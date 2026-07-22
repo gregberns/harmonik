@@ -1,0 +1,108 @@
+go build -ldflags "-X main.commitHash=26a4cfd9ffc48e71ed37e57f01bca1fcf3d67231" -o /tmp/harmonik ./cmd/harmonik
+go build ./...
+go build -ldflags "-X main.commitHash=26a4cfd9ffc48e71ed37e57f01bca1fcf3d67231" -o /Users/gb/github/harmonik/twins/generic-twin ./cmd/harmonik-twin-generic
+go build -ldflags "-X main.commitHash=26a4cfd9ffc48e71ed37e57f01bca1fcf3d67231" -o /Users/gb/github/harmonik/twins/pi-twin ./cmd/harmonik-twin-pi
+bash scripts/scratch-daemon.sh down "/tmp/h-assessor/core-loop-lt-baseline" 2>/dev/null || true
+[scratch-daemon] no pidfile at /private/tmp/h-assessor/core-loop-lt-baseline/.harmonik/daemon.pid — daemon not running via this script
+[scratch-daemon] down complete
+rm -rf "/tmp/h-assessor/core-loop-lt-baseline"
+bash scripts/scratch-daemon.sh init "/tmp/h-assessor/core-loop-lt-baseline" "/private/tmp/h-assessor/pinsrc"
+[scratch-daemon] SAFETY: operates ONLY on the scratch clone you name; never targets the fleet daemon.
+[scratch-daemon] cloning /private/tmp/h-assessor/pinsrc → /private/tmp/h-assessor/core-loop-lt-baseline
+Cloning into '/private/tmp/h-assessor/core-loop-lt-baseline'...
+done.
+Note: switching to '26a4cfd9ffc48e71ed37e57f01bca1fcf3d67231'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+Updating files:  68% (4306/6316)Updating files:  69% (4359/6316)Updating files:  70% (4422/6316)Updating files:  71% (4485/6316)Updating files:  72% (4548/6316)Updating files:  73% (4611/6316)Updating files:  74% (4674/6316)Updating files:  75% (4737/6316)Updating files:  76% (4801/6316)Updating files:  77% (4864/6316)Updating files:  78% (4927/6316)Updating files:  79% (4990/6316)Updating files:  80% (5053/6316)Updating files:  81% (5116/6316)Updating files:  82% (5180/6316)Updating files:  83% (5243/6316)Updating files:  84% (5306/6316)Updating files:  85% (5369/6316)Updating files:  86% (5432/6316)Updating files:  87% (5495/6316)Updating files:  88% (5559/6316)Updating files:  89% (5622/6316)Updating files:  90% (5685/6316)Updating files:  91% (5748/6316)Updating files:  92% (5811/6316)Updating files:  93% (5874/6316)Updating files:  94% (5938/6316)Updating files:  95% (6001/6316)Updating files:  96% (6064/6316)Updating files:  97% (6127/6316)Updating files:  98% (6190/6316)Updating files:  99% (6253/6316)Updating files: 100% (6316/6316)Updating files: 100% (6316/6316), done.
+[scratch-daemon] no .harmonik/config.yaml — running harmonik init
+[scratch-daemon] building scratch binary → /private/tmp/h-assessor/core-loop-lt-baseline/.harmonik/bin/harmonik (commit 26a4cfd9ffc48e71ed37e57f01bca1fcf3d67231)
+[scratch-daemon] build OK
+harmonik init: precondition checks passed
+harmonik init: bootstrapping project at /private/tmp/h-assessor/core-loop-lt-baseline (target-branch: main)
+Prefix set to: cllb
+Initialized beads workspace in ./.beads
+harmonik init: wrote .harmonik/config.yaml
+harmonik init: wrote .harmonik/branching.yaml
+harmonik init: wrote .harmonik/.gitignore
+harmonik init: provisioned .claude/skills/agent-comms
+harmonik init: provisioned .claude/skills/beads-cli
+harmonik init: provisioned .claude/skills/captain
+harmonik init: provisioned .claude/skills/crew-launch
+harmonik init: provisioned .claude/skills/harmonik-dispatch
+harmonik init: provisioned .claude/skills/harmonik-lifecycle
+harmonik init: provisioned .claude/skills/keeper
+harmonik init: provisioned .claude/skills/major-issue-fanout
+harmonik init: provisioned .claude/skills/orchestrator-rules
+harmonik init: provisioned .claude/skills/watch
+harmonik init: wrote AGENT_INDEX.md
+harmonik init: wrote STATUS.md
+harmonik init: wrote .harmonik/context/project.yaml
+harmonik init: wrote .harmonik/context/captain-lanes.md
+harmonik init: wrote .harmonik/context/roadmap.md
+harmonik init: wrote HANDOFF.md
+harmonik init: wrote AGENTS.md
+harmonik init: CLAUDE.md → AGENTS.md symlink already exists — skipping
+harmonik init: registered goal-keeper schedule (every 1h)
+harmonik: WARNING  5 on-disk instruction file(s) have not been synced to this binary version
+harmonik:   → run: harmonik sync-assets --dry-run   (review what would change)
+harmonik:          harmonik sync-assets --apply      (apply updates)
+harmonik init: done
+[scratch-daemon] provision: created local 'main' branch from HEAD (no origin/main)
+[scratch-daemon] provision: liveness_no_progress_n already set — skipping
+[scratch-daemon] provision: stripped default harnesses/codex + appended ornith overlay from /private/tmp/h-assessor/pinsrc/scripts/scratch-config-overlay.yaml
+[scratch-daemon] init complete. Next: scripts/scratch-daemon.sh build /private/tmp/h-assessor/core-loop-lt-baseline && scripts/scratch-daemon.sh up /private/tmp/h-assessor/core-loop-lt-baseline
+bash scripts/core-loop-seed.sh "/tmp/h-assessor/core-loop-lt-baseline" "/tmp/h-assessor/core-loop-lt-baseline/.harmonik/matrix-seed-map.tsv"
+[core-loop-seed] isolated origin -> /tmp/h-assessor/core-loop-lt-baseline/.harmonik/matrix-origin.git (daemon landings push here, never the fleet)
+[core-loop-seed] provisioned /tmp/h-assessor/core-loop-lt-baseline/review-loop.dot <- specs/examples/review-loop.dot (untracked; dot:review-loop same-model reviewer)
+[core-loop-seed] codex -> cllb-iqj (codename:quality-system,core-loop-seed,harness:codex)
+[core-loop-seed] pi -> lands on branch 'core-loop-proof-integ' (created/reset off main)
+[core-loop-seed] pi -> cllb-e67 (codename:quality-system,core-loop-seed,harness:pi,workflow:single)
+[core-loop-seed] pi-dot -> lands on branch 'core-loop-proof-dot-integ' (created/reset off main)
+[core-loop-seed] pi-dot -> cllb-bns (codename:quality-system,core-loop-seed,harness:pi,workflow:dot,dot:review-loop)
+[core-loop-seed] claude -> cllb-70u (codename:quality-system,core-loop-seed,harness:claude-code,workflow:single,model:claude-opus-4-8)
+[core-loop-seed] wrote MATRIX_SEED_MAP -> /tmp/h-assessor/core-loop-lt-baseline/.harmonik/matrix-seed-map.tsv (7 cells)
+MATRIX_SEED_MAP="/tmp/h-assessor/core-loop-lt-baseline/.harmonik/matrix-seed-map.tsv" bash scripts/core-loop-matrix.sh "/tmp/h-assessor/core-loop-lt-baseline" --harnesses "pi" --substrates "local" --assert --gate --json --specs "scenarios/core-loop-proof/cells.json"
+[core-loop-matrix] cycling a clean scratch daemon at /tmp/h-assessor/core-loop-lt-baseline (down → build → up) [workflow-mode=dot]
+[scratch-daemon] SAFETY: operates ONLY on the scratch clone you name; never targets the fleet daemon.
+[scratch-daemon] cycle: down → build → up
+[scratch-daemon] no pidfile at /private/tmp/h-assessor/core-loop-lt-baseline/.harmonik/daemon.pid — daemon not running via this script
+[scratch-daemon] down complete
+[scratch-daemon] building scratch binary → /private/tmp/h-assessor/core-loop-lt-baseline/.harmonik/bin/harmonik (commit 26a4cfd9ffc48e71ed37e57f01bca1fcf3d67231)
+[scratch-daemon] build OK
+[scratch-daemon] starting standalone daemon (session=harmonik-ecc8cc620311-default, project=/private/tmp/h-assessor/core-loop-lt-baseline)
+[scratch-daemon] waiting for daemon socket (/private/tmp/h-assessor/core-loop-lt-baseline/.harmonik/daemon.sock)...
+[scratch-daemon] daemon ready (2s) — session=harmonik-ecc8cc620311-default log=/private/tmp/h-assessor/core-loop-lt-baseline/.harmonik/scratch-daemon.log
+[core-loop-matrix] preflight OK — pi endpoint answered (http://127.0.0.1:8551/v1)
+[core-loop-matrix] RUN   pi:local — batch 'matrix-pi-local' seed=cllb-e67
+BATCH_ITEM	cllb-e67	pass	019f7985-7c69-75fb-ba4f-39de39864edf	-
+BATCH_SUMMARY name=matrix-pi-local total=1 pass=1 fail=0 incomplete=0 results=/private/tmp/h-assessor/core-loop-lt-baseline/.harmonik/batch-matrix-pi-local-019f7985-7691-7ec1-bcd6-2bce871353c0.json
+[core-loop-matrix] landing: want='core-loop-proof-integ' observed='core-loop-proof-integ' (main 26a4cfd9->26a4cfd9, target 26a4cfd9->d694ec4c)
+GAP	gap1	pass	harness=pi tier=1 model=ornith
+GAP	gap3	pass	provider produced a real HEAD change (commit_landed)
+GAP	gap4	pass	workflow_mode=single workflow_id=
+GAP	t10	pass	landed on 'core-loop-proof-integ' (git-verified; main unchanged)
+
+================ core-loop-proof matrix ================
+CELL             VERDICT  DETAIL
+pi:local         ✅ GREEN CELL_VERDICT green
+--------------------------------------------------------
+green=1 red=0 pending=0 skip=0
+MATRIX_SUMMARY green=1 red=0 pending=0 skip=0
+========================================================
+MATRIX_JSON {"summary":{"green":1,"red":0,"pending":0,"skip":0},"gate":true,"all_green":true,"cells":[{"cell":"pi:local","verdict":"green","detail":"CELL_VERDICT green"}]}
+EXIT_CODE=0

@@ -1,0 +1,129 @@
+diff --git a/internal/codexdriver/driver.go b/internal/codexdriver/driver.go
+index 569cd3f8d..476255d57 100644
+--- a/internal/codexdriver/driver.go
++++ b/internal/codexdriver/driver.go
+@@ -119,7 +119,26 @@ func NewCodexSubstrate(opts Options) handler.Substrate {
+ 		opts.Clock = substrate.SystemClock{}
+ 	}
+ 	if len(opts.Args) == 0 {
+-		opts.Args = []string{"app-server"}
++		// Headless crew orchestration (hk-5h759): the app-server must execute the
++		// model's shell + apply-patch tool calls WITHOUT a human in the loop, or a
++		// crew turn produces no reviewable output. Two config knobs make that true,
++		// both proven live by Spike B:
++		//   - approval_policy=never — the server never emits a client approval
++		//     request, so it does not stall on codexdriver's non-negotiated reply
++		//     path (handleServerRequest, session.go).
++		//   - sandbox_mode=danger-full-access — under workspace-write the sandbox
++		//     blocks .git writes, so the model writes files but the commit silently
++		//     never lands; full-access is required for a turn to produce a commit.
++		// danger-full-access assumes the substrate itself runs inside an external
++		// sandbox (the worker-routing runner's container / remote host); this is
++		// deliberate, not a default we reach for lightly. A caller that supplies
++		// explicit Options.Args (or a non-empty SubstrateSpawn.Argv) owns the
++		// config and overrides these.
++		opts.Args = []string{
++			"app-server",
++			"-c", `approval_policy="never"`,
++			"-c", `sandbox_mode="danger-full-access"`,
++		}
+ 	}
+ 	return &codexSubstrate{opts: opts}
+ }
+diff --git a/internal/codexdriver/defaultargs_hk5h759_test.go b/internal/codexdriver/defaultargs_hk5h759_test.go
+new file mode 100644
+index 00000000..26e9b825
+--- /dev/null
++++ b/internal/codexdriver/defaultargs_hk5h759_test.go
+@@ -0,0 +1,91 @@
++package codexdriver_test
++
++// hk-5h759: the default codex app-server spawn must be headless-capable, or a
++// crew turn produces no reviewable output. Spike B proved the two required
++// knobs live (approval_policy=never so the server does not stall on the
++// non-negotiated approval reply; sandbox_mode=danger-full-access so the model's
++// commit actually lands instead of being sandboxed out of .git). This test
++// pins those flags onto the EFFECTIVE spawn argv (what exec receives), not a
++// private field, so a regression that drops them fails here.
++
++import (
++	"context"
++	"os"
++	"os/exec"
++	"strings"
++	"sync"
++	"testing"
++
++	"github.com/gregberns/harmonik/internal/codexdriver"
++	"github.com/gregberns/harmonik/internal/handler"
++)
++
++// recordingRunner captures the (name, args) handed to Command but executes a
++// harmless fast-exiting process so SpawnWindow's pipe wiring succeeds.
++type recordingRunner struct {
++	mu   sync.Mutex
++	name string
++	args []string
++}
++
++func (r *recordingRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
++	r.mu.Lock()
++	r.name = name
++	r.args = append([]string(nil), args...)
++	r.mu.Unlock()
++	// Execute the test binary with no matching test — starts and exits cleanly.
++	return exec.CommandContext(ctx, os.Args[0], "-test.run=NONE")
++}
++
++func (r *recordingRunner) argv() []string {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return append([]string{r.name}, r.args...)
++}
++
++func TestDefaultArgs_HeadlessFlags_HK5H759(t *testing.T) {
++	rec := &recordingRunner{}
++	sub := codexdriver.NewCodexSubstrate(codexdriver.Options{Binary: "codex", Runner: rec})
++
++	// Empty SubstrateSpawn.Argv -> the driver builds argv from Binary + default Args.
++	sess, err := sub.SpawnWindow(context.Background(), handler.SubstrateSpawn{WindowName: "hk5h759"})
++	if err != nil {
++		t.Fatalf("SpawnWindow: %v", err)
++	}
++	t.Cleanup(func() { _ = sess.Kill(context.Background()) })
++
++	got := strings.Join(rec.argv(), " ")
++	for _, want := range []string{
++		"codex app-server",
++		`-c approval_policy="never"`,
++		`-c sandbox_mode="danger-full-access"`,
++	} {
++		if !strings.Contains(got, want) {
++			t.Errorf("default spawn argv missing %q\n  full argv: %s", want, got)
++		}
++	}
++}
++
++// A caller that supplies explicit Args owns the config — the headless defaults
++// must NOT be forced on top of an explicit override.
++func TestExplicitArgs_OverrideDefaults_HK5H759(t *testing.T) {
++	rec := &recordingRunner{}
++	sub := codexdriver.NewCodexSubstrate(codexdriver.Options{
++		Binary: "codex",
++		Args:   []string{"app-server", "-c", `sandbox_mode="read-only"`},
++		Runner: rec,
++	})
++	sess, err := sub.SpawnWindow(context.Background(), handler.SubstrateSpawn{WindowName: "hk5h759-override"})
++	if err != nil {
++		t.Fatalf("SpawnWindow: %v", err)
++	}
++	t.Cleanup(func() { _ = sess.Kill(context.Background()) })
++
++	got := strings.Join(rec.argv(), " ")
++	if strings.Contains(got, "danger-full-access") {
++		t.Errorf("explicit Args must override the headless defaults, got: %s", got)
++	}
++	if !strings.Contains(got, `sandbox_mode="read-only"`) {
++		t.Errorf("explicit Args not honored, got: %s", got)
++	}
++}

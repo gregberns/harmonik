@@ -1,0 +1,42 @@
+{
+  "chunk": "RU-21",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/specaudit/RELOCATED-ALLOWLIST.md",
+    "internal/specaudit/doc.go",
+    "internal/specaudit/ar025_agent_type_regex_test.go",
+    "internal/specaudit/hqwn57_eventbus_interface_test.go",
+    "internal/specaudit/sh_inv005_declarative_loadable_test.go"
+  ],
+  "status": "reviewed",
+  "status_note": "CLASSIFY verdict: the 3 untagged stragglers (ar025, hqwn57, sh_inv005) are REAL, correctly-carved-out tests, NOT theater at the structural level. All 3 genuinely import harmonik product code (internal/core, internal/eventbus, internal/scenario) and therefore legitimately stay under the default `go test` run while the other 129 pure spec-prose sensors are relocated behind `//go:build specaudit`. Bookkeeping is exact: 132 test files total = 129 tagged + 3 untagged, matching RELOCATED-ALLOWLIST.md byte-for-byte. ar025 (regex byte-identity vs core.AgentTypeRegexPattern) and hqwn57 (reflect-based EventBus interface method-set/signature check) are genuine drift sensors that assert against live product symbols. sh_inv005 has one real behavioral frame (corpus lint calls scenario.ParseScenarioFile) plus two weaker source/prose-grep frames noted below. Findings are minor robustness/theater issues within otherwise sound tests.",
+  "findings": [
+    {
+      "file": "internal/specaudit/sh_inv005_declarative_loadable_test.go",
+      "line": 250,
+      "severity": "low",
+      "category": "test-theater",
+      "title": "TestSHINV005ImplementationAudit asserts on a source-code substring, not behavior",
+      "detail": "The implementation-audit frame opens internal/scenario/scenariofile.go as text and asserts it CONTAINS the literal needle \"KnownFields(true)\". This is text-anchored test-theater: it passes if the string appears anywhere in the source — including inside a comment, a doc string, or dead/disabled code — and it does NOT verify that ParseScenarioFile actually invokes decoder.KnownFields(true) at runtime or that strict mode is effective. A refactor that renames the decoder var, wraps the call, or moves it while leaving a stale comment mentioning KnownFields(true) would keep this test green while strict parsing silently regresses. The behavioral guarantee is only actually exercised by the sibling TestSHINV005CorpusLint frame (which calls scenario.ParseScenarioFile on the real corpus); this frame adds fragility without adding real coverage.",
+      "suggested_fix": "Drop the source-substring frame and rely on a behavioral assertion: feed ParseScenarioFile a fixture YAML containing an unknown field (and a forbidden tag like !!python/object) and assert it is rejected. That proves KnownFields(true)+deny-list is wired, independent of source text."
+    },
+    {
+      "file": "internal/specaudit/sh_inv005_declarative_loadable_test.go",
+      "line": 162,
+      "severity": "nit",
+      "category": "test-theater",
+      "title": "TestSHINV005SpecBodyAudit greps spec prose for enforcement-phrase substrings",
+      "detail": "The spec-body-audit frame asserts the SH-INV-005 prose block contains substrings like \"KnownFields\" and \"gopkg.in/yaml.v3\". This tests documentation wording, not the system — it passes on any incidental mention and mainly guards against someone deleting a sentence. Low value; it is a prose lint masquerading as a conformance sensor. Not harmful, but it inflates the apparent test count for SH-INV-005.",
+      "suggested_fix": "Keep only if the intent is explicitly a spec-wording tripwire; otherwise fold its signal into the behavioral corpus-lint frame and delete the prose-grep."
+    },
+    {
+      "file": "internal/specaudit/ar025_agent_type_regex_test.go",
+      "line": 79,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Regex extractor matches the FIRST `agent_type :=` line anywhere in the spec, not scoped to §6.1",
+      "detail": "ar025FixtureExtractRegex scans the whole of specs/architecture.md and returns the first line beginning with `agent_type :=`, despite the doc comment claiming it reads the canonical §6.1 declaration. Today there is exactly one such line (verified: only line 486 matches), so the byte-identity check is correct. But the sensor is a latent false-negative: if a second illustrative `agent_type := <something>` line is ever added earlier in the document (e.g. an example in a narrative section), the test would silently compare core.AgentTypeRegexPattern against the wrong (example) regex, and could pass or fail spuriously without anyone noticing the canonical §6.1 value drifted. The comment even admits it deliberately does not require the match to be inside a code fence.",
+      "suggested_fix": "Anchor the scan to the §6.1 heading (start scanning after the `## §6.1`/section header and stop at the next `##`), or require the match to be inside the single fenced block under §6.1, so the sensor is bound to the canonical declaration it claims to check."
+    }
+  ]
+}

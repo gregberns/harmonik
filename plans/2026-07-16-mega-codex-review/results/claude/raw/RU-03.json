@@ -1,0 +1,82 @@
+{
+  "chunk": "RU-03",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/runexec/run.go",
+    "internal/runexec/dispatch.go",
+    "internal/runexec/vocab.go",
+    "internal/runexec/doc.go",
+    "internal/mergeq/mergeq.go",
+    "internal/mergeq/mergeq_test.go",
+    "internal/run/registry.go",
+    "internal/runexectest/harness_test.go",
+    "internal/runexectest/relaunch10_test.go",
+    "internal/runexectest/fault_matrix_test.go"
+  ],
+  "status": "reviewed",
+  "findings": [
+    {
+      "file": "internal/mergeq/mergeq.go",
+      "line": 66,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "Queue's strict-FIFO invariant rests on undocumented Go channel sendq ordering",
+      "detail": "The package's central guarantee (RSM-002/012: submissions execute strictly FIFO in arrival order) is implemented by having senders block on an unbuffered channel and relying on 'a Go-runtime FIFO send queue so arrival order is the execution order' (New's comment, and the test's determinism note). The Go language spec does NOT guarantee that blocked senders on a channel are released in FIFO order — it is a stable but undocumented runtime implementation detail (the sudog wait queue). If a future runtime changed this, merges could execute out of arrival order with zero test failure until a real ordering-sensitive race surfaced on main. The correctness of the merge-exclusion domain should not depend on unspecified runtime behavior; the queue should carry an explicit sequence number / intake-ordering it controls, rather than delegating ordering to the channel scheduler.",
+      "suggested_fix": "Assign a monotonic seq at Submit time and have the owner drain an explicit ordered structure (or document that FIFO is best-effort and the merge path tolerates reordering). At minimum, stop asserting strict FIFO if it is not actually guaranteed."
+    },
+    {
+      "file": "internal/mergeq/mergeq_test.go",
+      "line": 75,
+      "severity": "medium",
+      "category": "test-theater",
+      "title": "FIFO test proves nothing beyond the sleep-tuned scheduler timing it constructs",
+      "detail": "TestFIFOOrderUnderConcurrentSubmits sequences submitters with time.Sleep(2ms) between each launch specifically so each goroutine reaches its blocking send before the next launches — i.e. the test manufactures the exact serial arrival order it then asserts. It does not exercise genuinely-concurrent submits (the real hazard). It therefore validates the sleep choreography, not the queue's ordering under contention; a queue that ordered by any deterministic rule would pass. Combined with the finding above (FIFO relies on runtime sendq order), this test gives false confidence that concurrent arrival order is preserved. It is also timing-fragile: under load/CI the 2ms gap can be insufficient, flipping it to flaky.",
+      "suggested_fix": "Drive ordering through an observable the queue controls (seq numbers), or accept that true-concurrent order is nondeterministic and test the property that actually matters (mutual exclusion + no lost/duplicated execution), not a scripted arrival order."
+    },
+    {
+      "file": "internal/runexec/run.go",
+      "line": 66,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "RunState + run.go is a fragile god-module whose correctness is 'byte-exact strings preserved as data'",
+      "detail": "RunState carries ~15 tightly-coupled latch fields (PathLabel, PathCloseSummary, SingleShotLabel, TransientSummary, AttentionClose, Draining, FinalizeMode, DoneOutcome, ...) whose interactions are only decipherable via dense inline references to external spec IDs and source line numbers (RF :3899, :4138, :4206-:4217, RSM-020/032/033/035, RT6/RT9). Core behavior is preserving exact human-readable summary/reason strings ('close-transient-merged (' + label + ')', 'code-sync failed (' + label + '): ' + reason) by string concatenation scattered across mergeFailureStrings/mergeCloseTransient/finalizeClose/doneClosed. Any label typo or refactor silently changes an observable outcome string with no compile-time protection, and the RF :NNNN line-number anchors rot the moment workloop.go changes. This is high-risk to maintain and effectively unreviewable without the external design docs open.",
+      "suggested_fix": "Promote the observable strings to named typed constants/templates in one table keyed by (mode, stage, outcome), drop the volatile 'RF :NNNN' line anchors in favor of stable spec-section refs, and add golden tests that pin each emitted string so a refactor can't silently drift them."
+    },
+    {
+      "file": "internal/runexec/dispatch.go",
+      "line": 268,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "ReadyTimeout->Failed on agent exit leaves the kill-reap timer armed (no CancelTimer)",
+      "detail": "dispatchReadyTimeoutEdge arms TimerReadyKillReap. In stepDispatchReadyTimeout, an EvAgentExited (the agent died before the reap deadline) transitions to DispatchFailed and returns NIL actions — it never emits ActCancelTimer{TimerReadyKillReap}. The shell-side reap timer therefore stays live and later fires EvTimerFired(ReadyKillReap) into an already-terminal machine (harmlessly ignored by the terminal guard). Every ready-timeout that resolves via exit leaks one armed timer/goroutine on the shell until it fires. Contrast with every other terminal edge (launch-failed, exit, brief-ack) which explicitly cancels its outstanding timer.",
+      "suggested_fix": "On the EvAgentExited branch of stepDispatchReadyTimeout, return []Action{{Kind: ActCancelTimer, Timer: TimerReadyKillReap}} so the reap deadline is torn down when the agent exits first."
+    },
+    {
+      "file": "internal/run/registry.go",
+      "line": 121,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "List silently drops records that fail to load, masking corruption from the post-SIGKILL adoption sweep",
+      "detail": "List's whole purpose is letting the daemon discover surviving tmux sessions after a SIGKILL restart. A record whose JSON fails to unmarshal (partial write from an older format, disk bit-rot, manual edit) is skipped with `continue` and no log at all (line 122-124). The consequence is not cosmetic: a dropped record means a real orphaned run/tmux session is never adopted nor reaped — it becomes a zombie the daemon can't see. Swallowing the error with zero telemetry makes that failure invisible; an operator would never know a session was silently abandoned.",
+      "suggested_fix": "Log (warn) the runID + error on load failure so a corrupt/undecodable record surfaces, and consider surfacing a count of skipped records to the caller rather than folding them into a nil error."
+    },
+    {
+      "file": "internal/run/registry.go",
+      "line": 52,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Atomic write is not durable and not safe for concurrent same-runID writers",
+      "detail": "Write uses a fixed tmp path recordPath+\".tmp\" then Rename. Two concerns: (1) no fsync of the temp file or the parent dir before/after rename, so a crash immediately after the run record is written can lose it on real filesystems even though the rename returned — precisely the SIGKILL-restart scenario the registry exists to survive. (2) The tmp filename is derived solely from runID, so two concurrent Write calls for the same runID race on the same tmp file and can interleave partial contents before rename. RunIDs are unique per run so (2) is unlikely, but a re-Write (status update) racing a remove is possible.",
+      "suggested_fix": "Use a unique tmp suffix (pid/rand) and fsync the file (and ideally the dir) before rename if durability across crash is required for the adoption guarantee."
+    },
+    {
+      "file": "internal/runexec/run.go",
+      "line": 214,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Single-mode terminal latches path label only when Detail!=\"\", silently degrading merge-failure strings on empty payload",
+      "detail": "In stepRunDispatching the EvAgentCompleted/EvCleanExit branch only sets PathLabel/SingleShotLabel/PathCloseSummary when ev.Detail != \"\". The comment asserts 'the single-mode shell always sends the payload', but nothing enforces it. If the shell ever emits a single-mode terminal with an empty Detail (a plausible regression or a partially-populated event), the run silently falls through to config-fallback strings and mergeFailureStrings returns empty (PathLabel==\"\"), producing generic reopen text instead of the label-parameterized diagnostics — a silent observability regression with no error. The invariant ('single-shot terminals carry a non-empty Detail') is a load-bearing assumption held only by a prose comment.",
+      "suggested_fix": "Either treat an empty Detail on a single-mode terminal as a defensive error/emit, or make the label independent of Detail (set PathLabel from ev.Kind unconditionally and only gate PathCloseSummary on Detail)."
+    }
+  ]
+}

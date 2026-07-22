@@ -1,0 +1,69 @@
+{
+  "chunk": "RU-10",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/core/eventregistry.go",
+    "internal/core/eventreg_hqwn59.go",
+    "internal/core/eventreg_wkzlc.go",
+    "internal/core/eventtype.go",
+    "internal/core/pertypecompat_hqwn38.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Read all five files in full plus cross-repo consumer greps (internal/replay, internal/eventbus, cmd/, internal/daemon) to confirm which registry-surface functions have live production callers vs test-only callers.",
+  "findings": [
+    {
+      "file": "internal/core/eventregistry.go",
+      "line": 331,
+      "severity": "high",
+      "category": "spec-drift",
+      "title": "EV-036 secret-field startup guard (ScanRegisteredPayloadsForSecretFields) is never invoked in production",
+      "detail": "The function's own doc (lines 312-330) and event-model.md §4.10 EV-036 state the daemon MUST call ScanRegisteredPayloadsForSecretFields after all RegisterEventType calls complete and before the bus is sealed, and MUST refuse to start on a non-nil (ErrSecretPrefixField) return. A grep across cmd/ and internal/daemon/ finds ZERO callers — the only invocations are in internal/operatornfr and internal/core test files. The fail-closed protection that is supposed to prevent a payload author from accidentally leaking a secret-named field to the JSONL log therefore never runs at real daemon startup. A future payload struct with a field like `SecretToken` would ship and emit to the durable log with no startup failure; the guarantee exists only in a unit test scanning the same registry, which is not the runtime enforcement the spec requires.",
+      "suggested_fix": "Wire a ScanRegisteredPayloadsForSecretFields() call into the daemon startup sequence (after init-time registration, before bus seal / first emit) and treat a non-nil return as a fatal startup error, matching the EV-036 contract. Alternatively amend the spec if the runtime check was deliberately downgraded to a compile/test-time-only guarantee."
+    },
+    {
+      "file": "internal/core/pertypecompat_hqwn38.go",
+      "line": 86,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "Event taxonomy is three hand-maintained parallel lists keyed on duplicated string literals with no compile-time link",
+      "detail": "The same ~169 event type names are spelled out independently in three places: the EventType constants in eventtype.go (e.g. `EventTypeRunStarted EventType = \"run_started\"`), the mustRegister(\"run_started\", ...) string literals in eventreg_hqwn59.go / eventreg_wkzlc.go, and the {TypeName: \"run_started\", ...} rows here in allPayloadCompatEntries. None of the three references the others: registration uses raw string literals rather than the EventType constants, and the registry itself stores `map[string]typeEntry` string keys (eventregistry.go:73, with a standing TODO(hk-hqwn.59.82) to hoist to EventType). A typo or an added type that updates one list but not another is invisible to the compiler and caught only if the coverage/pertypecompat tests happen to assert it. This is a large, fragile, verbose surface (the compat table alone is ~300 lines of near-identical rows) that grows with every new event and depends entirely on test discipline for consistency.",
+      "suggested_fix": "Make the EventType constants the single source: register via the constants (mustRegister(EventTypeRunStarted, ...)), key the registry on EventType, and derive/validate the compat table from the registry rather than restating every type name a third time. At minimum, collapse to one authoritative list the other two are generated or checked against at compile/init time."
+    },
+    {
+      "file": "internal/core/eventregistry.go",
+      "line": 205,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "CurrentPayloadSchemaVersion is a pure alias with no non-test caller",
+      "detail": "CurrentPayloadSchemaVersion just calls LookupTypeSchemaVersion with no added behavior. A repo-wide grep shows its only reference outside its own definition is pertypecompat_hqwn38_test.go:184. No production code uses it; live consumers call LookupTypeSchemaVersion directly (eventbus/busimpl.go). It is an exported-API duplicate carrying its own doc block that must be kept in sync with the aliased function.",
+      "suggested_fix": "Delete CurrentPayloadSchemaVersion and point the one test at LookupTypeSchemaVersion, or drop it entirely if EV-029 does not mandate the name."
+    },
+    {
+      "file": "internal/core/pertypecompat_hqwn38.go",
+      "line": 52,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "Per-type schema-version / N-1 compat machinery is entirely speculative — every type is v1 with no prior version",
+      "detail": "The whole per-type version apparatus — RegisterEventTypeAtVersion, the PayloadCompatEntry.CurrentVersion/PreviousVersion/CompatWindowHolds/AdditiveOnly fields, and the ~300-line allPayloadCompatEntries table — exists to support N->N+1 evolution, but no type has ever advanced: every row is {CurrentVersion:1, PreviousVersion:0, CompatWindowHolds:true, AdditiveOnly:true}, and RegisterEventTypeAtVersion has no production caller at a version other than 1 (all registration goes through RegisterEventType->version 1). The single live reader, replay.go:247, only checks entry.CompatWindowHolds, which is unconditionally true for every entry, so the branch is dead in practice. This is a large maintenance burden (a new row required for every event, enforced by tests) delivering no behavior today.",
+      "suggested_fix": "Keep the extension point but shrink the standing cost: derive the all-v1 table from the registry instead of hand-listing every type, or gate the table/tests behind the first real version bump. At minimum document it as reserved-until-first-bump so reviewers don't treat the table as load-bearing."
+    },
+    {
+      "file": "internal/core/eventregistry.go",
+      "line": 69,
+      "severity": "low",
+      "category": "correctness",
+      "title": "secretPrefixRe matches substrings without word boundaries — 'auth' trips on Author/AuthorID etc.",
+      "detail": "secretPrefixRe = `(?i)(secret|token|password|api[_-]?key|auth)` is matched with MatchString against exported field names (scanConstructors line 303), so it fires on any field whose name merely CONTAINS one of these substrings. A legitimately named field such as `Author`, `AuthorID`, or `Authorized` would match `auth` and cause ErrSecretPrefixField. Today this is latent because (a) no current payload has such a field and (b) the scan is never wired into startup (see the high finding), but if the guard is ever correctly wired it will fail the daemon closed on innocuous field names.",
+      "suggested_fix": "Anchor the rule to whole-word / camelCase token boundaries (e.g. split the field name into words or require a boundary), and add a test with an Author-style field asserting it does NOT trip the guard."
+    },
+    {
+      "file": "internal/core/eventregistry.go",
+      "line": 186,
+      "severity": "nit",
+      "category": "spec-drift",
+      "title": "Stale '71' event-type count in doc comments vs ~169 registered types",
+      "detail": "AllPayloadSchemaVersions' doc cites EV-029 'N (currently 71) independent compatibility contracts', and pertypecompat_hqwn38.go headers repeat 'up to 71+'. The registry now holds ~169 types (replay.go:298 even calls it 'the entire 169-type registry', and eventtype.go's header says '~79'). The counts across these comments are mutually inconsistent and stale.",
+      "suggested_fix": "Drop the hard-coded counts from the comments (they rot on every new event) or replace with 'len(allPayloadCompatEntries)'-style language; reconcile eventtype.go's '~79'/'~169' figures."
+    }
+  ]
+}

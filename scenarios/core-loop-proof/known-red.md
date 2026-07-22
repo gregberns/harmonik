@@ -8,10 +8,38 @@ is "full-matrix green **minus** the known-RED cells").
 When the underlying defect lands, the assertion flips to `pass`, its expected-fail
 self-test row breaks loudly, and that break is the signal to retire the entry here.
 
-## (none — all known-RED cells retired)
+## `pi-dot:local` — the DOT review round trip never converges (hk-psla4)
 
-There are currently no known-RED cells. The full-matrix green gate is therefore the plain
-"full-matrix green" with no exclusions.
+**Recorded 2026-07-22 by the assessor, from the `650f359b` release gate.**
+
+`pi-dot:local` fails `gap6` and `t10` whenever the reviewer returns REQUEST_CHANGES: the
+implementer is re-dispatched, `implementer_phase_complete` fires, and the pass produces
+**zero diff** (`diff_hash_prior == diff_hash_current`), so `review_fixup_stalled` fires at
+iteration 2 and nothing lands on `core-loop-proof-dot-integ`.
+
+**This is not a release-introduced red.** It was proven pre-existing by a controlled
+differential — the identical cell, command, and isolated substrate at the release commit
+`650f359b` and at the then-deployed `eb2b4f1a`, both single-daemon-verified, produced the
+same signature line for line. Report: `.harmonik/reports/rel-650f359b-gate.md` §5a.2.
+
+**Two traps that make this cell easy to misread, both of which cost real runs:**
+
+1. **A green here can be a false green.** The cell only exercises the fix-up path if the
+   reviewer actually asks for changes, and the reviewer verdict is nondeterministic. A run
+   whose reviewer APPROVES on the first pass lands cleanly and reports the round trip as
+   working — it never entered the path. Treat "landed" as informative only alongside a
+   REQUEST_CHANGES in the same run's event log.
+2. **`pi:local` flips green→red at a fixed SHA**, at the deployed commit as well as the
+   release commit. A single green and a single red are equally weak evidence from this
+   harness; only a differential across commits carries a conclusion.
+
+**Retire this entry when** a run shows REQUEST_CHANGES at iteration 1 followed by an APPROVE
+after re-dispatch, with the work landed on `core-loop-proof-dot-integ`.
+
+Until then the forced LT gate (`make core-loop-lt` with `EXTRA_CELLS='pi-dot:local|pi|local'`)
+**cannot be made green by any release**, and a release must not be blocked on it — the gate
+cannot currently tell two commits apart. Scope the T9 full-matrix green gate as
+"full-matrix green **minus** `pi-dot:local`" until `hk-psla4` lands.
 
 ### Operator caveat — live codex empty-model runs depend on the account default (not a known-RED cell)
 

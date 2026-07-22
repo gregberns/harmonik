@@ -1,0 +1,50 @@
+{
+  "chunk": "RU-19",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/keepertest/doc.go",
+    "internal/keepertest/helpers_test.go",
+    "internal/keepertest/l0_step_test.go",
+    "internal/keepertest/l1_contract_test.go",
+    "internal/keepertest/l2_integration_test.go",
+    "internal/keepertest/l2_fault_matrix_test.go",
+    "internal/keepertest/l3_live_test.go",
+    "internal/keepertest/canary_test.go",
+    "internal/keepertest/metrics_export_test.go",
+    "internal/codexdigitaltwin/twin.go",
+    "internal/codexdigitaltwin/inputtwin.go",
+    "internal/codexdigitaltwin/inputsynth.go",
+    "internal/codexdigitaltwin/twin_test.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Focus-lens classification: the twin harnesses (codexdigitaltwin output+input, keepertest L0-L3) are REAL, not test-theater. They drive the actual pure reactor (keeper.Cycle / codexreactor) end-to-end, assert concrete action/emit sequences and SR invariants, run a 507-cycle corpus-anchored drift canary, and an exhaustive 4x4xN fault matrix. The INPUT twin (inputtwin.go/inputsynth.go) is unused within codexdigitaltwin's own tests but IS exercised by internal/codextest (l0/l1/l2 AIS suites) — not dead code. Findings below are the few real weaknesses, all low/nit.",
+  "findings": [
+    {
+      "file": "internal/keepertest/l1_contract_test.go",
+      "line": 135,
+      "severity": "low",
+      "category": "coverage-gap",
+      "title": "L1/L2 golden-outcome replay is anchored to SYNTHESIZED input derived from the summary's own classification, not to recorded input traffic",
+      "detail": "TestL1_GoldenOutcomes / the L2 discrete harness build their stimulus via keepertwin.SynthesizeStimulus(sum), where the schedule is constructed per-stratum from keepertwin.Classify(sum), then assert the reactor reaches the same stratum's outcome (wantReplayOutcome also calls Classify(sum)). The input side is therefore self-referential: it largely proves the synthesizer and reactor agree on the stratum shape, not that the reactor matches real captured input traffic. The only independent ground truth is the recorded OUTPUT envelopes in TestL1_RecordedCorpusDecodesStrict (keeper has no recorded input stream). This is acknowledged in measurement-design 2.2, but the '507-cycle corpus golden replay' framing overstates the independence of the input-driven assertions.",
+      "suggested_fix": "Document the self-referential input clearly in the test header, or add a fixed hand-authored (non-Classify-derived) stimulus fixture for at least one cycle per stratum to break the synthesizer<->reactor circularity."
+    },
+    {
+      "file": "internal/keepertest/l2_integration_test.go",
+      "line": 163,
+      "severity": "low",
+      "category": "correctness",
+      "title": "drainTwin uses a 2s WALL-CLOCK idle timeout that can produce a false 'silence bug' failure under load/-race",
+      "detail": "drainTwin arms a real 2*time.Second wall-clock timer per receive and, for non-stall modes, calls t.Fatalf('twin produced no event within the idle budget (silence bug?)') if it fires. The comment asserts the twin produces from memory in microseconds, but this is a genuine wall-clock deadline: under a loaded CI box, GC pause, or -race instrumentation, a legitimately slow-but-correct twin can trip it and fail spuriously. This is used by the entire L2 integration + the 44-cell fault matrix (runDiscrete -> drainTwin), so it is a broad flakiness surface.",
+      "suggested_fix": "Raise the idle budget substantially (e.g. 30s) since it is only meant to catch a true hang, or gate it off -race, or drive the twin drain synchronously without a per-receive wall timer."
+    },
+    {
+      "file": "internal/keepertest/canary_test.go",
+      "line": 28,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Redundant frozen anchor: count duplicates started (both 507)",
+      "detail": "frozenAnchors carries both started:507 and count:507 and asserts both against the manifest; they are the same population size by construction, so the second check adds no coverage and invites future skew if only one is updated.",
+      "suggested_fix": "Drop count (or assert count==started once) to keep a single source of the population size."
+    }
+  ]
+}

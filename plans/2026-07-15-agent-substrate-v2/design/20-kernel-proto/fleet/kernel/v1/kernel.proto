@@ -1,0 +1,260 @@
+// The fleet kernel's entire plugin-facing API.
+//
+// BOUNDARY RULE: no message in this file may name a domain concept.
+// The kernel does not know what an agent, a log file, a session, a repo,
+// a message, or an SSH key is. Payloads are opaque bytes, never Any,
+// because the kernel has no type registry and therefore cannot parse them.
+syntax = "proto3";
+
+package fleet.kernel.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/gb/fleet/gen/fleet/kernel/v1;kernelv1";
+
+// ---------------------------------------------------------------- channels
+
+// A channel is (name, type). The kernel moves bytes; the plugin owns meaning.
+enum ChannelType {
+  CHANNEL_TYPE_UNSPECIFIED = 0;
+  // Every subscriber whose pattern matches gets a copy. Subscribing to an
+  // exact name is what people call "fanout"; subscribing to a pattern is what
+  // people call "pubsub". Same primitive, so one type.
+  CHANNEL_TYPE_PUBSUB = 1;
+  // Competing consumers: exactly one member of each named group gets each
+  // message. A 1:1 link is the degenerate case with one consumer.
+  CHANNEL_TYPE_POINT_TO_POINT = 2;
+  // One outstanding question, one answer, correlated by the kernel.
+  CHANNEL_TYPE_REQUEST_REPLY = 3;
+  // Replicated map. Single-writer-per-key BY CONSTRUCTION: the writing node
+  // owns every key it writes, so there is no conflict and no resolution
+  // policy. Changes also arrive as deliveries.
+  CHANNEL_TYPE_LOOKUP = 4;
+}
+
+// The unit the kernel carries. Fields 1-3 are the plugin's. Fields 10+ are
+// stamped by the kernel and OVERWRITTEN if a caller sets them.
+message Envelope {
+  string channel = 1;
+  bytes payload = 2;                  // OPAQUE. Never parsed by the kernel.
+  map<string, string> headers = 3;    // plugin metadata; kernel does not read it
+
+  string origin_node = 10;            // which box published it
+  google.protobuf.Timestamp origin_time = 11;  // that box's clock. NOT a fleet order.
+  string message_id = 12;             // unique; the hook a plugin builds ACKs on
+  uint64 origin_seq = 13;             // monotonic per (origin_node, channel). NEVER fleet-wide.
+  string producer = 14;               // publishing plugin's namespace
+}
+
+// Does anyone, anywhere in the fleet, subscribe to this channel right now?
+// Answers BRIEF 5's "notify the sender that the receiver is not listening".
+// This is a LOCAL lookup against gossiped interest: microseconds, no network.
+// It says "someone is listening", NOT "it was delivered".
+enum Interest {
+  INTEREST_UNSPECIFIED = 0;
+  INTEREST_PRESENT = 1;   // at least one live subscriber known
+  INTEREST_NONE = 2;      // nobody is listening; the send went nowhere
+  INTEREST_UNKNOWN = 3;   // fleet view incomplete (e.g. a node is suspect)
+}
+
+message PublishRequest {
+  string channel = 1;
+  bytes payload = 2;
+  map<string, string> headers = 3;
+  string group_key = 4;   // POINT_TO_POINT only: same key => same consumer
+}
+message PublishResponse {
+  string message_id = 1;
+  Interest interest = 2;
+  uint64 origin_seq = 3;
+}
+
+message SubscribeRequest {
+  string pattern = 1;      // channel name or pattern; must sit inside a declared interest
+  string group = 2;        // POINT_TO_POINT only: the competing-consumer group
+}
+message SubscribeResponse { Envelope envelope = 1; }
+
+message RequestRequest {
+  string channel = 1;
+  bytes payload = 2;
+  map<string, string> headers = 3;
+  uint32 timeout_ms = 4;
+}
+message RequestResponse {
+  Envelope envelope = 1;
+  Interest interest = 2;   // INTEREST_NONE => nobody serves this; returned immediately, not after timeout
+}
+
+message ServeRequest { string pattern = 1; }
+message ServeResponse {
+  Envelope envelope = 1;
+  string request_id = 2;   // echo this back to Respond
+}
+message RespondRequest {
+  string request_id = 1;
+  bytes payload = 2;
+  map<string, string> headers = 3;
+  string error = 4;        // non-empty => the requester's call fails with this
+}
+message RespondResponse {}
+
+// ---------------------------------------------------------------- lookup
+
+message LookupPutRequest {
+  string channel = 1;
+  string key = 2;          // this node becomes the sole writer of this key
+  bytes value = 3;
+  uint32 ttl_seconds = 4;  // 0 = no expiry. Local wall clock; not a fleet lease.
+}
+message LookupPutResponse { uint64 revision = 1; }
+
+message LookupEntry {
+  string key = 1;
+  bytes value = 2;
+  string writer_node = 3;
+  uint64 revision = 4;     // monotonic PER WRITER. Comparable only within one writer.
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// Returns EVERY claimant of the key. If two nodes claim one name you get two
+// entries and the kernel does not pick: name clashes are a plugin policy.
+message LookupGetRequest { string channel = 1; string key = 2; }
+message LookupGetResponse { repeated LookupEntry entries = 1; }
+
+message LookupListRequest { string channel = 1; string key_prefix = 2; }
+message LookupListResponse { repeated LookupEntry entries = 1; }
+
+// ---------------------------------------------------------------- storage
+//
+// NOTE WHAT IS ABSENT: there is no namespace field anywhere below. The kernel
+// derives it from the calling plugin's registered identity. Reading another
+// plugin's storage is not forbidden, it is UNREPRESENTABLE. Storage is
+// box-local and never replicated; if you want data on another box, publish it
+// on a channel. Replication, like durability, is a plugin decision.
+
+message KVPutRequest {
+  string key = 1;
+  bytes value = 2;
+  uint32 ttl_seconds = 3;
+  optional uint64 if_revision = 4;  // compare-and-swap; 0 = must not exist
+}
+message KVPutResponse { uint64 revision = 1; }
+message KVGetRequest { string key = 1; }
+message KVGetResponse { bool found = 1; bytes value = 2; uint64 revision = 3; }
+message KVDeleteRequest { string key = 1; }
+message KVDeleteResponse { bool existed = 1; }
+message KVListRequest { string key_prefix = 1; uint32 limit = 2; }
+message KVListResponse { repeated KVEntry entries = 1; }
+message KVEntry { string key = 1; bytes value = 2; uint64 revision = 3; }
+message KVWatchRequest { string key_prefix = 1; }
+message KVWatchResponse {
+  enum Kind { KIND_UNSPECIFIED = 0; KIND_PUT = 1; KIND_DELETE = 2; KIND_EXPIRE = 3; }
+  Kind kind = 1;
+  KVEntry entry = 2;
+}
+
+// An append-only journal. Sequence is monotonic per (plugin, journal name) ON THIS BOX
+// ONLY. The kernel does NOT order records across boxes and will not pretend to:
+// a fleet-wide order needs a single writer, a single writer is a fatal hub, and
+// BRIEF 4 forbids fatal hubs. Read N logs and merge by a rule you chose.
+message JournalAppendRequest { string journal = 1; repeated bytes records = 2; }
+message JournalAppendResponse { repeated uint64 seqs = 1; }
+message JournalReadRequest {
+  string journal = 1;
+  uint64 after_seq = 2;   // exclusive; cursors live in KV, not in a plugin's own file
+  uint32 limit = 3;
+  bool follow = 4;
+}
+message JournalRecord {
+  uint64 seq = 1;
+  bytes record = 2;
+  google.protobuf.Timestamp appended_at = 3;
+}
+message JournalReadResponse { repeated JournalRecord records = 1; }
+message JournalTruncateRequest { string journal = 1; uint64 before_seq = 2; }
+message JournalTruncateResponse { uint64 removed = 1; }
+
+// ---------------------------------------------------------------- roster
+//
+// The kernel knows what a BOX is, because it has to dial one. It does not know
+// what runs on a box. An agent list is a PLUGIN built on a LOOKUP channel.
+
+message Node {
+  string name = 1;          // roster name = the key. Stable. Not os.Hostname().
+  string address = 2;       // the Tailscale IP. The ONE address. Never DNS, never LAN.
+  string node_id = 3;       // stable external id (Tailscale node id)
+  string os = 4;            // "linux" | "darwin"
+  string arch = 5;          // "arm64"
+  uint32 port = 6;
+  Intent intent = 7;
+  uint32 schema = 8;
+  enum Intent {
+    INTENT_UNSPECIFIED = 0;
+    INTENT_UP = 1;
+    INTENT_SLEEPING = 2;   // announced before sleep: ~0.6s to propagate vs ~6s to infer death
+    INTENT_DRAINING = 3;
+  }
+}
+
+// Liveness is computed LOCALLY from this box's own observations and is never
+// gossiped. Peers do not exchange opinions about third parties' clocks.
+message Liveness {
+  State state = 1;
+  google.protobuf.Timestamp last_seen = 2;   // THIS box's clock
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_ALIVE = 1;
+    STATE_SUSPECT = 2;
+    STATE_DEAD = 3;   // died without warning
+    STATE_LEFT = 4;   // announced its departure
+  }
+}
+
+message NodeStatus { Node node = 1; Liveness liveness = 2; }
+message RosterListRequest {}
+message RosterListResponse { repeated NodeStatus nodes = 1; string self = 2; }
+message RosterWatchRequest {}
+message RosterWatchResponse {
+  enum Kind { KIND_UNSPECIFIED = 0; KIND_JOIN = 1; KIND_LEAVE = 2; KIND_UPDATE = 3; KIND_DEAD = 4; }
+  Kind kind = 1;
+  NodeStatus node = 2;
+}
+
+message InfoRequest {}
+message InfoResponse {
+  string node = 1;
+  uint32 api_version = 2;
+  string kernel_version = 3;
+  string namespace = 4;   // the namespace the kernel assigned to THIS caller
+}
+
+// The whole kernel. 19 methods. Every one is unary or server-streaming --
+// there is no bidirectional streaming anywhere, which is what lets this exact
+// service answer plain curl over HTTP/1.1 as well as a plugin over gRPC.
+service KernelService {
+  rpc Publish(PublishRequest) returns (PublishResponse);
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+  rpc Request(RequestRequest) returns (RequestResponse);
+  rpc Serve(ServeRequest) returns (stream ServeResponse);
+  rpc Respond(RespondRequest) returns (RespondResponse);
+
+  rpc LookupPut(LookupPutRequest) returns (LookupPutResponse);
+  rpc LookupGet(LookupGetRequest) returns (LookupGetResponse);
+  rpc LookupList(LookupListRequest) returns (LookupListResponse);
+
+  rpc KVPut(KVPutRequest) returns (KVPutResponse);
+  rpc KVGet(KVGetRequest) returns (KVGetResponse);
+  rpc KVDelete(KVDeleteRequest) returns (KVDeleteResponse);
+  rpc KVList(KVListRequest) returns (KVListResponse);
+  rpc KVWatch(KVWatchRequest) returns (stream KVWatchResponse);
+
+  rpc JournalAppend(JournalAppendRequest) returns (JournalAppendResponse);
+  rpc JournalRead(JournalReadRequest) returns (stream JournalReadResponse);
+  rpc JournalTruncate(JournalTruncateRequest) returns (JournalTruncateResponse);
+
+  rpc RosterList(RosterListRequest) returns (RosterListResponse);
+  rpc RosterWatch(RosterWatchRequest) returns (stream RosterWatchResponse);
+
+  rpc Info(InfoRequest) returns (InfoResponse);
+}

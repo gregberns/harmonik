@@ -1,0 +1,25 @@
+{
+  "pass_id": "exploratory-2d308836",
+  "pass_kind": "exploratory",
+  "pin_sha": "2d3088363e9fea9ae82c78fa7816a7e148053516",
+  "pin_branch": "phase1-session-restart-substrate",
+  "scratch": "/tmp/h-assessor/scratch-exploratory-2d308836",
+  "binary_sha_verified": true,
+  "daemon_pid": 6632,
+  "sandbox_up": true,
+  "preflight_4A": "PASS (0 fails, 2 warn)",
+  "green_tree": {"build": "PASS", "vet": "PASS", "test_race": "RUNNING"},
+  "suites": {
+    "S1": "PENDING", "S2": "PENDING", "S3": "PENDING",
+    "S4": "PENDING", "S5": "PENDING", "S6": "IN_PROGRESS", "S7": "PENDING"
+  },
+  "s3_cells_done": [],
+  "g_cells_done": [],
+  "s6_watcher_task": "bsr9he7jv",
+  "findings": {"F1_hooksystem_hook_fired": "hk-okzy1 P1", "F2_codexdriver_ru07": "hk-8m2j4 P2", "F3_watchdog_autorevive": "hk-ky7ye P2 (corroborated on live fleet)"},
+  "green_tree_verdict": "RED at pin — precondition FAIL. Confirmed-real: F-1 hooksystem hook_fired (P1, attrib 7bee7b89f W4) + F-2 codexdriver RU-07 (P2, codex-minimal). internal/daemon timeouts/flakes = load/env-confounded (NOT real). eval-limiter race = by-design fixture.",
+  "exploratory_shakeout": "COMPLETE — 3 real findings filed + documented; sandbox isolation proven; S6 warm.",
+  "blockers": ["real fleet daemon 22202 DEAD → comms bus down → cannot deliver gate verdict to admiral; interim status undelivered; reviving live daemon is an operator call", "awaiting operator: revive-daemon + continue-now-vs-hold-for-baseline"],
+  "re_run_trigger": "captain comms --topic status 'mediums-complete' → fresh baseline pass from new clone at clean SHA",
+  "last_checkpoint": "2026-07-18T17:12:00Z"
+}

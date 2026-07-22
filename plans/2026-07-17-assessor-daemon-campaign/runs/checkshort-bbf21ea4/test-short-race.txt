@@ -1,0 +1,598 @@
+ok  	github.com/gregberns/harmonik/cmd/harmonik	36.791s
+ok  	github.com/gregberns/harmonik/cmd/harmonik/digest	1.491s
+ok  	github.com/gregberns/harmonik/cmd/harmonik/supervise	3.455s
+ok  	github.com/gregberns/harmonik/cmd/harmonik-twin-claude	10.044s
+ok  	github.com/gregberns/harmonik/cmd/harmonik-twin-codex	3.512s
+ok  	github.com/gregberns/harmonik/cmd/harmonik-twin-generic	1.560s
+?   	github.com/gregberns/harmonik/cmd/harmonik-twin-pi	[no test files]
+ok  	github.com/gregberns/harmonik/cmd/harmonik-twin-session	1.405s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-bugfix-rate-limiter	1.392s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-cli-kv	1.400s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-dedupe-stable	1.389s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-expr-eval	1.386s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-fizzbuzz	1.394s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-interval-schedule	1.405s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-json-roundtrip	1.400s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-lru-cache	1.393s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-lru-ttl	1.752s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-parse-int-safe	1.389s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-refactor-storage	1.385s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-string-reverse	1.395s
+ok  	github.com/gregberns/harmonik/evaltasks/eval-topo-sort	1.400s
+ok  	github.com/gregberns/harmonik/internal/agentlaunch	1.469s
+ok  	github.com/gregberns/harmonik/internal/agentmanifest	1.499s
+ok  	github.com/gregberns/harmonik/internal/apptap	1.439s
+ok  	github.com/gregberns/harmonik/internal/branching	1.424s
+ok  	github.com/gregberns/harmonik/internal/brcli	62.147s
+ok  	github.com/gregberns/harmonik/internal/codexdigitaltwin	1.616s
+ok  	github.com/gregberns/harmonik/internal/codexdriver	13.346s
+ok  	github.com/gregberns/harmonik/internal/codexinput	1.401s
+ok  	github.com/gregberns/harmonik/internal/codexreactor	1.410s
+ok  	github.com/gregberns/harmonik/internal/codextest	29.511s
+ok  	github.com/gregberns/harmonik/internal/codexwire	1.501s
+ok  	github.com/gregberns/harmonik/internal/cognition	3.623s
+ok  	github.com/gregberns/harmonik/internal/core	15.969s
+ok  	github.com/gregberns/harmonik/internal/crew	1.590s
+daemon: branch-reap: scanned 2 branch(es), reaped 1, skipped 0: [run/abc]
+2026/07/18 21:49:14 INFO br_history_archive_pruned pruned_snapshots=3 pruned_orphan_metas=0 kept=2 keep_n=2 max_age=0s
+2026/07/18 21:49:14 INFO br_history_archive_pruned pruned_snapshots=1 pruned_orphan_metas=0 kept=1 keep_n=0 max_age=168h0m0s
+2026/07/18 21:49:14 INFO br_history_archive_pruned pruned_snapshots=0 pruned_orphan_metas=1 kept=0 keep_n=0 max_age=168h0m0s
+2026/07/18 21:49:14 INFO br_history_rotation_skipped reason=within_limit count=2 keep=20
+2026/07/18 21:49:14 INFO br_history_archive_pruned pruned_snapshots=1 pruned_orphan_metas=0 kept=1 keep_n=300 max_age=168h0m0s
+2026/07/18 21:49:14 INFO br_history_rotation_skipped reason=dir_absent
+2026/07/18 21:49:14 INFO br_history_rotation_skipped reason=within_limit count=20 keep=20
+2026/07/18 21:49:14 INFO br_history_rotation_started total=30 keep=20
+2026/07/18 21:49:14 INFO br_history_rotation_completed archived=10 remaining=20 duration_ms=1
+2026/07/18 21:49:14 INFO br_history_rotation_started total=30 keep=20
+2026/07/18 21:49:14 INFO br_history_rotation_completed archived=10 remaining=20 duration_ms=1
+2026/07/18 21:49:14 INFO br_history_rotation_skipped reason=within_limit count=20 keep=20
+2026/07/18 21:49:15 INFO br_history_rotation_started total=10 keep=5
+2026/07/18 21:49:15 INFO br_history_rotation_completed archived=5 remaining=5 duration_ms=0
+daemon: workloop: codex isolation-boundary guard: refusing to launch a codex app-server crew with no enabled ssh worker boundary (danger-full-access would run unsandboxed on the daemon host) — enable an ssh-transport worker (bead hk-5h759-guard-probe run bab4c6be-e4cb-4b21-9bb7-c201b5127c45, reopening)
+daemon: workloop: codex isolation-boundary guard: refusing to launch a codex app-server crew with no enabled ssh worker boundary (danger-full-access would run unsandboxed on the daemon host) — enable an ssh-transport worker (bead hk-5h759-guard-probe run fa23c92e-506f-4286-a9eb-d1b0f72241b2, reopening)
+daemon: workloop: codex isolation-boundary guard: refusing to launch a codex app-server crew with no enabled ssh worker boundary (danger-full-access would run unsandboxed on the daemon host) — enable an ssh-transport worker (bead hk-5h759-guard-probe run 436d3f7c-c1ba-41f6-9e89-c9876e6f8ed9, reopening)
+daemon: workloop: CreateWorktree for bead hk-5h759-guard-probe run ff12da59-a378-4d97-ab39-0643930f7b31: n5md3: stop run immediately after the routing-gate decision (reopening)
+daemon: workloop: ensureWorkerHarmonikDir bead hk-5h759-guard-probe run b4a086e5-6013-4c2f-a890-8c1eaf61034f: ensureWorkerHarmonikDir (dir=/tmp/TestCodexIsolationGuard_HK5H759codex_crew_with_boundary_ALLOWED3518144885/001/.harmonik): exit status 255
+mkdir: ssh: Could not resolve hostname worker-n5md3.invalid: nodename nor servname provided, or not known
+ (non-fatal; readiness gate is authority)
+daemon: workloop: reverse-tunnel readiness gate bead hk-5h759-guard-probe run b4a086e5-6013-4c2f-a890-8c1eaf61034f: context deadline exceeded (reopening, not launching)
+2026/07/18 21:49:21 WARN codex_wal_guard_removed_large_stale wal=/tmp/TestCleanCodexStaleWAL_LargerThanThreshold_Removed4118232247/002/state_abc123.sqlite-wal size_bytes=4096 max_bytes=1024 backup_dir=/tmp/TestCleanCodexStaleWAL_LargerThanThreshold_Removed4118232247/002/.wal-backup-1784436561220740000
+2026/07/18 21:49:21 INFO codex_wal_guard_removed_stale wal=/tmp/TestCleanCodexStaleWAL_SmallUnheldWAL_Removed3086933223/002/state_abc123.sqlite-wal size_bytes=239616 max_bytes=1048576 backup_dir=/tmp/TestCleanCodexStaleWAL_SmallUnheldWAL_Removed3086933223/002/.wal-backup-1784436561524512000
+2026/07/18 21:49:21 WARN codex_wal_guard_removed_large_stale wal=/tmp/TestCleanCodexStaleWAL_ZeroThreshold_RemovesNonEmpty4258539649/002/state_abc123.sqlite-wal size_bytes=64 max_bytes=0 backup_dir=/tmp/TestCleanCodexStaleWAL_ZeroThreshold_RemovesNonEmpty4258539649/002/.wal-backup-1784436561823898000
+2026/07/18 21:49:21 INFO codex_wal_guard_backup_reaped dir=/tmp/TestReapCodexWALBackupDirs_KeepsLastN352027063/001/.wal-backup-0
+2026/07/18 21:49:21 INFO codex_wal_guard_backup_reaped dir=/tmp/TestReapCodexWALBackupDirs_KeepsLastN352027063/001/.wal-backup-1
+2026/07/18 21:49:21 INFO codex_wal_guard_backup_reaped dir=/tmp/TestReapCodexWALBackupDirs_KeepsLastN352027063/001/.wal-backup-2
+2026/07/18 21:49:22 WARN codex_wal_guard_backup_failed wal=/tmp/TestCleanCodexStaleWAL_CopyFailure_DropsEmptyBackupDir2865399556/002/state_abc123.sqlite-wal error="open /tmp/TestCleanCodexStaleWAL_CopyFailure_DropsEmptyBackupDir2865399556/002/state_abc123.sqlite-wal: permission denied"
+daemon: crew-idle-reap: crew "paul" queue "paul" completed and idle 6m0s — reclaiming slot
+daemon: crew-idle-reap: crew "paul" queue "paul-q" completed and idle 5m0s — reclaiming slot
+daemon: crew-idle-reap: crew "paul" queue "paul-q" completed and idle 5m0s — reclaiming slot
+daemon: crew-idle-reap: crew "paul" queue "paul-q" completed and idle 5m0s — reclaiming slot
+daemon: pasteinject: crew-init delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: crew-init seed marker "/session-resume" not yet in pane (attempt 1/3)
+daemon: pasteinject: crew-init seed landed on attempt 2/3
+daemon: pasteinject: crew-init delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: crew-init seed marker "/session-resume" not yet in pane (attempt 1/3)
+daemon: pasteinject: crew-init seed marker "/session-resume" not yet in pane (attempt 2/3)
+daemon: pasteinject: crew-init seed marker "/session-resume" not yet in pane (attempt 3/3)
+daemon: crew-start: paste mission unverified: crew-init: seed paste unverified after 3 attempts: seed marker "/session-resume" absent from pane
+daemon: pasteinject: crew-init delivered via SubmitInput (ack=delivered)
+daemon: SpawnCrewSession: crew "paul" session already exists — re-arming keeper if absent
+daemon: SpawnCrewSession: crew "paul" keeper window absent from existing session — re-arming
+daemon: SpawnCrewSession: crew "paul" session already exists — re-arming keeper if absent
+daemon: SpawnCrewSession: crew "paul" session already has keeper window — no re-arm needed
+daemon: SpawnCrewSession: crew "paul" session already exists — re-arming keeper if absent
+daemon: crew "crew-b" keeper watcher NOT live after 0s grace — crew is monitor-less; check keeper config and run 'harmonik keeper --agent crew-b'
+daemon: crew "crew-c" keeper watcher NOT live after 0s grace — crew is monitor-less; check keeper config and run 'harmonik keeper --agent crew-c'
+daemon: crew "crew-d" keeper watcher NOT live after 0s grace — crew is monitor-less; check keeper config and run 'harmonik keeper --agent crew-d'
+daemon: LoadDecisionAckState: skip /tmp/TestLoadDecisionAckState_CorruptFileSkipped3768359363/001/.harmonik/decision_acks/bad-tok: parse: invalid character 'o' in literal null (expecting 'u')
+daemon: LoadDecisionAckState: skip /tmp/TestLoadDecisionAckState_NewerSchemaSkipped3152879215/001/.harmonik/decision_acks/future-tok: schema_version 2 > supported 1
+daemon: dot tool node "run-tool" failed (exit status 3); gate log: /tmp/TestDispatchDotToolNode_Exit3_Deterministic2315825329/001/.harmonik/commit-gate.log
+daemon: dot tool node "run-tool" timed out after 1s; gate log: /tmp/TestDispatchDotToolNode_TimeoutKill_Transient2547590787/001/.harmonik/commit-gate.log
+daemon: dot tool node "run-tool" failed (exit status 1) with build-cache infra signature (transient); gate log: /tmp/TestDispatchDotToolNode_BuildCacheInfraError_Transient3726103583/001/.harmonik/commit-gate.log
+daemon: workloop: bead hk-3hozm-slot-leak-probe refused: daemon: bead hk-3hozm-slot-leak-probe: unknown Pi profile "does-not-exist" (not present in harnesses.pi.profiles) (reopening)
+daemon: pasteinject: quit-on-review-file: verdict budget 200ms for /tmp/TestPasteInjectQuitOnReviewFile_RemoteRunner_DetectsVerdictViaRu458196453/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: valid verdict detected at /tmp/TestPasteInjectQuitOnReviewFile_RemoteRunner_DetectsVerdictViaRu458196453/001/.harmonik/review.json; sending /quit
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: workloop: resolveParentCommit for bead hk-8ziid2-match-bead: daemon: resolveParentCommit for bead hk-8ziid2-match-bead: daemon: start_from ref "hk8ziid2-no-such-ref" not found in local repository: git rev-parse hk8ziid2-no-such-ref: exit status 128 (reopening)
+daemon: workloop: resolveParentCommit for bead hk-8ziid2-noprofile-bead: daemon: resolveParentCommit for bead hk-8ziid2-noprofile-bead: daemon: start_from ref "hk8ziid2-no-such-ref" not found in local repository: git rev-parse hk8ziid2-no-such-ref: exit status 128 (reopening)
+daemon: workloop: resolveParentCommit for bead hk-8ziid2-nonpi-bead: daemon: resolveParentCommit for bead hk-8ziid2-nonpi-bead: daemon: start_from ref "hk8ziid2-no-such-ref" not found in local repository: git rev-parse hk8ziid2-no-such-ref: exit status 128 (reopening)
+daemon: workloop: bead hk-m6uu2-unknown-profile-bead refused: daemon: bead hk-m6uu2-unknown-profile-bead: unknown Pi profile "does-not-exist" (not present in harnesses.pi.profiles) (reopening)
+daemon: quiesce: waking "captain" (epic_completed)
+daemon: quiesce: waking "captain" (agent_message from "paul" to captain)
+daemon: quiesce: max-sleep failsafe: waking "captain" (slept 0s)
+daemon: quiesce: reconcile: re-loaded 1 orphaned sleep marker(s) into the failsafe
+daemon: quiesce: waking "captain" (epic_completed)
+daemon: quiesce: waking "paul" (queue "crew-paul-queue" has pending items)
+daemon: quiesce: waking "captain" (first)
+daemon: quiesce: reconcile: re-loaded 1 orphaned sleep marker(s) into the failsafe
+daemon: quiesce: reconcile: re-loaded 1 orphaned sleep marker(s) into the failsafe
+daemon: quiesce: max-sleep failsafe: waking "paul" (slept 1m1s)
+daemon: quiesce: waking "watch" (agent_message from "paul" to watch)
+daemon: newCachedOrphanStatusReader: ListInFlightBeads failed: boom — falling back to per-bead reader
+daemon: newCachedOrphanStatusReader: ListBeadsByStatus(open) failed: boom — falling back to per-bead reader
+daemon: restart-backoff: 1 rapid boot(s) in the last 1h0m0s — delaying dispatch by 30s (after socket bind)
+daemon: restart-backoff: 2 rapid boot(s) in the last 1h0m0s — delaying dispatch by 1m0s (after socket bind)
+daemon: restart-backoff: read "/tmp/TestApplyBootBackoff_CorruptRecord2226560242/001/.harmonik/cognition/restart-record.json": restartRecord unmarshal: invalid character 'n' looking for beginning of object key string (skipping backoff)
+daemon: restart-backoff: 5 rapid boot(s) in the last 1h0m0s — delaying dispatch by 8m0s (after socket bind)
+daemon: restart-backoff: 6 rapid boot(s) in the last 1h0m0s — delaying dispatch by 10m0s (after socket bind)
+daemon: restart-backoff: 3 rapid boot(s) in the last 3m0s — delaying dispatch by 5s (after socket bind)
+daemon: scenario-gate: WARNING: could not produce a verdict (unclassified) for `go test -tags=scenario `: exec: "go": executable file not found in $PATH — ALLOWING merge (fail-open, hk-ur428)
+
+daemon: schedule: job "j2": skip-on-overlap (crew "owl" presence-online)
+daemon: schedule: job "multi": firing coalesced catch-up
+daemon: schedule: job "skip": skipping missed fire at 2026-07-19T03:49:00Z (outside catch-up window)
+daemon: schedule: job "cmdskip": skip-on-overlap (prior command pid 9896 still alive)
+2026/07/18 21:49:37 INFO wal_checkpoint_skip reason=wal_absent
+2026/07/18 21:49:37 INFO wal_checkpoint_skip reason=below_threshold wal_size_bytes=1048575 threshold_bytes=1048576
+2026/07/18 21:49:37 WARN wal_checkpoint_started wal_path=/tmp/TestWALCheckpointPreflight_TruncatesLargeWAL2483422609/001/.beads/beads.db-wal size_mb=5.00
+2026/07/18 21:49:37 INFO wal_checkpoint_completed duration_ms=6 new_size_bytes=0 wal_path=/tmp/TestWALCheckpointPreflight_TruncatesLargeWAL2483422609/001/.beads/beads.db-wal
+daemon: workloop: CreateWorktree for bead hk-n5md3-gate run b23ccd82-a25f-46cc-8881-8520096a7ff1: n5md3: stop run immediately after the routing-gate decision (reopening)
+daemon: workloop: ensureWorkerHarmonikDir bead hk-n5md3-gate run 024b010c-ad73-4861-8057-d08e79c3bbbc: ensureWorkerHarmonikDir (dir=/tmp/TestBeadRunOne_RoutingGate_N5md3Zero_value_calls_SelectWorker_r4151322082/001/.harmonik): exit status 255
+mkdir: ssh: Could not resolve hostname worker-n5md3.invalid: nodename nor servname provided, or not known
+ (non-fatal; readiness gate is authority)
+daemon: workloop: reverse-tunnel readiness gate bead hk-n5md3-gate run 024b010c-ad73-4861-8057-d08e79c3bbbc: context deadline exceeded (reopening, not launching)
+daemon: workloop: ensureWorkerHarmonikDir bead hk-n5md3-gate run 519afd03-3be2-46f3-93be-7633a518da74: ensureWorkerHarmonikDir (dir=/tmp/TestBeadRunOne_RoutingGate_N5md3Target_match_calls_SelectWorker3560079165/001/.harmonik): exit status 255
+mkdir: ssh: Could not resolve hostname worker-n5md3.invalid: nodename nor servname provided, or not known
+ (non-fatal; readiness gate is authority)
+daemon: workloop: reverse-tunnel readiness gate bead hk-n5md3-gate run 519afd03-3be2-46f3-93be-7633a518da74: context deadline exceeded (reopening, not launching)
+daemon: workloop: CreateWorktree for bead hk-n5md3-gate run 74fd5f7d-3224-43af-8af6-d275332ff4d2: n5md3: stop run immediately after the routing-gate decision (reopening)
+daemon: workloop: CreateWorktree for bead hk-n5md3-gate run 55cce188-1597-4644-8739-dbc21316b391: n5md3: stop run immediately after the routing-gate decision (reopening)
+daemon: workloop: ensureCodexRefsTrailer bead hkgd9r-codex-daemon-commit: committed
+daemon: workloop: waitAgentReady bead remote-agent-ready-B run 019f78b5-9059-729f-b25a-a19cc49ca26c: agent_ready timeout: no agent_ready event within deadline (HC-056) (reopening)
+daemon: workloop: waitAgentReady bead remote-agent-ready-A run 019f78b5-9059-7186-9bc5-a095a8e6b579: agent_ready timeout: no agent_ready event within deadline (HC-056) (reopening)
+daemon: reviewloop: waitAgentReady implementer bead rl-impl-sess-wait-B iter 1 run 019f78b5-925e-72b7-b6dd-71f0f05cdde6: agent_ready timeout: no agent_ready event within deadline (HC-056) (error)
+daemon: reviewloop: waitAgentReady implementer bead rl-impl-sess-wait-A iter 1 run 019f78b5-925e-71ad-b4bf-991ac59413ef: agent_ready timeout: no agent_ready event within deadline (HC-056) (error)
+daemon: reviewloop: waitAgentReady reviewer bead rl-rev-sess-wait-bounded iter 1 run 019f78b5-94a6-7509-b1e4-e220663968c9: agent_ready timeout: no agent_ready event within deadline (HC-056) (error)
+daemon: pasteinject: quit-on-commit: stale-pane: pane dead at brief delivery in /tmp/TestStalePane_DeadPaneAtBriefDelivery_FiresNoChangeImmediately1802024515/001; firing noChange immediately to reopen bead for retry (hk-1too)
+daemon: pasteinject: quit-on-commit: total-timeout waiting for new commit (pane inactive) in /tmp/TestStalePane_NilEventCh_SkipsCheck3576708901/001 (initial=6ef993556687df145f599a50a6e2d3b77618608c); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: brief_delivered timeout after 20ms for /tmp/TestStalePane_BriefDeliveredTimeout_SkipsCheck1390764747/001; proceeding with commit poll (session may be broken)
+daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: no heartbeat within launch window after brief delivery in /tmp/TestStalePane_BriefDeliveredTimeout_SkipsCheck1390764747/001 (initial=a800b8e93ebc817869e34c50f16dcbb64ecbf8bc); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: no heartbeat within launch window after brief delivery in /tmp/TestPasteInjectLaunchVerification_NoFirstHeartbeat_KillsAfterLau671397822/001 (initial=a800b8e93ebc817869e34c50f16dcbb64ecbf8bc); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: total-timeout waiting for new commit (pane inactive) in /tmp/TestPasteInjectLaunchVerification_NilEventCh_LaunchWindowSkipped2520871237/001 (initial=07ca13dae016d6ed0e729778c127948d0fc75f87); sending /quit unconditionally
+daemon: pasteinject: quit-on-review-file: verdict budget 10ms for /tmp/TestReviewerTimeout_Hk4p2h_LargeDiffNotKilledAtOldBudget4098343312/001 (changed_lines=-1, ceiling=60ms)
+daemon: pasteinject: quit-on-review-file: valid verdict detected at /tmp/TestReviewerTimeout_Hk4p2h_LargeDiffNotKilledAtOldBudget4098343312/001/.harmonik/review.json; sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 20ms for /tmp/TestQuitOnReviewFile_HeartbeatCeiling_BoundsExtension_hk4u1mb148684594/001 (changed_lines=-1, ceiling=200ms)
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (heartbeat) in /tmp/TestQuitOnReviewFile_HeartbeatCeiling_BoundsExtension_hk4u1mb148684594/001; extending (ceiling 40ms, hard ceiling 200ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: heartbeat-ceiling after 42.656042ms waiting for /tmp/TestQuitOnReviewFile_HeartbeatCeiling_BoundsExtension_hk4u1mb148684594/001/.harmonik/review.json (budget=20ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 40ms for /tmp/TestReviewerTimeout_NoHeartbeat_KillsAtBudget1432648963/001 (changed_lines=-1, ceiling=500ms)
+daemon: pasteinject: quit-on-review-file: budget-exceeded after 40.048041ms waiting for /tmp/TestReviewerTimeout_NoHeartbeat_KillsAtBudget1432648963/001/.harmonik/review.json (budget=40ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 40ms for /tmp/TestReviewerTimeout_RecentHeartbeat_ExtendsDeadlineAndCompletes38388891/001 (changed_lines=-1, ceiling=300ms)
+daemon: pasteinject: quit-on-review-file: valid verdict detected at /tmp/TestReviewerTimeout_RecentHeartbeat_ExtendsDeadlineAndCompletes38388891/001/.harmonik/review.json; sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 40ms for /tmp/TestReviewerTimeout_OverrideCeiling_UsedInsteadOfDefault1073605493/001 (changed_lines=-1, ceiling=200ms)
+daemon: pasteinject: quit-on-review-file: valid verdict detected at /tmp/TestReviewerTimeout_OverrideCeiling_UsedInsteadOfDefault1073605493/001/.harmonik/review.json; sending /quit
+daemon: pasteinject: quit-on-commit: reseed-enter: 100ms elapsed in /tmp/TestPasteInjectQuitOnCommit_ReseedEnterSubmitsPendingInput1004454777/001; sending Enter to submit any pending input
+daemon: pasteinject: quit-on-commit: total-timeout waiting for new commit (pane inactive) in /tmp/TestPasteInjectQuitOnCommit_ReseedEnterSkippedWhenNoEnterSender351289551/001 (initial=92bc3e4f13c010f368f838df396955b466f2140d); sending /quit unconditionally
+daemon: pasteinject: reviewer delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: quit-on-review-file: verdict budget 10s for /tmp/TestQuitOnReviewFile_ReseedsOnceWhenStalledAndPaneActive1206261639/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: no verdict after 20ms re-seed grace and pane active in /tmp/TestQuitOnReviewFile_ReseedsOnceWhenStalledAndPaneActive1206261639/001; re-seeding reviewer brief once (hk-7rgqs)
+daemon: pasteinject: reviewer delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: quit-on-review-file: valid verdict detected at /tmp/TestQuitOnReviewFile_ReseedsOnceWhenStalledAndPaneActive1206261639/001/.harmonik/review.json; sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 20ms for /tmp/TestQuitOnReviewFile_ReseedsOnlyOnce545825119/001 (changed_lines=-1, ceiling=120ms)
+daemon: pasteinject: quit-on-review-file: no verdict after 10ms re-seed grace and pane active in /tmp/TestQuitOnReviewFile_ReseedsOnlyOnce545825119/001; re-seeding reviewer brief once (hk-7rgqs)
+daemon: pasteinject: reviewer delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_ReseedsOnlyOnce545825119/001; extending (ceiling 120ms, hard ceiling 120ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_ReseedsOnlyOnce545825119/001; extending (ceiling 120ms, hard ceiling 120ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_ReseedsOnlyOnce545825119/001; extending (ceiling 120ms, hard ceiling 120ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_ReseedsOnlyOnce545825119/001; extending (ceiling 120ms, hard ceiling 120ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_ReseedsOnlyOnce545825119/001; extending (ceiling 120ms, hard ceiling 120ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: hard-ceiling after 121.026916ms waiting for /tmp/TestQuitOnReviewFile_ReseedsOnlyOnce545825119/001/.harmonik/review.json (budget=20ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 40ms for /tmp/TestQuitOnReviewFile_NoReseedWhenPaneDead3926738579/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: budget-exceeded after 41.029584ms waiting for /tmp/TestQuitOnReviewFile_NoReseedWhenPaneDead3926738579/001/.harmonik/review.json (budget=40ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-commit: heartbeat stale for >60ms (no agent_heartbeat received) in /tmp/TestPasteInjectQuitOnCommit_StalenessKillsSession3627620365/001 (initial=c6293cac4c79090d2d914d1c79e67a1ddd72224f); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: heartbeat stale for >40ms (no agent_heartbeat received) in /tmp/TestPasteInjectQuitOnCommit_StalenessClosesNoChangeCh1756433962/001 (initial=c6293cac4c79090d2d914d1c79e67a1ddd72224f); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: total-timeout waiting for new commit (pane inactive) in /tmp/TestPasteInjectQuitOnCommit_NilEventChWallClockBackstop3666700587/001 (initial=ed07d48727315f9419c1c598ed536e8be364a73d); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: heartbeat stale for >500ms (no agent_heartbeat received) in /tmp/TestPasteInjectQuitOnCommit_NewCommitBeforeStaleness2712704481/001 (initial=ed07d48727315f9419c1c598ed536e8be364a73d); sending /quit unconditionally
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-initial CaptureLastPane attempt 1/3: ssh: connection reset (ControlPath=none, transient)
+daemon: pasteinject: implementer-initial CaptureLastPane attempt 2/3: ssh: connection reset (ControlPath=none, transient)
+daemon: pasteinject: implementer-initial CaptureLastPane attempt 3/3: ssh: connection reset (ControlPath=none, transient)
+daemon: pasteinject: implementer-initial pane capture failed on all 3 attempts but every paste write succeeded; trusting the write: ssh: connection reset (ControlPath=none, transient)
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-initial CaptureLastPane attempt 1/3: ssh: connection reset (ControlPath=none, transient)
+daemon: pasteinject: implementer-initial seed landed on attempt 2/3
+daemon: pasteinject: quit-on-commit: brief_delivered timeout after 30ms for /tmp/TestPasteInjectQuitOnCommit_BriefDeliveredTimeoutProceedsWithPol4102304967/001; proceeding with commit poll (session may be broken)
+daemon: pasteinject: quit-on-commit: total-timeout waiting for new commit (pane inactive) in /tmp/TestPasteInjectQuitOnCommit_BriefDeliveredTimeoutProceedsWithPol4102304967/001 (initial=f644dc836face297ca71ce3175d3e654aa1e44ea); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: commit-budget 40ms elapsed but pane is making progress (pane output growth) in /tmp/TestPasteInjectQuitOnCommit_HardCeilingKills2572894081/001; extending budget (hard ceiling 120ms)
+daemon: pasteinject: quit-on-commit: commit-budget 40ms elapsed but pane is making progress (pane output growth) in /tmp/TestPasteInjectQuitOnCommit_HardCeilingKills2572894081/001; extending budget (hard ceiling 120ms)
+daemon: pasteinject: quit-on-commit: hard-ceiling 120ms reached without a new commit in /tmp/TestPasteInjectQuitOnCommit_HardCeilingKills2572894081/001 (initial=32733d43ef9c2b60c89dccf264bc6b63a88486fc); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: total-timeout waiting for new commit (pane inactive) in /tmp/TestPasteInjectQuitOnCommit_StaleBudgetKillsAndEmits2007461253/001 (initial=aa08cf8e5ee518e3866ad2271370a214be1cf4f5); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: total-timeout waiting for new commit (pane active but no observable progress) in /tmp/TestPasteInjectCommitBudget_IdleActivePane_HKukx1759775744/001 (initial=aa08cf8e5ee518e3866ad2271370a214be1cf4f5); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: worktree progressing (active pane + changed working tree) in /tmp/TestPasteInjectActivityAware_ProgressingPaneSurvivesCeiling1534786979/001; treating as heartbeat, deferring to commit budget (hard ceiling 10s)
+daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: no heartbeat within launch-suppression ceiling 120ms (pane active but never progressed) in /tmp/TestPasteInjectActivityAware_StablePaneStillKilledAtCeiling1391530162/001 (initial=dd1d9131a94889f0cf6706244368df4ede1066d3); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: heartbeat stale for >60ms (no agent_heartbeat received) in /tmp/TestQuitOnCommit_KillsAfterImplementerDiesSilentlyPostAgentReady715247886/001 (initial=dd1d9131a94889f0cf6706244368df4ede1066d3); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: heartbeat stale for >60ms (no agent_heartbeat received) in /tmp/TestQuitOnCommit_ContinuousHBsThenSilentDeathKills3357207186/001 (initial=dd1d9131a94889f0cf6706244368df4ede1066d3); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: heartbeat stale for >50ms (no agent_heartbeat received) in /tmp/TestPasteInjectLiveness_StalenessSupressedWhenProcessActive2002034195/001 (initial=96d5e26807417968a85be45bc02b21549c274f6f); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: no heartbeat within launch window after brief delivery in /tmp/TestPasteInjectLiveness_LaunchTimeoutSuppressedWhenProcessActive3553428770/001 (initial=96d5e26807417968a85be45bc02b21549c274f6f); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: heartbeat stale for >50ms (no agent_heartbeat received) in /tmp/TestPasteInjectLiveness_KillsWhenProcessDead3182651037/001 (initial=96d5e26807417968a85be45bc02b21549c274f6f); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: heartbeat stale for >50ms (no agent_heartbeat received) in /tmp/TestPasteInjectLiveness_NilCheckerKillsNormally1197236527/001 (initial=96d5e26807417968a85be45bc02b21549c274f6f); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: no heartbeat within launch-suppression ceiling 150ms (pane active but never progressed) in /tmp/TestPasteInjectLaunchSuppressionTerminates_ActivePaneForever3212536756/001 (initial=280425600667252307139edef1c53b7be3518cf4); sending /quit unconditionally
+daemon: pasteinject: quit-on-review-file: verdict budget 10s for /tmp/TestPasteInjectQuitOnReviewFile_VerdictDetected412999659/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: valid verdict detected at /tmp/TestPasteInjectQuitOnReviewFile_VerdictDetected412999659/001/.harmonik/review.json; sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 30ms for /tmp/TestPasteInjectQuitOnReviewFile_TimeoutSendsQuitAndKills326722475/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: budget-exceeded after 30.961583ms waiting for /tmp/TestPasteInjectQuitOnReviewFile_TimeoutSendsQuitAndKills326722475/001/.harmonik/review.json (budget=30ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-review-file: brief_delivered timeout after 30ms for /tmp/TestPasteInjectQuitOnReviewFile_BriefDeliveredTimeoutProceedsWit1798668962/001; proceeding
+daemon: pasteinject: quit-on-review-file: verdict budget 80ms for /tmp/TestPasteInjectQuitOnReviewFile_BriefDeliveredTimeoutProceedsWit1798668962/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: budget-exceeded after 81.2325ms waiting for /tmp/TestPasteInjectQuitOnReviewFile_BriefDeliveredTimeoutProceedsWit1798668962/001/.harmonik/review.json (budget=80ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 10s for /tmp/TestPasteInjectQuitOnReviewFile_CtxCancelExitsCleanly3843423049/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: implementer-resume delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: quit-on-review-file: verdict budget 30s for /tmp/TestQuitOnReviewFile_PartialVerdict_DoesNotKill3238706200/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: verdict budget 30s for /tmp/TestQuitOnReviewFile_AbsentVerdict_DoesNotKill3953043553/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: verdict budget 30s for /tmp/TestQuitOnReviewFile_CompleteVerdict_Kills3067624532/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: valid verdict detected at /tmp/TestQuitOnReviewFile_CompleteVerdict_Kills3067624532/001/.harmonik/review.json; sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 30ms for /tmp/TestQuitOnReviewFile_BudgetKillWritesSentinel2198507965/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: budget-exceeded after 31.009625ms waiting for /tmp/TestQuitOnReviewFile_BudgetKillWritesSentinel2198507965/001/.harmonik/review.json (budget=30ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 10s for /tmp/TestQuitOnReviewFile_NoMarkerWhenVerdictWritten2005273740/001 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: valid verdict detected at /tmp/TestQuitOnReviewFile_NoMarkerWhenVerdictWritten2005273740/001/.harmonik/review.json; sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 30ms for /tmp/TestQuitOnReviewFile_PaneLivenessExtendsBudget3029524579/001 (changed_lines=-1, ceiling=5s)
+daemon: pasteinject: quit-on-review-file: budget 30ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_PaneLivenessExtendsBudget3029524579/001; extending (ceiling 5s, hard ceiling 5s) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: budget 30ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_PaneLivenessExtendsBudget3029524579/001; extending (ceiling 5s, hard ceiling 5s) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: budget 30ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_PaneLivenessExtendsBudget3029524579/001; extending (ceiling 5s, hard ceiling 5s) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: budget 30ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_PaneLivenessExtendsBudget3029524579/001; extending (ceiling 5s, hard ceiling 5s) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: verdict budget 20ms for /tmp/TestQuitOnReviewFile_HardCeilingKillsActivePane1838905249/001 (changed_lines=-1, ceiling=60ms)
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_HardCeilingKillsActivePane1838905249/001; extending (ceiling 60ms, hard ceiling 60ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (pane-active) in /tmp/TestQuitOnReviewFile_HardCeilingKillsActivePane1838905249/001; extending (ceiling 60ms, hard ceiling 60ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: hard-ceiling after 60.716584ms waiting for /tmp/TestQuitOnReviewFile_HardCeilingKillsActivePane1838905249/001/.harmonik/review.json (budget=20ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 20ms for /tmp/TestQuitOnReviewFile_KillsAfterHeartbeatGraceExpires3010259366/001 (changed_lines=-1, ceiling=500ms)
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (heartbeat) in /tmp/TestQuitOnReviewFile_KillsAfterHeartbeatGraceExpires3010259366/001; extending (ceiling 40ms, hard ceiling 500ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: heartbeat-ceiling after 41.129375ms waiting for /tmp/TestQuitOnReviewFile_KillsAfterHeartbeatGraceExpires3010259366/001/.harmonik/review.json (budget=20ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-review-file: verdict budget 20ms for /tmp/TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget4114717269/001 (changed_lines=-1, ceiling=300ms)
+daemon: pasteinject: quit-on-review-file: budget 20ms elapsed but reviewer active (heartbeat) in /tmp/TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget4114717269/001; extending (ceiling 40ms, hard ceiling 300ms) [hk-60t8/hk-4u1mb]
+daemon: pasteinject: quit-on-review-file: heartbeat-ceiling after 40.880625ms waiting for /tmp/TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget4114717269/001/.harmonik/review.json (budget=20ms, changed_lines=-1); sending /quit
+daemon: pasteinject: quit-on-commit: total-timeout waiting for new commit (pane inactive) in /tmp/TestPasteInjectQuitOnCommit_TimeoutSendsQuitAndKills4188067626/001 (initial=cf345d974b416f3f8a9b64665a6ac327d15605ed); sending /quit unconditionally
+daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: worktree progressing (active pane + pane output growth) in /tmp/TestPasteInjectPaneOutputGrowth_ReadHeavyBeadSurvivesCeiling1123681341/001; treating as heartbeat, deferring to commit budget (hard ceiling 10s)
+daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: no heartbeat within launch-suppression ceiling 120ms (pane active but never progressed) in /tmp/TestPasteInjectPaneOutputGrowth_StableOutputStillKilledAtCeiling3924365711/001 (initial=926bb7f8551758d7381214c0842e31482f6e1287); sending /quit unconditionally
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-initial seed marker "agent-task.md" not yet in pane (attempt 1/3)
+daemon: pasteinject: implementer-initial seed landed on attempt 2/3
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-initial seed marker "agent-task.md" not yet in pane (attempt 1/3)
+daemon: pasteinject: implementer-initial seed marker "agent-task.md" not yet in pane (attempt 2/3)
+daemon: pasteinject: implementer-initial seed marker "agent-task.md" not yet in pane (attempt 3/3)
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: reviewer delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: reviewer seed marker "review-target.md" not yet in pane (attempt 1/3)
+daemon: pasteinject: reviewer seed landed on attempt 2/3
+daemon: workloop: ensureCodexRefsTrailer bead hkzlo8-process-exit-no-paste: already_present
+daemon: reviewloop: ForAgent(claude-code) implementer bead hkzlo8-interactive-paste-retained iter 1: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: reviewloop: ForAgent(claude-code) bead hkzlo8-interactive-paste-retained iter 1: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: pasteinject: reviewer delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: reviewer delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-resume delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-initial: tmux: structural invariant violated: task file absent: /tmp/TestPasteInjectOnLaunch_TaskFileMissing3730019300/001/.harmonik/agent-task.md (skipping inject)
+daemon: pasteinject: implementer-initial SubmitInput: simulated tmux failure
+daemon: pasteinject: reviewer delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-resume feedback iter 1: not found (delivering task-only message)
+daemon: pasteinject: implementer-resume delivered via SubmitInput (ack=delivered)
+daemon: workloop: ForAgent(pi) bead hkj6wm7-pi-fail: handlercontract: AdapterRegistry.ForAgent("pi"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: workloop: ensurePiRefsTrailer bead hkj6wm7-pi-fail: committed
+daemon: workloop: bead hkj6wm7-pi-fail run 019f78b6-8e33-757a-a3e8-c69b8ed30e22 stderr tail:
+pi: fast-fail against base_url ornith: api mismatch
+
+daemon: workloop: hk-j6wm7: Pi run 019f78b6-8e33-757a-a3e8-c69b8ed30e22 (bead hkj6wm7-pi-fail) FAILED — retaining worktree for post-mortem inspection at /private/tmp/TestPiRetainOnFailure_WorktreeAndOutputRetained1141581855/002/.harmonik/worktrees/019f78b6-8e33-757a-a3e8-c69b8ed30e22 (pi output under /private/tmp/TestPiRetainOnFailure_WorktreeAndOutputRetained1141581855/002/.harmonik/worktrees/019f78b6-8e33-757a-a3e8-c69b8ed30e22/.harmonik/pi-agent/)
+daemon: workloop: ForAgent(pi) bead hkj6wm7-pi-ok: handlercontract: AdapterRegistry.ForAgent("pi"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: workloop: ensurePiRefsTrailer bead hkj6wm7-pi-ok: already_present
+daemon: workloop: ensureCodexRefsTrailer bead hkf6g7-process-exit-codex: already_present
+daemon: reviewloop: ForAgent(claude-code) implementer bead rl-budget-test-001 iter 1: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: workloop: bead rl-budget-test-001 run 019f78b6-c0cd-7937-939a-34de2cf69ad6 review-loop budget exhausted — closing with needs-attention (hk-c1ah6)
+daemon: reviewloop: ForAgent(claude-code) implementer bead rl-budget-test-001 iter 1: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: pasteinject: quit-on-commit: heartbeat stale for >50ms (no agent_heartbeat received) in /tmp/TestReviewLoopImplementerWait_StaleHeartbeatKills397670782/001 (initial=89e97da45a7369ada0d742d0a9de10d2ca437d38); sending /quit unconditionally
+daemon: reviewloop: ForAgent(claude-code) implementer bead scenario-hk-5s7tg-watchdog-001 iter 1: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: reviewloop: ForAgent(claude-code) bead scenario-hk-5s7tg-watchdog-001 iter 1: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: pasteinject: quit-on-review-file: verdict budget 10m0s for /tmp/TestReviewLoop_LaunchAfterCommit_Hk5s7tg_WatchdogUnblocksStuckWa1212629391/001/.harmonik/worktrees/019f78b6-de62-7324-a026-6a5bf5909700-reviewer-1 (changed_lines=-1, ceiling=1h0m0s)
+daemon: pasteinject: quit-on-review-file: valid verdict detected at /tmp/TestReviewLoop_LaunchAfterCommit_Hk5s7tg_WatchdogUnblocksStuckWa1212629391/001/.harmonik/worktrees/019f78b6-de62-7324-a026-6a5bf5909700-reviewer-1/.harmonik/review.json; sending /quit
+daemon: reviewloop: ForAgent(claude-code) implementer bead sc7-tmux-substrate-nil-watcher iter 1: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: reviewloop: ForAgent(claude-code) bead sc7-tmux-substrate-nil-watcher iter 1: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: stalewatch: kill-consumer backstop: bead hk-test2 run 019f78b7-223b-7edc-9687-3f16def2dad4 age 10m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-test2 run 019f78b7-223b-7edc-9687-3f16def2dad4: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: stalewatch: kill-consumer backstop: bead hk-testback run 019f78b7-2270-7c0d-9ca7-68634fb41a3f age 10m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-testback run 019f78b7-2270-7c0d-9ca7-68634fb41a3f: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: stalewatch: kill-consumer backstop: bead hk-testprune run 019f78b7-2374-788f-b521-1dd97855040a age 10m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-testprune run 019f78b7-2374-788f-b521-1dd97855040a: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: stalewatch: kill-consumer backstop: bead hk-testtrack run 019f78b7-23dd-73ff-8624-5173021c12bf age 10m1s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-testtrack run 019f78b7-23dd-73ff-8624-5173021c12bf: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: stalewatch: kill-consumer backstop: bead hk-testlabel run 019f78b7-2446-773b-a6dc-ffb6bf11633b age 20m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-testlabel run 019f78b7-2446-773b-a6dc-ffb6bf11633b: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: stalewatch: kill-consumer backstop: bead hk-testcolonlabel run 019f78b7-24ac-711d-99a3-e6c5db11966b age 2m1s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-testcolonlabel run 019f78b7-24ac-711d-99a3-e6c5db11966b: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: stalewatch: kill-consumer backstop: bead hk-testrevgating run 019f78b7-2513-715b-bc34-fef9608c9949 age 30m1s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-testrevgating run 019f78b7-2513-715b-bc34-fef9608c9949: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: stalewatch: kill-consumer backstop: bead hk-testrevbackoff run 019f78b7-25ac-7493-8cbc-94d97d3953d5 age 30m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-testrevbackoff run 019f78b7-25ac-7493-8cbc-94d97d3953d5: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: stalewatch: kill-consumer backstop: bead hk-testvalid run 019f78b7-267d-7e4c-9768-033d1f8d1341 age 10m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-testvalid run 019f78b7-267d-7e4c-9768-033d1f8d1341: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: disk-check: proactive go clean -cache failed: signal: killed
+daemon: workloop: CreateWorktree for bead t3-claim-signal-test run 019f78b7-79e4-7284-80f3-dd8418d8423a: workspace: WorktreeCreationFailed: git worktree add -b "run/019f78b7-79e4-7284-80f3-dd8418d8423a" "/private/tmp/TestT3_SignalBeforeHandlerLaunch678147705/001/.harmonik/worktrees/019f78b7-79e4-7284-80f3-dd8418d8423a" "4963cdd693444b7ec4c88425a1f86babc5e787f3": signal: killed
+git output:  (reopening)
+daemon: workloop: claim-failure auto-close stale blocker hk-blocker1 (subsumed in main, unblocks hk-target)
+daemon: workloop: bead_claim_skipped hk-r9edj-relief-head observed_status=in_progress reason=status_changed_between_select_and_claim (BI-013c)
+daemon: workloop: stranded_bead_auto_reset bead=hk-r9edj-relief-head reason=in_progress_with_no_run (hk-l2xd1)
+daemon: workloop: resolveParentCommit for bead hk-r9edj-relief-tail: daemon: resolveParentCommit for bead hk-r9edj-relief-tail: daemon: start_from ref "main" not found in local repository: git rev-parse main: context canceled (reopening)
+daemon: workloop: bead_claim_skipped hk-r9edj-starve-head observed_status=in_progress reason=status_changed_between_select_and_claim (BI-013c)
+daemon: workloop: ShowBead pre-claim check hk-fvpz5-showbead-fail error (attempt 1/3, will retry): showbead: simulated network error
+daemon: workloop: ShowBead pre-claim check hk-fvpz5-showbead-fail error (attempt 2/3, will retry): showbead: simulated network error
+daemon: workloop: ShowBead pre-claim check hk-fvpz5-showbead-fail failed 3 times, skipping bead (hk-kupeo): showbead: simulated network error
+daemon: workloop: bead hk-fvpz5-showbead-fail exceeded maxItemAttempts=3 on br-ready path — skipping (hk-6pspu)
+daemon: workloop: bead hk-fvpz5-showbead-fail exceeded maxItemAttempts=3 on br-ready path — skipping (hk-6pspu)
+daemon: workloop: resolveParentCommit for bead hk-fvpz5-showbead-ok: daemon: resolveParentCommit for bead hk-fvpz5-showbead-ok: daemon: start_from ref "main" not found in local repository: git rev-parse main: context canceled (reopening)
+daemon: workloop: ForAgent(claude-code) bead sem-race-A: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: workloop: bead_claim_skipped hk-3kq05-tombstone-oob observed_status=tombstone reason=status_changed_between_select_and_claim (BI-013c)
+daemon: workloop: ClaimBead hk-5t0s6-target error (will retry): claim conflict: another run claimed first
+daemon: workloop: claim-failure auto-close stale blocker hk-5t0s6-blocker (subsumed in main, unblocks hk-5t0s6-target)
+daemon: workloop: bead_claim_skipped hk-6ri5k-deferred observed_status=deferred reason=status_changed_between_select_and_claim (BI-013c)
+daemon: workloop: bead_claim_skipped hk-3kq05-closed-oob observed_status=closed reason=status_changed_between_select_and_claim (BI-013c)
+daemon: workloop: bead hk-ev043-brready-blocked blocked by unacknowledged decision_required (EV-043, br-ready path) — holding
+daemon: workloop: ClaimBead hk-n91y0-open-blocked-a bead is blocked (deps or status) — failing queue item (hk-n91y0)
+daemon: workloop: bead_claim_skipped hk-79x3v-in-progress observed_status=in_progress reason=status_changed_between_select_and_claim (BI-013c)
+daemon: stalewatch: never-spawned reaper: bead hk-sj6a-per-dispatch run 019f78b8-b1d9-7c54-a61c-e301914cf6b9 elapsed 31m0s — launch_initiated but no agent_ready; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-tn36-aborted-order run 019f78b8-b20e-7514-9374-1feae568b6be age 11m0s — run_stale fired; aborting run
+reconciliation Cat-BL3: emitted bead_ledger_conflict_audit (1 conflicts, 1 beads)
+daemon: workloop: CreateWorktree for bead worktree-create-fail-hk3vbc-001 run 019f78b8-d1f7-76ca-ab83-f253db606e2b: git worktree add: fatal: a branch named 'run/x' already exists (reopening)
+daemon: reviewloop: ForAgent(claude-code) implementer bead hk-68pvl-defer-order-001 iter 1: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: workloop: CloseBead test-bead-closeerr-001: disk full
+daemon: mergeRunBranchToMain: WARNING: git restore --staged failed (bead sem-bead-B run 019f78b8-f2f0-729f-bc7c-da4ce2e324fd): exit status 128
+fatal: Unable to create '/private/tmp/TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency1256737702/001/.git/index.lock': File exists.
+
+Another git process seems to be running in this repository, e.g.
+an editor opened by 'git commit'. Please make sure all processes
+are terminated then try again. If it still fails, a git process
+may have crashed in this repository earlier:
+remove the file manually to continue.
+daemon: mergeRunBranchToMain: WARNING: git restore --staged failed (bead sem-bead-F run 019f78b9-029b-770c-8bfb-7aec380ec533): exit status 128
+fatal: Unable to create '/private/tmp/TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency1256737702/001/.git/index.lock': File exists.
+
+Another git process seems to be running in this repository, e.g.
+an editor opened by 'git commit'. Please make sure all processes
+are terminated then try again. If it still fails, a git process
+may have crashed in this repository earlier:
+remove the file manually to continue.
+daemon: disk-check: proactive-reap deferred — merge-build in flight
+daemon: workloop: bead_claim_skipped hk-l2xd1-live-run observed_status=in_progress reason=status_changed_between_select_and_claim (BI-013c)
+daemon: disk-check: proactive-reap deferred — merge-build in flight
+daemon: workloop: bead_claim_skipped hk-l2xd1-stranded observed_status=in_progress reason=status_changed_between_select_and_claim (BI-013c)
+daemon: workloop: stranded_bead_auto_reset bead=hk-l2xd1-stranded reason=in_progress_with_no_run (hk-l2xd1)
+daemon: workloop: bead_claim_skipped hk-l2xd1-stranded observed_status=in_progress reason=status_changed_between_select_and_claim (BI-013c)
+daemon: workloop: stranded_bead_auto_reset bead=hk-l2xd1-stranded reason=in_progress_with_no_run (hk-l2xd1)
+daemon: workloop: bead_claim_skipped hk-l2xd1-no-resetter observed_status=in_progress reason=status_changed_between_select_and_claim (BI-013c)
+daemon: workloop: DOT workflow load failed for bead hk-lphyf-dot-e2e-badref-001 run 019f78b9-6935-76e1-acc0-fc521492ee34: workflow_load: /private/tmp/TestDotMode_E2E_InvalidWorkflowRefReopens4143564713/001/does-not-exist.dot: read failed: open /private/tmp/TestDotMode_E2E_InvalidWorkflowRefReopens4143564713/001/does-not-exist.dot: no such file or directory (reopening)
+daemon: disk-check: proactive-reap deferred — merge-build in flight
+daemon: workloop: bead_claim_skipped hk-403fw-cooldown observed_status=in_progress reason=status_changed_between_select_and_claim (BI-013c)
+daemon: disk-check: proactive-reap deferred — merge-build in flight
+daemon: disk-check: proactive-reap deferred — merge-build in flight
+daemon: disk-check: proactive-reap deferred — merge-build in flight
+daemon: review-loop: implementer exited without commit; bead cd8yu-stderr-trunc-001 run 019f78b9-dca5-7ce0-bb70-7a6e2c933ce4 exit=1 stderr tail (truncated):
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+daemon: workloop: ForAgent(claude-code) bead hk-s20z-reset-test-001: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: stalewatch: never-spawned reaper: bead hk-8gixi-override run 019f78ba-0b6c-7bf6-85c9-2b064375dfa2 elapsed 1h1m0s — launch_initiated but no agent_ready; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-mdus1-wedged run 019f78ba-0bd3-7f0f-80b8-3e32fa1a5ff3 age 11m0s — run_stale fired; aborting run
+daemon: stalewatch: FORCE-REAP: bead hk-mdus1-wedged run 019f78ba-0bd3-7f0f-80b8-3e32fa1a5ff3: still registered 1m40s after Cancel — force-Unregistering leaked slot (hk-mdus1)
+daemon: pasteinject: implementer-resume feedback iter 1: not found (delivering task-only message)
+daemon: pasteinject: implementer-resume delivered via SubmitInput (ack=delivered)
+daemon: reviewloop: waitAgentReady implementer bead rl-ready-timeout-reviewer-001 iter 1 run 019f78ba-3dfa-77cc-a2a4-2de66f5c85e1: agent_ready timeout: no agent_ready event within deadline (HC-056) (error)
+daemon: stalewatch: kill-consumer backstop: bead hk-w6q7-test-armed run 019f78ba-4321-730d-a702-8690ce37b00d age 24h0m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-w6q7-test-armed run 019f78ba-4321-730d-a702-8690ce37b00d: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: pasteinject: implementer-resume delivered via SubmitInput (ack=delivered)
+daemon: workloop: bead hk-a11re-duplicate-bead already dispatched/completed from queue "alpha" — failing cross-queue duplicate item (hk-a11re, hk-dorz9)
+daemon: workloop: ClaimBead hk-tmhak-a error (will retry): brcli: SchemaMismatch (exit 4): stderr="Error: Validation failed: claim: cannot claim issue\n"
+daemon: workloop: ClaimBead hk-tmhak-a error (will retry): brcli: SchemaMismatch (exit 4): stderr="Error: Validation failed: claim: cannot claim issue\n"
+daemon: workloop: bead hk-tmhak-a exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+daemon: workloop: ClaimBead hk-tmhak-b error (will retry): brcli: SchemaMismatch (exit 4): stderr="Error: Validation failed: claim: cannot claim issue\n"
+daemon: workloop: ClaimBead hk-tmhak-b error (will retry): brcli: SchemaMismatch (exit 4): stderr="Error: Validation failed: claim: cannot claim issue\n"
+daemon: workloop: bead hk-tmhak-b exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+daemon: workloop: ClaimBead hk-tmhak-c error (will retry): brcli: SchemaMismatch (exit 4): stderr="Error: Validation failed: claim: cannot claim issue\n"
+daemon: workloop: ClaimBead hk-tmhak-c error (will retry): brcli: SchemaMismatch (exit 4): stderr="Error: Validation failed: claim: cannot claim issue\n"
+daemon: workloop: bead hk-tmhak-c exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+daemon: stalewatch: kill-consumer backstop: bead hk-w6q7-test-nil-gate run 019f78ba-cfec-70a7-9df7-4a6dcda28c05 age 24h0m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-w6q7-test-nil-gate run 019f78ba-cfec-70a7-9df7-4a6dcda28c05: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: per-queue spend cap: queue "rich" spend_cap_usd=50.00 oversubscribes global daily budget=20.00 USD; global ceiling still applies (NQ-X1)
+daemon: review-loop: implementer exited without commit; bead cd8yu-rl-event-fired-001 run 019f78ba-f918-73f7-bdf2-f4e6aa52d489 exit=42 stderr tail:
+cd8yu-impl-phase-crash-marker
+
+daemon: workloop: waitAgentReady bead hc056-reopen-test-bead-001 run 019f78bb-0606-704a-b14d-b21ce726a6ff: agent_ready timeout: no agent_ready event within deadline (HC-056) (reopening)
+daemon: workloop: resolveParentCommit for bead hc056-reopen-test-bead-001: daemon: resolveParentCommit for bead hc056-reopen-test-bead-001: daemon: start_from ref "main" not found in local repository: git rev-parse main: context canceled (reopening)
+daemon: stalewatch: kill-consumer backstop: bead hk-tn36-once run 019f78bb-0de7-71c1-a835-db96a040bb05 age 11m0s — run_stale fired; aborting run
+daemon: stalewatch: FORCE-REAP: bead hk-tn36-once run 019f78bb-0de7-71c1-a835-db96a040bb05: still registered 20m0s after Cancel — force-Unregistering leaked slot (hk-mdus1)
+reconciliation Cat-BL2: ledger corrupt for run bl2-failure-run-0001 — escalated to operator (Cat 6b): exit status 1
+daemon: workloop: ClaimBead hk-6pspu-fail-a error (will retry): brcli: InternalError (exit 99): unexpected failure
+daemon: workloop: ClaimBead hk-6pspu-fail-a error (will retry): brcli: InternalError (exit 99): unexpected failure
+daemon: workloop: bead hk-6pspu-fail-a exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+daemon: stalewatch: never-spawned reaper: bead hk-0z5x-once run 019f78bb-c663-784d-be84-bb835c66079c elapsed 31m0s — launch_initiated but no agent_ready; aborting run
+daemon: workloop: ForAgent(claude-code) bead hk8jh26-exit-on-failure-001: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: workloop: snapshotUntrackedFiles for bead hk-gf59k-idle-b run 019f78bc-19fb-78be-919e-8084a72ebfbb: snapshotUntrackedFiles: git status: signal: killed (escape check will run without baseline)
+daemon: workloop: Launch bead hk-gf59k-idle-b run 019f78bc-19fb-78be-919e-8084a72ebfbb: handler: Launch: NewSession: handler: NewSession: cmd.Start: context canceled: handler: structural error (reopening)
+daemon: stalewatch: kill-consumer backstop: bead hk-mdus1-queue run 019f78bc-34c1-7927-ba7a-a14e90287809 age 11m0s — run_stale fired; aborting run
+daemon: stalewatch: FORCE-REAP: bead hk-mdus1-queue run 019f78bc-34c1-7927-ba7a-a14e90287809: still registered 2m0s after Cancel — force-Unregistering leaked slot (hk-mdus1)
+daemon: workloop: ClaimBead hk-xorlb-timeout-a error (will retry): context deadline exceeded
+daemon: workloop: ClaimBead hk-xorlb-timeout-a error (will retry): context deadline exceeded
+daemon: workloop: bead hk-xorlb-timeout-a exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+reconciliation Cat-BL3: emitted bead_ledger_conflict_audit (1 conflicts, 1 beads)
+daemon: workloop: Launch bead hk-wnqos-test-001 run 019f78bc-60f4-7b1f-bfcd-54a97e66f109: handler: Launch: Substrate.SpawnWindow: wnqos spy: intentional spawn failure to short-circuit beadRunOne (reopening)
+daemon: stalewatch: never-spawned reaper: bead hk-0z5x-nil-cancel run 019f78bc-615e-7595-bad8-5569ad6c6746 elapsed 31m0s — launch_initiated but no agent_ready; aborting run
+daemon: stalewatch: never-spawned reaper: bead hk-0z5x-nil-cancel run 019f78bc-615e-7595-bad8-5569ad6c6746: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+--- FAIL: TestSandboxAcceptance_WriteToMainDenied_hki0377 (1.69s)
+    sandboxacceptance_hki0377_test.go:318: hki0377: sandbox profile written to /tmp/TestSandboxAcceptance_WriteToMainDenied_hki03771356199122/002/harmonik-srt-settings.json
+    sandboxsrt_gate_hktch4t_test.go:57: hktch4t: write-to-main probe attempt 1/3 observed an allowed write; retrying (transient sandbox_init apply-failure under fork saturation is the diagnosed cause, see hk-tch4t)
+    sandboxsrt_gate_hktch4t_test.go:57: hktch4t: write-to-main probe attempt 2/3 observed an allowed write; retrying (transient sandbox_init apply-failure under fork saturation is the diagnosed cause, see hk-tch4t)
+    sandboxsrt_gate_hktch4t_test.go:57: hktch4t: write-to-main probe attempt 3/3 observed an allowed write; retrying (transient sandbox_init apply-failure under fork saturation is the diagnosed cause, see hk-tch4t)
+    sandboxacceptance_hki0377_test.go:345: AC-B write-to-main-denied FAILED after 3 attempts: srt sh exit=0; evil.txt present=true at "/tmp/TestSandboxAcceptance_WriteToMainDenied_hki03771356199122/001/evil.txt"
+        output:
+reconciliation Cat-BL1: bead hk-openorphan1 git scan for parent hk-parentopen: exit status 128 (skipping)
+reconciliation Cat-BL1: bead hk-inprogorphan1 git scan for parent hk-parentinprog: exit status 128 (skipping)
+reconciliation Cat-BL1: closed orphan bead hk-openorphan1 (parent hk-parentopen run discarded)
+reconciliation Cat-BL1: bead hk-inprogorphan1 in_progress with orphaned parent hk-parentinprog — escalating
+daemon: workloop: ClaimBead hk-oylis-00 error (will retry): brcli: SchemaMismatch (exit 4): stderr="Error: Validation failed: claim: cannot claim issue\n"
+daemon: workloop: ClaimBead hk-oylis-00 error (will retry): brcli: SchemaMismatch (exit 4): stderr="Error: Validation failed: claim: cannot claim issue\n"
+daemon: workloop: bead hk-oylis-00 exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+daemon: workloop: bead hk-dorz9-completed-bead already dispatched/completed from queue "alpha-dorz9" — failing cross-queue duplicate item (hk-a11re, hk-dorz9)
+reconciliation Cat-BL2: ledger recovered for run bl2-success-run-0001
+reconciliation Cat-BL1: list open beads: brcli.ListBeadsByStatus: exec failed: brcli: exec failed: fork/exec /stub/br: no such file or directory (skipping status)
+reconciliation Cat-BL1: list in_progress beads: brcli.ListBeadsByStatus: exec failed: brcli: exec failed: fork/exec /stub/br: no such file or directory (skipping status)
+daemon: disk-check: proactive go clean -cache failed: context canceled
+daemon: pasteinject: reviewer delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: reviewer seed marker "review-target.md" not yet in pane (attempt 1/3)
+daemon: pasteinject: reviewer seed marker "review-target.md" not yet in pane (attempt 2/3)
+daemon: pasteinject: reviewer seed marker "review-target.md" not yet in pane (attempt 3/3)
+daemon: stalewatch: never-spawned reaper: bead hk-0z5x-fire run 019f78bd-83bd-74c6-86c3-37c002637149 elapsed 31m0s — launch_initiated but no agent_ready; aborting run
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestDotReviewFanout_GenuineNoProgressStillFires_hk2vpj258274317/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestDotReviewFanout_GenuineNoProgressStillFires_hk2vpj258274317/002/wt/.harmonik/commit-gate.log
+daemon: per-queue spend cap: queue "calm" spend_cap_usd=100.00 oversubscribes global daily budget=20.00 USD; global ceiling still applies (NQ-X1)
+daemon: stalewatch: kill-consumer backstop: bead hk-mdus1-nilcancel run 019f78bd-c4f5-7c15-b34d-865b8e01297b age 11m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-mdus1-nilcancel run 019f78bd-c4f5-7c15-b34d-865b8e01297b: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+daemon: stalewatch: FORCE-REAP: bead hk-mdus1-nilcancel run 019f78bd-c4f5-7c15-b34d-865b8e01297b: still registered 2m0s after Cancel — force-Unregistering leaked slot (hk-mdus1)
+daemon: workloop: beadExplicitlyReopened: AuditLog hk-logger-error-001: br audit log: brcli: br audit log failed (conservative: not bypassing pre-dispatch close)
+daemon: reviewloop: ReadReviewVerdict iter 1: workspace: review verdict ErrMalformed: json parse error at "/tmp/TestReviewLoopCycleComplete_Error2124113849/001/.harmonik/worktrees/019f78be-2d5b-7148-857a-fc4e91034667-reviewer-1/.harmonik/review.json": invalid character 'N' looking for beginning of value
+daemon: workloop: CloseBead hk-2hygc-blocked-during-run: brcli: SchemaMismatch (exit 4): stderr="Error: Validation failed: close: cannot close blocked issue: has open dependencies hk-newdep1\n"
+reconciliation Cat-BL1: list open beads: brcli.ListBeadsByStatus: exec failed: brcli: exec failed: fork/exec /stub/br: no such file or directory (skipping status)
+reconciliation Cat-BL1: list in_progress beads: brcli.ListBeadsByStatus: exec failed: brcli: exec failed: fork/exec /stub/br: no such file or directory (skipping status)
+daemon: stalewatch: fast dead-process reap: bead hk-mdus1-deadproc run 019f78bf-0e01-7660-8218-23a601b55fc7: agent process/pane gone and silent 3m0s — cancelling; force-reap in 1m30s if still registered
+daemon: disk-check: available=0MiB watermark=10240MiB path=/tmp/TestDiskCheck_ReactiveReaper_FallsBackToCacheCleanWhenReclaimIns3552423520/001 — dispatch paused; go_clean_attempted=true err=""
+daemon: stalewatch: kill-consumer backstop: bead hk-tn36-nil-cancel run 019f78bf-5575-71e4-aa20-2b5b27d8bb97 age 11m0s — run_stale fired; aborting run
+daemon: stalewatch: kill-consumer backstop: bead hk-tn36-nil-cancel run 019f78bf-5575-71e4-aa20-2b5b27d8bb97: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required
+--- FAIL: TestSandbox_WriteToMainDenied_i0377 (1.56s)
+    sandboxsrt_gate_hktch4t_test.go:57: hktch4t: write-to-main probe attempt 1/3 observed an allowed write; retrying (transient sandbox_init apply-failure under fork saturation is the diagnosed cause, see hk-tch4t)
+    sandboxsrt_gate_hktch4t_test.go:57: hktch4t: write-to-main probe attempt 2/3 observed an allowed write; retrying (transient sandbox_init apply-failure under fork saturation is the diagnosed cause, see hk-tch4t)
+    sandboxsrt_gate_hktch4t_test.go:57: hktch4t: write-to-main probe attempt 3/3 observed an allowed write; retrying (transient sandbox_init apply-failure under fork saturation is the diagnosed cause, see hk-tch4t)
+    scenario_sandbox_pi_i0377_test.go:305: isolation gate FAILED after 3 attempts: srt allowed write to main-repo file outside run worktree
+        expected content: "main content\n"
+        got content:      "x\n"
+        srt exit: <nil>
+        srt output:
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestGateGreenNoVerdict_RedGate_StillFails_hkdu4552565528141/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestGateGreenNoVerdict_RedGate_StillFails_hkdu4552565528141/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestCommitGateCapSalvage_DoesNotBypassReview_hka8xjg1489461341/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestCommitGateCapSalvage_DoesNotBypassReview_hka8xjg1489461341/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestCommitGateCapSalvage_DoesNotBypassReview_hka8xjg1489461341/002/wt/.harmonik/commit-gate.log
+daemon: stalewatch: kill-consumer backstop: bead hk-tn36-fire run 019f78c0-0656-774b-95f2-ac62948904ea age 11m0s — run_stale fired; aborting run
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestRequestChanges_RedGate_StillFails_hkw2ow4200278023/002/wt/.harmonik/commit-gate.log
+daemon: pasteinject: implementer-resume delivered via SubmitInput (ack=delivered)
+daemon: workloop: bead hk-ev043-queue-blocked blocked by unacknowledged decision_required (EV-043) — holding
+daemon: workloop: bead hk-ev043-queue-blocked blocked by unacknowledged decision_required (EV-043) — holding
+daemon: review-loop: implementer exited without commit; bead loga9-stderr-tail-001 run 019f78c0-7306-7dc3-9fd4-119107a2721b exit=42 stderr tail:
+boom-loga9: handler crashed in reasoning phase before any commit
+
+daemon: dot: reviewer node "review" produced no verdict; committed result present — retrying reviewer (attempt 2/2) [hk-bqf1q]
+daemon: dot tool node "gate" failed (exit status 1); gate log: /tmp/TestDotResume_CommitNudgeDelivered_hkwixms3707731722/002/wt/.harmonik/commit-gate.log
+daemon: pasteinject: implementer-resume delivered via SubmitInput (ack=delivered)
+daemon: workloop: ClaimBead hk-n91y0-blocked-a bead is blocked (deps or status) — failing queue item (hk-n91y0)
+daemon: disk-check: reclaimed 2 stale worktree(s) — disk recovered available=102400MiB watermark=10240MiB path=/tmp/TestDiskCheck_ReactiveReaper_ReclaimsWorktreesBeforeClean3862075566/001; skipping go clean -cache
+daemon: dot tool node "gate" failed (exit status 1); gate log: /tmp/TestDotResume_MixedReviewerGate_EdgeSourceDiscriminates_hkwixms3727525622/002/wt/.harmonik/commit-gate.log
+daemon: workloop: bead_claim_skipped hk-79x3v-closed observed_status=closed reason=status_changed_between_select_and_claim (BI-013c)
+daemon: dot: reviewer node "review" produced no verdict; committed result present — retrying reviewer (attempt 2/2) [hk-bqf1q]
+daemon: disk-check: WARN available=0MiB watermark=10240MiB path=/tmp/TestDiskCheck_ReactiveReaper_SkipsWhenRunsInFlight3335264615/001 — disk below watermark but merge-build in flight; reap deferred to next tick
+daemon: disk-check: available=0MiB watermark=10240MiB path=/tmp/TestDiskCheck_ReactiveReaper_SkipsWhenRunsInFlight3335264615/001 — dispatch paused; go_clean_attempted=false err=""
+daemon: dot: reviewer node "review" produced no verdict; committed result present — retrying reviewer (attempt 2/2) [hk-bqf1q]
+daemon: disk-check: available=0MiB watermark=10240MiB path=/tmp/TestDiskCheck_ReactiveReaper_RunsWhenIdle2763776260/001 — dispatch paused; go_clean_attempted=true err=""
+daemon: dot tool node "gate" failed (exit status 1); gate log: /tmp/TestCommitGateCapSalvage_NoCommit_StillFails_hk1vlz1899939122/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "gate" failed (exit status 1); gate log: /tmp/TestCommitGateCapSalvage_NoCommit_StillFails_hk1vlz1899939122/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "gate" failed (exit status 1); gate log: /tmp/TestCommitGateCapSalvage_NoCommit_StillFails_hk1vlz1899939122/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestGateGreenNoVerdict_CommittedWork_Completes_hkdu4552004006936/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestDotReviewFanout_FirstApproveDoesNotShortCircuit_hk2vpj429630681/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestCommitGateCapSalvage_hk1vlz1218806534/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestCommitGateCapSalvage_hk1vlz1218806534/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "commit_gate" failed (exit status 1); gate log: /tmp/TestCommitGateCapSalvage_hk1vlz1218806534/002/wt/.harmonik/commit-gate.log
+daemon: dot: ForAgent(claude-code) node "implement": handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: dot: reviewer node "review" produced no verdict; committed result present — retrying reviewer (attempt 2/2) [hk-bqf1q]
+daemon: disk-check: Statfs : no such file or directory
+daemon: workloop: resolveParentCommit for bead hk-bk33-no-gate-bead: daemon: resolveParentCommit for bead hk-bk33-no-gate-bead: daemon: start_from ref "main" not found in local repository: git rev-parse main: context canceled (reopening)
+daemon: adoptDeadRunSessions: ResetBead hk-78tji-reseterr-001 (run 019eff0a-0004-7000-8000-000000000004): br: stub reset error — bead may stay stuck; will retry on next boot
+daemon: workloop: ForAgent(claude-code) bead pane-isolation-A: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: workloop: ForAgent(claude-code) bead pane-isolation-B: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: implementer-initial delivered via SubmitInput (ack=delivered)
+daemon: pasteinject: quit-on-commit: stale-pane: pane dead at brief delivery in /tmp/pane-isolation-wt-019f78c5-3509446695; firing noChange immediately to reopen bead for retry (hk-1too)
+daemon: pasteinject: quit-on-commit: stale-pane: pane dead at brief delivery in /tmp/pane-isolation-wt-019f78c5-452187647; firing noChange immediately to reopen bead for retry (hk-1too)
+daemon: dot tool node "validate" failed (exit status 1); gate log: /tmp/TestDotAttractionParity_ToolNodeGatesRouting_FailPath1202011905/002/wt/.harmonik/commit-gate.log
+daemon: disk-check: Statfs : no such file or directory
+daemon: workloop: resolveParentCommit for bead hk-bk33-test-bead: daemon: resolveParentCommit for bead hk-bk33-test-bead: daemon: start_from ref "main" not found in local repository: git rev-parse main: context canceled (reopening)
+daemon: workloop: ForAgent(claude-code) bead hk-1h5q-ctx-cancel-test-001: handlercontract: AdapterRegistry.ForAgent("claude-code"): no adapter registered for this agent_type; S04 must Register all agent types at startup before dispatching (HC-012) (skipping ready-wait)
+daemon: dot tool node "gate" failed (exit status 3); gate log: /tmp/TestCommitGateNoEscapeLoop_hkpj4b62740491266/002/wt/.harmonik/commit-gate.log
+daemon: dot tool node "gate" failed (exit status 3); gate log: /tmp/TestCommitGateNoEscapeLoop_hkpj4b62740491266/002/wt/.harmonik/commit-gate.log
+daemon: disk-check: proactive-reap deferred — merge-build in flight
+codesync: ensureBaseOnWorker: SHA aabbccddaabbccddaabbccddaabbccddaabbccdd absent on worker after fetch origin; pushing directly from box A
+daemon: newCachedOrphanStatusReader: ListInFlightBeads failed: brcli.ListInFlightBeads: malformed br list output: invalid character 'b' looking for beginning of value; brcli: SchemaMismatch — falling back to per-bead reader
+reconciliation Cat-BL1: list open beads: brcli.ListBeadsByStatus: exec failed: brcli: exec failed: fork/exec /stub/br-bi024a-mismatch: no such file or directory (skipping status)
+reconciliation Cat-BL1: list in_progress beads: brcli.ListBeadsByStatus: exec failed: brcli: exec failed: fork/exec /stub/br-bi024a-mismatch: no such file or directory (skipping status)
+daemon: workloop: Ready poll error (will retry): brcli.Ready: exec failed: brcli: exec failed: fork/exec /stub/br-bi024a-mismatch: no such file or directory
+daemon: workloop: Ready poll error (will retry): brcli.Ready: exec failed: brcli: exec failed: fork/exec /stub/br-bi024a-mismatch: no such file or directory
+daemon: workloop: Ready poll error (will retry): brcli.Ready: exec failed: brcli: exec failed: fork/exec /stub/br-bi024a-mismatch: no such file or directory
+daemon: workloop: ClaimBead hk-cun4l-exit_137_SIGKILL error (will retry): brcli: exit status 137
+daemon: workloop: ClaimBead hk-cun4l-exit_137_SIGKILL error (will retry): brcli: exit status 137
+daemon: workloop: bead hk-cun4l-exit_137_SIGKILL exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+daemon: workloop: ClaimBead hk-cun4l-exit_3 error (will retry): brcli: exit status 3
+daemon: workloop: ClaimBead hk-cun4l-exit_3 error (will retry): brcli: exit status 3
+daemon: workloop: bead hk-cun4l-exit_3 exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+daemon: workloop: ClaimBead hk-cun4l-exit_2 error (will retry): brcli: exit status 2
+daemon: workloop: ClaimBead hk-cun4l-exit_2 error (will retry): brcli: exit status 2
+daemon: workloop: bead hk-cun4l-exit_2 exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+daemon: workloop: ClaimBead hk-cun4l-exit_139_SIGSEGV error (will retry): brcli: exit status 139
+daemon: workloop: ClaimBead hk-cun4l-exit_139_SIGSEGV error (will retry): brcli: exit status 139
+daemon: workloop: bead hk-cun4l-exit_139_SIGSEGV exceeded maxItemAttempts=3 — failing queue item (hk-6pspu)
+FAIL
+FAIL	github.com/gregberns/harmonik/internal/daemon	1157.554s
+ok  	github.com/gregberns/harmonik/internal/daemon/bootconfig	1.482s
+ok  	github.com/gregberns/harmonik/internal/daemon/router	1.398s
+?   	github.com/gregberns/harmonik/internal/daemon/scenariotest	[no test files]
+ok  	github.com/gregberns/harmonik/internal/dashboard	1.453s
+ok  	github.com/gregberns/harmonik/internal/digest	8.278s
+ok  	github.com/gregberns/harmonik/internal/eventbus	3.381s
+ok  	github.com/gregberns/harmonik/internal/goalstate	1.410s
+ok  	github.com/gregberns/harmonik/internal/handler	8.046s
+ok  	github.com/gregberns/harmonik/internal/handlercontract	4.181s
+ok  	github.com/gregberns/harmonik/internal/handlercontract/lifecycle	1.392s
+ok  	github.com/gregberns/harmonik/internal/hook	1.476s
+ok  	github.com/gregberns/harmonik/internal/hookrelay	2.102s
+ok  	github.com/gregberns/harmonik/internal/hooksystem	1.545s
+ok  	github.com/gregberns/harmonik/internal/keeper	44.763s
+ok  	github.com/gregberns/harmonik/internal/keepertest	27.831s
+ok  	github.com/gregberns/harmonik/internal/keepertwin	1.746s
+ok  	github.com/gregberns/harmonik/internal/lifecycle	46.355s
+ok  	github.com/gregberns/harmonik/internal/lifecycle/tmux	9.357s
+ok  	github.com/gregberns/harmonik/internal/mergeq	1.451s
+ok  	github.com/gregberns/harmonik/internal/orchestrator	1.475s
+ok  	github.com/gregberns/harmonik/internal/policy	1.477s
+ok  	github.com/gregberns/harmonik/internal/presence	1.537s
+ok  	github.com/gregberns/harmonik/internal/queue	2.414s
+ok  	github.com/gregberns/harmonik/internal/queue/cli	1.612s
+ok  	github.com/gregberns/harmonik/internal/release	1.413s
+ok  	github.com/gregberns/harmonik/internal/replay	1.497s
+?   	github.com/gregberns/harmonik/internal/run	[no test files]
+ok  	github.com/gregberns/harmonik/internal/runexec	1.478s
+ok  	github.com/gregberns/harmonik/internal/runexectest	1.524s
+ok  	github.com/gregberns/harmonik/internal/scenario	4.945s
+ok  	github.com/gregberns/harmonik/internal/schedule	1.929s
+ok  	github.com/gregberns/harmonik/internal/scratchpad/canary	1.388s
+ok  	github.com/gregberns/harmonik/internal/scratchpad/evalvol	1.409s
+ok  	github.com/gregberns/harmonik/internal/sentinel	4.308s
+ok  	github.com/gregberns/harmonik/internal/sessioncapture	1.422s
+ok  	github.com/gregberns/harmonik/internal/sessiondata	1.420s
+--- FAIL: TestSHINV005CorpusLint (0.00s)
+    sh_inv005_declarative_loadable_test.go:377: SH-INV-005 corpus lint: found 7 scenario file(s) under scenarios/; running declarative-load check on each
+    --- FAIL: TestSHINV005CorpusLint/core-loop-proof/scratch-config-overlay.yaml (0.00s)
+        sh_inv005_declarative_loadable_test.go:390: SH-INV-005 corpus lint FAILED: scenarios/core-loop-proof/scratch-config-overlay.yaml is not declarative-loadable
+              error: scenario-load-failure: schema check failed for "/private/tmp/h-assessor/scratch-checkshort-bbf21ea4/scenarios/core-loop-proof/scratch-config-overlay.yaml": yaml: unmarshal errors:
+              line 29: field codex not found in type scenario.ScenarioFile
+              line 32: field harnesses not found in type scenario.ScenarioFile
+              SH-INV-005 requires every scenario file to be parseable by gopkg.in/yaml.v3 in strict mode with KnownFields(true) and the forbidden-tag deny-list; any rejected file is a suite-load failure (specs/scenario-harness.md §4.9)
+FAIL
+FAIL	github.com/gregberns/harmonik/internal/specaudit	0.545s
+ok  	github.com/gregberns/harmonik/internal/structuredlog	3.166s
+ok  	github.com/gregberns/harmonik/internal/substrate	1.496s
+ok  	github.com/gregberns/harmonik/internal/supervise	37.392s
+ok  	github.com/gregberns/harmonik/internal/t5probe	1.582s
+ok  	github.com/gregberns/harmonik/internal/t6probe	6.881s
+ok  	github.com/gregberns/harmonik/internal/testhelpers	3.203s
+ok  	github.com/gregberns/harmonik/internal/twinparity	1.485s
+ok  	github.com/gregberns/harmonik/internal/usage	1.403s
+ok  	github.com/gregberns/harmonik/internal/watch	1.566s
+ok  	github.com/gregberns/harmonik/internal/workers	2.192s
+ok  	github.com/gregberns/harmonik/internal/workflow	1.535s
+ok  	github.com/gregberns/harmonik/internal/workflow/dot	1.487s
+ok  	github.com/gregberns/harmonik/internal/workflow/scenario	1.539s
+ok  	github.com/gregberns/harmonik/internal/workspace	41.881s
+?   	github.com/gregberns/harmonik/test/twins/fail-immediately	[no test files]
+?   	github.com/gregberns/harmonik/test/twins/hang	[no test files]
+?   	github.com/gregberns/harmonik/tools/forbid-import	[no test files]
+FAIL

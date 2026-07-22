@@ -1,0 +1,19 @@
+{
+  "pass_id": "regate-d59d5d32",
+  "pass_kind": "regate",
+  "pin_sha": "d59d5d325ab55e2b4e293f9ac0f49bda042e86bc",
+  "pin_branch": "phase1-session-restart-substrate",
+  "prior_gate": {"pin": "fff3d937", "verdict": "BLOCK", "report": "runs/codex-substrate-validation/REGATE-VERDICT.md",
+    "blockers": ["hk-daegv: worker codex 0.142.0 ignored danger-full-access -> commit_landed:false",
+                 "hk-qxvc2: LaunchSpec.Env/CLAUDE_CONFIG_DIR never reached remote claude -> agent_ready_timeout"]},
+  "remedies_landed": ["f907b702 forward env to remote ssh agents (RemoteExecArgv)",
+                      "44831898+49d7fde3 codex writable_roots incl git-common-dir, workspace-write (adapt-not-pin)",
+                      "37651569 reviewer->tmux substrate", "2b921fde tmux buffer name", "d59d5d32 local codex LocalRunner"],
+  "claimed_done_reconciliation": "BOTH remedies read at source level and MATCH the diagnosed root causes; tests added on both remote paths. Recorded caveat: local codex-cli now 0.144.5 (BLOCK was worker-side 0.142.0) -> a Leg-B PASS MUST record the WORKER codex version or it cannot distinguish fix-works from version-drift.",
+  "legs": {"LegA_local": "IN_FLIGHT (delegated)", "XT_exploratory": "IN_FLIGHT (delegated)", "LegB_live_decider": "RECON_ONLY (delegated; not executed)"},
+  "prior_pass_findings_all_closed": ["hk-l5saf","hk-3hozm","hk-nddg1","hk-cjqyn","hk-9ngiv","hk-hi53s","hk-13ff4","hk-bzol4"],
+  "findings_this_pass": ["hk-n64rw P3 CLI unknown-subcommand starts daemon"],
+  "refuted": ["stale pidfile lock — daemon alive pid 22753, lsof confirms holder"],
+  "guardrails": "do NOT touch prod /Users/gb/harmonik-worker, tailscale 100.87.151.114, or live fleet daemon pid 22753; NEVER run `harmonik <unrecognized-subcommand>` (starts a daemon); stable GOCACHE=/Users/gb/.cache/h-assessor-gocache",
+  "last_checkpoint": "2026-07-22T02:35:00Z"
+}

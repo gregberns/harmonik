@@ -1,0 +1,147 @@
+{
+  "chunk": "RU-16b",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "cmd/harmonik/eval_cmd.go",
+    "cmd/harmonik/eval_metrics_cmd.go",
+    "cmd/harmonik/eval_report_cmd.go",
+    "cmd/harmonik/eval_guardrails_lygpp.go",
+    "cmd/harmonik/init_cmd.go",
+    "cmd/harmonik/start.go",
+    "cmd/harmonik/captain.go",
+    "cmd/harmonik/crew.go",
+    "cmd/harmonik/reconcile.go",
+    "cmd/harmonik/watcherreap.go",
+    "cmd/harmonik/branch_reap_cmd.go",
+    "cmd/harmonik/project_hash_cmd.go",
+    "cmd/harmonik/sleepwake.go",
+    "cmd/harmonik/migrate_rc_prefix_cmd.go",
+    "cmd/harmonik/schedule.go",
+    "cmd/harmonik/sentinel_cmd.go",
+    "cmd/harmonik/usage.go",
+    "cmd/harmonik/usage_cmd.go",
+    "cmd/harmonik/digest.go",
+    "cmd/harmonik/asset_skew.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Read all named eval verbs + the CLI-lifecycle verbs in scope. dashboard_cmd.go, ops_monitor_cmd.go, release_cmd.go, sync_assets_cmd.go, keeper_*_cmd.go, resolve_*.go, sleepwake sub-helpers, and the asset_manifest/asset_reconcile bodies were only skimmed for cross-references, not line-audited, due to breadth; findings below are from the files listed in scope_reviewed.",
+  "findings": [
+    {
+      "file": "cmd/harmonik/eval_cmd.go",
+      "line": 173,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "eval collect appends records with no dedup — re-running double-counts in eval report",
+      "detail": "runEvalCollect opens the output file O_APPEND and writes one record per grade-dispatched run every invocation (line 173-200), and the help text advertises 'Appends to the output file (existing records are preserved)'. There is no keying on run_id against already-written records. Running `harmonik eval collect` twice over the same events.jsonl writes the SAME run's record twice. eval_report_cmd.go then aggregates every line in eval-results.jsonl (evalReadReportRecords → evalAggregateReport), so N (group size), pass_rate, and median wall_time are all skewed by the duplicate. Because collect is described as a re-runnable post-run collector, a routine re-collect silently corrupts the comparison table that DESIGN.md §1.3 calls 'the router's training set'.",
+      "suggested_fix": "Read existing run_ids from the output file first and skip runs already present, or truncate+rewrite deterministically, or have report dedup by run_id. At minimum document that collect is not idempotent and callers must truncate."
+    },
+    {
+      "file": "cmd/harmonik/eval_guardrails_lygpp.go",
+      "line": 76,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "G5 test-file-touch guardrail flags ANY _test.go hunk, including legitimately added tests",
+      "detail": "evalDiffTouchesTestFile returns true whenever a `diff --git` line contains `_test.go`. The comment and metric intent (self_id/test_file_touched → gaming feeder) is that the implementer edited/deleted the SHIPPED test to fool the grade. But a solution that legitimately ADDS its own new test file, or touches an unrelated helper *_test.go, trips test_file_touched=true just the same. There is no distinction between the shipped/reference test path and any other test file, and no add-vs-modify discrimination. This produces false-positive gaming signals on well-behaved runs, degrading the quality score the judge consumes.",
+      "suggested_fix": "Scope the check to the specific shipped test path (e.g. evaltasks/<taskID>/*_test.go or the hidden_test.go) rather than any _test.go, and/or only flag deletions/modifications of pre-existing test lines, not net-new test files."
+    },
+    {
+      "file": "cmd/harmonik/init_cmd.go",
+      "line": 93,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "init silently ignores unrecognized flags — a mistyped --target-branch runs against 'main'",
+      "detail": "The arg loop (lines 93-122) has cases only for known flags and NO default/else branch. Any unrecognized token — a typo like `--target-branc integration`, or a stray positional — is silently dropped. Because targetBranch then defaults to 'main' (line 141-143), an operator who fat-fingers the target branch bootstraps the whole project (config.yaml, branching.yaml, AGENTS.md, br init prefix) against the wrong branch with a 0 exit and no diagnostic. This is a destructive-by-omission footgun on a one-time bootstrap command.",
+      "suggested_fix": "Add a default case that errors on any token starting with '-' (unknown flag) and on unexpected positionals, mirroring reconcile.go / crew stop which do reject unknown flags."
+    },
+    {
+      "file": "cmd/harmonik/branch_reap_cmd.go",
+      "line": 36,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "gc branches silently ignores unknown flags and positionals — typo'd flags run with defaults",
+      "detail": "The flag loop (lines 36-61) has no default case. A mistyped `--projct /x`, `--taget main`, `--drー-run`, or a stray positional is silently ignored: projectDir falls back to cwd, dryRun stays false, and the command DELETES branches. Combined with the 30-day default max-age and real `git branch -D` behavior downstream (lifecycle.ReapBranches), a typo'd `--dry-run` (e.g. `--dryrun`) silently performs a live reap the operator believed was a preview.",
+      "suggested_fix": "Add a default case rejecting unknown `-`-prefixed tokens and unexpected positionals with exit 1, before any destructive call."
+    },
+    {
+      "file": "cmd/harmonik/crew.go",
+      "line": 304,
+      "severity": "low",
+      "category": "correctness",
+      "title": "crew start performs irreversible host-level side effects before the daemon RPC that may fail with exit 17",
+      "detail": "runCrewStartCoreWith reaps prior watcher processes (crewReapPriorWatchers, line 304), provisions boot assets into the project (ensureBootAssets, line 309), and wires keeper hooks into ~/.claude/settings.json (enableKeeper, line 315-320) BEFORE crewDialAndSend (line 342). If the daemon is down, crewDialAndSend returns exit 17 and the crew never starts — but the operator's global settings.json has already been mutated, prior watchers were killed, and files were written. On a daemon-down box, repeatedly invoking `crew start` mutates global state each time for a no-op. The captain path has the same ordering but there the tmux launch is local; here the authoritative action is a remote RPC that can cleanly fail.",
+      "suggested_fix": "Probe the socket (or attempt the dial) before mutating ~/.claude/settings.json and killing watchers, or make those steps conditional on RPC success / roll back on exit 17."
+    },
+    {
+      "file": "cmd/harmonik/digest.go",
+      "line": 243,
+      "severity": "low",
+      "category": "nil-deref",
+      "title": "Human digest output slices EventID[:8]/RunID[:8] without a length guard — panics on a short id",
+      "detail": "printHumanDigest does `ev.EventID[:8]` unconditionally (lines 243, 245) and `ev.RunID[:8]` when RunID != \"\" (line 243). A non-empty RunID or EventID shorter than 8 bytes (a malformed/truncated event that slipped past the collector, or a non-UUID run label) triggers a slice-bounds-out-of-range panic that crashes the whole `harmonik digest` render. digest is advertised as a no-daemon status sheet operators run under stress; a single bad event line should not panic it.",
+      "suggested_fix": "Add a min(len,8) helper or guard the slice, e.g. shorten via a helper that returns the whole string when len < 8."
+    },
+    {
+      "file": "cmd/harmonik/eval_cmd.go",
+      "line": 181,
+      "severity": "low",
+      "category": "correctness",
+      "title": "eval collect emits records in nondeterministic map-iteration order",
+      "detail": "runEvalCollect ranges over `states` (a map, line 181) to write records. Go randomizes map iteration order, so successive collect runs over the same events.jsonl append records in different orders. eval_report sorts groups, so the final table is stable, but the raw eval-results.jsonl (which the design calls the router training set and which may be diffed / snapshot-tested) is order-unstable, complicating reproducibility and any git-tracked comparison.",
+      "suggested_fix": "Collect run_ids into a slice, sort it, and iterate deterministically when writing records."
+    },
+    {
+      "file": "cmd/harmonik/eval_metrics_cmd.go",
+      "line": 211,
+      "severity": "low",
+      "category": "correctness",
+      "title": "evalDeriveTaskID strips only the final '-' segment; wrong taskID → vet/hidden-test/deadcode run against a nonexistent dir",
+      "detail": "evalDeriveTaskID trims 'hk-' then drops everything after the LAST '-' (lines 211-217). This assumes exactly one trailing random suffix. A bead id without a random suffix (e.g. 'hk-eval-fizzbuzz') derives 'eval' and the derived evaltaskDir 'evaltasks/eval' does not exist, so evalVetCheck / evalRunHiddenTest / evalDeadcodeCheck all silently run against a missing package (err != nil → clean/empty), yielding a falsely-clean metrics.json rather than an error. The derivation is a fragile string convention with no validation that evaltasks/<taskID> exists.",
+      "suggested_fix": "Validate that evaltasks/<taskID> exists (os.Stat) and surface an error if not, or carry taskID explicitly in agent-task.md rather than re-deriving it from the bead id."
+    },
+    {
+      "file": "cmd/harmonik/eval_metrics_cmd.go",
+      "line": 350,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Hidden-test pass count inflated by subtests and -run substring match",
+      "detail": "evalRunHiddenTest runs `go test -run Hidden -v` and counts every '--- PASS' line (lines 357-361). Go emits '--- PASS' for subtests (t.Run) too, so HiddenTestPassCount counts subtests, not hidden test functions. Separately, `-run Hidden` is a substring/regex match that also selects any test whose name merely contains 'Hidden' (e.g. TestFooHiddenBar), which the code comment half-acknowledges but does not constrain. Both make hidden_test_pass_count an unreliable feeder for the quality rubric.",
+      "suggested_fix": "Count only top-level '--- PASS:' lines (no leading indentation) or parse `-json` output for Action==pass at Test top level; anchor the run pattern (e.g. '^TestHidden')."
+    },
+    {
+      "file": "cmd/harmonik/schedule.go",
+      "line": 186,
+      "severity": "low",
+      "category": "correctness",
+      "title": "schedule add accepts --catchup-window without validating it as a Go duration",
+      "detail": "runScheduleAdd captures --catchup-window into catchupWin (line 186-188) and stores it verbatim into job.CatchupWindow with no parse check, unlike --schedule (validated via NextFire) and the overlap/catchup enums (validated). An invalid value like `--catchup-window 24hours` is persisted to schedules.json and only fails — or silently misbehaves — at fire time inside the daemon, far from the operator who typed it.",
+      "suggested_fix": "time.ParseDuration(catchupWin) at add-time when non-empty and reject with exit 1 on error, matching the fail-fast pattern used for the schedule spec."
+    },
+    {
+      "file": "cmd/harmonik/migrate_rc_prefix_cmd.go",
+      "line": 197,
+      "severity": "low",
+      "category": "correctness",
+      "title": "insertRCPrefixLine anchors on any matching field line in the file, not scoped to the daemon: block, and writes the prefix unquoted",
+      "detail": "insertRCPrefixLine (lines 190-228) inserts `  remote_control_prefix: <v>` after the first line whose trimmed text starts with `workflow_mode:`/`max_concurrent:`/`target_branch:` ANYWHERE in the file, with no check that the anchor is under `daemon:`. If any other top-level block ever contains a same-named field, the prefix lands in the wrong block at a fixed 2-space indent, producing a misplaced or mis-indented key. Additionally the value is written unquoted (line 171/193); a user-entered prefix containing a YAML-special char (`#`, leading digit, `:`) yields malformed YAML or a truncated value. Prefix from br issue_prefix / dir slug is safe, but the interactive prompt accepts arbitrary text.",
+      "suggested_fix": "Track daemon-block boundaries by indentation when choosing the anchor, and YAML-quote the prefix value when it is non-empty and not a bare-safe token."
+    },
+    {
+      "file": "cmd/harmonik/eval_metrics_cmd.go",
+      "line": 296,
+      "severity": "nit",
+      "category": "correctness",
+      "title": "evalGocycloMax conflates 'no gocyclo output' with a real max of 0",
+      "detail": "evalGocycloMax returns nil when the computed max is 0 (lines 296-298). Cyclomatic complexity is >=1 for any real function, so max==0 only happens when gocyclo produced no parseable lines — but the code treats that identically to 'tool unavailable', hiding a possible parse/tool-format problem behind a null feeder. Harmless today but obscures diagnosis if gocyclo output format changes.",
+      "suggested_fix": "Track whether any line parsed; return nil only when zero lines parsed, otherwise return the real max (including a genuine low value)."
+    },
+    {
+      "file": "cmd/harmonik/init_cmd.go",
+      "line": 873,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "goal-keeper schedule seeds argv 'harmonik' from PATH rather than the running binary",
+      "detail": "seedGoalKeeperSchedule hardcodes Argv[0]=\"harmonik\" (line 873) while the rest of the file resolves the binary via os.Executable() (maybeStartSupervise, line 784). If the operator installed harmonik somewhere not on the daemon's PATH at fire time, the scheduled goal-keeper backstop fails to exec. Inconsistent with the executable-resolution convention used two functions up.",
+      "suggested_fix": "Resolve os.Executable() (fallback 'harmonik') and use it as Argv[0], matching maybeStartSupervise."
+    }
+  ]
+}

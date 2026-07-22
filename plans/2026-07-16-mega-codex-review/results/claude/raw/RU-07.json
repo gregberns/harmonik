@@ -1,0 +1,90 @@
+{
+  "chunk": "RU-07",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/codexdriver/driver.go",
+    "internal/codexdriver/session.go",
+    "internal/codexinput/reactor.go",
+    "internal/codexinput/fake.go",
+    "internal/codexreactor/reactor.go",
+    "internal/codexwire/codexwire.go",
+    "internal/codexdigitaltwin/twin.go",
+    "internal/codexdigitaltwin/inputtwin.go",
+    "internal/codexdigitaltwin/inputsynth.go"
+  ],
+  "status": "reviewed",
+  "findings": [
+    {
+      "file": "internal/codexwire/codexwire.go",
+      "line": 171,
+      "severity": "high",
+      "category": "correctness",
+      "title": "JSON-RPC id typed as *int64 — a non-integer id crashes the whole envelope decode and tears down the session",
+      "detail": "rawLine.ID is `*int64`. JSON-RPC 2.0 permits string ids (and codex/other peers may use them). If any line arrives with a string or non-integer id, json.Unmarshal of the envelope fails, Parse returns an error, and codexdriver.readLoop (session.go:399-403) treats that as a FATAL decode -> injects EventTypeError -> stepTransportTerminal drives the reactor to Exited and the session is torn down. A single unexpected id shape kills an otherwise-healthy session rather than being preserved verbatim (the package's stated round-trip/forward-compat contract). The envelope is supposed to be the ONLY strict layer, but it is strict on a field JSON-RPC explicitly allows to vary.",
+      "suggested_fix": "Decode id as json.RawMessage (or a value that accepts string|number) and preserve it verbatim through Marshal; only interpret it as int64 at the correlation sites that need it."
+    },
+    {
+      "file": "internal/codexwire/codexwire.go",
+      "line": 211,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Server-originated requests are misclassified as ClientRequest and then silently dropped",
+      "detail": "Parse discriminates purely on field presence: `hasID && hasMethod` => FrameKindClientRequest. But the codex app-server sends REQUESTS to the client (e.g. exec/apply-patch approval prompts) that also carry id+method. These are classified FrameKindClientRequest, fall through handleFrame's switch (session.go:709-717) into the ignored default, and are never answered. A turn that requires an approval response then hangs on the server with no client reply; the driver has already emitted the ack (InTurn) so there is no InputAck timer to backstop it — the turn stalls until CloseInput/ctx. The direction of a request cannot be inferred from id+method alone, yet the code assumes all such frames are client-origin.",
+      "suggested_fix": "Distinguish server->client requests (method present in a server-request registry, or an id we did not originate) and either answer/reject them or surface them explicitly; do not silently drop id+method frames."
+    },
+    {
+      "file": "internal/codexdriver/session.go",
+      "line": 460,
+      "severity": "low",
+      "category": "correctness",
+      "title": "finalize() unconditionally marks every session wind-down as a launch failure",
+      "detail": "finalize() always calls s.setFailure(\"session wind-down before handshake\") even when the handshake completed and the session drained cleanly. setFailure closes failCh and stores a 'launch failure' error. A SubmitInput racing the wind-down selects across loopDone AND failCh (session.go:261-279); when the runtime picks the failCh case it returns 'codexdriver: submit aborted: ... launch failure' — a mislabel for what was actually a normal session close (ErrSessionClosed). The comment claims it 'fails the readiness gate IF the handshake never completed,' but the code has no such guard.",
+      "suggested_fix": "Only setFailure when the reactor never reached Ready (handshake incomplete); otherwise leave failCh unclosed so racing submits resolve as ErrSessionClosed."
+    },
+    {
+      "file": "internal/codexinput/reactor.go",
+      "line": 384,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Mid-turn steer (InputSubmitted from InTurn) orphans the previous turn's TurnID with no terminal",
+      "detail": "stepInputSubmitted accepts a submission from InTurn, transitions to AwaitingAck and sets PendingSeq, but never records or resolves the already-open turn (state.TurnID is left, then overwritten on the next InputAcked). If a mid-turn steer path is ever exercised, the prior turn is silently abandoned — no CancelTimer/Complete/Interrupt is emitted for it. Today the driver front-stop (awaitReady) only submits from Ready so this is unreachable via the driver, but the reactor is documented as supporting mid-turn steer and this is a latent hole in that path.",
+      "suggested_fix": "Either drop InputSubmitted-from-InTurn (only accept from Ready) or explicitly interrupt/close the prior turn before opening the new one."
+    },
+    {
+      "file": "internal/codexreactor/reactor.go",
+      "line": 204,
+      "severity": "low",
+      "category": "correctness",
+      "title": "EventTypeConnected resets InFlight/TurnID/LastSeq but leaves stale ThreadID",
+      "detail": "On reconnect (EventTypeConnected) the reactor clears InFlight, TurnID and LastSeq but does NOT clear ThreadID. A subsequent event that omits thread_id (or downstream code reading State().ThreadID between Connected and the next TurnStarted) will observe the previous connection's thread id. Minor because most events carry ThreadID, but it is an inconsistent reset that can leak a stale thread identifier across a reconnect boundary.",
+      "suggested_fix": "Clear ThreadID alongside TurnID in the EventTypeConnected branch."
+    },
+    {
+      "file": "internal/codexwire/codexwire.go",
+      "line": 379,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Server response with explicit `\"result\": null` does not round-trip (null dropped)",
+      "detail": "Parse computes hasResult as `len>0 && !=\"null\"`, so a response body of {\"id\":1,\"result\":null} has hasResult=false but is still classified ServerResponse (hasID && !hasMethod). marshalServerResponse only writes result when f.Result!=nil OR len(RawResult)>0; RawResult here is the literal `null` (len 4) so it IS re-emitted — but note the asymmetry: a genuinely absent result and an explicit null both survive only by accident of the len check. Any response carrying error+null-result or edge encodings risks a semantic-inequality against the stated round-trip guarantee. Worth a corpus test for the null-result and error-response shapes.",
+      "suggested_fix": "Add explicit round-trip coverage for null-result and error-only server responses; make the result/error emission rules explicit rather than relying on len() of the raw null."
+    },
+    {
+      "file": "internal/codexwire/codexwire.go",
+      "line": 275,
+      "severity": "nit",
+      "category": "dead-code",
+      "title": "parseResult is a no-op stub retained only for symmetry",
+      "detail": "parseResult(f) unconditionally returns nil and does nothing; the real work is deferred to ResolveResponseResult. It adds an indirection and a misleading doc comment ('reverse lookup from the request registry ... we find the entry by matching requests') that describes behavior the function does not implement. Reads as leftover scaffolding.",
+      "suggested_fix": "Inline the nil return at the call site or delete parseResult; trim the inaccurate comment."
+    },
+    {
+      "file": "internal/codexdriver/session.go",
+      "line": 447,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "codexSession is a very large god-struct mixing five concerns under overlapping mutexes",
+      "detail": "codexSession carries reactor-phase mirroring (phaseMu), waiter/pending/payload/turn-binding maps (mu), submit serialization (submitMu), outcome (outcomeMu), and multiple sync.Once + five lifecycle channels (evCh/wireDone/loopDone/failCh/waitDone). The concurrency contract is spread across long prose comments rather than encoded; correctness depends on the reader tracking which of four mutexes guards each field and the precise close-ordering of five channels. This is hard to maintain and easy to regress. Not a bug, but a maintainability hazard flagged for the record.",
+      "suggested_fix": "Consider extracting the waiter/pending correlation table and the phase-mirror into small dedicated types with their own guarded API, shrinking the session to composition of those."
+    }
+  ]
+}

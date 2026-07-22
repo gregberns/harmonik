@@ -1,0 +1,37 @@
+{
+  "verdict": "CONFIRMED",
+  "evidence": [
+    {
+      "file": "cmd/harmonik/confirm_verdict.go",
+      "line": 131,
+      "note": "confirm-verdict sends socket op \"confirm\" via sendVerdictOverrideRequest."
+    },
+    {
+      "file": "cmd/harmonik/veto_verdict.go",
+      "line": 163,
+      "note": "veto-verdict sends socket op \"veto_verdict\" via sendVerdictOverrideRequest."
+    },
+    {
+      "file": "internal/daemon/socketdispatch.go",
+      "line": 360,
+      "note": "buildSocketRouter registers exactly 25 ops; none is \"confirm\", \"veto_verdict\", \"confirm_verdict\", or any verdict-override op."
+    },
+    {
+      "file": "internal/daemon/socketdispatch.go",
+      "line": 56,
+      "note": "Unregistered ops fall through to the default: SocketResponse{Ok:false, Error:'daemon: unknown op %q'}."
+    },
+    {
+      "file": "internal/daemon/socket.go",
+      "line": 455,
+      "note": "The only daemon pre-branches are op==\"subscribe\" and hook-relay; neither handles confirm/veto."
+    },
+    {
+      "file": "internal/core/verdictoverride_rc027.go",
+      "line": 97,
+      "note": "The core VerdictOverride domain logic exists but is never invoked from any daemon dispatch/handler path (only referenced by tests) — it is not wired to the socket router."
+    }
+  ],
+  "reasoning": "Both CLI commands open the daemon unix socket and send a verdict-override request. confirm-verdict sends op \"confirm\"; veto-verdict sends op \"veto_verdict\". buildSocketRouter in socketdispatch.go registers 25 ops and none of them is any verdict-override op. A whole-tree grep for the op-name strings finds no router.Register, no case, and no alternate spelling that handles them; the subscribe/hook-relay pre-branches in socket.go do not either. Any unregistered op falls to the default 'daemon: unknown op' response. Note an additional latent defect: confirm-verdict sends \"confirm\" while the shared helper's doc claims the op should be \"confirm_verdict\" — but this is moot since neither spelling is registered. The core VerdictOverride logic (verdictoverride_rc027.go) is implemented but never reachable from the daemon dispatch path. Therefore a run blocked on a confirm_required reconciliation verdict has no working socket-side release path via these commands.",
+  "alternate_release_path_exists": false
+}

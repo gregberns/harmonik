@@ -1,0 +1,70 @@
+{
+  "pass_id": "baseline-35e4b3b9",
+  "pass_kind": "baseline",
+  "pin_sha": "35e4b3b91d9961274646a2575a4c108e1d99d35f",
+  "pin_branch": "phase1-session-restart-substrate",
+  "scratch": "/private/tmp/h-assessor/scratch-baseline-35e4b3b9",
+  "binary_sha_verified": true,
+  "session": "resumed-2026-07-18T21:20Z (session 4, keeper-restart)",
+  "preflight_4A": "PASS (15 pass, 1 warn: no workers.yaml local-only, 0 fail)",
+  "green_tree": "GREEN (session4). BUILD+VET clean; keeper/eventbus/load-flakes clear. ALL daemon-isolation reds root-caused non-product by 3 converging investigations: srt i0377/hki0377 + SocketBinds = campaign TMPDIR=/tmp/h-assessor defeated preconditions (temp inside srt allowWrite /tmp + socket 104B limit) -> PROVEN PASS at real /var/folders TMPDIR (ok 2.493s firsthand); ShutdownDrains/Throughput/ClaimSemaphore/SubscribeStream = load-flakes (invariants intact, self-heal); SSH ReviewVerdict = stale pre-fix-D test. Only deterministic real red = known P3 hk-uhxwd (non-product corpus-lint). No product regression, no srt bypass. daemon-up AUTHORIZED.",
+  "green_tree_verdict": "GREEN",
+  "session4_findings": ["hk-vbkv1 P3 stale-SSH-reviewer-verdict-test", "hk-0oebl P3 socket-path-guard-off-by-one"],
+  "coverage_caveat_srt_isolation": "scratch daemon at /private/tmp is INSIDE srt allowWrite -> write-isolation cells on scratch daemon = false-green; property covered by unit tests at correct TMPDIR (proven green); prod at /Users/gb/github/harmonik holds. Mark daemon write-isolation cell SKIPPED-with-reason.",
+  "clone_head_matches_pin": true,
+  "daemon_up": true,
+  "daemon_pid": 63401,
+  "s6_watcher": "armed (Monitor bz1ns3r38 on scratch-daemon.log; failure-signature grep)",
+  "live_phase": "S1/LT DONE. XT IN FLIGHT at session-4 handoff (subagent a07d7d36df5c2fdb0 restart-break-testing on daemon 63401; RE-RUN on resume — notification lost across keeper restart). After XT: write ASSESSMENT.md, post --topic gate, then re-pin cadence.",
+  "xt_in_flight_subagent": "a07d7d36df5c2fdb0 (LOST on restart — re-run: adversarial restart break-testing + reproduce hk-l5saf/hk-3hozm at runtime; charter in RUN-LOG session-4 XT entry)",
+  "session4_findings_filed": ["hk-vbkv1", "hk-0oebl", "hk-es4f7", "hk-xy9ym", "hk-oga33"],
+  "re_pin_cadence": "admiral HIGH-PRIORITY (2026-07-18 21:53Z): finish baseline@35e4b3b9 to VERDICT+ASSESSMENT, THEN <=1h re-pin to branch HEAD (was cb5022d6) + scoped re-run S2/S3/S7 + touched-path suites. ACKed.",
+  "last_checkpoint": "2026-07-18T22:10:00Z session4 keeper-ACT handoff",
+  "suites": {
+    "S1": "LT-RED (no daemon-workflow defect): pi:local GREEN (core-loop proven e2e real agent); pi-dot RED=ornith non-convergence (mechanism fired); claude:local RED=agent_ready_timeout+fixtures (hk-oga33). harness findings hk-es4f7/hk-xy9ym. codex+remote SKIP.",
+    "S2": "PENDING",
+    "S3": "PENDING",
+    "S4": "PENDING",
+    "S5": "PENDING",
+    "S6": "PENDING",
+    "S7": "PENDING",
+    "CR": "DONE (delegated 5-subagent cold review; 14 findings filed; see CR-FINDINGS.md)"
+  },
+  "s3_cells_done": [],
+  "g_cells_done": [],
+  "s6_watcher_pid": null,
+  "findings": {
+    "P1": [
+      "hk-l5saf workloop stranded-dispatched",
+      "hk-3hozm workloop worker-slot-leak",
+      "hk-nddg1 bootreconcile main-only-provenance(LATENT)"
+    ],
+    "P2": [
+      "hk-cjqyn tmuxsubstrate ssh-drop false-green",
+      "hk-9ngiv watcher lost ErrProtocolMismatch",
+      "hk-hi53s SessionIDInterceptor unbounded-buffer",
+      "hk-13ff4 scrub secret-tail-leak",
+      "hk-bzol4 keeper self-hint sleep-gate bypass"
+    ],
+    "P3_known_issue": [
+      "hk-nqkoz scrub over-redaction",
+      "hk-n8yha cycler hot-spin",
+      "hk-3edb1 gitignore branch-not-restored",
+      "hk-btl1n remote-kill asymmetry",
+      "hk-o66xy empty-session-id ACK hang",
+      "hk-3dn16 keeper test-fragility/deflake"
+    ],
+    "known_P3_corpus_lint": "hk-uhxwd (pre-existing, reproduced)"
+  },
+  "eval_bugfix_adjudication": "evaltasks/eval-bugfix-* fixtures carry intentional // BUG markers; their test failures are CORRECT fixture behavior, EXCLUDED from green-tree verdict (run-greentree2.sh greps out eval-bugfix-).",
+  "teardown_baseline_snapshot": "/tmp/h-assessor/real-env-snapshot-baseline.txt",
+  "prior_findings_landed": "hk-okzy1 (P1 hook_fired), hk-ky7ye (Tier0 watchdog revive), hk-8m2j4 (P2 codexdriver RU-07) all fixed+closed pre-baseline",
+  "notes": "Session 3 resume. Prior sessions died relaunching green-tree in session-bound shells; now via harness bg task (survives reset, notifies on completion). Admiral gate msg received: baseline authorized at 35e4b3b9. Comms re-joined. Captain live, admiral stale 6m.",
+  "green_tree_confound_evidence": {
+    "pkg_build_failed": "string literal in internal/daemon/scenariogate_test.go:108",
+    "TestLimiter": "eval-bugfix-rate-limiter intentional fixture",
+    "scenariopkg_build_failed": "Go stdlib import fail => GOCACHE pruned (2.4M)",
+    "daemon_605s": "load/timeout"
+  },
+  "positive_confirmations": "merge-vs-strand/DOT wiring intact; H13 lost-wakeup NOT present; socket-bind ordering correct; hk-ky7ye supervisor fixes correct; H8 remote-kill correct; keeper green-tree failures = load flakes"
+}

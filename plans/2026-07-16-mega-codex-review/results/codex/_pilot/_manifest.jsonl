@@ -1,0 +1,10 @@
+{"chunk":"RU-03-calibration","status":"DONE","result":"findings-RU-03-calibration.json","tokens":155719,"exit":0}
+{"chunk":"RU-03-smoke-runexec","status":"DONE","result":"findings-RU-03-smoke-runexec.json","tokens":0,"exit":0}
+{"chunk":"RU-03-smoke-mergeq","status":"DONE","result":"findings-RU-03-smoke-mergeq.json","tokens":0,"exit":0}
+{"chunk":"RU-03-smoke-run","status":"DONE","result":"findings-RU-03-smoke-run.json","tokens":0,"exit":0}
+{"chunk":"RU-03-smoke-runexectest","status":"DONE","result":"findings-RU-03-smoke-runexectest.json","tokens":86653,"exit":0}
+{"chunk":"RU-03-crosscheck-runexec","status":"DONE","result":"findings-RU-03-crosscheck-runexec.json","tokens":0,"exit":0}
+{"chunk":"RU-03-crosscheck-mergeq","status":"DONE","result":"findings-RU-03-crosscheck-mergeq.json","tokens":0,"exit":0}
+{"chunk":"RU-03-crosscheck-run","status":"DONE","result":"findings-RU-03-crosscheck-run.json","tokens":0,"exit":0}
+{"chunk":"RU-03-crosscheck-runexectest","status":"DONE","result":"findings-RU-03-crosscheck-runexectest.json","tokens":86660,"exit":0}
+{"chunk":"RU-03-adjudication","status":"DONE","result":"condensed-RU-03.json","tokens":0,"exit":0}

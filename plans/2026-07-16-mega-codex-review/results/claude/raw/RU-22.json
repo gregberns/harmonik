@@ -1,0 +1,81 @@
+{
+  "chunk": "RU-22",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/scenario/asserteval.go",
+    "internal/scenario/matrixexpand.go",
+    "internal/scenario/crashrecovery.go",
+    "internal/scenario/postsuiteleaksensor.go",
+    "internal/scenario/orchdrive.go",
+    "internal/scenario/doc.go",
+    "cmd/harmonik/harness.go (runner wiring cross-check)",
+    "Makefile / scripts/scenario-gate.sh (gate classification)"
+  ],
+  "status": "reviewed",
+  "status_note": "Gate classification: NO file in internal/scenario carries a //go:build scenario tag (only GOOS-implicit _darwin/_linux splits). The whole package compiles + tests under the plain `check` tier (`go test ./...`), so NOTHING here is prune-safe by build-tag gating. The prune question instead resolves to `wired into the real runner (cmd/harmonik/harness.go) vs. structural-corpus theater`. Three large subsystems are the latter — see findings.",
+  "findings": [
+    {
+      "file": "internal/scenario/matrixexpand.go",
+      "line": 53,
+      "severity": "high",
+      "category": "test-theater",
+      "title": "SH-030 matrix expansion (ExpandMatrix) is never invoked by the real harness runner",
+      "detail": "ExpandMatrix / applyMatrixParams / matrixCartesianProduct (325 impl lines + matrixexpand_test.go 685 lines) implement per-cell template substitution and cartesian expansion. But the production runner cmd/harmonik/harness.go ranges over the raw parsed `discovered` scenarios (harness.go:356 `for _, entry := range discovered`) and NEVER calls scenario.ExpandMatrix (grep: ExpandMatrix appears only in internal/scenario). The only matrix touch in the runner is a cell COUNT in --dry-run (harness.go:298 harnessMatrixCellCount) and --list. Failure scenario: a scenario YAML declaring `matrix:` with `{{.param}}` placeholders in paths/binaries runs EXACTLY ONCE with the template markers unsubstituted (or missingkey behavior), instead of N substituted cells. SH-030/SH-005/SH-007 (per-cell expansion, collision detection, sorted ordering) are entirely unreached in production — a fully built + green-tested subsystem that proves nothing about real behavior.",
+      "suggested_fix": "Either wire ExpandMatrix into the harness.go execution loop (expand each discovered scenario into its cells before the run loop) or, if matrix is not a v0.1 runner feature, delete matrixexpand.go + tests and drop `matrix` from the loader. Do not leave it as green-tested dead surface."
+    },
+    {
+      "file": "internal/scenario/postsuiteleaksensor.go",
+      "line": 111,
+      "severity": "high",
+      "category": "dead-code",
+      "title": "SH-INV-002 post-suite leak sensor (CheckPostSuiteLeaks) is never called by the runner",
+      "detail": "The file's own contract (lines 91-92) states CheckPostSuiteLeaks 'MUST be called AFTER all scenario teardowns complete and BEFORE WriteSuiteResult.' The real runner writes the suite result at harness.go:583 (WriteSuiteResult) but NEVER calls CheckPostSuiteLeaks (grep: symbol appears only in internal/scenario + its own test). The three platform variants (postsuiteleaksensor_{linux,darwin,other}.go), the lease scan, and the lsof FD scan are all unreachable in production. Failure scenario: a teardown defect that leaks a live HARMONIK_RUN_ID process, a held lease.lock, or an open events.jsonl fd is silently never detected — the sensor that exists specifically to catch it is dormant. This is spec-drift (the spec's MUST is unmet) plus ~360 lines of dead + green-tested code.",
+      "suggested_fix": "Call CheckPostSuiteLeaks in harness.go after the per-scenario teardown loop and before WriteSuiteResult, threading ExecutedRunIDs and fixtureRoot, and surface report.HasLeaks() as a suite-level hygiene signal. If deferred, mark the sensor explicitly unwired rather than presenting it as active coverage."
+    },
+    {
+      "file": "internal/scenario/crashrecovery.go",
+      "line": 204,
+      "severity": "medium",
+      "category": "dead-code",
+      "title": "Crash-recovery fixture types + canonicalInvariantsFor are structural corpus with no runner path",
+      "detail": "CrashRecoveryFixture, CrashPoint, CrashRecoveryInvariant, and canonicalInvariantsFor (296 lines) model crash-injection scenarios (kill daemon at write-tree/update-ref/ENOSPC, assert 6 post-restart invariants). None is referenced outside crashrecovery_test.go (grep confirms; the one external hit in internal/core/intentlogentry_test.go is an unrelated name match). DriveOrchestration (orchdrive.go) has NO crash-injection hook, no CrashPoint arg, and evaluates none of the invariants — there is no code anywhere that arms a CrashPoint or checks a CrashRecoveryInvariant. canonicalInvariantsFor is unused even within the package outside its test. Failure scenario: the harness advertises crash-recovery conformance (per the elaborate spec-ref doc comments) but cannot execute a single crash scenario; the types validate their own JSON round-trips and nothing else.",
+      "suggested_fix": "Either land the crash-injection driver that consumes CrashRecoveryFixture, or move these types behind a clearly-labeled `not-yet-wired` boundary / delete until the driver exists. As-is it is theater that inflates apparent coverage."
+    },
+    {
+      "file": "cmd/harmonik/harness.go",
+      "line": 481,
+      "severity": "medium",
+      "category": "spec-drift",
+      "title": "Timeout branch skips best-effort assertion evaluation required by SH-026",
+      "detail": "The ErrScenarioTimeout contract documented on orchdrive.go:17-27 requires the caller, on timeout, to (1) read the partial JSONL log via ReadEventLog and (2) call EvaluateAssertions against the partial event set (assertions impossible due to missing events recorded passed=false, NOT skipped), then emit verdict=timeout with those AssertionResults. But harness.go's `case errors.Is(orchErr, scenario.ErrScenarioTimeout)` (481-484) only sets finalVerdict=timeout / finalFC=scenario-timeout and leaves assertionResults nil — it never reads the partial log or evaluates assertions. Only the default (non-error) branch (489-501) evaluates assertions. Failure scenario: a scenario that times out emits an empty AssertionResults array, so operators lose the partial-assertion diagnostics SH-026/SH-023 promise; the no-short-circuit best-effort record is silently dropped.",
+      "suggested_fix": "In the timeout case, ReadEventLog(absEvLogPath) best-effort and run EvaluateAssertions to populate assertionResults, keeping finalVerdict=timeout (timeout precedence rank 6 supersedes assertion-failed rank 7 per the doc)."
+    },
+    {
+      "file": "internal/scenario/asserteval.go",
+      "line": 300,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "checkSymlinkSafety only inspects the leaf; a symlinked parent dir escapes the workspace guard",
+      "detail": "checkSymlinkSafety Lstats only the fully-joined target path (line 301). If the leaf file itself is not a symlink it returns nil immediately (302-304) and EvalSymlinks is never run. But if an INTERMEDIATE directory component of pred.Path is a symlink pointing outside workspaceDir (e.g. workspace has `escape -> /etc` and pred.Path is `escape/passwd`), the leaf `escape/passwd` is a regular file, Lstat sees no symlink, and the guard passes. evalWorkspacePredicate then reads/regex-matches a file outside the per-scenario worktree. Failure scenario: a malicious or buggy fixture seeds a directory symlink; file_contents_equal/match assertions read arbitrary host files, defeating SH-022 workspace isolation and producing false-pass or host-data leakage into ActualValue.",
+      "suggested_fix": "Resolve the full path with filepath.EvalSymlinks (or walk each parent component) and confirm the resolved real path is within workspaceDir, rather than only Lstat-ing the leaf."
+    },
+    {
+      "file": "internal/scenario/asserteval.go",
+      "line": 167,
+      "severity": "low",
+      "category": "correctness",
+      "title": "jsonValuesEqual only equates float64 numbers; YAML-decoded int payload_match values never match",
+      "detail": "jsonValuesEqual compares numbers only via the float64/float64 branch (175-179). Event payloads are json.Unmarshal'd so their numbers are float64 (good), but payload_match EXPECTED values originate from the scenario file which may be YAML (scenariofile_yaml_test.go exists); yaml.v3 decodes integers as int, not float64. So an expected `count: 3` (int) compared against an actual 3.0 (float64) falls through every type branch and returns false at line 217. Failure scenario: a perfectly correct event with a matching numeric payload field is reported as a mismatch (assertion fails) purely because the expected value came in as a YAML int — silent false-negative in event assertions.",
+      "suggested_fix": "Normalize numeric comparison across int/int64/float64 (convert both operands to float64, or json round-trip the expected map) before equality; add an int-vs-float test case."
+    },
+    {
+      "file": "internal/scenario/orchdrive.go",
+      "line": 90,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Stale TODO claims TimeoutSecs is unwired, but harness.go already populates it",
+      "detail": "The TODO(SH-032/G-01) block (90-94) warns that the harness CLI 'must populate this from ScenarioFile.TimeoutSecs before calling DriveOrchestration' and 'MUST NOT call with TimeoutSecs==0 when the scenario declares a budget.' This is already done — harness.go:463 passes `TimeoutSecs: sf.TimeoutSecs`. The stale TODO misleads a reader into thinking timeout enforcement is unhooked when it is live, and invites a redundant future fix.",
+      "suggested_fix": "Delete the resolved TODO (or downgrade to a plain note documenting that zero disables enforcement), since the wiring exists at harness.go:463."
+    }
+  ]
+}

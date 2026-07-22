@@ -1,0 +1,617 @@
+level=warning msg="[runner/nolint_filter] Found unknown linters in //nolint directives: gocritic — intentional leak; lockfd must outlive this func stack., goerr113"
+internal/codexdriver/inputqueue.go:50:2: found a struct that contains a context.Context field (containedctx)
+	ctx   context.Context
+	^
+internal/codexdriver/session.go:209:2: Function `readLoop->handleFrame->handleServerRequest` should pass the context parameter (contextcheck)
+	go s.readLoop()
+	^
+internal/codexdriver/session.go:591:21: Function `closeInputAction` should pass the context parameter (contextcheck)
+		s.closeInputAction()
+		                  ^
+internal/eventbus/busimpl_cascade_drain_test.go:57:20: Function `TestBusImpl_ReentrantEmitDuringDrain_IsWaitedAndDelivered$1$1` should pass the context parameter (contextcheck)
+				cascadeOnce.Do(func() {
+				               ^
+internal/daemon/projectconfig_ru06_test.go:75:3: The copy of the 'for' variable "content" can be deleted (Go 1.22+) (copyloopvar)
+		content := content
+		^
+internal/queue/w4_regression_test.go:73:3: The copy of the 'for' variable "idx" can be deleted (Go 1.22+) (copyloopvar)
+		idx := idx
+		^
+internal/codexdriver/session.go:912:1: calculated cyclomatic complexity for function handleResponse is 16, max is 15 (cyclop)
+func (s *codexSession) handleResponse(f codexwire.Frame) {
+^
+internal/daemon/daemon.go:927:1: calculated cyclomatic complexity for function startWithHooks is 16, max is 15 (cyclop)
+func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) error {
+^
+internal/keeper/step.go:453:1: calculated cyclomatic complexity for function stepIdleGaugeTick is 16, max is 15 (cyclop)
+func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+^
+internal/daemon/router/router_test.go:9:2: import 'github.com/gregberns/harmonik/internal/daemon/router' is not allowed from list 'socketrouter': router is a pure daemon sub-package; daemon threads handler closures in, never the reverse (import-cycle caveat) (depguard)
+	socketrouter "github.com/gregberns/harmonik/internal/daemon/router"
+	^
+internal/queue/rpc_h6_concurrent_submit_test.go:19:2: import 'github.com/gregberns/harmonik/internal/queue' is not allowed from list 'queue' (depguard)
+	"github.com/gregberns/harmonik/internal/queue"
+	^
+internal/queue/rpc_hk3hh9w_append_rollback_test.go:27:2: import 'github.com/gregberns/harmonik/internal/queue' is not allowed from list 'queue' (depguard)
+	"github.com/gregberns/harmonik/internal/queue"
+	^
+internal/queue/w4_regression_test.go:16:2: import 'github.com/gregberns/harmonik/internal/queue' is not allowed from list 'queue' (depguard)
+	"github.com/gregberns/harmonik/internal/queue"
+	^
+cmd/harmonik/branch_reap_cmd.go:63:15: Error return value of `fmt.Fprintf` is not checked (errcheck)
+			fmt.Fprintf(stderr, "harmonik gc branches: unknown argument %q\n\n%s", args[i], branchReapUsage)
+			           ^
+cmd/harmonik/eval_cmd.go:180:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(stderr, "harmonik eval collect: reading existing output: %v\n", err)
+		           ^
+cmd/harmonik/eval_cmd.go:227:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(stdout, "harmonik eval collect: wrote %d record(s) to %s (%d already present, skipped)\n",
+	           ^
+cmd/harmonik/eval_cmd.go:243:15: Error return value of `f.Close` is not checked (errcheck)
+	defer f.Close()
+	             ^
+cmd/harmonik/harness.go:612:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(stderr, "harness: post-suite leak sensor: %v\n", leakErr)
+		           ^
+cmd/harmonik/harness.go:615:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(stderr, "harness: SH-INV-002 post-suite leak(s) detected (%d) — suite fails:\n",
+		           ^
+cmd/harmonik/harness.go:618:15: Error return value of `fmt.Fprintf` is not checked (errcheck)
+			fmt.Fprintf(stderr, "  - %s: %s\n", lk.Kind, lk.Detail)
+			           ^
+cmd/harmonik/init_cmd.go:124:15: Error return value of `fmt.Fprintf` is not checked (errcheck)
+			fmt.Fprintf(stderr, "harmonik init: unknown argument %q\n\n%s", args[i], initUsage)
+			           ^
+cmd/harmonik/promote_cmd.go:313:4: Error return value of `os.RemoveAll` is not checked (errcheck)
+			_ = os.RemoveAll(tmpDir)
+			^
+cmd/harmonik/promote_cmd.go:316:4: Error return value of `pruneCmd.Run` is not checked (errcheck)
+			_ = pruneCmd.Run()
+			^
+cmd/harmonik/smoke.go:446:17: Error return value of `fmt.Fprintf` is not checked (errcheck)
+					fmt.Fprintf(stderr, "harmonik smoke: [SIGNAL 3 FAIL] no commit referencing %s on branch %s\n",
+					           ^
+cmd/harmonik/supervise/restart.go:66:15: Error return value of `fmt.Fprintf` is not checked (errcheck)
+			fmt.Fprintf(stderr, "harmonik supervise restart: read config: %v\n", err)
+			           ^
+cmd/harmonik/supervise/restart.go:70:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(stderr, "harmonik supervise restart: stat config: %v\n", statErr)
+		           ^
+cmd/harmonik/wave4_cli_fixes_test.go:31:17: Error return value of `server.Close` is not checked (errcheck)
+	defer func() { _ = server.Close() }()
+	               ^
+cmd/harmonik/wave4_cli_fixes_test.go:34:18: Error return value of `client.Close` is not checked (errcheck)
+		defer func() { _ = client.Close() }()
+		               ^
+internal/codexdriver/driver_test.go:126:4: Error return value of `json.Unmarshal` is not checked (errcheck)
+			_ = json.Unmarshal(env.Params, &rp)
+			^
+internal/codexdriver/prespawn_internal_test.go:35:3: Error return value of `sess.Kill` is not checked (errcheck)
+		_ = sess.Kill(context.Background())
+		^
+internal/codexdriver/prespawn_internal_test.go:38:3: Error return value of `sess.Wait` is not checked (errcheck)
+		_ = sess.Wait(waitCtx)
+		^
+internal/codexdriver/prespawn_internal_test.go:70:3: Error return value of `sess.Kill` is not checked (errcheck)
+		_ = sess.Kill(context.Background())
+		^
+internal/codexdriver/resident.go:290:3: Error return value of `sess.Kill` is not checked (errcheck)
+		_ = sess.Kill(ctx)
+		^
+internal/codexdriver/resident_test.go:38:3: Error return value of `r.Close` is not checked (errcheck)
+		_ = r.Close(ctx)
+		^
+internal/codexdriver/resident_test.go:101:3: Error return value of `r.Close` is not checked (errcheck)
+		_ = r.Close(ctx)
+		^
+internal/codexdriver/resident_test.go:131:3: Error return value of `r.Close` is not checked (errcheck)
+		_ = r.Close(ctx)
+		^
+internal/codexdriver/resume_internal_test.go:44:3: Error return value of `sess.Kill` is not checked (errcheck)
+		_ = sess.Kill(context.Background())
+		^
+internal/codexdriver/resume_internal_test.go:47:3: Error return value of `sess.Wait` is not checked (errcheck)
+		_ = sess.Wait(waitCtx)
+		^
+internal/codexdriver/resume_internal_test.go:125:2: Error return value of `sess.Kill` is not checked (errcheck)
+	_ = sess.Kill(context.Background())
+	^
+internal/codexdriver/resume_internal_test.go:128:2: Error return value of `sess.Wait` is not checked (errcheck)
+	_ = sess.Wait(waitCtx)
+	^
+internal/core/budgetexhaustion_rc018_test.go:420:8: Error return value is not checked (errcheck)
+	plan, _ := PlanForVerdict(VerdictEscalateToHuman)
+	      ^
+internal/core/verdictexecution_rc025_test.go:193:10: Error return value is not checked (errcheck)
+			plan, _ := PlanForVerdict(v)
+			      ^
+internal/core/verdictexecution_rc025_test.go:212:8: Error return value is not checked (errcheck)
+	plan, _ := PlanForVerdict(VerdictResumeHere)
+	      ^
+internal/core/verdictexecution_rc025_test.go:237:8: Error return value is not checked (errcheck)
+	plan, _ := PlanForVerdict(VerdictResumeWithContext)
+	      ^
+internal/core/verdictexecution_rc025_test.go:260:8: Error return value is not checked (errcheck)
+	here, _ := PlanForVerdict(VerdictResumeHere)
+	      ^
+internal/core/verdictexecution_rc025_test.go:261:11: Error return value is not checked (errcheck)
+	withCtx, _ := PlanForVerdict(VerdictResumeWithContext)
+	         ^
+internal/core/verdictexecution_rc025_test.go:282:8: Error return value is not checked (errcheck)
+	plan, _ := PlanForVerdict(VerdictResetToCheckpoint)
+	      ^
+internal/core/verdictexecution_rc025_test.go:308:8: Error return value is not checked (errcheck)
+	plan, _ := PlanForVerdict(VerdictReopenBead)
+	      ^
+internal/core/verdictexecution_rc025_test.go:333:8: Error return value is not checked (errcheck)
+	plan, _ := PlanForVerdict(VerdictAcceptCloseWithNote)
+	      ^
+internal/core/verdictexecution_rc025_test.go:357:8: Error return value is not checked (errcheck)
+	plan, _ := PlanForVerdict(VerdictNoOpAccept)
+	      ^
+internal/core/verdictexecution_rc025_test.go:381:8: Error return value is not checked (errcheck)
+	plan, _ := PlanForVerdict(VerdictEscalateToHuman)
+	      ^
+internal/core/verdictexecution_rc025_test.go:419:9: Error return value is not checked (errcheck)
+		plan, _ := PlanForVerdict(v)
+		      ^
+internal/core/verdictexecution_rc025_test.go:470:10: Error return value is not checked (errcheck)
+			plan, _ := PlanForVerdict(v)
+			      ^
+internal/core/verdictexecution_rc025_test.go:499:10: Error return value is not checked (errcheck)
+			plan, _ := PlanForVerdict(v)
+			      ^
+internal/core/verdictexecution_rc025_test.go:528:10: Error return value is not checked (errcheck)
+			plan, _ := PlanForVerdict(v)
+			      ^
+internal/core/verdictexecution_rc025_test.go:555:9: Error return value is not checked (errcheck)
+		plan, _ := PlanForVerdict(v)
+		      ^
+internal/core/verdictexecution_rc025_test.go:586:9: Error return value is not checked (errcheck)
+		plan, _ := PlanForVerdict(v)
+		      ^
+internal/core/verdictexecution_rc025_test.go:614:9: Error return value is not checked (errcheck)
+		plan, _ := PlanForVerdict(v)
+		      ^
+internal/daemon/brhistoryarchiveprune_hk8vnwg_test.go:146:2: Error return value of `os.Chtimes` is not checked (errcheck)
+	_ = os.Chtimes(stray, old, old)
+	^
+internal/daemon/brhistoryrotate.go:308:4: Error return value of `os.Remove` is not checked (errcheck)
+			_ = os.Remove(filepath.Join(archiveDir, sidecar)) // best-effort; may not exist
+			^
+internal/daemon/hk3hozm_slot_leak_test.go:112:5: Error return value of `reg.ForAgent` is not checked (errcheck)
+	_, _ = reg.ForAgent(core.AgentTypeClaudeCode) // seal
+	   ^
+internal/daemon/l5saf_localonly_strand_test.go:125:29: Error return value of `daemon.ExportedRunWorkLoop` is not checked (errcheck)
+		daemon.ExportedRunWorkLoop(ctx, deps)
+		                          ^
+internal/daemon/sessionidinterceptor_bufbound_hkhi53s_test.go:29:12: Error return value of `json.Marshal` is not checked (errcheck)
+	capsData, _ := json.Marshal(capsMsg)
+	          ^
+internal/daemon/socketdispatch_wire_test.go:88:6: Error return value of `clientConn.Write` is not checked (errcheck)
+		_, _ = clientConn.Write(reqBytes)
+		   ^
+internal/daemon/socketdispatch_wire_test.go:91:2: Error return value of `clientConn.SetReadDeadline` is not checked (errcheck)
+	_ = clientConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	^
+internal/daemon/socketdispatch_wire_test.go:184:5: Error return value of `json.Marshal` is not checked (errcheck)
+	b, _ := json.Marshal(s)
+	   ^
+internal/daemon/tmuxsubstrate.go:1488:3: Error return value of `w.adapter.KillWindow` is not checked (errcheck)
+		_ = w.adapter.KillWindow(ctx, w.handle)
+		^
+internal/eventbus/busimpl_cascade_drain_test.go:59:6: Error return value of `bus.Emit` is not checked (errcheck)
+					_ = bus.Emit(context.Background(), cascadeChildType, cascadePayload(t))
+					^
+internal/eventbus/busimpl_h7_drain_race_test.go:61:5: Error return value of `bus.Emit` is not checked (errcheck)
+				_ = bus.Emit(context.Background(), h7EventType, payload)
+				^
+internal/eventbus/busimpl_h7_drain_race_test.go:71:5: Error return value of `bus.Drain` is not checked (errcheck)
+				_ = bus.Drain(context.Background())
+				^
+internal/handler/handler.go:347:3: Error return value of `sess.Kill` is not checked (errcheck)
+		_ = sess.Kill(ctx)
+		^
+internal/handler/handler.go:434:3: Error return value of `adapted.Kill` is not checked (errcheck)
+		_ = adapted.Kill(ctx)
+		^
+internal/handler/session.go:436:4: Error return value of `s.waitOwner.Wait` is not checked (errcheck)
+			_ = s.waitOwner.Wait()
+			^
+internal/handler/session_w4_test.go:30:3: Error return value of `sess.Kill` is not checked (errcheck)
+		_ = sess.Kill(killCtx)
+		^
+internal/handler/session_w4_test.go:31:3: Error return value of `sess.Wait` is not checked (errcheck)
+		_ = sess.Wait(context.Background())
+		^
+internal/hookrelay/hookrelay.go:565:16: Error return value of `fmt.Fprintf` is not checked (errcheck)
+				fmt.Fprintf(stderr, "hook-relay: dial failed (%v), retrying in %v\n", dialErr, retryDelay)
+				           ^
+internal/hookrelay/hookrelay_test.go:151:18: Error return value of `ln.Close` is not checked (errcheck)
+		defer func() { _ = ln.Close() }()
+		               ^
+internal/hookrelay/hookrelay_test.go:156:18: Error return value of `conn.Close` is not checked (errcheck)
+		defer func() { _ = conn.Close() }()
+		               ^
+internal/hookrelay/hookrelay_test.go:164:6: Error return value of `fmt.Fprintln` is not checked (errcheck)
+		_, _ = fmt.Fprintln(conn, ackJSON)
+		   ^
+internal/keeper/presence_reachability_hk6nz2j_test.go:32:11: Error return value of `json.Marshal` is not checked (errcheck)
+	payload, _ := json.Marshal(map[string]any{
+	         ^
+internal/keeper/presence_reachability_hk6nz2j_test.go:38:6: Error return value of `json.Marshal` is not checked (errcheck)
+	ev, _ := json.Marshal(map[string]any{
+	    ^
+internal/keeper/presence_reachability_hk6nz2j_test.go:56:17: Error return value of `f.Close` is not checked (errcheck)
+	defer func() { _ = f.Close() }()
+	               ^
+internal/lifecycle/crashrecovery_uplift_hkfgy9o_test.go:265:17: Error return value of `held.Close` is not checked (errcheck)
+	defer func() { _ = held.Close() }()
+	               ^
+internal/lifecycle/crashrecovery_uplift_hkfgy9o_test.go:275:17: Error return value of `competitor.Close` is not checked (errcheck)
+	defer func() { _ = competitor.Close() }()
+	               ^
+internal/lifecycle/orphansweep_w4_pidreuse_test.go:98:3: Error return value of `cmd.Process.Kill` is not checked (errcheck)
+		_ = cmd.Process.Kill()
+		^
+internal/lifecycle/orphansweep_w4_pidreuse_test.go:99:3: Error return value of `cmd.Wait` is not checked (errcheck)
+		_ = cmd.Wait()
+		^
+internal/lifecycle/tmux/subcommand.go:102:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(stderr, "hk tmux-start: cannot locate tmux binary: %v\n", err)
+		           ^
+internal/queue/rpc_hk3hh9w_append_rollback_test.go:128:21: Error return value of `os.Chmod` is not checked (errcheck)
+	t.Cleanup(func() { _ = os.Chmod(harmonikDir, 0o755) }) // let TempDir cleanup succeed
+	                   ^
+internal/structuredlog/handler_test.go:675:3: Error return value of `h.Close` is not checked (errcheck)
+		_ = h.Close()
+		^
+internal/workers/health.go:87:7: Error return value of `reg.SetEnabledByName` is not checked (errcheck)
+			_, _ = reg.SetEnabledByName(w.Name, false)
+			   ^
+internal/workers/health.go:91:6: Error return value of `reg.SetEnabledByName` is not checked (errcheck)
+		_, _ = reg.SetEnabledByName(w.Name, true)
+		   ^
+internal/workspace/claudeconfigdir_hk8juwz_test.go:145:12: Error return value is not checked (errcheck)
+	projects, _ := got["projects"].(map[string]interface{})
+	          ^
+internal/workspace/claudeconfigdir_hk8juwz_test.go:174:8: Error return value of `os.ReadFile` is not checked (errcheck)
+	data, _ := os.ReadFile(filepath.Join(dir, ".claude.json"))
+	      ^
+internal/workspace/leaselock.go:106:2: Error return value of `os.Remove` is not checked (errcheck)
+	_ = os.Remove(tmpPath)
+	^
+internal/workspace/mergedispatch_wm018a.go:207:3: Error return value of `os.Remove` is not checked (errcheck)
+		_ = os.Remove(filepath.Join(gitDir, "SQUASH_MSG"))
+		^
+internal/workspace/mergedispatch_wm018a.go:208:3: Error return value of `os.Remove` is not checked (errcheck)
+		_ = os.Remove(filepath.Join(gitDir, "MERGE_MSG"))
+		^
+internal/brcli/terminaltransition_bi010.go:565:4: non-wrapping format verb for fmt.Errorf. Use `%w` to format errors (errorlint)
+			labelResult.BrErr, labelResult.ExitCode, string(labelResult.Stderr))
+			^
+internal/codexdriver/resident_test.go:192:78: comparing with != will fail on wrapped errors. Use errors.Is to check for a specific error (errorlint)
+	if _, err := r.Enqueue(ctx, handler.InputRequest{Payload: []byte("late")}); err != ErrResidentClosed {
+	                                                                            ^
+internal/daemon/sessionidinterceptor_bufbound_hkhi53s_test.go:49:6: comparing with == will fail on wrapped errors. Use errors.Is to check for a specific error (errorlint)
+		if err == io.EOF {
+		   ^
+internal/daemon/versionnego_w4_test.go:57:43: comparing with != will fail on wrapped errors. Use errors.Is to check for a specific error (errorlint)
+	if _, err := ic.Read(buf); err != nil && err != io.EOF {
+	                                         ^
+internal/workspace/autostatusmarker.go:111:73: non-wrapping format verb for fmt.Errorf. Use `%w` to format errors (errorlint)
+			return nil, fmt.Errorf("%w: cat %s: %v", ErrRemoteTransport, target, err)
+			                                                                     ^
+internal/workspace/reviewverdict.go:197:74: non-wrapping format verb for fmt.Errorf. Use `%w` to format errors (errorlint)
+				return nil, fmt.Errorf("%w: cat %s: %v", ErrRemoteTransport, target, err)
+				                                                                     ^
+internal/eventbus/busimpl_cascade_drain_test.go:52:4: missing cases in switch of type core.EventType: core.EventTypeRunStarted, core.EventTypeRunCompleted, core.EventTypeRunFailed, core.EventTypeStateEntered, core.EventTypeStateExited, core.EventTypeTransitionEvent, core.EventTypeCheckpointWritten, core.EventTypeOutcomeEmitted, core.EventTypeSubWorkflowEntered, core.EventTypeSubWorkflowExited, core.EventTypeNodeDispatchRequested, core.EventTypeNodeDispatchDecided, core.EventTypeBeadClosed, core.EventTypeEpicCompleted, core.EventTypeWorkingTreeRefreshFailed, core.EventTypeImplementerEscapedWorktree, core.EventTypeImplementerPhaseComplete, core.EventTypeMergeBuildFailed, core.EventTypeHookFired, core.EventTypeHookFailed, core.EventTypeHookVerdictPersisted, core.EventTypeGateAllowed, core.EventTypeGateDenied, core.EventTypeGateEscalated, core.EventTypeGuardReordered, core.EventTypeGuardFailed, core.EventTypeControlPointsRegistered, core.EventTypeControlPointsRegistrationStarted, core.EventTypeVerdictEnvelopeMismatch, core.EventTypePolicyExpressionExceededCost, core.EventTypeSkillsResolved, core.EventTypeGateDefinitionDrift, core.EventTypeGateRedefinedUnderCat6, core.EventTypeAgentReady, core.EventTypeAgentStarted, core.EventTypeAgentOutputChunk, core.EventTypeAgentCompleted, core.EventTypeAgentFailed, core.EventTypeAgentHeartbeat, core.EventTypeAgentRateLimitStatus, core.EventTypeSessionLogLocation, core.EventTypeSkillsProvisioned, core.EventTypeHandlerCapabilities, core.EventTypeAgentWarningSilentHang, core.EventTypeAgentResumedAfterWarning, core.EventTypeAgentSoftTerminating, core.EventTypeAgentHardTerminating, core.EventTypeLaunchInitiated, core.EventTypeAgentReadyTimeout, core.EventTypePostAgentReadyHang, core.EventTypeLifecycleTransition, core.EventTypePasteInjectFailed, core.EventTypeLaunchStallDetected, core.EventTypeAgentReadyStallDetected, core.EventTypeSpawnCapBlocked, core.EventTypeImplementerBudgetExceeded, core.EventTypeTmuxNewWindowTimeout, core.EventTypeCodexBillingGuard, core.EventTypePiBillingGuard, core.EventTypeReviewerBudgetExceeded, core.EventTypeBudgetWarning, core.EventTypeBudgetAccrual, core.EventTypeBudgetExhausted, core.EventTypeWorkspaceCreated, core.EventTypeWorkspaceLeased, core.EventTypeWorkspaceMergeStatus, core.EventTypeWorkspaceDiscarded, core.EventTypeWorkspaceInterrupted, core.EventTypeMergeConflictEscalation, core.EventTypeReconciliationStarted, core.EventTypeReconciliationCategoryAssigned, core.EventTypeReconciliationVerdictEmitted, core.EventTypeReconciliationVerdictExecuted, core.EventTypeReconciliationVerdictMalformed, core.EventTypeReconciliationBudgetExhausted, core.EventTypeReconciliationVerdictStale, core.EventTypeStoreDivergenceDetected, core.EventTypeOperatorEscalationRequired, core.EventTypeDivergenceInconclusive, core.EventTypeReconciliationDispatchDeduplicated, core.EventTypeReconciliationDetectorPanic, core.EventTypeReconciliationVerdictExecutionRetry, core.EventTypeBeadTerminalTransitionRecovered, core.EventTypeReconciliationCompleted, core.EventTypeReconciliationMismatchObserved, core.EventTypeDaemonStarted, core.EventTypeDaemonReady, core.EventTypeDaemonShutdown, core.EventTypeDaemonStartupFailed, core.EventTypeDaemonDegraded, core.EventTypeOperatorPauseStatus, core.EventTypeOperatorResuming, core.EventTypeOperatorStopped, core.EventTypeOperatorUpgrading, core.EventTypeOperatorUpgradeCompleted, core.EventTypeOperatorUpgradeRejected, core.EventTypeOperatorCommandRejected, core.EventTypeDispatchDeferred, core.EventTypeDaemonOrphanSweepCompleted, core.EventTypeInfrastructureUnavailable, core.EventTypeOperatorCommandFailed, core.EventTypeOperatorEscalationCleared, core.EventTypeDaemonConfig, core.EventTypeDiskLow, core.EventTypeSupervisorRevival, core.EventTypeDashboardStale, core.EventTypeDashboardRefreshed, core.EventTypeImplementerResumed, core.EventTypeReviewerLaunched, core.EventTypeReviewerVerdict, core.EventTypeIterationCapHit, core.EventTypeNoProgressDetected, core.EventTypeReviewLoopCycleComplete, core.EventTypeReviewBypassed, core.EventTypeReviewFixupStalled, core.EventTypeMetric, core.EventTypeConsumerFailed, core.EventTypeDeadLetterEnqueued, core.EventTypeBusOverflow, core.EventTypeRedactionFailed, core.EventTypeBeadLabelConflict, core.EventTypeBeadClaimSkipped, core.EventTypeHarnessSelected, core.EventTypeModelSelected, core.EventTypeProviderSelected, core.EventTypeHandlerPaused, core.EventTypeHandlerResumed, core.EventTypeQueueItemHeldForHandlerPause, core.EventTypeQueueSubmitted, core.EventTypeQueueGroupStarted, core.EventTypeQueueGroupCompleted, core.EventTypeQueuePaused, core.EventTypeQueueAppended, core.EventTypeQueueItemDeferredForLedgerDep, core.EventTypeQueueItemReconciled, core.EventTypeRunStale, core.EventTypeDecisionRequired, core.EventTypeDecisionAcknowledged, core.EventTypeGateDecisionRecorded, core.EventTypeSessionKeeperWarn, core.EventTypeSessionKeeperNoGauge, core.EventTypeSessionKeeperHandoffStarted, core.EventTypeSessionKeeperCycleComplete, core.EventTypeSessionKeeperCycleAborted, core.EventTypeSessionKeeperClearUnconfirmed, core.EventTypeSessionKeeperCycleRecovered, core.EventTypeSessionKeeperPrecompactBlocked, core.EventTypeSessionKeeperRespawnAttempted, core.EventTypeSessionKeeperOperatorAttached, core.EventTypeSessionKeeperRestartNowBlocked, core.EventTypeSessionKeeperRestartNow, core.EventTypeSessionKeeperLivePaneRecover, core.EventTypeSessionKeeperAckTimeout, core.EventTypeSessionKeeperBlind, core.EventTypeSessionKeeperIdleCrew, core.EventTypeSessionKeeperHardCeiling, core.EventTypeSessionKeeperWatcherDead, core.EventTypeLoopObservedPhantomDone, core.EventTypeReviewGateAnomaly, core.EventTypeStaleOpenBeadDetected, core.EventTypeWorkerUnhealthy, core.EventTypeWorkerOffline, core.EventTypeWorkerTunnelFailed, core.EventTypeWorkerReport, core.EventTypeResourceBreach, core.EventTypeDecisionNeeded, core.EventTypeDecisionResolved, core.EventTypeDecisionWithdrawn, core.EventTypeGovernorSignal, core.EventTypeBeadSyncFailed, core.EventTypeBeadLedgerRecovered, core.EventTypeBeadLedgerCorrupt, core.EventTypeBeadLedgerConflictAudit, core.EventTypeOrphanedChildBead, core.EventTypeLivenessHalt, core.EventTypeStallDetected, core.EventTypeSessionKeeperHandoffWritten, core.EventTypeSessionKeeperModelDone, core.EventTypeSessionKeeperClearSent, core.EventTypeSessionKeeperNewSessionUp (exhaustive)
+			switch core.EventType(evt.Type) {
+			^
+cmd/harmonik/digest.go:243:4: use of `fmt.Printf` forbidden because "use the structured logger" (forbidigo)
+			fmt.Printf("  %s  type=%s  run=%s\n", digestShortID(ev.EventID), ev.Type, digestShortID(ev.RunID))
+			^
+cmd/harmonik/digest.go:245:4: use of `fmt.Printf` forbidden because "use the structured logger" (forbidigo)
+			fmt.Printf("  %s  type=%s\n", digestShortID(ev.EventID), ev.Type)
+			^
+internal/codexdriver/resident.go:72:3: use of `panic` forbidden because "return an error; panics only in main/init" (forbidigo)
+		panic("codexdriver: NewCodexSubstrate did not return *codexSubstrate")
+		^
+internal/daemon/router/router.go:69:3: use of `panic` forbidden because "return an error; panics only in main/init" (forbidigo)
+		panic(fmt.Sprintf("socketrouter: duplicate op registered: %q", op))
+		^
+internal/daemon/brhistoryrotate.go:240:1: cognitive complexity 49 of func `pruneBrHistoryArchive` is high (> 20) (gocognit)
+func pruneBrHistoryArchive(ctx context.Context, archiveDir string, keepN int, maxAge time.Duration, now time.Time) {
+^
+internal/daemon/projectconfig.go:1515:1: cognitive complexity 23 of func `unknownYAMLKey` is high (> 20) (gocognit)
+func unknownYAMLKey(node *yaml.Node, typ reflect.Type, prefix string) (string, bool) {
+^
+internal/daemon/tmuxsubstrate.go:871:1: cognitive complexity 40 of func `(*tmuxSubstrate).spawnWindowVia` is high (> 20) (gocognit)
+func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.SubstrateSpawn, adapter tmux.Adapter, sessionName string, remote bool, runner tmux.CommandRunner) (handler.SubstrateSession, error) {
+^
+internal/daemon/sessionidinterceptor_bufbound_hkhi53s_test.go:30:14: appendAssign: append result not assigned to the same slice (gocritic)
+	capsLine := append(capsData, '\n')
+	            ^
+internal/daemon/versionnego_w4_test.go:108:22: whyNoLint: include an explanation for nolint directive (gocritic)
+	defer pw.Close()    //nolint:errcheck
+	                    ^
+internal/handlercontract/watcher_hc011.go:701:1: unnamedResult: consider giving a name to these results (gocritic)
+func buildWatcherFailedPayload(sessionID core.SessionID, runID, sub string, cause error) (core.EventType, []byte) {
+^
+internal/keeper/watcher_noise_reduction_test.go:311:18: whyNoLint: include an explanation for nolint directive (gocritic)
+		_ = w.Run(ctx) //nolint:errcheck
+		               ^
+internal/keeper/watcher_warnreload_223zs_test.go:19:1: unnamedResult: consider giving a name to these results (gocritic)
+func warnReloadFixtureWatcher(t *testing.T, fn func() (WarnMessageTexts, error)) (*Watcher, string) {
+^
+internal/queue/rpc_h6_concurrent_submit_test.go:36:2: badLock: defer is missing, mutex is unlocked immediately (gocritic)
+	f.mu.Unlock() //nolint:staticcheck // SA2001: intentional lock/unlock to model non-reentrant re-lock
+	^
+internal/workspace/mergedispatch_wm018a.go:204:7: emptyStringTest: replace `len(gitDir) > 0` with `gitDir != ""` (gocritic)
+		for len(gitDir) > 0 && (gitDir[len(gitDir)-1] == '\n' || gitDir[len(gitDir)-1] == '\r') {
+		    ^
+internal/workspace/workspace_w4_regressions_test.go:137:5: stringXbytes: suggestion: !bytes.Equal(sharedAfter, sharedBefore) (gocritic)
+	if string(sharedAfter) != string(sharedBefore) {
+	   ^
+cmd/harmonik/config_keeper_delivery_e1mdc_test.go:77:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	          ^
+cmd/harmonik/eval_cmd.go:236:12: G304: Potential file inclusion via variable (gosec)
+	f, err := os.Open(path)
+	          ^
+cmd/harmonik/wave4_cli_fixes_test.go:106:10: G204: Subprocess launched with a potential tainted input or cmd arguments (gosec)
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		       ^
+cmd/harmonik/wave4_cli_fixes_test.go:201:15: G304: Potential file inclusion via variable (gosec)
+	data, err := os.ReadFile(outputPath)
+	             ^
+internal/daemon/brhistoryarchiveprune_hk8vnwg_test.go:22:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(payload, []byte("snapshot"), 0o644); err != nil {
+	          ^
+internal/daemon/brhistoryarchiveprune_hk8vnwg_test.go:25:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(sidecar, []byte("{}"), 0o644); err != nil {
+	          ^
+internal/daemon/brhistoryarchiveprune_hk8vnwg_test.go:105:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(orphan, []byte("{}"), 0o644); err != nil {
+	          ^
+internal/daemon/brhistoryarchiveprune_hk8vnwg_test.go:114:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(youngOrphan, []byte("{}"), 0o644); err != nil {
+	          ^
+internal/daemon/brhistoryarchiveprune_hk8vnwg_test.go:142:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(stray, []byte("keep me"), 0o644); err != nil {
+	          ^
+internal/daemon/claudelaunchspec_configdir_hk8juwz_test.go:79:16: G304: Potential file inclusion via variable (gosec)
+	data, rerr := os.ReadFile(isoCfg)
+	              ^
+internal/daemon/hknddg1_crewqueue_provenance_test.go:91:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), 0o755); err != nil {
+	          ^
+internal/daemon/hknddg1_crewqueue_provenance_test.go:114:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(ownedDir, 0o755); err != nil {
+	          ^
+internal/daemon/tmuxsubstrate_w4c_test.go:190:14: G204: Subprocess launched with variable (gosec)
+	out, err := exec.Command("/bin/sh", "-c", script).Output()
+	            ^
+internal/keeper/nonce_provenance_hk0hk8n_test.go:76:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o755); err != nil {
+	          ^
+internal/keeper/presence_reachability_hk6nz2j_test.go:52:12: G304: Potential file inclusion via variable (gosec)
+	f, err := os.Create(path)
+	          ^
+internal/keeper/watcher_noise_reduction_test.go:262:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	          ^
+internal/keeper/watcher_warnreload_223zs_test.go:23:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	          ^
+internal/keeper/watcher_warnreload_223zs_test.go:28:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(cfgPath, []byte("schema_version: 1\n"), 0o644); err != nil {
+	          ^
+internal/lifecycle/crashrecovery_uplift_hkfgy9o_test.go:271:25: G304: Potential file inclusion via variable (gosec)
+	competitor, openErr := os.OpenFile(lockPath, os.O_RDWR, 0o600)
+	                       ^
+internal/lifecycle/gitmergecommitscanner_h3_test.go:45:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(fname, []byte("work for "+string(beadID)+"\n"), 0o644); err != nil {
+	          ^
+internal/lifecycle/gitmergecommitscanner_h3_test.go:53:9: G204: Subprocess launched with a potential tainted input or cmd arguments (gosec)
+	cmd := exec.Command("git", "commit", "-m",
+		"feat: work\n\nHarmonik-Bead-ID: "+string(beadID))
+internal/lifecycle/gitmergecommitscanner_h3_test.go:90:12: G204: Subprocess launched with a potential tainted input or cmd arguments (gosec)
+	revCmd := exec.Command("git", "revert", "--no-edit", string(shaOut[:len(shaOut)-1]))
+	          ^
+internal/lifecycle/orphansweep_w4_pidreuse_test.go:198:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	          ^
+internal/lifecycle/orphansweep_w4_pidreuse_test.go:228:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	          ^
+internal/lifecycle/orphansweep_w4_pidreuse_test.go:262:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(filepath.Join(intentsDir, "subdir"), 0o755); err != nil {
+	          ^
+internal/mergeq/mergeq_test.go:137:28: G115: integer overflow conversion int -> uint64 (gosec)
+				if j.seq != base+uint64(i) {
+				                       ^
+internal/queue/rpc_hk3hh9w_append_rollback_test.go:125:12: G302: Expect file permissions to be 0600 or less (gosec)
+	if err := os.Chmod(harmonikDir, 0o500); err != nil {
+	          ^
+internal/scenario/coreloopproof_fixture_drift_test.go:74:19: G304: Potential file inclusion via variable (gosec)
+	seedData, err := os.ReadFile(filepath.Join(dir, "seed-beads.json"))
+	                 ^
+internal/scenario/coreloopproof_fixture_drift_test.go:103:20: G304: Potential file inclusion via variable (gosec)
+	cellsData, err := os.ReadFile(filepath.Join(dir, "cells.json"))
+	                  ^
+internal/scenario/sh020_asserteval_test.go:841:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("host secret"), 0o644); err != nil {
+	          ^
+internal/scenario/sh020_asserteval_test.go:871:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+	          ^
+internal/scenario/sh020_asserteval_test.go:874:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(filepath.Join(nested, "ok.txt"), []byte("inside"), 0o644); err != nil {
+	          ^
+internal/workspace/claudetheme_hkoga33_test.go:20:15: G304: Potential file inclusion via variable (gosec)
+	data, err := os.ReadFile(path)
+	             ^
+internal/workspace/claudetheme_hkoga33_test.go:37:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+	          ^
+internal/workspace/gitignorehygiene.go:328:17: G204: Subprocess launched with variable (gosec)
+	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+	               ^
+internal/workspace/gitignorehygiene_h1_branch_test.go:19:14: G204: Subprocess launched with variable (gosec)
+	out, err := exec.Command("git", full...).Output()
+	            ^
+internal/workspace/gitignorehygiene_h1_branch_test.go:67:15: G304: Potential file inclusion via variable (gosec)
+	data, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	             ^
+internal/workspace/gitignorehygiene_hk3edb1_restore_test.go:27:15: G204: Subprocess launched with a potential tainted input or cmd arguments (gosec)
+		out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+		            ^
+internal/workspace/gitignorehygiene_hk3edb1_restore_test.go:68:15: G304: Potential file inclusion via variable (gosec)
+	data, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	             ^
+internal/workspace/gitignorehygiene_hk3edb1_restore_test.go:88:15: G204: Subprocess launched with a potential tainted input or cmd arguments (gosec)
+		out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+		            ^
+internal/workspace/gitignorehygiene_hk3edb1_restore_test.go:123:15: G304: Potential file inclusion via variable (gosec)
+	data, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	             ^
+internal/workspace/orphansweep_h2_test.go:35:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(filepath.Dir(leaseLockPath), 0o755); err != nil {
+	          ^
+internal/workspace/orphansweep_h2_test.go:38:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(leaseLockPath, []byte(`{"run_id":"trunc`), 0o644); err != nil {
+	          ^
+internal/workspace/orphansweep_h2_test.go:75:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(filepath.Dir(leaseLockPath), 0o755); err != nil {
+	          ^
+internal/workspace/orphansweep_h2_test.go:78:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(leaseLockPath, []byte("not json at all"), 0o644); err != nil {
+	          ^
+internal/workspace/orphansweep_h2_test.go:136:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(editPath, []byte("edited in place\n"), 0o644); err != nil {
+	          ^
+internal/workspace/workspace_w4_regressions_test.go:97:12: G301: Expect directory permissions to be 0750 or less (gosec)
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+	          ^
+internal/workspace/workspace_w4_regressions_test.go:102:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(filepath.Join(taskPath, "shared.txt"), []byte("task version\n"), 0o644); err != nil {
+	          ^
+internal/workspace/workspace_w4_regressions_test.go:110:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(filepath.Join(integPath, "shared.txt"), []byte("integration version\n"), 0o644); err != nil {
+	          ^
+internal/workspace/workspace_w4_regressions_test.go:117:23: G304: Potential file inclusion via variable (gosec)
+	sharedBefore, err := os.ReadFile(filepath.Join(integPath, "shared.txt"))
+	                     ^
+internal/workspace/workspace_w4_regressions_test.go:133:22: G304: Potential file inclusion via variable (gosec)
+	sharedAfter, err := os.ReadFile(filepath.Join(integPath, "shared.txt"))
+	                    ^
+internal/daemon/workloop.go:3631:4: naked return in func `beadRunOne` with 2234 lines of code (nakedret)
+			return
+			^
+internal/lifecycle/orphansweep.go:865:3: error is not nil (line 861) but it returns nil (nilerr)
+		return nil, false, nil
+		^
+internal/workspace/claudetrust_wm040b.go:392:3: error is not nil (line 388) but it returns nil (nilerr)
+		return false, nil
+		^
+cmd/harmonik/promote_cmd.go:314:28: os/exec.Command must not be called. use os/exec.CommandContext (noctx)
+			pruneCmd := exec.Command("git", "worktree", "prune")
+			                        ^
+internal/keeper/tmuxresolve.go:348:12: log/slog.Warn must not be called. use log/slog.WarnContext (noctx)
+		slog.Warn("keeper: recentTranscriptTurn: transcript scan truncated (over-long line)",
+		         ^
+internal/lifecycle/gitmergecommitscanner_h3_test.go:25:22: os/exec.Command must not be called. use os/exec.CommandContext (noctx)
+		cmd := exec.Command("git", args...)
+		                   ^
+internal/lifecycle/gitmergecommitscanner_h3_test.go:48:21: os/exec.Command must not be called. use os/exec.CommandContext (noctx)
+	add := exec.Command("git", "add", ".")
+	                   ^
+internal/lifecycle/gitmergecommitscanner_h3_test.go:84:24: os/exec.Command must not be called. use os/exec.CommandContext (noctx)
+	shaCmd := exec.Command("git", "rev-parse", "HEAD")
+	                      ^
+internal/lifecycle/orphansweep_w4_pidreuse_test.go:89:21: os/exec.Command must not be called. use os/exec.CommandContext (noctx)
+	cmd := exec.Command("sh", "-c", `trap '' TERM; echo ready; sleep 60`)
+	                   ^
+internal/structuredlog/handler_test.go:645:18: (*log/slog.Logger).Info must not be called. use (*log/slog.Logger).InfoContext (noctx)
+	slog.New(h).Info("after close")
+	                ^
+internal/structuredlog/handler_test.go:667:16: (*log/slog.Logger).Info must not be called. use (*log/slog.Logger).InfoContext (noctx)
+				logger.Info("racing write", "j", j)
+				           ^
+internal/workspace/claudetheme_hkoga33_test.go:158:21: os/exec.Command must not be called. use os/exec.CommandContext (noctx)
+	cmd := exec.Command("python3", "-")
+	                   ^
+internal/daemon/brhistoryrotate.go:270:3: directive `//nolint:gosec // G304: archiveDir constructed from operator-supplied projectDir; not user input.` is unused for linter "gosec" (nolintlint)
+		//nolint:gosec // G304: archiveDir constructed from operator-supplied projectDir; not user input.
+		^
+internal/daemon/brhistoryrotate.go:325:4: directive `//nolint:gosec // G304: archiveDir constructed from operator-supplied projectDir; not user input.` is unused for linter "gosec" (nolintlint)
+			//nolint:gosec // G304: archiveDir constructed from operator-supplied projectDir; not user input.
+			^
+internal/lifecycle/tmux/osadapter.go:550:3: directive `//nolint:gosec // G204: bufferName was validated by LoadBuffer above` is unused for linter "gosec" (nolintlint)
+		//nolint:gosec // G204: bufferName was validated by LoadBuffer above
+		^
+internal/daemon/codex_empty_model_hkd170r_test.go:96:2: Consider pre-allocating `out` (prealloc)
+	var out []core.ModelSelectedPayload
+	^
+internal/daemon/tmuxsubstrate_remotekill_hkbtl1n_test.go:111:2: Consider pre-allocating `joined` (prealloc)
+	var joined []string
+	^
+internal/scenario/asserteval.go:36:2: Consider pre-allocating `out` (prealloc)
+	var out []core.RunID
+	^
+internal/codexwire/codexwire.go:568:1: exported: comment on exported type ThreadResumeParams should be of the form "ThreadResumeParams ..." (with optional leading article) (revive)
+// ThreadResumeParams: client→server "thread/resume" request params.
+^
+internal/codexwire/codexwire.go:583:1: exported: exported method ThreadResumeParams.UnmarshalJSON should have comment or be unexported (revive)
+func (p *ThreadResumeParams) UnmarshalJSON(data []byte) error {
+^
+internal/codexwire/codexwire.go:591:1: exported: exported method ThreadResumeParams.MarshalJSON should have comment or be unexported (revive)
+func (p ThreadResumeParams) MarshalJSON() ([]byte, error) {
+^
+internal/codexwire/codexwire.go:737:1: exported: comment on exported type ThreadResumeResult should be of the form "ThreadResumeResult ..." (with optional leading article) (revive)
+// ThreadResumeResult: server→client "thread/resume" response result.
+^
+internal/daemon/codexlaunchspec_test.go:527:6: QF1001: could apply De Morgan's law (staticcheck)
+		if !(idxSandbox < idxModel && idxModel < idxC) {
+		   ^
+internal/daemon/codexlaunchspec_test.go:563:6: QF1001: could apply De Morgan's law (staticcheck)
+		if !(idxSandbox >= 0 && idxC >= 0 && idxSandbox < idxC) {
+		   ^
+internal/handlercontract/watcher_w4_correlation_test.go:75:30: unnecessary conversion (unconvert)
+	raw := pub.payloadFor(string(handlercontract.ProgressMsgTypeAgentFailed))
+	                            ^
+cmd/harmonik/substrate_select_router_hkm4c3_test.go:26:24: oneWorkerRegistry - host always receives "gb-mbp" (unparam)
+func oneWorkerRegistry(host string, enabled bool) *workers.Registry {
+                       ^
+internal/daemon/brhistoryarchiveprune_hk8vnwg_test.go:18:45: writeArchived - tag always receives "T0" (unparam)
+func writeArchived(t *testing.T, dir, base, tag string, mtime time.Time) (payload, sidecar string) {
+                                            ^
+internal/lifecycle/gitmergecommitscanner_h3_test.go:23:30: h3GitRepo$1 - result 0 (string) is never used (unparam)
+	run := func(args ...string) string {
+	                            ^
+internal/workspace/claudeconfigdir_hk8juwz_test.go:20:57: withIsolatedConfigSource - srcErr always receives nil (unparam)
+func withIsolatedConfigSource(t *testing.T, src string, srcErr error) {
+                                                        ^
+198 issues:
+* containedctx: 1
+* contextcheck: 3
+* copyloopvar: 2
+* cyclop: 3
+* depguard: 4
+* errcheck: 83
+* errorlint: 6
+* exhaustive: 1
+* forbidigo: 4
+* gocognit: 3
+* gocritic: 8
+* gosec: 51
+* nakedret: 1
+* nilerr: 2
+* noctx: 9
+* nolintlint: 3
+* prealloc: 3
+* revive: 4
+* staticcheck: 2
+* unconvert: 1
+* unparam: 4

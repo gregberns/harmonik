@@ -1,0 +1,69 @@
+{
+  "chunk": "RU-14-deep",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/hook/sessionstore.go",
+    "internal/hook/doc.go",
+    "internal/hooksystem/dispatcher.go",
+    "internal/hooksystem/cognition_cp017.go",
+    "internal/hooksystem/verdictpersist_cp040.go",
+    "internal/hookrelay/hookrelay.go",
+    "internal/policy/autoresume.go",
+    "internal/policy/drain.go",
+    "internal/policy/gate.go",
+    "internal/policy/ratelimit.go",
+    "internal/orchestrator/eagerfill.go",
+    "internal/orchestrator/groupadvance.go",
+    "internal/orchestrator/select.go",
+    "internal/core/cpregistry_hka8bg2.go (LookupByTrigger contract)"
+  ],
+  "status": "reviewed",
+  "status_note": "Full read of all five packages plus the MapRegistry.LookupByTrigger implementation and the daemon call sites that wire the agent_ready callback (workloop.go, reviewloop.go, dot_cascade.go, dot_gate.go). The policy/* and orchestrator/* packages are genuinely clean pure reducers (semantics-preserving ports with careful overflow/negative guards and RR-cursor normalization) — no findings there. The real seams (hookrelay dispatch, sessionstore concurrency, hooksystem dispatcher) surfaced the findings below.",
+  "findings": [
+    {
+      "file": "internal/hook/sessionstore.go",
+      "line": 285,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "agent_ready has no latch: a relay agent_ready that arrives before SetAgentReadyCallback is silently lost (lost-wakeup)",
+      "detail": "notifyAgentReady() reads sess.agentReadyCallback under the mutex and, if it is nil, does nothing — there is no stored 'ready already happened' latch. The work loop registers the session (RegisterHookSession) and launches the handler subprocess BEFORE calling SetAgentReadyCallback (workloop.go:4566 register, Launch, then 4738 SetAgentReadyCallback; same shape in reviewloop.go:385/651 and dot_gate.go:326/375). The handler subprocess's SessionStart hook fires asynchronously and drives the relay -> Dispatch('agent_ready') -> notifyAgentReady path. If that relay message lands in the window after RegisterHookSession but before SetAgentReadyCallback executes (scheduling skew, a fast/warm resume, or a subprocess that boots quicker than the daemon goroutine advances), notifyAgentReady finds cb==nil and drops the signal. Nothing re-delivers it, so waitAgentReady blocks until ErrAgentReadyTimeout / HC-056 and dispatch for that run stalls. This is the exact failure class the extensive comments at workloop.go:4710 and reviewloop.go:643 describe as already having bitten smoke v6 (hk-lj1p9.4); the current fix relies purely on 'Launch returns before we set the callback', which orders the two daemon statements but does NOT order them against the subprocess's independently-timed SessionStart. A pending-ready boolean on the session (set by notifyAgentReady when cb is nil, checked/fired by SetAgentReadyCallback) would close the race.",
+      "suggested_fix": "Add a `readyFired bool` (or pendingReady) to session: notifyAgentReady sets it and fires cb if present; SetAgentReadyCallback, when it installs cb, immediately invokes it (outside the lock) if readyFired was already set. Makes the ready signal edge-latched rather than requiring cb to be installed first."
+    },
+    {
+      "file": "internal/hooksystem/dispatcher.go",
+      "line": 147,
+      "severity": "low",
+      "category": "nil-deref",
+      "title": "Dispatcher dereferences cp.Payload.Hook unconditionally, but LookupByTrigger also returns Gates",
+      "detail": "handleEvent sorts hooks on `hooks[i].Payload.Hook.SubsystemPriority` (line 147/150) and fireHook reads `cp.Payload.Hook` (line 170), both assuming every returned ControlPoint is a Hook. The hooksystem.Registry interface doc (line 66-67) says LookupByTrigger 'returns all Hooks', but the concrete MapRegistry.LookupByTrigger (internal/core/cpregistry_hka8bg2.go:178) returns any CP where `cp.Kind == KindGate || cp.Kind == KindHook` and Trigger.Name matches. Gate CPs also carry a Trigger.Name (trigger.go:25-26: 'For Gate ControlPoints this encodes the attach point'), and their Payload.Hook is nil. Today the two namespaces don't collide (gate attach points don't start with 'on_'), so it is not actively reachable — but the dispatcher does no `cp.Kind == KindHook` guard, so the moment a Gate's trigger encoding ever overlaps the 'on_' hook namespace this is a nil-pointer panic in the observer goroutine. It is recovered by OnPanicRecoverAndLog, but the panic aborts the entire sorted hook chain for that event, silently dropping every later hook — a fail-open on hook dispatch rather than a clean skip.",
+      "suggested_fix": "Filter the LookupByTrigger result to `cp.Kind == core.KindHook` (or assert hookPL != nil in fireHook and skip non-hooks) before sorting/dereferencing, so a stray Gate cannot panic the chain."
+    },
+    {
+      "file": "internal/hook/sessionstore.go",
+      "line": 85,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "session.closed field is never set to true; the closed-check and its doc are dead/misleading",
+      "detail": "The `closed bool` field is documented (line 84-87) as 'set to true by CloseHookSession when cmd.Wait() returns', and updateOutcome guards on it (line 263: `sess.closed`). But CloseHookSession (line 158-163) DELETES the map entry rather than setting closed=true — nothing anywhere assigns sess.closed = true (confirmed by grep: the only reference is the read at line 263). So the `|| sess.closed` branch is unreachable and the field is dead. Functionally harmless (the delete already yields unknown_session on the missing-key path), but the field plus its authoritative-sounding doc invites a future reader to believe a close-then-late-arrival is handled by the flag when it is actually handled by map deletion. Either wire CloseHookSession to set the flag (soft-close) or remove the field and fix the comment.",
+      "suggested_fix": "Remove the closed field and its check, or change CloseHookSession to set closed=true (soft-close) instead of / in addition to delete and keep the guard — pick one model and make the doc match."
+    },
+    {
+      "file": "internal/hookrelay/hookrelay.go",
+      "line": 544,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "Dial failure is fatal with no retry, so the 25s startup-window retry budget only covers the daemon_not_ready ACK case",
+      "detail": "sendToSocket's retry loop (line 538) only continues on an ACK of status 'daemon_not_ready' (line 588). Any dial error returns immediately as bridge_dial_failed (line 544-546) — it never consumes the wallMax=25s / exponential-backoff budget. That budget is documented (line 515-518) as covering the daemon startup window per CHB-016. It works only if the daemon has already bound and is accepting the socket but answering daemon_not_ready; if the daemon process is not yet listening (unix socket ENOENT / TCP connection-refused during a cold boot or an in-place binary swap per docs/daemon-redeploy.md), the very first dial fails and the hook exits 1 with no retry, losing that lifecycle signal (e.g. a Stop -> WORK_COMPLETE outcome). Whether this is acceptable depends on the daemon binding its socket before it can respond ok — if there is any window where the socket does not exist but the daemon is coming up, the startup-window guarantee is not actually delivered for the connect phase.",
+      "suggested_fix": "If the intended contract is 'survive the daemon startup window', treat connection-refused / ENOENT dial errors as retryable within wallMax (same backoff loop) rather than an immediate fatal; keep genuinely fatal errors (bad address) non-retryable."
+    },
+    {
+      "file": "internal/hookrelay/hookrelay.go",
+      "line": 223,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "EmittedAtNs is an elapsed duration, not the 'invocation-start timestamp' its field doc claims",
+      "detail": "emittedAtNs is computed as `time.Since(start).Nanoseconds()` (line 223) — the elapsed time from process start to just before send, a small near-zero duration. It is stored in hookRelayMessage.EmittedAtNs, whose consumer-side doc (hook/sessionstore.go:52-54) describes it as 'a monotonic-relative nanosecond timestamp recorded by the relay at invocation start'. The value is neither a timestamp nor recorded at invocation start; it is a build-latency delta. Observability-only, so no functional impact, but the field name + doc mislead anyone trying to correlate emission times across relay invocations.",
+      "suggested_fix": "Either record start as a wall/monotonic reference and emit an actual timestamp, or rename/re-doc the field to 'build_latency_ns' to match what it actually carries."
+    }
+  ]
+}

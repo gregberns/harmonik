@@ -1,0 +1,65 @@
+{
+  "chunk": "RU-20",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/operatornfr/ (all 8 production .go + 37 _test.go, classify keep/delete)"
+  ],
+  "status": "reviewed",
+  "status_note": "Classification lens: read all production .go files fully, sampled test bodies, and traced import/usage graph across the whole repo to distinguish real coverage from spec-mirror theater.",
+  "findings": [
+    {
+      "file": "internal/operatornfr/exitcode.go",
+      "line": 36,
+      "severity": "high",
+      "category": "dead-code",
+      "title": "Entire operatornfr production API is unwired — nothing outside the package imports it",
+      "detail": "A repo-wide grep shows NO product (non-test) code imports internal/operatornfr. The only three external references are: internal/core/pertypecompat_hqwn38.go (a code COMMENT, not an import), and two internal/lifecycle test files that only list the package path as a string literal. Every exported symbol — ExitCodes / LookupExitCode, CommandExitCodeSets / VerifyCommandExitCodeSets / CommandLookup, CommitHashIntegrityCheck, IsPathWithinWorkspace, WriteUpgradingMarker / ReadUpgradingMarker / RemoveUpgradingMarker, ReviewLoopIterationState, BinarySigningPolicy — has 0 external callers. This means the actual daemon exit paths, upgrade integrity gate, command-execution sandbox, and upgrade-intent marker are enforced ELSEWHERE (or not at all); this package is a parallel spec-mirror that duplicates the obligations without being the enforcement point. Failure scenario: the real daemon returns an exit code or resolves a sandbox path that diverges from this taxonomy, and every test here still passes green — the package proves conformance of code no one runs.",
+      "suggested_fix": "Either wire the daemon/upgrade/sandbox subsystems to call these as the single source of truth (delete their private duplicates), or delete the package and keep the taxonomy in specs/ only. Do not leave it as an unreferenced shadow."
+    },
+    {
+      "file": "internal/operatornfr/restartrto_sx9r81_test.go",
+      "line": 112,
+      "severity": "high",
+      "category": "test-theater",
+      "title": "22 of 37 test files are pure spec-mirror theater — reference zero production symbols",
+      "detail": "Of 37 test files (~13.6k test LOC, 404 Test funcs), 22 files declare fixture tables/constants inline (package operatornfr_test) and assert those literals against themselves, referencing NO operatornfr production symbol and importing NO product package. Confirmed set (0 production references, 0 product imports): attachsurface_sx9r61, budgetdefaults_sx9r84, budgetfinitedefault_on004c, budgetobservable_on046, budgetpipeline_on045, credinjection_on008a, eventshb_sx9r50, healthcheck_sx9r52, multidaemon_sx9r83, observability_sx9r82, oninv001_sx9r69, operatoroverride_sx9r18, payloadschemacheck_sx9r28, restartrto_sx9r81, secretsinjection_sx9r27, securitydrain_sx9r80, stopimmediate_sx9r42, workflowmodeinventory_on004a, exitcodefixture, obligationsfixture, queueformatcompat, schemacompatwindow. Example (restartrto_sx9r81_test.go:29 then :115): `const restartRTOFixtureNominalSeconds = 30` … `if restartRTOFixtureNominalSeconds != 30 { t.Errorf(...) }`. Such a test can only fail if someone edits both the const and the assertion in the same file. It exercises no code path and provides zero regression protection. CLASSIFY: DELETE these 22 files.",
+      "suggested_fix": "Delete the pure-fixture files. If a spec-obligation checklist is genuinely wanted, it belongs as a doc/table in specs/, not as green Go tests that imply coverage they do not provide."
+    },
+    {
+      "file": "internal/operatornfr/statemachinetransition_test.go",
+      "line": 203,
+      "severity": "medium",
+      "category": "test-theater",
+      "title": "State-machine test reimplements the transition logic locally and tests the copy",
+      "detail": "statemachinetransition_test.go defines its own state enum (smStateRunning/smStatePausing/... at lines 21-26) and its own transition function smFixtureApply() (line 203), then TestON011_StateMachineTransitions (line 291) asserts behavior of that in-test reimplementation. The real daemon pause/resume/stop/upgrade state machine lives in the daemon/lifecycle subsystem, which this test does not import or call. Only the §8 cross-checks against operatornfr.ExitCodes/LookupExitCode (e.g. code 16 → operator_command_rejected) touch real code. Failure scenario: the product state machine changes a transition or emitted event and this test stays green because it validates a fossilized copy. PARTIAL KEEP: keep the taxonomy cross-checks, drop or redirect the transition assertions against the real state machine.",
+      "suggested_fix": "Point the transition tests at the actual daemon state-machine API, or delete the reimplemented smFixtureApply and its tests; retain only the assertions that reference operatornfr.ExitCodes."
+    },
+    {
+      "file": "internal/operatornfr/exitcode_test.go",
+      "line": 1,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "KEEP set — the ~11 test files that exercise real code, for the record",
+      "detail": "Classification deliverable, KEEP side: these files reference real operatornfr production functions or import real product packages and thus have genuine (if narrow) value: exitcode_test.go, commandcodes_test.go, commitintegrity_on005_test.go, reviewloopstatus_on035a_test.go, sandboxinvariant_on024_test.go, securitypolicy_on006_on026_test.go, upgradingmarker_on020a_test.go, upgradingmarker_coverage_hkj3hrn_test.go, workflowmodeimmutability_on013d_test.go (exercise this package's own pure helpers); oninv003_sx9r70_test.go (core/eventbus/handlercontract), cl071_cl073_explore_hkva7z2_test.go (queue/core), startupcheckpayload_sx9r20_test.go (core payload) exercise real product code. Caveat: their value is only as strong as finding-1 — the helpers they test are themselves unwired, so they verify a correct-but-unused library. commithashhgate_test.go / queueformatcompat_test.go / schemacompatwindow_test.go / upgradecontract_test.go reference just one production symbol and are mostly fixture; treat as weak-keep / merge candidates.",
+      "suggested_fix": "Keep the real-code tests; their long-term worth is contingent on wiring the production API (finding 1). Fold the single-symbol borderline files into their sibling real tests."
+    },
+    {
+      "file": "internal/operatornfr/commandcodes.go",
+      "line": 252,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Hand-rolled itoa to avoid importing strconv",
+      "detail": "itoa() (line 252) reimplements integer-to-string with a manual byte buffer 'to avoid a dependency for a minor helper' (comment line 250). strconv is in the standard library, already transitively linked everywhere, and carries no dependency cost. The hand-rolled version is more code to maintain and a place for off-by-one/negative bugs (the neg branch is untested since all callers pass non-negative exit codes). This is needless.",
+      "suggested_fix": "Replace itoa(code) with strconv.Itoa(code) and delete the hand-rolled helper."
+    },
+    {
+      "file": "internal/operatornfr/doc.go",
+      "line": 11,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "doc.go describes package as exit-code-only but package now spans 8 unrelated obligation areas",
+      "detail": "doc.go frames the package as 'the authoritative exit-code taxonomy' with exitCodeFixture/obligationsFixture helpers. The package has since accreted commit-integrity, sandbox invariant, security policy, review-loop status, upgrading-marker I/O, command-codes, and ~30 spec-obligation fixture files. The doc comment no longer maps the package's real surface, making it a misleading entry point.",
+      "suggested_fix": "Rewrite doc.go to describe the package's true scope, or (preferred, per findings 1-2) shrink the package to the wired helpers and update the doc accordingly."
+    }
+  ]
+}

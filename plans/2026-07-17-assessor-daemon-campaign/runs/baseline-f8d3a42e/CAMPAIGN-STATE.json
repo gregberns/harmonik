@@ -1,0 +1,12 @@
+{
+  "pass_id": "baseline-f8d3a42e",
+  "pin_sha": "f8d3a42efadbd3c29a70fa2b3ec91f42e9c8adb8",
+  "pin_branch": "origin/main",
+  "scope": "delta-merge-touched-PR32-hk-czb11",
+  "legs": {"CR": "PASS-no-tier0", "MG": "PASS", "LT": "PASS"},
+  "verdict": "PASS",
+  "findings": ["hk-okqyx (P2, pre-existing env-forward, main-health, non-blocking)"],
+  "crit3_hk_fufel_in_merge": false,
+  "next_target": "hk-fufel (handler.go crit3) on next merge — preempt2 watcher armed",
+  "last_checkpoint": "delta-verdict-posted"
+}

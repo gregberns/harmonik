@@ -1,0 +1,49 @@
+{
+  "chunk": "RU-25",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "specs/_registry.yaml",
+    "specs/*.md (all 39 specs; req-prefix cross-reference against internal/ + cmd/)",
+    "specs/run-state-machine.md",
+    "specs/claude-launchspec.md",
+    "specs/harness-contract.md",
+    "specs/flywheel-motion.md",
+    "specs/credential-isolation.md",
+    "specs/digest-command.md",
+    "specs/hitl-decisions.md",
+    "specs/promote.md",
+    "specs/release-pipeline.md",
+    "specs/sub-workflow-dispatch.md",
+    "specs/system-state.md",
+    "specs/workflow-graph.md",
+    "specs/agent-input.md",
+    "specs/session-keeper.md",
+    "specs/replay-substrate.md",
+    "internal/daemon/workloop.go",
+    "internal/workspace/worktreepath.go",
+    "internal/mergeq/mergeq.go",
+    "internal/sentinel/*"
+  ],
+  "status": "reviewed",
+  "status_note": "Focus lens = spec-vs-code drift. Method: enumerated every spec's requirement-prefix, cross-referenced req-ID citations in internal/+cmd/, and hand-verified the highest-drift-risk clauses (RSM merge-queue extraction, claude-launchspec assembly, harness-contract selection, flywheel governor/adversary) against live code. Scope is 39 specs / ~2.5MB of normative text; verification was sampled at the clause level (highest-risk + recently-landed specs), not exhaustive per-clause. No orphaned-spec (spec with zero implementation) found among the sampled set — CLS, HN, FW, PR all resolve to live code even where req-IDs are not cited in-source. Findings are governance/traceability drift rather than un-built features.",
+  "findings": [
+    {
+      "file": "specs/_registry.yaml",
+      "line": 24,
+      "severity": "medium",
+      "category": "spec-drift",
+      "title": "9 specs declare a requirement-prefix that is absent from the prefix registry, defeating the registry's own MUST and the duplicate-prefix lint",
+      "detail": "The registry header states the load-bearing invariant: 'Every spec under specs/ that declares a requirement-prefix in its front matter MUST have an entry here' and the lint check verifies each prefix 'is present in this file and not duplicated.' Cross-checking every spec's front matter against the registry, NINE specs declare a prefix that has no registry entry: CI (credential-isolation, status:draft), DC (digest-command, draft), FW (flywheel-motion, status:NORMATIVE), HD (hitl-decisions, reviewed), PR (promote, reviewed), RP (release-pipeline, draft), SW (sub-workflow-dispatch, draft), SS (system-state, draft), WG (workflow-graph, draft). WG alone carries 44 distinct req-IDs cited across internal/+cmd/ and FW is at the highest status tier (normative) — these are live, load-bearing prefixes, not stubs. Consequences: (1) the registry can no longer catch a duplicate/colliding prefix reservation for any of these 9 codes, so a future new spec could silently re-use CI/DC/FW/HD/PR/RP/SW/SS/WG; (2) the conformance-checklist lint is either not running or is being ignored, meaning the governance gate the registry exists to enforce is dark. This is exactly the drift the registry was built to prevent.",
+      "suggested_fix": "Add the 9 missing entries (CI, DC, FW, HD, PR, RP, SW, SS, WG) to specs/_registry.yaml with their spec-id/status, and wire the conformance-checklist lint into CI so a prefix-declared-but-unregistered spec fails the build."
+    },
+    {
+      "file": "internal/workspace/worktreepath.go",
+      "line": 51,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Stale 'mergeMu' references throughout workspace/daemon comments after RSM-015 replaced the mutex with an explicit merge queue",
+      "detail": "RSM-015 mandated (and the code implements) replacing the global merge mutex with an explicit strictly-FIFO merge queue (internal/mergeq, wired as workloop deps.mergeQ / mergeq.New). The actual `mergeMu` mutex is gone — no declaration or `.Lock()` call remains in non-test code. But numerous comments still describe current behavior in terms of the deleted mutex: worktreepath.go:51 ('governed by the existing mergeMu in the daemon workloop'), worktreepath.go:85 ('protected by the daemon's mergeMu'), and workloop.go:403,406,408,6785,7676 ('The caller ... holds mergeMu across this call', 'unlike the current implicit serialisation under mergeMu'). A maintainer reading worktreepath.go will go looking for a `mergeMu` field that does not exist, or will reason about serialisation guarantees using the wrong (mutex, not FIFO-queue) mental model — the two have different fairness/ordering semantics per RSM-016..019. The comments claim a live invariant ('the existing mergeMu') that is false.",
+      "suggested_fix": "Rewrite the mergeMu-referencing comments to describe the current mergeQ (mergeq.Queue / Submit critical section) mechanism, or phrase them as historical ('formerly serialised under mergeMu, now the mergeQ FIFO domain') so no comment asserts a live field that was deleted."
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "chunk": "RU-14",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/hook/sessionstore.go",
+    "internal/hook/doc.go",
+    "internal/hooksystem/dispatcher.go",
+    "internal/hooksystem/cognition_cp017.go",
+    "internal/hooksystem/verdictpersist_cp040.go",
+    "internal/hookrelay/hookrelay.go",
+    "internal/policy/ratelimit.go",
+    "internal/policy/gate.go",
+    "internal/policy/autoresume.go",
+    "internal/policy/drain.go",
+    "internal/orchestrator/groupadvance.go",
+    "internal/orchestrator/eagerfill.go",
+    "internal/orchestrator/select.go"
+  ],
+  "status": "reviewed",
+  "findings": [
+    {
+      "file": "internal/hookrelay/hookrelay.go",
+      "line": 544,
+      "severity": "medium",
+      "category": "spec-drift",
+      "title": "sendToSocket retry only covers daemon_not_ready ACK, not dial failure — startup window not actually retried",
+      "detail": "The function is documented as 'one-shot UDS with retry per CHB-016' with a 25s wallMax startup budget and exponential backoff. But the backoff/retry loop is only entered when the daemon accepts the connection and returns ack.Status==\"daemon_not_ready\" (line 588). If the daemon socket does not yet exist / is not listening (the normal case during a daemon cold boot or restart), DialContext fails and the code returns bridge_dial_failed immediately at line 545 with no retry. A hook that fires inside the daemon-startup window before the socket is bound therefore fails permanently instead of retrying within the 25s window the wallMax/retryDelay machinery was built for. The bridge_daemon_startup_window_exceeded path is effectively unreachable for the most common startup race (socket-absent), defeating the intent of CHB-016.",
+      "suggested_fix": "Treat a transient dial error (connection refused / ENOENT on the unix socket) the same as daemon_not_ready: fall into the backoff loop up to wallMax rather than returning immediately. Only a hard-error after the wall budget should return bridge_daemon_startup_window_exceeded."
+    },
+    {
+      "file": "internal/hook/sessionstore.go",
+      "line": 84,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "session.closed field is never set true; the closed check and its doc comment are dead/misleading",
+      "detail": "The `closed` field is documented (lines 84-88) as 'set to true by CloseHookSession when cmd.Wait() returns', and updateOutcome guards on `sess.closed` at line 263. But CloseHookSession (lines 158-163) achieves close semantics by `delete(s.sessions, key)`, and no code path ever assigns closed=true (grep confirms zero writers). The `sess.closed` term in the updateOutcome guard is therefore always false and pure dead code, and the field's doc comment describes behavior that does not exist. A future reader may believe a soft-closed-but-present session state exists when it does not.",
+      "suggested_fix": "Either remove the `closed` field and the `sess.closed` clause (rely solely on map-miss for unknown_session), or actually set closed=true in CloseHookSession and stop deleting — pick one model. Fix the doc comment to match."
+    },
+    {
+      "file": "internal/hooksystem/cognition_cp017.go",
+      "line": 78,
+      "severity": "low",
+      "category": "nil-deref",
+      "title": "computeHookEnvelopeHash dereferences cp.Evaluator.DelegationPath without a nil guard",
+      "detail": "Line 78 does `*cp.Evaluator.DelegationPath` unconditionally. DelegationPath is a *pointer field. For a cognition-tagged hook whose DelegationPath is nil this panics. In practice the S02 registrar validates that cognition-mode evaluators carry a populated DelegationPath, so a well-registered hook is safe, and the EventBus subscription uses OnPanicRecoverAndLog so a panic would not crash the daemon — but it would silently kill the hook fire WITHOUT emitting hook_failed (unlike every other failure path in fireCognitionHook, which emits a typed hook_failed). A registry bug or an unvalidated hook path thus degrades to a swallowed, unobservable failure rather than a diagnostic event.",
+      "suggested_fix": "Nil-check cp.Evaluator.DelegationPath at the top of fireCognitionHook (or computeHookEnvelopeHash) and emit hook_failed with ErrorCategoryDeterministic ('cognition hook missing delegation_path') instead of dereferencing blindly."
+    },
+    {
+      "file": "internal/hookrelay/hookrelay.go",
+      "line": 422,
+      "severity": "low",
+      "category": "correctness",
+      "title": "truncate4KiB can emit an invalid trailing UTF-8 rune when cutting mid multi-byte sequence",
+      "detail": "The boundary walk returns string(b[:i]) when b[i-1] is a UTF-8 lead byte (b[i-1]&0xC0 == 0xC0). When the 4096-byte cut lands in the middle of a multi-byte rune, the loop walks back over continuation bytes and stops at the lead byte, then returns b[:i] which INCLUDES that lead byte but not its (truncated-off) continuation bytes — producing a string ending in an incomplete/invalid rune. To drop the incomplete sequence it should return b[:i-1] in the lead-byte case. Impact is minor (a WORK_COMPLETE summary may end with one replacement char / invalid byte when it exceeds 4 KiB), but it defeats the stated 'valid UTF-8 boundary' guarantee in the comment.",
+      "suggested_fix": "In the lead-byte branch return string(b[:i-1]) (drop the incomplete lead byte). Alternatively use utf8.DecodeLastRune / utf8.RuneStart to find the last complete rune boundary."
+    },
+    {
+      "file": "internal/hook/sessionstore.go",
+      "line": 158,
+      "severity": "low",
+      "category": "correctness",
+      "title": "CloseHookSession does not wake WaitForOutcome waiters, so a no-outcome close blocks callers until ctx timeout",
+      "detail": "A WaitForOutcome caller parked on the slow-path channel (line 234) is only released by (a) the first outcome broadcast in updateOutcome or (b) its own ctx cancellation. CloseHookSession just deletes the session and never closes the pending notify channels for that key. If the handler session ends without any outcome_emitted ever arriving, every parked waiter blocks until its context deadline instead of being released promptly at close. The stale notifyChans[key] entries also linger until each waiter self-cleans on ctx.Done. Correctness holds only because callers always pass a bounded ctx; the latency cost is real.",
+      "suggested_fix": "In CloseHookSession, close and delete any notifyChans[key] channels (waiters then re-check under the mutex, see empty/closed session, and return promptly), matching the fan-out-broadcast pattern updateOutcome already uses."
+    }
+  ]
+}

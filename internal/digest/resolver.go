@@ -79,7 +79,7 @@ func ResolveSuppressionState(eventsPath string, now time.Time, cfg SentinelConfi
 }
 
 // resolveAttachedSource evaluates the operator_attached suppression source.
-func resolveAttachedSource(lastSeen time.Time, now time.Time, cfg SentinelConfig) SuppressionSourceState {
+func resolveAttachedSource(lastSeen, now time.Time, cfg SentinelConfig) SuppressionSourceState {
 	src := SuppressionSourceState{Name: "operator_attached"}
 	if lastSeen.IsZero() {
 		src.Reason = "no session_keeper_operator_attached events found"
@@ -104,7 +104,7 @@ func resolveAttachedSource(lastSeen time.Time, now time.Time, cfg SentinelConfig
 }
 
 // resolveDialogueSource evaluates the operator_dialogue suppression source.
-func resolveDialogueSource(lastSeen time.Time, now time.Time, cfg SentinelConfig) SuppressionSourceState {
+func resolveDialogueSource(lastSeen, now time.Time, cfg SentinelConfig) SuppressionSourceState {
 	src := SuppressionSourceState{Name: "operator_dialogue"}
 	if lastSeen.IsZero() {
 		src.Reason = "no agent_message events from operator found"
@@ -128,7 +128,7 @@ func resolveDialogueSource(lastSeen time.Time, now time.Time, cfg SentinelConfig
 // resolvePhaseFlagSource evaluates the phase_flag suppression source.
 // Returns (source, configError). configError is non-empty when the config is
 // invalid; in that case the source is treated as inactive (fail-open).
-func resolvePhaseFlagSource(now time.Time, cfg SentinelConfig) (SuppressionSourceState, string) {
+func resolvePhaseFlagSource(now time.Time, cfg SentinelConfig) (source SuppressionSourceState, configError string) {
 	src := SuppressionSourceState{Name: "phase_flag"}
 	if cfg.PhaseFlag == "" {
 		src.Reason = "not set"
@@ -166,7 +166,7 @@ const eventTypeAgentMessage = "agent_message"
 //   - dialogueLast: wall-clock time of the most recent agent_message from "operator"
 //
 // A missing or unreadable events.jsonl returns zero times (no suppression).
-func scanSuppressionEvents(eventsPath string) (attachedLast time.Time, dialogueLast time.Time) {
+func scanSuppressionEvents(eventsPath string) (attachedLast, dialogueLast time.Time) {
 	for ev := range eventbus.ScanAfter(eventsPath, ZeroEventID) {
 		switch {
 		case core.EventType(ev.Type) == core.EventTypeSessionKeeperOperatorAttached:

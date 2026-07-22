@@ -256,7 +256,7 @@ func TestBuildResolvedNotesExcluded(t *testing.T) {
 	dir := makeMinimalProject(t)
 
 	notesDir := filepath.Join(dir, ".harmonik", "cognition")
-	if err := os.MkdirAll(notesDir, 0o755); err != nil {
+	if err := os.MkdirAll(notesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	notesPath := filepath.Join(notesDir, "notes.jsonl")
@@ -512,7 +512,7 @@ func makeMinimalProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -572,7 +572,7 @@ func writeQueueJSON(t *testing.T, dir string, n int) {
 		t.Fatal(err)
 	}
 	queuesDir := filepath.Join(harmonikDir, "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(queuesDir, "main.json"), data, 0o600); err != nil {
@@ -596,7 +596,7 @@ type testDecisionEvent struct {
 func writeDecisionEvents(t *testing.T, dir string, events []testDecisionEvent) {
 	t.Helper()
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	f, err := os.Create(filepath.Join(eventsDir, "events.jsonl"))
@@ -649,7 +649,7 @@ func writeDecisionEvents(t *testing.T, dir string, events []testDecisionEvent) {
 func writeNotesJSONL(t *testing.T, dir string, n int) {
 	t.Helper()
 	notesDir := filepath.Join(dir, ".harmonik", "cognition")
-	if err := os.MkdirAll(notesDir, 0o755); err != nil {
+	if err := os.MkdirAll(notesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	f, err := os.Create(filepath.Join(notesDir, "notes.jsonl"))
@@ -687,7 +687,7 @@ func makeFakeBr(t *testing.T, dir, issuesJSON string) string {
 		"done\n" +
 		"echo '{\"issues\":[]}'\nexit 0\n"
 	path := filepath.Join(dir, "fake-br")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake-br: %v", err)
 	}
 	return path
@@ -725,7 +725,7 @@ func TestBuildHasUndeployedTail_Phase2ClassesNoClosedBeads(t *testing.T) {
 sentinel:
   done_definition:
     deploy-class: make deploy
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -758,7 +758,7 @@ func TestBuildHasUndeployedTail_ClosedBeadMatchesPhase2Class(t *testing.T) {
 sentinel:
   done_definition:
     deploy-class: make deploy && make smoke
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -792,7 +792,7 @@ func TestBuildHasUndeployedTail_ClosedBeadNoMatchingLabel(t *testing.T) {
 sentinel:
   done_definition:
     deploy-class: make deploy
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -825,7 +825,7 @@ func TestBuildHasUndeployedTail_InJSON(t *testing.T) {
 sentinel:
   done_definition:
     deploy-class: make deploy
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fakeBr := makeFakeBr(t, dir,
@@ -866,7 +866,7 @@ func TestBuildPendingDecisions_FromAcksDirOnly(t *testing.T) {
 
 	// Write a pending ack-state file (no corresponding events.jsonl entry).
 	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
-	if err := os.MkdirAll(acksDir, 0o755); err != nil {
+	if err := os.MkdirAll(acksDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	tok := "test-ack-token-durable-only"
@@ -931,7 +931,7 @@ func TestBuildPendingDecisions_AcksDirDedup(t *testing.T) {
 
 	// Write a pending ack-state file with the same ack_token.
 	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
-	if err := os.MkdirAll(acksDir, 0o755); err != nil {
+	if err := os.MkdirAll(acksDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ackRecord := map[string]interface{}{
@@ -970,7 +970,7 @@ func TestBuildPendingDecisions_AcksDirAcknowledgedSkipped(t *testing.T) {
 
 	tok := "tok-already-acked"
 	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
-	if err := os.MkdirAll(acksDir, 0o755); err != nil {
+	if err := os.MkdirAll(acksDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ackRecord := map[string]interface{}{
@@ -1019,7 +1019,7 @@ echo "error: unexpected argument" >&2
 exit 2
 `
 	path := filepath.Join(dir, "fake-br-order")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1040,7 +1040,7 @@ func TestBuildPausedQueues(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 	queuesDir := filepath.Join(dir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1094,7 +1094,7 @@ func TestBuildCrewList(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 	crewDir := filepath.Join(dir, ".harmonik", "crew")
-	if err := os.MkdirAll(crewDir, 0o755); err != nil {
+	if err := os.MkdirAll(crewDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	rec := map[string]interface{}{
@@ -1135,7 +1135,7 @@ func TestBuildCommsWho(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	eventID := uuid.Must(uuid.NewV7()).String()
@@ -1164,7 +1164,7 @@ func TestBuildCommsWho_OfflineOmitted(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	eventID := uuid.Must(uuid.NewV7()).String()
@@ -1194,7 +1194,7 @@ func TestBuildPausedQueues_CorruptFileSurfacesError(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 	queuesDir := filepath.Join(dir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(queuesDir, "broken-q.json"), []byte("{not json"), 0o600); err != nil {
@@ -1214,7 +1214,7 @@ func TestBuildPausedQueues_SkipsArchiveFiles(t *testing.T) {
 	t.Parallel()
 	dir := makeMinimalProject(t)
 	queuesDir := filepath.Join(dir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(queuesDir, "old-q.json.failed-20260101000000"), []byte("{not json"), 0o600); err != nil {

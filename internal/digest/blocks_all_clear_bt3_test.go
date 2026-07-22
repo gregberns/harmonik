@@ -146,7 +146,7 @@ func TestBT3_UndeployedTail_ActionableWhenReadyEmpty(t *testing.T) {
 sentinel:
   done_definition:
     deploy-class: make deploy && make smoke
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 

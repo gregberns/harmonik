@@ -1,3 +1,5 @@
+// Package digest builds the bounded operator boot digest.
+//
 // dashboardgateconfig.go — dashboard forcing-gate config reader.
 //
 // Reads the optional dashboard: block from .harmonik/config.yaml so the

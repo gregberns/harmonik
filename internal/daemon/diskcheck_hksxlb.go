@@ -10,20 +10,32 @@ package daemon
 //   - runPeriodicDiskCheck(ctx, deps) — called once per work-loop poll tick.
 //     Rate-limited to diskCheckInterval (default 10 min) for the probe.
 //
-//     Sub-step A — reactive reap: when disk is below the watermark, sets
+//     Reactive reap only: when disk is below the watermark, sets
 //     maint.diskLow = true, emits a disk_low event, and runs `go clean -cache`
 //     only when no merge-build is in flight (runRegistry.Len()==0). If a
 //     merge-build IS in flight, the reap is deferred to the next tick and a
 //     warning is logged instead of corrupting the build (hk-guez fix for the
 //     stopgap in 5c2276ca).
 //
-//     Sub-step B — proactive reap (restored by hk-guez): when disk is healthy,
-//     runs `go clean -cache` every goCacheCleanInterval (default 60 min) to
-//     prevent the cache from growing to 20 GiB between low-disk crossings.
-//     Also gated on idle (runRegistry.Len()==0) to avoid racing merge-builds.
+// A time-based proactive reap (running `go clean -cache` on a fixed cadence
+// even when disk was healthy) existed here previously and was REMOVED
+// (hk-gjbpp). It had no knowledge of `go build` / `go test` invoked
+// out-of-band by crews and operators in terminals, and it wiped the shared
+// default GOCACHE those runs depend on: observed cache collapse 122M -> 2.8M
+// mid-build, with concurrent test suites failing with "could not import
+// os/context/testing/... no such file or directory" and silently reporting
+// wrong results in BOTH directions (phantom failures and green runs that
+// never actually built) — with disk nowhere near the watermark (30GiB free
+// vs ~10GiB). This path was already removed once as a stopgap (5c2276ca) and
+// then restored (hk-guez) under the belief the cache would otherwise grow
+// unbounded; it will NOT be restored a third time — the reactive reap (disk
+// pressure) is the only legitimate trigger for wiping a cache other
+// processes depend on. Do not reintroduce a cadence-based reap gated only on
+// daemon idleness; it cannot see non-daemon cache consumers.
 //
 // Spec ref: bead hk-sxlb (logmine F65 disk-watermark guard).
 // Fix ref:  bead hk-guez (merge-aware cache reaper).
+// Fix ref:  bead hk-gjbpp (removed proactive reap; reactive-only).
 
 import (
 	"context"
@@ -154,10 +166,9 @@ func runWorktreeReclaim(ctx context.Context, deps *workLoopDeps, stalePaths []st
 }
 
 // runPeriodicDiskCheck is called once per work-loop poll tick to probe disk
-// space and run reactive / proactive go-cache cleanup.
-//
-// Sub-step A — disk probe (rate-limited to deps.diskCheckIntervalOverride or
-// diskCheckInterval): reads available bytes on the project filesystem.
+// space and run the reactive go-cache cleanup. Rate-limited to
+// deps.diskCheckIntervalOverride or diskCheckInterval: reads available bytes
+// on the project filesystem.
 //
 //   - Below watermark: sets maint.diskLow = true.
 //     If no merge-build is in flight (runRegistry.Len()==0), immediately runs
@@ -166,11 +177,9 @@ func runWorktreeReclaim(ctx context.Context, deps *workLoopDeps, stalePaths []st
 //     merge_build_failed at the cost of one deferred clean (hk-guez).
 //     A disk_low event is emitted when deps.bus is non-nil regardless.
 //
-//   - Above watermark: clears maint.diskLow.
-//
-// Sub-step B — proactive reap (hk-guez, restored from stopgap 5c2276ca):
-// runs `go clean -cache` every goCacheCleanInterval (default 60 min) even
-// when disk is healthy, gated on idle (runRegistry.Len()==0).
+//   - Above watermark: clears maint.diskLow. No cache reap happens on this
+//     path — see the file-level comment (hk-gjbpp) for why a healthy-disk
+//     cadence-based reap was removed rather than restored again.
 func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState) {
 	now := time.Now()
 
@@ -183,24 +192,14 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, maint *loopMa
 		watermark = diskLowWatermarkDefault
 	}
 
-	// Sub-step A: disk probe. A true return means the tick fully recovered via
-	// stale-worktree reclaim and the proactive reap must be skipped this tick
-	// (preserves the original early-return semantics).
 	if time.Since(maint.lastDiskCheck) >= checkInterval {
 		maint.lastDiskCheck = now
-		if runDiskProbe(ctx, deps, maint, now, watermark) {
-			return
-		}
+		runDiskProbe(ctx, deps, maint, now, watermark)
 	}
-
-	// Sub-step B: proactive reap.
-	runProactiveGoCacheReap(ctx, deps, maint, now)
 }
 
-// runDiskProbe performs the disk watermark probe and reactive reap (sub-step A).
-// It returns true when a stale-worktree reclaim recovered the disk, signalling
-// the caller to skip the proactive reap for this tick.
-func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState, now time.Time, watermark uint64) bool {
+// runDiskProbe performs the disk watermark probe and reactive reap.
+func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState, now time.Time, watermark uint64) {
 	freeBytesFunc := deps.diskFreeBytesFunc
 	if freeBytesFunc == nil {
 		freeBytesFunc = diskFreeBytes
@@ -210,7 +209,7 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 	if probeErr != nil {
 		// Non-fatal: log and leave diskLow unchanged.
 		fmt.Fprintf(os.Stderr, "daemon: disk-check: Statfs %s: %v\n", deps.projectDir, probeErr)
-		return false
+		return
 	}
 	if freeBytes >= watermark {
 		if maint.diskLow {
@@ -219,7 +218,7 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 				freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir)
 		}
 		maint.diskLow = false
-		return false
+		return
 	}
 
 	// Below watermark: attempt reactive reap, then emit event.
@@ -248,7 +247,7 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 						"disk recovered available=%dMiB watermark=%dMiB path=%s; skipping go clean -cache\n",
 					reclaimedCount, newFree/(1024*1024), watermark/(1024*1024), deps.projectDir)
 				maint.diskLow = false
-				return true
+				return
 			}
 		}
 
@@ -268,7 +267,6 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 			if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
 				cleanErrStr = cleanErr.Error()
 			}
-			maint.lastGoCacheClean = now // reset proactive timer on reactive clean
 		}
 		if deps.cacheReapMu != nil {
 			deps.cacheReapMu.Unlock()
@@ -293,44 +291,4 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 		freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir,
 		cleanAttempted, cleanErrStr)
 	maint.diskLow = true
-	return false
-}
-
-// runProactiveGoCacheReap runs `go clean -cache` every goCacheCleanInterval
-// (default 60 min) even when disk is healthy, gated on idle and protected by
-// cacheReapMu (sub-step B; hk-guez restored, TOCTOU fixed by hk-y3frr).
-func runProactiveGoCacheReap(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState, now time.Time) {
-	cleanInterval := deps.goCacheCleanIntervalOverride
-	if cleanInterval <= 0 {
-		cleanInterval = goCacheCleanInterval
-	}
-	if maint.diskLow || time.Since(maint.lastGoCacheClean) < cleanInterval {
-		return
-	}
-	if mergeOrRunInFlight(deps) {
-		// Merge-build in flight: defer proactive reap to avoid racing the
-		// build cache. The timer is NOT reset so the next idle tick will
-		// fire immediately (no silent skip of the 60-min cadence).
-		fmt.Fprintf(os.Stderr,
-			"daemon: disk-check: proactive-reap deferred — merge-build in flight\n")
-		return
-	}
-	// hk-y3frr: hold the reap↔dispatch exclusive lock for the entire
-	// duration of `go clean -cache`.  Register (RLock) blocks while we
-	// hold the WLock; we release only after the clean completes.
-	if deps.cacheReapMu != nil {
-		deps.cacheReapMu.Lock()
-	}
-	// Double-check after acquiring the lock: a run may have registered
-	// between the outer mergeOrRunInFlight check and the WLock.
-	if !mergeOrRunInFlight(deps) {
-		if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
-			fmt.Fprintf(os.Stderr,
-				"daemon: disk-check: proactive go clean -cache failed: %v\n", cleanErr)
-		}
-		maint.lastGoCacheClean = now
-	}
-	if deps.cacheReapMu != nil {
-		deps.cacheReapMu.Unlock()
-	}
 }

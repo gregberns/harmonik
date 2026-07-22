@@ -494,7 +494,7 @@ func buildNotificationMessage(inp hookInput) (
 // endpoint (the REMOTE-run reverse-tunnel transport) rather than a unix-socket
 // path. A unix-socket path never starts with this prefix, so the dialer can pick
 // the transport purely from the env value. Kept in sync with the daemon side
-// (internal/daemon/reversetunnel.go tcpEndpointPrefix).
+// (internal/transport/tunnel/tunnel.go tcpEndpointPrefix).
 //
 // hk-ege6: remote runs dial a TCP loopback listener on the worker
 // (tcp://127.0.0.1:<port>) because the macOS-root sshd `-R` unix-socket bind is

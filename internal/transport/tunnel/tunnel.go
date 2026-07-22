@@ -1,6 +1,4 @@
-package daemon
-
-// reversetunnel.go — per-run SSH reverse tunnel for remote-worker runs.
+// Package tunnel implements the per-run SSH reverse tunnel for remote-worker runs.
 //
 // A remote-worker run spawns its implementer agent on the worker host via a
 // DETACHED ssh (`ssh <host> -- tmux new-window -d …`, see
@@ -32,7 +30,15 @@ package daemon
 // NFR7: this path is reached ONLY for remote runs (rbc != nil). Local runs never
 // construct a tunnel and are byte-identical to the pre-tunnel code.
 //
-// Bead: rs-tunnel-spawn (gap #7 Option A, bead 1).
+// The package is a LEAF: stdlib + internal/lifecycle/tmux (the CommandRunner
+// local-vs-ssh execution seam) + internal/workers (worker addressing) only. It
+// MUST NOT import internal/daemon — P3's remote/container dispatch links this
+// transport, and a daemon back-edge would drag the monolith along with it. That
+// boundary is machine-checked by the `transport` depguard rule in .golangci.yml.
+//
+// Bead: rs-tunnel-spawn (gap #7 Option A, bead 1). Moved out of
+// internal/daemon/reversetunnel.go by P2 unit E4a.
+package tunnel
 
 import (
 	"context"
@@ -49,42 +55,43 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// workerHarmonikPath resolves the absolute harmonik binary path ON THE WORKER,
+// WorkerHarmonikPath resolves the absolute harmonik binary path ON THE WORKER,
 // used as the hook "command" in the worker's per-run .claude/settings.json
 // (hk-z8ek). Operators set it per-worker via workers.yaml (harmonik_path);
 // when unset it falls back to the documented Go-install convention
 // (workers.DefaultHarmonikPath). harmonik MUST be installed at this path on the
 // worker for the hook relay to fire — a worker-setup requirement the daemon
 // cannot fabricate.
-func workerHarmonikPath(w workers.Worker) string {
+func WorkerHarmonikPath(w workers.Worker) string {
 	if w.HarmonikPath != "" {
 		return w.HarmonikPath
 	}
 	return workers.DefaultHarmonikPath
 }
 
-// workerSocketPollInterval is the cadence at which waitWorkerSocketLive probes
+// workerSocketPollInterval is the cadence at which WaitWorkerSocketLive probes
 // the worker-side reverse-tunnel TCP listener. The listener should appear within
 // ~1s of the forward establishing, so a sub-second cadence keeps the gate snappy
 // without hammering the ssh transport.
 const workerSocketPollInterval = 300 * time.Millisecond
 
-// workerSocketReadyTimeout is the default bound for waitWorkerSocketLive: how
+// WorkerSocketReadyTimeout is the default bound for WaitWorkerSocketLive: how
 // long beadRunOne waits for the per-run reverse-tunnel TCP listener to become
 // connectable on the worker before failing the readiness gate. ~10s comfortably
 // covers a healthy `ssh -N -R` establishing its forward; a longer hang means the
 // tunnel will not come up and launching the agent would race ahead of a dead
 // forward.
-const workerSocketReadyTimeout = 10 * time.Second
+const WorkerSocketReadyTimeout = 10 * time.Second
 
-// reverseTunnelRunner is the seam for constructing the long-lived `ssh -N -R`
+// ReverseTunnelRunner is the seam for constructing the long-lived `ssh -N -R`
 // reverse-tunnel process. Production uses exec.CommandContext; tests inject a
 // recorder (mirroring tmux.CommandRunner / tmux.RecordingRunner) to assert the
-// argv without spawning a real ssh. Declared as a package-level var so a test in
-// the daemon package can swap it for the duration of a single test.
-var reverseTunnelRunner = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, name, args...)
-}
+// argv without spawning a real ssh. Declared as a package-level var so a test can
+// swap it for the duration of a single test — any test that does so MUST NOT be
+// parallel. internal/daemon/workloop_gate_n5md3_test.go swaps it from the daemon
+// package; that constraint is invisible from here, so do not make it parallel
+// either.
+var ReverseTunnelRunner = exec.CommandContext
 
 // tcpEndpointPrefix marks a HARMONIK_DAEMON_SOCKET value as a TCP loopback
 // endpoint (the REMOTE-run reverse-tunnel transport). A unix-socket path never
@@ -93,7 +100,7 @@ var reverseTunnelRunner = func(ctx context.Context, name string, args ...string)
 // sync with the hookrelay dialer.
 const tcpEndpointPrefix = "tcp://"
 
-// workerTCPEndpoint returns the per-run worker-side reverse-tunnel TCP endpoint
+// WorkerTCPEndpoint returns the per-run worker-side reverse-tunnel TCP endpoint
 // the worker-side agent's hook relay dials:
 //
 //	tcp://127.0.0.1:<port>
@@ -101,7 +108,7 @@ const tcpEndpointPrefix = "tcp://"
 // sshd binds this loopback listener on the worker via `-R 127.0.0.1:<port>:<sock>`
 // and forwards it back to box A's daemon hook socket. The "tcp://" prefix is what
 // the hookrelay dialer keys off to dial net.Dial("tcp", …) rather than "unix".
-func workerTCPEndpoint(port int) string {
+func WorkerTCPEndpoint(port int) string {
 	return tcpEndpointPrefix + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 }
 
@@ -117,16 +124,16 @@ func tcpEndpointAddr(endpoint string) (addr string, ok bool) {
 
 // reservedTunnelPorts tracks the worker-side reverse-tunnel ports currently
 // HELD by in-flight remote runs on THIS daemon, guarded by reservedTunnelPortsMu.
-// allocateReverseTunnelPort reserves a port here for the duration of a run;
-// releaseReverseTunnelPort frees it at tunnel teardown.
+// AllocatePort reserves a port here for the duration of a run; ReleasePort frees
+// it at tunnel teardown.
 var (
 	reservedTunnelPortsMu sync.Mutex
 	reservedTunnelPorts   = make(map[int]bool)
 )
 
-// allocateReverseTunnelPort picks a free TCP port to hand sshd for the worker-side
+// AllocatePort picks a free TCP port to hand sshd for the worker-side
 // `-R 127.0.0.1:<port>:…` loopback bind, and RESERVES it (in reservedTunnelPorts)
-// until releaseReverseTunnelPort frees it at tunnel teardown.
+// until ReleasePort frees it at tunnel teardown.
 //
 // CONCURRENCY SAFETY (we run waves of 4+ simultaneous remote runs): each call binds
 // a TCP listener on box A's 127.0.0.1:0, lets the OS assign a currently-free
@@ -141,7 +148,7 @@ var (
 // re-Listen for another. The port remains a HINT for sshd's worker-side bind (the
 // worker's free-port space is independent of box A's), so ExitOnForwardFailure=yes
 // still guards a clash on the worker itself, and the connect-probe readiness gate
-// (waitWorkerSocketLive) reopens the bead rather than launching claude into a dead
+// (WaitWorkerSocketLive) reopens the bead rather than launching claude into a dead
 // tunnel. This avoids any monotonic counter and the TOCTOU false-green of
 // "test -S exists".
 //
@@ -150,19 +157,29 @@ var (
 // the gap before the worker binds it — but box A never binds these ports itself
 // (they are hints for the worker's sshd), so that case is still caught on the
 // worker by ExitOnForwardFailure=yes + the readiness gate.
-func allocateReverseTunnelPort() (int, error) {
+func AllocatePort() (int, error) {
 	// Bounded retry: in practice a collision resolves on the first re-Listen,
 	// since the kernel's free-ephemeral pool is large relative to in-flight runs.
 	const maxAttempts = 50
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			return 0, fmt.Errorf("allocateReverseTunnelPort: %w", err)
+			return 0, fmt.Errorf("tunnel.AllocatePort: %w", err)
 		}
-		port := l.Addr().(*net.TCPAddr).Port
+		listenAddr := l.Addr()
+		tcpAddr, isTCP := listenAddr.(*net.TCPAddr)
 		// Close before reserving: the port is only a HINT for sshd's worker-side
-		// bind; box A does not hold the listener.
-		l.Close()
+		// bind; box A does not hold the listener. A close failure would leave box A
+		// holding the very port we are about to hand the worker, so it is reported
+		// rather than swallowed (errcheck runs with check-blank, and this really is
+		// the one close whose failure matters here).
+		if closeErr := l.Close(); closeErr != nil {
+			return 0, fmt.Errorf("tunnel.AllocatePort: close probe listener: %w", closeErr)
+		}
+		if !isTCP {
+			return 0, fmt.Errorf("tunnel.AllocatePort: listener address %v is not TCP", listenAddr)
+		}
+		port := tcpAddr.Port
 
 		reservedTunnelPortsMu.Lock()
 		if !reservedTunnelPorts[port] {
@@ -173,19 +190,19 @@ func allocateReverseTunnelPort() (int, error) {
 		reservedTunnelPortsMu.Unlock()
 		// Collided with a port a concurrent run already holds; try again.
 	}
-	return 0, fmt.Errorf("allocateReverseTunnelPort: no free port after %d attempts", maxAttempts)
+	return 0, fmt.Errorf("tunnel.AllocatePort: no free port after %d attempts", maxAttempts)
 }
 
-// releaseReverseTunnelPort frees a port previously reserved by
-// allocateReverseTunnelPort so a later run may reuse it. Called at per-run tunnel
-// teardown. Safe to call with a port that was never reserved (no-op).
-func releaseReverseTunnelPort(port int) {
+// ReleasePort frees a port previously reserved by AllocatePort so a later run may
+// reuse it. Called at per-run tunnel teardown. Safe to call with a port that was
+// never reserved (no-op).
+func ReleasePort(port int) {
 	reservedTunnelPortsMu.Lock()
 	delete(reservedTunnelPorts, port)
 	reservedTunnelPortsMu.Unlock()
 }
 
-// buildReverseTunnelArgs constructs the argv for the long-lived reverse tunnel:
+// BuildArgs constructs the argv for the long-lived reverse tunnel:
 //
 //	ssh -N -R 127.0.0.1:<port>:<daemonSock> \
 //	    -o ExitOnForwardFailure=yes [opts...] <host>
@@ -229,7 +246,7 @@ func releaseReverseTunnelPort(port int) {
 // ["-p", "2222"]); host is the SSH destination (user@host or bare host). The
 // returned slice does NOT include the leading "ssh" token — callers pass it as
 // the command name to the runner (matching exec.CommandContext / SSHRunner).
-func buildReverseTunnelArgs(port int, daemonSock, host string, opts []string) []string {
+func BuildArgs(port int, daemonSock, host string, opts []string) []string {
 	forward := net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) + ":" + daemonSock
 	args := make([]string, 0, 13+len(opts)+1)
 	args = append(args, "-N", "-R", forward, "-o", "ExitOnForwardFailure=yes")
@@ -246,18 +263,18 @@ func buildReverseTunnelArgs(port int, daemonSock, host string, opts []string) []
 	return args
 }
 
-// sshHostOpts extracts the host and extra opts from a CommandRunner when it is an
+// SSHHostOpts extracts the host and extra opts from a CommandRunner when it is an
 // SSHRunner (the production remote-run runner, built as
 // tmuxpkg.SSHRunner{Host: w.Host}). Returns ("", nil, false) for any other runner
 // type, so callers can fall back to the worker record's Host.
-func sshHostOpts(r tmuxpkg.CommandRunner) (host string, opts []string, ok bool) {
+func SSHHostOpts(r tmuxpkg.CommandRunner) (host string, opts []string, ok bool) {
 	if sr, isSSH := r.(tmuxpkg.SSHRunner); isSSH {
 		return sr.Host, sr.Opts, true
 	}
 	return "", nil, false
 }
 
-// resolveAgentDaemonSocket selects the HARMONIK_DAEMON_SOCKET path injected into
+// ResolveAgentDaemonSocket selects the HARMONIK_DAEMON_SOCKET path injected into
 // the implementer agent's spawn env (gap #7 Option A, bead 2).
 //
 //   - REMOTE run (workerHookSock != ""): the agent runs on a worker host that
@@ -270,14 +287,14 @@ func sshHostOpts(r tmuxpkg.CommandRunner) (host string, opts []string, ok bool) 
 //
 // The function is pure (no I/O) so the path-selection contract is unit-testable
 // without spawning a daemon or any ssh.
-func resolveAgentDaemonSocket(workerHookSock, daemonSock string) string {
+func ResolveAgentDaemonSocket(workerHookSock, daemonSock string) string {
 	if workerHookSock != "" {
 		return workerHookSock
 	}
 	return daemonSock
 }
 
-// ensureWorkerHarmonikDir runs `mkdir -p <workerRepoPath>/.harmonik` on the worker
+// EnsureWorkerHarmonikDir runs `mkdir -p <workerRepoPath>/.harmonik` on the worker
 // through r (an SSHRunner in production) so the reverse tunnel can bind its per-run
 // socket (run-<runID>.sock) under that directory. `ssh -N -R` fails to create the
 // bind socket if the parent directory is missing, so this MUST run before the
@@ -286,16 +303,16 @@ func resolveAgentDaemonSocket(workerHookSock, daemonSock string) string {
 // gap #7 Option A, bead 2. Caller treats a non-nil error as non-fatal (logs and
 // continues — the readiness gate in bead 3 is the authority): a transient mkdir
 // failure should not abort the dispatch on its own.
-func ensureWorkerHarmonikDir(ctx context.Context, r tmuxpkg.CommandRunner, workerRepoPath string) error {
+func EnsureWorkerHarmonikDir(ctx context.Context, r tmuxpkg.CommandRunner, workerRepoPath string) error {
 	dir := filepath.Join(workerRepoPath, ".harmonik")
 	cmd := r.Command(ctx, "mkdir", "-p", dir)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ensureWorkerHarmonikDir (dir=%s): %w\nmkdir: %s", dir, err, out)
+		return fmt.Errorf("tunnel.EnsureWorkerHarmonikDir (dir=%s): %w\nmkdir: %s", dir, err, out)
 	}
 	return nil
 }
 
-// waitWorkerSocketLive blocks until the worker-side per-run reverse-tunnel TCP
+// WaitWorkerSocketLive blocks until the worker-side per-run reverse-tunnel TCP
 // listener (endpoint, a "tcp://127.0.0.1:<port>" value) is actually CONNECTABLE
 // as the unprivileged worker user, or until timeout / ctx cancellation (gap #7
 // Option A, bead 3 — the tunnel readiness gate).
@@ -326,14 +343,14 @@ func ensureWorkerHarmonikDir(ctx context.Context, r tmuxpkg.CommandRunner, worke
 //   - an error if endpoint is not a TCP endpoint, or the listener never becomes
 //     connectable within timeout (caller emits worker_tunnel_failed + reopens the
 //     bead, and does NOT Launch).
-func waitWorkerSocketLive(ctx context.Context, r tmuxpkg.CommandRunner, endpoint string, timeout time.Duration) error {
+func WaitWorkerSocketLive(ctx context.Context, r tmuxpkg.CommandRunner, endpoint string, timeout time.Duration) error {
 	addr, ok := tcpEndpointAddr(endpoint)
 	if !ok {
-		return fmt.Errorf("waitWorkerSocketLive: endpoint %q is not a TCP endpoint", endpoint)
+		return fmt.Errorf("tunnel.WaitWorkerSocketLive: endpoint %q is not a TCP endpoint", endpoint)
 	}
 	_, portStr, splitErr := net.SplitHostPort(addr)
 	if splitErr != nil {
-		return fmt.Errorf("waitWorkerSocketLive: malformed endpoint %q: %w", endpoint, splitErr)
+		return fmt.Errorf("tunnel.WaitWorkerSocketLive: malformed endpoint %q: %w", endpoint, splitErr)
 	}
 
 	deadline := time.Now().Add(timeout)
@@ -349,7 +366,7 @@ func waitWorkerSocketLive(ctx context.Context, r tmuxpkg.CommandRunner, endpoint
 		// Stop as soon as the deadline has passed (also covers timeout <= 0:
 		// we still probe once above before bailing).
 		if time.Now().After(deadline) {
-			return fmt.Errorf("waitWorkerSocketLive: endpoint %s not live within %s", endpoint, timeout)
+			return fmt.Errorf("tunnel.WaitWorkerSocketLive: endpoint %s not live within %s", endpoint, timeout)
 		}
 		select {
 		case <-ctx.Done():

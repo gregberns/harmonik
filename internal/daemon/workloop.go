@@ -71,6 +71,7 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/sessiondata"
 	"github.com/gregberns/harmonik/internal/substrate"
+	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -3562,7 +3563,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			rbc = &remoteBeadCtx{
 				worker: *w,
 				// hk-zexsj: pin the tmux SSHRunner off the shared SSH ControlMaster
-				// (mirroring reversetunnel.go's tunnel opts). A churning multiplexed
+				// (mirroring internal/transport/tunnel's tunnel opts). A churning multiplexed
 				// master can silently drop a multiplexed load-buffer / paste-buffer
 				// mid-write (the hk-cnp17 truncation family), discarding the seed
 				// paste → agent never starts → 30-min timeout. A dedicated,
@@ -3594,8 +3595,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//     binds (tcp://127.0.0.1:<port>), shared by beads 1, 2, and 3. The
 	//     port is allocated from box A's free ephemeral space as a HINT for
 	//     sshd's worker-side bind (collision-safe: see
-	//     allocateReverseTunnelPort + ExitOnForwardFailure=yes).
-	//  2. ensureWorkerHarmonikDir (bead 2) mkdir-p's the worker's .harmonik/
+	//     tunnel.AllocatePort + ExitOnForwardFailure=yes).
+	//  2. tunnel.EnsureWorkerHarmonikDir (bead 2) mkdir-p's the worker's .harmonik/
 	//     dir for other per-run artifacts; non-fatal — the readiness gate
 	//     (bead 3) is the authority.
 	//  3. The tunnel (bead 1) is a SEPARATE long-lived `ssh -N -R`
@@ -3614,23 +3615,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if rbc != nil {
 		// Allocate a free TCP port (hint for sshd's worker-side loopback bind)
 		// and form the per-run worker TCP endpoint the hook relay will dial.
-		tunnelPort, portErr := allocateReverseTunnelPort()
+		tunnelPort, portErr := tunnelpkg.AllocatePort()
 		if portErr != nil {
 			// Non-fatal: log and skip the tunnel; the readiness gate below would
 			// fail an empty endpoint, so guard the gate on workerHookSock != "".
 			fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel port alloc bead %s run %s: %v\n",
 				beadID, runID.String(), portErr)
 		} else {
-			rbc.workerHookSock = workerTCPEndpoint(tunnelPort)
+			rbc.workerHookSock = tunnelpkg.WorkerTCPEndpoint(tunnelPort)
 			// hk-cnp17: free the reserved port when this run ends, so a later
 			// run may reuse it (the reservation prevents two concurrent runs
 			// from being handed the same worker-side hint port).
-			defer releaseReverseTunnelPort(tunnelPort)
+			defer tunnelpkg.ReleasePort(tunnelPort)
 		}
 
-		if mkErr := ensureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
+		if mkErr := tunnelpkg.EnsureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
 			fmt.Fprintf(os.Stderr,
-				"daemon: workloop: ensureWorkerHarmonikDir bead %s run %s: %v (non-fatal; readiness gate is authority)\n",
+				"daemon: workloop: tunnel.EnsureWorkerHarmonikDir bead %s run %s: %v (non-fatal; readiness gate is authority)\n",
 				beadID, runID.String(), mkErr)
 		}
 
@@ -3657,12 +3658,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// Mirror the SSHRunner host/opts argv pattern (runner.go SSHRunner.Command):
 		// extra opts BEFORE the host. Fall back to the worker record's Host when
 		// the runner is not an SSHRunner (e.g. a test double).
-		tunnelHost, tunnelOpts, hostOK := sshHostOpts(rbc.sshRunner)
+		tunnelHost, tunnelOpts, hostOK := tunnelpkg.SSHHostOpts(rbc.sshRunner)
 		if !hostOK {
 			tunnelHost = rbc.worker.Host
 		}
-		tunnelArgs := buildReverseTunnelArgs(tunnelPort, daemonHookSock, tunnelHost, tunnelOpts)
-		rbc.tunnelCmd = reverseTunnelRunner(ctx, "ssh", tunnelArgs...)
+		tunnelArgs := tunnelpkg.BuildArgs(tunnelPort, daemonHookSock, tunnelHost, tunnelOpts)
+		rbc.tunnelCmd = tunnelpkg.ReverseTunnelRunner(ctx, "ssh", tunnelArgs...)
 		if startErr := rbc.tunnelCmd.Start(); startErr != nil {
 			// Non-fatal: a failed tunnel start means the worker-side agent's hooks
 			// will not reach box A, but the readiness gate (bead 3) is the
@@ -3694,7 +3695,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// (above) and ReleaseSlot run on the way out, so the `ssh -N` process
 		// does not leak. The gate runs ONLY here, inside the remote branch
 		// (NFR7: local runs never construct a tunnel and never reach it).
-		if waitErr := waitWorkerSocketLive(ctx, rbc.sshRunner, rbc.workerHookSock, workerSocketReadyTimeout); waitErr != nil {
+		if waitErr := tunnelpkg.WaitWorkerSocketLive(ctx, rbc.sshRunner, rbc.workerHookSock, tunnelpkg.WorkerSocketReadyTimeout); waitErr != nil {
 			fmt.Fprintf(os.Stderr,
 				"daemon: workloop: reverse-tunnel readiness gate bead %s run %s: %v (reopening, not launching)\n",
 				beadID, runID.String(), waitErr)
@@ -3733,7 +3734,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 		// host/opts come from the worker SSHRunner so git's ssh:// fetch dials the
 		// worker exactly like the rest of the remote path.
-		workerHost, sshOpts, _ := sshHostOpts(rbc.sshRunner)
+		workerHost, sshOpts, _ := tunnelpkg.SSHHostOpts(rbc.sshRunner)
 		if err := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
 			// B11: SSH connection failure → emit worker_offline + disable worker.
 			if tmuxpkg.IsSSHConnectionFailure(err) {
@@ -3805,7 +3806,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// hk-2hfyt: use ensureBaseOnWorker (not fetchBaseOnWorker directly) so
 			// an unpushed base commit triggers a direct push from box A to the worker
 			// rather than leaving an empty-HEAD worktree.
-			workerHostEBOW, sshOptsEBOW, _ := sshHostOpts(rbc.sshRunner)
+			workerHostEBOW, sshOptsEBOW, _ := tunnelpkg.SSHHostOpts(rbc.sshRunner)
 			baseSyncErr = ensureBaseOnWorker(qctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA,
 				nil, deps.projectDir, workerHostEBOW, sshOptsEBOW)
 		}
@@ -4011,7 +4012,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		var rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd string
 		if rbc != nil {
 			rlRunner = rbc.sshRunner
-			rlWorkerBinary = workerHarmonikPath(rbc.worker)
+			rlWorkerBinary = tunnelpkg.WorkerHarmonikPath(rbc.worker)
 			rlWorkerHookSock = rbc.workerHookSock
 			rlWorkerCwd = rbc.worker.RepoPath
 			if ts, ok := deps.substrate.(*tmuxSubstrate); ok {
@@ -4162,7 +4163,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		var dotWorkerBinary, dotWorkerHookSock, dotWorkerSession, dotWorkerCwd string
 		if rbc != nil {
 			dotRunner = rbc.sshRunner
-			dotWorkerBinary = workerHarmonikPath(rbc.worker)
+			dotWorkerBinary = tunnelpkg.WorkerHarmonikPath(rbc.worker)
 			dotWorkerHookSock = rbc.workerHookSock
 			dotWorkerCwd = rbc.worker.RepoPath
 			if ts, ok := deps.substrate.(*tmuxSubstrate); ok {
@@ -4284,7 +4285,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// TCP endpoint (rbc.workerHookSock, tcp://127.0.0.1:<port>) instead, which the
 	// `ssh -N -R` tunnel launched above forwards back to box A's daemon.sock (it is
 	// a TCP loopback listener, not a unix socket, so the unprivileged hook user can
-	// connect — hk-ege6). resolveAgentDaemonSocket returns
+	// connect — hk-ege6). tunnel.ResolveAgentDaemonSocket returns
 	// rbc.workerHookSock for a remote run and the unchanged box-A daemonSock for a
 	// local run (rbc == nil), so local runs remain byte-identical (NFR7). The
 	// resolved path flows into rc.daemonSocket → ClaudeEnvVars(HARMONIK_DAEMON_SOCKET).
@@ -4292,7 +4293,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if rbc != nil {
 		rbcHookSock = rbc.workerHookSock
 	}
-	agentDaemonSock := resolveAgentDaemonSocket(rbcHookSock, daemonSock)
+	agentDaemonSock := tunnelpkg.ResolveAgentDaemonSocket(rbcHookSock, daemonSock)
 	rc := claudeRunCtx{
 		runID:             runID,
 		beadID:            string(beadID),
@@ -4330,7 +4331,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// for a LOCAL run keeps the materialization byte-identical (NFR7).
 	if rbc != nil {
 		rc.runner = rbc.sshRunner
-		rc.workerBinaryPath = workerHarmonikPath(rbc.worker)
+		rc.workerBinaryPath = tunnelpkg.WorkerHarmonikPath(rbc.worker)
 	}
 	// RSM-010 (RT7): build the launch spec through LaunchPort (assembled above,
 	// before the mode switch, over the pre-built routed builder). Byte-identical to

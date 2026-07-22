@@ -32,7 +32,7 @@ package daemon
 //
 //   - REMOTE branch taken (selector returned non-nil → rbc != nil): the run
 //     enters the reverse-tunnel setup and the readiness gate
-//     (waitWorkerSocketLive) fails, which emits a `worker_tunnel_failed` event
+//     (tunnel.WaitWorkerSocketLive) fails, which emits a `worker_tunnel_failed` event
 //     carrying the SELECTED worker's name. Its presence proves the gate did NOT
 //     skip and a slot was reserved; its worker_name proves WHICH worker (hence
 //     which selector matched). The deferred ReleaseSlot then runs, so
@@ -44,8 +44,8 @@ package daemon
 //     (InFlight() stays 0 — no ReleaseSlot leak).
 //
 // To keep the REMOTE-taken cases deterministic and FAST without a real worker,
-// two things are arranged: (1) the package-level `reverseTunnelRunner` seam is
-// swapped for a no-op so no real `ssh -N -R` is spawned, and (2) the worker
+// two things are arranged: (1) the package-level `tunnel.ReverseTunnelRunner`
+// seam is swapped for a no-op so no real `ssh -N -R` is spawned, and (2) the worker
 // Host is an unresolvable `.invalid` name and the run ctx is short-bounded, so
 // the readiness gate's connect-probe fails fast and the gate decision (the
 // thing under test) is observed WITHOUT completing a heavy remote run — the
@@ -76,6 +76,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
@@ -206,7 +207,7 @@ const n5md3WorkerName = "alpha"
 // n5md3Registry builds a real single-worker registry whose worker is selectable
 // (Enabled, a free slot) and named n5md3WorkerName. The Host is an unresolvable
 // `.invalid` name so the remote readiness probe fails fast; combined with the
-// no-op reverseTunnelRunner seam and a short ctx, the REMOTE branch is observed
+// no-op tunnelpkg.ReverseTunnelRunner seam and a short ctx, the REMOTE branch is observed
 // without a real worker or a slow network timeout.
 func n5md3Registry(t *testing.T) *workers.Registry {
 	t.Helper()
@@ -229,14 +230,16 @@ func n5md3Registry(t *testing.T) *workers.Registry {
 // the gate chose via the worker_tunnel_failed seam (REMOTE) / its absence
 // (LOCAL) plus the registry slot accounting (ReleaseSlot is remote-only).
 //
-// NOT parallel: it swaps the package-level reverseTunnelRunner seam.
+// NOT parallel: it swaps the package-level tunnelpkg.ReverseTunnelRunner seam.
+// That seam now lives in internal/transport/tunnel (P2 unit E4a), so the
+// no-parallel constraint is invisible from that package — it is enforced here.
 func TestBeadRunOne_RoutingGate_N5md3(t *testing.T) {
 	// Swap the reverse-tunnel constructor for a no-op so REMOTE-branch cases
 	// never spawn a real `ssh -N -R`. The readiness gate still fails (nothing is
 	// listening), which is exactly the observable we want.
-	origRunner := reverseTunnelRunner
-	t.Cleanup(func() { reverseTunnelRunner = origRunner })
-	reverseTunnelRunner = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+	origRunner := tunnelpkg.ReverseTunnelRunner
+	t.Cleanup(func() { tunnelpkg.ReverseTunnelRunner = origRunner })
+	tunnelpkg.ReverseTunnelRunner = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 		// A trivially-startable, ctx-bounded process standing in for the tunnel.
 		return exec.CommandContext(ctx, "sleep", "30")
 	}

@@ -1,18 +1,18 @@
-package daemon
+package tunnel
 
-// reversetunnel_test.go — unit tests for the per-run SSH reverse tunnel
+// tunnel_test.go — unit tests for the per-run SSH reverse tunnel
 // (rs-tunnel-spawn, gap #7 Option A, bead 1).
 //
 // Gate-runnable: NO real ssh is spawned. The tunnel-launcher's command
-// construction is asserted directly (buildReverseTunnelArgs), and the
+// construction is asserted directly (BuildArgs), and the
 // process-lifecycle assertions (killed + awaited on ctx-cancel and via the
 // teardown defer) use a controllable long-lived stand-in process injected
-// through the reverseTunnelRunner seam — mirroring the tmux.RecordingRunner
+// through the ReverseTunnelRunner seam — mirroring the tmux.RecordingRunner
 // pattern used elsewhere in this package.
 //
 // Test matrix:
 //   TestReverseTunnel_ArgvExact:
-//     buildReverseTunnelArgs == ssh -N -R <wsock>:<dsock> -o
+//     BuildArgs == ssh -N -R <wsock>:<dsock> -o
 //     StreamLocalBindUnlink=yes <host>, with the run-id'd worker sock and the
 //     box-A daemon sock.
 //   TestReverseTunnel_ArgvWithOpts:
@@ -20,10 +20,10 @@ package daemon
 //   TestReverseTunnel_WorkerRunSocketPath:
 //     the worker-side socket path is <repo>/.harmonik/run-<runID>.sock.
 //   TestReverseTunnel_SeamRecordsArgvAndProcessKilled:
-//     the reverseTunnelRunner seam records the full ssh argv and the started
+//     the ReverseTunnelRunner seam records the full ssh argv and the started
 //     process is killed + awaited on run-ctx cancel and via the teardown defer.
 //   TestReverseTunnel_SSHRunnerHostOptsExtraction:
-//     sshHostOpts extracts Host/Opts from an SSHRunner and reports false for
+//     SSHHostOpts extracts Host/Opts from an SSHRunner and reports false for
 //     other runner types (fall back to the worker record's Host).
 //
 // Bead: rs-tunnel-spawn.
@@ -31,13 +31,13 @@ package daemon
 // ── gap #7 bead 3 (tunnel readiness gate, hk-rs-tunnel-readiness-cc1w) ──
 //   TestWaitWorkerSocketLive_SocketAppears:
 //     the fake runner returns non-zero for the first N polls then exit 0;
-//     waitWorkerSocketLive returns nil (Launch would proceed) and the probe
+//     WaitWorkerSocketLive returns nil (Launch would proceed) and the probe
 //     argv is `test -S <sock>`.
 //   TestWaitWorkerSocketLive_Timeout:
-//     the fake runner always returns non-zero; waitWorkerSocketLive returns a
+//     the fake runner always returns non-zero; WaitWorkerSocketLive returns a
 //     timeout error within ~the (short) bound.
 //   TestWaitWorkerSocketLive_CtxCancel:
-//     a cancelled ctx makes waitWorkerSocketLive return ctx.Err() promptly.
+//     a cancelled ctx makes WaitWorkerSocketLive return ctx.Err() promptly.
 
 import (
 	"context"
@@ -65,7 +65,7 @@ func TestReverseTunnel_ArgvExact(t *testing.T) {
 		dsock = "/Users/gb/github/harmonik/.harmonik/daemon.sock"
 		host  = "worker-mac-1"
 	)
-	got := buildReverseTunnelArgs(port, dsock, host, nil)
+	got := BuildArgs(port, dsock, host, nil)
 	want := []string{
 		"-N", "-R", "127.0.0.1:51234:" + dsock,
 		"-o", "ExitOnForwardFailure=yes",
@@ -76,7 +76,7 @@ func TestReverseTunnel_ArgvExact(t *testing.T) {
 		host,
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("buildReverseTunnelArgs argv mismatch:\n got: %v\nwant: %v", got, want)
+		t.Fatalf("BuildArgs argv mismatch:\n got: %v\nwant: %v", got, want)
 	}
 	// hk-ege6: the forward MUST be a TCP loopback bind, NOT a unix-socket bind.
 	if !strings.HasPrefix(got[2], "127.0.0.1:") {
@@ -105,7 +105,7 @@ func TestReverseTunnel_ArgvWithOpts(t *testing.T) {
 		dsock = "/d/.harmonik/daemon.sock"
 		host  = "user@host"
 	)
-	got := buildReverseTunnelArgs(port, dsock, host, []string{"-p", "2222"})
+	got := BuildArgs(port, dsock, host, []string{"-p", "2222"})
 	want := []string{
 		"-N", "-R", "127.0.0.1:2200:" + dsock,
 		"-o", "ExitOnForwardFailure=yes",
@@ -117,7 +117,7 @@ func TestReverseTunnel_ArgvWithOpts(t *testing.T) {
 		host,
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("buildReverseTunnelArgs (with opts) mismatch:\n got: %v\nwant: %v", got, want)
+		t.Fatalf("BuildArgs (with opts) mismatch:\n got: %v\nwant: %v", got, want)
 	}
 	// Host must be the LAST token; opts must precede it.
 	if got[len(got)-1] != host {
@@ -146,10 +146,10 @@ func indexOf(ss []string, target string) int {
 func TestReverseTunnel_WorkerTCPEndpoint(t *testing.T) {
 	t.Parallel()
 
-	got := workerTCPEndpoint(51234)
+	got := WorkerTCPEndpoint(51234)
 	want := "tcp://127.0.0.1:51234"
 	if got != want {
-		t.Fatalf("workerTCPEndpoint = %q, want %q", got, want)
+		t.Fatalf("WorkerTCPEndpoint = %q, want %q", got, want)
 	}
 
 	addr, ok := tcpEndpointAddr(got)
@@ -166,7 +166,7 @@ func TestReverseTunnel_WorkerTCPEndpoint(t *testing.T) {
 	}
 }
 
-// TestReverseTunnel_AllocatePortConcurrencySafe asserts allocateReverseTunnelPort
+// TestReverseTunnel_AllocatePortConcurrencySafe asserts AllocatePort
 // returns a usable port and that a batch of concurrent allocations (mirroring a
 // wave of 4+ remote runs) yields DISTINCT ports — the concurrency-safety property
 // the daemon relies on (no shared mutable counter; the kernel hands out distinct
@@ -183,7 +183,7 @@ func TestReverseTunnel_AllocatePortConcurrencySafe(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			p, err := allocateReverseTunnelPort()
+			p, err := AllocatePort()
 			if err != nil {
 				errMu.Lock()
 				if firstErr == nil {
@@ -197,7 +197,7 @@ func TestReverseTunnel_AllocatePortConcurrencySafe(t *testing.T) {
 	}
 	wg.Wait()
 	if firstErr != nil {
-		t.Fatalf("allocateReverseTunnelPort: %v", firstErr)
+		t.Fatalf("AllocatePort: %v", firstErr)
 	}
 	seen := make(map[int]bool, n)
 	for _, p := range ports {
@@ -211,23 +211,23 @@ func TestReverseTunnel_AllocatePortConcurrencySafe(t *testing.T) {
 	}
 }
 
-// TestReverseTunnel_SeamRecordsArgvAndProcessKilled drives the reverseTunnelRunner
+// TestReverseTunnel_SeamRecordsArgvAndProcessKilled drives the ReverseTunnelRunner
 // seam end-to-end without real ssh: it injects a recorder that (a) captures the
 // full ssh argv and (b) returns a controllable long-lived process. It then
 // asserts the recorded argv is the run-id'd reverse-tunnel command and that the
 // process is reliably killed + awaited both on run-ctx cancel and via the
 // teardown sequence (Process.Kill + Wait), as beadRunOne's defer does.
 func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
-	// Not parallel: swaps the package-level reverseTunnelRunner seam.
-	orig := reverseTunnelRunner
-	t.Cleanup(func() { reverseTunnelRunner = orig })
+	// Not parallel: swaps the package-level ReverseTunnelRunner seam.
+	orig := ReverseTunnelRunner
+	t.Cleanup(func() { ReverseTunnelRunner = orig })
 
 	var (
 		mu          sync.Mutex
 		recordedCmd string
 		recordedArg []string
 	)
-	reverseTunnelRunner = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+	ReverseTunnelRunner = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		mu.Lock()
 		recordedCmd = name
 		recordedArg = append([]string(nil), args...)
@@ -247,8 +247,8 @@ func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	args := buildReverseTunnelArgs(port, dsock, host, nil)
-	cmd := reverseTunnelRunner(ctx, "ssh", args...)
+	args := BuildArgs(port, dsock, host, nil)
+	cmd := ReverseTunnelRunner(ctx, "ssh", args...)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("tunnel Start: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
 	// ignoring errors) must reliably terminate + reap an independently-started
 	// tunnel process. Start a fresh one under a non-cancelled ctx so the kill is
 	// the ONLY thing that stops it, then run the exact defer shape.
-	cmd2 := reverseTunnelRunner(context.Background(), "ssh", args...)
+	cmd2 := ReverseTunnelRunner(context.Background(), "ssh", args...)
 	if err := cmd2.Start(); err != nil {
 		t.Fatalf("tunnel(2) Start: %v", err)
 	}
@@ -312,14 +312,14 @@ func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
 	}
 }
 
-// TestReverseTunnel_SSHRunnerHostOptsExtraction asserts sshHostOpts pulls Host
+// TestReverseTunnel_SSHRunnerHostOptsExtraction asserts SSHHostOpts pulls Host
 // and Opts out of an SSHRunner and reports !ok for other runner types.
 func TestReverseTunnel_SSHRunnerHostOptsExtraction(t *testing.T) {
 	t.Parallel()
 
-	host, opts, ok := sshHostOpts(tmuxpkg.SSHRunner{Host: "worker-mac-1", Opts: []string{"-p", "2222"}})
+	host, opts, ok := SSHHostOpts(tmuxpkg.SSHRunner{Host: "worker-mac-1", Opts: []string{"-p", "2222"}})
 	if !ok {
-		t.Fatal("sshHostOpts(SSHRunner): ok = false, want true")
+		t.Fatal("SSHHostOpts(SSHRunner): ok = false, want true")
 	}
 	if host != "worker-mac-1" {
 		t.Errorf("host = %q, want worker-mac-1", host)
@@ -330,8 +330,8 @@ func TestReverseTunnel_SSHRunnerHostOptsExtraction(t *testing.T) {
 
 	// A non-SSH runner (LocalRunner) must report !ok so the caller falls back to
 	// the worker record's Host.
-	if _, _, ok := sshHostOpts(tmuxpkg.LocalRunner{}); ok {
-		t.Error("sshHostOpts(LocalRunner): ok = true, want false")
+	if _, _, ok := SSHHostOpts(tmuxpkg.LocalRunner{}); ok {
+		t.Error("SSHHostOpts(LocalRunner): ok = true, want false")
 	}
 }
 
@@ -343,25 +343,25 @@ func TestTunnelEnv_ResolveAgentDaemonSocket(t *testing.T) {
 	t.Parallel()
 
 	const boxASock = "/Users/gb/github/harmonik/.harmonik/daemon.sock"
-	workerSock := workerTCPEndpoint(51234) // tcp://127.0.0.1:51234
+	workerSock := WorkerTCPEndpoint(51234) // endpoint is tcp 127.0.0.1 port 51234
 
 	// REMOTE: workerHookSock is set (rbc != nil) → resolved endpoint is the
 	// worker-side TCP endpoint, and explicitly NOT box A's daemon.sock.
-	if got := resolveAgentDaemonSocket(workerSock, boxASock); got != workerSock {
-		t.Errorf("remote run: resolveAgentDaemonSocket = %q, want worker-side %q", got, workerSock)
+	if got := ResolveAgentDaemonSocket(workerSock, boxASock); got != workerSock {
+		t.Errorf("remote run: ResolveAgentDaemonSocket = %q, want worker-side %q", got, workerSock)
 	}
-	if got := resolveAgentDaemonSocket(workerSock, boxASock); got == boxASock {
+	if got := ResolveAgentDaemonSocket(workerSock, boxASock); got == boxASock {
 		t.Errorf("remote run: resolved endpoint must NOT be box A's daemon.sock (%q)", boxASock)
 	}
 
 	// LOCAL: workerHookSock == "" (rbc == nil) → resolved socket is box A's
 	// daemon.sock, unchanged.
-	if got := resolveAgentDaemonSocket("", boxASock); got != boxASock {
-		t.Errorf("local run: resolveAgentDaemonSocket = %q, want box-A %q (unchanged)", got, boxASock)
+	if got := ResolveAgentDaemonSocket("", boxASock); got != boxASock {
+		t.Errorf("local run: ResolveAgentDaemonSocket = %q, want box-A %q (unchanged)", got, boxASock)
 	}
 }
 
-// TestTunnelEnv_EnsureWorkerHarmonikDir asserts ensureWorkerHarmonikDir runs
+// TestTunnelEnv_EnsureWorkerHarmonikDir asserts EnsureWorkerHarmonikDir runs
 // `mkdir -p <repo>/.harmonik` through the injected runner (so the reverse tunnel
 // can bind its socket there) and surfaces a runner error.
 func TestTunnelEnv_EnsureWorkerHarmonikDir(t *testing.T) {
@@ -374,8 +374,8 @@ func TestTunnelEnv_EnsureWorkerHarmonikDir(t *testing.T) {
 			return exec.CommandContext(ctx, "true")
 		},
 	}
-	if err := ensureWorkerHarmonikDir(context.Background(), rr, "/home/worker/repo"); err != nil {
-		t.Fatalf("ensureWorkerHarmonikDir: unexpected error: %v", err)
+	if err := EnsureWorkerHarmonikDir(context.Background(), rr, "/home/worker/repo"); err != nil {
+		t.Fatalf("EnsureWorkerHarmonikDir: unexpected error: %v", err)
 	}
 	if len(rr.Calls) != 1 {
 		t.Fatalf("expected exactly 1 runner call, got %d: %+v", len(rr.Calls), rr.Calls)
@@ -396,8 +396,8 @@ func TestTunnelEnv_EnsureWorkerHarmonikDir(t *testing.T) {
 			return exec.CommandContext(ctx, "false")
 		},
 	}
-	if err := ensureWorkerHarmonikDir(context.Background(), rrFail, "/home/worker/repo"); err == nil {
-		t.Error("ensureWorkerHarmonikDir: expected error on non-zero mkdir exit, got nil")
+	if err := EnsureWorkerHarmonikDir(context.Background(), rrFail, "/home/worker/repo"); err == nil {
+		t.Error("EnsureWorkerHarmonikDir: expected error on non-zero mkdir exit, got nil")
 	}
 }
 
@@ -423,11 +423,11 @@ func TestWaitWorkerSocketLive_SocketAppears(t *testing.T) {
 	}
 
 	// Timeout comfortably exceeds 3 × the poll interval so the third probe lands.
-	if err := waitWorkerSocketLive(context.Background(), rr, endpoint, 5*time.Second); err != nil {
-		t.Fatalf("waitWorkerSocketLive: unexpected error: %v", err)
+	if err := WaitWorkerSocketLive(context.Background(), rr, endpoint, 5*time.Second); err != nil {
+		t.Fatalf("WaitWorkerSocketLive: unexpected error: %v", err)
 	}
 
-	// waitWorkerSocketLive has returned, so the runner is no longer invoked
+	// WaitWorkerSocketLive has returned, so the runner is no longer invoked
 	// concurrently — rr.Calls is safe to read directly.
 	if len(rr.Calls) < 3 {
 		t.Fatalf("expected at least 3 probes (2 not-ready + 1 ready), got %d: %+v", len(rr.Calls), rr.Calls)
@@ -457,16 +457,16 @@ func TestWaitWorkerSocketLive_NonConnectableFails(t *testing.T) {
 			return exec.CommandContext(ctx, "false") // connection always refused
 		},
 	}
-	if err := waitWorkerSocketLive(context.Background(), rr, endpoint, 200*time.Millisecond); err == nil {
+	if err := WaitWorkerSocketLive(context.Background(), rr, endpoint, 200*time.Millisecond); err == nil {
 		t.Fatal("non-connectable endpoint: expected an error, got nil (false-green regression)")
 	}
 
 	// A non-TCP endpoint (e.g. an empty endpoint from a failed port alloc, or a
 	// stray unix path) is rejected before any probe — fail-safe, never launches.
-	if err := waitWorkerSocketLive(context.Background(), rr, "", 200*time.Millisecond); err == nil {
+	if err := WaitWorkerSocketLive(context.Background(), rr, "", 200*time.Millisecond); err == nil {
 		t.Error("empty endpoint: expected an error, got nil")
 	}
-	if err := waitWorkerSocketLive(context.Background(), rr, "/some/unix.sock", 200*time.Millisecond); err == nil {
+	if err := WaitWorkerSocketLive(context.Background(), rr, "/some/unix.sock", 200*time.Millisecond); err == nil {
 		t.Error("unix-path endpoint: expected a not-a-TCP-endpoint error, got nil")
 	}
 }
@@ -486,10 +486,10 @@ func TestWaitWorkerSocketLive_Timeout(t *testing.T) {
 
 	const bound = 200 * time.Millisecond
 	start := time.Now()
-	err := waitWorkerSocketLive(context.Background(), rr, endpoint, bound)
+	err := WaitWorkerSocketLive(context.Background(), rr, endpoint, bound)
 	elapsed := time.Since(start)
 	if err == nil {
-		t.Fatal("waitWorkerSocketLive: expected a timeout error, got nil")
+		t.Fatal("WaitWorkerSocketLive: expected a timeout error, got nil")
 	}
 	if !strings.Contains(err.Error(), "not live") {
 		t.Errorf("error = %q, want it to mention the socket not being live", err.Error())
@@ -526,10 +526,10 @@ func TestWaitWorkerSocketLive_CtxCancel(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err := waitWorkerSocketLive(ctx, rr, endpoint, 30*time.Second)
+	err := WaitWorkerSocketLive(ctx, rr, endpoint, 30*time.Second)
 	elapsed := time.Since(start)
 	if err == nil {
-		t.Fatal("waitWorkerSocketLive: expected ctx error, got nil")
+		t.Fatal("WaitWorkerSocketLive: expected ctx error, got nil")
 	}
 	if err != context.Canceled {
 		t.Errorf("error = %v, want context.Canceled", err)

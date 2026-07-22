@@ -87,6 +87,7 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/substrate"
+	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
@@ -219,11 +220,11 @@ func driveDotWorkflow(
 	// tunnel TCP endpoint so the worker's claude can reach the relay; box A's local
 	// unix daemon.sock is unreachable from the worker. Empty workerHookSock (LOCAL
 	// run) ⇒ unchanged box-A unix socket (NFR7). Mirrors workloop.go single-mode
-	// resolveAgentDaemonSocket; previously the box-A unix path flowed into every
+	// tunnel.ResolveAgentDaemonSocket; previously the box-A unix path flowed into every
 	// node's rc.daemonSocket → HARMONIK_DAEMON_SOCKET → connect failure → no hook →
 	// agent_ready_timeout.
 	boxADaemonSocket := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
-	daemonSocket := resolveAgentDaemonSocket(workerHookSock, boxADaemonSocket)
+	daemonSocket := tunnelpkg.ResolveAgentDaemonSocket(workerHookSock, boxADaemonSocket)
 
 	// Index nodes by ID for O(1) type lookup during the walk.
 	nodesByID := make(map[string]*dot.Node, len(graph.Nodes))

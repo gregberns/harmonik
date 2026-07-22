@@ -61,7 +61,7 @@ func TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner(t *testing.T) {
 		runID:            z8ekRunID(t),
 		beadID:           "hk-z8ek",
 		workspacePath:    workerWt,
-		daemonSocket:     workerSock, // resolveAgentDaemonSocket already picked the worker sock
+		daemonSocket:     workerSock, // tunnel.ResolveAgentDaemonSocket already picked the worker sock
 		workflowMode:     core.WorkflowModeSingle,
 		phase:            "",
 		iterationCount:   1,

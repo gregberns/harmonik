@@ -313,11 +313,12 @@ func TestM4C7_SeamSurvival_StructuralFloors(t *testing.T) {
 		}
 	}
 
-	// (b) The reverse-tunnel seam must exist.
-	rtSrc := readRepoFile(t, "internal", "daemon", "reversetunnel.go")
-	for _, sym := range []string{"reverseTunnelRunner", "buildReverseTunnelArgs"} {
+	// (b) The reverse-tunnel seam must exist. It left internal/daemon in P2 unit
+	// E4a and now lives in internal/transport/tunnel; the seam itself is unchanged.
+	rtSrc := readRepoFile(t, "internal", "transport", "tunnel", "tunnel.go")
+	for _, sym := range []string{"ReverseTunnelRunner", "BuildArgs"} {
 		if !strings.Contains(rtSrc, sym) {
-			t.Errorf("seam deleted: reverse-tunnel symbol %q missing from reversetunnel.go", sym)
+			t.Errorf("seam deleted: reverse-tunnel symbol %q missing from internal/transport/tunnel/tunnel.go", sym)
 		}
 	}
 

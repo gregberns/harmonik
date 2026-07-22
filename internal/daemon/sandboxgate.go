@@ -64,7 +64,7 @@ func sandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxP
 	// macOS sandbox; a remote run's agent executes on the WORKER's OS, outside
 	// box A entirely, so there is nothing local to sandbox. On a remote run
 	// DaemonSockPath is a reverse-tunnel TCP endpoint ("tcp://127.0.0.1:<port>",
-	// see resolveAgentDaemonSocket) rather than an absolute unix-socket path —
+	// see tunnel.ResolveAgentDaemonSocket) rather than an absolute unix-socket path —
 	// so wrapping is not just pointless but FATAL: GenerateSandboxProfile rejects
 	// the non-absolute DaemonSockPath ("must be an absolute path"), killing every
 	// remote run in ~2s. Gating here — the single source of truth for "should
@@ -74,7 +74,7 @@ func sandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxP
 	// LOCAL run still surfaces the "must be non-empty" error downstream, and a
 	// (never-observed) relative LOCAL path stays fail-CLOSED via that same
 	// downstream "must be an absolute path" check — we key ONLY on the tcp://
-	// prefix, the sole signal resolveAgentDaemonSocket emits for a remote run,
+	// prefix, the sole signal tunnel.ResolveAgentDaemonSocket emits for a remote run,
 	// so this guard never trades a local run's sandbox for a fail-open skip.
 	if strings.HasPrefix(in.DaemonSockPath, "tcp://") {
 		return nil

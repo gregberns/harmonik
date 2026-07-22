@@ -58,6 +58,7 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/substrate"
+	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -209,7 +210,7 @@ func runReviewLoop(
 	// (tcp://127.0.0.1:<port>) the implementer's claude must dial for the hook
 	// relay; box A's local unix daemon.sock is unreachable from the worker. Empty
 	// for a LOCAL run ⇒ the unchanged box-A unix socket is used (NFR7). hk-fxy9:
-	// mirrors the single-mode rewrite at workloop.go (resolveAgentDaemonSocket).
+	// mirrors the single-mode rewrite at workloop.go (tunnel.ResolveAgentDaemonSocket).
 	workerHookSock string,
 	// workerSessionName / workerSessionCwd identify the tmux session ON THE WORKER
 	// that a REMOTE implementer spawn must ensure + target, and the cwd to create it
@@ -228,10 +229,10 @@ func runReviewLoop(
 	// Derived from projectDir so reviewloop.go does not need a separate field on deps.
 	// For a REMOTE run (workerHookSock != ""), rewrite to the worker-side
 	// reverse-tunnel TCP endpoint so the worker's claude can reach the relay
-	// (hk-fxy9; symmetric with workloop.go single-mode resolveAgentDaemonSocket).
+	// (hk-fxy9; symmetric with workloop.go single-mode tunnel.ResolveAgentDaemonSocket).
 	// nil/"" ⇒ unchanged box-A unix socket (NFR7).
 	boxADaemonSocket := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
-	daemonSocket := resolveAgentDaemonSocket(workerHookSock, boxADaemonSocket)
+	daemonSocket := tunnelpkg.ResolveAgentDaemonSocket(workerHookSock, boxADaemonSocket)
 
 	state := reviewLoopState{iterationCount: 1}
 
@@ -1123,7 +1124,7 @@ func runReviewLoop(
 		// always sees the latest implementer commit. The later preMergeSync is then
 		// a harmless no-op re-fetch.
 		var reviewHeadSHA string
-		workerHost, sshOpts, isSSHRunner := sshHostOpts(runner)
+		workerHost, sshOpts, isSSHRunner := tunnelpkg.SSHHostOpts(runner)
 		if runner != nil && isSSHRunner {
 			// hk-7bwx: fetch the run branch DIRECTLY from the worker's repo over SSH
 			// (ssh://<host><repoPath>) instead of the old worker→GitHub→box-A

@@ -20,7 +20,7 @@ import (
 //     non-fatal so the daemon still comes up — but a too-long path never
 //     self-heals (unlike a transient stale-socket race), leaving the daemon
 //     permanently socket-less with no clear signal why.
-//   - the remote reverse-tunnel (daemon/reversetunnel.go) forwards a worker
+//   - the remote reverse-tunnel (internal/transport/tunnel/tunnel.go) forwards a
 //     TCP port back to this same socket path via `ssh -R <port>:<path>`. ssh
 //     does not validate that local forward destination at tunnel start —
 //     only when a connection actually needs forwarding — so the tunnel

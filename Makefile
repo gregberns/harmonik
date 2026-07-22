@@ -234,6 +234,15 @@ test-codex-l012:  ## Codex L0/L1/L2 + input-driver harness + fault matrix + N=10
 codex-capture-pane-gate:  ## SC6: forbid `capture-pane` in the structured input-driver packages (T9)
 	scripts/codex-capture-pane-gate.sh
 
+# transport-freeze-gate: the P2 E4 extraction ratchet — the reverse-tunnel
+# concern left internal/daemon for internal/transport/tunnel, and depguard can
+# only fence the import edge, not the creation of a new file. This grep gate
+# fails if a reverse-tunnel-shaped file or one of the moved symbols reappears in
+# internal/daemon. Wired into check-fast and check-short.
+.PHONY: transport-freeze-gate
+transport-freeze-gate:  ## P2 E4: forbid new reverse-tunnel files or moved symbols in internal/daemon
+	scripts/transport-freeze-gate.sh
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -419,6 +428,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	go vet ./...
 	go build ./...
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=HEAD~1
+	scripts/transport-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -440,6 +450,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	go vet ./...
 	go build ./...
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=origin/main
+	scripts/transport-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

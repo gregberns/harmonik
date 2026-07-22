@@ -1,6 +1,6 @@
-package daemon
+package tunnel
 
-// reversetunnel_cnp17_test.go — regression tests for hk-cnp17: at max_slots>1 the
+// tunnel_cnp17_test.go — regression tests for hk-cnp17: at max_slots>1 the
 // per-run reverse tunnel collapsed onto the worker's shared SSH ControlMaster, so
 // the agent_ready forward was not durably established and every concurrent run died
 // at agent_ready_timeout. The fix pins each tunnel onto its own dedicated,
@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// TestReverseTunnel_CNP17_MultiplexingOptOut asserts buildReverseTunnelArgs forces
+// TestReverseTunnel_CNP17_MultiplexingOptOut asserts BuildArgs forces
 // the per-run tunnel off the worker's shared ControlMaster and keeps the dedicated
 // link warm, WITHOUT losing the existing reverse forward / fail-fast semantics.
 func TestReverseTunnel_CNP17_MultiplexingOptOut(t *testing.T) {
@@ -24,7 +24,7 @@ func TestReverseTunnel_CNP17_MultiplexingOptOut(t *testing.T) {
 		host  = "worker-mac-2"
 	)
 	// Include worker opts to prove the forced flags survive alongside them.
-	got := buildReverseTunnelArgs(port, dsock, host, []string{"-p", "2222"})
+	got := BuildArgs(port, dsock, host, []string{"-p", "2222"})
 	joined := strings.Join(got, " ")
 
 	// The hk-cnp17 multiplexing opt-outs + keepalives.
@@ -67,9 +67,9 @@ func TestReverseTunnel_CNP17_SequentialAllocDistinct(t *testing.T) {
 	got := make([]int, 0, n)
 	seen := make(map[int]bool, n)
 	for i := 0; i < n; i++ {
-		p, err := allocateReverseTunnelPort()
+		p, err := AllocatePort()
 		if err != nil {
-			t.Fatalf("allocateReverseTunnelPort #%d: %v", i, err)
+			t.Fatalf("AllocatePort #%d: %v", i, err)
 		}
 		if seen[p] {
 			t.Fatalf("duplicate port %d on sequential allocation #%d (reserved-set not holding)", p, i)
@@ -79,17 +79,17 @@ func TestReverseTunnel_CNP17_SequentialAllocDistinct(t *testing.T) {
 	}
 	// Release all reservations so the test leaves no global state behind.
 	for _, p := range got {
-		releaseReverseTunnelPort(p)
+		ReleasePort(p)
 	}
 
 	// After release, a fresh allocation may legitimately reuse a freed port — prove
 	// release actually frees by confirming we can re-allocate up to n more without
 	// running out (the set is no longer holding the originals).
 	for i := 0; i < n; i++ {
-		p, err := allocateReverseTunnelPort()
+		p, err := AllocatePort()
 		if err != nil {
-			t.Fatalf("post-release allocateReverseTunnelPort #%d: %v", i, err)
+			t.Fatalf("post-release AllocatePort #%d: %v", i, err)
 		}
-		releaseReverseTunnelPort(p)
+		ReleasePort(p)
 	}
 }

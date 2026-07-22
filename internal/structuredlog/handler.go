@@ -208,8 +208,8 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 // Rotation is attempted before the write when thresholds are exceeded.
 // Secrets redaction is applied to the fields map via cfg.Redact before any
 // bytes reach the file.
-func (h *Handler) Handle(_ context.Context, r slog.Record) error {
-	if !h.Enabled(context.Background(), r.Level) {
+func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
+	if !h.Enabled(ctx, r.Level) {
 		return nil
 	}
 

@@ -318,3 +318,117 @@ func TestCodexFallback_EmptyBeadIDErrors(t *testing.T) {
 		t.Error("ensureCodexRefsTrailer with empty beadID: want error, got nil")
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-jcrzn — the fallback must measure AGENT work, never daemon scaffolding
+// ─────────────────────────────────────────────────────────────────────────────
+
+// codexCommitWriteDaemonScaffolding writes the files the DAEMON itself drops
+// into a run worktree. None of these are the agent's work product.
+//
+// In a project whose gitignore does not cover them — `harmonik init` used to
+// scaffold an ENUMERATED .harmonik/.gitignore that omitted agent-task.md, and a
+// gitignore inside .harmonik/ cannot un-untrack its own directory — a bare
+// `git status --porcelain` reports `?? .harmonik/` even for a run in which the
+// agent did nothing at all.
+func codexCommitWriteDaemonScaffolding(t *testing.T, dir string) {
+	t.Helper()
+	for _, d := range []string{".harmonik", ".claude"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o750); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+	codexCommitWriteFile(t, dir, filepath.Join(".harmonik", "agent-task.md"),
+		"title: do the thing\n\n## Task Description\nimplement X\n")
+	codexCommitWriteFile(t, dir, filepath.Join(".harmonik", "commit-gate.log"), "gate ran\n")
+	codexCommitWriteFile(t, dir, filepath.Join(".claude", "settings.json"), "{}\n")
+}
+
+// TestCodexFallback_DaemonScaffoldingOnly_NoCommit is the hk-jcrzn regression
+// guard, and it is the false-green that mattered most: an implementer that did
+// NOTHING must not acquire a commit.
+//
+// Observed in production (lima, 3 sandboxed codex samples): exit 0 in 3-5s with
+// commit_landed=false, yet the daemon logged "ensureCodexRefsTrailer: committed"
+// and the run advanced through commit_gate to review. The synthesized commit
+// carried a changed tree, real insertions and a valid Refs trailer — so the gate
+// passed it LEGITIMATELY. By every check the gate makes, it was a real commit.
+// The commit contained only the daemon's own scaffolding.
+//
+// ensureCodexRefsTrailer was never at fault: it explicitly refuses to fabricate
+// on a clean worktree. The dirty check was being answered by the daemon's own
+// files, so the "did the agent work?" question was reading the daemon's writes.
+func TestCodexFallback_DaemonScaffoldingOnly_NoCommit(t *testing.T) {
+	t.Parallel()
+
+	dir, parentSHA := codexCommitRepo(t)
+	beadID := core.BeadID("hk-jcrzn-idle")
+
+	// The daemon writes its scaffolding; the agent then does nothing at all.
+	codexCommitWriteDaemonScaffolding(t, dir)
+
+	headBefore := codexCommitGitOut(t, dir, "rev-parse", "HEAD")
+	countBefore := codexCommitCount(t, dir)
+
+	outcome, err := daemon.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	if err != nil {
+		t.Fatalf("ensureCodexRefsTrailer: %v", err)
+	}
+
+	// MUTATION ORACLE: neutralise the agentWorkPathspec exclusions in
+	// codexcommit.go and this assertion fails — the worktree reads dirty on the
+	// daemon's own files and the fallback fabricates a commit.
+	if outcome != daemon.ExportedCodexRefsNoChange {
+		t.Errorf("outcome = %v; want no_change — the agent did nothing, so daemon scaffolding "+
+			"must not be read as uncommitted work (hk-jcrzn)", outcome)
+	}
+	if got := codexCommitGitOut(t, dir, "rev-parse", "HEAD"); got != headBefore {
+		t.Errorf("HEAD advanced on an idle run: %s -> %s — a commit was fabricated from daemon "+
+			"scaffolding and would pass commit_gate as real work (hk-jcrzn)", headBefore, got)
+	}
+	if got := codexCommitCount(t, dir); got != countBefore {
+		t.Errorf("commit count changed on an idle run: %d -> %d", countBefore, got)
+	}
+}
+
+// TestCodexFallback_AgentWorkWithScaffolding_ExcludesDaemonPaths verifies the
+// other half: when the agent DID work, the fallback still commits — but the
+// commit contains only agent files. Daemon scaffolding present in the same
+// worktree must never be swept in.
+//
+// The .claude/ exclusion is not cosmetic: that directory is only partially
+// gitignored, so a blanket `git add -A` can stage credential-adjacent files and
+// push them to origin (hk-igq3). commitResidualDelta has excluded both
+// directories since GH #7 / hk-znou; this committer was its unhardened twin.
+func TestCodexFallback_AgentWorkWithScaffolding_ExcludesDaemonPaths(t *testing.T) {
+	t.Parallel()
+
+	dir, parentSHA := codexCommitRepo(t)
+	beadID := core.BeadID("hk-jcrzn-real")
+
+	codexCommitWriteDaemonScaffolding(t, dir)
+	// Real agent work, uncommitted — the genuine fallback case.
+	codexCommitWriteFile(t, dir, "feature.go", "package main\n")
+
+	outcome, err := daemon.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	if err != nil {
+		t.Fatalf("ensureCodexRefsTrailer: %v", err)
+	}
+	if outcome != daemon.ExportedCodexRefsCommitted {
+		t.Fatalf("outcome = %v; want committed — real agent work must still be committed", outcome)
+	}
+
+	committed := codexCommitGitOut(t, dir, "diff", "--name-only", parentSHA, "HEAD")
+	if !strings.Contains(committed, "feature.go") {
+		t.Errorf("agent work missing from the commit; files = %q", committed)
+	}
+	for _, forbidden := range []string{".harmonik/", ".claude/"} {
+		if strings.Contains(committed, forbidden) {
+			t.Errorf("daemon-owned path %q was committed as agent work; files = %q", forbidden, committed)
+		}
+	}
+	// The worktree keeps its scaffolding — excluded from the commit, not deleted.
+	if _, statErr := os.Stat(filepath.Join(dir, ".harmonik", "agent-task.md")); statErr != nil {
+		t.Errorf("scaffolding was removed from the worktree: %v", statErr)
+	}
+}

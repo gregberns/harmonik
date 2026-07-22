@@ -88,7 +88,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 126 // +1 provider_selected (hk-8ziid.2 EV-027 amendment; O-class claim-time event recording the resolved Pi provider identity keyed on run_id)
+	const wantCount = 127 // +1 working_tree_local_edits_overwritten (hk-7qmpp EV-027 amendment; O-class event naming the uncommitted local edits the EM-054 post-merge refresh overwrote, plus the recovery-patch location)
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

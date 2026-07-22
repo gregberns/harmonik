@@ -101,6 +101,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-w6y70: epic_completed — emitted at most once per parent epic after last child closes (§8.13).
 	{TypeName: "epic_completed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "working_tree_refresh_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-7qmpp: working_tree_local_edits_overwritten — the EM-054 refresh named what it overwrote.
+	{TypeName: "working_tree_local_edits_overwritten", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "implementer_escaped_worktree", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "implementer_phase_complete", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-o68j3: post-merge build gate event.

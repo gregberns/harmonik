@@ -136,7 +136,6 @@ func replayFixtureReadSiblingAtCommit(t *testing.T, repoDir, sha, runID, transit
 func replayFixtureExtractRunIDFromCommit(t *testing.T, repoDir, sha string) string {
 	t.Helper()
 
-	//nolint:gosec // G204: sha is a git SHA from durableFixtureReadTip; repoDir is t.TempDir()
 	out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"log", "-1", "--format=%B", sha,
 	).Output()
@@ -158,7 +157,6 @@ func replayFixtureExtractRunIDFromCommit(t *testing.T, repoDir, sha string) stri
 func replayFixtureExtractTransitionIDFromCommit(t *testing.T, repoDir, sha string) string {
 	t.Helper()
 
-	//nolint:gosec // G204: sha is a git SHA from durableFixtureReadTip; repoDir is t.TempDir()
 	out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"log", "-1", "--format=%B", sha,
 	).Output()

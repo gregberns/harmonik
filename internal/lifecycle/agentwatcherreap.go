@@ -55,7 +55,6 @@ func (OSAgentWatcherLister) ListAgentFollowWatcherPIDs(ctx context.Context, agen
 	if agent == "" {
 		return nil, nil
 	}
-	//nolint:gosec // G204: arguments are hard-coded constants, not user input
 	out, err := exec.CommandContext(ctx, "ps", "-eo", "pid,args").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle: OSAgentWatcherLister: ps: %w", err)

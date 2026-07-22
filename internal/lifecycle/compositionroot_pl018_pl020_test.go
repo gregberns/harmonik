@@ -212,7 +212,6 @@ func compositionRootFixtureScanForLLMImports(t *testing.T, pkg string) compositi
 		"github.com/google/generative-ai-go/",
 	}
 
-	//nolint:gosec // G204: pkg is a fixed constant string in this test, not user-supplied input
 	cmd := exec.CommandContext(t.Context(), "go", "list", "-deps", pkg)
 	out, err := cmd.Output()
 	if err != nil {

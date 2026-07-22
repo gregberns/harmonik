@@ -513,7 +513,7 @@ func defaultReadHandoff(path string) (string, error) {
 // defaultHandoffModTime reports the handoff file's mtime and existence via
 // os.Stat. A missing/unreadable file returns (zero, false). Refs: hk-fi78d.
 func defaultHandoffModTime(path string) (time.Time, bool) {
-	fi, err := os.Stat(path) //nolint:gosec // G304: path is operator-controlled projectDir + agentName
+	fi, err := os.Stat(path)
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -533,7 +533,6 @@ func defaultIdleMarkerModTime(projectDir, agent string) (time.Time, bool) {
 }
 
 func defaultTruncateHandoff(path string) error {
-	//nolint:gosec // G304,G306: path is operator-controlled; 0600 — keeper-owned
 	return os.WriteFile(path, []byte{}, 0o600)
 }
 
@@ -546,7 +545,6 @@ func writeJournalFile(path string, j *CycleJournal) error {
 	if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil { //nolint:gosec // G301: 0755 matches .harmonik conventions
 		return fmt.Errorf("keeper: create journal dir: %w", mkErr)
 	}
-	//nolint:gosec // G306: 0600 — keeper-owned file; no world-read needed
 	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("keeper: write journal %q: %w", path, err)
 	}

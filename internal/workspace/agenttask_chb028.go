@@ -245,7 +245,7 @@ func WriteAgentTask(workspacePath string, payload AgentTaskPayload) error {
 	}
 
 	// Post-write assertion: file MUST exist and be non-empty.
-	fi, err := os.Stat(target) //nolint:gosec // G304: path constructed from workspacePath + known suffix
+	fi, err := os.Stat(target)
 	if err != nil {
 		return fmt.Errorf("%w: stat after write failed for %q: %v", ErrTaskFileEmpty, target, err)
 	}

@@ -198,7 +198,7 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 			}
 			// Non-transport cat failure (exit 1: no such file) → genuinely absent,
 			// mirroring ReadReviewVerdict's os.IsNotExist branch (nil,nil = inconclusive).
-			//nolint:nilnil,nilerr // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
+			//nolint:nilnil // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
 			return nil, nil
 		}
 		// Empty (whitespace-only) stdout → treat as absent. ROOT CAUSE: on some
@@ -493,7 +493,6 @@ func ArchiveVerdict(workspacePath string, iterationN int) error {
 	dst := ReviewVerdictArchivePath(workspacePath, iterationN)
 
 	// Check that the source exists; report ErrNotFound if absent.
-	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
 	if _, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("%w: review.json absent at %q", ErrNotFound, src)
@@ -502,7 +501,6 @@ func ArchiveVerdict(workspacePath string, iterationN int) error {
 	}
 
 	// Check that the destination does not exist; error on double-archive.
-	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
 	if _, err := os.Stat(dst); err == nil {
 		return fmt.Errorf("workspace: ArchiveVerdict: destination already exists at %q (double-archive at iteration %d)", dst, iterationN)
 	} else if !os.IsNotExist(err) {

@@ -17,7 +17,6 @@ func nonTxFixtureRunID(n int) string {
 func nonTxFixtureIsAncestor(t *testing.T, repoDir, ancestor, descendant string) bool {
 	t.Helper()
 
-	//nolint:gosec // G204: ancestor/descendant are commit SHAs from durableFixtureCommitCheckpoint; repoDir is t.TempDir()
 	cmd := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"merge-base", "--is-ancestor", ancestor, descendant,
 	)

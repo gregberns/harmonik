@@ -36,7 +36,6 @@ func pidfileLockFixtureWritePidfile(t *testing.T, projectDir string, pid, pgid i
 func pidfileLockFixtureSpawnAndKill(t *testing.T) (int, error) {
 	t.Helper()
 
-	//nolint:gosec // G204: "true" is a compile-time constant, not user input
 	cmd := exec.CommandContext(t.Context(), "true")
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("pidfileLockFixtureSpawnAndKill: Start: %w", err)

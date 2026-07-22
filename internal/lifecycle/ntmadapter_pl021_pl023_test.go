@@ -365,7 +365,6 @@ func TestPL021_PL022_NtmAdapterAllowedSurfaceOnly(t *testing.T) {
 		{ntmAdapterFixtureForbiddenAgentMail, "github.com/claude-ntm/ntm/agentmail"},
 	}
 
-	//nolint:gosec // G204: ntmAdapterPkg is a constant string, not user input
 	cmd := exec.CommandContext(t.Context(), "go", "list", "-deps", ntmAdapterPkg)
 	out, err := cmd.Output()
 	if err != nil {

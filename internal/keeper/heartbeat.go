@@ -202,7 +202,6 @@ func WriteCtxFile(projectDir, agent string, cf *CtxFile) error {
 		return fmt.Errorf("keeper: marshal heartbeat ctx: %w", err)
 	}
 	raw = append(raw, '\n')
-	//nolint:gosec // G304: keeperDir derived from operator-controlled projectDir; pattern uses validated agent name
 	tmp, err := os.CreateTemp(keeperDir, agent+".ctx.*.tmp")
 	if err != nil {
 		return fmt.Errorf("keeper: create heartbeat ctx tmp: %w", err)

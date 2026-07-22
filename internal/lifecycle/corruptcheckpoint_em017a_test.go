@@ -93,7 +93,6 @@ func corruptCheckpointFixtureSiblingPath(repoDir, runID, transitionID string) st
 func corruptCheckpointFixtureCheckTrailerPresent(t *testing.T, repoDir, commitSHA string) {
 	t.Helper()
 
-	//nolint:gosec // G204: commitSHA is a git SHA from durableFixtureReadTip; repoDir is t.TempDir()
 	out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"log", "-1", "--format=%B", commitSHA,
 	).Output()
@@ -110,7 +109,6 @@ func corruptCheckpointFixtureCheckTrailerPresent(t *testing.T, repoDir, commitSH
 func corruptCheckpointFixtureExtractTransitionID(t *testing.T, repoDir, commitSHA string) string {
 	t.Helper()
 
-	//nolint:gosec // G204: commitSHA is a git SHA from durableFixtureReadTip; repoDir is t.TempDir()
 	out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"log", "-1", "--format=%B", commitSHA,
 	).Output()
@@ -147,7 +145,6 @@ func corruptCheckpointFixtureExtractTransitionID(t *testing.T, repoDir, commitSH
 func corruptCheckpointFixtureClassify(t *testing.T, repoDir, commitSHA string) (hasTrailer bool, err error) {
 	t.Helper()
 
-	//nolint:gosec // G204: commitSHA is a test-provided SHA; repoDir is t.TempDir()
 	out, gitErr := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"log", "-1", "--format=%B", commitSHA,
 	).Output()

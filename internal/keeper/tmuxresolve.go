@@ -216,7 +216,6 @@ func OperatorAttached(target string) bool {
 		return false
 	}
 	// context.Background(): synchronous sub-second probe, mirroring tmuxSessionLive.
-	//nolint:gosec // G204: target is the resolved tmux target (derived from validated agentName / operator --tmux flag)
 	cmd := exec.CommandContext(context.Background(), "tmux", "list-clients", "-t", target, "-F", "#{client_activity}")
 	out, err := cmd.Output()
 	if err != nil {

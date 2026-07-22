@@ -212,7 +212,6 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 	// os.CreateTemp gives each concurrent writer a unique temp path so no two
 	// concurrent writes can publish each other's partial content. The retired
 	// keeper rebind surface was removed with hk-3391. Refs: hk-b5e2.
-	//nolint:gosec // G304: keeperDir derived from operator-controlled projectDir; pattern uses validated agent name
 	tmp, err := os.CreateTemp(keeperDir, agent+".managed.*.tmp")
 	if err != nil {
 		return fmt.Errorf("keeper: create managed session_id tmp: %w", err)

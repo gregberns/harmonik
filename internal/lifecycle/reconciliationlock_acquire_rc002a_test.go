@@ -130,7 +130,6 @@ func TestAcquireReconciliationLock_MetadataWritten(t *testing.T) {
 	}
 	defer func() { _ = lock.Release() }()
 
-	//nolint:gosec // G304: lock path constructed from t.TempDir() + known relative segments, not user input
 	data, err := os.ReadFile(lock.LockPath())
 	if err != nil {
 		t.Fatalf("ReadFile lock: %v", err)
@@ -170,7 +169,6 @@ func TestWriteVerdictExecuted_AppendsTrailerAndSyncs(t *testing.T) {
 		t.Fatalf("WriteVerdictExecuted: unexpected error: %v", err)
 	}
 
-	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
 	data, err := os.ReadFile(lock.LockPath())
 	if err != nil {
 		t.Fatalf("ReadFile lock: %v", err)

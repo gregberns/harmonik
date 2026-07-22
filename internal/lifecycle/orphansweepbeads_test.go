@@ -151,7 +151,6 @@ func imrestSweepWriteIntent(t *testing.T, intentLogDir string, beadID core.BeadI
 		t.Fatalf("imrestSweepWriteIntent: Marshal: %v", marshErr)
 	}
 	fname := string(beadID) + "_" + string(op) + ".json"
-	//nolint:gosec // G306: matches conventions
 	if err := os.WriteFile(filepath.Join(intentLogDir, fname), data, 0o600); err != nil {
 		t.Fatalf("imrestSweepWriteIntent: WriteFile: %v", err)
 	}

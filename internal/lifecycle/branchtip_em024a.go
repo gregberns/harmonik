@@ -101,7 +101,6 @@ func WritePersistedTip(projectDir string, runID core.RunID, tipSHA string) error
 // is a fast-forward descendant of the persisted prior tip SHA (the prior tip
 // is in the ancestor chain of the new tip)."
 func IsFastForwardDescendant(ctx context.Context, repoDir, ancestor, descendant string) (bool, error) {
-	//nolint:gosec // G204: ancestor/descendant are commit SHAs produced by git rev-parse or fixture helpers; repoDir is daemon-resolved project dir
 	cmd := exec.CommandContext(ctx, "git",
 		"-C", repoDir,
 		"merge-base", "--is-ancestor", ancestor, descendant,

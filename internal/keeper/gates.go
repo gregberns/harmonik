@@ -126,7 +126,6 @@ func SetDispatching(projectDir, agent string) error {
 	}
 	path := dispatchingMarkerPath(projectDir, agent)
 	content := time.Now().UTC().Format(time.RFC3339) + "\n"
-	//nolint:gosec // G306: 0600 — keeper-owned file, no world-read needed
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("keeper: write dispatching marker %q: %w", path, err)
 	}
@@ -196,7 +195,6 @@ func setHoldAt(projectDir, agent string, clock substrate.ClockPort) (sessionID s
 	}
 	path := holdMarkerPath(projectDir, agent, sid)
 	content := clock.Now().UTC().Format(time.RFC3339) + "\n"
-	//nolint:gosec // G306: 0600 — keeper-owned file, no world-read needed
 	if wErr := os.WriteFile(path, []byte(content), 0o600); wErr != nil {
 		return "", fmt.Errorf("keeper: write hold marker %q: %w", path, wErr)
 	}

@@ -42,7 +42,6 @@ func NewLiveRecoverViaRespawn(projectDir, respawnCmd string) func(ctx context.Co
 			}
 			return fmt.Errorf("%w (agent %q, sid=%q)", ErrLiveRecoverIdentityUntrusted, agentName, sid)
 		}
-		//nolint:gosec // G204: respawnCmd is operator-supplied via --respawn-cmd, not user input.
 		cmd := exec.CommandContext(ctx, "sh", "-c", respawnCmd)
 		return cmd.Run()
 	}

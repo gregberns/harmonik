@@ -35,7 +35,6 @@ import (
 // reconLockUpliftWriteFile writes content to path, failing the test on error.
 func reconLockUpliftWriteFile(t *testing.T, path, content string) {
 	t.Helper()
-	//nolint:gosec // G306: mode 0600 matches reconciliation-lock convention; path from t.TempDir()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("reconLockUpliftWriteFile: write %q: %v", path, err)
 	}

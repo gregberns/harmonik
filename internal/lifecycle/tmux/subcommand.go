@@ -311,7 +311,6 @@ func tmuxStartLookupBin(env []string) (string, error) {
 	pathEnv := tmuxEnvLookup(env, "PATH")
 	for _, dir := range filepath.SplitList(pathEnv) {
 		candidate := filepath.Join(dir, "tmux")
-		//nolint:gosec // G304: candidate path is constructed from PATH env variable, not user input
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate, nil
 		}

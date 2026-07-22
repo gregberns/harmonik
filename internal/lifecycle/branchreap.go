@@ -178,7 +178,6 @@ func ReapBranches(ctx context.Context, opts BranchReapOptions) (BranchReapResult
 // Uses `git for-each-ref --format='%(refname:short) %(creatordate:unix)'` against
 // the two ref prefixes. An empty repository (no refs) returns nil, nil.
 func listBranchCandidates(ctx context.Context, repoDir string) ([]branchCandidate, error) {
-	//nolint:gosec // G204: arguments are hard-coded constants and repoDir resolved at startup; not user input
 	cmd := exec.CommandContext(ctx, "git",
 		"-C", repoDir,
 		"for-each-ref",
@@ -265,7 +264,6 @@ func listMergedBranchSet(ctx context.Context, repoDir, targetBranch string) (map
 // Parses `git worktree list --porcelain` and extracts "branch refs/heads/<name>"
 // lines. A detached HEAD worktree contributes no branch name.
 func listActiveWorktreeBranches(ctx context.Context, repoDir string) (map[string]struct{}, error) {
-	//nolint:gosec // G204: arguments are hard-coded constants and repoDir resolved at startup; not user input
 	cmd := exec.CommandContext(ctx, "git",
 		"-C", repoDir,
 		"worktree", "list", "--porcelain",
@@ -299,7 +297,6 @@ func listActiveWorktreeBranches(ctx context.Context, repoDir string) (map[string
 // this function must guarantee the branch is NOT checked out in any worktree
 // before invoking — see the activeSet guard in ReapBranches.
 func deleteBranch(ctx context.Context, repoDir, shortName string) error {
-	//nolint:gosec // G204: shortName is a git ref name validated by git for-each-ref; repoDir resolved at startup
 	cmd := exec.CommandContext(ctx, "git",
 		"-C", repoDir,
 		"branch", "-D", shortName,

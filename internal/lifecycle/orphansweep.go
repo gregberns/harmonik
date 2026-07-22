@@ -44,19 +44,29 @@ type TmuxSessionKiller interface {
 // OSTmuxSessionLister is the production TmuxSessionLister. It invokes
 // `tmux list-sessions -F "#{session_name}"` and returns the session names.
 //
-// If tmux is not installed or no sessions exist, the command may exit non-zero;
-// those cases are treated as an empty list (not an error) to keep the sweep
-// non-fatal on systems without tmux.
+// tmux exits non-zero both when no server is running and when the call
+// genuinely failed. Only "no server running" is reported as an empty list; every
+// other failure — including tmux not being installed — is now returned, so a
+// broken tmux can no longer masquerade as "zero sessions" and silently reap
+// nothing. RunOrphanSweep accumulates that error and continues, and the boot
+// call site discards it per PL-006, so a tmux-less host still boots cleanly.
 type OSTmuxSessionLister struct{}
+
+func tmuxServerAbsent(out []byte) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(string(out))), "no server running")
+}
 
 // ListTmuxSessions implements TmuxSessionLister.
 func (OSTmuxSessionLister) ListTmuxSessions(ctx context.Context) ([]string, error) {
-	//nolint:gosec // G204: arguments are hard-coded constants, not user input
-	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
+	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
 	if err != nil {
-		// tmux exits non-zero when there are no sessions or tmux is not running.
-		// Return empty list rather than propagating a hard error.
-		return nil, nil //nolint:nilerr // intentional: no-tmux / no-sessions is not an error
+		// tmux exits non-zero when there are no sessions or the server is not
+		// running. Other failures (missing binary, permissions, cancellation)
+		// must remain observable or the sweep silently skips live orphans.
+		if tmuxServerAbsent(out) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("lifecycle: ListTmuxSessions: %w (output: %s)", err, strings.TrimSpace(string(out)))
 	}
 	var names []string
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
@@ -75,7 +85,6 @@ type OSTmuxSessionKiller struct{}
 
 // KillTmuxSession implements TmuxSessionKiller.
 func (OSTmuxSessionKiller) KillTmuxSession(ctx context.Context, sessionName string) error {
-	//nolint:gosec // G204: sessionName is a validated harmonik-<hash>- prefixed name, not raw user input
 	out, err := exec.CommandContext(ctx, "tmux", "kill-session", "-t", sessionName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("lifecycle: KillTmuxSession %q: %w (output: %s)", sessionName, err, strings.TrimSpace(string(out)))
@@ -223,7 +232,6 @@ type OSHandlerProcessLister struct{}
 //     PGID check (darwin, OQ-PL-008).
 //  3. Return PIDs whose provenance marker matches projectHash.
 func (OSHandlerProcessLister) ListOrphanHandlerPIDs(ctx context.Context, projectHash core.ProjectHash) ([]int, error) {
-	//nolint:gosec // G204: arguments are hard-coded constants, not user input
 	out, err := exec.CommandContext(ctx, "ps", "-eo", "pid,ppid").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle: OSHandlerProcessLister: ps: %w", err)
@@ -848,9 +856,11 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 //
 // Returns (nil, false, nil) if the lock is actively held (EWOULDBLOCK) or the
 // recorded creator PID is live (lock released before returning).
-// Returns (nil, false, err) if the file cannot be opened or the creator_pid
-// line cannot be parsed — an unparseable creator PID cannot be confirmed dead,
-// so the file is skipped rather than removed.
+// Returns (nil, false, err) if the file cannot be opened, the flock fails for
+// any reason other than contention, or the creator_pid line cannot be parsed.
+// All three are "cannot confirm this lock is dead", so the file is skipped
+// rather than removed — the error is reported instead of being silently folded
+// into the actively-held case, but the outcome for the caller is the same.
 func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error) {
 	//nolint:gosec // G304: path is constructed from projectDir + .harmonik/reconciliation-locks/ + entry name, not user input
 	f, err := os.OpenFile(lockPath, os.O_RDWR, 0o600)
@@ -860,9 +870,12 @@ func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error)
 
 	flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr != nil {
-		// EWOULDBLOCK: lock is actively held — not stale.
-		_ = f.Close()          //nolint:errcheck // cleanup error unactionable
-		return nil, false, nil //nolint:nilerr // EWOULDBLOCK = lock actively held (not stale); a normal signal, not an error to return
+		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		if errors.Is(flockErr, syscall.EWOULDBLOCK) || errors.Is(flockErr, syscall.EAGAIN) {
+			// Lock contention is a normal signal: the lock is actively held.
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("reconLockProbeStale: flock %q: %w", lockPath, flockErr)
 	}
 
 	// Parse creator_pid from file content (flock held throughout).

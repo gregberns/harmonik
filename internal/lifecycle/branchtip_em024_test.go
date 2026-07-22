@@ -69,7 +69,6 @@ func durableFixtureCommitCheckpoint(t *testing.T, repoDir, runID, nodeID string)
 func durableFixtureReadTip(t *testing.T, repoDir, branchRef string) string {
 	t.Helper()
 
-	//nolint:gosec // G204: branchRef is a test-only constant derived from a deterministic fixture; repoDir is t.TempDir()
 	out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"rev-parse", "--verify", branchRef,
 	).Output()
@@ -262,7 +261,6 @@ func TestEM024_CheckpointSHAIsAncestorOfSubsequentTip(t *testing.T) {
 func durableFixtureAssertAncestor(t *testing.T, repoDir, ancestor, descendant, label string) {
 	t.Helper()
 
-	//nolint:gosec // G204: ancestor/descendant are commit SHAs produced by durableFixtureCommitCheckpoint; repoDir is t.TempDir()
 	cmd := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"merge-base", "--is-ancestor", ancestor, descendant,
 	)

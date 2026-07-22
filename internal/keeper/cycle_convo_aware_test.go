@@ -382,7 +382,7 @@ func TestCycler_Gate5d_WritesHoldMarker(t *testing.T) {
 		t.Fatalf("mkdir keeper dir: %v", err)
 	}
 	sidPath := filepath.Join(keeperDir, agent+".sid")
-	if err := os.WriteFile(sidPath, []byte(sid+"\n"), 0o600); err != nil { //nolint:gosec
+	if err := os.WriteFile(sidPath, []byte(sid+"\n"), 0o600); err != nil {
 		t.Fatalf("write .sid: %v", err)
 	}
 

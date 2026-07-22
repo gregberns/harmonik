@@ -1,4 +1,4 @@
-package daemon_test
+package pi_test
 
 // pilaunchspec_test.go — unit tests for buildPiLaunchSpec (hk-1c16h PI-015/020/021/022).
 //
@@ -23,8 +23,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ import (
 func TestBuildPiLaunchSpec_InitialTurn(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath:    "/tmp/wt-test-pi-initial",
 		BeadID:           "hk-test001",
 		Provider:         "openrouter",
@@ -45,7 +45,7 @@ func TestBuildPiLaunchSpec_InitialTurn(t *testing.T) {
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	spec, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestBuildPiLaunchSpec_InitialTurn(t *testing.T) {
 func TestBuildPiLaunchSpec_CustomBinary(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		PiBinary:         "/usr/local/bin/pi",
 		WorkspacePath:    "/tmp/wt-test-pi-bin",
 		BeadID:           "hk-test002",
@@ -106,7 +106,7 @@ func TestBuildPiLaunchSpec_CustomBinary(t *testing.T) {
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	spec, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestBuildPiLaunchSpec_ResumeTurn(t *testing.T) {
 	t.Parallel()
 
 	sessionID := "pi-session-abc-123"
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath:    "/tmp/wt-test-pi-resume",
 		BeadID:           "hk-test003",
 		Provider:         "openrouter",
@@ -137,7 +137,7 @@ func TestBuildPiLaunchSpec_ResumeTurn(t *testing.T) {
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	spec, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestBuildPiEnv_AllowlistStrip(t *testing.T) {
 		"HOME=/root",
 	}
 
-	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
+	env := pi.ExportedBuildPiEnv(baseEnv, "", selectedKey)
 
 	// Non-credential entries must pass through.
 	assertEnvContains(t, env, "PATH=/usr/bin")
@@ -235,7 +235,7 @@ func TestBuildPiEnv_MaintainedTableStrippedEvenIfAbsentFromBaseEnv(t *testing.T)
 	// baseEnv contains ONLY PATH; none of the maintained-table keys are present.
 	baseEnv := []string{"PATH=/usr/bin"}
 
-	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
+	env := pi.ExportedBuildPiEnv(baseEnv, "", selectedKey)
 
 	// ANTHROPIC_API_KEY is in the maintained table but not in baseEnv.
 	// It must still be emitted as an empty override (tmux additive -e guard).
@@ -262,7 +262,7 @@ func TestBuildPiEnv_GuaranteesPathWhenBaseEnvHasNone(t *testing.T) {
 	// baseEnv has NO PATH entry — the leak scenario.
 	baseEnv := []string{"HK_PROVENANCE=daemon"}
 
-	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
+	env := pi.ExportedBuildPiEnv(baseEnv, "", selectedKey)
 
 	// A PATH entry must be present and non-empty (falls back to process PATH).
 	var pathVal string
@@ -296,7 +296,7 @@ func TestBuildPiEnv_PreservesBaseEnvPath(t *testing.T) {
 
 	baseEnv := []string{"PATH=/usr/bin"}
 
-	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
+	env := pi.ExportedBuildPiEnv(baseEnv, "", selectedKey)
 
 	// The baseEnv PATH must be preserved verbatim, and appear exactly once.
 	assertEnvContains(t, env, "PATH=/usr/bin")
@@ -331,7 +331,7 @@ func TestBuildPiEnv_AllowlistStrip_ProcessEnvForwarded(t *testing.T) {
 		t.Fatal("test setup: expected ANTHROPIC_API_KEY to be set")
 	}
 
-	env := daemon.ExportedBuildPiEnv(os.Environ(), "", selectedKey)
+	env := pi.ExportedBuildPiEnv(os.Environ(), "", selectedKey)
 
 	// No live value must leak for non-selected credential keys.
 	strippedKeys := []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MYSTERY_API_KEY"}
@@ -367,7 +367,7 @@ func TestBuildPiEnv_InjectsOnlySelectedKey(t *testing.T) {
 		"ANTHROPIC_API_KEY=ant-should-be-stripped",
 	}
 
-	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
+	env := pi.ExportedBuildPiEnv(baseEnv, "", selectedKey)
 
 	// Selected key must have its value.
 	assertEnvContains(t, env, selectedKey+"="+selectedVal)
@@ -409,7 +409,7 @@ func TestResolvePiAPIKeyValue(t *testing.T) {
 	const testVal = "or-resolver-sentinel"
 	t.Setenv(testKey, testVal)
 
-	got := daemon.ExportedResolvePiAPIKeyValue("", testKey)
+	got := pi.ExportedResolvePiAPIKeyValue("", testKey)
 	if got != testVal {
 		t.Errorf("resolvePiAPIKeyValue(%q) = %q; want %q", testKey, got, testVal)
 	}
@@ -419,7 +419,7 @@ func TestResolvePiAPIKeyValue(t *testing.T) {
 func TestResolvePiAPIKeyValue_AbsentKey(t *testing.T) {
 	t.Parallel()
 	// Use a key that should never be set in the test environment.
-	got := daemon.ExportedResolvePiAPIKeyValue("", "HARMONIK_TEST_NEVER_SET_XYZ_API_KEY")
+	got := pi.ExportedResolvePiAPIKeyValue("", "HARMONIK_TEST_NEVER_SET_XYZ_API_KEY")
 	if got != "" {
 		t.Errorf("absent key: expected empty string; got %q", got)
 	}
@@ -431,13 +431,13 @@ func TestResolvePiAPIKeyValue_AbsentKey(t *testing.T) {
 
 func TestBuildPiLaunchSpec_EmptyWorkspacePath(t *testing.T) {
 	t.Parallel()
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		BeadID:    "hk-err01",
 		Provider:  "openrouter",
 		Model:     "openrouter/qwen/qwen3-coder",
 		APIKeyEnv: "OPENROUTER_API_KEY",
 	}
-	_, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	_, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty workspacePath; got nil")
 	}
@@ -445,13 +445,13 @@ func TestBuildPiLaunchSpec_EmptyWorkspacePath(t *testing.T) {
 
 func TestBuildPiLaunchSpec_EmptyBeadID(t *testing.T) {
 	t.Parallel()
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath: "/tmp/wt-test",
 		Provider:      "openrouter",
 		Model:         "openrouter/qwen/qwen3-coder",
 		APIKeyEnv:     "OPENROUTER_API_KEY",
 	}
-	_, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	_, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty beadID; got nil")
 	}
@@ -459,14 +459,14 @@ func TestBuildPiLaunchSpec_EmptyBeadID(t *testing.T) {
 
 func TestBuildPiLaunchSpec_EmptyAPIKeyEnv(t *testing.T) {
 	t.Parallel()
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath: "/tmp/wt-test",
 		BeadID:        "hk-err02",
 		Provider:      "openrouter",
 		Model:         "openrouter/qwen/qwen3-coder",
 		APIKeyEnv:     "", // empty
 	}
-	_, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	_, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty apiKeyEnv; got nil")
 	}
@@ -475,13 +475,13 @@ func TestBuildPiLaunchSpec_EmptyAPIKeyEnv(t *testing.T) {
 func TestBuildPiLaunchSpec_EmptyPriorSessionID(t *testing.T) {
 	t.Parallel()
 	empty := ""
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath:  "/tmp/wt-test",
 		BeadID:         "hk-err03",
 		APIKeyEnv:      "OPENROUTER_API_KEY",
 		PriorSessionID: &empty, // pointer to empty string: invalid resume
 	}
-	_, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	_, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty priorSessionID string; got nil")
 	}
@@ -489,7 +489,7 @@ func TestBuildPiLaunchSpec_EmptyPriorSessionID(t *testing.T) {
 
 func TestBuildPiLaunchSpec_InitialTurn_EmptyProvider(t *testing.T) {
 	t.Parallel()
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath:    "/tmp/wt-test",
 		BeadID:           "hk-err04",
 		Provider:         "", // missing on initial turn
@@ -497,7 +497,7 @@ func TestBuildPiLaunchSpec_InitialTurn_EmptyProvider(t *testing.T) {
 		APIKeyEnv:        "OPENROUTER_API_KEY",
 		SkipBillingGuard: true,
 	}
-	_, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	_, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty provider on initial turn; got nil")
 	}
@@ -505,7 +505,7 @@ func TestBuildPiLaunchSpec_InitialTurn_EmptyProvider(t *testing.T) {
 
 func TestBuildPiLaunchSpec_InitialTurn_EmptyModel(t *testing.T) {
 	t.Parallel()
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath:    "/tmp/wt-test",
 		BeadID:           "hk-err05",
 		Provider:         "openrouter",
@@ -513,7 +513,7 @@ func TestBuildPiLaunchSpec_InitialTurn_EmptyModel(t *testing.T) {
 		APIKeyEnv:        "OPENROUTER_API_KEY",
 		SkipBillingGuard: true,
 	}
-	_, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	_, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty model on initial turn; got nil")
 	}
@@ -529,7 +529,7 @@ func TestBuildPiLaunchSpec_InitialTurn_EmptyModel(t *testing.T) {
 func TestBuildPiLaunchSpec_NoExtensions_InitialTurn(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath:    "/tmp/wt-test-noext-initial",
 		BeadID:           "hk-9s5fx",
 		Provider:         "openrouter",
@@ -539,7 +539,7 @@ func TestBuildPiLaunchSpec_NoExtensions_InitialTurn(t *testing.T) {
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	spec, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestBuildPiLaunchSpec_NoExtensions_ResumeTurn(t *testing.T) {
 	t.Parallel()
 
 	sessionID := "pi-session-noext-resume"
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath:    "/tmp/wt-test-noext-resume",
 		BeadID:           "hk-9s5fx",
 		Provider:         "openrouter",
@@ -564,7 +564,7 @@ func TestBuildPiLaunchSpec_NoExtensions_ResumeTurn(t *testing.T) {
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	spec, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -652,7 +652,7 @@ func TestResolvePiAPIKeyValue_FromFile_UsesFileValueOverEnv(t *testing.T) {
 		t.Fatalf("setup: write key file: %v", err)
 	}
 
-	got := daemon.ExportedResolvePiAPIKeyValue(keyFile, envKey)
+	got := pi.ExportedResolvePiAPIKeyValue(keyFile, envKey)
 	if got != "file-value-wins" {
 		t.Errorf("resolvePiAPIKeyValue(file, env) = %q; want %q (file-first precedence)", got, "file-value-wins")
 	}
@@ -666,7 +666,7 @@ func TestResolvePiAPIKeyValue_FileAbsent_FallsBackToEnv(t *testing.T) {
 	const envKey = "TEST_PI_FILE_FALLBACK_TO_ENV"
 	t.Setenv(envKey, "env-fallback-value")
 
-	got := daemon.ExportedResolvePiAPIKeyValue("/nonexistent-harmonik-test-xmfoi/key", envKey)
+	got := pi.ExportedResolvePiAPIKeyValue("/nonexistent-harmonik-test-xmfoi/key", envKey)
 	if got != "env-fallback-value" {
 		t.Errorf("resolvePiAPIKeyValue(missing file, env) = %q; want env fallback %q", got, "env-fallback-value")
 	}
@@ -687,7 +687,7 @@ func TestBuildPiEnv_APIKeyFile_InjectsFileValueOverEnv(t *testing.T) {
 	}
 
 	baseEnv := []string{"PATH=/usr/bin"}
-	env := daemon.ExportedBuildPiEnv(baseEnv, keyFile, selectedKey)
+	env := pi.ExportedBuildPiEnv(baseEnv, keyFile, selectedKey)
 
 	// PI-050: the file value must appear in the child env.
 	assertEnvContains(t, env, selectedKey+"=file-key-sentinel")
@@ -709,7 +709,7 @@ func TestBuildPiEnv_APIKeyFile_Unset_UsesEnvValue(t *testing.T) {
 	t.Setenv(selectedKey, envVal)
 
 	baseEnv := []string{"PATH=/usr/bin", selectedKey + "=" + envVal}
-	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
+	env := pi.ExportedBuildPiEnv(baseEnv, "", selectedKey)
 
 	// When apiKeyFile is unset, the ambient env value is injected.
 	assertEnvContains(t, env, selectedKey+"="+envVal)
@@ -730,7 +730,7 @@ func TestBuildPiLaunchSpec_APIKeyFile_DaemonEnvClean(t *testing.T) {
 		t.Fatalf("setup: write key file: %v", err)
 	}
 
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath:    "/tmp/wt-test-pi-apikeyfile",
 		BeadID:           "hk-xmfoi-test",
 		Provider:         "openrouter",
@@ -741,7 +741,7 @@ func TestBuildPiLaunchSpec_APIKeyFile_DaemonEnvClean(t *testing.T) {
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	spec, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -773,7 +773,7 @@ func TestPiHarness_BaseURL_ProductionPath_Present(t *testing.T) {
 
 	workDir := t.TempDir()
 
-	harness := daemon.NewPiHarness(
+	harness := pi.NewHarness(
 		"pi",                       // piBinary
 		"mylocal",                  // provider
 		"mylocal/ornith",           // model ("ornith" after last "/")
@@ -783,7 +783,7 @@ func TestPiHarness_BaseURL_ProductionPath_Present(t *testing.T) {
 		"",                         // api: empty → defaults to "openai"
 	)
 
-	rc := daemon.ExportedRunCtxForPi(workDir, "hk-z13jz-prod")
+	rc := pi.ExportedRunCtxForPi(workDir, "hk-z13jz-prod")
 	spec, err := harness.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("LaunchSpec: unexpected error: %v", err)
@@ -845,7 +845,7 @@ func TestPiHarness_BaseURL_ProductionPath_Absent(t *testing.T) {
 
 	workDir := t.TempDir()
 
-	harness := daemon.NewPiHarness(
+	harness := pi.NewHarness(
 		"pi",                          // piBinary
 		"openrouter",                  // provider
 		"openrouter/qwen/qwen3-coder", // model
@@ -855,7 +855,7 @@ func TestPiHarness_BaseURL_ProductionPath_Absent(t *testing.T) {
 		"",                            // api: absent
 	)
 
-	rc := daemon.ExportedRunCtxForPi(workDir, "hk-z13jz-absent")
+	rc := pi.ExportedRunCtxForPi(workDir, "hk-z13jz-absent")
 	spec, err := harness.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("LaunchSpec: unexpected error: %v", err)
@@ -884,7 +884,7 @@ func TestPiHarness_BaseURL_APIOverride(t *testing.T) {
 
 	workDir := t.TempDir()
 
-	harness := daemon.NewPiHarness(
+	harness := pi.NewHarness(
 		"pi",
 		"localprov",
 		"localprov/mymodel",
@@ -894,7 +894,7 @@ func TestPiHarness_BaseURL_APIOverride(t *testing.T) {
 		"openai", // explicit api override
 	)
 
-	rc := daemon.ExportedRunCtxForPi(workDir, "hk-z13jz-api-override")
+	rc := pi.ExportedRunCtxForPi(workDir, "hk-z13jz-api-override")
 	spec, err := harness.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("LaunchSpec: unexpected error: %v", err)
@@ -944,7 +944,7 @@ func TestBuildPiModelsJSON_ModelIDExtraction(t *testing.T) {
 		tc := tc
 		t.Run(tc.model, func(t *testing.T) {
 			t.Parallel()
-			raw, err := daemon.ExportedBuildPiModelsJSON("prov", "http://host/v1", "openai", "", "", tc.model)
+			raw, err := pi.ExportedBuildPiModelsJSON("prov", "http://host/v1", "openai", "", "", tc.model)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -977,7 +977,7 @@ func TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn(t *testing.T) {
 	workDir := t.TempDir()
 	sessionID := "pi-resume-session-id"
 
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath:    workDir,
 		BeadID:           "hk-z13jz-resume",
 		Provider:         "mylocal",
@@ -988,7 +988,7 @@ func TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn(t *testing.T) {
 		BaseEnv:          []string{"PATH=/usr/bin"},
 		SkipBillingGuard: true,
 	}
-	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	spec, err := pi.ExportedBuildPiLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("ExportedBuildPiLaunchSpec: unexpected error: %v", err)
 	}
@@ -1017,7 +1017,7 @@ func TestPiHarness_LaunchSpec_RcModelOverridesHarnessModel(t *testing.T) {
 	const harnessModel = "openrouter/qwen/qwen3-coder" // harness-level default
 	const rcModel = "openrouter/deepseek/deepseek-r1"  // per-run override
 
-	harness := daemon.NewPiHarness(
+	harness := pi.NewHarness(
 		"pi",
 		"openrouter",
 		harnessModel,
@@ -1058,7 +1058,7 @@ func TestPiHarness_LaunchSpec_EmptyRcModelFallsBackToHarnessModel(t *testing.T) 
 	workDir := t.TempDir()
 	const harnessModel = "openrouter/qwen/qwen3-coder"
 
-	harness := daemon.NewPiHarness(
+	harness := pi.NewHarness(
 		"pi",
 		"openrouter",
 		harnessModel,
@@ -1106,7 +1106,7 @@ func TestPiHarness_LaunchSpec_RCTupleOverridesGlobal(t *testing.T) {
 	workDir := t.TempDir()
 
 	// Harness carries the "old" global openrouter configuration.
-	harness := daemon.NewPiHarness(
+	harness := pi.NewHarness(
 		"pi",
 		"openrouter",
 		"openrouter/deepseek/deepseek-v4-flash",
@@ -1189,7 +1189,7 @@ func TestPiHarness_LaunchSpec_EmptyRCFallsBackToGlobal(t *testing.T) {
 
 	workDir := t.TempDir()
 
-	harness := daemon.NewPiHarness(
+	harness := pi.NewHarness(
 		"pi",
 		"openrouter",
 		"openrouter/deepseek/deepseek-v4-flash",
@@ -1252,7 +1252,7 @@ func TestPiHarness_LaunchSpec_OverriddenAPIKeyEnv_StripsSiblings(t *testing.T) {
 
 	workDir := t.TempDir()
 
-	harness := daemon.NewPiHarness(
+	harness := pi.NewHarness(
 		"pi",
 		"openrouter",
 		"openrouter/deepseek/deepseek-v4-flash",
@@ -1313,7 +1313,7 @@ func TestPiHarness_LaunchSpec_CoupledTriple_TravelTogether(t *testing.T) {
 	workDir := t.TempDir()
 
 	// Harness carries openrouter (cloud, no baseURL).
-	harness := daemon.NewPiHarness(
+	harness := pi.NewHarness(
 		"pi",
 		"openrouter",
 		"openrouter/deepseek/deepseek-v4-flash",
@@ -1403,7 +1403,7 @@ func TestPiHarness_DefaultPath_ByteIdentical(t *testing.T) {
 	)
 	baseEnv := []string{"PATH=/usr/bin"}
 
-	harness := daemon.NewPiHarness(piBinary, provider, model, apiKeyEnv, "", "", "")
+	harness := pi.NewHarness(piBinary, provider, model, apiKeyEnv, "", "", "")
 
 	// Unlabeled bead: every rc-tuple field is zero.
 	rc := handlercontract.RunCtx{
@@ -1419,7 +1419,7 @@ func TestPiHarness_DefaultPath_ByteIdentical(t *testing.T) {
 
 	// Golden: the pre-C4 shape — buildPiLaunchSpec driven ONLY by h.* config,
 	// with no rc-tuple involved anywhere in its construction.
-	wantSpec, err := daemon.ExportedBuildPiLaunchSpec(daemon.ExportedPiRunCtx{
+	wantSpec, err := pi.ExportedBuildPiLaunchSpec(pi.ExportedPiRunCtx{
 		PiBinary:      piBinary,
 		WorkspacePath: workDir,
 		BeadID:        beadID,

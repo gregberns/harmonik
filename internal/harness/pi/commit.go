@@ -1,6 +1,6 @@
-package daemon
+package pi
 
-// picommit.go — Refs:<bead> trailer guarantee for the Pi harness (codename:pilot, PI-030/031).
+// commit.go — Refs:<bead> trailer guarantee for the Pi harness (codename:pilot, PI-030/031).
 //
 // # Why Pi needs a daemon-side commit fallback
 //
@@ -10,13 +10,13 @@ package daemon
 // matches line-for-line. The fallback fires deterministically after Pi exits so
 // the standard trailer-detection path always succeeds.
 //
-// # Three parts (mirroring codex, see codexcommit.go)
+// # Three parts (mirroring codex, see internal/harness/codex/commit.go)
 //
-//  1. INSTRUCT — the Pi seed prompt (pilaunchspec.go) instructs Pi to commit with
-//     the Refs: trailer. ensurePiRefsTrailer relies on that as the happy path.
+//  1. INSTRUCT — the Pi seed prompt (launchspec.go) instructs Pi to commit with
+//     the Refs: trailer. EnsureRefsTrailer relies on that as the happy path.
 //  2. VERIFY — shared.WorktreeHEADHasRefsTrailer (internal/harness/shared/
 //     refstrailer.go) inspects HEAD exactly.
-//  3. FALLBACK — ensurePiRefsTrailer:
+//  3. FALLBACK — EnsureRefsTrailer:
 //       - HEAD already carries the trailer → no-op.
 //       - HEAD advanced but lacks the trailer → AMEND the commit to append it.
 //       - No commit but the worktree is dirty → stage all + CREATE a commit.
@@ -30,12 +30,12 @@ package daemon
 // works identically to local. Runner-routing lives in internal/harness/shared/
 // refstrailer.go (CommitAllWithHarnessRefsTrailer, AmendHEADAddRefsTrailer,
 // WorktreeHEADHasRefsTrailer, WorktreeDirty) — pi and codex share one copy.
-// Before P2 unit E1a-0 those primitives lived in codexcommit.go, which made the
+// Before P2 unit E1a-0 those primitives lived in internal/harness/codex/commit.go, which made the
 // pi harness depend on the codex harness; the split removed that edge.
 //
 // Spec: specs/pi-harness.md §3 (PI-030/PI-031).
 // Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.5.
-// Mirrors: codexcommit.go ensureCodexRefsTrailer (decision table identical).
+// Mirrors: internal/harness/codex/commit.go ensureCodexRefsTrailer (decision table identical).
 // Bead: hk-mazln.
 
 import (
@@ -61,7 +61,7 @@ const (
 	piRefsNoChange       = shared.RefsNoChange
 )
 
-// ensurePiRefsTrailer guarantees the worktree HEAD carries a "Refs: <beadID>"
+// EnsureRefsTrailer guarantees the worktree HEAD carries a "Refs: <beadID>"
 // trailer after a Pi turn exits, creating or amending a commit deterministically
 // when Pi edited files but did not produce a trailer-carrying commit.
 //
@@ -72,18 +72,18 @@ const (
 //	HEAD == parentSHA, worktree dirty  → stage all + commit w/ trailer → piRefsCommitted
 //	HEAD == parentSHA, worktree clean  → piRefsNoChange (no commit fabricated)
 //
-// Parameters mirror ensureCodexRefsTrailer (codexcommit.go) verbatim.
+// Parameters mirror ensureCodexRefsTrailer (internal/harness/codex/commit.go) verbatim.
 // Runner-routing (PI-031): all git ops route through runner when non-nil so the
 // remote SSH substrate works — the primitives themselves are the shared ones in
 // internal/harness/shared/refstrailer.go.
 //
 // On error the caller MUST treat the run as failed.
-func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (piRefsOutcome, error) {
+func EnsureRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (shared.RefsOutcome, error) {
 	if wtPath == "" {
-		return piRefsNoChange, fmt.Errorf("daemon: ensurePiRefsTrailer: wtPath must be non-empty")
+		return piRefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: wtPath must be non-empty")
 	}
 	if beadID == "" {
-		return piRefsNoChange, fmt.Errorf("daemon: ensurePiRefsTrailer: beadID must be non-empty")
+		return piRefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: beadID must be non-empty")
 	}
 
 	// VERIFY: does HEAD already carry the trailer? Happy path: Pi self-committed
@@ -98,7 +98,7 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 	// read from the worker, matching the no-commit guard (gitprobe.ResolveWorktreeHEADVia).
 	curHead, headErr := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 	if headErr != nil {
-		return piRefsNoChange, fmt.Errorf("daemon: ensurePiRefsTrailer: resolve HEAD: %w", headErr)
+		return piRefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: resolve HEAD: %w", headErr)
 	}
 
 	if parentSHA != "" && curHead != parentSHA {
@@ -106,7 +106,7 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 		// trailer — the edits are already in the commit, so a follow-up empty
 		// commit would be noise. Keeps a single work-commit carrying the trailer.
 		if err := shared.AmendHEADAddRefsTrailer(ctx, runner, wtPath, beadID); err != nil {
-			return piRefsNoChange, fmt.Errorf("daemon: ensurePiRefsTrailer: amend: %w", err)
+			return piRefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: amend: %w", err)
 		}
 		return piRefsAmended, nil
 	}
@@ -115,7 +115,7 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 	// deterministic commit) or did nothing (clean → no_change).
 	dirty, dirtyErr := shared.WorktreeDirty(ctx, runner, wtPath)
 	if dirtyErr != nil {
-		return piRefsNoChange, fmt.Errorf("daemon: ensurePiRefsTrailer: status: %w", dirtyErr)
+		return piRefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: status: %w", dirtyErr)
 	}
 	if !dirty {
 		// Pi did no work. Do NOT fabricate a commit — let the caller route this
@@ -125,7 +125,7 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 
 	// Pi edited but never committed: stage everything and create the commit.
 	if err := commitAllWithPiRefsTrailer(ctx, runner, wtPath, beadID); err != nil {
-		return piRefsNoChange, fmt.Errorf("daemon: ensurePiRefsTrailer: commit: %w", err)
+		return piRefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: commit: %w", err)
 	}
 	return piRefsCommitted, nil
 }

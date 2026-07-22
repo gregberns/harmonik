@@ -287,6 +287,20 @@ harnesscodex-freeze-gate:  ## P2 E1a: forbid new codex-harness files or moved sy
 harnessclaude-freeze-gate:  ## P2 E1b: forbid new claude-harness files or moved symbols in internal/daemon
 	scripts/harnessclaude-freeze-gate.sh
 
+# harnesspi-freeze-gate: the P2 E1c extraction ratchet — the pi harness
+# implementation (Harness impl, launch-spec builder, NDJSON parser, billing
+# guard, Refs:-trailer fallback) left internal/daemon for internal/harness/pi,
+# and depguard can only fence the import edge, not the creation of a new file.
+# This grep gate fails if a pi-harness-shaped file or one of the moved symbols
+# reappears in internal/daemon. pi_profile_resolve.go (claim-time daemon wiring
+# over projectconfig) is a named exception — see the script header. The gate
+# also asserts test-pi-live below still points at a package that HAS the test,
+# because `go test -run` exits 0 on an empty match. Wired into check-fast and
+# check-short.
+.PHONY: harnesspi-freeze-gate
+harnesspi-freeze-gate:  ## P2 E1c: forbid new pi-harness files or moved symbols in internal/daemon
+	scripts/harnesspi-freeze-gate.sh
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -344,7 +358,7 @@ test-twin-parity-claude:  ## Routine Claude twin-parity gate (twin-vs-reference-
 # HARMONIK_REQUIRE_PI_LIVE=1 turns a can't-run skip into a Fatalf.
 .PHONY: test-pi-live
 test-pi-live:  ## Real-pi oracle gate (PI_LIVE=1 required; pi provider auth; writes pi twin-parity fixtures)
-	PI_LIVE=1 go test -timeout 180s -count=1 -run TestPiA_ ./internal/daemon/...
+	PI_LIVE=1 go test -timeout 180s -count=1 -run TestPiA_ ./internal/harness/pi/...
 
 # test-twin-parity-pi: the ROUTINE pi twin-parity gate (WS3-pi / pi-C). Compares
 # the pi twin's NDJSON (committed testdata/twin-parity/pi/happy-path-sample/ndjson
@@ -477,6 +491,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/crewrun-freeze-gate.sh
 	scripts/harnesscodex-freeze-gate.sh
 	scripts/harnessclaude-freeze-gate.sh
+	scripts/harnesspi-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -503,6 +518,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/crewrun-freeze-gate.sh
 	scripts/harnesscodex-freeze-gate.sh
 	scripts/harnessclaude-freeze-gate.sh
+	scripts/harnesspi-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

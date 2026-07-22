@@ -1,4 +1,4 @@
-package daemon_test
+package pi_test
 
 // pijsonlparser_ws1d_test.go — Pi NDJSON usage-extraction tests (WS1d).
 //
@@ -17,7 +17,7 @@ package daemon_test
 import (
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,11 +28,11 @@ func TestParsePiNDJSONEvent_MessageStart_Usage(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"message_start","message":{"id":"msg_01","usage":{"input_tokens":150,"output_tokens":2}}}`)
-	kind, rawType, _, usage, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, rawType, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindMessageStart {
+	if kind != pi.ExportedPiEventKindMessageStart {
 		t.Errorf("Kind = %v; want piEventKindMessageStart", kind)
 	}
 	if rawType != "message_start" {
@@ -50,11 +50,11 @@ func TestParsePiNDJSONEvent_MessageStart_NoUsage(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"message_start","message":{"id":"msg_01"}}`)
-	kind, _, _, usage, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, _, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindMessageStart {
+	if kind != pi.ExportedPiEventKindMessageStart {
 		t.Errorf("Kind = %v; want piEventKindMessageStart", kind)
 	}
 	if usage.InputTokens != 0 || usage.OutputTokens != 0 {
@@ -67,11 +67,11 @@ func TestParsePiNDJSONEvent_MessageEnd_Usage(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"message_end","usage":{"output_tokens":87}}`)
-	kind, rawType, _, usage, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, rawType, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindMessageEnd {
+	if kind != pi.ExportedPiEventKindMessageEnd {
 		t.Errorf("Kind = %v; want piEventKindMessageEnd", kind)
 	}
 	if rawType != "message_end" {
@@ -89,11 +89,11 @@ func TestParsePiNDJSONEvent_MessageEnd_NoUsage(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"message_end"}`)
-	kind, _, _, usage, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, _, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindMessageEnd {
+	if kind != pi.ExportedPiEventKindMessageEnd {
 		t.Errorf("Kind = %v; want piEventKindMessageEnd", kind)
 	}
 	if usage.InputTokens != 0 || usage.OutputTokens != 0 {
@@ -111,11 +111,11 @@ func TestParsePiNDJSONEvent_AgentEnd_UsageFromMessages(t *testing.T) {
 		`{"role":"user","content":"do it"},` +
 		`{"role":"assistant","content":"done","usage":{"input_tokens":20,"output_tokens":15}}` +
 		`]}`)
-	kind, _, _, usage, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, _, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindAgentEnd {
+	if kind != pi.ExportedPiEventKindAgentEnd {
 		t.Errorf("Kind = %v; want piEventKindAgentEnd", kind)
 	}
 	if usage.InputTokens != 30 {
@@ -130,11 +130,11 @@ func TestParsePiNDJSONEvent_AgentEnd_EmptyMessages(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"agent_end","messages":[]}`)
-	kind, _, _, usage, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, _, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindAgentEnd {
+	if kind != pi.ExportedPiEventKindAgentEnd {
 		t.Errorf("Kind = %v; want piEventKindAgentEnd", kind)
 	}
 	if usage.InputTokens != 0 || usage.OutputTokens != 0 {
@@ -147,11 +147,11 @@ func TestParsePiNDJSONEvent_AgentEnd_MessagesWithoutUsage(t *testing.T) {
 
 	// Messages that don't carry a usage field should contribute zero.
 	line := []byte(`{"type":"agent_end","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hey"}]}`)
-	kind, _, _, usage, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, _, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindAgentEnd {
+	if kind != pi.ExportedPiEventKindAgentEnd {
 		t.Errorf("Kind = %v; want piEventKindAgentEnd", kind)
 	}
 	if usage.InputTokens != 0 || usage.OutputTokens != 0 {
@@ -164,7 +164,7 @@ func TestParsePiNDJSONEvent_Session_ZeroUsage(t *testing.T) {
 
 	// Session events never carry usage; Usage must be zero.
 	line := []byte(`{"type":"session","version":3,"id":"abc-123","cwd":"/tmp/wt"}`)
-	_, _, _, usage, err := daemon.ExportedParsePiNDJSONEvent(line)
+	_, _, _, usage, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,11 +180,11 @@ func TestParsePiNDJSONEvent_Session_ZeroUsage(t *testing.T) {
 func TestCapturePiUsage_MessageStart_AccumulatesInputOnly(t *testing.T) {
 	t.Parallel()
 
-	var arts daemon.ExportedPiRunArtifacts
+	var arts pi.ExportedPiRunArtifacts
 	// message_start carries the prompt cost in input_tokens; output_tokens is an
 	// initial draft count that must NOT be accumulated (message_end owns outputs).
 	line := []byte(`{"type":"message_start","message":{"usage":{"input_tokens":200,"output_tokens":1}}}`)
-	if !daemon.ExportedCapturePiUsage(&arts, line) {
+	if !pi.ExportedCapturePiUsage(&arts, line) {
 		t.Error("capturePiUsage returned false; want true for message_start with non-zero input_tokens")
 	}
 	if arts.TotalUsage.InputTokens != 200 {
@@ -199,9 +199,9 @@ func TestCapturePiUsage_MessageStart_AccumulatesInputOnly(t *testing.T) {
 func TestCapturePiUsage_MessageEnd_AccumulatesOutput(t *testing.T) {
 	t.Parallel()
 
-	var arts daemon.ExportedPiRunArtifacts
+	var arts pi.ExportedPiRunArtifacts
 	line := []byte(`{"type":"message_end","usage":{"output_tokens":42}}`)
-	if !daemon.ExportedCapturePiUsage(&arts, line) {
+	if !pi.ExportedCapturePiUsage(&arts, line) {
 		t.Error("capturePiUsage returned false; want true for message_end with usage")
 	}
 	if arts.TotalUsage.OutputTokens != 42 {
@@ -215,9 +215,9 @@ func TestCapturePiUsage_MessageEnd_AccumulatesOutput(t *testing.T) {
 func TestCapturePiUsage_IgnoresAgentEnd(t *testing.T) {
 	t.Parallel()
 
-	var arts daemon.ExportedPiRunArtifacts
+	var arts pi.ExportedPiRunArtifacts
 	line := []byte(`{"type":"agent_end","messages":[{"role":"assistant","usage":{"input_tokens":100,"output_tokens":50}}]}`)
-	if daemon.ExportedCapturePiUsage(&arts, line) {
+	if pi.ExportedCapturePiUsage(&arts, line) {
 		t.Error("capturePiUsage returned true for agent_end; want false (not accumulated)")
 	}
 	if arts.TotalUsage.InputTokens != 0 || arts.TotalUsage.OutputTokens != 0 {
@@ -229,9 +229,9 @@ func TestCapturePiUsage_IgnoresAgentEnd(t *testing.T) {
 func TestCapturePiUsage_IgnoresSession(t *testing.T) {
 	t.Parallel()
 
-	var arts daemon.ExportedPiRunArtifacts
+	var arts pi.ExportedPiRunArtifacts
 	line := []byte(`{"type":"session","id":"abc-123"}`)
-	if daemon.ExportedCapturePiUsage(&arts, line) {
+	if pi.ExportedCapturePiUsage(&arts, line) {
 		t.Error("capturePiUsage returned true for session; want false")
 	}
 	if arts.TotalUsage.InputTokens != 0 || arts.TotalUsage.OutputTokens != 0 {
@@ -242,9 +242,9 @@ func TestCapturePiUsage_IgnoresSession(t *testing.T) {
 func TestCapturePiUsage_IgnoresOtherEvents(t *testing.T) {
 	t.Parallel()
 
-	var arts daemon.ExportedPiRunArtifacts
+	var arts pi.ExportedPiRunArtifacts
 	line := []byte(`{"type":"tool_execution_start","name":"bash"}`)
-	if daemon.ExportedCapturePiUsage(&arts, line) {
+	if pi.ExportedCapturePiUsage(&arts, line) {
 		t.Error("capturePiUsage returned true for tool event; want false")
 	}
 	if arts.TotalUsage.InputTokens != 0 || arts.TotalUsage.OutputTokens != 0 {
@@ -255,10 +255,10 @@ func TestCapturePiUsage_IgnoresOtherEvents(t *testing.T) {
 func TestCapturePiUsage_ReturnsFalse_ZeroUsage(t *testing.T) {
 	t.Parallel()
 
-	var arts daemon.ExportedPiRunArtifacts
+	var arts pi.ExportedPiRunArtifacts
 	// message_start with no usage sub-object → zero usage → returns false.
 	line := []byte(`{"type":"message_start","message":{}}`)
-	if daemon.ExportedCapturePiUsage(&arts, line) {
+	if pi.ExportedCapturePiUsage(&arts, line) {
 		t.Error("capturePiUsage returned true for message_start with zero usage; want false")
 	}
 }
@@ -268,7 +268,7 @@ func TestCapturePiUsage_ReturnsFalse_ZeroUsage(t *testing.T) {
 func TestCapturePiUsage_MultiTurnAccumulation(t *testing.T) {
 	t.Parallel()
 
-	var arts daemon.ExportedPiRunArtifacts
+	var arts pi.ExportedPiRunArtifacts
 	stream := [][]byte{
 		[]byte(`{"type":"session","id":"sess-1"}`),
 		[]byte(`{"type":"turn_start"}`),
@@ -287,7 +287,7 @@ func TestCapturePiUsage_MultiTurnAccumulation(t *testing.T) {
 		[]byte(`{"type":"agent_end","messages":[]}`),
 	}
 	for _, line := range stream {
-		daemon.ExportedCapturePiUsage(&arts, line)
+		pi.ExportedCapturePiUsage(&arts, line)
 	}
 	// input: 100 (turn 1 message_start) + 200 (turn 2 message_start) = 300
 	// output: 50 (turn 1 message_end) + 75 (turn 2 message_end) = 125

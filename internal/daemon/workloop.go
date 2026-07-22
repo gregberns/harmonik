@@ -62,6 +62,7 @@ import (
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -5115,7 +5116,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// may omit the trailer). ensurePiRefsTrailer applies the same deterministic
 	// fallback so the standard trailer-detection path succeeds.
 	//
-	// Shared decision table (see internal/harness/codex/commit.go / picommit.go):
+	// Shared decision table (see internal/harness/codex/commit.go / internal/harness/pi/commit.go):
 	//   • HEAD already carries "Refs: <beadID>" → no-op (agent self-committed).
 	//   • HEAD advanced but lacks the trailer → amend HEAD to add it.
 	//   • HEAD unchanged, worktree dirty → stage all + create trailer commit.
@@ -5129,7 +5130,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if h, hErr := deps.harnessRegistry.ForAgent(agType); hErr == nil &&
 			h.Completion() == handlercontract.CompletionProcessExit {
 			if agType == core.AgentTypePi {
-				outcome, ensureErr := ensurePiRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
+				outcome, ensureErr := pi.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
 				if ensureErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ensurePiRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
 						beadID, ensureErr)

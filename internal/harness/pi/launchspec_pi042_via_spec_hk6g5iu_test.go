@@ -1,4 +1,4 @@
-package daemon_test
+package pi_test
 
 // pilaunchspec_pi042_via_spec_hk6g5iu_test.go — PI-042 deny path testable
 // through ExportedBuildPiLaunchSpec via injectable piHome (hk-6g5iu).
@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
 // TestBuildPiLaunchSpec_PI042_DeniesViaInjectableHome verifies that the PI-042
@@ -36,7 +36,7 @@ func TestBuildPiLaunchSpec_PI042_DeniesViaInjectableHome(t *testing.T) {
 		t.Fatalf("write auth.json: %v", err)
 	}
 
-	rc := daemon.ExportedPiRunCtx{
+	rc := pi.ExportedPiRunCtx{
 		WorkspacePath: t.TempDir(),
 		BeadID:        "hk-pi042-via-spec-sentinel",
 		Provider:      "openrouter",
@@ -46,7 +46,7 @@ func TestBuildPiLaunchSpec_PI042_DeniesViaInjectableHome(t *testing.T) {
 		PiHome:        piHome, // injectable: triggers PI-042 denial
 	}
 
-	if _, err := daemon.ExportedBuildPiLaunchSpec(rc); err == nil {
+	if _, err := pi.ExportedBuildPiLaunchSpec(rc); err == nil {
 		t.Fatal("expected PI-042 billing guard denial when auth.json carries api_key; got nil error")
 	}
 }

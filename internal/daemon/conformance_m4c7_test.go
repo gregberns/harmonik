@@ -53,6 +53,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -134,7 +135,7 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 			API:             "openai",
 			Runner:          nil, // LOCAL run — no worker
 		}
-		h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
+		h := pi.NewHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
 		if err != nil {
 			t.Fatalf("buildCodexRoutedLaunchSpec (local pi): %v", err)
@@ -222,7 +223,7 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 			BaseEnv:         []string{"PATH=/usr/bin"},
 			Runner:          newNoOpRecorderZ8ek(), // REMOTE run (worker selected)
 		}
-		h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
+		h := pi.NewHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
 		if err != nil {
 			t.Fatalf("buildCodexRoutedLaunchSpec (remote pi): %v", err)

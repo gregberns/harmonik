@@ -1,4 +1,4 @@
-package daemon_test
+package pi_test
 
 // picommit_test.go — Refs:<bead> trailer guarantee tests for the Pi harness
 // (codename:pilot, PI-030/PI-031, hk-mazln).
@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -105,11 +105,11 @@ func TestPiFallback_AlreadyCommittedWithTrailer_NoOp(t *testing.T) {
 	headBefore := piCommitGitOut(t, dir, "rev-parse", "HEAD")
 	countBefore := piCommitCount(t, dir)
 
-	outcome, err := daemon.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	outcome, err := pi.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID)
 	if err != nil {
 		t.Fatalf("ensurePiRefsTrailer: %v", err)
 	}
-	if outcome != daemon.ExportedPiRefsAlreadyPresent {
+	if outcome != pi.ExportedPiRefsAlreadyPresent {
 		t.Errorf("outcome = %v; want already_present", outcome)
 	}
 	if got := piCommitGitOut(t, dir, "rev-parse", "HEAD"); got != headBefore {
@@ -132,11 +132,11 @@ func TestPiFallback_EditedButNotCommitted_CreatesCommit(t *testing.T) {
 	piCommitWriteFile(t, dir, "new.txt", "new file from pi")
 	countBefore := piCommitCount(t, dir)
 
-	outcome, err := daemon.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	outcome, err := pi.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID)
 	if err != nil {
 		t.Fatalf("ensurePiRefsTrailer: %v", err)
 	}
-	if outcome != daemon.ExportedPiRefsCommitted {
+	if outcome != pi.ExportedPiRefsCommitted {
 		t.Errorf("outcome = %v; want committed", outcome)
 	}
 	if got := piCommitGitOut(t, dir, "rev-parse", "HEAD"); got == parentSHA {
@@ -145,7 +145,7 @@ func TestPiFallback_EditedButNotCommitted_CreatesCommit(t *testing.T) {
 	if got := piCommitCount(t, dir); got != countBefore+1 {
 		t.Errorf("commit count = %d; want %d (one fallback commit)", got, countBefore+1)
 	}
-	has, err := daemon.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
+	has, err := pi.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
 	if err != nil {
 		t.Fatalf("verify trailer: %v", err)
 	}
@@ -171,11 +171,11 @@ func TestPiFallback_CommittedWithoutTrailer_Amends(t *testing.T) {
 	treeBefore := piCommitGitOut(t, dir, "rev-parse", "HEAD^{tree}")
 	countBefore := piCommitCount(t, dir)
 
-	outcome, err := daemon.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	outcome, err := pi.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID)
 	if err != nil {
 		t.Fatalf("ensurePiRefsTrailer: %v", err)
 	}
-	if outcome != daemon.ExportedPiRefsAmended {
+	if outcome != pi.ExportedPiRefsAmended {
 		t.Errorf("outcome = %v; want amended", outcome)
 	}
 	if got := piCommitGitOut(t, dir, "rev-parse", "HEAD^{tree}"); got != treeBefore {
@@ -184,7 +184,7 @@ func TestPiFallback_CommittedWithoutTrailer_Amends(t *testing.T) {
 	if got := piCommitCount(t, dir); got != countBefore {
 		t.Errorf("commit count = %d; want %d (amend, not follow-up)", got, countBefore)
 	}
-	has, err := daemon.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
+	has, err := pi.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
 	if err != nil {
 		t.Fatalf("verify trailer: %v", err)
 	}
@@ -206,11 +206,11 @@ func TestPiFallback_NoWork_NoCommitFabricated(t *testing.T) {
 	beadID := core.BeadID("hk-pi-idle")
 	countBefore := piCommitCount(t, dir)
 
-	outcome, err := daemon.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	outcome, err := pi.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID)
 	if err != nil {
 		t.Fatalf("ensurePiRefsTrailer: %v", err)
 	}
-	if outcome != daemon.ExportedPiRefsNoChange {
+	if outcome != pi.ExportedPiRefsNoChange {
 		t.Errorf("outcome = %v; want no_change", outcome)
 	}
 	if got := piCommitGitOut(t, dir, "rev-parse", "HEAD"); got != parentSHA {
@@ -227,7 +227,7 @@ func TestPiFallback_EmptyBeadIDErrors(t *testing.T) {
 	t.Parallel()
 
 	dir, parentSHA := piCommitRepo(t)
-	if _, err := daemon.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, ""); err == nil {
+	if _, err := pi.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, ""); err == nil {
 		t.Error("ensurePiRefsTrailer with empty beadID: want error, got nil")
 	}
 }
@@ -246,17 +246,17 @@ func TestPiFallback_RunnerRoutedAmend(t *testing.T) {
 	piCommitGit(t, dir, "commit", "-m", "feat: pi did work but forgot the trailer")
 
 	rr := &tmux.RecordingRunner{}
-	outcome, err := daemon.ExportedEnsurePiRefsTrailerViaRunner(context.Background(), rr, dir, parentSHA, beadID)
+	outcome, err := pi.ExportedEnsurePiRefsTrailerViaRunner(context.Background(), rr, dir, parentSHA, beadID)
 	if err != nil {
 		t.Fatalf("ensurePiRefsTrailerViaRunner: %v", err)
 	}
-	if outcome != daemon.ExportedPiRefsAmended {
+	if outcome != pi.ExportedPiRefsAmended {
 		t.Errorf("outcome = %v; want amended", outcome)
 	}
 	if len(rr.Calls) == 0 {
 		t.Error("runner recorded zero calls — git commands must route through runner (PI-031)")
 	}
-	has, err := daemon.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
+	has, err := pi.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
 	if err != nil {
 		t.Fatalf("verify trailer: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestPiFallback_CommitMessageContainsPiPrefix(t *testing.T) {
 	beadID := core.BeadID("hk-pi-msgcheck")
 	piCommitWriteFile(t, dir, "seed.txt", "pi output")
 
-	if _, err := daemon.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID); err != nil {
+	if _, err := pi.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, beadID); err != nil {
 		t.Fatalf("ensurePiRefsTrailer: %v", err)
 	}
 	body := piCommitHeadBody(t, dir)

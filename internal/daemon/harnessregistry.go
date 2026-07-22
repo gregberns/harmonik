@@ -29,6 +29,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -38,10 +39,10 @@ import (
 //
 // piCfg carries the resolved harnesses.pi block from .harmonik/config.yaml
 // (loaded by daemon.Start and stored in Config.ProjectCfg.Harnesses.Pi).
-// Its provider, model, and api_key_env fields are threaded into NewPiHarness so
+// Its provider, model, and api_key_env fields are threaded into pi.NewHarness so
 // that a bead labelled harness:pi can launch without hitting the
-// "apiKeyEnv must be non-empty" gate in buildPiLaunchSpec.  Pass a zero
-// PiHarnessConfig when Pi config is absent; buildPiLaunchSpec will then surface
+// "apiKeyEnv must be non-empty" gate in pi.BuildLaunchSpec.  Pass a zero
+// PiHarnessConfig when Pi config is absent; pi.BuildLaunchSpec will then surface
 // a descriptive error naming the missing yaml keys and 'harmonik pi config --example'.
 //
 // Returns a non-nil error only if Register fails (a duplicate or sealed-registry
@@ -55,8 +56,8 @@ func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry
 	if err := reg.Register(core.AgentTypeCodex, codex.NewHarness("", "")); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register codex harness: %w", err)
 	}
-	piH := NewPiHarness(
-		"", // piBinary: normalised to "pi" by buildPiLaunchSpec
+	piH := pi.NewHarness(
+		"", // piBinary: normalised to "pi" by pi.BuildLaunchSpec
 		piCfg.Provider,
 		piCfg.Model,
 		piCfg.APIKeyEnv,
@@ -75,15 +76,15 @@ func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry
 //
 //   - Claude / Codex: rc.model (Claude = DOT node model= attr or run-level
 //     default; Codex = empty, not harmonik-controlled).
-//   - Pi: rc.model when non-empty (per-run override), else h.(*PiHarness).model
+//   - Pi: rc.model when non-empty (per-run override), else h.(*pi.Harness).Model()
 //     (harnesses.pi.model config fallback) — same override-with-fallback pattern
-//     as PiHarness.LaunchSpec and the claude harness.
+//     as pi.Harness.LaunchSpec and the claude harness.
 func effectiveModel(h handlercontract.Harness, rc shared.LaunchCtx) string {
-	if piH, ok := h.(*PiHarness); ok {
+	if piH, ok := h.(*pi.Harness); ok {
 		if rc.Model != "" {
 			return rc.Model
 		}
-		return piH.model
+		return piH.Model()
 	}
 	return rc.Model
 }

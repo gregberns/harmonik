@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -67,7 +68,7 @@ func TestBuildPiRoutedLaunchSpec_NoWorker_RunnerNil_NFR7(t *testing.T) {
 	ctx := context.Background()
 
 	rc := piRemoteRunCtx(t, t.TempDir(), nil) // LOCAL run
-	h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
+	h := pi.NewHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 
 	spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
 	if err != nil {
@@ -90,7 +91,7 @@ func TestBuildPiRoutedLaunchSpec_Worker_ThreadsRunner(t *testing.T) {
 
 	rr := newNoOpRecorderZ8ek()
 	rc := piRemoteRunCtx(t, t.TempDir(), rr) // REMOTE run (worker selected)
-	h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
+	h := pi.NewHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 
 	spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
 	if err != nil {
@@ -141,7 +142,7 @@ func TestBuildPiRoutedLaunchSpec_ProviderConfigIntactAcrossHosts(t *testing.T) {
 	readBaseURL := func(t *testing.T, runner tmux.CommandRunner) string {
 		t.Helper()
 		rc := piRemoteRunCtx(t, t.TempDir(), runner)
-		h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
+		h := pi.NewHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
 		if err != nil {
 			t.Fatalf("buildCodexRoutedLaunchSpec: %v", err)

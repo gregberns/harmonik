@@ -1,6 +1,6 @@
-package daemon
+package pi
 
-// pijsonlparser.go — Pi `--mode json` NDJSON event parser (codename:pilot, PI-012/014).
+// ndjsonparser.go — Pi `--mode json` NDJSON event parser (codename:pilot, PI-012/014).
 //
 // Pi `--mode json` streams newline-delimited JSON (NDJSON) to stdout. The first
 // line is always a session header:
@@ -28,7 +28,7 @@ package daemon
 //
 // The session id is the Pi analog of codex's thread_id. SessionIDPolicy() ==
 // SessionIDCaptured; the captured id is passed as --session <id> on the next
-// turn (resume argv, buildPiLaunchSpec). agentEndCb invokes Teardown→Kill because
+// turn (resume argv, BuildLaunchSpec). agentEndCb invokes Teardown→Kill because
 // Pi's process exit is unreliable (#4303/#161/#4942); the 90m ceiling is backstop
 // only (PI-014).
 //

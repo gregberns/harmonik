@@ -1,6 +1,6 @@
-package daemon
+package pi
 
-// pilaunchspec.go — buildPiLaunchSpec helper (codename:pilot, hk-1c16h).
+// launchspec.go — BuildLaunchSpec helper (codename:pilot, hk-1c16h).
 //
 // Builds the argv/env spec for launching a Pi subprocess for any workflow phase:
 //
@@ -29,7 +29,7 @@ package daemon
 //   - Sets shell rc-prompt suppression vars (oh-my-zsh anti-hang).
 //
 // resolvePiAPIKeyValue is the ONE shared key-resolution helper feeding BOTH
-// buildPiEnv (for injection) and the billing guard (PI-040, pibillingguard.go)
+// buildPiEnv (for injection) and the billing guard (PI-040, billingguard.go)
 // so they can never disagree about which value Pi receives at launch.
 //
 // Spec refs: specs/pi-harness.md §2 (PI-015, PI-020, PI-021).
@@ -79,108 +79,126 @@ var piProviderCredentialKeys = []string{
 
 // piSeedPromptTemplate is the seed prompt template passed to Pi as the
 // positional task argument. It instructs Pi to read agent-task.md (written by
-// the shared launch path before buildPiLaunchSpec is called), implement the
+// the shared launch path before BuildLaunchSpec is called), implement the
 // task, and commit with the required Refs: trailer.
 //
 // The trailer instruction is load-bearing: harmonik detects bead completion by
 // a git commit whose body carries an exact "Refs: <bead-id>" trailer line
 // (workloop.go beadAlreadySubsumedInMain). Pi is unsandboxed (PI-015) so it
-// can git-commit itself; ensurePiRefsTrailer (picommit.go) is the deterministic
+// can git-commit itself; EnsureRefsTrailer (commit.go) is the deterministic
 // backstop for when Pi edits but does not produce a trailer-carrying commit.
 //
 // %s is replaced with the bead ID. Spec: PI-015.
 const piSeedPromptTemplate = `Read .harmonik/agent-task.md to understand your task. Implement the changes described. When you are done, commit ALL your changes in a single git commit, and the commit message MUST include the line "Refs: %s" on its own line in the commit body. This trailer is required — without it the system cannot detect that your work is complete.`
 
-// piRunCtx carries the per-launch inputs to buildPiLaunchSpec.
-type piRunCtx struct {
-	// piBinary is the pi executable path. Empty is normalised to "pi".
-	piBinary string
+// RunCtx carries the per-launch inputs to BuildLaunchSpec.
+//
+// It is EXPORTED, along with BuildLaunchSpec, for one reason and it is not
+// "callers might want it": a Go export_test.go seam is visible only inside its
+// own package's test binary, so internal/daemon/export_test.go cannot alias a
+// shim living here — it can only alias something genuinely exported. Two
+// cross-harness parity tables in package daemon_test
+// (crossharness_empty_model_test.go pins the codex-vs-pi empty-model asymmetry;
+// crossharness_seedprompt_test.go pins resume-seed-prompt parity) assert about
+// BOTH harnesses in ONE table each, so neither can move into package pi_test,
+// and neither can reach SkipBillingGuard through the handlercontract.Harness
+// seam — Harness.LaunchSpec builds this struct without it, so the fail-closed
+// PI-040 guard would run and error without a real provider key. Splitting those
+// tables would destroy the only place each asymmetry/parity claim is pinned
+// together. Codex made the identical call in E1a (codex.RunCtx).
+//
+// Production callers do NOT use this type: they go through the registry-resolved
+// handlercontract.Harness. When the two parity tables move to a cross-harness
+// test package, RunCtx and BuildLaunchSpec should be un-exported again.
+type RunCtx struct {
+	// PiBinary is the pi executable path. Empty is normalised to "pi".
+	PiBinary string
 
-	// workspacePath is the absolute path to the run worktree. Set as WorkDir in
+	// WorkspacePath is the absolute path to the run worktree. Set as WorkDir in
 	// the returned LaunchSpec. Pi's file tools (read/write/edit/bash/grep/find/ls)
 	// operate relative to CWD; no -C flag (unlike codex exec). Required.
-	workspacePath string
+	WorkspacePath string
 
-	// beadID is the bead correlation identifier embedded in the seed prompt's
+	// BeadID is the bead correlation identifier embedded in the seed prompt's
 	// Refs: trailer instruction. Required.
-	beadID string
+	BeadID string
 
-	// provider is the Pi provider string (from harnesses.pi.provider config).
+	// Provider is the Pi provider string (from harnesses.pi.provider config).
 	// Required on the initial turn. Ignored on resume turns.
-	provider string
+	Provider string
 
-	// model is the Pi model string in "provider/id" form (from harnesses.pi.model).
+	// Model is the Pi model string in "provider/id" form (from harnesses.pi.model).
 	// Required on the initial turn. Ignored on resume turns.
-	model string
+	Model string
 
-	// apiKeyEnv is the name of the env var the Pi child expects for the provider
+	// APIKeyEnv is the name of the env var the Pi child expects for the provider
 	// API key (from harnesses.pi.api_key_env). REQUIRED — name only, no secret.
 	// The VALUE comes from apiKeyFile (when set) or the operator env (PI-020).
-	apiKeyEnv string
+	APIKeyEnv string
 
-	// apiKeyFile is the OPTIONAL path (pre-expanded by ResolvePiConfig) to a file
+	// APIKeyFile is the OPTIONAL path (pre-expanded by ResolvePiConfig) to a file
 	// holding the raw provider API key. When non-empty, resolvePiAPIKeyValue reads
 	// the file in preference to the ambient env. The daemon ambient env MUST NOT
 	// carry the secret (PI-050/hk-xmfoi). Absent → fall back to ambient env.
-	apiKeyFile string
+	APIKeyFile string
 
-	// baseURL is the OPTIONAL base URL for a locally-hosted OpenAI-compatible
+	// BaseURL is the OPTIONAL base URL for a locally-hosted OpenAI-compatible
 	// endpoint (from harnesses.pi.base_url). When non-empty and this is the
-	// initial turn, buildPiLaunchSpec generates a models.json under the run's
+	// initial turn, BuildLaunchSpec generates a models.json under the run's
 	// pi-agent dir and injects PI_CODING_AGENT_DIR into the child env. Absent =
 	// today's cloud-provider behavior byte-for-byte unchanged. Bead: hk-z13jz.
-	baseURL string
+	BaseURL string
 
-	// api is the OPTIONAL Pi wire-format string written into the generated
+	// API is the OPTIONAL Pi wire-format string written into the generated
 	// models.json "api" field. When empty and baseURL is set, defaults to "openai"
 	// at launch time. Bead: hk-z13jz.
-	api string
+	API string
 
-	// priorSessionID is non-nil for resume turns (iteration >= 2). It holds the
+	// PriorSessionID is non-nil for resume turns (iteration >= 2). It holds the
 	// Pi session ID captured from the prior turn's first {"type":"session",...}
 	// NDJSON line. Nil means this is the initial turn.
-	priorSessionID *string
+	PriorSessionID *string
 
-	// iterationCount is the 1-based DOT iteration index. On a resume turn
+	// IterationCount is the 1-based DOT iteration index. On a resume turn
 	// (priorSessionID != nil) it selects the reviewer-feedback.iter-<N-1>.md the
 	// resume seed prompt points at. Zero on the initial turn (single-mode or
-	// iteration 1). See implementerResumeSeedPrompt (agentseedprompt.go).
-	iterationCount int
+	// iteration 1). See shared.ImplementerResumeSeedPrompt (internal/harness/shared/seedprompt.go).
+	IterationCount int
 
-	// baseEnv is the base environment inherited from daemon Config.HandlerEnv.
+	// BaseEnv is the base environment inherited from daemon Config.HandlerEnv.
 	// buildPiEnv strips all credential keys (allowlist semantics, PI-021) and
 	// injects only the selected provider's key.
-	baseEnv []string
+	BaseEnv []string
 
-	// piHome is the Pi home directory used by the PI-042 billing guard check.
+	// PiHome is the Pi home directory used by the PI-042 billing guard check.
 	// When empty, piDefaultHome() is used (production behaviour). Injectable
-	// for tests to exercise the PI-042 deny path through buildPiLaunchSpec
+	// for tests to exercise the PI-042 deny path through BuildLaunchSpec
 	// without touching the real ~/.pi. Bead: hk-6g5iu.
-	piHome string
+	PiHome string
 
-	// billingEmitter, when non-nil, receives pi_billing_guard events from the
-	// fail-closed billing guard (PI-040/PI-042/PI-043, pibillingguard.go). Nil
+	// BillingEmitter, when non-nil, receives pi_billing_guard events from the
+	// fail-closed billing guard (PI-040/PI-042/PI-043, billingguard.go). Nil
 	// disables event emission; the guard's enforcement (fail-closed assert) still
 	// runs regardless.
-	billingEmitter handlercontract.EventEmitter
+	BillingEmitter handlercontract.EventEmitter
 
-	// runID correlates the pi_billing_guard events with a run. May be the zero
+	// RunID correlates the pi_billing_guard events with a run. May be the zero
 	// (uuid.Nil) RunID when the spec is built before a run_id is minted, in which
 	// case the events are emitted run-unscoped.
-	runID core.RunID
+	RunID core.RunID
 
-	// skipBillingGuard disables the pre-flight billing guard (PI-040,
-	// pibillingguard.go). Exists SOLELY so unit tests that exercise argv/env
+	// SkipBillingGuard disables the pre-flight billing guard (PI-040,
+	// billingguard.go). Exists SOLELY so unit tests that exercise argv/env
 	// shape do not require a real api key in the environment. Production callers
 	// MUST leave it false so the fail-closed guard runs.
-	skipBillingGuard bool
+	SkipBillingGuard bool
 }
 
 // resolvePiAPIKeyValue reads the Pi API key value, preferring an explicit file
 // (api_key_file, PI-050/hk-xmfoi) over the ambient env (api_key_env).
 //
 // This is the ONE shared key-resolution helper: BOTH buildPiEnv (for key
-// injection into the child env) and the billing guard (PI-040, pibillingguard.go,
+// injection into the child env) and the billing guard (PI-040, billingguard.go,
 // for the fail-closed pre-flight assert) MUST call this function so they can
 // never disagree about which value Pi receives at launch.
 //
@@ -202,7 +220,7 @@ func resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv string) string {
 	return os.Getenv(apiKeyEnv)
 }
 
-// buildPiLaunchSpec constructs a handler.LaunchSpec for launching a Pi
+// BuildLaunchSpec constructs a handler.LaunchSpec for launching a Pi
 // subprocess for one turn (initial or resume).
 //
 // The returned spec is suitable for passing directly to handler.Launch. The
@@ -210,16 +228,16 @@ func resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv string) string {
 // calling this function (the spec does not write it).
 //
 // Spec: PI-015, PI-020, PI-021.
-func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
-	if rc.workspacePath == "" {
+func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
+	if rc.WorkspacePath == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
-			"buildPiLaunchSpec: workspacePath must be non-empty")
+			"BuildLaunchSpec: workspacePath must be non-empty")
 	}
-	if rc.beadID == "" {
+	if rc.BeadID == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
-			"buildPiLaunchSpec: beadID must be non-empty")
+			"BuildLaunchSpec: beadID must be non-empty")
 	}
-	if rc.apiKeyEnv == "" {
+	if rc.APIKeyEnv == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
 			"Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
 				"missing: harnesses.pi.api_key_env. " +
@@ -227,19 +245,19 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 				"then add it to .harmonik/config.yaml. " +
 				"(R1 de-hardcode mandate: the product imposes ZERO baked Pi defaults.)")
 	}
-	if rc.priorSessionID != nil && *rc.priorSessionID == "" {
+	if rc.PriorSessionID != nil && *rc.PriorSessionID == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
-			"buildPiLaunchSpec: priorSessionID must not be an empty string (pass nil for initial turn)")
+			"BuildLaunchSpec: priorSessionID must not be an empty string (pass nil for initial turn)")
 	}
-	if rc.priorSessionID == nil {
-		if rc.provider == "" {
+	if rc.PriorSessionID == nil {
+		if rc.Provider == "" {
 			return handler.LaunchSpec{}, fmt.Errorf(
 				"Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
 					"missing: harnesses.pi.provider. " +
 					"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
 					"then add it to .harmonik/config.yaml.")
 		}
-		if rc.model == "" {
+		if rc.Model == "" {
 			return handler.LaunchSpec{}, fmt.Errorf(
 				"Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
 					"missing: harnesses.pi.model. " +
@@ -248,7 +266,7 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 		}
 	}
 
-	binary := rc.piBinary
+	binary := rc.PiBinary
 	if binary == "" {
 		binary = "pi"
 	}
@@ -267,22 +285,22 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	// via the shared resume prompt so a DOT back-edge re-entry gets an actionable
 	// instruction instead of the identical initial prompt it already satisfied
 	// (c073 defect; peer of pasteInjectImplementerResume for claude).
-	seedPrompt := fmt.Sprintf(piSeedPromptTemplate, rc.beadID)
+	seedPrompt := fmt.Sprintf(piSeedPromptTemplate, rc.BeadID)
 	var args []string
-	if rc.priorSessionID != nil {
-		seedPrompt = shared.ImplementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
+	if rc.PriorSessionID != nil {
+		seedPrompt = shared.ImplementerResumeSeedPrompt(rc.BeadID, rc.IterationCount-1)
 		args = []string{
 			"--mode", "json",
 			"--no-extensions",
-			"--session", *rc.priorSessionID,
+			"--session", *rc.PriorSessionID,
 			seedPrompt,
 		}
 	} else {
 		args = []string{
 			"--mode", "json",
 			"--no-extensions",
-			"--provider", rc.provider,
-			"--model", rc.model,
+			"--provider", rc.Provider,
+			"--model", rc.Model,
 			seedPrompt,
 		}
 	}
@@ -290,19 +308,19 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	// Build env: allowlist-strip all provider credential keys except the selected
 	// one, then inject only the selected provider's key (PI-021/PI-050).
 	// apiKeyFile takes precedence over the ambient env when set (file-first).
-	env := buildPiEnv(rc.baseEnv, rc.apiKeyFile, rc.apiKeyEnv)
+	env := buildPiEnv(rc.BaseEnv, rc.APIKeyFile, rc.APIKeyEnv)
 
-	// Pre-flight billing guard (PI-040/PI-042/PI-043, pibillingguard.go).
+	// Pre-flight billing guard (PI-040/PI-042/PI-043, billingguard.go).
 	// Fail-closed: absent/empty provider key → error → launch refused BEFORE
 	// agent_ready. Also checks for a persisted on-disk credential (PI-042).
-	// skipBillingGuard is false in production (see piRunCtx); tests that only
+	// skipBillingGuard is false in production (see RunCtx); tests that only
 	// exercise argv/env shape set it to avoid requiring a real key.
-	if !rc.skipBillingGuard {
-		piHome := rc.piHome
+	if !rc.SkipBillingGuard {
+		piHome := rc.PiHome
 		if piHome == "" {
 			piHome = piDefaultHome()
 		}
-		if err := runPiBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, rc.apiKeyFile, rc.apiKeyEnv, piHome); err != nil {
+		if err := runPiBillingGuard(context.Background(), rc.BillingEmitter, rc.RunID, rc.BeadID, rc.APIKeyFile, rc.APIKeyEnv, piHome); err != nil {
 			return handler.LaunchSpec{}, err
 		}
 	}
@@ -316,21 +334,21 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	// reads it via PI_CODING_AGENT_DIR, which is injected into the child env
 	// only (never argv — mirror the api-key injection pattern). When baseURL is
 	// absent this block is a no-op: today's behavior unchanged.
-	if rc.baseURL != "" && rc.priorSessionID == nil {
-		piAgentDir := filepath.Join(rc.workspacePath, ".harmonik", "pi-agent")
+	if rc.BaseURL != "" && rc.PriorSessionID == nil {
+		piAgentDir := filepath.Join(rc.WorkspacePath, ".harmonik", "pi-agent")
 		if mkdirErr := os.MkdirAll(piAgentDir, 0o755); mkdirErr != nil {
 			return handler.LaunchSpec{}, fmt.Errorf(
-				"buildPiLaunchSpec: create pi-agent dir %q: %w", piAgentDir, mkdirErr)
+				"BuildLaunchSpec: create pi-agent dir %q: %w", piAgentDir, mkdirErr)
 		}
-		modelsJSON, buildErr := buildPiModelsJSON(rc.provider, rc.baseURL, rc.api, rc.apiKeyFile, rc.apiKeyEnv, rc.model)
+		modelsJSON, buildErr := buildPiModelsJSON(rc.Provider, rc.BaseURL, rc.API, rc.APIKeyFile, rc.APIKeyEnv, rc.Model)
 		if buildErr != nil {
 			return handler.LaunchSpec{}, fmt.Errorf(
-				"buildPiLaunchSpec: build models.json: %w", buildErr)
+				"BuildLaunchSpec: build models.json: %w", buildErr)
 		}
 		modelsPath := filepath.Join(piAgentDir, "models.json")
 		if writeErr := os.WriteFile(modelsPath, modelsJSON, 0o644); writeErr != nil {
 			return handler.LaunchSpec{}, fmt.Errorf(
-				"buildPiLaunchSpec: write models.json to %q: %w", modelsPath, writeErr)
+				"BuildLaunchSpec: write models.json to %q: %w", modelsPath, writeErr)
 		}
 		env = append(env, "PI_CODING_AGENT_DIR="+piAgentDir)
 	}
@@ -339,7 +357,7 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 		Binary:       binary,
 		Args:         args,
 		Env:          env,
-		WorkDir:      rc.workspacePath,
+		WorkDir:      rc.WorkspacePath,
 		Role:         "implementer",
 		StdinDevNull: true, // PI-020 / #4303: Pi (ProcessExit) may hang on pane PTY stdin with /dev/null
 	}, nil

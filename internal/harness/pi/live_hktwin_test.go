@@ -1,10 +1,10 @@
-package daemon_test
+package pi_test
 
 // pi_live_hktwin_test.go — M6 WS3-pi (pi-A: the real-pi oracle).
 //
 // This is the REAL-BOX-GATED live leg: it drives a real `pi --mode json`
 // single-turn session, asserts the terminal NDJSON sequence (session first,
-// agent_end last, per internal/daemon/pijsonlparser.go), and writes the capture
+// agent_end last, per internal/harness/pi/ndjsonparser.go), and writes the capture
 // to testdata/twin-parity/pi/<scn>/{ndjson,events.jsonl} so it can replace the
 // deterministic twin sample as the parity-gate oracle.
 //
@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
 // piLiveRequireOrSkip mirrors the WS3-codex-B codexDriftRequireOrSkip anti-false-
@@ -74,7 +74,7 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 
 	// Drive a real single turn: pi --mode json --no-extensions --provider <p>
 	// --model <m> "<prompt>" — the initial-turn argv the adapter builds
-	// (internal/daemon/pilaunchspec.go §buildPiLaunchSpec).
+	// (internal/harness/pi/launchspec.go §BuildLaunchSpec).
 	ctxTimeout := 120 * time.Second
 	if v := os.Getenv("PI_LIVE_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -114,7 +114,7 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 	// captured (PI-012), agent_end fired (PI-014), session first + agent_end last.
 	var gotSessionID string
 	var agentEndFired bool
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(
 		bytes.NewReader(out),
 		func(id string) { gotSessionID = id },
 		func() { agentEndFired = true },
@@ -138,7 +138,7 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 	// Write the capture: ndjson (raw pi stream) + a projected durable events.jsonl
 	// (terminal triad the daemon projects on success). These OVERWRITE the
 	// deterministic twin sample so the parity gate can grade against a real run.
-	dir := filepath.Join("..", "..", "testdata", "twin-parity", "pi", piLiveScenario)
+	dir := filepath.Join("..", "..", "..", "testdata", "twin-parity", "pi", piLiveScenario)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir capture dir: %v", err)
 	}
@@ -163,7 +163,7 @@ func piFirstLastKind(t *testing.T, out []byte) (first, last string) {
 		if len(line) == 0 {
 			continue
 		}
-		_, rawType, _, _, err := daemon.ExportedParsePiNDJSONEvent(line)
+		_, rawType, _, _, err := pi.ExportedParsePiNDJSONEvent(line)
 		if err != nil {
 			continue
 		}

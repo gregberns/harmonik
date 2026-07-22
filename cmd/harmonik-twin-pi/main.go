@@ -10,13 +10,13 @@
 // LOCKED decision (M6-PLAN §WS3): pi's NDJSON dialect differs enough from
 // codex/claude that a shared twin would be a leaky abstraction — pi emits its
 // own event vocabulary (`session` → `message_start`/`message_end` → `agent_end`)
-// that no other harness uses (internal/daemon/pijsonlparser.go). A dedicated
+// that no other harness uses (internal/harness/pi/ndjsonparser.go). A dedicated
 // binary mirrors the codex precedent (cmd/harmonik-twin-codex).
 //
 // # Interface compatibility
 //
 // The twin accepts the subset of the pi flag surface the adapter emits
-// (internal/daemon/pilaunchspec.go §buildPiLaunchSpec):
+// (internal/harness/pi/launchspec.go §BuildLaunchSpec):
 //
 //	Initial: harmonik-twin-pi --mode json --no-extensions --provider <p> --model <m> "<prompt>"
 //	Resume:  harmonik-twin-pi --mode json --no-extensions --session <id> "<prompt>"
@@ -32,7 +32,7 @@
 //   - {"type":"message_end","usage":{"output_tokens":N}}
 //   - {"type":"agent_end","messages":[{"role":"assistant","usage":{...}}]} — terminal
 //
-// Normative dialect reference: internal/daemon/pijsonlparser.go (the real parser
+// Normative dialect reference: internal/harness/pi/ndjsonparser.go (the real parser
 // this twin must drive identically to a live pi).
 package main
 

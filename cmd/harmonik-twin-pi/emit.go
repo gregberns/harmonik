@@ -2,7 +2,7 @@
 //
 // This file implements the stdout NDJSON emitter that the pi twin uses to
 // simulate `pi --mode json` output. The format mirrors the real pi surface the
-// daemon parser consumes (internal/daemon/pijsonlparser.go):
+// daemon parser consumes (internal/harness/pi/ndjsonparser.go):
 //
 //	session → message_start → message_end → agent_end
 //

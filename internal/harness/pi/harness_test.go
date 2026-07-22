@@ -1,4 +1,4 @@
-package daemon_test
+package pi_test
 
 // piharness_test.go — PiHarness + pijsonlparser unit tests (codename:pilot, PI-010/012/013).
 //
@@ -20,8 +20,8 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,11 +32,11 @@ func TestParsePiNDJSONEvent_SessionHeader(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"session","version":3,"id":"550e8400-e29b-41d4-a716-446655440000","cwd":"/tmp/wt"}`)
-	kind, rawType, sessionID, _, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, rawType, sessionID, _, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindSession {
+	if kind != pi.ExportedPiEventKindSession {
 		t.Errorf("Kind = %v; want piEventKindSession", kind)
 	}
 	if rawType != "session" {
@@ -51,11 +51,11 @@ func TestParsePiNDJSONEvent_AgentEnd(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"agent_end","messages":[]}`)
-	kind, rawType, _, _, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, rawType, _, _, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindAgentEnd {
+	if kind != pi.ExportedPiEventKindAgentEnd {
 		t.Errorf("Kind = %v; want piEventKindAgentEnd", kind)
 	}
 	if rawType != "agent_end" {
@@ -67,11 +67,11 @@ func TestParsePiNDJSONEvent_UnknownType(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"tool_use","name":"bash"}`)
-	kind, rawType, _, _, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, rawType, _, _, err := pi.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if kind != daemon.ExportedPiEventKindOther {
+	if kind != pi.ExportedPiEventKindOther {
 		t.Errorf("Kind = %v; want piEventKindOther", kind)
 	}
 	if rawType != "tool_use" {
@@ -82,7 +82,7 @@ func TestParsePiNDJSONEvent_UnknownType(t *testing.T) {
 func TestParsePiNDJSONEvent_Malformed(t *testing.T) {
 	t.Parallel()
 
-	_, _, _, _, err := daemon.ExportedParsePiNDJSONEvent([]byte("not json"))
+	_, _, _, _, err := pi.ExportedParsePiNDJSONEvent([]byte("not json"))
 	if err == nil {
 		t.Error("expected error for malformed input; got nil")
 	}
@@ -91,7 +91,7 @@ func TestParsePiNDJSONEvent_Malformed(t *testing.T) {
 func TestParsePiNDJSONEvent_EmptyLine(t *testing.T) {
 	t.Parallel()
 
-	_, _, _, _, err := daemon.ExportedParsePiNDJSONEvent([]byte(""))
+	_, _, _, _, err := pi.ExportedParsePiNDJSONEvent([]byte(""))
 	if err == nil {
 		t.Error("expected error for empty line; got nil")
 	}
@@ -112,7 +112,7 @@ func TestPiSessionIDInterceptor_FiresOnSessionHeader(t *testing.T) {
 	var gotID string
 	cb := func(id string) { gotID = id }
 
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), cb, nil)
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), cb, nil)
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestPiSessionIDInterceptor_PassesThrough(t *testing.T) {
 	input := `{"type":"session","id":"` + wantID + `"}` + "\n" +
 		`{"type":"tool_use","name":"bash"}` + "\n"
 
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(input), func(string) {}, nil)
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(strings.NewReader(input), func(string) {}, nil)
 	got, err := io.ReadAll(interceptor)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -153,7 +153,7 @@ func TestPiSessionIDInterceptor_FirstSessionWins(t *testing.T) {
 	var captured []string
 	cb := func(id string) { captured = append(captured, id) }
 
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), cb, nil)
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), cb, nil)
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestPiSessionIDInterceptor_NoSessionLine(t *testing.T) {
 		`{"type":"agent_end","messages":[]}` + "\n"
 
 	fired := false
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {
 		fired = true
 	}, nil)
 	if _, err := io.ReadAll(interceptor); err != nil {
@@ -192,7 +192,7 @@ func TestPiSessionIDInterceptor_NoSessionLine(t *testing.T) {
 func TestPiHarness_AgentType(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if got := h.AgentType(); got != core.AgentTypePi {
 		t.Errorf("AgentType = %q; want %q", got, core.AgentTypePi)
 	}
@@ -201,7 +201,7 @@ func TestPiHarness_AgentType(t *testing.T) {
 func TestPiHarness_SessionIDPolicy(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if got := h.SessionIDPolicy(); got != handlercontract.SessionIDCaptured {
 		t.Errorf("SessionIDPolicy = %v; want SessionIDCaptured", got)
 	}
@@ -210,7 +210,7 @@ func TestPiHarness_SessionIDPolicy(t *testing.T) {
 func TestPiHarness_Completion(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if got := h.Completion(); got != handlercontract.CompletionProcessExit {
 		t.Errorf("Completion = %v; want CompletionProcessExit", got)
 	}
@@ -225,7 +225,7 @@ func TestPiHarness_Completion(t *testing.T) {
 func TestPiHarness_DetectReady_LaunchInitiated(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeLaunchInitiated)}
 	if h.DetectReady(ev) {
 		t.Error("DetectReady(launch_initiated) = true; want false (HC-041)")
@@ -237,7 +237,7 @@ func TestPiHarness_DetectReady_LaunchInitiated(t *testing.T) {
 func TestPiHarness_DetectReady_AgentReady(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeAgentReady)}
 	if !h.DetectReady(ev) {
 		t.Error("DetectReady(agent_ready) = false; want true")
@@ -249,7 +249,7 @@ func TestPiHarness_DetectReady_AgentReady(t *testing.T) {
 func TestPiHarness_DetectReady_OtherEvent(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	ev := handlercontract.EventEnvelope{Type: "run_started"}
 	if h.DetectReady(ev) {
 		t.Error("DetectReady(run_started) = true; want false")
@@ -263,7 +263,7 @@ func TestPiHarness_DetectReady_OtherEvent(t *testing.T) {
 func TestPiHarness_Seed_NoOp(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if err := h.Seed(nil, handlercontract.RunCtx{}); err != nil {
 		t.Errorf("Seed returned error: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestPiHarness_Seed_NoOp(t *testing.T) {
 func TestPiHarness_Retask_NoOp(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if err := h.Retask(nil, "feedback", handlercontract.RunCtx{}); err != nil {
 		t.Errorf("Retask returned error: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestPiHarness_Retask_NoOp(t *testing.T) {
 func TestPiHarness_Teardown_NilSession(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if err := h.Teardown(nil); err != nil {
 		t.Errorf("Teardown(nil) returned error: %v", err)
 	}
@@ -311,7 +311,7 @@ func (s *killTrackingSession) LogLocation() string { return "" }
 func TestPiHarness_Teardown_LiveSession_Kill(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
+	h := pi.ExportedNewPiHarness("", "", "", "", "", "", "")
 	sess := &killTrackingSession{}
 	if err := h.Teardown(sess); err != nil {
 		t.Errorf("Teardown(live session) returned error: %v", err)
@@ -336,7 +336,7 @@ func TestPiSessionIDInterceptor_AgentEndCb_Fires(t *testing.T) {
 	var fired int
 	agentEndCb := func() { fired++ }
 
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, agentEndCb)
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, agentEndCb)
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestPiSessionIDInterceptor_AgentEndCb_AfterSessionID(t *testing.T) {
 
 	var gotID string
 	var agentEndFired int
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(
 		strings.NewReader(ndjson),
 		func(id string) { gotID = id },
 		func() { agentEndFired++ },
@@ -382,7 +382,7 @@ func TestPiSessionIDInterceptor_AgentEndCb_FiringOnce(t *testing.T) {
 		`{"type":"agent_end","messages":[]}` + "\n"
 
 	var fired int
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, func() { fired++ })
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, func() { fired++ })
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestPiSessionIDInterceptor_NilAgentEndCb_Safe(t *testing.T) {
 
 	ndjson := `{"type":"agent_end","messages":[]}` + "\n"
 
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, nil)
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, nil)
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v (nil agentEndCb must not panic)", err)
 	}

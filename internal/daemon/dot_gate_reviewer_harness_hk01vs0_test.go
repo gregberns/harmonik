@@ -73,6 +73,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
@@ -184,7 +185,7 @@ func vs0HarnessRegistry(t *testing.T) *handlercontract.HarnessRegistry {
 	if err := reg.Register(core.AgentTypeCodex, codex.NewHarness(missing, "")); err != nil {
 		t.Fatalf("vs0HarnessRegistry: register codex: %v", err)
 	}
-	if err := reg.Register(core.AgentTypePi, daemon.NewPiHarness(missing, "", "", "", "", "", "")); err != nil {
+	if err := reg.Register(core.AgentTypePi, pi.NewHarness(missing, "", "", "", "", "", "")); err != nil {
 		t.Fatalf("vs0HarnessRegistry: register pi: %v", err)
 	}
 	return reg

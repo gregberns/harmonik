@@ -1,6 +1,6 @@
-package daemon
+package pi
 
-// piharness.go — PiHarness: handlercontract.Harness impl for Pi (codename:pilot, PI-010/011/012/013/014).
+// harness.go — Harness: handlercontract.Harness impl for Pi (codename:pilot, PI-010/011/012/013/014).
 //
 // Pi's shape is a ProcessExit + SessionIDCaptured harness, mirroring codex
 // (specs/harness-contract.md §2 N2/N3):
@@ -14,21 +14,21 @@ package daemon
 //
 //   - SessionIDPolicy = SessionIDCaptured. Pi emits, as the FIRST NDJSON line,
 //     `{"type":"session","version":3,"id":"<uuid>","cwd":"..."}`. The session
-//     id is captured via piSessionIDInterceptor (pijsonlparser.go) wired into
+//     id is captured via piSessionIDInterceptor (ndjsonparser.go) wired into
 //     the shared loop's implIsSessionIDCaptured block (PI-012a: forced-exec
 //     substrate). On the resume turn the captured id is passed as --session
-//     <id> in the argv (buildPiLaunchSpec, pilaunchspec.go).
+//     <id> in the argv (BuildLaunchSpec, launchspec.go).
 //
 // Because Pi delivers its task via argv, Seed and Retask are no-ops. Teardown
 // is load-bearing (PI-014): the agent_end watcher in piSessionIDInterceptor
 // calls Teardown→Kill on the terminal NDJSON event so a hung Pi does not burn
 // the full 90-minute ceiling. The real retask mechanism is the resume argv: on
 // iteration ≥2 the next turn's RunCtx carries PriorSessionID (the captured
-// session id) and buildPiLaunchSpec emits `pi --mode json --session <id> ...`.
+// session id) and BuildLaunchSpec emits `pi --mode json --session <id> ...`.
 //
 // Spec: specs/pi-harness.md §1 (PI-010/011/012/013/014).
 // Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.1/§3.3/§3.4.
-// See also: codexharness.go (structural template), pilaunchspec.go, pijsonlparser.go.
+// See also: internal/harness/codex/harness.go (structural template), launchspec.go, ndjsonparser.go.
 // Beads: hk-4rmj1 (PI-010/012/013); hk-mkcwg (PI-014).
 
 import (
@@ -39,13 +39,13 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// PiHarness implements handlercontract.Harness for the Pi agent.
+// Harness implements handlercontract.Harness for the Pi agent.
 //
-// The zero value is not valid; construct via NewPiHarness. The struct carries
+// The zero value is not valid; construct via NewHarness. The struct carries
 // Pi config fields (piBinary, provider, model, apiKeyEnv, apiKeyFile) that
-// buildPiLaunchSpec requires; all default sensibly when empty (piBinary defaults
-// to "pi"; provider/model/apiKeyEnv are validated by buildPiLaunchSpec on use).
-type PiHarness struct {
+// BuildLaunchSpec requires; all default sensibly when empty (piBinary defaults
+// to "pi"; provider/model/apiKeyEnv are validated by BuildLaunchSpec on use).
+type Harness struct {
 	// piBinary is the pi executable path. Empty is normalised to "pi".
 	piBinary string
 
@@ -68,7 +68,7 @@ type PiHarness struct {
 	apiKeyFile string
 
 	// baseURL is the OPTIONAL base URL for locally-hosted OpenAI-compatible
-	// endpoints (from harnesses.pi.base_url). When non-empty, buildPiLaunchSpec
+	// endpoints (from harnesses.pi.base_url). When non-empty, BuildLaunchSpec
 	// generates a models.json and injects PI_CODING_AGENT_DIR. Absent = today's
 	// cloud-provider behavior unchanged. Bead: hk-z13jz.
 	baseURL string
@@ -79,17 +79,17 @@ type PiHarness struct {
 	api string
 }
 
-// NewPiHarness returns a ready PiHarness.
+// NewHarness returns a ready Harness.
 //
-// All parameters may be empty; buildPiLaunchSpec validates them at launch time
+// All parameters may be empty; BuildLaunchSpec validates them at launch time
 // (missing provider/model on initial turn → launch error, not panic). The
-// default empty piBinary is normalised to "pi" by buildPiLaunchSpec.
+// default empty piBinary is normalised to "pi" by BuildLaunchSpec.
 // apiKeyFile is optional; pass empty string when api_key_file is not configured.
-// baseURL is optional; when non-empty buildPiLaunchSpec generates a models.json
+// baseURL is optional; when non-empty BuildLaunchSpec generates a models.json
 // and injects PI_CODING_AGENT_DIR so Pi uses the locally-hosted endpoint.
 // api is optional; defaults to "openai" at launch when empty and baseURL is set.
-func NewPiHarness(piBinary, provider, model, apiKeyEnv, apiKeyFile, baseURL, api string) *PiHarness {
-	return &PiHarness{
+func NewHarness(piBinary, provider, model, apiKeyEnv, apiKeyFile, baseURL, api string) *Harness {
+	return &Harness{
 		piBinary:   piBinary,
 		provider:   provider,
 		model:      model,
@@ -100,25 +100,47 @@ func NewPiHarness(piBinary, provider, model, apiKeyEnv, apiKeyFile, baseURL, api
 	}
 }
 
-// Compile-time assertion: *PiHarness satisfies handlercontract.Harness.
-var _ handlercontract.Harness = (*PiHarness)(nil)
+// Compile-time assertion: *Harness satisfies handlercontract.Harness.
+var _ handlercontract.Harness = (*Harness)(nil)
+
+// Provider returns the configured Pi provider (harnesses.pi.provider).
+//
+// The four accessors below exist for one reason: P2 unit E1c moved this struct
+// across a package boundary, and two readers that used to reach the private
+// fields directly now cannot. They are mechanical field reads, NOT a seam — no
+// caller may set these, and nothing here is injectable. The readers are
+// daemon.effectiveModel (harnessregistry.go, production — Model only) and the
+// config→harness wiring test's ExportedPiHarnessFields shim.
+func (h *Harness) Provider() string { return h.provider }
+
+// Model returns the configured Pi model in "provider/id" form
+// (harnesses.pi.model). Read by daemon.effectiveModel as the per-run fallback.
+func (h *Harness) Model() string { return h.model }
+
+// APIKeyEnv returns the name — never the value — of the env var the Pi child
+// expects for the provider API key (harnesses.pi.api_key_env).
+func (h *Harness) APIKeyEnv() string { return h.apiKeyEnv }
+
+// APIKeyFile returns the optional expanded path to the file holding the raw
+// provider API key (harnesses.pi.api_key_file). Empty when unconfigured.
+func (h *Harness) APIKeyFile() string { return h.apiKeyFile }
 
 // AgentType returns core.AgentTypePi — the registry key for this harness.
 // PI-010.
-func (h *PiHarness) AgentType() core.AgentType {
+func (h *Harness) AgentType() core.AgentType {
 	return core.AgentTypePi
 }
 
-// LaunchSpec converts rc to a piRunCtx, calls buildPiLaunchSpec, and returns
+// LaunchSpec converts rc to a RunCtx, calls BuildLaunchSpec, and returns
 // the subprocess SpawnSpec (Binary/Args/Env/WorkDir).
 //
 // The resume argv is selected when rc.PriorSessionID is non-nil: PriorSessionID
 // carries the captured Pi session id from the prior turn's first NDJSON session
-// header, and buildPiLaunchSpec emits `pi --mode json --session <id> "<prompt>"`.
+// header, and BuildLaunchSpec emits `pi --mode json --session <id> "<prompt>"`.
 // For the initial turn PriorSessionID is nil and the initial argv is built.
 //
 // rc.Model, when non-empty, overrides the harness-level h.model so concurrent
-// Pi runs can target different models (mirrors ClaudeHarness.LaunchSpec). hk-oqlgw.
+// Pi runs can target different models (mirrors claude.Harness.LaunchSpec). hk-oqlgw.
 //
 // rc.Provider/APIKeyEnv/APIKeyFile/BaseURL/API, when non-empty, override the
 // corresponding harness-level fields so per-bead profile selection (pi-provider-switch,
@@ -126,9 +148,9 @@ func (h *PiHarness) AgentType() core.AgentType {
 // The wire-format triple {Provider, BaseURL, API} + credentials arrive coupled from C3
 // and are copied together; C4 introduces no per-field default that could split them.
 //
-// Returns a non-nil error on any buildPiLaunchSpec failure; the caller MUST NOT
+// Returns a non-nil error on any BuildLaunchSpec failure; the caller MUST NOT
 // call handler.Launch on error. PI-010/PI-020.
-func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
+func (h *Harness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
 	model := h.model
 	if rc.Model != "" {
 		model = rc.Model
@@ -153,23 +175,23 @@ func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Spawn
 	if rc.API != "" {
 		api = rc.API
 	}
-	prc := piRunCtx{
-		piBinary:       h.piBinary,
-		workspacePath:  rc.WorkspacePath,
-		beadID:         rc.BeadID,
-		provider:       provider,
-		model:          model,
-		apiKeyEnv:      apiKeyEnv,
-		apiKeyFile:     apiKeyFile,
-		baseURL:        baseURL,
-		api:            api,
-		priorSessionID: rc.PriorSessionID,
-		iterationCount: rc.IterationCount,
-		baseEnv:        rc.BaseEnv,
-		runID:          rc.RunID,
+	prc := RunCtx{
+		PiBinary:       h.piBinary,
+		WorkspacePath:  rc.WorkspacePath,
+		BeadID:         rc.BeadID,
+		Provider:       provider,
+		Model:          model,
+		APIKeyEnv:      apiKeyEnv,
+		APIKeyFile:     apiKeyFile,
+		BaseURL:        baseURL,
+		API:            api,
+		PriorSessionID: rc.PriorSessionID,
+		IterationCount: rc.IterationCount,
+		BaseEnv:        rc.BaseEnv,
+		RunID:          rc.RunID,
 	}
 
-	spec, err := buildPiLaunchSpec(prc)
+	spec, err := BuildLaunchSpec(prc)
 	if err != nil {
 		return handlercontract.SpawnSpec{}, err
 	}
@@ -186,8 +208,8 @@ func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Spawn
 // Seed delivers the first-turn task to a freshly-spawned session.
 //
 // For Pi this is a no-op: the task is delivered via the seed-prompt argv built
-// by buildPiLaunchSpec (Pi has no TUI/paste path). PI-010/PI-015.
-func (h *PiHarness) Seed(_ handlercontract.Session, _ handlercontract.RunCtx) error {
+// by BuildLaunchSpec (Pi has no TUI/paste path). PI-010/PI-015.
+func (h *Harness) Seed(_ handlercontract.Session, _ handlercontract.RunCtx) error {
 	return nil
 }
 
@@ -197,7 +219,7 @@ func (h *PiHarness) Seed(_ handlercontract.Session, _ handlercontract.RunCtx) er
 // mechanism is the resume argv — the next turn's RunCtx carries the captured
 // session id as PriorSessionID, and LaunchSpec emits
 // `pi --mode json --session <id> "<feedback>"`. PI-010.
-func (h *PiHarness) Retask(_ handlercontract.Session, _ string, _ handlercontract.RunCtx) error {
+func (h *Harness) Retask(_ handlercontract.Session, _ string, _ handlercontract.RunCtx) error {
 	return nil
 }
 
@@ -209,7 +231,7 @@ func (h *PiHarness) Retask(_ handlercontract.Session, _ string, _ handlercontrac
 // the target of the PI-014 agent_end watcher (piSessionIDInterceptor fires
 // Teardown on {"type":"agent_end"}); it is also called defensively by the shared
 // loop on timeout/ceiling paths. A nil session is a no-op. PI-010/PI-014.
-func (h *PiHarness) Teardown(sess handlercontract.Session) error {
+func (h *Harness) Teardown(sess handlercontract.Session) error {
 	if sess == nil {
 		return nil
 	}
@@ -224,21 +246,21 @@ func (h *PiHarness) Teardown(sess handlercontract.Session) error {
 // correct: it MUST NOT return true for launch_initiated. The positive type
 // check below can only match agent_ready — launch_initiated never will.
 // PI-013.
-func (h *PiHarness) DetectReady(ev handlercontract.EventEnvelope) bool {
+func (h *Harness) DetectReady(ev handlercontract.EventEnvelope) bool {
 	return core.EventType(ev.Type) == core.EventTypeAgentReady
 }
 
 // SessionIDPolicy returns SessionIDCaptured: Pi does not accept a caller-minted
 // session id. The session id is captured from the `id` field of Pi's first
 // NDJSON line `{"type":"session",...}` via piSessionIDInterceptor
-// (pijsonlparser.go), wired into the exec-path StdoutWrapper by the shared
+// (ndjsonparser.go), wired into the exec-path StdoutWrapper by the shared
 // launch code (reviewloop.go implIsSessionIDCaptured block).
 //
 // The forced-exec substrate (PI-012a) is load-bearing: the launch code forces
 // implSpec.Substrate = nil for SessionIDCaptured harnesses so stdout is an
 // io.Reader and the StdoutWrapper fires. Without it, session-id capture silently
 // no-ops. PI-012.
-func (h *PiHarness) SessionIDPolicy() handlercontract.SessionIDPolicy {
+func (h *Harness) SessionIDPolicy() handlercontract.SessionIDPolicy {
 	return handlercontract.SessionIDCaptured
 }
 
@@ -247,7 +269,7 @@ func (h *PiHarness) SessionIDPolicy() handlercontract.SessionIDPolicy {
 // and relies on sess.Wait + the absolute commitHardCeiling. PI-014 adds an
 // event-driven kill (via the agent_end watcher) as a reliable backstop for Pi's
 // unreliable process exit (#4303). PI-011.
-func (h *PiHarness) Completion() handlercontract.CompletionMode {
+func (h *Harness) Completion() handlercontract.CompletionMode {
 	return handlercontract.CompletionProcessExit
 }
 
@@ -262,6 +284,6 @@ func (h *PiHarness) Completion() handlercontract.CompletionMode {
 //
 // All bytes pass through unchanged. Called by the shared loop's
 // implIsSessionIDCaptured block without concrete-type branching. PI-012/PI-014.
-func (h *PiHarness) NewSessionIDInterceptor(inner io.Reader, sessionIDCb func(string), agentEndCb func()) io.Reader {
+func (h *Harness) NewSessionIDInterceptor(inner io.Reader, sessionIDCb func(string), agentEndCb func()) io.Reader {
 	return newPiSessionIDInterceptor(inner, sessionIDCb, agentEndCb)
 }

@@ -271,6 +271,46 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/harness/codex", desc: "a harness impl MUST NOT import a sibling impl; cross-harness helpers belong in internal/harness/shared (P2 E1b)" }
             - { pkg: "github.com/gregberns/harmonik/internal/harness/pi", desc: "a harness impl MUST NOT import a sibling impl; cross-harness helpers belong in internal/harness/shared (P2 E1b)" }
 
+        # harness-pi: the Pi harness implementation, lifted out of internal/daemon
+        # by P2 unit E1c — the argv/env launch-spec builder (PI-015/020/021 plus
+        # the base_url models.json passthrough), the NDJSON parser and
+        # session-id/agent_end interceptor, the fail-closed PI-040 billing guard,
+        # and the PI-030/031 Refs:<bead> trailer fallback. Same success criterion
+        # as harness-codex and harness-claude: a P3 container must be able to
+        # link THIS package without dragging the 57k-LOC daemon in with it, so
+        # the daemon deny below IS the unit expressed in CI.
+        #
+        # The SIBLING denies matter as much as the daemon one here, and this is
+        # the unit that made them load-bearing: five of pi's six outbound symbols
+        # used to live in codexcommit.go, so before E1a-0 split them into
+        # internal/harness/shared a pi -> codex edge was the natural shape. It is
+        # a daemon back-edge in disguise (_plan.md §6) and must stay denied.
+        # This is also why these are PER-PACKAGE rules and not one umbrella
+        # **/internal/harness/** rule: depguard allow entries are PREFIX matches,
+        # so a single allow of .../internal/harness would silently permit every
+        # sibling edge it is the point of these rules to forbid.
+        #
+        # The allow list is the verified import set of the five files E1c moves
+        # plus its test files — nothing speculative. A denied import is a
+        # FINDING: prove the dependency belongs before widening this list.
+        # Rationale: plans/2026-07-21-p2-extraction/E1c-pi.md §5.1.
+        harness-pi:
+          files: ["**/internal/harness/pi/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+            - "github.com/gregberns/harmonik/internal/harness/pi"
+            - "github.com/google/uuid"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "harness impls MUST NOT import daemon back — the container links the harness, not the monolith (P2 E1c)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/codex", desc: "a harness impl MUST NOT import a sibling impl; cross-harness helpers belong in internal/harness/shared (P2 E1c)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/claude", desc: "a harness impl MUST NOT import a sibling impl; cross-harness helpers belong in internal/harness/shared (P2 E1c)" }
+
         # transport: the remote-execution transport leaves (P2 unit E4). tunnel owns
         # the per-run `ssh -N -R` reverse tunnel + its readiness gate; codesync owns
         # the DD1 worker<->box-A git sync (fetch-base on the worker, direct ssh://

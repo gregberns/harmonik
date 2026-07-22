@@ -1,6 +1,6 @@
-package daemon
+package pi
 
-// pibillingguard.go — Pi fail-closed billing guard (codename:pilot,
+// billingguard.go — Pi fail-closed billing guard (codename:pilot,
 // PI-040/042/043, hk-l1bkp).
 //
 // BILLING FAIL-CLOSED GUARD (inverted from codex):
@@ -21,9 +21,9 @@ package daemon
 //     (file absent → no-op), this is a cheap extra safety check.
 //
 // PI-041 (allowlist strip of non-selected provider keys) is handled in
-// buildPiEnv (pilaunchspec.go) before this guard is called.
+// buildPiEnv (launchspec.go) before this guard is called.
 //
-// PI-043: any guard failure → buildPiLaunchSpec returns an error → the tier-1
+// PI-043: any guard failure → BuildLaunchSpec returns an error → the tier-1
 // dispatch path propagates it to run_failed + bead reopen. The tier-4 claude
 // fallback CANNOT fire because harness:pi resolves at tier-1, which fails loud
 // on any LaunchSpec error.
@@ -170,7 +170,7 @@ func emitPiBillingGuard(
 //
 // Returns nil only when the launch may proceed. A non-nil error means the guard
 // failed closed (PI-043): the caller MUST NOT launch Pi. PI-043 is enforced
-// structurally: this error propagates from buildPiLaunchSpec → tier-1 dispatch
+// structurally: this error propagates from BuildLaunchSpec → tier-1 dispatch
 // path → run_failed + bead reopen; the tier-4 claude fallback cannot fire.
 func runPiBillingGuard(
 	ctx context.Context,

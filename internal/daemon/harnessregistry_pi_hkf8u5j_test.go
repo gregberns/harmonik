@@ -13,6 +13,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 )
 
 // TestHarnessRegistry_PiHarness_ConfiguredFields_NonEmpty verifies that when
@@ -41,9 +42,9 @@ func TestHarnessRegistry_PiHarness_ConfiguredFields_NonEmpty(t *testing.T) {
 		t.Fatalf("ForAgent(pi): %v", err)
 	}
 
-	ph, ok := h.(*daemon.PiHarness)
+	ph, ok := h.(*pi.Harness)
 	if !ok {
-		t.Fatalf("ForAgent(pi) returned %T; want *daemon.PiHarness", h)
+		t.Fatalf("ForAgent(pi) returned %T; want *pi.Harness", h)
 	}
 
 	provider, model, apiKeyEnv, _ := daemon.ExportedPiHarnessFields(ph)
@@ -87,9 +88,9 @@ func TestHarnessRegistry_PiHarness_EmptyConfig_FieldsEmpty(t *testing.T) {
 		t.Fatalf("ForAgent(pi): %v", err)
 	}
 
-	ph, ok := h.(*daemon.PiHarness)
+	ph, ok := h.(*pi.Harness)
 	if !ok {
-		t.Fatalf("ForAgent(pi) returned %T; want *daemon.PiHarness", h)
+		t.Fatalf("ForAgent(pi) returned %T; want *pi.Harness", h)
 	}
 
 	provider, model, apiKeyEnv, _ := daemon.ExportedPiHarnessFields(ph)

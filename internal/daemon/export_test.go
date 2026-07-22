@@ -26,6 +26,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -2667,18 +2668,13 @@ func ExportedNewHarnessRegistryWithPi(piCfg PiHarnessConfig) (*handlercontract.H
 	return newHarnessRegistry(piCfg)
 }
 
-// ExportedPiHarnessFields returns the provider, model, apiKeyEnv, apiKeyFile,
-// baseURL, and api fields from a PiHarness for test assertions on the
-// config→harness seam (hk-f8u5j; apiKeyFile added by hk-xmfoi;
-// baseURL/api added by hk-z13jz).
-func ExportedPiHarnessFields(h *PiHarness) (provider, model, apiKeyEnv, apiKeyFile string) {
-	return h.provider, h.model, h.apiKeyEnv, h.apiKeyFile
-}
-
-// ExportedPiHarnessBaseURLFields returns the baseURL and api fields from a
-// PiHarness for test assertions on the base_url wiring (hk-z13jz).
-func ExportedPiHarnessBaseURLFields(h *PiHarness) (baseURL, api string) {
-	return h.baseURL, h.api
+// ExportedPiHarnessFields returns the provider, model, apiKeyEnv and apiKeyFile
+// of a pi.Harness for test assertions on the config→harness seam (hk-f8u5j;
+// apiKeyFile added by hk-xmfoi). P2 unit E1c moved pi.Harness out of this
+// package, so the fields are read through the harness accessors instead of
+// directly.
+func ExportedPiHarnessFields(h *pi.Harness) (provider, model, apiKeyEnv, apiKeyFile string) {
+	return h.Provider(), h.Model(), h.APIKeyEnv(), h.APIKeyFile()
 }
 
 // ExportedEffectiveModel exposes effectiveModel for tests in package daemon_test.
@@ -2825,15 +2821,6 @@ var ExportedNewCodexHarness = codex.NewHarness
 // because picommit_test.go — a PI test — uses it to verify the shared VERIFY
 // half, and pi does not leave until E1c.
 
-// ExportedWorktreeHEADHasRefsTrailer exposes shared.WorktreeHEADHasRefsTrailer
-// (VERIFY). The nil argument is the tmux.CommandRunner — nil means bare local
-// exec (NFR7), which is what these tests exercise.
-//
-// Bead ref: hk-bpxci.
-func ExportedWorktreeHEADHasRefsTrailer(ctx context.Context, wtPath string, beadID core.BeadID) (bool, error) {
-	return shared.WorktreeHEADHasRefsTrailer(ctx, nil, wtPath, beadID)
-}
-
 // ExportedShellQuoteArg exposes shellQuoteArg for unit tests in package daemon_test.
 //
 // Bead ref: hk-rpr6.
@@ -2868,100 +2855,16 @@ func ExportedNewPerRunSubstrateWithSandbox(sub handler.Substrate, cfg *SrtSpawnC
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pi Refs:<bead> trailer guarantee test seams (PI-030/PI-031, hk-mazln)
+// Pi harness construction seam (PI-010, hk-4rmj1)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ExportedPiRefsOutcome mirrors the internal piRefsOutcome enum for tests.
-type ExportedPiRefsOutcome = piRefsOutcome
-
-// Exported piRefsOutcome constants for ensurePiRefsTrailer assertions.
-const (
-	ExportedPiRefsAlreadyPresent = piRefsAlreadyPresent
-	ExportedPiRefsAmended        = piRefsAmended
-	ExportedPiRefsCommitted      = piRefsCommitted
-	ExportedPiRefsNoChange       = piRefsNoChange
-)
-
-// ExportedEnsurePiRefsTrailer exposes ensurePiRefsTrailer (VERIFY + deterministic
-// commit-after-exit FALLBACK) for tests. Passes nil runner (local path) so tests
-// exercise the byte-identical local-substrate behaviour (NFR7).
-//
-// Bead ref: hk-mazln.
-func ExportedEnsurePiRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadID core.BeadID) (ExportedPiRefsOutcome, error) {
-	return ensurePiRefsTrailer(ctx, nil, wtPath, parentSHA, beadID)
-}
-
-// ExportedEnsurePiRefsTrailerViaRunner exposes ensurePiRefsTrailer with a
-// caller-supplied runner so tests can exercise the runner-routed remote path
-// (PI-031/PI-100). Use tmux.RecordingRunner with nil CmdFunc to run real git
-// commands while recording every call.
-//
-// Bead ref: hk-ypxwl (PI-100).
-func ExportedEnsurePiRefsTrailerViaRunner(ctx context.Context, runner tmuxPkg.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (ExportedPiRefsOutcome, error) {
-	return ensurePiRefsTrailer(ctx, runner, wtPath, parentSHA, beadID)
-}
-
-// ExportedNewPiHarness re-exports NewPiHarness for tests in package daemon_test.
+// ExportedNewPiHarness re-exports pi.NewHarness for tests in package
+// daemon_test. Three STAYING daemon tests construct a pi harness directly
+// (sandboxgate_hkr4p0l_test.go, hk_lfrub_dot_node_model_leak_test.go,
+// hk_pkugu_pi_model_leak_test.go), so this shim survives P2 unit E1c.
 //
 // Bead ref: hk-4rmj1 (PI-010/012/013).
-var ExportedNewPiHarness = NewPiHarness
-
-// ExportedNewPiSessionIDInterceptor exposes newPiSessionIDInterceptor for
-// tests in package daemon_test.
-//
-// Bead ref: hk-4rmj1 (PI-012); hk-mkcwg (PI-014 agentEndCb param added).
-func ExportedNewPiSessionIDInterceptor(inner io.Reader, sessionIDCb func(string), agentEndCb func()) io.Reader {
-	return newPiSessionIDInterceptor(inner, sessionIDCb, agentEndCb)
-}
-
-// ExportedParsePiNDJSONEvent exposes parsePiNDJSONEvent for tests in package
-// daemon_test. Returns (kind, rawType, sessionID, usage, err).
-//
-// Bead ref: hk-4rmj1 (PI-012); hk-eval-prog-pi-tokens-sr316 (WS1d — usage added).
-func ExportedParsePiNDJSONEvent(line []byte) (piEventKind, string, string, ExportedPiTokenUsage, error) {
-	ev, err := parsePiNDJSONEvent(line)
-	return ev.Kind, ev.RawType, ev.SessionID, ExportedPiTokenUsage{InputTokens: ev.Usage.InputTokens, OutputTokens: ev.Usage.OutputTokens}, err
-}
-
-// ExportedPiTokenUsage is the exported shape of piTokenUsage for tests.
-//
-// Bead ref: hk-eval-prog-pi-tokens-sr316 (WS1d).
-type ExportedPiTokenUsage struct {
-	InputTokens  int64
-	OutputTokens int64
-}
-
-// ExportedPiRunArtifacts is a type alias for piRunArtifacts so tests in package
-// daemon_test can inspect accumulated usage without exporting the internal type.
-//
-// Bead ref: hk-eval-prog-pi-tokens-sr316 (WS1d).
-type ExportedPiRunArtifacts = piRunArtifacts
-
-// ExportedCapturePiUsage exposes capturePiUsage for tests in package daemon_test.
-//
-// Bead ref: hk-eval-prog-pi-tokens-sr316 (WS1d).
-func ExportedCapturePiUsage(arts *piRunArtifacts, line []byte) bool {
-	ev, err := parsePiNDJSONEvent(line)
-	if err != nil {
-		return false
-	}
-	return capturePiUsage(arts, ev)
-}
-
-// ExportedPiEventKindSession re-exports piEventKindSession for tests.
-const ExportedPiEventKindSession = piEventKindSession
-
-// ExportedPiEventKindAgentEnd re-exports piEventKindAgentEnd for tests.
-const ExportedPiEventKindAgentEnd = piEventKindAgentEnd
-
-// ExportedPiEventKindOther re-exports piEventKindOther for tests.
-const ExportedPiEventKindOther = piEventKindOther
-
-// ExportedPiEventKindMessageStart re-exports piEventKindMessageStart for tests.
-const ExportedPiEventKindMessageStart = piEventKindMessageStart
-
-// ExportedPiEventKindMessageEnd re-exports piEventKindMessageEnd for tests.
-const ExportedPiEventKindMessageEnd = piEventKindMessageEnd
+var ExportedNewPiHarness = pi.NewHarness
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cognition signal test seams (hk-jay1 P2-c: SS-012)
@@ -3008,146 +2911,27 @@ func ExportedGateVerdictExistsVia(ctx context.Context, runner tmuxPkg.CommandRun
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// buildPiLaunchSpec test seams (hk-1c16h PI-015/020/021)
+// pi.BuildLaunchSpec test seams (hk-1c16h PI-015/020/021)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ExportedPiRunCtx is the exported shape of piRunCtx for tests.
-// Fields mirror piRunCtx verbatim with exported names.
+// ExportedPiRunCtx is the exported shape of the pi per-launch run context.
+// P2 unit E1c moved it to internal/harness/pi; this is now an alias, kept
+// because two cross-harness parity tables in package daemon_test
+// (crossharness_empty_model_test.go, crossharness_seedprompt_test.go) assert
+// about codex AND pi in one table each and therefore cannot move.
 //
 // Bead ref: hk-1c16h.
-type ExportedPiRunCtx struct {
-	PiBinary      string
-	WorkspacePath string
-	BeadID        string
-	Provider      string
-	Model         string
-	APIKeyEnv     string
-	// APIKeyFile is the OPTIONAL expanded path to a file holding the raw provider
-	// API key. When non-empty, resolvePiAPIKeyValue reads this file in preference
-	// to the ambient env. Pass empty string when api_key_file is not configured.
-	// Spec: PI-050 (api_key_file). Bead: hk-xmfoi.
-	APIKeyFile     string
-	PriorSessionID *string
-	IterationCount int
-	BaseEnv        []string
-	// BillingEmitter receives pi_billing_guard events from the guard (PI-040/042/043).
-	// Nil disables event emission; enforcement still runs unless SkipBillingGuard.
-	BillingEmitter handlercontract.EventEmitter
-	// RunID correlates pi_billing_guard events with a run. Zero is valid (run-unscoped).
-	RunID core.RunID
-	// SkipBillingGuard disables the pre-flight billing guard hook (PI-040).
-	// Set to true in argv/env-shape tests that do not require a real key.
-	SkipBillingGuard bool
-	// BaseURL is the OPTIONAL base URL for locally-hosted OpenAI-compatible
-	// endpoints (from harnesses.pi.base_url). When non-empty and initial turn,
-	// buildPiLaunchSpec generates models.json and injects PI_CODING_AGENT_DIR.
-	// Bead: hk-z13jz.
-	BaseURL string
-	// API is the OPTIONAL Pi wire-format string for the models.json "api" field.
-	// Defaults to "openai" at launch when empty and BaseURL is set. Bead: hk-z13jz.
-	API string
-	// PiHome is the optional Pi home directory for the PI-042 billing guard
-	// check. When empty, piDefaultHome() is used (production behaviour). Set in
-	// tests to a t.TempDir() to exercise the PI-042 deny path through
-	// buildPiLaunchSpec without touching the real ~/.pi. Bead: hk-6g5iu.
-	PiHome string
-}
+type ExportedPiRunCtx = pi.RunCtx
 
-// ExportedBuildPiLaunchSpec exposes buildPiLaunchSpec for tests in package
-// daemon_test. The ExportedPiRunCtx is translated to the internal piRunCtx
-// before calling.
+// ExportedBuildPiLaunchSpec exposes pi.BuildLaunchSpec for tests in package
+// daemon_test.
 //
 // Bead ref: hk-1c16h.
-func ExportedBuildPiLaunchSpec(rc ExportedPiRunCtx) (handler.LaunchSpec, error) {
-	return buildPiLaunchSpec(piRunCtx{
-		piBinary:         rc.PiBinary,
-		workspacePath:    rc.WorkspacePath,
-		beadID:           rc.BeadID,
-		provider:         rc.Provider,
-		model:            rc.Model,
-		apiKeyEnv:        rc.APIKeyEnv,
-		apiKeyFile:       rc.APIKeyFile,
-		baseURL:          rc.BaseURL,
-		api:              rc.API,
-		priorSessionID:   rc.PriorSessionID,
-		iterationCount:   rc.IterationCount,
-		baseEnv:          rc.BaseEnv,
-		billingEmitter:   rc.BillingEmitter,
-		runID:            rc.RunID,
-		skipBillingGuard: rc.SkipBillingGuard,
-		piHome:           rc.PiHome,
-	})
-}
-
-// ExportedBuildPiModelsJSON exposes buildPiModelsJSON for tests in package
-// daemon_test. Allows direct verification of the models.json content generated
-// for locally-hosted OpenAI-compatible endpoints (hk-z13jz).
-func ExportedBuildPiModelsJSON(provider, baseURL, api, apiKeyFile, apiKeyEnv, model string) ([]byte, error) {
-	return buildPiModelsJSON(provider, baseURL, api, apiKeyFile, apiKeyEnv, model)
-}
-
-// ExportedRunCtxForPi builds a minimal handlercontract.RunCtx suitable for
-// calling PiHarness.LaunchSpec in production-path tests (hk-z13jz).
-// workspacePath is the run worktree; beadID is the bead correlation id.
-// PriorSessionID is nil (initial turn). BaseEnv is PATH=/usr/bin.
-func ExportedRunCtxForPi(workspacePath, beadID string) handlercontract.RunCtx {
-	return handlercontract.RunCtx{
-		WorkspacePath: workspacePath,
-		BeadID:        beadID,
-		BaseEnv:       []string{"PATH=/usr/bin"},
-	}
-}
-
-// ExportedBuildPiEnv exposes buildPiEnv for tests in package daemon_test.
-// Allows direct verification of the allowlist-strip semantics (PI-021) and
-// the file-first key resolution (PI-050/hk-xmfoi).
-// Pass empty string for apiKeyFile when api_key_file is not configured.
-//
-// Bead ref: hk-1c16h.
-func ExportedBuildPiEnv(baseEnv []string, apiKeyFile, apiKeyEnv string) []string {
-	return buildPiEnv(baseEnv, apiKeyFile, apiKeyEnv)
-}
-
-// ExportedResolvePiAPIKeyValue exposes resolvePiAPIKeyValue for tests in
-// package daemon_test. Allows tests to verify the shared key-resolution helper
-// applies file-first precedence (PI-050) and falls back to the env var (PI-021).
-// Pass empty string for apiKeyFile when api_key_file is not configured.
-//
-// Bead ref: hk-1c16h.
-func ExportedResolvePiAPIKeyValue(apiKeyFile, apiKeyEnv string) string {
-	return resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv)
-}
+var ExportedBuildPiLaunchSpec = pi.BuildLaunchSpec
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pi billing guard test seams (hk-l1bkp PI-040/042/043)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedRunPiBillingGuard exposes runPiBillingGuard for tests in package
-// daemon_test. piHome is forwarded as-is so tests can supply a fake home dir and
-// exercise the PI-042 on-disk deny path without touching the real ~/.pi.
-// Pass "" for apiKeyFile when api_key_file is not configured (uses env var only).
-// Pass "" or piDefaultHome() for piHome for production-equivalent behavior.
-//
-// Bead ref: hk-l1bkp.
-func ExportedRunPiBillingGuard(bus handlercontract.EventEmitter, beadID, apiKeyFile, apiKeyEnv, piHome string) error {
-	return runPiBillingGuard(context.Background(), bus, core.RunID{}, beadID, apiKeyFile, apiKeyEnv, piHome)
-}
-
-// ExportedPiAuthIndicatesPersistentCredential exposes
-// piAuthIndicatesPersistentCredential for tests in package daemon_test. Allows
-// direct testing of the PI-042 on-disk credential check with a controlled piHome.
-//
-// Bead ref: hk-l1bkp.
-func ExportedPiAuthIndicatesPersistentCredential(piHome string) (bool, error) {
-	return piAuthIndicatesPersistentCredential(piHome)
-}
-
-// ExportedPiDefaultHome exposes piDefaultHome for tests in package daemon_test.
-//
-// Bead ref: hk-l1bkp.
-func ExportedPiDefaultHome() string {
-	return piDefaultHome()
-}
 
 // ExportedStrandedBeadHasOnDiskRun exposes strandedBeadHasOnDiskRun for tests
 // in package daemon_test, so the race-conservative-on-List-error behavior

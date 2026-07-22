@@ -63,6 +63,20 @@ type RestartNowConfig struct {
 	// self-restart is joinable to its originating cycle in events.jsonl. Nil → no
 	// event is emitted (Ping never emits). The CLI wires a keeper.FileEmitter.
 	Emitter Emitter
+
+	// Force skips the in-flight dispatch gate (Step 3b). The auto cycle has
+	// always deferred around in-flight work via Gate 5, but restart-now — the
+	// operator/captain-driven path — consulted NO gate at all, so it would
+	// /clear straight over a live run. Restarting mid-run cancels the crew's
+	// in-flight tool work, which is the first link in the hk-bl2k6 orphan
+	// chain. Force exists for the case where the operator KNOWS the marker is
+	// stale and wants the restart anyway; it is deliberately explicit.
+	Force bool
+
+	// HoldingDispatchFn reports whether the agent has in-flight queue work.
+	// Nil → HoldingDispatch (the .dispatching marker). Injectable so tests can
+	// drive the gate without a marker file.
+	HoldingDispatchFn func(projectDir, agent string) bool
 }
 
 // Nonce is a short verifiability token echoed back to the agent in the ACK line.
@@ -72,8 +86,9 @@ type RestartNowConfig struct {
 // RestartNow performs the dead-simple restart-now path. Returns nil on success
 // (ACK + /clear + agent brief all injected) or an error naming the first step
 // that failed (logged at WARN with the reason; the CLI maps any error to a
-// non-zero exit). It does NOT consult or write any marker file — there is no
-// marker in this path.
+// non-zero exit). It never WRITES a marker file. It does READ one: the
+// .dispatching marker, as the in-flight gate at Step 3b (hk-bl2k6), which
+// cfg.Force overrides.
 func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	clock := cfg.Clock
 	if clock == nil {
@@ -130,6 +145,34 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 			handoffPath, hStat.ModTime().Format(time.RFC3339), HandoffFreshnessWindow, requestedAt.Format(time.RFC3339))
 	}
 	log.InfoContext(ctx, "keeper: restart-now: handoff freshness ok", "handoff_mtime", hStat.ModTime())
+
+	// Step 3b: refuse to restart over in-flight queue work unless forced.
+	//
+	// The auto cycle has always deferred here (Gate 5, stepIdleGaugeTick), but
+	// restart-now consulted no gate ladder at all — so the operator-driven path
+	// would /clear straight over a live run. That cancels the crew's in-flight
+	// tool work, which is the first link in the hk-bl2k6 orphan chain: the
+	// killed run's descendants are not in a killable process group and get
+	// reparented to init.
+	//
+	// Ordered AFTER the freshness check and BEFORE the first inject, so a
+	// refusal injects NOTHING into the pane — the agent's context is untouched.
+	// FAIL-CLOSED, matching HoldingDispatch's own contract: an unreadable
+	// marker reads as holding.
+	if !cfg.Force {
+		holding := cfg.HoldingDispatchFn
+		if holding == nil {
+			holding = HoldingDispatch
+		}
+		if holding(cfg.ProjectDir, cfg.AgentName) {
+			log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "holding_dispatch")
+			return fmt.Errorf("keeper: restart-now: agent %q has in-flight queue work (.dispatching marker present); "+
+				"wait for it to drain, or pass --force if you know the marker is stale", cfg.AgentName)
+		}
+		log.InfoContext(ctx, "keeper: restart-now: no in-flight dispatch")
+	} else {
+		log.WarnContext(ctx, "keeper: restart-now: in-flight dispatch gate FORCED past", "agent", cfg.AgentName)
+	}
 
 	// Step 4: inject the ACK line FIRST so the agent can verify receipt before
 	// the /clear wipes its context. A failure here is load-bearing: if we can't

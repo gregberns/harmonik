@@ -323,6 +323,31 @@ and `.golangci.yml` concurrently and **did not weaken a single extraction fence*
 | `0fe9486c` | 275 fleet artifacts: 14 kerf works, 22 crew missions, 3 skills, gate verdicts |
 | `3b92142b` | daemon: DOT transport failures separated from "no verdict"; D2 credential guard moved to the launch boundary; both `nilerr` sites |
 | `42010150` | build: git-aware formatter, GOCACHE isolation, `cmd/**` coverage ratchet — **all eight P2 freeze gates verified byte-identical and passing** |
+| `1b6172ed` | lifecycle/keeper/workspace/queue/core: tmux failures no longer masquerade as an empty session list |
+| `89b514c9` | supervise: keep reaping after a kill failure; tolerate absent tmux (three regressions closed) |
+| `4082056a` | **RT19.0** — the 10 grandfathered findings in `export_test.go`, plus these recipe corrections |
+| `7273e95d` | cmd: SH-033 made deterministic; 8 `noctx` findings converted to `exec.CommandContext` |
+
+**Wave result: 11 commits, ~350 files, tree green.** `go build ./...` and `go vet` clean at every
+commit. Everything still uncommitted belongs to the quality agent's live lanes (`brcli`, `eventbus`,
+`scenario`, `sentinel`, `workers`, `hooksystem`, `digest`, `watch`, `presence`, `release`,
+`structuredlog`, `codextest`, `cognition`, `t5probe`) — deliberately untouched.
+
+### Scorecard for the review gate
+
+Six of eight substantive reviews returned REQUEST_CHANGES or BLOCK, every one for a real defect:
+
+- a **claimed** watchdog liveness bug that **did not exist** (HEAD already discarded that error)
+- a reap loop that abandoned the pass on first failure, losing events for sessions it HAD killed
+- `supervise reap` exiting 1 on any host with tmux installed but no server running — a fresh box
+- a coverage ratchet claimed "enforced" that was wired into nothing
+- a locale-dependent `join` that would print "all package baselines held" having compared nothing
+- two gate-red findings in `internal/daemon` and eight more in `cmd/harmonik`
+- two `RawItem` doc comments describing a mechanism the type does not have
+
+Not one was style. **The pattern worth carrying forward: the lane's own PROGRESS claims were the
+least reliable input.** Three separate claims ("enforced", "liveness bug fixed", "12 of 13 verified")
+did not survive independent checking. Verify against code, not against the progress log.
 
 ### The two gate regressions review caught, and the lesson
 

@@ -40,6 +40,7 @@ import (
 	"fmt"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -88,8 +89,8 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 
 	// Determine whether Pi produced a commit this turn (HEAD advanced past the
 	// parent SHA captured before launch). Route through runner so remote HEAD is
-	// read from the worker, matching the no-commit guard (resolveWorktreeHEADVia).
-	curHead, headErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
+	// read from the worker, matching the no-commit guard (gitprobe.ResolveWorktreeHEADVia).
+	curHead, headErr := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 	if headErr != nil {
 		return piRefsNoChange, fmt.Errorf("daemon: ensurePiRefsTrailer: resolve HEAD: %w", headErr)
 	}

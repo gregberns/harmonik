@@ -140,7 +140,7 @@ func TestDriveDotWorkflow_GateBaseSHA_Remote(t *testing.T) {
 	defer cancel()
 
 	// RecordingRunner with nil CmdFunc runs commands locally via
-	// exec.CommandContext — it is NOT nil, so runnerIsLocalFS returns false
+	// exec.CommandContext — it is NOT nil, so gitprobe.RunnerIsLocalFS returns false
 	// and dispatchDotToolNode takes the REMOTE branch (export inlining).
 	rr := &tmux.RecordingRunner{}
 

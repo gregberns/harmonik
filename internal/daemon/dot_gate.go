@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -637,7 +638,7 @@ func readGateVerdict(verdictPath string) (core.GateAction, error) {
 //
 // Bead: hk-hd2w6.
 func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdictPath string) (core.GateAction, error) {
-	if runner == nil || runnerIsLocalFS(runner) {
+	if runner == nil || gitprobe.RunnerIsLocalFS(runner) {
 		return readGateVerdict(verdictPath)
 	}
 	out, err := runner.Command(ctx, "cat", verdictPath).Output()
@@ -655,7 +656,7 @@ func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdict
 //
 // Bead: hk-hd2w6.
 func gateVerdictExistsVia(ctx context.Context, runner ltmux.CommandRunner, path string) bool {
-	if runner == nil || runnerIsLocalFS(runner) {
+	if runner == nil || gitprobe.RunnerIsLocalFS(runner) {
 		info, err := os.Stat(path)
 		return err == nil && info.Size() > 0
 	}

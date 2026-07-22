@@ -52,6 +52,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -487,7 +488,7 @@ func runReviewLoop(
 								// Idempotent: CHB-023 commit already on the branch (daemon-restart +
 								// resume). Resolve the current HEAD so the no-commit guard has the
 								// correct post-context-commit baseline.
-								sha, resolveErr := resolveWorktreeHEAD(capturedCtx, capturedWtPath)
+								sha, resolveErr := gitprobe.ResolveWorktreeHEAD(capturedCtx, capturedWtPath)
 								if resolveErr != nil {
 									sha = ""
 								}
@@ -707,8 +708,8 @@ func runReviewLoop(
 					// Beads: hk-cmybm, hk-930o3.
 					if qs, ok := implPasteTarget.(quitSender); ok {
 						// REMOTE: wtPath is on the worker; resolve its HEAD via the worker runner
-						// (resolveWorktreeHEADVia delegates to the local probe when runner is nil).
-						implInitialSHA, resolveErr := resolveWorktreeHEADVia(dctx, runner, wtPath)
+						// (gitprobe.ResolveWorktreeHEADVia delegates to the local probe when runner is nil).
+						implInitialSHA, resolveErr := gitprobe.ResolveWorktreeHEADVia(dctx, runner, wtPath)
 						if resolveErr != nil {
 							implInitialSHA = parentSHA // fallback to known-good parent SHA
 						}
@@ -797,7 +798,7 @@ func runReviewLoop(
 		// commitLanded is true when the worktree HEAD has advanced past
 		// parentSHA; HEAD resolution errors are treated as "not landed".
 		{
-			curHead, _ := resolveWorktreeHEADVia(ctx, runner, wtPath)
+			curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 			commitLanded := curHead != "" && curHead != parentSHA
 			emitImplementerPhaseComplete(ctx, deps.bus, runID, implEI.exitCode,
 				implEI.stderrTail, commitLanded, deps.clock.Since(implLaunchedAt))
@@ -868,7 +869,7 @@ func runReviewLoop(
 		}
 
 		if state.iterationCount == 1 {
-			headSHA, headErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
+			headSHA, headErr := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 			if headErr != nil {
 				result := rlErrorResult(fmt.Sprintf("resolve worktree HEAD after implementer at iteration %d: %v", state.iterationCount, headErr))
 				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -1036,7 +1037,7 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
-		currentHead, npHeadErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
+		currentHead, npHeadErr := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 		if npHeadErr != nil {
 			result := rlErrorResult(fmt.Sprintf("resolve HEAD before reviewer at iteration %d: %v", state.iterationCount, npHeadErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -1143,7 +1144,7 @@ func runReviewLoop(
 			}
 			reviewHeadSHA = sha
 		} else {
-			sha, headErr := resolveWorktreeHEAD(ctx, wtPath)
+			sha, headErr := gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
 			if headErr != nil {
 				result := rlErrorResult(fmt.Sprintf("resolve worktree HEAD before reviewer at iteration %d: %v", state.iterationCount, headErr))
 				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -1775,7 +1776,7 @@ func rlErrorResult(summary string) reviewLoopResult {
 // Returns (false, err) on git failure.
 //
 // Runner routing follows the same nil=local / non-nil=remote-runner convention
-// as resolveWorktreeHEADVia and rlComputeDiffHashVia (NFR7).
+// as gitprobe.ResolveWorktreeHEADVia and rlComputeDiffHashVia (NFR7).
 //
 // Bead: hk-30jd.
 func isChurnOnlyCommitVia(ctx context.Context, runner tmux.CommandRunner, wtPath, baseSHA, headSHA string) (bool, error) {
@@ -1835,7 +1836,7 @@ func rlComputeDiffHashVia(ctx context.Context, runner tmux.CommandRunner, wtPath
 	if runner == nil {
 		return rlComputeDiffHash(ctx, wtPath, parentSHA)
 	}
-	headSHA, err := resolveWorktreeHEADVia(ctx, runner, wtPath)
+	headSHA, err := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 	if err != nil {
 		return "", fmt.Errorf("daemon: reviewloop: %w", err)
 	}
@@ -1848,7 +1849,7 @@ func rlComputeDiffHashVia(ctx context.Context, runner tmux.CommandRunner, wtPath
 // branch (refs/heads/run/<id>) so the reviewer worktree — created on box A —
 // checks out a commit box A actually has. The lookup runs box-A-local (the
 // reviewer always runs on box A regardless of where the implementer ran), so it
-// uses a bare exec, mirroring resolveWorktreeHEAD.
+// uses a bare exec, mirroring gitprobe.ResolveWorktreeHEAD.
 func resolveBranchSHA(ctx context.Context, projectDir, branch string) (string, error) {
 	ref := "refs/heads/" + branch
 	cmd := exec.CommandContext(ctx, "git", "-C", projectDir, "rev-parse", ref)

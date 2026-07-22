@@ -47,6 +47,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
 // piProviderCredentialKeys is the maintained table of known provider API key
@@ -269,7 +270,7 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	seedPrompt := fmt.Sprintf(piSeedPromptTemplate, rc.beadID)
 	var args []string
 	if rc.priorSessionID != nil {
-		seedPrompt = implementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
+		seedPrompt = shared.ImplementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
 		args = []string{
 			"--mode", "json",
 			"--no-extensions",

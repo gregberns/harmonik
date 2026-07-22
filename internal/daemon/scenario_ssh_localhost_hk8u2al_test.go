@@ -77,7 +77,7 @@ import (
 //  2. SSH transport: routes the remapped command through SSHRunner{Host:"localhost"}
 //     so every cat/stat travels through a real ssh binary, exercising shell quoting.
 //
-// Because it is neither nil nor LocalRunner{}, runnerIsLocalFS classifies it as a
+// Because it is neither nil nor LocalRunner{}, gitprobe.RunnerIsLocalFS classifies it as a
 // remote runner, so all Via functions route through it rather than falling back to
 // bare os.ReadFile / os.Stat on box A.
 type hk8u2alSSHRemapRunner struct {

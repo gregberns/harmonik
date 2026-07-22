@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -485,7 +486,7 @@ func probeLivenessOrSSHFail(ctx context.Context, runner tmux.CommandRunner, pid 
 
 // commandRunnerProvider is an optional interface that a quitSender may
 // implement to expose its CommandRunner.  pasteInjectQuitOnCommit probes qs
-// for this interface so that resolveWorktreeHEAD and worktreeActivityFingerprint
+// for this interface so that gitprobe.ResolveWorktreeHEAD and worktreeActivityFingerprint
 // are routed through the run's CommandRunner (e.g. SSHRunner for remote
 // substrates) instead of bare exec.Command.
 //
@@ -494,45 +495,10 @@ type commandRunnerProvider interface {
 	commandRunner() tmux.CommandRunner
 }
 
-// resolveWorktreeHEADVia is like resolveWorktreeHEAD but routes the git probe
-// through runner instead of bare exec.CommandContext.  Uses `git -C <wtPath>
-// rev-parse HEAD` (the -C form works for both local and SSH runners).
-//
-// When runner is nil the call delegates to the bare-local resolveWorktreeHEAD,
-// so callers can pass the per-run runner unconditionally and get byte-identical
-// local behaviour for LOCAL runs (nil runner) — NFR7.
-//
-// Bead: hk-rs-b9-liveness-1m9n.
-func resolveWorktreeHEADVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, error) {
-	if runner == nil {
-		return resolveWorktreeHEAD(ctx, wtPath)
-	}
-	out, err := runner.Command(ctx, "git", "-C", wtPath, "rev-parse", "HEAD").Output()
-	if err != nil {
-		return "", fmt.Errorf("daemon: resolveWorktreeHEADVia: git -C %q rev-parse HEAD: %w", wtPath, err)
-	}
-	sha := string(out)
-	for len(sha) > 0 && sha[len(sha)-1] == '\n' {
-		sha = sha[:len(sha)-1]
-	}
-	if sha == "" {
-		return "", fmt.Errorf("daemon: resolveWorktreeHEADVia: git rev-parse HEAD returned empty in %q", wtPath)
-	}
-	return sha, nil
-}
-
-// runnerIsLocalFS reports whether r operates on box A's local filesystem — i.e.
-// the worktree paths it is given are directly stat-able with os.Stat. A nil
-// runner (defensive) and tmux.LocalRunner both qualify; an SSHRunner (or any
-// other transport) does NOT, because its worktree lives on a remote worker.
-func runnerIsLocalFS(r tmux.CommandRunner) bool {
-	switch r.(type) {
-	case nil, tmux.LocalRunner:
-		return true
-	default:
-		return false
-	}
-}
+// The git probes that used to live here — ResolveWorktreeHEADVia and
+// RunnerIsLocalFS — moved to internal/gitprobe in P2 unit E1a, so the extracted
+// harness packages can reach them without importing the daemon.
+// Bead: hk-rs-b9-liveness-1m9n (origin).
 
 // worktreeActivityFingerprintVia is like worktreeActivityFingerprint but routes
 // the git probes through runner.
@@ -549,7 +515,7 @@ func runnerIsLocalFS(r tmux.CommandRunner) bool {
 //
 // Bead: hk-rs-b9-liveness-1m9n.
 func worktreeActivityFingerprintVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, bool) {
-	head, err := resolveWorktreeHEADVia(ctx, runner, wtPath)
+	head, err := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 	if err != nil {
 		return "", false
 	}
@@ -561,7 +527,7 @@ func worktreeActivityFingerprintVia(ctx context.Context, runner tmux.CommandRunn
 	sb.WriteString(head)
 	sb.WriteByte(0)
 	sb.Write(out)
-	if runnerIsLocalFS(runner) {
+	if gitprobe.RunnerIsLocalFS(runner) {
 		for _, line := range strings.Split(string(out), "\n") {
 			if len(line) < 4 {
 				continue
@@ -1327,7 +1293,7 @@ func pasteInjectQuitOnCommit(
 				}
 			}
 
-			headSHA, err := resolveWorktreeHEADVia(ctx, probeRunner, wtPath)
+			headSHA, err := gitprobe.ResolveWorktreeHEADVia(ctx, probeRunner, wtPath)
 			if err != nil {
 				// Worktree may not be ready yet; keep polling.
 				continue
@@ -1430,13 +1396,13 @@ func pasteInjectOnLaunch(
 		}
 
 		// Extract the per-run runner for remote-aware file-stat probes (hk-hh5e).
-		// For local runs commandRunner() returns LocalRunner{} (runnerIsLocalFS=true)
+		// For local runs commandRunner() returns LocalRunner{} (gitprobe.RunnerIsLocalFS=true)
 		// so runner stays nil and statTaskFileVia falls back to os.Stat — unchanged
 		// local behaviour (NFR7).  For remote runs the SSHRunner is non-local, so
 		// runner is set and statTaskFileVia checks file existence on the worker.
 		var runner tmux.CommandRunner
 		if crp, ok2 := substrate.(commandRunnerProvider); ok2 {
-			if r := crp.commandRunner(); !runnerIsLocalFS(r) {
+			if r := crp.commandRunner(); !gitprobe.RunnerIsLocalFS(r) {
 				runner = r
 			}
 		}
@@ -2155,7 +2121,7 @@ func sumNumstatLines(numstat string) (int, bool) {
 //
 // Bead: hk-az4fd.
 func worktreeActivityFingerprint(ctx context.Context, wtPath string) (string, bool) {
-	head, err := resolveWorktreeHEAD(ctx, wtPath)
+	head, err := gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
 	if err != nil {
 		return "", false
 	}
@@ -2289,7 +2255,7 @@ func ReadReviewerBudgetSentinel(wtPath string) (*reviewerBudgetSentinel, error) 
 //
 // Bead: hk-f3u6o.
 func ReadReviewerBudgetSentinelVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (*reviewerBudgetSentinel, error) {
-	if runner == nil || runnerIsLocalFS(runner) {
+	if runner == nil || gitprobe.RunnerIsLocalFS(runner) {
 		return ReadReviewerBudgetSentinel(wtPath)
 	}
 	path := reviewerBudgetSentinelPath(wtPath)
@@ -2429,7 +2395,7 @@ func pasteInjectQuitOnReviewFile(
 	// through the runner.  nil → local os.Stat (NFR7 byte-identical).
 	var verdictRunner tmux.CommandRunner
 	if crp, ok := qs.(commandRunnerProvider); ok {
-		if r := crp.commandRunner(); !runnerIsLocalFS(r) {
+		if r := crp.commandRunner(); !gitprobe.RunnerIsLocalFS(r) {
 			verdictRunner = r
 		}
 	}
@@ -2518,7 +2484,7 @@ func pasteInjectQuitOnReviewFile(
 					// perRunSubstrate which also implements commandRunnerProvider.
 					var reseedRunner tmux.CommandRunner
 					if crp, ok2 := inj.(commandRunnerProvider); ok2 {
-						if r := crp.commandRunner(); !runnerIsLocalFS(r) {
+						if r := crp.commandRunner(); !gitprobe.RunnerIsLocalFS(r) {
 							reseedRunner = r
 						}
 					}

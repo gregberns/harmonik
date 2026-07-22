@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -142,7 +143,7 @@ func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 	// heavy suite.  Scoped to the affected package(s) only.
 	var out []byte
 	var testErr error
-	if runnerIsLocalFS(runner) {
+	if gitprobe.RunnerIsLocalFS(runner) {
 		args := append([]string{"test", "-tags=scenario"}, pkgs...)
 		cmd := exec.CommandContext(gateCtx, "go", args...)
 		cmd.Dir = wtPath
@@ -325,7 +326,7 @@ func changedFilesSince(ctx context.Context, wtPath, headSHA string) ([]string, e
 func changedFilesSinceVia(ctx context.Context, runner tmux.CommandRunner, wtPath, headSHA string) ([]string, error) {
 	var out []byte
 	var err error
-	if runnerIsLocalFS(runner) {
+	if gitprobe.RunnerIsLocalFS(runner) {
 		cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", headSHA+"..HEAD")
 		cmd.Dir = wtPath
 		out, err = cmd.Output()
@@ -391,7 +392,7 @@ func isScenarioTouchingVia(ctx context.Context, runner tmux.CommandRunner, wtPat
 	}
 	full := filepath.Join(wtPath, filePath)
 	var data []byte
-	if runnerIsLocalFS(runner) {
+	if gitprobe.RunnerIsLocalFS(runner) {
 		var err error
 		data, err = os.ReadFile(full)
 		if err != nil {

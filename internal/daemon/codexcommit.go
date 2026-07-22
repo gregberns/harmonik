@@ -66,6 +66,7 @@ import (
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -184,7 +185,7 @@ func codexWorktreeDirty(ctx context.Context, runner tmux.CommandRunner, wtPath s
 //   - runner    — the per-run CommandRunner (nil for local runs, sshRunner for
 //     remote). All git operations are routed through runner so that HEAD reads,
 //     dirty checks, amend, and commit all operate on the SAME host as the
-//     no-commit guard (resolveWorktreeHEADVia). nil is byte-identical to local
+//     no-commit guard (gitprobe.ResolveWorktreeHEADVia). nil is byte-identical to local
 //     exec (NFR7).
 //   - wtPath    — absolute path of the run's git worktree.
 //   - parentSHA — the worktree HEAD SHA captured BEFORE the codex turn launched.
@@ -219,7 +220,7 @@ func ensureCodexRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPa
 	// Determine whether codex produced a commit this turn (HEAD advanced past
 	// the parent SHA the caller captured before launch). Route through runner
 	// so REMOTE HEAD is read from the worker, matching the no-commit guard.
-	curHead, headErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
+	curHead, headErr := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 	if headErr != nil {
 		return codexRefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: resolve HEAD: %w", headErr)
 	}

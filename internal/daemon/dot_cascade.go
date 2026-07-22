@@ -81,6 +81,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -96,16 +97,16 @@ import (
 //
 // NFR7 (local runs MUST stay byte-identical): when runner is nil — every LOCAL
 // run, since rbc.sshRunner is nil unless a remote worker was selected — this
-// calls the bare resolveWorktreeHEAD (exec.Command + cmd.Dir), unchanged. Only
+// calls the bare gitprobe.ResolveWorktreeHEAD (exec.Command + cmd.Dir), unchanged. Only
 // REMOTE runs (runner != nil, an SSHRunner) take the runner-routed path
-// (resolveWorktreeHEADVia, `git -C <wtPath> rev-parse HEAD` over the transport),
+// (gitprobe.ResolveWorktreeHEADVia, `git -C <wtPath> rev-parse HEAD` over the transport),
 // which is REQUIRED on a worker whose worktree lives on a separate filesystem
 // that box A cannot chdir into.
 func resolveDotWorktreeHEAD(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, error) {
 	if runner == nil {
-		return resolveWorktreeHEAD(ctx, wtPath)
+		return gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
 	}
-	return resolveWorktreeHEADVia(ctx, runner, wtPath)
+	return gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 }
 
 // errDotNoChangeSubsumed is returned by dispatchDotAgenticNode when the
@@ -1202,7 +1203,7 @@ func nodeModelForHarness(resolvedModel, nodeModelAttr string, effHarness core.Ag
 // single no-retry read and false-fails the whole run on a transient
 // ErrMalformed — the review-loop fix (hk-1hgjr) never applied to the DOT path.
 func readDotReviewVerdictRetry(ctx context.Context, runner tmux.CommandRunner, wtPath string) (*workspace.ReviewVerdict, error) {
-	if runnerIsLocalFS(runner) {
+	if gitprobe.RunnerIsLocalFS(runner) {
 		return workspace.ReadReviewVerdictLocalRetry(ctx, wtPath)
 	}
 	return workspace.ReadReviewVerdictVia(ctx, runner, wtPath)

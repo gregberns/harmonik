@@ -166,7 +166,7 @@ func extractFuncNameFromLine(line string) string {
 
 // gateVerdictCatRunner is a non-local CommandRunner stub for gate-verdict tests.
 // Routes "cat" calls to the stored srcPath and "test" calls to os.Stat on srcPath.
-// The distinct (non-LocalRunner) type causes runnerIsLocalFS to return false.
+// The distinct (non-LocalRunner) type causes gitprobe.RunnerIsLocalFS to return false.
 type gateVerdictCatRunner struct {
 	srcPath string // path to cat/test; "" → absent file
 }

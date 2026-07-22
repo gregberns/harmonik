@@ -74,7 +74,7 @@ import (
 //	→ <workerDir>/.harmonik/review.json
 //
 // Being a distinct (non-LocalRunner) type it is classified as non-local by
-// runnerIsLocalFS, so Via functions route through it instead of falling back to
+// gitprobe.RunnerIsLocalFS, so Via functions route through it instead of falling back to
 // os.ReadFile/os.Stat on box A.
 type hk52xnrPathRemapRunner struct {
 	worktreesRoot string // <projectDir>/.harmonik/worktrees

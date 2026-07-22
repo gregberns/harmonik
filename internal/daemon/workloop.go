@@ -56,6 +56,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
 	"github.com/gregberns/harmonik/internal/digest"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
@@ -4259,7 +4260,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			if ctx.Err() != nil {
 				tipResolveCtx = context.Background()
 			}
-			if tipSHA, tipErr := resolveWorktreeHEADVia(tipResolveCtx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
+			if tipSHA, tipErr := gitprobe.ResolveWorktreeHEADVia(tipResolveCtx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
 				runTipSHA = &tipSHA
 			}
 			bridge.feed(ctx, runexec.Event{
@@ -5083,7 +5084,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// implementer failures previously produced no structured event.
 	//
 	// commitLanded is determined by comparing the current worktree HEAD against
-	// headSHA.  resolveWorktreeHEAD errors are treated as "not landed" (conservative).
+	// headSHA.  gitprobe.ResolveWorktreeHEAD errors are treated as "not landed" (conservative).
 	// REMOTE: route via runRunner so HEAD is read from the worker (nil ⇒ box-A-local).
 	//
 	// hk-368i4: implementerPhaseDur is captured ONCE here and reused by the
@@ -5092,7 +5093,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// two can never see them disagree.
 	implementerPhaseDur := deps.clock.Since(implementerLaunchedAt)
 	{
-		curHead, _ := resolveWorktreeHEADVia(ctx, runRunner, wtPath)
+		curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA
 		emitImplementerPhaseComplete(ctx, deps.bus, runID, ei.exitCode, ei.stderrTail,
 			commitLanded, implementerPhaseDur)
@@ -5267,7 +5268,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// reads the WORKER's run-branch HEAD (nil runRunner ⇒ box-A-local, NFR7). The
 	// noCommitGuardShouldReopen checks if THIS bead's code landed in the target
 	// repo's main branch (cross-repo: activeRepo; local: deps.projectDir).
-	if curHeadSHA, curHeadErr := resolveWorktreeHEADVia(ctx, runRunner, wtPath); curHeadErr == nil &&
+	if curHeadSHA, curHeadErr := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath); curHeadErr == nil &&
 		noCommitGuardShouldReopen(ctx, activeRepo, curHeadSHA, headSHA, beadID) {
 		// hk-4ie1z: the implementer's worktree HEAD never advanced past the
 		// parent (NO commit) AND this bead's own work is not on main. The prior
@@ -5346,7 +5347,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// requeue reopen with no run terminal (QM-002a reverts the queue
 				// item to pending at next startup, hk-ly0hg Fix-1 / hk-1h5q).
 				drainSHA := ""
-				if curHeadSHA, headErr := resolveWorktreeHEAD(context.Background(), wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
+				if curHeadSHA, headErr := gitprobe.ResolveWorktreeHEAD(context.Background(), wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
 					drainSHA = curHeadSHA
 				}
 				bridge.drain(ctx, drainSHA)
@@ -6780,7 +6781,7 @@ func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID c
 		}
 	}
 	if stripped {
-		if newTip, resolveErr := resolveWorktreeHEAD(ctx, wtPath); resolveErr == nil {
+		if newTip, resolveErr := gitprobe.ResolveWorktreeHEAD(ctx, wtPath); resolveErr == nil {
 			*runTip = newTip
 		}
 	}

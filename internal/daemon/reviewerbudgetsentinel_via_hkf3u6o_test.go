@@ -25,7 +25,7 @@ import (
 // catFromFileRunnerBudget is a non-local CommandRunner stub: every Command()
 // invocation is rewritten to `cat <srcPath>`, returning the bytes of srcPath
 // regardless of the requested argv. It simulates a remote worker whose budget
-// marker lives at srcPath. A distinct (non-LocalRunner) type ⇒ runnerIsLocalFS
+// marker lives at srcPath. A distinct (non-LocalRunner) type ⇒ gitprobe.RunnerIsLocalFS
 // classifies it non-local ⇒ ReadReviewerBudgetSentinelVia routes through it.
 type catFromFileRunnerBudget struct {
 	srcPath string // "" → a nonexistent path so cat fails (simulates absent marker)

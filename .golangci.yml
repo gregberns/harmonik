@@ -161,6 +161,22 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "crew MUST NOT import daemon (c2-spec.md §3.3)" }
 
+        # gitprobe: stdlib + the tmux CommandRunner seam + self-import (external test
+        # pattern); MUST NOT import daemon. The read-only git probes live here so the
+        # extracted harness packages (P2 unit E1a onward) can reach them without
+        # linking the daemon — which is the whole point of the extraction. If this
+        # package ever imports daemon, the harness closure silently drags the monolith
+        # back in and E1's "linkable unit" property is lost.
+        # Rationale: plans/2026-07-21-p2-extraction/_plan.md unit E1a.
+        gitprobe:
+          files: ["**/internal/gitprobe/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "gitprobe is a leaf: importing daemon would re-couple every harness that uses it (P2 E1a)" }
+
         # keeper: stdlib + core + eventbus + presence + self-import (external test
         # pattern); MUST NOT import daemon or workloop.
         # presence: the hitl-decisions K5 orphan reaper (presence.ReapOrphanedDecisions)

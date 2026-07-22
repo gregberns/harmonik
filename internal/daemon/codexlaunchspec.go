@@ -35,6 +35,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
 // codexCredentialDenyKeys lists the credential environment variable names that
@@ -191,7 +192,7 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 		// prompt so a DOT back-edge re-entry gets an actionable instruction instead
 		// of the identical initial prompt it already satisfied (c073 defect; peer of
 		// pasteInjectImplementerResume for claude).
-		seedPrompt = implementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
+		seedPrompt = shared.ImplementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
 		// codex exec resume does NOT accept -C (exit 2: "unexpected argument -C found").
 		// WorkDir in the returned LaunchSpec sets the subprocess working directory.
 		args = []string{"exec", "resume", *rc.priorThreadID, "--json", "-c", `sandbox_mode="danger-full-access"`}

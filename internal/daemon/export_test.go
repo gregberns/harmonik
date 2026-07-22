@@ -600,15 +600,6 @@ func ExportedDiskCheckDiskLow(ms *ExportedMaintState) bool {
 	return ms.m.diskLow
 }
 
-// ExportedDiskCheckSetGoCacheCleanInterval overrides the proactive-reap
-// interval on deps so tests don't have to wait 60 minutes. A zero override
-// restores the production default (goCacheCleanInterval).
-//
-// Bead ref: hk-guez.
-func ExportedDiskCheckSetGoCacheCleanInterval(deps *workLoopDeps, d time.Duration) {
-	deps.goCacheCleanIntervalOverride = d
-}
-
 // ExportedDiskCheckSetCheckInterval overrides the disk-probe interval on deps
 // so tests fire immediately. A zero override restores the production default
 // (diskCheckInterval).

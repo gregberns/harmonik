@@ -134,10 +134,16 @@ type Options struct {
 	// apply-patch prompts are declined and the crew's writes and commits never
 	// land. The composition root sets Sandbox="danger-full-access" +
 	// ApprovalPolicy="never" so codex runs non-interactively and its work lands.
-	// That posture is safe ONLY inside a real isolation boundary — the daemon's
-	// fail-closed guard (cmd/harmonik/substrate_select.go requireBoundary +
-	// workloop codexRequireIsolationBoundary) refuses to launch a codex crew
-	// with no enabled ssh worker bound. Empty (the zero value) OMITS the field
+	// That posture was originally described as safe ONLY inside a real isolation
+	// boundary, enforced by a daemon-side fail-closed guard. NO SUCH ENFORCEMENT
+	// EXISTS (hk-5vapm): this comment named a workloop codexRequireIsolationBoundary
+	// that is not in the tree — the only occurrences were comments describing it —
+	// and cmd/harmonik/substrate_select.go's requireBoundary is never set true, so
+	// its refusal path is unreachable. Do not read this as "unsandboxed codex is
+	// refused"; nothing refuses it. hk-tckw3.1 Step 1 dropped that fence on purpose
+	// (D4 removed the ssh worker that was its only boundary supplier), and codex
+	// containment comes from harmonik's srt sandbox (hk-scaj0) instead.
+	// Empty (the zero value) OMITS the field
 	// on the wire, leaving codex's own default posture — so a driver built
 	// WITHOUT the composition root never silently runs danger-full-access.
 	Sandbox        string

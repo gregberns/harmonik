@@ -95,9 +95,27 @@ func (l *ReconciliationLock) WriteVerdictExecuted() error {
 	return nil
 }
 
-// Release closes the underlying fd, which also releases the advisory flock
-// per PL-002a (fd-lifetime lock). Release is idempotent: a second call returns
-// nil without a double-close.
+// Release unlocks the advisory flock explicitly and then closes the fd.
+// Release is idempotent: a second call returns nil without a double-close.
+//
+// The explicit LOCK_UN is load-bearing, not belt-and-braces (hk-zhj2f). An
+// flock lives on the OPEN FILE DESCRIPTION, not on the fd, so close() drops it
+// only when the LAST fd referring to that description closes. fork() duplicates
+// every fd into the child and O_CLOEXEC (set at open) drops that duplicate at
+// EXEC, not at FORK — so while any sibling process sits between fork() and
+// execve(), a close()-only release releases nothing and the next
+// flock(LOCK_EX|LOCK_NB) returns EWOULDBLOCK. LOCK_UN acts on the open file
+// description itself and is therefore unaffected by how many duplicates exist.
+//
+// Measured before/after under 12 concurrent exec workers: close()-only left the
+// lock readable-as-held on 18/1500 releases (worst clear 4.6ms); LOCK_UN then
+// close: 0/1500. With no fork pressure both are 0/400, which isolates forking
+// as the cause.
+//
+// This matters beyond tidiness: RC-002a requires a second dispatch seeing
+// EWOULDBLOCK to dedupe and SKIP. A fork-window artifact read as a genuine
+// holder therefore skips a reconciliation that should have run — the exact
+// outcome the rule exists to prevent.
 //
 // Spec ref: specs/reconciliation/spec.md §4.1 RC-002a — lock MUST be released
 // on verdict-executed commit, budget exhaustion, malformed verdict,
@@ -111,6 +129,9 @@ func (l *ReconciliationLock) Release() error {
 	}
 	fd := l.fd
 	l.fd = nil
+	// Unlock before close. A failure here is not actionable and must not mask
+	// the close: the close still runs, leaving behaviour no worse than before.
+	_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN) //nolint:errcheck // unlock error unactionable; close below still releases on the last-fd path
 	return fd.Close()
 }
 

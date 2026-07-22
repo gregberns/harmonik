@@ -7006,9 +7006,18 @@ func commitFinalizeWorkingTree(ctx context.Context, projectDir string, runID cor
 	paths, pathsErr := mergedCommitPaths(ctx, projectDir, mainTip, runTip)
 	if pathsErr != nil {
 		// Without the path list there is no safe refresh: a tree-wide reset is
-		// the destructive behaviour this change exists to remove. Skip it. The
-		// merged paths stay stale, which surfaces LOUDLY (as dirt the next
-		// escape check reports) rather than by deleting someone's work.
+		// the destructive behaviour this change exists to remove. Skip it.
+		//
+		// Be precise about what is loud: the EVENT below is, the resulting STATE
+		// is not. checkMainWorkingTreeDirty drops .harmonik/, .claude/,
+		// .beads/issues.jsonl and AGENT_COMMS.md as expected churn, so stale
+		// paths in exactly the region this bead exists to protect are never
+		// surfaced by the escape check. Worse, the skip leaves the INDEX stale
+		// too (index at mainTip, HEAD at runTip), so a later commit of those
+		// paths from the main root would silently commit PRE-MERGE content.
+		// Still the right trade — the trigger needs a git diff between two
+		// known-good SHAs to fail, while the behaviour being removed fired on
+		// every merge — but it is a real hole, not a clean fallback.
 		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: cannot scope working-tree refresh, skipping it (bead %s run %s): %v\n",
 			beadID, runID.String(), pathsErr)
 		emitWorkingTreeRefreshFailed(ctx, bus, runID, beadID, pathsErr)

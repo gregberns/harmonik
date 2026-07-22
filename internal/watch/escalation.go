@@ -132,7 +132,7 @@ type EscalationEngine struct {
 func (e *EscalationEngine) Process(ev core.Event, summary string) error {
 	switch Classify(ev) {
 	case EscalationImmediate:
-		if err := e.recordImmediate(summary); err != nil {
+		if err := e.recordImmediate(); err != nil {
 			return err
 		}
 		return e.Sender.SendEscalation(summary)
@@ -182,7 +182,7 @@ func (e *EscalationEngine) appendDigestFlag(flag string) error {
 	return e.Ledger.WriteDigest(d)
 }
 
-func (e *EscalationEngine) recordImmediate(summary string) error {
+func (e *EscalationEngine) recordImmediate() error {
 	d, err := e.Ledger.ReadDigest()
 	if err != nil {
 		return fmt.Errorf("escalation: read digest: %w", err)

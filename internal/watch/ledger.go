@@ -88,7 +88,7 @@ type OpsMonitorReceipt struct {
 // (zero EventID).  The .harmonik/watch/ directory is created if absent.
 func NewLedger(harmonikDir string) (*Ledger, error) {
 	watchDir := filepath.Join(harmonikDir, "watch")
-	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+	if err := os.MkdirAll(watchDir, 0o750); err != nil {
 		return nil, err
 	}
 
@@ -169,7 +169,7 @@ func (l *Ledger) QueryEvents(eventsPath string, q LaneQuery) ([]core.Event, erro
 
 // scan is the shared implementation used by Scan and ScanOnSubscriptionGap.
 func (l *Ledger) scan(eventsPath string) ([]core.Event, error) {
-	var fresh []core.Event
+	fresh := make([]core.Event, 0)
 	var lastSeen core.EventID
 	hasNew := false
 
@@ -195,8 +195,7 @@ func (l *Ledger) scan(eventsPath string) ([]core.Event, error) {
 
 // writeCursor writes the current cursor to the cursor file.
 func (l *Ledger) writeCursor() error {
-	//nolint:gosec // G306: cursor file contains only a UUIDv7 string; world-readable is fine.
-	return os.WriteFile(l.cursorPath, []byte(l.cursor.String()+"\n"), 0o644)
+	return os.WriteFile(l.cursorPath, []byte(l.cursor.String()+"\n"), 0o600)
 }
 
 // WriteDigest writes d to .harmonik/watch/latest.json.
@@ -209,8 +208,7 @@ func (l *Ledger) WriteDigest(d WatchDigest) error {
 		return err
 	}
 	b = append(b, '\n')
-	//nolint:gosec // G306: digest file is operator-readable status; world-readable is fine.
-	return os.WriteFile(l.digestPath, b, 0o644)
+	return os.WriteFile(l.digestPath, b, 0o600)
 }
 
 // ReadDigest reads .harmonik/watch/latest.json and returns its contents.

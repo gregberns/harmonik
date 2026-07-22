@@ -1,4 +1,4 @@
-package daemon_test
+package runmerge_test
 
 // mergetomain_dirtyledger_hk3yz2d_test.go — regression test for the pre-rebase
 // churn-cleanup step added in hk-3yz2d and generalized in hk-aiw63.
@@ -44,7 +44,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 // dirtyLedgerGit runs a git command in dir and fails the test on error.
@@ -136,7 +136,7 @@ func TestDiscardDirtyChurn_AllowsRebase(t *testing.T) {
 	}
 
 	// Apply the fix.
-	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	// The worktree must now be clean.
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
@@ -171,7 +171,7 @@ func TestDiscardDirtyChurn_DiscardsClaudeSettings(t *testing.T) {
 		t.Fatalf("precondition: expected dirty .claude/settings.json; got status:\n%s", status)
 	}
 
-	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	// The worktree must now be clean.
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
@@ -204,7 +204,7 @@ func TestDiscardDirtyChurn_PreservesOtherDirtyFiles(t *testing.T) {
 		`{"hooks":{},"permissions":{"allow":["Read"]}}`+"\n")
 	writeFile(t, filepath.Join(wtPath, "code.txt"), "code\nagent work\nUNCOMMITTED EDIT\n")
 
-	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	status := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
 	if strings.Contains(status, ".beads/issues.jsonl") {
@@ -241,7 +241,7 @@ func TestDiscardDirtyChurn_NoOpOnCleanWorktree(t *testing.T) {
 	wtPath := dirtyLedgerSetup(t)
 
 	before := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
-	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 	after := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
 
 	if before != after {

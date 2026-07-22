@@ -29,6 +29,7 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 )
@@ -91,7 +92,7 @@ func (deps *workLoopDeps) emitterPort() EmitterPort {
 type MergePort interface {
 	// Submit returns the exclusion-domain entry point (mergeq.Queue.Submit when a
 	// queue is wired, else the inline nil-queue fallback).
-	Submit() mergeSubmit
+	Submit() runmerge.Submit
 }
 
 // daemonMerge is the production MergePort adapter over the RT3 mergeq handle: the
@@ -102,11 +103,11 @@ type daemonMerge struct {
 	q *mergeq.Queue
 }
 
-func (m daemonMerge) Submit() mergeSubmit {
+func (m daemonMerge) Submit() runmerge.Submit {
 	if m.q != nil {
 		return m.q.Submit
 	}
-	return inlineMergeSubmit
+	return runmerge.InlineSubmit
 }
 
 // mergePort returns the production MergePort bound to deps.mergeQ.

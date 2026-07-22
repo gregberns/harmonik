@@ -1,4 +1,4 @@
-package daemon_test
+package runmerge_test
 
 // mergetomain_hksfy7f_test.go — regression test for the no-local-worktree
 // merge failure introduced by hk-sfy7f.
@@ -29,7 +29,7 @@ package daemon_test
 //   (a) creating the run-branch (with an agent commit) in a TEMPORARY
 //       worktree that is NOT at the canonical WorktreePath;
 //   (b) removing that temporary worktree so no local wtPath exists;
-//   (c) calling ExportedMergeRunBranchToMain directly (no full work-loop
+//   (c) calling runmerge.RunBranchToTarget directly (no full work-loop
 //       overhead, since we only care about the merge step).
 //
 // Assertions:
@@ -56,7 +56,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -163,12 +163,13 @@ func TestMergeToMain_NoLocalWorktreeRebase(t *testing.T) {
 	}
 
 	// ── Step 4: call mergeRunBranchToMain directly. ─────────────────────────
-	collector := &stubEventCollector{}
+	collector := discardingEmitter{}
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 
-	result := daemon.ExportedMergeRunBranchToMain(
+	result := runmerge.RunBranchToTarget(
 		ctx,
+		runmerge.InlineSubmit,
 		projectDir,
 		runID,
 		collector,
@@ -180,10 +181,10 @@ func TestMergeToMain_NoLocalWorktreeRebase(t *testing.T) {
 	)
 
 	// ── Assertion (A): merge succeeded. ─────────────────────────────────────
-	if !result.Success() {
-		t.Errorf("mergeRunBranchToMain returned failure: reason=%q (want success; hk-sfy7f fix missing or broken)", result.Reason())
+	if !result.Success {
+		t.Errorf("mergeRunBranchToMain returned failure: reason=%q (want success; hk-sfy7f fix missing or broken)", result.Reason)
 	}
-	if result.NoChange() {
+	if result.NoChange {
 		t.Errorf("mergeRunBranchToMain returned noChange=true; expected real merge (agent commit must land)")
 	}
 

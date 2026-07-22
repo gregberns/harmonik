@@ -878,6 +878,44 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "mergeq MUST NOT import daemon (leaf exclusion domain; daemon drives it)" }
 
+        # runmerge: the run-branch merge / commit / fmt-gate path carved out of
+        # workloop.go lines 6391-8009 (P2 unit E5, RT13), plus the two whole
+        # files that only the merge path called (stripruncontext, reviewtrailers).
+        # Param-in/value-out git plumbing: it takes ctx + paths + an
+        # EventEmitter + a runmerge.Submit closure and returns an Outcome. The
+        # daemon threads its mergeq exclusion-domain submit IN, so the direction
+        # is daemon -> runmerge; runmerge MUST NOT import daemon back.
+        #
+        # Measured allow-list (widen only on proof, per the E1a-1 finding):
+        #   workspace       — the spine calls workspace.TaskBranchName /
+        #                     WorktreePath / NoWorktreeRootOverride, and
+        #                     RemoveWorktree calls PruneWorktreeTrust.
+        #   gitprobe        — RevParse / ResolveWorktreeHEAD.
+        #   harness/shared  — reviewtrailers.go's ContainsExactLine idempotency
+        #                     check (moved there by P2 E1a-0).
+        #   core            — RunID/BeadID/EventType + the two shared payloads.
+        #   handlercontract — the EventEmitter the merge path emits through.
+        # mergeq is deliberately NOT allowed — it appears in this region only in
+        # comments, and the queue handle stays on the daemon side of the seam.
+        # uuid is needed by the moved external test files (depguard `files:` globs
+        # match _test.go too); it is a leaf utility with no harmonik-internal deps.
+        # CAVEAT: depguard checks DIRECT imports only. The transitive check is
+        # `go list -deps ./internal/runmerge | grep internal/daemon` (empty).
+        # Rationale: plans/2026-07-21-p2-extraction/E5-dot-runloop.md; RSM-015.
+        runmerge:
+          files: ["**/internal/runmerge/**"]
+          allow:
+            - "$gostd"
+            - "github.com/google/uuid"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+            - "github.com/gregberns/harmonik/internal/workspace"
+            - "github.com/gregberns/harmonik/internal/runmerge"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runmerge MUST NOT import daemon (leaf merge path; daemon drives it) — P2 E5 RT13" }
+
         # runexec: the two pure run-lifecycle reactors (Dispatch + Run machines,
         # RSM-001/028, codename:run-state-machine). Trimmed leaf allow-list
         # ($gostd + core + substrate + self, design 00b R8): core supplies the

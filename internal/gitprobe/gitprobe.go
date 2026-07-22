@@ -66,6 +66,22 @@ func ResolveWorktreeHEADVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 	return sha, nil
 }
 
+// RevParse runs `git rev-parse <ref>` in repoRoot and returns the trimmed
+// SHA on success. On non-zero exit it returns an error.
+func RevParse(ctx context.Context, repoRoot, ref string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", ref)
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse %s: %w", ref, err)
+	}
+	sha := strings.TrimRight(string(out), "\n")
+	if sha == "" {
+		return "", fmt.Errorf("git rev-parse %s: empty output", ref)
+	}
+	return sha, nil
+}
+
 // RunnerIsLocalFS reports whether r operates on box A's local filesystem — i.e.
 // the worktree paths it is given are directly stat-able with os.Stat. A nil runner
 // (defensive) and tmux.LocalRunner both qualify; an SSHRunner (or any other

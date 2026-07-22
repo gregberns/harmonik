@@ -1,4 +1,4 @@
-package daemon_test
+package runmerge_test
 
 // mergetomain_residualdelta_hkrljho_test.go — regression test for the
 // review-loop residual-delta merge fix.
@@ -42,7 +42,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 // newResidualRunID mints a v7 run-id for the residual-delta tests.
@@ -79,14 +79,14 @@ func TestCommitResidualDelta_CommitsTrackedDeletionAndAllowsRebase(t *testing.T)
 	}
 	// This deletion is NOT churn, so discardDirtyChurn must leave it alone
 	// (hk-i1n7j) — meaning a bare rebase would still fail.
-	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); !strings.Contains(status, "code.txt") {
 		t.Fatalf("discardDirtyChurn must NOT discard the real deletion (hk-i1n7j); got:\n%s", status)
 	}
 
 	// Apply the fix: commit the residual delta onto the run-branch.
 	runID := newResidualRunID(t)
-	daemon.ExportedCommitResidualDelta(context.Background(), wtPath, runID)
+	runmerge.CommitResidualDelta(context.Background(), wtPath, runID)
 
 	// The worktree must now be clean (the delta is committed, not discarded).
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
@@ -123,7 +123,7 @@ func TestCommitResidualDelta_NoOpOnCleanWorktree(t *testing.T) {
 
 	headBefore := dirtyLedgerGit(t, wtPath, "rev-parse", "HEAD")
 
-	daemon.ExportedCommitResidualDelta(context.Background(), wtPath, newResidualRunID(t))
+	runmerge.CommitResidualDelta(context.Background(), wtPath, newResidualRunID(t))
 
 	headAfter := dirtyLedgerGit(t, wtPath, "rev-parse", "HEAD")
 	if headBefore != headAfter {
@@ -155,9 +155,9 @@ func TestCommitResidualDelta_GitignoredUntrackedNotSwept(t *testing.T) {
 	writeFile(t, wtPath+"/junk.log", "i am ignored runtime junk\n")
 
 	// Churn cleanup leaves the tracked delta (hk-i1n7j); junk.log is ignored.
-	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
-	daemon.ExportedCommitResidualDelta(context.Background(), wtPath, newResidualRunID(t))
+	runmerge.CommitResidualDelta(context.Background(), wtPath, newResidualRunID(t))
 
 	// The tracked delta MUST be in the residual commit.
 	committed := dirtyLedgerGit(t, wtPath, "show", "--name-only", "--format=", "HEAD")
@@ -206,10 +206,10 @@ func TestCommitResidualDelta_UntrackedClaudeNotSwept(t *testing.T) {
 
 	// Churn cleanup restores the churn allowlist; the .claude file is churn and
 	// left in place (untracked, not gitignored, but isHarmonikChurn → skip).
-	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	runID := newResidualRunID(t)
-	daemon.ExportedCommitResidualDelta(context.Background(), wtPath, runID)
+	runmerge.CommitResidualDelta(context.Background(), wtPath, runID)
 
 	committed := dirtyLedgerGit(t, wtPath, "show", "--name-only", "--format=", "HEAD")
 
@@ -259,10 +259,10 @@ func TestCommitResidualDelta_CapturesUntrackedNewFile(t *testing.T) {
 
 	// Churn cleanup leaves BOTH (neither is isHarmonikChurn; new_source.go is a
 	// genuine untracked authored file, not gitignored).
-	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+	runmerge.DiscardDirtyChurn(context.Background(), wtPath)
 
 	runID := newResidualRunID(t)
-	daemon.ExportedCommitResidualDelta(context.Background(), wtPath, runID)
+	runmerge.CommitResidualDelta(context.Background(), wtPath, runID)
 
 	// The worktree must be clean (both the tracked delta and the new file are
 	// committed, not left dangling).

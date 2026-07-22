@@ -1,4 +1,4 @@
-package daemon_test
+package runmerge_test
 
 // mergetomain_integrationartifacts_hkg9zz_test.go — regression test for the
 // pre-rebase integration-artifact cleanup added in hk-g9zz.
@@ -34,7 +34,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 // integArtifactGit runs a git command in dir and fails the test on error.
@@ -128,7 +128,7 @@ func TestCleanUntrackedFiles_AllowsRebase(t *testing.T) {
 	_ = abortCmd.Run()
 
 	// Apply the fix.
-	daemon.ExportedCleanUntrackedFiles(context.Background(), wtPath)
+	runmerge.CleanUntrackedFiles(context.Background(), wtPath)
 
 	// After clean, artifact.bin must be gone from the worktree.
 	if _, err := os.Stat(filepath.Join(wtPath, "artifact.bin")); err == nil {
@@ -162,7 +162,7 @@ func TestCleanUntrackedFiles_NoOpOnCleanWorktree(t *testing.T) {
 		t.Fatalf("precondition: expected clean worktree; got:\n%s", beforeStatus)
 	}
 
-	daemon.ExportedCleanUntrackedFiles(context.Background(), wtPath)
+	runmerge.CleanUntrackedFiles(context.Background(), wtPath)
 
 	afterStatus := integArtifactGit(t, wtPath, "status", "--porcelain")
 	if beforeStatus != afterStatus {
@@ -198,7 +198,7 @@ func TestCleanUntrackedFiles_PreservesGitignored(t *testing.T) {
 	writeFile(t, filepath.Join(wtPath, "keeper.test"), "test binary\n")
 	writeFile(t, filepath.Join(wtPath, "artifact.txt"), "integration artifact\n")
 
-	daemon.ExportedCleanUntrackedFiles(context.Background(), wtPath)
+	runmerge.CleanUntrackedFiles(context.Background(), wtPath)
 
 	// Non-gitignored artifact.txt must be removed.
 	if _, err := os.Stat(filepath.Join(wtPath, "artifact.txt")); err == nil {

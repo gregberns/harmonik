@@ -1,4 +1,4 @@
-package daemon_test
+package runmerge_test
 
 // mergepath_commitsubject_hkr1v2n_test.go — GATE-0: table-driven assertion that
 // every commit subject produced by the daemon merge path passes the repo's

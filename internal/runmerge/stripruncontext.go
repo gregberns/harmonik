@@ -1,4 +1,4 @@
-package daemon
+package runmerge
 
 // stripruncontext_hk4je.go — strip .harmonik/run-context/** from the run-branch
 // at the merge-to-main step.
@@ -44,7 +44,15 @@ import (
 	"strings"
 )
 
-// stripRunContextFromMerge removes any .harmonik/run-context/** paths from the
+// RunContextDirPrefix is the directory prefix under .harmonik/ for run-context
+// files. Full path: <worktree>/.harmonik/run-context/<run_id>/context.json
+//
+// The constant lives here rather than beside its CHB-023 writer because
+// internal/runmerge may not import internal/daemon (P2 E5 RT13 deny edge) and a
+// duplicated literal would silently fork the strip from the write.
+const RunContextDirPrefix = ".harmonik/run-context"
+
+// StripRunContextFromMerge removes any .harmonik/run-context/** paths from the
 // run-branch index and commits the removal, so they cannot land on the merge
 // target via the subsequent fast-forward update-ref.
 //
@@ -58,18 +66,18 @@ import (
 // Returns stripped=true when the strip commit was created, false otherwise.
 //
 // Bead: hk-4je.
-func stripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool, err error) {
+func StripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool, err error) {
 	if _, statErr := os.Stat(wtPath); statErr != nil {
 		// Worktree was already removed — nothing to strip.
 		return false, nil
 	}
 
 	// Check whether any .harmonik/run-context/** paths are tracked in the index.
-	lsCmd := exec.CommandContext(ctx, "git", "ls-files", "--cached", "--", runContextDirPrefix)
+	lsCmd := exec.CommandContext(ctx, "git", "ls-files", "--cached", "--", RunContextDirPrefix)
 	lsCmd.Dir = wtPath
 	lsOut, lsErr := lsCmd.Output()
 	if lsErr != nil {
-		return false, fmt.Errorf("daemon: stripRunContextFromMerge: git ls-files --cached: %w", lsErr)
+		return false, fmt.Errorf("daemon: StripRunContextFromMerge: git ls-files --cached: %w", lsErr)
 	}
 	if strings.TrimSpace(string(lsOut)) == "" {
 		// Nothing tracked — nothing to strip.
@@ -79,10 +87,10 @@ func stripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool
 	// Remove from the index only (--cached keeps the working-tree files).
 	// --ignore-unmatch is defensive: if a concurrent operation already removed
 	// some entries the command should not fail.
-	rmCmd := exec.CommandContext(ctx, "git", "rm", "--cached", "-r", "--ignore-unmatch", "--", runContextDirPrefix)
+	rmCmd := exec.CommandContext(ctx, "git", "rm", "--cached", "-r", "--ignore-unmatch", "--", RunContextDirPrefix)
 	rmCmd.Dir = wtPath
 	if out, rmErr := rmCmd.CombinedOutput(); rmErr != nil {
-		return false, fmt.Errorf("daemon: stripRunContextFromMerge: git rm --cached -r: %w\ngit output: %s", rmErr, out)
+		return false, fmt.Errorf("daemon: StripRunContextFromMerge: git rm --cached -r: %w\ngit output: %s", rmErr, out)
 	}
 
 	// Commit the removal onto the run-branch so the fast-forward update-ref
@@ -98,7 +106,7 @@ func stripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = wtPath
 	if out, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
-		return false, fmt.Errorf("daemon: stripRunContextFromMerge: git commit: %w\ngit output: %s", commitErr, out)
+		return false, fmt.Errorf("daemon: StripRunContextFromMerge: git commit: %w\ngit output: %s", commitErr, out)
 	}
 
 	return true, nil

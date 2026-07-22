@@ -20,6 +20,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 // runBridge binds one bead run's pure Run machine to the live daemon effects.
@@ -130,7 +131,7 @@ func (b *runBridge) emit(c context.Context, typ core.EventType, detail string) {
 	if detail == "rejected" {
 		reason = b.rejectReason
 	}
-	emitOutcomeEmitted(c, b.deps.bus, b.runID, b.beadID, detail, reason)
+	runmerge.EmitOutcomeEmitted(c, b.deps.bus, b.runID, b.beadID, detail, reason)
 }
 
 // feed stamps + feeds one shell-classified event and drains the synchronous
@@ -275,24 +276,24 @@ func (b *runBridge) mergeHook(a spineArgs) func(context.Context) {
 		if mergeInto == "" {
 			mergeInto = b.deps.targetBranch
 		}
-		mergeRes := mergeRunBranchToMain(c, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
+		mergeRes := runmerge.RunBranchToTarget(c, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
 		switch {
-		case mergeRes.noChange:
+		case mergeRes.NoChange:
 			b.sh.pending = append(b.sh.pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange})
-		case mergeRes.success:
+		case mergeRes.Success:
 			b.sh.pending = append(b.sh.pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeSuccess})
 		default:
 			// EM-053: non-FF or push failure → merge-failure classification.
-			b.rejectReason = mergeRes.reason
-			lastReason = mergeRes.reason
+			b.rejectReason = mergeRes.Reason
+			lastReason = mergeRes.Reason
 			ev := runexec.Event{
 				Kind: runexec.EvMergeResult, Merge: runexec.MergeFatal,
-				MergeStage: runexec.MergeStageMerge, MergeReason: mergeRes.reason,
+				MergeStage: runexec.MergeStageMerge, MergeReason: mergeRes.Reason,
 			}
 			switch {
-			case a.carveOut != nil && a.carveOut(mergeRes.reason):
+			case a.carveOut != nil && a.carveOut(mergeRes.Reason):
 				ev.AlreadyApprovedOnMain = true // hk-whru3/hk-vbv3b fall-through
-			case a.retryable != nil && a.retryable(mergeRes.reason):
+			case a.retryable != nil && a.retryable(mergeRes.Reason):
 				ev.Merge = runexec.MergeRetryable
 			}
 			b.sh.pending = append(b.sh.pending, ev)
@@ -318,16 +319,16 @@ func (b *runBridge) drainMergeHook(a spineArgs) func(context.Context, string) []
 		if mergeInto == "" {
 			mergeInto = b.deps.targetBranch
 		}
-		mergeRes := mergeRunBranchToMain(mctx, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
+		mergeRes := runmerge.RunBranchToTarget(mctx, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
 		switch {
-		case mergeRes.noChange:
+		case mergeRes.NoChange:
 			return []runexec.Event{{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange}}
-		case mergeRes.success:
+		case mergeRes.Success:
 			return []runexec.Event{{Kind: runexec.EvMergeResult, Merge: runexec.MergeSuccess}}
 		default:
 			fmt.Fprintf(os.Stderr, "daemon: workloop: shutdown-drain: merge failed for bead %s: %s; reopening for re-dispatch\n",
-				b.beadID, mergeRes.reason)
-			return []runexec.Event{{Kind: runexec.EvMergeResult, Merge: runexec.MergeFatal, MergeReason: mergeRes.reason}}
+				b.beadID, mergeRes.Reason)
+			return []runexec.Event{{Kind: runexec.EvMergeResult, Merge: runexec.MergeFatal, MergeReason: mergeRes.Reason}}
 		}
 	}
 }

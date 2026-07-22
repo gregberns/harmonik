@@ -1,4 +1,4 @@
-package daemon_test
+package runmerge_test
 
 // escapedetect_hkooexj_test.go — regression tests for the implementer-escaped-
 // worktree detector's false-positive on pre-existing / gitignored untracked
@@ -37,7 +37,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 // escapeFixtureGitRepo initialises a git repo in a temp dir with one commit on
@@ -100,14 +100,14 @@ func TestEscapeDetect_GitignoredPreExistingNotFlagged(t *testing.T) {
 
 	// Snapshot the baseline at run-start (the daemon does this before launching
 	// the implementer).
-	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	baseline, err := runmerge.SnapshotUntrackedFiles(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("snapshotUntrackedFiles: %v", err)
 	}
 
 	// After the run, with the implementer having touched nothing in main, the
 	// escape check must report clean.
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	dirty, files, checkErr := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -125,7 +125,7 @@ func TestEscapeDetect_GitignoredNotFlaggedEvenWithoutBaseline(t *testing.T) {
 	dir := escapeFixtureGitRepo(t)
 	escapeFixtureWrite(t, dir, "HANDOFF-flywheel.md", "scratch handoff\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil)
+	dirty, files, checkErr := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, nil)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -143,7 +143,7 @@ func TestEscapeDetect_NetNewUntrackedStillFlagged(t *testing.T) {
 
 	// Pre-existing baseline contains scratch-note.txt only.
 	escapeFixtureWrite(t, dir, "scratch-note.txt", "a note\n")
-	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	baseline, err := runmerge.SnapshotUntrackedFiles(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("snapshotUntrackedFiles: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestEscapeDetect_NetNewUntrackedStillFlagged(t *testing.T) {
 	// filename rather than collapsing a new directory to "dir/".
 	escapeFixtureWrite(t, dir, "leaked.go", "package main\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	dirty, files, checkErr := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -183,7 +183,7 @@ func TestEscapeDetect_NetNewUntrackedStillFlagged(t *testing.T) {
 func TestEscapeDetect_NetNewGitignoredNotFlagged(t *testing.T) {
 	dir := escapeFixtureGitRepo(t)
 
-	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	baseline, err := runmerge.SnapshotUntrackedFiles(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("snapshotUntrackedFiles: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestEscapeDetect_NetNewGitignoredNotFlagged(t *testing.T) {
 	// Implementer writes a NEW gitignored file during the run.
 	escapeFixtureWrite(t, dir, "HANDOFF-newthread.md", "new handoff\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	dirty, files, checkErr := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -213,7 +213,7 @@ func TestEscapeDetect_HarmonikChurnNotFlagged(t *testing.T) {
 	escapeFixtureWrite(t, dir, ".harmonik/queue.json", "{}\n")
 	escapeFixtureWrite(t, dir, ".claude/scratch.json", "{}\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil)
+	dirty, files, checkErr := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, nil)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -231,7 +231,7 @@ func TestEscapeDetect_AgentCommsNotFlagged(t *testing.T) {
 	dir := escapeFixtureGitRepo(t)
 
 	// Baseline is empty — AGENT_COMMS.md did not exist at run-start.
-	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	baseline, err := runmerge.SnapshotUntrackedFiles(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("snapshotUntrackedFiles: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestEscapeDetect_AgentCommsNotFlagged(t *testing.T) {
 	// Concurrent agent creates AGENT_COMMS.md during the run.
 	escapeFixtureWrite(t, dir, "AGENT_COMMS.md", "## ts · orchestrator\nhello\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	dirty, files, checkErr := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -259,7 +259,7 @@ func TestEscapeDetect_AgentCommsNotFlagged(t *testing.T) {
 func TestEscapeDetect_SiblingMergeRaceWindow(t *testing.T) {
 	dir := escapeFixtureGitRepo(t)
 
-	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	baseline, err := runmerge.SnapshotUntrackedFiles(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("snapshotUntrackedFiles: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestEscapeDetect_SiblingMergeRaceWindow(t *testing.T) {
 	run("update-ref", "refs/heads/main", siblingTip)
 
 	// Without mergeMu, the race window is observable: sibling.go appears dirty.
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	dirty, files, checkErr := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -318,7 +318,7 @@ func TestEscapeDetect_SiblingMergeSameFileEscapeDetected(t *testing.T) {
 	dir := escapeFixtureGitRepo(t)
 
 	// Baseline at run-start: tree is clean.
-	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	baseline, err := runmerge.SnapshotUntrackedFiles(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("snapshotUntrackedFiles: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestEscapeDetect_SiblingMergeSameFileEscapeDetected(t *testing.T) {
 
 	// The escape MUST be detected. Without siblingMergeChangedPaths exclusion,
 	// foo.go is correctly reported as dirty.
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	dirty, files, checkErr := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -399,7 +399,7 @@ func TestEscapeDetect_LockedPathNeverFiresOnConcurrentSiblingMerge(t *testing.T)
 
 	dir := escapeFixtureGitRepo(t)
 
-	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	baseline, err := runmerge.SnapshotUntrackedFiles(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("snapshotUntrackedFiles: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestEscapeDetect_LockedPathNeverFiresOnConcurrentSiblingMerge(t *testing.T)
 				return
 			}
 			mu.Lock()
-			dirty, files, _ := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+			dirty, files, _ := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 			mu.Unlock()
 			if dirty {
 				for _, f := range files {

@@ -45,6 +45,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/gregberns/harmonik/internal/branching"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 )
 
 // BranchingConfig holds the per-bead branching fields extracted from the
@@ -329,13 +330,13 @@ func extractFencedYAML(body string) (string, bool) {
 // message and reopen the bead.
 func resolveStartFrom(ctx context.Context, repoRoot, ref string) (string, error) {
 	// Attempt 1: refs/heads/<ref> (precise branch-name lookup).
-	sha, err := gitRevParse(ctx, repoRoot, "refs/heads/"+ref)
+	sha, err := gitprobe.RevParse(ctx, repoRoot, "refs/heads/"+ref)
 	if err == nil {
 		return sha, nil
 	}
 
 	// Attempt 2: bare ref (covers explicit SHAs and full refspecs like origin/foo).
-	sha, err = gitRevParse(ctx, repoRoot, ref)
+	sha, err = gitprobe.RevParse(ctx, repoRoot, ref)
 	if err == nil {
 		return sha, nil
 	}
@@ -358,22 +359,6 @@ func (e *StartFromRefError) Error() string {
 }
 
 func (e *StartFromRefError) Unwrap() error { return e.Cause }
-
-// gitRevParse runs `git rev-parse <ref>` in repoRoot and returns the trimmed
-// SHA on success. On non-zero exit it returns an error.
-func gitRevParse(ctx context.Context, repoRoot, ref string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", ref)
-	cmd.Dir = repoRoot
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("git rev-parse %s: %w", ref, err)
-	}
-	sha := strings.TrimRight(string(out), "\n")
-	if sha == "" {
-		return "", fmt.Errorf("git rev-parse %s: empty output", ref)
-	}
-	return sha, nil
-}
 
 // resolveParentCommit resolves the parent_commit SHA for worktree creation per
 // WM-005b. It is the integration point called by beadRunOne before passing the
@@ -530,10 +515,10 @@ func landTaskBranch(ctx context.Context, repoRoot, mergeWorktreeDir, taskBranch,
 	landsOn := resolveLandsOn(cfg)
 
 	// Validate that lands_on resolves locally (fail-fast per judgment call).
-	_, err := gitRevParse(ctx, repoRoot, "refs/heads/"+landsOn)
+	_, err := gitprobe.RevParse(ctx, repoRoot, "refs/heads/"+landsOn)
 	if err != nil {
 		// Try bare ref (explicit SHA or full refspec).
-		_, err2 := gitRevParse(ctx, repoRoot, landsOn)
+		_, err2 := gitprobe.RevParse(ctx, repoRoot, landsOn)
 		if err2 != nil {
 			return &LandsOnRefError{Ref: landsOn, Cause: err2}
 		}

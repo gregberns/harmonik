@@ -59,6 +59,7 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/substrate"
 	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
@@ -1805,7 +1806,7 @@ func isChurnOnlyCommitVia(ctx context.Context, runner tmux.CommandRunner, wtPath
 		if f == "" {
 			continue
 		}
-		if !isHarmonikChurn(f) {
+		if !runmerge.IsHarmonikChurn(f) {
 			return false, nil
 		}
 	}

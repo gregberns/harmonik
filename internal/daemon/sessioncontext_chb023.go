@@ -53,6 +53,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 // runContextFileName is the filename of the run-context JSON file written
@@ -61,7 +62,11 @@ const runContextFileName = "context.json"
 
 // runContextDirPrefix is the directory prefix under .harmonik/ for run-context files.
 // Full path: <worktree>/.harmonik/run-context/<run_id>/context.json
-const runContextDirPrefix = ".harmonik/run-context"
+//
+// Aliased to runmerge.RunContextDirPrefix so the CHB-023 writer and the
+// merge-time stripper (internal/runmerge/stripruncontext.go, moved there by P2
+// E5 RT13) can never drift apart.
+const runContextDirPrefix = runmerge.RunContextDirPrefix
 
 // runContextFile holds the persisted Run.context fields written to git.
 // Only fields updated at each checkpoint pass are included; other Run.context

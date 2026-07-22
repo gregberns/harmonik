@@ -372,28 +372,6 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// Authorised: execution-model.md §4.12 EM-052/EM-053; workspace-model.md §4.5.
 	"internal/daemon/workloop.go": "EM-052/EM-053 pre-merge rebase of run-branch onto target (WM §4.5 merge-back); not a workspace_leased task-branch rewrite",
 
-	// internal/daemon/mergetomain_dirtyledger_hk3yz2d_test.go — scenario test
-	// that drives the EM-052 merge-path rebase (and rebase --abort) inside an
-	// isolated throwaway test repo to exercise the dirty-ledger auto-resolve
-	// path (hk-3yz2d); not a live run task branch.
-	// Authorised: EM-052/EM-053 merge-path test fixture.
-	"internal/daemon/mergetomain_dirtyledger_hk3yz2d_test.go": "EM-052/EM-053 merge-path test fixture; isolated test repo, not a live run task branch",
-
-	// internal/daemon/mergetomain_residualdelta_hkrljho_test.go — scenario test
-	// that drives the EM-052 merge-path rebase inside an isolated throwaway test
-	// repo to exercise the residual-tracked-delta commit-then-rebase path
-	// (hk-rljho); not a live run task branch.
-	// Authorised: EM-052/EM-053 merge-path test fixture.
-	"internal/daemon/mergetomain_residualdelta_hkrljho_test.go": "EM-052/EM-053 merge-path test fixture; isolated test repo, not a live run task branch",
-
-	// internal/daemon/mergetomain_integrationartifacts_hkg9zz_test.go — regression
-	// test for hk-g9zz (pre-rebase integration-artifact cleanup). The test issues
-	// `git rebase main` twice (once to confirm it fails with untracked files, once to
-	// confirm it succeeds after cleanUntrackedFiles) and `git rebase --abort` once
-	// inside an isolated throwaway test repo; not a live run task branch.
-	// Authorised: EM-052/EM-053 merge-path test fixture (hk-g9zz regression).
-	"internal/daemon/mergetomain_integrationartifacts_hkg9zz_test.go": "EM-052/EM-053 merge-path test fixture (hk-g9zz); isolated test repo, pre/post-fix rebase probes; not a live run task branch",
-
 	// internal/specaudit/wminv003_task_branch_append_only_test.go — this file
 	// itself contains synthetic Go code fragments (as string literals) used in
 	// TestWMINV003PartBSyntheticViolationDetected and
@@ -437,20 +415,32 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// pre-observation amend only. Plan: plans/2026-07-21-p2-extraction/E1a-codex-harness.md §4 step 7.
 	"internal/harness/shared/refstrailer.go": "codex-harness C2/T9 (hk-bpxci), relocated by P2 E1a-0; post-exit Refs-trailer amend before workspace_leased; not a rewrite of an observed task branch",
 
-	// internal/daemon/reviewtrailers_hkdyim.go — appendReviewTrailersToHEAD
-	// amends the run/* worktree HEAD commit ONLY to append the review audit
-	// trail (Reviewed-By: agent-reviewer / Review-Verdict: <json>) after the
-	// review loop returns APPROVE. The commit TREE is unchanged — only the
-	// commit message gains trailers. It runs in the daemon-private worktree
-	// after the implementer process has exited and the reviewer has returned its
-	// verdict, immediately before the fast-forward merge (workloop.go calls it
-	// right before lockedMergeRunBranchToMain), so the trailer-bearing commit is
-	// the one main fast-forwards to. No other process observes the branch at this
-	// point — this mirrors the codex commit.go authorization (daemon-private,
-	// message-only, pre-merge amend), it is NOT a rewrite of an observed task
-	// branch. Authorised: hk-dyim review audit-trail embed; agent-reviewer skill
-	// contract §"How the verdict lands in git".
-	"internal/daemon/reviewtrailers_hkdyim.go": "hk-dyim review audit-trail trailer embed; daemon-private worktree HEAD message-only amend after implementer exit + reviewer APPROVE, immediately before the FF merge; tree unchanged, no concurrent observer — mirrors the codex harness commit path; not a rewrite of an observed task branch",
+	// internal/runmerge/ — the whole merge path. P2 unit E5 RT13 carved the
+	// EM-052/EM-053 merge-to-main sequence out of internal/daemon/workloop.go
+	// (and moved reviewtrailers_hkdyim.go wholesale) into internal/runmerge, so
+	// the `git rebase <target>` / `git rebase --abort` / `git commit --amend`
+	// calls this scanner sees now live under that path. The authorisation is
+	// unchanged, only its address:
+	//
+	//   - merge.go rebases the run/* run branch ONTO the target branch before
+	//     the fast-forward merge (EM-052 pre-merge rebase) and `rebase --abort`s
+	//     on conflict to fall through to the EM-053 reopen path. That advances
+	//     the integration tip; it does NOT rewrite the history of a
+	//     workspace_leased task branch under an observer.
+	//   - reviewtrailers.go amends the run/* worktree HEAD commit ONLY to append
+	//     the review audit trail (Reviewed-By: agent-reviewer / Review-Verdict:
+	//     <json>) after the review loop returns APPROVE. The commit TREE is
+	//     unchanged — only the message gains trailers — and it runs in the
+	//     daemon-private worktree after the implementer exited, immediately
+	//     before the FF merge, so no other process observes the branch.
+	//
+	// The allowlist matches on `relPath == key || strings.HasPrefix(relPath, key)`,
+	// so this trailing-slash directory key covers every file in the package.
+	// Authorised: execution-model.md §4.12 EM-052/EM-053; workspace-model.md §4.5;
+	// hk-dyim review audit-trail embed (agent-reviewer skill contract
+	// §"How the verdict lands in git").
+	// Plan: plans/2026-07-21-p2-extraction/E5-dot-runloop.md §4 step 11.
+	"internal/runmerge/": "EM-052/EM-053 pre-merge rebase of run-branch onto target (WM §4.5 merge-back) + hk-dyim review-trailer amend, moved from internal/daemon by P2 E5 RT13; not a workspace_leased task-branch rewrite",
 }
 
 // wmInv003FixtureScanGoSource walks all .go files under the given root (up to

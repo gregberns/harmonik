@@ -301,6 +301,20 @@ harnessclaude-freeze-gate:  ## P2 E1b: forbid new claude-harness files or moved 
 harnesspi-freeze-gate:  ## P2 E1c: forbid new pi-harness files or moved symbols in internal/daemon
 	scripts/harnesspi-freeze-gate.sh
 
+# runmerge-freeze-gate: the P2 E5 RT13 extraction ratchet — the run-branch merge
+# path (the EM-052/EM-053 merge-to-main sequence, the pre-rebase worktree
+# hygiene, the gofumpt/gci format gate, the run-context strip, the review-trailer
+# amend) left internal/daemon for internal/runmerge, and depguard can only fence
+# the import edge, not the creation of a new file. This grep gate fails if a
+# merge-path-shaped file or one of the moved symbols reappears in internal/daemon,
+# or if the daemon re-acquires a raw `git merge` / `git rebase` exec.
+# beadsmergedriver.go (git merge-DRIVER registration), scenariotest/ and
+# branching.go (the WM-019b task-branch landing path) are named exceptions — see
+# the script header. Wired into check-fast and check-short.
+.PHONY: runmerge-freeze-gate
+runmerge-freeze-gate:  ## P2 E5 RT13: forbid new merge-path files or moved symbols in internal/daemon
+	scripts/runmerge-freeze-gate.sh
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -492,6 +506,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/harnesscodex-freeze-gate.sh
 	scripts/harnessclaude-freeze-gate.sh
 	scripts/harnesspi-freeze-gate.sh
+	scripts/runmerge-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -519,6 +534,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/harnesscodex-freeze-gate.sh
 	scripts/harnessclaude-freeze-gate.sh
 	scripts/harnesspi-freeze-gate.sh
+	scripts/runmerge-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

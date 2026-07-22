@@ -1,11 +1,11 @@
-package daemon
+package runmerge
 
 // reviewtrailers_hkdyim.go — review verdict commit-trailer injection (hk-dyim).
 //
 // The daemon review loop fires and APPROVEs a bead, but the merge commit that
 // lands on main carries no Reviewed-By / Review-Verdict trailers — the review
 // audit trail never reaches git history. This file implements the fix:
-// appendReviewTrailersToHEAD amends the HEAD commit in the implementer's
+// AppendReviewTrailersToHEAD amends the HEAD commit in the implementer's
 // worktree (before the FF merge) to embed the verdict as git trailers, matching
 // the format documented in the agent-reviewer skill contract (SKILL.md §"How the
 // verdict lands in git").
@@ -27,7 +27,7 @@ import (
 // agent-reviewer skill contract (SKILL.md §"How the verdict lands in git").
 const reviewedByTrailerValue = "agent-reviewer"
 
-// appendReviewTrailersToHEAD amends the HEAD commit in wtPath to add
+// AppendReviewTrailersToHEAD amends the HEAD commit in wtPath to add
 //
 //	Reviewed-By: agent-reviewer
 //	Review-Verdict: <verdict-json>
@@ -45,7 +45,7 @@ const reviewedByTrailerValue = "agent-reviewer"
 // and logs it, proceeding with the merge without trailers.
 //
 // Bead: hk-dyim.
-func appendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *workspace.ReviewVerdict) error {
+func AppendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *workspace.ReviewVerdict) error {
 	if verdict == nil {
 		return nil
 	}
@@ -55,7 +55,7 @@ func appendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 	// agent-reviewer schema v1 exactly (same tags as workspace.ReviewVerdict).
 	verdictJSON, err := json.Marshal(verdict)
 	if err != nil {
-		return fmt.Errorf("appendReviewTrailersToHEAD: marshal verdict: %w", err)
+		return fmt.Errorf("AppendReviewTrailersToHEAD: marshal verdict: %w", err)
 	}
 
 	reviewedByLine := "Reviewed-By: " + reviewedByTrailerValue
@@ -66,7 +66,7 @@ func appendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 	logCmd.Dir = wtPath
 	out, err := logCmd.Output()
 	if err != nil {
-		return fmt.Errorf("appendReviewTrailersToHEAD: git log HEAD: %w", err)
+		return fmt.Errorf("AppendReviewTrailersToHEAD: git log HEAD: %w", err)
 	}
 	existing := strings.TrimRight(string(out), "\n")
 
@@ -91,7 +91,7 @@ func appendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 	amendCmd := exec.CommandContext(ctx, "git", "commit", "--amend", "-m", newMsg)
 	amendCmd.Dir = wtPath
 	if out, err := amendCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("appendReviewTrailersToHEAD: git commit --amend: %w\ngit output: %s", err, out)
+		return fmt.Errorf("AppendReviewTrailersToHEAD: git commit --amend: %w\ngit output: %s", err, out)
 	}
 	return nil
 }

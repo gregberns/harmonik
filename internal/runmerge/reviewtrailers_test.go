@@ -1,8 +1,8 @@
-package daemon
+package runmerge
 
-// reviewtrailers_hkdyim_test.go — unit tests for appendReviewTrailersToHEAD (hk-dyim).
+// reviewtrailers_hkdyim_test.go — unit tests for AppendReviewTrailersToHEAD (hk-dyim).
 //
-// Verifies that appendReviewTrailersToHEAD amends the HEAD commit in a git
+// Verifies that AppendReviewTrailersToHEAD amends the HEAD commit in a git
 // worktree to carry Reviewed-By: and Review-Verdict: trailers from an APPROVE
 // verdict, making the review audit trail visible in git history.
 //
@@ -60,7 +60,7 @@ func headCommitMsg_dyim(t *testing.T, dir string) string {
 
 // TestAppendReviewTrailersToHEAD_AddsTrailers_dyim verifies that the
 // Reviewed-By: and Review-Verdict: trailers are present in the HEAD commit
-// message after a successful call to appendReviewTrailersToHEAD with an
+// message after a successful call to AppendReviewTrailersToHEAD with an
 // APPROVE verdict.
 func TestAppendReviewTrailersToHEAD_AddsTrailers_dyim(t *testing.T) {
 	t.Parallel()
@@ -76,8 +76,8 @@ func TestAppendReviewTrailersToHEAD_AddsTrailers_dyim(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := appendReviewTrailersToHEAD(ctx, dir, verdict); err != nil {
-		t.Fatalf("appendReviewTrailersToHEAD: %v", err)
+	if err := AppendReviewTrailersToHEAD(ctx, dir, verdict); err != nil {
+		t.Fatalf("AppendReviewTrailersToHEAD: %v", err)
 	}
 
 	msg := headCommitMsg_dyim(t, dir)
@@ -119,7 +119,7 @@ func TestAppendReviewTrailersToHEAD_AddsTrailers_dyim(t *testing.T) {
 }
 
 // TestAppendReviewTrailersToHEAD_Idempotent_dyim verifies that calling
-// appendReviewTrailersToHEAD twice does not duplicate the trailers.
+// AppendReviewTrailersToHEAD twice does not duplicate the trailers.
 func TestAppendReviewTrailersToHEAD_Idempotent_dyim(t *testing.T) {
 	t.Parallel()
 
@@ -134,11 +134,11 @@ func TestAppendReviewTrailersToHEAD_Idempotent_dyim(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := appendReviewTrailersToHEAD(ctx, dir, verdict); err != nil {
-		t.Fatalf("first appendReviewTrailersToHEAD: %v", err)
+	if err := AppendReviewTrailersToHEAD(ctx, dir, verdict); err != nil {
+		t.Fatalf("first AppendReviewTrailersToHEAD: %v", err)
 	}
-	if err := appendReviewTrailersToHEAD(ctx, dir, verdict); err != nil {
-		t.Fatalf("second appendReviewTrailersToHEAD: %v", err)
+	if err := AppendReviewTrailersToHEAD(ctx, dir, verdict); err != nil {
+		t.Fatalf("second AppendReviewTrailersToHEAD: %v", err)
 	}
 
 	msg := headCommitMsg_dyim(t, dir)
@@ -161,8 +161,8 @@ func TestAppendReviewTrailersToHEAD_NilVerdict_dyim(t *testing.T) {
 	msgBefore := headCommitMsg_dyim(t, dir)
 
 	ctx := context.Background()
-	if err := appendReviewTrailersToHEAD(ctx, dir, nil); err != nil {
-		t.Fatalf("appendReviewTrailersToHEAD(nil): %v", err)
+	if err := AppendReviewTrailersToHEAD(ctx, dir, nil); err != nil {
+		t.Fatalf("AppendReviewTrailersToHEAD(nil): %v", err)
 	}
 
 	msgAfter := headCommitMsg_dyim(t, dir)

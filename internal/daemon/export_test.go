@@ -33,6 +33,7 @@ import (
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -1128,60 +1129,7 @@ var ExportedProductionWorktreeFactory = productionWorktreeFactory
 // ExportedIsRetryableMergeReason exposes isRetryableMergeReason for unit tests.
 //
 // Bead ref: hk-f9xzs.
-var ExportedIsRetryableMergeReason = isRetryableMergeReason
-
-// ExportedMergeOutcome wraps the internal mergeOutcome so tests in the
-// daemon_test package can inspect the result of ExportedMergeRunBranchToMain.
-//
-// Bead ref: hk-sfy7f.
-type ExportedMergeOutcome struct {
-	success  bool
-	reason   string
-	noChange bool
-}
-
-func (o ExportedMergeOutcome) Success() bool  { return o.success }
-func (o ExportedMergeOutcome) Reason() string { return o.reason }
-func (o ExportedMergeOutcome) NoChange() bool { return o.noChange }
-
-// ExportedMergeRunBranchToMain exposes mergeRunBranchToMain for direct unit
-// tests that set up the git state manually and call the merge helper without
-// going through the full work loop (e.g. the hk-sfy7f no-local-worktree
-// regression test).
-//
-// Bead ref: hk-sfy7f.
-func ExportedMergeRunBranchToMain(
-	ctx context.Context,
-	projectDir string,
-	runID core.RunID,
-	bus handlercontract.EventEmitter,
-	beadID core.BeadID,
-	headSHA string,
-	targetBranch string,
-	protectBranches []string,
-	brPath string,
-) ExportedMergeOutcome {
-	o := mergeRunBranchToMain(ctx, inlineMergeSubmit, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches, brPath)
-	return ExportedMergeOutcome{success: o.success, reason: o.reason, noChange: o.noChange}
-}
-
-// ExportedDiscardDirtyChurn exposes discardDirtyChurn for the pre-rebase
-// churn-cleanup regression test (hk-3yz2d ledger, hk-aiw63 generalized).
-func ExportedDiscardDirtyChurn(ctx context.Context, wtPath string) {
-	discardDirtyChurn(ctx, wtPath)
-}
-
-// ExportedCommitResidualDelta exposes commitResidualDelta for the review-loop
-// residual-delta merge regression test (hk-rljho class).
-func ExportedCommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
-	commitResidualDelta(ctx, wtPath, runID)
-}
-
-// ExportedCleanUntrackedFiles exposes cleanUntrackedFiles for the
-// integration-test artifact pre-rebase cleanup regression test (hk-g9zz).
-func ExportedCleanUntrackedFiles(ctx context.Context, wtPath string) {
-	cleanUntrackedFiles(ctx, wtPath)
-}
+var ExportedIsRetryableMergeReason = runmerge.IsRetryableReason
 
 // ExportedForceTeardownSession exposes forceTeardownSession for the hk-68pvl
 // worktree-teardown-ordering regression test.
@@ -2577,23 +2525,6 @@ func ExportedHandlerPauseControllerSetAutoResumeCfg(c *HandlerPauseController, a
 // The brQueueLedger test seam (hk-dv8qv — ledger-dep direction regression) moved
 // to internal/queuewiring/export_test.go as ExportedQueueLedger /
 // ExportedNewBRQueueLedger, along with the bridge and its only caller (P2 E3a).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Escape-detector test seams (hk-ooexj — gitignored/pre-existing false positive)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedSnapshotUntrackedFiles exposes snapshotUntrackedFiles for the
-// escape-detector baseline regression test (hk-ooexj).
-func ExportedSnapshotUntrackedFiles(ctx context.Context, mainPath string) (map[string]struct{}, error) {
-	return snapshotUntrackedFiles(ctx, mainPath)
-}
-
-// ExportedCheckMainWorkingTreeDirty exposes checkMainWorkingTreeDirty for the
-// escape-detector regression tests (hk-ooexj, hk-xux36). baseline is the set
-// of pre-existing untracked paths captured at run-start.
-func ExportedCheckMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}) (bool, []string, error) {
-	return checkMainWorkingTreeDirty(ctx, mainPath, baseline)
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-run event-tap fan-out test seams (hk-37giq)

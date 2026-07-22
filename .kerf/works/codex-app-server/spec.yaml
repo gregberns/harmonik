@@ -1,0 +1,30 @@
+codename: codex-app-server
+title: Resident codex app-server as harmonik crew orchestrator
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: tasks
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-11T06:23:11Z
+updated: 2026-07-11T14:31:08Z
+sessions:
+    - id: null
+      started: 2026-07-11T06:23:11Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

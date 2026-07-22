@@ -1,0 +1,310 @@
+# R-B — Message cluster: self-restart command, nonce provenance, configurable text
+
+Cluster: **R-B (K2 + K3 + K4)** — the keeper NUDGE MESSAGE. Grounds the self-restart
+primitive, nonce provenance, warn-text selection, and the existing config surface.
+All claims cite `file:line` at HEAD on branch `phase1-session-restart-substrate`.
+
+---
+
+## Q1 — The agent-run self-restart primitive (`restartnow.go`, hk-5da7)
+
+### Finding
+
+**It is a CLI subcommand: `harmonik keeper restart-now --agent <name> [--project DIR]`.**
+- CLI entry: `runKeeperRestartNow` at `cmd/harmonik/keeper_cmd.go:791`. Usage/help
+  lines `cmd/harmonik/keeper_cmd.go:975`, `:1006`, `:1091`.
+- Core logic: `keeper.RestartNow` at `internal/keeper/restartnow.go:69`.
+
+**It runs SYNCHRONOUSLY, entirely in the `restart-now` process** — no marker, no
+watcher hand-off. The doc-comment at `restartnow.go:13-29` states this explicitly:
+the old marker→watcher-poll→nonce-poll cycle was the silent-no-op bug; the new path
+does everything in-process. The synchronous sequence (`restartnow.go:85-150`):
+1. Require a resolved tmux pane, else error (`:86-89`).
+2. Verify session id: read the gauge `.ctx`/`.sid`, require a trusted **primary
+   lowercase UUIDv4** (`IsPrimarySID`) — a daemon UUIDv7 or absent id is refused
+   (`:95-105`).
+3. **ONE freshness check** — `os.Stat(HANDOFF-<agent>.md)`; the handoff must exist
+   and its mtime must not be older than `requestedAt - HandoffFreshnessWindow`
+   (`HandoffFreshnessWindow = 10*time.Minute`, `restartnow.go:43`, `:111-124`).
+4. Inject the ACK line **first** (`AckLine(nonce,"restart")` → `[KEEPER ACK <nonce>]
+   received restart`, `injector.go:70`) so the agent can verify receipt before
+   `/clear` wipes context (`:131-135`).
+5. Inject `/clear` (`:138-142`).
+6. Inject `briefRestartCmd` = `"harmonik agent brief --wake keeper-restart"`
+   (`cycle.go:19`) to re-pin identity (`:145-149`).
+
+Every step logs at INFO/WARN and any failure returns an error → the CLI maps it to a
+non-zero exit (`keeper_cmd.go:810-813`). "A silent no-op is impossible" (`restartnow.go:29`).
+
+**Can an AGENT invoke it from inside a normal turn?** Yes — it is an ordinary CLI
+command with no daemon dependency and no interactive prompt. This is already the
+designed usage: `ActionableWarnText` (`injector.go:41`) instructs the agent to run
+`/session-handoff` then `` `harmonik keeper restart-now --agent <name>` `` itself,
+and the plan records the captain/admiral already use this form (I3, `_plan.md:200`).
+The command drives the agent's *own* pane (`restart-now has no --tmux flag — it is
+always the agent's own pane`, `keeper_cmd.go:798-800`), resolved by convention via
+`keeper.ResolveTmuxTarget(projectFlag, agent, "", nil)` (`:800`).
+
+### Design implication
+
+G4's mechanism exists and is agent-invocable today — the spec's constraint
+("largely wiring it in as the default + composing the message, not inventing a
+mechanism", `01-problem-space.md:114-117`) is **confirmed correct**. The self-restart
+does NOT depend on the keeper's 300 s watch window at all: it is a wholly separate
+in-process CLI path. This is exactly why it closes the timeout gap (see Q5). One real
+gap for G4: restart-now injects into the agent's own pane via the tmux paste
+primitive (`RestartNowInjector` → `InjectText`, `restartnow.go:34`, `:76`), so the
+agent running it mid-turn still uses a terminal write — but that write targets its OWN
+pane at a moment IT chose, not an operator-typing collision, so it is compatible with
+the G1 "no terminal paste over operator input" goal.
+
+---
+
+## Q2 — Nonce provenance (the load-bearing correction)
+
+### Finding — TWO SEPARATE NONCE SCHEMES; restart-now does NOT consume the keeper's cycle nonce
+
+**Scheme A — the auto-cycle cycleID (`cyc-...`).** Minted by the keeper watcher:
+`newCycleIDGen` (`cycle.go:491`) returns `cyc-<startupTimestamp>-<6digitseq>`
+(`cycle.go:496`), seeded once per keeper process from `clock.Now()` (`:492`). The
+cycle injects it into the pane inside the `/session-handoff` command as a verbatim
+marker: `executeInjectHandoffCmd` (`shell.go:88-95`) sends
+`"/session-handoff <path>\n\nIMPORTANT: include exactly this line verbatim in the
+handoff file: <!-- KEEPER:<cycleID> -->"` (marker format `nonceMarker` →
+`"<!-- KEEPER:%s -->"`, `cycle.go:572`; prefix const `cycle.go:578`). The cycle then
+polls `HANDOFF-<agent>.md` until it contains that exact marker (`NonceObserved` →
+`step.go:318`), which is the SR3 confirm gate. This is the nonce the plan's grounded
+map describes at `_plan.md:114-117`.
+
+**Scheme B — the restart-now / ping nonce (`rn-...`).** Minted by the CLI, NOT by the
+keeper and NOT by the agent: `restartNowNonce(t)` returns `"rn-<t.UnixMilli()>"`
+(`keeper_cmd.go:880-882`). `runKeeperRestartNow` mints it locally at `:803`
+(`nonce := restartNowNonce(requestedAt)`). **`RestartNow` accepts the nonce ONLY to
+echo it in the ACK line — it is never validated against the handoff or anything
+else.** The doc-comment is explicit: *"It is generated by the caller (CLI) so the
+agent that fired the request can match it. RestartNow/Ping do not invent it — they
+only echo it."* (`restartnow.go:60-62`). The only gate restart-now applies to the
+handoff is the **mtime freshness check** (`restartnow.go:111-124`), NOT a nonce
+match.
+
+**restart-now has NO `--nonce` flag.** It parses only `--agent`/`--project` via
+`parseKeeperMarkerArgs` (`keeper_cmd.go:792`). By contrast `ping` DOES accept
+`--nonce` (`keeper_cmd.go:833`) — but only to echo it back in its ACK line
+(`:864-872`); ping performs no handoff check at all.
+
+### Flag: the plan's nonce claim is imprecise
+
+`_plan.md:116-117` says: *"Manual `restart-now`: the captain mints the nonce into
+`HANDOFF-captain.md`."* **This is not what the code does.** In the current code:
+- The `rn-<ms>` nonce is minted by the `restart-now` CLI itself (`keeper_cmd.go:803`),
+  not by the captain and not written into the handoff.
+- restart-now does NOT read, require, or match ANY nonce (neither `cyc-` nor `rn-`)
+  in `HANDOFF-<agent>.md`. Its only handoff gate is mtime freshness.
+- The `cyc-...` KEEPER marker in the handoff is consumed ONLY by the auto-cycle's
+  nonce poll (`shell.go`/`step.go`), never by restart-now.
+
+So the two schemes are disjoint today: the keeper's `cyc-` cycle nonce and the
+restart-now `rn-` echo nonce never meet. There is **no existing path for the keeper
+to hand the agent a nonce that `restart-now` then validates.**
+
+### Design implication (answers OQ-2 directly)
+
+For G4's "every nudge carries the agent's own restart command **carrying the keeper's
+cycle nonce**" and SC-4's "restart independent of the 300 s window," a NEW path is
+required — the nonce provenance does NOT flow today:
+1. `restart-now` must gain a `--nonce <cyc-id>` parameter (it has none; ping's is the
+   model to copy), and
+2. `RestartNow` must be extended to actually *honor/record* that nonce (bind it to
+   the emitted interior events / journal so the restart is attributable to the
+   keeper's cycle), rather than merely echoing it.
+
+Whether that nonce needs to be *validated* (agent must present the keeper's real
+`cyc-` id) or is merely carried for audit is a design decision this research does not
+make — but the mechanism to validate it does **not** exist now. If the keeper hands
+the nonce to the agent over a comms message (K1), that is a clean provenance channel:
+keeper mints `cyc-id` at cycle entry (`cycle.go:491`) → comms message embeds it in
+the `restart-now --nonce <cyc-id>` command string → agent runs it verbatim. The K4
+message template (Q3) is the natural carrier for that command+nonce.
+
+---
+
+## Q3 — Where nudge/warn text is chosen today (`selectWarnText`, `ActionableWarnText`, hk-vs4u)
+
+### Finding
+
+Text selection is a two-form choice made per warn tick in `selectWarnText`
+(`watcher.go:867-879`), called from the watcher warn path at `watcher.go:1451`.
+
+**The gate — `actionableWarnEligible` (`watcher.go:835-847`).** The ACTIONABLE
+(self-restart-handshake) form is chosen only when ALL hold:
+- `SelfServiceEnabled` (`:836`),
+- agent is `"captain"` OR (`SelfServiceCrewsEnabled` and a crew) (`:839-842`),
+- the bound SID is a primary lowercase UUIDv4 `isPrimarySID` (`:843`),
+- the pane is `crispIdle` (`:846`),
+- AND (checked in `selectWarnText:868`) the operator is NOT attached
+  (`operatorAttached` guard, hk-1ryc — `watcher.go:860-866`).
+
+**The two texts:**
+- Actionable form → `ActionableWarnText(agent, tokens, warn, act)` (`injector.go:41`):
+  `[KEEPER WARN] Context at Nk tokens (warn Wk / act Ak). Self-restart now: (a) run
+  /session-handoff, then (b) run \`harmonik keeper restart-now --agent <name>\`. Only
+  at a clean stop; if mid-task, finish first — the keeper auto-restarts at Ak.`
+  The restart-now command is templated in via `restartNowCmdToken` =
+  `"harmonik keeper restart-now --agent %s"` (`injector.go:23`), so the command token
+  cannot be stripped (`injector.go:19-23`).
+- Advisory form → `wrapUpWarningText` const (`injector.go:16-17`):
+  `[KEEPER WARN] Context threshold crossed. At a clean stop: commit + write
+  HANDOFF-<name>.md (KEEPER nonce). Keep working.`
+
+**Is it hard-coded or config-sourced? BOTH — with config override already wired:**
+- Compiled defaults are the two consts/functions above (`injector.go:16`, `:41`).
+- Config overrides exist: `selectWarnText` returns `c.ActionableWarnText` when set
+  AND it still contains the restart-now command stem (`containsRestartNowCmd`,
+  `watcher.go:870-871`, `:893-895`); otherwise it returns `c.DefaultWarnText` for the
+  advisory form (`watcher.go:875-877`). These two `WatcherConfig` fields
+  (`watcher.go:385`, `:401`) are populated from config (see Q4).
+
+### Design implication
+
+K2/K4 are unusually well-positioned: the actionable-vs-advisory split, the
+operator-attached guard, and a *validated* config override already exist. But note the
+**structural invariant already enforced in code**: a custom `ActionableWarnText` that
+drops `"harmonik keeper restart-now"` is REJECTED and the compiled text is used
+instead (`watcher.go:870`, `:889-895`). This is exactly the K4 "structure normative,
+prose tunable" contract (`02-components.md:29-31`) — partially realized already, but
+only for the *command token*, not for the other three structural elements (defer
+conditions, stopping-point test, nonce). The spec's normative-structure enforcement
+would need to extend `containsRestartNowCmd`-style validation to the additional
+required elements, OR (cleaner) template them in the way `restartNowCmdToken` is
+templated (`injector.go:42-48`) so an override can only fill the prose around fixed
+slots.
+
+---
+
+## Q4 — Existing config surface the keeper reads
+
+### Finding — the keeper DOES read an external config file today: `.harmonik/config.yaml`, `keeper:` block
+
+- Loaded by `daemon.LoadProjectConfig(projectDir)` at keeper startup
+  (`cmd/harmonik/keeper_cmd.go:272`; also the enable/doctor path
+  `keeper_enable_doctor_cmd.go:522`). Parser + schema doc: `internal/daemon/
+  projectconfig.go:17`, `:49-92`.
+- The block lives under `schema_version: 1` → `keeper:` and holds thresholds,
+  hard_ceiling, timings, cadence, budgets, **`self_service`**, and **`warn_messages`**
+  (`projectconfig.go:341-386`). Raw structs: `rawKeeperWarnMessages`
+  (`projectconfig.go:335-339`) with `default_warn_text`, `on_demand_warn_text`
+  (DEPRECATED alias), `actionable_warn_text`; `rawKeeperSelfService`
+  (`projectconfig.go:326`).
+- Documented keys (`projectconfig.go:89-92`):
+  - `keeper.warn_messages.default_warn_text` — advisory text for non-captain agents;
+    empty = compiled default. Threaded to `WatcherConfig.DefaultWarnText`
+    (`watcher.go:380-385`; wired `keeper_cmd.go:121`).
+  - `keeper.warn_messages.actionable_warn_text` — actionable self-service handshake
+    override; empty = compiled default. Threaded to `WatcherConfig.ActionableWarnText`
+    (`watcher.go:387-401`; wired `keeper_cmd.go:122`).
+  - `keeper.self_service.enabled` / `.crews_enabled` (unset→true) / `.grace_seconds`
+    / `.instruct_only_when_idle` (`projectconfig.go:84`, `watcher.go:403-423`).
+- Config example shipped: `cmd/harmonik/keeper_config_example.go:41-46` shows the
+  `self_service:` block; the `warn_messages:` keys are documented in
+  `projectconfig.go:89-92`.
+- **Strict validation:** unknown keys anywhere under `keeper:` are a HARD ERROR — the
+  keeper REFUSES to start (`projectconfig.go:113`, `:167`, `ErrUnknownConfigKey`;
+  enforced `keeper_cmd.go:279-283`, exit 2). Precedence: CLI flag > config.yaml >
+  compiled default (`keeper_cmd.go:271`).
+
+### Design implication (this is the natural home for K4)
+
+**The natural home for operator-editable message text already exists and is already
+wired end-to-end:** `.harmonik/config.yaml` → `keeper.warn_messages.*`. G8's
+"editable without a rebuild" is **satisfied today** for the two existing texts — an
+operator edits YAML, no binary rebuild. K4 extends this same surface with the new
+required message pieces (leader defer-message, crew message, good-stopping-point
+framing) rather than inventing a new config file.
+
+**One important nuance for "editable ON THE FLY":** config is read **once at keeper
+process startup** (`LoadProjectConfig` at `keeper_cmd.go:272`), then baked into
+`WatcherConfig` at construction (`keeper_cmd.go:88-123`). The watcher does NOT re-read
+config per tick. So an edit today requires **restarting the keeper process** to take
+effect — NOT a rebuild, but also not literally live-reload. If G8 means "no rebuild"
+(`01-problem-space.md:73`, "without a rebuild/redeploy"), it is met. If "on the fly"
+is read strictly as "without bouncing the keeper," a per-tick or SIGHUP re-read of the
+`warn_messages` block would be net-new work the spec must call out. The crew message
+(K7, defaulted-off via config) rides this same block — `crews_enabled: false` already
+demonstrates the default-off-via-config pattern (`watcher.go:409-416`).
+
+---
+
+## Q5 — The 300 s HandoffTimeout + fallback gap (`cycle.go`)
+
+### Finding
+
+- `HandoffTimeout` field (`cycle.go:68`), default `DefaultHandoffTimeout =
+  300 * time.Second` (`thresholds.go:154-157`); applied when unset at `cycle.go:340-341`.
+  Comment: *"wait for handoff nonce; default 300s (hk-4xni9 K2)"* (`cycle.go:68`).
+- `MaxHandoffTimeouts` (`cycle.go:196-199`), default `DefaultMaxHandoffTimeouts = 3`
+  (`thresholds.go:194-196`); applied `cycle.go:337-338`.
+- `ForceRestartFn` (`cycle.go:201-205`) — the kill+respawn escalation, wired into the
+  `RespawnPort` (`cycle.go:675-676`). Escalation is DORMANT when both `Respawn` and
+  `ForceRestartFn` are nil (`cycle.go:108`).
+
+**The gap — confirmed.** When the 300 s handoff timer fires
+(`TimerFired(handoff_timeout)`), the reactor's `stepAwaitingHandoff` (`step.go:329-349`)
+branches:
+- If a fresh handoff was seen (`HandoffFresh`), it recovers (hk-fi78d, `step.go:333-347`).
+- Otherwise → `stepAbort` (`step.go:349`, `:851`).
+
+In `stepAbort` (`step.go:851-889`) the **ForceRestart escalation only fires when the
+session is ABOVE the force threshold**:
+```
+if cfg.aboveForceThreshold(&s.EntryCF) {           // step.go:872
+    s.ConsecutiveHandoffTimeouts++
+    if cfg.hasRespawn && ... >= cfg.MaxHandoffTimeouts {
+        actions = append(actions, Action{Kind: ActForceRestart})   // step.go:875
+    }
+} else {
+    s.ConsecutiveHandoffTimeouts = 0               // step.go:881 — just resets, no fallback
+}
+```
+So **below the force threshold, a late handoff (>300 s) produces `cycle_aborted` and
+returns to `Idle` with NO restart and NO force-escalation** (`step.go:349`, `:851-887`;
+terminal `cycle_aborted(reason=handoff_timeout)`, `emitCycleAbortedAction` `:854`).
+The agent has written a handoff no one is watching and stays on a bloated context.
+This matches the problem statement (`01-problem-space.md:23-27`, `_plan.md:117` step 2)
+and the abort taxonomy (`session-keeper.md:476-478`: "The only path that never sends
+`/clear` — the `AwaitingHandoff` handoff_timeout edge with no fresh handoff… the
+baseline shows 79/79 handoff_timeout").
+
+Note: the hk-fi78d `HandoffFresh` recovery (`step.go:333-347`) is a PARTIAL mitigation
+— it recovers only if the shell happened to observe a fresh handoff mtime AT the timer
+edge (`EvHandoffFreshSeen`, `step.go:323-328`; sampled in `shell.go` at timeout). A
+handoff written at T+301 s (after the timer already fired and aborted) is NOT caught —
+the cycle is already terminal.
+
+### Design implication
+
+This is exactly the gap the agent-run command (Q1) closes, and it is why G4/SC-4 are
+load-bearing: the `harmonik keeper restart-now` path (`restartnow.go:69`) is **wholly
+independent of the cycle's 300 s timer** — it is a fresh in-process CLI invocation that
+does its own freshness check and drives clear→resume itself. An agent that finishes at
+T+301 s, writes its handoff, then runs the command still gets a clean restart, because
+restart-now never consulted the (already-aborted) cycle timer. The spec must ensure the
+message payload the agent receives (K2/K3) carries that command so the agent can self-
+rescue after the keeper has given up — the deferral (K2) legitimizes taking >300 s, and
+the command (K3) is what makes that safe. The FORCE-ACT unconditional backstop
+(`aboveForceThreshold` branch, `step.go:872-876`) remains the hard ceiling for a
+never-idle session (C5), unchanged — consistent with NG1/SC-9.
+
+---
+
+## Cross-cutting notes for the spec author
+
+- **restart-now uses the tmux paste injector** (`RestartNowInjector` → `InjectText`,
+  `restartnow.go:34`, `:76`), NOT comms. It writes to the agent's OWN pane at an
+  agent-chosen moment, so it does not create a K1-style operator collision — but the
+  spec should not claim restart-now is "comms-delivered." It is the agent driving its
+  own pane.
+- **The `containsRestartNowCmd` validation** (`watcher.go:893`) is a working model for
+  K4's "structure normative / prose tunable" — extend or template-slot it for the
+  other three required elements.
+- **Config is startup-read, not live-reload** — call this out explicitly in K4 if "on
+  the fly" must mean without a keeper bounce.

@@ -1,0 +1,31 @@
+codename: 2026-07-18-keeper-restart-delivery
+title: Keeper restart timing & delivery — leader-session comms nudge + self-restart safety net
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-18T21:30:23Z
+updated: 2026-07-18T22:37:17Z
+sessions:
+    - id: null
+      started: 2026-07-18T21:30:23Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:keeper-restart-delivery
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

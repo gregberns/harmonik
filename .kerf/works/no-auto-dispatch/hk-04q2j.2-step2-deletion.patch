@@ -1,0 +1,2421 @@
+diff --git a/.claude/skills/beads-cli/SKILL.md b/.claude/skills/beads-cli/SKILL.md
+index 62f0641c0..5a03d5794 100644
+--- a/.claude/skills/beads-cli/SKILL.md
++++ b/.claude/skills/beads-cli/SKILL.md
+@@ -46,6 +46,18 @@ that transitions a bead's `status` field. Those paths are the daemon's exclusive
+ 
+ ---
+ 
++## Filing discipline (before every `br create`)
++
++Re-labeling and re-prioritizing (`br update --add-label` / `--remove-label` / `--priority`)
++are **non-terminal** and permitted — use them to bring a bead into compliance. Every bead you
++file MUST satisfy the **Bead-Filing Hygiene Protocol**
++([`docs/components/internal/bead-hygiene.md`](../../../docs/components/internal/bead-hygiene.md)):
++priority per the P0–P4 rubric, required labels (`found-by:<agent>` / `codename:<work>` /
++`assessor-campaign-<sha>` + one disposition), a `subsystem: symptom` title, a non-empty
++actionable description, and a named goal or the ranked backlog. Run its §5 checklist first.
++
++---
++
+ ## Read surface
+ 
+ ### Check available work
+diff --git a/.harmonik/agents/admiral/operating.md b/.harmonik/agents/admiral/operating.md
+index 78d7557dd..8686343b6 100644
+--- a/.harmonik/agents/admiral/operating.md
++++ b/.harmonik/agents/admiral/operating.md
+@@ -12,8 +12,12 @@ Identity is `admiral`. CWD must always be `$HARMONIK_PROJECT`.
+ 3. Score per NAMED initiative, not per lane: for every ACTIVE initiative in `admiral-initiatives.md`, did it get commits/bead-closes this period? Zero movement on an ACTIVE initiative is drift — even if staffed lanes are busy and `kerf next` ranks other work higher (`kerf next` ranks the backlog *below* the named initiatives; it does not define what's highest-value). Also flag any `locked_decision`/`forbidden_action` violation or expired directive.
+ 4. Act: "aligned" is allowed ONLY when every ACTIVE initiative moved this period — then one-line status to operator, done. Any ACTIVE initiative with zero movement → find the specific blocker (unstaffed? mis-ranked below the fold? dep? decision?) and direct the captain to fix it, naming the initiative + what clears it. New initiative / locked-decision reversal → escalate to operator with options + consequences. The audit's job is to find and remove a blocker, not to certify calm.
+ 5. On lane-named `[IMMEDIATE]` from ops-monitor or watch: direct captain to staff that KNOWN lane now (autonomous) — do NOT re-score.
++6. **Bead-hygiene sweep** (per `docs/components/internal/bead-hygiene.md`): scan beads created since the last audit — `br list --status=open --format json | jq '.issues[] | select(.created_at > "<last-audit-ISO>")'`. Flag protocol violations: missing/miscalibrated priority, a `found-by:assessor` bead lacking exactly one `remediation:blocking`/`known-issue`, a `codename:<work>` that matches no `kerf map` work, an empty description, or an orphan (no initiative and unranked). On findings, direct the captain (`--to captain --topic directive`) to fix the metadata (non-terminal `br update` only — never status). Trivial metadata you may correct inline; systemic filer drift → direct the captain. A clean sweep is silent.
+ 
+ ## Release gate (I hold the final signoff)
++
++**Deploy ≠ test-in-prod.** We change a production config (reboot a daemon, flip a worker, switch substrate) because we are ALREADY confident the software does what we expect — never to find out whether it works. Proving-it-works happens in an ISOLATED, assessor-owned daemon; a live prod bead is NEVER a "canary to see if it execs/commits/relays." Two distinct jobs: the crew/I make sure the software does what we expect BEFORE deploy (engineering confidence + isolated proof); the assessor independently CHECKS those assumptions — it spins up its own daemon, runs the substrate both locally and remotely, and validates the behavior. If I catch a "canary in prod" framing, I reject it and route the validation to the assessor's isolated daemon instead.
++
+ 1. At a merge/deploy boundary for an epic, write the assessor handoff (`specs/assessor-handoff-schema.md`, `spawned_by: admiral`) and spawn the assessor: `harmonik crew start assessor --queue assessor-<epic>-q --mission <path>`.
+ 2. Await the assessor's verdict on `--topic gate` — a reasoned `PASS|BLOCK` with its concerns + report path. The assessor is the executor and recommender; it does NOT hold the release.
+ 3. Weigh that verdict against the good-enough principles (`.harmonik/agents/assessor/good-enough-principles.md`): a PASS is not an automatic release and a BLOCK is not always fatal — I read the concerns against what "good enough to ship" means for this epic, and I may probe the assessor over `--topic gate` before deciding.
+diff --git a/.harmonik/context/captain-lanes.md b/.harmonik/context/captain-lanes.md
+index 7ded1b960..63f91b65e 100644
+--- a/.harmonik/context/captain-lanes.md
++++ b/.harmonik/context/captain-lanes.md
+@@ -8,39 +8,58 @@
+ # Tier-2 context: captain lane registry + medium-term tracker (days cadence)
+ # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
+ # Keep this SHORT — one current-truth block. Superseded history is DELETED, not archived here.
+-# Pre-freeze lane history: .harmonik/archive/2026-07-12-freeze-and-carve/ (not boot-read).
+-
+-## ⭐ CURRENT TRUTH 2026-07-12 — FLEET TORN DOWN · EXECUTION FROZEN · PLAN-FIRST.
+-
+-> **No lanes are staffed.** The operator ordered a freeze-and-carve clean slate
+-> (direction-log ~18:00Z). All worker + oversight crews are stopped, run worktrees
+-> reaped, queues idle. Only **captain + admiral** sessions remain up. **Nothing
+-> dispatches** until the operator ratifies the plan and lifts the freeze.
+-
+-**Operative direction:** `.harmonik/context/direction-log.md` (the ~18:00Z STRATEGIC
+-PIVOT entry) is authoritative. The execution program is
+-`plans/2026-07-12-codebase-census/PLAN.md` (freeze-and-carve; STEP-0 → M1 → M2 → M3 → M4),
+-review-hardened v2, **awaiting operator ratification.**
+-
+-### Lanes
+-_None active._ The pre-freeze 5/6-lane fleet (kynes/hawat/piter/stilgar/yueh/leto) is
+-deliberately torn down. Do NOT re-stand any lane until the plan is ratified.
+-
+-**On ratification**, the first work is STEP-0 (resume-hang + noChange false-close +
+-honest-probe re-land), which runs **OUT-OF-PIPELINE** (direct agent + human-reviewed
+-merge), followed by M1 (delete test-theater) concurrently. See PLAN.md for per-move
+-scope, DoD (the Acceptance Oracle), and the in-pipeline-vs-out-of-pipeline call.
+-
+-### Carried-forward defects (must survive into the carve; parked, not lost)
+-- **Resume-hang / QA-execution-gate** — implementer relaunch-on-gate-fail hangs silently
+-  (~5/5 recent runs). PLAN STEP-0a. Correlates with the QA-execution-gate (~0adb6551).
+-- **noChange-subsumption false-close** — the daemon closed `hk-2hfyt` on a bead-ID
+-  MENTION in an unrelated docs commit (32dc13f7), fix ABSENT. PLAN STEP-0b. Do NOT trust
+-  that closed status.
+-- **honest-probe still live** — the gb-mbp fleet-down probe bug behind false-closed
+-  `hk-2hfyt`; `createworktree.go` has only a partial HEAD probe. PLAN STEP-0c
+-  (re-land under a clean bead ID; gb-mbp stays DISABLED until it lands + re-validates).
++
++## ⭐ CURRENT TRUTH 2026-07-21 — CODEX-SSH SCRAPPED · CODEX-FIRST (LOCAL) IS P0 · fleet re-framed.
++
++> **The multi-day Codex-remote-ssh effort is SCRAPPED** (realignment D4 + platform DECISIONS).
++> ssh-per-node remote execution, the codex isolation-boundary fence, and native harness sandboxes
++> are all OUT. All the old codex-substrate-unblock / gb-mbp-onboarding / DEPLOY-NOT-TEST /
++> review-relay-wedge work is **MOOT** — do NOT resume it. See:
++>   - `plans/2026-07-20-codex-strategy-realignment/DECISIONS.md` (D1–D4)
++>   - `plans/2026-07-21-platform-architecture/DECISIONS.md` (frame, C1–C6, PRINCIPLES)
++>   - `plans/2026-07-21-codex-first/_plan.md` (the P0 spec)
++
++**Frame:** system = applications on a platform/kernel. Three platform threads (P1 fabric / P2
++extraction / P3 distributed execution) come LATER and run on Codex crews. **P0, above all of it:
++make LOCAL codex a reliable bead-runner** (native sandbox OFF = danger-full-access like Claude;
++NO ssh; daemon-fallback commits the diff) so future crews run on Codex and conserve Claude tokens.
++Reviewer STAYS Claude for now (codex implements, claude reviews). Fast-follow right after codex:
++de-hard-code per-DOT-node model/harness via config.
++
++### Lanes / crews
++- **captain** (this session) — orchestrate + drive the two P0 lanes to completion.
++- **india** — CODEX-FIRST lane, epic **hk-tckw3** (P0). STAFFED but **BLOCKED at the OAuth login
++  wall** (hk-bkd6h, see blocker below). Mission `.harmonik/crew/missions/india.md`. Model Opus.
++  Verification = crew's OWN subagents (heavy testing) THEN assessor complete-system-test gate.
++- **juliet** — NO-AUTO-DISPATCH lane, epic **hk-04q2j** (remove daemon boot-time auto-drain;
++  DELETE the code). Mission staged `.harmonik/crew/missions/juliet.md`; NOT launched (same OAuth
++  wall + edits workloop.go/daemon tests so sequence behind india's daemon beads). Model Opus.
++- **admiral** — ALIVE, operator-facing overnight; ran backlog triage (closed the superseded
++  codex-app-server epic hk-g0ror + children; 42 open), teeing up P1–P3 platform prep. Do not collide.
++- **assessor** — idle (old codex-ssh verdict delivered, terminated). RESERVED for the codex-first
++  complete-system-test gate; re-task/restart fresh when india reaches the gate.
++- **yankee** — STOPPED (its codex-substrate-unblock/ssh lane is scrapped by D4; autonomous reconcile).
++
++### ⛔ CRITICAL BLOCKER — OAuth wall blocks all new claude crews (hk-bkd6h, now P1)
++Fresh `harmonik crew start` claude sessions hit the interactive OAuth "Paste code here" wall and
++never `comms join`. ROOT CAUSE (captain-confirmed on india): daemon LOCAL claude launch
++(`claudelaunchspec.go:333-340`, rc.runner==nil) seeds an ISOLATED `CLAUDE_CONFIG_DIR` from
++`~/.claude.json`, but macOS OAuth creds live in the Keychain, not that file → the isolated dir has
++settings but no auth. This is a coupling leaked from the scrapped-ssh isolation work.
++**Operator-surface (authentication I cannot perform):** either (A) operator pastes india's login
++to bootstrap ONE crew, or (B) fix LOCAL claude to inherit shared auth (small daemon change; india
++can do it once bootstrapped, or file as a bead). Recommend A-to-bootstrap-then-B. india's pane is
++LEFT LIVE at the login prompt for the operator.
++
++### Operational state
++- **Daemon:** UP (bare, pid 40386, STALE Jul-18 binary from 2d308836). No supervisor session running.
++  New HEAD binary (37651569) REBUILT + staged at `.harmonik/bin/harmonik.new`. Primary-daemon cycle
++  DEFERRED until codex-first's proven codex-enabled binary is ready (codex-first edits the daemon
++  anyway — avoids a double-redeploy; honors GATE-0 E2E). gb-mbp stays `enabled:false` (prod-safe).
++- **Queues:** ~44 stale paused-by-failure/drain queues from old runs; harmless (each crew uses its own
++  queue). Cleanup optional, not urgent.
+ 
+ ### Open operator decisions
+-- **PLAN.md ratification** — 7 open questions in the plan; **Q1 is the crux: the
+-  Acceptance Oracle / standard of proof** for "a fix is real." Everything waits on this.
++1. **OAuth bootstrap** (blocker above) — paste india login, or authorize the local-auth-isolation fix.
++2. **no-auto-dispatch sequencing** — I hold juliet behind india's daemon beads (workloop.go overlap);
++   flip to parallel on request.
+diff --git a/.harmonik/context/direction-log.md b/.harmonik/context/direction-log.md
+index 4c80847f0..d42d511c5 100644
+--- a/.harmonik/context/direction-log.md
++++ b/.harmonik/context/direction-log.md
+@@ -15,69 +15,181 @@
+ > snapshot at .harmonik/archive/2026-07-12-freeze-and-carve/. Struck 2026-07-12 by the
+ > admiral audit under the retention/anti-rot rule — all superseded by the pivot below.
+ 
+-## 2026-07-13 ~ (post-panel) — operator: PARK the generative-system framing; codebase-overhaul is the line · expires: 2026-07-15T00:00:00Z
+-WHAT: Operator decided the "generative-system" meta-approach (principles/metabolism/emergence) needs to
+-      be approached DIFFERENTLY and is NOT moving forward now. Its concrete engineering FINDINGS are kept
+-      as inputs to the codebase overhaul. All exploration docs relocated under the census they came from:
+-      plans/2026-07-12-codebase-census/generative-system-exploration/ (docs 1–4 + CAPTURE + CHARTER-draft).
+-WHY:  the emergent-systems/simulation framing was adversarially found to be mostly yak-shaving (doc 2);
+-      the VALUABLE residue is ordinary strong engineering — a stable event/port substrate, record→replay,
+-      property-tested invariants, and replay-vs-frozen-baseline measurement (doc 4). That belongs to the
+-      codebase overhaul, not a separate "system" project.
+-ORDER: next is a LARGER codebase-overhaul PLAN that decides REWRITE-vs-REFACTOR per section (STEP-0
+-      pipeline fixes, M1 test-theater, M2 agent-input, M3 run-lifecycle god-fn, M4 remote), tuned in
+-      before dispatch. Start small (panel pick: session-restart vertical, resume-hang = its first property
+-      test) but the per-section rewrite/refactor call is the open work. Measurement standard: replay +
+-      fault-injection vs baseline (.harmonik/events/baseline-2026-07-13/; 54% run-completion, 84% restart,
+-      347 clear-unconfirmed). Codex substrate template already built (internal/apptap|codexwire|codexreactor).
+-RETURN-PATH: supersedes the ~23:35Z generative-system reframe below (that entry retained as record).
+-      Freeze still HOLDS; keeper HELD. Next session: draft the overhaul plan; await operator ratification.
++## 2026-07-21 — operator (via captain): SCRAP codex-ssh; CODEX-FIRST (local) is P0; remove daemon auto-dispatch · expires: 2026-07-28T00:00:00Z
++WHAT: Major re-frame. The multi-day Codex-remote-ssh effort is SCRAPPED (realignment D4): ssh-per-node
++      remote execution, the codex isolation-boundary fence (D1), and native harness sandboxes (D3) are all
++      OUT. P0 = make LOCAL codex a reliable bead-runner (native sandbox OFF = danger-full-access like Claude,
++      NO ssh, daemon-fallback commits the diff) per plans/2026-07-21-codex-first/_plan.md. Separately: DELETE
++      the daemon's boot-time auto-drain of the backlog (only agents decide what runs). Reviewer stays Claude
++      for now; de-hard-code per-node model/harness is a fast-follow AFTER codex. Platform threads P1/P2/P3
++      (apps-on-a-kernel) come later, run on Codex crews.
++WHY:  ssh-remote stretched local worktree+agent execution across a network node-by-node — every wedge was a
++      symptom. Local codex conserves Claude tokens (the enabler for the platform work). Auto-drain of a stale
++      backlog on boot is a coupling to eliminate.
++ORDER: Captain created kerf works codex-first (epic hk-tckw3) + no-auto-dispatch (epic hk-04q2j) with beads,
++      staffed india (codex-first, Opus) + staged juliet (no-auto-dispatch). BLOCKED: OAuth wall (hk-bkd6h P1)
++      stops new claude crews — operator bootstraps india's login OR authorizes the local-auth-isolation fix.
++      Daemon binary rebuilt (37651569) + staged; primary cycle deferred until codex-first's proven binary.
++      gb-mbp stays enabled:false. Verification = crew subagents THEN assessor complete-system-test gate.
++RETURN-PATH: on OAuth unblock → india drives codex-first Step1→Step2 (go/no-go live bead)→assessor gate;
++      then juliet runs (codex once proven, to conserve Claude); then de-hard-code reviewer fast-follow.
++      SUPERSEDES all codex-ssh sequencing entries below (RE-GATE #2, codex-substrate-unblock, DEPLOY-NOT-TEST,
++      ACTIVATE-CODEX-CREW, SLOW-THE-FLEET, WIDE-routing) — those are MOOT; admiral audit should strike them.
++expires: 2026-07-28T00:00:00Z
+ 
+-## 2026-07-12 ~23:35Z — operator+admiral: REFRAME — the goal is a generative SYSTEM, not the tool; carve is downstream · expires: 2026-07-14T00:00:00Z
+-WHAT: Operator confirmed ("Yes") a reframe of the whole project. We are not building a tool; we are
+-      building a complex ADAPTIVE SYSTEM (principles + a self-pruning metabolism + agents that reason
+-      from principles) that BUILDS the tool as the encoding of the system's own attributes. Three hard
+-      problems named: (1) principles not structure — kerf gives a track, no compass (a 2300-line fn
+-      lived the whole life, no agent ever flagged it); (2) alignment across ~1000 varied sessions is
+-      EMERGENT like ants/flocks — shared principles + signals, a gradient not a rail; (3) stay stable
+-      AND improve WITHOUT accreting — promote only what generalizes, prune/fold by default, cap the
+-      count, selection not authorship. Recursion: the builder must run on the same principles it encodes.
+-WHY:  the treadmill is not a code problem, it's a BUILDER problem — the process that built harmonik
+-      carries no principles, so it produced (and could not reject) an unmaintainable system. Fixing the
+-      artifact without fixing the generative system just regenerates slop.
+-ORDER: freeze still HOLDS; nothing dispatches. The real STEP-0 is now the CHARTER (the few load-bearing
+-      principles + the metabolism that keeps them few/live/self-pruning). The freeze-and-carve carve
+-      (STEP-0/M1–M4, plans/2026-07-12-codebase-census/) is DOWNSTREAM — the first thing the system
+-      produces and proves itself on, not the north star. PLAN.md v2's "Acceptance Oracle" (Q1) is
+-      SUPERSEDED (wrong question: "is a fix real"); its residue folds into principle-space.
+-RETURN-PATH: capture DONE (plans/2026-07-12-generative-system/CAPTURE.md). NEXT: operator+admiral talk
+-      next steps, then draft the charter. Do NOT re-stand any lane; do NOT dispatch the carve until the
+-      charter exists and the operator lifts the freeze.
++## 2026-07-19 ~20:17Z — admiral (gate owner): RE-GATE #2 BLOCK @fff3d937 → lane RE-OPENED, new primary + live-repro gate · expires: 2026-07-26T00:00:00Z
++WHAT: Both codex-substrate fixes landed + reviewer-APPROVE (hk-daegv=a0619c1c, hk-qxvc2=fff3d937) and the
++      assessor re-gate ran on branch HEAD fff3d937 (pinned in isolation, not merged). Leg A local PASS 3/3;
++      Leg B LIVE gb-mbp FAIL (the decider). Fixes MOVED THE NEEDLE (config-isolation cleared nothing on the
++      remote path) — SHARP INDEPENDENT root causes from the assessor's live `ps eww`, superseding the initial
++      "downstream/empty-worktree" guess (REFUTED — Leg-B timeline shows the review claude launched and wedged
++      on the modal regardless of commit state): DEFECT A (hk-qxvc2) = the isolated .claude.json IS seeded on
++      the worker but CLAUDE_CONFIG_DIR / LaunchSpec.Env is NEVER delivered into the remote claude exec (dropped
++      on the ssh login-shell launch) → claude reads the shared ~/.claude.json + re-wedges (188s). DEFECT B
++      (hk-daegv) = `-c sandbox_mode=danger-full-access` IS delivered but worker codex-cli 0.142.0 does NOT honor
++      it (empirical "flag accepted" was on 0.144.5 LOCAL — version mismatch = passed-review-but-failed-live).
++WHY:  Two unit-green-but-live-fail fixes proved unit tests don't clear the live bar; the real gate is a live
++      remote codex exec + commit-land + review-relay on gb-mbp. Deploy-not-test still holding — prod untouched.
++ORDER: Lane codex-substrate-unblock RE-OPENED (yankee). Fix A and B in PARALLEL — INDEPENDENT, both gate-
++      blocking (A is NOT downstream of B). A = propagate CLAUDE_CONFIG_DIR (+ LaunchSpec.Env allowlist) into the
++      remote claude exec (env prefix in the zsh -c, or ssh SendEnv); reconcile with hk-okqyx (P2, codexdriver
++      cmd.Env not forwarded / no SendEnv) — SAME ssh-env surface, one fix likely covers both. B = adapt to the
++      INSTALLED codex 0.142.0, verified against the deployed version; DO NOT pin 0.144.5 (no-external-version-
++      binding). HARD REQ: prove each fix with an ISOLATED LIVE gb-mbp repro (A: ps eww shows CLAUDE_CONFIG_DIR
++      present → agent_ready → bead closes) before handback, NOT unit-green. RETURN-PATH: live-proven fixes →
++      independent review → assessor re-gate #3 → fresh PASS re-opens deploy. TRIPWIRE: another live-BLOCK →
++      major-issue-fanout + admiral surfaces a codex-WIDE re-plan to the operator. keeper P1s stay parked.
+ 
+-## 2026-07-12 ~20:5xZ — operator+admiral: PLAN-FIRST resolved → clean slate executed; PLAN.md v2 awaiting ratification · expires: 2026-07-14T00:00:00Z
+-WHAT: the 18:00Z pivot's a/b/c offer is RESOLVED — operator chose PLAN-FIRST + a clean slate.
+-      Executed: fleet torn down (all crews down, run worktrees reaped, 267 beads closed, ~2GB history
+-      cleared; captain+admiral up). Admiral authored + independently review-hardened the full carve
+-      program: plans/2026-07-12-codebase-census/PLAN.md v2 (STEP-0 → M1 → M2 → M3 → M4, with the
+-      Acceptance Oracle standard-of-proof). Initiative/lane trackers archived + cleared to the
+-      frozen state.
+-WHY:  no dispatch until the plan is ratified — the daemon run pipeline itself is untrustworthy
+-      (resume-hang + false-close), so STEP-0 must repair it OUT-OF-PIPELINE before any carve work flows.
+-ORDER: everything stays FROZEN. On operator ratification: settle PLAN Q1 (the Acceptance Oracle) →
+-      captain re-stands FRESH agents, STEP-0 first (resume-hang + noChange false-close + honest-probe
+-      re-land, all out-of-pipeline) → M1 (delete test-theater) concurrent → M2/M3/M4 kerf-first.
+-RETURN-PATH: AWAITING operator ratification of PLAN.md v2 (7 open questions; Q1 = standard of proof is
+-      the crux). Do NOT re-stand any pre-freeze lane; the carve program is the single front line.
++## 2026-07-19 ~19:13Z — admiral (gate owner): codex prod-deploy BLOCKED; STAFF the fixes before any reboot · expires: 2026-07-26T00:00:00Z
++WHAT: Assessor Leg-B (isolated) = BLOCK; admiral confirmed as gate owner. Codex on the remote onboarded
++      gb-mbp worker fails two ways: hk-daegv (P0) sandbox_mode=workspace-write DENIES git commit → codex
++      exits 0, NO commit = SILENT NO-OP (zero landed work, categorically not shippable); hk-qxvc2/hk-36xy5
++      (P1) pinned claude review node stalls agent_ready_timeout on the ONBOARDED worker (CONFIRMS hk-g5wkt —
++      onboarding necessary but NOT sufficient; 2 reproductions; review = sole close-edge → blocks every DOT
++      bead). Plus hk-wwyse (P2) codex /bin/zsh shell-spawn fails (daemon-fallback saved the commit).
++WHY:  a substrate that lands ZERO work is not a marginal good-enough call. Deploy-not-test paid off — caught
++      in isolation, prod + repo HEAD untouched.
++ORDER: NEW fix lane codex-substrate-unblock (owner yankee, Claude tokens authorized — unblocks the whole
++      codex-WIDE/conserve-Claude premise): (1) hk-daegv P0 FIRST, LOCAL/claude (codex can't self-fix — can't
++      commit), reconcile w/ hk-wwyse P2; (2) hk-qxvc2/hk-g5wkt P1 (review-relay). Independent review gate
++      (local claude review works; wedge is remote-only). After BOTH land → assessor codex-substrate RE-GATE;
++      only a fresh PASS re-opens the deploy.
++RETURN-PATH: supersedes the DEPLOY-NOT-TEST entry below's "on PASS → reboot" step (that gate returned BLOCK).
++      On fixes-land + assessor RE-GATE PASS → prod codex reboot + keeper-hardening (hk-220lv/hk-4tjyj/hk-bl2k6)
++      runs wide. keeper P1s stay parked behind the re-gate until then.
++expires: 2026-07-26T00:00:00Z
++
++## 2026-07-19 ~18:18Z — operator (via admiral): DEPLOY-NOT-TEST — assessor validates codex in isolation BEFORE prod reboot · expires: 2026-07-26T00:00:00Z
++WHAT: Staffing keeper-hardening hit a code-verified blocker (yankee 17:55Z): substrate is DAEMON-BOOT-GLOBAL
++      (HARMONIK_SUBSTRATE read once at boot, no per-lane override; substrate_select.go:70). Running codex on
++      the main daemon requires REBOOTING it into codex substrate (flips EVERY lane) + persisting gb-mbp
++      enabled:true on disk — bigger than the scoped-lane that was approved; exceeds captain+admiral authority.
++      Operator ruled: the reboot is a DEPLOYMENT of already-proven software, NOT a test → the "live canary
++      hk-bl2k6 in prod" plan is DROPPED (no test-in-prod).
++WHY:  we change prod config because we're already confident, never to find out. Isolated proof is the gate;
++      the assessor independently checks the assumptions (esp. the hk-g5wkt claude-review-relay), not a live bead.
++ORDER: (1) assessor spins its OWN codexdriver daemon, validates codex LOCAL + REMOTE/gb-mbp + claude review-node
++      relay → PASS|BLOCK on --topic gate; (2) on PASS → prod-daemon reboot (HARMONIK_SUBSTRATE=codexdriver +
++      gb-mbp enabled:true) as a real deploy, assessor re-validates on-pin; (3) release keeper beads
++      hk-bl2k6/hk-4tjyj/hk-220lv. yankee HELD (recipe staged) until PASS; quiet window preserved.
++RETURN-PATH: refines the ACTIVATE-CODEX-CREW entry below (does not supersede) — same lane, now gated on the
++      assessor PASS instead of a prod canary. On PASS+deploy → keeper-hardening runs wide via codex.
++expires: 2026-07-26T00:00:00Z
++
++## 2026-07-19 ~17:4xZ — operator: ACTIVATE a CODEX implementer crew on the open backlog · expires: 2026-07-26T00:00:00Z
++WHAT: Operator asked "can we run a codex crew to handle open work?" → GO. Staff ONE codex implementer
++      crew (DOT workflow) against a coherent P1 prod-readiness slice of the 20 ready beads (keeper-reliability
++      hk-220lv/hk-4tjyj/hk-bl2k6 + assessor prod-readiness findings hk-8juwz/hk-y81iv/hk-hx9os/hk-rupvi).
++WHY:  this IS the conserve-Claude path — codex implement nodes burn ZERO Claude tokens; only the DOT review
++      node is claude (lightweight oversight). Mechanism proven (hk-g0ror.4 acceptance PASSED: sandboxed +
++      fail-closed + commit lands inside boundary on 9db85569). Directly advances Codex Phase-2.
++ORDER: captain staffs on the ONBOARDED gb-mbp worker (onboarded since 2026-06-14) so the claude review node
++      relays — a fresh un-onboarded worker = 100% claude review-node wedge (hk-g5wkt; guard hk-q0dqf not yet
++      wired). Sandbox+fail-closed enforced; pre-deploy ISOLATED E2E gate for any daemon-behavior change.
++      NOTE: captain-lanes.md "Standing gate" still says WIDE held until hk-go6nq — STALE; superseded by the
++      WIDE-UNBLOCKED ruling below. Captain refreshes that line when it staffs.
++RETURN-PATH: refines (does not supersede) the SLOW-THE-FLEET entry below — Claude oversight-only still holds;
++      this adds codex implementer dispatch. Normal full cadence resumes when operator Claude budget recovers.
++expires: 2026-07-26T00:00:00Z
++
++## 2026-07-19 — operator: SLOW THE FLEET + drive ONLY hk-go6nq (Claude usage 92%) · expires: 2026-07-26T00:00:00Z
++WHAT: Operator (relayed by admiral 14:49/15:44Z) — Claude usage at 92%, switching toward Codex to save
++      tokens. Two commanded actions: (a) tear down + DEREGISTER dead OAuth-walled zombies charlie+bravo
++      (no respawn); done — registry now admiral/assessor/yankee only. (b) Re-task yankee → hk-go6nq
++      root-cause (review-node agent_ready_timeout) — the ONE token-worthy keep-moving task; everything
++      else stays conserve-Claude (no new Claude implementer crews).
++WHY:  hk-go6nq is the LAST gate before Codex-implementer WIDE routing (and per the incus plan also the
++      two-hop remote event-relay risk — one fix, two payoffs). yankee's live iso harness reproduces the
++      exact stall, so it's the cheapest place to root-cause. Start from the hk-ege6 socket-perm lead.
++RETURN-PATH: once hk-go6nq is root-caused/fixed → WIDE codex routing unblocks; normal fleet cadence
++      resumes when operator Claude budget recovers. Until then: yankee on hk-go6nq only, no new Claude crews.
++expires: 2026-07-26T00:00:00Z
++
++## 2026-07-19 — admiral (WIDE-gate owner): Codex WIDE routing UNBLOCKED, pre-onboard interim · expires: 2026-08-02T00:00:00Z
++WHAT: yankee resolved hk-go6nq (16:00Z): PROPER = a ~13% retry-survivable relay/timing tail, NOT a regression,
++      codex-path IMMUNE (live chase PARKED, conserve-Claude). Real deterministic risk = hk-g5wkt (P1): claude
++      modal-suppression is LOCAL-ONLY (claudelaunchspec.go:331) → a FRESH worker = 100% claude agent_ready_timeout,
++      CLAUDE nodes only (incl. review nodes inside a codex crew); codex immune.
++WHY:  hk-go6nq was the last named gate before Codex WIDE; it is non-gating for the codex path. Unblocking aligns
++      with the operator's Codex-aggressive/conserve-Claude posture; the lone residual is claude-only + mitigable.
++ORDER: WIDE UNBLOCKED now, CONDITIONAL — every worker running a claude node MUST be pre-onboarded, enforced in the
++      provision/crew-start path (AUTOMATED, no manual footgun). hk-g5wkt stays P1 (do NOT start — claude-remote,
++      conserve-Claude); yankee parked + standby.
++RETURN-PATH: on hk-g5wkt fix, retire the pre-onboard interim. Refines (not supersedes) the 2026-07-18 CODEX-AS-CREW Phase-2 entry.
++
++## 2026-07-18 — operator: MAIN DAEMON BACK ON (fresh HEAD binary) to launch the assessor · expires: 2026-07-30T00:00:00Z
++WHAT: Operator called it directly — build the current-HEAD binary and run it as the main daemon (the M6
++      "daemon off for the rebuild" posture lifted for launch). Built `.harmonik/bin/harmonik` from HEAD
++      2d308836, killed a wedged `harmonik status` holding the stale pidfile, started the daemon. Verified:
++      daemon_started binary_commit_hash==2d308836; orphan sweep skipped BOTH sessions
++      (captain_sessions_skipped:1, crew_sessions_skipped:1 — protected by captain.sentinel + crew registry,
++      no reap); reconcile refused to reopen landed beads. Remote routing off (0 enabled workers).
++WHY:  `harmonik crew start assessor` (correct launcher — resolveCrewType maps the same-named agent folder to
++      type=assessor) routes through the daemon, so the daemon must be up to spawn the assessor cleanly. The
++      daemon-off friction had been forcing hand-rolled workarounds; at release-gate stage the daemon needs to
++      be running anyway.
++ORDER: daemon up → `harmonik crew start assessor` → assessor runs the §6 campaign (stands up its OWN isolated
++      sandbox daemon; main daemon is just the launcher + fleet control plane). Captain keeps working
++      out-of-pipeline per its own NO-DAEMON directive; no work-beads are queued for the main daemon to dispatch.
++RETURN-PATH: folds into the assessor-campaign entry below; on baseline PASS → PR #20 / branch-advance (operator-gated).
++
++## 2026-07-18 — operator (via admiral): START the assessor daemon campaign NOW (exploratory), baseline on mediums-complete · expires: 2026-07-30T00:00:00Z
++WHAT: Operator authorized standing up the assessor acceptance-test campaign immediately — an exploratory pass
++      against current HEAD of phase1-session-restart-substrate, with the authoritative baseline pass re-run at
++      the clean SHA when the captain posts `mediums-complete`. PLAN.md flipped DRAFT→ACTIVE (v2), hardened by a
++      3-agent adversarial fan-out (build-SHA pinning, PASS/BLOCK rubric, evidence standard, G1–G14 coverage
++      cells, §4A isolation pre-flight + §4B teardown verification, §6 runbook). Operator decisions baked in:
++      start now; sandbox on THIS box (/tmp/h-assessor); harness set claude+pi full, codex minimal; assessor
++      role drives interactively.
++WHY:  after the mega-review fixes land, do not ASSUME the daemon works — prove it exhaustively in isolation
++      before the release/PR conversation. This is the M6 controlled-testing substrate put to work; it is the
++      release gate M6 exists to feed.
++ORDER: admiral spawns the assessor; assessor runs §6 startup (pin build, §4A pre-flight, S6 watcher, S1→S7 +
++      G1–G14, critic-until-dry, §4B teardown) and posts a reasoned PASS/BLOCK over comms --topic gate. Daemon is
++      ON only inside the sandbox; the frozen main line stays daemon-off. LAUNCH NOTE: `harmonik start assessor`
++      does NOT exist (roles are captain/crew only) and `crew start` needs the live main daemon (off) — the
++      assessor is launched daemon-independently; mechanism pending operator confirm.
++RETURN-PATH: on a baseline-pass PASS → the branch-advance / PR #20 conversation opens (still operator-gated).
++      Does NOT supersede the 2026-07-16 M6 entry below; this is M6's release gate executing under it.
++
++## 2026-07-16 — operator (via admiral): M5 DONE → M6 is GO; captain executes M6 next · expires: 2026-07-30T00:00:00Z
++WHAT: M5 (daemon god-fn → 3 pure-seam extractions: hook✓/policy✓/orchestrator✓, closure ruling A) is
++      COMPLETE — all three orchestrator sub-slices (3A `9b3eb87f`, 3B `fc058829`, 3C `5b975097`) landed,
++      independently APPROVED, trailer-stamped; COORD closed c052. Operator gave explicit GO on M6
++      (controlled-testing harness). The M6-PLAN §4 gate is cleared: item #1 (go) GRANTED; #2/#3/#4 already
++      resolved 2026-07-16 (WS1.1 last, no git hook, WS4-0 Docker default).
++WHY:  a real controlled-testing substrate is the point of freeze-and-carve — stop the bug treadmill by
++      making the E2E gate real + building twin↔real parity + the release-readiness assessor. It is the
++      sequenced next milestone after M5.
++ORDER: captain owns M6 execution (planner authored M6-PLAN.md; captain drives the build). First wave per
++      M6-PLAN §1: WS1.2/1.3 ‖ WS3-F1→Claude-A/B ‖ WS4-1 ‖ WS5-1. The giant-retirement follow-up
++      (startWithHooks→boot-config, handleSocketConn→socket-router) stays a NAMED, UNSTARTED follow-up —
++      not part of M6, not gating anything; planner slots it on ROADMAP.
++RETURN-PATH: on M6 landing (all tiers built+green, WS1.1 required-check flipped as the closing step) →
++      M4 real-`gb-mbp` proof, which stays operator+human-box gated behind this whole milestone.
++
++<!-- 4 expired freeze-and-carve entries (2026-07-12 ~18:00Z/~20:5xZ/~23:35Z + 2026-07-13 PARK,
++     all expires 07-14/07-15) STRUCK 2026-07-19 by admiral audit under the expiry-lapse/anti-rot rule
++     (captain-delegated). RETURN-PATHs all satisfied: freeze lifted, execution resumed, PR#31 merged.
++     Preserved in git history + the snapshot at .harmonik/archive/2026-07-12-freeze-and-carve/. -->
+ 
+-## 2026-07-12 ~18:00Z — operator (via admiral): STRATEGIC PIVOT → FREEZE-AND-CARVE; fleet QUIESCED · expires: 2026-07-14T00:00:00Z
+-WHAT: Operator voiced a deep architectural concern ("everything keeps breaking, remote poorly
+-      architected, don't know what's real, can't build the system with itself, so much slop,
+-      mutexes=bugs") → authorized a codebase CENSUS (10 Fable assessors + 10 adversarial challengers
+-      + synthesis; every verdict UPHELD). Report: plans/2026-07-12-codebase-census/REPORT.md.
+-WHY:  the treadmill (43% of 20-day commits are hardening; 80% land in the 55k-LOC daemon god-package)
+-      is architectural, not review-debt. Domain logic is SOUND; the two ack-free IO boundaries (tmux
+-      paste-inject + remote SSH) + the god-package + no-single-writer are the root. Verdict: KEEP the
+-      proven core (queue model, lifecycle sweeps, harness axes, ~466 regression tests), REBUILD
+-      daemon-workloop core + remote + tmux-input, SIMPLIFY the rest, DELETE ~50k LOC of test-theater.
+-RETURN-PATH: superseded by the ~20:5xZ entry above (plan-first + clean slate executed). Retained here
+-      as the root direction change of record.
+diff --git a/.harmonik/context/lanes.json b/.harmonik/context/lanes.json
+index dfd569ec1..83a622f2d 100644
+--- a/.harmonik/context/lanes.json
++++ b/.harmonik/context/lanes.json
+@@ -1,6 +1,31 @@
+ {
+   "schema_version": 1,
+-  "updated": "2026-07-12T21:00:00Z",
+-  "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate. Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. 2026-07-12: FLEET TORN DOWN under the freeze-and-carve clean slate (direction-log ~18:00Z) — no lanes are staffed; execution is frozen pending ratification of plans/2026-07-12-codebase-census/PLAN.md. Re-seed this array only when lanes are re-stood on ratification (STEP-0 first, out-of-pipeline). Pre-freeze 6-lane snapshot: .harmonik/archive/2026-07-12-freeze-and-carve/lanes.json.",
+-  "lanes": []
++  "updated": "2026-07-21T22:30:00Z",
++  "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. Admiral-owned; captain updates on staffing. 2026-07-21: codex-ssh SCRAPPED (D4); the old codex-substrate-unblock + keeper-hardening lanes are MOOT and removed. New frame: P0 codex-first (local codex bead-runner) + no-auto-dispatch (delete daemon boot auto-drain). Both currently GATED on the OAuth crew-launch wall (hk-bkd6h).",
++  "lanes": [
++    {
++      "lane": "codex-first",
++      "epic_id": "hk-tckw3",
++      "status": "active",
++      "beads": ["hk-tckw3.1", "hk-tckw3.2", "hk-tckw3.3", "hk-tckw3.4", "hk-tckw3.5"],
++      "gate": {
++        "name": "oauth-crew-launch-wall",
++        "reason": "india (codex-first, Opus) staffed but BLOCKED at the OAuth 'Paste code here' wall (hk-bkd6h P1): daemon LOCAL claude launch seeds an isolated CLAUDE_CONFIG_DIR lacking macOS Keychain auth. Needs operator to bootstrap india's login OR authorize the local-auth-isolation fix. india pane left live at the prompt.",
++        "owner": "operator",
++        "expires": "2026-07-28T00:00:00Z"
++      }
++    },
++    {
++      "lane": "no-auto-dispatch",
++      "epic_id": "hk-04q2j",
++      "status": "held",
++      "beads": ["hk-04q2j.1", "hk-04q2j.2", "hk-04q2j.3", "hk-04q2j.4", "hk-04q2j.5"],
++      "gate": {
++        "name": "oauth-wall-plus-sequence-behind-india",
++        "reason": "juliet mission staged, NOT launched: same OAuth wall (hk-bkd6h), AND sequenced behind india's daemon beads since both edit internal/daemon/workloop.go + the daemon test tree (avoid a two-branch merge storm). Flip to parallel on operator request.",
++        "owner": "captain",
++        "expires": "2026-07-28T00:00:00Z"
++      }
++    }
++  ]
+ }
+diff --git a/.harmonik/crew/admiral-initiatives.md b/.harmonik/crew/admiral-initiatives.md
+index 665d24e43..614a22e89 100644
+--- a/.harmonik/crew/admiral-initiatives.md
++++ b/.harmonik/crew/admiral-initiatives.md
+@@ -6,6 +6,25 @@
+ > daemon; green units are not the gate). Enforce every deploy. Canonical: orchestrator-rules
+ > §"PRE-DEPLOY END-TO-END TEST GATE" + `docs/daemon-redeploy.md` GATE 0.
+ 
++> **STANDING RULE (operator, restated 2026-07-22) — THE ASSESSOR VALIDATES ALL RELEASES.**
++> No exceptions. A **daemon binary swap is a release**, and so is a merge to the target
++> branch, a `promote`, and a substrate/config flip. None of them happen without an assessor
++> PASS delivered on `--topic gate`. The assessor stands its OWN isolated daemon and proves
++> the behavior there; a live prod bead is NEVER a canary. Tonight's 77-commit prod rollback
++> (see hk-45pm7) is the direct cost of skipping this gate. The admiral holds the final
++> release call; the assessor executes and recommends.
++
++> **STANDING RULE (operator, 2026-07-22) — THE FLEET MULTITASKS.** Multiple beads in flight
++> across multiple crews and lanes is the expected steady state (daemon `max_concurrent`=4).
++> One-bead-at-a-time is a FAILURE MODE — the operator can do that himself without two
++> supervisors. The admiral measures concurrency every sweep and calls out any period with 0
++> or 1 beads in flight while ready, unblocked work exists.
++
++> **ADMIRAL CADENCE (operator, 2026-07-22):** sweep every **12 minutes**, not hourly. Each
++> sweep: capture the captain's pane and judge what it is actually doing, count concurrency,
++> check that no release slipped the assessor gate, and score initiative motion. The job is to
++> make the system PROGRESS, not to watch it.
++
+ > **Admiral-owned.** The complete set of major initiatives + their status — the admiral's
+ > oversight anchor. Every audit reconciles it against ground truth (captain-lanes.md tier-2
+ > + `kerf next` + comms). Complements captain-lanes.md (which crew is on which lane right now);
+@@ -23,6 +42,406 @@
+ > `.harmonik/archive/2026-07-12-freeze-and-carve/admiral-initiatives.md` (not boot-read). That
+ > whole priority order is SUPERSEDED by the freeze-and-carve pivot below.
+ 
++---
++
++# THE ROADMAP (rebuilt 2026-07-22 from the 07-20/07-21 planning sessions)
++
++> Rebuilt after the operator flagged that the registry was missing most of what was decided
++> on 2026-07-20/21. Sources: the platform-architecture and codex-strategy-realignment plans,
++> the four thread plans, and the planning-session transcripts. Detail sections follow below;
++> **this ordered list is the index and the priority order.**
++
++**The frame, in plain language.** A multi-day effort to run Codex over ssh was halted by the
++operator. Investigation found two things: the security fence blocking local Codex was invented
++by an *agent*, not the operator; and shipping the repo to another machine to run work over ssh
++is the wrong architecture — scrapped, not patched. What replaces it grew into building
++harmonik as **applications on a platform/kernel**. But before any of that: **Codex has to run
++work locally**, because Codex is cheap and Claude is not, and the crews that build the platform
++are meant to run on Codex.
++
++| # | Tier | Item | State |
++|---|---|---|---|
++| T0 | Unblock | `hk-9hvr0` paste-wedge FIXED (`2b921fde`, live) · `hk-8juwz` FIXED by the revert · `hk-45pm7` recommended not-a-defect · **still open:** `hk-wwa4z` captain deaf to comms, `hk-qx065` P0 trust race, `hk-bkd6h` P1 crew OAuth wall | **CLEARED for dispatch 2026-07-22T04:50Z** — prod runs `4d308f3b`, assessor-gated |
++| T1 | **Priority-0** | **codex-first** — local Codex clears a bead end-to-end | **ACTIVE — codex IMPLEMENTED + SELF-COMMITTED a real 4-file bead 06:35Z** on unmodified `4d308f3b`. Criteria 1–2 MET, criterion 3 (verdict + terminal state) pending. Needs NO code change: prod flip to `codexdriver` is the path; assessor handoff STAGED, not fired. `hk-pkxju` confirmed OFF the critical path |
++| T2 | Fast-follow | config-driven per-node model/harness (de-hard-code reviewer) · remove daemon auto-dispatch | one UNFILED, one staged |
++| T3 | Platform | **P1 kernel/fabric · P2 extraction · P3 distributed execution** — all three IN PARALLEL (C4) | drafted+reviewed, 7 must-fixes unapplied, **no kerf works, zero beads** |
++| T3b | Platform-parallel | **uniform sandbox/security** — operator: *"not later — in parallel"* | most overdue item; unfiled |
++| T4 | Capacity | remote concurrency ~9 (3 Pi + 4 Claude + 2 codex); fails at 6 today | operator suspects an architecture issue |
++| T5 | Debt | **the kerf works are not actually worked** — see §KERF DEBT | operator-flagged 2026-07-22 |
++
++## ★ KERF DEBT — the works exist as shells; the operator wants them fully worked
++
++> **Audited 2026-07-22.** The operator's instruction: *the kerf works need to be fully worked
++> on.* They are not. Findings, worst first:
++>
++> - **`codex-first` — 0% written.** Only `spec.yaml` exists; a bare `kerf new` shell minted
++>   2026-07-21 15:12. Its plan claims "kerf-ready" and its beads (`hk-tckw3` + 5 steps) exist,
++>   so this is largely transcription — but it needs all 7 passes, a `bead_filter`, and the
++>   mandated `scenario:`/`explore:` beads. Size S–M.
++> - **`no-auto-dispatch` — 0% written.** Same story, minted the same second. Content already
++>   lives in the `hk-04q2j` epic body (code anchors, preserve-list, blast radius). Size S.
++> - **P1 / P2 / P3 have NO kerf work at all.** Checked all 59 works. All three plans are
++>   marked "DRAFT for review, pre-kerf" — correctly parked, not silently dropped, but the 7
++>   `REVIEW.md` must-fixes gate their entry into kerf. Note P2's stream is **already running
++>   in code** (bootconfig B1–B6, socket-router SR-1–SR-3, run-state-machine RT1–RT9 landed),
++>   so the missing work understates how live that thread is.
++> - **`dot-hardening`** — full chain written and substantive, but **no `tasks-review.md`**:
++>   the review gate never ran. Needs the reviewer, a `SESSION.md`, and two operator decisions
++>   in its `ISSUES.md`. S to ready, **L to implement**.
++> - **`codex-app-server`** — the one genuine mid-pipeline hole: all five `04-design/C*` files
++>   and the entire `05-spec-drafts/` directory are absent. Overlaps codex-first; needs a
++>   live-or-superseded call. M.
++> - **`2026-07-18-keeper-restart-delivery`** — best-formed recent work (SQUARE 16/16, ready),
++>   but `kerf finalize` never ran and 2 beads stay open. Its specs are also inverted:
++>   10/12 beads closed and code shipped, while `specs/session-keeper.md` stops at SK-021 and
++>   two named specs were never created. S.
++> - **`2026-07-17-dot-mechanism`** — thinking is FINISHED but written under non-jig filenames;
++>   already consumed by `dot-hardening`. Rename into jig filenames or archive as superseded. S.
++>
++> **Wiring defects:** 22 of 59 works have no `bead_filter` and 5 more resolve to zero — so
++> `codex-first` (7 open beads), `no-auto-dispatch` (6 open) and `codex-app-server` (16 closed)
++> are all **orphaned from their own beads** even though the `codename:` labels are correct.
++> `session-restart-substrate`'s filter matches nothing. Triage baseline is 11 days stale
++> (48 untriaged, 520 external drift, last acked 2026-07-10).
++>
++> **Two traps to know:** (a) `kerf square` is an unreliable signal — it derives expected draft
++> filenames from `02-components.md`, so works that name drafts after the spec they amend fail
++> with false positives; that noise hides the one place square is telling the truth
++> (`codex-app-server`). (b) **`.kerf/` has not been committed since 2026-07-16** — 8 of 10
++> audited works are untracked and exist only in this working tree. That is the real orphan risk.
++>
++> **Doc fix, highest value:** `AGENTS.md` §Key conventions still tells agents that kerf
++> artifacts live on a global bench and that the repo's `.kerf/` is a partial mirror. That is
++> now WRONG — the project is in local mode and `~/.kerf/projects/gregberns-harmonik` is a
++> symlink to `.kerf/works`. Do not run `kerf localize`.
++
++## ★ PLATFORM MUST-FIXES — the named gate on P1/P2/P3 entering kerf
++
++> Seven blocking corrections from `plans/2026-07-21-platform-architecture/REVIEW.md`, in
++> blast-radius order. Operator deferred them behind codex-first; they are the first platform
++> action once Codex rolls.
++> 1. **P3** resolve the address-book contradiction (static wins); P1 adds the trigger line.
++> 2. **P3** decide the container fork — **dumb container + driver on the worker**; define the
++>    worker binary's link set. Three plans depend on this one call.
++> 3. **P3** the **durable-dispatch protocol is in nobody's deliverables.** On an at-most-once
++>    fabric, work published with no listener silently evaporates. Name it as a design artifact
++>    that gates implementation.
++> 4. **P2** grounding is wrong in four ways: the "zero deep-daemon calls, verified" claim is
++>    FALSE (same-package calls into 6 files); the dependency allowlist omits a package three
++>    moving files import, so the fence fails day one; "631 files" is mislabeled (134 non-test);
++>    and **the first sub-release must land AFTER codex-first Steps 1–3** — codex-first edits
++>    those exact files.
++> 5. **P2+P3** re-scope the transport unit to **extract-or-DELETE, deletion preferred** (it
++>    currently relocates code that D4 kills); write the scaffold carve-out into the hard rule
++>    and assign the tunnel-gating edit to exactly ONE owner.
++> 6. **P1** dispatch must be **one plugin with a `role: primary|worker` setting** — otherwise
++>    the namespace rule makes cross-plugin channel use illegal.
++> 7. **P3** the fail-closed guard it plans to extend **has already been deleted** by
++>    codex-first; re-word as a new container-reachability check.
++>
++> Also: nobody should build a version-2 workers file (the cap dies with the new path), and the
++> inert ssh seam's deletion belongs to exactly one owner.
++
++## ★ LOCKED DECISIONS — do not reopen without the operator
++
++> **Realignment (`plans/2026-07-20-codex-strategy-realignment/DECISIONS.md`)**
++> **D1** local Codex permitted — the fence was agent-invented · **D-framing** Claude/Codex/Pi
++> all fully supported, and *codex-for-beads* ≠ *codex-as-crew* (separate discussions) ·
++> **D2-direction** *(recommendation superseded by D3; findings hold)* the daemon already
++> commits the diff from outside the sandbox, so full machine access was never needed to land
++> code · **D3** every harness's native sandbox OFF, uniform host posture; security **re-homed,
++> not dropped** · **D4** scrap ssh-per-node; its wedges are MOOT.
++>
++> **Platform (`plans/2026-07-21-platform-architecture/DECISIONS.md`)**
++> **C1** control plane only — git stays the artifact plane · **C2** build the kernel now, in
++> parallel, with distributed execution as its **test bed**; no hacks in either · **C3**
++> transport leaderless, dispatch centrally owned **as an application on top**; static config
++> names the primary · **C4** all three threads in parallel · **C5** keep it simple, with two
++> non-skippables: a dead container's work must requeue and never strand `in_progress`, and a
++> per-workflow-step timeout catches hangs · **C6** plugins are **in-process Go libraries**;
++> the kernel is the cross-machine layer.
++> Plus: the **Resource APIs** seam (Android-style system interfaces — design now, build
++> storage only) · P2 = **extract everything first, then delete** · the `internal/core` split
++> comes **last and deliberately**, not skipped · auto-dispatch removed **entirely**.
++> **OQ-1** guardrails reframed as principles referenced from AGENTS.md · **OQ-2** liveness
++> lean and reactive, not a fixed L1–L9 spec · **OQ-3** Claude reviewer for now; the real fix
++> is config-driven.
++
++## ★ PRINCIPLES THE OPERATOR SET (these govern how work is done)
++
++> - **Principles, not rules.** Rules get obeyed literally and make agents do goofy things;
++>   principles give a direction to travel. CI checks are **signals that prompt thought, not
++>   laws that stop it**.
++> - **Build for the future, not half-assed.** The "you're over-architecting" dismissal is the
++>   pattern to break, not a caution to heed.
++> - **Four platform principles:** the kernel carries signals, not meaning · a healthy kernel
++>   stops growing · the fabric moves references, not cargo · code lives in the component that
++>   owns it, and the composition root wires rather than accumulates.
++> - **Security:** *"it just works AND is secure."* Security that gets in the way gets turned
++>   off — so the secure path must be the easy path.
++> - **Process:** align on the problem before solutioning · plans → resolve every question →
++>   then kerf · **the captain does detailed kerf planning, not the admiral** · delegate
++>   busywork to subagents and have research agents write to disk · steady stream for P2 (no
++>   big bang, no trickle) · no jargon, a conversation not a book, diagrams help.
++
++## ★★★ PRIORITY-0 INITIATIVE — CODEX-FIRST, LOCAL (operator, 2026-07-21)
++
++> **OPERATOR, 2026-07-22T05:40Z, verbatim:** *"The sooner we can get beads processed by codex
++> the longer we'll be able to run this system."* Read it as a **RUNWAY constraint, not a
++> preference** — Claude tokens are what runs out, and codex-as-implementer is what extends the
++> fleet's life. This initiative does not merely rank first; it determines how long everything
++> else gets to exist. Optimize for the SHORTEST PATH TO ONE REAL BEAD PROCESSED END-TO-END BY
++> CODEX. Cut scope freely; **never** cut the assessor gate or the isolated-daemon rule to buy
++> speed.
++
++> **Status: ACTIVE — ★ STEP 2 GO/NO-GO PASSED. ONE REAL BEAD PROCESSED END-TO-END BY CODEX
++> (2026-07-22T06:45Z, admiral ACCEPTED).** Bead `igt-6ig`, run `019f884d-50d1…`, india's
++> isolated daemon, DOT cascade mode, **UNMODIFIED `4d308f3b`** — **no code change was required.**
++> All three admiral criteria MET: (1) implement really ran on codex —
++> `harness_selected {codex, tier: 4}` **and** live `codex exec --json -c
++> sandbox_mode="danger-full-access"` argv, no silent claude fallback; (2) real multi-file
++> self-commit `f5a2206` (4 files, 50 insertions, `Refs: igt-6ig` self-carried,
++> `ensureCodexRefsTrailer already_present` — the daemon's fallback committer was never needed);
++> (3) **both** reviewer nodes ran as claude (tier 3) and **both APPROVED substantively** — the
++> reviewer independently ran build/vet/test *and executed the binary* — then `bead_closed` +
++> `run_completed success=true`. `agent_ready` fired normally; `hk-8juwz` did NOT wedge.
++> Containment held: origin `/tmp/india-gate-origin.git`, `lands_on=gate-lands`, prod HEAD
++> untouched.
++>
++> **★ THE PROD FLIP IS *NOT* AUTHORIZED — HELD BY THE ADMIRAL (06:45Z). Do not re-litigate.**
++> What was proven is the **PLUMBING** (harness resolution, codex exec, self-commit, claude
++> review, terminal close). What is **NOT** proven is **CAPABILITY**, on two limits india
++> volunteered: (a) the test project was a small purpose-built Go module, **not harmonik**;
++> (b) india had to drop `scripts/scenario-gate.sh` from the commit gate because it does not
++> exist outside the repo — so **production's real, heavier commit gate has never run under
++> codex.** A global substrate flip routes *every* prod bead to codex — a far wider blast radius
++> than the evidence supports. **Proof of plumbing is not proof of capability.**
++>
++> **Closing that gap, both running in parallel (06:45Z):** india runs mike's `hk-pina9` as a
++> **strength test** inside a **clone of harmonik** on its isolated daemon — which closes *both*
++> limits at once (real harmonik bead + real commit gate) — while the **assessor gate is fired
++> independently**, scoped at the actual gap, not at re-proving india's result. **Option on the
++> table:** a per-bead **`harness:codex` label (tier 1) ramp** may beat a wholesale substrate
++> flip — mike established the tier-3 node pin beats a tier-1 label unconditionally *when*
++> `deps.harnessRegistry != nil`. Prefer a gradual ramp today over a wholesale flip tomorrow.
++>
++> **THE DECISIVE FINDING — `codex-implements/claude-reviews` NEEDS NO CODE CHANGE.** india read
++> it out of `workflow.dot` hours before it could be run, and the run confirmed it: immediately
++> after the implementer, `harness_selected {agent_type: claude-code, tier: 3}` fired — tier 3
++> being the DOT **node pin** (`dot_cascade.go:1394-1417`, `hk-2jxqg`) winning unconditionally.
++> So **DOT cascade mode already resolves implement=codex (tier 4) and review=claude (tier 3) in
++> production's own graph.** Consequence: the shortest path to the operator's ask is a
++> **production CONFIG FLIP to `HARMONIK_SUBSTRATE=codexdriver`** — no code change at all. That
++> flip is a RELEASE: assessor-gated on an isolated daemon, admiral's call, never a prod canary.
++> The assessor handoff is STAGED (captain, 06:35Z) and deliberately NOT fired pending criterion 3.
++>
++> **`hk-pkxju` is CONFIRMED REVIEW-LOOP-MODE ONLY and is OFF this critical path.** It remains
++> worth fixing (a reviewer should never silently inherit a harness that structurally cannot
++> review) and india is landing it anyway, but it does **not** block the go/no-go. Earlier framing
++> that it was "the one remaining blocker" is **superseded** — do not re-derive it. Its underlying
++> mechanism still stands: the missing `agent_ready` is a **deliberate pin in `reviewloop.go`**,
++> not an absent signal — a design choice to undo, not a bug to add.
++>
++> **Two traps recorded so nobody re-derives them.** (a) `harmonik init` scaffolds a `harnesses.pi`
++> block but **no `codex` block**, so any *freshly initialized* project dies in under a second at
++> spec-build on a missing `codex.stale_wal_max_bytes` (no compiled default). **Prod is NOT
++> affected** — `.harmonik/config.yaml:146-147` already has it; nobody should "fix" prod config.
++> It bites future deployments to new projects. (b) The tier-3 reviewer pin is conditional on
++> `deps.harnessRegistry != nil`; a nil registry lets a `harness:codex` *bead label* override the
++> pin and produce a **false RED** that looks like a product defect. india's run emitted tier 3,
++> so the registry was non-nil — **moot for this proof**, but check it first on any future red.
++>
++> Plan:
++> `plans/2026-07-21-codex-first/_plan.md`. Epic `hk-tckw3` (+ `.1`–`.5`), codename
++> `codex-first`. Goal: local Codex as a reliable local bead-runner so implementer crews stop
++> burning Claude tokens. Steps: 1 fence-flip + danger-full-access (code LANDED d59d5d32) →
++> **2 = the GO/NO-GO LIVE gate** (one real bead end-to-end) → 3 dead-code deletion →
++> 4 thread `HARMONIK_SUBSTRATE=codexdriver` as config → 5 multi-node DOT.
++>
++> **RESOLVED 2026-07-22T04:50Z — that blocker is gone.** Prod now runs `4d308f3b`, which sits
++> directly ON TOP of `d59d5d32` and reverts only `a964cbcb`'s `CLAUDE_CONFIG_DIR` isolation.
++> **Step 1 is therefore SHIPPED AND LIVE** — do not repeat the error that `d59d5d32` was
++> "the refused build" and is excluded; what was refused was the config-isolation change, not
++> the codex work. The daemon contains the `hk-9hvr0` paste fix (`2b921fde`) and Step 1. The
++> `unexpected_exit` scare was root-caused as a reporting artifact (`hk-msrpw`: `daemon_shutdown`
++> has no emitter, so every clean restart records as `supervisor_revival cause=unexpected_exit`
++> — that false signal is what drove the 77-commit rollback). Gate compliance on the roll-forward
++> was clean: assessor PASS 04:45:44Z → swap 04:50:25Z.
++>
++> **Remaining blocker is now ONE bead: `hk-pkxju`** — the codex reviewer never emits
++> `agent_ready` in review-loop mode, so every codex bead fails AFTER a successful
++> implement+commit. Nothing else gates Step 2. **The Step-2 proof belongs on an ISOLATED
++> assessor-owned daemon + `codexdriver`, never a prod canary** (standing PRE-DEPLOY E2E GATE
++> above). **Still NO crew on the lane** as of the 05:05Z sweep — india died 00:3xZ and was
++> never replaced; all five live crews are on platform stabilization. Directed to captain
++> 05:05Z: staff `hk-pkxju`, then `hk-tckw3.2`.
++>
++> **Locked context (D1–D4, `plans/2026-07-20-codex-strategy-realignment/DECISIONS.md`):**
++> D1 the fail-closed remote-only Codex fence was agent-invented → REMOVED; D3 native harness
++> sandboxes OFF (Codex runs `danger-full-access` like Claude; uniform security is a separate
++> PARALLEL workstream); D4 ssh-per-node remote execution SCRAPPED — `hk-qxvc2`/`hk-daegv`
++> and the hook-tunnel work are MOOT. The 30h-stale captain gate question on the ssh re-plan
++> was ruled MOOT by admiral 2026-07-22T02:0xZ.
++
++## ★★ ACTIVE INITIATIVE — PLATFORM ARCHITECTURE, P1/P2/P3 (operator, 2026-07-21)
++
++> **Status: DRAFTED + REVIEWED, deliberately DEFERRED behind codex-first (operator: "get
++> Codex rolling first").** Authority: `plans/2026-07-21-platform-architecture/DECISIONS.md`
++> (three-problem frame + crux decisions C1–C6 + principles). Threads:
++> **P1 kernel fabric** (transport + addressing + in-proc plugin interface — substrate-v2's
++> design minus its data-sharing premise) · **P2 extraction** (the two god packages
++> `internal/daemon` + `internal/core`; steady-stream extract-then-delete) · **P3 distributed
++> execution** (containerized beads, local + remote, built on P1).
++>
++> **Next concrete step:** apply the 7 must-fix corrections from `REVIEW.md` (LOOKUP
++> contradiction, dumb-container wording, named dispatch-protocol deliverable, P2 grounding
++> fixes, ssh extract-or-DELETE rescope) — delegable to a subagent — THEN P1–P3 → kerf.
++> Operator framing that governs it: *build for the future, not half-assed* — a strong
++> platform is not over-engineering. Container "dumb box" diagrams deferred to P3.
++
++## ★ FAST-FOLLOW (after codex-first proves) — CONFIG-DRIVEN NODE MODEL/HARNESS
++
++> De-hard-code the reviewer: DOT nodes take model + harness as config rather than a compiled
++> constant (reviewer stays Claude for now by *configuration*, not by hard-coding). Includes
++> the "rerun a node under a different harness" idea. Operator-named 2026-07-21.
++
++## ★ ACTIVE INITIATIVE — REMOVE DAEMON AUTO-DISPATCH (operator, 2026-07-21)
++
++> Epic `hk-04q2j` (+ `.1`–`.5`), codename `no-auto-dispatch`. Operator directive: the daemon
++> must NOT drain the bead backlog at boot — **only agents decide what runs**, never a stale
++> backlog. Steps: 1 test-helper single-item export, 2 delete the br-ready fallback dispatch
++> block, 3 remove `NoAutoPull` config/flag/status plumbing, 4 rewrite feature-specific tests,
++> 5 (optional) retire `restartbackoff.go`. Captain-owned; unstaffed as of this audit.
++
++## ★★ PARALLEL INITIATIVE — UNIFORM SANDBOX / SECURITY (operator, 2026-07-20)
++
++> **Operator's words: "It's not 'later' — it's going to be done in parallel."** This is the
++> most overdue item on the board and it has no plan and no beads. D3 turned every harness's
++> native sandbox OFF; the replacement is ONE harmonik-level sandbox covering all beads, with
++> an ad-hoc per-bead disable. Governing principle: *it just works AND is secure* — three
++> goals, (1) runnable, (2) not painful to run, (3) secure, and (3) must not undermine (2).
++> **Open and explicitly NOT decided: container vs wrapper.** The operator has mixed feelings —
++> do NOT assume container. Pi's macOS sandbox reconciliation folds into this design.
++> Followups: `plans/2026-07-20-codex-strategy-realignment/FOLLOWUP-TOPICS.md` §A.
++
++## ★ INITIATIVE — REMOTE CONCURRENCY / VOLUME (operator, 2026-07-21)
++
++> Target ~9 concurrent runs (3 Pi on the DGX + 4 Claude + 2 codex). It fails at 6 today. The
++> operator flagged this as possibly **"a fundamental architecture issue,"** not a tuning knob —
++> which is part of why the platform threads exist. Unfiled as a work; track it here so it does
++> not evaporate.
++
++## ★ VERIFICATION IS TWO LAYERS — not one proof bead
++
++> **Operator, 2026-07-21, verbatim rebuke to the prior admiral:** *"I believe you want to test
++> the codex work in production before passing that to the assessor. That is a complete
++> violation of the release rules."* Also: do NOT flip `HARMONIK_SUBSTRATE=codexdriver` to a
++> default — untested is not default, and *"we never said we were switching to Codex as the
++> primary driver."*
++>
++> The bar is **two layers, not one**: (1) heavy in-crew testing that the crew drives through
++> its OWN subagents, then (2) the **assessor's complete-system test as the gate**. "One bead
++> cleared" is explicitly NOT the bar.
++>
++> **Assessor standing orders (operator):** autonomous exploratory testing; it MAY re-pin to a
++> new commit without waiting on the admiral; it SHOULD delegate to subagents; it must never
++> idle and never sit on a stale SHA. **A verdict is valid only for its pinned SHA.**
++
++## ★ ACTIVE INITIATIVE — CODEX-AS-CREW (Phase-2 GO, operator 2026-07-18)
++
++> **Re-activated (was PARKED under freeze-and-carve; that front is now drained).** Operator
++> directive 2026-07-18: use the Codex subscription aggressively; drive the **working
++> (non-captain/admiral) crews** on the **Codex app-server** harness, starting with Codex.
++> This resolves the pending "Phase-2 go/no-go" (Decision #2) as **GO**. Phase-1 substrate is
++> COMPLETE + PROVEN (`internal/{apptap,codexwire,codexreactor,codexdigitaltwin,codextest,codexdriver,codexinput}`
++> built + green vs real corpus; `codexdriver` daemon-registered as the 2nd `handler.Substrate`;
++> verdict "layering cheap+sound"). **Why it matters:** Codex app-server = long-lived JSON-RPC
++> stdio with server-held resumable thread state → no tmux, no pane paste-injection → may retire
++> the keeper entirely (directly attacks the C1/C4 keeper-collision pain). **Phase-2 scope:**
++> `hk-nzzos` (persistent client + supervised sidecar: reconnect/backpressure/watchdog) + Spike B
++> ("can Codex actually orchestrate?") + un-park `hk-l63b9` (route crew-start through harness
++> selection → app-server driver). Epic **hk-q3ovr** (MR1 crew harness selection). Entry point:
++> `.kerf/works/codex-app-server/07-tasks.md` + `04-design/{orchestrator-session-model,keeper-verdict}`.
++> **Captain owns scoping+staffing; admiral holds oversight.** Sequencing: scope NOW (design/plan,
++> no contention); staff implementation crews as the assessor-gate fix queue drains.
++>
++> **UPDATED 2026-07-18 (supersedes the stale IDs above):** the old Phase-2 beads
++> (`hk-q3ovr`/`hk-nzzos`/`hk-l63b9` + dependents) were CLOSED in the freeze-and-carve sweep;
++> re-filed under FRESH epic **`hk-g0ror`** — `.1` **Spike B** (P1 GO/NO-GO gate, assigned crew
++> **yankee**, running now), `.2` persistent client + supervised sidecar (P1, **HELD** until
++> spike-positive + admiral plan-gate), `.3` crew-start harness routing (parallel, substrate-neutral).
++> **NOT ready to BUILD — ready to SPIKE:** the "resident Codex can orchestrate a crew" premise is
++> UNPROVEN; yankee runs Spike B first. **Collision guard:** Phase-2 keeper-retirement touches the
++> same surface as the fleet keeper-reliability initiative below — stays at spike/design only until
++> that Track A lands or admiral sequences. **Pending operator nod:** a Spike-B FAIL HALTS the `.2`
++> build (anti-sunk-cost).
++>
++> **UPDATED 2026-07-18 (operator decisions — Spike PASSED, plan reviewed):** `hk-g0ror.2`
++> SIDECAR BUILD **GREEN-LIT: GO** (staffed under yankee). **Sandbox posture:** run INSIDE a real
++> isolation boundary (worker/container) AND commits must land inside it — NOT unsandboxed naked
++> host; **FAIL-CLOSED** (refuse codex-crew spawn without a worker/container boundary; no
++> `substrate_select.go:52` LOCAL fallback). `hk-5h759` lands only fail-closed. **Spend:** no token
++> gate — operator on a subscription (not per-token charged). **Binding build conditions:** additive
++> to assessor-gate crews; pre-deploy isolated E2E test reproducing changed behavior as an
++> acceptance criterion; Track-A fence (keeper-retirement design-only behind xray).
++
++## ★ ACTIVE INITIATIVE — FLEET COMMS/KEEPER RELIABILITY (operator, 2026-07-18)
++
++> **Captain-owned: plan + delegate. Admiral holds oversight only.** Two linked problems, one
++> plan: (1) crews under-drain their comms queues — inbound directed sends only become a crew
++> ACTION if the recipient keeps a recv `--follow` stream armed via the **Monitor tool**; that
++> contract is unwritten in the skills and empirically unmet (root cause of the captain's
++> 7-unread symptom). Cheap no-rebuild skill-edit ships today; keeper inbox-nag is the durable
++> half. (2) a **larger keeper reliability issue** the operator is flagging — a bigger plan
++> "we'll need to take on" (scope TBD by operator/captain, likely kerf-first). The captain scopes
++> both (kerf explore → beads → delegate), reports the codename + first beads on `--topic status`.
++> Diagnostic evidence: admiral fan-out 2026-07-18. NOT gate-blocking freeze-and-carve.
++>
++> **UPDATED 2026-07-18 (operator): xray drives the keeper changes fully through KERF.** The
++> leader-session timing+delivery redesign (Track A) is being taken all the way through the kerf
++> process by xray as work **`keeper-restart-delivery`** (spec → design → tasks). **TRIGGER —
++> admiral must delegate when READY:** when that kerf work reaches READY (tasks finalized /
++> `kerf show` shows ready), delegate it to the captain to staff a crew and build. Check this
++> every hour audit until it fires. Until then xray owns it in-kerf; do NOT delegate a
++> half-specced work. (Track B crew-reliability defects stay ordinary bugs, separate.)
++>
++> **UPDATED 2026-07-18 — TRIGGER FIRED, DELEGATED.** xray drove keeper-restart-delivery fully
++> through kerf (Q3 def → DIRECTION memo → SQUARE 16/16 → 10 beads T1-T10, codename:keeper-restart-delivery).
++> **Now delegated to the captain to BUILD (Track A executing);** ready roots T1/T2/T5 parallel.
++> Guardrails: zero threshold changes, keep hk-89g retry-Enter loop, 2 mandatory test beads +
++> pre-deploy E2E. **This Track A landing UNFENCES the Codex keeper-retirement slice (hk-f8wtm).**
++> xray research role COMPLETE (idle-watch). Track B crew-reliability defects = ordinary bugs.
++>
++> **UPDATED 2026-07-19 (admiral audit) — GATED, not executing.** Track A is READY (roots
++> T1/T2/T5) but NOT being built: the fleet's ONE working crew (yankee) is fully consumed by the
++> operator-ruled-A codex-substrate-unblock cycle (the critical path), and new implementer crews
++> can't be conserve-routed to Codex because codex-as-crew is exactly what's under repair.
++> **Un-gate trigger:** the Ruling-A codex cycle clears its live gate (frees yankee + restores
++> Codex-staffing) → Track A is the immediate next work. Alternative un-gate = operator authorizes
++> a parallel Claude implementer crew now (conserve-posture call, surfaced to operator this audit).
++
++## ★ ACTIVE INITIATIVE — VERIFY-BEFORE-REVIEW (standard-bead DOT gate; operator, 2026-07-18)
++
++> **Captain-owned: scope kerf-first + delegate. Admiral holds oversight.** Operator policy:
++> the moment a bead finishes IMPLEMENTATION in the DOT workflow it is IMMEDIATELY linted +
++> unit-tested + all baseline tests run; ONLY on green does it advance to REVIEW. Verification is
++> a mandatory node BETWEEN Builder and Reviewer — no bead reaches review un-verified; nothing
++> merges without baseline green. **Mechanism:** the architecture's non-agentic VERIFICATION NODE
++> (mechanism-tagged deterministic checker — linter + test-runner + type/build, `architecture.md`
++> §4.7/§4.a), positioned Builder → Verify(deterministic) → Reviewer, FAIL routes back to Builder
++> (`specs/examples/review-route-by-failure-class.dot` + `quality-gate-policy.dot`). **One
++> definition of baseline-green across all gates:** check-short parity (fmt-check, vet, build,
++> golangci-lint --new-from-rev, go test -short -race) so per-bead == CI `check (Tier 2)` ==
++> assessor MG (good-enough §2.5). **Why now:** the root cause of PR #31's 198-finding / red-CI
++> false-green — local hooks were uninstalled since ~Jun 27, so lint+tests never ran per bead;
++> lint had even been cleared to 0-new-from-rev at c066 then REGRESSED to 198 with no per-bead
++> enforcement. Defense-in-depth: hooks catch at commit, THIS catches per-bead pre-review, MG
++> catches at release. **Scope:** fold into the existing `standard-bead-dot` / `2026-07-17-dot-mechanism`
++> kerf works (no new work); determine whether the standard bead DOT is MISSING the verify node
++> or has it dormant/unwired. Captain reports codename + node placement + failure routing + first
++> beads on `--topic status`. Sibling of the enforcement-chain fix (hooks reinstall + CI hooks-check
++> made blocking) and the assessor MG policy.
++
+ ## ★★ CURRENT INITIATIVE — FREEZE-AND-CARVE (operator, 2026-07-12 ~18:00Z)
+ 
+ > Stop the bug-fix treadmill. Keep the proven core (queue model, lifecycle sweeps, harness
+@@ -37,7 +456,7 @@ ratifies PLAN.md and lifts the freeze.
+ 
+ | # | Initiative | State |
+ |---|---|---|
+-| 1 | **freeze-and-carve** — the carve/rebuild program (P1 → Track B/C → M1 → {M2, M3} → M4 → M5) | **ACTIVE (executing).** Ratified 2026-07-13. As of 2026-07-15: P1 + Track B/C ✅, **M3 done** (closed out-of-jig), **M2 code-complete** (T5–T10; T11 parked by operator — delete once no callers), M1 mostly done (M1-5 finishing; M1-2/M1-3 operator-gated), **M4 next** (at `analyze`; planner running AR-2 + design→ready), M5 held (un-hold trigger now met). Order + T11 rationale: COORD c035. |
++| 1 | **freeze-and-carve** — the carve/rebuild program (P1 → Track B/C → M1 → {M2, M3} → M4 → M5 → M6) | **ACTIVE (executing).** Ratified 2026-07-13. As of 2026-07-16: P1 + Track B/C ✅, **M3 done**, **M2 code-complete** (T11 parked by operator), M1 mostly done (M1-2/M1-3 operator-gated). **M5 (daemon god-fn → 3 pure-seam extractions) DONE ✅:** `hook`✓ (c043) · `policy`✓ (c045) · `orchestrator`✓ (3A `9b3eb87f` / 3B `fc058829` / 3C `5b975097`, c052). All independently APPROVED + trailer-stamped; COORD closed c052. **M5-closure = option (A)** (planner ruling c051): M5 is the 3 extractions only; the two giant retirements (`startWithHooks`→boot-config, `handleSocketConn`→socket-router) are a NAMED, UNSTARTED follow-up (own design+review each), NOT M5's bar, not gating anything. **M6 (controlled-testing harness): ACTIVE — waves 1–3 LANDED (2026-07-16).** Landed: WS1.2/1.3, WS2.1/2.2/2.4 (docker foundation + subprocess smoke), WS3 all (Claude A/B/C/D + codex-B + pi), WS4-1 reconcile, WS5-1/2/3. **In flight:** WS2.3 compose E2E. Plan: M6-PLAN.md. **END-GAME SEQUENCED (admiral directive c061):** 4 tracks — (1) finish M6 [WS2.3→2.5, WS4-0→4-2, WS5-4…8, codex-A real-box, WS1.1 CI-flip LAST], (2) lint remediation [107 feature-owned; gates WS1.1; admiral call = start now, parallel lane], (3) giant-retirement [**LANDED** — boot-config B1–B6 + socket-router SR-1…SR-3 committed on this branch; `internal/daemon/{bootconfig,router}` pkgs populated; `handleSocketConn` retired to a 22-line shell delegating to `router`; C1 routes wired. NOT unstarted — the earlier "execution-ready/after-M6" framing is superseded by the actual commits (COORD c082 + boot-config/socket-router commit series)], (4) mega code-review [MEGA-REVIEW-PLAN-v2, pilot→sweep; after giant-retirement]. Operator-async: PR #20 push + M4 real-box proof (both operator-gated). **M4 real-box proof** stays operator+human-box gated behind M6. **UPDATED 2026-07-18 (reconciled to COORD c087):** Track-2 lint **DONE** (c066; `--new-from-rev=origin/main`=0; WS1.1 green-tree prereq MET). Track-4 mega-review **Wave 4 COMPLETE** (batches 1–4, c084–c087; §c mediums swept + LOW/nit). M6 Wall-2 root-caused + resolved to operator-boundary/infra items (c070–c076); DOT loop proven green e2e (c075). 3 known defects filed as beads (hk-n1kln/hk-uhxwd/hk-1dgy0). **Un-gated KNOWN out-of-pipeline backlog is DRAINED.** Remaining forward motion is all operator/admiral-gated: (a) **assessor daemon campaign** (operator GO — the staged release gate), (b) **WS1.1 CI-required-status-check flip** (admiral/operator GitHub branch-protection action; prereq met), (c) giant-retirement (operator "do only if you ask"), (d) PR #20 / M4 real-box (operator+human-box). Latest COORD: c087. **UPDATED 2026-07-19 08:4xZ (admiral audit) — PHASE1 CODE-REVAMP SHIPPED: PR #31 (phase1-session-restart-substrate → main) MERGED @26a4cfd9 08:06Z; CI Tier2 Linux + Tier3 both green; the whole carve/rebuild program is on main. Post-merge assessor baseline @26a4cfd9 = PASS (forced-local LT + race on 4 merge-touched pkgs, isolated clone), S7 fault-injection in flight. This initiative row is effectively DONE on main; residual forward-motion (WS1.1 CI-flip, PR#20, M4 real-box) stays operator-gated.** |
+ 
+ **On ratification** the ordered work is: STEP-0 (resume-hang + noChange false-close +
+ honest-probe re-land, OUT-OF-PIPELINE) → M1 delete test-theater (concurrent) → M2 agent-input
+diff --git a/.harmonik/crew/admiral-playbook.md b/.harmonik/crew/admiral-playbook.md
+index 048c435a7..8172f45cf 100644
+--- a/.harmonik/crew/admiral-playbook.md
++++ b/.harmonik/crew/admiral-playbook.md
+@@ -169,6 +169,10 @@ the high-value modes below; when there's nothing in them, make the audit SHORT o
+    (default on expiry is LAPSE → standing autonomous posture, never a hold). A dated
+    directive with no matching direction-log entry, or an `epic_id: null` lane with no
+    gate, is a FINDING.
++8a. **Bead-hygiene sweep (`docs/components/internal/bead-hygiene.md`):** on newly-created beads
++    since last audit, check priority-rubric fit, required labels (provenance / `codename:` matching
++    `kerf map` / campaign + one disposition), non-empty description, and goal-alignment. Orphans or
++    mislabels → ONE `--to captain --topic directive` to fix (non-terminal `br update`), or correct trivial metadata inline. Clean → silent.
+ 9. Decide: ALIGNED-and-nothing-new → **idle silently** (no post). · ALIGNED-but-operator-should-
+    know (slack, pattern, knob-deviation, approaching operator-gate) → ONE short `--to operator`.
+    · Lane/priority drift, INCLUDING resuming a KNOWN parked lane → ONE `--to captain
+diff --git a/AGENTS.md b/AGENTS.md
+index cd33858ea..3e417d1cb 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -20,32 +20,27 @@ Each role loads only its slice. The boot runbook in each role's skill is authori
+   3. Step 0b — tier-2 `.harmonik/context/captain-lanes.md` (lanes + epics-in-progress + parked + dated operator directives).
+   4. Step 1 — `captain/SKILL.md` + the **`orchestrator-rules` skill** (standing rules) + tier-1 `HANDOFF.md` (a claim, not ground truth).
+   5. Step 2 — boot digest = ground-truth; overrides every claim above. Steps 3–6 reconcile / plan / staff / arm watchers.
+-  - Does **NOT** boot-read: `AGENT_INDEX.md`, `STATUS.md`, product/`docs/` knowledge base, full skill bodies. `ROADMAP.md` only on cold boot / milestone.
++  - Does **NOT** boot-read: `AGENT_INDEX.md`, `STATUS.md`, product/`docs/` knowledge base, full skill bodies. `.harmonik/context/roadmap.md` only on cold boot / milestone.
+ - **Captain — keeper-restart resume (LEAN):** re-drain comms → re-read tier-3/tier-2 + ONE boot digest → trust cached tier state as input → re-arm watchers. No heavy re-derive.
+-- **Crew — minimal load** (see `.claude/skills/crew-launch/SKILL.md`): its mission file (`.harmonik/crew/missions/<crew>.md`) + `crew-launch/SKILL.md` + `agent-comms` + `beads-cli` + `harmonik-dispatch`. Does **NOT** load fleet-level state (ROADMAP, captain-lanes, project.yaml, orchestrator standing-rules, STATUS, HANDOFF, knowledge base) — scoped to ONE epic + ONE queue.
++- **Crew — minimal load** (see `.claude/skills/crew-launch/SKILL.md`): its mission file (`.harmonik/crew/missions/<crew>.md`) + `crew-launch/SKILL.md` + `agent-comms` + `beads-cli` + `harmonik-dispatch`. Does **NOT** load fleet-level state (roadmap, captain-lanes, project.yaml, orchestrator standing-rules, STATUS, HANDOFF, knowledge base) — scoped to ONE epic + ONE queue.
+ - **Implementer-orchestrator (main `/session-resume`, non-captain):** `AGENT_INDEX → STATUS → HANDOFF` reading order + the **`orchestrator-rules` skill** (standing rules) + `harmonik-dispatch`.
+ 
+ ## Start here
+ 
+ Read [AGENT_INDEX.md](AGENT_INDEX.md) first — the master map of the knowledge base (every doc reachable within two hops). Then [STATUS.md](STATUS.md) for phase + locked decisions, `.harmonik/context/captain-lanes.md` for the medium-term lane/epic tracker, and [HANDOFF.md](HANDOFF.md) for this-session state.
+ 
+-**Launching a captain or crew?** Use the native umbrella verb — `harmonik start captain` or `harmonik start crew <name>` (keeper auto-armed; NO env var, NO script path — `--project` defaults to cwd). The old `~/.claude/captain-tools/captain-launch.sh` + `HK_PROJECT` env var are RETIRED in favor of `harmonik start captain`. Positional-XOR-flags rule (D2): the simple form is a bare name only (`start crew paul`); the moment any `--flag` appears the name must move to `--name` (mixing a bare name with flags is a hard error). `harmonik captain` / `harmonik crew start <name>` remain as back-compat aliases.
+-
+-**Launching an oversight session (commodore, admiral)?** ALWAYS use `harmonik start commodore` / `harmonik start admiral` — never a bare `claude --remote-control` or `harmonik agent brief` in a hand-rolled tmux session. Those launch paths write neither the crew registry record nor the `crew-<name>`-prefixed tmux session that the daemon's boot-time orphan sweep (`RunOrphanSweep`) checks for, so the session is reaped as an orphan at the next daemon boot / supervisor revive (hk-zeo5y). `harmonik start commodore` / `admiral` always route through the same registry-protecting RPC as `harmonik crew start <name>` — the identity is the role name (no positional), so protection is automatic, not a step to remember.
+-
+ **Booting as a captain or crew?** These skills are **project-local under the repo** — read them at `/Users/gb/github/harmonik/.claude/skills/…`, NOT the global `~/.claude/skills/` (no captain/crew skill exists there). Captain: read `.claude/skills/captain/STARTUP.md` FIRST, then `SKILL.md` in that dir. Crew: read `.claude/skills/crew-launch/SKILL.md`. See also `.claude/skills/keeper` (per-session context-watcher) and `.claude/skills/harmonik-lifecycle` (supervise / promote / reconcile / init).
+ 
+ ## Standing rules → the `orchestrator-rules` skill
+ 
+ Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (kerf-first), bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, autonomy/flow boundaries, and the major-issue fan-out trigger: all canonical in the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`). It points to the detail-owner skills; it does not duplicate them.
+ 
+-- **Daily loop / daemon / `queue submit` / `append` / `subscribe`:** the **harmonik-dispatch** skill. Full design: `docs/orchestration-protocol-v2.md`.
+-- **Monitoring the daemon** (the canonical Monitor pattern, stream-vs-wave, failure triage): the **harmonik-dispatch** skill. Manual hang-recovery: `docs/known-workarounds.md`.
++- **Daily loop / daemon / `queue submit` / `append` / `subscribe`:** the **harmonik-dispatch** skill.
++- **Monitoring the daemon** (the canonical Monitor pattern, stream-vs-wave, failure triage): the **harmonik-dispatch** skill.
+ - **CWD discipline** (never `cd` into a worktree; operate from repo root via `git -C` absolute paths): the **orchestrator-rules** skill.
+ - **Multi-agent comms** (`harmonik comms` bus; dedupe on `event_id`): the **agent-comms** skill. The `.harmonik/comms/*.md` file-outbox is RETIRED — do NOT write to those files.
+-- **Lifecycle** (init / supervise / reconcile / promote; work-project deployment, `branching.yaml`): the **harmonik-lifecycle** skill. integration→main is always a human PR step.
+-- **Redeploy the live daemon binary** (in-place swap on the running box; supervisor revival, SIGTERM-the-daemon, health-window/last-good, `daemon-YYYYMMDD-NN` tag): the runbook at [`docs/daemon-redeploy.md`](docs/daemon-redeploy.md).
+-- **Keeper** (per-session context-fill watcher; now incl. the `hold`/`release` co-working override that suspends the ACT/restart cutoff while WARN still fires): the **keeper** skill.
++- **Lifecycle** (init / supervise / reconcile / promote; work-project deployment, `branching.yaml`): the **harmonik-lifecycle** skill. The daemon merges completed bead branches into `$TARGET_BRANCH`.
++- **Keeper** (per-session context-fill watcher): the **keeper** skill.
+ 
+ <!-- END harmonik:managed -->
+ 
+diff --git a/internal/daemon/brready_priority_scenario_hktul2a_test.go b/internal/daemon/brready_priority_scenario_hktul2a_test.go
+deleted file mode 100644
+index d031cfb5e..000000000
+--- a/internal/daemon/brready_priority_scenario_hktul2a_test.go
++++ /dev/null
+@@ -1,207 +0,0 @@
+-package daemon_test
+-
+-// brready_priority_scenario_hktul2a_test.go — scenario test: daemon br-ready
+-// priority claim order (hk-tul2a).
+-//
+-// # What this test covers
+-//
+-// Regression guard for workloop.go:692 (readyRecords[0] pick on the br-ready
+-// fallback path). The hk-rp48p fix added --sort priority to brcli.Ready so that
+-// br returns beads in priority order; the workloop then picks readyRecords[0].
+-//
+-// This test exercises the full dispatch path end-to-end via ExportedRunWorkLoop:
+-//
+-//  1. Two beads are seeded at different priorities: P0 ("hk-tul2a-p0") and P1
+-//     ("hk-tul2a-p1"). The stub ledger returns [P0, P1] on the first Ready call
+-//     — the same priority-sorted order that `br ready --sort priority` would
+-//     produce. On the second call it returns [P1] (P0 in-flight), and [] on
+-//     subsequent calls.
+-//
+-//  2. ExportedRunWorkLoop runs with MaxConcurrent=1 (single-threaded default).
+-//     The capacity gate ensures P1 is not dispatched until P0 completes.
+-//
+-//  3. After both beads reach a terminal state (closed or reopened), the test
+-//     asserts that ClaimBead was called for P0 before P1.
+-//
+-// A future regression that changes readyRecords[0] to a different index, removes
+-// the priority-first sort from the brcli adapter, or reorders the dispatch path
+-// would cause this assertion to fail.
+-//
+-// Helper prefix: brPriority (bead hk-tul2a; per implementer-protocol §Helper-prefix).
+-//
+-// Spec refs: specs/beads-integration.md §4.a BI-013d (--sort priority adapter
+-// sort discipline); workloop.go:692 (readyRecords[0] pick).
+-// Source: review verdict on hk-rp48p commit 2e48555.
+-// Bead: hk-tul2a.
+-
+-import (
+-	"context"
+-	"path/filepath"
+-	"sync"
+-	"testing"
+-	"time"
+-
+-	"github.com/gregberns/harmonik/internal/brcli"
+-	"github.com/gregberns/harmonik/internal/core"
+-	"github.com/gregberns/harmonik/internal/daemon"
+-)
+-
+-// brPriorityP0BeadID is the P0 (highest-priority) bead ID used in this test.
+-const brPriorityP0BeadID = core.BeadID("hk-tul2a-p0")
+-
+-// brPriorityP1BeadID is the P1 (lower-priority) bead ID used in this test.
+-const brPriorityP1BeadID = core.BeadID("hk-tul2a-p1")
+-
+-// brPriorityOrderStub is a bead ledger stub that serves pre-seeded Ready
+-// responses and records the order in which ClaimBead is called.
+-//
+-// Concurrency: all methods are safe to call concurrently.
+-type brPriorityOrderStub struct {
+-	mu         sync.Mutex
+-	readySlots [][]core.BeadRecord // successive Ready() responses, consumed in order
+-	readyIdx   int
+-	claimOrder []core.BeadID // order in which ClaimBead was called
+-	terminal   []core.BeadID // beads that reached CloseBead or ReopenBead
+-}
+-
+-func (s *brPriorityOrderStub) Ready(_ context.Context) ([]core.BeadRecord, error) {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	if s.readyIdx >= len(s.readySlots) {
+-		return []core.BeadRecord{}, nil
+-	}
+-	recs := s.readySlots[s.readyIdx]
+-	s.readyIdx++
+-	return recs, nil
+-}
+-
+-func (s *brPriorityOrderStub) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+-	// Always report "open" so the pre-claim guard in workloop.go passes.
+-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+-}
+-
+-func (s *brPriorityOrderStub) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID) error {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	s.claimOrder = append(s.claimOrder, beadID)
+-	return nil
+-}
+-
+-func (s *brPriorityOrderStub) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ bool) error {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	s.terminal = append(s.terminal, beadID)
+-	return nil
+-}
+-
+-func (s *brPriorityOrderStub) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ string) error {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	s.terminal = append(s.terminal, beadID)
+-	return nil
+-}
+-
+-func (s *brPriorityOrderStub) terminalCount() int {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	return len(s.terminal)
+-}
+-
+-func (s *brPriorityOrderStub) claimOrderSnapshot() []core.BeadID {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	out := make([]core.BeadID, len(s.claimOrder))
+-	copy(out, s.claimOrder)
+-	return out
+-}
+-
+-// ─────────────────────────────────────────────────────────────────────────────
+-// TestScenario_BrReadyPriorityClaimOrder_hktul2a
+-// ─────────────────────────────────────────────────────────────────────────────
+-
+-// TestScenario_BrReadyPriorityClaimOrder_hktul2a is the end-to-end scenario test
+-// for the daemon br-ready priority claim path (hk-tul2a).
+-//
+-// Seeds two beads at different priorities (P0 and P1). The stub Ready() returns
+-// [P0, P1] on the first call — the priority-sorted order produced by brcli.Ready
+-// after the hk-rp48p fix. Asserts that the workloop claims P0 before P1, catching
+-// any future regression at workloop.go:692 (readyRecords[0] pick).
+-//
+-// Spec refs: specs/beads-integration.md §4.a BI-013d; workloop.go:692.
+-// Bead: hk-tul2a.
+-func TestScenario_BrReadyPriorityClaimOrder_hktul2a(t *testing.T) {
+-	skipRealDaemonE2EInShort(t)
+-	t.Parallel()
+-
+-	projectDir, _ := workloopFixtureProjectDir(t)
+-	workloopFixtureGitRepo(t, projectDir)
+-
+-	// Seed Ready responses:
+-	//   Call 1: [P0, P1] — both beads, priority order (P0 highest, as --sort priority returns).
+-	//   Call 2: [P1]     — P0 is in-flight; P1 still pending.
+-	//   Call 3+: []      — all beads processed; loop idles.
+-	ledger := &brPriorityOrderStub{
+-		readySlots: [][]core.BeadRecord{
+-			{
+-				{BeadID: brPriorityP0BeadID},
+-				{BeadID: brPriorityP1BeadID},
+-			},
+-			{
+-				{BeadID: brPriorityP1BeadID},
+-			},
+-		},
+-	}
+-
+-	p := daemon.WorkLoopDepsParams{
+-		BrAdapter:        ledger,
+-		Bus:              &stubEventCollector{},
+-		ProjectDir:       projectDir,
+-		HandlerBinary:    "/bin/sh",
+-		HandlerArgs:      []string{"-c", "exit 0"},
+-		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+-		// MaxConcurrent defaults to 1 — ensures P0 is fully dispatched before P1.
+-	}
+-	deps := daemon.ExportedWorkLoopDeps(p)
+-
+-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+-	defer cancel()
+-
+-	loopDone := make(chan struct{})
+-	go func() {
+-		defer close(loopDone)
+-		daemon.ExportedRunWorkLoop(ctx, deps)
+-	}()
+-
+-	// Poll until both beads have reached a terminal state (CloseBead or ReopenBead).
+-	pollDeadline := time.Now().Add(25 * time.Second)
+-	for time.Now().Before(pollDeadline) {
+-		if ledger.terminalCount() >= 2 {
+-			break
+-		}
+-		time.Sleep(25 * time.Millisecond)
+-	}
+-
+-	cancel()
+-	select {
+-	case <-loopDone:
+-	case <-time.After(5 * time.Second):
+-		t.Fatal("brPriority: workloop did not exit within 5s after context cancel")
+-	}
+-
+-	// Assert: P0 was claimed before P1.
+-	order := ledger.claimOrderSnapshot()
+-	if len(order) < 2 {
+-		t.Fatalf("brPriority: expected 2 ClaimBead calls; got %d (%v) — both beads must be dispatched", len(order), order)
+-	}
+-	if order[0] != brPriorityP0BeadID {
+-		t.Errorf("brPriority: first claimed bead = %q; want P0 = %q — "+
+-			"priority-first claim is broken (hk-tul2a / hk-rp48p regression at workloop.go:692)",
+-			order[0], brPriorityP0BeadID)
+-	}
+-	if order[1] != brPriorityP1BeadID {
+-		t.Errorf("brPriority: second claimed bead = %q; want P1 = %q",
+-			order[1], brPriorityP1BeadID)
+-	}
+-	t.Logf("brPriority PASS: claim order = [%s, %s]", order[0], order[1])
+-}
+diff --git a/internal/daemon/export_test.go b/internal/daemon/export_test.go
+index 442620830..e926c689c 100644
+--- a/internal/daemon/export_test.go
++++ b/internal/daemon/export_test.go
+@@ -259,14 +259,6 @@ type WorkLoopDepsParams struct {
+ 	// Bead ref: hk-a6e24.
+ 	DecisionBlocker *DecisionBlocker
+ 
+-	// NoAutoPull, when true, disables the br-ready fallback poll path so the
+-	// work loop only dispatches via the queue surface (EM-066). The zero value
+-	// (false) preserves the existing test default: br-ready fallback enabled.
+-	// Set to true to test the quiet-daemon (queue-only) topology.
+-	//
+-	// Bead ref: hk-h5lv2 (EM-066 scenario test).
+-	NoAutoPull bool
+-
+ 	// ConcurrencyCtrl, when non-nil, replaces the static MaxConcurrent with a
+ 	// runtime-mutable controller that tests can adjust mid-run (hk-ohiaf). When
+ 	// nil the static MaxConcurrent field is used (backward-compat).
+@@ -568,7 +560,6 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
+ 		strandedResetDaemonNS:      p.StrandedResetDaemonNS,      // hk-l2xd1
+ 		operatorPauseCtrl:          p.OperatorPauseCtrl,          // hk-ry8q1
+ 		decisionBlocker:            p.DecisionBlocker,            // hk-a6e24 EV-043
+-		noAutoPull:                 p.NoAutoPull,                 // hk-h5lv2 / EM-066
+ 		concurrencyCtrl:            p.ConcurrencyCtrl,            // hk-ohiaf
+ 		localInFlight:              new(atomic.Int32),            // hk-hs7ex: split gate — fresh counter for each test
+ 		skipBrHistoryRotation:      true,                         // hk-hypbi: tests use temp dirs without real .br_history
+diff --git a/internal/daemon/l5saf_localonly_strand_test.go b/internal/daemon/l5saf_localonly_strand_test.go
+index 70bd2917b..a10741cd3 100644
+--- a/internal/daemon/l5saf_localonly_strand_test.go
++++ b/internal/daemon/l5saf_localonly_strand_test.go
+@@ -108,7 +108,6 @@ func TestL5saf_LocalOnlyItemNotStrandedByCapGuard(t *testing.T) {
+ 		QueueStore:       qs,
+ 		WorkerRegistry:   reg,
+ 		MaxConcurrent:    gateMax,
+-		NoAutoPull:       true,
+ 	})
+ 
+ 	// Preload local saturation: localInFlight == gateMax. The split gate then
+diff --git a/internal/daemon/noautopull_em066_em067_test.go b/internal/daemon/noautopull_em066_em067_test.go
+deleted file mode 100644
+index a466ded74..000000000
+--- a/internal/daemon/noautopull_em066_em067_test.go
++++ /dev/null
+@@ -1,327 +0,0 @@
+-package daemon_test
+-
+-// noautopull_em066_em067_test.go — scenario tests for EM-066 (quiet-daemon
+-// no-auto-pull topology) and EM-067 (operator-pause gate on br-ready fallback).
+-//
+-// # EM-066 — No-auto-pull (queue-only) daemon topology
+-//
+-// When noAutoPull is set, the daemon MUST NOT fall back to `br ready` for
+-// dispatch input. A daemon booted in this topology with no submitted queue MUST
+-// dispatch zero runs — it MUST NOT emit run_started, MUST NOT spawn any agent
+-// subprocess, and MUST consume no agent credit — until a queue is submitted.
+-//
+-// Tests in this file:
+-//   - TestScenario_NoAutoPull_ZeroRunsStarted_EM066 — quiet-daemon: set
+-//     NoAutoPull=true, no queue submitted; assert zero run_started events
+-//     and zero Ready() calls over a bounded observation window.
+-//   - TestScenario_NoAutoPull_BrReadyFallbackEnabled_EM066 — opt-in branch:
+-//     NoAutoPull=false with ≥1 ready bead and no queue; verify Ready() is
+-//     called (demonstrating the fallback fires when the flag is unset).
+-//   - TestScenario_BrReadyOperatorPauseGate_EM067 — operator-pause gate on
+-//     fallback: NoAutoPull=false with ≥1 ready bead and operator-control
+-//     state driven to paused; assert Ready() is NOT called while paused and
+-//     IS called after resume.
+-//
+-// Spec refs:
+-//   - specs/execution-model.md §4.11.EM-066 (no-auto-pull topology)
+-//   - specs/execution-model.md §4.11.EM-067 (operator-pause fallback gate)
+-//   - specs/execution-model.md §10.2 (EM-066/EM-067 test obligations)
+-//
+-// Bead: hk-h5lv2.
+-
+-import (
+-	"context"
+-	"path/filepath"
+-	"sync/atomic"
+-	"testing"
+-	"time"
+-
+-	"github.com/gregberns/harmonik/internal/brcli"
+-	"github.com/gregberns/harmonik/internal/core"
+-	"github.com/gregberns/harmonik/internal/daemon"
+-)
+-
+-// ─────────────────────────────────────────────────────────────────────────────
+-// countingLedger — records Ready() and ClaimBead() calls for EM-066/EM-067.
+-// ─────────────────────────────────────────────────────────────────────────────
+-
+-// countingLedger is a minimal beadLedger stub that counts how many times
+-// Ready() and ClaimBead() are called so the tests can assert on whether the
+-// br-ready fallback path was entered.
+-type countingLedger struct {
+-	readyCalls  atomic.Int64
+-	claimCalls  atomic.Int64
+-	readyResult []core.BeadRecord // returned on every Ready() call
+-	notifyReady chan struct{}     // closed or sent on first Ready() call (may be nil)
+-}
+-
+-func (c *countingLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
+-	n := c.readyCalls.Add(1)
+-	if n == 1 && c.notifyReady != nil {
+-		select {
+-		case c.notifyReady <- struct{}{}:
+-		default:
+-		}
+-	}
+-	return c.readyResult, nil
+-}
+-
+-func (c *countingLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+-}
+-
+-func (c *countingLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+-	c.claimCalls.Add(1)
+-	return nil
+-}
+-
+-func (c *countingLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
+-	return nil
+-}
+-
+-func (c *countingLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
+-	return nil
+-}
+-
+-// ─────────────────────────────────────────────────────────────────────────────
+-// EM-066: Quiet-daemon — NoAutoPull=true, no queue, zero run_started
+-// ─────────────────────────────────────────────────────────────────────────────
+-
+-// TestScenario_NoAutoPull_ZeroRunsStarted_EM066 verifies the quiet-daemon
+-// (queue-only) topology: when NoAutoPull is set and no queue is submitted, the
+-// work loop MUST NOT call br-ready, MUST NOT emit run_started, and MUST NOT
+-// spawn any agent subprocess.
+-//
+-// The test observes the daemon for a bounded window (300 ms) then cancels the
+-// context and checks that zero run_started events were emitted and Ready() was
+-// never called.
+-//
+-// Spec ref: specs/execution-model.md §4.11.EM-066.
+-// Bead: hk-h5lv2.
+-func TestScenario_NoAutoPull_ZeroRunsStarted_EM066(t *testing.T) {
+-	skipRealDaemonE2EInShort(t)
+-	t.Parallel()
+-
+-	projectDir, _ := workloopFixtureProjectDir(t)
+-	workloopFixtureGitRepo(t, projectDir)
+-
+-	// Seed ≥1 ready bead so the test would fail if the fallback path fires.
+-	ledger := &countingLedger{
+-		readyResult: []core.BeadRecord{
+-			{BeadID: core.BeadID("hk-h5lv2-em066-bead")},
+-		},
+-	}
+-	bus := &stubEventCollector{}
+-
+-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+-		BrAdapter:        ledger,
+-		Bus:              bus,
+-		ProjectDir:       projectDir,
+-		HandlerBinary:    "/bin/sh",
+-		HandlerArgs:      []string{"-c", "exit 0"},
+-		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+-		NoAutoPull:       true, // queue-only topology — br-ready MUST NOT fire
+-		// No QueueStore: no queue submitted.
+-	})
+-
+-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+-	defer cancel()
+-
+-	loopDone := make(chan struct{})
+-	go func() {
+-		defer close(loopDone)
+-		daemon.ExportedRunWorkLoop(ctx, deps)
+-	}()
+-
+-	// Observe for 300 ms — long enough for several poll ticks.
+-	time.Sleep(300 * time.Millisecond)
+-	cancel()
+-
+-	select {
+-	case <-loopDone:
+-	case <-time.After(3 * time.Second):
+-		t.Fatal("em066: workloop did not exit within 3s after context cancel")
+-	}
+-
+-	// Assert: Ready() was never called.
+-	if readyCalls := ledger.readyCalls.Load(); readyCalls != 0 {
+-		t.Errorf("em066: Ready() called %d time(s); want 0 — noAutoPull must suppress the br-ready fallback path", readyCalls)
+-	}
+-
+-	// Assert: no run_started events emitted.
+-	for _, et := range bus.eventTypes() {
+-		if et == string(core.EventTypeRunStarted) {
+-			t.Errorf("em066: run_started event emitted while NoAutoPull=true and no queue submitted — daemon must dispatch zero runs")
+-			break
+-		}
+-	}
+-
+-	t.Logf("em066 PASS: Ready()=%d calls, run_started events=0, daemon sat idle in queue-only mode",
+-		ledger.readyCalls.Load())
+-}
+-
+-// ─────────────────────────────────────────────────────────────────────────────
+-// EM-066 opt-in branch: NoAutoPull=false (--auto-pull) with ready bead
+-// ─────────────────────────────────────────────────────────────────────────────
+-
+-// TestScenario_AutoPull_BrReadyFallbackFires_EM066 verifies the opt-in
+-// historical topology: when NoAutoPull=false (equivalent to --auto-pull) and
+-// ≥1 ready bead exists, the br-ready fallback path IS entered — Ready() is
+-// called within a bounded window.
+-//
+-// This is the EM-066 "Historical-topology" test obligation in §10.2.
+-//
+-// Spec ref: specs/execution-model.md §4.11.EM-066 opt-in branch.
+-// Bead: hk-h5lv2.
+-func TestScenario_AutoPull_BrReadyFallbackFires_EM066(t *testing.T) {
+-	skipRealDaemonE2EInShort(t)
+-	t.Parallel()
+-
+-	projectDir, _ := workloopFixtureProjectDir(t)
+-	workloopFixtureGitRepo(t, projectDir)
+-
+-	notifyReady := make(chan struct{}, 1)
+-	ledger := &countingLedger{
+-		readyResult: []core.BeadRecord{}, // empty so the loop idles after Ready() returns
+-		notifyReady: notifyReady,
+-	}
+-	bus := &stubEventCollector{}
+-
+-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+-		BrAdapter:        ledger,
+-		Bus:              bus,
+-		ProjectDir:       projectDir,
+-		HandlerBinary:    "/bin/sh",
+-		HandlerArgs:      []string{"-c", "exit 0"},
+-		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+-		NoAutoPull:       false, // br-ready fallback enabled (--auto-pull opt-in)
+-		// No QueueStore: no queue submitted, triggers the br-ready path.
+-	})
+-
+-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+-	defer cancel()
+-
+-	loopDone := make(chan struct{})
+-	go func() {
+-		defer close(loopDone)
+-		daemon.ExportedRunWorkLoop(ctx, deps)
+-	}()
+-
+-	// Ready() MUST be called within the poll window.
+-	select {
+-	case <-notifyReady:
+-		// Correct: br-ready fallback fired.
+-	case <-time.After(5 * time.Second):
+-		t.Fatal("em066-opt-in: Ready() was not called within 5s — br-ready fallback must fire when NoAutoPull=false")
+-	}
+-
+-	cancel()
+-	select {
+-	case <-loopDone:
+-	case <-time.After(3 * time.Second):
+-		t.Fatal("em066-opt-in: workloop did not exit within 3s after context cancel")
+-	}
+-
+-	t.Logf("em066-opt-in PASS: Ready() called %d time(s) — br-ready fallback active when NoAutoPull=false",
+-		ledger.readyCalls.Load())
+-}
+-
+-// ─────────────────────────────────────────────────────────────────────────────
+-// EM-067: Operator-pause gate on br-ready fallback path
+-// ─────────────────────────────────────────────────────────────────────────────
+-
+-// TestScenario_BrReadyOperatorPauseGate_EM067 verifies the defense-in-depth
+-// operator-pause gate on the br-ready fallback path.
+-//
+-// Setup: NoAutoPull=false (br-ready fallback enabled), ≥1 ready bead, no
+-// submitted queue, operator-control state driven to paused before the loop
+-// starts.
+-//
+-// Phase 1 (paused): observe for 200 ms; Ready() MUST NOT be called.
+-// Phase 2 (resumed): call HandleOperatorResume; Ready() MUST be called within
+-// a bounded window — demonstrating that fallback dispatch resumes once the
+-// operator-pause gate releases.
+-//
+-// The observable criterion (Ready() not called while paused → called after
+-// resume) is the EM-067 conformance criterion regardless of whether the
+-// primary §7.4 loop-top ON-008 gate or the inline defense-in-depth assertion
+-// enforces it.
+-//
+-// Spec ref: specs/execution-model.md §4.11.EM-067.
+-// Bead: hk-h5lv2.
+-func TestScenario_BrReadyOperatorPauseGate_EM067(t *testing.T) {
+-	skipRealDaemonE2EInShort(t)
+-	t.Parallel()
+-
+-	projectDir, _ := workloopFixtureProjectDir(t)
+-	workloopFixtureGitRepo(t, projectDir)
+-
+-	notifyReady := make(chan struct{}, 1)
+-	ledger := &countingLedger{
+-		readyResult: []core.BeadRecord{}, // empty to avoid subprocess dispatch
+-		notifyReady: notifyReady,
+-	}
+-	bus := &stubEventCollector{}
+-
+-	ctrl := daemon.ExportedNewOperatorPauseController(bus)
+-	// Pause BEFORE the loop starts so the first dispatch tick is gated.
+-	if err := ctrl.HandleOperatorPause(context.Background(), ""); err != nil {
+-		t.Fatalf("em067: HandleOperatorPause: %v", err)
+-	}
+-
+-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+-		BrAdapter:         ledger,
+-		Bus:               bus,
+-		ProjectDir:        projectDir,
+-		HandlerBinary:     "/bin/sh",
+-		HandlerArgs:       []string{"-c", "exit 0"},
+-		IntentLogDir:      filepath.Join(projectDir, ".harmonik", "beads-intents"),
+-		AdapterRegistry2:  NewSealedAdapterRegistryForTest(t),
+-		NoAutoPull:        false, // fallback enabled so the pause gate is reachable
+-		OperatorPauseCtrl: ctrl,  // operator-pause gate wired
+-		// No QueueStore: no queue submitted, routes to br-ready path.
+-	})
+-
+-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+-	defer cancel()
+-
+-	loopDone := make(chan struct{})
+-	go func() {
+-		defer close(loopDone)
+-		daemon.ExportedRunWorkLoop(ctx, deps)
+-	}()
+-
+-	// Phase 1: observe for 200 ms while paused — Ready() MUST NOT be called.
+-	time.Sleep(200 * time.Millisecond)
+-
+-	select {
+-	case <-notifyReady:
+-		t.Fatal("em067: Ready() was called while operator-paused — gate must hold dispatch")
+-	default:
+-		// Correct: gate prevented Ready() from being called.
+-	}
+-
+-	// Phase 2: resume and verify Ready() is called within the poll window.
+-	if err := ctrl.HandleOperatorResume(context.Background(), ""); err != nil {
+-		t.Fatalf("em067: HandleOperatorResume: %v", err)
+-	}
+-
+-	select {
+-	case <-notifyReady:
+-		// Correct: Ready() was called after operator resume.
+-	case <-time.After(5 * time.Second):
+-		t.Fatal("em067: Ready() was not called within 5s after operator resume — gate must release on resume")
+-	}
+-
+-	cancel()
+-	select {
+-	case <-loopDone:
+-	case <-time.After(3 * time.Second):
+-		t.Fatal("em067: workloop did not exit within 3s after context cancel")
+-	}
+-
+-	t.Logf("em067 PASS: Ready() correctly suppressed while paused, fired after resume (total Ready()=%d)",
+-		ledger.readyCalls.Load())
+-}
+diff --git a/internal/daemon/scenario_captain_crew_e2e_hkzi4ej_test.go b/internal/daemon/scenario_captain_crew_e2e_hkzi4ej_test.go
+index 251573a12..cfbb2bb7d 100644
+--- a/internal/daemon/scenario_captain_crew_e2e_hkzi4ej_test.go
++++ b/internal/daemon/scenario_captain_crew_e2e_hkzi4ej_test.go
+@@ -799,7 +799,6 @@ func TestScenario_CaptainCrewE2E_hkzi4ej(t *testing.T) {
+ 		JSONLLogPath:          jsonlPath,
+ 		BrPath:                brWrapper,
+ 		HandlerBinary:         twinWrapper,
+-		NoAutoPull:            true, // queue-only: only the named queues we persist dispatch
+ 		MaxConcurrent:         2,    // two crew queues × Workers=1 = global cap
+ 		SkipWALCheckpoint:     true,
+ 		SkipBrHistoryRotation: true,
+diff --git a/internal/daemon/scenario_concurrent_multiqueue_hkumemp_test.go b/internal/daemon/scenario_concurrent_multiqueue_hkumemp_test.go
+index 590eaa872..93d680874 100644
+--- a/internal/daemon/scenario_concurrent_multiqueue_hkumemp_test.go
++++ b/internal/daemon/scenario_concurrent_multiqueue_hkumemp_test.go
+@@ -544,7 +544,6 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
+ 		JSONLLogPath:          jsonlPath,
+ 		BrPath:                brWrapper,
+ 		HandlerBinary:         twinWrapper,
+-		NoAutoPull:            true, // queue-only mode: no br-ready fallback
+ 		MaxConcurrent:         2,    // global ceiling = 2 (QM-062)
+ 		SkipWALCheckpoint:     true,
+ 		SkipBrHistoryRotation: true,
+@@ -803,7 +802,6 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
+ 		JSONLLogPath:          jsonlPath,
+ 		BrPath:                brWrapper,
+ 		HandlerBinary:         blockingWrapper,
+-		NoAutoPull:            true,
+ 		MaxConcurrent:         2,
+ 		SkipWALCheckpoint:     true,
+ 		SkipBrHistoryRotation: true,
+diff --git a/internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go b/internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go
+index 9eea572ff..000a4a137 100644
+--- a/internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go
++++ b/internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go
+@@ -432,7 +432,6 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
+ 		SkipWALCheckpoint:     true,
+ 		SkipBrHistoryRotation: true,
+ 		AgentReadyTimeout:     5 * time.Second,
+-		NoAutoPull:            true, // queue-only dispatch; prevents br-ready pre-emption (hk-24xn1)
+ 		QueueStore:            qs,
+ 		LogWriter:             testLogWriter{t: t},
+ 		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+@@ -588,7 +587,6 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
+ 		SkipWALCheckpoint:     true,
+ 		SkipBrHistoryRotation: true,
+ 		AgentReadyTimeout:     5 * time.Second,
+-		NoAutoPull:            true, // queue-only; prevents br-ready from racing the submit
+ 		QueueStore:            qs,
+ 		LogWriter:             testLogWriter{t: t},
+ 		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+diff --git a/internal/daemon/scenario_restart_recovery_ivzsl_test.go b/internal/daemon/scenario_restart_recovery_ivzsl_test.go
+index 307152632..88db5c1e0 100644
+--- a/internal/daemon/scenario_restart_recovery_ivzsl_test.go
++++ b/internal/daemon/scenario_restart_recovery_ivzsl_test.go
+@@ -434,7 +434,6 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
+ 		ProjectDir:            projectDir,
+ 		JSONLLogPath:          jsonlPath,
+ 		BrPath:                brWrapper,
+-		NoAutoPull:            true, // queue-only mode; no br-ready fallback
+ 		SkipWALCheckpoint:     true,
+ 		SkipBrHistoryRotation: true,
+ 		SkipRestartBackoff:    true,
+diff --git a/internal/daemon/scenario_terminated_locked_hjvl4_test.go b/internal/daemon/scenario_terminated_locked_hjvl4_test.go
+index c3f0c0ae0..6cfc281a7 100644
+--- a/internal/daemon/scenario_terminated_locked_hjvl4_test.go
++++ b/internal/daemon/scenario_terminated_locked_hjvl4_test.go
+@@ -497,7 +497,6 @@ func TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock(t *testi
+ 		ProjectDir:            projectDir,
+ 		JSONLLogPath:          jsonlPath,
+ 		BrPath:                brWrapper,
+-		NoAutoPull:            true, // queue-only; no br-ready fallback dispatch of our seeded bead
+ 		SkipWALCheckpoint:     true,
+ 		SkipBrHistoryRotation: true,
+ 		LogWriter:             testLogWriter{t: t},
+diff --git a/internal/daemon/workloop.go b/internal/daemon/workloop.go
+index 997f1b39a..5e2d15b2b 100644
+--- a/internal/daemon/workloop.go
++++ b/internal/daemon/workloop.go
+@@ -76,8 +76,8 @@ import (
+ 	"github.com/gregberns/harmonik/internal/workspace"
+ )
+ 
+-// workloopPollInterval is the sleep duration used for retry backoff and the
+-// br-ready fallback poll path (no queue loaded). It is NOT used for
++// workloopPollInterval is the sleep duration used for retry backoff and for
++// the idle wait when no queue item is available. It is NOT used for
+ // queue-loaded idle states, which block indefinitely via workloopIdleWait
+ // per PL-013 (retired-with-stub): idle daemon MUST wait without a periodic
+ // re-query timer until a queue-submit wake signal or shutdown arrives.
+@@ -709,13 +709,6 @@ type workLoopDeps struct {
+ 	// Bead ref: hk-pbmsq.
+ 	decisionBlocker *DecisionBlocker
+ 
+-	// noAutoPull, when true, disables the br-ready fallback poll path so the
+-	// work loop only dispatches items that arrive via the queue surface.
+-	// Sourced from Config.NoAutoPull; see that field's godoc for rationale.
+-	//
+-	// Bead ref: hk-exd7m.
+-	noAutoPull bool
+-
+ 	// skipBrHistoryRotation, when true, disables the pre-close .br_history trim
+ 	// performed by closeBeadWithHistoryTrim before every CloseBead call (hk-hypbi).
+ 	// Mirrors Config.SkipBrHistoryRotation; set to true for tests that operate on
+@@ -1172,7 +1165,6 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
+ 		followUpLedger:             make(map[string]struct{}), // hk-f722: at-most-once guard per daemon session
+ 		followUpLedgerMu:           &sync.Mutex{},
+ 		followUpLedgerPath:         filepath.Join(cfg.ProjectDir, ".harmonik", followUpLedgerFileName), // hk-3ndb: durable ledger path
+-		noAutoPull:                 cfg.NoAutoPull,                                                     // hk-exd7m: queue-only mode for flywheel topology
+ 		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,                                          // hk-hypbi: per-close .br_history trim
+ 		// mergeQ (RSM-015 merge exclusion domain) is left nil here: runWorkLoop
+ 		// creates AND owns the production queue (starts its owner, cancels on
+@@ -1617,13 +1609,6 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
+ 	// Bead ref: hk-403fw.
+ 	claimSkipInProgressUntil := make(map[core.BeadID]time.Time)
+ 
+-	// readyPathAttempts tracks dispatch attempts for each bead on the br-ready
+-	// fallback path (no queue). Bounded by maxItemAttempts. Resets on daemon
+-	// restart (acceptable — the br-ready path is the backward-compat fallback).
+-	//
+-	// Bead ref: hk-kupeo (ShowBead bounded retry), hk-6pspu (dispatch bound).
+-	readyPathAttempts := make(map[core.BeadID]int)
+-
+ 	// sentinelPendingAckToken is the ack_token of the in-flight sentinel trip
+ 	// (ACT mode, FW3 hk-4toh). Empty when no trip is pending. Persists across
+ 	// loop iterations so dormant transitions can clear the correct token.
+@@ -2715,112 +2700,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
+ 
+ 		var beadID core.BeadID
+ 		if queueItemIndex < 0 {
+-			// No-auto-pull gate (hk-exd7m): when --no-auto-pull is set, suppress the
+-			// br-ready fallback path entirely so the daemon only dispatches work that
+-			// arrives via the queue surface (harmonik queue submit / append).  This is
+-			// the queue-only mode required by the flywheel topology (CL-013/070/071)
+-			// where a Pi cognition loop curates dispatch timing.
+-			if deps.noAutoPull {
+-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-					return exitClean()
+-				}
+-				continue
+-			}
+-
+-			// Operator-pause gate for the br-ready path (hk-ry8q1): when the daemon
+-			// is operator-paused, hold dispatch without claiming any bead. The queue
+-			// path is already gated via QueueStatusPausedByDrain.
+-			//
+-			// Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
+-			if deps.operatorPauseCtrl != nil && deps.operatorPauseCtrl.IsPaused() {
+-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-					return exitClean()
+-				}
+-				continue
+-			}
+-
+-			// No queue active — fall back to br-ready poll.
+-			readyRecords, err := deps.brAdapter.Ready(ctx)
+-			if err != nil {
+-				// Treat poll errors as transient: log and backoff.
+-				if dispatchCtx.Err() != nil {
+-					return exitClean()
+-				}
+-				// Non-fatal: surface to stderr so operators can diagnose CWD/PATH
+-				// misconfiguration (hk-c1ln2: silent-failure fix).
+-				fmt.Fprintf(os.Stderr, "daemon: workloop: Ready poll error (will retry): %v\n", err)
+-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-					return exitClean()
+-				}
+-				continue
+-			}
+-
+-			if len(readyRecords) == 0 {
+-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-					return exitClean()
+-				}
+-				continue
+-			}
+-
+-			// Pick first ready bead; labels carry workflow:<mode> for mode resolution.
+-			beadRecord = readyRecords[0]
+-
+-			// hk-6pspu: br-ready path attempt bound. Skip beads that have
+-			// exceeded maxItemAttempts on this path. The counter is incremented
+-			// on ShowBead/claim failures (not on every poll). Resets on daemon
+-			// restart (acceptable for the backward-compat fallback path).
+-			if readyPathAttempts[beadRecord.BeadID] >= maxItemAttempts {
+-				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d on br-ready path — skipping (hk-6pspu)\n",
+-					beadRecord.BeadID, maxItemAttempts)
+-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-					return exitClean()
+-				}
+-				continue
+-			}
+-
+-			// Handler-pause gate for the br-ready path (hk-kac8g): mirror the same
+-			// check applied in the queue path above.  The bead remains in the br
+-			// ready queue (not claimed) while the handler is paused.
+-			//
+-			// Bead ref: hk-kac8g.
+-			if deps.handlerPauseController != nil {
+-				epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
+-				lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(&deps, epoch, lastSeenPauseEpoch)
+-				if isPaused {
+-					emitHeldEvent(ctx, deps, beadRecord.BeadID, core.AgentTypeClaudeCode, epoch)
+-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-						return exitClean()
+-					}
+-					continue
+-				}
+-			}
+-
+-			// Decision-required dispatch-blocking gate (EV-043, br-ready path):
+-			// mirror the check applied in the queue path above.
+-			//
+-			// Sentinel queue-level gate (FW3 hk-4toh): also hold when the sentinel
+-			// governor trip is pending — all beads are blocked until real movement.
+-			//
+-			// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
+-			// Bead ref: hk-pbmsq (bead gate), hk-4toh (sentinel queue gate).
+-			if deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(beadRecord.BeadID) {
+-				fmt.Fprintf(os.Stderr,
+-					"daemon: workloop: bead %s blocked by unacknowledged decision_required (EV-043, br-ready path) — holding\n",
+-					beadRecord.BeadID)
+-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-					return exitClean()
+-				}
+-				continue
+-			}
+-			if deps.decisionBlocker != nil && deps.decisionBlocker.IsQueueBlocked(sentinelSubjectIDACT) {
+-				fmt.Fprintf(os.Stderr,
+-					"daemon: workloop: bead %s blocked by sentinel governor trip (EV-043, FW3, br-ready path) — holding until real movement\n",
+-					beadRecord.BeadID)
+-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-					return exitClean()
+-				}
+-				continue
++			// No queue item to dispatch: idle until a queue-submit wake signal or
++			// shutdown arrives. The daemon does NOT self-start work from the bead
++			// backlog -- only agents submitting to their own named queues decide
++			// what runs. The br-ready poll fallback that used to live here (with
++			// its own operator-pause, handler-pause, decision-blocker and sentinel
++			// gates, and its readyPathAttempts bound) was deleted with hk-04q2j.2.
++			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
++				return exitClean()
+ 			}
++			continue
+ 		}
+ 		beadID = beadRecord.BeadID
+ 
+@@ -2867,55 +2756,6 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
+ 			return fmt.Errorf("daemon: workloop: generate claim TransitionID: %w", tidErr)
+ 		}
+ 
+-		if queueItemIndex < 0 {
+-			// br-ready path: pre-claim status guard (hk-p4xbw) + label hydration
+-			// (hk-a0htu).
+-			//
+-			// ShowBead serves two purposes here:
+-			//   1. Guard: confirm the bead is still open before claiming (TOCTOU
+-			//      window is acceptable per the claim-semaphore note above).
+-			//   2. Label hydration: `br ready --format json` (br v0.1.45) does not
+-			//      include the `labels` field, so BeadRecord.Labels from Ready() is
+-			//      always nil.  ShowBead returns the full record including labels;
+-			//      we overwrite beadRecord.Labels so resolveWorkflowMode (tier-1)
+-			//      and ResolveModelPreference can read per-bead overrides correctly.
+-			//
+-			// Queue-path items are already exclusively owned by this loop (set to
+-			// dispatched under write lock), so the guard is skipped there; their
+-			// label hydration is handled below after the claim write.
+-			showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
+-			if showErr != nil {
+-				if dispatchCtx.Err() != nil {
+-					return exitClean()
+-				}
+-				readyPathAttempts[beadID]++
+-				if readyPathAttempts[beadID] >= maxItemAttempts {
+-					fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s failed %d times, skipping bead (hk-kupeo): %v\n",
+-						beadID, readyPathAttempts[beadID], showErr)
+-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-						return exitClean()
+-					}
+-					continue
+-				}
+-				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (attempt %d/%d, will retry): %v\n",
+-					beadID, readyPathAttempts[beadID], maxItemAttempts, showErr)
+-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-					return exitClean()
+-				}
+-				continue
+-			}
+-			if showRecord.Status != core.CoarseStatusOpen {
+-				fmt.Fprintf(os.Stderr, "daemon: workloop: bead_claim_skipped %s status=%s (competing claim won)\n", beadID, showRecord.Status)
+-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+-					return exitClean()
+-				}
+-				continue
+-			}
+-			// Hydrate from the full ShowBead record (hk-a0htu).
+-			beadRecord.Labels = showRecord.Labels
+-			beadRecord.Title = showRecord.Title
+-			beadRecord.Description = showRecord.Description
+-		}
+ 
+ 		// hk-l5saf: the secondary local-cap guard that previously sat here (post-stamp)
+ 		// was hoisted to before the Phase-3 dispatch stamp (see the guard tagged
+@@ -2969,10 +2809,6 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
+ 
+ 			// Claim conflict or transient error — surface to stderr and retry.
+ 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
+-			// hk-6pspu: increment br-ready path attempt counter on claim failure.
+-			if queueItemIndex < 0 {
+-				readyPathAttempts[beadID]++
+-			}
+ 			// hk-rnsjs: if the bead is blocked by stale dependencies already in
+ 			// main, auto-close them so the next workloop retry can claim the bead.
+ 			autoCloseStaleBlockersOnClaimFailure(ctx, deps, beadID)
+diff --git a/internal/daemon/workloop_crossqueue_dedup_completed_hkdorz9_test.go b/internal/daemon/workloop_crossqueue_dedup_completed_hkdorz9_test.go
+index 54967056c..bdf519b4a 100644
+--- a/internal/daemon/workloop_crossqueue_dedup_completed_hkdorz9_test.go
++++ b/internal/daemon/workloop_crossqueue_dedup_completed_hkdorz9_test.go
+@@ -86,7 +86,6 @@ func TestWorkLoop_CrossQueueDedup_CompletedBead_FailsDuplicateItem(t *testing.T)
+ 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+ 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+ 		QueueStore:       qs,
+-		NoAutoPull:       true,
+ 		MaxConcurrent:    1,
+ 	})
+ 
+diff --git a/internal/daemon/workloop_crossqueue_dedup_hka11re_test.go b/internal/daemon/workloop_crossqueue_dedup_hka11re_test.go
+index 7fe772bf7..35fafa840 100644
+--- a/internal/daemon/workloop_crossqueue_dedup_hka11re_test.go
++++ b/internal/daemon/workloop_crossqueue_dedup_hka11re_test.go
+@@ -160,7 +160,6 @@ func TestWorkLoop_CrossQueueDedup_FailsDuplicateItem(t *testing.T) {
+ 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+ 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+ 		QueueStore:       qs,
+-		NoAutoPull:       true, // queue-only dispatch; no br-ready fallback
+ 		MaxConcurrent:    1,
+ 	})
+ 
+diff --git a/internal/daemon/workloop_decision_block_ev043_test.go b/internal/daemon/workloop_decision_block_ev043_test.go
+index 6f74c0121..3bd76871f 100644
+--- a/internal/daemon/workloop_decision_block_ev043_test.go
++++ b/internal/daemon/workloop_decision_block_ev043_test.go
+@@ -171,7 +171,6 @@ func TestDecisionBlock_QueuePath_HoldOnBlocked(t *testing.T) {
+ 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+ 		QueueStore:       qs,
+ 		DecisionBlocker:  blocker,
+-		NoAutoPull:       true, // queue-only: do not fall through to br-ready path
+ 	})
+ 
+ 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+diff --git a/internal/daemon/workloop_deferred_idle_poll_hkgf59k_test.go b/internal/daemon/workloop_deferred_idle_poll_hkgf59k_test.go
+index f62379b07..96eafaf99 100644
+--- a/internal/daemon/workloop_deferred_idle_poll_hkgf59k_test.go
++++ b/internal/daemon/workloop_deferred_idle_poll_hkgf59k_test.go
+@@ -133,7 +133,6 @@ func TestWorkLoop_DeferredOnlyQueue_ReevaluatesWithoutResubmit(t *testing.T) {
+ 		QueueLedger:      ledger,
+ 		MaxConcurrent:    1,
+ 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+-		NoAutoPull:       true,
+ 	}
+ 	deps := daemon.ExportedWorkLoopDeps(p)
+ 
+diff --git a/internal/daemon/workloop_hk45ude_test.go b/internal/daemon/workloop_hk45ude_test.go
+index 23d728c71..5f41c2762 100644
+--- a/internal/daemon/workloop_hk45ude_test.go
++++ b/internal/daemon/workloop_hk45ude_test.go
+@@ -426,96 +426,6 @@ func TestQueueDispatch_FailurePath_QueuePaused(t *testing.T) {
+ 	}
+ }
+ 
+-// ─────────────────────────────────────────────────────────────────────────────
+-// TestQueueDispatch_BackwardCompat_BrReadyFallback
+-// ─────────────────────────────────────────────────────────────────────────────
+-
+-// TestQueueDispatch_BackwardCompat_BrReadyFallback verifies that when the
+-// QueueStore is nil (no queue loaded), the workloop falls back to the br-ready
+-// poll path and closes the bead normally.
+-//
+-// This is the backward-compatibility test for existing single-bead dispatch
+-// tests that do not use the queue surface.
+-//
+-// Bead ref: hk-45ude.
+-func TestQueueDispatch_BackwardCompat_BrReadyFallback(t *testing.T) {
+-	skipRealDaemonE2EInShort(t)
+-	t.Parallel()
+-
+-	projectDir, _ := workloopFixtureProjectDir(t)
+-	workloopFixtureGitRepo(t, projectDir)
+-
+-	const beadID = core.BeadID("hk45ude-compat-bead-001")
+-	ledger := &stubBeadLedger{
+-		ready: []core.BeadID{beadID},
+-	}
+-	bus := &stubEventCollector{}
+-
+-	// No QueueStore — uses br-ready path.
+-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+-		BrAdapter:     ledger,
+-		Bus:           bus,
+-		ProjectDir:    projectDir,
+-		HandlerBinary: "/bin/sh",
+-		HandlerArgs:   []string{"-c", "exit 0"},
+-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+-		// Empty registry: /bin/sh exit-0 handler never delivers agent_ready, so
+-		// bypass the waitAgentReady gate (hk-ngw3d; hk-6hzci).
+-		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
+-		// Pre-commit factory advances worktree HEAD past the parent so the
+-		// no-commit guard (hk-mmh8f) does not reopen the bead (hk-6hzci).
+-		WorktreeFactory: workloopFixturePreCommitWorktreeFactory,
+-		// QueueStore: nil — intentionally absent
+-	})
+-
+-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+-	defer cancel()
+-
+-	waitDone := make(chan struct{})
+-	go func() {
+-		defer close(waitDone)
+-		daemon.ExportedRunWorkLoop(ctx, deps)
+-	}()
+-
+-	queueDispatchFixturePollClosed(t, ledger, 1, 15*time.Second)
+-
+-	cancel()
+-	select {
+-	case <-waitDone:
+-	case <-time.After(3 * time.Second):
+-		t.Fatal("workloop did not exit after context cancellation")
+-	}
+-
+-	closed := ledger.closedIDs()
+-	if len(closed) == 0 {
+-		t.Fatal("expected bead to be closed via br-ready fallback; none were")
+-	}
+-	if closed[0] != beadID {
+-		t.Errorf("closed bead = %q; want %q", closed[0], beadID)
+-	}
+-
+-	// run_started must NOT carry queue fields when no queue is active.
+-	allEvts := bus.allEvents()
+-	for _, e := range allEvts {
+-		if e.EventType != string(core.EventTypeRunStarted) {
+-			continue
+-		}
+-		var pl struct {
+-			QueueID         *string `json:"queue_id"`
+-			QueueGroupIndex *int    `json:"queue_group_index"`
+-		}
+-		if err := json.Unmarshal(e.Payload, &pl); err != nil {
+-			t.Fatalf("unmarshal run_started: %v", err)
+-		}
+-		if pl.QueueID != nil {
+-			t.Errorf("run_started queue_id = %v; want nil (no queue loaded)", pl.QueueID)
+-		}
+-		if pl.QueueGroupIndex != nil {
+-			t.Errorf("run_started queue_group_index = %v; want nil (no queue loaded)", pl.QueueGroupIndex)
+-		}
+-		break
+-	}
+-}
+ 
+ // ─────────────────────────────────────────────────────────────────────────────
+ // TestQueueDispatch_QueuePausedState_NoDispatch
+diff --git a/internal/daemon/workloop_operatorpause_ry8q1_test.go b/internal/daemon/workloop_operatorpause_ry8q1_test.go
+deleted file mode 100644
+index 689794675..000000000
+--- a/internal/daemon/workloop_operatorpause_ry8q1_test.go
++++ /dev/null
+@@ -1,132 +0,0 @@
+-package daemon_test
+-
+-// workloop_operatorpause_ry8q1_test.go — operator-pause br-ready gate test (hk-ry8q1).
+-//
+-// Acceptance criteria:
+-//   - When the daemon is operator-paused, the br-ready fallback path does NOT
+-//     call Ready() (the gate fires before entering the br-ready poll).
+-//   - After operator resume, the gate releases and Ready() is eventually called.
+-//
+-// The test uses a notifying ledger to detect Ready() calls deterministically
+-// without requiring a full subprocess dispatch (which is an integration concern
+-// covered by other tests).
+-//
+-// This mirrors TestHandlerPause_BrReadyPath_SkipOnPaused in workloop_handlerpause_kac8g_test.go
+-// but uses the OperatorPauseController rather than HandlerPauseController.
+-//
+-// Bead ref: hk-ry8q1.
+-
+-import (
+-	"context"
+-	"path/filepath"
+-	"testing"
+-	"time"
+-
+-	"github.com/gregberns/harmonik/internal/brcli"
+-	"github.com/gregberns/harmonik/internal/core"
+-	"github.com/gregberns/harmonik/internal/daemon"
+-)
+-
+-// notifyingLedger is a stubBeadLedger wrapper that sends on readyCh whenever
+-// Ready() is called. Used to detect when the gate releases without requiring
+-// a full subprocess dispatch.
+-type notifyingLedger struct {
+-	readyCh chan<- struct{} // non-blocking send
+-	inner   *stubBeadLedger
+-}
+-
+-func (n *notifyingLedger) Ready(ctx context.Context) ([]core.BeadRecord, error) {
+-	// Non-blocking send: we just need to know the gate released.
+-	select {
+-	case n.readyCh <- struct{}{}:
+-	default:
+-	}
+-	return n.inner.Ready(ctx)
+-}
+-
+-func (n *notifyingLedger) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error) {
+-	return n.inner.ShowBead(ctx, id)
+-}
+-
+-func (n *notifyingLedger) ClaimBead(ctx context.Context, brPath string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, beadID core.BeadID) error {
+-	return n.inner.ClaimBead(ctx, brPath, cfg, runID, tid, beadID)
+-}
+-
+-func (n *notifyingLedger) CloseBead(ctx context.Context, brPath string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, beadID core.BeadID, success bool) error {
+-	return n.inner.CloseBead(ctx, brPath, cfg, runID, tid, beadID, success)
+-}
+-
+-func (n *notifyingLedger) ReopenBead(ctx context.Context, brPath string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, beadID core.BeadID, reason string) error {
+-	return n.inner.ReopenBead(ctx, brPath, cfg, runID, tid, beadID, reason)
+-}
+-
+-// TestOperatorPause_BrReadyPath_HoldOnPaused verifies that when operatorPauseCtrl
+-// is paused, the br-ready fallback dispatch loop does NOT call Ready(). After
+-// resume, the gate releases and Ready() is eventually called.
+-func TestOperatorPause_BrReadyPath_HoldOnPaused(t *testing.T) {
+-	t.Parallel()
+-
+-	projectDir, _ := workloopFixtureProjectDir(t)
+-	workloopFixtureGitRepo(t, projectDir)
+-
+-	readyCh := make(chan struct{}, 1)
+-	inner := &stubBeadLedger{}
+-	ledger := &notifyingLedger{readyCh: readyCh, inner: inner}
+-	bus := &stubEventCollector{}
+-
+-	ctrl := daemon.ExportedNewOperatorPauseController(bus)
+-	// Pause BEFORE the loop starts — first dispatch tick must be held.
+-	if err := ctrl.HandleOperatorPause(context.Background(), ""); err != nil {
+-		t.Fatalf("HandleOperatorPause: %v", err)
+-	}
+-
+-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+-		BrAdapter:         ledger,
+-		Bus:               bus,
+-		ProjectDir:        projectDir,
+-		HandlerBinary:     "/bin/sh",
+-		HandlerArgs:       []string{"-c", "exit 0"},
+-		IntentLogDir:      filepath.Join(projectDir, ".harmonik", "beads-intents"),
+-		AdapterRegistry2:  NewSealedAdapterRegistryForTest(t),
+-		OperatorPauseCtrl: ctrl,
+-		// No QueueStore — uses br-ready fallback path.
+-	})
+-
+-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+-	defer cancel()
+-
+-	loopDone := make(chan struct{})
+-	go func() {
+-		defer close(loopDone)
+-		daemon.ExportedRunWorkLoop(ctx, deps)
+-	}()
+-
+-	// Allow several poll ticks; Ready() must NOT be called while paused.
+-	time.Sleep(250 * time.Millisecond)
+-
+-	select {
+-	case <-readyCh:
+-		t.Fatal("Ready() was called while operator-paused — gate must hold dispatch")
+-	default:
+-		// Correct: gate prevented Ready() call.
+-	}
+-
+-	// Resume: gate should release and Ready() should be called within the poll interval.
+-	if err := ctrl.HandleOperatorResume(context.Background(), ""); err != nil {
+-		t.Fatalf("HandleOperatorResume: %v", err)
+-	}
+-
+-	select {
+-	case <-readyCh:
+-		// Correct: Ready() was called after resume.
+-	case <-time.After(5 * time.Second):
+-		t.Fatal("Ready() was not called within 5s after operator resume")
+-	}
+-
+-	cancel()
+-	select {
+-	case <-loopDone:
+-	case <-time.After(3 * time.Second):
+-		t.Fatal("workloop did not exit after context cancellation")
+-	}
+-}
+diff --git a/internal/daemon/workloop_showbead_retry_hkfvpz5_test.go b/internal/daemon/workloop_showbead_retry_hkfvpz5_test.go
+deleted file mode 100644
+index b7df355ee..000000000
+--- a/internal/daemon/workloop_showbead_retry_hkfvpz5_test.go
++++ /dev/null
+@@ -1,241 +0,0 @@
+-package daemon_test
+-
+-// workloop_showbead_retry_hkfvpz5_test.go — ShowBead error retry bounded test
+-// (hk-fvpz5).
+-//
+-// Verifies that when ShowBead fails on the br-ready path pre-claim check, the
+-// workloop does not retry infinitely. The failing bead is retried a bounded
+-// number of times (maxReadyPathAttempts=3), then skipped. Other beads in the
+-// ready list are still claimed and processed.
+-//
+-// Helper prefix: showBeadRetry (per implementer-protocol.md §Helper-prefix
+-// discipline; bead hk-fvpz5).
+-
+-import (
+-	"context"
+-	"errors"
+-	"path/filepath"
+-	"sync"
+-	"sync/atomic"
+-	"testing"
+-	"time"
+-
+-	"github.com/gregberns/harmonik/internal/brcli"
+-	"github.com/gregberns/harmonik/internal/core"
+-	"github.com/gregberns/harmonik/internal/daemon"
+-)
+-
+-// showBeadRetryLedger is a stub bead ledger where ShowBead returns an error for
+-// a specific bead. Ready() returns both beads on every call (simulating a real
+-// ledger where unclaimed beads stay in the ready list).
+-//
+-// Once the failing bead is skipped (after maxReadyPathAttempts), Ready()
+-// continues to return the good bead until it is claimed, after which Ready()
+-// returns empty so the loop quiesces.
+-type showBeadRetryLedger struct {
+-	mu sync.Mutex
+-
+-	failBead core.BeadID
+-	goodBead core.BeadID
+-
+-	readyCalls    atomic.Int32          // count of Ready() calls
+-	showBeadCalls map[core.BeadID]int32 // count of ShowBead calls per bead
+-	claimed       []core.BeadID
+-	closed        []core.BeadID
+-	reopened      []core.BeadID
+-
+-	goodClaimed atomic.Bool // set once ClaimBead succeeds for goodBead
+-}
+-
+-func newShowBeadRetryLedger(failBead, goodBead core.BeadID) *showBeadRetryLedger {
+-	return &showBeadRetryLedger{
+-		failBead:      failBead,
+-		goodBead:      goodBead,
+-		showBeadCalls: make(map[core.BeadID]int32),
+-	}
+-}
+-
+-func (s *showBeadRetryLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
+-	n := s.readyCalls.Add(1)
+-
+-	if s.goodClaimed.Load() {
+-		// Good bead already claimed — nothing left to dispatch.
+-		return []core.BeadRecord{}, nil
+-	}
+-
+-	// Simulate a real ledger: both beads are always ready (unclaimed beads stay
+-	// in the ready list). The workloop picks readyRecords[0].
+-	//
+-	// Return the failing bead first for the first several calls so the workloop
+-	// exercises the ShowBead retry path. After enough calls, return the good
+-	// bead so the workloop can make progress. The workloop's readyPathAttempts
+-	// map (hk-kupeo + hk-6pspu) bounds retries for the failing bead; once it
+-	// exceeds the limit and skips the bead, Ready() is called again and we
+-	// return the good bead.
+-	//
+-	// We use Ready() call count rather than ShowBead call count because the
+-	// hk-6pspu bound skips beads before ShowBead is called. After ~4 calls
+-	// (3 ShowBead attempts + 1 hk-6pspu skip), we start returning the good bead.
+-	// Keep this threshold low so the test completes within the polling deadline
+-	// (each call sleeps workloopPollInterval=2s).
+-	if n <= 5 {
+-		return []core.BeadRecord{{BeadID: s.failBead}}, nil
+-	}
+-	return []core.BeadRecord{{BeadID: s.goodBead}}, nil
+-}
+-
+-func (s *showBeadRetryLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	s.showBeadCalls[id]++
+-
+-	if id == s.failBead {
+-		return core.BeadRecord{}, errors.New("showbead: simulated network error")
+-	}
+-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+-}
+-
+-func (s *showBeadRetryLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID) error {
+-	if id == s.goodBead {
+-		s.goodClaimed.Store(true)
+-	}
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	s.claimed = append(s.claimed, id)
+-	return nil
+-}
+-
+-func (s *showBeadRetryLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID, _ bool) error {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	s.closed = append(s.closed, id)
+-	return nil
+-}
+-
+-func (s *showBeadRetryLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID, _ string) error {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	s.reopened = append(s.reopened, id)
+-	return nil
+-}
+-
+-func (s *showBeadRetryLedger) showBeadCallCount(id core.BeadID) int32 {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	return s.showBeadCalls[id]
+-}
+-
+-func (s *showBeadRetryLedger) claimedIDs() []core.BeadID {
+-	s.mu.Lock()
+-	defer s.mu.Unlock()
+-	out := make([]core.BeadID, len(s.claimed))
+-	copy(out, s.claimed)
+-	return out
+-}
+-
+-// ─────────────────────────────────────────────────────────────────────────────
+-// TestWorkLoop_ShowBeadErrorRetryBounded (hk-fvpz5)
+-// ─────────────────────────────────────────────────────────────────────────────
+-
+-// TestWorkLoop_ShowBeadErrorRetryBounded verifies that when ShowBead fails on
+-// the br-ready path pre-claim check, the workloop retries a bounded number of
+-// times (maxReadyPathAttempts=3) and then skips the bead. Other beads in the
+-// ready list are still dispatched normally.
+-//
+-// This prevents an infinite retry loop that would stall the daemon on a single
+-// broken bead.
+-//
+-// Bead ref: hk-fvpz5. Related fix: hk-kupeo.
+-func TestWorkLoop_ShowBeadErrorRetryBounded(t *testing.T) {
+-	t.Parallel()
+-
+-	projectDir, _ := workloopFixtureProjectDir(t)
+-	workloopFixtureGitRepo(t, projectDir)
+-
+-	const (
+-		failBead = core.BeadID("hk-fvpz5-showbead-fail")
+-		goodBead = core.BeadID("hk-fvpz5-showbead-ok")
+-	)
+-
+-	ledger := newShowBeadRetryLedger(failBead, goodBead)
+-	bus := &stubEventCollector{}
+-
+-	p := daemon.WorkLoopDepsParams{
+-		BrAdapter:        ledger,
+-		Bus:              bus,
+-		ProjectDir:       projectDir,
+-		HandlerBinary:    "/bin/sh",
+-		HandlerArgs:      []string{"-c", "exit 0"},
+-		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+-		// No QueueStore — br-ready path only.
+-	}
+-	deps := daemon.ExportedWorkLoopDeps(p)
+-
+-	// Budget: 5 Ready calls returning failBead * 2s workloopPollInterval = ~10s,
+-	// plus goodBead dispatch (~5s for git worktree + handler). 30s is generous.
+-	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+-	defer cancel()
+-
+-	loopDone := make(chan error, 1)
+-	go func() {
+-		loopDone <- daemon.ExportedRunWorkLoop(ctx, deps)
+-	}()
+-
+-	// Poll until the good bead is claimed or timeout.
+-	deadline := time.After(60 * time.Second)
+-	for {
+-		if ledger.goodClaimed.Load() {
+-			break
+-		}
+-		select {
+-		case <-deadline:
+-			t.Fatal("timed out waiting for goodBead to be claimed — ShowBead retry may be unbounded (infinite loop)")
+-		case <-time.After(50 * time.Millisecond):
+-		}
+-	}
+-
+-	// Cancel the context to stop the loop.
+-	cancel()
+-	// Teardown of an in-flight dispatch (git worktree cleanup + handler kill) can
+-	// take several seconds on a saturated CI runner. A 3s ceiling here false-fails
+-	// under load even though the loop DOES exit; give it a generous 20s — this
+-	// still catches a genuine no-exit hang while surviving CPU contention.
+-	select {
+-	case <-loopDone:
+-	case <-time.After(20 * time.Second):
+-		t.Fatal("work loop did not exit after context cancellation")
+-	}
+-
+-	// Assert: ShowBead was called a bounded number of times for the failing bead.
+-	// maxReadyPathAttempts=3, but the hk-6pspu readyPathAttempts check also
+-	// increments on each Ready() return, so the total may be slightly higher.
+-	// We assert ≤10 to be generous while still catching an infinite loop.
+-	failCalls := ledger.showBeadCallCount(failBead)
+-	if failCalls > 10 {
+-		t.Errorf("ShowBead called %d times for failing bead; want ≤10 (bounded retry)", failCalls)
+-	}
+-	if failCalls == 0 {
+-		t.Error("ShowBead was never called for the failing bead — test setup error")
+-	}
+-	t.Logf("ShowBead called %d times for failing bead (bounded as expected)", failCalls)
+-
+-	// Assert: the good bead was claimed.
+-	claimed := ledger.claimedIDs()
+-	foundGood := false
+-	for _, id := range claimed {
+-		if id == goodBead {
+-			foundGood = true
+-		}
+-	}
+-	if !foundGood {
+-		t.Errorf("goodBead was never claimed — ShowBead error on failBead blocked dispatch; claimed=%v", claimed)
+-	}
+-
+-	// Assert: the failing bead was NOT claimed (ShowBead always errored for it).
+-	for _, id := range claimed {
+-		if id == failBead {
+-			t.Errorf("failBead was claimed despite ShowBead always returning an error; claimed=%v", claimed)
+-		}
+-	}
+-}
+diff --git a/plans/2026-07-17-keeper-restart-timing/_plan.md b/plans/2026-07-17-keeper-restart-timing/_plan.md
+index 74a238306..fa8d4083c 100644
+--- a/plans/2026-07-17-keeper-restart-timing/_plan.md
++++ b/plans/2026-07-17-keeper-restart-timing/_plan.md
+@@ -257,8 +257,24 @@ current architecture.
+    immediate Enter; the "non-disruptive" feel likely comes from Claude Code TUI
+    paste-queuing while busy, not the injector. See grounded map above. The retry
+    loop is a load-bearing reliability fix (hk-89g) — reversing it is not free.
+-3. **What is a crisp, agent-legible definition of "good stopping point"?** Without
+-   it, I2/I3/I8 all inherit the same ambiguity failure.
++3. ~~**What is a crisp, agent-legible definition of "good stopping point"?**~~
++   **ANSWERED (2026-07-18, xray — full write-up in `DIRECTION.md` §Q3).** A crisp
++   definition exists, framed as **reconstruction cost from durable substrate**: a
++   stopping point is GOOD when the *delta* between what's in the agent's context and
++   what's already durably recorded (disk / beads / queue / a bounded handoff) is
++   small enough to serialize losslessly. Agent self-test (4-item checklist): (i)
++   between discrete units, not mid-edit/mid-plan/mid-tool-sequence; (ii) all in-flight
++   work committed to durable substrate or trivially re-derivable; (iii) no unanswered
++   operator question / half-composed reply being held; (iv) next session, reading only
++   handoff + substrate, resumes with no redo and no lost decision. All four yes → good.
++   **Key design implication:** this test is **agent-legible, NOT keeper-legible** — the
++   keeper cannot read context to detect it, so the *agent* must own the self-assessment
++   and the keeper can only **bound** it with a deadline (seek a good point within a
++   window; FORCE-ACT cuts if none arrives). This is exactly why the agent-initiated
++   deferred-restart path (I3 / `restart-now`) is the right vehicle, not keeper-side
++   detection. CrispIdle (turn boundary, keeper-legible) is a coarse proxy for this
++   (task boundary, agent-legible); the gap between the two IS the "agents get confused"
++   ambiguity the operator observed.
+ 4. **How disruptive are crew restarts, really?** Sample crew transcripts (C6) to
+    decide whether crews need the same treatment as captain/admiral or a lighter one.
+ 5. **Does the three-tier intent (soft/stern/hard) already exist adequately** in
+@@ -295,9 +311,22 @@ current architecture.
+    SIGKILLed → orphan-process contamination — chani). **Implication: crews need a
+    lighter, reliability-focused treatment kept separate from the captain/admiral
+    timing+delivery redesign.**
+-5. ⬜ A short direction memo picks 1–2 threads to pursue and hands off to a
+-   solution/kerf-work plan. NOT built here. (The Q1/Q2 findings above reshape the
+-   candidate threads — see note below.)
++5. ✅ **Direction memo WRITTEN + operator-directed (2026-07-18, xray — `DIRECTION.md`).**
++   Operator chose the direction on 2026-07-18 (memo revised to record it). Anchor fact:
++   the keeper watches the handoff file only 300s then gives up (`cycle.go`
++   DefaultHandoffTimeout) — so every keeper message must ALSO hand the agent the command
++   to restart itself (`restartnow.go`), the safety net for a late handoff. **Track A
++   (captain/admiral):** deliver the nudge as a **comms message, not a terminal paste**
++   (so it can't step on operator input); message tells the agent to hold if talking to
++   the operator OR if work is in flight, and carries the self-restart command; wire the
++   Q3 "good pause" self-test into the framing; sharpen operator-present detection.
++   **Track B (crew):** keep the finish-then-self-restart message for crews too *if made
++   reliable* — self-restart-on-wake is the only thing that reaches a parked crew — AND
++   fix the four C6 reliability bugs (dead watcher, discarded handoff, orphan-process
++   kill, garbled args). **Plus:** keeper-accuracy ideas + a **testing initiative**
++   (integration / e2e / twin-scenario coverage for every named failure — unit exists).
++   Follow-on kerf plan builds; open confirmations: comms-inbox-armed assumption + filing
++   the 4 crew bugs.
+ 
+ ## What the Q1/Q2 findings imply for the option space (framing only — NOT a decision)
+ 

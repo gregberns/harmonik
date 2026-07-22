@@ -1,0 +1,31 @@
+codename: child-pgid
+title: Run child gets its own process group so the kill path reaches grandchildren (HC-044 / PL-006a amendment)
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: spec-draft
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-22T03:05:48Z
+updated: 2026-07-22T03:13:10Z
+sessions:
+    - id: null
+      started: 2026-07-22T03:05:48Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:child-pgid
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

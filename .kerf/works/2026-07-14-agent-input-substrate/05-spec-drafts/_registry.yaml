@@ -1,0 +1,36 @@
+# Harmonik spec requirement-prefix registry.
+#
+# Every spec under specs/ that declares a `requirement-prefix` in its front
+# matter MUST have an entry here. The lint check (see
+# docs/foundation/spec-template.md §Conformance checklist) verifies that
+# each spec's prefix is present in this file and not duplicated.
+#
+# To reserve a new prefix:
+#   1. Pick a 2-3 letter uppercase code unique across the table below.
+#   2. Add an entry with `spec-id`, today's date as `reserved`, and `status: draft`.
+#   3. Land the registry edit and the new spec in the same commit.
+#
+# Status values: draft | reviewed | finalized | superseded.
+
+prefixes:
+  AR: {spec-id: architecture,       reserved: 2026-04-24, status: draft}
+  EM: {spec-id: execution-model,    reserved: 2026-04-24, status: draft}
+  EV: {spec-id: event-model,        reserved: 2026-04-24, status: draft}
+  HC: {spec-id: handler-contract,   reserved: 2026-04-24, status: draft}
+  WM: {spec-id: workspace-model,    reserved: 2026-04-24, status: draft}
+  CP: {spec-id: control-points,     reserved: 2026-04-24, status: draft}
+  ON: {spec-id: operator-nfr,       reserved: 2026-04-24, status: draft}
+  PL: {spec-id: process-lifecycle,  reserved: 2026-04-24, status: draft}
+  RC: {spec-id: reconciliation,     reserved: 2026-04-24, status: draft}
+  BI: {spec-id: beads-integration,  reserved: 2026-04-24, status: draft}
+  SH: {spec-id: scenario-harness,   reserved: 2026-05-05, status: draft}
+  QM: {spec-id: queue-model,        reserved: 2026-05-18, status: draft}
+  CHB: {spec-id: claude-hook-bridge, reserved: 2026-05-18, status: draft}
+  HP: {spec-id: handler-pause,      reserved: 2026-05-18, status: draft}
+  CLS: {spec-id: claude-launchspec, reserved: 2026-05-19, status: draft}
+  CL: {spec-id: cognition-loop,    reserved: 2026-05-30, status: draft}
+  HN: {spec-id: harness-contract,  reserved: 2026-06-10, status: draft}
+  PI: {spec-id: pi-harness,        reserved: 2026-06-30, status: draft}
+  RS: {spec-id: replay-substrate,  reserved: 2026-07-13, status: draft}
+  SK: {spec-id: session-keeper,    reserved: 2026-07-13, status: draft}
+  AIS: {spec-id: agent-input,      reserved: 2026-07-14, status: draft}

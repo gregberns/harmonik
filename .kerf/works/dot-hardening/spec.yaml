@@ -1,0 +1,30 @@
+codename: dot-hardening
+title: 'Harden DOT: single brief renderer + declared per-node I/O + per-node model/effort override with replay seal + forceable round-trip test harness'
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: tasks
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-18T05:43:58Z
+updated: 2026-07-18T06:26:26Z
+sessions:
+    - id: null
+      started: 2026-07-18T05:43:58Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

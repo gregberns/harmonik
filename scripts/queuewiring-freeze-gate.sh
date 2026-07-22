@@ -36,7 +36,7 @@ HITS=0
 while IFS= read -r f; do
     echo "queuewiring-freeze-gate: FORBIDDEN queue-wiring file in internal/daemon: $f" >&2
     HITS=$((HITS + 1))
-done < <(find internal/daemon -maxdepth 1 -type f \
+done < <(find internal/daemon -type f \
              \( -name '*queuestore*.go' -o -name '*queueledger*.go' \
                 -o -name '*queue_operatorevent*.go' \) \
              ! -name '*_test.go')
@@ -45,9 +45,10 @@ done < <(find internal/daemon -maxdepth 1 -type f \
 for sym in newQueueStore NewQueueStore newBRQueueLedger NewBRQueueLedger \
            cloneQueue cloneGroup cloneItem submitWakeCBufSize \
            NewQueueOperatorEventConsumer; do
-    if grep -rn --include='*.go' -E "^(func|var|const|type)[[:space:]]+${sym}\b" internal/daemon >/dev/null 2>&1; then
+    MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E "^[[:space:]]*(func|var|const|type)?[[:space:]]*${sym}\b[[:space:]]*(=|struct|interface|func|\()" internal/daemon 2>/dev/null | grep -vE '=[[:space:]]*(shared|claude|codex|pi|crewrun|queuewiring|tunnel|codesync|gitprobe)\.' || true)"
+    if [ -n "$MATCHES" ]; then
         echo "queuewiring-freeze-gate: FORBIDDEN re-declaration of ${sym} in internal/daemon:" >&2
-        grep -rn --include='*.go' -E "^(func|var|const|type)[[:space:]]+${sym}\b" internal/daemon >&2
+        printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
 done
@@ -55,9 +56,10 @@ done
 # (3) No re-declaration of the moved types.
 for sym in QueueStore LockedQueueStore BRQueueLedger \
            QueueOperatorEventConsumer QueueOperatorEventConsumerConfig; do
-    if grep -rn --include='*.go' -E "^type[[:space:]]+${sym}[[:space:]]+(struct|interface)" internal/daemon >/dev/null 2>&1; then
+    MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E "^[[:space:]]*(type[[:space:]]+)?${sym}\b[[:space:]]*(=|struct|interface)" internal/daemon 2>/dev/null | grep -vE '=[[:space:]]*(shared|claude|codex|pi|crewrun|queuewiring|tunnel|codesync|gitprobe)\.' || true)"
+    if [ -n "$MATCHES" ]; then
         echo "queuewiring-freeze-gate: FORBIDDEN re-declaration of type ${sym} in internal/daemon:" >&2
-        grep -rn --include='*.go' -E "^type[[:space:]]+${sym}[[:space:]]+(struct|interface)" internal/daemon >&2
+        printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
 done

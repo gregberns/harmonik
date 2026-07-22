@@ -25,7 +25,7 @@ HITS=0
 while IFS= read -r f; do
     echo "transport-freeze-gate: FORBIDDEN transport file in internal/daemon: $f" >&2
     HITS=$((HITS + 1))
-done < <(find internal/daemon -maxdepth 1 -type f \
+done < <(find internal/daemon -type f \
              \( -name '*reversetunnel*.go' -o -name '*revtunnel*.go' \
                 -o -name '*codesync*.go' \))
 
@@ -35,9 +35,10 @@ for sym in buildReverseTunnelArgs allocateReverseTunnelPort releaseReverseTunnel
            workerTCPEndpoint sshHostOpts workerHarmonikPath reverseTunnelRunner \
            fetchRunBranchBoxA ensureBaseOnWorker fetchBaseOnWorker pushBaseToWorker \
            workerSSHURL; do
-    if grep -rn --include='*.go' -E "^(func|var|const)[[:space:]]+${sym}\b" internal/daemon >/dev/null 2>&1; then
+    MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E "^[[:space:]]*(func|var|const|type)?[[:space:]]*${sym}\b[[:space:]]*(=|struct|interface|func|\()" internal/daemon 2>/dev/null | grep -vE '=[[:space:]]*(shared|claude|codex|pi|crewrun|queuewiring|tunnel|codesync|gitprobe)\.' || true)"
+    if [ -n "$MATCHES" ]; then
         echo "transport-freeze-gate: FORBIDDEN re-declaration of ${sym} in internal/daemon:" >&2
-        grep -rn --include='*.go' -E "^(func|var|const)[[:space:]]+${sym}\b" internal/daemon >&2
+        printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
 done

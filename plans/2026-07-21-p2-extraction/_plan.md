@@ -118,7 +118,20 @@ For each extracted concern, the **same PR that extracts it adds the depguard edg
 
 **Where P2 UNBLOCKS P3 (the extractions are the forcing function A5 §2/§4d names):**
 
-- **E1 (harness impls) IS "minimal harmonik in a container."** Option-3's "minimal harmonik" cannot be minimal while it links `internal/daemon` (drags the 56k-LOC monolith into every container). E1 makes `internal/harness/codex` a linkable unit with a core/handler/workspace-only closure → the container links the harness, not the daemon. **E1 = the single most P3-enabling P2 unit.** Codex-first (E1a) aligns with PRIORITY-0.
+- **E1 (harness impls) IS "minimal harmonik in a container."** Option-3's "minimal harmonik" cannot be minimal while it links `internal/daemon` (drags the 56k-LOC monolith into every container). E1 makes `internal/harness/codex` a linkable unit → the container links the harness, not the daemon. **E1 = the single most P3-enabling P2 unit.** Codex-first (E1a) aligns with PRIORITY-0.
+
+  > **MEASURED 2026-07-22, after E1a/E1b/E1c landed — correcting this section's original claim.**
+  > This paragraph promised "a core/handler/workspace-only closure." That was optimistic. The actual
+  > closure of each harness package is **11 harmonik packages**: `core`, `handler`, `handlercontract`,
+  > `handlercontract/lifecycle`, `brcli`, `queue`, `lifecycle`, `lifecycle/tmux`, `gitprobe`,
+  > `harness/shared`, and self. The extra four (`brcli`, `queue`, `lifecycle`,
+  > `handlercontract/lifecycle`) arrive transitively via `handlercontract` and `lifecycle/tmux`.
+  >
+  > **The property P3 actually needs holds exactly as promised** — `go list -deps
+  > ./internal/harness/{claude,codex,pi} | grep internal/daemon` is empty for all three, and
+  > `harness/pi` has no edge to `harness/codex`. But P3 should size a container against the measured
+  > 11-package closure, not against the word "minimal." If a genuinely minimal closure is required,
+  > that is follow-on work on `handlercontract`'s own dependencies, not something E1 delivered.
 - **E4 (transport) gives P3 a clean dispatch substrate.** P3's remote container dispatch builds on `CommandRunner` + `workers.Registry` instead of forking `workloop`'s embedded reverse-tunnel logic — which is exactly the "bespoke pipe reinvented per-path" failure P1/A5 §1 diagnoses.
 - **E3 (queue) gives P3's dispatch plugin a clean queue API** (`queue` RPC surface) to hand beads through, rather than reaching into daemon queue wiring.
 

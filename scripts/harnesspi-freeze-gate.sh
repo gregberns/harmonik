@@ -51,7 +51,7 @@ HITS=0
 while IFS= read -r f; do
     echo "harnesspi-freeze-gate: FORBIDDEN pi-harness file in internal/daemon: $f" >&2
     HITS=$((HITS + 1))
-done < <(find internal/daemon -maxdepth 1 -type f \
+done < <(find internal/daemon -type f \
              \( -name 'pi*.go' -o -name '*piharness*.go' -o -name '*pilaunch*.go' \) \
              ! -name '*_test.go' \
              ! -name 'pi_profile_resolve.go')
@@ -66,9 +66,10 @@ for sym in NewPiHarness buildPiLaunchSpec buildPiEnv buildPiModelsJSON \
            runPiBillingGuard emitPiBillingGuard piDefaultHome \
            piAuthIndicatesPersistentCredential isPiAPIKeyPattern \
            piProviderCredentialKeys piSeedPromptTemplate; do
-    if grep -rn --include='*.go' -E "^(func|var|const)[[:space:]]+${sym}\b" internal/daemon >/dev/null 2>&1; then
+    MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E "^[[:space:]]*(func|var|const|type)?[[:space:]]*${sym}\b[[:space:]]*(=|struct|interface|func|\()" internal/daemon 2>/dev/null | grep -vE '=[[:space:]]*(shared|claude|codex|pi|crewrun|queuewiring|tunnel|codesync|gitprobe)\.' || true)"
+    if [ -n "$MATCHES" ]; then
         echo "harnesspi-freeze-gate: FORBIDDEN re-declaration of ${sym} in internal/daemon:" >&2
-        grep -rn --include='*.go' -E "^(func|var|const)[[:space:]]+${sym}\b" internal/daemon >&2
+        printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
 done
@@ -78,9 +79,10 @@ done
 #     own projectconfig types and stay.
 for sym in PiHarness piRunCtx piRunArtifacts piEvent piTokenUsage \
            piSessionIDInterceptor piNDJSONLine piAuthFile; do
-    if grep -rn --include='*.go' -E "^type[[:space:]]+${sym}[[:space:]]+(struct|interface)" internal/daemon >/dev/null 2>&1; then
+    MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E "^[[:space:]]*(type[[:space:]]+)?${sym}\b[[:space:]]*(=|struct|interface)" internal/daemon 2>/dev/null | grep -vE '=[[:space:]]*(shared|claude|codex|pi|crewrun|queuewiring|tunnel|codesync|gitprobe)\.' || true)"
+    if [ -n "$MATCHES" ]; then
         echo "harnesspi-freeze-gate: FORBIDDEN re-declaration of type ${sym} in internal/daemon:" >&2
-        grep -rn --include='*.go' -E "^type[[:space:]]+${sym}[[:space:]]+(struct|interface)" internal/daemon >&2
+        printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
 done

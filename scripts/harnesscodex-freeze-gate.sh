@@ -41,7 +41,7 @@ HITS=0
 while IFS= read -r f; do
     echo "harnesscodex-freeze-gate: FORBIDDEN codex-harness file in internal/daemon: $f" >&2
     HITS=$((HITS + 1))
-done < <(find internal/daemon -maxdepth 1 -type f \
+done < <(find internal/daemon -type f \
              \( -name 'codex*.go' -o -name '*codexharness*.go' -o -name '*codexlaunch*.go' \) \
              ! -name '*_test.go')
 
@@ -59,9 +59,10 @@ for sym in NewCodexHarness NewHarness buildCodexLaunchSpec BuildLaunchSpec \
            codexNoWorkSuspected NoWorkSuspected codexNoWorkFloor NoWorkFloor \
            codexNoWorkDurationFloorDefault emitImplementerNoWorkSuspected \
            EmitImplementerNoWorkSuspected; do
-    if grep -rn --include='*.go' -E "^(func|var|const|type)[[:space:]]+${sym}\b" internal/daemon >/dev/null 2>&1; then
+    MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E "^[[:space:]]*(func|var|const|type)?[[:space:]]*${sym}\b[[:space:]]*(=|struct|interface|func|\()" internal/daemon 2>/dev/null | grep -vE '=[[:space:]]*(shared|claude|codex|pi|crewrun|queuewiring|tunnel|codesync|gitprobe)\.' || true)"
+    if [ -n "$MATCHES" ]; then
         echo "harnesscodex-freeze-gate: FORBIDDEN re-declaration of ${sym} in internal/daemon:" >&2
-        grep -rn --include='*.go' -E "^(func|var|const|type)[[:space:]]+${sym}\b" internal/daemon >&2
+        printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
 done
@@ -71,9 +72,10 @@ for sym in CodexHarness codexRunCtx RunCtx codexEventKind codexEvent \
            codexTokenUsage codexJSONLLine codexRunArtifacts \
            codexThreadIDInterceptor codexWALGuardConfig codexAuthFile \
            ErrMissingCodexStaleWALMaxBytes ErrMissingStaleWALMaxBytes; do
-    if grep -rn --include='*.go' -E "^type[[:space:]]+${sym}[[:space:]]+(struct|interface|int)" internal/daemon >/dev/null 2>&1; then
+    MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E "^type[[:space:]]+${sym}[[:space:]]+(struct|interface|int)" internal/daemon 2>/dev/null | grep -vE '=[[:space:]]*(shared|claude|codex|pi|crewrun|queuewiring|tunnel|codesync|gitprobe)\.' || true)"
+    if [ -n "$MATCHES" ]; then
         echo "harnesscodex-freeze-gate: FORBIDDEN re-declaration of type ${sym} in internal/daemon:" >&2
-        grep -rn --include='*.go' -E "^type[[:space:]]+${sym}[[:space:]]+(struct|interface|int)" internal/daemon >&2
+        printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
 done

@@ -57,7 +57,7 @@ HITS=0
 while IFS= read -r f; do
     echo "harnessclaude-freeze-gate: FORBIDDEN claude-harness file in internal/daemon: $f" >&2
     HITS=$((HITS + 1))
-done < <(find internal/daemon -maxdepth 1 -type f \
+done < <(find internal/daemon -type f \
              \( -name 'claude*.go' -o -name '*claudeharness*.go' -o -name '*claudelaunch*.go' \) \
              ! -name '*_test.go' \
              ! -name 'claudeheartbeat.go' \
@@ -69,9 +69,10 @@ done < <(find internal/daemon -maxdepth 1 -type f \
 #     daemon is a re-implementation of the extracted concern.
 for sym in NewClaudeHarness NewHarness buildClaudeLaunchSpec BuildLaunchSpec \
            isHarmonikManagedWorktree; do
-    if grep -rn --include='*.go' -E "^(func|var|const)[[:space:]]+${sym}\b" internal/daemon >/dev/null 2>&1; then
+    MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E "^[[:space:]]*(func|var|const|type)?[[:space:]]*${sym}\b[[:space:]]*(=|struct|interface|func|\()" internal/daemon 2>/dev/null | grep -vE '=[[:space:]]*(shared|claude|codex|pi|crewrun|queuewiring|tunnel|codesync|gitprobe)\.' || true)"
+    if [ -n "$MATCHES" ]; then
         echo "harnessclaude-freeze-gate: FORBIDDEN re-declaration of ${sym} in internal/daemon:" >&2
-        grep -rn --include='*.go' -E "^(func|var|const)[[:space:]]+${sym}\b" internal/daemon >&2
+        printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
 done
@@ -80,9 +81,10 @@ done
 #     of the launch DTO that moved to internal/harness/shared in E1b-prep.
 for sym in ClaudeHarness Harness claudeRunCtx claudeRunArtifacts \
            LaunchCtx LaunchArtifacts ModelPreferenceError; do
-    if grep -rn --include='*.go' -E "^type[[:space:]]+${sym}[[:space:]]+(struct|interface)" internal/daemon >/dev/null 2>&1; then
+    MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E "^[[:space:]]*(type[[:space:]]+)?${sym}\b[[:space:]]*(=|struct|interface)" internal/daemon 2>/dev/null | grep -vE '=[[:space:]]*(shared|claude|codex|pi|crewrun|queuewiring|tunnel|codesync|gitprobe)\.' || true)"
+    if [ -n "$MATCHES" ]; then
         echo "harnessclaude-freeze-gate: FORBIDDEN re-declaration of type ${sym} in internal/daemon:" >&2
-        grep -rn --include='*.go' -E "^type[[:space:]]+${sym}[[:space:]]+(struct|interface)" internal/daemon >&2
+        printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
 done

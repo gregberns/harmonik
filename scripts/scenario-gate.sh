@@ -120,6 +120,55 @@ file_to_pkg_pattern() {
     fi
 }
 
+# ── output trimming that preserves failing test names (hk-a5fxl #4) ──────────
+# The daemon caps gate output at maxOut=2000 bytes (scenariogate.go:219-221), so
+# this script has always trimmed to match. A blind `tail -c 2000` on a large
+# `go test` run keeps the trailing package summary and DISCARDS the "--- FAIL:
+# TestName" lines above it — the only part that says WHAT broke. Attribution then
+# needs a separate manual control run, which is exactly what happened while
+# diagnosing hk-a5fxl.
+#
+# Instead: pull the FAIL lines out first, then fill whatever budget REMAINS with
+# the tail.
+#
+# The total MUST stay within 2000 bytes. If it does not, the daemon tails it and
+# cuts off the preserved FAIL header at the top — silently re-losing exactly the
+# attribution this helper exists to save, and doing so precisely when the run has
+# the most failures. So the FAIL section is capped in BYTES (not just lines) and
+# the tail takes only what is left.
+trim_preserving_failures() {
+    local raw="$1"
+    local fails tail_part budget=2000 fail_cap=1200
+    local hdr="--- failing tests (preserved from full output; hk-a5fxl) ---"
+    local sep="--- output tail ---"
+
+    fails=$(printf '%s' "$raw" | grep -E '^(--- FAIL|[[:space:]]*--- FAIL|FAIL[[:space:]])' | head -40)
+    if [ -z "$fails" ]; then
+        printf '%s' "$raw" | tail -c "$budget"
+        return 0
+    fi
+
+    # Byte-cap the FAIL section itself: keep the FIRST failures (the earliest
+    # ones are the most likely root cause; later ones are often cascades).
+    if [ "${#fails}" -gt "$fail_cap" ]; then
+        fails=$(printf '%s' "$fails" | head -c "$fail_cap")
+        fails="${fails}
+[FAIL list truncated at ${fail_cap} bytes — see .harmonik/commit-gate.log for all failures]"
+    fi
+
+    # Whatever is left after the header, separator, fails and newlines goes to the
+    # tail. If nothing is left, emit the FAIL section alone — the names matter more
+    # than the trailing summary, which is what the old blind tail kept instead.
+    local overhead=$(( ${#hdr} + ${#sep} + ${#fails} + 4 ))
+    local tail_budget=$(( budget - overhead ))
+    if [ "$tail_budget" -le 0 ]; then
+        printf '%s\n%s' "$hdr" "$fails"
+        return 0
+    fi
+    tail_part=$(printf '%s' "$raw" | tail -c "$tail_budget")
+    printf '%s\n%s\n%s\n%s' "$hdr" "$fails" "$sep" "$tail_part"
+}
+
 # ── go test runner with fail-open classification ─────────────────────────────
 # Mirrors classifyScenarioGateError + isSignalKill + isCompileFailure +
 # isGenuineTestFailure (scenariogate.go:125-226). Runs `go test [tags] <pkgs>`
@@ -165,7 +214,8 @@ run_go_test() {
 
     # Prefer `timeout` when available so a hung suite is a fail-open timeout
     # rather than an indefinite hang. SIGTERM first (rc 124), KILL after grace.
-    local out rc
+    local out rc run1_start run1_elapsed
+    run1_start=$SECONDS
     if command -v timeout >/dev/null 2>&1; then
         out=$(timeout --kill-after=30s "${SCENARIO_GATE_TIMEOUT:-600}s" \
             go "${gotest_args[@]}" 2>&1)
@@ -174,15 +224,19 @@ run_go_test() {
         out=$(go "${gotest_args[@]}" 2>&1)
         rc=$?
     fi
+    run1_elapsed=$(( SECONDS - run1_start ))
 
     if [ "$rc" -eq 0 ]; then
         log "${class} tests passed for: ${pkglist}"
         return 0
     fi
 
-    # Keep only the tail of the output, matching the daemon's maxOut=2000 cap.
+    # Trim for the daemon's maxOut=2000 cap, but PRESERVE the --- FAIL lines
+    # (hk-a5fxl #4): a blind `tail -c 2000` scrolled the failing test NAMES off
+    # the top, which is why attributing a red previously required a separate
+    # manual control run. The names are the whole diagnostic.
     local trimmed
-    trimmed=$(printf '%s' "$out" | tail -c 2000)
+    trimmed=$(trim_preserving_failures "$out")
 
     # Timeout — `timeout` exits 124 (or 137 on KILL after grace). Not a verdict.
     if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
@@ -218,7 +272,47 @@ run_go_test() {
     # on run 2 is flaky/transient — fail-open so it doesn't bounce a valid commit.
     # A test that fails on both runs is a genuine regression — block.
     if [ "$rc" -eq 1 ] && printf '%s' "$trimmed" | grep -qE '(--- FAIL|^FAIL|[[:space:]]FAIL)'; then
-        log "first-run FAIL for go test ${tagdesc}${pkglist} — retrying once to check for flakiness (hk-8b35c)"
+        # hk-a5fxl #2: the flake-retry must be BUDGET-AWARE. The retry re-runs the
+        # WHOLE affected package set, so it roughly doubles the cost. On
+        # internal/daemon (~600s per run) that pushed the commit_gate node past its
+        # timeout, and a timeout reports NOTHING — the genuine red was laundered
+        # into "transient" and the run died in close-needs-attention with no
+        # verdict. A reported BLOCK is strictly better than a silent timeout, so
+        # when there is not enough headroom left to finish a second run, we skip it
+        # and report the first-run failure instead.
+        #
+        # SEMANTIC CHANGE, stated plainly: skipping the retry means flakiness was
+        # NOT ruled out, so a genuinely flaky red will BLOCK instead of failing
+        # open. That is the deliberate trade — a flaky block is visible and
+        # re-runnable by the implementer, whereas the timeout it replaces was
+        # invisible and unrecoverable. The message says so explicitly.
+        #
+        # SCENARIO_GATE_NODE_BUDGET must be kept in sync with workflow.dot's
+        # commit_gate timeout (currently 1800). The daemon does not pass the node
+        # timeout down to this script today, so the default is a documented
+        # mirror rather than a derived value — see the bead follow-up note.
+        #
+        # $SECONDS counts only from THIS script's start, but the node budget also
+        # covers the three stages that run BEFORE it in commit_gate's tool_command
+        # (`go build ./...`, `go vet ./...`, `go test -run=^$ ./...`). Ignoring them
+        # OVERSTATES headroom, which would let a retry run past the node timeout and
+        # reproduce the exact silent-timeout bug this bead exists to fix. So they are
+        # charged against the budget as a reserve.
+        # MEASURED on this repo with a warm build cache: build 11s + vet 22s +
+        # compile-only 57s = 90s. The 300s default is deliberately ~3x that to cover
+        # a cold cache and a loaded box (load average 43.67 was observed during the
+        # gate that produced this bead).
+        local node_budget pre_reserve spent headroom
+        node_budget="${SCENARIO_GATE_NODE_BUDGET:-1800}"
+        pre_reserve="${SCENARIO_GATE_PRE_RESERVE:-300}"
+        spent=$(( SECONDS + pre_reserve ))
+        headroom=$(( node_budget - spent ))
+        if [ "$run1_elapsed" -ge "$headroom" ]; then
+            log "BLOCK (unretried): go test ${tagdesc}${pkglist} FAILED on run 1 in ${run1_elapsed}s; only ${headroom}s headroom remains under the ${node_budget}s node budget, so the hk-8b35c flake-retry was SKIPPED (hk-a5fxl). Flakiness was NOT ruled out — if you believe this red is flaky, re-run the bead. Reporting the failure is deliberate: a retry here would time the node out and report nothing at all."
+            printf '%s\n' "$trimmed" >&2
+            return 1
+        fi
+        log "first-run FAIL for go test ${tagdesc}${pkglist} — retrying once to check for flakiness (hk-8b35c; ${run1_elapsed}s used, ${headroom}s headroom under ${node_budget}s budget)"
         printf '%s\n' "$trimmed" >&2
         local retry_out retry_rc
         if command -v timeout >/dev/null 2>&1; then
@@ -234,7 +328,7 @@ run_go_test() {
             return 0
         fi
         local retry_trimmed
-        retry_trimmed=$(printf '%s' "$retry_out" | tail -c 2000)
+        retry_trimmed=$(trim_preserving_failures "$retry_out")
         log "BLOCK: genuine test FAILURE on both runs for go test ${tagdesc}${pkglist}"
         printf '%s\n' "$retry_trimmed" >&2
         return 1

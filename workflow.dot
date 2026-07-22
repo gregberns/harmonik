@@ -111,7 +111,18 @@ digraph "standard-bead" {
         handler_ref="shell",
         idempotency_class="idempotent",
         tool_command="go build ./... && go vet ./... && go test -run=^$ ./... && bash scripts/scenario-gate.sh",
-        timeout="900",
+        // hk-a5fxl: 900s was SHORTER than the work this node runs, so a real red
+        // in internal/daemon could never report. Measured: internal/daemon
+        // `go test -short` alone is ~600s (601.4s / 593.5s on two independent
+        // daemons), and scenario-gate.sh retries the whole affected run once on a
+        // first-run FAIL (hk-8b35c) — so a FAILING internal/daemon change costs
+        // ~1200s of tests before build + vet + the whole-repo compile-only pass.
+        // At 900s it timed out deterministically, was classified TRANSIENT, burned
+        // its self-loop budget, and died in close-needs-attention having never
+        // reported WHICH test failed. 1800s clears the measured worst case with
+        // headroom for a loaded box (load average 43.67 was observed during the
+        // gate that produced this bead).
+        timeout="1800",
         role="commit gate: build + vet + test-compile + affected-package-scoped unit + scenario tests (fail-open); exit 0 = ready for review"
     ];
 

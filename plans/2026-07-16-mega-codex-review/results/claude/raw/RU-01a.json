@@ -1,0 +1,108 @@
+{
+  "chunk": "RU-01a",
+  "reviewer": "claude",
+  "scope_reviewed": ["internal/daemon/workloop.go (lines 1-4100)"],
+  "status": "reviewed",
+  "status_note": "Reviewed lines 1-4100 as scoped: package doc, const/deps declarations, runWorkLoop (the outer poll god-function, 1531-3097), and beadRunOne (3121-4100 within scope; function continues past 4100). Findings focus on the two god-functions, error-swallowing, and concurrency hazards.",
+  "findings": [
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 1531,
+      "severity": "high",
+      "category": "maintainability",
+      "title": "runWorkLoop is a ~1560-line god-function with deeply nested, multi-concern control flow",
+      "detail": "runWorkLoop spans 1531-3097 (~1560 lines) in a single function body. It interleaves at least a dozen distinct concerns in one lexical scope: merge-queue ownership, claim-semaphore sizing, schedule ticks, coordinator reap, disk watermark checks, split capacity gate, dashboard staleness gate, two near-identical sentinel governor blocks (observe vs act), cross-queue round-robin selection with three-phase lock dance, handler-pause / decision-blocker / greenlight gates duplicated across queue-path AND br-ready path, claim-semaphore acquire, and goroutine spawn. Nesting reaches 6-7 levels (e.g. the bead_claim_skipped stranded-reset block at 2399-2484). This is unreviewable as a unit: a reader cannot hold the invariants of the outer `for` loop, the lock lifetimes (lq.Done() must pair with every LockForMutation across dozens of early `continue`s), and the dispatch state machine simultaneously. The many `continue` statements each after a workloopSleep make it extremely easy to leak a held lock or skip a needed state reset on a new branch.",
+      "suggested_fix": "Decompose into named stages returning a small dispatch-decision struct: pollMaintenance(), evaluateGates(), selectDispatchTarget() (owns the entire lock dance and returns a captured value struct), claimAndSpawn(). The sentinel observe/act blocks should collapse into one helper parameterized by mode."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 3121,
+      "severity": "high",
+      "category": "maintainability",
+      "title": "beadRunOne carries //nolint:gocognit,cyclop,funlen — a self-admitted god-function that continues well past the review window",
+      "detail": "beadRunOne is annotated `//nolint:gocognit,cyclop,funlen // grandfathered pre-reactor guard sequence (M3-D2); the M5 full reactorization decomposes it`. Within the reviewed window (3121-4100) it already threads: local-slot release flag mutation, owning-epic resolution, run-terminal effector closure, workflow-mode/ref resolution, model/effort resolution, Pi profile resolution, cross-repo activeRepo determination, parent-commit resolution, lands_on protection gate, merge-target resolution, remote worker pre-selection + fallback, and reverse-tunnel setup — and the function body continues past line 4100. The suppressed linters exist precisely because this exceeds every complexity threshold. The 'M5 reactorization' the comment promises has not landed, so the nolint is load-bearing debt. Every guard path duplicates the reopen-bead-and-return idiom (3294-3300, 3351-3357, 3384-3390, 3411-3421) with a fresh tidGen.Next() whose error is discarded (`reopenTID, _ :=`).",
+      "suggested_fix": "Extract the resolution phase (workflow/model/profile/repo/parent/lands_on) into a single resolveRunPlan() returning a plan struct or a typed refuse-error; funnel all refuse-and-reopen paths through one helper so the tidGen error and ReopenBead error are handled once, not copy-pasted 4+ times."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 1716,
+      "severity": "medium",
+      "category": "resource-leak",
+      "title": "adoptLiveRunSession goroutines are spawned untracked by wg — shutdown drain cannot wait for them",
+      "detail": "At boot runWorkLoop spawns one `go adoptLiveRunSession(ctx, deps, rec, tmuxAdp)` per surviving run session (1711-1720) without wg.Add/wg.Done. exitClean() waits only on `wg` (in-flight bead goroutines, 1668-1671). These adopt goroutines monitor prior-instance Claude sessions and perform ReopenBead + queue revert when the session dies; on SIGTERM they receive ctx cancellation but their teardown (a br write on ctx cancel) is neither awaited nor bounded by shutdownDrainTimeout. The process can exit mid-write, leaving a bead/queue-item in an inconsistent state that QM-002a must clean up, or (worse) they race the exit and emit events onto a bus that is being torn down. They are silently unaccounted in runRegistry.Len() reporting too.",
+      "suggested_fix": "Track adopt goroutines on the same wg (or a dedicated WaitGroup drained inside exitClean) so shutdown awaits their teardown within the drain window."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 2193,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "queue.Persist (disk I/O) runs while holding the LockForMutation write lock, serializing all queue mutation behind fsync latency",
+      "detail": "Inside the held write lock (lq := deps.queueStore.LockForMutation()), the deferred-item re-evaluation loop calls queue.Persist(ctx, deps.projectDir, q) (2197) for every queue that had an item flip, and the dispatch-stamp / cross-queue-duplicate / claim-revert blocks likewise call queue.Persist while holding the lock (2472, 2574, 2617, 2638, 2813, 2962). Persist writes queue.json to disk (marshal + write + likely fsync). Every per-run goroutine that needs the write lock (evaluateGroupAdvanceWithOutcome on run completion) blocks for the full disk-write duration on each poll tick. Under N concurrent runs plus multiple loaded queues this converts a poll tick into a serialized disk-I/O chain and can stall completion accounting. The lock is meant to protect in-memory state, not to gate durable writes.",
+      "suggested_fix": "Snapshot the mutated queue under the lock, release, then Persist outside the critical section (the pattern already used for bootstrapEvents at 2160-2172). At minimum batch the Persist calls so only one write happens per tick."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 2599,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "max-attempts branch sets LastFailureReason but leaves the queue item Status=pending, relying on evaluateGroupAdvanceWithOutcome to fail it",
+      "detail": "When Items[snapItemIdx].Attempts >= maxItemAttempts (2601), the code sets LastFailureReason='max_attempts_exceeded', sets maxAttemptsHit=true, and `break`s — but never sets the item Status to ItemStatusFailed. It then persists (with the item still pending) and calls evaluateGroupAdvanceWithOutcome(..., false) (2622). If evaluateGroupAdvanceWithOutcome does not itself transition a pending item to failed (it is normally called for dispatched/in-flight items), the item remains pending with a stale failure reason and will be re-selected next tick — Attempts increments again but the >= guard keeps re-hitting this branch, producing an infinite dispatch-attempt spin that never advances the group. Compare the cross-queue-duplicate branch just above (2569) which explicitly sets Status=ItemStatusFailed before advancing. The asymmetry is a latent live-lock.",
+      "suggested_fix": "Set Items[snapItemIdx].Status = queue.ItemStatusFailed in the maxAttemptsHit block before Persist, matching the cross-queue-duplicate path, rather than depending on evaluateGroupAdvanceWithOutcome to fail a still-pending item."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 2608,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "RunID placeholder pointer (&runUUIDStr with empty string) is a brittle two-phase patch that can persist a dangling empty RunID",
+      "detail": "At 2608-2611 the dispatch stamp sets Items[snapItemIdx].RunID = &runUUIDStr where runUUIDStr is the empty string, with `_ = runUUIDStr // suppress lint`, intending to patch it after uuid generation at 2794-2818. The patch block only rewrites RunID when it re-finds the item with Status==ItemStatusDispatched (2805-2809). Between the stamp-persist (2638) and the patch, queue.json is persisted with RunID pointing at an empty string; if the daemon crashes in that window, or if the patch loop fails to match (group/index drift), the queue item durably carries RunID=\"\". A pointer-to-empty-string is indistinguishable from an intentionally cleared RunID and defeats the QM recovery logic that keys on RunID presence.",
+      "suggested_fix": "Generate the runID UUID before the dispatch-stamp block and write the real value in one pass, eliminating the placeholder + patch two-phase entirely."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 2308,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Handler-pause / decision-blocker / sentinel-gate logic is copy-pasted between the queue path and the br-ready path",
+      "detail": "The handler-pause gate (2308-2318 vs 2743-2753), the decision-required bead gate (2331-2339 vs 2763-2771), and the sentinel queue gate (2340-2348 vs 2772-2780) are near-verbatim duplicates differing only in the stderr string and the bead-id variable (snapItemBeadID vs beadRecord.BeadID). Duplicated gate logic drifts: a fix to one path (e.g. a new pause dimension) silently misses the other, and the two have already diverged subtly in their log wording. This is a recurring maintainability tax across the ~1560-line function.",
+      "suggested_fix": "Extract a single `dispatchGatesPass(ctx, deps, beadID) (blocked bool)` helper invoked from both paths so the queue and br-ready flows cannot diverge."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 1849,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "Pervasive silent discard of bus.Emit / Marshal / ReopenBead errors across the loop and run paths",
+      "detail": "The file discards errors from event emission and durable writes throughout: `_ = deps.bus.Emit(...)` (1850, 1860, 1916, 1968, 1980, 2170, 2392, ...), `reopenTID, _ := deps.tidGen.Next()` followed by `_ = deps.brAdapter.ReopenBead(...)` in every refuse path (3295-3298, 3353-3355, 3386-3388, 3416-3418), and `if raw, mErr := json.Marshal(...); mErr == nil` blocks that simply skip emitting on marshal failure (1849, 1859, 1915, 1967). Individually each is defensible as 'best-effort', but collectively a ReopenBead failure in a refuse path means the bead is neither dispatched nor reopened — it silently strands in_progress until the next restart's QM-002a sweep, with no event and only a best-effort stderr line. There is no counter/metric distinguishing 'emit dropped' from 'never attempted', so operators cannot detect systematic emit loss.",
+      "suggested_fix": "At minimum route ReopenBead failures in the refuse paths through a single helper that logs at error level and emits a durable reopen_failed marker; consider a dropped-emit counter so silent bus loss is observable."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 1202,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "clockAfter spawns a non-cancellable sleep goroutine on context.Background()",
+      "detail": "clockAfter (1202-1210) launches `go func(){ if clk.Sleep(context.Background(), d) { ch <- clk.Now() } }()`. Because it sleeps on context.Background(), the goroutine cannot be cancelled: if the caller stops waiting on the returned channel (e.g. the surrounding select takes a different branch), the goroutine lingers for the full duration `d`. With a large `d` and frequent calls this accumulates parked goroutines until each timer fires. The buffered channel (size 1) prevents a send-side block, so the leak is bounded per-call but is still an unnecessary un-cancellable timer.",
+      "suggested_fix": "Thread the caller's context into clk.Sleep so an abandoned timer is reclaimed promptly, or use a time.Timer the caller can Stop()."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 2532,
+      "severity": "low",
+      "category": "efficiency",
+      "title": "Cross-queue duplicate scan is O(queues * groups * items) executed under the write lock on every dispatch",
+      "detail": "The cross-queue bead-dedup guard (2532-2584) iterates every other active queue, every group, and every item under the held LockForMutation lock on each dispatch decision to detect a same-bead in-flight item. Combined with the bootstrap scan (2140-2159) and the deferred-item re-evaluation scan (2184-2209) — all under the same lock each tick — the poll loop does three full fleet-wide scans per tick while blocking all queue mutation. For a fleet with many queues/large groups this is a hot loop holding the global queue lock. It is correctness-motivated (must be under the lock) but the triple full-scan design will not scale.",
+      "suggested_fix": "Maintain an in-memory bead_id -> (queue,item) dispatched-index updated on stamp/terminal so the cross-queue conflict check is O(1), rather than re-scanning the whole fleet under the lock every tick."
+    },
+    {
+      "file": "internal/daemon/workloop.go",
+      "line": 1668,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "exitClean drain goroutine leaks a wg.Wait() goroutine when the drain times out",
+      "detail": "exitClean (1659-1689) spawns `go func(){ wg.Wait(); close(drainDone) }()` and selects on drainDone vs time.After(shutdownDrainTimeout). On timeout it proceeds and returns without the wg.Wait goroutine ever completing (in-flight beads exceeded the window). That goroutine stays blocked on wg.Wait() until those beads eventually finish; since the process is exiting this is harmless in practice, but it is a deliberately-leaked goroutine plus a time.After timer that is never drained (minor timer leak on the fast path where drainDone wins first). Worth noting because the same pattern copied elsewhere without a process exit behind it would be a real leak.",
+      "suggested_fix": "Document the intentional leak inline, or use a context-bounded wait; drain the time.After timer with a Stop on the fast path to avoid the parked timer."
+    }
+  ]
+}

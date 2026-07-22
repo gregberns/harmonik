@@ -1,0 +1,138 @@
+{
+  "chunk": "RU-23",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/agentmanifest/brief.go",
+    "internal/agentmanifest/manifest.go",
+    "internal/apptap/tap.go",
+    "internal/apptap/capture.go",
+    "internal/branching/branching.go",
+    "internal/cognition/twophasedone.go",
+    "internal/cognition/gitdone_ev041.go",
+    "internal/cognition/missingheartbeat_ev040.go",
+    "internal/crew/registry.go",
+    "internal/dashboard/store.go",
+    "internal/dashboard/unlock.go",
+    "internal/digest/builder.go",
+    "internal/digest/resolver.go",
+    "internal/presence/reaper.go",
+    "internal/presence/presence.go",
+    "internal/presence/decisions.go",
+    "internal/release/ledger.go",
+    "internal/release/lastgood.go",
+    "internal/release/ledger_file.go",
+    "internal/replay/replay.go",
+    "internal/replay/runcheckers.go",
+    "internal/replay/synthesizer.go",
+    "internal/schedule/store.go",
+    "internal/schedule/clock.go",
+    "internal/sentinel/governor.go",
+    "internal/sentinel/signals.go",
+    "internal/sentinel/adversary.go",
+    "internal/sentinel/trip_ev043b.go",
+    "internal/sentinel/layera_hkl087e.go",
+    "internal/sessioncapture/sessioncapture.go",
+    "internal/sessioncapture/retention.go",
+    "internal/sessioncapture/scrub.go",
+    "internal/sessiondata/sessiondata.go",
+    "internal/structuredlog/handler.go",
+    "internal/usage/usage.go",
+    "internal/watch/escalation.go",
+    "internal/watch/ledger.go",
+    "internal/watch/markers.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Broad, careful read across the supporting grab-bag. Code quality is high overall (atomic writes, clock injection, extensive spec cross-refs); findings are mostly localized correctness/maintainability issues rather than systemic rot.",
+  "findings": [
+    {
+      "file": "internal/structuredlog/handler.go",
+      "line": 264,
+      "severity": "medium",
+      "category": "nil-deref",
+      "title": "Handle after Close nil-derefs the log file instead of returning an error",
+      "detail": "Close() sets h.shared.file = nil (line 278). The Close doc comment claims 'After Close, Handle returns an error', but Handle never checks for a nil file: rotateIfNeeded (line 163, h.shared.file.Close()) and the final h.shared.file.Write(line) (line 264) both dereference the nil *os.File and panic. Any goroutine still holding a slog.Logger backed by this handler that logs a line after the daemon closes the handler on shutdown crashes the process with a nil-pointer panic rather than getting a benign error. This is a real shutdown-ordering hazard for a shared, cloned-by-pointer handler.",
+      "suggested_fix": "Guard the top of Handle (and rotateIfNeeded) with `if h.shared.file == nil { return ErrClosed }` under the mutex, matching the documented contract."
+    },
+    {
+      "file": "internal/usage/usage.go",
+      "line": 423,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "Orchestrator-session discovery hardcodes the harmonik repo path and $USER",
+      "detail": "findOrchestratorSessions builds `-Users-%s-github-harmonik` from os.Getenv(\"USER\") and returns (nil,nil) when that exact directory is absent (line 424). Any checkout not living at ~/github/harmonik, any non-USER-owned run, or any renamed project silently yields zero orchestrator sessions — so `harmonik usage` under-reports idle/orchestrator burn with no warning. The same brittle assumption is duplicated in sessiondata.ResolveTranscriptPath (sessiondata.go:623). It couples a reporting tool to one machine's filesystem layout.",
+      "suggested_fix": "Derive the Claude-projects dir name from the actual project path (the encoding Claude Code uses) rather than a hardcoded literal, or take it as config; at minimum emit a warning when the derived dir is missing."
+    },
+    {
+      "file": "internal/usage/usage.go",
+      "line": 276,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "knownSessionIDs is created and threaded through but never populated",
+      "detail": "The comment at line 275 says 'Collect session IDs attributed to daemon runs (to exclude from orchestrator scan)' and knownSessionIDs is passed into findOrchestratorSessions (line 279) which checks it at line 440. But nothing ever writes to the map — Phase 1 never inserts run session IDs. The intended dedup-by-session-id is dead; orchestrator/daemon-run separation relies solely on the run/-branch heuristic (line 449-458). A daemon run whose transcript is not all-run/-branches could be double-counted as both a productive run and an orchestrator session.",
+      "suggested_fix": "Either populate knownSessionIDs from the sessiondata records (their Claude session id) so the intended exclusion works, or delete the map and its comment."
+    },
+    {
+      "file": "internal/cognition/gitdone_ev041.go",
+      "line": 127,
+      "severity": "low",
+      "category": "correctness",
+      "title": "EV-041 tracker re-triggers the same bead on every heartbeat after threshold, unbounded",
+      "detail": "Once a bead's absenceCount reaches k it is returned as a trigger (line 128-130), but the bead is never removed from seenBeads and its absenceCount keeps incrementing on each subsequent absent heartbeat — so it is re-emitted as a git-check trigger every heartbeat forever (until MarkTerminal). A consumer that git-checks per trigger will re-run the same `git log --grep` repeatedly for a bead that already resolved via git, and seenBeads/absenceCount grow without bound across a long-lived session.",
+      "suggested_fix": "After emitting a trigger for a bead, either drop it from seenBeads (emit once) or add an 'already triggered' set so the git-check fires at most once per absence episode; prune seenBeads for terminal/never-returning beads."
+    },
+    {
+      "file": "internal/watch/ledger.go",
+      "line": 180,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "Watch ledger seen-set grows unbounded for the always-on session",
+      "detail": "scan() inserts every scanned event_id into l.seen (line 180) and MarkSeen adds every live-stream event_id, but nothing ever evicts. The watch tier is an always-on Sonnet session consuming the whole bus; over days the seen map accumulates one entry per event ever observed, a slow but real memory leak. The cursor already advances monotonically, so full-history retention is not actually needed for dedup — only ids at/after the cursor could ever be re-scanned.",
+      "suggested_fix": "Bound the seen set to events at/after the current cursor (drop ids older than cursor on each scan), or use a bounded LRU / ring keyed on recent event_ids."
+    },
+    {
+      "file": "internal/sentinel/governor.go",
+      "line": 517,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "Redundant if/else in the staircase — both branches are identical",
+      "detail": "isLowWindow and its else 'moderate' branch (lines 517-522) both execute exactly `state.ConsecutiveLowWindows++`. With the default config highThreshold==lowThreshold==10 the moderate band is empty, and even when it is non-empty the two branches do the same thing, so the conditional is pure noise that misleads a reader into thinking moderate windows are treated differently.",
+      "suggested_fix": "Collapse to a single `state.ConsecutiveLowWindows++` with a comment that non-high windows (low or moderate) all count toward the sustained gate."
+    },
+    {
+      "file": "internal/sessioncapture/sessioncapture.go",
+      "line": 219,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "OUTPUT persistWriter buffers an unbounded partial line when no newline arrives",
+      "detail": "The OUTPUT direction accumulates bytes into p.tail and only flushes on a newline (line 219-230). A child that emits a very long or newline-free stretch (a stuck stream, a huge single JSON line, or binary noise) makes p.tail grow without bound in memory until a newline or Close. For a long-lived captured agent this is a latent unbounded-buffer hazard on the capture side.",
+      "suggested_fix": "Cap tail length; when it exceeds a sane bound, scrub-and-flush the accumulated bytes (accepting a possible mid-line scrub) rather than buffering indefinitely."
+    },
+    {
+      "file": "internal/usage/usage.go",
+      "line": 776,
+      "severity": "low",
+      "category": "correctness",
+      "title": "dominantKey tie-break is nondeterministic (map iteration order)",
+      "detail": "dominantKey picks the model with the highest turn count via `if c > bestCount` while ranging a map (line 778). On a tie between two models the winner depends on Go's randomized map iteration order, so DominantModel (shown in TopBeads/TopRuns/orch summaries) can differ run-to-run for the same input, making the report non-reproducible.",
+      "suggested_fix": "Break ties deterministically (e.g. prefer the lexicographically smaller/larger key) by iterating a sorted key slice."
+    },
+    {
+      "file": "internal/agentmanifest/brief.go",
+      "line": 74,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "context entries with as:instruction are validated but silently dropped from the boot doc",
+      "detail": "validateManifest allows as ∈ {instruction, skill, doc} (manifest.go:236), but BuildBootDoc's switch only handles 'skill' and 'doc' (brief.go:74-81). An 'instruction' context entry passes validation yet never appears in any rendered section — no error, no output. Either instruction handling was dropped or the enum still advertises a kind the builder cannot surface.",
+      "suggested_fix": "Render instruction entries (inline into the operating section) or remove 'instruction' from allowedAs if it is not a supported presence in the boot document."
+    },
+    {
+      "file": "internal/sentinel/trip_ev043b.go",
+      "line": 446,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "EmitTrip appends to events.jsonl directly, bypassing the eventbus writer",
+      "detail": "appendEventLine opens events.jsonl with O_APPEND|O_WRONLY and writes a full JSON line (line 446-452), independent of the daemon's eventbus JSONLWriter. Go's os.File.Write of a line larger than PIPE_BUF (4096) is not guaranteed to be a single write() syscall, so a concurrent append from the eventbus writer could theoretically interleave and produce a torn JSONL line. The codebase does accept multi-writer append to events.jsonl elsewhere (see replay.go header), so risk is low, but this writer neither fsyncs nor shares any lock with the primary emitter.",
+      "suggested_fix": "Route sentinel event emission through the shared eventbus writer (or a shared append lock) rather than a private O_APPEND path, so ordering/atomicity guarantees are uniform."
+    }
+  ]
+}

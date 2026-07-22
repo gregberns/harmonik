@@ -1,0 +1,96 @@
+{
+  "chunk": "RU-15",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/workflow/dot/parser.go",
+    "internal/workflow/dot/validator.go",
+    "internal/workflow/dot/edges.go",
+    "internal/workflow/dispatcher.go",
+    "internal/workflow/loader.go",
+    "internal/workflow/params.go",
+    "internal/workflow/params_graph.go",
+    "internal/workflow/sub_workflow.go",
+    "internal/workflow/context_updates.go",
+    "internal/workflowvalidator/validator.go",
+    "internal/workflowvalidator/dotparser.go",
+    "internal/goalstate/distill.go",
+    "internal/goalstate/store.go",
+    "internal/goalstate/types.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Read all non-test source in scope plus cross-checked production wiring (grep of importers) to determine which validation/parse stack is live.",
+  "findings": [
+    {
+      "file": "internal/workflowvalidator/validator.go",
+      "line": 1,
+      "severity": "high",
+      "category": "dead-code",
+      "title": "Entire internal/workflowvalidator package is dead: a second, unused DOT parser + validator kept in parallel with internal/workflow/dot",
+      "detail": "internal/workflowvalidator (validator.go 722 lines, dotparser.go 363 lines, plus ~2000 lines of tests) is a complete second implementation of the workflow-graph pipeline: its own DOT parser (rawGraph), its own Tarjan SCC (tarjanSCC/strongConnect), its own BFS reachability (bfsReach), its own cycle-bound and reachability checks (validateReachability/validateCycleBounds), and its own EM-038 rule set. It is NOT used by any production or CLI path. grep for `workflowvalidator.` across all non-test .go files returns zero symbol references; the only surviving mention is a prose comment in internal/workflow/dot/parser.go:12 and cmd/harmonik/graph.go:12. The daemon and the CLI both went through internal/workflow/dot (workloop.go, standardgraph.go, dot_cascade.go, dot_gate.go, sub_workflow_runner.go, loader.go, dispatcher.go, graph.go all import internal/workflow/dot). parser.go's own header (lines 6-14) promised the old parser would be removed by the validator migration bead (hk-0a60l); that migration landed (CLI unified on internal/workflow/dot per hk-kxygy, graph.go:10) but the old package was never deleted. This is the prime over-abstraction/rot finding: two full parsers + two full SCC/BFS/reachability engines maintained in parallel, one entirely dead, still carrying ~2000 lines of tests that give a false impression of coverage.",
+      "suggested_fix": "Delete the internal/workflowvalidator package and its tests; internal/workflow/dot is the sole live implementation. If any EM-038-code semantics there are unique and still desired, port them into internal/workflow/dot/validator.go first."
+    },
+    {
+      "file": "internal/workflowvalidator/validator.go",
+      "line": 268,
+      "severity": "medium",
+      "category": "spec-drift",
+      "title": "The two validators disagree on handler_ref for non-agentic nodes (one requires it, the other forbids it)",
+      "detail": "The live validator internal/workflow/dot/validator.go checkNonAgentic (line 190) treats handler_ref as REQUIRED on non-agentic nodes ('EM-007 amendment'). The dead validator internal/workflowvalidator/validator.go validateNodeAttrs (lines 269-277) computes requiresHandlerRef = (agentic || gate) and then FORBIDS handler_ref on every other type, i.e. a non-agentic node carrying handler_ref is rejected with codeForbiddenHandlerRef, and a non-agentic node WITHOUT handler_ref passes. These are directly contradictory contracts for the same node type. Because workflowvalidator is dead the divergence is currently inert, but it is concrete evidence the two stacks drifted apart on a normative rule, and anyone who resurrects or copies from the old package will enforce the opposite of the daemon. Same class of drift exists for the graph attribute name: dot/parser.go reserves `start_node`/`start_node_id`, while workflowvalidator only reads `start_node_id` (validator.go:173).",
+      "suggested_fix": "When deleting workflowvalidator, record that internal/workflow/dot is canonical for handler-ref-on-non-agentic (required). Do not port the old forbidden-handler_ref rule."
+    },
+    {
+      "file": "internal/workflow/params.go",
+      "line": 56,
+      "severity": "medium",
+      "category": "dead-code",
+      "title": "SubstituteTemplateParams is unused in production; kept alive only by its own unit tests (test-theater)",
+      "detail": "SubstituteTemplateParams (the raw-source, pre-parse token splice) is retained per its header comment (lines 16-18) as 'the lower-level raw-string primitive (exported API + its unit tests)' but MUST NOT be used on any load path. grep confirms zero non-test callers: every reference is a comment or its own tests. The live substitution path is substituteGraphParams in params_graph.go (post-parse, per-attribute). So this exported function is dead product code whose passing unit tests inflate apparent coverage of the params subsystem while exercising a function no runtime path calls. The shared ErrResidualToken type is the only thing in params.go that is actually reused.",
+      "suggested_fix": "Remove SubstituteTemplateParams (and its tests); move ErrResidualToken/templateTokenRe into params_graph.go. If a public raw-string primitive is genuinely wanted as API surface, gate it behind an explicit test-only build or document why it must remain exported."
+    },
+    {
+      "file": "internal/workflow/loader.go",
+      "line": 262,
+      "severity": "medium",
+      "category": "dead-code",
+      "title": "LoadDotWorkflowWithPolicy (CP-057 skills_ref resolution) is never called at runtime — skills resolution is unreachable in the daemon",
+      "detail": "LoadDotWorkflowWithPolicy resolves each node's skills_ref against policy.SkillSets and returns SkillsResolvedPayload entries (CP-057). grep shows the only callers are loader_test.go; no daemon or CLI code invokes it (the daemon uses LoadDotWorkflowWithParams / LoadDotWorkflowFromBytes / LoadDotWorkflow, none of which do skills resolution). So the CP-057 skills_ref semantics are implemented and unit-tested but never exercised in a real run: a workflow that declares skills_ref gets the raw string threaded through (or ignored) but never validated against a policy at dispatch. This is either dead code or a wiring gap where a spec obligation silently does not run in production.",
+      "suggested_fix": "Either wire LoadDotWorkflowWithPolicy into the daemon's DOT load path so skills_ref actually resolves at run time, or delete it and its tests and mark CP-057 skills resolution as not-yet-implemented so the tests stop implying it is live."
+    },
+    {
+      "file": "internal/workflow/dot/parser.go",
+      "line": 1036,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Edge-condition operator split ignores quoted RHS: a '!=' or '==' inside a single-quoted literal mis-parses the clause",
+      "detail": "parseEquality finds the operator with strings.Index(s, \"!=\") / strings.Index(s, \"==\") over the whole clause string, before RHS quoting is considered. For a legal condition like `outcome.preferred_label == 'a!=b'` the scanner finds the `!=` inside the quoted literal first: op becomes '!=' at that index, so lhs = `outcome.preferred_label == 'a` (fails the WG-014 whitelist) and the whole graph is rejected at parse time with a misleading error. Similarly `context.k == 'x==y'` splits on the first `==` inside the quotes. WG-015 explicitly allows single-quoted string RHS literals, so a value containing the operator characters is spec-legal input that the parser cannot express. Narrow (operator chars inside a quoted routing label are uncommon) but it is a real correctness gap in the condition dialect and produces a confusing whitelist error rather than a clear one.",
+      "suggested_fix": "Scan for the operator only outside quoted spans (track single/double-quote state as findQuotedToolCommandToken already does elsewhere), or split on the FIRST top-level operator not enclosed in quotes."
+    },
+    {
+      "file": "internal/workflow/loader.go",
+      "line": 89,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "policy_ref rejection is routed by substring-matching the error text (strings.Contains(err, \"CP-056\"))",
+      "detail": "All three load functions decide whether to return ErrPolicyRefRejected (which wraps ErrDeterministic) versus ErrWorkflowLoad by doing strings.Contains(parseErr.Error(), \"CP-056\"). This is stringly-typed control flow over a formatted message: (1) it silently breaks if the parser's CP-056 message wording ever changes; (2) when a graph has BOTH a policy_ref AND other strict parse errors, the joined ParseErrors string contains \"CP-056\", so the whole failure is classified as a deterministic policy_ref rejection and the other errors' proper class (workflow_load) is masked; (3) any unrelated future error text that happens to contain the literal \"CP-056\" would be misclassified. The parser already has typed ParseError/ParseErrors values, so the classification could be structural.",
+      "suggested_fix": "Give the parser a typed/sentinel signal for the policy_ref case (e.g. a ParseError Code field or a sentinel wrapped error) and route with errors.Is / a code check instead of substring matching the rendered message."
+    },
+    {
+      "file": "internal/workflowvalidator/dotparser.go",
+      "line": 172,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Bare-node statement overwrites a previously-declared node's attributes with an empty map",
+      "detail": "In parseBody the bare-identifier branch does `g.nodes[id] = make(map[string]string)` unconditionally. If a node id was already declared with attributes (e.g. `n [type=agentic ...]`) and later appears as a bare statement (`n;`, legal in DOT), its full attribute map is clobbered to empty, so all downstream type/handler_ref/idempotency checks silently see a bare node and mis-validate. The node-with-attrs branch (line 163) has the same last-writer-wins overwrite. This lives in the dead workflowvalidator package so it is currently inert, but it is a latent correctness bug if that parser is ever revived, and it contrasts with the live internal/workflow/dot parser which preserves declaration order as a list rather than a clobbering map.",
+      "suggested_fix": "N/A if the package is deleted (preferred). Otherwise: only create the empty attr map when the id is not already present, and merge rather than replace on redeclaration."
+    },
+    {
+      "file": "internal/workflow/dispatcher.go",
+      "line": 123,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Condition bridge keys the evaluator lookup by raw condition string rather than by edge identity",
+      "detail": "DecideNextNode builds condByRaw map[string]*dot.Condition keyed on e.ConditionRaw, then core.SelectNextEdge calls back with the raw string to re-find the parsed condition. The header comment argues collisions are benign because equal raw strings parse identically, which is true today. But it is an indirection that exists only because core.Edge.Condition is a PolicyExpression(string) rather than carrying the parsed form; it couples correctness to the assumption that the raw string round-trips uniquely, and it re-does a map lookup per edge per evaluation. Minor, but it is avoidable coupling between the dot layer and the core cascade primitive.",
+      "suggested_fix": "Consider carrying the parsed condition (or an index) through the core.Edge rather than re-resolving via a raw-string map, or leave as-is with the current comment if the core.Edge shape is fixed."
+    }
+  ]
+}

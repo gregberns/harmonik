@@ -1,0 +1,96 @@
+{
+  "chunk": "RU-02",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/daemon/dot_cascade.go",
+    "internal/daemon/reviewloop.go",
+    "internal/daemon/dot_gate.go",
+    "internal/daemon/verdictexecutor_rc025a.go",
+    "internal/daemon/sub_workflow_runner.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Read dot_cascade.go through line ~1693 of 2669 (the full cascade walk loop, no-progress block, terminal/cap handling, and the head of dispatchDotAgenticNode); read reviewloop.go through line ~997 of 2160 (full implementer dispatch + no-commit/churn guards); dot_gate.go, verdictexecutor_rc025a.go, and sub_workflow_runner.go read in full. Findings focus on the state-machine, verdict, and gate logic that was fully covered.",
+  "findings": [
+    {
+      "file": "internal/daemon/verdictexecutor_rc025a.go",
+      "line": 151,
+      "severity": "high",
+      "category": "error-handling",
+      "title": "Staleness re-capture silently swallows a beads-audit fetch error, defeating RC-024",
+      "detail": "In the RC-024 staleness check, `if auditErr != nil || (cfg.BrAdapter == nil || cfg.TargetBeadID == \"\") { currentBeadsAuditID = ve.SnapshotToken.BeadsAuditEntryID }`. When captureBeadsAuditID returns a REAL error (transient br failure, DB lock, timeout), the code forces currentBeadsAuditID to equal the snapshot token — i.e. it asserts the beads dimension is UNCHANGED. That means a genuine beads mutation that occurred since the snapshot is masked whenever the audit-log read happens to fail, so CheckVerdictStaleness can report not-stale and the executor proceeds to mechanically apply (reopen-bead / accept-close) a verdict that was computed against stale state. The 'unavailable adapter' case legitimately wants match-the-snapshot, but a hard fetch error is being conflated with 'no adapter'. Failure scenario: investigator emits accept-close-with-note; between snapshot and execution someone reopens/edits the bead; the audit fetch errors transiently; staleness is suppressed; the bead is closed over a live change.",
+      "suggested_fix": "Separate the two conditions: on auditErr != nil, either return the error (fail-closed, re-dispatch later) or treat the dimension as CHANGED (force stale) rather than matching the snapshot. Only the adapter-nil / bead-empty case should coerce to the snapshot value."
+    },
+    {
+      "file": "internal/daemon/verdictexecutor_rc025a.go",
+      "line": 439,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "resume-here / reset-to-checkpoint verdicts are recorded as executed but do nothing",
+      "detail": "applyVerdictAction handles VerdictActionKindDispatchCurrentNode and VerdictActionKindResetToCheckpoint by returning nil with only a TODO ('not yet wired at MVH'). Control then flows to step 5 (commitVerdictExecuted) and step 6 emits reconciliation_verdict_executed with the plan's ActionSummary. So for these two action kinds the system durably records the verdict as EXECUTED — Harmonik-Verdict-Executed:true commit + event — while performing no re-dispatch and no rollback. An operator or a downstream consumer reading the executed event/commit will believe the run was resumed or rolled back when nothing happened, and the Cat 3b idempotency guard will treat it as complete on restart (it sees the executed marker), so it is never retried. This is a silent no-op on two of the six verdict actions.",
+      "suggested_fix": "Until VerdictNodeDispatcher is wired, treat these action kinds as NOT executable: return a sentinel that suppresses the verdict-executed commit/event (or routes escalate-to-human) so the verdict is not falsely marked executed. Do not stamp Harmonik-Verdict-Executed for an action that performed no work."
+    },
+    {
+      "file": "internal/daemon/dot_cascade.go",
+      "line": 414,
+      "severity": "high",
+      "category": "maintainability",
+      "title": "driveDotWorkflow is a ~1000-line god-function whose no-progress block is a tangle of overlapping merge-decision exemptions",
+      "detail": "The single for-loop in driveDotWorkflow carries ~15 mutually-entangled state variables (iterationCount, priorIterHeadSHA, priorVerdict, priorVerdictFlags, priorVerdictNotes, lastGatePassed, lastGateNotes, reviewerNoVerdictRetries, lastImplementerReviewerHarness, axisReviewerVerdicts, noProgressGuard*, consecutiveNoProgressCount, prevAgenticNodeWasReviewer, prevNodeID). The no-progress block (lines ~499-747) stacks at least five distinct completion/suppression exemptions (hk-8ps7q APPROVE-and-done, hk-w2ow advisory-RC, hk-du455 gate-green-no-verdict, hk-nwgj7 first-reviewer suppression, hk-ycxfa reviewer-retry suppression, plus the hk-nvd3 configurable guard), each of which independently decides whether valid committed work is MERGED or STRANDED. The predicates overlap (all key on committedResult + priorVerdict + lastGatePassed + isReviewer + prevAgenticNodeWasReviewer) and are guarded only by prose comments citing bead IDs. Any future edit to one branch can silently merge un-reviewed work or strand approved work; the correctness of the review gate depends on getting this boolean lattice exactly right in one place with no structural enforcement. This is the single highest maintainability risk in the scope.",
+      "suggested_fix": "Extract the no-progress/completion decision into a pure function that takes an explicit state struct and returns a typed disposition (Complete{reason} / Fail{reason} / Continue), unit-tested exhaustively across the (committedResult × priorVerdict × lastGatePassed × isReviewer × prevWasReviewer) matrix. Keep the loop as effect-only."
+    },
+    {
+      "file": "internal/daemon/dot_cascade.go",
+      "line": 1122,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "Cap-hit salvage and resume-nudge branch on hardcoded node-ID string \"commit_gate\"",
+      "detail": "The F42 auto-salvage only fires when `currentNodeID == \"commit_gate\"` (line 1122), and the implementer-resume gate-fail nudge only fires when `prevNode.ID == \"commit_gate\"` (line 851). The graph is author-defined arbitrary DOT, and the file's own header (lines 40-44) states terminal disposition MUST be resolved by node IDENTITY via the spec surface, not by ad-hoc topology. Hardcoding the literal \"commit_gate\" couples this daemon logic to one specific node name in one specific fixture. A graph that names its build/test gate anything else (e.g. \"ci_gate\", or a per-axis gate) silently loses cap-hit salvage — its committed tip is stranded/reopened instead of merged — and loses the gate-failure feedback delivery, degrading to the generic no-commit nudge. This is invisible until someone authors a graph with a differently-named gate.",
+      "suggested_fix": "Classify gate nodes structurally (e.g. node.HandlerRef == \"shell\" with a tool_command, or a typed gate role) rather than string-matching the ID \"commit_gate\". Thread the actual gate node ID/kind through the loop state instead of a literal."
+    },
+    {
+      "file": "internal/daemon/dot_cascade.go",
+      "line": 1218,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "dispatchDotAgenticNode mixes harness resolution, sandbox engagement, stdout interception, paste-inject and watchdog wiring in one ~450-line function",
+      "detail": "dispatchDotAgenticNode takes 20 parameters and inlines: reviewer review-target write, phase selection, node model/effort/harness override resolution (four-tier), spec build, per-run substrate wiring, SessionIDCaptured branch (sandbox spawn + srt engagement verification + argv-wrap + pi-stdout capture + StdoutWrapper + agent_end teardown), reviewer_launched emission, the dispatchSegment construction with launch/deliver/killReady closures, and post-run verdict read. The 20-arg signature is duplicated verbatim into sub_workflow_runner.go's call site (dispatchSubWorkflowExpandedNode) and dot_gate.go's cognition path partially re-implements the same launch sequence. Adding one cross-cutting concern (e.g. a new harness policy) requires editing three near-identical launch bodies. This is over-large + tightly-coupled and a prime driver of the copy-paste drift seen between reviewloop.go, dot_cascade.go, and dot_gate.go.",
+      "suggested_fix": "Factor the launch/ready/deliver/wait sequence into a shared 'runAgenticSegment(spec, deliverHooks)' helper consumed by single-mode, review-loop, DOT agentic, and cognition-gate paths; collapse the 20 positional args into a context struct."
+    },
+    {
+      "file": "internal/daemon/reviewloop.go",
+      "line": 237,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "review-loop and DOT drivers duplicate the entire no-progress / HEAD-advancement / feedback-write machinery",
+      "detail": "runReviewLoop (reviewloop.go) and driveDotWorkflow (dot_cascade.go) independently re-implement: the HEAD-advancement no-progress signal (lastIterHeadSHA vs priorIterHeadSHA, both citing hk-togxq), the diff-hash observability payload, the CHB-023 session-id persist/interceptor, the no-commit guard, the reviewer-feedback file write (WriteReviewerFeedback), and the priorVerdict/flags/notes threading. The DOT driver's header even describes itself as 'a GENERALIZATION of the hardcoded review-loop driver.' Because they are two separate ~2000-line copies, every fix lands twice (the bead-ID comments show hk-togxq, hk-m1wqp, hk-wixms, hk-fxy9 all applied in both) and the two can drift — e.g. review-loop uses ReviewLoopCompletionReason enums while DOT uses free-form summary strings, and the REMOTE feedback-routing limitation is handled differently in each. This is systemic over-duplication rather than one bug.",
+      "suggested_fix": "Once the agentic-segment helper (see other finding) exists, hoist the progress/verdict/feedback state machine into a shared component that the review-loop is a fixed two-node instance of, so the DOT driver and review-loop share one implementation."
+    },
+    {
+      "file": "internal/daemon/dot_gate.go",
+      "line": 402,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "Cognition-gate ready-wait uses == on the timeout sentinel; a wrapped/ctx-cancel return falls through to paste-inject on a dead session",
+      "detail": "executeCognitionGate does `if readyErr == ErrAgentReadyTimeout`. waitAgentReady currently returns the bare sentinel on timeout (so == works today) but returns ctx.Err() on cancellation. On ctx-cancel during ready-wait, readyErr != ErrAgentReadyTimeout, so the timeout branch is skipped and execution proceeds to pasteInjectCognitionGate + waitWithSocketGrace against a session that never became ready; the run then relies on the downstream ctx.Err() check to bail. More importantly the == idiom is brittle: if waitAgentReady is ever changed to wrap the sentinel (fmt.Errorf(\"...: %w\", ErrAgentReadyTimeout)), the gate timeout handling silently breaks. Elsewhere the codebase already prefers errors.Is (agentready tests, ErrPostAgentReadyHang). workloop.go:4832 shares the same == idiom.",
+      "suggested_fix": "Use errors.Is(readyErr, ErrAgentReadyTimeout) at dot_gate.go:402 (and workloop.go:4832) for robustness against error wrapping."
+    },
+    {
+      "file": "internal/daemon/dot_gate.go",
+      "line": 473,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "Run-context JSON marshal error ignored when building the gate-task brief",
+      "detail": "writeCognitionGateTask does `ctxJSON, _ := json.MarshalIndent(run.Context, ...)`. run.Context is map[string]any that may hold values placed by policy/EM-041a context updates. If a non-marshalable value ever lands there, ctxJSON is nil and the '## Run Context' section of the gate-evaluator brief is emitted as an empty code block with no error surfaced, so the cognition gate evaluates with missing context and no operator signal. Low likelihood today (context is JSON-origin) but the swallowed error means a future context-value regression degrades silently.",
+      "suggested_fix": "Check the marshal error and either fail the gate dispatch or emit a visible '<context unavailable: err>' marker in the brief."
+    },
+    {
+      "file": "internal/daemon/dot_cascade.go",
+      "line": 916,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Stale absolute line-number cross-references in comments",
+      "detail": "Several comments cite specific line numbers that no longer match: line 916 says priorIterHeadSHA 'was already set to currentHead ... at line 381 above' (the set is actually ~line 764), line 891 references 'line 883' for the consolidate post-dispatch use, and the header block references drift. Absolute line references rot on every edit and mislead the next reader trying to follow the invariant across the 2600-line file.",
+      "suggested_fix": "Replace 'at line NNN' with a symbolic reference (the variable name / the guarded block's purpose) so the note survives edits."
+    }
+  ]
+}

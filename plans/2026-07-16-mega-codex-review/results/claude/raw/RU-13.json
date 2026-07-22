@@ -1,0 +1,97 @@
+{
+  "chunk": "RU-13",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/keeper/watcher.go",
+    "internal/keeper/step.go",
+    "internal/keeper/cycle.go",
+    "internal/keepertwin/synthesizer.go",
+    "internal/keepertwin/codec.go",
+    "internal/keepertwin/doc.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Full read of all three keeper/ scope files plus all of keepertwin/. Cross-checked WarnOnly wiring in cmd/harmonik/keeper_cmd.go to qualify the WarnOnly finding. shell.go (referenced heavily by step/cycle) is out of RU-13 scope and only inspected via its callers.",
+  "findings": [
+    {
+      "file": "internal/keeper/step.go",
+      "line": 447,
+      "severity": "medium",
+      "category": "nil-deref",
+      "title": "stepIdleGaugeTick dereferences ev.CF with no nil guard, unlike the precompact entry",
+      "detail": "stepCycle claims to be a TOTAL, pure transition (step.go:16-22, 278-280) that tolerates any event. But stepIdleGaugeTick does `cf := ev.CF` (438) then `cf.SessionID` (447) with no nil check. stepIdlePrecompact (625-630) and stepIdleRestartTick (694) BOTH explicitly guard cf==nil, showing the author knows CF can be absent. A GaugeTick event whose CF is nil (any future shell path, a replay/twin stimulus line that omits `cf`, or a hand-built event) panics the reactor goroutine — which in production is the watcher/shell goroutine — taking down the keeper. The totality claim is thus false for the most common event kind.",
+      "suggested_fix": "Guard cf==nil at the top of stepIdleGaugeTick (return s,nil), mirroring stepIdlePrecompact; or make the guard uniform across all Idle entries."
+    },
+    {
+      "file": "internal/keeper/watcher.go",
+      "line": 1279,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "WarnOnly gates RunForIdle but NOT MaybeRun / RunForPrecompact",
+      "detail": "WatcherConfig.WarnOnly is documented (607-614) as 'NEVER triggers a restart cycle, respawn, or live-pane recovery.' RunForIdle correctly carries `&& !w.cfg.WarnOnly` (1301); maybeRespawn (1576) and maybeLivePaneRecover (1666) also guard it. But the primary cycle dispatch `Cycler.MaybeRun` (1279-1283) and `RunForPrecompact` (1291-1295) have NO WarnOnly guard — they rely solely on Cycler being nil. Today keeper_cmd.go:478-489 leaves Cycler nil in warn-only mode so it is not live-triggerable, but the asymmetry is a latent contract violation: any caller that sets both WarnOnly=true and a non-nil Cycler + TmuxTarget (nothing structural forbids it, and the field doc implies WarnOnly alone suffices) will fire the destructive /session-handoff+/clear cycle in 'warn-only' mode. The redundant guard on RunForIdle proves the intent; the two omissions are the bug.",
+      "suggested_fix": "Add `&& !w.cfg.WarnOnly` to the MaybeRun and RunForPrecompact dispatch conditions so WarnOnly is enforced at the watcher regardless of Cycler wiring."
+    },
+    {
+      "file": "internal/keeper/watcher.go",
+      "line": 965,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "Watcher.Run is a ~450-line god-function; WatcherConfig/CyclerConfig are ~60-field god-structs",
+      "detail": "Watcher.Run (965-1416) is a single ~450-line loop body carrying ~17 loop-local mutable state vars (warnArmed, warnFired, pendingInject, lastModTime, gaugeStaleSince, lastRespawnAt, lastLiveRecoverAt, lastWarnFiredAt, hintSentThisSession, hardCeilingLastAt, lastReapAt, ...) interleaved with deeply nested branch logic (the foreign-session block alone, 1136-1242, is ~100 lines with 4 nesting levels of hard-ceiling mode gating). WatcherConfig (200-640) has ~60 fields and CyclerConfig (37-285) has ~55; both mix policy scalars, injectable fn seams, and named ports. This is very hard to unit-test in isolation (state is closure-local, not on a struct) and hard to reason about ordering invariants (e.g. the load-bearing 'MaybeRun before RunForPrecompact' ordering is a prose comment, not enforced). The pure reactor split (step.go) is clean; the shell/watcher side did not get the same treatment.",
+      "suggested_fix": "Lift the loop-local warn/respawn/ceiling state onto a small struct with named step methods (advanceWarn, handleForeign, handleStale), so each branch is independently testable; consider grouping the config fn-seams behind the already-existing ports."
+    },
+    {
+      "file": "internal/keeper/watcher.go",
+      "line": 1173,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Blind-keeper episode clock (blindSince) is not reset on absent/stale gaps",
+      "detail": "The blind alarm is documented as firing after BlindKeeperThreshold of *continuous* foreign_session (927-937, 1167-1183). blindSince is armed on the first foreign tick and reset only on a fresh SID-matched tick (1253-1254). But the absent branch (1070-1080) and the stale branch (1107-1118) both `continue` without touching w.blindSince/w.blindAlarmFired. So a foreign→absent→foreign sequence keeps the original blindSince running across a non-foreign gap: on the resumed foreign tick, Clock.Since(blindSince) can already exceed the threshold and fire session_keeper_blind even though the foreign episode was not continuous. Conversely blindAlarmFired stays latched across the gap so a genuinely new episode after a good tick is fine — the defect is specifically the absent/stale interruption not breaking continuity.",
+      "suggested_fix": "Reset w.blindSince / w.blindAlarmFired in the absent and stale branches too (or only treat an episode as continuous across strictly-consecutive foreign ticks)."
+    },
+    {
+      "file": "internal/keeper/watcher.go",
+      "line": 1082,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Gauge parse-error branch omits the warnArmed/warnFired reset that ErrNotExist and stale branches perform",
+      "detail": "The os.ErrNotExist branch (1070-1080) and the stale branch (1107-1118) both reset warnArmed=true, warnFired=false, pendingInject=false. The generic parse/stat-error branch (1082-1093) resets only pendingInject=false and leaves warnArmed/warnFired untouched. Consequence: if a gauge becomes transiently unparseable while warnFired=true, then recovers fresh still above the warn band, warnArmed stays false and warnFired stays true, so no re-warn/re-inject fires for the recovered session even though the other two absence paths would have re-armed it. Inconsistent handling of the three 'gauge unavailable' cases.",
+      "suggested_fix": "Mirror the ErrNotExist branch: set warnArmed=true, warnFired=false in the parse-error branch (or factor all three unavailability branches through one helper)."
+    },
+    {
+      "file": "internal/keeper/step.go",
+      "line": 356,
+      "severity": "low",
+      "category": "correctness",
+      "title": "AwaitModelDone ignores EvSessionChanged — a mid-wait session flip clears into the wrong (new) session",
+      "detail": "stepAwaitModelDone (356-374) handles only EvModelDone and EvTimerFired(model_done_timeout); any EvSessionChanged is dropped via the default (373). If the monitored session dies and a new one comes up while the reactor is waiting for model-done (e.g. agent crash+auto-restart during the handoff→model-done window), the reactor keeps waiting on the dead session until the 60s model_done_timeout fires, then enters Clearing with PrevSID=old and injects /clear into TmuxTarget — which is now hosting the FRESH session — clobbering a just-started turn. SessionChanged is meaningful (and acted on) in Clearing but silently ignored here.",
+      "suggested_fix": "Decide the intended semantics: either abort the cycle on an unexpected SessionChanged during AwaitModelDone, or document why swallowing it (and clearing the successor session) is acceptable."
+    },
+    {
+      "file": "internal/keeper/cycle.go",
+      "line": 491,
+      "severity": "low",
+      "category": "correctness",
+      "title": "newCycleIDGen sequence is per-generator; two Cyclers in the same process/second mint colliding cycle IDs",
+      "detail": "newCycleIDGen (491-498) builds the prefix from clock.Now() at construction (second granularity) and an atomic seq that starts at 0 for EACH generator. Two Cyclers constructed within the same wall-clock second (e.g. multiple keeper agents in one process, or test harnesses) both produce cyc-<sameprefix>-000001, cyc-...-000002, .... The comment claims the prefix makes IDs 'never collide' across process instances, but it does not disambiguate multiple generators within one instance. Correctness is currently saved only by the D7 composite (agent_name, cycle_id) join key everywhere the id is consumed; the id alone is not unique as the doc asserts.",
+      "suggested_fix": "Fold a per-generator random/instance nonce into the prefix, or scope the seq counter across generators, so the cycle_id is unique on its own rather than relying on the agent_name composite."
+    },
+    {
+      "file": "internal/keeper/watcher.go",
+      "line": 1104,
+      "severity": "nit",
+      "category": "correctness",
+      "title": "Staleness check uses the pre-heartbeat modTime, so a just-refreshed gauge still takes the stale branch for one tick",
+      "detail": "maybeHeartbeat (1104) may re-write .ctx with a fresh mtime when the gauge has aged past HeartbeatThreshold on a live pane, but the very next check (1107) evaluates Clock.Since(modTime) against the modTime captured at the 1067 read — before the heartbeat write. So on the tick where the heartbeat rescues the gauge past Staleness, the watcher still emits no_gauge:stale and runs respawn/live-recover gates using the stale reading, correcting only on the following tick. In normal operation HeartbeatThreshold (Staleness/2) fires well before Staleness so this is rarely hit, but it is a latent one-tick inconsistency and makes the heartbeat's stated 'gauge NEVER goes stale' guarantee off-by-one.",
+      "suggested_fix": "Have maybeHeartbeat return the refreshed mtime (or a 'refreshed' bool) and use it for the staleness comparison on the same tick."
+    },
+    {
+      "file": "internal/keeper/watcher.go",
+      "line": 1560,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Direct fmt.Printf to stdout from a long-lived daemon/library path",
+      "detail": "emitWarn (1560), maybeRespawn (1615), and maybeLivePaneRecover (1722) write human text straight to os.Stdout via fmt.Printf alongside the structured slog calls. In the in-daemon keeper path this pollutes stdout uncontrollably and cannot be routed/leveled/silenced like the slog output. It is duplicative of the adjacent slog.WarnContext lines.",
+      "suggested_fix": "Drop the fmt.Printf lines (the slog calls already carry the same information) or route them through a configured writer."
+    }
+  ]
+}

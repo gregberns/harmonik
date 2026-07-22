@@ -1,0 +1,50 @@
+{
+  "pass_id": "baseline-6ec71a55",
+  "pass_kind": "baseline-authoritative",
+  "pin_sha": "6ec71a552c65964773d9f0f4f96eb8cc81d65dbe",
+  "pin_branch": "phase1-session-restart-substrate",
+  "scratch": "/private/tmp/h-assessor/scratch-baseline-d8288a64",
+  "supersedes": "baseline-35e4b3b9 (BLOCK-at-pin, all findings remediated; ASSESSMENT checkpointed)",
+  "authoritative": "YES \u2014 admiral 2026-07-18T22:32Z: this pass's PASS/BLOCK + ASSESSMENT.md is the release call",
+  "session": "session 5 (keeper-restart)",
+  "legs": {
+    "preflight_4A": "PASS",
+    "green_tree": "RUNNING (subagent ae1feb4a \u2014 build/vet/test-race per-pkg, dedicated GOCACHE)",
+    "LT": "RUNNING (subagent ab5c35a1 \u2014 make core-loop-lt at new pin)",
+    "XT": "CLOSED \u2014 restart-substrate angles CLEAN (pin-invariant, session-4 XT completed post-restart): event_id HWM cross-restart monotonic + graceful degrade on corrupt HWM; socket-bind-before-backoff; drain integrity; NO lost-wakeup; NO double-run on SIGKILL+auto-revive. Both P1 wedges (l5saf/3hozm) proven REMOTE-WORKER-GATED = structurally INERT local-only; FIXED at this pin (3a391dc9) \u2014 covered by CR + closed discriminating tests. Remote-worker live XT SKIPPED-with-reason (heavy SSH substrate; fixes landed+regression-tested+closed; marginal value).",
+    "CR": "DONE \u2014 gate NOT blocked by delta; all 22 code commits FIX-CORRECT (hk-s2eac FIX-WEAK by-design). 3 new non-blocking findings: hk-a5f1k P2 auth-scrub-leak(non-gating, admiral-adjudicate), hk-elo60 P2 prune-defer-untested, hk-do173 P3 reaper-disable-test-free."
+  },
+  "dedup_note": "many of the 14 baseline-35e4b3b9 findings already CLOSED on this pin (3a391dc9 P1s + P2/P3 sweep) \u2014 dedup CR/XT findings against closed beads; only file NEW regressions or newly-surfaced defects",
+  "still_open_prior_findings": [
+    "hk-uhxwd P3 corpus-lint",
+    "hk-es4f7 P2 LT-overlay",
+    "hk-xy9ym P2 core-loop-lt-provisioning",
+    "hk-oga33 P2 claude-launch"
+  ],
+  "created": "session5 keeper-restart resume",
+  "scratch_path_note": "on-disk scratch dir retains d8288a64 label (daemon handles keyed to path); binary+code == pin 6ec71a55",
+  "preflight_4A": "PASS (13 pass, 0 fail; 1 cosmetic warn=script br-count multiline bug, scratch br list empty). TMPDIR=/var/folders (real per-user) so prior srt/socket TMPDIR confounds do NOT recur.",
+  "daemon_up": true,
+  "daemon_pid": 38591,
+  "daemon_session": "harmonik-ccabb46b419f-default",
+  "xt_pin_invariance_note": "phase1 session-restart code is unchanged between 35e4b3b9 and 6ec71a55 (the 22-commit delta is fixes ON TOP, not to the restart substrate) \u2014 so the restart-angle XT PASS carries to the new pin.",
+  "hk_oga33_claude_cell": {
+    "status": "DROPPED by admiral (hk-g4flm): claude agent_ready timeout resolved as HOST SATURATION, not a hook-relay wiring bug. Do NOT run the dedicated diagnostic \u2014 no wiring bead.",
+    "task": "admiral-routed (from captain): does claude:local emit agent_ready live or hit 150s timeout? Capture SessionStart + hook-relay stderr; disambiguate wiring-bug vs live-env.",
+    "pin_nuance": "fixture fix 06e4af11 (seed-only: workflow:single+opus labels) landed AFTER pin 6ec71a55 (now HEAD); seed change does NOT affect daemon/hook-relay, so agent_ready-wiring answer is pin-independent \u2014 apply corrected seed manually to the live 6ec71a55 scratch daemon, no re-pin.",
+    "claude_agent_ready": "HOOK-SOURCED ONLY (Claude SessionStart -> harmonik hook-relay -> daemon socket; no daemon-synth fallback like pi/codex)",
+    "gates": "the claude cell of core-loop-lt; real wiring bug -> file found-by:assessor",
+    "saturation_impact": "LEADING explanation for any claude:local agent_ready timeout is now LIVE-ENV saturation (foxtrot root-cause), NOT a hook-relay wiring bug. HOLD dedicated capture until load clears for a clean signal; do NOT file a wiring bug on a saturated box."
+  },
+  "head_drift_note": "HEAD advanced to 06e4af11 during this pass (+f6d554e1 test-only, +06e4af11 seed-fix). NOT hot-swapping mid-pass per admiral; pin stays 6ec71a55. Next cycle re-pins to then-current HEAD.",
+  "new_findings_6ec71a55": [
+    "hk-a5f1k P2 auth-family-scrub-leak (non-gating)",
+    "hk-elo60 P2 br-history-prune-defer-untested",
+    "hk-do173 P3 crewidlereap-disable-test-free"
+  ],
+  "verdict_trend": "PASS (CR clean, XT clean, green-tree+LT pending)",
+  "fleet_saturation_advisory": "captain 2026-07-18: load 25/10cores, swapping, ~40 opus agents. foxtrot root-caused agent_ready timeouts to SATURATION. Directive: 1 subagent at a time, spawn nothing extra.",
+  "load_discipline": "spawn nothing new until captain lifts advisory; let green-tree+LT finish, then serialize any remaining work.",
+  "saturation_verdict_rule": "admiral hk-g4flm: verdict rests ONLY on cells that ran UN-SATURATED. Any agent_ready timeout under load = env-confounded (annotate, NOT a BLOCK) and MUST be re-run on a clean box before the verdict depends on it. A saturation false-BLOCK would wrongly gate release.",
+  "keeper_restart": "handoff written to /Users/gb/github/harmonik/HANDOFF-assessor.md at cyc-20260718T194132-000003; resuming session continues this pass."
+}

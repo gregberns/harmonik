@@ -1,0 +1,72 @@
+{
+  "chunk": "RU-05a",
+  "reviewer": "claude",
+  "scope_reviewed": ["internal/daemon/tmuxsubstrate.go", "internal/daemon/pasteinject.go"],
+  "status": "reviewed",
+  "status_note": "",
+  "findings": [
+    {
+      "file": "internal/daemon/tmuxsubstrate.go",
+      "line": 2492,
+      "severity": "high",
+      "category": "correctness",
+      "title": "tmuxSubstrateSession.Kill sends SIGTERM/SIGKILL to a local PID even for remote sessions, risking killing an unrelated local process",
+      "detail": "Kill() calls killProcessWithGrace(s.pid, ...) unconditionally, and killProcessWithGrace uses local syscall.Kill(pid, SIGTERM) then syscall.Kill(pid, SIGKILL). For a REMOTE session (spawnWindowRemote → remote=true), s.pid is the WORKER's pane PID, resolved via the SSH-backed adapter's WindowPanePID (tmuxsubstrate.go:1037 with the remote adapter). That PID number is meaningless on box A. runWait correctly guards every liveness check on !s.remote (lines 2617, 2626), but Kill has NO such guard. Failure scenario: a remote run finishes; workloop calls sess.Kill; killProcessWithGrace fires SIGTERM/SIGKILL at whatever local box-A process happens to occupy that numeric PID (the worker PID space and box-A PID space are independent, collisions are common for low/mid PIDs). This can terminate an arbitrary unrelated daemon-host process. The worker-side claude is meanwhile only reaped by the KillWindow step (which does route to the worker via s.adapter).",
+      "suggested_fix": "Guard the process-signal step on !s.remote (mirror runWait): for remote sessions skip killProcessWithGrace entirely and rely on s.adapter.KillWindow (which targets the worker's tmux) to tear down the worker pane/process."
+    },
+    {
+      "file": "internal/daemon/tmuxsubstrate.go",
+      "line": 1680,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "SpawnCrewSession / SpawnRunSession join argv WITHOUT shell-quoting, reintroducing the hk-rpr6 argv-shattering bug",
+      "detail": "spawnWindowVia carefully shell-quotes every argv element via shellQuoteArg (line 914) precisely because tmux new-window passes the joined command to `sh -c`, which re-word-splits on whitespace (hk-rpr6: unquoted args caused codex ARGC shattering → immediate exit-2). But SpawnCrewSession (line 1680) and SpawnRunSession (line 1772) build the command with a bare strings.Join(spawn.Argv, \" \") — no quoting. Failure scenario: any crew/run argv element containing a space (a multi-word --system-prompt/seed, a path with spaces, a flag value with spaces) is split by sh -c into multiple tokens, so the launched claude/crew process receives a mangled argv and mis-parses or exits. The two paths that DO quote and the two that DON'T are inconsistent for identical downstream `sh -c` semantics.",
+      "suggested_fix": "Route crew/run command construction through the same shellJoinArgv/shellQuoteArg helper the main SpawnWindow path uses, so all three sh -c launch paths quote identically."
+    },
+    {
+      "file": "internal/daemon/tmuxsubstrate.go",
+      "line": 991,
+      "severity": "medium",
+      "category": "resource-leak",
+      "title": "KillAllWindows kills remote-worker windows through the LOCAL adapter, so remote windows leak on daemon exit",
+      "detail": "spawnWindowVia appends outcome.Handle to s.spawnedHandles for BOTH local and remote spawns (line 991 runs on the shared path used by the remote adapter too). KillAllWindows (line 1483-1487) iterates spawnedHandles and calls s.adapter.KillWindow — but s.adapter is box A's LOCAL adapter, not the per-run SSH-backed remoteAdapter. A remote run's window lives on the WORKER's tmux server. Failure scenario: on wave completion / daemon exit, KillAllWindows issues `tmux kill-window <worker-handle>` against box A's local tmux, which either errors (silently swallowed) or, worse, matches a same-named local window; the actual worker window is never cleaned up and accumulates across daemon lifetimes on the worker.",
+      "suggested_fix": "Track the spawning adapter (or remote/worker session) alongside each handle, and in KillAllWindows kill each handle through the adapter that created it; or exclude remote handles here and clean them via the per-run teardown that owns the SSH adapter."
+    },
+    {
+      "file": "internal/daemon/tmuxsubstrate.go",
+      "line": 1143,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "callNewWindowBounded orphans a tmux window that new-window creates just past the timeout",
+      "detail": "On the newWindowTimeout path, callNewWindowBounded returns (zero, err) and releaseSlotFn is called, but the in-flight goroutine's result (line 1144) — including any outcome.Handle for a window that tmux actually created server-side moments after the client ctx was cancelled — is discarded into the buffered resCh and never inspected. exec.CommandContext SIGKILLs the tmux client, but tmux frequently completes window creation server-side before the client is reaped, leaving a window that was never appended to spawnedHandles and is never killed. Failure scenario: a momentarily-slow tmux server (the exact condition that trips the 60s bound) creates the window, the daemon treats the launch as failed and moves on, and the orphan window lingers until an external sweep.",
+      "suggested_fix": "On the timeout branch, drain resCh (bounded) in a small follow-up goroutine and, if outcome.Handle is non-empty and outcome.Err==nil, issue a best-effort KillWindow for it."
+    },
+    {
+      "file": "internal/daemon/pasteinject.go",
+      "line": 353,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "hasChildProcess / hasAnyDirectChild / commandMatchesLiveAgent are production-dead, reachable only from tests (test-theater)",
+      "detail": "hasChildProcess (353) is called by no production code — its only callers are export_test.go:2409 and the hkfbydv/hktgqy5 tests. hasAnyDirectChild (371) and commandMatchesLiveAgent (389) are in turn called only by hasChildProcess. The live production liveness path (perRunSubstrate.PaneHasActiveProcess, tmuxsubstrate.go:2329) uses probeLivenessOrSSHFail → the *OrSSHFail / *Via variants, never these three. The tests exercising hasChildProcess therefore assert behavior no production caller depends on. This is stale code carried only by its tests, and the two near-identical copies (bare vs *Via) invite drift.",
+      "suggested_fix": "Delete hasChildProcess, hasAnyDirectChild, and the non-Via commandMatchesLiveAgent (plus their tests), or re-point production at them if the bare-local variant is actually intended for a code path; keep a single source of truth for the pgrep/ps probe."
+    },
+    {
+      "file": "internal/daemon/tmuxsubstrate.go",
+      "line": 2190,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "perRunSubstrate.remoteAdapter is written/read without the synchronization used for cachedPaneTarget",
+      "detail": "spawnWindowRemote assigns p.remoteAdapter = remoteAdapter (line 2190) with no lock, while pasteAdapter() (2198) reads p.remoteAdapter from the paste-inject/liveness goroutines. cachedPaneTarget in the same struct is deliberately mutex-guarded (paneTargetMu) for exactly this cross-goroutine handoff, but remoteAdapter is not. In the current flow SpawnWindow returns (establishing happens-before) before pasteInjectOnLaunch/QuitOnCommit goroutines start, so it is safe today — but the asymmetry is fragile: any future path that reads pasteAdapter() concurrently with a remote spawn (or a retry that re-assigns remoteAdapter) is an unsynchronized data race the race detector will flag.",
+      "suggested_fix": "Guard remoteAdapter with paneTargetMu (or a dedicated mutex) on both write and read, matching cachedPaneTarget, so the remote handoff is uniformly synchronized."
+    },
+    {
+      "file": "internal/daemon/tmuxsubstrate.go",
+      "line": 2026,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Production constructor newPerRunSubstrate calls a test-only seam (notifySubstrateRunner) on every construction",
+      "detail": "notifySubstrateRunner(runner) fires unconditionally in the production constructor purely to let a test observe the runner arg. It is documented as a no-op in prod, but embedding a test-observation hook in the hot construction path (called per bead run) is a code smell — it couples production wiring to a regression-test seam and would silently do work if the hook var were ever set outside tests.",
+      "suggested_fix": "Move the regression assertion into the test by having the test wrap/inspect the constructor's inputs, or gate the hook behind a build tag, rather than an always-present package-var callback in prod code."
+    }
+  ]
+}

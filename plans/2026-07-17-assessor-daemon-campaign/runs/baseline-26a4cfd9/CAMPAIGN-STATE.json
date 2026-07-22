@@ -1,0 +1,30 @@
+{
+  "pass_id": "baseline-26a4cfd9",
+  "pin_sha": "26a4cfd9ffc48e71ed37e57f01bca1fcf3d67231",
+  "pin_branch": "origin/main",
+  "scratch": "/tmp/h-assessor/scratch-hset2-26a4cfd9",
+  "binary_sha_verified": true,
+  "hset_cells": {
+    "H2": "PASS",
+    "H4": "INCONCLUSIVE",
+    "H5": "INCONCLUSIVE",
+    "H6": "PASS",
+    "H7": "PASS",
+    "H8": "INCONCLUSIVE"
+  },
+  "hset_verdict": "PASS (3 local green, 2 remote substrate-constrained/non-gating; no regressions, no beads)",
+  "fd_baseline": 12,
+  "thread_baseline": 14,
+  "teardown_clean": true,
+  "fleet_untouched": "a3dc45482890 12 sessions intact",
+  "last_checkpoint": "teardown-complete",
+  "note": "Leg reported per-cell in its final message; it advanced this checkpoint only to s6-armed, then the assessor folded final cell states here. Per-cell evidence in RUN-LOG H-set blocks.",
+  "daemon_pid_current": 59791,
+  "s6_watcher_pid": null,
+  "fd_teardown": 13,
+  "thread_teardown": 15,
+  "leaked_worktrees_pruned": 2,
+  "live_fleet_untouched": true,
+  "daemon_survived_all_faults": true,
+  "beads_filed": []
+}

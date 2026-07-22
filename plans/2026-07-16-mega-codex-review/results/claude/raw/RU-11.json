@@ -1,0 +1,81 @@
+{
+  "chunk": "RU-11",
+  "reviewer": "claude",
+  "scope_reviewed": ["internal/eventbus/busimpl.go", "internal/eventbus/jsonlwriter.go"],
+  "status": "reviewed",
+  "status_note": "",
+  "findings": [
+    {
+      "file": "internal/eventbus/busimpl.go",
+      "line": 505,
+      "severity": "high",
+      "category": "concurrency",
+      "title": "Global wg.Add(1) in Emit can race Drain's wg.Wait() -> fatal WaitGroup misuse",
+      "detail": "Every Emit/EmitWithRunID/EmitAgentMessage/EmitAgentPresence/EmitTyped calls b.wg.Add(1) (lines 505, 626, 727, 821, 923) before launching an async/observer goroutine. Drain (line 1504) spawns a goroutine that calls b.wg.Wait(). The code goes to great lengths to prevent exactly this hazard for the PER-RUN WaitGroup (runSealed / addRunDrainer under runDrainersMu, see lines 111-117, 1439-1452, 1466-1478) because 'Add called concurrently with Wait' when the counter is at zero is a fatal, whole-process abort. But the GLOBAL b.wg has no equivalent seal. If Drain runs (counter momentarily 0 because prior async work finished) while a concurrent Emit does wg.Add(1), Go aborts the process with 'fatal error: sync: WaitGroup misuse: Add called concurrently with Wait'. Any shutdown path that calls Drain while producers are still emitting is exposed. The per-run fix proves the authors know this pattern is unsafe; the global path is unprotected.",
+      "suggested_fix": "Apply the same seal discipline to the global path: gate Emit's wg.Add behind a 'draining/sealed' flag taken under a mutex that Drain sets before Wait, or restructure so producers are guaranteed quiescent before Drain (documented barrier + assertion). At minimum document that Emit and Drain must never be concurrent and enforce it."
+    },
+    {
+      "file": "internal/eventbus/busimpl.go",
+      "line": 412,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "Five near-identical emit pipelines (redact -> marshal -> append -> fan-out) copy-pasted",
+      "detail": "Emit (412), EmitWithRunID (540), EmitAgentMessage (661), EmitAgentPresence (751), EmitTyped (858) each re-implement the same 6-step pipeline: json.Unmarshal payload -> RedactionMiddleware -> Marshal -> idGen.Next -> LookupTypeSchemaVersion -> build core.Event -> Marshal envelope -> jsonlWriter.Append -> maybeUpdateHWM -> snapshot subs under mu -> switch over ConsumerClass with an identical async goroutine (wg.Add/defer Done/recover->observer_panic/handler->consumer_error). The fan-out switch alone is duplicated five times verbatim. Any change to the redaction pipeline, envelope stamping, dead-letter semantics, or async dispatch must be edited in five places and it is easy to miss one (e.g. EmitWithRunID is the only one that also tracks runWG; a future edit could silently diverge). This is architecture rot in the single most load-bearing file of the bus.",
+      "suggested_fix": "Extract a private emitCore(ctx, evt, needsSync, runWG *sync.WaitGroup) that does append+HWM+fan-out, and a buildEnvelope helper for the redact/marshal/stamp steps. The five public methods become thin wrappers that differ only in run_id stamping, forced-fsync, and return value."
+    },
+    {
+      "file": "internal/eventbus/busimpl.go",
+      "line": 1504,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "Drain/DrainRun leak the waiter goroutine when ctx is cancelled",
+      "detail": "Drain (1504) and DrainRun (1466) both spawn `go func(){ wg.Wait(); close(done) }()` and then select on done vs ctx.Done(). If ctx is cancelled first, the method returns but the spawned goroutine stays blocked on wg.Wait() until every in-flight consumer eventually finishes. If a consumer hangs forever (the exact scenario a caller uses ctx-timeout to escape), the waiter goroutine and its closure leak for the process lifetime. Repeated Drain-with-timeout calls accumulate leaked goroutines.",
+      "suggested_fix": "Acceptable for a one-shot shutdown, but for DrainRun (called per-run, potentially many times) consider documenting the leak or using a wg-with-context wrapper. At minimum note that a hung consumer leaks the waiter."
+    },
+    {
+      "file": "internal/eventbus/jsonlwriter.go",
+      "line": 383,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "Filter logs a spurious error for a missing JSONL file; inconsistent with ScanAfter/replay",
+      "detail": "Filter's open-error path (383-386) does `log.Printf(...open...)` for ANY open error including os.IsNotExist, then returns. ScanAfter (315-319) and replayAndDetectTrunc (1392-1396 in busimpl.go) deliberately suppress IsNotExist (treat missing file as empty log, no log noise) because a fresh daemon has no JSONL yet. Filter will emit a spurious 'open ...: no such file' warning on a fresh project dir every time it is called, and unlike the others it cannot distinguish 'no events for this run' from 'file absent'. Inconsistent durability-read contract across three readers of the same file.",
+      "suggested_fix": "Mirror ScanAfter: `if !os.IsNotExist(err) { log.Printf(...) }; return` so a missing file is a silent empty result."
+    },
+    {
+      "file": "internal/eventbus/busimpl.go",
+      "line": 1220,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "Seal sets sealed=true but nothing blocks a concurrent Emit during startup replay",
+      "detail": "Seal (1220) sets b.sealed=true, snapshots subs, releases the lock, then runs synchronous startup replay outside the lock (1247-1259). The doc claims 'live-stream delivery (the first Emit after Seal) never races with replay events.' But Emit does not check b.sealed, so this invariant relies entirely on the caller not calling Emit until Seal returns. If any producer emits concurrently with Seal's replay, a consumer can receive a live event interleaved with (or before) its replay backlog, violating the ordered-replay-then-live contract the comment asserts. The guarantee is by-convention, not enforced.",
+      "suggested_fix": "Either document the precondition as a hard caller contract in the method doc, or hold a 'replaying' gate that Emit respects (e.g. queue live events until replay completes for each replaying consumer)."
+    },
+    {
+      "file": "internal/eventbus/jsonlwriter.go",
+      "line": 209,
+      "severity": "low",
+      "category": "correctness",
+      "title": "processBatch comment overstates O_APPEND atomicity for batched writes exceeding PIPE_BUF",
+      "detail": "processBatch concatenates every buffered request into one f.Write (203-209) and the type-doc (line 69) claims 'All line buffers are concatenated into one Write call to preserve POSIX O_APPEND atomicity within PIPE_BUF.' A coalesced batch of up to 128 events can be far larger than PIPE_BUF (typically 4 KiB), so the POSIX guarantee that an O_APPEND write is atomic does NOT hold for the whole combined buffer. In this codebase the writer owns the fd exclusively (single drainer goroutine, no other appender), so intra-process torn interleaving cannot happen and the practical risk is nil; but if a second process ever appends to the same file the comment's stated guarantee is false and readers could see interleaved partial lines. os.File.Write does at least catch short writes (returns ErrShortWrite), so a truncated batch surfaces as an error rather than silent corruption.",
+      "suggested_fix": "Fix the comment to state the atomicity holds only because this writer is the sole appender, not because of PIPE_BUF (which the batch can exceed). Optionally cap combined batch size or note the single-writer invariant explicitly."
+    },
+    {
+      "file": "internal/eventbus/jsonlwriter.go",
+      "line": 263,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "Append holds mu across a blocking channel send, so Close can stall behind a full queue",
+      "detail": "Append (263-269) takes w.mu, checks isClosed, then does a BLOCKING `w.queue <- req` while still holding mu. If the 128-slot queue is full (sustained burst faster than the drainer writes+fsyncs), Append blocks holding mu. Close (286) needs mu to set isClosed and cannot proceed until that Append's send completes, so a shutdown can be delayed for as long as the queue stays saturated. Not a permanent deadlock (the drainer keeps consuming, so the send eventually completes), but it couples Close latency to write/fsync backpressure and defeats the intent of the 'minimal lock window' comment on lines 261-262.",
+      "suggested_fix": "Do the closed-check under mu but perform the queue send outside the lock (re-check via a select on stop to bail out if Close raced), so a full queue never blocks Close from setting isClosed."
+    },
+    {
+      "file": "internal/eventbus/jsonlwriter.go",
+      "line": 331,
+      "severity": "nit",
+      "category": "error-handling",
+      "title": "ScanAfter cannot distinguish a torn tail from genuine corruption; logs every replay",
+      "detail": "ScanAfter (325-343) has no torn-tail detection (unlike replayAndDetectTrunc at busimpl.go:1405 which checks hasTerm && EOF). A crash-time partial final line is decoded, fails json.Unmarshal, and is logged as 'malformed line ... (skipping)' on EVERY ScanAfter invocation over that file. The tail is correctly skipped so there is no data bug, but the log noise is misleading (it reads as corruption, not the expected torn-tail case documented in the type comment lines 28-31) and repeats on each replay until a new full line is appended.",
+      "suggested_fix": "Optionally detect the torn tail (final non-newline-terminated line at EOF) and skip it without a warning, matching replayAndDetectTrunc, so only genuine mid-file corruption logs."
+    }
+  ]
+}

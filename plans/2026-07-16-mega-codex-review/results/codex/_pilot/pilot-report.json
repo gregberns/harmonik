@@ -1,0 +1,40 @@
+{
+  "recommendation": "PASS",
+  "gate": "STOP_AWAITING_GO_NO_GO",
+  "unit": "RU-03",
+  "model": "gpt-5.5",
+  "codex_cli": "0.144.5",
+  "auth": {
+    "forced_login_method": "chatgpt",
+    "stored_api_key": false,
+    "environment_api_keys_unset": true
+  },
+  "requests": {
+    "attempted": 10,
+    "completed": 10,
+    "schema_valid": 10,
+    "failed": 0,
+    "first_429_request": null,
+    "requests_until_first_429": ">10",
+    "reset_window": "not_observed"
+  },
+  "fanout": {
+    "width": 4,
+    "waves": 2,
+    "sqlite_contention": false,
+    "schema_failures": 0,
+    "fanout_multiplier_on_throttle": "not_observed"
+  },
+  "findings": {
+    "raw_records": 27,
+    "independently_condensed": 14,
+    "high": 2,
+    "medium": 12,
+    "low": 0,
+    "nit": 0,
+    "substantive_result": "condensed-RU-03.json",
+    "nits_result": "nits-RU-03.json"
+  },
+  "telemetry_note": "Token counts are recorded only where the CLI's final token line was retained by the launcher; zero means unavailable, not zero usage.",
+  "decision_note": "The invocation, isolated CODEX_HOME setup, strict schema, read-only sandbox, and four-way concurrency all passed. No quota ceiling or reset window was reached within the bounded ten-request pilot, so full-sweep scheduling still needs conservative checkpoints."
+}

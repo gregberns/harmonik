@@ -1,0 +1,114 @@
+{
+  "chunk": "RU-06",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/daemon/daemon.go",
+    "internal/daemon/projectconfig.go",
+    "internal/daemon/socket.go",
+    "internal/daemon/bootconfig/bootconfig.go",
+    "internal/daemon/router/router.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Read all five files in full (projectconfig.go across two pages). bootconfig/doc.go, bootconfig_test.go, router/doc.go, router_test.go were listed in scope dir but are doc/test scaffolding; the substantive review targets are the five files above.",
+  "findings": [
+    {
+      "file": "internal/daemon/projectconfig.go",
+      "line": 1287,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "watchBlockAbsent checks only 2 of 9 watch fields — a watch-only config with no schema_version is silently swallowed as empty",
+      "detail": "The empty-file sentinel gate (lines 1293-1298) returns a zero-value ProjectConfig (absent semantics) only when EVERY block is judged absent. watchBlockAbsent (line 1287) tests just StatusTarget=='' && OpsmonitorTarget==''. But rawWatchConfig has 9 fields (AbsentThreshSec, StallTicks, LivenessInterval, DigestInterval, StaffingStarvationGrace, LivenessPingBody, VerifyServicesBody are all ignored). Failure scenario: operator writes `.harmonik/config.yaml` containing only `watch:\\n  absent_thresh_s: 30` and forgets `schema_version: 1`. Because SchemaVersion==0 and watchBlockAbsent()==true (the two target fields are empty), the whole config is treated as an absent file and returns zero-value with nil error — the daemon boots on defaults and the operator's watch tuning is silently discarded. The correct behavior (what daemonAbsent/keeperBlockAbsent/stallSentinelBlockAbsent achieve for their blocks) is to detect the present block and fall through to the schema_version!=1 check, yielding ErrUnsupportedConfigVersion.",
+      "suggested_fix": "Replace the inline `watchBlockAbsent` expression with a field-by-field helper (watchBlockAbsent(raw.Watch)) that checks ALL 9 rawWatchConfig fields, mirroring keeperBlockAbsent/stallSentinelBlockAbsent, and add the same INVARIANT comment."
+    },
+    {
+      "file": "internal/daemon/projectconfig.go",
+      "line": 1290,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "harnessesAbsent omits 5 of 9 pi fields — a base_url/profiles-only config with no schema_version is silently swallowed",
+      "detail": "harnessesAbsent (lines 1290-1292) checks only Pi.Provider, Pi.Model, Pi.APIKeyEnv, and Pi.Fallback. rawHarnessesPiConfig also has APIKeyFile, BaseURL, API, Profiles, and ProviderSlots. Failure scenario: operator writes only `harnesses:\\n  pi:\\n    base_url: http://dgx.local:8551/v1` without schema_version. harnessesAbsent()==true (the four checked fields are empty), so the file is treated as empty and the pi harness config is dropped with no error. Same class of silent-drop hazard as the watch finding; both defeat the fail-fast intent of the schema_version gate.",
+      "suggested_fix": "Extract a harnessesBlockAbsent(raw.Harnesses) helper that checks every pi field (incl. APIKeyFile, BaseURL, API, len(Profiles), len(ProviderSlots)) with an extend-in-lockstep INVARIANT comment."
+    },
+    {
+      "file": "internal/daemon/projectconfig.go",
+      "line": 1664,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "keeper.hard_ceiling.cooldown is parsed and validated but never consumed by the resolver — dead operator knob",
+      "detail": "parseKeeperBlock parses hc.Cooldown into cfg.HardCeilingCooldownDur (line 1664-1668), but the NOTE at lines 1669-1672 states the resolver reads cadence.hard_ceiling_cooldown (CadenceHardCeilingCooldown), NOT HardCeilingCooldownDur. So an operator who sets `keeper.hard_ceiling.cooldown: 30m` gets a value that passes strict-key validation and duration parsing yet has zero runtime effect. This is a config trap: a plausible-looking key that silently does nothing, while the actually-consumed key lives under a different block (cadence). Documentation of the trap in a code comment does not fix the operator-facing hazard.",
+      "suggested_fix": "Either wire HardCeilingCooldownDur into the resolver, or reject/deprecate keeper.hard_ceiling.cooldown loudly (log a warning that it is ignored and cadence.hard_ceiling_cooldown is authoritative), matching the on_demand_warn_text deprecation pattern already in this file."
+    },
+    {
+      "file": "internal/daemon/projectconfig.go",
+      "line": 1481,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "Unknown-keeper-key detection couples to yaml.v3's internal error-message text via regex",
+      "detail": "strictDecodeKeeperBlock relies on keeperUnknownFieldRe (line 1481) matching the literal string `field <name> not found in type <pkg>.<Type>` produced by yaml.v3's KnownFields(true) TypeError. If a yaml.v3 upgrade changes that wording, the regex stops matching and every unknown keeper key silently degrades from the precise *ErrUnknownConfigKey (naming the exact bad key path) to a generic *ErrMalformedConfigYAML — the daemon still fails to start, but the operator loses the pinpointed key path that hk-9f3f was specifically built to provide. It also depends on keeperTypeToPrefix being kept in exact sync with the Go type names of every keeper sub-struct; a renamed sub-struct silently falls back to the bare `keeper` prefix (line 1533-1536).",
+      "suggested_fix": "Add a test that asserts the regex still matches the current yaml.v3 error format (a canary that breaks on upgrade), and consider decoding into yaml.Node and walking keys against a known-field set rather than parsing the library's error prose."
+    },
+    {
+      "file": "internal/daemon/daemon.go",
+      "line": 557,
+      "severity": "medium",
+      "category": "over-abstraction",
+      "title": "Config god-struct mixes production surface with test-injection seams despite daemonTestHooks existing to prevent exactly that",
+      "detail": "daemonTestHooks (line 581) was explicitly introduced 'to carry test-only injection points that are absent from the production Config surface.' Yet Config still carries multiple pure test-injection seams: Runner (line 569) whose own doc says 'This field is a test-injection seam. Tests supply a tmux.RecordingRunner via Config.Runner'; WorkerRegistryObserver (line 555); QueueStore (line 388, 'so the caller can inspect queue status after Start returns'); plus a long tail of Skip* flags (SkipWALCheckpoint, SkipBrHistoryRotation, SkipRestartBackoff, SkipBeadsMergeDriverConfig) that the field docs describe as existing 'solely for unit tests.' The result is a ~50-field composition-root struct where production and test concerns are interleaved, defeating the stated rationale for daemonTestHooks and making it hard to reason about which fields a production caller must set. This is the composition-root god-struct the review lens targets.",
+      "suggested_fix": "Migrate the test-only Skip* flags and injection seams (Runner, WorkerRegistryObserver, and the inspect-after-return QueueStore handle) into daemonTestHooks / StartForTesting options, leaving Config as the genuine production configuration surface."
+    },
+    {
+      "file": "internal/daemon/socket.go",
+      "line": 279,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Six-level telescoping RunSocketListener* constructor ladder survives after SocketHandlers/Serve was introduced to replace it",
+      "detail": "The SR-3 carve introduced SocketHandlers (line 344) and Serve (line 381) explicitly to 'replace the telescoping-constructor chain of positional RunSocketListener* wrappers.' But the entire ladder is still present and each rung just forwards to the next: RunSocketListener → RunSocketListenerWithSubscribe → RunSocketListenerFull → RunSocketListenerWithCrew → RunSocketListenerWithSleepWake → Serve (lines 279-338). Six exported functions differing only by which trailing nil handlers they thread, each with its own doc block to maintain. This is precisely the positional-argument telescoping the refactor was meant to retire; keeping all rungs re-creates the maintenance burden (a new handler means touching every rung) that SocketHandlers eliminated.",
+      "suggested_fix": "Deprecate/remove the intermediate rungs and have callers construct SocketHandlers directly (or keep at most one thin back-compat shim), so there is a single wide seam rather than six positional wrappers."
+    },
+    {
+      "file": "internal/daemon/projectconfig.go",
+      "line": 1882,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "parseStallSentinelBlock allocates 7 throwaway *time.Duration via new() then dereferences into the struct",
+      "detail": "The fields slice (lines 1882-1890) uses `new(time.Duration)` for each dst, runs parseDurationField into those heap pointers, then dereferences all seven (*fields[0].dst ... *fields[6].dst) into the returned struct (lines 1899-1905). This indexed-deref-by-position construction is fragile (reordering the fields slice silently misassigns values to the wrong struct field, with no compile error) and needlessly convoluted versus the &cfg.Field pointer-into-destination pattern the sibling parseSuperviseBlock/parseKeeperBlock loops already use.",
+      "suggested_fix": "Build the StallSentinelConfig first and point each fields[].dst at &cfg.Field (as parseSuperviseBlock does), eliminating the seven new() allocations and the positional-index reassembly."
+    },
+    {
+      "file": "internal/daemon/router/router.go",
+      "line": 44,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Classify routing hinges on len(rawJSON)>2 of the 'type' value — {\"type\":null} routes as a hook-relay envelope",
+      "detail": "Classify (line 44-49) returns KindHookRelay when the raw bytes of the 'type' value have len>2. Per the doc, {\"type\":null} (len 4) classifies as HookRelay and {\"type\":\"\"} (len 2) as Op. So a malformed op-request that happens to carry a null 'type' field is misrouted into the hook-relay path (handleHookRelayEnvelope), where it then fails envelope decode and returns bad_envelope instead of the op-level error the caller expected. The behavior is intentional and test-anchored (the comment warns against 'cleanup'), but pinning routing to a byte-length of raw JSON rather than a decoded/typed discriminator is inherently brittle and surprising; it survives here as documented tech-debt rather than a robust classifier.",
+      "suggested_fix": "Decode 'type' into a *string and route on non-nil-and-non-empty, or explicitly document null-type as an error envelope; keep the current byte-length test only if a test locks every boundary case (which it partly does)."
+    },
+    {
+      "file": "internal/daemon/projectconfig.go",
+      "line": 1923,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "daemonExpandHomePath error swallowed in parseHarnessesBlock",
+      "detail": "Line 1923 `apiKeyFile, _ := daemonExpandHomePath(pi.APIKeyFile)` discards the error. If os.UserHomeDir() fails (line 2019), the function returns the original unexpanded `~/...` path plus an error; here the error is dropped and the literal tilde path is stored. ResolvePiConfig later validates readability, so the failure surfaces eventually, but the discarded error means the true cause (home dir undeterminable) is lost and the downstream error will instead be a confusing 'file ~/foo not found'. Minor because the tilde-only path is rare and a later gate exists.",
+      "suggested_fix": "Propagate the error (make parseHarnessesBlock return an error, or expand in ResolvePiConfig where the error is already handled) rather than silently keeping the unexpanded path."
+    },
+    {
+      "file": "internal/daemon/projectconfig.go",
+      "line": 402,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Multiple hand-maintained field-by-field *BlockAbsent invariants are a recurring drift source",
+      "detail": "keeperBlockAbsent (line 402), sandboxBlockAbsent (766), superviseBlockAbsent (1794), stallSentinelBlockAbsent (1134), plus the inline daemonAbsent/watchdogAbsent/watchBlockAbsent/opsmonitorAbsent/harnessesAbsent expressions (1280-1292) each enumerate every field of their raw struct, guarded only by an INVARIANT comment saying 'extend in lockstep.' Two of them (watch, harnesses — see separate findings) have ALREADY drifted out of sync. This is a structural fragility: adding a field to any raw*Config requires remembering to edit a spatially-distant absent-check, with no compile-time enforcement. The pattern scales poorly as config blocks proliferate (10+ blocks now).",
+      "suggested_fix": "Replace the hand-written zero-checks with a reflect-based or generics helper that reports whether a struct equals its zero value (handling slices/maps), or centralize all absent-checks so a single test iterating the raw struct fields fails when one is unhandled."
+    },
+    {
+      "file": "internal/daemon/socket.go",
+      "line": 228,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "removeStaleSocket → Listen has a TOCTOU window against a racing daemon",
+      "detail": "removeStaleSocket (line 228) probes/removes the socket, then Serve calls Listen (line 386) as a separate step. Between the stale-check and the bind, a second daemon could bind the same path, and this daemon would then either fail to bind or (if it removed a socket the other just created) disrupt the peer. In practice this is gated upstream by the pidfile advisory lock (acquirePidfile), so two daemons for the same ProjectDir should never reach here concurrently — hence low severity — but the socket layer itself provides no atomicity and the safety depends entirely on the caller having acquired the pidfile first.",
+      "suggested_fix": "Document the pidfile-lock precondition on Serve/removeStaleSocket, or bind to a temp path and rename() atomically to close the window independent of the pidfile ordering."
+    }
+  ]
+}

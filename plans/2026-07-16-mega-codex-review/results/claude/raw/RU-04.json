@@ -1,0 +1,94 @@
+{
+  "chunk": "RU-04",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/workspace/remotematerialize.go",
+    "internal/workspace/createworktree.go",
+    "internal/workspace/reviewverdict.go",
+    "internal/workspace/autostatusmarker.go",
+    "internal/workspace/diffhash.go",
+    "internal/workers/offline.go",
+    "internal/workers/tunnelfailed.go",
+    "internal/workers/registry.go",
+    "internal/workers/breach.go",
+    "internal/workers/health.go",
+    "internal/workers/workers.go",
+    "internal/workers/report_poll.go",
+    "internal/lifecycle/tmux/runner.go"
+  ],
+  "status": "reviewed",
+  "findings": [
+    {
+      "file": "internal/workspace/reviewverdict.go",
+      "line": 176,
+      "severity": "high",
+      "category": "error-handling",
+      "title": "SSH transport failure on verdict read is swallowed as \"verdict absent\" (inconclusive)",
+      "detail": "ReadReviewVerdictVia's remote branch runs `cat target` over the runner and, on ANY error, returns (nil,nil) = absent/inconclusive (lines 177-182). A genuine SSH transport failure (connection refused/reset/host-key/timeout — ssh exit 255) is therefore indistinguishable from a legitimately-missing review.json. The package already has tmux.IsSSHConnectionFailure(err) (runner.go:128) built precisely to classify exit-255 transport failures, but it is not consulted here. Failure scenario: the worker's SSH link drops for a few seconds while the daemon polls for the reviewer verdict; the read returns absent, the daemon treats the iteration as inconclusive per WM-027a §(e) and proceeds down the no-verdict path (or fast-fails the run) instead of recognising an offline worker and recovering via the run_stale / worker_offline path. The retry wrapper does NOT help because it only retries on ErrMalformed, not on the absent (nil,nil) transport-masked result.",
+      "suggested_fix": "In the remote closure, branch on tmux.IsSSHConnectionFailure(err): surface a distinct transport error (retryable / trigger worker_offline) rather than collapsing every cat error to absent. Only treat a true 'no such file' (non-255 exit) as absent."
+    },
+    {
+      "file": "internal/workspace/autostatusmarker.go",
+      "line": 99,
+      "severity": "high",
+      "category": "error-handling",
+      "title": "SSH transport failure on auto_status read swallowed as absent → wrong outcome gate",
+      "detail": "ReadAutoStatusMarkerVia's remote branch (lines 99-104) returns (nil,nil) on ANY cat error, so a dropped SSH connection is treated identically to 'marker absent → C1-only gate'. The FAIL marker is the deny-side outcome-derivation hint (HC-068); silently dropping it because the transport hiccupped means a run that DID fail with an agent-declared failure_class is instead gated as if no marker existed, letting the daemon back-fill/mis-route the outcome. tmux.IsSSHConnectionFailure exists to distinguish exit-255 transport failure from a real missing file but is not used. Same masking class as the reviewverdict finding.",
+      "suggested_fix": "Distinguish transport failure (exit 255 via tmux.IsSSHConnectionFailure) from a real missing marker; only the latter should map to treat-as-absent. A transport failure should surface as an error so the caller can retry or mark the worker offline."
+    },
+    {
+      "file": "internal/workers/health.go",
+      "line": 82,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "RunHealthCheck loops over N workers but SetEnabled acts on the single registry worker",
+      "detail": "RunHealthCheck ranges over cfg.Workers (line 76) and on each iteration calls reg.SetEnabled(false)/reg.SetEnabled(true) (lines 82,86). Registry stores exactly ONE worker (registry.go: worker/hasWorker) and SetEnabled flips THAT one regardless of which cfg.Workers[i] was actually probed. If cfg ever carried >1 worker the health verdicts clobber each other — the last-iterated worker's pass/fail wins and silently overwrites the earlier ones, and a failing worker A can be re-enabled by a passing worker B. The correct, name-checked primitive (SetEnabledByName, registry.go:128) already exists and is used elsewhere. Currently latent because workers.go caps Version-1 at one worker (parse() ErrTooManyWorkers), but the loop pretends to support N and is a landmine the moment the single-worker cap is lifted.",
+      "suggested_fix": "Use reg.SetEnabledByName(w.Name, ...) inside the loop so each verdict targets the worker actually probed; or assert/limit the loop to the single configured worker to match Registry's real shape."
+    },
+    {
+      "file": "internal/workspace/createworktree.go",
+      "line": 276,
+      "severity": "low",
+      "category": "correctness",
+      "title": "`break` inside select breaks only the select, not the retry loop, on ctx cancel during backoff",
+      "detail": "In the backoff wait (lines 275-281) the `case <-ctx.Done(): break` only exits the select statement, not the enclosing for-loop. After the select returns on ctx cancellation the code falls through to `continue` and issues another `git worktree add` attempt against a cancelled context. Intent was clearly to stop retrying on cancellation (mirrors the explicit `ctx.Err()!=nil { break }` on the command-error path at line 267). Impact is bounded — the next CommandContext fails fast on the dead ctx — so it burns one extra doomed attempt + cleanup rather than hanging, but the control flow does not do what the code reads as doing.",
+      "suggested_fix": "Use a labeled break (e.g. `break retryLoop`) or set a sentinel and break the for-loop, so ctx cancellation during backoff terminates the retry loop immediately."
+    },
+    {
+      "file": "internal/workspace/createworktree.go",
+      "line": 213,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "cleanupPartialState uses the possibly-cancelled ctx → remote stale worktree/branch left behind",
+      "detail": "cleanupPartialState (lines 213-227) issues its remote `rm -rf`, `git worktree prune`, and `git branch -D` through `runner.Command(ctx, ...)` using the SAME ctx that may already be cancelled/deadlined (cancellation is one reason cleanup runs). When ctx is done these cleanup commands fail immediately (best-effort, errors discarded), leaving the partial remote worktree dir and branch ref on the worker. The next dispatch then collides with 'branch/reference already exists', which isTransientWorktreeAddRace does NOT match, so no retry fires and the dispatch fails. CreateReviewerWorktree deliberately runs its cleanup with context.Background() (line 68,70) to avoid exactly this; CreateWorktree does not.",
+      "suggested_fix": "Run cleanupPartialState's rm/prune/branch-D via context.Background() (or a short fresh timeout) like CreateReviewerWorktree, so cleanup still executes when the run ctx is cancelled."
+    },
+    {
+      "file": "internal/workspace/diffhash.go",
+      "line": 47,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Inconsistent local/remote runner classification across the *Via surface violates the stated NFR7 local invariant",
+      "detail": "ComputeDiffHashVia (line 47) and all of remotematerialize.go's *Via helpers branch on `runner == nil`, treating a non-nil tmux.LocalRunner as REMOTE and routing it through the SSH/base64/`git -C` shell path. reviewverdict.go:162 and autostatusmarker.go:96 instead branch on `runner == nil || runnerIsLocalFS(runner)`, treating LocalRunner as local. So passing tmux.LocalRunner produces byte-identical-local behaviour in the verdict/marker readers but the shell-routed 'remote' path in diffhash/materialize — contradicting each function's doc claim of a byte-identical local path (NFR7). It works today only because LocalRunner execs on the same box; it is latent drift and a trap for any caller that passes an explicit LocalRunner.",
+      "suggested_fix": "Adopt one classifier everywhere — reuse runnerIsLocalFS(runner) in ComputeDiffHashVia and the remotematerialize *Via helpers so LocalRunner is uniformly treated as local."
+    },
+    {
+      "file": "internal/workspace/remotematerialize.go",
+      "line": 78,
+      "severity": "low",
+      "category": "correctness",
+      "title": "writeRemoteFile inlines base64 content into the remote command line — ARG_MAX risk for large briefs",
+      "detail": "writeRemoteFile base64-encodes the whole file content and interpolates it directly into the `printf %s <b64> | base64 -d` command string (lines 80-82), which SSHRunner then passes as a single shell-quoted argv token on the remote command line. For large payloads (agent-task.md / review-target.md briefs can be sizeable, and base64 inflates by ~33%) this can approach or exceed the worker's getconf ARG_MAX / login-shell command-length limit, producing an opaque 'Argument list too long' remote failure. EnsureWorktreeTrustVia already recognised this class and pipes its program via stdin (cmd.Stdin, lines 284-285) instead of the command line; writeRemoteFile does not use the same safe channel for its (larger) content.",
+      "suggested_fix": "Feed the base64 payload to the remote `base64 -d > file` via cmd.Stdin (pipe) rather than interpolating it into the command string, mirroring EnsureWorktreeTrustVia's stdin approach; keeps content off the remote command line entirely."
+    },
+    {
+      "file": "internal/workers/workers.go",
+      "line": 62,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "DefaultHarmonikPath hardcodes an operator-specific home path",
+      "detail": "DefaultHarmonikPath = \"/Users/gb/go/bin/harmonik\" bakes a specific operator's macOS home into the fallback used when a Worker omits harmonik_path. Any worker whose user is not `gb` (or non-macOS layout) silently falls back to a non-existent binary; per the same file's note the hook relay then never fires and the run times out at agent_ready with no clear signal pointing back to this path. It is a portability/maintainability smell in checked-in code.",
+      "suggested_fix": "Derive the default from the worker user's $HOME (e.g. resolve `$HOME/go/bin/harmonik` on the worker) or require harmonik_path explicitly for non-default layouts; at minimum surface a clear error when the fallback path is absent on the worker rather than a silent agent_ready timeout."
+    }
+  ]
+}

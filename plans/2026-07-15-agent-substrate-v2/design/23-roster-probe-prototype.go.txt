@@ -1,0 +1,217 @@
+package main
+
+// Prototype: static-roster direct-probe failure detector at n=3.
+// Claim under test: with a STATIC peer list and DIRECT probing, rejoin after an
+// arbitrarily long absence is trivial -- there is no membership state to reap,
+// no stale third-party rumour, and therefore no incarnation number needed.
+// Timings scaled down 5x (200ms probe vs the proposed 1s) so the test runs fast.
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+var probeClient = &http.Client{
+	Timeout:   probeTimeout,
+	Transport: &http.Transport{DisableKeepAlives: noReuse},
+}
+
+type State int
+
+const (
+	Unknown State = iota
+	Up
+	Suspect
+	Down
+)
+
+func (s State) String() string { return [...]string{"UNKNOWN", "UP", "SUSPECT", "DOWN"}[s] }
+
+const (
+	probeInterval = 200 * time.Millisecond
+	probeTimeout  = 200 * time.Millisecond
+	suspectAfter  = 3
+	downAfter     = 6
+)
+
+type peerView struct {
+	BackAt   time.Time // instant of the ->UP transition (what we actually want to measure)
+	DownAt   time.Time // instant of the ->DOWN transition
+	State    State
+	Fails    int
+	LastSeen time.Time
+	LastRTT  time.Duration
+	Intent   string
+}
+
+type node struct {
+	name   string
+	addr   string
+	peers  map[string]string // STATIC. name -> addr. Never mutated at runtime.
+	mu     sync.Mutex
+	view   map[string]*peerView
+	intent atomic.Value // string
+	frozen atomic.Bool
+}
+
+func (n *node) log(f string, a ...any) {
+	fmt.Printf("%s [%-12s] %s\n", time.Now().Format("15:04:05.000"), n.name, fmt.Sprintf(f, a...))
+}
+
+func (n *node) serve() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+		if n.frozen.Load() { // emulate sleep/crash: accept then never answer
+			time.Sleep(10 * time.Second)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"node": n.name, "intent": n.intent.Load()})
+	})
+	lis, err := net.Listen("tcp", n.addr)
+	if err != nil {
+		panic(fmt.Sprintf("%s: listen %s: %v", n.name, n.addr, err))
+	}
+	n.addr = lis.Addr().String() // OS-assigned port
+	go (&http.Server{Handler: mux}).Serve(lis)
+}
+
+func (n *node) probeOnce(peer, addr string) {
+	c := probeClient
+	t0 := time.Now()
+	resp, err := c.Get("http://" + addr + "/probe")
+	rtt := time.Since(t0)
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	v := n.view[peer]
+	old := v.State
+	if err != nil {
+		v.Fails++
+		switch {
+		case v.Fails >= downAfter:
+			v.State = Down
+		case v.Fails >= suspectAfter:
+			v.State = Suspect
+		}
+		if old != v.State {
+			if v.State == Down {
+				v.DownAt = time.Now()
+			}
+			n.log("%-12s %s -> %-7s (consecutive fails=%d)", peer, old, v.State, v.Fails)
+		}
+		return
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var rep struct{ Node, Intent string }
+	json.Unmarshal(body, &rep)
+	v.Fails, v.State, v.LastSeen, v.LastRTT, v.Intent = 0, Up, time.Now(), rtt, rep.Intent
+	if old != Up {
+		v.BackAt = time.Now()
+		n.log("%-12s %s -> UP      (rtt=%v, intent=%q)", peer, old, rtt.Round(100*time.Microsecond), rep.Intent)
+	}
+}
+
+func (n *node) run() {
+	for range time.NewTicker(probeInterval).C {
+		for peer, addr := range n.peers { // STATIC list: always probed, never forgotten
+			go n.probeOnce(peer, addr)
+		}
+	}
+}
+
+func newNode(name, addr string, peers map[string]string) *node {
+	n := &node{name: name, addr: addr, peers: peers, view: map[string]*peerView{}}
+	n.intent.Store("up")
+	for p := range peers {
+		n.view[p] = &peerView{State: Unknown}
+	}
+	return n
+}
+
+func (n *node) stateOf(p string) (State, string, time.Time) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	v := n.view[p]
+	return v.State, v.Intent, v.LastSeen
+}
+
+func (n *node) marks(p string) (down, back time.Time) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.view[p].DownAt, n.view[p].BackAt
+}
+
+func main() {
+	fmt.Printf("### probe connection reuse DISABLED = %v\n\n", noReuse)
+	addrs := map[string]string{"dgx": "127.0.0.1:0", "gb-mac-mini": "127.0.0.1:0", "gb-mbp": "127.0.0.1:0"}
+	peersOf := func(self string) map[string]string {
+		m := map[string]string{}
+		for k, v := range addrs {
+			if k != self {
+				m[k] = v
+			}
+		}
+		return m
+	}
+	nodes := map[string]*node{}
+	for name, addr := range addrs {
+		nodes[name] = newNode(name, addr, map[string]string{})
+		nodes[name].serve() // binds, panics on failure, fills in the real port
+		addrs[name] = nodes[name].addr
+	}
+	for name, n := range nodes {
+		n.peers = peersOf(name) // STATIC peer list, wired once, never mutated
+		for p := range n.peers {
+			n.view[p] = &peerView{State: Unknown}
+		}
+		go n.run()
+	}
+	time.Sleep(700 * time.Millisecond)
+	fmt.Println("=== steady state: all three UP ===")
+	for _, obs := range []string{"dgx", "gb-mac-mini", "gb-mbp"} {
+		for p := range nodes[obs].peers {
+			s, _, _ := nodes[obs].stateOf(p)
+			fmt.Printf("    %-12s sees %-12s %s\n", obs, p, s)
+		}
+	}
+
+	// TEST 1: ungraceful freeze (crash / sleep with no announcement)
+	fmt.Println("\n=== TEST 1: gb-mbp freezes with NO announcement (crash or hard sleep) ===")
+	t0 := time.Now()
+	nodes["gb-mbp"].frozen.Store(true)
+	fmt.Printf("    FREEZE at %s\n", t0.Format("15:04:05.000"))
+	time.Sleep(longFreeze)
+	s, _, _ := nodes["dgx"].stateOf("gb-mbp")
+	dn, _ := nodes["dgx"].marks("gb-mbp")
+	fmt.Printf("    -> dgx's view of gb-mbp: %s, UP->DOWN transition %v after freeze\n", s, dn.Sub(t0).Round(time.Millisecond))
+
+	// TEST 2: rejoin after an absence far past every timeout
+	fmt.Println("\n=== TEST 2: gb-mbp wakes. No Join(), no re-register, no operator action ===")
+	wake := time.Now()
+	nodes["gb-mbp"].frozen.Store(false)
+	time.Sleep(1200 * time.Millisecond)
+	for _, obs := range []string{"dgx", "gb-mac-mini"} {
+		s, _, _ := nodes[obs].stateOf("gb-mbp")
+		_, back := nodes[obs].marks("gb-mbp")
+		fmt.Printf("    %-12s sees gb-mbp %s, DOWN->UP transition %v after wake\n", obs, s, back.Sub(wake).Round(time.Millisecond))
+	}
+
+	// TEST 3: announced sleep -> DOWN carries a reason
+	fmt.Println("\n=== TEST 3: gb-mbp ANNOUNCES sleep, then freezes ===")
+	nodes["gb-mbp"].intent.Store("sleeping")
+	time.Sleep(400 * time.Millisecond) // let the announcement propagate on the next probe
+	s, intent, _ := nodes["dgx"].stateOf("gb-mbp")
+	fmt.Printf("    before freeze: dgx sees gb-mbp %s intent=%q\n", s, intent)
+	nodes["gb-mbp"].frozen.Store(true)
+	time.Sleep(2000 * time.Millisecond)
+	s, intent, _ = nodes["dgx"].stateOf("gb-mbp")
+	fmt.Printf("    after  freeze: dgx sees gb-mbp %s intent=%q  <- DOWN(reason=announced_sleep)\n", s, intent)
+	fmt.Println("\n=== done ===")
+}

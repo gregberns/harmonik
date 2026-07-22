@@ -1,0 +1,275 @@
+{
+  "chunk": "RU-08-deep",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/substrate/replay.go",
+    "internal/substrate/fakeclock.go",
+    "internal/substrate/clock.go",
+    "internal/substrate/seam.go",
+    "internal/substrate/doubles.go",
+    "internal/handlercontract/handler_hc001.go",
+    "internal/handlercontract/adapter.go",
+    "internal/handlercontract/adapterregistry_hc012.go",
+    "internal/handlercontract/launchspec_hc006.go",
+    "internal/handlercontract/launchspecdelivery_hc005.go",
+    "internal/handlercontract/versionnego_hc009.go",
+    "internal/handlercontract/sessionlogloc_hc010.go",
+    "internal/handlercontract/watcher_hc011.go",
+    "internal/handlercontract/cancelbounds.go",
+    "internal/handlercontract/orphancheck_hc044a.go",
+    "internal/handlercontract/provisioningretry_hc048a.go",
+    "internal/handlercontract/turnboundary_hc013a.go",
+    "internal/handlercontract/workqueue.go",
+    "internal/handlercontract/mutexdiscipline_hc015.go",
+    "internal/handlercontract/schemachecker_hc033.go",
+    "internal/handlercontract/sessionid.go",
+    "internal/handlercontract/redaction.go",
+    "internal/handlercontract/redactionregistry.go",
+    "internal/handlercontract/deadlettersink.go",
+    "internal/handlercontract/harness.go",
+    "internal/handlercontract/harnessregistry.go",
+    "internal/handlercontract/heartbeat_hc026a.go",
+    "internal/handlercontract/readystate_hc039.go",
+    "internal/handlercontract/skillsprovisioned_hc049.go",
+    "internal/handlercontract/skillresolution_hc047_hc048.go",
+    "internal/handlercontract/progressstream_hc007.go",
+    "internal/handlercontract/sentinels.go",
+    "internal/handler/handler.go",
+    "internal/handler/session.go",
+    "internal/handler/substrate.go",
+    "internal/handler/runtime.go",
+    "internal/handler/input_port.go",
+    "internal/handler/wirecapture.go",
+    "internal/handler/gate_dispatch.go",
+    "internal/handler/classify_hc023.go",
+    "internal/handler/subreason_u5c5i.go",
+    "internal/handler/launchpath.go",
+    "internal/handler/twinlaunch.go",
+    "internal/handler/commithash.go",
+    "internal/handler/errors.go",
+    "internal/handler/adapter_claudecode.go",
+    "internal/handler/adapter_codex.go",
+    "internal/handler/adapter_pi.go",
+    "internal/handler/claudehandler_chb006_024.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Deep pass over the HC-xxx contract .go files (skipped by pass 1's sampling) plus the substrate/handler driver surface. substrate/ is clean. Dominant systemic finding: a large fraction of the *behavioral* HC contract helpers are exercised only by their own sensor tests and sit on NO production path, so their MUST clauses are asserted-but-not-enforced against the real internal/handler implementation — the contract and the code that ships have quietly diverged.",
+  "findings": [
+    {
+      "file": "internal/handler/handler.go",
+      "line": 342,
+      "severity": "medium",
+      "category": "resource-leak",
+      "title": "Subprocess orphaned when openWireTap fails after the child is already started",
+      "detail": "In Launch, newSessionWithIDs (line 284) has already spawned the child process. If openWireTap() then returns an error (lines 342-345) Launch returns (nil,nil,err) WITHOUT calling sess.Kill. The caller receives no Session handle, so the running claude/pi/codex subprocess plus its runWait/drainStderr goroutines are leaked with no reaping handle. Same pattern in launchViaSubstrate at lines 426-429: subSess is already spawned via Substrate.SpawnWindow, then an openWireTap error returns without killing it. Failure: HARMONIK_WIRE_CAPTURE_DIR points at an unwritable dir -> os.MkdirAll fails -> the just-spawned subprocess runs orphaned until the daemon orphan sweep. Reachable only under the wire-capture harness, hence medium.",
+      "suggested_fix": "On the openWireTap error path, kill+wait the already-started session before returning (e.g. _ = sess.Kill(ctx) / _ = subSess.Kill(ctx) prior to returning the error)."
+    },
+    {
+      "file": "internal/handler/session.go",
+      "line": 370,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "session.SendInput ignores ctx; HandlerSpec-delivery goroutine can block forever (doc drift)",
+      "detail": "session.SendInput takes a context but discards it (`_ context.Context`) and does a plain io.WriteString on the stdin pipe (line 372). handler.go:309-329 spawns a goroutine calling sess.SendInput(ctx, ...) and the surrounding comments (handler.go:305-306, 320-321) claim the write is 'bounded by ctx'. That is false — nothing wires ctx to the write. Failure: a HandlerSpec JSON larger than the pipe buffer (~64 KiB) delivered to a subprocess that never reads stdin (crashed post-fork or wedged) -> WriteString blocks on the full pipe indefinitely -> delivery goroutine leaks and ctx cancellation has no effect. Both a goroutine leak and a contract/doc drift.",
+      "suggested_fix": "Honor ctx: perform the write in a helper goroutine and select on ctx.Done(), closing stdin to unblock on cancel; or correct the handler.go/LaunchSpec comments to state the write is NOT ctx-bounded."
+    },
+    {
+      "file": "internal/handlercontract/orphancheck_hc044a.go",
+      "line": 155,
+      "severity": "high",
+      "category": "test-theater",
+      "title": "HC-044a pidfile/orphan machinery has no production caller (contract unwired)",
+      "detail": "CheckOrphanHeldWorkspace, WriteWorkerPidfileAtomic, and RemoveWorkerPidfile have zero non-test callers across internal/ and cmd/ (only *_test.go references). The real orphan handling is the daemon 'orphan sweep' (RunOrphanSweep) referenced from internal/handler/session.go — a completely different mechanism. The doc says 'Before Launch returns a Session, the daemon MUST call this function', but Launch/session.go never does. The HC-044a MUST is not enforced, and the pidfile-vs-sweep divergence is undetectable except by the helper's own sensor tests.",
+      "suggested_fix": "Either wire CheckOrphanHeldWorkspace into the Launch path as the contract states, or delete the pidfile helpers and re-point HC-044a at the actual orphan-sweep implementation so spec matches reality."
+    },
+    {
+      "file": "internal/handlercontract/provisioningretry_hc048a.go",
+      "line": 59,
+      "severity": "high",
+      "category": "test-theater",
+      "title": "RetryProvisionWithBackoff (HC-048a) unused; adapters implement backoff independently",
+      "detail": "RetryProvisionWithBackoff has no non-test caller. The actual provisioning/backoff behavior lives in internal/handler/adapter_claudecode.go and adapter_pi.go and does not route through this helper. The HC-048a base=1s/cap=16s/maxAttempts=4 discipline is asserted here but not enforced where provisioning actually happens, so the two can silently diverge.",
+      "suggested_fix": "Route the adapters' provisioning through this helper, or move HC-048a's normative backoff constants to the shared location the adapters read."
+    },
+    {
+      "file": "internal/daemon/sessioncontext_chb023.go",
+      "line": 373,
+      "severity": "medium",
+      "category": "spec-drift",
+      "title": "Version negotiation hardcodes selected_version:1, ignores handler SupportedVersions and HandlerCapabilitiesTimeout",
+      "detail": "versionnego_hc009.go is normative: the daemon MUST select max(intersection(daemon.supported, handler.supported)), MUST return ErrProtocolMismatch on empty intersection (incl. nil/empty SupportedVersions), and MUST abort with ErrProtocolMismatch if handler_capabilities is absent within HandlerCapabilitiesTimeout (5s). The implementation hardcodes selected_version:1 and never reads msg.SupportedVersions; the interceptor only extracts claude_session_id. HandlerCapabilitiesTimeout has zero production references so no timeout is enforced. Failure: a handler advertising SupportedVersions:[2] (or []) is still told version 1; a handler that never emits handler_capabilities hangs forever instead of aborting at 5s.",
+      "suggested_fix": "Decode SupportedVersions, compute the intersection, return ErrProtocolMismatch on empty, and wrap the capabilities read in a HandlerCapabilitiesTimeout deadline. (Line is approximate — locate the hardcoded version_selected emit.)"
+    },
+    {
+      "file": "internal/handlercontract/turnboundary_hc013a.go",
+      "line": 133,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "ScheduleRotateAccount TOCTOU — RotateAccount can fire during a new in-flight turn",
+      "detail": "When inFlight is true, the method waits on the snapshot boundary channel for exactly ONE MarkTurnCompleted, then calls adapter.RotateAccount (line 147) without re-checking inFlight or holding a lock. Between the boundary signal and the RotateAccount call, a concurrent MarkTurnStarted can set inFlight=true again, so RotateAccount runs while a turn is in-flight — exactly what HC-013a forbids. Compounded by the helper having no production caller, so the real rotate path in the adapters is not constrained by this guard at all.",
+      "suggested_fix": "Re-acquire the lock after the boundary wait and hold it (or a rotation-in-progress flag that blocks MarkTurnStarted) across the RotateAccount call."
+    },
+    {
+      "file": "internal/handlercontract/orphancheck_hc044a.go",
+      "line": 208,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "PID recycling not detected — false orphan -> spurious ErrStructural",
+      "detail": "Liveness is probed only via syscall.Kill(pid,0). If the OS recycled the recorded PID to an unrelated live process, the check returns Held=true and Launch fails with ErrStructural(workspace_held_by_orphan) against an innocent process. OrphanCheckResult.Stale's doc (line 150) claims it covers 'PID not live or recycled', but there is no start-time/identity/run_id cross-check; the RunID in the pidfile is read but never compared. The comment promises a guarantee the code does not provide.",
+      "suggested_fix": "Compare process start-time / /proc identity (or at least verify the live process is a handler subprocess) before declaring Held=true; or downgrade the Stale doc comment to state recycling is NOT detected."
+    },
+    {
+      "file": "internal/handler/handler.go",
+      "line": 256,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "stdout bridge goroutine + OS pipe leak if watcher stops reading without closing the pipe",
+      "detail": "NewSession bridges stdoutR through an io.Pipe with io.Copy(stdoutPW, stdoutR) in a goroutine (session.go around line 256). io.Pipe writes block until the reader consumes. If the consumer (SpawnWatcher read loop / StdoutWrapper) stops reading before EOF and does not close its end (e.g. watcher exits on its own ctx cancel), io.Copy blocks forever on Write, the goroutine leaks, stdoutR (a real OS fd) is never Closed, and the subprocess can itself block writing stdout.",
+      "suggested_fix": "Give the bridge a teardown path — close stdoutR when the session is reaped, or invoke CloseWithError on the pipe when the watcher is torn down."
+    },
+    {
+      "file": "internal/handlercontract/handler_hc001.go",
+      "line": 73,
+      "severity": "medium",
+      "category": "spec-drift",
+      "title": "HC-004 Launch idempotency unimplemented; LaunchKey is dead code",
+      "detail": "The contract Handler interface (HC-001) declares Launch MUST be idempotent on LaunchKey(spec): a second call with the same key MUST return the existing Session without spawning. No production type implements this interface, and LaunchKey has no non-test caller. The real launcher internal/handler.Handler.Launch (handler.go:236) has a different signature, mints a fresh UUID SessionID on every call, and unconditionally spawns — no idempotency map keyed on (run_id,node_id) anywhere. Failure: daemon restarts mid-run and re-dispatches the same (run_id,node_id) -> a second subprocess is spawned for the same node -> duplicate work / double budget accrual, exactly what HC-004 exists to prevent.",
+      "suggested_fix": "Either implement launch-key idempotency in the real handler.Launch or re-point HC-004/LaunchKey at whatever layer actually dedupes dispatches (daemon), so the contract is enforced where it matters."
+    },
+    {
+      "file": "internal/handlercontract/schemachecker_hc033.go",
+      "line": 61,
+      "severity": "low",
+      "category": "test-theater",
+      "title": "CheckPayloadSchema (HC-033 startup secret-leak guard) has no production caller",
+      "detail": "HC-033 requires the event-schema registry to call CheckPayloadSchema at daemon startup ('Callers at daemon startup MUST treat a non-nil return as a fatal error'). It has no non-test caller, so no registered event payload is actually scanned for redaction-prefix field names at startup — the secret-leak guard is not wired into daemon init.",
+      "suggested_fix": "Invoke CheckPayloadSchema over every registered event payload prototype during daemon/event-registry init, or document why the guard is intentionally test-only."
+    },
+    {
+      "file": "internal/handlercontract/provisioningretry_hc048a.go",
+      "line": 97,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "Any non-structural error is retried, not only ErrTransient",
+      "detail": "The doc (step 3) says 'If the error wraps ErrTransient: apply backoff and retry'. The code retries every error that is NOT structural: after the isStructuralProvisioningError check (line 93) it unconditionally enters the backoff path. An unclassified error (wrapping neither ErrTransient nor ErrStructural) is retried MaxAttempts times then reclassified to ErrSkillProvisioningFailed instead of being surfaced immediately.",
+      "suggested_fix": "Explicitly test errors.Is(err, ErrTransient) before entering the backoff path; treat unclassified errors per the spec's intended default."
+    },
+    {
+      "file": "internal/handlercontract/mutexdiscipline_hc015.go",
+      "line": 40,
+      "severity": "low",
+      "category": "test-theater",
+      "title": "RunLock (HC-015 discipline) is an unused wrapper over sync.RWMutex",
+      "detail": "RunLock has no non-test caller and is a thin pass-through around sync.RWMutex whose methods add no enforcement — the HC-015 rules it documents (release before publish, no lock across adapter call) are prose with no runtime check. The daemon's real per-run locking does not go through this type, so the discipline is unverified where it matters.",
+      "suggested_fix": "Delete RunLock (use sync.RWMutex directly) or add real enforcement (an adapter-call guard that panics if the lock is held) and wire the daemon's per-run state through it."
+    },
+    {
+      "file": "internal/handlercontract/watcher_hc011.go",
+      "line": 391,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "ctx cancellation only observed between scans, not during a blocked Scan",
+      "detail": "readLoop checks ctx.Done() in a non-blocking select before each scanner.Scan() (lines 393-399); Scan then blocks on Read. On the direct-exec path this is masked because exec.CommandContext kills the process and closes the pipe on cancel. But on the substrate path (Stdout from a custom SubstrateSession reader) or any reader not tied to ctx, a silent subprocess leaves Scan blocked and cancellation is never honored within CancelGoSideBound (500ms, HC-018). Failure: operator stops a substrate-hosted session whose reader does not close on cancel -> watcher goroutine stays blocked in Scan indefinitely.",
+      "suggested_fix": "Ensure the reader is closed on ctx cancel (wrap it so ctx.Done triggers Close), so the blocked Scan returns and the loop honors the 500ms bound."
+    },
+    {
+      "file": "internal/handlercontract/watcher_hc011.go",
+      "line": 405,
+      "severity": "low",
+      "category": "correctness",
+      "title": "lastReadEventAt advances per-Scan (per-line), not per-Read — coarser than HC-011a liveness contract",
+      "detail": "HC-011a and the Watcher doc state LastReadEventAt updates 'on every successful io.Reader.Read return' and is distinct from per-message decode. The code updates it after bufio.Scanner.Scan() returns (line 405), which only completes when a full NDJSON line arrives; the inline comment admits the approximation. A subprocess trickling a single very long line (many Read returns, no newline yet) advances the underlying Read but not Scan, so lastReadEventAt stagnates. Failure: handler emits a large single output_chunk line slowly over >T/2 -> supervisor sees no LastReadEventAt advance -> misclassifies a live watcher as wedged and kills a healthy session.",
+      "suggested_fix": "Update lastReadEventAt at the io.Reader.Read boundary (wrap the reader) rather than after Scan."
+    },
+    {
+      "file": "internal/handlercontract/sessionlogloc_hc010.go",
+      "line": 77,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "SessionLogLocationTimeout declared but not enforced by the watcher",
+      "detail": "The contract states the watcher MUST abort with ErrStructural if session_log_location is not received within SessionLogLocationTimeout (10s) after version negotiation. The constant has no production reference and the watcher readLoop applies no per-message deadline. Failure: handler negotiates version then hangs before emitting session_log_location -> the watcher waits forever (until EOF/ctx) instead of aborting at 10s.",
+      "suggested_fix": "Add a per-message deadline for session_log_location after negotiation and abort with ErrStructural on breach, or remove the unused constant if the guarantee is dropped."
+    },
+    {
+      "file": "internal/handlercontract/cancelbounds.go",
+      "line": 11,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "HC-018 cancellation bounds declared but never enforced",
+      "detail": "CancelGoSideBound (500ms) and CancelSubprocessBound (5s) are the normative HC-018 cancellation deadlines, but both constants have zero non-test references. No code measures Go-side return latency against 500ms or subprocess-cleanup latency against 5s, nor escalates to hard termination on breach. Failure: a handler's CleanExitSequence blocks 30s on cancel; nothing detects the CancelSubprocessBound breach or escalates, so a stuck subprocess lingers past the 5s ceiling the spec guarantees.",
+      "suggested_fix": "Wire the bounds into the actual cancel path (measure + escalate to SIGKILL on breach), or drop the unused constants."
+    },
+    {
+      "file": "internal/handlercontract/workqueue.go",
+      "line": 48,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "Unreachable invariant panic in NewWorkQueueSet; helper unused in production",
+      "detail": "The post-construction loop (lines 49-53) iterates the same roles slice used to populate queues two lines earlier and panics if any role is missing — since the map was just filled from that identical slice, the guard can never fire (dead defensive code presented as an HC-016 invariant). Additionally NewWorkQueueSet/WorkQueueSet/Queue/Roles have no non-test caller, so HC-016's 'one queue per role' is unenforced in production.",
+      "suggested_fix": "Delete the redundant loop; if guarding against AllActorRoles() duplicates, check for that specific condition instead."
+    },
+    {
+      "file": "internal/handlercontract/sessionid.go",
+      "line": 19,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "NewSessionID mints UUIDv4 but WM-018/harness docs say UUIDv7",
+      "detail": "NewSessionID uses uuid.New() (UUIDv4) and its comment says 'UUIDv4 string'. But claudesession_wm018.go:16 states the session_id is 'UUIDv7 (minted by the handler watcher)' and harness.go:43 describes SessionIDMinted as 'a caller-minted UUIDv7'. The version claim is inconsistent across the contract; any consumer relying on v7 time-ordering would be broken.",
+      "suggested_fix": "Pick one: switch to uuid.NewV7() (matching the WM-018/harness docs, gaining time-ordering) or correct the UUIDv7 references to UUIDv4."
+    },
+    {
+      "file": "internal/handler/claudehandler_chb006_024.go",
+      "line": 696,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "Claude transcript-path slug conversion incomplete vs Claude's real slug rule",
+      "detail": "The slug replaces only '/' and ' ' with '-' and trims a leading '-'. Claude Code's real project-slug convention also normalizes other characters (notably '.' and '_') to '-'. A workspace path containing '.' (e.g. a worktree under /repo/.harmonik/wt) produces a slug that does not match Claude's on-disk directory, so the session_log_location LogPath reported via CHB-018 points at a non-existent transcript file. Impact limited to observability/log-location, hence low.",
+      "suggested_fix": "Mirror Claude Code's full slug normalization (replace '.' and '_' too, or reuse a canonical slug helper) and add a fixture test against a real transcript path."
+    },
+    {
+      "file": "internal/handler/handler.go",
+      "line": 205,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "handler.registry is required (panics if nil) but never consulted",
+      "detail": "NewHandler panics when registry is nil (line 212-214) and stores it, but the field is 'a latent seam ... not consulted at MVH'. Launch never uses h.registry for adapter selection. A required-but-unused dependency that panics on nil forces every construction site to thread a live AdapterRegistry for no runtime effect and hides whether adapter selection is actually wired.",
+      "suggested_fix": "Consume the registry in Launch (adapter selection) or drop the nil-panic to a soft/optional dependency until the seam is live."
+    },
+    {
+      "file": "internal/handlercontract/orphancheck_hc044a.go",
+      "line": 160,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Detection-algorithm doc references a nonexistent parameter name",
+      "detail": "The algorithm comment (steps 4-5) refers to ownedByDaemon(pid), but the function parameter is ownedByCurrentGen map[int]bool and the code indexes it directly (line 221). The ownedByDaemon naming will mislead a maintainer looking for that helper.",
+      "suggested_fix": "Rename the doc references to ownedByCurrentGen to match the parameter."
+    },
+    {
+      "file": "internal/handler/claudehandler_chb006_024.go",
+      "line": 685,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Exported function name typo: DeriveCIaudeTranscriptPath (capital-I 'CIaude')",
+      "detail": "The exported identifier reads 'CIaude' (capital I) instead of 'Claude'. It is part of the package's public surface, so callers must reproduce the typo, and it defeats grep-for-Claude.",
+      "suggested_fix": "Rename to DeriveClaudeTranscriptPath and update call sites."
+    },
+    {
+      "file": "internal/handlercontract/watcher_hc011.go",
+      "line": 684,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "isLineTooLong uses == instead of errors.Is",
+      "detail": "isLineTooLong compares err == bufio.ErrTooLong. bufio.Scanner.Err() returns the sentinel unwrapped today so this works, but == is brittle against any future wrapping; a wrapped ErrTooLong would be misclassified as a generic structural error (PartialMessageSubReason instead of NDJSONLineTooLongSubReason).",
+      "suggested_fix": "Use errors.Is(err, bufio.ErrTooLong)."
+    },
+    {
+      "file": "internal/handler/substrate.go",
+      "line": 187,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "substrateSessionAdapter.CloseStdin discards caller context (uses context.Background())",
+      "detail": "CloseStdin routes to ip.CloseInput(context.Background()), ignoring any deadline/cancellation the caller might expect to bound end-of-input signalling. The Session.CloseStdin interface takes no ctx so this is not a contract violation, but a structured InputPort whose CloseInput blocks would be unbounded here.",
+      "suggested_fix": "Thread a bounded context if CloseInput can block, or document that CloseStdin is fire-and-forget with no cancellation."
+    }
+  ]
+}

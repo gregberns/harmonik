@@ -23,7 +23,7 @@ Work progresses through a fixed stage sequence: problem-space, decompose, resear
 Jigs define the passes an agent makes over a piece of work. Built-in jigs: plan, spec, bug, implementation, spike, retrofit. Each jig prescribes what the agent does at each pass, what artifacts it produces, and what checks must pass before advancing. Custom jigs are supported for project-specific workflows.
 
 ### Work Management
-Works have codenames, statuses, and sessions. They live on a bench (~/.kerf/) outside of git until finalization. This keeps speculative and in-progress planning out of the repository until it reaches a publishable state.
+Works have codenames, statuses, and sessions. Where they live depends on the project's storage mode. In **bench mode** they sit on a bench (`~/.kerf/`) outside of git until finalization, keeping speculative planning out of the repository. **This project runs in local mode** (`.kerf/config.yaml` has `storage: local`): works live in the repo at `.kerf/works/{codename}/`, the bench path is a symlink to them, and they are tracked and committed like any other file.
 
 ### Multi-Agent Coordination via Agent-Mail
 The orchestrator registers with Agent Mail, spawns workers via NTM, sends beads (task units) per worker, and polls for completion. This is kerf's native multi-agent dispatch model.
@@ -41,7 +41,7 @@ Works can declare dependencies on other works, including cross-project dependenc
 Structural verification that work matches jig expectations. Square checks validate artifacts, stage completeness, and structural correctness without requiring LLM judgment.
 
 ### Finalization to Git
-Moves specs from the bench into the repository with pre-flight checks. This is the publish gate -- work is not visible to other agents or humans until it passes finalization.
+Moves specs from the works directory (bench or local) into `specs/` with pre-flight checks. This is the publish gate -- a spec is not normative until it passes finalization.
 
 ## Integration Points for Harmonik
 
@@ -57,7 +57,7 @@ Kerf is the **planning and specification layer**. Its role in the system:
 
 - **No runtime replanning**: Once beads are dispatched, the plan is fixed. If implementation reveals the spec was wrong, there is no built-in mechanism to revise the plan mid-execution.
 - **Single-orchestrator model**: The current agent-mail integration assumes one orchestrator coordinating workers. Nested or hierarchical orchestration is not yet supported.
-- **Bench is local**: The ~/.kerf/ bench is machine-local. Multi-machine planning requires manual coordination or external sync.
+- **Bench is machine-local (bench-mode projects only)**: The `~/.kerf/` bench is machine-local, so multi-machine planning requires manual coordination or external sync. This project runs in local mode, where works live in the repo and sync through normal git — the limitation does not apply here.
 
 ## Open Questions
 

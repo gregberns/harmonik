@@ -235,7 +235,7 @@ When writing or moving planning artifacts, choose the home by time horizon:
 | Weeks / durable guardrails | `.harmonik/context/project.yaml` | Phase, locked decisions, forbidden actions, durable project guardrails. |
 | Months / milestone history | `ROADMAP.md` | Long-horizon progress, completed campaigns, milestone narrative. |
 | Normative behavior | `specs/` | Requirements the code must satisfy; specs override plans and docs. |
-| Kerf work-in-progress | Global kerf bench path printed by `kerf show` | Problem, research, design, task, and review pass artifacts before finalize. |
+| Kerf work-in-progress | `.kerf/works/{codename}/` — this project runs kerf in local mode (`.kerf/config.yaml` has `storage: local`), and the bench path printed by `kerf show` is a symlink to the same files | Problem, research, design, task, and review pass artifacts before finalize. These live in the repo, so they must be **committed** like any other file. Do NOT run `kerf localize`. |
 
 Do not use AGENTS.md or this skill as operational state. They are routing and behavioral contracts.
 

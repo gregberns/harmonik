@@ -88,6 +88,13 @@ func registerRunLifecycle() {
 	// last child closes. Durability class: O (ordinary — observational).
 	mustRegister("epic_completed", func() EventPayload { return &EpicCompletedPayload{} })
 	mustRegister("working_tree_refresh_failed", func() EventPayload { return &WorkingTreeRefreshFailedPayload{} })
+	// working_tree_local_edits_overwritten (hk-7qmpp): emitted when the EM-054
+	// post-merge refresh overwrites an uncommitted local edit on a path the
+	// merged commit itself changed. Names the paths and the recovery patch so
+	// the overwrite is never silent. Durability class: O.
+	mustRegister("working_tree_local_edits_overwritten", func() EventPayload {
+		return &WorkingTreeLocalEditsOverwrittenPayload{}
+	})
 	// implementer_escaped_worktree (hk-6zylj): emitted by the daemon workloop
 	// when, after the implementer exits, the MAIN repo's working tree contains
 	// dirty files outside the .harmonik/.claude/.beads churn allowlist —

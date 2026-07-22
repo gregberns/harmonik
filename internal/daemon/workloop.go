@@ -6649,7 +6649,8 @@ func mergeRunBranchToMain(ctx context.Context, submit mergeSubmit, projectDir st
 		pushOut, pushErr := gitPushOrigin(ctx, projectDir, targetBranch)
 		if pushErr == nil {
 			// Phase C (INSIDE the domain): refresh the project working tree
-			// (index restore + reset --hard, RSM-016/¶1) and reconcile the ledger.
+			// (scoped to the merged commit's own paths, RSM-016/¶1, EM-054 as
+			// amended by hk-7qmpp) and reconcile the ledger.
 			if submitErr := submit(ctx, "commit-merge", func(qctx context.Context) error {
 				commitFinalizeWorkingTree(qctx, projectDir, runID, bus, beadID, adv.priorMainTip, runTip, brPath)
 				return nil
@@ -6987,23 +6988,32 @@ func commitHandlePushFailure(ctx context.Context, projectDir, targetBranch, prio
 // push (EM-054) and reconciles the bead ledger (BL-MRG-004/005). All steps are
 // best-effort / non-fatal — the merge is already durable.
 func commitFinalizeWorkingTree(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, mainTip, runTip, brPath string) {
-	// Step 5a: restore the staged index (best-effort / non-fatal).
-	restoreCmd := exec.CommandContext(ctx, "git", "restore", "--staged", ".")
-	restoreCmd.Dir = projectDir
-	if out, restoreErr := restoreCmd.CombinedOutput(); restoreErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: git restore --staged failed (bead %s run %s): %v\n%s",
-			beadID, runID.String(), restoreErr, out)
-	}
-
-	// Step 5b: git reset --hard HEAD re-syncs the index + working tree. On failure
-	// the merge is already durable: warn, emit working_tree_refresh_failed, and
-	// still report success.
-	resetCmd := exec.CommandContext(ctx, "git", "reset", "--hard", "HEAD")
-	resetCmd.Dir = projectDir
-	if out, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: git reset --hard HEAD failed (bead %s run %s): %v\n%s",
-			beadID, runID.String(), resetErr, out)
-		emitWorkingTreeRefreshFailed(ctx, bus, runID, beadID, resetErr)
+	// Step 5: refresh the working tree, SCOPED to the paths the merged commit
+	// itself changed (hk-7qmpp).
+	//
+	// This step used to be a tree-wide `git restore --staged .` + `git reset
+	// --hard HEAD`. That is strictly stronger than EM-054 needs, and on
+	// 2026-07-22 it silently destroyed uncommitted fleet state in the main root
+	// on every merge. The interaction that made it invisible: the pre-merge
+	// escape check (checkMainWorkingTreeDirty) FAILS a run when main is dirty,
+	// but its churn allowlist deliberately exempts `.harmonik/` and `.claude/` —
+	// exactly where agent and fleet state live. So the one region waved through
+	// as expected churn was the one region the refresh then deleted.
+	//
+	// Scoping the refresh to the merge's own paths satisfies EM-054's obligation
+	// ("the merged commit's files match HEAD") and cannot touch anything the
+	// merge did not write.
+	paths, pathsErr := mergedCommitPaths(ctx, projectDir, mainTip, runTip)
+	if pathsErr != nil {
+		// Without the path list there is no safe refresh: a tree-wide reset is
+		// the destructive behaviour this change exists to remove. Skip it. The
+		// merged paths stay stale, which surfaces LOUDLY (as dirt the next
+		// escape check reports) rather than by deleting someone's work.
+		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: cannot scope working-tree refresh, skipping it (bead %s run %s): %v\n",
+			beadID, runID.String(), pathsErr)
+		emitWorkingTreeRefreshFailed(ctx, bus, runID, beadID, pathsErr)
+	} else if len(paths) > 0 {
+		refreshMergedPaths(ctx, projectDir, runID, bus, beadID, mainTip, paths)
 	}
 
 	// BL-MRG-004/005: reconcile the bead ledger when the merge touched
@@ -7011,13 +7021,7 @@ func commitFinalizeWorkingTree(ctx context.Context, projectDir string, runID cor
 	if brPath == "" {
 		return
 	}
-	diffCmd := exec.CommandContext(ctx, "git", "diff", "--name-only", mainTip, runTip)
-	diffCmd.Dir = projectDir
-	diffOut, diffErr := diffCmd.Output()
-	if diffErr != nil {
-		return
-	}
-	for _, p := range strings.Split(strings.TrimRight(string(diffOut), "\n"), "\n") {
+	for _, p := range paths {
 		if p == ".beads/issues.jsonl" {
 			syncCmd := exec.CommandContext(ctx, brPath, "sync", "--import-only")
 			syncCmd.Dir = projectDir
@@ -7027,6 +7031,115 @@ func commitFinalizeWorkingTree(ctx context.Context, projectDir string, runID cor
 			return
 		}
 	}
+}
+
+// mergedCommitPaths returns the repo-relative paths the merged commit changed
+// between mainTip and runTip — the exact set EM-054's refresh is responsible
+// for, and the same set the BL-MRG-004/005 bead-ledger reconciliation checks.
+//
+// Bead: hk-7qmpp.
+func mergedCommitPaths(ctx context.Context, projectDir, mainTip, runTip string) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", mainTip, runTip)
+	cmd.Dir = projectDir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only %s %s: %w", mainTip, runTip, err)
+	}
+	var paths []string
+	for _, p := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// refreshMergedPaths re-syncs index + working tree for exactly the merged
+// commit's own paths, and names any uncommitted local edits it overwrites.
+//
+// A merged path may itself carry an uncommitted local edit. The merged commit
+// is authoritative for its own paths, so the refresh proceeds — but it MUST NOT
+// be silent: the edits are written to a recovery patch first ("park it before
+// you delete it") and the paths are named in a
+// working_tree_local_edits_overwritten event.
+//
+// Local edits are detected against mainTip, NOT against HEAD: the ref has
+// already advanced (Phase A), so every merged path reads as modified relative
+// to HEAD whether or not anyone touched it. Diffing against the pre-merge tip
+// separates a real local edit from that phantom staleness.
+//
+// All steps are best-effort / non-fatal — the merge is already durable.
+//
+// Spec ref: specs/execution-model.md §4.12 EM-054. Bead: hk-7qmpp, hk-4goy3.
+func refreshMergedPaths(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, mainTip string, paths []string) {
+	overwritten := locallyEditedPaths(ctx, projectDir, mainTip, paths)
+	if len(overwritten) > 0 {
+		patchPath := writeRecoveryPatch(ctx, projectDir, runID, mainTip, overwritten)
+		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: post-merge refresh overwrote %d uncommitted local edit(s) in main (bead %s run %s): %s; recovery patch: %s\n",
+			len(overwritten), beadID, runID.String(), strings.Join(overwritten, ", "), patchPath)
+		emitWorkingTreeLocalEditsOverwritten(ctx, bus, runID, beadID, projectDir, overwritten, patchPath)
+	}
+
+	// `git restore --source=HEAD --staged --worktree` re-syncs index AND working
+	// tree for the given pathspec, and correctly REMOVES paths the merged commit
+	// deleted. Pathspecs arrive on stdin so a large merge cannot overflow ARG_MAX.
+	restoreCmd := exec.CommandContext(ctx, "git", "restore", "--source=HEAD", "--staged", "--worktree", "--pathspec-from-file=-")
+	restoreCmd.Dir = projectDir
+	restoreCmd.Stdin = strings.NewReader(strings.Join(paths, "\n") + "\n")
+	if out, restoreErr := restoreCmd.CombinedOutput(); restoreErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: scoped working-tree refresh failed (bead %s run %s): %v\n%s",
+			beadID, runID.String(), restoreErr, out)
+		emitWorkingTreeRefreshFailed(ctx, bus, runID, beadID, restoreErr)
+	}
+}
+
+// locallyEditedPaths returns the subset of paths whose working-tree content
+// deviates from mainTip — i.e. genuine uncommitted local edits, as opposed to
+// the phantom staleness every merged path shows against the already-advanced
+// HEAD. Returns nil on error: the refresh must not be blocked by a failed
+// diagnostic.
+//
+// Bead: hk-7qmpp.
+func locallyEditedPaths(ctx context.Context, projectDir, mainTip string, paths []string) []string {
+	args := append([]string{"diff", "--name-only", mainTip, "--"}, paths...)
+	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // G204: fixed git binary; args are a git SHA and repo-relative paths from git itself
+	cmd.Dir = projectDir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var edited []string
+	for _, p := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if p != "" {
+			edited = append(edited, p)
+		}
+	}
+	return edited
+}
+
+// writeRecoveryPatch saves the about-to-be-overwritten local edits as a patch
+// under .harmonik/recovery/ and returns its path, or "" if it could not be
+// written. Untracked and outside the merged paths, so neither the refresh nor a
+// future one can eat it.
+//
+// Bead: hk-7qmpp.
+func writeRecoveryPatch(ctx context.Context, projectDir string, runID core.RunID, mainTip string, paths []string) string {
+	dir := filepath.Join(projectDir, ".harmonik", "recovery")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	args := append([]string{"diff", mainTip, "--"}, paths...)
+	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // G204: fixed git binary; args are a git SHA and repo-relative paths from git itself
+	cmd.Dir = projectDir
+	patch, err := cmd.Output()
+	if err != nil || len(patch) == 0 {
+		return ""
+	}
+	dest := filepath.Join(dir, "worktree-refresh-"+runID.String()+".patch")
+	if err := os.WriteFile(dest, patch, 0o644); err != nil { //nolint:gosec // G306: a recovery patch is operator-readable by design
+		return ""
+	}
+	return dest
 }
 
 // gitUpdateRefBestEffort advances refs/heads/<branch> to sha in dir, logging on
@@ -7364,6 +7477,30 @@ func emitWorkingTreeRefreshFailed(ctx context.Context, bus handlercontract.Event
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeRefreshFailed, b)
+}
+
+// emitWorkingTreeLocalEditsOverwritten emits a
+// working_tree_local_edits_overwritten event naming the uncommitted local edits
+// the post-merge refresh overwrote, and where to recover them from.
+//
+// Informational: the merge is already durable and the overwrite is intended
+// (the merged commit owns its own paths). The event exists so the overwrite is
+// never silent — the 2026-07-22 incident was silence, not refresh.
+//
+// Spec ref: specs/execution-model.md §4.12 EM-054. Bead: hk-7qmpp.
+func emitWorkingTreeLocalEditsOverwritten(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, mainPath string, paths []string, recoveryPatch string) {
+	pl := core.WorkingTreeLocalEditsOverwrittenPayload{
+		RunID:         runID,
+		BeadID:        string(beadID),
+		MainPath:      mainPath,
+		Paths:         paths,
+		RecoveryPatch: recoveryPatch,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeLocalEditsOverwritten, b)
 }
 
 // isMergeBuildColdCacheError reports whether the go build/vet output matches

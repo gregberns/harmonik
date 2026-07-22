@@ -7098,7 +7098,8 @@ func locallyEditedPaths(ctx context.Context, projectDir, mainTip string, paths [
 // Bead: hk-7qmpp.
 func writeRecoveryPatch(ctx context.Context, projectDir string, runID core.RunID, mainTip string, paths []string) string {
 	dir := filepath.Join(projectDir, ".harmonik", "recovery")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// 0o700: this directory holds rescued uncommitted work; it is owner-only by intent.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return ""
 	}
 	args := append([]string{"diff", mainTip, "--"}, paths...)
@@ -7473,7 +7474,11 @@ func emitWorkingTreeLocalEditsOverwritten(ctx context.Context, bus handlercontra
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeLocalEditsOverwritten, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeLocalEditsOverwritten, b); emitErr != nil {
+		// The whole point of this event is that overwritten work is announced. If the
+		// emit fails silently, the recovery patch on disk is the only trace left.
+		slog.WarnContext(ctx, "emit working_tree_local_edits_overwritten failed", "run_id", runID, "err", emitErr)
+	}
 }
 
 // isMergeBuildColdCacheError reports whether the go build/vet output matches

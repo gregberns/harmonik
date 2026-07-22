@@ -71,7 +71,7 @@ const sp47CodexStream = `{"type":"thread.started","thread_id":"th_hk47u9z_one"}
 // revert. Driving the real closure is what makes the assertions below mean
 // anything.
 func sp47ProductionSpawnProof(em *sp47CollectingEmitter, runID core.RunID) func() {
-	return daemon.ExportedNewCapturedSpawnProof(em, runID)
+	return daemon.ExportedNewCapturedSpawnProof(context.Background(), em, runID)
 }
 
 // sp47CollectingEmitter records every envelope the production tap emits.

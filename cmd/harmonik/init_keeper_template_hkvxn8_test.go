@@ -47,13 +47,13 @@ import (
 func renderedInitConfig(t *testing.T) string {
 	t.Helper()
 	projectRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(projectRoot, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectRoot, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
 	if rc := writeConfigYAML(projectRoot, "main", "hk", false, io.Discard, io.Discard); rc != 0 {
 		t.Fatalf("writeConfigYAML returned %d, want 0", rc)
 	}
-	raw, err := os.ReadFile(filepath.Join(projectRoot, ".harmonik", "config.yaml"))
+	raw, err := os.ReadFile(filepath.Join(projectRoot, ".harmonik", "config.yaml")) //nolint:gosec // G304: path built from this test's own t.TempDir()
 	if err != nil {
 		t.Fatalf("read generated config.yaml: %v", err)
 	}

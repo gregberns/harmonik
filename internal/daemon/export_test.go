@@ -3601,7 +3601,7 @@ func ExportedLoadQueueProvenance(ctx context.Context, projectDir string) (lifecy
 // restatement of it. A test that rebuilds the closure itself passes with the
 // production wiring reverted — verified, and it is how the first draft of the
 // hk-47u9z test was a false green.
-func ExportedNewCapturedSpawnProof(emitter handlercontract.EventEmitter, runID core.RunID) func() {
+func ExportedNewCapturedSpawnProof(ctx context.Context, emitter handlercontract.EventEmitter, runID core.RunID) func() {
 	tap, _ := newPerRunEventTap(emitter, runID)
-	return newCapturedSpawnProof(tap, runID)
+	return newCapturedSpawnProof(ctx, tap, runID)
 }

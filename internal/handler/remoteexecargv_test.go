@@ -98,7 +98,7 @@ func TestRemoteExecArgv_BinaryAfterPrefixBeforeArgs(t *testing.T) {
 			argIdx = i
 		}
 	}
-	if !(kvIdx < binIdx && binIdx < argIdx) {
+	if kvIdx >= binIdx || binIdx >= argIdx {
 		t.Fatalf("positions kv=%d binary=%d arg1=%d; want kv < binary < arg1 in %#v", kvIdx, binIdx, argIdx, argv)
 	}
 }

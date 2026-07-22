@@ -401,6 +401,58 @@ func trustConfigDecodeErr(err error) bool {
 // fresh per-attempt deadline; see trustWriteRetryBackoff's latency note.
 //
 // MUST be called with trustWriteMu held — it reads trustPostWriteHook.
+// readClaudeConfigMap reads and parses ~/.claude.json, treating "not there yet"
+// as an empty config but a malformed one as a hard error — rewriting a file we
+// could not parse would silently discard the operator's real config.
+func readClaudeConfigMap(cfgPath string) (map[string]interface{}, error) {
+	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: cfgPath is the user's own config file
+	switch {
+	case err == nil:
+		var cfg map[string]interface{}
+		if jsonErr := json.Unmarshal(data, &cfg); jsonErr != nil {
+			return nil, fmt.Errorf("workspace: EnsureWorktreeTrust: parse %s: %w", cfgPath, jsonErr)
+		}
+		if cfg == nil {
+			// A literal "null" body parses without error into a nil map.
+			cfg = make(map[string]interface{})
+		}
+		return cfg, nil
+	case os.IsNotExist(err):
+		return make(map[string]interface{}), nil
+	default:
+		return nil, fmt.Errorf("workspace: EnsureWorktreeTrust: read %s: %w", cfgPath, err)
+	}
+}
+
+// claudeProjectsMap returns cfg["projects"], creating and attaching it when
+// absent. A present-but-wrong-typed projects field is an error rather than
+// something to overwrite: it means this is not the file we think it is.
+func claudeProjectsMap(cfg map[string]interface{}) (map[string]interface{}, error) {
+	if raw, ok := cfg["projects"]; ok && raw != nil {
+		projects, ok := raw.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("workspace: EnsureWorktreeTrust: ~/.claude.json projects field has unexpected type %T", raw)
+		}
+		return projects, nil
+	}
+	projects := make(map[string]interface{})
+	cfg["projects"] = projects
+	return projects, nil
+}
+
+// claudeProjectEntry returns the per-project entry for worktreePath, falling
+// back to a fresh minimal entry when it is missing or has an unexpected shape.
+// Unlike the projects map, a malformed single entry is safe to replace — it
+// affects only this worktree's own record.
+func claudeProjectEntry(projects map[string]interface{}, worktreePath string) map[string]interface{} {
+	if raw, ok := projects[worktreePath]; ok && raw != nil {
+		if entry, ok := raw.(map[string]interface{}); ok {
+			return entry
+		}
+	}
+	return make(map[string]interface{})
+}
+
 func trustUpsertOnce(worktreePath, cfgPath string, lockTimeout time.Duration) error {
 	// Acquire the bounded exclusive flock on the sidecar lockfile (LOCK_EX|LOCK_NB
 	// + deadline) to guard against OTHER PROCESSES rewriting ~/.claude.json
@@ -420,43 +472,17 @@ func trustUpsertOnce(worktreePath, cfgPath string, lockTimeout time.Duration) er
 	// Lock is released automatically when lockFd is closed by the deferred call.
 
 	// Read existing config, or start from an empty map.
-	var cfg map[string]interface{}
-	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: cfgPath is the user's own config file
-	switch {
-	case err == nil:
-		if jsonErr := json.Unmarshal(data, &cfg); jsonErr != nil {
-			// Malformed ~/.claude.json: fail rather than silently corrupt.
-			return fmt.Errorf("workspace: EnsureWorktreeTrust: parse %s: %w", cfgPath, jsonErr)
-		}
-	case os.IsNotExist(err):
-		cfg = make(map[string]interface{})
-	default:
-		return fmt.Errorf("workspace: EnsureWorktreeTrust: read %s: %w", cfgPath, err)
+	cfg, err := readClaudeConfigMap(cfgPath)
+	if err != nil {
+		return err
 	}
 
-	// Navigate to cfg["projects"] map.
-	var projects map[string]interface{}
-	if raw, ok := cfg["projects"]; ok && raw != nil {
-		projects, ok = raw.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("workspace: EnsureWorktreeTrust: ~/.claude.json projects field has unexpected type %T", raw)
-		}
-	} else {
-		projects = make(map[string]interface{})
-		cfg["projects"] = projects
+	// Navigate to cfg["projects"] and the per-project entry for worktreePath.
+	projects, err := claudeProjectsMap(cfg)
+	if err != nil {
+		return err
 	}
-
-	// Upsert the per-project entry for worktreePath.
-	var projectEntry map[string]interface{}
-	if raw, ok := projects[worktreePath]; ok && raw != nil {
-		projectEntry, ok = raw.(map[string]interface{})
-		if !ok {
-			// Unexpected shape — replace with a minimal entry.
-			projectEntry = make(map[string]interface{})
-		}
-	} else {
-		projectEntry = make(map[string]interface{})
-	}
+	projectEntry := claudeProjectEntry(projects, worktreePath)
 
 	// Re-check under the lock: a cooperating writer may have trusted this path
 	// between our lock-free probe and acquiring the lock. If so, skip the rewrite —

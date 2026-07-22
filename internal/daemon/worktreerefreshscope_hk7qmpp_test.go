@@ -70,13 +70,14 @@ func wtScopeFixtureReadmeFactory(t *testing.T) func(ctx context.Context, project
 			cleanup()
 			return "", nil, fmt.Errorf("wtScopeFixtureReadmeFactory: WriteFile: %w", err2)
 		}
+		//nolint:gosec // G204: fixed argv; runID is a test-generated identifier, not external input
 		commitCmd := exec.CommandContext(ctx, "git", "commit", "-am", "feat: agent edits README",
 			"--trailer", "Harmonik-Run-ID: "+runID,
 		)
 		commitCmd.Dir = wtPath
 		if out, err2 := commitCmd.CombinedOutput(); err2 != nil {
 			cleanup()
-			return "", nil, fmt.Errorf("wtScopeFixtureReadmeFactory: git commit: %v\n%s", err2, out)
+			return "", nil, fmt.Errorf("wtScopeFixtureReadmeFactory: git commit: %w\n%s", err2, out)
 		}
 		return wtPath, cleanup, nil
 	}
@@ -107,7 +108,7 @@ func wtScopeFixtureRunMerge(t *testing.T, projectDir string, beadID core.BeadID,
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
-		daemon.ExportedRunWorkLoop(ctx, deps)
+		_ = daemon.ExportedRunWorkLoop(ctx, deps) //nolint:errcheck // loop exits on ctx cancel; the test asserts on emitted events, not this return
 	}()
 
 	select {
@@ -242,7 +243,7 @@ func TestWorkingTreeRefreshScope_NamesOverwrittenLocalEdits(t *testing.T) {
 	if len(pl.Paths) != 1 || pl.Paths[0] != "README" {
 		t.Errorf("payload.Paths = %v; want [README] — the event must name what it overwrote", pl.Paths)
 	}
-	if string(pl.BeadID) != string(beadID) {
+	if pl.BeadID != string(beadID) {
 		t.Errorf("payload.BeadID = %q; want %q", pl.BeadID, beadID)
 	}
 
@@ -250,7 +251,7 @@ func TestWorkingTreeRefreshScope_NamesOverwrittenLocalEdits(t *testing.T) {
 	if pl.RecoveryPatch == "" {
 		t.Fatal("payload.RecoveryPatch is empty; want a written patch — park it before you delete it")
 	}
-	patch, err := os.ReadFile(pl.RecoveryPatch) //nolint:gosec // G304: path comes from the event the daemon just emitted
+	patch, err := os.ReadFile(pl.RecoveryPatch)
 	if err != nil {
 		t.Fatalf("read recovery patch %q: %v", pl.RecoveryPatch, err)
 	}

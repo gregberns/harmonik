@@ -136,13 +136,13 @@ func TestSpawn_RemoteRunner_ForwardsEnvViaArgv_hkokqyx(t *testing.T) {
 
 	const remoteCwd = "/box-b/.harmonik/worktrees/run-okqyx/does-not-exist-locally"
 	const marker = "HK_REMOTE_MARKER=present"
-	const emptyCred = "HK_EMPTY_CRED="
+	const emptyDenyListOverride = "HK_EMPTY_DENYLIST_OVERRIDE="
 	binary := os.Args[0]
 	sess, err := sub.SpawnWindow(context.Background(), handler.SubstrateSpawn{
 		WindowName: "twin",
 		Argv:       []string{binary, "-test.run=NONE"},
 		Cwd:        remoteCwd,
-		Env:        append(os.Environ(), "CODEXDRIVER_TWIN=1", "CODEXDRIVER_TWIN_MODE=happy", marker, emptyCred),
+		Env:        append(os.Environ(), "CODEXDRIVER_TWIN=1", "CODEXDRIVER_TWIN_MODE=happy", marker, emptyDenyListOverride),
 	})
 	if err != nil {
 		t.Fatalf("SpawnWindow (remote runner, env-forward): %v", err)
@@ -165,8 +165,8 @@ func TestSpawn_RemoteRunner_ForwardsEnvViaArgv_hkokqyx(t *testing.T) {
 			markerIdx = i
 		case binary:
 			binaryIdx = i
-		case emptyCred:
-			t.Errorf("empty deny-list override %q was forwarded to the remote codex; it must be dropped (would clobber ambient credential) — hk-okqyx", emptyCred)
+		case emptyDenyListOverride:
+			t.Errorf("empty deny-list override %q was forwarded to the remote codex; it must be dropped (would clobber ambient credential) — hk-okqyx", emptyDenyListOverride)
 		}
 	}
 	if markerIdx < 0 {

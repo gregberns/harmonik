@@ -222,6 +222,11 @@ var compositionRootWirings = []wiringEntry{
 		callSite: "daemon.go:883",
 		wires:    "runWorkLoop(ctx, deps) → bead dispatch goroutine",
 	},
+	{
+		symbol:   "bs.keeperReviveWatcher",
+		callSite: "bootsocket.go:~269 (constructed), bootsocket.go:~145 (started with the socket listener)",
+		wires:    "NewKeeperReviveWatcher(crew.List + keeper flock probe + tmuxSubstrate re-arm) → crew keeper self-heal (hk-220lv)",
+	},
 }
 
 // logCompositionRoot writes one line per composition-root wiring to w when

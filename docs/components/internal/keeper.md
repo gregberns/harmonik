@@ -78,6 +78,8 @@ both crew (warn-only) and captain keepers.
 | `keeper.timings.clear_settle` | — | `3s` (`DefaultClearSettle`) | Cycler-only |
 | `keeper.timings.boot_grace` | `--boot-grace` | `5m` (`DefaultBootGracePeriod`) | Watcher/Cycler (young-session guard) |
 | `keeper.timings.max_boot_grace_total` | — | (derived; unset = no cap) | Cycler-only |
+| `keeper.timings.revive_scan_interval` | — | `60s` (compiled default; **absent = ON**) | Daemon keeper-revive sweep |
+| `keeper.timings.revive_grace` | — | `90s` (compiled default; **absent = ON**) | Daemon keeper-revive sweep |
 
 ### `cadence` (all Go duration strings)
 
@@ -101,6 +103,29 @@ both crew (warn-only) and captain keepers.
 | --- | --- | --- | --- |
 | `keeper.budgets.heartbeat_max_misses` | — | `12` (`DefaultMaxHeartbeatMisses`) | Watcher |
 | `keeper.budgets.max_handoff_timeouts` | — | `3` (`DefaultMaxHandoffTimeouts`) | Cycler-only (timeout escalation) |
+| `keeper.budgets.revive_max_attempts` | — | `3` (compiled default; **absent = ON**) | Daemon keeper-revive sweep |
+
+> **The keeper-revive sweep is DEFAULT ON (hk-220lv).** A crew keeper is launched
+> fire-and-forget as a tmux window, so when its process dies the exclusive flock on
+> `.harmonik/keeper/<agent>.lock` is dropped by the kernel *silently* — no event, no mtime change,
+> and the `.ctx` gauge (written by the status line, not by the watcher) stays green. A crew can
+> therefore run unmonitored for days. The daemon now sweeps every managed crew's flock every
+> `revive_scan_interval`; a flock that reads unheld continuously for `revive_grace` triggers a
+> keeper-window re-arm, up to `revive_max_attempts` per dead episode (the counter resets the moment
+> a live flock is seen again). Hitting the cap raises one `keeper-alert` comms message to the
+> operator. Unlike every other key in these tables, an **absent** revive key resolves to the
+> compiled default and the sweep **runs** — a safety net that is disabled-by-default is the exact
+> failure this closes. The only opt-out is an explicit `keeper.timings.revive_scan_interval: 0s`.
+>
+> Two operational details worth knowing. **A stale `keeper` window is killed, not reused.** If tmux
+> `remain-on-exit` leaves a dead keeper's window standing, the sweep kills it before spawning a
+> fresh keeper — the flock has already read unheld for the full grace window, so that window holds
+> no live watcher, and short-circuiting on its name would make the sweep report success forever
+> while spawning nothing. The kill costs the dead keeper's scrollback and is logged. **The daemon
+> says at boot whether the sweep is on.** A normal daemon log carries either
+> `keeper-revive: ACTIVE — probing …` or `keeper-revive: INACTIVE — <reason>`; the common INACTIVE
+> reason is a non-tmux substrate (`HARMONIK_SUBSTRATE=codexdriver`), which has no seam to spawn a
+> keeper window into.
 
 ### `self_service`
 

@@ -1089,6 +1089,16 @@ const (
 	// Durability class: O (ordinary — operator attention; crew is unmonitored).
 	// Refs: hk-qgfme.
 	EventTypeSessionKeeperWatcherDead EventType = "session_keeper_watcher_dead"
+
+	// EventTypeSessionKeeperWatcherRevived is the session_keeper_watcher_revived
+	// event type. Emitted by the daemon's periodic keeper-revive watcher after it
+	// re-arms a crew's keeper window because the watcher's exclusive flock had
+	// been unheld continuously for keeper.timings.revive_grace. It always follows
+	// a session_keeper_watcher_dead for the same agent in the same sweep: dead
+	// states the diagnosis, revived states the remediation that was attempted.
+	// Durability class: O (ordinary — operator attention; self-heal audit trail).
+	// Refs: hk-220lv.
+	EventTypeSessionKeeperWatcherRevived EventType = "session_keeper_watcher_revived"
 )
 
 // ---------------------------------------------------------------------------

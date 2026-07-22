@@ -237,6 +237,10 @@ func (bs *bootState) startBackgroundLoops(ctx context.Context, deps *workLoopDep
 	bs.quiesceArbiter.Start(ctx)
 	bs.crewIdleReaper.StartWatcher(ctx)
 	bs.branchReapWatcher.StartWatcher(ctx)
+	// NOTE (hk-220lv): the keeper-revive sweep is deliberately NOT started here.
+	// This function runs inside launchWorkLoop, which returns early when BrPath is
+	// unset; crews outlive bead dispatch, so the sweep starts with the socket
+	// listener in bindSocket instead.
 
 	// All 31 wiring points are established at this point; the audit log is a stable
 	// diff surface for catching silent drops between daemon versions.

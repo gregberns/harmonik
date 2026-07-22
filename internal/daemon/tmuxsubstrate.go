@@ -1723,7 +1723,7 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 	// lives in its own window it survives an agent-window respawn (invariant I1)
 	// and is torn down with the session on crew-stop. Best-effort: a failed keeper
 	// window does NOT fail the crew start — the agent is already live.
-	s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn)
+	_ = s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn) //nolint:errcheck // best-effort; a failed keeper window does not fail the crew start
 
 	paneID := outcome.PaneID
 	pidTarget := outcome.Handle
@@ -1873,11 +1873,14 @@ func crewKeeperWindowArgv(keeperBin, crewName, sessName, projectDir string) []st
 // executable (os.Executable, "harmonik" on failure), matching the CLI crew
 // keeper resolution.
 //
-// Best-effort: any failure (no project dir, NewWindowIn error) is logged and
-// returns without failing the crew start — the agent window is already live and
-// an operator can attach a keeper externally (the .managed marker still records
-// the crew as keeper-managed).
-func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, sessName string, spawn handler.SubstrateSpawn) {
+// Best-effort ON THE CREW-START PATH: any failure (no project dir, NewWindowIn
+// error) is logged and the crew start continues — the agent window is already
+// live and an operator can attach a keeper externally (the .managed marker still
+// records the crew as keeper-managed). The error is nonetheless RETURNED so the
+// keeper-revive watcher (keeperrevive.go, hk-220lv) can tell a re-arm that took
+// from one that did not, and withhold its session_keeper_watcher_revived event
+// accordingly. Crew-start callers deliberately discard it.
+func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, sessName string, spawn handler.SubstrateSpawn) error {
 	projectDir := spawn.Cwd
 	if projectDir == "" {
 		for _, kv := range spawn.Env {
@@ -1906,7 +1909,10 @@ func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, ses
 	if outcome.Err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: SpawnCrewSession: launch keeper window for crew %q (%s:%s): %v (non-fatal)\n",
 			crewName, sessName, tmux.WindowKeeper, outcome.Err)
+		return fmt.Errorf("launch keeper window for crew %q (%s:%s): %w",
+			crewName, sessName, tmux.WindowKeeper, outcome.Err)
 	}
+	return nil
 }
 
 // ensureCrewKeeperWindow checks whether a "keeper" window already exists in
@@ -1914,10 +1920,16 @@ func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, ses
 // SpawnCrewSession on a session-collision to re-arm a keeper-less surviving
 // crew (hk-u5tgh). Best-effort: if ListWindows fails, spawnCrewKeeperWindow is
 // attempted anyway (it logs its own failure as non-fatal).
+//
+// PRESENCE-BASED, deliberately: on the crew-start path the keeper window was
+// (re)created moments ago in a session that is being adopted, so a window named
+// "keeper" is good evidence of a live keeper and a duplicate spawn would only
+// collide. That reasoning does NOT hold on the revive path — see
+// ReArmCrewKeeperWindow, which is liveness-based and must not reuse this.
 func (s *tmuxSubstrate) ensureCrewKeeperWindow(ctx context.Context, crewName, sessName string, spawn handler.SubstrateSpawn) {
 	windows, listErr := s.adapter.ListWindows(ctx, sessName)
 	if listErr != nil {
-		s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn)
+		_ = s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn) //nolint:errcheck // best-effort; logged inside
 		return
 	}
 	for _, w := range windows {
@@ -1931,7 +1943,77 @@ func (s *tmuxSubstrate) ensureCrewKeeperWindow(ctx context.Context, crewName, se
 	fmt.Fprintf(os.Stderr,
 		"daemon: SpawnCrewSession: crew %q keeper window absent from existing session — re-arming\n",
 		crewName)
-	s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn)
+	_ = s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn) //nolint:errcheck // best-effort; logged inside
+}
+
+// ReArmCrewKeeperWindow is the crewKeeperReArmer seam consumed by the
+// keeper-revive watcher (keeperrevive.go, hk-220lv). It ALWAYS ends with a
+// freshly-spawned keeper process or a non-nil error — never with "a window by
+// that name already exists, so we are done".
+//
+// WHY IT KILLS THE EXISTING WINDOW RATHER THAN SHORT-CIRCUITING ON IT.
+// The watcher only calls this after the crew's keeper flock has read UNHELD for
+// a full grace window. A "keeper" window that still exists at that point does
+// not contain a live keeper: the process behind it exited (tmux `remain-on-exit`
+// keeps the corpse standing) or is wedged before AcquireLock. Two consequences:
+//
+//  1. Presence-based short-circuiting (ensureCrewKeeperWindow's rule) would make
+//     the sweep permanently ineffective for exactly this case — it would report
+//     a successful re-arm on every scan while spawning nothing, and the crew
+//     would stay unmonitored forever. That is the precise failure shape hk-220lv
+//     exists to eliminate, so it must not be reintroduced by the fix.
+//  2. NewWindowIn returns ErrWindowCollision for a duplicate window name, so
+//     killing the corpse is not merely preferable — it is REQUIRED for the fresh
+//     spawn to succeed at all.
+//
+// The cost is the dead keeper's scrollback. That is accepted: in the ordinary
+// case tmux has already removed the window (and the scrollback with it) when the
+// command exited, so the surviving-corpse case is the `remain-on-exit` minority;
+// and the kill is logged with the crew and session so the loss is recorded, not
+// silent. Restoring monitoring for a live crew outranks retaining diagnostics
+// for a keeper that is already dead.
+//
+// SESSION NAME. sessName comes from the caller (the watcher derives it from the
+// crew registry Handle) rather than from the canonical crewSessionName(crewName).
+// Deliberate: crewSessionName is the correct answer for where a NEW session
+// SHOULD be minted, but this call re-arms an EXISTING session, and the registry
+// Handle is the record of where the crew process actually lives. If a project
+// hash ever changed under a running crew, the Handle stays right and the
+// canonical name would send the keeper to a session the agent is not in.
+//
+// The argv is built by the shared agentlaunch.KeeperWindowArgv via
+// crewKeeperWindowArgv — this path assembles nothing itself.
+func (s *tmuxSubstrate) ReArmCrewKeeperWindow(ctx context.Context, crewName, sessName, projectDir string) error {
+	if sessName == "" {
+		return fmt.Errorf("re-arm keeper window for crew %q: empty tmux session name", crewName)
+	}
+
+	// A ListWindows failure is NOT swallowed here (unlike the crew-start path):
+	// a missing session (ErrNoSession) means the spawn cannot succeed either, and
+	// reporting a re-arm that did not happen is the bug being fixed.
+	windows, listErr := s.adapter.ListWindows(ctx, sessName)
+	if listErr != nil {
+		return fmt.Errorf("re-arm keeper window for crew %q: list windows in session %q: %w",
+			crewName, sessName, listErr)
+	}
+
+	for _, w := range windows {
+		if w != tmux.WindowKeeper {
+			continue
+		}
+		handle := tmux.WindowHandle(sessName + ":" + tmux.WindowKeeper)
+		fmt.Fprintf(os.Stderr,
+			"daemon: keeper-revive: crew %q has a STALE %q window in session %q (flock unheld — the keeper "+
+				"process is gone but the window survives); killing it before spawning a fresh keeper\n",
+			crewName, tmux.WindowKeeper, sessName)
+		if killErr := s.adapter.KillWindow(ctx, handle); killErr != nil {
+			return fmt.Errorf("re-arm keeper window for crew %q: kill stale window %q: %w",
+				crewName, handle, killErr)
+		}
+		break
+	}
+
+	return s.spawnCrewKeeperWindow(ctx, crewName, sessName, handler.SubstrateSpawn{Cwd: projectDir})
 }
 
 // existingCrewSession builds a tmuxSubstrateSession for a crew session that

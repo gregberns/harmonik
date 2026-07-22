@@ -518,6 +518,8 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_config_rejected", func() EventPayload { return &SessionKeeperConfigRejectedPayload{} })
 	// hk-qgfme: crew keeper watcher dead post-spawn — flock not acquired within flock_acquire_grace.
 	mustRegister("session_keeper_watcher_dead", func() EventPayload { return &SessionKeeperWatcherDeadPayload{} })
+	// hk-220lv: daemon keeper-revive watcher re-armed a crew keeper window after the flock stayed unheld past revive_grace.
+	mustRegister("session_keeper_watcher_revived", func() EventPayload { return &SessionKeeperWatcherRevivedPayload{} })
 	// hk-wqdc: live-pane recovery attempt after a cleared pane is detected.
 	mustRegister("session_keeper_live_pane_recover", func() EventPayload { return &SessionKeeperLivePaneRecoverPayload{} })
 	// hk-wqdc: ack timeout when keeper sent a clear but received no confirmation.

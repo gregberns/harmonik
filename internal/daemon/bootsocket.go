@@ -139,6 +139,17 @@ func (bs *bootState) bindSocket(ctx context.Context) error {
 	bs.buildPauseConcurrencyTuner(ctx, queueHandler)
 	commsSendHandler := bs.buildCommsAndCrewHandlers()
 	bs.startSocketListener(ctx, sockPath, queueHandler, commsSendHandler)
+
+	// hk-220lv: the keeper-revive sweep starts HERE, with the socket listener,
+	// rather than alongside the other background loops in startBackgroundLoops.
+	// Deliberate divergence from the sibling reapers: startBackgroundLoops runs
+	// inside launchWorkLoop, which returns early when BrPath is unset, whereas the
+	// socket listener — and therefore the crew-start op, and therefore crews and
+	// their keepers — is live whenever ProjectDir is set. Gating crew keeper
+	// self-heal on the BEAD-DISPATCH path would leave a br-less daemon hosting
+	// crews with no keeper protection at all: the same silently-inactive safety
+	// net this bead exists to remove.
+	bs.keeperReviveWatcher.StartWatcher(ctx)
 	return nil
 }
 
@@ -261,6 +272,35 @@ func (bs *bootState) buildCommsAndCrewHandlers() CommsSendHandler {
 			}
 			return tf.Manifest.Lifecycle.Persistent
 		},
+	})
+
+	// hk-220lv: keeper-revive watcher. The crew keeper watcher is launched
+	// fire-and-forget as a tmux window, so when its process dies the flock it held
+	// is dropped SILENTLY and the crew runs unmonitored indefinitely (43 h in the
+	// field case). This sweep re-probes the flock periodically and re-arms the
+	// keeper window. DEFAULT ON: absent config → compiled defaults; only an
+	// explicit `keeper.timings.revive_scan_interval: 0s` disables it. Started
+	// post-Seal in the work loop.
+	keeperCfg := cfg.ProjectCfg.Keeper
+	var keeperReArm func(ctx context.Context, crewName, session string) error
+	if reArmer, ok := cfg.Substrate.(crewKeeperReArmer); ok {
+		projectDir := cfg.ProjectDir
+		keeperReArm = func(ctx context.Context, crewName, session string) error {
+			return reArmer.ReArmCrewKeeperWindow(ctx, crewName, session, projectDir)
+		}
+	}
+	// keeperReArm stays nil on a non-tmux substrate (HARMONIK_SUBSTRATE=codexdriver).
+	// StartWatcher announces that INACTIVE state loudly at boot rather than going
+	// quietly dark — see KeeperReviveWatcher.inactiveReason.
+	bs.keeperReviveWatcher = NewKeeperReviveWatcher(KeeperReviveWatcherConfig{
+		ProjectDir:   cfg.ProjectDir,
+		Disabled:     KeeperReviveDisabledByConfig(keeperCfg),
+		ScanInterval: keeperCfg.ReviveScanInterval,
+		Grace:        keeperCfg.ReviveGrace,
+		MaxAttempts:  keeperCfg.ReviveMaxAttempts,
+		ReArmFn:      keeperReArm,
+		Emit:         bs.bus,
+		Comms:        crewCommsEmitter,
 	})
 
 	// hk-2i36s: periodic branch reaper. Started post-Seal in the work loop.

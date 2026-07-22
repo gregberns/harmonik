@@ -413,6 +413,37 @@ type SessionKeeperWatcherDeadPayload struct {
 	Reason string `json:"reason"`
 }
 
+// SessionKeeperWatcherRevivedPayload is the payload for
+// session_keeper_watcher_revived (hk-220lv).
+//
+// Emitted by the daemon's periodic keeper-revive watcher immediately after it
+// re-arms a crew's keeper window. The preceding session_keeper_watcher_dead for
+// the same agent states the diagnosis (flock unheld past the grace window); this
+// event states the remediation that was attempted, and how many attempts remain
+// before the watcher stops trying and escalates to the operator.
+//
+// Durability class: O (ordinary — operator attention; self-heal audit trail).
+// Refs: hk-220lv.
+type SessionKeeperWatcherRevivedPayload struct {
+	// AgentName is the crew name whose keeper window was re-armed.
+	AgentName string `json:"agent_name"`
+
+	// Session is the tmux session the keeper window was re-armed into, derived
+	// from the crew registry Handle ("<session>:agent" → "<session>").
+	Session string `json:"session,omitempty"`
+
+	// DeadForSeconds is how long the watcher flock had been continuously unheld
+	// when the re-arm fired.
+	DeadForSeconds float64 `json:"dead_for_seconds"`
+
+	// Attempt is the 1-based revive attempt number for this dead episode. The
+	// counter resets to zero as soon as a live watcher flock is observed again.
+	Attempt int `json:"attempt"`
+
+	// MaxAttempts is the configured per-agent revive cap (keeper.budgets.revive_max_attempts).
+	MaxAttempts int `json:"max_attempts"`
+}
+
 // SessionKeeperConfigRejectedPayload is the typed payload for
 // session_keeper_config_rejected (hk-4pnv).
 //

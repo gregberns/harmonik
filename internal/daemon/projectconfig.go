@@ -288,6 +288,11 @@ type rawKeeperTimings struct {
 	BootGrace          string `yaml:"boot_grace"`
 	MaxBootGraceTotal  string `yaml:"max_boot_grace_total"`
 	FlockAcquireGrace  string `yaml:"flock_acquire_grace"` // hk-qgfme: crew keeper post-spawn liveness probe bound
+	// hk-220lv: daemon-hosted periodic keeper-revive sweep. DEFAULT ON — absent
+	// keys fall back to the compiled defaults and the sweep RUNS. Only an explicit
+	// `revive_scan_interval: 0s` disables it.
+	ReviveScanInterval string `yaml:"revive_scan_interval"`
+	ReviveGrace        string `yaml:"revive_grace"`
 }
 
 // rawKeeperCadence holds the keeper.cadence block. All fields are Go duration
@@ -314,6 +319,10 @@ type rawKeeperCadence struct {
 type rawKeeperBudgets struct {
 	HeartbeatMaxMisses int `yaml:"heartbeat_max_misses"`
 	MaxHandoffTimeouts int `yaml:"max_handoff_timeouts"`
+	// ReviveMaxAttempts is the per-agent cap on keeper-revive re-arms before the
+	// daemon stops trying and escalates to the operator. Absent → compiled
+	// default (hk-220lv).
+	ReviveMaxAttempts int `yaml:"revive_max_attempts"`
 }
 
 // rawKeeperSelfService holds the keeper.self_service block. Enabled /
@@ -438,6 +447,8 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		tm.BootGrace == "" &&
 		tm.MaxBootGraceTotal == "" &&
 		tm.FlockAcquireGrace == "" &&
+		tm.ReviveScanInterval == "" &&
+		tm.ReviveGrace == "" &&
 		// cadence
 		c.WarnCooldown == "" &&
 		c.NoGaugeBackoff == "" &&
@@ -456,6 +467,7 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		// budgets
 		b.HeartbeatMaxMisses == 0 &&
 		b.MaxHandoffTimeouts == 0 &&
+		b.ReviveMaxAttempts == 0 &&
 		// self_service
 		!s.Enabled &&
 		s.GraceSeconds == 0 &&
@@ -504,6 +516,12 @@ type KeeperConfigPresence struct {
 	ClearSettle        bool
 	BootGrace          bool // true even for "0s" (explicit disable)
 	FlockAcquireGrace  bool // true even for "0s" (explicit disable); hk-qgfme
+	// ReviveScanInterval is true even for an explicit "0s" — and that is the ONLY
+	// way to disable the keeper-revive sweep. An ABSENT key means "use the
+	// compiled default and RUN" (hk-220lv: a safety net that is silently
+	// disabled-by-default is the exact failure class this watcher fixes).
+	ReviveScanInterval bool
+	ReviveGrace        bool
 
 	WarnCooldown         bool
 	NoGaugeBackoff       bool
@@ -522,6 +540,7 @@ type KeeperConfigPresence struct {
 
 	HeartbeatMaxMisses bool
 	MaxHandoffTimeouts bool
+	ReviveMaxAttempts  bool // hk-220lv
 }
 
 // KeeperConfig holds the keeper-level configuration read from the
@@ -579,6 +598,22 @@ type KeeperConfig struct {
 	// Refs: hk-qgfme.
 	FlockAcquireGrace time.Duration
 
+	// ReviveScanInterval is how often the daemon's keeper-revive watcher
+	// re-probes every managed crew's keeper flock (keeper.timings.revive_scan_interval).
+	//
+	// DEFAULT ON, unlike FlockAcquireGrace: an ABSENT key resolves to the compiled
+	// default (keeperReviveDefaultScanInterval) and the sweep RUNS. The ONLY way to
+	// turn it off is an explicit `revive_scan_interval: 0s`, which is recorded in
+	// Present.ReviveScanInterval and read as a deliberate opt-out. Refs: hk-220lv.
+	ReviveScanInterval time.Duration
+
+	// ReviveGrace is how long a crew's keeper flock must read CONTINUOUSLY unheld
+	// before the keeper-revive watcher re-arms the keeper window
+	// (keeper.timings.revive_grace). Zero/absent → compiled default. The first
+	// scan that sees a dead watcher only ARMS this clock; it never revives.
+	// Refs: hk-220lv.
+	ReviveGrace time.Duration
+
 	// Cadence (all zero = not configured).
 	WarnCooldown               time.Duration
 	NoGaugeBackoff             time.Duration
@@ -603,6 +638,13 @@ type KeeperConfig struct {
 	// Budgets (zero = not configured).
 	HeartbeatMaxMisses int
 	MaxHandoffTimeouts int
+	// ReviveMaxAttempts caps how many times the keeper-revive watcher re-arms a
+	// single agent's keeper window during one dead episode
+	// (keeper.budgets.revive_max_attempts). The counter RESETS as soon as a live
+	// flock is observed again; on hitting the cap the watcher stops reviving that
+	// agent and raises one keeper-alert to the operator. Zero/absent → compiled
+	// default (keeperReviveDefaultMaxAttempts). Refs: hk-220lv.
+	ReviveMaxAttempts int
 
 	// SelfService.
 	SelfServiceEnabled              bool
@@ -1748,6 +1790,11 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		{"timings.boot_grace", tm.BootGrace, &cfg.BootGrace, &cfg.Present.BootGrace},
 		{"timings.max_boot_grace_total", tm.MaxBootGraceTotal, &cfg.MaxBootGraceTotal, nil},
 		{"timings.flock_acquire_grace", tm.FlockAcquireGrace, &cfg.FlockAcquireGrace, &cfg.Present.FlockAcquireGrace},
+		// hk-220lv: keeper-revive sweep. Present is tracked so an explicit "0s"
+		// (the sole opt-out) is distinguishable from an absent key, which resolves
+		// to the compiled default and leaves the sweep RUNNING.
+		{"timings.revive_scan_interval", tm.ReviveScanInterval, &cfg.ReviveScanInterval, &cfg.Present.ReviveScanInterval},
+		{"timings.revive_grace", tm.ReviveGrace, &cfg.ReviveGrace, &cfg.Present.ReviveGrace},
 	} {
 		dv, derr := parseDurationField(path, f.key, f.val)
 		if derr != nil {
@@ -1801,6 +1848,10 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	if b.MaxHandoffTimeouts > 0 {
 		cfg.MaxHandoffTimeouts = b.MaxHandoffTimeouts
 		cfg.Present.MaxHandoffTimeouts = true
+	}
+	if b.ReviveMaxAttempts > 0 {
+		cfg.ReviveMaxAttempts = b.ReviveMaxAttempts
+		cfg.Present.ReviveMaxAttempts = true
 	}
 
 	// ── self_service ──

@@ -410,7 +410,7 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 ### 8.16 Session-keeper watcher & cycle lifecycle
 
-The session-keeper watcher/lifecycle cohort (codename:session-keeper, hk-ekap1). These 18 types are the coarse-grained watcher and cycle-boundary signals the keeper has shipped since v0.6.x; they are documented here to close the code↔spec §-numbering drift — the code doc-comments cited them as "§8.13", colliding with the spec's §8.13 Epic-completion family (§8.13/§8.14/§8.15 are unmoved; only the code-comment citations are corrected to §8.16 in the same change). This cohort is registered by `registerKeeperEvents()` and is the coarse counterpart to the fine-grained interior milestones in §8.20. Emitter is the standalone `internal/keeper` process (the `session_keeper_watcher_dead` liveness probe is daemon-emitted). All 18 are durability class O.
+The session-keeper watcher/lifecycle cohort (codename:session-keeper, hk-ekap1). These 19 types are the coarse-grained watcher and cycle-boundary signals the keeper has shipped since v0.6.x; they are documented here to close the code↔spec §-numbering drift — the code doc-comments cited them as "§8.13", colliding with the spec's §8.13 Epic-completion family (§8.13/§8.14/§8.15 are unmoved; only the code-comment citations are corrected to §8.16 in the same change). This cohort is registered by `registerKeeperEvents()` and is the coarse counterpart to the fine-grained interior milestones in §8.20. Emitter is the standalone `internal/keeper` process (the `session_keeper_watcher_dead` / `session_keeper_watcher_revived` liveness+self-heal pair is daemon-emitted). All 19 are durability class O.
 
 | # | Type | Dur | Emitter | Typical consumers | Payload fields |
 |---|---|---|---|---|---|
@@ -432,10 +432,11 @@ The session-keeper watcher/lifecycle cohort (codename:session-keeper, hk-ekap1).
 | 8.16.16 | `session_keeper_watcher_dead` | O | daemon-core | captain, operator-observability, audit | `agent_name`, `grace_period_seconds`, `reason` |
 | 8.16.17 | `session_keeper_live_pane_recover` | O | internal/keeper | operator-observability, audit | `agent_name`, `session_id?`, `stale_seconds`, `outcome`, `error?` |
 | 8.16.18 | `session_keeper_ack_timeout` | O | internal/keeper (await-ack) | operator-observability, audit | `agent_name`, `nonce`, `kind`, `timeout_seconds`, `tmux_target?`, `reason` |
+| 8.16.19 | `session_keeper_watcher_revived` | O | daemon-core | captain, operator-observability, audit | `agent_name`, `session?`, `dead_for_seconds`, `attempt`, `max_attempts` |
 
-> **Cohort-guard carve-out (§8.16).** Per EV-050, the `session_keeper_*` family is registered (each has a `mustRegister` constructor and a mandatory `pertypecompat` row) but is EXCLUDED from the cross-bus taxonomy cohort guard (`allEventTypeCohort`) and from the EV-027 amendment count guard. This documents the existing 18-type precedent (they were already absent from the cohort) and applies equally to the §8.20 interior cohort.
+> **Cohort-guard carve-out (§8.16).** Per EV-050, the `session_keeper_*` family is registered (each has a `mustRegister` constructor and a mandatory `pertypecompat` row) but is EXCLUDED from the cross-bus taxonomy cohort guard (`allEventTypeCohort`) and from the EV-027 amendment count guard. This documents the existing 19-type precedent (they were already absent from the cohort) and applies equally to the §8.20 interior cohort.
 
-> Section Axes (§8.16 Session-keeper watcher & cycle lifecycle): all 18 entries are mechanism-tagged, class O (ordinary — observability; a lost signal is recoverable from the keeper journal / gauge / a fresh probe). Default per-entry Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+> Section Axes (§8.16 Session-keeper watcher & cycle lifecycle): all 19 entries are mechanism-tagged, class O (ordinary — observability; a lost signal is recoverable from the keeper journal / gauge / a fresh probe). Default per-entry Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
 
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 

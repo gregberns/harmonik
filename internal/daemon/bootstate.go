@@ -55,6 +55,7 @@ type bootState struct {
 	drainDet            *DrainDetector
 	crewHandler         CrewHandler
 	crewIdleReaper      *CrewIdleReaper
+	keeperReviveWatcher *KeeperReviveWatcher
 	branchReapWatcher   *BranchReapWatcher
 }
 

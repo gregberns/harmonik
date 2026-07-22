@@ -124,6 +124,24 @@ type windowCleaner interface {
 // Bead ref: hk-6pspu.
 const maxItemAttempts = queue.MaxItemAttempts
 
+// queuePreClaimAttemptKey identifies ONE queue item for the queue-path
+// pre-claim ShowBead attempt counter (hk-pina9).
+//
+// Keyed on queueID (NOT queueName): a queue name slot is reusable — `queue
+// clear` + a fresh submit installs a NEW QueueID under the same name — so a
+// name-keyed counter would carry a dead queue's failures onto a fresh item.
+// itemIdx + beadID together pin the exact item: itemIdx alone is reused when a
+// bead is re-appended to a group, and beadID alone would conflate two entries
+// for the same bead in one stream group (the hk-wifef re-append case).
+//
+// Bead ref: hk-pina9.
+type queuePreClaimAttemptKey struct {
+	queueID    string
+	groupIndex int
+	itemIdx    int
+	beadID     core.BeadID
+}
+
 // agentReadyKillReapTimeout bounds two operations in the HC-056
 // agent_ready_timeout path:
 //
@@ -1624,6 +1642,22 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// Bead ref: hk-kupeo (ShowBead bounded retry), hk-6pspu (dispatch bound).
 	readyPathAttempts := make(map[core.BeadID]int)
 
+	// queuePreClaimShowAttempts tracks consecutive pre-claim ShowBead failures
+	// per QUEUE ITEM on the queue path. Bounded by maxItemAttempts; the entry is
+	// deleted as soon as ShowBead succeeds (so a transient error episode never
+	// accumulates) and when the item is failed at the bound.
+	//
+	// Deliberately NOT the item's persisted Attempts field, which the hk-6pspu
+	// dispatch-stamp bound owns. Sharing that budget would mean two transient
+	// ShowBead blips leave the item with only one real dispatch attempt left —
+	// a bead that recovers would be failed at the stamp without ever running.
+	// The two failure modes get independent budgets. In-memory (like
+	// readyPathAttempts) so a daemon restart forgives a transient outage rather
+	// than resuming a half-spent budget.
+	//
+	// Bead ref: hk-pina9.
+	queuePreClaimShowAttempts := make(map[queuePreClaimAttemptKey]int)
+
 	// sentinelPendingAckToken is the ack_token of the in-flight sentinel trip
 	// (ACT mode, FW3 hk-4toh). Empty when no trip is pending. Persists across
 	// loop iterations so dormant transitions can clear the correct token.
@@ -2380,17 +2414,53 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// anything changed between the pre-claim read and the claim write.
 				var preClaimRecord core.BeadRecord
 				{
+					// hk-pina9: bound the pre-claim ShowBead retry on the QUEUE path.
+					// Without a bound this item stays pending at the head of its group
+					// and is re-selected every tick forever, so one bead whose `br show`
+					// persistently errors wedges the whole queue.
+					//
+					// Mirrors the br-ready bound (hk-kupeo/hk-6pspu, readyPathAttempts)
+					// with ONE deliberate difference: the ready path merely SKIPS the
+					// bead, because a ready bead has no queue state and the next poll
+					// simply looks past it. A queue item does have state, and skipping
+					// it would leave it pending at the head of its group — the wedge we
+					// are fixing. So the queue path drives the item to a TERMINAL status
+					// (failed) via evaluateGroupAdvanceWithOutcome, which is what lets
+					// the group reach allItemsTerminal and advance. `queue resume` resets
+					// failed items to pending with Attempts=0, so this is recoverable.
+					preClaimKey := queuePreClaimAttemptKey{
+						queueID:    snapQueueID,
+						groupIndex: snapGroupIndex,
+						itemIdx:    snapItemIdx,
+						beadID:     snapItemBeadID,
+					}
 					rec, preClaimErr := deps.brAdapter.ShowBead(ctx, snapItemBeadID)
 					if preClaimErr != nil {
 						if dispatchCtx.Err() != nil {
 							return exitClean()
 						}
-						fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim (queue-path) %s error (will retry): %v\n", snapItemBeadID, preClaimErr)
+						queuePreClaimShowAttempts[preClaimKey]++
+						preClaimAttempts := queuePreClaimShowAttempts[preClaimKey]
+						if preClaimAttempts >= maxItemAttempts {
+							delete(queuePreClaimShowAttempts, preClaimKey)
+							fmt.Fprintf(os.Stderr,
+								"daemon: workloop: ShowBead pre-claim (queue-path) %s failed %d times — failing queue item so the group can advance (hk-pina9): %v\n",
+								snapItemBeadID, preClaimAttempts, preClaimErr)
+							markQueueItemFailureReason(ctx, deps, snapQueueName, snapGroupIndex, snapItemIdx, snapItemBeadID, "show_bead_failed")
+							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+							continue
+						}
+						fmt.Fprintf(os.Stderr,
+							"daemon: workloop: ShowBead pre-claim (queue-path) %s error (attempt %d/%d, will retry): %v\n",
+							snapItemBeadID, preClaimAttempts, maxItemAttempts, preClaimErr)
 						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
 					}
+					// Success clears the counter: only a CONSECUTIVE run of failures
+					// consumes the budget, so a transient blip never poisons the item.
+					delete(queuePreClaimShowAttempts, preClaimKey)
 					preClaimRecord = rec
 					if preClaimRecord.Status != core.CoarseStatusOpen && preClaimRecord.Status != core.CoarseStatusBlocked {
 						// BI-013c: non-open status observed — skip claim, emit bead_claim_skipped.
@@ -6161,6 +6231,38 @@ func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq 
 	// write lock (EV-002a emit-after-persist-and-unlock idiom, matching
 	// activateFirstPendingGroup / evaluateGroupAdvanceWithOutcome).
 	return true, events
+}
+
+// markQueueItemFailureReason stamps LastFailureReason on one queue item without
+// touching its Status. It is called immediately BEFORE
+// evaluateGroupAdvanceWithOutcome(..., false), which sets the terminal status
+// and persists — so the reason lands in queue.json on the same write, giving an
+// operator reading `harmonik queue status` the WHY behind a failed item.
+//
+// No-op when the queue, group, or item cannot be resolved: the caller's
+// evaluateGroupAdvanceWithOutcome applies the same guards and is the load-
+// bearing half of the pair.
+//
+// Bead ref: hk-pina9.
+func markQueueItemFailureReason(_ context.Context, deps workLoopDeps, queueName string, groupIndex int, itemIdx int, beadID core.BeadID, reason string) {
+	if deps.queueStore == nil {
+		return
+	}
+	lq := deps.queueStore.LockForMutation()
+	defer lq.Done()
+	q := lq.LockedQueueByName(queue.NormaliseQueueName(queueName))
+	if q == nil {
+		return
+	}
+	for gi := range q.Groups {
+		if q.Groups[gi].GroupIndex != groupIndex {
+			continue
+		}
+		if itemIdx < len(q.Groups[gi].Items) && q.Groups[gi].Items[itemIdx].BeadID == beadID {
+			q.Groups[gi].Items[itemIdx].LastFailureReason = reason
+		}
+	}
+	lq.LockedSetQueueByName(queue.NormaliseQueueName(queueName), q)
 }
 
 // evaluateGroupAdvance — EM-015f group-advance gate (hk-45ude)

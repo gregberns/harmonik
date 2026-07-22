@@ -173,6 +173,13 @@ type CycleState struct {
 	LastIdleCrewNotifiedSID    string
 	ConsecutiveHandoffTimeouts int
 
+	// LastCycleEndedAt is the instant the most recent cycle reached a TERMINAL
+	// (stamped by BOTH stepAbort and stepBriefing, alongside LastFiredSID). It
+	// is the post-cycle-grace anchor for Gate 6's forced-clear retry exception
+	// — see forceRetrySuppresses for why the cycle-START stamp
+	// (LastForcedAttemptAt) is not sufficient on its own. Refs: hk-pvrfx.
+	LastCycleEndedAt time.Time
+
 	// Boot-grace tracking (hk-4f8, hk-ibb). SeenSessionIDs is updated
 	// copy-on-write inside stepCycle so CycleState copies are value-safe
 	// (the shell's ladder peek runs on a copy).
@@ -621,21 +628,60 @@ func gateAntiLoopSuppresses(cfg *CyclerConfig, s CycleState, at time.Time, cf *C
 	if s.LastFiredSID == "" {
 		return false
 	}
-	if cf.SessionID == s.LastFiredSID {
+	// Same session id, or a novel session id that has never been observed below
+	// the warn threshold since the last fire: suppressed outright, EXCEPT for
+	// the forced-clear retry escape hatch above the hard force threshold.
+	if cf.SessionID == s.LastFiredSID || !s.SeenLowPctAfterLastFire {
 		if !cfg.aboveForceThreshold(cf) {
 			return true
 		}
-		// Retry the forced-clear once the retry interval has elapsed.
-		return !s.LastForcedAttemptAt.IsZero() && at.Sub(s.LastForcedAttemptAt) < cfg.ForceRetryInterval
-	}
-	if !s.SeenLowPctAfterLastFire {
-		if !cfg.aboveForceThreshold(cf) {
-			return true
-		}
-		// Retry the forced-clear once the retry interval has elapsed.
-		return !s.LastForcedAttemptAt.IsZero() && at.Sub(s.LastForcedAttemptAt) < cfg.ForceRetryInterval
+		return forceRetrySuppresses(cfg, s, at)
 	}
 	return false
+}
+
+// forceRetrySuppresses is Gate 6's forced-clear retry rate limit (hk-qoz) with
+// the post-cycle grace fix (hk-pvrfx). A session above the hard force threshold
+// gets an escape hatch out of the anti-loop suppression so it can never wedge
+// permanently — but only once ForceRetryInterval has elapsed since the keeper
+// last TOUCHED this session. "Last touched" is the LATER of:
+//
+//   - LastForcedAttemptAt — stamped at cycle START by stepStartCycle, and ONLY
+//     when the entry gauge was above the force threshold; and
+//   - LastCycleEndedAt — stamped at BOTH terminals (stepAbort, stepBriefing).
+//
+// Taking the later of the two makes the interval a genuine POST-CYCLE grace and
+// closes two holes that each let a new cycle open one poll tick (~1s) after the
+// previous one ended, on the same session id — injecting /session-handoff into a
+// session that was still booting, which then aborted a full HandoffTimeout later
+// (live on crew chani: cycle 000003 completed 20:11:41, cycle 000004 opened
+// 20:11:42, aborted 300s later on handoff_timeout):
+//
+//  1. ZERO fall-through: the prior cycle entered BELOW the force threshold, so
+//     LastForcedAttemptAt was never stamped. The old `!IsZero() && at.Sub(…) <
+//     ForceRetryInterval` guard read a MISSING timestamp as "not suppressed".
+//  2. STALE anchor: a cycle's own wall time (HandoffTimeout 300s +
+//     ModelDoneTimeout 60s + ClearConfirmBackstop 150s in the worst case) easily
+//     exceeds ForceRetryInterval (120s), so a start-anchored interval was
+//     already fully spent by the time the cycle reached its terminal.
+//
+// It cannot wedge the keeper: every terminal stamps LastCycleEndedAt, so once a
+// cycle has fired the anchor is non-zero, monotone, and the window always
+// expires — a session genuinely stuck above the force threshold still gets its
+// retry, one ForceRetryInterval after the last attempt FINISHED instead of after
+// it started.
+func forceRetrySuppresses(cfg *CyclerConfig, s CycleState, at time.Time) bool {
+	anchor := s.LastForcedAttemptAt
+	if s.LastCycleEndedAt.After(anchor) {
+		anchor = s.LastCycleEndedAt
+	}
+	if anchor.IsZero() {
+		// No cycle has ever run on this reactor, so there is nothing to rate
+		// limit (unreachable on the live path — the caller already checked
+		// LastFiredSID != "", and both terminals stamp LastCycleEndedAt).
+		return false
+	}
+	return at.Sub(anchor) < cfg.ForceRetryInterval
 }
 
 // stepIdlePrecompact is the RunForPrecompact entry ladder (gate subset; skips
@@ -876,6 +922,10 @@ func stepAbort(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 	s.LastFiredSID = s.EntryCF.SessionID
 	s.SeenLowPctAfterLastFire = false
 	s.LastFireWasAbort = true
+	// Post-cycle grace anchor (hk-pvrfx): a terminal is the instant the keeper
+	// stopped touching this session, and Gate 6's force-retry interval runs from
+	// here — not from the cycle's (possibly minutes-older) start stamp.
+	s.LastCycleEndedAt = ev.At
 
 	// Re-arm: clear .managed so the .sid channel can rebind — ONLY when a real
 	// session-id change was previously observed (hk-ibb fix 3).
@@ -996,6 +1046,12 @@ func stepBriefing(cfg *CyclerConfig, s CycleState, ev Event, newSID string, acti
 	s.LastFiredSID = s.EntryCF.SessionID
 	s.SeenLowPctAfterLastFire = false
 	s.LastFireWasAbort = false
+	// Post-cycle grace anchor (hk-pvrfx) — see stepAbort. The clear_unconfirmed
+	// path reaches this terminal with NO new session id observed, so boot-grace
+	// (which keys on a session-id CHANGE) cannot cover the re-fire window here;
+	// this stamp is the only thing standing between the terminal and the next
+	// poll tick.
+	s.LastCycleEndedAt = ev.At
 	// Successful cycle: reset the escalation counter and the grace burst
 	// window (hk-hz9 fix 1).
 	s.ConsecutiveHandoffTimeouts = 0

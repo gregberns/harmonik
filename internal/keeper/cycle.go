@@ -156,7 +156,14 @@ type CyclerConfig struct {
 	// After an abort (handoff_timeout) or a completed forced cycle, the
 	// same-session Gate 6 suppression is lifted only after this interval.
 	// Prevents tight retry loops while still guaranteeing eventual clearance.
-	// Default: 120s. Refs: hk-qoz (forced-clear catch-22 fix).
+	//
+	// The interval is measured from the LATER of the last forced attempt
+	// (cycle START) and the last cycle TERMINAL — so it doubles as the
+	// post-cycle grace, and a cycle whose own wall time exceeds the interval can
+	// no longer be re-fired on the very next poll tick (hk-pvrfx). See
+	// forceRetrySuppresses in step.go.
+	//
+	// Default: 120s. Refs: hk-qoz (forced-clear catch-22 fix), hk-pvrfx.
 	ForceRetryInterval time.Duration
 
 	// IdleRestartAbsTokens is the absolute-token floor above which an idle crew

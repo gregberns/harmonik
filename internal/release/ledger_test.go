@@ -23,12 +23,12 @@ func fixture() []release.ReleaseEntry {
 }
 
 // certifiedFixture returns a ledger where v0.2.0 has already been certified.
-func certifiedFixture() []release.ReleaseEntry {
+func certifiedFixture(t testing.TB) []release.ReleaseEntry {
+	t.Helper()
 	entries := fixture()
-	var err error
-	entries, err = release.Certify(entries, "v0.2.0", "2026-06-10T12:00:00Z")
+	entries, err := release.Certify(entries, "v0.2.0", "2026-06-10T12:00:00Z")
 	if err != nil {
-		panic("certifiedFixture: " + err.Error())
+		t.Fatalf("certifiedFixture: %v", err)
 	}
 	return entries
 }
@@ -61,7 +61,7 @@ func TestRecordCreate_AppendsPrereleaseEntry(t *testing.T) {
 }
 
 func TestRecordCreate_ExistingSemverIsNoOp(t *testing.T) {
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	result := release.RecordCreate(entries, release.ReleaseEntry{
 		Semver:     "v0.2.0",
 		CommitHash: "ffffffffffffffffffffffffffffffffffffffff",
@@ -97,7 +97,7 @@ func TestCertify_UncertifiedToStable(t *testing.T) {
 }
 
 func TestCertify_DoubleCertifyRejected(t *testing.T) {
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	_, err := release.Certify(entries, "v0.2.0", "2026-06-10T13:00:00Z")
 	if !errors.Is(err, release.ErrAlreadyCertified) {
 		t.Errorf("double-certify: want ErrAlreadyCertified, got %v", err)
@@ -105,7 +105,7 @@ func TestCertify_DoubleCertifyRejected(t *testing.T) {
 }
 
 func TestCertify_AfterYankRejected(t *testing.T) {
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	yanked, err := release.Yank(entries, "v0.2.0", "critical regression")
 	if err != nil {
 		t.Fatalf("Yank setup: %v", err)
@@ -127,7 +127,9 @@ func TestCertify_SemverNotFound(t *testing.T) {
 func TestCertify_DoesNotMutateInput(t *testing.T) {
 	entries := fixture()
 	original := entries[0].Prerelease
-	_, _ = release.Certify(entries, "v0.2.0", "2026-06-10T12:00:00Z")
+	if _, err := release.Certify(entries, "v0.2.0", "2026-06-10T12:00:00Z"); err != nil {
+		t.Fatalf("Certify: %v", err)
+	}
 	if entries[0].Prerelease != original {
 		t.Error("Certify mutated the input slice")
 	}
@@ -136,7 +138,7 @@ func TestCertify_DoesNotMutateInput(t *testing.T) {
 // --- Yank tests ---
 
 func TestYank_CertifiedToYanked(t *testing.T) {
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	result, err := release.Yank(entries, "v0.2.0", "critical regression in merge logic")
 	if err != nil {
 		t.Fatalf("Yank: unexpected error: %v", err)
@@ -151,7 +153,7 @@ func TestYank_CertifiedToYanked(t *testing.T) {
 }
 
 func TestYank_EmptyReasonRejected(t *testing.T) {
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	_, err := release.Yank(entries, "v0.2.0", "")
 	if !errors.Is(err, release.ErrYankReasonEmpty) {
 		t.Errorf("empty reason: want ErrYankReasonEmpty, got %v", err)
@@ -167,7 +169,7 @@ func TestYank_PrereleaseRejected(t *testing.T) {
 }
 
 func TestYank_AlreadyYankedRejected(t *testing.T) {
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	yanked, err := release.Yank(entries, "v0.2.0", "first reason")
 	if err != nil {
 		t.Fatalf("first Yank: %v", err)
@@ -179,7 +181,7 @@ func TestYank_AlreadyYankedRejected(t *testing.T) {
 }
 
 func TestYank_SemverNotFound(t *testing.T) {
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	_, err := release.Yank(entries, "v9.9.9", "reason")
 	if !errors.Is(err, release.ErrSemverNotFound) {
 		t.Errorf("unknown semver: want ErrSemverNotFound, got %v", err)
@@ -187,9 +189,11 @@ func TestYank_SemverNotFound(t *testing.T) {
 }
 
 func TestYank_DoesNotMutateInput(t *testing.T) {
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	original := entries[0].Yanked
-	_, _ = release.Yank(entries, "v0.2.0", "reason")
+	if _, err := release.Yank(entries, "v0.2.0", "reason"); err != nil {
+		t.Fatalf("Yank: %v", err)
+	}
 	if entries[0].Yanked != original {
 		t.Error("Yank mutated the input slice")
 	}
@@ -211,7 +215,7 @@ func TestCurrentStable_Prerelease(t *testing.T) {
 }
 
 func TestCurrentStable_AfterCertify(t *testing.T) {
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	s := release.CurrentStable(entries)
 	if s == nil {
 		t.Fatal("expected a current stable entry, got nil")
@@ -222,8 +226,11 @@ func TestCurrentStable_AfterCertify(t *testing.T) {
 }
 
 func TestCurrentStable_AfterYank(t *testing.T) {
-	entries := certifiedFixture()
-	yanked, _ := release.Yank(entries, "v0.2.0", "reason")
+	entries := certifiedFixture(t)
+	yanked, err := release.Yank(entries, "v0.2.0", "reason")
+	if err != nil {
+		t.Fatalf("Yank: %v", err)
+	}
 	if s := release.CurrentStable(yanked); s != nil {
 		t.Errorf("expected nil after yank, got %+v", s)
 	}
@@ -235,7 +242,7 @@ func TestLedgerFile_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := release.LedgerPath(dir)
 
-	entries := certifiedFixture()
+	entries := certifiedFixture(t)
 	if err := release.SaveLedgerFile(path, entries); err != nil {
 		t.Fatalf("SaveLedgerFile: %v", err)
 	}
@@ -276,15 +283,18 @@ func TestLedgerFile_SchemaVersionMismatch(t *testing.T) {
 		"schema_version": 99,
 		"entries":        []interface{}{},
 	}
-	data, _ := json.MarshalIndent(badEnv, "", "  ")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	data, err := json.MarshalIndent(badEnv, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := release.LoadLedgerFile(path)
+	_, err = release.LoadLedgerFile(path)
 	if err == nil {
 		t.Error("expected error for schema_version mismatch, got nil")
 	}

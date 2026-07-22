@@ -85,8 +85,10 @@ func SaveLedgerFile(path string, entries []ReleaseEntry) error {
 		return fmt.Errorf("release: write temp ledger %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("release: rename ledger %s → %s: %w", tmp, path, err)
+		return errors.Join(
+			fmt.Errorf("release: rename ledger %s → %s: %w", tmp, path, err),
+			removeTempFile(tmp),
+		)
 	}
 	return nil
 }

@@ -4503,7 +4503,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		AllowedDomains:         deps.sandboxCfg.Network.AllowedDomains,
 		AllowLocalBinding:      deps.sandboxCfg.Network.AllowLocalBinding,
 		WeakerNetworkIsolation: deps.sandboxCfg.Network.WeakerNetworkIsolation,
-		TmpDirs:                sandboxOSTmpDirs(),
 		SharedReadCacheDirs:    deps.sandboxCfg.Cache.WarmRead,
 		PrivateWriteCacheDirs:  deps.sandboxCfg.Cache.PrivateWrite,
 	})
@@ -8274,17 +8273,32 @@ func adoptLiveRunSession(ctx context.Context, deps workLoopDeps, rec runpkg.Reco
 	}
 }
 
-// sandboxOSTmpDirs returns the OS temp directories to include in the srt sandbox
-// allowWrite set (hk-6596l). On macOS /tmp is a symlink to /private/tmp; srt
-// requires the canonical path, so both are included when os.TempDir() returns "/tmp".
-func sandboxOSTmpDirs() []string {
-	tmpDir := os.TempDir()
-	dirs := []string{tmpDir}
-	if tmpDir == "/tmp" {
-		dirs = append(dirs, "/private/tmp")
-	}
-	return dirs
-}
+// sandboxOSTmpDirs is REMOVED (hk-guapd). It used to return os.TempDir() (plus
+// /private/tmp when that was "/tmp") for the sandbox profile's allowWrite set,
+// and GenerateSandboxProfile expands every TmpDirs entry into a RECURSIVE write
+// rule. os.TempDir() honours $TMPDIR and falls back to "/tmp" when TMPDIR is
+// UNSET, so a daemon started without a per-user TMPDIR — or with TMPDIR=/tmp,
+// which Makefile:453 and :465 do routinely — granted every sandboxed run write
+// access to all of /tmp: other runs' scratch state, other tools' temp files, and
+// any socket or lockfile living there. That is a hole in a mechanism whose only
+// purpose is confinement.
+//
+// The sandboxed child never needed it. Both real consumers are granted
+// separately and explicitly in GenerateSandboxProfile:
+//   - the run worktree, section 1 (in.WorktreePath) — so a worktree that itself
+//     lives under the host temp root still gets its writes;
+//   - srt's own scratch TMPDIR, section 6a (/tmp/claude, /private/tmp/claude) —
+//     srt injects TMPDIR=/tmp/claude into every child regardless of the parent's
+//     TMPDIR (hk-cdpxu), so TMPDIR-honouring tools resolve there, not to the
+//     host root.
+//
+// Measured, not assumed (hk-guapd): TestSandboxAcceptance_WriteToMainDenied_hki0377
+// failed 3/3 with TMPDIR=/tmp and passed 3/3 with a per-user TMPDIR, at load 7.53
+// — the band the "srt fails to apply under fork saturation" theory predicted
+// failure in. srt was applying correctly the whole time; the profile was too wide
+// and the test's own fixture sat inside the grant. Do not reintroduce an ambient
+// os.TempDir() feed here. If a future caller genuinely needs a temp grant, pass an
+// explicit PER-RUN directory via SandboxProfileInput.TmpDirs — never a shared root.
 
 // strandedBeadHasOnDiskRun reports whether any record in .harmonik/runs/ is
 // associated with beadID. An on-disk record means an adoptLiveRunSession

@@ -184,7 +184,15 @@ func hki0377WriteProfile(t *testing.T, repo hki0377GitRepo) string {
 		RunID:          repo.RunID,
 		BranchName:     "", // broader refs/heads/ subtree — accommodates .lock files
 		DaemonSockPath: filepath.Join(repo.RepoDir, ".harmonik", "daemon.sock"),
-		TmpDirs:        []string{"/tmp", "/private/tmp"},
+		// hk-guapd: NO TmpDirs. This fixture used to pass ["/tmp","/private/tmp"],
+		// which GenerateSandboxProfile expands into a RECURSIVE write grant — and
+		// this test's own "main repo" is t.TempDir()-derived, so under TMPDIR=/tmp
+		// it was created INSIDE that grant. AC-B (write-to-main-denied) then failed
+		// 3/3, because the sandbox correctly permitted the write it was asked to
+		// permit. That was misread as srt intermittently failing to apply under
+		// fork saturation; it is deterministic and has nothing to do with load.
+		// Production supplies no TmpDirs at all now, so neither does this fixture.
+		TmpDirs: nil,
 	}
 	data, err := daemon.GenerateSandboxProfile(in)
 	if err != nil {

@@ -1534,7 +1534,6 @@ func dispatchDotAgenticNode(
 					// binding never reaches the sandboxed Pi and the model connect is Seatbelt-denied.
 					AllowLocalBinding:      deps.sandboxCfg.Network.AllowLocalBinding,
 					WeakerNetworkIsolation: deps.sandboxCfg.Network.WeakerNetworkIsolation,
-					TmpDirs:                sandboxOSTmpDirs(),
 					SharedReadCacheDirs:    deps.sandboxCfg.Cache.WarmRead,
 					PrivateWriteCacheDirs:  deps.sandboxCfg.Cache.PrivateWrite,
 				})

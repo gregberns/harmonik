@@ -28,13 +28,16 @@ import (
 // fields populated. Tests override individual fields as needed.
 func sandboxProfileFixture() daemon.SandboxProfileInput {
 	return daemon.SandboxProfileInput{
-		WorktreePath:          "/repo/.harmonik/worktrees/0196f000-0000-7000-8000-000000000001",
-		GitDir:                "/repo/.git",
-		RunID:                 "0196f000-0000-7000-8000-000000000001",
-		BranchName:            "run/0196f000-0000-7000-8000-000000000001",
-		DaemonSockPath:        "/repo/.harmonik/daemon.sock",
-		AllowedDomains:        []string{"openrouter.ai"},
-		TmpDirs:               []string{"/tmp", "/private/tmp"},
+		WorktreePath:   "/repo/.harmonik/worktrees/0196f000-0000-7000-8000-000000000001",
+		GitDir:         "/repo/.git",
+		RunID:          "0196f000-0000-7000-8000-000000000001",
+		BranchName:     "run/0196f000-0000-7000-8000-000000000001",
+		DaemonSockPath: "/repo/.harmonik/daemon.sock",
+		AllowedDomains: []string{"openrouter.ai"},
+		// hk-guapd: deliberately EMPTY. A world-shared temp root here would be
+		// expanded into a recursive write grant. Production no longer supplies any
+		// TmpDirs at all; a caller that genuinely needs one must pass a PER-RUN dir.
+		TmpDirs:               nil,
 		SharedReadCacheDirs:   []string{"/Users/gb/.cache/go-build"},
 		PrivateWriteCacheDirs: []string{"/repo/.harmonik/worktrees/0196f000-0000-7000-8000-000000000001/.cache"},
 	}
@@ -134,8 +137,6 @@ func TestSandboxProfile_AllowWriteExactSet(t *testing.T) {
 		{"packed-refs", "/repo/.git/packed-refs"},
 		{"packed-refs lock", "/repo/.git/packed-refs.lock"},
 		{"reflog dir (tight scope)", "/repo/.git/logs/refs/heads/run"},
-		{"tmpdir /tmp", "/tmp"},
-		{"tmpdir /private/tmp", "/private/tmp"},
 		{"srt scratch TMPDIR /tmp/claude (hk-cdpxu)", "/tmp/claude"},
 		{"srt scratch TMPDIR /private/tmp/claude (hk-cdpxu)", "/private/tmp/claude"},
 		{"private cache", "/repo/.harmonik/worktrees/0196f000-0000-7000-8000-000000000001/.cache"},

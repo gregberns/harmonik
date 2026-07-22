@@ -146,10 +146,23 @@ func i0377GitOutput(t *testing.T, dir string, args ...string) string {
 // i0377GenerateProfile calls GenerateSandboxProfile with per-test coordinates
 // and writes the JSON to a temp file. Returns the settings file path.
 //
-// TmpDirs = ["/tmp", "/private/tmp"] — the standard macOS srt temp entries.
-// The test's own temp dirs live under $TMPDIR (/var/folders/…), which is
-// intentionally NOT included here: this keeps the main-repo working tree
-// (also in $TMPDIR) outside the sandbox's allowWrite list for scenario (b).
+// NO TmpDirs (hk-guapd). This used to pass ["/tmp", "/private/tmp"], with the
+// comment: "the test's own temp dirs live under $TMPDIR (/var/folders/…), which
+// is intentionally NOT included here: this keeps the main-repo working tree
+// (also in $TMPDIR) outside the sandbox's allowWrite list for scenario (b)."
+//
+// That reasoning was correct ONLY while $TMPDIR happened to be a per-user path.
+// It states its own precondition as if it were a fact. Under TMPDIR=/tmp — which
+// Makefile:453 and :465 use for the gating suites, and which os.TempDir() also
+// falls back to whenever TMPDIR is UNSET — mainDir is created inside /tmp, i.e.
+// inside the grant, and scenario (b) inverts: the sandbox correctly ALLOWS the
+// write the test exists to prove is denied. Measured, not argued: this test
+// failed under TMPDIR=/tmp and passed with a per-user TMPDIR, deterministically,
+// independent of machine load.
+//
+// Supplying no TmpDirs at all removes the precondition rather than documenting
+// it. The main-repo tree is now outside allowWrite because nothing grants a temp
+// root, not because of where $TMPDIR happens to point today.
 func i0377GenerateProfile(t *testing.T, mainDir, worktreeDir, gitDir, runID, runBranch string) string {
 	t.Helper()
 
@@ -159,7 +172,6 @@ func i0377GenerateProfile(t *testing.T, mainDir, worktreeDir, gitDir, runID, run
 		RunID:          runID,
 		BranchName:     runBranch,
 		DaemonSockPath: filepath.Join(mainDir, "daemon.sock"),
-		TmpDirs:        []string{"/tmp", "/private/tmp"},
 	})
 	if err != nil {
 		t.Fatalf("i0377GenerateProfile: GenerateSandboxProfile: %v", err)

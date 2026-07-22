@@ -386,6 +386,55 @@ type WorkLoopDepsParams struct {
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
 // a real handler.Handler bound to the provided bus.  Use in tests to bypass
 // newWorkLoopDeps (which requires a real br binary).
+// synthesizeQueueStoreFromLedger builds a single-item queue from the first bead
+// the stub ledger reports ready, so a test that supplied no QueueStore still
+// dispatches through the queue-pull path (hk-04q2j.1).
+//
+// Returns nil when there is nothing to dispatch — no ledger, a ledger that
+// errors, or an empty ready set. A nil store leaves the loop idle, which is
+// exactly what the daemon does once the br-ready fallback is deleted.
+//
+// Only the FIRST ready bead is enqueued, deliberately. The deleted fallback
+// re-polled and picked one bead per tick, so legacy tests were written around a
+// single in-flight dispatch. Enqueuing the whole ready list instead was measured
+// against the suite and is wrong: it turns those single-dispatch tests into
+// concurrent ones and breaks 18 of them (throughput, pane-isolation, and
+// claim-semaphore assertions all assume one bead goes out). Keep this at one.
+//
+// The known cost is TestWorkLoop_ShowBeadErrorRetryBounded, which needs a SECOND
+// ready bead to prove a broken one gets skipped. That test pins the br-ready
+// attempt bound being deleted in hk-04q2j.2, and the surviving queue path has no
+// equivalent bound (hk-pina9). It is handled in hk-04q2j.4, not worked around here.
+func synthesizeQueueStoreFromLedger(br beadLedger) *QueueStore {
+	if br == nil {
+		return nil
+	}
+
+	ready, err := br.Ready(context.Background())
+	if err != nil || len(ready) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	qs := NewQueueStore()
+	qs.SetQueue(&queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "hk-04q2j-synthesized-legacy-test-queue",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{{
+			GroupIndex: 0,
+			Kind:       queue.GroupKindStream,
+			Status:     queue.GroupStatusActive,
+			Items: []queue.Item{
+				{BeadID: ready[0].BeadID, Status: queue.ItemStatusPending},
+			},
+			CreatedAt: now,
+		}},
+	})
+	return qs
+}
+
 func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	binary := p.HandlerBinary
 	if binary == "" {
@@ -460,12 +509,28 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		cacheReapMu = &sync.RWMutex{}
 	}
 
+	// QueueStore: use the caller-supplied store, or synthesize one from the
+	// BrAdapter's ready beads when the caller supplied none (hk-04q2j.1).
+	//
+	// Legacy tests predate the queue path: they drive dispatch by having a stub
+	// ledger's Ready() return a bead, and rely on the br-ready poll fallback to
+	// pick it up. That fallback is being deleted (hk-04q2j.2) because the daemon
+	// must never self-start work from the backlog — only agents submitting to
+	// their own named queues decide what runs. Synthesizing a queue here routes
+	// those tests through the queue-pull path instead, so they keep dispatching
+	// once the fallback is gone, without each test having to build a queue by
+	// hand. Tests that already supply a QueueStore are untouched.
+	queueStore := p.QueueStore
+	if queueStore == nil {
+		queueStore = synthesizeQueueStoreFromLedger(p.BrAdapter)
+	}
+
 	// Derive the submit-wake channel from the QueueStore when one is provided
 	// (hk-24xn1). Mirrors the daemon.Start wiring so queue-aware tests observe
 	// the same wake-on-submit behaviour as production.
 	var submitWakeC <-chan struct{}
-	if p.QueueStore != nil {
-		submitWakeC = p.QueueStore.WakeCh()
+	if queueStore != nil {
+		submitWakeC = queueStore.WakeCh()
 	}
 
 	return workLoopDeps{
@@ -491,7 +556,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		agentReadyTimeout:          p.AgentReadyTimeout,
 		postAgentReadyHangTimeout:  p.PostAgentReadyHangTimeout,
 		projectCfg:                 p.ProjectCfg,
-		queueStore:                 p.QueueStore,
+		queueStore:                 queueStore,
 		queueLedger:                p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
 		submitWakeC:                submitWakeC,
 		cancelOnQueueDrain:         p.CancelOnQueueDrain,

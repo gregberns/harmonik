@@ -39,7 +39,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/cognition"
@@ -57,7 +56,6 @@ func ev041GitFixtureSetup(t *testing.T) string {
 
 	runGit := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: args are constant strings in tests.
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -70,7 +68,7 @@ func ev041GitFixtureSetup(t *testing.T) string {
 	runGit("config", "user.name", "Harmonik EV041 Test")
 
 	f := filepath.Join(dir, "README")
-	if err := os.WriteFile(f, []byte("ev041 fixture\n"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("ev041 fixture\n"), 0o600); err != nil {
 		t.Fatalf("ev041Fixture: write README: %v", err)
 	}
 	runGit("add", "README")
@@ -84,20 +82,18 @@ func ev041GitFixtureSetup(t *testing.T) string {
 func ev041CommitWithRunIDTrailer(t *testing.T, repoDir, runID string) {
 	t.Helper()
 
-	runGit := func(args ...string) string {
+	runGit := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: args are constant strings; repoDir is t.TempDir()-based.
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = repoDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("ev041CommitWithRunIDTrailer: git %v: %v\n%s", args, err, out)
 		}
-		return strings.TrimSpace(string(out))
 	}
 
 	marker := filepath.Join(repoDir, "ev041-marker-"+runID+".txt")
-	if err := os.WriteFile(marker, []byte("run: "+runID+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(marker, []byte("run: "+runID+"\n"), 0o600); err != nil {
 		t.Fatalf("ev041CommitWithRunIDTrailer: write marker: %v", err)
 	}
 	runGit("add", marker)

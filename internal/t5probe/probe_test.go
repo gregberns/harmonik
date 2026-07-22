@@ -30,7 +30,11 @@ func readLines(t *testing.T, path string) []string {
 	if err != nil {
 		t.Fatalf("readLines: open %s: %v", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("readLines: close %s: %v", path, err)
+		}
+	}()
 	var out []string
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -58,10 +62,16 @@ func TestT5_EnvelopeFieldsInJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	bus := eventbus.NewBusImplWithWriter(reg, w)
-	_ = bus.Seal()
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
 	type testPayload struct {
 		At string `json:"at"`
@@ -73,7 +83,10 @@ func TestT5_EnvelopeFieldsInJSONL(t *testing.T) {
 		core.EventType("run_completed"),
 	} {
 		p := testPayload{At: time.Now().UTC().Format(time.RFC3339Nano)}
-		pb, _ := json.Marshal(p)
+		pb, err := json.Marshal(p)
+		if err != nil {
+			t.Fatalf("Marshal event %s: %v", evtType, err)
+		}
 		if emitErr := bus.Emit(context.Background(), evtType, pb); emitErr != nil {
 			t.Fatalf("Emit %s: %v", evtType, emitErr)
 		}
@@ -119,15 +132,26 @@ func TestT5_JSONLValidJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	bus := eventbus.NewBusImplWithWriter(reg, w)
-	_ = bus.Seal()
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
 	for i := range 10 {
 		p := map[string]any{"seq": i}
-		pb, _ := json.Marshal(p)
-		_ = bus.Emit(context.Background(), core.EventTypeDaemonStarted, pb)
+		pb, err := json.Marshal(p)
+		if err != nil {
+			t.Fatalf("Marshal seq %d: %v", i, err)
+		}
+		if err := bus.Emit(context.Background(), core.EventTypeDaemonStarted, pb); err != nil {
+			t.Fatalf("Emit seq %d: %v", i, err)
+		}
 	}
 
 	lines := readLines(t, jsonlPath)
@@ -151,10 +175,16 @@ func TestT5_EventOrderInJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 
 	bus := eventbus.NewBusImplWithWriter(reg, w)
-	_ = bus.Seal()
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
 	emitOrder := []core.EventType{
 		core.EventTypeDaemonStarted,
@@ -163,8 +193,13 @@ func TestT5_EventOrderInJSONL(t *testing.T) {
 	}
 	for _, evtType := range emitOrder {
 		p := map[string]any{"evt": string(evtType)}
-		pb, _ := json.Marshal(p)
-		_ = bus.Emit(context.Background(), evtType, pb)
+		pb, err := json.Marshal(p)
+		if err != nil {
+			t.Fatalf("Marshal event %s: %v", evtType, err)
+		}
+		if err := bus.Emit(context.Background(), evtType, pb); err != nil {
+			t.Fatalf("Emit event %s: %v", evtType, err)
+		}
 	}
 
 	lines := readLines(t, jsonlPath)
@@ -176,11 +211,19 @@ func TestT5_EventOrderInJSONL(t *testing.T) {
 	// nested under "payload". Check payload["evt"] for the event type string.
 	for i, line := range lines {
 		var m map[string]any
-		_ = json.Unmarshal([]byte(line), &m)
-		payloadRaw, _ := m["payload"].(map[string]any)
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("line %d: invalid JSON: %v", i, err)
+		}
+		payloadRaw, ok := m["payload"].(map[string]any)
+		if !ok {
+			t.Fatalf("line %d: payload is %T, want object", i, m["payload"])
+		}
 		var got string
 		if payloadRaw != nil {
-			got, _ = payloadRaw["evt"].(string)
+			got, ok = payloadRaw["evt"].(string)
+			if !ok {
+				t.Fatalf("line %d: payload evt is %T, want string", i, payloadRaw["evt"])
+			}
 		}
 		want := string(emitOrder[i])
 		if got != want {
@@ -212,12 +255,17 @@ func TestT5_SIGKILLDurability(t *testing.T) {
 	}
 
 	bus := eventbus.NewBusImplWithWriter(reg, w)
-	_ = bus.Seal()
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
 	// Write 5 F-class (daemon_started) events — each is fsynced.
 	for i := range 5 {
 		p := map[string]any{"seq": i}
-		pb, _ := json.Marshal(p)
+		pb, err := json.Marshal(p)
+		if err != nil {
+			t.Fatalf("Marshal seq %d: %v", i, err)
+		}
 		if emitErr := bus.Emit(context.Background(), core.EventTypeDaemonStarted, pb); emitErr != nil {
 			t.Fatalf("Emit seq %d: %v", i, emitErr)
 		}
@@ -234,9 +282,14 @@ func TestT5_SIGKILLDurability(t *testing.T) {
 		t.Fatalf("OpenJSONLWriter (crash sim): %v", err)
 	}
 	bus2 := eventbus.NewBusImplWithWriter(reg, w2)
-	_ = bus2.Seal()
+	if err := bus2.Seal(); err != nil {
+		t.Fatalf("Seal crash sim: %v", err)
+	}
 	// Write one more event
-	pb2, _ := json.Marshal(map[string]any{"seq": 5, "crash_before_close": true})
+	pb2, err := json.Marshal(map[string]any{"seq": 5, "crash_before_close": true})
+	if err != nil {
+		t.Fatalf("Marshal crash-sim: %v", err)
+	}
 	if emitErr := bus2.Emit(context.Background(), core.EventTypeDaemonStarted, pb2); emitErr != nil {
 		t.Fatalf("Emit crash-sim: %v", emitErr)
 	}
@@ -274,11 +327,22 @@ func TestT5_SIGKILLDurability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter (re-open): %v", err)
 	}
-	defer func() { _ = w3.Close() }()
+	defer func() {
+		if err := w3.Close(); err != nil {
+			t.Errorf("Close re-open writer: %v", err)
+		}
+	}()
 	bus3 := eventbus.NewBusImplWithWriter(reg, w3)
-	_ = bus3.Seal()
-	pb3, _ := json.Marshal(map[string]any{"seq": 99, "reopen": true})
-	_ = bus3.Emit(context.Background(), core.EventTypeDaemonStarted, pb3)
+	if err := bus3.Seal(); err != nil {
+		t.Fatalf("Seal re-open bus: %v", err)
+	}
+	pb3, err := json.Marshal(map[string]any{"seq": 99, "reopen": true})
+	if err != nil {
+		t.Fatalf("Marshal re-open event: %v", err)
+	}
+	if err := bus3.Emit(context.Background(), core.EventTypeDaemonStarted, pb3); err != nil {
+		t.Fatalf("Emit re-open event: %v", err)
+	}
 
 	lines2 := readLines(t, jsonlPath)
 	if len(lines2) < len(lines)+1 {
@@ -305,10 +369,19 @@ func TestT5_RedactionHC031ByFieldName(t *testing.T) {
 	jsonlPath := filepath.Join(dir, "events.jsonl")
 
 	reg := handlercontract.NewRedactionRegistry()
-	w, _ := eventbus.OpenJSONLWriter(jsonlPath)
-	defer func() { _ = w.Close() }()
+	w, err := eventbus.OpenJSONLWriter(jsonlPath)
+	if err != nil {
+		t.Fatalf("OpenJSONLWriter: %v", err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 	bus := eventbus.NewBusImplWithWriter(reg, w)
-	_ = bus.Seal()
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
 	secretPayload := map[string]any{
 		"run_id":       "test-run-id",
@@ -317,9 +390,16 @@ func TestT5_RedactionHC031ByFieldName(t *testing.T) {
 		"password":     "hunter2",
 		"safe_field":   "visible",
 	}
-	pb, _ := json.Marshal(secretPayload)
-	_ = bus.Emit(context.Background(), core.EventType("run_started"), pb)
-	_ = w.Close()
+	pb, err := json.Marshal(secretPayload)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := bus.Emit(context.Background(), core.EventType("run_started"), pb); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 
 	lines := readLines(t, jsonlPath)
 	if len(lines) != 1 {
@@ -331,8 +411,8 @@ func TestT5_RedactionHC031ByFieldName(t *testing.T) {
 	}
 	// JSONL records carry the full EV-001 envelope; payload fields are nested
 	// under "payload".
-	p, _ := envelope["payload"].(map[string]any)
-	if p == nil {
+	p, ok := envelope["payload"].(map[string]any)
+	if !ok {
 		t.Fatal("envelope missing 'payload' object")
 	}
 
@@ -369,10 +449,19 @@ func TestT5_RedactionHC032ValuePattern(t *testing.T) {
 	skPattern := regexp.MustCompile(`sk-[A-Za-z0-9]+`)
 	reg.RegisterPattern("t5probe_handler", []*regexp.Regexp{skPattern})
 
-	w, _ := eventbus.OpenJSONLWriter(jsonlPath)
-	defer func() { _ = w.Close() }()
+	w, err := eventbus.OpenJSONLWriter(jsonlPath)
+	if err != nil {
+		t.Fatalf("OpenJSONLWriter: %v", err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 	bus := eventbus.NewBusImplWithWriter(reg, w)
-	_ = bus.Seal()
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
 	// "carrier_field" carries an sk-prefixed secret value.
 	// "safe_field" carries a value that does NOT match the pattern.
@@ -380,20 +469,29 @@ func TestT5_RedactionHC032ValuePattern(t *testing.T) {
 		"carrier_field": "sk-SuperSecretValue",
 		"safe_field":    "visible-ok",
 	}
-	pb, _ := json.Marshal(p)
-	_ = bus.Emit(context.Background(), core.EventType("run_started"), pb)
-	_ = w.Close()
+	pb, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if err := bus.Emit(context.Background(), core.EventType("run_started"), pb); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 
 	lines := readLines(t, jsonlPath)
 	if len(lines) != 1 {
 		t.Fatalf("expected 1 line, got %d", len(lines))
 	}
 	var envelope map[string]any
-	_ = json.Unmarshal([]byte(lines[0]), &envelope)
+	if err := json.Unmarshal([]byte(lines[0]), &envelope); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
 	// JSONL records carry the full EV-001 envelope; payload fields are nested
 	// under "payload".
-	payload, _ := envelope["payload"].(map[string]any)
-	if payload == nil {
+	payload, ok := envelope["payload"].(map[string]any)
+	if !ok {
 		t.Fatal("envelope missing 'payload' object")
 	}
 
@@ -402,7 +500,10 @@ func TestT5_RedactionHC032ValuePattern(t *testing.T) {
 	if !ok {
 		t.Fatal("carrier_field missing from JSONL payload")
 	}
-	valStr, _ := val.(string)
+	valStr, ok := val.(string)
+	if !ok {
+		t.Fatalf("carrier_field is %T, want string", val)
+	}
 	if strings.Contains(valStr, "sk-") {
 		t.Errorf("carrier_field not redacted by HC-032 value-pattern: got %q", valStr)
 	}
@@ -421,14 +522,21 @@ func TestT5_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 	jsonlPath := filepath.Join(dir, "events.jsonl")
 
 	reg := handlercontract.NewRedactionRegistry()
-	w, _ := eventbus.OpenJSONLWriter(jsonlPath)
-	defer func() { _ = w.Close() }()
+	w, err := eventbus.OpenJSONLWriter(jsonlPath)
+	if err != nil {
+		t.Fatalf("OpenJSONLWriter: %v", err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
 	bus := eventbus.NewBusImplWithWriter(reg, w)
 
 	var mu sync.Mutex
 	var dispatchLog []string
 
-	_, _ = bus.Subscribe(core.Subscription{
+	if _, err := bus.Subscribe(core.Subscription{
 		ConsumerID:    "sync-1",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern:  core.EventPattern{Wildcard: true},
@@ -438,11 +546,13 @@ func TestT5_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 			mu.Unlock()
 			return nil
 		},
-	})
+	}); err != nil {
+		t.Fatalf("Subscribe sync: %v", err)
+	}
 	asyncStarted := make(chan struct{}, 1)
 	asyncMayFinish := make(chan struct{})
 	asyncDone := make(chan struct{})
-	_, _ = bus.Subscribe(core.Subscription{
+	if _, err := bus.Subscribe(core.Subscription{
 		ConsumerID:    "async-1",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern:  core.EventPattern{Wildcard: true},
@@ -455,10 +565,17 @@ func TestT5_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 			close(asyncDone)
 			return nil
 		},
-	})
-	_ = bus.Seal()
+	}); err != nil {
+		t.Fatalf("Subscribe async: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
-	pb, _ := json.Marshal(map[string]any{"x": 1})
+	pb, err := json.Marshal(map[string]any{"x": 1})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
 	if emitErr := bus.Emit(context.Background(), core.EventType("run_started"), pb); emitErr != nil {
 		t.Fatalf("Emit: %v", emitErr)
 	}

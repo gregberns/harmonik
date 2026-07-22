@@ -55,7 +55,7 @@ func TestL1_CorpusZeroUnknownFrames(t *testing.T) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		lineNum++
-		if len(strings.TrimSpace(string(line))) == 0 {
+		if strings.TrimSpace(string(line)) == "" {
 			continue
 		}
 		frame, parseErr := codexwire.Parse(line)
@@ -97,7 +97,7 @@ func TestL1_CorpusZeroUnmodeledFields(t *testing.T) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		lineNum++
-		if len(strings.TrimSpace(string(line))) == 0 {
+		if strings.TrimSpace(string(line)) == "" {
 			continue
 		}
 		frame, parseErr := codexwire.Parse(line)
@@ -140,7 +140,7 @@ func TestL1_CorpusRoundTrip(t *testing.T) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		lineNum++
-		if len(strings.TrimSpace(string(line))) == 0 {
+		if strings.TrimSpace(string(line)) == "" {
 			continue
 		}
 		frame, parseErr := codexwire.Parse(line)

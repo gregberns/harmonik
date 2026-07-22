@@ -82,11 +82,11 @@ type Record struct {
 type State int
 
 const (
-	// StateOnline: effective_last_seen < TTL (120s).
+	// StateOnline means effective_last_seen < TTL (120s).
 	StateOnline State = iota
-	// StateStale: TTL ≤ effective_last_seen < StaleCutoff (10m).
+	// StateStale means TTL ≤ effective_last_seen < StaleCutoff (10m).
 	StateStale
-	// StateOffline: explicit leave beat OR effective_last_seen ≥ StaleCutoff.
+	// StateOffline means an explicit leave beat or effective_last_seen ≥ StaleCutoff.
 	StateOffline
 )
 

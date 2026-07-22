@@ -134,7 +134,7 @@ func TestL3_HappyPathLive(t *testing.T) {
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			return codexwire.Frame{}, fmt.Errorf("scan error: %v", err)
+			return codexwire.Frame{}, fmt.Errorf("scan error: %w", err)
 		}
 		return codexwire.Frame{}, fmt.Errorf("EOF before seeing %q", want)
 	}

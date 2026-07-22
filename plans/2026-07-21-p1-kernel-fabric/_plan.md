@@ -1,6 +1,21 @@
 # P1 — Kernel / Fabric: Plan (design-only, pre-kerf review draft)
 
-**Date:** 2026-07-21 · **Status:** DRAFT for review, then kerf · **Daemon/comms:** DOWN (design only)
+**Date:** 2026-07-21 · **Revised:** 2026-07-22 (kilo) · **Status:** REVIEWED — must-fixes applied, KERF-READY
+**Daemon/comms:** DOWN (design only)
+
+**Review disposition.** The 2026-07-21 chief-architect pass returned **NEEDS-REVISION (minor)**
+on P1: the frame and C1–C6 are honored, the substrate-v2 recast is accurate, and scope is
+right-sized — with two must-fixes and one deletion. All three are applied:
+
+| Review item | Where | Status |
+|---|---|---|
+| Must-fix 6 — dispatch-plugin channel ownership is ambiguous; a separately-namespaced worker plugin cannot use `dispatch.*` | §3 | **Applied** — one plugin, `role: primary\|worker`, one namespace |
+| Must-fix 1 (P1 half) — state the LOOKUP deferral as a *contract with P3*, which currently marks it REQUIRED | §4 | **Applied** — trigger named; static-config reading wins per C3 |
+| Drop Q-2 — already answered verbatim by locked C3 | §7 | **Applied** — deleted, recorded as a scope line |
+
+The review also resolved P1's Q-1 / Q-4 / Q-5 without operator input. Those are recorded in §7
+as adopted defaults, leaving **one** genuine operator question in this plan (Q-3, guardrail
+ratification). Nothing in P1 violates a locked decision.
 **Governing decisions:** `../2026-07-21-platform-architecture/DECISIONS.md` (C1–C6, locked).
 **Reused architecture:** `../2026-07-21-platform-architecture/research/A2-substrate-v2-architecture.md`
 (the fleetd kernel) — recast for in-proc plugins per C6, premise dropped per §6 below.
@@ -185,11 +200,28 @@ recurring:
 - **Transport = leaderless/peerless at the contract level.** No method names a coordinator;
   the transport interface takes a peer *set* (`SetPeers`), not a leader. A kernel can cold-boot
   alone and keep serving when peers die. "No box in charge" is a property of the *network*.
-- **Work-dispatch = one central owner, as an application.** A single **dispatch plugin**
-  instance is configured `role: primary` and holds the queue. Every other daemon runs a
-  **worker plugin** whose static config names the primary. Primary dies → **restart it**; you
-  do not rebuild the network. This is the operator's "central harmonik server holds the queues"
-  with the clarification that the fabric underneath has no single point of failure.
+- **Work-dispatch = one central owner, as an application.** **ONE dispatch plugin, deployed on
+  every daemon, with `role: primary | worker` in its config.** The instance configured
+  `role: primary` holds the queue; every other instance runs the worker side. Primary dies →
+  **restart it**; you do not rebuild the network. This is the operator's "central harmonik
+  server holds the queues" with the clarification that the fabric underneath has no single
+  point of failure.
+
+  **Why one plugin and not two (a primary plugin + a worker plugin).** Under §2's manifest rule
+  a namespace owns `<namespace>.*` and its storage — that ownership is what makes cross-plugin
+  storage access *unrepresentable* rather than merely forbidden. Two separately-namespaced
+  plugins therefore could not talk: a `worker`-namespaced plugin could neither publish on
+  `dispatch.status` nor subscribe-as-group on `dispatch.work`, because it does not own
+  `dispatch.*`. Resolving that by inventing cross-namespace publish/subscribe rights would
+  weaken the single hardest boundary in the kernel for one application's convenience.
+  One plugin, one namespace (`dispatch`), deployed everywhere, behaving differently by config,
+  needs no such exception. substrate-v2 never hit this because the plugin that ran on every box
+  (comms) was the same plugin — the same resolution, arrived at by not having the problem.
+
+  **This is a contract with P3, not a P1 implementation detail:** P3's dispatch plugin ships as
+  one artifact with a role switch. If P3 ever proposes split primary/worker plugins, that is the
+  boundary test firing (§6) — the answer is to re-examine the split, not to add cross-namespace
+  channel rights to the kernel.
 
 **How a worker daemon connects to the primary's kernel (first cut, static — C3):**
 
@@ -226,9 +258,22 @@ The **exact slice P3 needs on day one**, and nothing more:
 
 **Deferred out of the day-one slice (built when P3 forces it, not before):**
 
-- **LOOKUP / dynamic worker registration.** Static config (Q workers naming the primary) covers
+- **LOOKUP / dynamic worker registration.** Static config (workers naming the primary) covers
   the first cut; LOOKUP-based join/leave of ephemeral containers is the "later capability" C3
   names and A2 flags as a thin spot.
+
+  **Concrete trigger, so "deferred" cannot drift into "contested":** the `Lookup` *interface*
+  ships on day one and the in-memory kernel MAY implement it trivially — deferral is of the
+  replicated cross-node implementation and of any *consumer*, not of the contract. **LOOKUP
+  lands when dynamic worker join is scheduled.** Until then v1 has no LOOKUP consumer: worker
+  addresses are static per C3, and containers are supervised by their local worker rather than
+  being fabric-visible, so nothing ephemeral needs an address in the fabric.
+
+  **This resolves a live contradiction with P3, recorded here so it is not re-litigated:** P3
+  §3.2.1 currently declares ephemeral LOOKUP join/leave "P3 REQUIRES this from P1," while P3 §4
+  states topology is static config. Both cannot hold. **The static-config reading wins — it is
+  what C3 locked** — and P3 §3.1/§3.2/§2.5 move LOOKUP + ephemeral join/leave to the first
+  post-v1 increment. Without this, P1 and P3 would be scoped against contradictory contracts.
 - **Real cross-machine mesh transport.** First co-validation uses an in-memory transport
   double (see §5); the NATS-or-TCP implementation lands behind the transport interface without
   changing what P3 consumes.
@@ -319,42 +364,60 @@ Resolved here (no operator input needed):
 - **Namespace isolation** → namespace-scoped `Kernel` handle at `Start`; cross-namespace access
   unrepresentable. No namespace argument anywhere.
 - **Minimal P3 slice** → §4 table: transport (pubsub + p2p + req/reply) + roster + State
-  resource + Info. LOOKUP and real mesh deferred.
+  resource + Info. LOOKUP and real mesh deferred, **with the trigger and the P3 contradiction
+  resolved in §4** — the earlier version of this line claimed resolution it did not have, since
+  P3 simultaneously marked LOOKUP required.
+- **Dispatch channel ownership** → ONE `dispatch` plugin with a `role: primary|worker` config
+  switch, deployed on every daemon (§3). Two separately-namespaced plugins could not share
+  `dispatch.*` without weakening namespace ownership.
 - **Where durable dispatch lives** → the dispatch *plugin* (P3), not the kernel. P1 exposes the
   four tools; it does not grow a queue.
 - **Package home** → `internal/kernel/`, dep-allowlisted, out of `internal/daemon`.
 
 ### Questions for operator
 
-- **Q-1 — Cross-machine transport implementation.** substrate-v2 chose *embed NATS core behind
-  the 6-method interface* (JetStream off). C6 didn't change kernel↔kernel (still network). Keep
-  the NATS-embed bet for the networked kernel, or start the first real cut on something simpler
-  (minimal owned TCP/gRPC between kernels) and revisit? Either way the contract plugins approve
-  is unchanged — this is purely the hidden implementation. **Recommendation: defer the choice;
-  ship the in-memory kernel first (§5), decide Q-1 when the first *cross-machine* P3 run is
-  actually scheduled.** Need your OK to defer.
+The pre-kerf review consolidated 18 raw questions across the three plans down to 3 that
+genuinely need operator judgment. **Exactly one of those is P1's.** The rest of P1's original
+five are answered below as adopted defaults — either because a locked decision already settled
+them, or because they are reversible implementation choices that should not consume operator
+attention. **Any of them can be vetoed; none blocks kerf.**
 
-- **Q-2 — First cut is static-primary, not yet leaderless-in-practice.** C3 says static config
-  first. That means "no single point of failure" is *contracted at the interface* but the first
-  implementation (worker dials primary) does **not** demonstrate partition survival or mesh.
-  Confirm we ship the static cut now and treat mesh + dynamic LOOKUP registration as an
-  explicit *later* capability — i.e. we are OK that the leaderless property is designed-for but
-  unproven in v1.
+#### NEEDS OPERATOR JUDGMENT (1)
 
 - **Q-3 — Ratify the kill-criteria / boundary-test guardrail.** DECISIONS lists this as
-  "proposed — to ratify." I want to adopt it as *shared, pre-agreed* ground rules (dep-
-  allowlist, vocabulary test, `[]byte` payload, size tripwire, "two plugins needing new verbs =
-  stop") so scope disputes are settled by a test both sides agreed to in advance. Ratify?
+  "proposed — to ratify," so it is explicitly reserved for you. Adopt as *shared, pre-agreed*
+  ground rules: dep-allowlist test, vocabulary/boundary test (no domain noun in
+  `internal/kernel`), `[]byte`-payload rule, kernel-size tripwire, and "two plugins needing new
+  kernel verbs = stop." The point is that scope disputes get settled by a test both sides agreed
+  to in advance, rather than by whoever says "over-engineering" or "dismissal" first.
+  **Recommendation: ratify the package.** One yes here also covers the equivalent question in P2
+  and P3 — the review dedupes them into this single ask.
 
-- **Q-4 — Live-reload: accept losing it under C6?** In-proc plugins (C6) cannot be hot-swapped
-  the way substrate-v2's separate-process plugins could; swapping a plugin means restarting the
-  daemon. C6 was chosen deliberately (fewer deploy artifacts, easier testing) and I think the
-  trade is right, but it *does* forfeit the "swap tooling without stopping the daemon"
-  property. Confirm that's acceptable (daemon restart to swap a plugin), or flag if hot-reload
-  is a requirement — because it would reopen the in-proc-vs-process boundary.
+  This is P1's *only* genuine operator question. The other two the review escalated (the C5
+  liveness set, and the review-token posture) belong to P3 and codex-first.
 
-- **Q-5 — `max_payload_bytes` posture given C1.** Since the fabric is control-plane-only (git
-  is the artifact plane), the payload ceiling should be small enough to *structurally* prevent
-  someone streaming a diff/repo over it. Want a hard, low ceiling (e.g. tens–hundreds of KB) as
-  a C1 tripwire, or leave it advisory? **Recommendation: hard low ceiling** — it makes C1
-  enforced by the kernel, not by discipline.
+#### ADOPTED DEFAULTS — recorded, vetoable, not blocking
+
+- **Q-1 — Cross-machine transport implementation → DEFER.** Ship the in-memory kernel first
+  (§5); decide NATS-embed vs. minimal owned TCP when the first *cross-machine* P3 run is
+  actually scheduled. The 6-method transport interface is what makes this genuinely deferrable
+  rather than merely postponed: the choice sits behind a seam the plugin contract never sees.
+
+- **Q-2 — DELETED, already locked.** The former question asked whether to accept a static-primary
+  first cut whose leaderless property is contracted but not demonstrated. **C3 locked exactly
+  that, verbatim** ("static config, not dynamic discovery yet"). Asking again would re-open a
+  locked decision. Recorded instead as a known scope line: *leaderless is contracted at the
+  interface; partition survival and mesh are demonstrated later.* §3's "honest scope line" is
+  the durable statement of it.
+
+- **Q-4 — Live-reload loss → ACCEPTED CONSEQUENCE of locked C6, FYI not a question.** In-proc
+  plugins cannot be hot-swapped; swapping one means restarting the daemon. C6 chose in-proc
+  deliberately (fewer deploy artifacts, easier testing) with this as a known trade. Reopen only
+  if hot-swap ever becomes an actual requirement — which would reopen the in-proc-vs-process
+  boundary itself, not just this line.
+
+- **Q-5 — `max_payload_bytes` → HARD LOW CEILING (order 256 KB).** This converts locked C1 from
+  a discipline into a mechanism: with a low hard ceiling, streaming a diff or a repo over the
+  fabric *fails* rather than merely violating a rule someone has to remember. Nothing in P3 needs
+  a large payload — its messages carry a bead id and a SHA. A ceiling that is advisory is a C1
+  guardrail that only holds while everyone is paying attention.

@@ -275,6 +275,18 @@ crewrun-freeze-gate:  ## P2 E2: forbid new crew-launch files or moved symbols in
 harnesscodex-freeze-gate:  ## P2 E1a: forbid new codex-harness files or moved symbols in internal/daemon
 	scripts/harnesscodex-freeze-gate.sh
 
+# harnessclaude-freeze-gate: the P2 E1b extraction ratchet — the claude harness
+# implementation (the Harness impl + the claude-hook-bridge launch-spec builder)
+# left internal/daemon for internal/harness/claude, and depguard can only fence
+# the import edge, not the creation of a new file. This grep gate fails if a
+# claude-harness-shaped file or one of the moved symbols reappears in
+# internal/daemon. claudeheartbeat.go (harness-blind heartbeat emitter) and
+# claudeworktreesweep.go (CLI-leftover janitor) are named exceptions — see the
+# script header. Wired into check-fast and check-short.
+.PHONY: harnessclaude-freeze-gate
+harnessclaude-freeze-gate:  ## P2 E1b: forbid new claude-harness files or moved symbols in internal/daemon
+	scripts/harnessclaude-freeze-gate.sh
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -464,6 +476,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/queuewiring-freeze-gate.sh
 	scripts/crewrun-freeze-gate.sh
 	scripts/harnesscodex-freeze-gate.sh
+	scripts/harnessclaude-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -489,6 +502,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/queuewiring-freeze-gate.sh
 	scripts/crewrun-freeze-gate.sh
 	scripts/harnesscodex-freeze-gate.sh
+	scripts/harnessclaude-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

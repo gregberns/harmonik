@@ -1,6 +1,6 @@
-package daemon_test
+package claude_test
 
-// claudelaunchspec_test.go — unit tests for buildClaudeLaunchSpec (hk-gql20.13).
+// launchspec_test.go — unit tests for claude.BuildLaunchSpec (hk-gql20.13).
 //
 // Verifies the helper threads all bridge pieces correctly for all four workflow
 // phases: single, implementer-initial, implementer-resume, reviewer.
@@ -28,8 +28,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/claude"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
 // claudeLaunchSpecFixtureWorkspace creates a temporary workspace directory
@@ -54,13 +55,13 @@ func claudeLaunchSpecFixtureRunCtx(
 	phase handlercontract.ReviewLoopPhase,
 	priorClaudeSessID *string,
 	iterationCount int,
-) daemon.ExportedClaudeRunCtx {
+) shared.LaunchCtx {
 	t.Helper()
 	runUID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("claudeLaunchSpecFixtureRunCtx: NewV7 runID: %v", err)
 	}
-	return daemon.ExportedClaudeRunCtx{
+	return shared.LaunchCtx{
 		RunID:             core.RunID(runUID),
 		BeadID:            "test-bead-gql20.13",
 		WorkspacePath:     workspacePath,
@@ -86,7 +87,7 @@ func TestBuildClaudeLaunchSpec_Single(t *testing.T) {
 	ws := claudeLaunchSpecFixtureWorkspace(t)
 	rc := claudeLaunchSpecFixtureRunCtx(t, ws, "", nil, 0)
 
-	spec, arts, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	spec, arts, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("TestBuildClaudeLaunchSpec_Single: unexpected error: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestBuildClaudeLaunchSpec_ImplementerInitial(t *testing.T) {
 	ws := claudeLaunchSpecFixtureWorkspace(t)
 	rc := claudeLaunchSpecFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseImplementerInitial, nil, 1)
 
-	spec, arts, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	spec, arts, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("TestBuildClaudeLaunchSpec_ImplementerInitial: unexpected error: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestBuildClaudeLaunchSpec_ImplementerResume(t *testing.T) {
 
 	rc := claudeLaunchSpecFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseImplementerResume, &priorSessID, 2)
 
-	spec, arts, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	spec, arts, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("TestBuildClaudeLaunchSpec_ImplementerResume: unexpected error: %v", err)
 	}
@@ -190,7 +191,7 @@ func TestBuildClaudeLaunchSpec_Reviewer(t *testing.T) {
 	// CHB-009: reviewer must always mint fresh; caller must NOT pass a prior session ID.
 	rc := claudeLaunchSpecFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseReviewer, nil, 1)
 
-	spec, arts, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	spec, arts, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("TestBuildClaudeLaunchSpec_Reviewer: unexpected error: %v", err)
 	}
@@ -220,7 +221,7 @@ func TestBuildClaudeLaunchSpec_CheckForbiddenFlagsInvoked(t *testing.T) {
 		t.Fatalf("mint runUID: %v", err)
 	}
 	// Inject the forbidden env var via baseEnv.
-	rc := daemon.ExportedClaudeRunCtx{
+	rc := shared.LaunchCtx{
 		RunID:             core.RunID(runUID),
 		BeadID:            "test-bead-chb007",
 		WorkspacePath:     ws,
@@ -236,7 +237,7 @@ func TestBuildClaudeLaunchSpec_CheckForbiddenFlagsInvoked(t *testing.T) {
 		},
 	}
 
-	_, _, err = daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	_, _, err = claude.BuildLaunchSpec(context.Background(), rc)
 	if err == nil {
 		t.Error("expected error for forbidden env var CLAUDE_CODE_SKIP_PROMPT_HISTORY; got nil")
 	}
@@ -251,7 +252,7 @@ func TestBuildClaudeLaunchSpec_ImplementerResume_NilPriorSessionErrors(t *testin
 	ws := claudeLaunchSpecFixtureWorkspace(t)
 	rc := claudeLaunchSpecFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseImplementerResume, nil, 2)
 
-	_, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	_, _, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err == nil {
 		t.Error("expected error for implementer-resume with nil priorClaudeSessID; got nil")
 	}
@@ -267,7 +268,7 @@ func TestBuildClaudeLaunchSpec_TwinBlind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint runUID: %v", err)
 	}
-	rc := daemon.ExportedClaudeRunCtx{
+	rc := shared.LaunchCtx{
 		RunID:             core.RunID(runUID),
 		BeadID:            "test-bead-twin",
 		WorkspacePath:     ws,
@@ -280,7 +281,7 @@ func TestBuildClaudeLaunchSpec_TwinBlind(t *testing.T) {
 		BaseEnv:           []string{"HARMONIK_PROJECT_HASH=deadbeef123456"},
 	}
 
-	spec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	spec, _, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("TestBuildClaudeLaunchSpec_TwinBlind: unexpected error: %v", err)
 	}
@@ -356,13 +357,13 @@ func claudeLaunchSpecAssertEnvKey(t *testing.T, env []string, key string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CI-003 regression: credential deny-list scrub at buildClaudeLaunchSpec boundary
+// CI-003 regression: credential deny-list scrub at BuildLaunchSpec boundary
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv is the integration-level
 // regression lock for specs/credential-isolation.md CI-003/CI-004a.
 //
-// It verifies that buildClaudeLaunchSpec never emits a live ANTHROPIC_API_KEY,
+// It verifies that BuildLaunchSpec never emits a live ANTHROPIC_API_KEY,
 // ANTHROPIC_AUTH_TOKEN, or CLAUDE_CODE_OAUTH_TOKEN value in spec.Env even when
 // those keys are present in baseEnv (simulating a caller that passes os.Environ()
 // directly). The fix is in ClaudeEnvVars; this test locks it at the integration
@@ -383,7 +384,7 @@ func TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv(t *testing.T) {
 	// Inject live credential values into baseEnv to simulate a caller that
 	// passes os.Environ() without pre-filtering. The values are test-only
 	// sentinels; no real credentials are used (CI-007).
-	rc := daemon.ExportedClaudeRunCtx{
+	rc := shared.LaunchCtx{
 		RunID:          core.RunID(runUID),
 		BeadID:         "test-bead-ci003",
 		WorkspacePath:  ws,
@@ -400,7 +401,7 @@ func TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv(t *testing.T) {
 		},
 	}
 
-	spec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	spec, _, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv: unexpected error: %v", err)
 	}
@@ -475,7 +476,7 @@ func TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_InWorktree(t *testing.
 	}
 	wtRoot, wtPath := claudeLaunchSpecFixtureWorktreeLayout(t, runUID.String())
 
-	rc := daemon.ExportedClaudeRunCtx{
+	rc := shared.LaunchCtx{
 		RunID:            core.RunID(runUID),
 		BeadID:           "test-bead-hc055b-in",
 		WorkspacePath:    wtPath,
@@ -488,7 +489,7 @@ func TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_InWorktree(t *testing.
 		WorktreeRootPath: wtRoot,
 	}
 
-	spec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	spec, _, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_InWorktree: unexpected error: %v", err)
 	}
@@ -521,7 +522,7 @@ func TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_OutsideWorktree(t *tes
 	if err != nil {
 		t.Fatalf("mint runUID: %v", err)
 	}
-	rc := daemon.ExportedClaudeRunCtx{
+	rc := shared.LaunchCtx{
 		RunID:            core.RunID(runUID),
 		BeadID:           "test-bead-hc055b-out",
 		WorkspacePath:    ws,
@@ -534,7 +535,7 @@ func TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_OutsideWorktree(t *tes
 		WorktreeRootPath: unrelatedRoot,
 	}
 
-	spec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	spec, _, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_OutsideWorktree: unexpected error: %v", err)
 	}

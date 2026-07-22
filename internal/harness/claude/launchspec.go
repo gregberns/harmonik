@@ -1,6 +1,14 @@
-package daemon
+package claude
 
-// claudelaunchspec.go — buildClaudeLaunchSpec helper (hk-gql20.13).
+// launchspec.go — BuildLaunchSpec helper (hk-gql20.13).
+//
+// The eleven error prefixes below still read "daemon: buildClaudeLaunchSpec:".
+// That is deliberate, not an oversight: P2 unit E1b relocated this file out of
+// internal/daemon and the extraction is a PURE MOVE, so every observable string
+// is byte-identical to the daemon-side original
+// (plans/2026-07-21-p2-extraction/E1b-claude.md §3a, R10). No test asserts on
+// them. A prefix-hygiene sweep across the extracted harness packages is a
+// follow-up, not part of a relocation.
 //
 // Threads together all bridge pieces required to launch a Claude Code (or
 // harmonik-twin-claude) subprocess for any workflow phase:
@@ -44,7 +52,7 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// buildClaudeLaunchSpec threads together all bridge pieces required to launch
+// BuildLaunchSpec threads together all bridge pieces required to launch
 // a Claude Code (or twin) subprocess for any workflow phase.
 //
 // The sequence follows the design in
@@ -67,7 +75,7 @@ import (
 //
 // Spec refs: claude-hook-bridge.md §4.2..4.3, §4.7, §4.9;
 // handler-contract.md HC-005, HC-055.
-func buildClaudeLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 	_ = ctx // reserved for future async steps (e.g. skill provisioning)
 
 	// Step 1 — MintClaudeSessionID (CHB-008, CHB-009).

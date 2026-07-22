@@ -24,6 +24,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle"
@@ -1402,13 +1403,20 @@ type ExportedClaudeRunCtx = shared.LaunchCtx
 // Bead ref: hk-gql20.13.
 type ExportedClaudeRunArtifacts = shared.LaunchArtifacts
 
-// ExportedBuildClaudeLaunchSpec exposes buildClaudeLaunchSpec for tests in
+// ExportedBuildClaudeLaunchSpec exposes claude.BuildLaunchSpec for tests in
 // package daemon_test. Since E1b-prep the exported and internal DTOs are the
 // same type, so this is a plain passthrough.
 //
+// RETAINED after P2 E1b: the builder itself moved to internal/harness/claude,
+// but nine STAYING daemon test files still call this shim to assert
+// daemon-composition claims (routed-vs-direct spec parity, harness pinning,
+// review-loop resume, CHB-024 settings shadowing, the DOT prompt path). Those
+// are claims about the daemon's wiring, not about the claude unit, so they do
+// not move with it.
+//
 // Bead ref: hk-gql20.13.
 func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
-	return buildClaudeLaunchSpec(ctx, rc)
+	return claude.BuildLaunchSpec(ctx, rc)
 }
 
 // ExportedNewSessionIDInterceptor exposes newSessionIDInterceptor for tests.
@@ -2630,10 +2638,17 @@ func (t *ExportedPerRunEventTap) ExportedEmit(ctx context.Context, eventType cor
 // ClaudeHarness test seams (hk-3kyh3 C1/T2)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ExportedNewClaudeHarness re-exports NewClaudeHarness for tests.
+// ExportedNewClaudeHarness re-exports claude.NewHarness for tests in package
+// daemon_test.
+//
+// RETAINED after P2 E1b for the same reason as ExportedNewCodexHarness below:
+// regression_golden_no_selection_hkhwwlk_test.go asserts, from package
+// daemon_test, that the claude harness is what a no-selection bead resolves to
+// and that its Completion() mode discriminates from codex's — a
+// daemon-composition claim, not a claude-unit claim.
 //
 // Bead ref: hk-3kyh3.
-var ExportedNewClaudeHarness = NewClaudeHarness
+var ExportedNewClaudeHarness = claude.NewHarness
 
 // ExportedNewHarnessRegistry exposes newHarnessRegistry for tests in package
 // daemon_test. It returns the daemon's HarnessRegistry with ClaudeHarness
@@ -2782,33 +2797,6 @@ func ExportedPinnedHarnessLaunchSpecBuilder(
 	bus handlercontract.EventEmitter,
 ) func(context.Context, ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
 	return pinnedHarnessLaunchSpecBuilder(reg, bead, agentType, bus)
-}
-
-// ExportedRunCtxFromClaudeRunCtx converts an ExportedClaudeRunCtx into the
-// handlercontract.RunCtx shape expected by ClaudeHarness.LaunchSpec.  This
-// allows harness-golden tests to use the same fixture builders as the
-// buildClaudeLaunchSpec tests and compare outputs side-by-side.
-//
-// Bead ref: hk-3kyh3.
-func ExportedRunCtxFromClaudeRunCtx(rc ExportedClaudeRunCtx) handlercontract.RunCtx {
-	return handlercontract.RunCtx{
-		RunID:            rc.RunID,
-		BeadID:           rc.BeadID,
-		WorkspacePath:    rc.WorkspacePath,
-		DaemonSocket:     rc.DaemonSocket,
-		WorkflowMode:     rc.WorkflowMode,
-		Phase:            rc.Phase,
-		IterationCount:   rc.IterationCount,
-		PriorSessionID:   rc.PriorClaudeSessID,
-		HandlerBinary:    rc.HandlerBinary,
-		DaemonBinaryPath: rc.DaemonBinaryPath,
-		BaseEnv:          rc.BaseEnv,
-		Model:            rc.Model,
-		Effort:           rc.Effort,
-		WorktreeRootPath: rc.WorktreeRootPath,
-		BeadDescription:  rc.BeadDescription,
-		NodePrompt:       rc.NodePrompt,
-	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

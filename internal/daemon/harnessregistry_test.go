@@ -4,7 +4,7 @@ package daemon_test
 // launchSpecBuilder tests (codex-harness C1/T3, hk-hj9ld).
 //
 // Covers:
-//  1. newHarnessRegistry registers ClaudeHarness for core.AgentTypeClaudeCode and
+//  1. newHarnessRegistry registers claude.Harness for core.AgentTypeClaudeCode and
 //     no other type (claude-only in T3).
 //  2. The registry-routed launchSpecBuilder produces a LaunchSpec equivalent to a
 //     direct buildClaudeLaunchSpec call for the default (claude) resolution —
@@ -12,7 +12,7 @@ package daemon_test
 //  3. resolveHarness default resolution lands on AgentTypeClaudeCode, so the
 //     routed builder uses the claude harness for a bead with no harness label.
 //
-// These tests do NOT call t.Parallel(): like claudeharness_test.go they invoke
+// These tests do NOT call t.Parallel(): like harness/claude's harness_test.go they invoke
 // buildClaudeLaunchSpec (EnsureWorktreeTrust writes under a ~/.claude file lock),
 // so running them in parallel with the integration suite causes spurious
 // lock-timeout failures.
@@ -32,6 +32,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
@@ -80,7 +81,7 @@ func harnessRegistryFixtureBus(t *testing.T) handlercontract.EventEmitter {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestHarnessRegistry_ForAgent_Claude verifies newHarnessRegistry registers the
-// ClaudeHarness under core.AgentTypeClaudeCode and ForAgent returns it.
+// claude.Harness under core.AgentTypeClaudeCode and ForAgent returns it.
 func TestHarnessRegistry_ForAgent_Claude(t *testing.T) {
 	reg, err := daemon.ExportedNewHarnessRegistry()
 	if err != nil {
@@ -94,9 +95,9 @@ func TestHarnessRegistry_ForAgent_Claude(t *testing.T) {
 	if got := h.AgentType(); got != core.AgentTypeClaudeCode {
 		t.Errorf("ForAgent(claude-code).AgentType() = %q; want %q", got, core.AgentTypeClaudeCode)
 	}
-	// It must be the concrete *ClaudeHarness.
-	if _, ok := h.(*daemon.ClaudeHarness); !ok {
-		t.Errorf("ForAgent(claude-code) returned %T; want *daemon.ClaudeHarness", h)
+	// It must be the concrete *claude.Harness.
+	if _, ok := h.(*claude.Harness); !ok {
+		t.Errorf("ForAgent(claude-code) returned %T; want *claude.Harness", h)
 	}
 }
 

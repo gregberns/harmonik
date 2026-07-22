@@ -1,6 +1,8 @@
-// claudeharness.go — ClaudeHarness: handlercontract.Harness impl for Claude Code (C1/T2, hk-3kyh3).
+package claude
+
+// harness.go — Harness: handlercontract.Harness impl for Claude Code (C1/T2, hk-3kyh3).
 //
-// ClaudeHarness wraps the existing buildClaudeLaunchSpec path.  It satisfies the
+// Harness wraps the existing BuildLaunchSpec path.  It satisfies the
 // Harness interface without changing any dispatch behavior (no behavior change rule
 // for C1).  T3 (hk-hj9ld) will route the registry + launchSpecBuilder lookup
 // through this struct; T12 (hk-xhawy) will route the full cascade through it.
@@ -8,7 +10,6 @@
 // Spec: specs/harness-contract.md §2; specs/handler-contract.md §4.10 HC-045a
 // (claude-code agent type governed by claude-hook-bridge spec).
 // See also: handlercontract/harness.go.
-package daemon
 
 import (
 	"context"
@@ -19,34 +20,34 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
-// ClaudeHarness implements handlercontract.Harness for the Claude Code agent.
+// Harness implements handlercontract.Harness for the Claude Code agent.
 //
-// The zero value is not valid; construct via NewClaudeHarness.
-type ClaudeHarness struct{}
+// The zero value is not valid; construct via NewHarness.
+type Harness struct{}
 
-// NewClaudeHarness returns a ready ClaudeHarness.
-func NewClaudeHarness() *ClaudeHarness {
-	return &ClaudeHarness{}
+// NewHarness returns a ready Harness.
+func NewHarness() *Harness {
+	return &Harness{}
 }
 
-// Compile-time assertion: *ClaudeHarness satisfies handlercontract.Harness.
-var _ handlercontract.Harness = (*ClaudeHarness)(nil)
+// Compile-time assertion: *Harness satisfies handlercontract.Harness.
+var _ handlercontract.Harness = (*Harness)(nil)
 
 // AgentType returns core.AgentTypeClaudeCode — the registry key for this harness.
-func (h *ClaudeHarness) AgentType() core.AgentType {
+func (h *Harness) AgentType() core.AgentType {
 	return core.AgentTypeClaudeCode
 }
 
-// LaunchSpec converts rc to a shared.LaunchCtx, calls buildClaudeLaunchSpec, and
+// LaunchSpec converts rc to a shared.LaunchCtx, calls BuildLaunchSpec, and
 // returns the subprocess SpawnSpec (Binary/Args/Env/WorkDir).
 //
 // The caller receives a non-nil error on any CHB-001..CHB-024 failure; it MUST
 // NOT call handler.Launch on error.
 //
-// Note: buildClaudeLaunchSpec also returns shared.LaunchArtifacts (session IDs,
+// Note: BuildLaunchSpec also returns shared.LaunchArtifacts (session IDs,
 // preExecMsgs).  Those remain available only on the internal shared.LaunchCtx path
 // until T3 threads a richer seam through the registry.
-func (h *ClaudeHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
+func (h *Harness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
 	internal := shared.LaunchCtx{
 		RunID:               rc.RunID,
 		BeadID:              rc.BeadID,
@@ -74,7 +75,7 @@ func (h *ClaudeHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.S
 		BaseBranch:          rc.BaseBranch,
 	}
 
-	spec, _, err := buildClaudeLaunchSpec(context.Background(), internal)
+	spec, _, err := BuildLaunchSpec(context.Background(), internal)
 	if err != nil {
 		return handlercontract.SpawnSpec{}, err
 	}
@@ -94,7 +95,7 @@ func (h *ClaudeHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.S
 // The actual paste path is still threaded through beadRunOne's pasteInjectOnLaunch
 // call until T12 (hk-xhawy) routes the full cascade through the harness.
 // This method is a no-op for T2 (no behavior change).
-func (h *ClaudeHarness) Seed(_ handlercontract.Session, _ handlercontract.RunCtx) error {
+func (h *Harness) Seed(_ handlercontract.Session, _ handlercontract.RunCtx) error {
 	return nil
 }
 
@@ -102,7 +103,7 @@ func (h *ClaudeHarness) Seed(_ handlercontract.Session, _ handlercontract.RunCtx
 //
 // For the claude harness this pastes combined task+feedback via the tmux substrate.
 // No-op for T2 (no behavior change); T12 will route the real call here.
-func (h *ClaudeHarness) Retask(_ handlercontract.Session, _ string, _ handlercontract.RunCtx) error {
+func (h *Harness) Retask(_ handlercontract.Session, _ string, _ handlercontract.RunCtx) error {
 	return nil
 }
 
@@ -113,7 +114,7 @@ func (h *ClaudeHarness) Retask(_ handlercontract.Session, _ string, _ handlercon
 // by beadRunOne; Teardown calls Kill directly (same as forceTeardownSession) so
 // a future T12 caller that only dispatches through the Harness still gets a
 // safe session close.
-func (h *ClaudeHarness) Teardown(sess handlercontract.Session) error {
+func (h *Harness) Teardown(sess handlercontract.Session) error {
 	if sess == nil {
 		return nil
 	}
@@ -126,7 +127,7 @@ func (h *ClaudeHarness) Teardown(sess handlercontract.Session) error {
 // "launch_initiated" per HC-041 (the type check below is a positive-match; a
 // future event whose type string happens to be equal to agent_ready would still
 // satisfy the contract, while launch_initiated never will).
-func (h *ClaudeHarness) DetectReady(ev handlercontract.EventEnvelope) bool {
+func (h *Harness) DetectReady(ev handlercontract.EventEnvelope) bool {
 	return core.EventType(ev.Type) == core.EventTypeAgentReady
 }
 
@@ -134,23 +135,23 @@ func (h *ClaudeHarness) DetectReady(ev handlercontract.EventEnvelope) bool {
 // UUIDv7 (or reuses a prior one for implementer-resume) via MintClaudeSessionID
 // inside LaunchSpec; the caller receives the ID as part of the returned SpawnSpec.Env
 // (HARMONIK_CLAUDE_SESSION_ID) until T3 exposes a richer artifacts seam.
-func (h *ClaudeHarness) SessionIDPolicy() handlercontract.SessionIDPolicy {
+func (h *Harness) SessionIDPolicy() handlercontract.SessionIDPolicy {
 	return handlercontract.SessionIDMinted
 }
 
 // Completion returns CompletionEventStreamThenQuit: the claude harness run
 // signals completion via the event-stream /quit path.  The shared loop sends
 // /quit + kill grace to the session and waits for sess.Wait.
-func (h *ClaudeHarness) Completion() handlercontract.CompletionMode {
+func (h *Harness) Completion() handlercontract.CompletionMode {
 	return handlercontract.CompletionEventStreamThenQuit
 }
 
 // NewSessionIDInterceptor returns inner unchanged for the claude harness.
 //
-// ClaudeHarness is SessionIDMinted, not SessionIDCaptured, so the shared
+// Harness is SessionIDMinted, not SessionIDCaptured, so the shared
 // loop's implIsSessionIDCaptured gate prevents this method from ever being
 // called in production. The no-op passthrough satisfies the interface contract
 // so no concrete-type branching is needed in the shared loop.
-func (h *ClaudeHarness) NewSessionIDInterceptor(inner io.Reader, _ func(string), _ func()) io.Reader {
+func (h *Harness) NewSessionIDInterceptor(inner io.Reader, _ func(string), _ func()) io.Reader {
 	return inner
 }

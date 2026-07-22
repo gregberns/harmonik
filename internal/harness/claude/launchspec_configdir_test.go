@@ -1,6 +1,6 @@
-package daemon
+package claude
 
-// claudelaunchspec_configdir_hk8juwz_test.go — pins WHO gets CLAUDE_CONFIG_DIR.
+// launchspec_configdir_test.go — pins WHO gets CLAUDE_CONFIG_DIR.
 // REMOTE (rc.runner != nil) provisions a private, worker-absolute config dir and
 // exports it (hk-qxvc2). LOCAL (rc.runner == nil) must export NOTHING: the local
 // isolation was reverted after it broke claude auth (hk-8juwz).
@@ -60,9 +60,9 @@ func TestBuildClaudeLaunchSpec_Local_NoClaudeConfigDir(t *testing.T) {
 		Runner:           nil, // LOCAL run
 	}
 
-	spec, _, err := buildClaudeLaunchSpec(ctx, rc)
+	spec, _, err := BuildLaunchSpec(ctx, rc)
 	if err != nil {
-		t.Fatalf("buildClaudeLaunchSpec (local): %v", err)
+		t.Fatalf("BuildLaunchSpec (local): %v", err)
 	}
 
 	if got, ok := envValue(spec.Env, "CLAUDE_CONFIG_DIR"); ok {
@@ -97,9 +97,9 @@ func TestBuildClaudeLaunchSpec_Remote_SetsClaudeConfigDir(t *testing.T) {
 		WorkerBinaryPath: "/home/worker/harmonik",
 	}
 
-	spec, _, err := buildClaudeLaunchSpec(ctx, rc)
+	spec, _, err := BuildLaunchSpec(ctx, rc)
 	if err != nil {
-		t.Fatalf("buildClaudeLaunchSpec (remote): %v", err)
+		t.Fatalf("BuildLaunchSpec (remote): %v", err)
 	}
 
 	// CLAUDE_CONFIG_DIR must now be exported, pointing at the worker-absolute

@@ -1,16 +1,16 @@
-package daemon_test
+package claude_test
 
-// claudeharness_test.go — ClaudeHarness unit tests (hk-3kyh3 C1/T2).
+// harness_test.go — claude.Harness unit tests (hk-3kyh3 C1/T2).
 //
 // Two test categories:
 //
-//  1. Pure-LaunchSpec golden: ClaudeHarness.LaunchSpec returns a SpawnSpec whose
-//     Binary/Args/Env/WorkDir match what buildClaudeLaunchSpec returns for the
+//  1. Pure-LaunchSpec golden: claude.Harness.LaunchSpec returns a SpawnSpec whose
+//     Binary/Args/Env/WorkDir match what BuildLaunchSpec returns for the
 //     equivalent shared.LaunchCtx.  Covers all four workflow phases.
 //
-//  2. Shared-scaffolding side-effect parity: calling ClaudeHarness.LaunchSpec
+//  2. Shared-scaffolding side-effect parity: calling claude.Harness.LaunchSpec
 //     produces the same workspace side-effects (settings.json, agent-task.md) as
-//     calling buildClaudeLaunchSpec directly.
+//     calling BuildLaunchSpec directly.
 
 import (
 	"context"
@@ -22,8 +22,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/claude"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
 // claudeHarnessFixtureWorkspace mirrors claudeLaunchSpecFixtureWorkspace.
@@ -44,13 +45,13 @@ func claudeHarnessFixtureRunCtx(
 	phase handlercontract.ReviewLoopPhase,
 	priorSessID *string,
 	iterationCount int,
-) daemon.ExportedClaudeRunCtx {
+) shared.LaunchCtx {
 	t.Helper()
 	runUID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("claudeHarnessFixtureRunCtx: NewV7: %v", err)
 	}
-	return daemon.ExportedClaudeRunCtx{
+	return shared.LaunchCtx{
 		RunID:             core.RunID(runUID),
 		BeadID:            "test-bead-harness-hk-3kyh3",
 		WorkspacePath:     workspacePath,
@@ -64,11 +65,43 @@ func claudeHarnessFixtureRunCtx(
 	}
 }
 
+// claudeHarnessRunCtxFrom converts a shared.LaunchCtx into the
+// handlercontract.RunCtx shape expected by claude.Harness.LaunchSpec. This
+// allows the harness-golden tests to use the same fixture builders as the
+// BuildLaunchSpec tests and compare outputs side-by-side.
+//
+// Relocated verbatim from internal/daemon/export_test.go's
+// ExportedRunCtxFromClaudeRunCtx by P2 unit E1b. It reads nothing unexported,
+// so it is a plain test helper here rather than an export_test.go seam; its
+// only callers are the tests in this file.
+//
+// Bead ref: hk-3kyh3.
+func claudeHarnessRunCtxFrom(rc shared.LaunchCtx) handlercontract.RunCtx {
+	return handlercontract.RunCtx{
+		RunID:            rc.RunID,
+		BeadID:           rc.BeadID,
+		WorkspacePath:    rc.WorkspacePath,
+		DaemonSocket:     rc.DaemonSocket,
+		WorkflowMode:     rc.WorkflowMode,
+		Phase:            rc.Phase,
+		IterationCount:   rc.IterationCount,
+		PriorSessionID:   rc.PriorClaudeSessID,
+		HandlerBinary:    rc.HandlerBinary,
+		DaemonBinaryPath: rc.DaemonBinaryPath,
+		BaseEnv:          rc.BaseEnv,
+		Model:            rc.Model,
+		Effort:           rc.Effort,
+		WorktreeRootPath: rc.WorktreeRootPath,
+		BeadDescription:  rc.BeadDescription,
+		NodePrompt:       rc.NodePrompt,
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Pure-LaunchSpec golden tests
 //
 // These tests deliberately do NOT call t.Parallel(): they all invoke
-// buildClaudeLaunchSpec (via ClaudeHarness.LaunchSpec) which calls
+// BuildLaunchSpec (via claude.Harness.LaunchSpec) which calls
 // EnsureWorktreeTrust and writes to ~/.claude.json under a file lock.
 // Running them in parallel with each other and with the integration-test suite
 // (TestT4_ConcurrentLoops, TestParallelSmoke_TwoBeadsConcurrent) creates
@@ -81,22 +114,22 @@ func TestClaudeHarness_LaunchSpec_Single(t *testing.T) {
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
 
-	// Reference: what buildClaudeLaunchSpec returns.
-	refSpec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	// Reference: what BuildLaunchSpec returns.
+	refSpec, _, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
-		t.Fatalf("reference buildClaudeLaunchSpec: %v", err)
+		t.Fatalf("reference BuildLaunchSpec: %v", err)
 	}
 
 	// Harness: must produce a matching SpawnSpec.
 	// Use a fresh workspace so side-effect collision (WriteAgentTask) is avoided.
 	ws2 := claudeHarnessFixtureWorkspace(t)
 	rc2 := claudeHarnessFixtureRunCtx(t, ws2, "", nil, 0)
-	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc2)
+	hrc := claudeHarnessRunCtxFrom(rc2)
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	spawn, err := h.LaunchSpec(hrc)
 	if err != nil {
-		t.Fatalf("ClaudeHarness.LaunchSpec: %v", err)
+		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
 	claudeHarnessAssertSpawnSpecShape(t, "Single", spawn, refSpec.Binary, false)
@@ -108,19 +141,19 @@ func TestClaudeHarness_LaunchSpec_ImplementerInitial(t *testing.T) {
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseImplementerInitial, nil, 1)
 
-	refSpec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	refSpec, _, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
-		t.Fatalf("reference buildClaudeLaunchSpec: %v", err)
+		t.Fatalf("reference BuildLaunchSpec: %v", err)
 	}
 
 	ws2 := claudeHarnessFixtureWorkspace(t)
 	rc2 := claudeHarnessFixtureRunCtx(t, ws2, handlercontract.ReviewLoopPhaseImplementerInitial, nil, 1)
-	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc2)
+	hrc := claudeHarnessRunCtxFrom(rc2)
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	spawn, err := h.LaunchSpec(hrc)
 	if err != nil {
-		t.Fatalf("ClaudeHarness.LaunchSpec: %v", err)
+		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
 	claudeHarnessAssertSpawnSpecShape(t, "ImplementerInitial", spawn, refSpec.Binary, false)
@@ -138,19 +171,19 @@ func TestClaudeHarness_LaunchSpec_ImplementerResume(t *testing.T) {
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseImplementerResume, &priorSessID, 2)
 
-	_, _, err = daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	_, _, err = claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
-		t.Fatalf("reference buildClaudeLaunchSpec: %v", err)
+		t.Fatalf("reference BuildLaunchSpec: %v", err)
 	}
 
 	ws2 := claudeHarnessFixtureWorkspace(t)
 	rc2 := claudeHarnessFixtureRunCtx(t, ws2, handlercontract.ReviewLoopPhaseImplementerResume, &priorSessID, 2)
-	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc2)
+	hrc := claudeHarnessRunCtxFrom(rc2)
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	spawn, err := h.LaunchSpec(hrc)
 	if err != nil {
-		t.Fatalf("ClaudeHarness.LaunchSpec: %v", err)
+		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
 	// implementer-resume uses --resume (CHB-008).
@@ -165,35 +198,35 @@ func TestClaudeHarness_LaunchSpec_Reviewer(t *testing.T) {
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseReviewer, nil, 1)
 
-	refSpec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	refSpec, _, err := claude.BuildLaunchSpec(context.Background(), rc)
 	if err != nil {
-		t.Fatalf("reference buildClaudeLaunchSpec: %v", err)
+		t.Fatalf("reference BuildLaunchSpec: %v", err)
 	}
 
 	ws2 := claudeHarnessFixtureWorkspace(t)
 	rc2 := claudeHarnessFixtureRunCtx(t, ws2, handlercontract.ReviewLoopPhaseReviewer, nil, 1)
-	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc2)
+	hrc := claudeHarnessRunCtxFrom(rc2)
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	spawn, err := h.LaunchSpec(hrc)
 	if err != nil {
-		t.Fatalf("ClaudeHarness.LaunchSpec: %v", err)
+		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
 	claudeHarnessAssertSpawnSpecShape(t, "Reviewer", spawn, refSpec.Binary, false)
 }
 
 // TestClaudeHarness_LaunchSpec_EnvKeys verifies CHB-006 env vars are present in
-// the SpawnSpec returned by ClaudeHarness.LaunchSpec (same as buildClaudeLaunchSpec).
+// the SpawnSpec returned by claude.Harness.LaunchSpec (same as BuildLaunchSpec).
 func TestClaudeHarness_LaunchSpec_EnvKeys(t *testing.T) {
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
-	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc)
+	hrc := claudeHarnessRunCtxFrom(rc)
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	spawn, err := h.LaunchSpec(hrc)
 	if err != nil {
-		t.Fatalf("ClaudeHarness.LaunchSpec: %v", err)
+		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
 	for _, key := range []string{
@@ -216,7 +249,7 @@ func TestClaudeHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint runUID: %v", err)
 	}
-	rc := daemon.ExportedClaudeRunCtx{
+	rc := shared.LaunchCtx{
 		RunID:         core.RunID(runUID),
 		BeadID:        "test-bead-harness-ci003",
 		WorkspacePath: ws,
@@ -230,12 +263,12 @@ func TestClaudeHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 			"CLAUDE_CODE_OAUTH_TOKEN=harness-ci003-sentinel-must-not-reach-child",
 		},
 	}
-	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc)
+	hrc := claudeHarnessRunCtxFrom(rc)
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	spawn, err := h.LaunchSpec(hrc)
 	if err != nil {
-		t.Fatalf("ClaudeHarness.LaunchSpec: %v", err)
+		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
 	denyKeys := []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
@@ -268,16 +301,16 @@ func TestClaudeHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestClaudeHarness_LaunchSpec_SettingsJSON_Created verifies that calling
-// ClaudeHarness.LaunchSpec materializes .claude/settings.json in the workspace
-// (same side-effect as buildClaudeLaunchSpec / MaterializeClaudeSettings).
+// claude.Harness.LaunchSpec materializes .claude/settings.json in the workspace
+// (same side-effect as BuildLaunchSpec / MaterializeClaudeSettings).
 func TestClaudeHarness_LaunchSpec_SettingsJSON_Created(t *testing.T) {
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
-	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc)
+	hrc := claudeHarnessRunCtxFrom(rc)
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	if _, err := h.LaunchSpec(hrc); err != nil {
-		t.Fatalf("ClaudeHarness.LaunchSpec: %v", err)
+		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
 	settingsPath := filepath.Join(ws, ".claude", "settings.json")
@@ -287,16 +320,16 @@ func TestClaudeHarness_LaunchSpec_SettingsJSON_Created(t *testing.T) {
 }
 
 // TestClaudeHarness_LaunchSpec_AgentTask_Created verifies that calling
-// ClaudeHarness.LaunchSpec writes .harmonik/agent-task.md into the workspace
-// (same side-effect as buildClaudeLaunchSpec / WriteAgentTask).
+// claude.Harness.LaunchSpec writes .harmonik/agent-task.md into the workspace
+// (same side-effect as BuildLaunchSpec / WriteAgentTask).
 func TestClaudeHarness_LaunchSpec_AgentTask_Created(t *testing.T) {
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
-	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc)
+	hrc := claudeHarnessRunCtxFrom(rc)
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	if _, err := h.LaunchSpec(hrc); err != nil {
-		t.Fatalf("ClaudeHarness.LaunchSpec: %v", err)
+		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
 	taskPath := filepath.Join(ws, ".harmonik", "agent-task.md")
@@ -306,16 +339,16 @@ func TestClaudeHarness_LaunchSpec_AgentTask_Created(t *testing.T) {
 }
 
 // TestClaudeHarness_LaunchSpec_WorkDir verifies that SpawnSpec.WorkDir equals the
-// workspace path supplied in RunCtx, mirroring the buildClaudeLaunchSpec behaviour.
+// workspace path supplied in RunCtx, mirroring the BuildLaunchSpec behaviour.
 func TestClaudeHarness_LaunchSpec_WorkDir(t *testing.T) {
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
-	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc)
+	hrc := claudeHarnessRunCtxFrom(rc)
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	spawn, err := h.LaunchSpec(hrc)
 	if err != nil {
-		t.Fatalf("ClaudeHarness.LaunchSpec: %v", err)
+		t.Fatalf("claude.Harness.LaunchSpec: %v", err)
 	}
 
 	if spawn.WorkDir != ws {
@@ -331,7 +364,7 @@ func TestClaudeHarness_LaunchSpec_WorkDir(t *testing.T) {
 func TestClaudeHarness_AgentType(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	if got := h.AgentType(); got != core.AgentTypeClaudeCode {
 		t.Errorf("AgentType = %q; want %q", got, core.AgentTypeClaudeCode)
 	}
@@ -341,7 +374,7 @@ func TestClaudeHarness_AgentType(t *testing.T) {
 func TestClaudeHarness_SessionIDPolicy(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	if got := h.SessionIDPolicy(); got != handlercontract.SessionIDMinted {
 		t.Errorf("SessionIDPolicy = %v; want SessionIDMinted", got)
 	}
@@ -351,7 +384,7 @@ func TestClaudeHarness_SessionIDPolicy(t *testing.T) {
 func TestClaudeHarness_Completion(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	if got := h.Completion(); got != handlercontract.CompletionEventStreamThenQuit {
 		t.Errorf("Completion = %v; want CompletionEventStreamThenQuit", got)
 	}
@@ -362,7 +395,7 @@ func TestClaudeHarness_Completion(t *testing.T) {
 func TestClaudeHarness_DetectReady_AgentReady(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeAgentReady)}
 	if !h.DetectReady(ev) {
 		t.Error("DetectReady(agent_ready) = false; want true")
@@ -374,7 +407,7 @@ func TestClaudeHarness_DetectReady_AgentReady(t *testing.T) {
 func TestClaudeHarness_DetectReady_LaunchInitiated(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeLaunchInitiated)}
 	if h.DetectReady(ev) {
 		t.Error("DetectReady(launch_initiated) = true; want false (HC-041)")
@@ -386,7 +419,7 @@ func TestClaudeHarness_DetectReady_LaunchInitiated(t *testing.T) {
 func TestClaudeHarness_DetectReady_OtherEvent(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewClaudeHarness()
+	h := claude.NewHarness()
 	ev := handlercontract.EventEnvelope{Type: "run_started"}
 	if h.DetectReady(ev) {
 		t.Error("DetectReady(run_started) = true; want false")

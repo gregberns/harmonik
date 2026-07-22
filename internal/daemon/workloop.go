@@ -60,6 +60,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
+	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle"
@@ -3981,7 +3982,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			)
 		} else {
 			// No registry (legacy test fixtures): fall back to direct claude builder.
-			deps.launchSpecBuilder = buildClaudeLaunchSpec
+			deps.launchSpecBuilder = claude.BuildLaunchSpec
 		}
 	}
 	// RSM-010 (RT7): thread the resolved builder onto RunPorts as LaunchPort. The

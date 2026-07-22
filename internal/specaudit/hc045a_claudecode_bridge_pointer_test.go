@@ -29,8 +29,8 @@ package specaudit_test
 //     (e) "bridge spec" appears in the body (the realization delegation phrase).
 //     (f) Tags: mechanism is present in the body window.
 //
-//  2. Code-traceability check — confirms that the ClaudeHarness implementation
-//     file (internal/daemon/claudeharness.go) contains a cite back to HC-045a.
+//  2. Code-traceability check — confirms that the claude.Harness implementation
+//     file (internal/harness/claude/harness.go) contains a cite back to HC-045a.
 //     This ensures the normative pointer is anchored in the code that realizes
 //     the claude-code agent type, so future readers can trace from the harness
 //     implementation to the governing spec requirement.
@@ -43,7 +43,7 @@ package specaudit_test
 //   - Spec check (d): "cross-handler invariants" absent from HC-045a body.
 //   - Spec check (e): "bridge spec" absent from HC-045a body.
 //   - Spec check (f): Tags: mechanism absent from HC-045a body window.
-//   - Code check (2): "HC-045a" not cited in internal/daemon/claudeharness.go.
+//   - Code check (2): "HC-045a" not cited in internal/harness/claude/harness.go.
 //
 // # Helper prefix
 //
@@ -86,10 +86,16 @@ func hc045aFixtureHandlerContractPath(t *testing.T, repoRoot string) string {
 }
 
 // hc045aFixtureClaudeHarnessPath returns the absolute path to
-// internal/daemon/claudeharness.go.
+// internal/harness/claude/harness.go.
+//
+// The file moved out of internal/daemon in P2 unit E1b
+// (plans/2026-07-21-p2-extraction/E1b-claude.md §4 step 12). This constant is
+// the ONLY machine-checked pin on its location, and it is behind //go:build
+// specaudit — no plain build, test or lint run compiles it — so it must be
+// updated in the same commit as any future relocation.
 func hc045aFixtureClaudeHarnessPath(t *testing.T, repoRoot string) string {
 	t.Helper()
-	return filepath.Join(repoRoot, "internal", "daemon", "claudeharness.go")
+	return filepath.Join(repoRoot, "internal", "harness", "claude", "harness.go")
 }
 
 // hc045aFixtureHC045aHeading matches the HC-045a level-4 requirement heading
@@ -181,7 +187,7 @@ func hc045aFixtureBodyContains(body []string, substr string) bool {
 //  1. Spec-corpus check: opens specs/handler-contract.md, locates the HC-045a
 //     heading, and validates the required phrases and Tags: mechanism.
 //
-//  2. Code-traceability check: verifies that internal/daemon/claudeharness.go
+//  2. Code-traceability check: verifies that internal/harness/claude/harness.go
 //     contains a "HC-045a" citation so the harness implementation is traceable
 //     back to its governing spec requirement.
 func TestHC045aClaudeCodeBridgePointer(t *testing.T) {
@@ -290,7 +296,7 @@ func TestHC045aClaudeCodeBridgePointer(t *testing.T) {
 			headingLineNo, len(body))
 	})
 
-	// ── Check 2: code-traceability — claudeharness.go cites HC-045a ────────────
+	// ── Check 2: code-traceability — harness/claude/harness.go cites HC-045a ───
 	t.Run("code-traceability-claudeharness", func(t *testing.T) {
 		t.Parallel()
 
@@ -307,8 +313,8 @@ func TestHC045aClaudeCodeBridgePointer(t *testing.T) {
 		if !found {
 			t.Errorf(
 				"HC-045a code-traceability FAILED: 'HC-045a' not cited in %s\n"+
-					"  detail: internal/daemon/claudeharness.go is the ClaudeHarness implementation — "+
-					"the concrete realization of agent_type='claude-code' in the daemon. "+
+					"  detail: internal/harness/claude/harness.go is the claude.Harness implementation — "+
+					"the concrete realization of agent_type='claude-code'. "+
 					"It MUST cite HC-045a so that a future reader can trace from the code "+
 					"to the governing spec requirement. "+
 					"Add 'HC-045a' to the file-level or type-level doc comment's Spec: line "+
@@ -316,7 +322,7 @@ func TestHC045aClaudeCodeBridgePointer(t *testing.T) {
 				harnessFile,
 			)
 		} else {
-			t.Logf("HC-045a code-traceability PASS: 'HC-045a' found in internal/daemon/claudeharness.go")
+			t.Logf("HC-045a code-traceability PASS: 'HC-045a' found in internal/harness/claude/harness.go")
 		}
 	})
 }

@@ -55,6 +55,7 @@ import (
 	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
@@ -308,7 +309,7 @@ func runReviewLoop(
 		}
 		implSpecBuilder := deps.launchSpecBuilder
 		if implSpecBuilder == nil {
-			implSpecBuilder = buildClaudeLaunchSpec
+			implSpecBuilder = claude.BuildLaunchSpec
 		}
 		implSpec, implArtifacts, implSpecErr := implSpecBuilder(ctx, implRC)
 		if implSpecErr != nil {
@@ -1266,7 +1267,7 @@ func runReviewLoop(
 			)
 		}
 		if revSpecBuilder == nil {
-			revSpecBuilder = buildClaudeLaunchSpec
+			revSpecBuilder = claude.BuildLaunchSpec
 		}
 		revSpec, revArtifacts, revSpecErr := revSpecBuilder(ctx, revRC)
 		if revSpecErr != nil {

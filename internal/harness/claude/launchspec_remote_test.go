@@ -1,7 +1,7 @@
-package daemon
+package claude
 
-// claudelaunchspec_remote_hkz8ek_test.go — gate-runnable tests that
-// buildClaudeLaunchSpec threads the run's CommandRunner into the three
+// launchspec_remote_test.go — gate-runnable tests that
+// BuildLaunchSpec threads the run's CommandRunner into the three
 // materialization writes for a REMOTE run, and uses the unchanged box-A-local
 // path for a LOCAL run (hk-z8ek). All remote writes are intercepted by a
 // RecordingRunner; NO real ssh / worker is touched.
@@ -42,7 +42,7 @@ func z8ekRunID(t *testing.T) core.RunID {
 }
 
 // TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner asserts that when
-// rc.runner is set (remote run), buildClaudeLaunchSpec issues the settings.json,
+// rc.runner is set (remote run), BuildLaunchSpec issues the settings.json,
 // agent-task.md, and trust writes THROUGH the runner, targeting the worker-side
 // worktree path, and that the settings content carries the WORKER's hook command
 // plus the resolved HARMONIK_DAEMON_SOCKET-bearing hook wiring.
@@ -74,9 +74,9 @@ func TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner(t *testing.T) {
 		WorkerBinaryPath: workerBin,
 	}
 
-	_, _, err := buildClaudeLaunchSpec(ctx, rc)
+	_, _, err := BuildLaunchSpec(ctx, rc)
 	if err != nil {
-		t.Fatalf("buildClaudeLaunchSpec (remote): %v", err)
+		t.Fatalf("BuildLaunchSpec (remote): %v", err)
 	}
 
 	// Three remote writes expected, in CHB order: settings (sh) → trust (python3)
@@ -157,7 +157,7 @@ func TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner(t *testing.T) {
 }
 
 // TestBuildClaudeLaunchSpec_Local_UsesLocalFS asserts that with a nil runner
-// (local run) buildClaudeLaunchSpec writes the three artifacts to box A's local
+// (local run) BuildLaunchSpec writes the three artifacts to box A's local
 // filesystem and makes NO runner-routed remote write (NFR7).
 func TestBuildClaudeLaunchSpec_Local_UsesLocalFS(t *testing.T) {
 	// Not parallel: sets HARMONIK_CLAUDE_CONFIG_PATH via t.Setenv.
@@ -182,8 +182,8 @@ func TestBuildClaudeLaunchSpec_Local_UsesLocalFS(t *testing.T) {
 		WorkerBinaryPath: "",
 	}
 
-	if _, _, err := buildClaudeLaunchSpec(ctx, rc); err != nil {
-		t.Fatalf("buildClaudeLaunchSpec (local): %v", err)
+	if _, _, err := BuildLaunchSpec(ctx, rc); err != nil {
+		t.Fatalf("BuildLaunchSpec (local): %v", err)
 	}
 
 	// Local-FS artifacts must exist on box A's disk.

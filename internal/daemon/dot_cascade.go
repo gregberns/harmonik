@@ -84,6 +84,7 @@ import (
 	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -1450,7 +1451,7 @@ func dispatchDotAgenticNode(
 		)
 	}
 	if specBuilder == nil {
-		specBuilder = buildClaudeLaunchSpec
+		specBuilder = claude.BuildLaunchSpec
 	}
 	spec, artifacts, specErr := specBuilder(ctx, rc)
 	if specErr != nil {

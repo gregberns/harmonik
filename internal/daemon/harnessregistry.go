@@ -8,14 +8,14 @@ package daemon
 // routed through resolveHarness (the four-tier precedence walk, harnessresolve.go)
 // and HarnessRegistry.ForAgent (the per-agent-type route table).
 //
-// T12 wires the codex path: CodexHarness is now registered alongside ClaudeHarness,
+// T12 wires the codex path: the codex harness is now registered alongside the claude harness,
 // and routedLaunchSpecBuilder produces a handler.LaunchSpec + shared.LaunchArtifacts for
 // the codex harness (previously it failed closed). The claude path retains its
-// byte-identical delegation to buildClaudeLaunchSpec.
+// byte-identical delegation to claude.BuildLaunchSpec.
 //
 // Spec: specs/harness-contract.md §2 N5.
 // See also: handlercontract/harnessregistry.go (the registry type),
-// claudeharness.go, codexharness.go, harnessresolve.go.
+// harness/claude/harness.go, harness/codex/harness.go, harnessresolve.go.
 
 import (
 	"context"
@@ -27,13 +27,14 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// newHarnessRegistry builds the daemon's HarnessRegistry with ClaudeHarness,
-// CodexHarness, and PiHarness registered.
+// newHarnessRegistry builds the daemon's HarnessRegistry with the claude,
+// codex, and pi harnesses registered.
 //
 // piCfg carries the resolved harnesses.pi block from .harmonik/config.yaml
 // (loaded by daemon.Start and stored in Config.ProjectCfg.Harnesses.Pi).
@@ -48,7 +49,7 @@ import (
 // so callers fail-closed if this grows.
 func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry, error) {
 	reg := handlercontract.NewHarnessRegistry()
-	if err := reg.Register(core.AgentTypeClaudeCode, NewClaudeHarness()); err != nil {
+	if err := reg.Register(core.AgentTypeClaudeCode, claude.NewHarness()); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register claude harness: %w", err)
 	}
 	if err := reg.Register(core.AgentTypeCodex, codex.NewHarness("", "")); err != nil {
@@ -118,12 +119,12 @@ func emitModelSelected(
 // an unregistered type returns a well-defined error (the routed builder fails the
 // run rather than silently launching claude for an unknown type).
 //
-// Claude path: delegates to buildClaudeLaunchSpec directly so the returned
+// Claude path: delegates to claude.BuildLaunchSpec directly so the returned
 // LaunchSpec and shared.LaunchArtifacts are byte-identical to the pre-T3 call.
 // Harness.LaunchSpec returns only a SpawnSpec, so routing the claude build
 // through it would drop the artifacts the workloop/review-loop consume.
 //
-// Codex path (T12): writes agent-task.md, calls CodexHarness.LaunchSpec for the
+// Codex path (T12): writes agent-task.md, calls codex.Harness.LaunchSpec for the
 // SpawnSpec, and assembles shared.LaunchArtifacts with a tracking session ID and
 // pre-exec bus messages. The claudeSessionID field is a harmonic-internal tracking
 // ID (not used for codex resume; resume uses the captured thread_id via
@@ -152,11 +153,11 @@ func routedLaunchSpecBuilder(
 
 		emitModelSelected(ctx, bus, core.RunID(rc.RunID), effectiveModel(h, rc), agentType)
 
-		// Claude path: delegate to buildClaudeLaunchSpec directly so the returned
+		// Claude path: delegate to claude.BuildLaunchSpec directly so the returned
 		// LaunchSpec AND shared.LaunchArtifacts are byte-identical to the pre-T3 call.
-		// buildClaudeLaunchSpec also sets artifacts.resolvedAgentType = claude-code.
-		if _, ok := h.(*ClaudeHarness); ok {
-			return buildClaudeLaunchSpec(ctx, rc)
+		// claude.BuildLaunchSpec also sets artifacts.resolvedAgentType = claude-code.
+		if _, ok := h.(*claude.Harness); ok {
+			return claude.BuildLaunchSpec(ctx, rc)
 		}
 
 		// Codex path (T12): write agent-task.md, call harness.LaunchSpec for the
@@ -183,15 +184,15 @@ func pinnedHarnessLaunchSpecBuilder(
 				"daemon: pinnedHarnessLaunchSpecBuilder: resolve harness %q: %w", agentType, err)
 		}
 		emitModelSelected(ctx, bus, core.RunID(rc.RunID), effectiveModel(h, rc), agentType)
-		if _, ok := h.(*ClaudeHarness); ok {
-			return buildClaudeLaunchSpec(ctx, rc)
+		if _, ok := h.(*claude.Harness); ok {
+			return claude.BuildLaunchSpec(ctx, rc)
 		}
 		return buildCodexRoutedLaunchSpec(ctx, rc, h, agentType)
 	}
 }
 
 // buildCodexRoutedLaunchSpec assembles a handler.LaunchSpec + shared.LaunchArtifacts
-// for non-claude harnesses (currently only CodexHarness).
+// for non-claude harnesses (currently only the codex harness).
 //
 // Steps:
 //  1. Write agent-task.md (codex reads it via the seed-prompt argv).

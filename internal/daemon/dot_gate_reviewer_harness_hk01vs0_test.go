@@ -71,6 +71,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/claude"
 	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
@@ -177,7 +178,7 @@ func vs0HarnessRegistry(t *testing.T) *handlercontract.HarnessRegistry {
 	t.Helper()
 	missing := filepath.Join(t.TempDir(), "no-such-harness-binary-hk01vs0")
 	reg := handlercontract.NewHarnessRegistry()
-	if err := reg.Register(core.AgentTypeClaudeCode, daemon.NewClaudeHarness()); err != nil {
+	if err := reg.Register(core.AgentTypeClaudeCode, claude.NewHarness()); err != nil {
 		t.Fatalf("vs0HarnessRegistry: register claude: %v", err)
 	}
 	if err := reg.Register(core.AgentTypeCodex, codex.NewHarness(missing, "")); err != nil {

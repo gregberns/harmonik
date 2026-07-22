@@ -64,7 +64,7 @@ func TestHookRelay_TCPEndpoint_DialsTCP(t *testing.T) {
 
 	endpoint, received := tcpFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e := hookRelayFixtureEnv(t.TempDir())
-	e.DaemonSocket = endpoint // tcp://127.0.0.1:<port>
+	e.DaemonSocket = endpoint
 
 	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionStart", nil)
 	var stderr bytes.Buffer

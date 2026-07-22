@@ -224,7 +224,6 @@ func TestHookRelay_CHB014_SchemaVersionNotOne(t *testing.T) {
 	t.Parallel()
 
 	for _, sv := range []int{0, 2, 99} {
-		sv := sv
 		t.Run("schema_version_"+string(rune('0'+sv%10)), func(t *testing.T) {
 			t.Parallel()
 			verdictJSON, _ := json.Marshal(map[string]interface{}{
@@ -250,7 +249,6 @@ func TestHookRelay_CHB014_InvalidVerdictValue(t *testing.T) {
 	t.Parallel()
 
 	for _, bad := range []string{"MAYBE", "approve", "", "ACCEPT"} {
-		bad := bad
 		t.Run("verdict_"+bad, func(t *testing.T) {
 			t.Parallel()
 			verdictJSON, _ := json.Marshal(map[string]interface{}{
@@ -279,7 +277,6 @@ func TestHookRelay_CHB014_PhaseNotReviewerUsesWorkComplete(t *testing.T) {
 	t.Parallel()
 
 	for _, phase := range []string{"single", "implementer-initial", "implementer-resume", ""} {
-		phase := phase
 		t.Run("phase_"+phase, func(t *testing.T) {
 			t.Parallel()
 

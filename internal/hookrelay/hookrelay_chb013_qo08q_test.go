@@ -114,7 +114,6 @@ func TestHookRelay_CHB013_Stop_WorkComplete_AllImplementerPhases(t *testing.T) {
 	t.Parallel()
 
 	for _, phase := range []string{"single", "implementer-initial", "implementer-resume", ""} {
-		phase := phase
 		t.Run("phase="+phase, func(t *testing.T) {
 			t.Parallel()
 
@@ -279,7 +278,6 @@ func TestHookRelay_CHB013_StopFailure_AllStructuralTypes(t *testing.T) {
 	}
 
 	for _, errorType := range structuralTypes {
-		errorType := errorType
 		t.Run(errorType, func(t *testing.T) {
 			t.Parallel()
 
@@ -403,7 +401,6 @@ func TestHookRelay_CHB013_Notification_WaitingInput(t *testing.T) {
 	t.Parallel()
 
 	for _, notifType := range []string{"idle_prompt", "permission_prompt"} {
-		notifType := notifType
 		t.Run(notifType, func(t *testing.T) {
 			t.Parallel()
 
@@ -456,7 +453,6 @@ func TestHookRelay_CHB013_Notification_Reasoning(t *testing.T) {
 	t.Parallel()
 
 	for _, notifType := range []string{"progress", "tool_use", "thinking", "", "unknown_future_type"} {
-		notifType := notifType
 		t.Run("type="+notifType, func(t *testing.T) {
 			t.Parallel()
 

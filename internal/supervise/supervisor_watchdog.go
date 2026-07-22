@@ -90,7 +90,7 @@ func (sw *SupervisorWatchdog) Run(ctx context.Context) error {
 	ticker := time.NewTicker(sw.spec.CheckInterval)
 	defer ticker.Stop()
 
-	sw.log.Info("supervisor-watchdog: started",
+	sw.log.InfoContext(ctx, "supervisor-watchdog: started",
 		"pidfile", sw.spec.PidfilePath,
 		"check_interval", sw.spec.CheckInterval,
 		"max_revives", sw.spec.MaxRevives)
@@ -98,18 +98,18 @@ func (sw *SupervisorWatchdog) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			sw.log.Info("supervisor-watchdog: stopped")
+			sw.log.InfoContext(ctx, "supervisor-watchdog: stopped")
 			return ctx.Err()
 		case <-ticker.C:
 			if sw.isSupervisorAlive() {
 				if revives > 0 {
-					sw.log.Info("supervisor-watchdog: supervisor confirmed alive after revival — counter reset")
+					sw.log.InfoContext(ctx, "supervisor-watchdog: supervisor confirmed alive after revival — counter reset")
 					revives = 0
 				}
 				continue
 			}
 
-			sw.log.Warn("supervisor-watchdog: supervisor not running",
+			sw.log.WarnContext(ctx, "supervisor-watchdog: supervisor not running",
 				"pidfile", sw.spec.PidfilePath,
 				"revives_so_far", revives)
 
@@ -122,26 +122,26 @@ func (sw *SupervisorWatchdog) Run(ctx context.Context) error {
 			}
 
 			if sw.spec.MaxRevives >= 0 && revives >= sw.spec.MaxRevives {
-				sw.log.Error("supervisor-watchdog: revival cap reached — giving up",
+				sw.log.ErrorContext(ctx, "supervisor-watchdog: revival cap reached — giving up",
 					"max_revives", sw.spec.MaxRevives)
 				return fmt.Errorf("supervisor-watchdog: revival cap reached after %d attempts", sw.spec.MaxRevives)
 			}
 
 			revives++
-			sw.log.Warn("supervisor-watchdog: spawning supervisor",
+			sw.log.WarnContext(ctx, "supervisor-watchdog: spawning supervisor",
 				"attempt", revives, "cmd", sw.spec.ReviveCmd)
 
 			if err := sw.reviveWith(sw.spec.ReviveCmd); err != nil {
-				sw.log.Error("supervisor-watchdog: spawn failed",
+				sw.log.ErrorContext(ctx, "supervisor-watchdog: spawn failed",
 					"attempt", revives, "err", err)
 				continue
 			}
 
-			sw.log.Info("supervisor-watchdog: supervisor spawned — waiting for pidfile",
+			sw.log.InfoContext(ctx, "supervisor-watchdog: supervisor spawned — waiting for pidfile",
 				"window", sw.spec.ReviveWindow, "poll_interval", sw.spec.ReviveBackoff)
 
 			if sw.pollUntilAlive(ctx, sw.spec.ReviveWindow, sw.spec.ReviveBackoff) {
-				sw.log.Info("supervisor-watchdog: supervisor confirmed alive after revival")
+				sw.log.InfoContext(ctx, "supervisor-watchdog: supervisor confirmed alive after revival")
 				revives = 0
 			}
 		}
@@ -195,7 +195,9 @@ func (sw *SupervisorWatchdog) reviveWith(argv []string) error {
 		return fmt.Errorf("supervisor-watchdog: reviveWith: empty argv")
 	}
 	//nolint:gosec // G204: argv is operator-controlled config
-	cmd := exec.Command(argv[0], argv[1:]...)
+	// This process is deliberately detached so it survives cancellation of the
+	// watchdog that revived it; CommandContext would violate that contract.
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:noctx // detached child must survive watchdog cancellation
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if sw.spec.WorkDir != "" {
 		cmd.Dir = sw.spec.WorkDir

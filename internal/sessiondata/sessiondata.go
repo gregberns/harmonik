@@ -342,7 +342,6 @@ func Append(projectDir string, rec Record) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("sessiondata: MkdirAll: %w", err)
 	}
-	//nolint:gosec // G304: path is projectDir-derived (operator config, not user input).
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // G306: world-readable session metrics, not a secret.
 	if err != nil {
 		return fmt.Errorf("sessiondata: OpenFile: %w", err)

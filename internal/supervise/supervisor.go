@@ -2,9 +2,10 @@ package supervise
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"sync"
@@ -112,11 +113,17 @@ func (s *Spec) applyDefaults() {
 type Status string
 
 const (
-	StatusIdle      Status = "idle"
-	StatusStarting  Status = "starting"
-	StatusRunning   Status = "running"
+	// StatusIdle means no child has been started yet.
+	StatusIdle Status = "idle"
+	// StatusStarting means the child started but has not passed the assume-running gate.
+	StatusStarting Status = "starting"
+	// StatusRunning means the child has passed the assume-running gate.
+	StatusRunning Status = "running"
+	// StatusUnhealthy means a liveness or heartbeat probe failed.
 	StatusUnhealthy Status = "unhealthy"
-	StatusStopped   Status = "stopped"
+	// StatusStopped means the child exited or was stopped.
+	StatusStopped Status = "stopped"
+	// StatusCrashLoop means the child exceeded a restart limit.
 	StatusCrashLoop Status = "crashloop"
 )
 
@@ -205,7 +212,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 
 		pid := cmd.Process.Pid
-		s.log.Info("supervise: child started", "pid", pid, "restarts", len(restartTimes))
+		s.log.InfoContext(ctx, "supervise: child started", "pid", pid, "restarts", len(restartTimes))
 		s.setState(State{
 			PID:          pid,
 			Status:       StatusStarting,
@@ -221,7 +228,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 				next := *cur
 				next.Status = StatusRunning
 				s.state.Store(&next)
-				s.log.Info("supervise: assume-running gate fired", "pid", pid)
+				s.log.InfoContext(ctx, "supervise: assume-running gate fired", "pid", pid)
 			}
 		})
 
@@ -230,7 +237,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		var stopHealthOnce sync.Once
 		stopHealth := func() { stopHealthOnce.Do(func() { close(healthDone) }) }
 		if s.spec.HeartbeatPath != "" {
-			go s.runHealthProbe(pid, healthDone)
+			go s.runHealthProbe(ctx, pid, healthDone)
 		}
 
 		// Wait for child exit in a goroutine so we can also select on ctx/stop.
@@ -241,17 +248,17 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			assumeTimer.Stop()
-			s.forwardSignal(cmd, syscall.SIGTERM)
+			s.forwardSignal(ctx, cmd, syscall.SIGTERM)
 			<-waitCh
 			stopHealth()
-			s.setStatus(StatusStopped)
+			s.setStopped()
 			return ctx.Err()
 
 		case <-s.stopCh:
 			assumeTimer.Stop()
-			s.terminateChild(cmd, waitCh)
+			s.terminateChild(ctx, cmd, waitCh)
 			stopHealth()
-			s.setStatus(StatusStopped)
+			s.setStopped()
 			return nil
 
 		case exitErr = <-waitCh:
@@ -260,7 +267,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 
 		exitCode := exitCodeFrom(exitErr)
-		s.log.Info("supervise: child exited", "pid", pid, "code", exitCode)
+		s.log.InfoContext(ctx, "supervise: child exited", "pid", pid, "code", exitCode)
 
 		cur := s.state.Load()
 		next := *cur
@@ -274,7 +281,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 		// PolicyOnFailure: only restart on non-zero exit.
 		if exitCode == 0 {
-			s.log.Info("supervise: clean exit with on-failure policy — not restarting")
+			s.log.InfoContext(ctx, "supervise: clean exit with on-failure policy — not restarting")
 			return nil
 		}
 
@@ -284,7 +291,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 
 		if s.spec.Backoff.MaxRestarts >= 0 && len(restartTimes) > s.spec.Backoff.MaxRestarts {
 			s.setCrashLoopState(len(restartTimes), exitCode)
-			s.log.Error("supervise: crash-loop detected — restart cap reached",
+			s.log.ErrorContext(ctx, "supervise: crash-loop detected — restart cap reached",
 				"max_restarts", s.spec.Backoff.MaxRestarts)
 			return fmt.Errorf("supervise: crash-loop: exceeded %d restarts", s.spec.Backoff.MaxRestarts)
 		}
@@ -301,7 +308,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			}
 			if count >= s.spec.Backoff.MaxRestarts {
 				s.setCrashLoopState(len(restartTimes), exitCode)
-				s.log.Error("supervise: crash-loop detected — sliding window exceeded",
+				s.log.ErrorContext(ctx, "supervise: crash-loop detected — sliding window exceeded",
 					"restarts_in_window", count,
 					"window", s.spec.CrashLoopWindow)
 				return fmt.Errorf("supervise: crash-loop: %d restarts in %s",
@@ -311,15 +318,15 @@ func (s *Supervisor) Run(ctx context.Context) error {
 
 		// Backoff with jitter before respawn.
 		delay := backoffWithJitter(backoff, s.spec.Backoff.Jitter)
-		s.log.Info("supervise: backoff before restart", "delay", delay, "restart", len(restartTimes))
+		s.log.InfoContext(ctx, "supervise: backoff before restart", "delay", delay, "restart", len(restartTimes))
 
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
-			s.setStatus(StatusStopped)
+			s.setStopped()
 			return ctx.Err()
 		case <-s.stopCh:
-			s.setStatus(StatusStopped)
+			s.setStopped()
 			return nil
 		}
 
@@ -335,7 +342,9 @@ func (s *Supervisor) Run(ctx context.Context) error {
 // from the shim so the tmux pane absorbs them (PL-028d).
 func (s *Supervisor) buildCmd() *exec.Cmd {
 	//nolint:gosec // command comes from operator-controlled config
-	cmd := exec.Command(s.spec.Command[0], s.spec.Command[1:]...)
+	// The run loop implements the graceful context-cancellation path itself;
+	// CommandContext would race that path by sending an immediate SIGKILL.
+	cmd := exec.Command(s.spec.Command[0], s.spec.Command[1:]...) //nolint:noctx // Run performs graceful cancellation itself
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	// When BaseEnv is set, use it as the base (scoped injection, CI-005);
@@ -346,7 +355,8 @@ func (s *Supervisor) buildCmd() *exec.Cmd {
 		if base == nil {
 			base = os.Environ()
 		}
-		cmd.Env = append(base, s.spec.Env...)
+		cmd.Env = append([]string{}, base...)
+		cmd.Env = append(cmd.Env, s.spec.Env...)
 	}
 	if s.spec.WorkDir != "" {
 		cmd.Dir = s.spec.WorkDir
@@ -359,38 +369,42 @@ func (s *Supervisor) buildCmd() *exec.Cmd {
 // terminateChild implements PL-011: SIGTERM → bounded wait → SIGKILL. The
 // bounded wait honours the timeout passed to Stop() (recorded in
 // stopTimeoutNanos); a zero value falls back to Spec.StopTimeout.
-func (s *Supervisor) terminateChild(cmd *exec.Cmd, waitCh <-chan error) {
+func (s *Supervisor) terminateChild(ctx context.Context, cmd *exec.Cmd, waitCh <-chan error) {
 	killTimeout := time.Duration(s.stopTimeoutNanos.Load())
 	if killTimeout <= 0 {
 		killTimeout = s.spec.StopTimeout
 	}
-	s.forwardSignal(cmd, syscall.SIGTERM)
+	s.forwardSignal(ctx, cmd, syscall.SIGTERM)
 	timer := time.NewTimer(killTimeout)
 	defer timer.Stop()
 	select {
 	case <-waitCh:
 	case <-timer.C:
-		s.log.Warn("supervise: SIGTERM timeout — sending SIGKILL", "timeout", killTimeout)
-		s.forwardSignal(cmd, syscall.SIGKILL)
+		s.log.WarnContext(ctx, "supervise: SIGTERM timeout — sending SIGKILL", "timeout", killTimeout)
+		s.forwardSignal(ctx, cmd, syscall.SIGKILL)
 		<-waitCh
 	}
 }
 
-func (s *Supervisor) forwardSignal(cmd *exec.Cmd, sig syscall.Signal) {
+func (s *Supervisor) forwardSignal(ctx context.Context, cmd *exec.Cmd, sig syscall.Signal) {
 	if cmd.Process == nil {
 		return
 	}
-	_ = cmd.Process.Signal(sig)
+	if err := cmd.Process.Signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		s.log.WarnContext(ctx, "supervise: failed to signal child", "pid", cmd.Process.Pid, "signal", sig, "err", err)
+	}
 }
 
 // runHealthProbe periodically checks process liveness (kill(pid,0)) and
 // heartbeat-file freshness. Health failures update state.Status but do NOT
 // trigger a restart — only process exit does (matches TS behaviour).
-func (s *Supervisor) runHealthProbe(pid int, done <-chan struct{}) {
+func (s *Supervisor) runHealthProbe(ctx context.Context, pid int, done <-chan struct{}) {
 	ticker := time.NewTicker(s.spec.HealthProbeInterval)
 	defer ticker.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-done:
 			return
 		case <-ticker.C:
@@ -405,7 +419,7 @@ func (s *Supervisor) runHealthProbe(pid int, done <-chan struct{}) {
 				}
 				s.state.Store(&next)
 				if !healthy {
-					s.log.Warn("supervise: health probe failed", "pid", pid)
+					s.log.WarnContext(ctx, "supervise: health probe failed", "pid", pid)
 				}
 			}
 		}
@@ -434,10 +448,10 @@ func (s *Supervisor) setState(st State) {
 	s.state.Store(&st)
 }
 
-func (s *Supervisor) setStatus(status Status) {
+func (s *Supervisor) setStopped() {
 	cur := s.state.Load()
 	next := *cur
-	next.Status = status
+	next.Status = StatusStopped
 	s.state.Store(&next)
 }
 
@@ -463,11 +477,7 @@ func exitCodeFrom(err error) int {
 }
 
 func isExitError(err error, target **exec.ExitError) bool {
-	e, ok := err.(*exec.ExitError)
-	if ok {
-		*target = e
-	}
-	return ok
+	return errors.As(err, target)
 }
 
 // backoffWithJitter adds uniform random jitter of ±(jitter*d)/2.
@@ -475,7 +485,6 @@ func backoffWithJitter(d time.Duration, jitter float64) time.Duration {
 	if jitter <= 0 {
 		return d
 	}
-	//nolint:gosec // non-cryptographic jitter
 	delta := float64(d) * jitter
 	return d + time.Duration((rand.Float64()-0.5)*delta)
 }

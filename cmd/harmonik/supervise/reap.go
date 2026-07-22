@@ -25,7 +25,8 @@ import (
 // Exit codes:
 //
 //	0  — reap pass completed (zero or more sessions reaped)
-//	1  — argument or operational error
+//	1  — argument or operational error (including a kill that failed; the events
+//	     for the sessions the pass DID kill are still emitted before exiting)
 //
 // Spec ref: docs/retro/2026-06-10/A3-embed-inventory.md gap #2 (Tmux orphan reap).
 func RunReap(args []string, stdout, stderr io.Writer) int {
@@ -64,19 +65,23 @@ func RunReap(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	result, err := supervise.ReapOrphanFlywheelSessions(ctx, supervise.OSReapAdapter(), opts)
-	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise reap: %v\n", err)
-		return 1
-	}
 
 	// Emit one tmux_orphan_reaped event per kill (newline-delimited JSON on
-	// stdout so it is greppable / pipeable to the daemon event stream).
+	// stdout so it is greppable / pipeable to the daemon event stream). This runs
+	// BEFORE the error check on purpose: a pass that kills A and B and then fails
+	// on C still killed A and B, and dropping their events would lose
+	// observability exactly when something is going wrong.
 	for _, ev := range result.Events {
 		b, mErr := json.Marshal(ev)
 		if mErr != nil {
 			continue
 		}
 		fmt.Fprintln(stdout, string(b))
+	}
+
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "harmonik supervise reap: %v\n", err) //nolint:errcheck // best-effort
+		return 1
 	}
 
 	if asJSON {

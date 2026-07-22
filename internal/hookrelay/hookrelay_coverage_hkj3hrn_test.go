@@ -164,7 +164,7 @@ func TestHookRelay_Stop_MessageLargeStringTruncated(t *testing.T) {
 		if len(summary) > 4096 {
 			t.Errorf("Stop large-message: summary length %d exceeds 4 KiB limit 4096", len(summary))
 		}
-		if len(summary) == 0 {
+		if summary == "" {
 			t.Error("Stop large-message: summary is empty; expected truncated text")
 		}
 	default:
@@ -388,7 +388,7 @@ func TestHookRelay_EnvFromOS_MissingRequired(t *testing.T) {
 	// nil envOverride forces envFromOS path.
 	// When HARMONIK_RUN_ID is absent, hook-relay exits 0 silently (hk-f0xb6):
 	// not a harmonik-managed session, so the hook is a no-op.
-	stdin := fmt.Sprintf(`{"session_id":"","hook_event_name":"Stop"}`)
+	stdin := `{"session_id":"","hook_event_name":"Stop"}`
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", strings.NewReader(stdin), &stderr, nil)
 	if code != 0 {

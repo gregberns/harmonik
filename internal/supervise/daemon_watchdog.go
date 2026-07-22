@@ -1,8 +1,11 @@
+// Package supervise manages and monitors long-running Harmonik processes.
 package supervise
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -99,15 +102,22 @@ func (s *DaemonWatchdogSpec) applyDefaults() {
 // CL-083: the cognition loop (bridge.ts) detects daemon_down and nudges the
 // model; this component is the actor that actually restarts the daemon process.
 type DaemonWatchdog struct {
-	spec DaemonWatchdogSpec
-	log  *slog.Logger
+	spec       DaemonWatchdogSpec
+	log        *slog.Logger
+	dialDaemon func(context.Context) (io.Closer, error)
 }
 
 // NewDaemonWatchdog creates a DaemonWatchdog. SocketPath and Command must be
 // non-empty or Run returns an error immediately.
 func NewDaemonWatchdog(spec DaemonWatchdogSpec, log *slog.Logger) *DaemonWatchdog {
 	spec.applyDefaults()
-	return &DaemonWatchdog{spec: spec, log: log}
+	return &DaemonWatchdog{
+		spec: spec,
+		log:  log,
+		dialDaemon: func(ctx context.Context) (io.Closer, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", spec.SocketPath)
+		},
+	}
 }
 
 // Run is the main blocking loop. It exits when ctx is cancelled or the revival
@@ -142,7 +152,7 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 	ticker := time.NewTicker(dw.spec.CheckInterval)
 	defer ticker.Stop()
 
-	dw.log.Info("daemon-watchdog: started",
+	dw.log.InfoContext(ctx, "daemon-watchdog: started",
 		"socket", dw.spec.SocketPath,
 		"check_interval", dw.spec.CheckInterval,
 		"max_revives", dw.spec.MaxRevives)
@@ -150,13 +160,13 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			dw.log.Info("daemon-watchdog: stopped")
+			dw.log.InfoContext(ctx, "daemon-watchdog: stopped")
 			return ctx.Err()
 		case <-ticker.C:
 			if dw.isDaemonAlive(ctx) {
 				// Daemon alive: check if the health window has elapsed.
 				if !adoptDeadline.IsZero() && !time.Now().Before(adoptDeadline) {
-					dw.pinLastGood(activeCommand[0])
+					dw.pinLastGood(ctx, activeCommand[0])
 					adoptDeadline = time.Time{}
 				}
 				continue
@@ -167,12 +177,12 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 			crashedInHealthWindow := !adoptDeadline.IsZero()
 			adoptDeadline = time.Time{}
 
-			dw.log.Warn("daemon-watchdog: daemon not reachable",
+			dw.log.WarnContext(ctx, "daemon-watchdog: daemon not reachable",
 				"socket", dw.spec.SocketPath, "revives_so_far", revives,
 				"crashed_in_health_window", crashedInHealthWindow)
 
 			if dw.spec.MaxRevives >= 0 && revives >= dw.spec.MaxRevives {
-				dw.log.Error("daemon-watchdog: revival cap reached — giving up",
+				dw.log.ErrorContext(ctx, "daemon-watchdog: revival cap reached — giving up",
 					"max_revives", dw.spec.MaxRevives)
 				return fmt.Errorf("daemon-watchdog: revival cap reached after %d attempts", dw.spec.MaxRevives)
 			}
@@ -182,25 +192,25 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 			// revival attempt so a crash-looping non-yanked binary does not
 			// keep replacing a known-good one.
 			if crashedInHealthWindow {
-				activeCommand = dw.applyLastGoodFallback(activeCommand, "crash within health window")
+				activeCommand = dw.applyLastGoodFallback(ctx, activeCommand, "crash within health window")
 			}
 
 			// §7.2.1: if the active binary is yanked in the ledger, fall back
 			// to the last-good binary.
-			activeCommand = dw.resolveReviveCommand(activeCommand)
+			activeCommand = dw.resolveReviveCommand(ctx, activeCommand)
 
 			revives++
-			dw.log.Warn("daemon-watchdog: spawning daemon",
+			dw.log.WarnContext(ctx, "daemon-watchdog: spawning daemon",
 				"attempt", revives, "cmd", activeCommand)
-			spawnErr := dw.reviveWith(activeCommand)
+			spawnErr := dw.reviveWith(ctx, activeCommand)
 			if spawnErr != nil {
-				dw.log.Error("daemon-watchdog: spawn failed",
+				dw.log.ErrorContext(ctx, "daemon-watchdog: spawn failed",
 					"attempt", revives, "err", spawnErr)
 				// Spawn failed — skip the revival window poll; the daemon
 				// process was never started so it cannot bind the socket.
 				continue
 			}
-			dw.log.Info("daemon-watchdog: daemon spawned — waiting for socket bind",
+			dw.log.InfoContext(ctx, "daemon-watchdog: daemon spawned — waiting for socket bind",
 				"window", dw.spec.ReviveWindow, "poll_interval", dw.spec.ReviveBackoff)
 
 			// Poll until the daemon binds its socket or ReviveWindow expires.
@@ -213,7 +223,7 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 			if dw.pollUntilAlive(ctx, dw.spec.ReviveWindow, dw.spec.ReviveBackoff) {
 				revives = 0
 				adoptDeadline = time.Now().Add(dw.spec.CheckInterval)
-				dw.log.Info("daemon-watchdog: daemon confirmed alive after revival — health window started",
+				dw.log.InfoContext(ctx, "daemon-watchdog: daemon confirmed alive after revival — health window started",
 					"adopt_after", adoptDeadline.Format(time.RFC3339))
 			}
 		}
@@ -226,11 +236,11 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 // available.
 //
 // Spec ref: specs/release-pipeline.md §7.2.1 — supervisor yanked-binary guard.
-func (dw *DaemonWatchdog) resolveReviveCommand(current []string) []string {
+func (dw *DaemonWatchdog) resolveReviveCommand(ctx context.Context, current []string) []string {
 	if dw.spec.LedgerPath == "" || len(current) == 0 {
 		return current
 	}
-	hash := commitHashOf(current[0])
+	hash := commitHashOf(ctx, current[0])
 	if hash == "" {
 		return current
 	}
@@ -242,7 +252,7 @@ func (dw *DaemonWatchdog) resolveReviveCommand(current []string) []string {
 		if e.CommitHash != hash || !e.Yanked {
 			continue
 		}
-		dw.log.Warn("daemon-watchdog: refused_yank — binary is yanked in ledger",
+		dw.log.WarnContext(ctx, "daemon-watchdog: refused_yank — binary is yanked in ledger",
 			"semver", e.Semver,
 			"commit", hash,
 			"reason", e.YankedReason)
@@ -250,7 +260,7 @@ func (dw *DaemonWatchdog) resolveReviveCommand(current []string) []string {
 			"daemon-watchdog: refused_yank: %s %s — %s\n",
 			e.Semver, hash[:min(12, len(hash))], e.YankedReason)
 
-		return dw.applyLastGoodFallback(current, "yanked binary")
+		return dw.applyLastGoodFallback(ctx, current, "yanked binary")
 	}
 	return current
 }
@@ -261,7 +271,7 @@ func (dw *DaemonWatchdog) resolveReviveCommand(current []string) []string {
 //
 // Spec ref: specs/release-pipeline.md §7.2.3 (crash fallback) and §7.2.1
 // (yanked fallback).
-func (dw *DaemonWatchdog) applyLastGoodFallback(current []string, reason string) []string {
+func (dw *DaemonWatchdog) applyLastGoodFallback(ctx context.Context, current []string, reason string) []string {
 	if dw.spec.LastGoodPath == "" || len(current) == 0 {
 		fmt.Fprintf(os.Stderr, "daemon-watchdog: last-good fallback unavailable (%s): no LastGoodPath configured\n", reason)
 		return current
@@ -273,11 +283,11 @@ func (dw *DaemonWatchdog) applyLastGoodFallback(current []string, reason string)
 	}
 	// Don't switch if we are already running the last-good binary.
 	if current[0] == lastGood {
-		dw.log.Warn("daemon-watchdog: already running last-good binary; staying with it",
+		dw.log.WarnContext(ctx, "daemon-watchdog: already running last-good binary; staying with it",
 			"reason", reason, "bin", lastGood)
 		return current
 	}
-	dw.log.Info("daemon-watchdog: falling back to last-good binary",
+	dw.log.InfoContext(ctx, "daemon-watchdog: falling back to last-good binary",
 		"reason", reason, "last_good", lastGood, "was", current[0])
 	result := make([]string, len(current))
 	copy(result, current)
@@ -289,19 +299,19 @@ func (dw *DaemonWatchdog) applyLastGoodFallback(current []string, reason string)
 // file. Logs at Warn on failure (non-fatal: the daemon is still running).
 //
 // §2.4 MUST NOT: pre-release binaries are never adopted as last-good.
-func (dw *DaemonWatchdog) pinLastGood(binPath string) {
+func (dw *DaemonWatchdog) pinLastGood(ctx context.Context, binPath string) {
 	if dw.spec.LastGoodPath == "" {
 		return
 	}
 
 	// §2.4: refuse to adopt pre-release binaries as last-good.
 	if dw.spec.LedgerPath != "" {
-		hash := commitHashOf(binPath)
+		hash := commitHashOf(ctx, binPath)
 		if hash != "" {
 			if entries, err := release.LoadLedgerFile(dw.spec.LedgerPath); err == nil {
 				for _, e := range entries {
 					if e.CommitHash == hash && e.Prerelease {
-						dw.log.Info("daemon-watchdog: skipping last-good pin — binary is pre-release",
+						dw.log.InfoContext(ctx, "daemon-watchdog: skipping last-good pin — binary is pre-release",
 							"bin", binPath, "semver", e.Semver, "commit", hash)
 						return
 					}
@@ -311,10 +321,10 @@ func (dw *DaemonWatchdog) pinLastGood(binPath string) {
 	}
 
 	if err := release.PinLastGoodBinary(dw.spec.LastGoodPath, binPath); err != nil {
-		dw.log.Warn("daemon-watchdog: failed to pin last-good binary", "bin", binPath, "err", err)
+		dw.log.WarnContext(ctx, "daemon-watchdog: failed to pin last-good binary", "bin", binPath, "err", err)
 		return
 	}
-	dw.log.Info("daemon-watchdog: pinned last-good binary",
+	dw.log.InfoContext(ctx, "daemon-watchdog: pinned last-good binary",
 		"bin", binPath,
 		"last_good", binPath+".last-good",
 		"state", dw.spec.LastGoodPath)
@@ -323,8 +333,8 @@ func (dw *DaemonWatchdog) pinLastGood(binPath string) {
 // commitHashOf runs "$bin version" and extracts the commit hash from the
 // output. Output format (normative): "harmonik v0.y.z (commit: <sha>)".
 // Returns empty string on any error.
-func commitHashOf(binPath string) string {
-	out, err := exec.Command(binPath, "version").Output() //nolint:gosec // G204: binPath is operator-controlled
+func commitHashOf(ctx context.Context, binPath string) string {
+	out, err := exec.CommandContext(ctx, binPath, "version").Output()
 	if err != nil {
 		return ""
 	}
@@ -347,11 +357,15 @@ func commitHashOf(binPath string) string {
 func (dw *DaemonWatchdog) isDaemonAlive(ctx context.Context) bool {
 	dialCtx, cancel := context.WithTimeout(ctx, dw.spec.DialTimeout)
 	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(dialCtx, "unix", dw.spec.SocketPath)
+	conn, err := dw.dialDaemon(dialCtx)
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	// A successful dial proves liveness. Closing the probe's local endpoint is
+	// best-effort and must not manufacture a daemon outage or trigger revival.
+	if closeErr := conn.Close(); closeErr != nil {
+		dw.log.DebugContext(ctx, "daemon-watchdog: probe connection close failed", "err", closeErr)
+	}
 	return true
 }
 
@@ -386,12 +400,14 @@ func (dw *DaemonWatchdog) pollUntilAlive(ctx context.Context, window, interval t
 // it can outlive the supervisor/shim pane. When CrashLogPath is set, stdout
 // and stderr are redirected to a rotating crash log; otherwise output falls to
 // /dev/null. The daemon writes structured events to .harmonik/events/events.jsonl.
-func (dw *DaemonWatchdog) reviveWith(argv []string) error {
+func (dw *DaemonWatchdog) reviveWith(ctx context.Context, argv []string) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("daemon-watchdog: reviveWith: empty argv")
 	}
 	//nolint:gosec // G204: argv comes from operator-controlled config or last-good state
-	cmd := exec.Command(argv[0], argv[1:]...)
+	// This process is deliberately detached so it survives cancellation of the
+	// watchdog that revived it; CommandContext would violate that contract.
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:noctx // detached child must survive watchdog cancellation
 	// Detach from shim's process group and session so SIGTERM to the flywheel
 	// pane does not cascade to the revived daemon.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -406,7 +422,7 @@ func (dw *DaemonWatchdog) reviveWith(argv []string) error {
 	if dw.spec.CrashLogPath != "" {
 		f, err := openCrashLog(dw.spec.CrashLogPath, dw.spec.CrashLogKeep, argv)
 		if err != nil {
-			dw.log.Warn("daemon-watchdog: failed to open crash log; daemon output will be lost",
+			dw.log.WarnContext(ctx, "daemon-watchdog: failed to open crash log; daemon output will be lost",
 				"path", dw.spec.CrashLogPath, "err", err)
 		} else {
 			cmd.Stdout = f
@@ -426,15 +442,33 @@ func openCrashLog(path string, keep int, argv []string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("crash log dir: %w", err)
 	}
-	_ = os.Remove(path + "." + strconv.Itoa(keep-1))
-	for i := keep - 2; i >= 1; i-- {
-		_ = os.Rename(path+"."+strconv.Itoa(i), path+"."+strconv.Itoa(i+1))
+	if err := os.Remove(path + "." + strconv.Itoa(keep-1)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("remove oldest crash log: %w", err)
 	}
-	_ = os.Rename(path, path+".1")
+	for i := keep - 2; i >= 1; i-- {
+		if err := renameIfExists(path+"."+strconv.Itoa(i), path+"."+strconv.Itoa(i+1)); err != nil {
+			return nil, err
+		}
+	}
+	if err := renameIfExists(path, path+".1"); err != nil {
+		return nil, err
+	}
 	f, err := os.Create(path) //nolint:gosec // G304: operator-configured path
 	if err != nil {
 		return nil, err
 	}
-	_, _ = fmt.Fprintf(f, "=== daemon boot cmd=%s\n", strings.Join(argv, " "))
+	if _, err := fmt.Fprintf(f, "=== daemon boot cmd=%s\n", strings.Join(argv, " ")); err != nil {
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		return nil, fmt.Errorf("write crash log header: %w", err)
+	}
 	return f, nil
+}
+
+func renameIfExists(oldPath, newPath string) error {
+	if err := os.Rename(oldPath, newPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("rotate crash log %q to %q: %w", oldPath, newPath, err)
+	}
+	return nil
 }

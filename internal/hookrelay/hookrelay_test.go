@@ -556,7 +556,6 @@ func TestHookRelay_Notification_WaitingInput(t *testing.T) {
 
 	// CHB-013: Notification{idle_prompt} → agent_heartbeat{phase:waiting_input}.
 	for _, notifType := range []string{"idle_prompt", "permission_prompt"} {
-		notifType := notifType
 		t.Run(notifType, func(t *testing.T) {
 			t.Parallel()
 
@@ -673,7 +672,7 @@ func TestHookRelay_DaemonNotReady_RetryThenSuccess(t *testing.T) {
 	e := hookRelayFixtureEnv(t.TempDir())
 
 	// First response: daemon_not_ready. Second response: ok.
-	sockPath, received := hookRelayFixtureListenSequence(t, []string{
+	sockPath, _ := hookRelayFixtureListenSequence(t, []string{
 		`{"status":"daemon_not_ready","reason":"unknown_run_id"}`,
 		`{"status":"ok"}`,
 	})
@@ -685,11 +684,7 @@ func TestHookRelay_DaemonNotReady_RetryThenSuccess(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("daemon_not_ready retry: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
-	// Two messages should have been received.
-	// The channel is buffered at 1, so we just need to confirm one message.
-	if len(received) == 0 {
-		// The second message was received; channel may be empty — that's fine.
-	}
+	// The channel is buffered at 1; successful completion proves the retry ACK path.
 }
 
 func TestHookRelay_EnvelopeFields(t *testing.T) {

@@ -180,9 +180,25 @@ each closes a distinct strand-the-bead hole. None require an agent or a schedule
 | L4 | **Container-info handoff to primary** — worker passes container identity/address to the primary at start | enables later agent-based deep inspection | YES (C5.4) |
 | L5 | **Orphan → requeue (the non-skippable §4.1)** — any bead whose container is dead/hung is marked failed and requeued, never left `in_progress` | stranded `in_progress` beads | YES (mandatory) |
 | L6 | **Worker heartbeat / roster** — primary watches the roster; a whole worker going dark requeues ALL its in-flight beads (not just one container) | a worker/box vanishing (kernel liveness: ALIVE/SUSPECT/DEAD) | YES (roster is a kernel primitive) |
-| L7 | **Spawn-time reachability fail-closed** — a launched-but-UNREACHABLE container fails closed; the spawn check verifies reachability of the *specific* container, never falls back to local unsandboxed | a container that launches but can't be driven (extends hk-5h759 fail-closed guard) | YES (safety-critical) |
+| L7 | **Spawn-time reachability fail-closed** — a launched-but-UNREACHABLE container fails closed; the spawn check verifies reachability of the *specific* container, never falls back to local unsandboxed | a container that launches but can't be driven — **NEW work, see the correction below** | YES (safety-critical) |
 | L8 | **Startup/onboarding timeout** — container never reaches codex `Ready` (in-band `initialize`→`thread/start`) within a bound → fail + requeue | dead-on-arrival containers | YES |
 | L9 | **Result-return watchdog** — `run/<id>` branch doesn't come home within a bound after the run reports complete → treat as failure, don't hang the run | git-fetch/merge-back stalls | YES |
+
+> **CORRECTION 2026-07-22 (lima, review R3) — L7 has nothing to extend; it must be built.**
+> Earlier drafts described L7 as extending an existing "fail-closed spawn guard (`hk-5h759`)", and
+> §5 listed that guard among the landed seams to reuse. Both are wrong, three ways:
+> 1. **The citation names the wrong thing.** `hk-5h759` is *"codexdriver: set
+>    `sandbox_mode=danger-full-access` + `approval_policy=never`"* — the **posture**, not a guard.
+> 2. **The real fail-closed codex isolation fence was deliberately REMOVED** (2026-07-22) as the
+>    operator-directed point of `hk-tckw3.1` Step 1. That is intentional and is *not* a regression —
+>    but a plan written against "the guard exists" describes a world that no longer holds.
+> 3. **The nearest surviving guard is itself failing open.** `hk-y81iv` (OPEN, P1):
+>    `verifySandboxEngaged` reads *"srt failed **and** the canary is absent"* as **ENGAGED**.
+>
+> L7 stays — it is safety-critical and correct. It is simply **new work**. And `hk-y81iv` is the
+> exact mistake shape to design against: a container-reachability check has the same hazard of
+> reading *absence of evidence* as *evidence of success*. L7 must treat "could not verify" as
+> **unreachable**, never as reachable.
 
 **Explicitly DEFERRED (named, not now):**
 - **Full leases with redelivery + typed orphan-recovery** (park vs requeue vs escalate). v1 does
@@ -196,10 +212,16 @@ each closes a distinct strand-the-bead hole. None require an agent or a schedule
 
 ### 4.3 Concurrency note
 
-v1 keeps the registry as "one logical container-transport worker" is the OLD framing — P3's whole
-point is to lift `ErrTooManyWorkers`. But start with **serialized single-container dispatch** to
-measure single-container throughput and warm-cache economics before committing to concurrent
-containers. Concurrency is an increment on top of a working single-container path, not a v1 gate.
+"One logical container-transport worker" is the OLD framing and P3 explicitly rejects it — lifting
+`ErrTooManyWorkers` is the whole point. But start with **serialized single-container dispatch**
+anyway, to measure single-container throughput and warm-cache economics before committing to
+concurrent containers. Concurrency is an increment on top of a working single-container path, not a
+v1 gate.
+
+The reason to accept that delay: §6.3's warm-cache economics are **unvalidated**, and they decide
+whether per-run-ephemeral containers survive at all. That number is far easier to read off one
+container than off three. Sequencing it this way is a v1 scope question the operator owns — see
+Questions.
 
 ---
 
@@ -216,9 +238,12 @@ proves the *container-as-isolation-boundary* and the *git-branch-home* half end-
 of the fabric.
 
 **Build (near-zero new transport code):**
-1. Reuse the landed seams: `SSHRunner`/`CommandInDir` remote-cwd fix (hk-czb11/hk-fufel, PR#32/#33),
-   the fail-closed spawn guard (hk-5h759). Reach the container via **ProxyJump through `fleet`**
-   (`ssh -J <fleet> <container-ip>`) — reuses the transport + `CommandInDir` with least new code.
+1. Reuse the landed seams: `SSHRunner`/`CommandInDir` remote-cwd fix (hk-czb11/hk-fufel, PR#32/#33)
+   — both verified CLOSED. **The fail-closed spawn guard is NOT a landed seam and was removed from
+   this list** (review R3): there is nothing here to reuse, so L7 is new work in the build, not a
+   reuse. Reach the container via **ProxyJump through `fleet`** (`ssh -J <fleet> <container-ip>`) —
+   reuses the transport + `CommandInDir` with least new code. **Presupposes `fleet` exists; see
+   review R1, currently unanswered.**
 2. Golden-image the container (harmonik binary at known path, pre-cloned repo, warm Go cache).
 3. Route ONE codex bead to ONE ephemeral container: launch → `git fetch` base → cut worktree → run
    codex `app-server` (in-band readiness) → commit to `run/<id>` → daemon `git fetch` home → merge →

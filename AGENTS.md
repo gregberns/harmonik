@@ -46,6 +46,7 @@ Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (kerf-f
 - **Lifecycle** (init / supervise / reconcile / promote; work-project deployment, `branching.yaml`): the **harmonik-lifecycle** skill. integration→main is always a human PR step.
 - **Redeploy the live daemon binary** (in-place swap on the running box; supervisor revival, SIGTERM-the-daemon, health-window/last-good, `daemon-YYYYMMDD-NN` tag): the runbook at [`docs/daemon-redeploy.md`](docs/daemon-redeploy.md).
 - **Keeper** (per-session context-fill watcher; now incl. the `hold`/`release` co-working override that suspends the ACT/restart cutoff while WARN still fires): the **keeper** skill.
+- **Disk running low** (agent session scratchpads + orphaned `GOCACHE`, `.beads/.br_history-archive`, stale worktrees in four locations, unrotated `events.jsonl`): the runbook at [`docs/disk-reclaim.md`](docs/disk-reclaim.md) — check it before hand-deleting anything.
 
 <!-- END harmonik:managed -->
 

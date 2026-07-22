@@ -99,7 +99,9 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 			model:           "o4-mini",
 			runner:          nil, // LOCAL run — no worker
 		}
-		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, NewCodexHarness("", ""), core.AgentTypeCodex)
+		// hk-b7rt7: temp CODEX_HOME — the routed path runs the billing guard, which
+		// MkdirAlls + WriteFiles <CODEX_HOME>/config.toml.
+		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, NewCodexHarness("", t.TempDir()), core.AgentTypeCodex)
 		if err != nil {
 			t.Fatalf("buildCodexRoutedLaunchSpec (local codex): %v", err)
 		}
@@ -186,7 +188,9 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 			baseEnv:         []string{"PATH=/usr/bin"},
 			runner:          newNoOpRecorderZ8ek(), // REMOTE run (worker selected)
 		}
-		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, NewCodexHarness("", ""), core.AgentTypeCodex)
+		// hk-b7rt7: temp CODEX_HOME — the routed path runs the billing guard, which
+		// MkdirAlls + WriteFiles <CODEX_HOME>/config.toml.
+		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, NewCodexHarness("", t.TempDir()), core.AgentTypeCodex)
 		if err != nil {
 			t.Fatalf("buildCodexRoutedLaunchSpec (remote codex): %v", err)
 		}

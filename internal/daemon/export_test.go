@@ -3037,6 +3037,14 @@ func ExportedRunCtxFromClaudeRunCtx(rc ExportedClaudeRunCtx) handlercontract.Run
 // Bead ref: hk-m57va.
 var ExportedNewCodexHarness = NewCodexHarness
 
+// ExportedCodexHomeQuarantineCleanup removes the throwaway CODEX_HOME that this
+// test binary quarantines the operator's real ~/.codex into (hk-b7rt7; installed
+// by init() in codexhome_testleak_hkb7rt7_test.go). TestMain calls it after
+// m.Run so the suite leaves no temp directory behind.
+//
+// Bead ref: hk-b7rt7.
+func ExportedCodexHomeQuarantineCleanup() { codexHomeQuarantineCleanup() }
+
 // ExportedCodexEventKind mirrors the internal codexEventKind enum for tests.
 type ExportedCodexEventKind = codexEventKind
 

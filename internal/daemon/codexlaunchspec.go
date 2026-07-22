@@ -30,6 +30,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -241,13 +242,73 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 // this single helper so they never disagree about which CODEX_HOME codex reads.
 func resolveCodexHome(codexHome string) string {
 	if codexHome != "" {
-		return codexHome
+		return quarantineCodexHome(codexHome)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "$HOME/.codex"
+		return quarantineCodexHome("$HOME/.codex")
 	}
-	return home + "/.codex"
+	return quarantineCodexHome(home + "/.codex")
+}
+
+// codexHomeQuarantinedPath and codexHomeQuarantineRedirect implement the daemon
+// TEST BINARY's structural isolation from the operator's real ~/.codex
+// (hk-b7rt7). BOTH ARE EMPTY IN EVERY PRODUCTION BINARY: nothing outside a
+// _test.go file assigns them, so quarantineCodexHome below is an unconditional
+// identity function in production and resolveCodexHome's behaviour is
+// byte-for-byte what it was before this seam existed — including the intended
+// `NewCodexHarness("", "")` → "$HOME/.codex" default that harnessregistry.go
+// relies on.
+//
+// Why the seam lives here rather than at each test call site: resolveCodexHome
+// is the ONE place where an unset CODEX_HOME becomes a real directory that the
+// daemon then WRITES to. Downstream, materializeForcedLoginMethod does
+// os.MkdirAll + os.WriteFile of forced_login_method into <home>/config.toml, and
+// cleanCodexStaleWAL copies and DELETES <home>/state_*.sqlite-wal sidecars. A
+// test that passes "" therefore mutates the operator's live codex install. Fixing
+// the call sites that exist today leaves the next test author free to reintroduce
+// the leak; quarantining the real path here makes it unreachable from the test
+// binary regardless of what any test passes — including an explicit literal
+// ~/.codex.
+//
+// Assigned exactly once, from init() in codexhome_testleak_hkb7rt7_test.go,
+// before any test runs; never mutated afterwards, so there is no race with
+// parallel tests.
+var (
+	// codexHomeQuarantinedPath is the single cleaned path resolveCodexHome must
+	// never return (the operator's real ~/.codex, captured at test-binary start
+	// before any t.Setenv("HOME", …) can move it).
+	codexHomeQuarantinedPath string
+	// codexHomeQuarantineRedirect is the throwaway directory a quarantined
+	// resolution is diverted to.
+	codexHomeQuarantineRedirect string
+)
+
+// quarantineCodexHome returns p unchanged in production (codexHomeQuarantinedPath
+// is empty there). In the daemon test binary it diverts the operator's real
+// ~/.codex to a throwaway directory so no test — whether it passes "", the
+// literal real path, or nothing at all — can read or write the live codex
+// install.
+//
+// Comparison is by filepath.Clean only; a path that reaches the same directory
+// through a symlink is NOT recognised (see the test file's "does not cover"
+// note).
+func quarantineCodexHome(p string) string {
+	return quarantineCodexHomeWith(p, codexHomeQuarantinedPath, codexHomeQuarantineRedirect)
+}
+
+// quarantineCodexHomeWith is the pure form of quarantineCodexHome, taking the
+// quarantine pair as arguments so a test can assert the PRODUCTION shape
+// (quarantined == "" → identity) without mutating package state under parallel
+// tests.
+func quarantineCodexHomeWith(p, quarantined, redirect string) string {
+	if quarantined == "" {
+		return p
+	}
+	if filepath.Clean(p) == quarantined {
+		return redirect
+	}
+	return p
 }
 
 // buildCodexEnv constructs the codex child environment from baseEnv.

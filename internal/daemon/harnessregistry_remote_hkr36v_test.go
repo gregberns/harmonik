@@ -44,7 +44,9 @@ func TestBuildCodexRoutedLaunchSpec_Remote_RoutesAgentTaskThroughRunner(t *testi
 		runner:          rr,
 	}
 
-	h := NewCodexHarness("", "")
+	// hk-b7rt7: temp CODEX_HOME — the routed path runs the billing guard, which
+	// MkdirAlls + WriteFiles <CODEX_HOME>/config.toml.
+	h := NewCodexHarness("", t.TempDir())
 	if _, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypeCodex); err != nil {
 		t.Fatalf("buildCodexRoutedLaunchSpec (remote): %v", err)
 	}
@@ -99,7 +101,9 @@ func TestBuildCodexRoutedLaunchSpec_Local_UsesLocalFS(t *testing.T) {
 		runner:          nil, // LOCAL run
 	}
 
-	h := NewCodexHarness("", "")
+	// hk-b7rt7: temp CODEX_HOME — the routed path runs the billing guard, which
+	// MkdirAlls + WriteFiles <CODEX_HOME>/config.toml.
+	h := NewCodexHarness("", t.TempDir())
 	if _, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypeCodex); err != nil {
 		t.Fatalf("buildCodexRoutedLaunchSpec (local): %v", err)
 	}

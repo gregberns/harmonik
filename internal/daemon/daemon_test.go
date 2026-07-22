@@ -37,6 +37,11 @@ import (
 // Per-test helpers that need their OWN isolated config (e.g. the non-parallel
 // scenario tests, rlIsolateClaudeConfig) override this with their own temp path
 // and RESTORE this default on cleanup, so the package-wide isolation is sticky.
+//
+// The SISTER isolation for the real ~/.codex (hk-b7rt7) is installed by init()
+// in codexhome_testleak_hkb7rt7_test.go rather than here: it must be armed
+// before any package-level state observes resolveCodexHome, and package inits
+// run before TestMain. This function only disposes of its temp directory.
 func TestMain(m *testing.M) {
 	var tmpDir string
 	if _, set := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH"); !set {
@@ -49,6 +54,7 @@ func TestMain(m *testing.M) {
 	if tmpDir != "" {
 		_ = os.RemoveAll(tmpDir)
 	}
+	daemon.ExportedCodexHomeQuarantineCleanup() // hk-b7rt7 quarantine CODEX_HOME
 	os.Exit(code)
 }
 

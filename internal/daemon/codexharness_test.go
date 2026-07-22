@@ -117,7 +117,11 @@ func TestCodexHarness_LaunchSpec_InitialDelegates(t *testing.T) {
 		BaseEnv:       []string{"PATH=/usr/bin"},
 	}
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	// hk-b7rt7: LaunchSpec runs the fail-closed billing guard, which MkdirAlls and
+	// WriteFiles <CODEX_HOME>/config.toml. An empty codexHome used to resolve to the
+	// operator's real ~/.codex, so this test rewrote the live install and its verdict
+	// depended on whatever auth state a running codex fleet had at that instant.
+	h := daemon.ExportedNewCodexHarness("", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -158,7 +162,9 @@ func TestCodexHarness_LaunchSpec_ResumeDelegates(t *testing.T) {
 		PriorSessionID: &threadID,
 	}
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	// hk-b7rt7: temp CODEX_HOME so the billing guard's materialize/assert cannot
+	// reach the operator's real ~/.codex.
+	h := daemon.ExportedNewCodexHarness("", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -184,7 +190,8 @@ func TestCodexHarness_LaunchSpec_CustomBinary(t *testing.T) {
 		Model:         "o4-mini",
 	}
 
-	h := daemon.ExportedNewCodexHarness("/usr/local/bin/codex", "")
+	// hk-b7rt7: temp CODEX_HOME — the billing guard writes to it.
+	h := daemon.ExportedNewCodexHarness("/usr/local/bin/codex", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -277,7 +284,8 @@ func TestCodexHarness_LaunchSpec_EmptyWorkspaceErrors(t *testing.T) {
 		BeadID:        "hk-m57va-test-err",
 	}
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	// hk-b7rt7: temp CODEX_HOME — LaunchSpec reaches the billing guard's writes.
+	h := daemon.ExportedNewCodexHarness("", t.TempDir())
 	if _, err := h.LaunchSpec(rc); err == nil {
 		t.Error("LaunchSpec with empty WorkspacePath: want error, got nil")
 	}

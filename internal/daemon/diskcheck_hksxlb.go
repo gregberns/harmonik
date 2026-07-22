@@ -74,6 +74,34 @@ func runGoCleanCache(ctx context.Context, deps *workLoopDeps) error {
 	return exec.CommandContext(cleanCtx, "go", "clean", "-cache").Run()
 }
 
+// goCleanOwnCacheEnv strips GOCACHE from an inherited environment so that a
+// command which then names its OWN cache explicitly cannot be overridden by
+// whatever the parent process happened to export.
+//
+// Used by the relocation call sites below (the per-agent cache reclaim and the
+// merge gate's build env): both append an explicit GOCACHE after this strip, so
+// the target is a property of the COMMAND rather than of whoever launched the
+// daemon. Stripping first rather than relying on Go's last-entry-wins semantics
+// keeps that guarantee independent of env ordering.
+//
+// NOT applied to runGoCleanCache above. That is hk-agl8b, which is HELD:
+// stripping GOCACHE there makes the reap target the default cache, which does
+// not eliminate the mid-build wipe (default-cache crews are still exposed, and
+// that default is the macOS-purgeable path — hk-pgtbr). It also narrows what
+// the reaper may reclaim without giving it a replacement source of disk, which
+// risks converting a cache-corruption bug into a silently paused fleet. india
+// owns the correct fix; do not add the strip there without one.
+func goCleanOwnCacheEnv(parent []string) []string {
+	out := make([]string, 0, len(parent))
+	for _, kv := range parent {
+		if strings.HasPrefix(kv, "GOCACHE=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // reclaimStaleWorktrees enumerates .harmonik/worktrees/ and removes directories
 // whose basename is not a currently-registered run ID. These are stale worktrees
 // from crashed or otherwise-unclean runs whose deferred wtCleanup did not fire.
@@ -268,6 +296,19 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 			if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
 				cleanErrStr = cleanErr.Error()
 			}
+			// hk-137y6: the per-agent caches are the relief valve now. Once the
+			// fleet's builds moved OFF Go's default cache, `go clean -cache`
+			// above reclaims progressively less — without this the daemon could
+			// sit below the watermark with dispatch paused and nothing left to
+			// free. REACTIVE PATH ONLY, deliberately: this reclaims caches that
+			// belong to other agents, which is the very corruption hk-gjbpp
+			// exists to prevent, and is justified only by genuine disk pressure
+			// with nothing in flight. It must never run on a healthy-disk timer.
+			if reaped := reapAgentGoCaches(ctx, deps); reaped > 0 {
+				fmt.Fprintf(os.Stderr,
+					"daemon: disk-check: reclaimed %d per-agent go-build cache(s) under disk pressure (hk-137y6); "+
+						"affected agents will rebuild from a cold cache\n", reaped)
+			}
 			maint.lastGoCacheClean = now // reset proactive timer on reactive clean
 		}
 		if deps.cacheReapMu != nil {
@@ -294,6 +335,111 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 		cleanAttempted, cleanErrStr)
 	maint.diskLow = true
 	return false
+}
+
+// reapAgentGoCaches reclaims the per-agent Go build caches under
+// .harmonik/go-cache (hk-137y6) and returns how many were reclaimed.
+//
+// Called ONLY from the reactive disk-low path, never from the proactive timer:
+// these caches belong to other agents, and wiping one mid-`go test` is exactly
+// the mid-verification corruption hk-gjbpp was filed to stop. Genuine disk
+// pressure with nothing in flight justifies it; a healthy-disk cadence does not.
+//
+// A cache is reaped ONLY when it can be shown QUIESCENT (see
+// goCacheQuiescenceWindow). A reclaim that cannot tell a running cache from a
+// stale one MUST NOT delete either — on 2026-07-22 something ran `go clean
+// -cache` against a crew's private cache mid-experiment (483M -> 8.0K) and its
+// build then failed with "could not import os/exec" naming that crew's OWN
+// path. That did not merely cost a rebuild: the cache-miss errors nearly
+// entered a flaky-test dataset as real failures. A contaminated measurement
+// that looks like a result is worse than no measurement.
+//
+// Uses `go clean -cache` per directory rather than a bare rm -rf so the Go
+// toolchain removes its own cache on its own terms; a directory that fails is
+// skipped rather than force-removed.
+func reapAgentGoCaches(ctx context.Context, deps *workLoopDeps) int {
+	if deps == nil || deps.projectDir == "" {
+		return 0
+	}
+	root := goCacheRootDir(deps.projectDir)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	reaped := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		if !goCacheQuiescent(dir, time.Now()) {
+			// In use, or too recently used to be sure. Skipping is loud on
+			// purpose: an operator staring at a paused-for-disk daemon needs to
+			// know reclaim found candidates and declined them, otherwise the
+			// silence reads as "there was nothing to free".
+			fmt.Fprintf(os.Stderr,
+				"daemon: disk-check: SKIPPING go-cache reap for %q — active within %s; "+
+					"a reclaim that cannot prove a cache is stale must not delete it (hk-137y6)\n",
+				e.Name(), goCacheQuiescenceWindow)
+			continue
+		}
+		cleanCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		cmd := exec.CommandContext(cleanCtx, "go", "clean", "-cache")
+		// Strip any inherited GOCACHE before naming our own, so the target is
+		// unambiguous rather than resting on Go's last-entry-wins env semantics
+		// (hk-agl8b: an inherited GOCACHE is how the suite ate a crew's cache).
+		cmd.Env = append(goCleanOwnCacheEnv(os.Environ()), "GOCACHE="+dir)
+		runErr := cmd.Run()
+		cancel()
+		if runErr == nil {
+			reaped++
+		}
+	}
+	return reaped
+}
+
+// goCacheQuiescenceWindow is how long a per-agent cache must have gone untouched
+// before the disk-pressure reclaim may delete it.
+//
+// Deliberately far longer than a build: a full `go test ./...` on this repo runs
+// in minutes, so 30 minutes of no writes means no build is using it. The cost of
+// being wrong is asymmetric and that is why the window is generous — reaping too
+// eagerly destroys a live working set and silently corrupts whatever measurement
+// it was feeding, while reaping too little only means we free less disk on this
+// tick and try again on the next.
+const goCacheQuiescenceWindow = 30 * time.Minute
+
+// goCacheQuiescent reports whether the Go build cache at dir has gone untouched
+// for at least goCacheQuiescenceWindow — i.e. whether it is provably NOT in use.
+//
+// Go writes into 256 hex-named shard subdirectories as it builds, so a live
+// cache always has a recent mtime somewhere in its top level. Checking the
+// directory plus its immediate children is enough and costs a couple of hundred
+// stats.
+//
+// FAILS CLOSED: any error reading the directory returns false (treat as in use).
+// The one thing this function must never do is report "safe to delete" about a
+// cache it could not inspect.
+func goCacheQuiescent(dir string, now time.Time) bool {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	newest := info.ModTime()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		ei, infoErr := e.Info()
+		if infoErr != nil {
+			return false // cannot inspect it -> cannot claim it is stale
+		}
+		if ei.ModTime().After(newest) {
+			newest = ei.ModTime()
+		}
+	}
+	return now.Sub(newest) >= goCacheQuiescenceWindow
 }
 
 // runProactiveGoCacheReap runs `go clean -cache` every goCacheCleanInterval

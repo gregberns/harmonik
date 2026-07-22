@@ -6784,21 +6784,34 @@ func runMergeBuildGate(ctx context.Context, wtPath, projectDir string, runID cor
 	if _, goModErr := os.Stat(filepath.Join(buildDir, "go.mod")); goModErr != nil {
 		return nil
 	}
+	// hk-137y6/hk-pgtbr: the gate compiles against a FIXED daemon-owned cache
+	// rather than Go's default. The default is `~/Library/Caches/go-build`, which
+	// macOS purges wholesale under disk pressure AND which the daemon's own reap
+	// targets — so this gate could fail with errors inside Go's STANDARD LIBRARY
+	// ("could not import bytes ... no such file") and the daemon would record
+	// that infrastructure fault as a BEAD rejection, indistinguishable in the
+	// event log from a genuine regression. A fixed cache also stays warm across
+	// merges instead of recompiling the world every time.
+	gateEnv := append(goCleanOwnCacheEnv(os.Environ()), GoCacheEnvFor(projectDir, "daemon-merge-gate")...)
 	for _, buildArgs := range [][]string{
 		{"build", "./..."},
 		{"vet", "./..."},
 	} {
 		buildCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
 		buildCmd.Dir = buildDir
+		buildCmd.Env = gateEnv
 		out, buildErr := buildCmd.CombinedOutput()
 		if buildErr == nil {
 			continue
 		}
 		// Cold-cache retry (hk-44ab2): the go-cache reaper can wipe the cache in
 		// the TOCTOU window; retry once when the output matches the signature.
+		// Rarer now that the gate owns its cache, but kept: a reactive disk-low
+		// reap can still reclaim it mid-gate under genuine pressure.
 		if isMergeBuildColdCacheError(out) {
 			retryCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
 			retryCmd.Dir = buildDir
+			retryCmd.Env = gateEnv
 			if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
 				continue
 			} else {

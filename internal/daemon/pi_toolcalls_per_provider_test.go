@@ -12,7 +12,7 @@ package daemon_test
 // buildPiLaunchSpec. The per-bead profile tuple (provider/apiKeyEnv/
 // apiKeyFile/baseURL/api) is threaded via ExportedClaudeRunCtx's Provider/
 // APIKeyEnv/APIKeyFile/BaseURL/API fields (added by this bead — see
-// export_test.go) exactly as claudeRunCtx.provider/... carries it in
+// export_test.go) exactly as shared.LaunchCtx.Provider/... carries it in
 // production (workloop.go:4079-4083).
 //
 // Hermetic: no network. PI-040 billing guard is satisfied per-profile via a

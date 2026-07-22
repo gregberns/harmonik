@@ -29,7 +29,7 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
-// helper — build a claudeRunCtx fixture with model/effort fields
+// helper — build a shared.LaunchCtx fixture with model/effort fields
 // ─────────────────────────────────────────────────────────────────────────────
 
 func modelPrefFixtureRunCtx(t *testing.T, ws, model, effort string) daemon.ExportedClaudeRunCtx {

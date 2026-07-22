@@ -165,7 +165,7 @@ type WorkLoopDepsParams struct {
 	// behaviours; prefer nil (production path) for correctness.
 	//
 	// Bead ref: hk-kqdpf.1, hk-ngw3d.
-	LaunchSpecBuilder func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)
+	LaunchSpecBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
 
 	// WorktreeFactory, when non-nil, overrides the worktree creation function
 	// in beadRunOne. When nil, the production productionWorktreeFactory (real
@@ -911,12 +911,12 @@ func ExportedDriveDotWorkflowFull(
 
 // ExportedMinimalLaunchSpecBuilder returns a launchSpecBuilder stub that
 // produces a handler.LaunchSpec with a no-op binary (/bin/true) and
-// zero-value claudeRunArtifacts. Used in tests that inject a spy substrate
+// zero-value shared.LaunchArtifacts. Used in tests that inject a spy substrate
 // and need handler.Launch to reach Substrate.SpawnWindow without the full
 // Claude build infrastructure (e.g. hk-wnqos single-mode terminal-spawn test).
-func ExportedMinimalLaunchSpecBuilder() func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	return func(_ context.Context, _ claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-		return handler.LaunchSpec{Binary: "/bin/true"}, claudeRunArtifacts{}, nil
+func ExportedMinimalLaunchSpecBuilder() func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return func(_ context.Context, _ shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+		return handler.LaunchSpec{Binary: "/bin/true"}, shared.LaunchArtifacts{}, nil
 	}
 }
 
@@ -924,49 +924,49 @@ func ExportedMinimalLaunchSpecBuilder() func(context.Context, claudeRunCtx) (han
 // sends the extraContext from the FIRST call into ch (non-blocking), then
 // returns an error to short-circuit the dispatch. Tests use this to assert
 // that node role= is injected into the agent brief (hk-m5lmo).
-func ExportedCaptureExtraContextBuilder(ch chan<- string) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+func ExportedCaptureExtraContextBuilder(ch chan<- string) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return func(_ context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		select {
-		case ch <- rc.extraContext:
+		case ch <- rc.ExtraContext:
 		default:
 		}
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
 	}
 }
 
 // ExportedCaptureNodePromptBuilder returns a launchSpecBuilder stub that
 // sends the nodePrompt from the FIRST call into ch (non-blocking), then
 // returns an error to short-circuit the dispatch. Tests use this to assert
-// that node prompt= is threaded into claudeRunCtx (hk-sdnzj).
-func ExportedCaptureNodePromptBuilder(ch chan<- string) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+// that node prompt= is threaded into shared.LaunchCtx (hk-sdnzj).
+func ExportedCaptureNodePromptBuilder(ch chan<- string) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return func(_ context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		select {
-		case ch <- rc.nodePrompt:
+		case ch <- rc.NodePrompt:
 		default:
 		}
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
 	}
 }
 
 // ExportedCaptureRunnerBuilder returns a launchSpecBuilder stub that sends the
-// CommandRunner from the FIRST call's claudeRunCtx into ch (non-blocking), then
+// CommandRunner from the FIRST call's shared.LaunchCtx into ch (non-blocking), then
 // returns an error to short-circuit the dispatch. Tests use this to assert that
 // the review-loop and DOT launch paths thread the run's CommandRunner into the
-// claudeRunCtx so the worktree-trust / settings / agent-task writes land on the
+// shared.LaunchCtx so the worktree-trust / settings / agent-task writes land on the
 // WORKER for a REMOTE run (hk-3sus).
-func ExportedCaptureRunnerBuilder(ch chan<- tmuxPkg.CommandRunner) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+func ExportedCaptureRunnerBuilder(ch chan<- tmuxPkg.CommandRunner) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return func(_ context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		select {
-		case ch <- rc.runner:
+		case ch <- rc.Runner:
 		default:
 		}
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
 	}
 }
 
 // ExportedRunReviewLoopWithRunner exposes runReviewLoop with an explicit
 // CommandRunner so tests can assert the remote (runner != nil) path threads the
-// runner into the implementer/reviewer claudeRunCtx (hk-3sus).
+// runner into the implementer/reviewer shared.LaunchCtx (hk-3sus).
 func ExportedRunReviewLoopWithRunner(
 	ctx context.Context,
 	deps workLoopDeps,
@@ -1036,7 +1036,7 @@ func ExportedExecuteCognitionGate(
 
 // ExportedDriveDotWorkflowWithRunner exposes driveDotWorkflow with an explicit
 // CommandRunner so tests can assert the remote (runner != nil) path threads the
-// runner into the DOT agentic-node claudeRunCtx (hk-3sus).
+// runner into the DOT agentic-node shared.LaunchCtx (hk-3sus).
 func ExportedDriveDotWorkflowWithRunner(
 	ctx context.Context,
 	deps workLoopDeps,
@@ -1058,7 +1058,7 @@ func ExportedDriveDotWorkflowWithRunner(
 	}
 }
 
-// ModelEffortPair holds the model and effort values captured from a claudeRunCtx.
+// ModelEffortPair holds the model and effort values captured from a shared.LaunchCtx.
 // Used by ExportedCaptureModelEffortBuilder tests (hk-q8nqr).
 type ModelEffortPair struct {
 	Model  string
@@ -1069,14 +1069,14 @@ type ModelEffortPair struct {
 // sends the (model, effort) pair from the FIRST call into ch (non-blocking),
 // then returns an error to short-circuit the dispatch. Tests use this to
 // assert that per-node model= / effort= overrides are threaded into
-// claudeRunCtx (hk-q8nqr WG-042 §I.5 / EM-012b-NODE).
-func ExportedCaptureModelEffortBuilder(ch chan<- ModelEffortPair) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+// shared.LaunchCtx (hk-q8nqr WG-042 §I.5 / EM-012b-NODE).
+func ExportedCaptureModelEffortBuilder(ch chan<- ModelEffortPair) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return func(_ context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		select {
-		case ch <- ModelEffortPair{Model: rc.model, Effort: rc.effort}:
+		case ch <- ModelEffortPair{Model: rc.Model, Effort: rc.Effort}:
 		default:
 		}
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
 	}
 }
 
@@ -1384,119 +1384,31 @@ func ExportedBandwidthTunerTick(t *BandwidthTuner) {
 // buildClaudeLaunchSpec test seams (hk-gql20.13)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ExportedClaudeRunCtx is the exported shape of claudeRunCtx for tests.
-// Fields mirror claudeRunCtx verbatim with exported names.
+// ExportedClaudeRunCtx is the launch DTO for tests in package daemon_test.
+//
+// It used to be a hand-maintained mirror struct plus a field-by-field
+// translation in every builder below. P2 unit E1b-prep moved the real type out
+// of internal/daemon into internal/harness/shared (where it belongs — it is the
+// universal launch DTO, fed to codex and pi as well as claude), so the mirror
+// collapsed into a plain alias and the translations became passthroughs.
 //
 // Bead ref: hk-gql20.13, hk-xo03m.
-type ExportedClaudeRunCtx struct {
-	RunID             core.RunID
-	BeadID            string
-	WorkspacePath     string
-	DaemonSocket      string
-	WorkflowMode      core.WorkflowMode
-	Phase             handlercontract.ReviewLoopPhase
-	IterationCount    int
-	PriorClaudeSessID *string
-	HandlerBinary     string
-	// DaemonBinaryPath is the absolute path to the running harmonik binary for
-	// hook command materialization (hk-kqdpf.6). Empty in tests that don't need
-	// real hook wiring.
-	DaemonBinaryPath string
-	BaseEnv          []string
-	// Model is the resolved model alias from ModelPreference (HC-055a / EM-012b).
-	// Non-empty → --model <value> appended to argv. Must satisfy ^[A-Za-z0-9._:/-]+$, ≤128 chars.
-	// Empty → no flag emitted.
-	Model string
-	// Effort is the resolved effort level from ModelPreference (HC-055a / EM-012b).
-	// Non-empty → --effort <value> appended to argv. Must be one of {low,medium,high,xhigh,max}.
-	// Empty → no flag emitted.
-	Effort string
-	// WorktreeRootPath is the absolute path to the harmonik worktrees root
-	// (e.g. <projectDir>/.harmonik/worktrees). When non-empty and workspacePath
-	// canonicalizes to a path under this prefix, --dangerously-skip-permissions is
-	// added to argv per HC-055b. Empty → path-check skipped, flag not emitted.
-	WorktreeRootPath string
+type ExportedClaudeRunCtx = shared.LaunchCtx
 
-	// BeadDescription is the bead body verbatim from the Beads ledger.
-	// Used to populate the "## Task Description" section in agent-task.md.
-	BeadDescription string
-
-	// NodePrompt is the optional inline LLM prompt from the DOT node's prompt=
-	// attribute (WG-040 §I.3). When non-empty and phase is implementer, it
-	// REPLACES BeadDescription as the CHB-028 Body channel (hk-sdnzj).
-	NodePrompt string
-
-	// Runner is the CommandRunner threaded into the materialization step for a
-	// REMOTE run (hk-z8ek). Non-nil → the three launch-artifact writes go through
-	// the runner onto the worker FS; nil → byte-identical box-A-local writes (NFR7).
-	Runner tmuxPkg.CommandRunner
-
-	// WorkerBinaryPath is the worker-side harmonik path used as the hook command
-	// in the worker's settings.json for a REMOTE run (hk-z8ek). Empty → the
-	// box-A DaemonBinaryPath is used unchanged.
-	WorkerBinaryPath string
-
-	// Provider, APIKeyEnv, APIKeyFile, BaseURL, API are the per-bead Pi provider
-	// tuple resolved by resolvePiProfile from a `profile:<name>` label
-	// (pi-provider-switch, hk-m6uu2 C5). Empty ⇒ harness-global default
-	// (mirrors claudeRunCtx.provider/apiKeyEnv/apiKeyFile/baseURL/api, C4
-	// fallback in PiHarness.LaunchSpec).
-	Provider   string
-	APIKeyEnv  string
-	APIKeyFile string
-	BaseURL    string
-	API        string
-}
-
-// ExportedClaudeRunArtifacts is the exported shape of claudeRunArtifacts for tests.
-// Fields mirror claudeRunArtifacts verbatim with exported names.
+// ExportedClaudeRunArtifacts is the post-launch artifact bundle for tests in
+// package daemon_test. Alias of the real type for the same reason as
+// ExportedClaudeRunCtx above.
 //
 // Bead ref: hk-gql20.13.
-type ExportedClaudeRunArtifacts struct {
-	ClaudeSessionID  string
-	SessionLogPath   string
-	HandlerSessionID string
-	PreExecMsgs      []json.RawMessage
-	Substrate        interface{}
-}
+type ExportedClaudeRunArtifacts = shared.LaunchArtifacts
 
 // ExportedBuildClaudeLaunchSpec exposes buildClaudeLaunchSpec for tests in
-// package daemon_test. The ExportedClaudeRunCtx is translated to the internal
-// claudeRunCtx before calling.
+// package daemon_test. Since E1b-prep the exported and internal DTOs are the
+// same type, so this is a plain passthrough.
 //
 // Bead ref: hk-gql20.13.
 func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
-	internal := claudeRunCtx{
-		runID:             rc.RunID,
-		beadID:            rc.BeadID,
-		workspacePath:     rc.WorkspacePath,
-		daemonSocket:      rc.DaemonSocket,
-		workflowMode:      rc.WorkflowMode,
-		phase:             rc.Phase,
-		iterationCount:    rc.IterationCount,
-		priorClaudeSessID: rc.PriorClaudeSessID,
-		handlerBinary:     rc.HandlerBinary,
-		daemonBinaryPath:  rc.DaemonBinaryPath,
-		baseEnv:           rc.BaseEnv,
-		model:             rc.Model,
-		effort:            rc.Effort,
-		worktreeRootPath:  rc.WorktreeRootPath,
-		beadDescription:   rc.BeadDescription,
-		nodePrompt:        rc.NodePrompt,
-		runner:            rc.Runner,
-		workerBinaryPath:  rc.WorkerBinaryPath,
-	}
-	spec, arts, err := buildClaudeLaunchSpec(ctx, internal)
-	if err != nil {
-		return handler.LaunchSpec{}, ExportedClaudeRunArtifacts{}, err
-	}
-	return spec, ExportedClaudeRunArtifacts{
-		ClaudeSessionID:  arts.claudeSessionID,
-		SessionLogPath:   arts.sessionLogPath,
-		HandlerSessionID: arts.handlerSessionID,
-		PreExecMsgs:      arts.preExecMsgs,
-		Substrate:        arts.substrate,
-	}, nil
+	return buildClaudeLaunchSpec(ctx, rc)
 }
 
 // ExportedNewSessionIDInterceptor exposes newSessionIDInterceptor for tests.
@@ -2757,7 +2669,7 @@ func ExportedPiHarnessBaseURLFields(h *PiHarness) (baseURL, api string) {
 // ExportedEffectiveModel exposes effectiveModel for tests in package daemon_test.
 // Bead ref: hk-7z6l8.
 func ExportedEffectiveModel(h handlercontract.Harness, model string) string {
-	return effectiveModel(h, claudeRunCtx{model: model})
+	return effectiveModel(h, shared.LaunchCtx{Model: model})
 }
 
 // ExportedPiProcessExitLaunchSpecBuilder returns a launchSpecBuilder that
@@ -2772,16 +2684,16 @@ func ExportedEffectiveModel(h handlercontract.Harness, model string) string {
 // then supply this builder so beadRunOne resolves the run as a Pi run.
 //
 // Bead ref: hk-j6wm7.
-func ExportedPiProcessExitLaunchSpecBuilder(scriptPath string) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+func ExportedPiProcessExitLaunchSpecBuilder(scriptPath string) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return func(_ context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		spec := handler.LaunchSpec{
 			Binary:  "/bin/sh",
 			Args:    []string{scriptPath},
-			WorkDir: rc.workspacePath,
-			Role:    string(rc.phase),
+			WorkDir: rc.WorkspacePath,
+			Role:    string(rc.Phase),
 		}
-		arts := claudeRunArtifacts{
-			resolvedAgentType: core.AgentTypePi,
+		arts := shared.LaunchArtifacts{
+			ResolvedAgentType: core.AgentTypePi,
 		}
 		return spec, arts, nil
 	}
@@ -2797,20 +2709,20 @@ func ExportedPiProcessExitLaunchSpecBuilder(scriptPath string) func(context.Cont
 // the codex adapter + harness (Completion() == CompletionProcessExit).
 //
 // The script is expected to run in the worktree directory (handler.LaunchSpec.WorkDir
-// = claudeRunCtx.workspacePath).  It MUST make a "Refs: <beadID>" git commit and
+// = shared.LaunchCtx.WorkspacePath).  It MUST make a "Refs: <beadID>" git commit and
 // exit 0; it MUST NOT emit agent_ready.
 //
 // Bead ref: hk-f6g7.
-func ExportedCodexProcessExitLaunchSpecBuilder(scriptPath string) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+func ExportedCodexProcessExitLaunchSpecBuilder(scriptPath string) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return func(_ context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		spec := handler.LaunchSpec{
 			Binary:  "/bin/sh",
 			Args:    []string{scriptPath},
-			WorkDir: rc.workspacePath,
-			Role:    string(rc.phase),
+			WorkDir: rc.WorkspacePath,
+			Role:    string(rc.Phase),
 		}
-		arts := claudeRunArtifacts{
-			resolvedAgentType: core.AgentTypeCodex,
+		arts := shared.LaunchArtifacts{
+			ResolvedAgentType: core.AgentTypeCodex,
 		}
 		return spec, arts, nil
 	}
@@ -2820,8 +2732,7 @@ func ExportedCodexProcessExitLaunchSpecBuilder(scriptPath string) func(context.C
 // package daemon_test. It returns a builder that resolves the harness via the
 // four-tier precedence walk and the HarnessRegistry, then (for the claude
 // harness) delegates to buildClaudeLaunchSpec. The returned closure has the same
-// shape as the workLoopDeps.launchSpecBuilder hook; the artifacts are translated
-// to the exported shape for comparison against ExportedBuildClaudeLaunchSpec.
+// shape as the workLoopDeps.launchSpecBuilder hook.
 //
 // Bead ref: hk-hj9ld.
 func ExportedRoutedLaunchSpecBuilder(
@@ -2832,48 +2743,7 @@ func ExportedRoutedLaunchSpecBuilder(
 	globalDefault core.AgentType,
 	bus handlercontract.EventEmitter,
 ) func(context.Context, ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
-	builder := routedLaunchSpecBuilder(reg, bead, queueDefault, nodeDefault, globalDefault, bus)
-	return func(ctx context.Context, rc ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
-		internal := claudeRunCtx{
-			runID:             rc.RunID,
-			beadID:            rc.BeadID,
-			workspacePath:     rc.WorkspacePath,
-			daemonSocket:      rc.DaemonSocket,
-			workflowMode:      rc.WorkflowMode,
-			phase:             rc.Phase,
-			iterationCount:    rc.IterationCount,
-			priorClaudeSessID: rc.PriorClaudeSessID,
-			handlerBinary:     rc.HandlerBinary,
-			daemonBinaryPath:  rc.DaemonBinaryPath,
-			baseEnv:           rc.BaseEnv,
-			model:             rc.Model,
-			effort:            rc.Effort,
-			provider:          rc.Provider,
-			apiKeyEnv:         rc.APIKeyEnv,
-			apiKeyFile:        rc.APIKeyFile,
-			baseURL:           rc.BaseURL,
-			api:               rc.API,
-			worktreeRootPath:  rc.WorktreeRootPath,
-			beadDescription:   rc.BeadDescription,
-			nodePrompt:        rc.NodePrompt,
-			// remote-substrate M4-C4 (T6): thread the per-run runner so tests can
-			// assert the routed pi/codex exec-path launch spec carries the worker's
-			// SSHRunner (remote) or nil (local, NFR7).
-			runner:           rc.Runner,
-			workerBinaryPath: rc.WorkerBinaryPath,
-		}
-		spec, arts, err := builder(ctx, internal)
-		if err != nil {
-			return handler.LaunchSpec{}, ExportedClaudeRunArtifacts{}, err
-		}
-		return spec, ExportedClaudeRunArtifacts{
-			ClaudeSessionID:  arts.claudeSessionID,
-			SessionLogPath:   arts.sessionLogPath,
-			HandlerSessionID: arts.handlerSessionID,
-			PreExecMsgs:      arts.preExecMsgs,
-			Substrate:        arts.substrate,
-		}, nil
-	}
+	return routedLaunchSpecBuilder(reg, bead, queueDefault, nodeDefault, globalDefault, bus)
 }
 
 // ExportedObservedRoutedLaunchSpecBuilder returns the REAL production
@@ -2891,9 +2761,9 @@ func ExportedObservedRoutedLaunchSpecBuilder(
 	globalDefault core.AgentType,
 	bus handlercontract.EventEmitter,
 	onCall func(),
-) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 	builder := routedLaunchSpecBuilder(reg, bead, core.AgentType(""), core.AgentType(""), globalDefault, bus)
-	return func(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return func(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		if onCall != nil {
 			onCall()
 		}
@@ -2911,48 +2781,7 @@ func ExportedPinnedHarnessLaunchSpecBuilder(
 	agentType core.AgentType,
 	bus handlercontract.EventEmitter,
 ) func(context.Context, ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
-	builder := pinnedHarnessLaunchSpecBuilder(reg, bead, agentType, bus)
-	return func(ctx context.Context, rc ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
-		internal := claudeRunCtx{
-			runID:             rc.RunID,
-			beadID:            rc.BeadID,
-			workspacePath:     rc.WorkspacePath,
-			daemonSocket:      rc.DaemonSocket,
-			workflowMode:      rc.WorkflowMode,
-			phase:             rc.Phase,
-			iterationCount:    rc.IterationCount,
-			priorClaudeSessID: rc.PriorClaudeSessID,
-			handlerBinary:     rc.HandlerBinary,
-			daemonBinaryPath:  rc.DaemonBinaryPath,
-			baseEnv:           rc.BaseEnv,
-			model:             rc.Model,
-			effort:            rc.Effort,
-			provider:          rc.Provider,
-			apiKeyEnv:         rc.APIKeyEnv,
-			apiKeyFile:        rc.APIKeyFile,
-			baseURL:           rc.BaseURL,
-			api:               rc.API,
-			worktreeRootPath:  rc.WorktreeRootPath,
-			beadDescription:   rc.BeadDescription,
-			nodePrompt:        rc.NodePrompt,
-			// remote-substrate M4-C4 (T6): thread the per-run runner so tests can
-			// assert the routed pi/codex exec-path launch spec carries the worker's
-			// SSHRunner (remote) or nil (local, NFR7).
-			runner:           rc.Runner,
-			workerBinaryPath: rc.WorkerBinaryPath,
-		}
-		spec, arts, err := builder(ctx, internal)
-		if err != nil {
-			return handler.LaunchSpec{}, ExportedClaudeRunArtifacts{}, err
-		}
-		return spec, ExportedClaudeRunArtifacts{
-			ClaudeSessionID:  arts.claudeSessionID,
-			SessionLogPath:   arts.sessionLogPath,
-			HandlerSessionID: arts.handlerSessionID,
-			PreExecMsgs:      arts.preExecMsgs,
-			Substrate:        arts.substrate,
-		}, nil
-	}
+	return pinnedHarnessLaunchSpecBuilder(reg, bead, agentType, bus)
 }
 
 // ExportedRunCtxFromClaudeRunCtx converts an ExportedClaudeRunCtx into the

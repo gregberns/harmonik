@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -57,20 +58,20 @@ func TestBuildClaudeLaunchSpec_Remote_RoutesWritesThroughRunner(t *testing.T) {
 	)
 	rr := newNoOpRecorderZ8ek()
 
-	rc := claudeRunCtx{
-		runID:            z8ekRunID(t),
-		beadID:           "hk-z8ek",
-		workspacePath:    workerWt,
-		daemonSocket:     workerSock, // tunnel.ResolveAgentDaemonSocket already picked the worker sock
-		workflowMode:     core.WorkflowModeSingle,
-		phase:            "",
-		iterationCount:   1,
-		handlerBinary:    "claude",
-		daemonBinaryPath: boxABin, // box A path — MUST NOT be used in remote settings
-		beadTitle:        "remote materialization",
-		beadDescription:  "Implement the SSH-aware materialization seam.",
-		runner:           rr,
-		workerBinaryPath: workerBin,
+	rc := shared.LaunchCtx{
+		RunID:            z8ekRunID(t),
+		BeadID:           "hk-z8ek",
+		WorkspacePath:    workerWt,
+		DaemonSocket:     workerSock, // tunnel.ResolveAgentDaemonSocket already picked the worker sock
+		WorkflowMode:     core.WorkflowModeSingle,
+		Phase:            "",
+		IterationCount:   1,
+		HandlerBinary:    "claude",
+		DaemonBinaryPath: boxABin, // box A path — MUST NOT be used in remote settings
+		BeadTitle:        "remote materialization",
+		BeadDescription:  "Implement the SSH-aware materialization seam.",
+		Runner:           rr,
+		WorkerBinaryPath: workerBin,
 	}
 
 	_, _, err := buildClaudeLaunchSpec(ctx, rc)
@@ -165,20 +166,20 @@ func TestBuildClaudeLaunchSpec_Local_UsesLocalFS(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), ".claude.json")
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", cfgPath)
 
-	rc := claudeRunCtx{
-		runID:            z8ekRunID(t),
-		beadID:           "hk-z8ek-local",
-		workspacePath:    wt,
-		daemonSocket:     filepath.Join(wt, ".harmonik", "daemon.sock"),
-		workflowMode:     core.WorkflowModeSingle,
-		phase:            "",
-		iterationCount:   1,
-		handlerBinary:    "claude",
-		daemonBinaryPath: "/Users/gb/go/bin/harmonik",
-		beadTitle:        "local materialization",
-		beadDescription:  "local body",
-		runner:           nil, // LOCAL run
-		workerBinaryPath: "",
+	rc := shared.LaunchCtx{
+		RunID:            z8ekRunID(t),
+		BeadID:           "hk-z8ek-local",
+		WorkspacePath:    wt,
+		DaemonSocket:     filepath.Join(wt, ".harmonik", "daemon.sock"),
+		WorkflowMode:     core.WorkflowModeSingle,
+		Phase:            "",
+		IterationCount:   1,
+		HandlerBinary:    "claude",
+		DaemonBinaryPath: "/Users/gb/go/bin/harmonik",
+		BeadTitle:        "local materialization",
+		BeadDescription:  "local body",
+		Runner:           nil, // LOCAL run
+		WorkerBinaryPath: "",
 	}
 
 	if _, _, err := buildClaudeLaunchSpec(ctx, rc); err != nil {

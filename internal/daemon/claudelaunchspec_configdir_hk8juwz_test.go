@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
 // envValue returns the value of key in a KEY=VALUE env slice, and whether it was
@@ -44,19 +45,19 @@ func TestBuildClaudeLaunchSpec_Local_NoClaudeConfigDir(t *testing.T) {
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(t.TempDir(), ".claude.json"))
 
 	wt := t.TempDir()
-	rc := claudeRunCtx{
-		runID:            z8ekRunID(t),
-		beadID:           "hk-8juwz-local",
-		workspacePath:    wt,
-		daemonSocket:     filepath.Join(wt, ".harmonik", "daemon.sock"),
-		workflowMode:     core.WorkflowModeSingle,
-		phase:            "",
-		iterationCount:   1,
-		handlerBinary:    "claude",
-		daemonBinaryPath: "/Users/gb/go/bin/harmonik",
-		beadTitle:        "no config-dir isolation",
-		beadDescription:  "body",
-		runner:           nil, // LOCAL run
+	rc := shared.LaunchCtx{
+		RunID:            z8ekRunID(t),
+		BeadID:           "hk-8juwz-local",
+		WorkspacePath:    wt,
+		DaemonSocket:     filepath.Join(wt, ".harmonik", "daemon.sock"),
+		WorkflowMode:     core.WorkflowModeSingle,
+		Phase:            "",
+		IterationCount:   1,
+		HandlerBinary:    "claude",
+		DaemonBinaryPath: "/Users/gb/go/bin/harmonik",
+		BeadTitle:        "no config-dir isolation",
+		BeadDescription:  "body",
+		Runner:           nil, // LOCAL run
 	}
 
 	spec, _, err := buildClaudeLaunchSpec(ctx, rc)
@@ -80,20 +81,20 @@ func TestBuildClaudeLaunchSpec_Remote_SetsClaudeConfigDir(t *testing.T) {
 	ctx := context.Background()
 	wt := t.TempDir()
 	rr := newNoOpRecorderZ8ek() // REMOTE run
-	rc := claudeRunCtx{
-		runID:            z8ekRunID(t),
-		beadID:           "hk-qxvc2-remote",
-		workspacePath:    wt,
-		daemonSocket:     filepath.Join(wt, ".harmonik", "daemon.sock"),
-		workflowMode:     core.WorkflowModeSingle,
-		phase:            "",
-		iterationCount:   1,
-		handlerBinary:    "claude",
-		daemonBinaryPath: "/Users/gb/go/bin/harmonik",
-		beadTitle:        "remote run",
-		beadDescription:  "body",
-		runner:           rr,
-		workerBinaryPath: "/home/worker/harmonik",
+	rc := shared.LaunchCtx{
+		RunID:            z8ekRunID(t),
+		BeadID:           "hk-qxvc2-remote",
+		WorkspacePath:    wt,
+		DaemonSocket:     filepath.Join(wt, ".harmonik", "daemon.sock"),
+		WorkflowMode:     core.WorkflowModeSingle,
+		Phase:            "",
+		IterationCount:   1,
+		HandlerBinary:    "claude",
+		DaemonBinaryPath: "/Users/gb/go/bin/harmonik",
+		BeadTitle:        "remote run",
+		BeadDescription:  "body",
+		Runner:           rr,
+		WorkerBinaryPath: "/home/worker/harmonik",
 	}
 
 	spec, _, err := buildClaudeLaunchSpec(ctx, rc)

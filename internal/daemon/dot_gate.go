@@ -34,6 +34,7 @@ import (
 	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -271,33 +272,33 @@ func executeCognitionGate(
 
 	// Build launch spec. Use ReviewLoopPhaseReviewer for a fresh session with
 	// no resume, mirroring how the reviewer is launched.
-	rc := claudeRunCtx{
-		runID:         runID,
-		beadID:        string(beadID),
-		workspacePath: wtPath,
+	rc := shared.LaunchCtx{
+		RunID:         runID,
+		BeadID:        string(beadID),
+		WorkspacePath: wtPath,
 		// remote-substrate (hk-9fe2): thread the run's CommandRunner + worker
-		// harmonik path into the cognition-gate's claudeRunCtx the same way
+		// harmonik path into the cognition-gate's shared.LaunchCtx the same way
 		// dispatchDotAgenticNode does (dot_cascade.go), so the trust/settings/
 		// agent-task materialization writes land on the WORKER for a REMOTE
 		// DOT run and stay box-A-local for a LOCAL run (runner == nil, NFR7).
-		runner:            runner,
-		workerBinaryPath:  workerBinaryPath,
-		daemonSocket:      daemonSocket,
-		workflowMode:      core.WorkflowModeDot,
-		phase:             handlercontract.ReviewLoopPhaseReviewer,
-		iterationCount:    iterationCount,
-		priorClaudeSessID: nil,
-		handlerBinary:     deps.handlerBinary,
-		daemonBinaryPath:  deps.daemonBinaryPath,
-		baseEnv:           deps.handlerEnv,
-		beadTitle:         beadTitle,
-		beadDescription:   beadDescription,
-		nodePrompt:        "",
-		model:             resolvedModel,
-		effort:            resolvedEffort,
-		worktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
-		extraContext:      extraContext,
-		baseBranch:        baseBranch,
+		Runner:            runner,
+		WorkerBinaryPath:  workerBinaryPath,
+		DaemonSocket:      daemonSocket,
+		WorkflowMode:      core.WorkflowModeDot,
+		Phase:             handlercontract.ReviewLoopPhaseReviewer,
+		IterationCount:    iterationCount,
+		PriorClaudeSessID: nil,
+		HandlerBinary:     deps.handlerBinary,
+		DaemonBinaryPath:  deps.daemonBinaryPath,
+		BaseEnv:           deps.handlerEnv,
+		BeadTitle:         beadTitle,
+		BeadDescription:   beadDescription,
+		NodePrompt:        "",
+		Model:             resolvedModel,
+		Effort:            resolvedEffort,
+		WorktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
+		ExtraContext:      extraContext,
+		BaseBranch:        baseBranch,
 	}
 
 	// hk-01vs0: the cognition gate is REVIEWER-CLASS — it launches with
@@ -398,7 +399,7 @@ func executeCognitionGate(
 	spec.Substrate = substrate
 
 	if deps.hookStore != nil {
-		deps.hookStore.RegisterHookSession(runID.String(), artifacts.claudeSessionID)
+		deps.hookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
 	tap, tapCh := newPerRunEventTap(deps.bus, runID)
@@ -410,12 +411,12 @@ func executeCognitionGate(
 	// single-mode path (workloop.go:2098/2137). Without this the cognition-gate
 	// node never emits launch_initiated and the stale watcher (stalewatch.go:296)
 	// flags a phantom launch stall on every gate dispatch.
-	gateLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.preExecMsgs)
+	gateLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
 
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
 		if deps.hookStore != nil {
-			deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+			deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 		}
 		return nil, fmt.Errorf("cognition gate %q: launch: %w", gateRef, launchErr)
 	}
@@ -432,7 +433,7 @@ func executeCognitionGate(
 	// full run duration, causing false-positive run_stale on every gate dispatch.
 	// Mirrors the single-mode path (workloop.go Step 5).
 	gateHBDone := make(chan struct{})
-	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
+	go handler.RunHeartbeatLoop(ctx, artifacts.HandlerSessionID,
 		handler.HeartbeatInterval, gateHBDone,
 		newDaemonHeartbeatEmitter(tap, runID))
 	defer close(gateHBDone)
@@ -447,7 +448,7 @@ func executeCognitionGate(
 
 	if deps.hookStore != nil {
 		capturedTap := tap
-		deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
+		deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() {
 			_ = capturedTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
 		})
 	}
@@ -486,28 +487,28 @@ func executeCognitionGate(
 			}
 			_ = sess.Wait(ctx)
 			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
-			emitAgentReadyTimeout(ctx, deps.bus, runID, artifacts.claudeSessionID, deps.agentReadyTimeout)
+			emitAgentReadyTimeout(ctx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
 			return nil, fmt.Errorf("cognition gate %q: agent_ready_timeout", gateRef)
 		}
 	}
 
 	// Deliver gate-evaluator kick-off message and watch for verdict file.
-	briefDelivered := pasteInjectCognitionGate(ctx, pasteTarget, artifacts.claudeSessionID, wtPath, deps.bus, runID)
+	briefDelivered := pasteInjectCognitionGate(ctx, pasteTarget, artifacts.ClaudeSessionID, wtPath, deps.bus, runID)
 	if qs, ok := pasteTarget.(quitSender); ok {
 		go pasteInjectQuitOnGateFile(ctx, runner, qs, sess, wtPath, briefDelivered)
 	}
 
 	_, _ = waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
-		runID.String(), artifacts.claudeSessionID)
+		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {
 		_ = sess.Kill(context.Background())
 	}
 
 	if deps.hookStore != nil {
-		deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+		deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
 	if ctx.Err() != nil {

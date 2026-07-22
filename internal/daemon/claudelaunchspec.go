@@ -11,14 +11,14 @@ package daemon
 //   - CheckSettingsLocalJSON — fail-fast if settings.local.json shadows hooks (CHB-024).
 //   - ClaudeEnvVars — CHB-006 env-var set.
 //   - argv construction — --session-id or --resume per CHB-008 (OQ3: allow-list).
-//     Appends --model and --effort when claudeRunCtx fields are non-empty (HC-055a).
+//     Appends --model and --effort when shared.LaunchCtx fields are non-empty (HC-055a).
 //   - CheckForbiddenFlags — deny-list guard (CHB-007).
 //   - PreExecMessages — 4 ordered pre-exec progress messages (CHB-018).
 //
 // The helper is twin-blind: the same code path is used whether Binary points to
 // "claude" or "harmonik-twin-claude". The Binary field of the returned
 // handler.LaunchSpec is opaque to this helper — the caller sets it from
-// claudeRunCtx.handlerBinary.
+// shared.LaunchCtx.HandlerBinary.
 //
 // Spec refs:
 //   - specs/claude-hook-bridge.md §4.2 CHB-006..009, §4.7 CHB-018..019, §4.9 CHB-024.
@@ -40,195 +40,9 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
-	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
-
-// claudeRunCtx carries the per-launch inputs to buildClaudeLaunchSpec.
-// The caller assembles this from a bead record and daemon configuration; the
-// helper treats all fields as read-only.
-type claudeRunCtx struct {
-	// runID is the UUIDv7 run identifier for this dispatch.
-	runID core.RunID
-
-	// beadID is the opaque bead correlation identifier.
-	beadID string
-
-	// workspacePath is the absolute path to the worktree assigned to this bead.
-	workspacePath string
-
-	// daemonSocket is the UNIX-domain socket path for the hook-relay, typically
-	// <ProjectDir>/.harmonik/daemon.sock.
-	daemonSocket string
-
-	// workflowMode is the resolved workflow mode for this run (e.g. "single",
-	// "review-loop").
-	workflowMode core.WorkflowMode
-
-	// phase is the review-loop phase string, or the empty string for single-mode.
-	// For review-loop, one of {implementer-initial, implementer-resume, reviewer}.
-	phase handlercontract.ReviewLoopPhase
-
-	// iterationCount is the 1-based iteration index for review-loop runs.
-	// Zero or negative means this is not a multi-phase run (single-mode).
-	iterationCount int
-
-	// priorClaudeSessID is non-nil only for the implementer-resume phase; it
-	// carries the Claude session ID minted by the previous implementer-initial
-	// launch in the same cycle. All other phases MUST pass nil.
-	priorClaudeSessID *string
-
-	// handlerBinary is the resolved path to the handler executable, taken from
-	// daemon Config (e.g. "claude" or "/usr/local/bin/harmonik-twin-claude").
-	handlerBinary string
-
-	// daemonBinaryPath is the absolute path to the running harmonik binary,
-	// resolved via os.Executable() at daemon startup (hk-kqdpf.6). Passed to
-	// MaterializeClaudeSettings so the hook "command" field in settings.json
-	// references an absolute path rather than the bare "harmonik" name.
-	daemonBinaryPath string
-
-	// baseEnv is the base environment inherited from daemon Config.HandlerEnv,
-	// which MUST already include HARMONIK_PROJECT_HASH per PL-006a. CHB-006
-	// vars are appended (or overwrite) by ClaudeEnvVars.
-	baseEnv []string
-
-	// beadTitle is the human-readable bead title from the Beads ledger.
-	// Used to populate the "title:" header in the CHB-028 agent-task.md.
-	// When empty, beadID is substituted.
-	beadTitle string
-
-	// beadDescription is the bead body verbatim from the Beads ledger.
-	// Used to populate the "## Task Description" section in agent-task.md
-	// per CHB-028. When empty, a placeholder is used so the file is never
-	// structurally empty.
-	beadDescription string
-
-	// nodePrompt is the optional inline LLM prompt from the DOT node's prompt=
-	// attribute (WG-040 §I.3, HC-006a §III.3). When non-empty and phase is
-	// implementer-initial or implementer-resume, it REPLACES beadDescription as
-	// the Body channel of the agent-task.md (CHB-028). On reviewer phase, it is
-	// accepted-but-inert (EM-015d-RIA). Empty when the node has no prompt= attr.
-	nodePrompt string
-
-	// agentTaskReAttach signals that this launch is on the re-attach path
-	// (daemon restart mid-session). When true, WriteAgentTask skips collision
-	// check and returns nil if agent-task.md already exists (CHB-028
-	// re-launch semantics).
-	agentTaskReAttach bool
-
-	// priorVerdictFile is the absolute path to the archived reviewer verdict
-	// for the immediately preceding iteration (.harmonik/review.iter-<N-1>.json).
-	// Set only for phase = implementer-resume; empty otherwise.
-	priorVerdictFile string
-
-	// priorVerdictSummary is a short human-readable summary of the prior
-	// verdict. Set only for phase = implementer-resume; empty otherwise.
-	priorVerdictSummary string
-
-	// reviewBaseSHA is the base commit SHA for the diff under review.
-	// Set only for phase = reviewer; empty otherwise.
-	reviewBaseSHA string
-
-	// reviewHeadSHA is the head commit SHA for the diff under review.
-	// Set only for phase = reviewer; empty otherwise.
-	reviewHeadSHA string
-
-	// model is the resolved model alias from the ModelPreference descriptor
-	// (EM-012b / HC-055a). When non-empty, --model <model> is appended to argv.
-	// The value must satisfy the shape constraint ^[A-Za-z0-9._:/-]+$ and be
-	// ≤ 128 chars; violation returns *ModelPreferenceError before LaunchSpec is built.
-	// Empty means no model flag is emitted (tool default).
-	model string
-
-	// effort is the resolved effort level from the ModelPreference descriptor
-	// (EM-012b / HC-055a). When non-empty, --effort <effort> is appended to argv.
-	// Must be one of {low, medium, high, xhigh, max}; empty means no flag emitted.
-	// Violation returns *ModelPreferenceError before LaunchSpec is built.
-	effort string
-
-	// provider, apiKeyEnv, apiKeyFile, baseURL, api are the per-bead Pi provider
-	// tuple resolved by resolvePiProfile from a `profile:<name>` label
-	// (pi-provider-switch, hk-m6uu2). Empty ⇒ harness-global default (C4
-	// fallback in PiHarness.LaunchSpec). Zero-value for any non-pi-resolved bead
-	// (hk-pkugu harness gate). Only meaningful when the resolved agent type is
-	// core.AgentTypePi.
-	provider   string
-	apiKeyEnv  string
-	apiKeyFile string
-	baseURL    string
-	api        string
-
-	// worktreeRootPath is the absolute path to the harmonik worktrees root
-	// directory (e.g. <projectDir>/.harmonik/worktrees). When non-empty,
-	// buildClaudeLaunchSpec checks whether workspacePath canonicalizes to a
-	// path under this prefix; if so, --dangerously-skip-permissions is added
-	// to argv per specs/handler-contract.md §4.10 HC-055b.
-	//
-	// When empty (e.g. in tests that do not need the flag), the path-check is
-	// skipped and the flag is not emitted.
-	worktreeRootPath string
-
-	// extraContext is an optional operator-supplied free-form string injected
-	// into the agent-task.md as an "## Extra Context" section (hk-boiwe).
-	// Empty means no section is rendered. Passed through to AgentTaskPayload.
-	extraContext string
-
-	// baseBranch is the resolved lands_on branch for this run (hk-mtm0w).
-	// Passed into AgentTaskPayload so the implementer sees base_branch in the
-	// agent-task header and can rebase against origin/$baseBranch pre-exit.
-	// Empty when the caller cannot resolve branching config (non-fatal).
-	baseBranch string
-
-	// runner is the CommandRunner for materializing the run's launch artifacts
-	// (.claude/settings.json, .harmonik/agent-task.md, ~/.claude.json trust).
-	// It is the worker's SSHRunner for a REMOTE run — so the three writes land
-	// on the WORKER's filesystem where the worktree actually lives — and nil for
-	// a LOCAL run, in which case the materialization takes the byte-identical
-	// box-A-local os.* path (NFR7). Threaded from workloop's rbc.sshRunner (hk-z8ek).
-	runner tmux.CommandRunner
-
-	// workerBinaryPath is the absolute path to harmonik ON THE WORKER, used as the
-	// hook "command" field in the worker's .claude/settings.json for a REMOTE run
-	// (the hook subprocess is executed on the worker, so a box-A path would not
-	// exist there). Empty for LOCAL runs, where daemonBinaryPath (box A's path) is
-	// used unchanged. Set by the caller only when runner != nil (hk-z8ek).
-	workerBinaryPath string
-}
-
-// claudeRunArtifacts carries the values that the workloop and review-loop
-// need after buildClaudeLaunchSpec returns, in addition to the LaunchSpec.
-type claudeRunArtifacts struct {
-	// claudeSessionID is the Claude session ID minted (or reused) by
-	// MintClaudeSessionID for this launch. The caller stores it so it can be
-	// passed as priorClaudeSessID on the next implementer-resume launch.
-	claudeSessionID string
-
-	// sessionLogPath is the Claude transcript path derived from the workspace
-	// and session ID, as reported via the session_log_location message (CHB-018).
-	sessionLogPath string
-
-	// handlerSessionID is a freshly minted UUIDv7 identifying this particular
-	// handler session within harmonik's event bus. Distinct from claudeSessionID.
-	handlerSessionID string
-
-	// preExecMsgs holds the 4 ordered pre-exec progress messages (handler_capabilities,
-	// session_log_location, skills_provisioned, agent_ready) in compact JSON form.
-	// The caller MUST emit these on the bus BEFORE calling handler.Launch per CHB-018.
-	preExecMsgs []json.RawMessage
-
-	// substrate is the optional tmux-substrate reference for this session.
-	// At MVH this is always nil; the handler falls back to exec.CommandContext.
-	// TODO(hk-gql20.x): wire tmux substrate once component-2 lands.
-	substrate interface{}
-
-	// resolvedAgentType is the agent_type resolved by the four-tier harness
-	// precedence walk (resolveHarness). Set by routedLaunchSpecBuilder (T12,
-	// hk-xhawy) so callers can look up the correct Adapter via
-	// adapterRegistry.ForAgent(resolvedAgentType) instead of hardcoding claude-code.
-	// Zero value ("") means the caller should default to core.AgentTypeClaudeCode.
-	resolvedAgentType core.AgentType
-}
 
 // buildClaudeLaunchSpec threads together all bridge pieces required to launch
 // a Claude Code (or twin) subprocess for any workflow phase.
@@ -246,27 +60,27 @@ type claudeRunArtifacts struct {
 //  6. Build argv — --session-id or --resume per CHB-008 (OQ3 allow-list).
 //  7. CheckForbiddenFlags — deny-list guard (CHB-007).
 //  8. PreExecMessages — render 4 ordered progress messages (CHB-018).
-//  9. Return handler.LaunchSpec + claudeRunArtifacts.
+//  9. Return handler.LaunchSpec + shared.LaunchArtifacts.
 //
 // Returns a non-nil error (wrapping handler.ErrStructural where applicable)
 // if any step fails. The caller MUST NOT call handler.Launch on error.
 //
 // Spec refs: claude-hook-bridge.md §4.2..4.3, §4.7, §4.9;
 // handler-contract.md HC-005, HC-055.
-func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+func buildClaudeLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 	_ = ctx // reserved for future async steps (e.g. skill provisioning)
 
 	// Step 1 — MintClaudeSessionID (CHB-008, CHB-009).
-	mintRes, err := handler.MintClaudeSessionID(string(rc.phase), rc.priorClaudeSessID)
+	mintRes, err := handler.MintClaudeSessionID(string(rc.Phase), rc.PriorClaudeSessID)
 	if err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: MintClaudeSessionID: %w", err)
 	}
 
 	// Step 2 — Derive Claude transcript path (CHB-018 step 2).
-	sessionLogPath, err := handler.DeriveClaudeTranscriptPath(rc.workspacePath, mintRes.ClaudeSessionID)
+	sessionLogPath, err := handler.DeriveClaudeTranscriptPath(rc.WorkspacePath, mintRes.ClaudeSessionID)
 	if err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: DeriveClaudeTranscriptPath: %w", err)
 	}
 
@@ -279,12 +93,12 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// WORKER's harmonik path for remote runs (a box-A path would not exist on the
 	// worker); falls back to rc.daemonBinaryPath when workerBinaryPath is unset
 	// (hk-kqdpf.6: absolute path, never the bare "harmonik" name).
-	settingsHookBinary := rc.daemonBinaryPath
-	if rc.runner != nil && rc.workerBinaryPath != "" {
-		settingsHookBinary = rc.workerBinaryPath
+	settingsHookBinary := rc.DaemonBinaryPath
+	if rc.Runner != nil && rc.WorkerBinaryPath != "" {
+		settingsHookBinary = rc.WorkerBinaryPath
 	}
-	if err := workspace.MaterializeClaudeSettingsVia(ctx, rc.runner, rc.workspacePath, settingsHookBinary, sessionLogPath); err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+	if err := workspace.MaterializeClaudeSettingsVia(ctx, rc.Runner, rc.WorkspacePath, settingsHookBinary, sessionLogPath); err != nil {
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: MaterializeClaudeSettings: %w", err)
 	}
 
@@ -294,8 +108,8 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// REMOTE run (rc.runner != nil): the trust entry is upserted into the WORKER's
 	// ~/.claude.json (the worker is where claude reads trust); LOCAL run: unchanged
 	// box-A ~/.claude.json write (NFR7) (hk-z8ek).
-	if err := workspace.EnsureWorktreeTrustVia(ctx, rc.runner, rc.workspacePath); err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+	if err := workspace.EnsureWorktreeTrustVia(ctx, rc.Runner, rc.WorkspacePath); err != nil {
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: EnsureWorktreeTrust: %w", err)
 	}
 
@@ -317,8 +131,8 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// ensureClaudeThemeAt). Since fleet writers can lost-update that key away, this
 	// can re-fire across launches. Retiring it is a follow-up; do not describe it as
 	// a no-op.
-	if err := workspace.EnsureClaudeThemeVia(ctx, rc.runner); err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+	if err := workspace.EnsureClaudeThemeVia(ctx, rc.Runner); err != nil {
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: EnsureClaudeTheme: %w", err)
 	}
 
@@ -345,10 +159,10 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// operator's normal shared ~/.claude. A local launch therefore inherits the
 	// operator's real config and sets no CLAUDE_CONFIG_DIR at all.
 	var isolatedClaudeConfigDir string
-	if rc.runner != nil {
-		isolatedClaudeConfigDir, err = workspace.PrepareIsolatedClaudeConfigDirVia(ctx, rc.runner, rc.workspacePath)
+	if rc.Runner != nil {
+		isolatedClaudeConfigDir, err = workspace.PrepareIsolatedClaudeConfigDirVia(ctx, rc.Runner, rc.WorkspacePath)
 		if err != nil {
-			return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 				"daemon: buildClaudeLaunchSpec: PrepareIsolatedClaudeConfigDirVia: %w", err)
 		}
 	}
@@ -359,58 +173,58 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// or whitespace-only (e.g. bead has no body, or --body " "), use the bead title so the
 	// file is never structurally empty (hk-lpbu7: TrimSpace closes the whitespace-body livelock
 	// where a " " description was non-empty at this layer but rejected by WriteAgentTask).
-	taskBody := rc.beadDescription
+	taskBody := rc.BeadDescription
 	// When the DOT node carries an inline prompt= and the phase is implementer,
 	// replace the bead-derived body with the prompt verbatim (WG-040 §I.3,
 	// HC-006a §III.3). Bead Title + ID remain in the header for traceability.
 	// Reviewer phase: nodePrompt is accepted-but-inert (EM-015d-RIA).
-	if rc.nodePrompt != "" && rc.phase != handlercontract.ReviewLoopPhaseReviewer {
-		taskBody = rc.nodePrompt
+	if rc.NodePrompt != "" && rc.Phase != handlercontract.ReviewLoopPhaseReviewer {
+		taskBody = rc.NodePrompt
 	}
 	if strings.TrimSpace(taskBody) == "" {
-		taskBody = rc.beadTitle
+		taskBody = rc.BeadTitle
 	}
 	if taskBody == "" {
 		// Last resort: use the bead ID so CHB-028's non-empty invariant is always satisfied.
-		taskBody = rc.beadID
+		taskBody = rc.BeadID
 	}
-	taskTitle := rc.beadTitle
+	taskTitle := rc.BeadTitle
 	if taskTitle == "" {
-		taskTitle = rc.beadID
+		taskTitle = rc.BeadID
 	}
 	agentTaskPayload := workspace.AgentTaskPayload{
-		BeadID:              rc.beadID,
+		BeadID:              rc.BeadID,
 		Title:               taskTitle,
-		Phase:               string(rc.phase),
-		Iteration:           rc.iterationCount,
-		RunID:               core.RunID(rc.runID).String(),
-		WorkspacePath:       rc.workspacePath,
+		Phase:               string(rc.Phase),
+		Iteration:           rc.IterationCount,
+		RunID:               core.RunID(rc.RunID).String(),
+		WorkspacePath:       rc.WorkspacePath,
 		Body:                taskBody,
-		PriorVerdictFile:    rc.priorVerdictFile,
-		PriorVerdictSummary: rc.priorVerdictSummary,
-		ReviewBaseSHA:       rc.reviewBaseSHA,
-		ReviewHeadSHA:       rc.reviewHeadSHA,
-		ReAttach:            rc.agentTaskReAttach,
-		ExtraContext:        rc.extraContext,
-		BaseBranch:          rc.baseBranch,
+		PriorVerdictFile:    rc.PriorVerdictFile,
+		PriorVerdictSummary: rc.PriorVerdictSummary,
+		ReviewBaseSHA:       rc.ReviewBaseSHA,
+		ReviewHeadSHA:       rc.ReviewHeadSHA,
+		ReAttach:            rc.AgentTaskReAttach,
+		ExtraContext:        rc.ExtraContext,
+		BaseBranch:          rc.BaseBranch,
 	}
 	// REMOTE run (rc.runner != nil): write agent-task.md onto the WORKER's
 	// worktree; LOCAL run: unchanged box-A-local write (NFR7) (hk-z8ek).
-	if err := workspace.WriteAgentTaskVia(ctx, rc.runner, rc.workspacePath, agentTaskPayload); err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+	if err := workspace.WriteAgentTaskVia(ctx, rc.Runner, rc.WorkspacePath, agentTaskPayload); err != nil {
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: WriteAgentTask: %w", err)
 	}
 
 	// Step 4 — Fail-fast if settings.local.json shadows bridge hooks (CHB-024).
-	if err := handler.CheckSettingsLocalJSON(rc.workspacePath); err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+	if err := handler.CheckSettingsLocalJSON(rc.WorkspacePath); err != nil {
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: CheckSettingsLocalJSON: %w", err)
 	}
 
 	// Step 5 — Build ClaudeEnvConfig and derive the CHB-006 env slice.
 	handlerSessUID, err := uuid.NewV7()
 	if err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: mint handlerSessionID UUIDv7: %w", err)
 	}
 	handlerSessionID := handlerSessUID.String()
@@ -421,21 +235,21 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	//
 	// TODO(hk-gql20.x): replace with typed WorkflowID / NodeID from a workflow
 	// registry once multi-node workflows are introduced.
-	nodeID := "bead/" + rc.beadID
-	workflowID := core.WorkflowID(core.RunID(rc.runID))
+	nodeID := "bead/" + rc.BeadID
+	workflowID := core.WorkflowID(core.RunID(rc.RunID))
 
 	// Build optional ClaudeEnvConfig fields.
-	workflowModeStr := string(rc.workflowMode)
-	phaseStr := string(rc.phase)
+	workflowModeStr := string(rc.WorkflowMode)
+	phaseStr := string(rc.Phase)
 	iterCountStr := ""
-	if rc.iterationCount > 0 {
-		iterCountStr = strconv.Itoa(rc.iterationCount)
+	if rc.IterationCount > 0 {
+		iterCountStr = strconv.Itoa(rc.IterationCount)
 	}
 
 	cfg := handler.ClaudeEnvConfig{
-		RunID:            core.RunID(rc.runID).String(),
-		DaemonSocket:     rc.daemonSocket,
-		WorkspacePath:    rc.workspacePath,
+		RunID:            core.RunID(rc.RunID).String(),
+		DaemonSocket:     rc.DaemonSocket,
+		WorkspacePath:    rc.WorkspacePath,
 		HandlerSessionID: handlerSessionID,
 		ClaudeSessionID:  mintRes.ClaudeSessionID,
 		WorkflowID:       core.WorkflowID(workflowID).String(),
@@ -443,11 +257,11 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 		WorkflowMode:     workflowModeStr,
 		Phase:            phaseStr,
 		IterationCount:   iterCountStr,
-		BeadID:           rc.beadID,
+		BeadID:           rc.BeadID,
 		// HarmonikAgent distinguishes this implementer on the keeper bus so the
 		// statusLine helper writes impl-<runID>.ctx rather than captain.ctx (hk-4hk).
-		HarmonikAgent: "impl-" + core.RunID(rc.runID).String(),
-		BaseEnv:       rc.baseEnv,
+		HarmonikAgent: "impl-" + core.RunID(rc.RunID).String(),
+		BaseEnv:       rc.BaseEnv,
 	}
 	env := handler.ClaudeEnvVars(cfg)
 
@@ -467,14 +281,14 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 
 	// Step 6 — Validate ModelPreference fields (HC-055a) before argv construction.
 	// Invalid model or effort → typed *ModelPreferenceError; do NOT silently drop.
-	if rc.model != "" {
-		if err := validateModel(rc.model); err != nil {
-			return handler.LaunchSpec{}, claudeRunArtifacts{}, err
+	if rc.Model != "" {
+		if err := shared.ValidateModel(rc.Model); err != nil {
+			return handler.LaunchSpec{}, shared.LaunchArtifacts{}, err
 		}
 	}
-	if rc.effort != "" {
-		if err := validateEffort(rc.effort); err != nil {
-			return handler.LaunchSpec{}, claudeRunArtifacts{}, err
+	if rc.Effort != "" {
+		if err := shared.ValidateEffort(rc.Effort); err != nil {
+			return handler.LaunchSpec{}, shared.LaunchArtifacts{}, err
 		}
 	}
 
@@ -488,29 +302,29 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	} else {
 		args = []string{"--session-id", mintRes.ClaudeSessionID}
 	}
-	if rc.model != "" {
-		args = append(args, "--model", rc.model)
+	if rc.Model != "" {
+		args = append(args, "--model", rc.Model)
 	}
-	if rc.effort != "" {
-		args = append(args, "--effort", rc.effort)
+	if rc.Effort != "" {
+		args = append(args, "--effort", rc.Effort)
 	}
 	// HC-055b: emit --dangerously-skip-permissions iff workspacePath canonicalizes
 	// to a path under the harmonik worktrees root. This suppresses the interactive
 	// trust dialog in operator-daemon launches where the worktree is already
 	// operator-sanctioned. The path check is a positive-allowlist match; if
 	// EvalSymlinks fails for either path the flag is silently omitted.
-	if isHarmonikManagedWorktree(rc.workspacePath, rc.worktreeRootPath) {
+	if isHarmonikManagedWorktree(rc.WorkspacePath, rc.WorktreeRootPath) {
 		args = append(args, "--dangerously-skip-permissions")
 	}
 
 	// Step 7 — Deny-list guard (CHB-007).
 	if err := handler.CheckForbiddenFlags(args, env); err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: CheckForbiddenFlags: %w", err)
 	}
 
 	// Step 8 — Render pre-exec messages (CHB-018).
-	runIDStr := core.RunID(rc.runID).String()
+	runIDStr := core.RunID(rc.RunID).String()
 	rawMsgs, err := handler.PreExecMessages(
 		runIDStr,
 		handlerSessionID,
@@ -520,7 +334,7 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 		nil, // skills = nil at MVH per design §1 step 9
 	)
 	if err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: PreExecMessages: %w", err)
 	}
 	preExecMsgs := make([]json.RawMessage, len(rawMsgs))
@@ -533,20 +347,20 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// Binary is opaque to this helper; the caller sets it via rc.handlerBinary.
 	// Substrate is nil at MVH; handler falls back to exec.CommandContext.
 	spec := handler.LaunchSpec{
-		Binary:  rc.handlerBinary,
+		Binary:  rc.HandlerBinary,
 		Args:    args,
 		Env:     env,
-		WorkDir: rc.workspacePath,
-		Role:    string(rc.phase), // "implementer-initial", "implementer-resume", "reviewer", or "" (single)
+		WorkDir: rc.WorkspacePath,
+		Role:    string(rc.Phase), // "implementer-initial", "implementer-resume", "reviewer", or "" (single)
 	}
 
-	artifacts := claudeRunArtifacts{
-		claudeSessionID:   mintRes.ClaudeSessionID,
-		sessionLogPath:    sessionLogPath,
-		handlerSessionID:  handlerSessionID,
-		preExecMsgs:       preExecMsgs,
-		substrate:         nil,
-		resolvedAgentType: core.AgentTypeClaudeCode,
+	artifacts := shared.LaunchArtifacts{
+		ClaudeSessionID:   mintRes.ClaudeSessionID,
+		SessionLogPath:    sessionLogPath,
+		HandlerSessionID:  handlerSessionID,
+		PreExecMsgs:       preExecMsgs,
+		Substrate:         nil,
+		ResolvedAgentType: core.AgentTypeClaudeCode,
 	}
 
 	return spec, artifacts, nil

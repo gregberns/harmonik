@@ -16,6 +16,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
 // ClaudeHarness implements handlercontract.Harness for the Claude Code agent.
@@ -36,41 +37,41 @@ func (h *ClaudeHarness) AgentType() core.AgentType {
 	return core.AgentTypeClaudeCode
 }
 
-// LaunchSpec converts rc to a claudeRunCtx, calls buildClaudeLaunchSpec, and
+// LaunchSpec converts rc to a shared.LaunchCtx, calls buildClaudeLaunchSpec, and
 // returns the subprocess SpawnSpec (Binary/Args/Env/WorkDir).
 //
 // The caller receives a non-nil error on any CHB-001..CHB-024 failure; it MUST
 // NOT call handler.Launch on error.
 //
-// Note: buildClaudeLaunchSpec also returns claudeRunArtifacts (session IDs,
-// preExecMsgs).  Those remain available only on the internal claudeRunCtx path
+// Note: buildClaudeLaunchSpec also returns shared.LaunchArtifacts (session IDs,
+// preExecMsgs).  Those remain available only on the internal shared.LaunchCtx path
 // until T3 threads a richer seam through the registry.
 func (h *ClaudeHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
-	internal := claudeRunCtx{
-		runID:               rc.RunID,
-		beadID:              rc.BeadID,
-		workspacePath:       rc.WorkspacePath,
-		daemonSocket:        rc.DaemonSocket,
-		workflowMode:        rc.WorkflowMode,
-		phase:               rc.Phase,
-		iterationCount:      rc.IterationCount,
-		priorClaudeSessID:   rc.PriorSessionID,
-		handlerBinary:       rc.HandlerBinary,
-		daemonBinaryPath:    rc.DaemonBinaryPath,
-		baseEnv:             rc.BaseEnv,
-		beadTitle:           rc.BeadTitle,
-		beadDescription:     rc.BeadDescription,
-		nodePrompt:          rc.NodePrompt,
-		agentTaskReAttach:   rc.AgentTaskReAttach,
-		priorVerdictFile:    rc.PriorVerdictFile,
-		priorVerdictSummary: rc.PriorVerdictSummary,
-		reviewBaseSHA:       rc.ReviewBaseSHA,
-		reviewHeadSHA:       rc.ReviewHeadSHA,
-		model:               rc.Model,
-		effort:              rc.Effort,
-		worktreeRootPath:    rc.WorktreeRootPath,
-		extraContext:        rc.ExtraContext,
-		baseBranch:          rc.BaseBranch,
+	internal := shared.LaunchCtx{
+		RunID:               rc.RunID,
+		BeadID:              rc.BeadID,
+		WorkspacePath:       rc.WorkspacePath,
+		DaemonSocket:        rc.DaemonSocket,
+		WorkflowMode:        rc.WorkflowMode,
+		Phase:               rc.Phase,
+		IterationCount:      rc.IterationCount,
+		PriorClaudeSessID:   rc.PriorSessionID,
+		HandlerBinary:       rc.HandlerBinary,
+		DaemonBinaryPath:    rc.DaemonBinaryPath,
+		BaseEnv:             rc.BaseEnv,
+		BeadTitle:           rc.BeadTitle,
+		BeadDescription:     rc.BeadDescription,
+		NodePrompt:          rc.NodePrompt,
+		AgentTaskReAttach:   rc.AgentTaskReAttach,
+		PriorVerdictFile:    rc.PriorVerdictFile,
+		PriorVerdictSummary: rc.PriorVerdictSummary,
+		ReviewBaseSHA:       rc.ReviewBaseSHA,
+		ReviewHeadSHA:       rc.ReviewHeadSHA,
+		Model:               rc.Model,
+		Effort:              rc.Effort,
+		WorktreeRootPath:    rc.WorktreeRootPath,
+		ExtraContext:        rc.ExtraContext,
+		BaseBranch:          rc.BaseBranch,
 	}
 
 	spec, _, err := buildClaudeLaunchSpec(context.Background(), internal)

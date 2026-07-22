@@ -9,7 +9,7 @@ package daemon
 // and HarnessRegistry.ForAgent (the per-agent-type route table).
 //
 // T12 wires the codex path: CodexHarness is now registered alongside ClaudeHarness,
-// and routedLaunchSpecBuilder produces a handler.LaunchSpec + claudeRunArtifacts for
+// and routedLaunchSpecBuilder produces a handler.LaunchSpec + shared.LaunchArtifacts for
 // the codex harness (previously it failed closed). The claude path retains its
 // byte-identical delegation to buildClaudeLaunchSpec.
 //
@@ -28,6 +28,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -76,14 +77,14 @@ func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry
 //   - Pi: rc.model when non-empty (per-run override), else h.(*PiHarness).model
 //     (harnesses.pi.model config fallback) — same override-with-fallback pattern
 //     as PiHarness.LaunchSpec and the claude harness.
-func effectiveModel(h handlercontract.Harness, rc claudeRunCtx) string {
+func effectiveModel(h handlercontract.Harness, rc shared.LaunchCtx) string {
 	if piH, ok := h.(*PiHarness); ok {
-		if rc.model != "" {
-			return rc.model
+		if rc.Model != "" {
+			return rc.Model
 		}
 		return piH.model
 	}
-	return rc.model
+	return rc.Model
 }
 
 // emitModelSelected emits a model_selected event (hk-eval-prog-model-on-log-bh2o7)
@@ -109,7 +110,7 @@ func emitModelSelected(
 }
 
 // routedLaunchSpecBuilder returns a launchSpecBuilder (the workLoopDeps hook
-// shape: func(ctx, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error))
+// shape: func(ctx, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error))
 // that routes through resolveHarness + reg.ForAgent before building the spec.
 //
 // Precedence/selection: resolveHarness walks bead>queue>node>global and falls
@@ -118,15 +119,15 @@ func emitModelSelected(
 // run rather than silently launching claude for an unknown type).
 //
 // Claude path: delegates to buildClaudeLaunchSpec directly so the returned
-// LaunchSpec and claudeRunArtifacts are byte-identical to the pre-T3 call.
+// LaunchSpec and shared.LaunchArtifacts are byte-identical to the pre-T3 call.
 // Harness.LaunchSpec returns only a SpawnSpec, so routing the claude build
 // through it would drop the artifacts the workloop/review-loop consume.
 //
 // Codex path (T12): writes agent-task.md, calls CodexHarness.LaunchSpec for the
-// SpawnSpec, and assembles claudeRunArtifacts with a tracking session ID and
+// SpawnSpec, and assembles shared.LaunchArtifacts with a tracking session ID and
 // pre-exec bus messages. The claudeSessionID field is a harmonic-internal tracking
 // ID (not used for codex resume; resume uses the captured thread_id via
-// RunCtx.PriorSessionID / claudeRunCtx.priorClaudeSessID).
+// RunCtx.PriorSessionID / shared.LaunchCtx.PriorClaudeSessID).
 //
 // The bead argument carries the labels resolveHarness reads for the tier-1
 // harness:<agent-type> override. Production passes the dispatch-time BeadRecord;
@@ -139,27 +140,27 @@ func routedLaunchSpecBuilder(
 	nodeDefault core.AgentType,
 	globalDefault core.AgentType,
 	bus handlercontract.EventEmitter,
-) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	return func(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return func(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		agentType := resolveHarness(ctx, bead, queueDefault, nodeDefault, globalDefault, bus)
 
 		h, err := reg.ForAgent(agentType)
 		if err != nil {
-			return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 				"daemon: routedLaunchSpecBuilder: resolve harness %q: %w", agentType, err)
 		}
 
-		emitModelSelected(ctx, bus, core.RunID(rc.runID), effectiveModel(h, rc), agentType)
+		emitModelSelected(ctx, bus, core.RunID(rc.RunID), effectiveModel(h, rc), agentType)
 
 		// Claude path: delegate to buildClaudeLaunchSpec directly so the returned
-		// LaunchSpec AND claudeRunArtifacts are byte-identical to the pre-T3 call.
+		// LaunchSpec AND shared.LaunchArtifacts are byte-identical to the pre-T3 call.
 		// buildClaudeLaunchSpec also sets artifacts.resolvedAgentType = claude-code.
 		if _, ok := h.(*ClaudeHarness); ok {
 			return buildClaudeLaunchSpec(ctx, rc)
 		}
 
 		// Codex path (T12): write agent-task.md, call harness.LaunchSpec for the
-		// SpawnSpec, then build claudeRunArtifacts with a tracking session ID.
+		// SpawnSpec, then build shared.LaunchArtifacts with a tracking session ID.
 		return buildCodexRoutedLaunchSpec(ctx, rc, h, agentType)
 	}
 }
@@ -173,15 +174,15 @@ func pinnedHarnessLaunchSpecBuilder(
 	bead core.BeadRecord,
 	agentType core.AgentType,
 	bus handlercontract.EventEmitter,
-) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	return func(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return func(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		emitHarnessSelected(ctx, bus, bead, agentType, 3)
 		h, err := reg.ForAgent(agentType)
 		if err != nil {
-			return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 				"daemon: pinnedHarnessLaunchSpecBuilder: resolve harness %q: %w", agentType, err)
 		}
-		emitModelSelected(ctx, bus, core.RunID(rc.runID), effectiveModel(h, rc), agentType)
+		emitModelSelected(ctx, bus, core.RunID(rc.RunID), effectiveModel(h, rc), agentType)
 		if _, ok := h.(*ClaudeHarness); ok {
 			return buildClaudeLaunchSpec(ctx, rc)
 		}
@@ -189,109 +190,109 @@ func pinnedHarnessLaunchSpecBuilder(
 	}
 }
 
-// buildCodexRoutedLaunchSpec assembles a handler.LaunchSpec + claudeRunArtifacts
+// buildCodexRoutedLaunchSpec assembles a handler.LaunchSpec + shared.LaunchArtifacts
 // for non-claude harnesses (currently only CodexHarness).
 //
 // Steps:
 //  1. Write agent-task.md (codex reads it via the seed-prompt argv).
-//  2. Convert claudeRunCtx → handlercontract.RunCtx; call h.LaunchSpec.
+//  2. Convert shared.LaunchCtx → handlercontract.RunCtx; call h.LaunchSpec.
 //  3. Mint tracking session ID + handler session ID.
 //  4. Render pre-exec bus messages (CHB-018 subset).
-//  5. Return LaunchSpec + claudeRunArtifacts{resolvedAgentType: agentType}.
+//  5. Return LaunchSpec + shared.LaunchArtifacts{ResolvedAgentType: agentType}.
 func buildCodexRoutedLaunchSpec(
 	ctx context.Context,
-	rc claudeRunCtx,
+	rc shared.LaunchCtx,
 	h handlercontract.Harness,
 	agentType core.AgentType,
-) (handler.LaunchSpec, claudeRunArtifacts, error) {
+) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 	// Step 1: write agent-task.md.
-	taskBody := rc.nodePrompt
+	taskBody := rc.NodePrompt
 	if taskBody == "" {
-		taskBody = rc.beadDescription
+		taskBody = rc.BeadDescription
 	}
 	if taskBody == "" {
-		taskBody = rc.beadID
+		taskBody = rc.BeadID
 	}
-	taskTitle := rc.beadTitle
+	taskTitle := rc.BeadTitle
 	if taskTitle == "" {
-		taskTitle = rc.beadID
+		taskTitle = rc.BeadID
 	}
 	agentTaskPayload := workspace.AgentTaskPayload{
-		BeadID:              rc.beadID,
+		BeadID:              rc.BeadID,
 		Title:               taskTitle,
-		Phase:               string(rc.phase),
-		Iteration:           rc.iterationCount,
-		RunID:               core.RunID(rc.runID).String(),
-		WorkspacePath:       rc.workspacePath,
+		Phase:               string(rc.Phase),
+		Iteration:           rc.IterationCount,
+		RunID:               core.RunID(rc.RunID).String(),
+		WorkspacePath:       rc.WorkspacePath,
 		Body:                taskBody,
-		PriorVerdictFile:    rc.priorVerdictFile,
-		PriorVerdictSummary: rc.priorVerdictSummary,
-		ReviewBaseSHA:       rc.reviewBaseSHA,
-		ReviewHeadSHA:       rc.reviewHeadSHA,
-		ReAttach:            rc.agentTaskReAttach,
-		ExtraContext:        rc.extraContext,
-		BaseBranch:          rc.baseBranch,
+		PriorVerdictFile:    rc.PriorVerdictFile,
+		PriorVerdictSummary: rc.PriorVerdictSummary,
+		ReviewBaseSHA:       rc.ReviewBaseSHA,
+		ReviewHeadSHA:       rc.ReviewHeadSHA,
+		ReAttach:            rc.AgentTaskReAttach,
+		ExtraContext:        rc.ExtraContext,
+		BaseBranch:          rc.BaseBranch,
 	}
-	if err := workspace.WriteAgentTaskVia(ctx, rc.runner, rc.workspacePath, agentTaskPayload); err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+	if err := workspace.WriteAgentTaskVia(ctx, rc.Runner, rc.WorkspacePath, agentTaskPayload); err != nil {
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildCodexRoutedLaunchSpec: WriteAgentTaskVia: %w", err)
 	}
 
 	// Step 2: convert to RunCtx and call harness.LaunchSpec.
 	hrc := handlercontract.RunCtx{
-		RunID:               core.RunID(rc.runID),
-		BeadID:              rc.beadID,
-		WorkspacePath:       rc.workspacePath,
-		DaemonSocket:        rc.daemonSocket,
-		WorkflowMode:        rc.workflowMode,
-		Phase:               rc.phase,
-		IterationCount:      rc.iterationCount,
-		HandlerBinary:       rc.handlerBinary,
-		DaemonBinaryPath:    rc.daemonBinaryPath,
-		BaseEnv:             rc.baseEnv,
-		BeadTitle:           rc.beadTitle,
-		BeadDescription:     rc.beadDescription,
-		NodePrompt:          rc.nodePrompt,
-		PriorVerdictFile:    rc.priorVerdictFile,
-		PriorVerdictSummary: rc.priorVerdictSummary,
-		ReviewBaseSHA:       rc.reviewBaseSHA,
-		ReviewHeadSHA:       rc.reviewHeadSHA,
-		Model:               rc.model,
-		Effort:              rc.effort,
-		Provider:            rc.provider,
-		APIKeyEnv:           rc.apiKeyEnv,
-		APIKeyFile:          rc.apiKeyFile,
-		BaseURL:             rc.baseURL,
-		API:                 rc.api,
-		WorktreeRootPath:    rc.worktreeRootPath,
-		ExtraContext:        rc.extraContext,
-		BaseBranch:          rc.baseBranch,
-		PriorSessionID:      rc.priorClaudeSessID,
+		RunID:               core.RunID(rc.RunID),
+		BeadID:              rc.BeadID,
+		WorkspacePath:       rc.WorkspacePath,
+		DaemonSocket:        rc.DaemonSocket,
+		WorkflowMode:        rc.WorkflowMode,
+		Phase:               rc.Phase,
+		IterationCount:      rc.IterationCount,
+		HandlerBinary:       rc.HandlerBinary,
+		DaemonBinaryPath:    rc.DaemonBinaryPath,
+		BaseEnv:             rc.BaseEnv,
+		BeadTitle:           rc.BeadTitle,
+		BeadDescription:     rc.BeadDescription,
+		NodePrompt:          rc.NodePrompt,
+		PriorVerdictFile:    rc.PriorVerdictFile,
+		PriorVerdictSummary: rc.PriorVerdictSummary,
+		ReviewBaseSHA:       rc.ReviewBaseSHA,
+		ReviewHeadSHA:       rc.ReviewHeadSHA,
+		Model:               rc.Model,
+		Effort:              rc.Effort,
+		Provider:            rc.Provider,
+		APIKeyEnv:           rc.APIKeyEnv,
+		APIKeyFile:          rc.APIKeyFile,
+		BaseURL:             rc.BaseURL,
+		API:                 rc.API,
+		WorktreeRootPath:    rc.WorktreeRootPath,
+		ExtraContext:        rc.ExtraContext,
+		BaseBranch:          rc.BaseBranch,
+		PriorSessionID:      rc.PriorClaudeSessID,
 	}
 	spawnSpec, err := h.LaunchSpec(hrc)
 	if err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildCodexRoutedLaunchSpec: harness.LaunchSpec: %w", err)
 	}
 
 	// Step 3: mint tracking session ID and handler session ID.
 	handlerSessUID, err := uuid.NewV7()
 	if err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildCodexRoutedLaunchSpec: mint handlerSessionID: %w", err)
 	}
 	handlerSessionID := handlerSessUID.String()
 
 	trackingUID, err := uuid.NewV7()
 	if err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildCodexRoutedLaunchSpec: mint trackingSessionID: %w", err)
 	}
 	trackingSessionID := trackingUID.String()
 
 	// Step 4: render pre-exec bus messages (CHB-018 subset).
-	nodeID := "bead/" + rc.beadID
-	runIDStr := core.RunID(rc.runID).String()
+	nodeID := "bead/" + rc.BeadID
+	runIDStr := core.RunID(rc.RunID).String()
 	rawMsgs, err := handler.PreExecMessages(
 		runIDStr,
 		handlerSessionID,
@@ -301,7 +302,7 @@ func buildCodexRoutedLaunchSpec(
 		nil,
 	)
 	if err != nil {
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
 			"daemon: buildCodexRoutedLaunchSpec: PreExecMessages: %w", err)
 	}
 	preExecMsgs := make([]json.RawMessage, len(rawMsgs))
@@ -309,13 +310,13 @@ func buildCodexRoutedLaunchSpec(
 		preExecMsgs[i] = json.RawMessage(b)
 	}
 
-	// Step 5: assemble handler.LaunchSpec and claudeRunArtifacts.
+	// Step 5: assemble handler.LaunchSpec and shared.LaunchArtifacts.
 	spec := handler.LaunchSpec{
 		Binary:       spawnSpec.Binary,
 		Args:         spawnSpec.Args,
 		Env:          spawnSpec.Env,
 		WorkDir:      spawnSpec.WorkDir,
-		Role:         string(rc.phase),
+		Role:         string(rc.Phase),
 		StdinDevNull: spawnSpec.StdinDevNull, // hk-j0p1r: forward /dev/null stdin so ProcessExit harnesses (pi, codex) get startup EOF
 		// remote-substrate M4-C4 (T6): thread the per-run runner so a
 		// worker-selected pi/codex run spawns the agent process ON THE WORKER via
@@ -327,13 +328,13 @@ func buildCodexRoutedLaunchSpec(
 		// with the landed pi provider config ({Provider,BaseURL,API}, decision 6):
 		// the runner only changes WHICH host the process runs on, never the wire
 		// config carried in spawnSpec.Env/Args above.
-		Runner: rc.runner,
+		Runner: rc.Runner,
 	}
-	artifacts := claudeRunArtifacts{
-		claudeSessionID:   trackingSessionID,
-		handlerSessionID:  handlerSessionID,
-		preExecMsgs:       preExecMsgs,
-		resolvedAgentType: agentType,
+	artifacts := shared.LaunchArtifacts{
+		ClaudeSessionID:   trackingSessionID,
+		HandlerSessionID:  handlerSessionID,
+		PreExecMsgs:       preExecMsgs,
+		ResolvedAgentType: agentType,
 	}
 	return spec, artifacts, nil
 }

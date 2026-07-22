@@ -85,6 +85,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/substrate"
@@ -1377,38 +1378,38 @@ func dispatchDotAgenticNode(
 		nodeEffort = node.Effort
 	}
 
-	rc := claudeRunCtx{
-		runID:         runID,
-		beadID:        string(beadID),
-		workspacePath: wtPath,
+	rc := shared.LaunchCtx{
+		RunID:         runID,
+		BeadID:        string(beadID),
+		WorkspacePath: wtPath,
 		// runner threads the per-run CommandRunner into buildClaudeLaunchSpec so the
 		// worktree-trust / settings / agent-task writes land on the WORKER for a
 		// REMOTE DOT run (runner == dotRunner == rbc.sshRunner) and stay box-A-local
 		// for a LOCAL run (runner == nil, NFR7). Without this the trust upsert ran
 		// box-A-local → worker worktree untrusted → trust modal → no_commit
 		// (hk-3sus; symmetric with how settings/agent-task get the worker).
-		runner: runner,
+		Runner: runner,
 		// hk-538l: workerBinaryPath resolves the SessionStart hook command to the
 		// WORKER's harmonik path for a REMOTE DOT run; empty for LOCAL falls back box-A-
 		// local in claudelaunchspec. Without this the worker's settings.json pointed at
 		// box-A's daemonBinaryPath → hook never exec'd → agent_ready_timeout (hk-538l).
-		workerBinaryPath:  workerBinaryPath,
-		daemonSocket:      daemonSocket,
-		workflowMode:      core.WorkflowModeDot,
-		phase:             phase,
-		iterationCount:    iterationCount,
-		priorClaudeSessID: priorSess,
-		handlerBinary:     deps.handlerBinary,
-		daemonBinaryPath:  deps.daemonBinaryPath,
-		baseEnv:           deps.handlerEnv,
-		beadTitle:         beadTitle,
-		beadDescription:   beadDescription,
-		nodePrompt:        node.Prompt,
-		model:             nodeModel,
-		effort:            nodeEffort,
-		worktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
-		extraContext:      nodeExtraContext,
-		baseBranch:        baseBranch,
+		WorkerBinaryPath:  workerBinaryPath,
+		DaemonSocket:      daemonSocket,
+		WorkflowMode:      core.WorkflowModeDot,
+		Phase:             phase,
+		IterationCount:    iterationCount,
+		PriorClaudeSessID: priorSess,
+		HandlerBinary:     deps.handlerBinary,
+		DaemonBinaryPath:  deps.daemonBinaryPath,
+		BaseEnv:           deps.handlerEnv,
+		BeadTitle:         beadTitle,
+		BeadDescription:   beadDescription,
+		NodePrompt:        node.Prompt,
+		Model:             nodeModel,
+		Effort:            nodeEffort,
+		WorktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
+		ExtraContext:      nodeExtraContext,
+		BaseBranch:        baseBranch,
 	}
 
 	// Resolve the per-node spec builder. The pre-built deps.launchSpecBuilder
@@ -1633,7 +1634,7 @@ func dispatchDotAgenticNode(
 	preHeadSHA, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 
 	if deps.hookStore != nil {
-		deps.hookStore.RegisterHookSession(runID.String(), artifacts.claudeSessionID)
+		deps.hookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
 	tap, tapCh := newPerRunEventTap(deps.bus, runID)
@@ -1654,7 +1655,7 @@ func dispatchDotAgenticNode(
 	// review-loop path (reviewloop.go:336). Holding launch_initiated until after a
 	// successful Launch also keeps it truthful: when SpawnWindow is wedged on a
 	// leaked slot, Launch returns an error below and launch_initiated never fires.
-	nodeLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.preExecMsgs)
+	nodeLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
 
 	// hk-c73fs: emit reviewer_launched (§8.1a.2) for reviewer nodes before
 	// launch, matching the builtin review-loop path (reviewloop.go:922-923).
@@ -1715,7 +1716,7 @@ func dispatchDotAgenticNode(
 	// invoked directly after the segment settles into Working, preserving the
 	// pre-RT8 fall-through ("paste-inject is a no-op for codex").
 	dotDeliver := func(dctx context.Context) {
-		briefDelivered := pasteInjectOnLaunch(dctx, pasteTarget, artifacts.claudeSessionID,
+		briefDelivered := pasteInjectOnLaunch(dctx, pasteTarget, artifacts.ClaudeSessionID,
 			phase, iterationCount, wtPath, deps.bus, runID)
 		if qs, ok := pasteTarget.(quitSender); ok {
 			if isReviewer {
@@ -1739,7 +1740,7 @@ func dispatchDotAgenticNode(
 				// so it can track agent_heartbeat events for the active-reasoning
 				// extension — independent of the tapCh used by the segment's ready pump.
 				reviewerHBCh := tap.Subscribe()
-				go pasteInjectQuitOnReviewFile(ctx, qs, sess, revInj, artifacts.claudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
+				go pasteInjectQuitOnReviewFile(ctx, qs, sess, revInj, artifacts.ClaudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
 			} else if dotCompletionMode != handlercontract.CompletionProcessExit {
 				// hk-o90sl (T13/C5): gate on Completion() policy (specs/harness-contract.md §2 N5).
 				// ProcessExit harnesses (codex) self-terminate when the turn completes; sess.Wait +
@@ -1791,7 +1792,7 @@ func dispatchDotAgenticNode(
 		},
 		onLaunchFailed: func(lctx context.Context, lErr error) {
 			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
 			// hk-oihnf: surface structural launch-timeout failures as their dedicated
 			// diagnostic events before returning — mirrors the single-mode path
@@ -1840,14 +1841,14 @@ func dispatchDotAgenticNode(
 				hbTarget = tap
 			}
 			nodeHBDone = make(chan struct{})
-			go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
+			go handler.RunHeartbeatLoop(ctx, artifacts.HandlerSessionID,
 				handler.HeartbeatInterval, nodeHBDone,
 				newDaemonHeartbeatEmitter(hbTarget, runID))
 
 			if deps.hookStore != nil {
 				capturedTap := tap
 				capturedRunID := runID                                                                   // hk-wths: copy runID so EmitWithRunID stamps the bus envelope
-				deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+				deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 					// hk-wths: use EmitWithRunID so the bus envelope carries run_id. Without
 					// this, the stale watcher's observe() skips the event (evt.RunID == nil),
 					// agentReadySeen stays false, and the never-spawned reaper fires after
@@ -1871,11 +1872,11 @@ func dispatchDotAgenticNode(
 			}
 			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)
 			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
 		},
 		emitReadyTimeout: func(ectx context.Context) {
-			emitAgentReadyTimeout(ectx, deps.bus, runID, artifacts.claudeSessionID, deps.agentReadyTimeout)
+			emitAgentReadyTimeout(ectx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
 		},
 		killAbort: func(context.Context) {
 			if sess != nil {
@@ -1918,7 +1919,7 @@ func dispatchDotAgenticNode(
 	// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
 	_, nodeEI := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
-		runID.String(), artifacts.claudeSessionID)
+		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {
 		_ = sess.Kill(context.Background())
@@ -1940,7 +1941,7 @@ func dispatchDotAgenticNode(
 	}
 
 	if deps.hookStore != nil {
-		deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+		deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
 	if ctx.Err() != nil {
@@ -1949,7 +1950,7 @@ func dispatchDotAgenticNode(
 
 	// Capture the claude_session_id for implementer-resume back-edges.
 	if !isReviewer && *claudeSessionID == "" {
-		*claudeSessionID = artifacts.claudeSessionID
+		*claudeSessionID = artifacts.ClaudeSessionID
 	}
 
 	if isReviewer {
@@ -1993,7 +1994,7 @@ func dispatchDotAgenticNode(
 		// WorkflowMode is DOT; session_id reuses the reviewerSessionID minted before
 		// launch (hk-c73fs: reviewer_launched uses the same ID so the two events
 		// are correlated); claude_session_id is the reviewer node's Claude session.
-		emitDotReviewerVerdict(ctx, deps.bus, runID, reviewerSessionID, artifacts.claudeSessionID, iterationCount, verdict)
+		emitDotReviewerVerdict(ctx, deps.bus, runID, reviewerSessionID, artifacts.ClaudeSessionID, iterationCount, verdict)
 		label := verdict.Verdict
 		flags := verdict.Flags
 		if flags == nil {

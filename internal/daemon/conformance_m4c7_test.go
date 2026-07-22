@@ -53,6 +53,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -89,16 +90,16 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
 			t.Fatalf("mkdir .harmonik: %v", err)
 		}
-		rc := claudeRunCtx{
-			runID:           z8ekRunID(t),
-			beadID:          "hk-m4c7-codex-local",
-			workspacePath:   wt,
-			phase:           "implementer-initial",
-			iterationCount:  1,
-			beadTitle:       "codex local NFR7",
-			beadDescription: "local body",
-			model:           "o4-mini",
-			runner:          nil, // LOCAL run — no worker
+		rc := shared.LaunchCtx{
+			RunID:           z8ekRunID(t),
+			BeadID:          "hk-m4c7-codex-local",
+			WorkspacePath:   wt,
+			Phase:           "implementer-initial",
+			IterationCount:  1,
+			BeadTitle:       "codex local NFR7",
+			BeadDescription: "local body",
+			Model:           "o4-mini",
+			Runner:          nil, // LOCAL run — no worker
 		}
 		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, codex.NewHarness("", ""), core.AgentTypeCodex)
 		if err != nil {
@@ -117,21 +118,21 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
 			t.Fatalf("mkdir .harmonik: %v", err)
 		}
-		rc := claudeRunCtx{
-			runID:           z8ekRunID(t),
-			beadID:          "hk-m4c7-pi-local",
-			workspacePath:   wt,
-			phase:           "implementer-initial",
-			iterationCount:  1,
-			beadTitle:       "pi local NFR7",
-			beadDescription: "local body",
-			handlerBinary:   "pi",
-			provider:        "openrouter",
-			model:           "openrouter/qwen/qwen3-coder",
-			apiKeyEnv:       "OPENROUTER_API_KEY",
-			baseURL:         "http://dgx.local:8080/v1",
-			api:             "openai",
-			runner:          nil, // LOCAL run — no worker
+		rc := shared.LaunchCtx{
+			RunID:           z8ekRunID(t),
+			BeadID:          "hk-m4c7-pi-local",
+			WorkspacePath:   wt,
+			Phase:           "implementer-initial",
+			IterationCount:  1,
+			BeadTitle:       "pi local NFR7",
+			BeadDescription: "local body",
+			HandlerBinary:   "pi",
+			Provider:        "openrouter",
+			Model:           "openrouter/qwen/qwen3-coder",
+			APIKeyEnv:       "OPENROUTER_API_KEY",
+			BaseURL:         "http://dgx.local:8080/v1",
+			API:             "openai",
+			Runner:          nil, // LOCAL run — no worker
 		}
 		h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
@@ -175,17 +176,17 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
 			t.Fatalf("mkdir .harmonik: %v", err)
 		}
-		rc := claudeRunCtx{
-			runID:           z8ekRunID(t),
-			beadID:          "hk-m4c7-codex-remote",
-			workspacePath:   wt,
-			phase:           "implementer-initial",
-			iterationCount:  1,
-			beadTitle:       "codex remote D2",
-			beadDescription: "remote body",
-			model:           "o4-mini",
-			baseEnv:         []string{"PATH=/usr/bin"},
-			runner:          newNoOpRecorderZ8ek(), // REMOTE run (worker selected)
+		rc := shared.LaunchCtx{
+			RunID:           z8ekRunID(t),
+			BeadID:          "hk-m4c7-codex-remote",
+			WorkspacePath:   wt,
+			Phase:           "implementer-initial",
+			IterationCount:  1,
+			BeadTitle:       "codex remote D2",
+			BeadDescription: "remote body",
+			Model:           "o4-mini",
+			BaseEnv:         []string{"PATH=/usr/bin"},
+			Runner:          newNoOpRecorderZ8ek(), // REMOTE run (worker selected)
 		}
 		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, codex.NewHarness("", ""), core.AgentTypeCodex)
 		if err != nil {
@@ -204,22 +205,22 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
 			t.Fatalf("mkdir .harmonik: %v", err)
 		}
-		rc := claudeRunCtx{
-			runID:           z8ekRunID(t),
-			beadID:          "hk-m4c7-pi-remote",
-			workspacePath:   wt,
-			phase:           "implementer-initial",
-			iterationCount:  1,
-			beadTitle:       "pi remote D2",
-			beadDescription: "remote body",
-			handlerBinary:   "pi",
-			provider:        "openrouter",
-			model:           "openrouter/qwen/qwen3-coder",
-			apiKeyEnv:       "OPENROUTER_API_KEY",
-			baseURL:         "http://dgx.local:8080/v1",
-			api:             "openai",
-			baseEnv:         []string{"PATH=/usr/bin"},
-			runner:          newNoOpRecorderZ8ek(), // REMOTE run (worker selected)
+		rc := shared.LaunchCtx{
+			RunID:           z8ekRunID(t),
+			BeadID:          "hk-m4c7-pi-remote",
+			WorkspacePath:   wt,
+			Phase:           "implementer-initial",
+			IterationCount:  1,
+			BeadTitle:       "pi remote D2",
+			BeadDescription: "remote body",
+			HandlerBinary:   "pi",
+			Provider:        "openrouter",
+			Model:           "openrouter/qwen/qwen3-coder",
+			APIKeyEnv:       "OPENROUTER_API_KEY",
+			BaseURL:         "http://dgx.local:8080/v1",
+			API:             "openai",
+			BaseEnv:         []string{"PATH=/usr/bin"},
+			Runner:          newNoOpRecorderZ8ek(), // REMOTE run (worker selected)
 		}
 		h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
@@ -325,8 +326,8 @@ func TestM4C7_SeamSurvival_StructuralFloors(t *testing.T) {
 
 	// (c) The runner-threading through the shared harness builder must survive.
 	hrSrc := readRepoFile(t, "internal", "daemon", "harnessregistry.go")
-	if !strings.Contains(hrSrc, "Runner: rc.runner") {
-		t.Error("seam deleted: harnessregistry.go no longer threads the per-run runner (Runner: rc.runner)")
+	if !strings.Contains(hrSrc, "Runner: rc.Runner") {
+		t.Error("seam deleted: harnessregistry.go no longer threads the per-run runner (Runner: rc.Runner)")
 	}
 
 	// (d) …Via(runner) helpers — the CommandRunner-aware file I/O seam. M4 landed

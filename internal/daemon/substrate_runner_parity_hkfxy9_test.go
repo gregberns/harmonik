@@ -247,7 +247,7 @@ func TestDotCognitionGateSubstrateRunnerLeak_hk9fe2(t *testing.T) {
 // codex run the agent-task.md would be written to box A's worktree path instead of
 // the WORKER's, so the worker-side codex would launch without its brief.
 //
-// rc.runner IS in scope in buildCodexRoutedLaunchSpec (it is a claudeRunCtx), so
+// rc.runner IS in scope in buildCodexRoutedLaunchSpec (it is a shared.LaunchCtx), so
 // unlike the cognition-gate this one IS a near-one-line swap to WriteAgentTaskVia
 // — but it lives in the SPEC-runner family (hk-3sus / hk-r36v), not the
 // SUBSTRATE-spawn family this test file pins, so the fix is deliberately left to

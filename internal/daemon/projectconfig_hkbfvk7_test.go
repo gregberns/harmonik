@@ -20,7 +20,7 @@ package daemon_test
 //   - Resolution: tier-1 conflict (two model: labels) → event emitted + tier-2 used.
 //   - Resolution: tier-1 conflict (two effort: labels) → event emitted + tier-2 used.
 //   - Resolution: tier-1 unrecognised effort value → event emitted + tier-2 used.
-//   - Integration: beadRunOne claudeRunCtx gets resolved model+effort from project config.
+//   - Integration: beadRunOne shared.LaunchCtx gets resolved model+effort from project config.
 //
 // Helper prefix: projCfgFixture (implementer-protocol.md §Helper-prefix discipline).
 //

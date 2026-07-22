@@ -6,7 +6,7 @@ package daemon_test
 //
 //  1. Pure-LaunchSpec golden: ClaudeHarness.LaunchSpec returns a SpawnSpec whose
 //     Binary/Args/Env/WorkDir match what buildClaudeLaunchSpec returns for the
-//     equivalent claudeRunCtx.  Covers all four workflow phases.
+//     equivalent shared.LaunchCtx.  Covers all four workflow phases.
 //
 //  2. Shared-scaffolding side-effect parity: calling ClaudeHarness.LaunchSpec
 //     produces the same workspace side-effects (settings.json, agent-task.md) as

@@ -26,6 +26,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/substrate"
@@ -163,7 +164,7 @@ type WorktreePort interface {
 type LaunchPort interface {
 	// BuildSpec builds the handler LaunchSpec + artifacts for a run (the
 	// launchSpecBuilder surface).
-	BuildSpec(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)
+	BuildSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
 }
 
 // BudgetPort is the one-method wrap of the queueStore review-loop-failure budget
@@ -202,17 +203,17 @@ func worktreePort(factory func(ctx context.Context, projectDir, runID, headSHA s
 // BuildSpec is a pass-through onto that builder — byte-identical to the pre-port
 // `specBuilder(ctx, rc)` call site.
 type daemonLaunch struct {
-	builder func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)
+	builder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
 }
 
-func (l daemonLaunch) BuildSpec(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+func (l daemonLaunch) BuildSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 	return l.builder(ctx, rc)
 }
 
 // launchPort wraps a resolved launch-spec builder as a LaunchPort. The builder
 // is assembled per-run in beadRunOne (it needs the routed harness registry and
 // the pre-built spec builder), so this is threaded there (RSM-010).
-func launchPort(builder func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)) LaunchPort {
+func launchPort(builder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)) LaunchPort {
 	return daemonLaunch{builder: builder}
 }
 

@@ -61,6 +61,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
@@ -249,7 +250,7 @@ type workLoopDeps struct {
 
 	// daemonBinaryPath is the absolute path to the running harmonik binary,
 	// resolved via os.Executable() at daemon startup (hk-kqdpf.6). Threaded
-	// into claudeRunCtx so MaterializeClaudeSettings emits absolute-path hook
+	// into shared.LaunchCtx so MaterializeClaudeSettings emits absolute-path hook
 	// commands instead of bare "harmonik". When empty, falls back to "harmonik".
 	daemonBinaryPath string
 
@@ -348,7 +349,7 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.21.
 	hookStore hookStoreIface
 
-	// launchSpecBuilder builds the handler.LaunchSpec and claudeRunArtifacts for
+	// launchSpecBuilder builds the handler.LaunchSpec and shared.LaunchArtifacts for
 	// a given bead run. Production always uses buildClaudeLaunchSpec. Test fixtures
 	// that do not need real bridge setup (e.g. MaterializeClaudeSettings fsyncs)
 	// may inject a lightweight stub via ExportedWorkLoopDeps.
@@ -356,7 +357,7 @@ type workLoopDeps struct {
 	// When nil, buildClaudeLaunchSpec is used (production default).
 	//
 	// Bead ref: hk-kqdpf.1.
-	launchSpecBuilder func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)
+	launchSpecBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
 
 	// worktreeFactory creates a worktree directory for a bead run and returns its
 	// absolute path. Production always uses workspace.CreateWorktree and then
@@ -4297,33 +4298,33 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		rbcHookSock = rbc.workerHookSock
 	}
 	agentDaemonSock := tunnelpkg.ResolveAgentDaemonSocket(rbcHookSock, daemonSock)
-	rc := claudeRunCtx{
-		runID:             runID,
-		beadID:            string(beadID),
-		workspacePath:     wtPath,
-		daemonSocket:      agentDaemonSock,
-		workflowMode:      workflowMode,
-		phase:             "", // empty = single-mode
-		iterationCount:    1,
-		priorClaudeSessID: nil,
-		handlerBinary:     deps.handlerBinary,
-		daemonBinaryPath:  deps.daemonBinaryPath,
-		baseEnv:           deps.handlerEnv,
-		beadTitle:         beadRecord.Title,
-		beadDescription:   beadRecord.Description,
-		model:             resolvedModel,
-		effort:            resolvedEffort,
-		provider:          resolvedProfile.Provider,
-		apiKeyEnv:         resolvedProfile.APIKeyEnv,
-		apiKeyFile:        resolvedProfile.APIKeyFile,
-		baseURL:           resolvedProfile.BaseURL,
-		api:               resolvedProfile.API,
+	rc := shared.LaunchCtx{
+		RunID:             runID,
+		BeadID:            string(beadID),
+		WorkspacePath:     wtPath,
+		DaemonSocket:      agentDaemonSock,
+		WorkflowMode:      workflowMode,
+		Phase:             "", // empty = single-mode
+		IterationCount:    1,
+		PriorClaudeSessID: nil,
+		HandlerBinary:     deps.handlerBinary,
+		DaemonBinaryPath:  deps.daemonBinaryPath,
+		BaseEnv:           deps.handlerEnv,
+		BeadTitle:         beadRecord.Title,
+		BeadDescription:   beadRecord.Description,
+		Model:             resolvedModel,
+		Effort:            resolvedEffort,
+		Provider:          resolvedProfile.Provider,
+		APIKeyEnv:         resolvedProfile.APIKeyEnv,
+		APIKeyFile:        resolvedProfile.APIKeyFile,
+		BaseURL:           resolvedProfile.BaseURL,
+		API:               resolvedProfile.API,
 		// worktreeRootPath is used by buildClaudeLaunchSpec to check whether the
 		// workspace is a harmonik-managed worktree for --dangerously-skip-permissions
 		// per HC-055b. Derived from activeRepo (= target repo for cross-repo runs).
-		worktreeRootPath: workspace.WorktreeRootPath(activeRepo, workspace.NoWorktreeRootOverride()),
-		extraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
-		baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
+		WorktreeRootPath: workspace.WorktreeRootPath(activeRepo, workspace.NoWorktreeRootOverride()),
+		ExtraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
+		BaseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 	}
 	// hk-z8ek: for a REMOTE run, thread the worker's SSHRunner into the launch
 	// spec so the three materialization writes (.claude/settings.json,
@@ -4333,8 +4334,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hook subprocess runs ON THE WORKER). Nil runner + empty workerBinaryPath
 	// for a LOCAL run keeps the materialization byte-identical (NFR7).
 	if rbc != nil {
-		rc.runner = rbc.sshRunner
-		rc.workerBinaryPath = tunnelpkg.WorkerHarmonikPath(rbc.worker)
+		rc.Runner = rbc.sshRunner
+		rc.WorkerBinaryPath = tunnelpkg.WorkerHarmonikPath(rbc.worker)
 	}
 	// RSM-010 (RT7): build the launch spec through LaunchPort (assembled above,
 	// before the mode switch, over the pre-built routed builder). Byte-identical to
@@ -4635,8 +4636,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	// Step 2: register the hook session so incoming Stop-hook relays are routed
 	// to this run's hookSessionStore entry (CHB-025).
-	deps.hookStore.RegisterHookSession(runID.String(), artifacts.claudeSessionID)
-	defer deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+	deps.hookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
+	defer deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 
 	// Step 3: emit pre-exec messages on the bus BEFORE Launch (CHB-018 ordering).
 	// Each message carries a "type" field that maps directly to a core.EventType.
@@ -4646,7 +4647,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// it must signal that a tmux window actually spawned, not merely that the
 	// daemon is about to try (which would mislead operators when SpawnWindow is
 	// wedged on a leaked spawn slot).
-	implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.preExecMsgs)
+	implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
 
 	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
 	// watcher events without a post-seal bus subscription (EV-009).
@@ -4806,8 +4807,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Capture values for the callback closure; claudeSessionID is a plain string
 	// (not core.SessionID) so copy it explicitly to avoid capturing a loop var.
 	cbRunID := runID
-	cbClaudeSessionID := artifacts.claudeSessionID
-	deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
+	cbClaudeSessionID := artifacts.ClaudeSessionID
+	deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() {
 		// hk-5cox8 observability: populate run_id, claude_session_id, and provenance
 		// so the emitted agent_ready event in events.jsonl can be correlated per-run.
 		// Previously this called tap.Emit with nil payload, producing payload:null
@@ -4837,7 +4838,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Step 5: start CHB-019 heartbeat goroutine.  Daemon-owned per OQ5 resolution.
 	hbDone := make(chan struct{})
-	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
+	go handler.RunHeartbeatLoop(ctx, artifacts.HandlerSessionID,
 		handler.HeartbeatInterval, hbDone,
 		newDaemonHeartbeatEmitter(tap, runID))
 	defer close(hbDone)
@@ -4984,8 +4985,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 		// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
-		briefDelivered := pasteInjectOnLaunch(ctx, runPasteTarget, artifacts.claudeSessionID,
-			handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath,
+		briefDelivered := pasteInjectOnLaunch(ctx, runPasteTarget, artifacts.ClaudeSessionID,
+			handlercontract.ReviewLoopPhase(rc.Phase), rc.IterationCount, wtPath,
 			deps.bus, runID)
 
 		// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
@@ -5038,7 +5039,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
 	// apply the stop-hook grace window for a pending outcome_emitted payload.
 	socketOutcome, ei := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
-		runID.String(), artifacts.claudeSessionID)
+		runID.String(), artifacts.ClaudeSessionID)
 
 	// hk-0z5x: per-run abort check — fired when the never-spawned reaper in
 	// StaleWatcher cancels the per-run context (ctx) because launch_initiated
@@ -5162,7 +5163,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	// Step 8: map Wait-return to a terminal event (CHB-020 branches 1/2/3).
 	term := handler.MapWaitReturnToTerminalEvent(
-		artifacts.handlerSessionID, ei.exitCode, ei.waitErr, socketOutcome,
+		artifacts.HandlerSessionID, ei.exitCode, ei.waitErr, socketOutcome,
 	)
 
 	// Step 9: emit terminal event and close or reopen the bead.
@@ -8100,16 +8101,16 @@ func emitTmuxNewWindowTimeout(ctx context.Context, bus handlercontract.EventEmit
 // emitAgentReadyTimeout emits an agent_ready_timeout event (hk-5cox8) when
 // the HC-056 timeout fires — no agent_ready relay message arrived within the
 // configured deadline. The event carries run_id, claude_session_id, and
-// artifactAgentType returns the resolved agent type from claudeRunArtifacts,
+// artifactAgentType returns the resolved agent type from shared.LaunchArtifacts,
 // falling back to core.AgentTypeClaudeCode when the field is empty (e.g. from a
 // legacy test fixture that builds artifacts directly without going through
 // routedLaunchSpecBuilder).
 //
 // Used to look up the correct Adapter via adapterRegistry.ForAgent instead of
 // hardcoding core.AgentTypeClaudeCode (T12, hk-xhawy).
-func artifactAgentType(a claudeRunArtifacts) core.AgentType {
-	if a.resolvedAgentType.Valid() {
-		return a.resolvedAgentType
+func artifactAgentType(a shared.LaunchArtifacts) core.AgentType {
+	if a.ResolvedAgentType.Valid() {
+		return a.ResolvedAgentType
 	}
 	return core.AgentTypeClaudeCode
 }

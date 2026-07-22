@@ -13,7 +13,7 @@ package daemon_test
 //     detection path is not directly testable here — the helper builds argv
 //     internally, so we verify the deny-list path via env-var injection).
 //   - LaunchSpec fields are populated correctly per spec.
-//   - claudeRunArtifacts carries claudeSessionID, sessionLogPath, handlerSessionID,
+//   - shared.LaunchArtifacts carries claudeSessionID, sessionLogPath, handlerSessionID,
 //     and preExecMsgs.
 //
 // Helper prefix: claudeLaunchSpecFixture (bead hk-gql20.13).
@@ -46,7 +46,7 @@ func claudeLaunchSpecFixtureWorkspace(t *testing.T) string {
 	return dir
 }
 
-// claudeLaunchSpecFixtureRunCtx builds a claudeRunCtx for the given phase.
+// claudeLaunchSpecFixtureRunCtx builds a shared.LaunchCtx for the given phase.
 // workspacePath must be a valid temp directory (e.g. from claudeLaunchSpecFixtureWorkspace).
 func claudeLaunchSpecFixtureRunCtx(
 	t *testing.T,

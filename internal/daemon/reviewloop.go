@@ -55,6 +55,7 @@ import (
 	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/substrate"
@@ -268,10 +269,10 @@ func runReviewLoop(
 			implPrior = &prior
 		}
 
-		implRC := claudeRunCtx{
-			runID:         runID,
-			beadID:        string(beadID),
-			workspacePath: wtPath,
+		implRC := shared.LaunchCtx{
+			RunID:         runID,
+			BeadID:        string(beadID),
+			WorkspacePath: wtPath,
 			// runner threads the per-run CommandRunner into buildClaudeLaunchSpec so
 			// MaterializeClaudeSettingsVia / EnsureWorktreeTrustVia / WriteAgentTaskVia
 			// all land on the WORKER for a REMOTE run (runner == rbc.sshRunner) and
@@ -279,31 +280,31 @@ func runReviewLoop(
 			// worktree-trust upsert ran box-A-local and the worker's per-run worktree
 			// stayed untrusted → claude showed the trust/bypass modal → no_commit
 			// (hk-3sus; symmetric with how settings/agent-task get the worker).
-			runner: runner,
+			Runner: runner,
 			// workerBinaryPath resolves the SessionStart hook command to the WORKER's
 			// harmonik path for a REMOTE run; empty for a LOCAL run falls back box-A-
 			// local in claudelaunchspec (hk-fxy9). Without this the worker's settings.json
 			// pointed at box-A's daemonBinaryPath → hook never exec'd → agent_ready_timeout.
-			workerBinaryPath:  workerBinaryPath,
-			daemonSocket:      daemonSocket,
-			workflowMode:      core.WorkflowModeReviewLoop,
-			phase:             implPhase,
-			iterationCount:    state.iterationCount,
-			priorClaudeSessID: implPrior,
-			handlerBinary:     deps.handlerBinary,
-			daemonBinaryPath:  deps.daemonBinaryPath,
-			baseEnv:           deps.handlerEnv,
-			beadTitle:         beadTitle,
-			beadDescription:   beadDescription,
-			model:             resolvedModel,
-			effort:            resolvedEffort,
+			WorkerBinaryPath:  workerBinaryPath,
+			DaemonSocket:      daemonSocket,
+			WorkflowMode:      core.WorkflowModeReviewLoop,
+			Phase:             implPhase,
+			IterationCount:    state.iterationCount,
+			PriorClaudeSessID: implPrior,
+			HandlerBinary:     deps.handlerBinary,
+			DaemonBinaryPath:  deps.daemonBinaryPath,
+			BaseEnv:           deps.handlerEnv,
+			BeadTitle:         beadTitle,
+			BeadDescription:   beadDescription,
+			Model:             resolvedModel,
+			Effort:            resolvedEffort,
 			// worktreeRootPath enables --dangerously-skip-permissions for daemon-managed
 			// worktrees per HC-055b.
-			worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
+			WorktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
 			// priorVerdictFile and priorVerdictSummary are populated below for
 			// implementer-resume phases (iteration ≥ 2) once state.lastVerdictNotes is known.
-			extraContext: extraContext, // hk-boiwe
-			baseBranch:   baseBranch,   // hk-mtm0w: pre-exit rebase target
+			ExtraContext: extraContext, // hk-boiwe
+			BaseBranch:   baseBranch,   // hk-mtm0w: pre-exit rebase target
 		}
 		implSpecBuilder := deps.launchSpecBuilder
 		if implSpecBuilder == nil {
@@ -385,7 +386,7 @@ func runReviewLoop(
 		// correctly (CHB-025). Closed after waitWithSocketGrace returns so late
 		// hooks from a completed implementer don't bleed into the reviewer.
 		if deps.hookStore != nil {
-			deps.hookStore.RegisterHookSession(runID.String(), implArtifacts.claudeSessionID)
+			deps.hookStore.RegisterHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 		}
 
 		// For the initial implementer launch (iteration 1): wire a
@@ -522,7 +523,7 @@ func runReviewLoop(
 		// so it signals a window actually spawned, not merely that the daemon is
 		// about to try (which misleads operators when SpawnWindow is wedged on a
 		// leaked spawn slot).
-		implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, implArtifacts.preExecMsgs)
+		implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, implArtifacts.PreExecMsgs)
 
 		// Create a per-run tapping emitter so the dispatch segment's ready pump
 		// can observe watcher events from the implementer launch without a
@@ -606,7 +607,7 @@ func runReviewLoop(
 			},
 			onLaunchFailed: func(lctx context.Context, launchErr error) {
 				if deps.hookStore != nil {
-					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 				}
 				// hk-4l7zs: surface spawn-cap saturation (slot-leak signature) as a
 				// dedicated spawn_cap_blocked event when the implementer launch is
@@ -637,7 +638,7 @@ func runReviewLoop(
 				// dispatch. Mirrors the single-mode path (workloop.go Step 5); closed via
 				// the per-iteration defer registered after the segment returns.
 				implHBDone = make(chan struct{})
-				go handler.RunHeartbeatLoop(ctx, implArtifacts.handlerSessionID,
+				go handler.RunHeartbeatLoop(ctx, implArtifacts.HandlerSessionID,
 					handler.HeartbeatInterval, implHBDone,
 					newDaemonHeartbeatEmitter(implTap, runID))
 				// Wire the implementer's agent-ready callback into implTap so that
@@ -651,7 +652,7 @@ func runReviewLoop(
 				if deps.hookStore != nil {
 					capturedImplTap := implTap
 					capturedImplRunID := runID                                                                   // hk-wths: copy for EmitWithRunID closure
-					deps.hookStore.SetAgentReadyCallback(runID.String(), implArtifacts.claudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+					deps.hookStore.SetAgentReadyCallback(runID.String(), implArtifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 						// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
 						// the stale watcher's never-spawned reaper sees agentReadySeen = true.
 						_ = capturedImplTap.EmitWithRunID(context.Background(), capturedImplRunID, core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
@@ -697,7 +698,7 @@ func runReviewLoop(
 				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 				// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3, hk-kunm4.
 				if implCompletionMode != handlercontract.CompletionProcessExit {
-					implBriefDelivered := pasteInjectOnLaunch(dctx, implPasteTarget, implArtifacts.claudeSessionID,
+					implBriefDelivered := pasteInjectOnLaunch(dctx, implPasteTarget, implArtifacts.ClaudeSessionID,
 						implPhase, state.iterationCount, wtPath, deps.bus, runID)
 
 					// Quit-on-commit: after the implementer's task commit lands in the worktree,
@@ -740,11 +741,11 @@ func runReviewLoop(
 					implWaitCancel()
 				}
 				if deps.hookStore != nil {
-					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 				}
 			},
 			emitReadyTimeout: func(ectx context.Context) {
-				emitAgentReadyTimeout(ectx, deps.bus, runID, implArtifacts.claudeSessionID, deps.agentReadyTimeout)
+				emitAgentReadyTimeout(ectx, deps.bus, runID, implArtifacts.ClaudeSessionID, deps.agentReadyTimeout)
 			},
 			killAbort: func(context.Context) {
 				// Ctx-cancel abort edge: Kill is idempotent (the per-iteration
@@ -785,7 +786,7 @@ func runReviewLoop(
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
 		_, implEI := waitWithSocketGrace(ctx, deps.hookStore, implWatcher, implSess,
-			runID.String(), implArtifacts.claudeSessionID)
+			runID.String(), implArtifacts.ClaudeSessionID)
 		// implEI carries exit code + stderr tail; surfaced into the no-commit
 		// failure summary below (hk-loga9, extends hk-ajhqw's single-mode fix).
 
@@ -809,7 +810,7 @@ func runReviewLoop(
 		// Close this phase's hook session — late hooks from a completed implementer
 		// must not bleed into the next phase (reviewer or implementer-resume).
 		if deps.hookStore != nil {
-			deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+			deps.hookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 		}
 
 		// hk-a2okh: stop the hang-detector goroutine promptly (idempotent).
@@ -819,7 +820,7 @@ func runReviewLoop(
 		if implHangDetectedCh != nil {
 			select {
 			case <-implHangDetectedCh:
-				emitPostAgentReadyHang(ctx, deps.bus, runID, implArtifacts.claudeSessionID,
+				emitPostAgentReadyHang(ctx, deps.bus, runID, implArtifacts.ClaudeSessionID,
 					deps.postAgentReadyHangTimeout, state.iterationCount, string(implPhase))
 				result := rlErrorResult(fmt.Sprintf("post_agent_ready_hang: implementer made no observable progress within %v at iteration %d",
 					deps.postAgentReadyHangTimeout, state.iterationCount))
@@ -975,7 +976,7 @@ func runReviewLoop(
 				// Interceptor never fired (tmux substrate, or handler exited
 				// without emitting handler_capabilities with claude_session_id).
 			}
-			state.claudeSessionID = rlResolveIter1ClaudeSessionID(deps.clock, interceptorID, implArtifacts.claudeSessionID)
+			state.claudeSessionID = rlResolveIter1ClaudeSessionID(deps.clock, interceptorID, implArtifacts.ClaudeSessionID)
 
 			// hk-za5mz: when the interceptor never persisted the id (interceptorID
 			// empty) but we fell back to the real minted id, the CHB-023 git
@@ -1001,7 +1002,7 @@ func runReviewLoop(
 			// (codex). Their session id is the captured thread_id, not a minted UUID;
 			// persisting implArtifacts.claudeSessionID (a tracking UUID, not a real codex
 			// thread_id) would write a useless value and misrepresent the state.
-			if runner == nil && interceptorID == "" && state.claudeSessionID == implArtifacts.claudeSessionID && implArtifacts.claudeSessionID != "" && !implIsSessionIDCaptured {
+			if runner == nil && interceptorID == "" && state.claudeSessionID == implArtifacts.ClaudeSessionID && implArtifacts.ClaudeSessionID != "" && !implIsSessionIDCaptured {
 				res, persistErr := persistClaudeSessionID(ctx, wtPath, runID, state.claudeSessionID)
 				if persistErr != nil {
 					fmt.Fprintf(os.Stderr,
@@ -1198,10 +1199,10 @@ func runReviewLoop(
 		// CHB-009: reviewer ALWAYS mints a fresh claudeSessionID (priorClaudeSessID=nil).
 		// Each reviewer is an independent fresh session; the prior implementer's
 		// session ID is NEVER passed to the reviewer even when it is known.
-		revRC := claudeRunCtx{
-			runID:         runID,
-			beadID:        string(beadID),
-			workspacePath: revWtPath,
+		revRC := shared.LaunchCtx{
+			RunID:         runID,
+			BeadID:        string(beadID),
+			WorkspacePath: revWtPath,
 			// hk-fxy9 (fix D): the reviewer worktree is ALWAYS box-A-local
 			// (CreateReviewerWorktree above uses NoWorktreeRootOverride and materialises
 			// on box A at the implementer's pushed SHA), so its spec runner MUST be nil —
@@ -1211,24 +1212,24 @@ func runReviewLoop(
 			// box-A reviewer worktree stayed untrusted → trust modal → reviewer no-verdict.
 			// (The reviewer's SUBSTRATE runner at revPRS below is correctly nil — its claude
 			// process also spawns box-A-local.)
-			runner:            nil,
-			daemonSocket:      boxADaemonSocket,
-			workflowMode:      core.WorkflowModeReviewLoop,
-			phase:             handlercontract.ReviewLoopPhaseReviewer,
-			iterationCount:    state.iterationCount,
-			priorClaudeSessID: nil, // CHB-009: reviewer always mints fresh
-			handlerBinary:     deps.handlerBinary,
-			daemonBinaryPath:  deps.daemonBinaryPath,
-			baseEnv:           deps.handlerEnv,
-			beadTitle:         beadTitle,
-			beadDescription:   beadDescription,
-			model:             resolvedModel,
-			effort:            resolvedEffort,
+			Runner:            nil,
+			DaemonSocket:      boxADaemonSocket,
+			WorkflowMode:      core.WorkflowModeReviewLoop,
+			Phase:             handlercontract.ReviewLoopPhaseReviewer,
+			IterationCount:    state.iterationCount,
+			PriorClaudeSessID: nil, // CHB-009: reviewer always mints fresh
+			HandlerBinary:     deps.handlerBinary,
+			DaemonBinaryPath:  deps.daemonBinaryPath,
+			BaseEnv:           deps.handlerEnv,
+			BeadTitle:         beadTitle,
+			BeadDescription:   beadDescription,
+			Model:             resolvedModel,
+			Effort:            resolvedEffort,
 			// worktreeRootPath enables --dangerously-skip-permissions for daemon-managed
 			// worktrees per HC-055b.
-			worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
-			extraContext:     extraContext, // hk-boiwe
-			baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
+			WorktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
+			ExtraContext:     extraContext, // hk-boiwe
+			BaseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 		}
 		// T14 hk-iv748: reviewer harness resolution — DEFAULT path (review-loop mode).
 		//
@@ -1253,7 +1254,7 @@ func runReviewLoop(
 		// a claude/SessionIDMinted implementer unchanged (all-claude byte-identical).
 		revSpecBuilder := deps.launchSpecBuilder
 		revNodeDefault := reviewerDefaultHarness(
-			deps.harnessRegistry, implArtifacts.resolvedAgentType, string(beadID))
+			deps.harnessRegistry, implArtifacts.ResolvedAgentType, string(beadID))
 		if deps.harnessRegistry != nil && revNodeDefault.Valid() {
 			revSpecBuilder = routedLaunchSpecBuilder(
 				deps.harnessRegistry,
@@ -1313,7 +1314,7 @@ func runReviewLoop(
 		// Register reviewer's hook session (CHB-025); closed after wait completes
 		// so late hooks from a closed reviewer don't bleed into the next iteration.
 		if deps.hookStore != nil {
-			deps.hookStore.RegisterHookSession(runID.String(), revArtifacts.claudeSessionID)
+			deps.hookStore.RegisterHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 		}
 
 		// hk-fra5l: emit reviewer pre-exec messages (handler_capabilities →
@@ -1322,7 +1323,7 @@ func runReviewLoop(
 		//
 		// hk-4l7zs: launch_initiated is held back and emitted AFTER Launch returns
 		// (see implementer phase) so it signals a live reviewer window.
-		revLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, revArtifacts.preExecMsgs)
+		revLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, revArtifacts.PreExecMsgs)
 
 		// Create a per-phase tapping emitter so the dispatch segment's ready pump
 		// can observe watcher events from the reviewer launch without a post-seal
@@ -1381,7 +1382,7 @@ func runReviewLoop(
 			},
 			onLaunchFailed: func(lctx context.Context, launchErr error) {
 				if deps.hookStore != nil {
-					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
+					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 				}
 				// hk-4l7zs: spawn-cap saturation on the reviewer launch.
 				if errors.Is(launchErr, ErrSpawnCapTimeout) {
@@ -1410,7 +1411,7 @@ func runReviewLoop(
 				if deps.hookStore != nil {
 					capturedRevTap := revTap
 					capturedRevRunID := runID                                                                   // hk-wths: copy for EmitWithRunID closure
-					deps.hookStore.SetAgentReadyCallback(runID.String(), revArtifacts.claudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+					deps.hookStore.SetAgentReadyCallback(runID.String(), revArtifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 						// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
 						// the stale watcher's never-spawned reaper sees agentReadySeen = true.
 						_ = capturedRevTap.EmitWithRunID(context.Background(), capturedRevRunID, core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
@@ -1429,7 +1430,7 @@ func runReviewLoop(
 				// and sends /quit once the verdict is written — without this the
 				// reviewer claude hangs indefinitely at a prompt.
 				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
-				revBriefDelivered := pasteInjectOnLaunch(dctx, revPasteTarget, revArtifacts.claudeSessionID,
+				revBriefDelivered := pasteInjectOnLaunch(dctx, revPasteTarget, revArtifacts.ClaudeSessionID,
 					handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, revWtPath,
 					deps.bus, runID)
 				if qs, ok := revPasteTarget.(quitSender); ok {
@@ -1444,7 +1445,7 @@ func runReviewLoop(
 					// actively reasoning (recent agent_heartbeat), not only when the OS
 					// pane-liveness probe finds an active process.
 					revHBCh := revTap.Subscribe()
-					go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revInj, revArtifacts.claudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
+					go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revInj, revArtifacts.ClaudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
 				}
 			},
 			killReady: func(kctx context.Context) {
@@ -1473,7 +1474,7 @@ func runReviewLoop(
 					revWaitCancel()
 				}
 				if deps.hookStore != nil {
-					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
+					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 				}
 			},
 			killAbort: func(context.Context) {
@@ -1506,7 +1507,7 @@ func runReviewLoop(
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
 		_, revEI := waitWithSocketGrace(ctx, deps.hookStore, revWatcher, revSess,
-			runID.String(), revArtifacts.claudeSessionID)
+			runID.String(), revArtifacts.ClaudeSessionID)
 		_ = revEI
 
 		// hk-e6mtt: destroy the reviewer tmux window after the session completes.
@@ -1518,7 +1519,7 @@ func runReviewLoop(
 		// Close reviewer's hook session — late hooks must not bleed into the
 		// next iteration's implementer-resume (CHB-025 isolation).
 		if deps.hookStore != nil {
-			deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
+			deps.hookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 		}
 
 		if ctx.Err() != nil {

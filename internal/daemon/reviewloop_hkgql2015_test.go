@@ -274,7 +274,7 @@ func (tr *rlBridgeHookTracker) snapshot() []rlBridgeHookCall {
 // reuses the implementer's session ID.
 //
 // CHB-009 is enforced by always passing priorClaudeSessID=nil when building
-// the reviewer's claudeRunCtx. We test this at two levels:
+// the reviewer's shared.LaunchCtx. We test this at two levels:
 //
 // Level 1 (unit): ExportedBuildClaudeLaunchSpec with phase=reviewer and a
 // non-nil priorClaudeSessID still produces --session-id <fresh-uuid> args

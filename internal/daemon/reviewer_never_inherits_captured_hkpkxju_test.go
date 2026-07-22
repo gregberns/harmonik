@@ -15,7 +15,7 @@ package daemon_test
 // dispatch blocks on it.
 //
 // Two sites inherited:
-//   - reviewloop.go — reviewer tier-3 nodeDefault pinned to implArtifacts.resolvedAgentType.
+//   - reviewloop.go — reviewer tier-3 nodeDefault pinned to implArtifacts.ResolvedAgentType.
 //   - dot_cascade.go — reviewer node with no reviewer_harness= override and no own
 //     harness= attr fell through to deps.launchSpecBuilder (tier-1/tier-4 → codex).
 //
@@ -59,7 +59,7 @@ func hkpkxjuBead(id string, labels ...string) core.BeadRecord {
 // TestReviewerNeverInheritsCapturedHarness_ReviewLoop_hkpkxju covers cases 1 and 2:
 // the review-loop reviewer's tier-3 nodeDefault.
 //
-// This binds to reviewloop.go, where implArtifacts.resolvedAgentType is passed
+// This binds to reviewloop.go, where implArtifacts.ResolvedAgentType is passed
 // through reviewerDefaultHarness before being handed to routedLaunchSpecBuilder as
 // the reviewer's tier-3 nodeDefault.
 func TestReviewerNeverInheritsCapturedHarness_ReviewLoop_hkpkxju(t *testing.T) {
@@ -280,7 +280,7 @@ func TestReviewerNeverInheritsCapturedHarness_DispatchWiring_hkpkxju(t *testing.
 			file: "reviewloop.go",
 			want: []string{
 				"revNodeDefault := reviewerDefaultHarness(",
-				"deps.harnessRegistry, implArtifacts.resolvedAgentType, string(beadID))",
+				"deps.harnessRegistry, implArtifacts.ResolvedAgentType, string(beadID))",
 				"revNodeDefault,     // tier-3",
 			},
 		},

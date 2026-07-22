@@ -365,7 +365,6 @@ func TestCadenceFilterIncludes(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		name := string(tc.filter) + "/" + string(tc.tag)
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

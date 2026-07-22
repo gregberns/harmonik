@@ -2,6 +2,7 @@ package scenario
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -208,7 +209,9 @@ func fsyncCloseEventLog(path string) error {
 		return fmt.Errorf("open %q: %w", path, err)
 	}
 	if syncErr := f.Sync(); syncErr != nil {
-		_ = f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			return fmt.Errorf("sync and close %q: %w", path, errors.Join(syncErr, closeErr))
+		}
 		return fmt.Errorf("sync %q: %w", path, syncErr)
 	}
 	if closeErr := f.Close(); closeErr != nil {

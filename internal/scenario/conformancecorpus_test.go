@@ -122,7 +122,6 @@ func TestConformanceCorpus_SH101ScenariosParse(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.path, func(t *testing.T) {
 			t.Parallel()
 
@@ -461,7 +460,6 @@ func TestConformanceCorpus_PiTier3ModelLeakGate(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := conformanceCorpusFixtureGap1Verdict(t, lib, filepath.Join(td, tc.stream), spec)

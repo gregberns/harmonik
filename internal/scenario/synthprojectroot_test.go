@@ -16,7 +16,7 @@ func syntheticRootFixtureParentDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("syntheticRootFixtureParentDir: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cleanupTempDir(t, dir)
 	return dir
 }
 

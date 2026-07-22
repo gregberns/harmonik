@@ -39,7 +39,7 @@ func shINV002TempDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("shINV002TempDir: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cleanupTempDir(t, dir)
 	return dir
 }
 
@@ -59,7 +59,10 @@ func shINV002WriteLease(t *testing.T, workspacePath string, runID core.RunID) st
 		"created_at": "2026-01-01T00:00:00Z",
 		"ttl_sec":    3600,
 	}
-	data, _ := json.Marshal(content)
+	data, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("shINV002WriteLease: Marshal: %v", err)
+	}
 	data = append(data, '\n')
 	//nolint:gosec // G306: 0644 is appropriate for test fixture files
 	if err := os.WriteFile(lockPath, data, 0o644); err != nil {

@@ -553,7 +553,6 @@ func TestScenarioFileNameRegex(t *testing.T) {
 	}
 
 	for _, n := range valid {
-		n := n
 		t.Run("valid:"+n, func(t *testing.T) {
 			t.Parallel()
 			sf := base
@@ -585,7 +584,6 @@ func TestScenarioFileNameRegex(t *testing.T) {
 	}
 
 	for _, n := range invalid {
-		n := n
 		t.Run("invalid:"+n, func(t *testing.T) {
 			t.Parallel()
 			sf := base

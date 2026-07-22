@@ -83,14 +83,18 @@ func shINV004WriteJSONL(t *testing.T, lines []string) string {
 	if err != nil {
 		t.Fatalf("shINV004WriteJSONL: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cleanupTempDir(t, dir)
 
 	p := filepath.Join(dir, "events.jsonl")
 	f, err := os.Create(p) //nolint:gosec // G304: test-only temp path
 	if err != nil {
 		t.Fatalf("shINV004WriteJSONL: Create: %v", err)
 	}
-	defer f.Close()
+	t.Cleanup(func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("shINV004WriteJSONL: Close: %v", closeErr)
+		}
+	})
 	for _, line := range lines {
 		if _, err := fmt.Fprintln(f, line); err != nil {
 			t.Fatalf("shINV004WriteJSONL: Fprintln: %v", err)

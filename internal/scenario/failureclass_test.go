@@ -306,8 +306,8 @@ func TestFailureClassHigherPrecedenceThan(t *testing.T) {
 		name  string
 		a     FailureClass
 		b     FailureClass
-		wantA bool // a.HigherPrecedenceThan(b)
-		wantB bool // b.HigherPrecedenceThan(a)
+		wantA bool
+		wantB bool
 	}{
 		{
 			name:  "harness-internal-error beats cleanup-failed",

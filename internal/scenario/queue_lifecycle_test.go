@@ -70,13 +70,22 @@ func queueLifecycleFixtureProjectDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("queueLifecycleFixtureProjectDir: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(fixtureRoot) })
+	queueLifecycleCleanupTempDir(t, fixtureRoot)
 
 	result, err := scenario.BootstrapFixture(t.Context(), fixtureRoot, "queue-lifecycle", nil)
 	if err != nil {
 		t.Fatalf("queueLifecycleFixtureProjectDir: BootstrapFixture: %v", err)
 	}
 	return result.ProjectRoot
+}
+
+func queueLifecycleCleanupTempDir(t *testing.T, dir string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove temporary directory %q: %v", dir, err)
+		}
+	})
 }
 
 // queueLifecycleFixtureTwoGroupQueue constructs the canonical 2-wave-group queue:

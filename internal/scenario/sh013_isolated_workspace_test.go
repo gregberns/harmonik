@@ -38,7 +38,7 @@ func sh013IsolatedEphemeralRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("sh013IsolatedEphemeralRoot: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cleanupTempDir(t, dir)
 	return dir
 }
 

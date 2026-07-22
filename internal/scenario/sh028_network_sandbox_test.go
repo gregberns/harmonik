@@ -95,7 +95,9 @@ func TestSH028_ApplyNetworkSandboxCallable(t *testing.T) {
 		t.Fatal("SH-028: ApplyNetworkSandbox returned (nil, nil); one must be non-nil")
 	}
 	if h != nil {
-		_ = h.Release()
+		if releaseErr := h.Release(); releaseErr != nil {
+			t.Errorf("SH-028: release sandbox handle: %v", releaseErr)
+		}
 	}
 }
 
@@ -242,9 +244,11 @@ func TestSH028_LinuxNetworkSandboxIsolation(t *testing.T) {
 	// Use a well-known non-loopback address (8.8.8.8:53 — Google DNS).
 	// After unshare(CLONE_NEWNET), this MUST fail with "network unreachable"
 	// or similar, NOT with a timeout (the kernel rejects it immediately).
-	conn, dialErr := net.DialTimeout("tcp", "8.8.8.8:53", nonLoopbackDialTimeout) //nolint:noctx
+	conn, dialErr := net.DialTimeout("tcp", "8.8.8.8:53", nonLoopbackDialTimeout) //nolint:noctx // DialTimeout deliberately exercises the sandbox's outbound TCP block.
 	if conn != nil {
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			t.Errorf("SH-028: close unexpected non-loopback connection: %v", closeErr)
+		}
 		t.Error("SH-028: non-loopback TCP dial to 8.8.8.8:53 SUCCEEDED inside network sandbox; " +
 			"this violates SH-028 (external network access must be blocked)")
 	}
@@ -260,7 +264,7 @@ func TestSH028_LinuxNetworkSandboxIsolation(t *testing.T) {
 
 	// Verify loopback is still up by attempting a dial to 127.0.0.1:1
 	// (no listener). Expect "connection refused", NOT "network unreachable".
-	_, loopErr := net.DialTimeout("tcp", "127.0.0.1:1", nonLoopbackDialTimeout) //nolint:noctx
+	_, loopErr := net.DialTimeout("tcp", "127.0.0.1:1", nonLoopbackDialTimeout) //nolint:noctx // DialTimeout deliberately verifies that loopback is not blocked.
 	if loopErr == nil {
 		// Extremely unlikely but harmless if something is listening on port 1.
 		t.Log("SH-028: unexpected successful dial to 127.0.0.1:1; loopback appears up (OK)")

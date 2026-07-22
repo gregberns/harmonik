@@ -147,7 +147,7 @@ func TestQueueDaemonWiring_LoadAtStartup(t *testing.T) {
 		projectDir,
 		ledger,
 		emitter,
-		nil, // slog.Default()
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("LoadQueueAtStartup: %v", err)

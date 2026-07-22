@@ -74,7 +74,9 @@ func initGitRepo(t *testing.T, dir string) {
 func gitCommit(t *testing.T, dir, message string) {
 	t.Helper()
 	dummy := filepath.Join(dir, ".keep")
-	_ = os.WriteFile(dummy, []byte(""), 0o644)
+	if err := os.WriteFile(dummy, []byte(""), 0o644); err != nil {
+		t.Fatalf("write commit marker: %v", err)
+	}
 	for _, args := range [][]string{
 		{"add", ".keep"},
 		{"commit", "-m", message},
@@ -127,9 +129,13 @@ func TestSH020_ReadEventLog_TornTail(t *testing.T) {
 		`{"type":"run_complet` // torn tail — partial JSON, no \n
 
 	logDir := filepath.Join(dir, ".harmonik", "events")
-	_ = os.MkdirAll(logDir, 0o755)
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir torn-tail event log dir: %v", err)
+	}
 	path := filepath.Join(logDir, "events.jsonl")
-	_ = os.WriteFile(path, []byte(content), 0o644)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write torn-tail event log: %v", err)
+	}
 
 	events, err := scenario.ReadEventLog(path)
 	if err != nil {
@@ -163,9 +169,13 @@ func TestSH024_ReadEventLog_MidFileCorruption(t *testing.T) {
 		"\n"
 
 	logDir := filepath.Join(dir, ".harmonik", "events")
-	_ = os.MkdirAll(logDir, 0o755)
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("mkdir corrupt event log dir: %v", err)
+	}
 	path := filepath.Join(logDir, "events.jsonl")
-	_ = os.WriteFile(path, []byte(content), 0o644)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write corrupt event log: %v", err)
+	}
 
 	_, err := scenario.ReadEventLog(path)
 	if err == nil {
@@ -271,7 +281,7 @@ func TestSH021_EventPresent_Fail(t *testing.T) {
 		{Kind: scenario.EventExpectationKindPresent, Type: "agent_ready", Description: "check agent_ready"},
 	})
 	results, verdict, fc := scenario.EvaluateAssertions(sf, events, "")
-	if !(!results[0].Passed) {
+	if results[0].Passed {
 		t.Error("event_present should fail when event absent")
 	}
 	if verdict != scenario.ScenarioVerdictFail {
@@ -643,7 +653,9 @@ func TestSH022_FileContentsEqual_Pass(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
 	content := "hello world\n"
-	_ = os.WriteFile(filepath.Join(wsDir, "out.txt"), []byte(content), 0o644)
+	if err := os.WriteFile(filepath.Join(wsDir, "out.txt"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write workspace file: %v", err)
+	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
 		{Kind: scenario.WorkspacePredicateKindFileContentsEqual, Path: "out.txt", Expected: ptr(content), Description: "contents equal"},
 	})
@@ -660,7 +672,9 @@ func TestSH022_FileContentsEqual_Pass(t *testing.T) {
 func TestSH022_FileContentsEqual_Fail(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
-	_ = os.WriteFile(filepath.Join(wsDir, "out.txt"), []byte("actual"), 0o644)
+	if err := os.WriteFile(filepath.Join(wsDir, "out.txt"), []byte("actual"), 0o644); err != nil {
+		t.Fatalf("write workspace file: %v", err)
+	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
 		{Kind: scenario.WorkspacePredicateKindFileContentsEqual, Path: "out.txt", Expected: ptr("expected"), Description: "mismatch"},
 	})
@@ -678,7 +692,9 @@ func TestSH022_FileContentsEqual_Fail(t *testing.T) {
 func TestSH022_FileContentsMatch_Pass(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
-	_ = os.WriteFile(filepath.Join(wsDir, "log.txt"), []byte("Run ID: abc-123\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(wsDir, "log.txt"), []byte("Run ID: abc-123\n"), 0o644); err != nil {
+		t.Fatalf("write workspace log: %v", err)
+	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
 		{Kind: scenario.WorkspacePredicateKindFileContentsMatch, Path: "log.txt", Expected: ptr(`Run ID: [a-z0-9-]+`), Description: "regex match"},
 	})
@@ -696,7 +712,9 @@ func TestSH022_FileContentsMatch_Pass(t *testing.T) {
 func TestSH022_FileContentsMatch_Fail(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
-	_ = os.WriteFile(filepath.Join(wsDir, "log.txt"), []byte("no match here\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(wsDir, "log.txt"), []byte("no match here\n"), 0o644); err != nil {
+		t.Fatalf("write workspace log: %v", err)
+	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
 		{Kind: scenario.WorkspacePredicateKindFileContentsMatch, Path: "log.txt", Expected: ptr(`^NEVER_MATCHES$`), Description: "no match"},
 	})
@@ -807,7 +825,9 @@ func TestSH022_SymlinkTraversalRejected(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
 	outsideFile := filepath.Join(t.TempDir(), "secret.txt")
-	_ = os.WriteFile(outsideFile, []byte("secret"), 0o644)
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write outside fixture: %v", err)
+	}
 
 	// Create a symlink inside workspace that points outside.
 	symlinkPath := filepath.Join(wsDir, "escape.txt")
@@ -925,7 +945,9 @@ func TestSH023_NoShortCircuit(t *testing.T) {
 func TestSH023_AssertionOrder(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
-	_ = os.WriteFile(filepath.Join(wsDir, "marker.txt"), []byte("present"), 0o644)
+	if err := os.WriteFile(filepath.Join(wsDir, "marker.txt"), []byte("present"), 0o644); err != nil {
+		t.Fatalf("write workspace marker: %v", err)
+	}
 	lines := []string{
 		mustMarshalEvent(t, "agent_ready", map[string]any{}),
 		mustMarshalEvent(t, "outcome_emitted", map[string]any{"outcome_status": "SUCCESS"}),

@@ -36,7 +36,7 @@ func sh034TempDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("sh034TempDir: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cleanupTempDir(t, dir)
 	return dir
 }
 
@@ -85,7 +85,7 @@ func TestSH034_ScenarioResultPath(t *testing.T) {
 	t.Parallel()
 
 	got := ScenarioResultPath("/tmp/fixture-root", "my-scenario")
-	want := filepath.Join("/tmp/fixture-root", "my-scenario", "result.json")
+	want := "/tmp/fixture-root/my-scenario/result.json"
 	if got != want {
 		t.Errorf("ScenarioResultPath = %q; want %q", got, want)
 	}
@@ -97,7 +97,7 @@ func TestSH034_SuiteResultPath(t *testing.T) {
 	t.Parallel()
 
 	got := SuiteResultPath("/tmp/fixture-root")
-	want := filepath.Join("/tmp/fixture-root", "suite-result.json")
+	want := "/tmp/fixture-root/suite-result.json"
 	if got != want {
 		t.Errorf("SuiteResultPath = %q; want %q", got, want)
 	}

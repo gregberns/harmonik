@@ -80,7 +80,7 @@ func ReadEventLog(logPath string) ([]RawEvent, error) {
 	lines := bytes.Split(data, []byte("\n"))
 	toProcess := lines[:len(lines)-1]
 
-	var events []RawEvent
+	events := make([]RawEvent, 0, len(toProcess))
 	for i, line := range toProcess {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -353,8 +353,11 @@ func isFilePredicateKind(k WorkspacePredicateKind) bool {
 		WorkspacePredicateKindFileContentsEqual,
 		WorkspacePredicateKindFileContentsMatch:
 		return true
+	case WorkspacePredicateKindGitRefAt,
+		WorkspacePredicateKindCommitTrailerPresent:
+		return false
 	}
-	return false
+	return false // invalid values are rejected while loading the scenario.
 }
 
 // checkSymlinkSafety returns an error if targetPath escapes workspaceDir via a
@@ -485,6 +488,10 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 			}
 			ar.Passed = re.Match(contents)
 			ar.ActualValue = string(contents)
+
+		case WorkspacePredicateKindGitRefAt,
+			WorkspacePredicateKindCommitTrailerPresent:
+			// These are handled by the git-predicate switch below.
 		}
 		return ar
 	}
@@ -527,6 +534,11 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 		trailerKey := *pred.Expected
 		ar.Passed = commitMessageHasTrailer(message, trailerKey)
 		ar.ActualValue = strings.TrimSpace(message)
+
+	case WorkspacePredicateKindFileExists,
+		WorkspacePredicateKindFileContentsEqual,
+		WorkspacePredicateKindFileContentsMatch:
+		// File predicates are handled above.
 	}
 	return ar
 }

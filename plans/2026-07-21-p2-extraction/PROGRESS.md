@@ -1,7 +1,7 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-22 08:20 — Phase 3, 4 of 9 landed, slice 5 (E2a) in flight.
+**Last updated:** 2026-07-22 — P2 core COMPLETE (9/9) + RT13 + E4c landed. 13 commits.
 
 > ## ⚠️ We nearly collided at 08:00 — read this
 >
@@ -39,11 +39,23 @@ plans, then began landing them one commit at a time.
 
 | Phase | What | Status |
 |---|---|---|
-| **1. Recon** | 8 units (E1a/E1b/E1c/E2/E3/E4/E5/E6) analyzed for real file sets, symbol coupling, feasibility — each recon then adversarially challenged by a second agent | **DONE** |
-| **2. Plan** | 9 executable plan files written into this folder (~5,000 lines), reconciled recon-vs-challenge | **DONE** |
-| **3. Execute** | 9 slices, strictly sequential: refactor → fast gate → project `agent-reviewer` → commit → independent adversarial verify | **IN PROGRESS — 2 of 9 landed** |
-| **4. Punch list** | Apply findings the verifiers raised but that were out of scope mid-flight (§5) | NOT STARTED |
-| **5. Differential suite** | One serialized full `go test` + `specaudit` run, compared against the measured baseline | NOT STARTED |
+| **1. Recon** | 8 units analyzed, each adversarially challenged | **DONE** |
+| **2. Plan** | 9 executable per-unit plans | **DONE** |
+| **3. Execute (P2 core)** | 9 slices, sequential | **DONE — 9/9, every verify `is_pure_move: true`** |
+| **4. Punch list** | verifier findings applied | **DONE** — `ffc5415a` |
+| **5. Differential verification** | clean before/after pair, identical scope | **DONE — no regression** (see below) |
+| **6. E5 RT stream + E4c** | RT13, E4c landed; RT14/16/19b + RT15/17/18/19/lift planned | **IN PROGRESS** |
+| **7. E4d re-plan** | overturned "impossible"; 3 prep slices ready, E4d-3 parked | **DONE** |
+
+### Verification verdict (Phase 5)
+
+Clean pair, identical package scope, healthy disk: **pre-P2 6 failures / P2 HEAD 3 failures.**
+Three runs of the SAME commit gave 123 / 3 / 9 — runs B and C share **1 of 11** failures. The only
+stable failure is `TestThroughput_TenBeadsAtMaxFour`, which **also fails at pre-P2 baseline**.
+**No failure is attributable to P2.** The 123-failure run was the disk watermark pausing dispatch.
+
+Consequence for the oracle: compare **stable intersections across repeated runs**, never one run
+against one run. Recorded in `00-test-oracle-baseline.md`.
 
 ### Slice-by-slice
 
@@ -56,9 +68,28 @@ plans, then began landing them one commit at a time.
 | 4 | **E2a** | crew launch contract → `internal/crewrun` | **LANDED** — boundary OK, no foreign files swept | `12663fac` |
 | 5 | **E1a-0** | `harness-shared`/`harness-codex` depguard blocks + cross-harness refs-trailer leaf → `harness/shared` | **LANDED — verify PASS**, pure move, 0 logic changes | `9b682ae2` |
 | 6 | **E1a-1** | codex harness → `internal/harness/codex` | **LANDED** — `go list -deps ./internal/harness/codex \| grep daemon` is **empty**; specaudit path-allowlist updated; tagged builds clean | `5f7762c3` |
-| 7 | E1b-prep | evict the mis-named `claudeRunCtx` universal launch DTO | queued | — |
-| 8 | E1b | claude harness → `internal/harness/claude` | queued | — |
-| 9 | E1c | pi harness → `internal/harness/pi` | queued | — |
+| 7 | **E1b-prep** | evict the mis-named `claudeRunCtx` universal launch DTO → `shared.LaunchCtx` (85 daemon call sites) | **LANDED — verify PASS** | `c3fff27d` |
+| 8 | **E1b** | claude harness → `internal/harness/claude` | **LANDED — verify PASS**; the path-pinned `hc045a` specaudit sensor updated and passing under its tag | `db2f4752` |
+| 9 | **E1c** | pi harness → `internal/harness/pi` | **LANDED — verify PASS**; no `harness/pi → harness/codex` back-edge | `66e0041d` |
+| 10 | **RT13** | run-branch merge path → `internal/runmerge` (E5 stream) | **LANDED — verify PASS**, `is_pure_move: true`, freeze gate proven with 4 probes | `379fca71` |
+| 11 | **test fix** | two unsound source-text conformance assertions replaced | **LANDED** | `b423081f` |
+| 12 | **E4c** | worker-registry boot wiring → `internal/workers` | **LANDED — verify PASS**; `pure_move: false` **by design** (one declared signature change, confirmed the only delta) | `646748f3` |
+
+### Result
+
+`internal/daemon`: **126 files / 57,197 LOC → 103 / 49,012** — **−23 files, −8,185 LOC (−14.3%)**.
+
+Seven new fenced leaf packages, each with a depguard deny edge **and** a grep freeze gate wired into
+both `check-fast` and `check-short`: `gitprobe`, `harness/{shared,claude,codex,pi}`,
+`transport/{tunnel,codesync}`, `queuewiring`, `crewrun`, `runmerge`.
+
+The P3-enabling property, measured — all three harness packages are daemon-free and pi has no
+back-edge to codex:
+
+```
+go list -deps ./internal/harness/{claude,codex,pi} | grep internal/daemon   ->  empty
+go list -deps ./internal/harness/pi | grep harness/codex                    ->  empty
+```
 
 **Failure policy:** each slice commits independently. A slice that fails verification gets one repair
 attempt; if that fails the tree resets to the last good commit and the chain continues past it. So a bad

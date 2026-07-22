@@ -24,6 +24,36 @@ const (
 	AgentTypeCodex AgentType = "codex"
 )
 
+// ReservedAgentTypes returns the reserved MVH agent-type identifiers declared
+// above, in declaration order. It is the single source of truth for "is this a
+// real agent type", so callers that must reject an unknown name do not carry
+// their own copy of the list and drift from it.
+//
+// Shape validation is NOT sufficient for that question and this exists because
+// of it: Valid() only checks the AR-025 regex, and a plausible-but-wrong name
+// like "claude" satisfies the regex while matching no harness. A caller doing a
+// membership test needs this set, not Valid().
+func ReservedAgentTypes() []AgentType {
+	return []AgentType{
+		AgentTypeClaudeCode,
+		AgentTypePi,
+		AgentTypeClaudeTwin,
+		AgentTypePiTwin,
+		AgentTypeCodex,
+	}
+}
+
+// Reserved reports whether a is one of the reserved MVH agent-type identifiers.
+// This is the membership check that Valid() deliberately does not perform.
+func (a AgentType) Reserved() bool {
+	for _, r := range ReservedAgentTypes() {
+		if a == r {
+			return true
+		}
+	}
+	return false
+}
+
 // AgentTypeRegexPattern is the canonical regex string for the agent_type
 // identifier shape declared in architecture.md §6.1 (AR-025).
 // It is exported so that specaudit sensors can verify the spec-text regex

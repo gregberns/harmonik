@@ -783,6 +783,40 @@ func (c SandboxConfig) HasHarness(name string) bool {
 	return false
 }
 
+// agentTypeNamesForError renders the reserved agent types as a comma-separated
+// list for an error message, so the set in the message can never drift from the
+// set the check actually uses.
+func agentTypeNamesForError() string {
+	reserved := core.ReservedAgentTypes()
+	names := make([]string, 0, len(reserved))
+	for _, a := range reserved {
+		names = append(names, string(a))
+	}
+	return strings.Join(names, ", ")
+}
+
+// nearestAgentType returns the reserved agent type that got is a prefix of, when
+// exactly one qualifies. It exists for the case this validation was written for —
+// "claude" for "claude-code" — and deliberately does nothing cleverer: a prefix
+// test either names the intended type unambiguously or stays silent. "claude" is
+// a prefix of both claude-code and claude-twin, so it returns nothing there and
+// the caller falls back to listing the full set, which is the honest answer.
+func nearestAgentType(got string) (string, bool) {
+	if got == "" {
+		return "", false
+	}
+	var match string
+	for _, a := range core.ReservedAgentTypes() {
+		if strings.HasPrefix(string(a), got) {
+			if match != "" {
+				return "", false // ambiguous — say nothing rather than guess
+			}
+			match = string(a)
+		}
+	}
+	return match, match != ""
+}
+
 // sandboxBlockAbsent reports whether the sandbox: block is at its zero value,
 // i.e. no sandbox config was supplied in .harmonik/config.yaml.
 func sandboxBlockAbsent(raw rawSandboxConfig) bool {
@@ -2044,6 +2078,31 @@ func parseSandboxBlock(path string, raw rawSandboxConfig) (SandboxConfig, error)
 			Path:  path,
 			Cause: fmt.Errorf("sandbox.backend %q: unknown value; must be one of srt, none", raw.Backend),
 		}
+	}
+	// hk-vsl4d: reject an unknown sandbox.harnesses entry. The list is matched
+	// against a run's agent type by exact string compare (SandboxConfig.HasHarness
+	// -> sandboxSpawnForRun), so a name that matches no agent type does not fail —
+	// it silently matches nothing and the run is NOT sandboxed. The natural thing
+	// to write is "claude"; the real identifier is "claude-code". That config reads
+	// as sandboxing claude and sandboxes nothing, with no error and no log line.
+	//
+	// Fails CLOSED, matching sandbox.backend directly above: a security control
+	// that is misconfigured must refuse to start, not run unprotected. A shape
+	// check would not do this job — "claude" satisfies the AR-025 regex — so
+	// membership in core.ReservedAgentTypes() is the test.
+	for _, h := range raw.Harnesses {
+		if core.AgentType(h).Reserved() {
+			continue
+		}
+		cause := fmt.Errorf("sandbox.harnesses[%q]: unknown agent type; must be one of %s",
+			h, agentTypeNamesForError())
+		// Name the near-miss explicitly. This defect's whole shape is a
+		// plausible-looking name, so the error should say what to write.
+		if suggestion, ok := nearestAgentType(h); ok {
+			cause = fmt.Errorf("sandbox.harnesses[%q]: unknown agent type; did you mean %q? must be one of %s",
+				h, suggestion, agentTypeNamesForError())
+		}
+		return SandboxConfig{}, &ErrMalformedConfigYAML{Path: path, Cause: cause}
 	}
 	return SandboxConfig{
 		Backend:   raw.Backend,

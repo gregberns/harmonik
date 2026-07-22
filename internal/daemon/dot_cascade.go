@@ -1013,7 +1013,8 @@ func driveDotWorkflow(
 			gateOutcome, gateErr := dispatchDotGateNode(
 				ctx, deps, runID, run, wtPath, daemonSocket, node,
 				iterationCount, resolvedModel, resolvedEffort,
-				beadID, beadTitle, beadDescription, extraContext, baseBranch, runner,
+				beadID, beadRecord, // hk-01vs0: tier-1 harness label reaches the gate's harness resolution
+				beadTitle, beadDescription, extraContext, baseBranch, runner,
 				workerBinaryPath, workerSessionName, workerSessionCwd,
 			)
 			if gateErr != nil {

@@ -73,6 +73,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -1476,6 +1477,14 @@ func dispatchDotAgenticNode(
 	// can only arrive after Launch returns and sets sess.
 	var sess handler.Session
 
+	// hk-47u9z: same predeclare-and-capture-by-reference trick as sess, for the
+	// SessionIDCaptured spawn proof. Assigned just after the per-run tap exists;
+	// invoked from the session-id interceptor, which can only run after Launch
+	// has started the child and its stdout is flowing. Nil-checked at the call
+	// site so an early capture (impossible today) degrades to a no-op rather
+	// than a panic in a daemon goroutine.
+	var emitCapturedSpawnProof func()
+
 	// hk-z4nif: SessionIDCaptured harnesses (Pi, Codex) deliver their task via
 	// argv, not via tmux pane paste. Attempting paste injection yields "seed
 	// marker absent" (the terminal shows NDJSON, not the seed text) →
@@ -1553,6 +1562,39 @@ func dispatchDotAgenticNode(
 						src = io.TeeReader(r, piStdoutFile)
 					}
 					return capturedH.NewSessionIDInterceptor(src, func(id string) {
+						// hk-47u9z: capturing a session id off the harness's own
+						// stdout stream is PROOF the child spawned and is
+						// producing output — the SessionIDCaptured analogue of
+						// the Claude SessionStart hook's agent_ready. Emit it so
+						// the stale watcher's never-spawned reaper disarms.
+						//
+						// Without this the reaper NEVER disarms for codex/pi:
+						// agent_ready is emitted only by the Claude hook path,
+						// so agentReadySeen stays false for the whole run and
+						// the launch-stall guard silently becomes an ABSOLUTE
+						// 30-minute wall-clock cap. It killed a demonstrably
+						// healthy codex run (commit_landed=true, exit 0) at
+						// 30m19s and mislabelled it "context cancelled at node
+						// commit_gate", naming the wrong node AND the wrong
+						// cause.
+						//
+						// A launch that truly never produces output never reaches
+						// this callback, so the never-spawned reaper still fires
+						// for it. This guard answers "did it ever spawn?", not
+						// "is it still making progress?".
+						//
+						// It does NOT follow that a wedged child is covered. A
+						// child that spawns and THEN wedges is caught by nothing:
+						// run_stale cannot fire because RunHeartbeatLoop refreshes
+						// lastEventAt every 300s against a 600s StaleAfter,
+						// regardless of child liveness, and commitHardCeiling is
+						// unreachable here because pasteTarget is nil for
+						// SessionIDCaptured. That hole is PRE-EXISTING and
+						// symmetric with the claude path; this change does not
+						// create it and does not close it. See hk-spqhh.
+						if emitCapturedSpawnProof != nil {
+							emitCapturedSpawnProof()
+						}
 						capturedSessionIDCh <- id
 					}, agentEndCb)
 				}
@@ -1570,6 +1612,10 @@ func dispatchDotAgenticNode(
 
 	tap, tapCh := newPerRunEventTap(deps.bus, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
+
+	// hk-47u9z: arm the SessionIDCaptured spawn proof now that the per-run tap
+	// exists.
+	emitCapturedSpawnProof = newCapturedSpawnProof(tap, runID)
 
 	// hk-goczd: emit the CHB-018 pre-exec progress messages (handler_capabilities,
 	// session_log_location, skills_provisioned) BEFORE Launch, holding back
@@ -2680,4 +2726,50 @@ func emitDotImplementerResumed(
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerResumed, b)
+}
+
+// newCapturedSpawnProof returns the once-guarded emitter that a SessionIDCaptured
+// harness (codex, pi) invokes when it captures its session id off its own stdout.
+//
+// Capturing a session id IS proof the child spawned and is producing output —
+// the SessionIDCaptured analogue of the Claude SessionStart hook's agent_ready.
+// Emitting it disarms the stale watcher's never-spawned reaper.
+//
+// Without this the reaper NEVER disarms for these harnesses: agent_ready is
+// emitted only by the Claude hook path, so agentReadySeen stays false for the
+// whole run and the launch-stall guard silently becomes an ABSOLUTE 30-minute
+// wall-clock cap on TOTAL run time (hk-47u9z). It killed a demonstrably healthy
+// codex run (commit_landed=true, exit_code=0) at 30m19s and mislabelled it
+// "context cancelled at node commit_gate" — the wrong node AND the wrong cause,
+// which is why the defect read as "codex is unreliable" for so long.
+//
+// A launch that truly never produces output never reaches the capture callback,
+// so the never-spawned reaper still fires for it. This guard answers "did it ever
+// spawn?", not "is it still making progress?".
+//
+// It does NOT follow that a wedged child is covered. run_stale cannot catch one:
+// RunHeartbeatLoop refreshes lastEventAt every 300s against a 600s StaleAfter,
+// regardless of child liveness, and commitHardCeiling is unreachable on this path
+// because pasteTarget is nil for SessionIDCaptured. A hung child therefore holds
+// its slot indefinitely. That hole is PRE-EXISTING and symmetric with the claude
+// path — this change makes codex no worse than claude, and closing it is hk-spqhh.
+//
+// sync.Once is defensive only. Both current SessionIDCaptured interceptors
+// already fire their callback exactly once (codexharness.go:192,
+// piharness.go:258), so removing it breaks no test today. It guards against a
+// future interceptor that does not.
+//
+// EmitWithRunID (not Emit) is load-bearing: the stale watcher's observe() SKIPS
+// any envelope whose RunID is nil, so emitting without the run id would look
+// correct and do nothing — precisely the hk-wths failure shape this bug rhymes
+// with. Extracted as a named function so tests exercise this exact closure
+// rather than a restatement of it.
+func newCapturedSpawnProof(tap *perRunEventTap, runID core.RunID) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			//nolint:errcheck // best-effort emit; the reaper disarm is a guard, not a correctness gate (pre-RT8 idiom)
+			_ = tap.EmitWithRunID(context.Background(), runID, core.EventTypeAgentReady, nil)
+		})
+	}
 }

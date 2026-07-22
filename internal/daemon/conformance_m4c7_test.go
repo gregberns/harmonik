@@ -45,6 +45,10 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/printer"
+	"go/token"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -265,31 +269,96 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 	})
 }
 
-// TestM4C7_D2Chokepoint_IsHarnessAgnostic is a static guard proving the D2
-// fail-closed check in workloop.go is applied to whatever the specBuilder produced,
-// guarded ONLY by the remote predicate (rbc != nil) — never conditioned on the
-// agent type. A regression that made the guard Claude-only (e.g. `if rbc != nil &&
-// isClaude && ...`) would slip a Codex/Pi remote key past it; this test trips first.
+// TestM4C7_D2Chokepoint_IsHarnessAgnostic proves the D2 fail-closed check is
+// applied to whatever the specBuilder produced, guarded ONLY by the remote
+// predicate (rbc != nil) — never narrowed to one agent type. A regression that
+// made the guard Claude-only (e.g. `if rbc != nil && isClaude && ...`) would slip
+// a Codex/Pi remote key past it and re-open the 2026-05-30 credential-leak
+// incident; this test trips first.
+//
+// WHY THIS IS A STATIC TEST, DELIBERATELY. The guard lives inside beadRunOne
+// (workloop.go), a ~2,200-line function whose remote arm needs a live worker, an
+// ssh runner and a reverse tunnel to reach. There is no cheap behavioural route to
+// the branch, and the credential-leak class is severe enough to warrant a
+// structural assertion rather than no assertion. The BEHAVIOUR of the predicate
+// itself is covered behaviourally above (hasAPIKeyInEnv across claude/codex/pi
+// spec envs); what is asserted here is only that the predicate is still WIRED at
+// the chokepoint and still harness-agnostic.
+//
+// It parses the AST rather than grepping source text. The previous version took a
+// 200-character window before the call site and string-matched inside it. That was
+// not merely brittle, it was UNSOUND — it passes on code where the guard has been
+// completely un-gated, as long as an unrelated `rbc != nil` happens to sit in the
+// preceding window. Demonstrated:
+//
+//	if rbc != nil { setupTunnel() }
+//	log("some intervening work here")
+//	if hasAPIKeyInEnv(spec.Env) { return }   // <- NOT gated on remote any more
+//
+// The 200-char window contains "rbc != nil" (from the FIRST if), so the old
+// assertion returned true and the suite stayed green while the credential guard
+// was disarmed. The AST form asserts on the actual `if` condition that encloses
+// the call, so it cannot be fooled by a neighbouring statement, and it survives
+// reformatting because it never looks at source text layout.
 func TestM4C7_D2Chokepoint_IsHarnessAgnostic(t *testing.T) {
 	t.Parallel()
-	src := readRepoFile(t, "internal", "daemon", "workloop.go")
-	idx := strings.Index(src, "hasAPIKeyInEnv(spec.Env)")
-	if idx < 0 {
-		t.Fatal("D2 chokepoint hasAPIKeyInEnv(spec.Env) not found in workloop.go — the fail-closed guard was removed or renamed")
+
+	path := filepath.Join(repoRootForConformance(), "internal", "daemon", "workloop.go")
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse workloop.go: %v", err)
 	}
-	// Grab the ~200 chars preceding the call (the guard condition).
-	start := idx - 200
-	if start < 0 {
-		start = 0
+
+	// Find the `if` whose condition calls hasAPIKeyInEnv(spec.Env).
+	var guard ast.Expr
+	ast.Inspect(file, func(n ast.Node) bool {
+		ifStmt, ok := n.(*ast.IfStmt)
+		if !ok || ifStmt.Cond == nil {
+			return true
+		}
+		found := false
+		ast.Inspect(ifStmt.Cond, func(inner ast.Node) bool {
+			call, ok := inner.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "hasAPIKeyInEnv" {
+				found = true
+				return false
+			}
+			return true
+		})
+		if found {
+			guard = ifStmt.Cond
+			return false
+		}
+		return true
+	})
+
+	if guard == nil {
+		t.Fatal("D2 chokepoint: no `if` in workloop.go has hasAPIKeyInEnv(...) in its condition — " +
+			"the fail-closed guard was removed, renamed, or moved out of a conditional")
 	}
-	guard := src[start:idx]
-	if !strings.Contains(guard, "rbc != nil") {
-		t.Errorf("D2 guard is not gated on the remote predicate rbc != nil; context:\n%s", guard)
+
+	// Render the condition back to source so we can assert on its shape.
+	var buf strings.Builder
+	if err := printer.Fprint(&buf, fset, guard); err != nil {
+		t.Fatalf("render guard condition: %v", err)
 	}
-	// The guard must NOT be narrowed to a single agent type.
-	for _, narrow := range []string{"isClaude", "AgentTypeClaude", "== core.AgentTypeClaude"} {
-		if strings.Contains(guard, narrow) {
-			t.Errorf("D2 guard appears narrowed to Claude (%q) — it must gate ALL harnesses; context:\n%s", narrow, guard)
+	cond := buf.String()
+
+	// (a) It must still be gated on the remote predicate. Only a REMOTE run may be
+	//     refused; a local run legitimately carries the key in its own env.
+	if !strings.Contains(cond, "rbc != nil") {
+		t.Errorf("D2 guard is not gated on the remote predicate `rbc != nil`; condition is:\n\t%s", cond)
+	}
+
+	// (b) It must NOT be narrowed to a single agent type.
+	for _, narrow := range []string{"isClaude", "AgentTypeClaude"} {
+		if strings.Contains(cond, narrow) {
+			t.Errorf("D2 guard appears narrowed to Claude (%q) — it must gate ALL harnesses; condition is:\n\t%s",
+				narrow, cond)
 		}
 	}
 }
@@ -339,14 +408,37 @@ func TestM4C7_SeamSurvival_StructuralFloors(t *testing.T) {
 		t.Errorf("seam eroded: only %d …Via helper decls across internal/daemon+internal/workspace; want >= %d (DEC-A cleanup is DEFERRED)", n, viaFloor)
 	}
 
-	// (e) The remote/local dual-path branch (rbc != nil) must NOT be collapsed.
-	// DEC-A cleanup is DEFERRED (decision 5): the dual path stays. A floor on the
-	// remote-predicate branch count trips if someone deletes the local fall-through.
-	rbcFloor := 8
-	wlSrc := readRepoFile(t, "internal", "daemon", "workloop.go")
-	if n := strings.Count(wlSrc, "rbc != nil"); n < rbcFloor {
-		t.Errorf("dual-path collapsed: only %d `rbc != nil` branches in workloop.go; want >= %d (DEC-A deferred — the local/remote branch must survive)", n, rbcFloor)
-	}
+	// (e) REMOVED 2026-07-22 — the `strings.Count(workloop.go, "rbc != nil") >= 8` floor.
+	//
+	// It asserted a magic number of occurrences of a string in a source file, as a
+	// proxy for "the remote/local dual path has not been collapsed". That is not a
+	// test of behaviour, and it failed on three counts:
+	//
+	//   1. It could not detect the thing it claimed to. Deleting the local
+	//      fall-through entirely while leaving eight `rbc != nil` predicates
+	//      elsewhere passes. Conversely a legitimate refactor that consolidates
+	//      predicates fails. The signal is uncorrelated with the invariant.
+	//   2. The threshold was arbitrary and slack — the floor was 8 against an
+	//      actual count of 20, so it only tripped after a change had already
+	//      removed 60% of the branch sites.
+	//   3. It obstructed exactly the refactoring P2 exists to do: any extraction
+	//      touching the remote path trips it for reasons unrelated to correctness.
+	//
+	// The invariant it was reaching for — that the local and remote paths BOTH still
+	// work — is covered behaviourally, and those tests fail for the right reasons:
+	//
+	//   - TestSingleModeWorkloopThreadsRunnerIntoSubstrate_hkfxy9  (substrate_runner_parity_hkfxy9_test.go)
+	//         local run threads its runner into the substrate
+	//   - TestReviewLoopReviewerSubstrateRunnerIsNil_hkfxy9        (substrate_runner_parity_hkfxy9_test.go)
+	//         a local reviewer run carries a nil runner
+	//   - TestScenario_RemoteSubstrate_Localhost_E2E               (scenario_remote_substrate_localhost_test.go)
+	//         the remote path end-to-end over a localhost worker
+	//   - TestScenario_RemoteSubstrate_NoWorker_RunStartedWorkerNameEmpty
+	//         no worker available => the run falls through to local
+	//
+	// The D2 credential guard, which is the one genuinely security-critical
+	// structural property here, keeps a static test — but an AST-based one. See
+	// TestM4C7_D2Chokepoint_IsHarnessAgnostic above for why that one stays static.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

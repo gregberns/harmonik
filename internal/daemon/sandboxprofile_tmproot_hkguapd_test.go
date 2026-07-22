@@ -38,10 +38,18 @@ import (
 // using it.
 var worldSharedTempRoots = []string{"/tmp", "/private/tmp", "/var/tmp"}
 
-// TestSandboxProfile_NeverGrantsWorldSharedTempRoot_hkguapd is the regression
-// guard. It asserts on the DEFAULT production-shaped input — the one with no
-// TmpDirs supplied, which is what both call sites now build — that no
-// world-shared temp root appears in allowWrite.
+// TestSandboxProfile_NeverGrantsWorldSharedTempRoot_hkguapd asserts that with no
+// TmpDirs supplied — the shape both production call sites now build — the
+// generator itself hardcodes no world-shared temp root.
+//
+// BE CLEAR ABOUT WHAT THIS DOES AND DOES NOT CATCH. It reads a test-local
+// fixture, so the tie between it and production is prose, not code; a call site
+// that started supplying a shared root again would not fail here. It is near
+// tautological on its own — with TmpDirs nil, a shared root can only appear if
+// the generator hardcodes one. It earns its place by catching the OVER-correction
+// (someone adding "/tmp" to section 6a instead of "/tmp/claude"), which nothing
+// else covers. The actual regression guard for hk-guapd is
+// TestSandboxProfile_SharedTempRootIsRejected_hkguapd below.
 //
 // The /tmp/claude and /private/tmp/claude entries (section 6a, hk-cdpxu) are
 // expected and are NOT violations: srt injects TMPDIR=/tmp/claude into every
@@ -98,44 +106,66 @@ func TestSandboxProfile_SrtScratchTmpStillGranted_hkguapd(t *testing.T) {
 	}
 }
 
-// TestSandboxProfile_ExplicitSharedTempRootIsStillHonored_hkguapd documents the
-// deliberate limit of this fix, so the next reader does not mistake it for a
-// guarantee it is not.
+// TestSandboxProfile_SharedTempRootIsRejected_hkguapd is the test that actually
+// binds the defect. The two above assert on a test-local fixture; nothing in them
+// would fail if someone re-added `TmpDirs: sandboxOSTmpDirs()` to a call site
+// tomorrow, because the defect lived at the CALL SITES, not in the generator's
+// literal output. The correspondence between "what the fixture builds" and "what
+// production builds" would be maintained by prose alone — which is the pattern
+// that let hk-guapd survive in the first place.
 //
-// GenerateSandboxProfile is a pure generator: it still appends whatever TmpDirs a
-// caller passes. The fix removed the AMBIENT feed (os.TempDir() at the two
-// production call sites), which is where the defect actually lived; it did not add
-// a validation gate. That was deliberate — a hard failure on a shared root would
-// fire inside `make check-short` and `make check-race-full`, both of which run
-// under TMPDIR=/tmp (Makefile:453, :465), turning a security hardening into a
-// broken gating suite. Mitigations that cause the harm they prevent are their own
-// failure mode.
+// The gate closes that. A world-shared root in TmpDirs is now a launch-time error,
+// so reintroducing the ambient feed fails loudly at the point of use instead of
+// silently restoring the over-grant. It fails CLOSED, matching the five validators
+// GenerateSandboxProfile already applies to its other inputs.
 //
-// So: the profile generator trusts its caller. The guard is that production has no
-// caller which supplies a shared root, asserted above. If a future change adds one,
-// THIS test still passes and the first test still passes — the protection would
-// have to come from review. Stating that plainly here is the point.
-func TestSandboxProfile_ExplicitSharedTempRootIsStillHonored_hkguapd(t *testing.T) {
+// It is inert in production: every caller supplies nil. The only thing it can
+// break is a caller that passes a shared root, which is exactly the thing.
+func TestSandboxProfile_SharedTempRootIsRejected_hkguapd(t *testing.T) {
 	t.Parallel()
 
+	// Unnormalised forms are included deliberately: exact string comparison
+	// alone would let "/tmp/" and "/tmp/../tmp" through, and a gate defeated by
+	// a trailing slash is worse than none because it reads as protection.
+	for _, root := range []string{"/tmp", "/tmp/", "/tmp/../tmp", "/private/tmp", "/var/tmp", "/"} {
+		in := sandboxProfileFixture()
+		in.TmpDirs = []string{root}
+
+		if _, err := daemon.GenerateSandboxProfile(in); err == nil {
+			t.Errorf("hk-guapd: GenerateSandboxProfile ACCEPTED the world-shared temp root %q. "+
+				"srt expands every TmpDirs entry into a recursive write rule, so this grants the "+
+				"run write access to every other process's scratch state on the box — the exact "+
+				"defect hk-guapd fixed, reintroduced through the front door.", root)
+		}
+	}
+}
+
+// TestSandboxProfile_PerRunTempDirStillAccepted_hkguapd pins the escape hatch the
+// gate promises. A rejection rule that also rejects the legitimate per-run case
+// would push callers back toward the shared root, so the boundary is asserted
+// from both sides.
+func TestSandboxProfile_PerRunTempDirStillAccepted_hkguapd(t *testing.T) {
+	t.Parallel()
+
+	const perRun = "/tmp/harmonik-run-0199abcd"
+
 	in := sandboxProfileFixture()
-	in.TmpDirs = []string{"/tmp"}
+	in.TmpDirs = []string{perRun}
 
 	allowWrite := hkguapdAllowWrite(t, in)
 
 	found := false
 	for _, got := range allowWrite {
-		if got == "/tmp" {
+		if got == perRun {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("hk-guapd: GenerateSandboxProfile silently DROPPED an explicitly-passed "+
-			"TmpDirs entry. If that behaviour was added on purpose, this test is now the "+
-			"stale one and should be replaced by an assertion that generation FAILS loudly "+
-			"— but a silent drop is the worst of the three options, because a caller that "+
-			"needs a per-run temp grant would lose it without any signal. Got: %v", allowWrite)
+		t.Errorf("hk-guapd: a PER-RUN temp dir %q was rejected or dropped. The gate is meant to "+
+			"reject only world-shared roots; a caller that genuinely needs scratch space must "+
+			"still have a way to ask for it, or it will reach for the shared root instead. "+
+			"Got: %v", perRun, allowWrite)
 	}
 }
 

@@ -1924,11 +1924,16 @@ func dispatchDotAgenticNode(
 	// Emit implementer_phase_complete (hk-cd8yu / hk-mvjs4) immediately after the
 	// implementer session ends, mirroring workloop.go:1697 and reviewloop.go:526.
 	// Skipped for reviewer-class nodes (they produce reviewer_verdict instead).
+	//
+	// hk-368i4: nodePhaseDur is captured ONCE and reused by the no-work detector
+	// further down, so the event's duration_seconds and the detector's verdict
+	// come from the same measurement (mirrors workloop.go).
+	nodePhaseDur := deps.clock.Since(nodeLaunchedAt)
 	if !isReviewer {
 		curHead, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		commitLanded := curHead != "" && curHead != preHeadSHA
 		emitImplementerPhaseComplete(ctx, deps.bus, runID, nodeEI.exitCode,
-			nodeEI.stderrTail, commitLanded, deps.clock.Since(nodeLaunchedAt))
+			nodeEI.stderrTail, commitLanded, nodePhaseDur)
 	}
 
 	if deps.hookStore != nil {
@@ -2014,6 +2019,16 @@ func dispatchDotAgenticNode(
 			} else {
 				fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %s\n",
 					beadID, codexOutcome)
+				// hk-368i4: same detector as the workloop path — a no-change
+				// outcome from a node that finished in seconds is a no-work run.
+				// Diagnostic only; the no-commit guard below still decides.
+				if codexNoWorkSuspected(codexOutcome, nodePhaseDur, deps.codexNoWorkDurationFloor) {
+					floor := codexNoWorkFloor(deps.codexNoWorkDurationFloor)
+					fmt.Fprintf(os.Stderr,
+						"daemon: dot: bead %s node %q: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
+						beadID, node.ID, nodePhaseDur, floor)
+					emitImplementerNoWorkSuspected(ctx, deps.bus, runID, beadID, nodePhaseDur, floor)
+				}
 			}
 		}
 	}

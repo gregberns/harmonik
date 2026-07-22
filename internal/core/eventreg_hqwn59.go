@@ -215,6 +215,11 @@ func registerAgentEvents() {
 	// when an implementer session is force-killed for exhausting its commit
 	// budget (hard ceiling reached, or progress went stale). Durability class: O.
 	mustRegister("implementer_budget_exceeded", func() EventPayload { return &ImplementerBudgetExceededPayload{} })
+	// implementer_no_work_suspected (hk-368i4): emitted when a process-exit
+	// implementer produced no commit and a clean worktree AND ran for less than
+	// the no-work duration floor — the independent detector for the silent
+	// implementer failure hk-jcrzn exposed. Durability class: O.
+	mustRegister("implementer_no_work_suspected", func() EventPayload { return &ImplementerNoWorkSuspectedPayload{} })
 	// reviewer_budget_exceeded (hk-da3rr): emitted by the builtin review-loop
 	// and the DOT reviewer-node path when pasteInjectQuitOnReviewFile
 	// force-kills a reviewer session that exhausted its diff-scaled verdict

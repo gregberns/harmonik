@@ -364,6 +364,23 @@ const (
 	// Refs: hk-9vp51.
 	EventTypeImplementerBudgetExceeded EventType = "implementer_budget_exceeded"
 
+	// EventTypeImplementerNoWorkSuspected is the implementer_no_work_suspected
+	// event type. Emitted by the daemon when a process-exit implementer (codex)
+	// produced NO commit and left a CLEAN worktree (codexRefsNoChange) AND its
+	// phase ran for less than the no-work duration floor. Either signal alone is
+	// ambiguous — a legitimately trivial bead can finish fast, and a slow run can
+	// still fail to commit — so the event fires only on the conjunction, which no
+	// observed real run has produced.
+	//
+	// Diagnostic only: the run is ALREADY failing via the no-commit guard when
+	// this fires. The event exists because the hk-jcrzn silent-implementer failure
+	// was invisible at every layer that was checked; it names the shape so a
+	// future failure of a DIFFERENT cause is still caught.
+	// Payload: run_id, bead_id, duration_seconds, floor_seconds.
+	// Durability class: O.
+	// Refs: hk-368i4 (detector), hk-jcrzn (the cause it was split from).
+	EventTypeImplementerNoWorkSuspected EventType = "implementer_no_work_suspected"
+
 	// EventTypeTmuxNewWindowTimeout is the tmux_new_window_timeout event type.
 	// Emitted by the daemon when tmuxSubstrate.SpawnWindow's underlying
 	// `tmux new-window` shell call (adapter.NewWindowIn) does not return within

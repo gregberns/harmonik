@@ -3224,6 +3224,27 @@ const (
 	ExportedCodexRefsNoChange       = codexRefsNoChange
 )
 
+// ExportedCodexNoWorkDurationFloorDefault exposes the default no-work duration
+// floor so tests can assert against the shipped value rather than restating it.
+//
+// Bead ref: hk-368i4.
+const ExportedCodexNoWorkDurationFloorDefault = codexNoWorkDurationFloorDefault
+
+// ExportedCodexNoWorkSuspected exposes codexNoWorkSuspected — the hk-368i4
+// detector pairing a codexRefsNoChange outcome with a sub-floor phase duration.
+//
+// Bead ref: hk-368i4.
+func ExportedCodexNoWorkSuspected(outcome ExportedCodexRefsOutcome, phaseDuration, floorOverride time.Duration) bool {
+	return codexNoWorkSuspected(outcome, phaseDuration, floorOverride)
+}
+
+// ExportedCodexNoWorkFloor exposes codexNoWorkFloor (override resolution).
+//
+// Bead ref: hk-368i4.
+func ExportedCodexNoWorkFloor(override time.Duration) time.Duration {
+	return codexNoWorkFloor(override)
+}
+
 // ExportedWorktreeHEADHasRefsTrailer exposes worktreeHEADHasRefsTrailer (VERIFY).
 //
 // Bead ref: hk-bpxci.

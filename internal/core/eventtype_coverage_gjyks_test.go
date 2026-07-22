@@ -182,6 +182,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 
 	// Launch / dispatch diagnostics (hk-9vp51, hk-da3rr)
 	{EventTypeImplementerBudgetExceeded, func() EventPayload { return &ImplementerBudgetExceededPayload{} }},
+	{EventTypeImplementerNoWorkSuspected, func() EventPayload { return &ImplementerNoWorkSuspectedPayload{} }},
 	{EventTypeReviewerBudgetExceeded, func() EventPayload { return &ReviewerBudgetExceededPayload{} }},
 
 	// Launch_initiated → agent_ready stall detector (hk-1s1or)

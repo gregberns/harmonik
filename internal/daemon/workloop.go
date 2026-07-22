@@ -850,6 +850,15 @@ type workLoopDeps struct {
 	// Bead ref: hk-sxlb.
 	goCacheCleanIntervalOverride time.Duration
 
+	// codexNoWorkDurationFloor overrides codexNoWorkDurationFloorDefault (10s),
+	// the implement-phase duration below which a codexRefsNoChange outcome is
+	// flagged as a no-work run.  Zero → the default.  Production leaves this
+	// zero; the measured no-work/real-work gap is ~5x wide, so the value is not
+	// delicate.
+	//
+	// Bead ref: hk-368i4.
+	codexNoWorkDurationFloor time.Duration
+
 	// diskFreeBytesFunc, when non-nil, replaces the diskFreeBytes call inside
 	// runPeriodicDiskCheck.  Tests use this to control the apparent free-space
 	// reading without touching the real filesystem.
@@ -5076,11 +5085,17 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// commitLanded is determined by comparing the current worktree HEAD against
 	// headSHA.  resolveWorktreeHEAD errors are treated as "not landed" (conservative).
 	// REMOTE: route via runRunner so HEAD is read from the worker (nil ⇒ box-A-local).
+	//
+	// hk-368i4: implementerPhaseDur is captured ONCE here and reused by the
+	// no-work detector below, so the event's duration_seconds and the detector's
+	// verdict are computed from the same measurement — a reader correlating the
+	// two can never see them disagree.
+	implementerPhaseDur := deps.clock.Since(implementerLaunchedAt)
 	{
 		curHead, _ := resolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA
 		emitImplementerPhaseComplete(ctx, deps.bus, runID, ei.exitCode, ei.stderrTail,
-			commitLanded, deps.clock.Since(implementerLaunchedAt))
+			commitLanded, implementerPhaseDur)
 	}
 
 	// ── ProcessExit daemon-side commit fallback (hk-gd9r / hk-mazln) ─────────
@@ -5123,6 +5138,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				} else {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ensureCodexRefsTrailer bead %s: %s\n",
 						beadID, outcome)
+					// hk-368i4: a no-change outcome from a phase that finished in
+					// seconds is a no-work run, not a bead that had nothing to do.
+					// Diagnostic only — the run is already failing via the
+					// no-commit guard; this records WHY, which is what was
+					// missing when hk-jcrzn went undetected.
+					if codexNoWorkSuspected(outcome, implementerPhaseDur, deps.codexNoWorkDurationFloor) {
+						floor := codexNoWorkFloor(deps.codexNoWorkDurationFloor)
+						fmt.Fprintf(os.Stderr,
+							"daemon: workloop: bead %s: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
+							beadID, implementerPhaseDur, floor)
+						emitImplementerNoWorkSuspected(ctx, deps.bus, runID, beadID, implementerPhaseDur, floor)
+					}
 				}
 			}
 		}

@@ -118,7 +118,7 @@ func TestPasteInjectImplementerResume_BothMessagesReadable(t *testing.T) {
 	// second buffer; combined paste uses the task buffer, hk-poy7k).
 	// T8: daemon-run delivery routes through the AIS InputPort.SubmitInput → the
 	// single AIS input buffer (per-phase name is now keeper/CLI-only per PL-021d).
-	wantBuf := daemon.ExportedInputBufferName()
+	wantBuf := daemon.ExportedInputBufferName(sub)
 	if calls[0].bufferName != wantBuf {
 		t.Errorf("bufferName = %q, want %q", calls[0].bufferName, wantBuf)
 	}

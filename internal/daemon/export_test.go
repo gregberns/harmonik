@@ -1976,15 +1976,17 @@ func ExportedBufferName(sessionID, purpose string) string {
 }
 
 // ExportedInputBufferName exposes the interim tmux/paste InputPort buffer name
-// (inputBufferName) for tests in package daemon_test. Since T8
-// (codename:agent-input-substrate) the daemon-run review-loop delivery routes
-// through handler.InputPort.SubmitInput, whose interim tmux driver uses this
-// single AIS input buffer rather than the former per-phase
-// "harmonik-<session-id>-<purpose>" buffer names. The per-purpose bufferName
-// discipline remains normative only for the keeper + interactive-CLI paste paths
-// (PL-021d carve-out).
-func ExportedInputBufferName() string {
-	return inputBufferName
+// for tests in package daemon_test. Since T8 (codename:agent-input-substrate) the
+// daemon-run review-loop delivery routes through handler.InputPort.SubmitInput,
+// whose interim tmux driver names its buffer per-run as
+// "harmonik-<run-id>-input" (hk-9hvr0: the former hardcoded "harmonik-input"
+// failed the bufferNameRe invariant). The name is per-run, so callers pass the
+// substrate the SubmitInput will run on and get back the exact name it emits.
+func ExportedInputBufferName(sub handler.Substrate) string {
+	if p, ok := sub.(*perRunSubstrate); ok {
+		return p.inputBufferName()
+	}
+	return ""
 }
 
 // ExportedSynthesiseClaudeSessionID exposes rlSynthesiseClaudeSessionID for

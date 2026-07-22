@@ -101,7 +101,7 @@ func TestPasteInjectOnLaunch_ImplementerResume_SyntheticSessionID(t *testing.T) 
 	// T8: daemon-run delivery routes through the AIS InputPort.SubmitInput, whose
 	// interim tmux driver uses the single AIS input buffer (the per-phase
 	// "harmonik-<sessionID>-task" name is now keeper/CLI-only per PL-021d).
-	wantTaskBuf := daemon.ExportedInputBufferName()
+	wantTaskBuf := daemon.ExportedInputBufferName(sub)
 	if calls[0].bufferName != wantTaskBuf {
 		t.Errorf("call[0] bufferName = %q, want %q", calls[0].bufferName, wantTaskBuf)
 	}

@@ -1,0 +1,27 @@
+codename: 2026-07-17-dot-mechanism
+title: 'Harden the DOT workflow mechanism: structured per-role input routing + in-process integration testing across all handlers'
+type: spike
+project:
+    id: gregberns-harmonik
+jig: spike
+jig_version: 1
+status: explore
+status_values:
+    - frame
+    - explore
+    - converge
+    - align
+    - squared
+created: 2026-07-18T00:36:58Z
+updated: 2026-07-18T00:38:51Z
+sessions:
+    - id: null
+      started: 2026-07-18T00:36:58Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

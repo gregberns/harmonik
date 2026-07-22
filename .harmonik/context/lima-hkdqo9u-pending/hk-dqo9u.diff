@@ -1,0 +1,571 @@
+diff --git a/internal/daemon/dot_cascade.go b/internal/daemon/dot_cascade.go
+index fd07c4db..44f48be6 100644
+--- a/internal/daemon/dot_cascade.go
++++ b/internal/daemon/dot_cascade.go
+@@ -1520,38 +1520,78 @@ func dispatchDotAgenticNode(
+ 	// StdoutWrapper for session-id capture + PI-014 agent_end teardown.
+ 	if deps.harnessRegistry != nil {
+ 		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
++			// hk-dqo9u: this gate USED TO live inside the SessionIDCaptured branch
++			// below, which made the DOT cascade sandbox pi and codex but NEVER
++			// claude — claude is SessionIDMinted (handlercontract/harness.go), so
++			// the branch was not entered, sandboxSpawnForRun was never called, and
++			// no config value could turn the sandbox on. It failed SILENTLY AND
++			// OPEN: `sandbox.harnesses: [claude-code]` read like protection and was
++			// ignored. Single mode never had the bug because workloop.go:4498
++			// computes the gate unconditionally and feeds BOTH launch paths.
++			//
++			// Hoisted here so the same is true of DOT. The two consumers stay
++			// mutually exclusive, so there is still no double-wrap:
++			//   - exec path (SessionIDCaptured: pi, codex) — spec.Substrate is
++			//     forced nil below, so SpawnWindow never runs; the wrap is applied
++			//     directly to spec.Binary/spec.Args.
++			//   - substrate path (SessionIDMinted: claude) — spec.Substrate stays
++			//     the perRunSubstrate, whose SpawnWindow prepends the srt argv-wrap
++			//     when it sees a non-nil sandboxSpawn (tmuxsubstrate.go:2066).
++			sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(h, artifactAgentType(artifacts)), SandboxProfileInput{
++				WorktreePath:   wtPath,
++				GitDir:         filepath.Join(deps.projectDir, ".git"),
++				RunID:          runID.String(),
++				DaemonSockPath: daemonSocket,
++				AllowedDomains: deps.sandboxCfg.Network.AllowedDomains,
++				// hk-ybuts/hk-u69my: the DOT cascade is the LIVE canary's launch path — it MUST
++				// mirror single-mode's egress wiring (workloop.go), else a config-permitted local
++				// binding never reaches the sandboxed Pi and the model connect is Seatbelt-denied.
++				AllowLocalBinding:      deps.sandboxCfg.Network.AllowLocalBinding,
++				WeakerNetworkIsolation: deps.sandboxCfg.Network.WeakerNetworkIsolation,
++				SharedReadCacheDirs:    deps.sandboxCfg.Cache.WarmRead,
++				PrivateWriteCacheDirs:  deps.sandboxCfg.Cache.PrivateWrite,
++			})
++			// hk-dqo9u test seam: report the gate verdict for THIS harness. Fired
++			// unconditionally, before any policy branch, so a regression that sinks
++			// this call back inside the SessionIDCaptured branch is caught — the
++			// observer would simply never fire for claude.
++			notifySandboxGate(resolveGateAgentType(h, artifactAgentType(artifacts)), sandboxSpawn)
++			// hk-5wdon: prove the srt sandbox actually engages under this
++			// profile before trusting it to isolate the run. Mirrors the
++			// single-mode exec-path check in workloop.go — srt's own exit
++			// code alone is not sufficient evidence (hk-tch4t).
++			if sandboxSpawn != nil {
++				canaryPath := srtEngagementCanaryPath(deps.projectDir, runID.String())
++				if engageErr := verifySandboxEngaged(ctx, sandboxSpawn, canaryPath, func(format string, args ...any) {
++					fmt.Fprintf(os.Stderr, "daemon: dot: bead %s run %s: "+format+"\n",
++						append([]any{beadID, runID.String()}, args...)...)
++				}); engageErr != nil {
++					fmt.Fprintf(os.Stderr, "daemon: dot: srt sandbox engagement verification bead %s run %s: %v\n",
++						beadID, runID.String(), engageErr)
++					return core.Outcome{}, fmt.Errorf("srt sandbox engagement verification failed: %w", engageErr)
++				}
++			}
++			// hk-cdpxu (DOT analog of workloop.go:4557): when the run is actually
++			// srt-sandboxed, point Go's toolchain caches at the run worktree —
++			// already in the profile's allowWrite set — instead of their default
++			// location under $HOME, which the sandbox denies. Without this an agent
++			// running `go build`/`go vet`/`go test` INSIDE the sandbox resolves
++			// `go` fine and then fails on the cache write. Applied to BOTH paths
++			// here, deliberately: the substrate path had no cache redirect in
++			// either file, which was invisible only while that path was never
++			// sandboxed. Landing the hoist above without this would make a newly
++			// sandboxed claude look like a regression caused by the fix.
++			// Additive only — spec.Env wins on duplicate keys (last entry wins).
++			// No-op when this run is not srt-sandboxed (sandboxSpawn == nil).
++			if sandboxSpawn != nil {
++				spec.Env = append(spec.Env,
++					"GOCACHE="+filepath.Join(wtPath, ".harmonik", "go-cache"),
++					"GOPATH="+filepath.Join(wtPath, ".harmonik", "go-path"),
++				)
++			}
+ 			if h.SessionIDPolicy() == handlercontract.SessionIDCaptured {
+ 				pasteTarget = nil
+ 				spec.Substrate = nil
+-				sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(h, artifactAgentType(artifacts)), SandboxProfileInput{
+-					WorktreePath:   wtPath,
+-					GitDir:         filepath.Join(deps.projectDir, ".git"),
+-					RunID:          runID.String(),
+-					DaemonSockPath: daemonSocket,
+-					AllowedDomains: deps.sandboxCfg.Network.AllowedDomains,
+-					// hk-ybuts/hk-u69my: the DOT cascade is the LIVE canary's launch path — it MUST
+-					// mirror single-mode's egress wiring (workloop.go), else a config-permitted local
+-					// binding never reaches the sandboxed Pi and the model connect is Seatbelt-denied.
+-					AllowLocalBinding:      deps.sandboxCfg.Network.AllowLocalBinding,
+-					WeakerNetworkIsolation: deps.sandboxCfg.Network.WeakerNetworkIsolation,
+-					SharedReadCacheDirs:    deps.sandboxCfg.Cache.WarmRead,
+-					PrivateWriteCacheDirs:  deps.sandboxCfg.Cache.PrivateWrite,
+-				})
+-				// hk-5wdon: prove the srt sandbox actually engages under this
+-				// profile before trusting it to isolate the run. Mirrors the
+-				// single-mode exec-path check in workloop.go — srt's own exit
+-				// code alone is not sufficient evidence (hk-tch4t).
+-				if sandboxSpawn != nil {
+-					canaryPath := srtEngagementCanaryPath(deps.projectDir, runID.String())
+-					if engageErr := verifySandboxEngaged(ctx, sandboxSpawn, canaryPath, func(format string, args ...any) {
+-						fmt.Fprintf(os.Stderr, "daemon: dot: bead %s run %s: "+format+"\n",
+-							append([]any{beadID, runID.String()}, args...)...)
+-					}); engageErr != nil {
+-						fmt.Fprintf(os.Stderr, "daemon: dot: srt sandbox engagement verification bead %s run %s: %v\n",
+-							beadID, runID.String(), engageErr)
+-						return core.Outcome{}, fmt.Errorf("srt sandbox engagement verification failed: %w", engageErr)
+-					}
+-				}
+ 				wrapBin, wrapArgs, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
+ 				if wrapErr != nil {
+ 					fmt.Fprintf(os.Stderr, "daemon: dot: srt argv-wrap bead %s run %s: %v (reopening)\n",
+@@ -1621,6 +1661,38 @@ func dispatchDotAgenticNode(
+ 						capturedSessionIDCh <- id
+ 					}, agentEndCb)
+ 				}
++			} else if sandboxSpawn != nil {
++				// hk-dqo9u: the substrate path — SessionIDMinted harnesses (claude).
++				// This attach is the half of the sandbox wiring the DOT cascade never
++				// had. perRunSubstrate.SpawnWindow prepends the srt argv-wrap when it
++				// sees a non-nil sandboxSpawn (tmuxsubstrate.go:2066); with the field
++				// left nil it spawns the agent BARE, which is why claude ran
++				// unsandboxed under DOT no matter what sandbox.harnesses said.
++				// Mirrors workloop.go:4509-4511.
++				//
++				// FAIL CLOSED when there is nothing to attach to. newPerRunSubstrate
++				// returns nil when the substrate is absent or is not a *tmuxSubstrate
++				// (tmuxsubstrate.go:2037-2041), and guarding this attach with
++				// `prs != nil` would silently skip it — relocating hk-dqo9u from
++				// "wrong branch" to "nil substrate" while still letting a config value
++				// read like protection and do nothing.
++				//
++				// Refusing is not merely tidier, it is required for the evidence to
++				// stay honest: verifySandboxEngaged has ALREADY run and passed above,
++				// so continuing here would emit positive proof that the sandbox
++				// engages and then launch the run bare. A control that reports
++				// ENGAGED for an unprotected run is worse than no control.
++				//
++				// This also matches the exec path twenty lines up, where a
++				// sandbox-application failure returns rather than launching
++				// unprotected — same security control, same failure semantics.
++				if prs == nil {
++					fmt.Fprintf(os.Stderr, "daemon: dot: srt sandbox configured for %s bead %s run %s but no per-run substrate to attach it to (reopening)\n",
++						resolveGateAgentType(h, artifactAgentType(artifacts)), beadID, runID.String())
++					return core.Outcome{}, fmt.Errorf("srt sandbox configured for %s but no per-run substrate to attach it to",
++						resolveGateAgentType(h, artifactAgentType(artifacts)))
++				}
++				prs.sandboxSpawn = sandboxSpawn
+ 			}
+ 		}
+ 	}
+diff --git a/internal/daemon/dot_sandbox_minted_hkdqo9u_test.go b/internal/daemon/dot_sandbox_minted_hkdqo9u_test.go
+new file mode 100644
+index 00000000..9a035e87
+--- /dev/null
++++ b/internal/daemon/dot_sandbox_minted_hkdqo9u_test.go
+@@ -0,0 +1,336 @@
++package daemon_test
++
++// dot_sandbox_minted_hkdqo9u_test.go — the DOT cascade must consult the srt
++// sandbox gate for EVERY harness, not only SessionIDCaptured ones (hk-dqo9u).
++//
++// # The bug
++//
++// The DOT cascade's sandbox wiring lived entirely inside
++//
++//	if h.SessionIDPolicy() == handlercontract.SessionIDCaptured { ... }
++//
++// with no else. sandboxSpawnForRun was therefore only ever CALLED for pi and
++// codex. claude is SessionIDMinted (handlercontract/harness.go names ClaudeHarness
++// as the non-captured example), so for a claude run under DOT the gate was never
++// consulted, perRunSubstrate.sandboxSpawn was never assigned, and SpawnWindow
++// spawned the agent BARE.
++//
++// It failed SILENTLY AND OPEN, which is the part that makes it worth a dedicated
++// regression: `sandbox.harnesses: [claude-code]` in config.yaml read like
++// protection and did nothing. No value of any config key could turn it on, and
++// nothing was logged. Single mode never had the bug — workloop.go computes the
++// same gate unconditionally and feeds both launch paths.
++//
++// Measured before it was found in source: a two-arm control on the same binary,
++// config, and harness, differing only in workflow mode, showed DOT launching
++// claude bare while single mode wrapped it in srt with a real per-run profile.
++//
++// # Why the assertion is on a seam and not on the substrate field
++//
++// The natural assertion — "perRunSubstrate.sandboxSpawn is non-nil" — is not
++// reachable from a test. newPerRunSubstrate returns nil unless the substrate is a
++// *tmuxSubstrate, and the DOT test fixtures necessarily use a test-double
++// substrate, so the field would always be unobservable. tmuxsubstrate.go's own
++// comment on newPerRunSubstrate documents this and solves it the same way for the
++// runner arg (substrateRunnerObserver, hk-fxy9): observe the DECISION as it is
++// made rather than the field it is stored in. sandboxGateObserver is that seam.
++//
++// The seam fires unconditionally at the launch site, BEFORE any policy branch.
++// That is what makes this test a real regression guard: if the gate call is ever
++// moved back inside the SessionIDCaptured branch, the observer simply never fires
++// for claude and the test fails on observerCalled — the exact original defect.
++//
++// Bead: hk-dqo9u.
++
++import (
++	"context"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/gregberns/harmonik/internal/core"
++	"github.com/gregberns/harmonik/internal/daemon"
++	"github.com/gregberns/harmonik/internal/handlercontract"
++	"github.com/gregberns/harmonik/internal/workflow"
++)
++
++// hkdqo9uClaudeRegistry returns a HarnessRegistry with the real ClaudeHarness
++// registered under claude-code. The real harness is used deliberately rather than
++// a stub: the defect turned on its SessionIDPolicy being Minted, so a stub that
++// hardcoded the policy would assume away the thing under test.
++func hkdqo9uClaudeRegistry(t *testing.T) *handlercontract.HarnessRegistry {
++	t.Helper()
++	reg := handlercontract.NewHarnessRegistry()
++	if err := reg.Register(core.AgentTypeClaudeCode, daemon.ExportedNewClaudeHarness()); err != nil {
++		t.Fatalf("hkdqo9uClaudeRegistry: register claude-code: %v", err)
++	}
++	return reg
++}
++
++// TestDotMode_MintedHarness_ConsultsSandboxGate is the RED-before/GREEN-after for
++// hk-dqo9u: driving a DOT workflow whose implementer is claude (SessionIDMinted),
++// with claude-code listed in sandbox.harnesses, MUST consult the srt gate and get
++// a non-nil spawn decision.
++//
++// Pre-fix this failed on observerCalled: the gate sat inside the
++// SessionIDCaptured branch, so for claude it was never called at all.
++func TestDotMode_MintedHarness_ConsultsSandboxGate(t *testing.T) {
++	skipRealDaemonE2EInShort(t)
++
++	// NOT t.Parallel(): sandboxGateObserver is package-level shared state, same
++	// constraint the substrateRunnerObserver tests operate under.
++
++	projectDir := implReadyFixtureProjectDir(t)
++	wtPath, parentSHA := implReadyFixtureWorktree(t, projectDir)
++	scriptPath := implReadyFixtureHandlerScript(t)
++	adapterReg := implReadyFixtureAdapterRegistry(t)
++
++	dotPath := filepath.Join(dotE2EModuleRoot(), "specs", "examples", "review-loop.dot")
++	graph, loadErr := workflow.LoadDotWorkflow(dotPath)
++	if loadErr != nil {
++		t.Fatalf("LoadDotWorkflow(%s): %v", dotPath, loadErr)
++	}
++
++	var (
++		mu             sync.Mutex
++		observerCalled bool
++		gotAgentType   core.AgentType
++		gotSpawnNonNil bool
++	)
++	daemon.ExportedSetSandboxGateObserver(func(agentType core.AgentType, spawn *daemon.ExportedSrtSpawnConfig) {
++		mu.Lock()
++		defer mu.Unlock()
++		// Record only the claude-code decision. The graph's later nodes may
++		// resolve other harnesses; the claim under test is specifically that the
++		// MINTED harness reaches the gate.
++		if agentType != core.AgentTypeClaudeCode {
++			return
++		}
++		observerCalled = true
++		gotAgentType = agentType
++		gotSpawnNonNil = spawn != nil
++	})
++	defer daemon.ExportedSetSandboxGateObserver(nil)
++
++	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
++		BrAdapter:           &stubBeadLedger{},
++		Bus:                 &stubEventCollector{},
++		ProjectDir:          projectDir,
++		HandlerBinary:       "/bin/sh",
++		HandlerArgs:         []string{scriptPath},
++		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
++		WorkflowModeDefault: core.WorkflowModeDot,
++		AdapterRegistry2:    adapterReg,
++		HarnessRegistry:     hkdqo9uClaudeRegistry(t),
++		// The config that the bug rendered inert: backend srt, claude-code listed.
++		SandboxCfg: daemon.SandboxConfig{
++			Backend:   "srt",
++			Harnesses: []string{"claude-code"},
++		},
++		// The handler hangs; we only need the launch path to reach the gate, which
++		// happens well before agent_ready. A short timeout ends the run promptly.
++		AgentReadyTimeout: 100 * time.Millisecond,
++		HookStore:         daemon.ExportedNewHookSessionStore(),
++	})
++
++	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
++	defer cancel()
++
++	_ = daemon.ExportedDriveDotWorkflow(
++		ctx, deps,
++		implReadyFixtureRunID(t),
++		core.BeadID("dot-sandbox-minted-hkdqo9u-001"),
++		wtPath, parentSHA,
++		graph,
++	)
++
++	mu.Lock()
++	defer mu.Unlock()
++
++	// THE regression assertion. Pre-fix this is where it fails: the gate was
++	// never called for a SessionIDMinted harness, so the observer never fired.
++	if !observerCalled {
++		t.Fatalf("hk-dqo9u FAIL: the DOT cascade never consulted the srt sandbox gate for claude-code "+
++			"(SessionIDMinted). sandbox.harnesses=%v was silently ignored — this is the fail-open defect: "+
++			"the config reads like protection and does nothing.", []string{"claude-code"})
++	}
++	if gotAgentType != core.AgentTypeClaudeCode {
++		t.Errorf("hk-dqo9u: gate keyed off %q; want %q", gotAgentType, core.AgentTypeClaudeCode)
++	}
++	// With backend=srt and the harness listed, the gate's two config predicates
++	// are both satisfied, so the decision must be a real spawn config. A nil here
++	// would mean the call site was reached but the run still launches bare.
++	if !gotSpawnNonNil {
++		t.Errorf("hk-dqo9u FAIL: gate consulted for claude-code but returned a nil SrtSpawnConfig; "+
++			"want non-nil (backend=%q, harnesses=%v both match, so the run must be sandboxed)",
++			"srt", []string{"claude-code"})
++	}
++}
++
++// TestDotMode_MintedHarness_NoSubstrateRefusesToLaunch pins the FAIL-CLOSED half
++// of the substrate path (india's review of hk-dqo9u).
++//
++// The attach `prs.sandboxSpawn = sandboxSpawn` needs somewhere to attach to, and
++// newPerRunSubstrate returns nil when the substrate is absent or is not a
++// *tmuxSubstrate. Guarding the attach with `prs != nil` would make that case
++// silently skip the sandbox and launch bare — relocating hk-dqo9u from "wrong
++// branch" to "nil substrate" rather than fixing it, with the config still reading
++// like protection and still doing nothing.
++//
++// Worse, verifySandboxEngaged runs BEFORE this point, so continuing would emit
++// positive evidence that the sandbox engages and then launch unprotected.
++//
++// Note what this test does NOT rely on: the sandboxGateObserver assertion in the
++// tests above proves the gate was CONSULTED, never that the sandbox was APPLIED.
++// In this failure mode the observer fires with a non-nil verdict and those
++// assertions pass while the run is unsandboxed. Consultation and application are
++// separate properties and need separate tests; this is the application half.
++func TestDotMode_MintedHarness_NoSubstrateRefusesToLaunch(t *testing.T) {
++	skipRealDaemonE2EInShort(t)
++
++	projectDir := implReadyFixtureProjectDir(t)
++	wtPath, parentSHA := implReadyFixtureWorktree(t, projectDir)
++	scriptPath := implReadyFixtureHandlerScript(t)
++	adapterReg := implReadyFixtureAdapterRegistry(t)
++
++	dotPath := filepath.Join(dotE2EModuleRoot(), "specs", "examples", "review-loop.dot")
++	graph, loadErr := workflow.LoadDotWorkflow(dotPath)
++	if loadErr != nil {
++		t.Fatalf("LoadDotWorkflow(%s): %v", dotPath, loadErr)
++	}
++
++	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
++		BrAdapter:           &stubBeadLedger{},
++		Bus:                 &stubEventCollector{},
++		ProjectDir:          projectDir,
++		HandlerBinary:       "/bin/sh",
++		HandlerArgs:         []string{scriptPath},
++		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
++		WorkflowModeDefault: core.WorkflowModeDot,
++		AdapterRegistry2:    adapterReg,
++		HarnessRegistry:     hkdqo9uClaudeRegistry(t),
++		// Sandbox IS configured for this harness...
++		SandboxCfg: daemon.SandboxConfig{
++			Backend:   "srt",
++			Harnesses: []string{"claude-code"},
++		},
++		// ...and Substrate is deliberately left nil, so newPerRunSubstrate returns
++		// nil and there is nothing to attach the spawn config to.
++		AgentReadyTimeout: 100 * time.Millisecond,
++		HookStore:         daemon.ExportedNewHookSessionStore(),
++	})
++
++	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
++	defer cancel()
++
++	result := daemon.ExportedDriveDotWorkflow(
++		ctx, deps,
++		implReadyFixtureRunID(t),
++		core.BeadID("dot-sandbox-minted-hkdqo9u-003"),
++		wtPath, parentSHA,
++		graph,
++	)
++
++	// Assert on the REASON, not merely on failure. `success == false` alone is
++	// worthless here: the fixture's handler hangs, so a run that launches bare
++	// still fails — with agent_ready_timeout. A mutation check confirmed exactly
++	// that; with the fail-closed guard neutered, an assertion on success alone
++	// still passed, i.e. the test bound to nothing. The run must fail BECAUSE the
++	// sandbox could not be attached.
++	if result.Success {
++		t.Fatalf("hk-dqo9u FAIL-OPEN: the run SUCCEEDED with srt configured for claude-code but no " +
++			"per-run substrate to attach the spawn config to — it launched unsandboxed.")
++	}
++	const wantReason = "no per-run substrate to attach it to"
++	if !strings.Contains(result.Summary, wantReason) {
++		t.Fatalf("hk-dqo9u FAIL-OPEN: run failed, but NOT for the sandbox reason.\n"+
++			"  summary: %q\n"+
++			"  want it to contain: %q\n"+
++			"The run must REFUSE because the sandbox could not be attached. Failing for any other "+
++			"reason (e.g. agent_ready_timeout) means the agent was launched BARE first and the "+
++			"sandbox was silently skipped — which is hk-dqo9u relocated, not fixed. Note that "+
++			"verifySandboxEngaged has already passed by this point, so a bare launch here would "+
++			"carry positive evidence that the sandbox engaged.",
++			result.Summary, wantReason)
++	}
++	t.Logf("refused for the right reason: summary=%q", result.Summary)
++}
++
++// TestDotMode_MintedHarness_UnlistedHarnessStaysUnsandboxed pins the other side of
++// the gate so the fix above cannot degenerate into "always sandbox everything".
++// The gate must still be CONSULTED for claude (that is the fix), but with
++// claude-code absent from sandbox.harnesses the decision must be nil.
++func TestDotMode_MintedHarness_UnlistedHarnessStaysUnsandboxed(t *testing.T) {
++	skipRealDaemonE2EInShort(t)
++
++	projectDir := implReadyFixtureProjectDir(t)
++	wtPath, parentSHA := implReadyFixtureWorktree(t, projectDir)
++	scriptPath := implReadyFixtureHandlerScript(t)
++	adapterReg := implReadyFixtureAdapterRegistry(t)
++
++	dotPath := filepath.Join(dotE2EModuleRoot(), "specs", "examples", "review-loop.dot")
++	graph, loadErr := workflow.LoadDotWorkflow(dotPath)
++	if loadErr != nil {
++		t.Fatalf("LoadDotWorkflow(%s): %v", dotPath, loadErr)
++	}
++
++	var (
++		mu             sync.Mutex
++		observerCalled bool
++		gotSpawnNonNil bool
++	)
++	daemon.ExportedSetSandboxGateObserver(func(agentType core.AgentType, spawn *daemon.ExportedSrtSpawnConfig) {
++		mu.Lock()
++		defer mu.Unlock()
++		if agentType != core.AgentTypeClaudeCode {
++			return
++		}
++		observerCalled = true
++		gotSpawnNonNil = spawn != nil
++	})
++	defer daemon.ExportedSetSandboxGateObserver(nil)
++
++	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
++		BrAdapter:           &stubBeadLedger{},
++		Bus:                 &stubEventCollector{},
++		ProjectDir:          projectDir,
++		HandlerBinary:       "/bin/sh",
++		HandlerArgs:         []string{scriptPath},
++		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
++		WorkflowModeDefault: core.WorkflowModeDot,
++		AdapterRegistry2:    adapterReg,
++		HarnessRegistry:     hkdqo9uClaudeRegistry(t),
++		// backend is srt, but claude-code is NOT listed: gate consulted, no wrap.
++		SandboxCfg: daemon.SandboxConfig{
++			Backend:   "srt",
++			Harnesses: []string{"pi"},
++		},
++		AgentReadyTimeout: 100 * time.Millisecond,
++		HookStore:         daemon.ExportedNewHookSessionStore(),
++	})
++
++	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
++	defer cancel()
++
++	_ = daemon.ExportedDriveDotWorkflow(
++		ctx, deps,
++		implReadyFixtureRunID(t),
++		core.BeadID("dot-sandbox-minted-hkdqo9u-002"),
++		wtPath, parentSHA,
++		graph,
++	)
++
++	mu.Lock()
++	defer mu.Unlock()
++
++	if !observerCalled {
++		t.Fatalf("hk-dqo9u: the gate must be CONSULTED for claude-code even when the harness is " +
++			"unlisted — the consult is the fix; the nil verdict is the config's answer.")
++	}
++	if gotSpawnNonNil {
++		t.Errorf("hk-dqo9u FAIL: claude-code is absent from sandbox.harnesses but the gate returned a " +
++			"non-nil SrtSpawnConfig; the fix must not sandbox harnesses the operator did not list.")
++	}
++}
+diff --git a/internal/daemon/export_test.go b/internal/daemon/export_test.go
+index 218aec29..ecbd78e9 100644
+--- a/internal/daemon/export_test.go
++++ b/internal/daemon/export_test.go
+@@ -151,6 +151,12 @@ type WorkLoopDepsParams struct {
+ 	// Bead ref: hk-f6g7.
+ 	HarnessRegistry *handlercontract.HarnessRegistry
+ 
++	// SandboxCfg is forwarded into workLoopDeps.sandboxCfg, letting a test drive
++	// a launch path with a real sandbox: config block (backend + harnesses) and
++	// assert on the gate's verdict. Zero value = sandbox disabled, which is the
++	// behaviour every pre-existing fixture already relies on (hk-dqo9u).
++	SandboxCfg SandboxConfig
++
+ 	// LaunchSpecBuilder, when non-nil, overrides the buildClaudeLaunchSpec
+ 	// function called by beadRunOne. When nil, the production buildClaudeLaunchSpec
+ 	// is used (via the nil-guard in beadRunOne). Tests that use this path must
+@@ -487,6 +493,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
+ 		worktreeFactory:            wtf,
+ 		adapterRegistry:            p.AdapterRegistry2,
+ 		harnessRegistry:            p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
++		sandboxCfg:                 p.SandboxCfg,      // hk-dqo9u: drive the srt gate from a test
+ 		substrate:                  p.Substrate,
+ 		agentReadyTimeout:          p.AgentReadyTimeout,
+ 		postAgentReadyHangTimeout:  p.PostAgentReadyHangTimeout,
+@@ -991,6 +998,18 @@ func ExportedSetSubstrateRunnerObserver(f func(tmuxPkg.CommandRunner)) {
+ 	substrateRunnerObserver = f
+ }
+ 
++// ExportedSetSandboxGateObserver installs (or clears, with nil) the package test
++// seam that captures the srt sandbox gate verdict at the DOT agentic launch site,
++// together with the resolved harness identity it was keyed off.
++//
++// Tests use this to assert the gate is consulted for EVERY harness rather than
++// only for SessionIDCaptured ones — the hk-dqo9u defect, where the call sat
++// inside the SessionIDCaptured branch so claude (SessionIDMinted) was never
++// sandboxed under DOT no matter what sandbox.harnesses said.
++func ExportedSetSandboxGateObserver(f func(core.AgentType, *SrtSpawnConfig)) {
++	sandboxGateObserver = f
++}
++
+ // ExportedExecuteCognitionGate drives executeCognitionGate — the PRODUCTION
+ // cognition-gate dispatch body in dot_gate.go — directly, so a test can assert
+ // which harness the gate actually resolves without standing up the whole DOT
+diff --git a/internal/daemon/reviewloop.go b/internal/daemon/reviewloop.go
+index 0b945849..f648ed79 100644
+--- a/internal/daemon/reviewloop.go
++++ b/internal/daemon/reviewloop.go
+@@ -74,6 +74,29 @@ func notifySubstrateRunner(r tmux.CommandRunner) {
+ 	}
+ }
+ 
++// sandboxGateObserver is a TEST SEAM (hk-dqo9u), the direct analog of
++// substrateRunnerObserver and for the same reason: the value we need to assert on
++// is unobservable in the DOT/review-loop test fixtures. Those fixtures use a
++// non-tmux substrate, so newPerRunSubstrate returns nil and the
++// perRunSubstrate.sandboxSpawn field the fix assigns can never be read back.
++// Observing the DECISION as it is made is observable regardless of substrate type.
++//
++// Invoked at the DOT agentic launch site with the gate's verdict and the resolved
++// harness identity. hk-dqo9u was exactly a "the call is in the wrong lexical
++// place" defect — sandboxSpawnForRun sat inside the SessionIDCaptured branch, so
++// for claude (SessionIDMinted) it was never called at all and the sandbox failed
++// silently open. No unit test of the gate helper could catch that, because the
++// helper was correct; only its placement was wrong. This seam makes the call
++// site itself assertable. nil in production (zero overhead).
++var sandboxGateObserver func(agentType core.AgentType, spawn *SrtSpawnConfig)
++
++// notifySandboxGate invokes sandboxGateObserver if set. No-op in prod.
++func notifySandboxGate(agentType core.AgentType, spawn *SrtSpawnConfig) {
++	if sandboxGateObserver != nil {
++		sandboxGateObserver(agentType, spawn)
++	}
++}
++
+ // reviewLoopIterationCap is the hardcoded maximum number of iterations per
+ // execution-model.md §4.3.EM-015e. Not operator-tunable at MVH.
+ const reviewLoopIterationCap = 3

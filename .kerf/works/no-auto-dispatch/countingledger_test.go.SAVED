@@ -1,0 +1,51 @@
+package daemon_test
+
+import (
+	"context"
+	"sync/atomic"
+
+	"github.com/gregberns/harmonik/internal/brcli"
+	"github.com/gregberns/harmonik/internal/core"
+)
+
+// countingLedger is a minimal beadLedger stub that counts how many times
+// Ready() and ClaimBead() are called.
+//
+// It originally lived in noautopull_em066_em067_test.go, which was deleted with
+// hk-04q2j.2 along with the br-ready fallback those tests pinned. The stub
+// itself is still used by tests that assert a bead is never claimed, so it was
+// lifted here rather than lost.
+type countingLedger struct {
+	readyCalls  atomic.Int64
+	claimCalls  atomic.Int64
+	readyResult []core.BeadRecord // returned on every Ready() call
+	notifyReady chan struct{}     // signalled on first Ready() call (may be nil)
+}
+
+func (c *countingLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
+	n := c.readyCalls.Add(1)
+	if n == 1 && c.notifyReady != nil {
+		select {
+		case c.notifyReady <- struct{}{}:
+		default:
+		}
+	}
+	return c.readyResult, nil
+}
+
+func (c *countingLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+}
+
+func (c *countingLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+	c.claimCalls.Add(1)
+	return nil
+}
+
+func (c *countingLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
+	return nil
+}
+
+func (c *countingLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
+	return nil
+}

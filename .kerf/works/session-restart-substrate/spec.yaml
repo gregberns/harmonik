@@ -1,0 +1,31 @@
+codename: session-restart-substrate
+title: Extract internal/substrate (record→replay seam) and prove it on the session-restart vertical
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-13T23:45:39Z
+updated: 2026-07-14T01:19:37Z
+sessions:
+    - id: null
+      started: 2026-07-13T23:45:39Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:session-restart-substrate
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

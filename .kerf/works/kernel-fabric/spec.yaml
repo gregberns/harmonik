@@ -1,0 +1,31 @@
+codename: kernel-fabric
+title: 'P1 kernel/fabric: the in-proc plugin kernel — transport, addressing, and a reserved resource seam that applications run on'
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: problem-space
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-22T12:56:53Z
+updated: 2026-07-22T12:56:53Z
+sessions:
+    - id: null
+      started: 2026-07-22T12:56:53Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:kernel-fabric
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

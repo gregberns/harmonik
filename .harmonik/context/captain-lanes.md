@@ -10,21 +10,25 @@
 # Keep this SHORT — one current-truth block. Superseded history is DELETED, not archived here.
 # Pre-freeze lane history: .harmonik/archive/2026-07-12-freeze-and-carve/ (not boot-read).
 
-## ⭐ CURRENT TRUTH 2026-07-12 — FLEET TORN DOWN · EXECUTION FROZEN · PLAN-FIRST.
+## CURRENT TRUTH 2026-07-22 — FLEET DISPATCHING (inline mode), RELEASE/REBUILD IN PROGRESS.
 
-> **No lanes are staffed.** The operator ordered a freeze-and-carve clean slate
-> (direction-log ~18:00Z). All worker + oversight crews are stopped, run worktrees
-> reaped, queues idle. Only **captain + admiral** sessions remain up. **Nothing
-> dispatches** until the operator ratifies the plan and lifts the freeze.
+> The 2026-07-12 freeze was LIFTED long ago; the fleet has dispatched for ~10 days since.
+> This block replaces the superseded freeze text (pre-freeze history archived at
+> `.harmonik/archive/2026-07-12-freeze-and-carve/`, not boot-read). 7 sessions up and
+> working: captain + admiral (oversight) + crews india, juliet, kilo, lima, mike, assessor.
+> INLINE MODE — crews implement in in-crew subagents; daemon queue-dispatch is OFF until
+> the tmux-input fix hk-9hvr0 deploys. A major release is mid-flight: 31 landed commits are
+> NOT yet running — the prod daemon is stuck on eb2b4f1a (since 09:03Z 2026-07-22); a gated
+> redeploy (daemon-20260722-02) is being prepared: admiral gates via the assessor, captain
+> drives, no swap until admiral clears.
 
-**Operative direction:** `.harmonik/context/direction-log.md` (the ~18:00Z STRATEGIC
-PIVOT entry) is authoritative. The execution program is
-`plans/2026-07-12-codebase-census/PLAN.md` (freeze-and-carve; STEP-0 → M1 → M2 → M3 → M4),
-review-hardened v2, **awaiting operator ratification.**
-
-### Lanes
-_None active._ The pre-freeze 5/6-lane fleet (kynes/hawat/piter/stilgar/yueh/leto) is
-deliberately torn down. Do NOT re-stand any lane until the plan is ratified.
+### Lanes (live)
+- codex-first (hk-tckw3, india) — Step-2 GO/NO-GO gated on the rebuild.
+- flake initiative (hk-f8o5u, juliet) — both arms discharged; root cause = leaked
+  test-daemon cache-wipe artifact; hk-gjbpp is the fix; clean re-measure post-rebuild.
+- sandbox (hk-scaj0, lima) — hk-guapd/dqo9u/bzydx/quoka/s13ee landed; hk-rhhig/mp37h/155gs remain.
+- process-group-provenance (kilo) — kerf pass-5 spec-draft in review.
+- daemon-reliability + the release batch — the rebuild is the culmination.
 
 **On ratification**, the first work is STEP-0 (resume-hang + noChange false-close +
 honest-probe re-land), which runs **OUT-OF-PIPELINE** (direct agent + human-reviewed

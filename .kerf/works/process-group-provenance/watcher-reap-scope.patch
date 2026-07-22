@@ -1,0 +1,979 @@
+diff --git a/cmd/harmonik/captain.go b/cmd/harmonik/captain.go
+index 995365dd2..c2534ec01 100644
+--- a/cmd/harmonik/captain.go
++++ b/cmd/harmonik/captain.go
+@@ -482,8 +482,10 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
+ 	// leave its predecessor's watcher holding a daemon subscribe slot. This is
+ 	// orthogonal to the D7 tmux-session pre-flight above (D7 gates on the
+ 	// AGENT PANE's liveness; this reaps watcher PROCESSES by argv+identity,
+-	// live or dead, independent of any tmux session).
+-	captainReapPriorWatchers(name)
++	// live or dead, independent of any tmux session). Scoped to project:
++	// agent names repeat across projects sharing a box, so an unscoped reap
++	// would kill a peer project's same-named watcher.
++	captainReapPriorWatchers(name, project)
+ 
+ 	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
+ 	// before launching so a foreign project (never run harmonik init) has the
+diff --git a/cmd/harmonik/crew.go b/cmd/harmonik/crew.go
+index d31707a60..e404edf6f 100644
+--- a/cmd/harmonik/crew.go
++++ b/cmd/harmonik/crew.go
+@@ -314,7 +314,9 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
+ 	// or a re-`crew start` for the same name) must never leave its
+ 	// predecessor's watcher holding a daemon subscribe slot. See
+ 	// captainReapPriorWatchers in captain.go for the mirrored captain-side call.
+-	crewReapPriorWatchers(name)
++	// Scoped to absProject: crew names repeat across projects sharing a box, so
++	// an unscoped reap would kill a peer project's same-named watcher.
++	crewReapPriorWatchers(name, absProject)
+ 
+ 	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
+ 	// before the daemon spawns the crew so a foreign project (never run harmonik
+diff --git a/cmd/harmonik/watcherreap.go b/cmd/harmonik/watcherreap.go
+index 531f331e6..af6e94dd5 100644
+--- a/cmd/harmonik/watcherreap.go
++++ b/cmd/harmonik/watcherreap.go
+@@ -22,16 +22,17 @@ import (
+ // reapPriorAgentWatchersFn is the seam tests inject into captainReapPriorWatchers /
+ // crewReapPriorWatchers to observe or no-op the reap call without touching the
+ // real process table.
+-type reapPriorAgentWatchersFn func(agent string)
++type reapPriorAgentWatchersFn func(agent, project string)
+ 
+ // reapPriorAgentWatchers is the production reap hook: it enumerates and
+-// terminates every prior --follow watcher process addressed to agent,
+-// regardless of liveness (see lifecycle.ReapPriorAgentFollowWatchers for why),
+-// and reports survivors/errors to stderr. Best-effort: never blocks or fails
+-// the launch — a missed reap just leaves the pre-existing leak in place,
+-// which is the status quo, not a regression introduced by this call.
+-func reapPriorAgentWatchers(agent string) {
+-	survived, err := lifecycle.ReapPriorAgentFollowWatchers(context.Background(), nil, agent, os.Getpid(), nil)
++// terminates every prior --follow watcher process addressed to agent WITHIN
++// project, regardless of liveness (see lifecycle.ReapPriorAgentFollowWatchers
++// for why liveness is not a gate, and why project is), and reports
++// survivors/errors to stderr. Best-effort: never blocks or fails the launch —
++// a missed reap just leaves the pre-existing leak in place, which is the
++// status quo, not a regression introduced by this call.
++func reapPriorAgentWatchers(agent, project string) {
++	survived, err := lifecycle.ReapPriorAgentFollowWatchers(context.Background(), nil, agent, project, os.Getpid(), nil)
+ 	if err != nil {
+ 		fmt.Fprintf(os.Stderr, "harmonik: reap prior --follow watcher(s) for %q: %v\n", agent, err)
+ 		return
+diff --git a/cmd/harmonik/watcherreap_hk6629b_test.go b/cmd/harmonik/watcherreap_hk6629b_test.go
+index 3ffc6fca7..69e371549 100644
+--- a/cmd/harmonik/watcherreap_hk6629b_test.go
++++ b/cmd/harmonik/watcherreap_hk6629b_test.go
+@@ -22,11 +22,12 @@ import (
+ // captain name exactly once, before the launch completes.
+ func TestCaptainLaunch_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
+ 	var calls int
+-	var gotAgent string
++	var gotAgent, gotProject string
+ 	orig := captainReapPriorWatchers
+-	captainReapPriorWatchers = func(agent string) {
++	captainReapPriorWatchers = func(agent, project string) {
+ 		calls++
+ 		gotAgent = agent
++		gotProject = project
+ 	}
+ 	t.Cleanup(func() { captainReapPriorWatchers = orig })
+ 
+@@ -47,6 +48,12 @@ func TestCaptainLaunch_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
+ 	if gotAgent != "captain" {
+ 		t.Errorf("captainReapPriorWatchers agent = %q, want %q", gotAgent, "captain")
+ 	}
++	// The reap MUST be scoped to the launching project: agent names repeat
++	// across projects sharing a box, and an unscoped reap kills a peer
++	// project's same-named watcher.
++	if gotProject != proj {
++		t.Errorf("captainReapPriorWatchers project = %q, want %q", gotProject, proj)
++	}
+ }
+ 
+ // TestCaptainLaunch_ReapsPriorAgentWatchers_D7Refuse_Hk6629b verifies the reap
+@@ -56,7 +63,7 @@ func TestCaptainLaunch_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
+ func TestCaptainLaunch_ReapsPriorAgentWatchers_D7Refuse_Hk6629b(t *testing.T) {
+ 	var calls int
+ 	orig := captainReapPriorWatchers
+-	captainReapPriorWatchers = func(_ string) { calls++ }
++	captainReapPriorWatchers = func(_, _ string) { calls++ }
+ 	t.Cleanup(func() { captainReapPriorWatchers = orig })
+ 
+ 	run, _ := captureRunHkly0n()
+@@ -112,11 +119,12 @@ func startWatcherReapMockDaemon(t *testing.T, project, sessionID, crewName strin
+ // name exactly once for a successful crew start.
+ func TestCrewStart_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
+ 	var calls int
+-	var gotAgent string
++	var gotAgent, gotProject string
+ 	orig := crewReapPriorWatchers
+-	crewReapPriorWatchers = func(agent string) {
++	crewReapPriorWatchers = func(agent, project string) {
+ 		calls++
+ 		gotAgent = agent
++		gotProject = project
+ 	}
+ 	t.Cleanup(func() { crewReapPriorWatchers = orig })
+ 
+@@ -136,6 +144,10 @@ func TestCrewStart_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
+ 	if gotAgent != "gamma" {
+ 		t.Errorf("crewReapPriorWatchers agent = %q, want %q", gotAgent, "gamma")
+ 	}
++	// Scoped to the launching project — see the captain-side assertion.
++	if gotProject != proj {
++		t.Errorf("crewReapPriorWatchers project = %q, want %q", gotProject, proj)
++	}
+ }
+ 
+ // TestCrewStart_ReapsPriorAgentWatchers_NoDaemonSkips_Hk6629b verifies the
+@@ -148,7 +160,7 @@ func TestCrewStart_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
+ func TestCrewStart_ReapsPriorAgentWatchers_NoDaemonSkips_Hk6629b(t *testing.T) {
+ 	var calls int
+ 	orig := crewReapPriorWatchers
+-	crewReapPriorWatchers = func(_ string) { calls++ }
++	crewReapPriorWatchers = func(_, _ string) { calls++ }
+ 	t.Cleanup(func() { crewReapPriorWatchers = orig })
+ 
+ 	proj := t.TempDir() // no mock daemon listening here
+diff --git a/internal/lifecycle/agentwatcherreap.go b/internal/lifecycle/agentwatcherreap.go
+index f9efa974f..43cf9fdbe 100644
+--- a/internal/lifecycle/agentwatcherreap.go
++++ b/internal/lifecycle/agentwatcherreap.go
+@@ -19,6 +19,28 @@ package lifecycle
+ // would MISS exactly the case that motivated this fix — so identification
+ // here is by COMMAND LINE + AGENT IDENTITY only, never by liveness/parentage.
+ //
++// # Two bounds on that ruling
++//
++// "Regardless of liveness" says when a match may be killed. It says nothing
++// about what counts as a match, and read as a licence to match loosely it
++// authorises two kills this reap must never make.
++//
++// (1) Project scope. Agent names are per-project, not per-machine: several
++// harmonik projects share a box and each runs a crew called "mike". A reap
++// keyed on the name alone kills every project's watcher, not just this one's.
++// So a candidate MUST positively prove it belongs to the caller's project —
++// via a --project flag if it carries one, otherwise via its HARMONIK_PROJECT
++// environment variable — and a candidate that can prove neither is LEFT
++// ALONE. Failing closed here costs a missed reap (the pre-existing leak);
++// failing open costs another project's live watcher.
++//
++// (2) The process must BE the watcher, not merely mention it. Agents routinely
++// run the watcher command through a wrapper — `/bin/zsh -c '... harmonik comms
++// recv --agent mike --follow ...'`, often wrapped again in a re-arming
++// `while true` loop. A substring scan matches the wrapper as readily as the
++// watcher, and killing the wrapper takes out a live agent's tool subprocess.
++// So the subcommand is matched POSITIONALLY: argv[0] must itself be harmonik.
++//
+ // Bead: hk-6629b.
+ 
+ import (
+@@ -26,12 +48,24 @@ import (
+ 	"fmt"
+ 	"log"
+ 	"os/exec"
++	"path/filepath"
+ 	"strconv"
+ 	"strings"
+ 	"syscall"
+ 	"time"
+ )
+ 
++// ProjectPathEnvKey is the environment variable carrying a harmonik agent's
++// project root. The crew launch spec sets it on every agent it starts (see
++// internal/daemon/crewlaunchspec.go), and it is inherited by the watcher
++// processes that agent spawns — which is what lets the launch-path reap tell
++// this project's watchers from a peer project's.
++//
++// Distinct from ProvenanceEnvKey (HARMONIK_PROJECT_HASH), which the DAEMON
++// sets on handler subprocesses only and which is absent from the agent-side
++// population this reap enumerates.
++const ProjectPathEnvKey = "HARMONIK_PROJECT"
++
+ // AgentWatcherLister enumerates the PIDs of prior `--follow` comms-watcher
+ // processes addressed to a given agent name. Implementations match on the
+ // full command line, not on process-tree liveness or parentage — see the
+@@ -47,12 +81,18 @@ type AgentWatcherLister interface {
+ //
+ //	harmonik comms recv --agent <name> ... --follow ...
+ //	harmonik subscribe  --to    <name> ... --follow ...
+-type OSAgentWatcherLister struct{}
++type OSAgentWatcherLister struct {
++	// Project is the root of the project whose watchers may be reaped. It is
++	// REQUIRED: a zero Project matches nothing, so a caller that forgets to
++	// set it reaps none of its own watchers rather than every project's.
++	Project string
++}
+ 
+ // ListAgentFollowWatcherPIDs implements AgentWatcherLister using
+-// `ps -eo pid,args`.
+-func (OSAgentWatcherLister) ListAgentFollowWatcherPIDs(ctx context.Context, agent string) ([]int, error) {
+-	if agent == "" {
++// `ps -eo pid,args`, returning only processes that both match the watcher
++// shape for agent and prove membership of l.Project.
++func (l OSAgentWatcherLister) ListAgentFollowWatcherPIDs(ctx context.Context, agent string) ([]int, error) {
++	if agent == "" || l.Project == "" {
+ 		return nil, nil
+ 	}
+ 	//nolint:gosec // G204: arguments are hard-coded constants, not user input
+@@ -60,6 +100,7 @@ func (OSAgentWatcherLister) ListAgentFollowWatcherPIDs(ctx context.Context, agen
+ 	if err != nil {
+ 		return nil, fmt.Errorf("lifecycle: OSAgentWatcherLister: ps: %w", err)
+ 	}
++	want := canonicalProjectPath(l.Project)
+ 
+ 	var pids []int
+ 	lines := strings.Split(string(out), "\n")
+@@ -76,38 +117,134 @@ func (OSAgentWatcherLister) ListAgentFollowWatcherPIDs(ctx context.Context, agen
+ 		if perr != nil {
+ 			continue
+ 		}
+-		if matchesAgentFollowWatcher(strings.TrimSpace(fields[1]), agent) {
+-			pids = append(pids, pid)
++		cmdline := strings.TrimSpace(fields[1])
++		if !matchesAgentFollowWatcher(cmdline, agent) {
++			continue
++		}
++		if !candidateInProject(ctx, pid, cmdline, want) {
++			continue
+ 		}
++		pids = append(pids, pid)
+ 	}
+ 	return pids, nil
+ }
+ 
+-// matchesAgentFollowWatcher reports whether cmdline is an invocation of
+-// `harmonik comms recv --follow` or `harmonik subscribe --follow` addressed to
+-// agent via a "--agent"/"--to" flag. Matching is TOKEN-based (not substring),
+-// so agent "captain" does not match a watcher addressed to "captain2".
+-func matchesAgentFollowWatcher(cmdline, agent string) bool {
+-	if agent == "" || !strings.Contains(cmdline, "harmonik") || !strings.Contains(cmdline, "--follow") {
++// candidateInProject reports whether the process identified by pid/cmdline can
++// PROVE it belongs to the project rooted at want (already canonicalized).
++//
++// Two proofs are accepted, in order of cost: an explicit --project flag on the
++// command line, then the HARMONIK_PROJECT environment variable the agent
++// passed down to it. A process offering neither proof returns false and is
++// left alone — see bound (1) in the package doc.
++func candidateInProject(ctx context.Context, pid int, cmdline, want string) bool {
++	if want == "" {
+ 		return false
+ 	}
+-	isCommsRecv := strings.Contains(cmdline, "comms") && strings.Contains(cmdline, "recv")
+-	isSubscribe := strings.Contains(cmdline, "subscribe")
+-	if !isCommsRecv && !isSubscribe {
+-		return false
++	if got, ok := watcherProjectFromCmdline(cmdline); ok {
++		return canonicalProjectPath(got) == want
+ 	}
++	if got, ok := processEnvValue(ctx, pid, ProjectPathEnvKey); ok {
++		return canonicalProjectPath(got) == want
++	}
++	return false
++}
+ 
++// watcherProjectFromCmdline returns the value of an explicit --project flag,
++// in either the "--project=<path>" or "--project <path>" form.
++func watcherProjectFromCmdline(cmdline string) (string, bool) {
+ 	tokens := strings.Fields(cmdline)
+ 	for i, tok := range tokens {
+ 		flag, val, ok := splitFlagToken(tok)
+-		if !ok && (tok == "--agent" || tok == "--to") && i+1 < len(tokens) {
++		if !ok && tok == "--project" && i+1 < len(tokens) {
+ 			flag, val, ok = tok, tokens[i+1], true
+ 		}
+-		if ok && (flag == "--agent" || flag == "--to") && val == agent {
+-			return true
++		if ok && flag == "--project" && val != "" {
++			return val, true
+ 		}
+ 	}
+-	return false
++	return "", false
++}
++
++// canonicalProjectPath reduces a project root to a comparable form: absolute,
++// symlinks resolved, trailing separators removed. Resolution is best-effort —
++// a path that cannot be resolved (e.g. it no longer exists) degrades to its
++// lexically cleaned form rather than to the empty string, so two spellings of
++// a live path still compare equal.
++func canonicalProjectPath(path string) string {
++	if path == "" {
++		return ""
++	}
++	if abs, err := filepath.Abs(path); err == nil {
++		path = abs
++	}
++	if resolved, err := filepath.EvalSymlinks(path); err == nil {
++		path = resolved
++	}
++	return filepath.Clean(path)
++}
++
++// matchesAgentFollowWatcher reports whether cmdline IS an invocation of
++// `harmonik comms recv --follow` or `harmonik subscribe --follow` addressed to
++// agent via a "--agent"/"--to" flag.
++//
++// Every element is matched by argv POSITION, never by substring:
++//
++//   - argv[0]'s basename must be "harmonik", so a shell running the watcher
++//     (`/bin/zsh -c '... harmonik comms recv --agent mike --follow ...'`) does
++//     not match — killing that shell would take out a live agent's tool
++//     subprocess, not a stray watcher. See bound (2) in the package doc.
++//   - the subcommand must occupy argv[1:], so a `harmonik` invocation that
++//     merely mentions "subscribe" in a later argument does not match.
++//   - the agent name must be a whole flag value, so "captain" does not match a
++//     watcher addressed to "captain2".
++func matchesAgentFollowWatcher(cmdline, agent string) bool {
++	if agent == "" {
++		return false
++	}
++	args, ok := watcherSubcommandArgs(strings.Fields(cmdline))
++	if !ok {
++		return false
++	}
++	return argsAddressFollowedAgent(args, agent)
++}
++
++// watcherSubcommandArgs reports whether tokens are the argv of a harmonik
++// watcher invocation, returning the arguments that follow the subcommand.
++//
++// Both the binary and the subcommand are read by POSITION, which is what
++// excludes a shell whose script text merely contains the watcher command.
++func watcherSubcommandArgs(tokens []string) ([]string, bool) {
++	if len(tokens) < 2 || filepath.Base(tokens[0]) != "harmonik" {
++		return nil, false
++	}
++	switch {
++	case tokens[1] == "subscribe":
++		return tokens[2:], true
++	case tokens[1] == "comms" && len(tokens) > 2 && tokens[2] == "recv":
++		return tokens[3:], true
++	}
++	return nil, false
++}
++
++// argsAddressFollowedAgent reports whether args carry both --follow and an
++// --agent/--to naming agent, in either the "--flag=value" or "--flag value"
++// form. The agent name must be a whole flag value, so "captain" does not match
++// a watcher addressed to "captain2".
++func argsAddressFollowedAgent(args []string, agent string) bool {
++	var following, addressed bool
++	for i, tok := range args {
++		flag, val, ok := splitFlagToken(tok)
++		if !ok && (tok == "--agent" || tok == "--to") && i+1 < len(args) {
++			flag, val, ok = tok, args[i+1], true
++		}
++		switch {
++		case tok == "--follow", ok && flag == "--follow":
++			following = true
++		case ok && (flag == "--agent" || flag == "--to") && val == agent:
++			addressed = true
++		}
++	}
++	return following && addressed
+ }
+ 
+ // splitFlagToken splits a "--flag=value" token into (flag, value, true).
+@@ -146,49 +283,108 @@ var (
+ // fires on SIGTERM), then SIGKILL after a grace period for any survivor —
+ // mirroring SweepOrphanBr's termination discipline (BI-014a).
+ //
+-// If lister is nil, OSAgentWatcherLister is used. If logger is nil, log
+-// messages are silently discarded.
++// project is the root of the project whose watchers may be reaped, and is
++// REQUIRED: agent names are per-project, so without it this would reap every
++// same-named watcher on the machine, including peer projects'. An empty
++// project reaps nothing.
++//
++// If lister is nil, an OSAgentWatcherLister scoped to project is used. If
++// logger is nil, log messages are silently discarded.
+ //
+ // Bead: hk-6629b.
+-func ReapPriorAgentFollowWatchers(ctx context.Context, lister AgentWatcherLister, agent string, excludePID int, logger *log.Logger) (survived []int, err error) {
++func ReapPriorAgentFollowWatchers(ctx context.Context, lister AgentWatcherLister, agent, project string, excludePID int, logger *log.Logger) (survived []int, err error) {
+ 	if agent == "" {
+ 		return nil, nil
+ 	}
+ 	if lister == nil {
+-		lister = OSAgentWatcherLister{}
++		if project == "" {
++			orphanLog(logger, "ReapPriorAgentFollowWatchers: no project scope for agent %q; skipping reap (a name alone cannot distinguish this project's watchers from a peer project's)", agent)
++			return nil, nil
++		}
++		lister = OSAgentWatcherLister{Project: project}
+ 	}
+ 
+ 	pids, err := lister.ListAgentFollowWatcherPIDs(ctx, agent)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("lifecycle: ReapPriorAgentFollowWatchers: enumerate: %w", err)
+ 	}
+-	filtered := make([]int, 0, len(pids))
+-	for _, pid := range pids {
+-		if excludePID != 0 && pid == excludePID {
+-			continue
+-		}
+-		filtered = append(filtered, pid)
+-	}
+-	pids = filtered
++	pids = withoutPID(pids, excludePID)
+ 	if len(pids) == 0 {
+ 		return nil, nil
+ 	}
+ 
+ 	orphanLog(logger, "ReapPriorAgentFollowWatchers: found %d prior --follow watcher(s) for agent %q: %v", len(pids), agent, pids)
+ 
++	signalWatchers(pids, syscall.SIGTERM, "SIGTERM", logger)
++	alive := awaitWatcherExit(ctx, pids, logger)
++
++	// Before SIGKILL, re-verify identity via a fresh command-line enumeration
++	// so a recycled PID (unrelated process that inherited the number after the
++	// watcher exited) is never SIGKILLed. This does NOT reintroduce a liveness
++	// gate on the initial candidate set (the hk-6629b ruling): identification
++	// stays command-line + agent-identity only; the recheck only confirms the
++	// PID still belongs to a matching watcher before escalation.
++	if len(alive) > 0 {
++		fresh, freshErr := lister.ListAgentFollowWatcherPIDs(ctx, agent)
++		if freshErr != nil {
++			orphanLog(logger, "ReapPriorAgentFollowWatchers: re-enumerate before SIGKILL failed: %v; skipping SIGKILL (PID-reuse guard)", freshErr)
++			return pidSetSlice(alive), nil
++		}
++		alive = reverifyCandidatePIDs(alive, fresh)
++	}
++	if len(alive) > 0 {
++		orphanLog(logger, "ReapPriorAgentFollowWatchers: %d process(es) survived SIGTERM grace period; sending SIGKILL", len(alive))
++		signalWatchers(pidSetSlice(alive), syscall.SIGKILL, "SIGKILL", logger)
++	}
++
++	for pid := range alive {
++		if orphanSweepIsPidLive(pid) {
++			survived = append(survived, pid)
++			orphanLog(logger, "ReapPriorAgentFollowWatchers: pid %d survived SIGKILL", pid)
++		}
++	}
++
++	return survived, nil
++}
++
++// withoutPID returns pids with excludePID removed. A zero excludePID removes
++// nothing.
++func withoutPID(pids []int, excludePID int) []int {
++	if excludePID == 0 {
++		return pids
++	}
++	out := make([]int, 0, len(pids))
+ 	for _, pid := range pids {
+-		if sigErr := syscall.Kill(pid, syscall.SIGTERM); sigErr != nil {
+-			orphanLog(logger, "ReapPriorAgentFollowWatchers: SIGTERM pid %d: %v (may have already exited)", pid, sigErr)
+-		} else {
+-			orphanLog(logger, "ReapPriorAgentFollowWatchers: sent SIGTERM to pid %d", pid)
++		if pid == excludePID {
++			continue
+ 		}
++		out = append(out, pid)
+ 	}
++	return out
++}
+ 
+-	deadline := time.Now().Add(agentWatcherReapGracePeriod)
++// signalWatchers sends sig to every pid, logging each outcome under name. A
++// signal failure is logged and passed over rather than returned: the process
++// having already exited is the ordinary case, not an error.
++func signalWatchers(pids []int, sig syscall.Signal, name string, logger *log.Logger) {
++	for _, pid := range pids {
++		if sigErr := syscall.Kill(pid, sig); sigErr != nil {
++			orphanLog(logger, "ReapPriorAgentFollowWatchers: %s pid %d: %v (may have already exited)", name, pid, sigErr)
++			continue
++		}
++		orphanLog(logger, "ReapPriorAgentFollowWatchers: sent %s to pid %d", name, pid)
++	}
++}
++
++// awaitWatcherExit polls pids until each has exited or the grace period
++// lapses, returning the set still alive. A cancelled context ends the wait
++// early and escalates rather than abandoning the reap half-done.
++func awaitWatcherExit(ctx context.Context, pids []int, logger *log.Logger) map[int]bool {
+ 	alive := make(map[int]bool, len(pids))
+ 	for _, pid := range pids {
+ 		alive[pid] = true
+ 	}
++	deadline := time.Now().Add(agentWatcherReapGracePeriod)
+ 	for time.Now().Before(deadline) && len(alive) > 0 {
+ 		for pid := range alive {
+ 			if !orphanSweepIsPidLive(pid) {
+@@ -208,41 +404,14 @@ func ReapPriorAgentFollowWatchers(ctx context.Context, lister AgentWatcherLister
+ 			break
+ 		}
+ 	}
++	return alive
++}
+ 
+-	// Before SIGKILL, re-verify identity via a fresh command-line enumeration
+-	// so a recycled PID (unrelated process that inherited the number after the
+-	// watcher exited) is never SIGKILLed. This does NOT reintroduce a liveness
+-	// gate on the initial candidate set (the hk-6629b ruling): identification
+-	// stays command-line + agent-identity only; the recheck only confirms the
+-	// PID still belongs to a matching watcher before escalation.
+-	if len(alive) > 0 {
+-		fresh, freshErr := lister.ListAgentFollowWatcherPIDs(ctx, agent)
+-		if freshErr != nil {
+-			orphanLog(logger, "ReapPriorAgentFollowWatchers: re-enumerate before SIGKILL failed: %v; skipping SIGKILL (PID-reuse guard)", freshErr)
+-			for pid := range alive {
+-				survived = append(survived, pid)
+-			}
+-			return survived, nil
+-		}
+-		alive = reverifyCandidatePIDs(alive, fresh)
+-	}
+-	if len(alive) > 0 {
+-		orphanLog(logger, "ReapPriorAgentFollowWatchers: %d process(es) survived SIGTERM grace period; sending SIGKILL", len(alive))
+-	}
+-	for pid := range alive {
+-		if sigErr := syscall.Kill(pid, syscall.SIGKILL); sigErr != nil {
+-			orphanLog(logger, "ReapPriorAgentFollowWatchers: SIGKILL pid %d: %v (may have already exited)", pid, sigErr)
+-		} else {
+-			orphanLog(logger, "ReapPriorAgentFollowWatchers: sent SIGKILL to pid %d", pid)
+-		}
+-	}
+-
+-	for pid := range alive {
+-		if orphanSweepIsPidLive(pid) {
+-			survived = append(survived, pid)
+-			orphanLog(logger, "ReapPriorAgentFollowWatchers: pid %d survived SIGKILL", pid)
+-		}
++// pidSetSlice returns the members of set as a slice.
++func pidSetSlice(set map[int]bool) []int {
++	out := make([]int, 0, len(set))
++	for pid := range set {
++		out = append(out, pid)
+ 	}
+-
+-	return survived, nil
++	return out
+ }
+diff --git a/internal/lifecycle/agentwatcherreap_hk6629b_test.go b/internal/lifecycle/agentwatcherreap_hk6629b_test.go
+index fbfa1d692..c65c909e7 100644
+--- a/internal/lifecycle/agentwatcherreap_hk6629b_test.go
++++ b/internal/lifecycle/agentwatcherreap_hk6629b_test.go
+@@ -113,7 +113,7 @@ func TestHk6629b_MatchesAgentFollowWatcher_NotFollowOrNotHarmonik(t *testing.T)
+ func TestHk6629b_ReapPriorAgentFollowWatchers_EmptyAgent(t *testing.T) {
+ 	t.Parallel()
+ 
+-	survived, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{pids: []int{123}}, "", 0, nil)
++	survived, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{pids: []int{123}}, "", "/proj", 0, nil)
+ 	if err != nil {
+ 		t.Fatalf("unexpected error: %v", err)
+ 	}
+@@ -128,7 +128,7 @@ func TestHk6629b_ReapPriorAgentFollowWatchers_ExcludesSelf(t *testing.T) {
+ 	t.Parallel()
+ 
+ 	selfPID := os.Getpid()
+-	survived, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{pids: []int{selfPID}}, "captain", selfPID, nil)
++	survived, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{pids: []int{selfPID}}, "captain", "/proj", selfPID, nil)
+ 	if err != nil {
+ 		t.Fatalf("unexpected error: %v", err)
+ 	}
+@@ -148,7 +148,7 @@ func TestHk6629b_ReapPriorAgentFollowWatchers_ListError(t *testing.T) {
+ 	t.Parallel()
+ 
+ 	wantErr := context.DeadlineExceeded
+-	_, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{err: wantErr}, "captain", 0, nil)
++	_, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{err: wantErr}, "captain", "/proj", 0, nil)
+ 	if err == nil {
+ 		t.Fatal("expected error, got nil")
+ 	}
+@@ -208,7 +208,7 @@ func TestHk6629b_ReapPriorAgentFollowWatchers_KillsLiveWatcher(t *testing.T) {
+ 	// kernel's own signal delivery — discard it here, as the sibling
+ 	// SweepOrphanBr test (BI-014a) does for the same reason. The durable
+ 	// assertion is the post-Wait() liveness probe below.
+-	if _, err := ReapPriorAgentFollowWatchers(ctx, lister, "captain", 0, nil); err != nil {
++	if _, err := ReapPriorAgentFollowWatchers(ctx, lister, "captain", "/proj", 0, nil); err != nil {
+ 		t.Fatalf("unexpected error: %v", err)
+ 	}
+ 
+diff --git a/internal/lifecycle/agentwatcherreap_scope_test.go b/internal/lifecycle/agentwatcherreap_scope_test.go
+new file mode 100644
+index 000000000..eef506997
+--- /dev/null
++++ b/internal/lifecycle/agentwatcherreap_scope_test.go
+@@ -0,0 +1,235 @@
++package lifecycle
++
++// agentwatcherreap_scope_test.go — regression coverage for the two ways the
++// hk-6629b launch-path reap could kill a process it does not own:
++//
++//	(1) no project scope — every project on the box runs a crew called "mike",
++//	    so a name-only match reaps peer projects' watchers too;
++//	(2) substring matching — an agent's `/bin/zsh -c '... harmonik comms recv
++//	    --agent mike --follow ...'` tool wrapper matches as readily as the
++//	    watcher it wraps, and killing it takes out live agent work.
++//
++// Both were reachable from `harmonik start crew <name>` / `harmonik captain`.
++// The fixtures below are real command lines captured from a running fleet.
++
++import (
++	"os"
++	"os/exec"
++	"path/filepath"
++	"testing"
++	"time"
++)
++
++// --- (2) the process must BE the watcher, not merely mention it -------------
++
++// TestWatcherMatch_WrapperShellNotMatched is the hazard-2 regression: a zsh
++// tool wrapper whose script text contains the watcher command must NOT match.
++// This exact command line was live on the fleet; under the old substring
++// matcher `harmonik start crew assessor` would have SIGKILLed it, taking out
++// the agent's Bash-tool subprocess rather than a stray watcher.
++func TestWatcherMatch_WrapperShellNotMatched(t *testing.T) {
++	t.Parallel()
++
++	wrapper := "/bin/zsh -c source /Users/gb/.claude/shell-snapshots/snapshot-zsh-1784698986137-e4xw5t.sh 2>/dev/null || true && " +
++		"setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && " +
++		"eval 'harmonik comms recv --agent assessor --follow --json 2>&1 | head -200' < /dev/null"
++	if matchesAgentFollowWatcher(wrapper, "assessor") {
++		t.Error("wrapper shell matched: killing it takes out a live agent's tool subprocess, not a watcher")
++	}
++}
++
++// TestWatcherMatch_RearmingLoopNotMatched covers the other live wrapper shape:
++// a `while true` loop that re-spawns the watcher. Killing the loop is a
++// different act from killing the watcher, and is not what the reap is for.
++func TestWatcherMatch_RearmingLoopNotMatched(t *testing.T) {
++	t.Parallel()
++
++	loop := "/bin/zsh -c while true; do harmonik comms recv --agent juliet --follow --json; sleep 3; done"
++	if matchesAgentFollowWatcher(loop, "juliet") {
++		t.Error("re-arming loop wrapper matched; only the watcher process itself may be reaped")
++	}
++}
++
++// TestWatcherMatch_RealWatcherStillMatches guards against over-correction: the
++// actual watcher shapes, including an absolute argv[0] (a peer project runs
++// harmonik from its own build directory), must still match.
++func TestWatcherMatch_RealWatcherStillMatches(t *testing.T) {
++	t.Parallel()
++
++	for _, cmdline := range []string{
++		"harmonik comms recv --agent mike --follow --json",
++		"harmonik comms recv --follow --json --agent mike",
++		"harmonik comms recv --agent=mike --follow",
++		"/tmp/hk155gs/harmonik comms recv --agent mike --follow",
++		"harmonik subscribe --to mike --follow",
++	} {
++		if !matchesAgentFollowWatcher(cmdline, "mike") {
++			t.Errorf("real watcher no longer matched: %q", cmdline)
++		}
++	}
++}
++
++// TestWatcherMatch_WrongSubcommandNotMatched verifies the subcommand is read
++// positionally: a harmonik invocation that merely carries the word elsewhere
++// is not a watcher.
++func TestWatcherMatch_WrongSubcommandNotMatched(t *testing.T) {
++	t.Parallel()
++
++	for _, cmdline := range []string{
++		"harmonik comms send --agent mike --follow --body subscribe",
++		"harmonik queue submit --agent mike --follow",
++		"grep -n harmonik comms recv --agent mike --follow",
++	} {
++		if matchesAgentFollowWatcher(cmdline, "mike") {
++			t.Errorf("non-watcher matched: %q", cmdline)
++		}
++	}
++}
++
++// --- (1) project scope ------------------------------------------------------
++
++// scopeTestHelperEnv marks a re-exec of this test binary as the blocking
++// helper child rather than a normal test run.
++const scopeTestHelperEnv = "HARMONIK_SCOPE_TEST_HELPER"
++
++// TestScopeHelperProcess is not a test: it is the body of the helper child
++// startEnvChild spawns. Under a normal run the sentinel is absent and it
++// returns immediately.
++//
++// The helper re-execs THIS test binary rather than a system tool such as
++// /bin/sleep, because darwin withholds the environment of SIP-protected
++// platform binaries from `ps -E` — a /bin/sleep child is unreadable on darwin
++// for reasons that have nothing to do with the code under test. A Go-built
++// binary is readable, and matches the population this code really runs on.
++func TestScopeHelperProcess(t *testing.T) {
++	if os.Getenv(scopeTestHelperEnv) != "1" {
++		return
++	}
++	time.Sleep(30 * time.Second)
++}
++
++// startEnvChild spawns a real, live child process carrying env, and returns
++// its PID. The command line is irrelevant to candidateInProject (which is
++// passed a cmdline separately) — what matters is that the process really
++// exists with a real exec-time environment to read back.
++func startEnvChild(t *testing.T, env []string) int {
++	t.Helper()
++
++	//nolint:gosec // G204: os.Args[0] is this test binary and the argument is a constant
++	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestScopeHelperProcess")
++	cmd.Env = append([]string{scopeTestHelperEnv + "=1"}, env...)
++	if err := cmd.Start(); err != nil {
++		t.Fatalf("start helper child: %v", err)
++	}
++	t.Cleanup(func() {
++		if killErr := cmd.Process.Kill(); killErr != nil {
++			t.Logf("kill helper child: %v", killErr)
++		}
++		if _, waitErr := cmd.Process.Wait(); waitErr != nil {
++			t.Logf("wait helper child: %v", waitErr)
++		}
++	})
++	return cmd.Process.Pid
++}
++
++// TestCandidateInProject_PeerProjectNotClaimed is the hazard-1 regression, run
++// against a real process and the real platform environment reader: a watcher
++// belonging to a peer project must not be claimed by this project's reap.
++func TestCandidateInProject_PeerProjectNotClaimed(t *testing.T) {
++	t.Parallel()
++
++	ours := t.TempDir()
++	peer := t.TempDir()
++	pid := startEnvChild(t, []string{ProjectPathEnvKey + "=" + peer})
++	const cmdline = "harmonik comms recv --agent mike --follow --json"
++
++	if candidateInProject(t.Context(), pid, cmdline, canonicalProjectPath(ours)) {
++		t.Error("peer project's watcher claimed as ours — this is the cross-project kill")
++	}
++	if !candidateInProject(t.Context(), pid, cmdline, canonicalProjectPath(peer)) {
++		t.Error("watcher not claimed by its OWN project; the reap would never fire")
++	}
++}
++
++// TestCandidateInProject_NoMarkerIsLeftAlone verifies the fail-closed default:
++// a process that can prove nothing is not ours to kill.
++func TestCandidateInProject_NoMarkerIsLeftAlone(t *testing.T) {
++	t.Parallel()
++
++	ours := t.TempDir()
++	pid := startEnvChild(t, []string{"PATH=/usr/bin:/bin"}) // no project marker at all
++
++	if candidateInProject(t.Context(), pid, "harmonik comms recv --agent mike --follow", canonicalProjectPath(ours)) {
++		t.Error("unmarked process claimed; an unprovable candidate must be left alone")
++	}
++}
++
++// TestCandidateInProject_ExplicitProjectFlag verifies the cheaper proof: an
++// explicit --project flag is honoured without reading the environment, in both
++// the "--project=<path>" and "--project <path>" forms.
++func TestCandidateInProject_ExplicitProjectFlag(t *testing.T) {
++	t.Parallel()
++
++	ours := t.TempDir()
++	peer := t.TempDir()
++	// PID 1 is live and certainly carries no harmonik marker, so a match here
++	// can only have come from the command line.
++	for _, form := range []string{"--project " + ours, "--project=" + ours} {
++		cmdline := "harmonik comms recv --agent mike --follow " + form
++		if !candidateInProject(t.Context(), 1, cmdline, canonicalProjectPath(ours)) {
++			t.Errorf("--project not honoured in form %q", form)
++		}
++		if candidateInProject(t.Context(), 1, cmdline, canonicalProjectPath(peer)) {
++			t.Errorf("--project matched the wrong project in form %q", form)
++		}
++	}
++}
++
++// TestCanonicalProjectPath_EquatesSpellings verifies two spellings of one live
++// path compare equal, so a trailing separator or a relative spelling does not
++// silently turn into "different project" (which would fail closed and quietly
++// disable the reap).
++func TestCanonicalProjectPath_EquatesSpellings(t *testing.T) {
++	t.Parallel()
++
++	dir := t.TempDir()
++	want := canonicalProjectPath(dir)
++	for _, spelling := range []string{dir + string(filepath.Separator), filepath.Join(dir, "sub", "..")} {
++		if got := canonicalProjectPath(spelling); got != want {
++			t.Errorf("canonicalProjectPath(%q) = %q, want %q", spelling, got, want)
++		}
++	}
++}
++
++// --- fail-closed wiring -----------------------------------------------------
++
++// TestOSAgentWatcherLister_UnscopedListsNothing verifies a lister with no
++// project reaps nothing rather than everything. This is the guard that keeps a
++// future caller who forgets the scope from re-introducing the cross-project
++// kill.
++func TestOSAgentWatcherLister_UnscopedListsNothing(t *testing.T) {
++	t.Parallel()
++
++	pids, err := OSAgentWatcherLister{}.ListAgentFollowWatcherPIDs(t.Context(), "captain")
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(pids) != 0 {
++		t.Errorf("unscoped lister returned %d pid(s), want 0", len(pids))
++	}
++}
++
++// TestReapPriorAgentFollowWatchers_NoProjectIsNoOp verifies the production
++// entry point refuses to build an unscoped lister: with no injected lister and
++// no project, it must not touch the process table at all.
++func TestReapPriorAgentFollowWatchers_NoProjectIsNoOp(t *testing.T) {
++	t.Parallel()
++
++	survived, err := ReapPriorAgentFollowWatchers(t.Context(), nil, "captain", "", os.Getpid(), nil)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(survived) != 0 {
++		t.Errorf("survived = %v, want empty", survived)
++	}
++}
+diff --git a/internal/lifecycle/orphansweep_w4_pidreuse_test.go b/internal/lifecycle/orphansweep_w4_pidreuse_test.go
+index f59e62c8e..20d5dbd82 100644
+--- a/internal/lifecycle/orphansweep_w4_pidreuse_test.go
++++ b/internal/lifecycle/orphansweep_w4_pidreuse_test.go
+@@ -171,7 +171,7 @@ func TestReapPriorAgentFollowWatchers_PIDReuseGuard_NoSIGKILLWhenIdentityGone(t
+ 	pid := w4StartTermIgnoringProc(t)
+ 	lister := &w4SeqWatcherLister{seq: [][]int{{pid}, {}}}
+ 
+-	survived, err := ReapPriorAgentFollowWatchers(t.Context(), lister, "captain", 0, orphanSweepFixtureNopLogger())
++	survived, err := ReapPriorAgentFollowWatchers(t.Context(), lister, "captain", "/proj", 0, orphanSweepFixtureNopLogger())
+ 	if err != nil {
+ 		t.Fatalf("ReapPriorAgentFollowWatchers: unexpected error: %v", err)
+ 	}
+diff --git a/internal/lifecycle/processenv_darwin.go b/internal/lifecycle/processenv_darwin.go
+new file mode 100644
+index 000000000..7c611fda2
+--- /dev/null
++++ b/internal/lifecycle/processenv_darwin.go
+@@ -0,0 +1,81 @@
++package lifecycle
++
++// processenv_darwin.go — per-process environment lookup on darwin, backed by
++// `ps -Ewww`.
++//
++// darwin has no /proc, but `ps -E` prints each process's exec-time environment
++// appended to its command column, for every process owned by the SAME UID.
++//
++// Two populations print no environment, and both are fail-closed boundaries —
++// an unreadable environment yields ok=false and the caller leaves the process
++// alone:
++//
++//   - processes owned by another user;
++//   - SIP-protected platform binaries (verified: /bin/sleep prints its command
++//     and nothing else, while an ordinary user-built binary in the same shell
++//     prints its full environment).
++//
++// The second is why callers must not reach for this to identify an arbitrary
++// process. It is sound for the population it is used on — harmonik's own
++// binaries, which are user-built and therefore readable.
++//
++// Used by the launch-path watcher reap (agentwatcherreap.go) to prove a kill
++// candidate belongs to THIS project before signalling it.
++
++import (
++	"context"
++	"os/exec"
++	"regexp"
++	"strconv"
++	"strings"
++)
++
++// darwinEnvAssignmentRe matches the start of a shell-style environment
++// assignment in `ps -E` output: a start-of-string or whitespace boundary
++// followed by IDENT=.
++//
++// The leading boundary is what keeps command-line flags out of the results:
++// in "--agent=mike" the character before "agent=" is '-', not whitespace, so
++// the flag is not mistaken for an environment assignment.
++var darwinEnvAssignmentRe = regexp.MustCompile(`(^|\s)([A-Za-z_][A-Za-z0-9_]*)=`)
++
++// processEnvValue returns the value environment variable key held at exec time
++// for pid.
++//
++// ok is false whenever the value cannot be established for ANY reason — the
++// process is gone, it belongs to another UID, or the key is absent. Callers
++// MUST read !ok as "cannot prove this process is ours" and leave the process
++// alone; this function never guesses.
++//
++// Value boundaries. `ps -E` flattens the environment into a single
++// space-separated column, so a value that itself contains whitespace cannot be
++// delimited unambiguously. This implementation ends a value at the next
++// IDENT= assignment, which means a whitespace-bearing value is returned
++// over-long rather than truncated short. Either way it fails to compare equal
++// to the caller's expected value, so the ambiguity resolves to "no match" —
++// fail-closed, never a false positive.
++func processEnvValue(ctx context.Context, pid int, key string) (value string, ok bool) {
++	//nolint:gosec // G204: pid is an integer; key is not passed to the command
++	out, err := exec.CommandContext(ctx, "ps", "-Ewww", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
++	if err != nil {
++		return "", false
++	}
++	line := string(out)
++
++	matches := darwinEnvAssignmentRe.FindAllStringSubmatchIndex(line, -1)
++	// Scan from the end: the environment is appended AFTER the command, so the
++	// last assignment bearing this key is the environment's, not an argument
++	// that happens to look like one.
++	for i := len(matches) - 1; i >= 0; i-- {
++		m := matches[i]
++		if line[m[4]:m[5]] != key {
++			continue
++		}
++		end := len(line)
++		if i+1 < len(matches) {
++			end = matches[i+1][0]
++		}
++		return strings.TrimSpace(line[m[1]:end]), true
++	}
++	return "", false
++}
+diff --git a/internal/lifecycle/processenv_linux.go b/internal/lifecycle/processenv_linux.go
+new file mode 100644
+index 000000000..7fd75e573
+--- /dev/null
++++ b/internal/lifecycle/processenv_linux.go
+@@ -0,0 +1,38 @@
++package lifecycle
++
++// processenv_linux.go — per-process environment lookup on Linux, backed by
++// /proc/<pid>/environ.
++//
++// Used by the launch-path watcher reap (agentwatcherreap.go) to prove a kill
++// candidate belongs to THIS project before signalling it. See processEnvValue
++// for the fail-closed contract.
++
++import (
++	"context"
++	"fmt"
++	"os"
++	"strings"
++)
++
++// processEnvValue returns the value environment variable key held at exec time
++// for pid.
++//
++// ok is false whenever the value cannot be established for ANY reason — the
++// process is gone, the read is denied, or the key is absent. Callers MUST read
++// !ok as "cannot prove this process is ours" and leave the process alone; this
++// function never guesses and never partially matches.
++func processEnvValue(_ context.Context, pid int, key string) (value string, ok bool) {
++	path := fmt.Sprintf("/proc/%d/environ", pid)
++	//nolint:gosec // G304: path is /proc/<pid>/environ, built from an integer pid
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return "", false
++	}
++	prefix := key + "="
++	for _, entry := range splitNul(data) {
++		if after, found := strings.CutPrefix(entry, prefix); found {
++			return after, true
++		}
++	}
++	return "", false
++}

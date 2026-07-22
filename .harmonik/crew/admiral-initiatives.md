@@ -1,6 +1,38 @@
 # Admiral — Major-Initiatives Registry
 
-> # ⚠ RECONSTRUCTED 2026-07-22 07:2xZ AFTER DATA LOSS — READ THIS FIRST
+> # ★ THE PROGRAM — READ THIS BEFORE ANYTHING ELSE ON THIS PAGE
+>
+> **Source of truth: `plans/2026-07-21-platform-architecture/DECISIONS.md` (operator-locked C1–C6).**
+> Everything below this block is INCIDENT FORENSICS. It is not the objective. The admiral spent
+> 2026-07-22 auditing incidents as if they were the program — that was the failure, and this block
+> exists so no future admiral repeats it. **If a lane cannot be traced to a thread below, it is not
+> the program.**
+>
+> **PRIORITY-0 — CODEX FIRST** (operator, load-bearing). Local codex as a reliable bead-runner via
+> the SIMPLE path: flip a small number of seams, prove ONE real bead end-to-end through DOT.
+> `plans/2026-07-21-codex-first/_plan.md` — kerf-ready; **the plan names the CAPTAIN as owner on
+> execution.** Why it is first: codex crews then CARRY P1/P2/P3, conserving Claude tokens.
+> **EXPLICITLY OUT OF SCOPE and marked "must not block this": the uniform harmonik-level sandbox.**
+> Also out: containers, remote/multi-machine, scheduling. **"No new architecture."**
+>
+> **THEN — C4: ALL THREE IN PARALLEL.** "That's the whole point of this platform."
+> - **P1 kernel/fabric** — transport, addressing/identity, plugin-interface lifecycle, resource seam.
+>   `plans/2026-07-21-p1-kernel-fabric/_plan.md`. DRAFT, pre-kerf. Build P1 as its own fast-iterating
+>   thing and use **P3 as its test bed** (C2); no hacks in either.
+> - **P2 extraction** — steady-stream carve-out of the two god packages behind seams that ALREADY
+>   EXIST. `plans/2026-07-21-p2-extraction/_plan.md`. The giant-retirement stream (bootconfig B1–B6,
+>   socket-router SR-1–3, RT1–RT9) is the template. **Extract COLD-first** (harness impls are cold;
+>   the DOT loop is hot). Needs no daemon, no rebuild, no codex.
+> - **P3 distributed execution** — a bead runs fully inside a container, local and remote the same
+>   shape. `plans/2026-07-21-p3-distributed-execution/_plan.md`. First consumer of the P1 kernel.
+>
+> **OPERATOR'S CREW SHAPE: ~4–5 crews — Codex, P2, P1, P3, and a tester checking P1+P3.**
+> Staff them on codex once codex is up.
+>
+> **STATUS 2026-07-22 12:2xZ:** Codex-first partially staffed but wandered out of scope; **P1 zero
+> crews · P2 stream STOPPED · P3 zero crews.** Zero codex executions to date.
+
+> # ⚠ RECONSTRUCTED 2026-07-22 07:2xZ AFTER DATA LOSS — INCIDENT RECORD, NOT THE PROGRAM
 >
 > A **`git reset --hard`** was run in the main repo (`reflog HEAD@{0}: reset: moving to HEAD`).
 > It destroyed every uncommitted modification in the working tree, including this file's entire

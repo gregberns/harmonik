@@ -8,7 +8,7 @@ requirement-prefix: HC
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.7.0
+version: 0.8.0
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-07-14
@@ -482,6 +482,10 @@ Tags: mechanism
 
 A `ctx` cancellation MUST cause in-flight Go-side operations to return with `context.Canceled` (wrapped as `ErrCanceled` per §4.5) within 500ms, and MUST cause subprocess cleanup to complete within 5s. Exceeding the subprocess cleanup bound triggers escalation to hard termination per §4.6.
 
+**The 5-second cleanup bound is per process group, not per process** (v0.8.0, following §4.10.HC-044(b)'s group obligation). It bounds the entire group-directed termination — from the first signal to the group being clear — and the escalation clock MUST NOT restart for each descendant.
+
+The reading this forecloses, stated so that it is not reintroduced as a simplification: under a per-process reading, a process tree of depth *n* would be permitted 5*n* seconds while this requirement still claimed a 5-second bound. The orphan sweep of [process-lifecycle.md §4.2 PL-006] anchors its own signal-to-hard-kill interval to this bound, so it would escalate to a hard kill while a cleanup that was still legally in progress had not yet finished. The 500ms Go-side bound and the §4.6 hard-termination escalation are unchanged.
+
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent
 
@@ -801,15 +805,53 @@ Before launch, the orchestrator MUST verify an in-repo handler binary's embedded
 
 Tags: mechanism
 
-#### HC-044 — Subprocess is a child of the daemon
+#### HC-044 — Subprocess parentage, process group, and provenance
 
-The daemon MUST spawn every handler subprocess as a direct child process (per [process-lifecycle.md §4.5]). The handler subprocess MUST communicate back to the daemon on the Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §4.1]); this is the same socket that carries the progress stream per §4.2.HC-007 and §4.2.HC-007a. There is one bidirectional socket-backed channel per session; there is no separate "control channel" at MVH. Socket authenticity is filesystem-permission-based for MVH (daemon socket MUST be mode `0600` owned by the daemon user); per-connection challenges are deferred post-MVH. On Linux, handler subprocesses SHOULD install `PR_SET_PDEATHSIG(SIGTERM)` at spawn time; macOS has no equivalent and subprocess survival across daemon death is a platform reality addressed by §4.10.HC-044a.
+**(a) Parentage depends on the spawn regime.** The daemon spawns handler subprocesses by one of two regimes, and the initial parent differs between them. Both are conformant.
+
+| Regime | Initial parent | Established by |
+|---|---|---|
+| direct-exec | the daemon process | this requirement |
+| substrate-hosted | the multiplexer server | [process-lifecycle.md §4.7 PL-021b], which mandates `tmux new-window` |
+
+Post-crash re-parenting to init is the only legal deviation, for either regime.
+
+**Amended at v0.8.0.** This requirement previously read "The daemon MUST spawn every handler subprocess as a direct child process." That was descriptively false for the majority of production runs and it contradicted PL-021b, which *mandates* the multiplexer for the substrate regime. The implementation follows PL-021b. The mirror clause in [process-lifecycle.md §4.9 PL-INV-005] is amended in the same revision so the two files cannot drift apart again.
+
+**(b) Each direct-exec handler subprocess leads its own process group.** For the direct-exec regime the daemon MUST spawn the subprocess as the leader of a new process group, and `Session.Kill` MUST be directed at that group rather than at the single process, so that termination reaches descendants which remain in the group.
+
+**This is a new obligation, not a correction.** The previous text imposed no process-group rule of any kind — it neither required a subprocess to lead its own group nor to join the daemon's. Read it as an addition to the contract. (Implementers should be aware that existing code comments attribute a join-the-daemon's-group rule to this requirement. That attribution was never accurate; the rule came from the now-retired PGID clause of [process-lifecycle.md §4.2 PL-006a].)
+
+The shape has precedent inside this system rather than being novel: the workflow-cascade spawn sites and the scheduled-tick spawn site already create their own groups and terminate them group-wise.
+
+**(c) A process group is a kill handle and carries no provenance meaning.** A reaper MUST NOT infer ownership of a process from its group. Ownership is established only by the provenance marker of [process-lifecycle.md §4.2a PL-006e], and the prohibition is stated normatively in PL-006f. The two roles are kept apart deliberately: the only rule that could recover ownership from a group under this design — "match processes whose group ID equals their own process ID" — is true of every group leader on the machine.
+
+**(d) Every handler subprocess carries the provenance marker, on both regimes.** The obligation and the marker's definition belong to [process-lifecycle.md §4.2a PL-006e]; this requirement names the source rather than restating it. On the substrate regime the marker reaches the child through the multiplexer's environment-passing flag at window creation.
+
+**(e) What the group obligation does not reach.** A descendant that calls `setsid` leaves the group and is not reached by the group-directed kill of (b). This is the ordinary case rather than an edge case: the agent harnesses hosted by this system do exactly that to the subprocesses they spawn. This requirement MUST NOT be read as "descendants are now handled."
+
+State the limit at its true width. Such a descendant, once orphaned to init, IS reached by the orphan sweep of [process-lifecycle.md §4.2 PL-006], which matches on the marker and does not ask how the process became parentless. The case reached by nothing is the descendant that has left the group while its root is still alive. The full coverage table, including that one dated non-coverage row, is in [process-lifecycle.md §4.7 PL-021b §7] and is normative there.
+
+**(f) Socket and platform clauses, unchanged.** The handler subprocess MUST communicate back to the daemon on the Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §4.1]); this is the same socket that carries the progress stream per §4.2.HC-007 and §4.2.HC-007a. There is one bidirectional socket-backed channel per session; there is no separate "control channel" at MVH. Socket authenticity is filesystem-permission-based for MVH (daemon socket MUST be mode `0600` owned by the daemon user); per-connection challenges are deferred post-MVH. On Linux, handler subprocesses SHOULD install `PR_SET_PDEATHSIG(SIGTERM)` at spawn time; macOS has no equivalent and subprocess survival across daemon death is a platform reality addressed by §4.10.HC-044a.
 
 Tags: mechanism
 
 #### HC-044a — Launch MUST fail-fast on orphan-held workspace
 
-Before `Launch` returns a `Session`, the daemon MUST verify that the target `workspace_path` is NOT held by a prior-generation handler subprocess. Detection mechanism: the daemon MUST maintain a pidfile at `.harmonik/worktrees/<run_id>/.lock` written atomically at subprocess spawn and removed on clean session termination. On `Launch`, if the pidfile exists AND the recorded PID is live (liveness probe via `kill(pid, 0)` or platform equivalent) AND the live process is NOT owned by the current daemon generation, `Launch` MUST return `ErrStructural` with sub-reason `workspace_held_by_orphan` and emit `agent_failed` carrying the offending PID for operator attention. The daemon MUST NOT silently reclaim the workspace: two concurrent subprocesses writing to the same worktree is the one scenario in this spec that can silently corrupt committed artifacts, so fail-fast is mandatory. Stale pidfiles (PID not live, or PID recycled to a non-handler process identifiable by argv check) MAY be reclaimed by the new generation. This requirement is a minimum-surface stub that the reconciliation subsystem's startup sweep (per [reconciliation/spec.md §4]) will subsume post-MVH; until then, OQ-HC-006's cross-generation GC default is "reconciliation owns it, handler-contract owns fail-fast." The socket file at `.harmonik/daemon.sock` from a prior generation MUST be unlinked before `bind` by the new daemon generation per [process-lifecycle.md §4.1].
+Before `Launch` returns a `Session`, the daemon MUST verify that the target `workspace_path` is NOT held by a prior-generation handler subprocess. If it is held, `Launch` MUST return `ErrStructural` with sub-reason `workspace_held_by_orphan` and emit `agent_failed` carrying the offending PID for operator attention. The daemon MUST NOT silently reclaim the workspace: two concurrent subprocesses writing to the same worktree is the one scenario in this spec that can silently corrupt committed artifacts, so fail-fast is mandatory.
+
+**Ownership is determined by the provenance marker and the generation nonce** of [process-lifecycle.md §4.2a PL-006e], evaluated under the matcher discipline of PL-006f. A process holds the workspace against this `Launch` when it carries this project's marker and a generation nonce other than the current one.
+
+**Fail-closed polarity for this requirement: undeterminable ownership means HELD.** If the marker or the nonce cannot be read (PL-006e(4)), the workspace MUST be treated as held and `Launch` MUST fail fast.
+
+Note that this is the opposite polarity to the reaper's fail-closed rule in PL-006f(3), where an unreadable input means *do not kill*. Both resolve the same way on the principle that matters — the ambiguous case must not destroy state. A future revision that "harmonises" the two into a single rule will invert one of them; they are stated together here so that the shared principle, and not the shared wording, is what carries forward.
+
+**RETIRED at v0.8.0 — the `.lock` pidfile mechanism.** The per-run pidfile at `.harmonik/worktrees/<run_id>/.lock`, its `kill(pid, 0)` liveness probe, and its "PID recycled to a non-handler process identifiable by argv check" reclamation discriminator are all withdrawn and replaced by the clause above. Recorded rather than deleted, for two reasons worth keeping:
+
+1. The mechanism was never implemented, so retirement costs no migration and preserves no behavior. It was a fourth independent way of answering "does this process belong to us," and removing it reduces the number of provenance schemes in this system rather than adding one.
+2. Its `argv check` discriminator is forbidden by PL-006f(2), which prohibits the command line as an identity signal. Left in place, this requirement would have been non-conformant with the specification landing in the same revision — a contradiction inside one release, not a legacy inconsistency.
+
+The obligation is retained in full force; only the detection mechanism changed. This requirement is a minimum-surface stub that the reconciliation subsystem's startup sweep (per [reconciliation/spec.md §4]) will subsume post-MVH; until then, OQ-HC-006's cross-generation GC default is "reconciliation owns it, handler-contract owns fail-fast." The socket file at `.harmonik/daemon.sock` from a prior generation MUST be unlinked before `bind` by the new daemon generation per [process-lifecycle.md §4.1].
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -1403,7 +1445,7 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 - **[event-model.md §8]** — event taxonomy; this spec's co-owned events have their payload schemas there.
 - **[event-model.md §4.3]** — consumer taxonomy and dead-letter destination referenced by §4.6.HC-027.
 - **[process-lifecycle.md §4.1]** — daemon socket path for subprocess-to-daemon communication (§4.10.HC-044).
-- **[process-lifecycle.md §4.5]** — agent subprocess as a child of the daemon (§4.10.HC-044).
+- **[process-lifecycle.md §4.5]** — agent-subprocess parentage, stated per spawn regime (§4.10.HC-044(a)).
 - **[process-lifecycle.md §4.6]** — deterministic daemon vs. orchestrator-agent distinction; the seam in §4.12 pins this boundary.
 
 ### 9.2 Reverse dependencies
@@ -1554,6 +1596,7 @@ Default-if-unresolved: Log-only. Promote to Cat 6 escalation if observed disagre
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-22 | 0.8.0 | agent (process-group-provenance / hk-n93gq, hk-o7x4w) | **Parentage, process group, and provenance separated (HC-044); cleanup bound made group-scoped (HC-018); the HC-044a `.lock` mechanism retired.** HC-044 restated: parentage is per spawn regime (the previous "every handler subprocess is a direct child of the daemon" was false for the substrate regime and contradicted PL-021b, which mandates it); direct-exec subprocesses now lead their own process group and are killed group-wise — presented as a NEW obligation, since the prior text imposed no group rule at all; a process group is declared a kill handle carrying no provenance meaning; the marker obligation is cross-referenced to the new PL-006e; and the group's kill reach is stated at its true width — a `setsid` descendant escapes the group kill, is reached by the PL-006 orphan sweep once orphaned to init, and is reached by nothing only while its root is alive. HC-018's 5-second cleanup bound now bounds the whole group with no per-descendant clock restart. HC-044a keeps its fail-fast obligation unchanged and replaces its detection mechanism: the never-implemented per-run `.lock` pidfile, its liveness probe, and its argv-check recycling discriminator are retired in favour of the PL-006e marker plus generation nonce — the argv check was forbidden by PL-006f(2) landing in the same revision. The two fail-closed polarities (unreadable ⇒ do not kill, for reapers; unreadable ⇒ treat as held, for launch) are stated side by side with the shared principle named, so a later harmonisation cannot invert one. |
 | 2026-07-14 | 0.7.0 | agent (M2 agent-input-substrate) | **Seam gains a first-class typed input verb + ack (new §4.1a; HC-069/070/071 + HC-INV-008).** New **§4.1a Session input port**: **HC-069** — narrow consumer-declared `InputPort` (`SubmitInput(ctx, InputRequest) -> (Ack, error)` blocking until acked-or-stale + `CloseInput`), separately asserted (NOT a `Session` method); retires the six type-asserted input side-interfaces and the no-op `SendInput`/`CloseStdin` (a non-satisfying session returns `ErrDeterministic("input unsupported")`); interim tmux/paste impl satisfies it by returning `Delivered`; `StdinDevNull` disposition split — the structured driver owns stdin, `/dev/null` stays codex / interim-tmux only. **HC-070** — `Ack` carries delivery outcome `{Delivered, Rejected}` (binary; NO acceptance class/tier — the two input methods are peers) + monotonic `input_seq` + protocol acceptance token; positive acceptance is the async `agent_input_acked` event (its existence IS the ack), sourced on the tmux/Claude path from the Claude-hook-bridge (`outcome_emitted` / `agent_ready` per CHB-013/CHB-018), on the structured driver from the wire input-ack — never a `capture-pane` scrape; `agent_input_stale` on the bounded-liveness timeout; front-stop composition (NOT replacement) of HC-056/HC-057. **HC-071** — machine-enforced seam inversion: a REAL `depguard` deny (`internal/handler` MUST NOT import `internal/lifecycle/tmux`) landed with the port. New invariant **HC-INV-008** — bounded input liveness (output-or-stale within a `ClockPort`-measured window; silence forbidden; every timer edge emits); machine-checked home is AIS-INV-001 in [agent-input.md]. Amended: HC-054 (observation peer of the input port, one line), HC-056 + HC-057 (one front-stop cross-ref clause each), §6.1 (removed no-op `SendInput` from `Session`; added `InputPort` interface + `InputRequest` / `Ack` records), §6.4 (registered `agent_input_acked` / `agent_input_stale`), §10.1 (invariant range → HC-INV-008; bridge-amendment note), §10.2 (ack-class matrix + bounded-liveness fault + depguard-deny test bullet), §9.3 (AIS co-reference). Cross-ref [agent-input.md] (AIS) as the home of wire/driver/capture detail. **ID note:** the design brief named these HC-058/059/060, but those IDs are already live in §4.2a (Outcome surface) through HC-068 — per the HC ID FREEZE / additive-gap-filler rule they land as HC-069/070/071. NO existing HC IDs renumbered. Status remains `reviewed`. |
 | 2026-06-13 | 0.5.5 | agent (hk-2j90) | **New HC-068 (§4.2a) — `.harmonik/auto_status.json` daemon-validated deny-side INPUT mirroring review.json/ReadReviewVerdict; status must be FAIL, failure_class ∈ the six, compilation_loop→structural per HC-059; daemon retains authority; gitignored; no mid-loop archival; C3 deferred. Refs: hk-2j90.** |
 | 2026-06-01 | 0.5.4 | agent (hk-7k48y T12) | **Agent-comms skill (N3) added to §10.2 test scenarios.** Added agent-comms skill reference to the HC-046–HC-050 test-scenario list: end-to-end agent-comms skill provisioning test; normative N3 requirement (at-least-once delivery, dedupe-by-`event_id`); skill file at `.claude/skills/agent-comms/SKILL.md`. Version bump 0.5.3 → 0.5.4. No HC IDs added or renumbered. |

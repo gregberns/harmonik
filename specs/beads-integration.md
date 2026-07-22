@@ -8,7 +8,7 @@ requirement-prefix: BI
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.7.0
+version: 0.8.0
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-06-21
@@ -349,11 +349,31 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### BI-014a — Orphan `br` subprocess sweep on daemon startup
 
-On daemon startup, the orphan sweep of [process-lifecycle.md §4.2 PL-006] MUST enumerate processes whose binary path matches the pinned `br` location and whose parent PID is 1 (re-parented to init). For each match, the adapter MUST send SIGTERM and wait up to 5s, then SIGKILL, mirroring the BI-025c termination discipline. Orphan `br` subprocesses surviving the sweep are a Cat 0 prerequisite failure (SQLite WAL contention) per [reconciliation/spec.md §8.1].
+On daemon startup, the orphan sweep of [process-lifecycle.md §4.2 PL-006] MUST identify candidate orphan `br` subprocesses by the provenance marker of [process-lifecycle.md §4.2a PL-006e], evaluated under the matcher discipline of PL-006f. For each match, the adapter MUST send SIGTERM and wait up to 5s, then SIGKILL, mirroring the BI-025c termination discipline. Orphan `br` subprocesses surviving the sweep are a Cat 0 prerequisite failure (SQLite WAL contention) per [reconciliation/spec.md §8.1].
 
-Cross-spec coordination request to PL: extend PL-006 orphan-sweep enumeration to include `br` subprocesses (alongside tmux sessions, worktree locks, agent subprocesses, and intent files). Tracked as new OQ-BI-010.
+**Identification rules, in force at v0.8.0:**
+
+1. **The marker is the only admissible identification.** The binary path, the pinned `br` location, and the process name are narrowing filters that MAY be applied **after** a marker match has succeeded. None of them may serve as the match.
+2. **Parent PID 1 is retained as a narrowing filter**, not as an identifier. `br` subprocesses are forked by the daemon, so unlike the substrate-hosted handler case this filter is not structurally blind here.
+3. **An unmarked `br` process is not ours and MUST NOT be signalled**, even where it is in fact a genuine orphan of this project. The cost of this rule is that some orphans are left behind until their marker coverage lands; that cost is accepted deliberately, and the asymmetry is why: an orphan left alive causes SQLite WAL contention, which is recoverable, already classified as a Cat 0 prerequisite failure, and visible to the operator. Killing the wrong `br` is silent, immediate, and unrecoverable — and `br` is not an internal implementation detail but the operator's own command-line tool, run by hand, in this repository and in others on the same machine.
+4. **An unreadable environment is not a match**, per PL-006f(3).
+
+**Amended at v0.8.0.** The previous text required this sweep to enumerate "processes whose binary path matches the pinned `br` location." That directly contradicted [process-lifecycle.md §4.2 PL-007], which forbids matching on binary path — two requirements in force and in opposition, with the implementation obeying the weaker one and, in fact, going further than either permitted by matching on the process *basename* alone. That is why other projects' and other developers' `br` processes were in scope of this sweep.
 
 Tags: mechanism
+
+#### BI-014b — The `br` adapter sets the provenance marker on every `br` subprocess
+
+The adapter MUST set the provenance marker of [process-lifecycle.md §4.2a PL-006e] on every `br` subprocess it spawns.
+
+**The marker MUST be set explicitly on the subprocess, not assumed to be inherited.** The daemon does not carry the marker in its own environment, so a `br` child that receives only the daemon's environment carries no marker. An implementation that relies on inheritance produces a subprocess population that BI-014a can never match, and the failure is silent: the sweep runs, finds nothing, and reports success.
+
+**This requirement and BI-014a's identification rules MUST take effect together.** They are two halves of one change, and either half alone is defective in a different direction. The matcher without the marker is a sweep that can never match — safe, but it leaves the contention hazard permanently unaddressed. The marker without the matcher widens the population every reaper in the system considers, while removing none of the ways a reaper can be wrong.
+
+This spawn site appears in the [process-lifecycle.md §4.2a PL-006g] register, so its conformance is checkable from the register rather than only from this file.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 4.5a Submit-time validation read surface
 
@@ -997,12 +1017,15 @@ Owner: foundation-author
 Blocks: BI-031 step 3 disambiguation strength
 Default-if-unresolved: assume not; step 3ii is the canonical path.
 
-#### OQ-BI-010 — PL-006 orphan-sweep extension to include `br` subprocesses
+#### OQ-BI-010 — PL-006 orphan-sweep extension to include `br` subprocesses (RESOLVED v0.8.0)
 
-Question: BI-014a requires the daemon-startup orphan sweep of PL-006 to enumerate `br` subprocesses re-parented to init. PL-006 currently enumerates tmux sessions, worktree locks, agent subprocesses, and intent files; extension to `br` subprocesses is required for SQLite WAL contention avoidance.
-Owner: process-lifecycle author (cross-spec coordination request to PL R3)
-Blocks: BI-014a implementation
-Default-if-unresolved: BI-014a documents the requirement; PL-006 extension lands in PL R3 integration.
+Question (as asked): BI-014a requires the daemon-startup orphan sweep of PL-006 to enumerate `br` subprocesses re-parented to init; extension of PL-006's enumeration to `br` subprocesses is required for SQLite WAL contention avoidance.
+
+**Resolved: there is nothing left for PL to extend.** [process-lifecycle.md §4.2a PL-006e] obliges every process harmonik spawns — `br` included — to carry one provenance marker, and PL-006f gives every reaper one matching discipline. PL-006's enumeration already covers `br` subprocesses by that marker; it does not need a `br`-shaped special case, and adding one would have introduced a second identification scheme for a single process class.
+
+What the question was actually blocked on was not PL's enumeration but the **write** side: nothing set the marker on a `br` subprocess. That obligation now exists as BI-014b, in this spec, because the `br` adapter belongs to this subsystem.
+
+Superseded by: BI-014b; [process-lifecycle.md §4.2a PL-006e, PL-006f, PL-006g].
 
 #### OQ-BI-011 — Post-MVH compatibility-window widening
 
@@ -1038,6 +1061,7 @@ Default-if-unresolved: corruption manifests as parse errors on multiple `br` com
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-22 | 0.8.0 | agent (process-group-provenance / hk-c6dt2) | **`br` orphan sweep matches the provenance marker, never the binary path; the adapter gains the matching write obligation.** BI-014a's enumeration clause is replaced: identification is by the [process-lifecycle.md §4.2a PL-006e] marker under PL-006f discipline, with binary path, pinned path, process name, and parent-PID-1 demoted to post-match narrowing filters. The prior text mandated binary-path matching, which contradicted PL-007's prohibition — two MUSTs in force and in opposition, with the implementation obeying neither and matching on the process basename alone, putting other projects' and the operator's own `br` processes in scope. The fail-closed trade is written into the requirement rather than left to the general rule, because `br` is the operator's day-to-day CLI and the two error directions are not symmetric. NEW BI-014b: the adapter MUST set the marker explicitly on every `br` subprocess it spawns — explicitly, because the daemon does not carry the marker in its own environment, so inheritance yields an unmarked child and a sweep that silently matches nothing. BI-014a and BI-014b MUST land together. OQ-BI-010 RESOLVED: PL needs no `br`-specific enumeration extension; the gap was always the write side, which BI-014b now owns. |
 | 2026-06-21 | 0.7.0 | agent (kerf work `bead-ledger-worktree-merge` / bead hk-rhtpa) | **BL-MRG merge contract + BI-010e child-bead-spawn + BI-011 permitted-write table.** Three changes applied from `05-spec-drafts/beads-integration-bl-mrg.md` plus T0 label rename (`codename:hk-<parent-id>` → `parent:hk-<parent-id>` — `codename:` is reserved for kerf work codenames; bead lineage labels use the `parent:` prefix). **(1) BI-010e (NEW):** child-bead-spawn creates — implementer agents MAY call `br create` intra-run with four constraints: `parent:hk-<parent-id>` lineage label required, idempotency check via `br list --label=parent:hk-<parent-id>` before create, terminal transitions remain daemon-only, union merge-driver (BL-MRG-002) preserves creates unconditionally. **(2) BI-011 (amended):** retitled "Permitted and prohibited intra-run writes"; added permitted-write table with three categories (`claim` existing, `child-bead-spawn` new per BI-010e, `parent-bead-label` new); added explicit failure contract for prohibited terminal writes from inside worktrees referencing BL-MRG-004. **(3) §4.8b BL-MRG (NEW section, 6 clauses):** BL-MRG-001 (`.gitattributes` + `.git/config` driver registration; daemon auto-configures at startup), BL-MRG-002 (union-by-ID algorithm with `updated_at` LWW for conflicting rows + explicit set-union for `labels`/`dependencies` arrays), BL-MRG-003 (semantic conflict logging to `.beads/merge-conflicts.log`; exit 0 always), BL-MRG-004 (`br sync --import-only` mandatory post-merge before any subsequent `br` operation; failure routes to Cat-BL2), BL-MRG-005 (`mergeRebaseAutoResolveBeadsLedger` in `workloop.go` MUST be removed — it suppresses the driver with `git checkout --theirs`), BL-MRG-006 (Phase 2 shared-DB migration path, informative). BI IDs frozen at v0.7.0 (additive: BI-010e; BL-MRG-001..006). |
 | 2026-06-11 | 0.6.3 | agent (kerf work `standard-bead-dot` / epic hk-o7j) | **BI-009a workflow-mode resolution-chain tail flipped `single` → `dot` (embedded `standard-bead.dot`) with a `review-loop` review-floor, syncing to the EM-012a tier-4 default flip.** Amended **BI-009a**: the label-absence fall-through tail changed from "→ daemon-level per [process-lifecycle.md §4.1 PL-004a] → built-in fallback `single`" to "→ daemon-level → built-in fallback `dot`, resolving the embedded `standard-bead.dot` canonical exemplar per [execution-model.md §4.3 EM-012a]." Added the review-floor note (EM-012a-FLOOR): on embedded-artifact load failure the daemon MUST fall back to `review-loop`, NEVER `single`; `single` is reachable ONLY via an explicit tier-1 per-bead `workflow:single` label (audited via `review_bypassed`), and a bead resolved at the per-project / daemon-level / built-in-fallback tiers MUST NEVER dispatch under `single`. This corrects BI-009a's contradiction with the now-NORMATIVE EM-012a default flip (execution-model v0.9.0). The allowed-mode enum `{single, review-loop, dot}` and the four-tier resolution chain remain owned by [execution-model.md §4.3] and cited by reference; only the tail of the precedence narrative changed. No requirement IDs renumbered or retired; BI IDs frozen at v0.6.3 (text-only amendment of BI-009a). Refs: hk-o7j, hk-30vlb. |
 | 2026-05-20 | 0.6.2 | foundation-author | **hk-uhvjo — BI-013d NEW: `--sort priority` adapter discipline for br-ready fallback.** Added BI-013d to §4.5 documenting the normative requirement that the adapter MUST pass `--sort priority` when invoking `br ready`. Rationale: the daemon's br-ready fallback path selects `readyRecords[0]` as the claim candidate and requires strict priority ordering; the default `hybrid` sort can promote an older lower-priority bead above a higher-priority bead (regression hk-rp48p). Spec-debt item: the constraint was previously carried only in the `brReadySortPriority` Go constant comment; no spec text existed. BI-013d is additive; BI IDs frozen at v0.6.2. |

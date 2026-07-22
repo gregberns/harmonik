@@ -2240,10 +2240,51 @@ func (p *perRunSubstrate) WriteLastPane(ctx context.Context, bufferName string, 
 	return p.pasteAdapter().WriteToPane(ctx, bufferName, target, payload)
 }
 
-// inputBufferName is the tmux buffer name the interim InputPort.SubmitInput uses
-// for its bracketed paste (perRunSubstrate is the input-bearing handle at the
-// process-spawn seam in the tmux/paste path).
-const inputBufferName = "harmonik-input"
+// inputBufferPurpose is the PL-021d purpose slug the interim
+// InputPort.SubmitInput bracketed paste tags its buffer with.
+const inputBufferPurpose = "input"
+
+// inputBufferName builds the PL-021d buffer name this run's SubmitInput uses for
+// its bracketed paste: "harmonik-<run-id>-input". The <run-id> segment MUST
+// satisfy bufferNameRe ([a-z0-9-] after the "harmonik-" prefix), or LoadBuffer /
+// PasteBuffer reject it with ErrStructural — which is exactly what the retired
+// hardcoded "harmonik-input" did, wedging every tmux-substrate dispatch
+// (hk-9hvr0: implementer-initial SubmitInput failed the buffer-name invariant so
+// the task prompt never reached the worker). The minted run id is a lowercase
+// UUIDv7 that already matches; we sanitize defensively and fall back to the
+// per-run pane target (then a literal) so a shared-session or remote run with no
+// runSessionID still yields a valid, per-run-unique name. Mirrors the daemon's
+// own bufferName(sessionID, purpose) helper used by the "task"/"review" pastes.
+func (p *perRunSubstrate) inputBufferName() string {
+	id := sanitizeBufferSegment(p.runSessionID)
+	if id == "" {
+		id = sanitizeBufferSegment(p.paneTarget())
+	}
+	if id == "" {
+		id = "run"
+	}
+	return bufferName(id, inputBufferPurpose)
+}
+
+// sanitizeBufferSegment lowercases s and maps every character outside [a-z0-9]
+// to '-', so the result is safe to embed as the <session-id> segment of a
+// bufferNameRe-valid buffer name. Leading/trailing hyphens are trimmed so the
+// segment never collapses the "harmonik-<id>-<purpose>" delimiters. Returns ""
+// when s has no usable characters.
+func sanitizeBufferSegment(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r - 'A' + 'a')
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
 
 // SubmitInput is the interim tmux/paste implementation of handler.InputPort
 // (AIS-001 / AIS-003 / HC-069 / HC-070). It delivers the payload to this run's
@@ -2259,7 +2300,7 @@ const inputBufferName = "harmonik-input"
 // error. Seq/Token are codec-owned and remain zero for the interim paste path
 // (no wire protocol supplies them).
 func (p *perRunSubstrate) SubmitInput(ctx context.Context, req handler.InputRequest) (handler.Ack, error) {
-	if err := p.WriteLastPane(ctx, inputBufferName, req.Payload); err != nil {
+	if err := p.WriteLastPane(ctx, p.inputBufferName(), req.Payload); err != nil {
 		return handler.Ack{}, err
 	}
 	return handler.Ack{Outcome: handler.Delivered}, nil

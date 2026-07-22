@@ -29,6 +29,72 @@ const defaultTrustLockTimeout = 15 * time.Second
 // not to spin-burn a core while waiting.
 const trustLockRetryInterval = 50 * time.Millisecond
 
+// trustWriteMaxAttempts bounds how many read-modify-write cycles the trust
+// writer will run before giving up (hk-qx065). Each attempt re-reads the config
+// from disk, re-applies the trust key on top of whatever is there now, writes,
+// and then VERIFIES the key survived. The retry exists because the clobberer is
+// NOT another harmonik goroutine or process — it is Claude Code itself, which
+// rewrites ~/.claude.json wholesale from its own in-memory snapshot and does not
+// honor our advisory flock (observed in a964cbcb: ~15 concurrent live claude
+// processes rewriting the shared config). No amount of locking on our side can
+// exclude a writer that never asks for the lock, so we repair instead.
+//
+// # What the evidence actually was, and what is inference
+//
+// OBSERVED, at max-concurrent 3: two of three workers parked on the folder-trust
+// modal, and the failed worktree's projects[<realpath>].hasTrustDialogAccepted
+// was ABSENT from ~/.claude.json even though EnsureWorktreeTrust had run and
+// returned success. INFERRED from that, plus a964cbcb's independent note that
+// live claude processes rewrite the shared config without honoring our lock: the
+// key was written and then erased by such a rewrite. Nobody counted clobbers —
+// there is no measurement of how many rewrites hit a given launch, and this
+// constant is NOT calibrated against one.
+//
+// 4 is therefore a judgement call, not a fitted value: enough attempts that a
+// short burst of foreign rewrites is ridden out, few enough that the cost is
+// negligible when nothing is wrong (the happy path performs exactly one cycle).
+// If four consecutive attempts are all erased, the config is being rewritten
+// continuously and a fifth is unlikely to differ — failing loudly beats retrying
+// while the provisioning window stretches.
+const trustWriteMaxAttempts = 4
+
+// trustWriteRetryBackoff is the pause between a failed verification and the next
+// read-modify-write attempt (hk-qx065). Sized just above the ~180ms in-flight
+// RMW cycle noted on defaultTrustLockTimeout: long enough that a competing
+// writer's rename has landed before we re-read (so we re-apply on top of its
+// result rather than colliding with it mid-cycle), short enough that the whole
+// retry budget stays negligible on the launch path.
+//
+// # Latency budget (worst case, and why it is safe)
+//
+// defaultTrustLockTimeout is a budget for the WHOLE verify-and-repair loop, not
+// per attempt: ensureWorktreeTrustAt computes one deadline up front and passes
+// each attempt only the time remaining. That matters because a lock wait which
+// SUCCEEDS at 14.9s neither errors nor ends the loop — a fresh 15s per attempt
+// would make the worst case that still returns nil ~4x15s + 3x200ms ≈ 60.6s.
+// With a single shared deadline the worst case is 15s of lock waiting in total
+// plus 3 x 200ms of backoff ≈ 15.6s, restoring the bound hk-bfvby established.
+//
+// That bound is what makes it safe, NOT the 150s agent_ready budget: this code
+// runs during PROVISIONING (workloop's BuildSpec), and the agent_ready timer is
+// only armed later, at the Idle->Launching transition in internal/runexec
+// (stepDispatchIdle's ActArmTimer), reached after provisioning completes. There
+// is no agent_ready deadline ticking while we retry. The real constraint is that
+// trustWriteMu is held for the whole loop, so every other in-process launch that
+// needs a trust write queues behind us — bounding the loop at ~15.6s keeps that
+// queueing in the same range hk-bfvby already accepted.
+const trustWriteRetryBackoff = 200 * time.Millisecond
+
+// trustPostWriteHook is a TEST-ONLY seam (hk-qx065). When non-nil it is invoked
+// immediately after a trust-upsert attempt's atomic write succeeds and BEFORE the
+// post-write verification read, letting a test stand in for the non-cooperating
+// external writer that erases our key. Production never sets it.
+//
+// It is read only while trustWriteMu is held (the write path holds that mutex for
+// its whole duration), so tests MUST take trustWriteMu to set and restore it —
+// that is what makes the access properly synchronized under -race.
+var trustPostWriteHook func(cfgPath string)
+
 // ErrTrustLockTimeout is returned when ensureWorktreeTrustAt cannot acquire the
 // exclusive write lock within defaultTrustLockTimeout (hk-bfvby). It wraps
 // handlercontract.ErrStructural so the daemon dispatch path classifies the
@@ -121,6 +187,30 @@ func defaultClaudeGlobalConfigPath() string {
 // approach keeps the target file's rename-atomic identity stable and the lock
 // independent of the file's inode.
 //
+// # Verify-and-repair against a non-cooperating writer (hk-qx065)
+//
+// The flock only excludes writers that TAKE it. Claude Code does not: each live
+// claude process rewrites ~/.claude.json wholesale from its own in-memory
+// snapshot, so an entry we just wrote can be erased moments later. That was
+// observed directly at max-concurrent 3 — two of three workers parked on the
+// folder-trust modal, and the failed worktree's hasTrustDialogAccepted key was
+// simply ABSENT from the config even though this function had returned success.
+// A successful write syscall is therefore not proof the key is on disk.
+//
+// So every write attempt is followed by a RE-READ that confirms the key actually
+// persisted, and a failed verification triggers a bounded retry of the whole
+// read-modify-write (fresh read each time, so we re-apply on top of whatever the
+// other writer left). If the key still has not stuck after trustWriteMaxAttempts,
+// the function returns a structural error rather than reporting a success the
+// disk does not support.
+//
+// This NARROWS the race; it does not eliminate it. A clobber that lands after our
+// final verification but before Claude Code reads the config at startup will still
+// produce the trust modal, and nothing on our side of the process boundary can
+// prevent that. What the verification buys is that the common case — a clobber
+// during our own write window — is now detected and repaired instead of being
+// silently reported as success.
+//
 // # Ordering obligation (CHB-029 / WM-040b)
 //
 // MUST be called AFTER WM-003 (worktree creation) and WM-040a
@@ -131,9 +221,10 @@ func defaultClaudeGlobalConfigPath() string {
 //
 // # Failure semantics
 //
-// On any error (lock, read, parse, marshal, write), EnsureWorktreeTrust returns
-// a wrapped error. The caller MUST propagate this as a structural error and MUST
-// NOT exec Claude — an un-trusted session would block rather than hang silently.
+// On any error (lock, read, parse, marshal, write, or a write that would not
+// stick), EnsureWorktreeTrust returns a wrapped error. The caller MUST propagate
+// this as a structural error and MUST NOT exec Claude — an un-trusted session
+// would block rather than hang silently.
 //
 // # Parameters
 //
@@ -154,10 +245,17 @@ func EnsureWorktreeTrust(worktreePath string) error {
 }
 
 // ensureWorktreeTrustAt is the testable inner implementation; cfgPath is the
-// ~/.claude.json override, allowing unit tests to redirect to a temp file.
+// ~/.claude.json override, allowing unit tests to redirect to a temp file. It is
+// also the path used against an EXPLICIT config file by
+// PrepareIsolatedClaudeConfigDir (hk-8juwz), so it must stay correct for a
+// per-launch private config, not just the shared global one.
 //
 // hk-bfvby: the already-trusted case takes NO write lock and performs NO
 // read-modify-write. Only an actual mutation acquires the bounded LOCK_EX.
+//
+// hk-qx065: every write attempt is verified by a re-read, and a lost write is
+// repaired by retrying the whole read-modify-write. See EnsureWorktreeTrust's
+// "Verify-and-repair" section for why locking alone cannot be the answer.
 func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 	// Fast path: lock-free read-only probe. If worktreePath is already present
 	// and trusted, return immediately — no LOCK_EX, no rewrite. This is the
@@ -165,13 +263,24 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 	// NOT contend on the write lock. A concurrent writer mid-rename only ever
 	// makes this probe MISS (it then falls through to the locked write path and
 	// re-checks under the lock), never produces a false trust.
+	//
+	// The fast path is inherently ADVISORY (hk-qx065): it reports what the config
+	// said at the instant it was read. A non-cooperating writer can erase the entry
+	// immediately afterwards, and this probe has no way to notice. That is exactly
+	// why the write path below verifies rather than trusting its own write — but it
+	// also means a "true" here is a snapshot, not a guarantee that claude will find
+	// the key when it starts.
 	trusted, probeErr := alreadyTrustedAt(worktreePath, cfgPath)
-	if probeErr != nil {
+	if probeErr != nil && !trustConfigDecodeErr(probeErr) {
 		return probeErr
 	}
 	if trusted {
 		return nil
 	}
+	// A DECODE error here does not return: it means the snapshot we read was not
+	// valid JSON, which a torn read of a foreign non-atomic write looks exactly
+	// like. Fall through to the repair loop, which re-reads under the retry budget
+	// and surfaces the decode error only if it is still there on the last attempt.
 
 	// Slow path: a mutation is needed. Serialize in-process first (hk-z16): hold
 	// trustWriteMu so only one goroutine within this daemon process attempts the
@@ -183,16 +292,121 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 	trustWriteMu.Lock()
 	defer trustWriteMu.Unlock()
 
-	if trusted2, err2 := alreadyTrustedAt(worktreePath, cfgPath); err2 != nil {
+	if trusted2, err2 := alreadyTrustedAt(worktreePath, cfgPath); err2 != nil && !trustConfigDecodeErr(err2) {
 		return err2
 	} else if trusted2 {
 		return nil
 	}
 
+	// Write, verify, repair (hk-qx065).
+	//
+	// LOCK DISCIPLINE, precisely: each attempt re-acquires the sidecar FLOCK and
+	// releases it before we sleep, so other PROCESSES are never blocked by our
+	// backoff. trustWriteMu is a different story — it IS held across the whole
+	// loop including the sleeps, so other in-process launches needing a trust
+	// write DO queue behind us for the loop's duration. That is why the loop is
+	// bounded (see trustWriteRetryBackoff's latency note): the total is ~15.6s
+	// worst case, the same order hk-bfvby settled on, rather than the ~60.6s a
+	// per-attempt lock deadline would allow.
+	//
+	// The lock budget is shared across attempts: one deadline computed here, each
+	// attempt gets only what is left.
+	lockDeadline := time.Now().Add(defaultTrustLockTimeout)
+
+	// lastErr carries a DECODE error forward between attempts. Nil means the
+	// cycle completed but the key simply was not there afterwards.
+	var lastErr error
+
+	for attempt := 1; attempt <= trustWriteMaxAttempts; attempt++ {
+		if attempt > 1 {
+			time.Sleep(trustWriteRetryBackoff)
+		}
+
+		remaining := time.Until(lockDeadline)
+		if remaining <= 0 {
+			return ErrTrustLockTimeout
+		}
+
+		err := trustUpsertOnce(worktreePath, cfgPath, remaining)
+		if err == nil {
+			// Verification: re-read from disk. The write syscall succeeding proves
+			// nothing about what is in the file now — an external writer may have
+			// replaced the whole config in between (the observed hk-qx065 failure).
+			var persisted bool
+			persisted, err = alreadyTrustedAt(worktreePath, cfgPath)
+			if err == nil && persisted {
+				return nil
+			}
+		}
+
+		// A lock timeout, an IO failure, or a marshal failure is not something a
+		// retry can improve, and each costs real launch time — surface it now. A
+		// DECODE failure is different: we cannot distinguish a genuinely corrupt
+		// config from a torn read of a foreign writer's non-atomic rewrite by
+		// looking at one snapshot, and this whole fix exists because such a writer
+		// is active. So decode failures re-read within the same bounded budget; a
+		// truly corrupt file costs ~600ms and then reports itself.
+		if err != nil && !trustConfigDecodeErr(err) {
+			return err
+		}
+		lastErr = err
+	}
+
+	// Out of attempts. A decode failure that survived every re-read is reported as
+	// itself — it is more specific than "did not persist", and it preserves the
+	// fail-rather-than-corrupt contract (we never overwrite an unparseable config
+	// with a fresh one).
+	if lastErr != nil {
+		return lastErr
+	}
+
+	// The key would not stick. Fail structurally: the callers treat a trust-seed
+	// failure as fatal and MUST NOT exec claude, because a launch into an untrusted
+	// folder parks on the trust modal before SessionStart and no agent_ready is
+	// ever synthesized — the run then dies at its ready deadline with nothing
+	// explaining why. This error is the explanation.
+	return fmt.Errorf("workspace: EnsureWorktreeTrust: %w: projects[%q].hasTrustDialogAccepted did not persist in %s after %d write attempts; "+
+		"the most likely cause is a concurrent writer rewriting the shared config wholesale (live claude processes do this and do not honor our advisory lock)",
+		handlercontract.ErrStructural, worktreePath, cfgPath, trustWriteMaxAttempts)
+}
+
+// trustConfigDecodeErr reports whether err is a JSON-decode failure of the config
+// file, as opposed to a lock, IO, or marshal failure. Decode failures are the
+// only class this file retries: a foreign writer that does not commit via rename
+// can be observed mid-write, and that torn snapshot is indistinguishable from a
+// corrupt file in a single read. Everything else either cannot improve with time
+// (marshal, unexpected JSON shape) or indicates the file is unreachable (IO).
+func trustConfigDecodeErr(err error) bool {
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
+}
+
+// trustUpsertOnce performs ONE read-modify-write cycle: acquire the bounded
+// sidecar flock, read the config fresh from disk, upsert
+// projects[worktreePath].hasTrustDialogAccepted = true, and atomically write it
+// back. It returns nil both when it wrote and when it found the entry already
+// trusted under the lock; the CALLER verifies the result by re-reading, so a nil
+// here means "the cycle completed", not "the key is on disk".
+//
+// The flock is released when this function returns (deferred close), so the
+// caller's backoff sleep never holds it. Reading the config fresh on every call
+// is load-bearing: a retry must re-apply the key on top of whatever the clobbering
+// writer left behind, never on a stale in-memory snapshot. Re-applying a stale
+// snapshot would turn harmonik itself into the lost-update clobberer, erasing
+// every key another writer committed in between — including a sibling worker's
+// trust entry. That is the exact bug class this file exists to prevent.
+//
+// lockTimeout is the REMAINING share of the caller's single lock budget, not a
+// fresh per-attempt deadline; see trustWriteRetryBackoff's latency note.
+//
+// MUST be called with trustWriteMu held — it reads trustPostWriteHook.
+func trustUpsertOnce(worktreePath, cfgPath string, lockTimeout time.Duration) error {
 	// Acquire the bounded exclusive flock on the sidecar lockfile (LOCK_EX|LOCK_NB
 	// + deadline) to guard against OTHER PROCESSES rewriting ~/.claude.json
 	// concurrently. The sidecar pattern keeps the lock independent of the target
-	// file's inode across atomic renames.
+	// file's inode across atomic renames. Note this only excludes writers that
+	// cooperate — see EnsureWorktreeTrust's "Verify-and-repair" section.
 	lockPath := cfgPath + ".lock"
 	lockFd, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // G304: sidecar lockfile path is derived from user's own config path
 	if err != nil {
@@ -200,7 +414,7 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 	}
 	defer lockFd.Close() //nolint:errcheck // closing a lock fd; error is non-actionable and lock is advisory
 
-	if err := acquireExclusiveBounded(int(lockFd.Fd()), defaultTrustLockTimeout); err != nil {
+	if err := acquireExclusiveBounded(int(lockFd.Fd()), lockTimeout); err != nil {
 		return err
 	}
 	// Lock is released automatically when lockFd is closed by the deferred call.
@@ -244,8 +458,9 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 		projectEntry = make(map[string]interface{})
 	}
 
-	// Re-check under the lock: a concurrent writer may have trusted this path
-	// between our lock-free probe and acquiring the lock. If so, skip the rewrite.
+	// Re-check under the lock: a cooperating writer may have trusted this path
+	// between our lock-free probe and acquiring the lock. If so, skip the rewrite —
+	// the caller's verification read will confirm it independently.
 	if t, ok := projectEntry["hasTrustDialogAccepted"].(bool); ok && t {
 		return nil
 	}
@@ -273,6 +488,14 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 
 	if err := atomicWriteWithParentFsync(cfgPath, out); err != nil {
 		return fmt.Errorf("workspace: EnsureWorktreeTrust: write %s: %w", cfgPath, err)
+	}
+
+	// Test seam only (hk-qx065): stands in for the external process that rewrites
+	// the config out from under us. Fires here — after our rename, before the
+	// caller's verification read — because that is precisely the window the real
+	// clobber lands in. nil in production.
+	if trustPostWriteHook != nil {
+		trustPostWriteHook(cfgPath)
 	}
 
 	return nil

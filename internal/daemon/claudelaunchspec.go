@@ -308,33 +308,49 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// the trust seed. Fatal-structural for the same reason: an un-themed session
 	// blocks indefinitely on the modal rather than reaching SessionStart.
 	//
-	// SUPERSEDED for claude:LOCAL by Step 3a'' (CLAUDE_CONFIG_DIR isolation,
-	// hk-8juwz): the shared-global theme seed was live-refuted (fleet writers
-	// lost-update it; top-level "theme" is not even the modal-gating key). Left in
-	// place as a harmless no-op for now (a follow-up can retire it) and still
-	// covers the REMOTE path, which is not yet isolated.
+	// The seed itself was live-refuted as a modal fix (fleet writers lost-update the
+	// shared file; top-level "theme" is not even the modal-gating key), and the modal
+	// no longer reproduces on claude v2.1.217 with the operator's normal shared
+	// config (see Step 3a''). It is left in place, but it is NOT inert: whenever
+	// top-level "theme" is absent, EnsureClaudeTheme takes an exclusive flock and
+	// read-modify-writes the operator's real shared ~/.claude.json (see
+	// ensureClaudeThemeAt). Since fleet writers can lost-update that key away, this
+	// can re-fire across launches. Retiring it is a follow-up; do not describe it as
+	// a no-op.
 	if err := workspace.EnsureClaudeThemeVia(ctx, rc.runner); err != nil {
 		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: EnsureClaudeTheme: %w", err)
 	}
 
-	// Step 3a'' — Isolate a PRIVATE per-launch Claude config dir for the LOCAL path
-	// (hk-8juwz). For a claude:LOCAL run (rc.runner == nil), provision a private
-	// config dir seeded from the operator's real (onboarded) ~/.claude.json and set
-	// CLAUDE_CONFIG_DIR to it below (Step 5). This relocates claude's config reads
-	// off the SHARED global ~/.claude.json that ~15 live fleet processes race, so
-	// the modal-dismissing onboarding state cannot be lost-updated away. Auth is
-	// Keychain-based (machine-global), so relocation does NOT lose auth. Scoped to
-	// LOCAL for now; the REMOTE worker path is a deliberate follow-up. Fatal-
-	// structural like the trust seed: an un-isolated launch re-wedges on the modal.
+	// Step 3a'' — Isolate a PRIVATE per-launch Claude config dir. REMOTE ONLY
+	// (rc.runner != nil, hk-qxvc2): PrepareIsolatedClaudeConfigDirVia runs the
+	// preparation ON THE WORKER, seeding from the WORKER's own onboarded
+	// ~/.claude.json and returning the worker-absolute dir (the value
+	// CLAUDE_CONFIG_DIR must carry below in Step 5a, since claude reads it on the
+	// worker). Fatal-structural like the trust seed: a failed prepare must not exec
+	// claude.
+	//
+	// LOCAL: DELIBERATELY NOT ISOLATED — do not re-add (hk-8juwz). The local
+	// isolation was tried (a964cbcb) and LIVE-REFUTED by an A/B on one daemon with
+	// one line toggled: isolation ON → agent_ready_timeout at 150s with the pane
+	// parked on the Bypass Permissions modal; isolation OFF → agent_ready in 2.0s,
+	// work committed, run completed. Two defects, both fatal. (1) Relocating
+	// CLAUDE_CONFIG_DIR moves the WHOLE ~/.claude surface, but only .claude.json was
+	// seeded — ~/.claude/settings.json (and its skipDangerousModePermissionPrompt)
+	// was dropped, so --dangerously-skip-permissions parked on the bypass modal
+	// pre-SessionStart. (2) With the config dir relocated claude reports "Not logged
+	// in · Please run /login" and can do NO work; the commit's premise that
+	// Keychain-based auth survives relocation is refuted. The onboarding modal the
+	// isolation was written to fix no longer reproduces on claude v2.1.217 with the
+	// operator's normal shared ~/.claude. A local launch therefore inherits the
+	// operator's real config and sets no CLAUDE_CONFIG_DIR at all.
 	var isolatedClaudeConfigDir string
-	if rc.runner == nil {
-		dir, isoErr := workspace.PrepareIsolatedClaudeConfigDir(rc.workspacePath)
-		if isoErr != nil {
+	if rc.runner != nil {
+		isolatedClaudeConfigDir, err = workspace.PrepareIsolatedClaudeConfigDirVia(ctx, rc.runner, rc.workspacePath)
+		if err != nil {
 			return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
-				"daemon: buildClaudeLaunchSpec: PrepareIsolatedClaudeConfigDir: %w", isoErr)
+				"daemon: buildClaudeLaunchSpec: PrepareIsolatedClaudeConfigDirVia: %w", err)
 		}
-		isolatedClaudeConfigDir = dir
 	}
 
 	// Step 3b — Write per-launch task artifact (CHB-028).
@@ -435,13 +451,15 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	}
 	env := handler.ClaudeEnvVars(cfg)
 
-	// Step 5a — Export CLAUDE_CONFIG_DIR for the claude:LOCAL path (hk-8juwz).
-	// claude v2.1.214 reads CLAUDE_CONFIG_DIR to relocate its config directory to
+	// Step 5a — Export CLAUDE_CONFIG_DIR for the REMOTE path only (hk-qxvc2). claude
+	// v2.1.214 reads CLAUDE_CONFIG_DIR to relocate its config directory to
 	// <dir>/.claude.json, off the shared global ~/.claude.json. Appended AFTER
-	// ClaudeEnvVars so the tmux/local substrate carries it into the spawned process
-	// env (SubstrateSpawn replaces the pane env with this slice). Empty for REMOTE
-	// runs (isolatedClaudeConfigDir is only set when rc.runner == nil), so the
-	// remote path is unchanged. CLAUDE_CONFIG_DIR is not on the CHB-007 forbidden
+	// ClaudeEnvVars so the substrate carries it into the spawned process env
+	// (SubstrateSpawn replaces the pane env with this slice). isolatedClaudeConfigDir
+	// is set ONLY on the remote branch (Step 3a''), where it is the WORKER-absolute
+	// isolated dir; on a LOCAL run it stays "" and this is a no-op, so claude
+	// inherits the operator's real ~/.claude — the configuration proven green
+	// (hk-8juwz; see Step 3a''). CLAUDE_CONFIG_DIR is not on the CHB-007 forbidden
 	// env-var list, so the Step 7 guard passes.
 	if isolatedClaudeConfigDir != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+isolatedClaudeConfigDir)

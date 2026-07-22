@@ -318,12 +318,6 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-rs-b8-codesync-3fk0.
 	WorkerRegistry *workers.Registry
 
-	// CodexRequireIsolationBoundary mirrors Config.CodexRequireIsolationBoundary
-	// (hk-5h759): when true, beadRunOne fails closed unless the worker registry's
-	// WorkerSnapshot() yields an enabled ssh worker. Test default false — the
-	// tmux/baseline path.
-	CodexRequireIsolationBoundary bool
-
 	// BrPath is the absolute path to the `br` CLI binary used by the staged-bead
 	// generator (hk-f722). When empty the generator is disabled (safe test default).
 	BrPath string
@@ -475,59 +469,58 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	}
 
 	return workLoopDeps{
-		brAdapter:                     p.BrAdapter,
-		bus:                           p.Bus,
-		intentLogDir:                  p.IntentLogDir,
-		projectDir:                    p.ProjectDir,
-		handlerBinary:                 binary,
-		handlerArgs:                   p.HandlerArgs,
-		handlerEnv:                    nil,
-		brTimeoutCfg:                  brcli.TimeoutConfig{},
-		tidGen:                        core.NewTransitionIDGenerator(),
-		workflowModeDefault:           wmd,
-		runRegistry:                   reg,
-		maxConcurrent:                 maxConcurrent,
-		cpRegistry:                    p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
-		hookStore:                     hookStore,
-		launchSpecBuilder:             lsb,
-		worktreeFactory:               wtf,
-		adapterRegistry:               p.AdapterRegistry2,
-		harnessRegistry:               p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
-		substrate:                     p.Substrate,
-		agentReadyTimeout:             p.AgentReadyTimeout,
-		postAgentReadyHangTimeout:     p.PostAgentReadyHangTimeout,
-		projectCfg:                    p.ProjectCfg,
-		queueStore:                    p.QueueStore,
-		queueLedger:                   p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
-		submitWakeC:                   submitWakeC,
-		cancelOnQueueDrain:            p.CancelOnQueueDrain,
-		cancelOnQueueExit:             p.CancelOnQueueExit,
-		stopDispatchCtx:               p.StopDispatchCtx,
-		handlerPauseController:        p.HandlerPauseController,
-		staleBlockerCloser:            p.StaleBlockerCloser,         // hk-rnsjs
-		strandedInProgressResetter:    p.StrandedInProgressResetter, // hk-l2xd1
-		strandedResetDaemonNS:         p.StrandedResetDaemonNS,      // hk-l2xd1
-		operatorPauseCtrl:             p.OperatorPauseCtrl,          // hk-ry8q1
-		decisionBlocker:               p.DecisionBlocker,            // hk-a6e24 EV-043
-		noAutoPull:                    p.NoAutoPull,                 // hk-h5lv2 / EM-066
-		concurrencyCtrl:               p.ConcurrencyCtrl,            // hk-ohiaf
-		localInFlight:                 new(atomic.Int32),            // hk-hs7ex: split gate — fresh counter for each test
-		skipBrHistoryRotation:         true,                         // hk-hypbi: tests use temp dirs without real .br_history
-		targetBranch:                  bootconfig.ResolveTargetBranch(p.TargetBranch),
-		protectBranches:               p.ProtectBranches,
-		mergeQ:                        mergeQ,
-		worktreeCreateMu:              worktreeCreateMu,
-		agentSpawnSem:                 agentSpawnSem,                  // hk-5z1f0: per-worker cold-start spawn semaphore
-		emittedEpics:                  make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
-		emittedEpicsMu:                &sync.Mutex{},
-		workerRegistry:                p.WorkerRegistry,                // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
-		codexRequireIsolationBoundary: p.CodexRequireIsolationBoundary, // hk-5h759: fail-closed codex-crew isolation guard
-		brPath:                        p.BrPath,                        // hk-f722: staged-bead generator; empty → disabled
-		followUpLedger:                make(map[string]struct{}),
-		followUpLedgerMu:              &sync.Mutex{},
-		spawnSubstrateReadyCh:         p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
-		allowedRepos:                  p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
-		diskFreeBytesFunc:             p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
+		brAdapter:                  p.BrAdapter,
+		bus:                        p.Bus,
+		intentLogDir:               p.IntentLogDir,
+		projectDir:                 p.ProjectDir,
+		handlerBinary:              binary,
+		handlerArgs:                p.HandlerArgs,
+		handlerEnv:                 nil,
+		brTimeoutCfg:               brcli.TimeoutConfig{},
+		tidGen:                     core.NewTransitionIDGenerator(),
+		workflowModeDefault:        wmd,
+		runRegistry:                reg,
+		maxConcurrent:              maxConcurrent,
+		cpRegistry:                 p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
+		hookStore:                  hookStore,
+		launchSpecBuilder:          lsb,
+		worktreeFactory:            wtf,
+		adapterRegistry:            p.AdapterRegistry2,
+		harnessRegistry:            p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
+		substrate:                  p.Substrate,
+		agentReadyTimeout:          p.AgentReadyTimeout,
+		postAgentReadyHangTimeout:  p.PostAgentReadyHangTimeout,
+		projectCfg:                 p.ProjectCfg,
+		queueStore:                 p.QueueStore,
+		queueLedger:                p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
+		submitWakeC:                submitWakeC,
+		cancelOnQueueDrain:         p.CancelOnQueueDrain,
+		cancelOnQueueExit:          p.CancelOnQueueExit,
+		stopDispatchCtx:            p.StopDispatchCtx,
+		handlerPauseController:     p.HandlerPauseController,
+		staleBlockerCloser:         p.StaleBlockerCloser,         // hk-rnsjs
+		strandedInProgressResetter: p.StrandedInProgressResetter, // hk-l2xd1
+		strandedResetDaemonNS:      p.StrandedResetDaemonNS,      // hk-l2xd1
+		operatorPauseCtrl:          p.OperatorPauseCtrl,          // hk-ry8q1
+		decisionBlocker:            p.DecisionBlocker,            // hk-a6e24 EV-043
+		noAutoPull:                 p.NoAutoPull,                 // hk-h5lv2 / EM-066
+		concurrencyCtrl:            p.ConcurrencyCtrl,            // hk-ohiaf
+		localInFlight:              new(atomic.Int32),            // hk-hs7ex: split gate — fresh counter for each test
+		skipBrHistoryRotation:      true,                         // hk-hypbi: tests use temp dirs without real .br_history
+		targetBranch:               bootconfig.ResolveTargetBranch(p.TargetBranch),
+		protectBranches:            p.ProtectBranches,
+		mergeQ:                     mergeQ,
+		worktreeCreateMu:           worktreeCreateMu,
+		agentSpawnSem:              agentSpawnSem,                  // hk-5z1f0: per-worker cold-start spawn semaphore
+		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
+		emittedEpicsMu:             &sync.Mutex{},
+		workerRegistry:             p.WorkerRegistry, // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
+		brPath:                     p.BrPath,         // hk-f722: staged-bead generator; empty → disabled
+		followUpLedger:             make(map[string]struct{}),
+		followUpLedgerMu:           &sync.Mutex{},
+		spawnSubstrateReadyCh:      p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
+		allowedRepos:               p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
+		diskFreeBytesFunc:          p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
 		// hk-y3frr: default to a no-op clean in tests so that the now-enabled
 		// proactive reap never calls real `go clean -cache` in scenario tests
 		// (which have no goCacheCleanFunc set and would wipe the build cache on
@@ -715,6 +708,32 @@ func ExportedResolveHarnessAgentTypeQuiet(
 	globalDefault core.AgentType,
 ) core.AgentType {
 	return resolveHarnessAgentTypeQuiet(bead, queueDefault, nodeDefault, globalDefault)
+}
+
+// ExportedReviewerDefaultHarness exposes reviewerDefaultHarness for tests in
+// package daemon_test. See reviewerharness_hkiv748.go (hk-pkxju).
+func ExportedReviewerDefaultHarness(
+	reg *handlercontract.HarnessRegistry,
+	implementer core.AgentType,
+	beadID string,
+) core.AgentType {
+	return reviewerDefaultHarness(reg, implementer, beadID)
+}
+
+// ExportedDotReviewerInheritedHarnessOverride exposes
+// dotReviewerInheritedHarnessOverride for tests in package daemon_test.
+// See reviewerharness_hkiv748.go (hk-pkxju).
+func ExportedDotReviewerInheritedHarnessOverride(
+	reg *handlercontract.HarnessRegistry,
+	isReviewer bool,
+	reviewerHarnessOverride core.AgentType,
+	nodeHarness core.AgentType,
+	bead core.BeadRecord,
+	globalDefault core.AgentType,
+	beadID string,
+) core.AgentType {
+	return dotReviewerInheritedHarnessOverride(
+		reg, isReviewer, reviewerHarnessOverride, nodeHarness, bead, globalDefault, beadID)
 }
 
 // ExportedResolveGateAgentType exposes resolveGateAgentType for tests in package
@@ -1976,15 +1995,17 @@ func ExportedBufferName(sessionID, purpose string) string {
 }
 
 // ExportedInputBufferName exposes the interim tmux/paste InputPort buffer name
-// (inputBufferName) for tests in package daemon_test. Since T8
-// (codename:agent-input-substrate) the daemon-run review-loop delivery routes
-// through handler.InputPort.SubmitInput, whose interim tmux driver uses this
-// single AIS input buffer rather than the former per-phase
-// "harmonik-<session-id>-<purpose>" buffer names. The per-purpose bufferName
-// discipline remains normative only for the keeper + interactive-CLI paste paths
-// (PL-021d carve-out).
-func ExportedInputBufferName() string {
-	return inputBufferName
+// for tests in package daemon_test. Since T8 (codename:agent-input-substrate) the
+// daemon-run review-loop delivery routes through handler.InputPort.SubmitInput,
+// whose interim tmux driver names its buffer per-run as
+// "harmonik-<run-id>-input" (hk-9hvr0: the former hardcoded "harmonik-input"
+// failed the bufferNameRe invariant). The name is per-run, so callers pass the
+// substrate the SubmitInput will run on and get back the exact name it emits.
+func ExportedInputBufferName(sub handler.Substrate) string {
+	if p, ok := sub.(*perRunSubstrate); ok {
+		return p.inputBufferName()
+	}
+	return ""
 }
 
 // ExportedSynthesiseClaudeSessionID exposes rlSynthesiseClaudeSessionID for

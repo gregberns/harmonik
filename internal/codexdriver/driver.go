@@ -59,6 +59,21 @@ type CommandRunner interface {
 	Command(ctx context.Context, name string, args ...string) *exec.Cmd
 }
 
+// RemoteCwdRunner is an OPTIONAL capability a CommandRunner may implement when it
+// executes the child on a REMOTE host (an ssh transport). For such a runner the
+// spawn working directory (SubstrateSpawn.Cwd) is a REMOTE worktree path: setting
+// the LOCAL exec.Cmd.Dir to it fork/exec-ENOENTs the local ssh process, and
+// without a remote `cd` the child would run in the ssh login $HOME, not the
+// worktree (both hk-czb11). CommandInDir returns an *exec.Cmd whose REMOTE command
+// runs in dir, leaving the LOCAL exec.Cmd.Dir unset (a box-A-valid default). A
+// LOCAL runner does NOT implement this; spawn then sets exec.Cmd.Dir = Cwd as
+// before (byte-identical to the pre-fix local path). Declared locally
+// (structurally satisfied by tmux.SSHRunner) so codexdriver keeps its no-import-
+// of-tmux depguard boundary.
+type RemoteCwdRunner interface {
+	CommandInDir(ctx context.Context, dir, name string, args ...string) *exec.Cmd
+}
+
 // localRunner is the default CommandRunner: plain exec.CommandContext.
 type localRunner struct{}
 
@@ -127,6 +142,30 @@ type Options struct {
 	// WITHOUT the composition root never silently runs danger-full-access.
 	Sandbox        string
 	ApprovalPolicy string
+
+	// WritableRoots, when non-nil, is called at every thread/start and
+	// thread/resume with the session's worktree cwd (SubstrateSpawn.Cwd); it
+	// returns the absolute paths stamped as that thread's `runtimeWorkspaceRoots`
+	// — the codex workspace-write writable roots ("Replace the thread's runtime
+	// workspace roots. Paths must be absolute.", app-server v2 schema).
+	//
+	// hk-daegv: codex app-server 0.142.0 under ChatGPT auth does NOT honor the
+	// danger-full-access sandbox posture (that is gated behind a
+	// --dangerously-bypass-approvals-and-sandbox flag app-server does not expose),
+	// so it runs the effective workspace-write seatbelt whose only writable root is
+	// the worktree cwd. A linked worktree's git COMMON dir (<repo>/.git, holding
+	// objects/refs and worktrees/<id>/) lives OUTSIDE that root, so codex's OWN
+	// `git commit` fails EPERM and only the daemon fallback commits. Stamping the
+	// git common dir here makes codex's own commit land.
+	//
+	// The hook keeps the driver BLIND to harmonik's worktree layout (RS-017): the
+	// composition root derives the roots from the cwd and injects them, exactly
+	// like Runner / PreSpawn. Because runtimeWorkspaceRoots REPLACES the thread's
+	// roots, the hook MUST also include the worktree cwd itself. A nil hook (or an
+	// empty result, or an empty spawn cwd) omits runtimeWorkspaceRoots entirely,
+	// leaving codex's default single-root behavior untouched — and an older codex
+	// that does not know the field ignores it, so this degrades gracefully.
+	WritableRoots func(worktreeCwd string) []string
 }
 
 // codexSubstrate is the handler.Substrate implementation.
@@ -194,8 +233,25 @@ func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, r
 	// dispatch-scoped spawn ctx.
 	procCtx, procCancel := context.WithCancel(context.Background())
 
-	cmd := c.opts.Runner.Command(procCtx, argv[0], argv[1:]...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
-	cmd.Dir = in.Cwd
+	// Remote-cwd-aware spawn (hk-czb11). A remote transport (ssh) runs the child
+	// ON THE WORKER, so in.Cwd is a REMOTE worktree path. Applying it as the LOCAL
+	// exec.Cmd.Dir fork/exec-ENOENTs the local `ssh …` process, and without a
+	// remote `cd` the child runs in the ssh login $HOME rather than the worktree.
+	// When the runner advertises RemoteCwdRunner, apply the cwd REMOTELY and leave
+	// the local exec.Cmd.Dir UNSET; a local runner keeps the direct
+	// exec.Cmd.Dir = in.Cwd path (byte-identical to before).
+	var cmd *exec.Cmd
+	if rc, ok := c.opts.Runner.(RemoteCwdRunner); ok && in.Cwd != "" {
+		// hk-okqyx: ssh does NOT forward the local process env (cmd.Env below),
+		// so in.Env would never reach the remote codex. Deliver it via an
+		// `env KEY=VAL … <binary> <args>` argv prefix the remote login-shell
+		// `exec`s in place. cmd.Env below stays load-bearing for the LOCAL branch.
+		name, remoteArgv := handler.RemoteExecArgv(in.Env, argv[0], argv[1:])
+		cmd = rc.CommandInDir(procCtx, in.Cwd, name, remoteArgv...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
+	} else {
+		cmd = c.opts.Runner.Command(procCtx, argv[0], argv[1:]...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
+		cmd.Dir = in.Cwd
+	}
 	if in.Env != nil {
 		cmd.Env = in.Env
 	}
@@ -224,6 +280,12 @@ func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, r
 	// the readLoop's handshake branch (handleResponse pendingInitialize) reads a
 	// fully-published value with no race against the reactor goroutines.
 	s.resumeThreadID = resumeThreadID
+	// spawnCwd is the worktree the thread/start|resume writable-roots hook keys off
+	// (hk-daegv). Captured from in.Cwd — NOT cmd.Dir — because the remote (ssh)
+	// spawn path leaves cmd.Dir UNSET (the cwd is applied on the worker via `cd`).
+	// Immutable for the session's life; set before start() so the readLoop handshake
+	// branch reads a fully-published value with no goroutine race.
+	s.spawnCwd = in.Cwd
 	s.start(ctx)
 	return s, nil
 }

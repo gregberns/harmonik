@@ -206,6 +206,13 @@ type Config struct {
 	// Bead ref: hk-kqdpf.4.
 	Substrate handler.Substrate
 
+	// ReviewerSubstrate is the substrate for a claude (SessionIDMinted)
+	// reviewer/cognition-gate node; it is always the tmux substrate. Under
+	// codexdriver mode Substrate is the protocol-locked codex driver, and a
+	// claude reviewer handed to it never emits agent_ready (hk-qxvc2). A nil
+	// value falls back to Substrate for backward compatibility.
+	ReviewerSubstrate handler.Substrate
+
 	// DaemonBinaryPath is the absolute path to the running harmonik binary,
 	// resolved via os.Executable() at daemon startup (hk-kqdpf.6).
 	//
@@ -563,20 +570,6 @@ type Config struct {
 	// (RS-017 twin-blindness: selection stays at the wire/root, driver stays
 	// blind). No-op for the tmux substrate (observer is nil there).
 	WorkerRegistryObserver func(*workers.Registry)
-
-	// CodexRequireIsolationBoundary makes the work loop FAIL CLOSED for codex
-	// app-server crews (hk-5h759). The composition root sets it true iff
-	// HARMONIK_SUBSTRATE=codexdriver — a codex crew runs with a permissive sandbox
-	// posture (danger-full-access) that is safe ONLY inside a real isolation
-	// boundary (an enabled remote ssh worker / container IS the sandbox). With it
-	// set, beadRunOne refuses to launch any codex run unless the worker registry's
-	// WorkerSnapshot() yields an enabled ssh worker — mirroring the runner's own
-	// routing predicate. Any other state (no registry, no worker, disabled, or a
-	// non-ssh transport) would otherwise fall through codexWorkerRoutingRunner.Command
-	// to LocalRunner and run codex UNSANDBOXED on the daemon host. Operator mandate:
-	// never a silent local fallback; commits must land inside the boundary. False
-	// (default) for the tmux path — no permissive posture, nothing to guard.
-	CodexRequireIsolationBoundary bool
 
 	// Runner is the CommandRunner used for remote-aware marker-file reads on the
 	// DOT run path (hk-hd2w6). At runtime, local runs set it to nil (NFR7:

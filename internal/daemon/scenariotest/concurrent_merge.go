@@ -138,6 +138,15 @@ type ConcurrentMergeConfig struct {
 	// BeadPrefix is the br workspace prefix (and bead-id namespace). Defaults to
 	// "rcm". Must be a short lowercase token accepted by `br init --prefix`.
 	BeadPrefix string
+
+	// ClaudeConfigPath overrides the test-local ~/.claude.json the fixture points
+	// HARMONIK_CLAUDE_CONFIG_PATH at. Zero value = the fixture mints its own temp
+	// path (the normal case: the redirect exists only so the test does not contend
+	// with a running daemon on the real config's lock).
+	//
+	// Set it when the TEST needs to observe or manipulate that file — e.g. the
+	// hk-qx065 trust-clobber scenario runs an adversarial writer against it.
+	ClaudeConfigPath string
 }
 
 // ConcurrentMergeResult reports the observed outcome for caller-side assertions
@@ -228,7 +237,10 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 
 	// Redirect EnsureWorktreeTrust to a test-local claude config so this test
 	// does not contend with a running harmonik daemon on ~/.claude.json.lock.
-	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	claudeConfigPath := cfg.ClaudeConfigPath
+	if claudeConfigPath == "" {
+		claudeConfigPath = filepath.Join(t.TempDir(), ".claude.json")
+	}
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("RunConcurrentMerge: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}

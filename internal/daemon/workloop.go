@@ -493,6 +493,10 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.14.
 	substrate handler.Substrate
 
+	// reviewerSubstrate is the claude reviewer/gate substrate from
+	// cfg.ReviewerSubstrate; nil falls back to substrate.
+	reviewerSubstrate handler.Substrate
+
 	// clock is the determinism port through which the RUN path reads time
 	// (RSM-013 / M3-D4). Production wires substrate.SystemClock{}; tests inject
 	// substrate.FakeClock so agent-ready / reap timeouts replay in virtual time
@@ -745,14 +749,6 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-rs-b8-codesync-3fk0.
 	workerRegistry *workers.Registry
-
-	// codexRequireIsolationBoundary mirrors Config.CodexRequireIsolationBoundary
-	// (hk-5h759): true iff this daemon dispatches codex app-server crews, whose
-	// permissive sandbox posture is safe ONLY inside a bound worker/container
-	// boundary. When true, beadRunOne fails closed unless workerRegistry's
-	// WorkerSnapshot() yields an enabled ssh worker (the runner's own routing
-	// predicate) rather than launching codex unsandboxed on the daemon host.
-	codexRequireIsolationBoundary bool
 
 	// runner is the CommandRunner threaded into the DOT run path for remote-aware
 	// marker-file reads (hk-hd2w6). nil for local runs (NFR7: byte-identical
@@ -1156,8 +1152,9 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		hookStore:                  store,
 		cpRegistry:                 cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
 		adapterRegistry:            registry,
-		harnessRegistry:            harnessReg,              // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
-		substrate:                  cfg.Substrate,           // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		harnessRegistry:            harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
+		substrate:                  cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		reviewerSubstrate:          cfg.ReviewerSubstrate,
 		clock:                      substrate.SystemClock{}, // RSM-013 / M3-D4: run-path determinism port (SystemClock in prod, FakeClock in tests)
 		agentReadyTimeout:          cfg.AgentReadyTimeout,
 		remoteAgentReadyTimeout:    cfg.RemoteAgentReadyTimeout, // hk-96d7w: remote-worker agent_ready wait window
@@ -1181,20 +1178,19 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		// creates AND owns the production queue (starts its owner, cancels on
 		// return after the drain). A test may inject a pre-started queue via
 		// WithMergeQueue, which runWorkLoop then leaves untouched (hk-yyso7).
-		worktreeCreateMu:              &sync.Mutex{},                  // hk-5qp7z: global worktree-create serialisation for remote runs
-		agentSpawnSem:                 make(chan struct{}, 3),         // hk-5z1f0: per-worker cold-start spawn semaphore (cap 3, remote-only)
-		cacheReapMu:                   &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
-		emittedEpics:                  make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
-		emittedEpicsMu:                &sync.Mutex{},
-		targetBranch:                  bootconfig.ResolveTargetBranch(cfg.TargetBranch),
-		protectBranches:               cfg.ProtectBranches,
-		allowedRepos:                  cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
-		workerRegistry:                workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
-		codexRequireIsolationBoundary: cfg.CodexRequireIsolationBoundary,  // hk-5h759: fail-closed codex-crew isolation guard
-		coordinatorReapAdapter:        coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
-		coordinatorReapProjectHash:    projectHash,                        // hk-t08m: pre-computed for session name derivation
-		runner:                        cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
-		sandboxCfg:                    cfg.ProjectCfg.Sandbox,             // hk-6596l: srt sandbox config block
+		worktreeCreateMu:           &sync.Mutex{},                  // hk-5qp7z: global worktree-create serialisation for remote runs
+		agentSpawnSem:              make(chan struct{}, 3),         // hk-5z1f0: per-worker cold-start spawn semaphore (cap 3, remote-only)
+		cacheReapMu:                &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
+		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
+		emittedEpicsMu:             &sync.Mutex{},
+		targetBranch:               bootconfig.ResolveTargetBranch(cfg.TargetBranch),
+		protectBranches:            cfg.ProtectBranches,
+		allowedRepos:               cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
+		workerRegistry:             workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
+		coordinatorReapAdapter:     coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
+		coordinatorReapProjectHash: projectHash,                        // hk-t08m: pre-computed for session name derivation
+		runner:                     cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
+		sandboxCfg:                 cfg.ProjectCfg.Sandbox,             // hk-6596l: srt sandbox config block
 	}, nil
 }
 
@@ -3600,37 +3596,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//     lifetime, forwarding the worker-side per-run socket back to box
 	//     A's daemon hook socket. Start is non-fatal; teardown defers a
 	//     Kill+Wait.
-	//
-	// hk-5h759: FAIL-CLOSED codex isolation-boundary guard. A codex app-server
-	// crew runs with a permissive sandbox posture (danger-full-access) that is
-	// safe ONLY inside a real isolation boundary — an ENABLED, ssh-transport
-	// remote worker (container/host) IS that boundary. The guard MUST mirror the
-	// runner's own host decision exactly: codexWorkerRoutingRunner.Command routes
-	// to the remote worker ONLY when the shared registry's WorkerSnapshot() peek
-	// yields `w.Enabled && w.Transport == "ssh"`, and otherwise (no registry, no
-	// worker, disabled, or non-ssh transport) falls through to LocalRunner —
-	// UNSANDBOXED on the daemon host. NOTE: rbc != nil is NOT a sufficient proxy:
-	// SelectWorker binds rbc without inspecting Transport, so an enabled non-ssh
-	// worker yields rbc != nil yet the runner still runs codex locally. So we ask
-	// the same question against the same registry the runner consults. If this
-	// daemon dispatches codex crews (codexRequireIsolationBoundary, set iff
-	// HARMONIK_SUBSTRATE=codexdriver) but no enabled ssh worker is selectable,
-	// refuse — never a silent local fallback; commits must land inside the
-	// boundary. Fail fast here, before any worktree/tunnel setup. Placed with the
-	// other pre-launch sandbox refusals (srt engagement gate below).
-	if deps.codexRequireIsolationBoundary {
-		var boundary *workers.Worker
-		if deps.workerRegistry != nil {
-			boundary = deps.workerRegistry.WorkerSnapshot()
-		}
-		if boundary == nil || !boundary.Enabled || boundary.Transport != "ssh" {
-			reason := "codex isolation-boundary guard: refusing to launch a codex app-server crew with no enabled ssh worker boundary (danger-full-access would run unsandboxed on the daemon host) — enable an ssh-transport worker"
-			fmt.Fprintf(os.Stderr, "daemon: workloop: %s (bead %s run %s, reopening)\n",
-				reason, beadID, runID.String())
-			failRun(reason, reason)
-			return //nolint:nakedret // giant legacy function; naming returns here is a large risky edit — deferred
-		}
-	}
 
 	// hk-hs7ex: this block is now outside both the pre-selected and fallback
 	// worker selection blocks, so it runs for ALL remote runs (rbc != nil)

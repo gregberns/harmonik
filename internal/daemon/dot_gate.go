@@ -310,9 +310,23 @@ func executeCognitionGate(
 	// spawns on the WORKER, mirroring dispatchDotAgenticNode (dot_cascade.go).
 	// LATENT: the default workflow.dot uses a tool-command commit_gate, not a
 	// cognition gate, so no live remote run exercises this path today.
-	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runner)
-	var substrate handler.Substrate = deps.substrate
-	var pasteTarget handler.Substrate = deps.substrate
+	// hk-qxvc2: the cognition-gate node runs a claude (SessionIDMinted) evaluator;
+	// route it onto the tmux/claude substrate, never the codexdriver app-server
+	// substrate. runner (SSHRunner/remote) is preserved so a remote gate still
+	// spawns on the worker (hk-9fe2).
+	gateHarnessIsClaude := true
+	if deps.harnessRegistry != nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+			gateHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
+		}
+	}
+	gateBaseSubstrate := deps.substrate
+	if gateHarnessIsClaude && deps.reviewerSubstrate != nil {
+		gateBaseSubstrate = deps.reviewerSubstrate
+	}
+	prs := newPerRunSubstrate(gateBaseSubstrate, deps.handlerBinary, runner)
+	var substrate handler.Substrate = gateBaseSubstrate
+	var pasteTarget handler.Substrate = gateBaseSubstrate
 	if prs != nil {
 		substrate = prs
 		pasteTarget = prs

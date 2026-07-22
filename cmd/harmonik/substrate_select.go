@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/gregberns/harmonik/internal/sessioncapture"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // substrateSelectEnv is the composition-root substrate-selection axis
@@ -67,13 +69,15 @@ const (
 // REFUSES to launch a codex run that has no worker bound (which would otherwise
 // fall through codexWorkerRoutingRunner.Command to LocalRunner and run codex
 // UNSANDBOXED on the daemon host). False for the tmux path (no such posture).
-func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), requireIsolationBoundary bool) {
+// reviewerSubstrate is always tmuxSub so a claude (SessionIDMinted) reviewer
+// runs on tmux/claude, not the codex app-server driver (hk-qxvc2).
+func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), requireIsolationBoundary bool, reviewerSubstrate handler.Substrate) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
-		return tmuxSub, nil, false
+		return tmuxSub, nil, false, tmuxSub
 	}
-	router := &codexWorkerRoutingRunner{requireBoundary: true}
+	router := &codexWorkerRoutingRunner{requireBoundary: false}
 	opts, _ := codexSubstrateOptions(codexBinary, router)
-	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, true
+	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, false, tmuxSub
 }
 
 // codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that
@@ -171,6 +175,40 @@ func (r *codexWorkerRoutingRunner) Command(ctx context.Context, name string, arg
 	return ltmux.LocalRunner{}.Command(ctx, name, args...)
 }
 
+// CommandInDir is the RemoteCwdRunner (hk-czb11) analog of Command: it applies
+// the spawn working directory correctly for the routed transport. Without it the
+// codex driver's RemoteCwdRunner type-assert would fail against this router (the
+// composition-root runner wired into codexdriver.Options.Runner) and fall back to
+// setting the LOCAL exec.Cmd.Dir — which for an ssh-routed run is the REMOTE
+// worktree path, fork/exec-ENOENTing the local ssh process.
+//
+//   - ssh worker bound: delegate to SSHRunner.CommandInDir — the cwd is applied
+//     ON THE WORKER (cd … && exec …) and the local exec.Cmd.Dir is left unset.
+//   - fail-closed (requireBoundary, no ssh route): return the refusal argv0
+//     exactly as Command does; dir is irrelevant (exec.Start fails immediately).
+//   - LOCAL fallback: LocalRunner runs box-A-locally, so dir is a LOCAL path —
+//     set it as exec.Cmd.Dir here, because the driver's spawn leaves Dir unset on
+//     the RemoteCwdRunner branch (this method owns applying it for local runs).
+//
+// Mirrors Command's routing decision exactly (same WorkerSnapshot peek, same
+// per-run non-multiplexed SSHRunner opts). Refs: hk-czb11.
+func (r *codexWorkerRoutingRunner) CommandInDir(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+	if reg := r.reg.Load(); reg != nil {
+		if w := reg.WorkerSnapshot(); w != nil && w.Enabled && w.Transport == "ssh" {
+			return ltmux.SSHRunner{
+				Host: w.Host,
+				Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"},
+			}.CommandInDir(ctx, dir, name, args...)
+		}
+	}
+	if r.requireBoundary {
+		return exec.CommandContext(ctx, refusedIsolationBoundaryArgv0)
+	}
+	cmd := ltmux.LocalRunner{}.Command(ctx, name, args...)
+	cmd.Dir = dir
+	return cmd
+}
+
 // codexSubstrateOptions builds the structured-driver Options and, when live
 // capture is opted in (HARMONIK_CAPTURE_DIR), wires the sessioncapture corpus
 // writers into Options.InCapture/OutCapture — the M2-4 production tee (AIS-013).
@@ -186,6 +224,20 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 	}
 	opts := codexdriver.Options{
 		Binary: codexBinary,
+		// hk-daegv: force the sandbox posture at app-server LAUNCH via a codex
+		// config override — NOT only per-thread. codex app-server (0.142/0.144) does
+		// not honor the thread/start `sandbox` field for the exec seatbelt; it runs
+		// its config default (workspace-write). Under workspace-write the worktree's
+		// real git dir (<repo>/.git/worktrees/<id>/ — a PARENT of the worktree
+		// writable-root) is denied, so codex's own `git commit` fails ("Operation
+		// not permitted") AND its /bin/zsh exec_command spawn fails (hk-wwyse, same
+		// seatbelt) — the turn silently no-ops and only the daemon fallback commits.
+		// `-c sandbox_mode="<posture>"` overrides ~/.codex/config.toml and applies to
+		// the exec seatbelt. Safe ONLY inside the isolation boundary the fail-closed
+		// guard enforces (danger-full-access = no seatbelt), set here at the
+		// composition root alongside Sandbox/requireBoundary. One override restores
+		// BOTH facets: .git-writable commit and working shell-spawn.
+		Args:   []string{"app-server", "-c", `sandbox_mode="` + codexHeadlessSandbox + `"`},
 		Runner: runner, // M4-C3: per-run worker-routing runner (SSHRunner remote / LocalRunner local)
 		Clock:  substrate.SystemClock{},
 		// hk-5h759: headless crew-orchestration posture. The driver auto-declines
@@ -199,6 +251,16 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 		// default posture, so it can never silently run danger-full-access.
 		Sandbox:        codexHeadlessSandbox,
 		ApprovalPolicy: codexHeadlessApprovalPolicy,
+		// hk-daegv: codex app-server 0.142.0 under ChatGPT auth does NOT honor the
+		// danger-full-access posture above — it runs the effective workspace-write
+		// seatbelt whose only writable root is the worktree cwd. A linked worktree's
+		// git common dir (<repo>/.git) lives OUTSIDE that root, so codex's OWN
+		// `git commit` fails EPERM and only the daemon fallback commits. Wire the
+		// composition-root hook that adds the git common dir to the thread's
+		// runtimeWorkspaceRoots so codex's own commit lands. Kept ALONGSIDE the
+		// `-c sandbox_mode` override and Sandbox/ApprovalPolicy (harmless
+		// forward-intent for a codex build that does honor danger-full-access).
+		WritableRoots: codexWorktreeWritableRoots,
 	}
 	sess := openCaptureSession()
 	if sess != nil {
@@ -206,6 +268,48 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 		opts.OutCapture = sess.Output()
 	}
 	return opts, sess
+}
+
+// codexWorktreeWritableRoots is the composition-root hook wired into
+// codexdriver.Options.WritableRoots (hk-daegv). Given the session's worktree cwd
+// it returns the absolute paths codex stamps as the thread's
+// `runtimeWorkspaceRoots` (the workspace-write writable roots).
+//
+// It ALWAYS includes the worktree cwd itself (runtimeWorkspaceRoots REPLACES the
+// thread's roots — dropping the cwd would make the worktree unwritable) and, when
+// the cwd matches harmonik's linked-worktree layout, the repo's git COMMON dir
+// (<repo>/.git). The git common dir holds objects/refs and worktrees/<id>/ and
+// lives OUTSIDE the worktree writable root, so without it codex's OWN `git commit`
+// fails EPERM under 0.142.0's effective workspace-write seatbelt (see WritableRoots
+// doc). An empty cwd, or a cwd not under the worktree root, adds no git dir and
+// leaves the behavior unchanged (degrades gracefully).
+func codexWorktreeWritableRoots(worktreeCwd string) []string {
+	if worktreeCwd == "" {
+		return nil
+	}
+	roots := []string{worktreeCwd}
+	if gitCommon := codexGitCommonDir(worktreeCwd); gitCommon != "" {
+		roots = append(roots, gitCommon)
+	}
+	return roots
+}
+
+// codexGitCommonDir derives the git COMMON dir (<repo>/.git) of a harmonik linked
+// worktree from its path (hk-daegv). A worktree lives at
+// <repo>/<worktreeRoot>/<name> (worktreeRoot default ".harmonik/worktrees"); its
+// common dir is <repo>/.git. Returns "" when the path does not match that layout
+// (e.g. an overridden worktree root, or a non-worktree cwd) — the caller then adds
+// no git dir.
+//
+// Uses plain "/" string ops, NOT filepath: the cwd may be a REMOTE (ssh worker)
+// POSIX path, so the derivation must not depend on the local OS path separator.
+func codexGitCommonDir(worktreeCwd string) string {
+	marker := "/" + workspace.DefaultWorktreeRoot + "/" // "/.harmonik/worktrees/"
+	idx := strings.LastIndex(worktreeCwd, marker)
+	if idx < 0 {
+		return ""
+	}
+	return worktreeCwd[:idx] + "/.git"
 }
 
 // openCaptureSession opens a live-capture corpus session when opted in, else

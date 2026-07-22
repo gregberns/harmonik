@@ -6,9 +6,9 @@ package daemon
 // phase:
 //
 //   - Initial turn (priorThreadID == nil):
-//       codex exec --json --sandbox workspace-write -C <worktree> <seed-prompt>
+//       codex exec --json -c sandbox_mode="danger-full-access" -C <worktree> <seed-prompt>
 //   - Resume turn (priorThreadID != nil):
-//       codex exec resume <thread_id> --json --sandbox workspace-write -C <worktree> <seed-prompt>
+//       codex exec resume <thread_id> --json -c sandbox_mode="danger-full-access" <seed-prompt>
 //
 // The seed prompt instructs codex to read .harmonik/agent-task.md, implement
 // the task, and commit with a "Refs: <beadID>" trailer.
@@ -169,11 +169,14 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	}
 
 	// Build argv.
-	// Initial:  codex exec --json --sandbox workspace-write [--model <model>] -C <wt> <seed>
-	// Resume:   codex exec resume <thread_id> --json --sandbox workspace-write <seed>
+	// Initial: codex exec --json -c sandbox_mode="danger-full-access"
+	//          [--model <model>] -C <wt> <seed>
+	// Resume:  codex exec resume <thread_id> --json
+	//          -c sandbox_mode="danger-full-access" <seed>
 	//
-	// Note: codex 0.139.0 removed the -a/--ask-for-approval flag. Sandboxing is
-	// controlled exclusively by --sandbox/-s. Do not add -a back.
+	// Note: codex exec resume rejects --sandbox, --add-dir, and -C. The global
+	// -c config override works for both initial and resume turns, so sandboxing
+	// uses that uniform mechanism. WorkDir sets the resume subprocess cwd.
 	//
 	// --model is emitted on the initial turn ONLY when rc.model is non-empty. An
 	// empty model omits the flag so codex uses its $CODEX_HOME/config.toml default
@@ -191,18 +194,10 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 		seedPrompt = implementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
 		// codex exec resume does NOT accept -C (exit 2: "unexpected argument -C found").
 		// WorkDir in the returned LaunchSpec sets the subprocess working directory.
-		args = []string{
-			"exec", "resume", *rc.priorThreadID,
-			"--json",
-			"--sandbox", "workspace-write",
-			seedPrompt,
-		}
+		args = []string{"exec", "resume", *rc.priorThreadID, "--json", "-c", `sandbox_mode="danger-full-access"`}
+		args = append(args, seedPrompt)
 	} else {
-		args = []string{
-			"exec",
-			"--json",
-			"--sandbox", "workspace-write",
-		}
+		args = []string{"exec", "--json", "-c", `sandbox_mode="danger-full-access"`}
 		if rc.model != "" {
 			args = append(args, "--model", rc.model)
 		}

@@ -9,8 +9,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/workers"
 )
+
+type hkqxvc2ReviewerSubstrateSpy struct{}
+
+func (*hkqxvc2ReviewerSubstrateSpy) SpawnWindow(context.Context, handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	return nil, nil
+}
 
 // M4-C3 (T5) — composition-root runner selection for the Codex driver.
 //
@@ -177,18 +184,28 @@ func TestCodexRouter_SelectSubstrateWiresObserver(t *testing.T) {
 // posture) and false for the tmux default (nothing to guard). The daemon keys
 // its fail-closed refusal off this bool, so it must track the substrate choice.
 func TestSelectSubstrate_RequireIsolationBoundary_HK5H759(t *testing.T) {
+	tmuxSpy := &hkqxvc2ReviewerSubstrateSpy{}
 	t.Run("codexdriver_requires_boundary", func(t *testing.T) {
 		t.Setenv(substrateSelectEnv, "codexdriver")
-		_, _, requireBoundary := selectSubstrate(nil, "codex")
+		sub, _, requireBoundary, reviewerSubstrate := selectSubstrate(tmuxSpy, "codex")
 		if !requireBoundary {
 			t.Fatal("codexdriver path must require an isolation boundary (fail-closed signal)")
+		}
+		if sub == tmuxSpy {
+			t.Fatal("codexdriver path must return the codex substrate as its primary substrate")
+		}
+		if reviewerSubstrate != tmuxSpy {
+			t.Fatalf("hk-qxvc2: codexdriver reviewer substrate = %T, want tmux spy", reviewerSubstrate)
 		}
 	})
 	t.Run("tmux_default_no_boundary", func(t *testing.T) {
 		t.Setenv(substrateSelectEnv, "")
-		_, _, requireBoundary := selectSubstrate(nil, "codex")
+		sub, _, requireBoundary, reviewerSubstrate := selectSubstrate(tmuxSpy, "codex")
 		if requireBoundary {
 			t.Fatal("tmux default has no permissive posture; must NOT require a boundary")
+		}
+		if sub != tmuxSpy || reviewerSubstrate != tmuxSpy {
+			t.Fatalf("hk-qxvc2: tmux path substrates = %T / %T, want tmux spy for both", sub, reviewerSubstrate)
 		}
 	})
 }

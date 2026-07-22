@@ -239,11 +239,11 @@ func cursorStrictlyGreater(candidate, current string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("malformed event_id %q: %w", candidate, err)
 	}
-	pu, err := uuid.Parse(current)
-	if err != nil {
+	pu, valid := parseCursorUUID(current)
+	if !valid {
 		// Corrupt persisted cursor: treat as "no usable floor" so a well-formed
 		// advance can recover rather than the cursor wedging forever.
-		return true, nil //nolint:nilerr // intentional: corrupt floor → allow forward write
+		return true, nil
 	}
 	cb := [16]byte(cu)
 	pb := [16]byte(pu)
@@ -253,6 +253,14 @@ func cursorStrictlyGreater(candidate, current string) (bool, error) {
 		}
 	}
 	return false, nil // equal — not strictly greater
+}
+
+// parseCursorUUID converts a persisted cursor into its comparison form. The
+// validity bit is deliberate: a corrupt persisted floor is recoverable state,
+// not an error returned to the caller (see cursorStrictlyGreater).
+func parseCursorUUID(value string) (uuid.UUID, bool) {
+	parsed, err := uuid.Parse(value)
+	return parsed, err == nil
 }
 
 // lockDir is the directory holding per-agent sidecar lockfiles. It is a SIBLING

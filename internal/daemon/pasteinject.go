@@ -2261,9 +2261,15 @@ func ReadReviewerBudgetSentinelVia(ctx context.Context, runner tmux.CommandRunne
 	path := reviewerBudgetSentinelPath(wtPath)
 	out, err := runner.Command(ctx, "cat", path).Output()
 	if err != nil {
-		// Absent marker (cat: no such file) or transport hiccup → treat as absent,
-		// mirroring ReadReviewerBudgetSentinel's os.ErrNotExist branch (nil,nil).
-		//nolint:nilnil,nilerr // absent marker = normal case; cat-fail = absent, mirrors readAutoStatusMarkerVia
+		if tmux.IsSSHConnectionFailure(err) {
+			// An unreachable worker does not prove the marker is absent. Preserve
+			// the workspace remote-reader contract so callers can treat this result
+			// as inconclusive rather than silently misclassifying a budget kill.
+			return nil, fmt.Errorf("%w: cat %s: %w", workspace.ErrRemoteTransport, path, err)
+		}
+		// A non-transport cat failure means the marker is absent, mirroring
+		// ReadReviewerBudgetSentinel's os.ErrNotExist branch (nil,nil).
+		//nolint:nilnil // absent marker is the normal no-budget-kill case
 		return nil, nil
 	}
 	var pl reviewerBudgetSentinel

@@ -47,7 +47,6 @@ import (
 	"context"
 	"go/ast"
 	"go/parser"
-	"go/printer"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -269,21 +268,50 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 	})
 }
 
+func TestM4C7_D2RemoteAPIKeyRefusal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		remote bool
+		env    []string
+		refuse bool
+	}{
+		{name: "remote live key", remote: true, env: []string{"ANTHROPIC_API_KEY=secret"}, refuse: true},
+		{name: "remote inherited key", remote: true, env: []string{"ANTHROPIC_API_KEY"}, refuse: true},
+		{name: "local live key", env: []string{"ANTHROPIC_API_KEY=secret"}},
+		{name: "remote empty override", remote: true, env: []string{"ANTHROPIC_API_KEY="}},
+		{name: "remote clean environment", remote: true, env: []string{"PATH=/usr/bin"}},
+		{name: "remote empty environment", remote: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			refusal, refused := d2RemoteAPIKeyRefusal(tc.remote, tc.env)
+			if refused != tc.refuse {
+				t.Fatalf("refused = %v, want %v", refused, tc.refuse)
+			}
+			if refused && refusal != d2APIKeyRefusal {
+				t.Errorf("refusal = %q, want %q", refusal, d2APIKeyRefusal)
+			}
+			if !refused && refusal != "" {
+				t.Errorf("non-refusal returned reason %q", refusal)
+			}
+		})
+	}
+}
+
 // TestM4C7_D2Chokepoint_IsHarnessAgnostic proves the D2 fail-closed check is
-// applied to whatever the specBuilder produced, guarded ONLY by the remote
-// predicate (rbc != nil) — never narrowed to one agent type. A regression that
-// made the guard Claude-only (e.g. `if rbc != nil && isClaude && ...`) would slip
-// a Codex/Pi remote key past it and re-open the 2026-05-30 credential-leak
-// incident; this test trips first.
+// applied to whatever the specBuilder produced. The behavioral decision is made
+// by d2RemoteAPIKeyRefusal; this sensor proves beadRunOne passes the harness-
+// agnostic remote predicate and built spec environment to it, then fails the run
+// and returns before launch.
 //
 // WHY THIS IS A STATIC TEST, DELIBERATELY. The guard lives inside beadRunOne
 // (workloop.go), a ~2,200-line function whose remote arm needs a live worker, an
 // ssh runner and a reverse tunnel to reach. There is no cheap behavioural route to
 // the branch, and the credential-leak class is severe enough to warrant a
-// structural assertion rather than no assertion. The BEHAVIOUR of the predicate
-// itself is covered behaviourally above (hasAPIKeyInEnv across claude/codex/pi
-// spec envs); what is asserted here is only that the predicate is still WIRED at
-// the chokepoint and still harness-agnostic.
+// structural assertion rather than no assertion. The predicate itself is covered
+// behaviorally above; what is asserted here is only its composition-root wiring.
 //
 // It parses the AST rather than grepping source text. The previous version took a
 // 200-character window before the call site and string-matched inside it. That was
@@ -297,9 +325,9 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 //
 // The 200-char window contains "rbc != nil" (from the FIRST if), so the old
 // assertion returned true and the suite stayed green while the credential guard
-// was disarmed. The AST form asserts on the actual `if` condition that encloses
-// the call, so it cannot be fooled by a neighbouring statement, and it survives
-// reformatting because it never looks at source text layout.
+// was disarmed. The AST form anchors the call to beadRunOne, checks identifier
+// bindings, and requires the guarded body to pass the typed reason to failRun
+// before returning.
 func TestM4C7_D2Chokepoint_IsHarnessAgnostic(t *testing.T) {
 	t.Parallel()
 
@@ -310,57 +338,198 @@ func TestM4C7_D2Chokepoint_IsHarnessAgnostic(t *testing.T) {
 		t.Fatalf("parse workloop.go: %v", err)
 	}
 
-	// Find the `if` whose condition calls hasAPIKeyInEnv(spec.Env).
-	var guard ast.Expr
-	ast.Inspect(file, func(n ast.Node) bool {
-		ifStmt, ok := n.(*ast.IfStmt)
-		if !ok || ifStmt.Cond == nil {
-			return true
-		}
-		found := false
-		ast.Inspect(ifStmt.Cond, func(inner ast.Node) bool {
-			call, ok := inner.(*ast.CallExpr)
-			if !ok {
-				return true
+	if !hasValidD2Wiring(file) {
+		t.Fatal("beadRunOne must call d2RemoteAPIKeyRefusal(rbc != nil, spec.Env), failRun then return on refusal, immediately before its unique launch")
+	}
+}
+
+func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		body       string
+		want       bool
+		ownsLaunch bool
+	}{
+		{name: "canonical", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }`, want: true},
+		{name: "decoy outside beadRunOne", body: `return`},
+		{name: "valid decoy plus bypass", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }; _ = d2RemoteAPIKeyRefusal(false, spec.Env)`},
+		{name: "disabled remote", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil && false, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }`},
+		{name: "agent narrowed", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil && isClaude, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }`},
+		{name: "or remote", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil || local, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }`},
+		{name: "body log only", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); log(reason); return }`},
+		{name: "intervening side effect", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); log(reason); return }`},
+		{name: "nested launch before fail", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); if retry { sess0, watcher0, err0 := runH.Launch(ctx, spec) }; failRun(reason, reason); return }`},
+		{name: "no return", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason) }`},
+		{name: "shadow refusal", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { refusal := d2Refusal("other"); reason := string(refusal); failRun(reason, reason); return }`},
+		{name: "wrong environment", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, other.Env); refused { reason := string(refusal); failRun(reason, reason); return }`},
+		{name: "environment mutation after guard", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }; spec.Env = append(spec.Env, "ANTHROPIC_API_KEY=late")`},
+		{name: "guard after launch", body: `sess, watcher, err := runH.Launch(ctx, spec); if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }`, ownsLaunch: true},
+		{name: "duplicate launch ambiguity", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }; sess, watcher, err := runH.Launch(ctx, spec); sess2, watcher2, err2 := runH.Launch(ctx, spec)`, ownsLaunch: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := tc.body
+			if !tc.ownsLaunch {
+				body += `; sess, watcher, err := runH.Launch(ctx, spec)`
 			}
-			if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "hasAPIKeyInEnv" {
-				found = true
+			src := "package fixture\nfunc beadRunOne() { " + body + " }\n"
+			if tc.name == "decoy outside beadRunOne" {
+				src += `func decoy() { if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return } }`
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", src, 0)
+			if err != nil {
+				t.Fatalf("parse fixture: %v", err)
+			}
+			if got := hasValidD2Wiring(file); got != tc.want {
+				t.Errorf("hasValidD2Wiring() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func hasValidD2Wiring(file *ast.File) bool {
+	var beadRunOne *ast.FuncDecl
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == "beadRunOne" {
+			if beadRunOne != nil {
 				return false
 			}
-			return true
-		})
-		if found {
-			guard = ifStmt.Cond
-			return false
+			beadRunOne = fn
+		}
+	}
+	if beadRunOne == nil || beadRunOne.Body == nil {
+		return false
+	}
+
+	valid := 0
+	var guardPos token.Pos
+	var launchPos token.Pos
+	var directLaunchPos token.Pos
+	guardIndex, launchIndex := -1, -1
+	decisionCalls := 0
+	ast.Inspect(beadRunOne.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if ok && isIdent(call.Fun, "d2RemoteAPIKeyRefusal") {
+			decisionCalls++
+		}
+		if ok && isRunLaunchCall(call) {
+			if launchPos != token.NoPos {
+				launchPos = -1 // more than one launch is always ambiguous
+			} else {
+				launchPos = call.Pos()
+			}
 		}
 		return true
 	})
-
-	if guard == nil {
-		t.Fatal("D2 chokepoint: no `if` in workloop.go has hasAPIKeyInEnv(...) in its condition — " +
-			"the fail-closed guard was removed, renamed, or moved out of a conditional")
-	}
-
-	// Render the condition back to source so we can assert on its shape.
-	var buf strings.Builder
-	if err := printer.Fprint(&buf, fset, guard); err != nil {
-		t.Fatalf("render guard condition: %v", err)
-	}
-	cond := buf.String()
-
-	// (a) It must still be gated on the remote predicate. Only a REMOTE run may be
-	//     refused; a local run legitimately carries the key in its own env.
-	if !strings.Contains(cond, "rbc != nil") {
-		t.Errorf("D2 guard is not gated on the remote predicate `rbc != nil`; condition is:\n\t%s", cond)
-	}
-
-	// (b) It must NOT be narrowed to a single agent type.
-	for _, narrow := range []string{"isClaude", "AgentTypeClaude"} {
-		if strings.Contains(cond, narrow) {
-			t.Errorf("D2 guard appears narrowed to Claude (%q) — it must gate ALL harnesses; condition is:\n\t%s",
-				narrow, cond)
+	for i, stmt := range beadRunOne.Body.List {
+		ifStmt, ok := stmt.(*ast.IfStmt)
+		if ok && isValidD2If(ifStmt) {
+			valid++
+			guardPos = ifStmt.Pos()
+			guardIndex = i
+		}
+		if assign, ok := stmt.(*ast.AssignStmt); ok && len(assign.Rhs) == 1 {
+			if call, ok := assign.Rhs[0].(*ast.CallExpr); ok && isRunLaunchCall(call) {
+				directLaunchPos = call.Pos()
+				launchIndex = i
+			}
 		}
 	}
+	return valid == 1 && decisionCalls == 1 && launchPos > token.NoPos &&
+		directLaunchPos == launchPos && guardPos < launchPos && launchIndex == guardIndex+1
+}
+
+func isValidD2If(ifStmt *ast.IfStmt) bool {
+	init, ok := ifStmt.Init.(*ast.AssignStmt)
+	if !ok || init.Tok != token.DEFINE || len(init.Lhs) != 2 || len(init.Rhs) != 1 {
+		return false
+	}
+	refusal, refusalOK := init.Lhs[0].(*ast.Ident)
+	refused, refusedOK := init.Lhs[1].(*ast.Ident)
+	call, callOK := init.Rhs[0].(*ast.CallExpr)
+	if !refusalOK || !refusedOK || !callOK || !isD2DecisionCall(call) {
+		return false
+	}
+	cond, ok := unparenExpr(ifStmt.Cond).(*ast.Ident)
+	if !ok || cond.Obj == nil || cond.Obj != refused.Obj {
+		return false
+	}
+
+	var reason *ast.Ident
+	failIndex, returnIndex := -1, -1
+	for i, stmt := range ifStmt.Body.List {
+		if assign, ok := stmt.(*ast.AssignStmt); ok && assign.Tok == token.DEFINE && len(assign.Lhs) == 1 && len(assign.Rhs) == 1 {
+			id, idOK := assign.Lhs[0].(*ast.Ident)
+			conversion, convOK := assign.Rhs[0].(*ast.CallExpr)
+			if idOK && convOK && len(conversion.Args) == 1 && isIdent(conversion.Fun, "string") {
+				arg, argOK := unparenExpr(conversion.Args[0]).(*ast.Ident)
+				if argOK && arg.Obj != nil && arg.Obj == refusal.Obj {
+					reason = id
+				}
+			}
+		}
+		if exprStmt, ok := stmt.(*ast.ExprStmt); ok && reason != nil {
+			if call, ok := exprStmt.X.(*ast.CallExpr); ok && isFailRunWithReason(call, reason) {
+				failIndex = i
+			}
+		}
+		if ret, ok := stmt.(*ast.ReturnStmt); ok && len(ret.Results) == 0 {
+			returnIndex = i
+		}
+	}
+	return failIndex >= 0 && returnIndex == failIndex+1
+}
+
+func isRunLaunchCall(call *ast.CallExpr) bool {
+	if len(call.Args) != 2 || !isIdent(call.Args[0], "ctx") || !isIdent(call.Args[1], "spec") {
+		return false
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && isIdent(selector.X, "runH") && selector.Sel.Name == "Launch"
+}
+
+func isD2DecisionCall(call *ast.CallExpr) bool {
+	if !isIdent(call.Fun, "d2RemoteAPIKeyRefusal") || len(call.Args) != 2 {
+		return false
+	}
+	remote, ok := unparenExpr(call.Args[0]).(*ast.BinaryExpr)
+	if !ok || remote.Op != token.NEQ || !isIdent(remote.X, "rbc") || !isNil(remote.Y) {
+		return false
+	}
+	env, ok := unparenExpr(call.Args[1]).(*ast.SelectorExpr)
+	return ok && isIdent(env.X, "spec") && env.Sel.Name == "Env"
+}
+
+func isFailRunWithReason(call *ast.CallExpr, reason *ast.Ident) bool {
+	if !isIdent(call.Fun, "failRun") || len(call.Args) != 2 {
+		return false
+	}
+	left, leftOK := unparenExpr(call.Args[0]).(*ast.Ident)
+	right, rightOK := unparenExpr(call.Args[1]).(*ast.Ident)
+	return leftOK && rightOK && reason.Obj != nil && left.Obj == reason.Obj && right.Obj == reason.Obj
+}
+
+func unparenExpr(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
+func isIdent(expr ast.Expr, name string) bool {
+	ident, ok := unparenExpr(expr).(*ast.Ident)
+	return ok && ident.Name == name
+}
+
+func isNil(expr ast.Expr) bool {
+	return isIdent(expr, "nil")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

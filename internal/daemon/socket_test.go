@@ -443,7 +443,6 @@ func TestRunSocketListener_HandlerError(t *testing.T) {
 	t.Parallel()
 
 	sockPath := socketFixtureTempSockPath(t)
-	//nolint:goerr113 // test sentinel error; inline construction is intentional
 	h := &stubHandler{claimNextErr: fmt.Errorf("brcli: no ready beads")}
 	socketFixtureStartListener(t, sockPath, h)
 	socketFixtureWaitReady(t, sockPath)

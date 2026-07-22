@@ -1412,8 +1412,6 @@ func snapshotFleet(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap
 // the dispatch stamp lands on the right item (addendum fix #1). The absolute
 // index is resolved exactly as the legacy selectNextQueue did: the first
 // Items entry matching the eligible item's BeadID with ItemStatusPending.
-//
-//nolint:gocognit // slated for giant-retirement refactor (TRACK 3); do not split here
 func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 	for gi := range q.Groups {
 		if q.Groups[gi].Status != queue.GroupStatusActive {
@@ -3080,8 +3078,6 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // exists) report false.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-//
-//nolint:gocognit,cyclop,funlen // grandfathered pre-reactor guard sequence (M3-D2); the M5 full reactorization decomposes it
 func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, extraContext, itemWorkflowMode, itemWorkflowRef string, itemTemplateParams map[string]string, itemLocalOnly bool, itemWorkerTarget string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
 	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
 	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
@@ -4282,18 +4278,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		spec.Args = append(deps.handlerArgs, spec.Args...)
 	}
 
-	// D2 (fail-closed): refuse to forward ANTHROPIC_API_KEY to a remote worker.
-	// A key present in spec.Env for a remote run would bill the worker's own API
-	// quota (the 2026-05-30 credential-leak incident). Fail the dispatch rather
-	// than silently forwarding it.
-	if rbc != nil && hasAPIKeyInEnv(spec.Env) {
-		const reason = "remote run: ANTHROPIC_API_KEY in spawn env (D2 fail-closed)"
-		fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s run %s (reopening)\n",
-			reason, beadID, runID.String())
-		failRun(reason, reason)
-		return
-	}
-
 	// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
 	//
 	// hk-012af: when deps.substrate is a *tmuxSubstrate, wrap it in a
@@ -4598,6 +4582,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	bridge.start(ctx, workflowMode)
 
 	implementerLaunchedAt := deps.clock.Now()
+	// D2 (fail-closed): inspect the final spawn environment at the launch
+	// boundary, after every spec mutation, and refuse live Anthropic credentials
+	// on remote workers (the 2026-05-30 credential-leak incident).
+	if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused {
+		reason := string(refusal)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s run %s (reopening)\n",
+			reason, beadID, runID.String())
+		failRun(reason, reason)
+		return false
+	}
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
@@ -5792,6 +5786,21 @@ type workloopRunCompletedPayload struct {
 	QueueID            *string `json:"queue_id,omitempty"`
 	QueueGroupIndex    *int    `json:"queue_group_index,omitempty"`
 	WorktreeTipSHA     *string `json:"worktree_tip_sha,omitempty"`
+}
+
+type d2Refusal string
+
+//nolint:gosec // G101: refusal text names an environment variable; it contains no credential.
+const d2APIKeyRefusal d2Refusal = "remote run: ANTHROPIC_API_KEY in spawn env (D2 fail-closed)"
+
+// d2RemoteAPIKeyRefusal makes the post-build, pre-launch D2 decision. Keeping
+// the remote/local distinction in this predicate makes every harness use the
+// same fail-closed behavior without coupling the decision to an agent type.
+func d2RemoteAPIKeyRefusal(remote bool, env []string) (d2Refusal, bool) {
+	if remote && hasAPIKeyInEnv(env) {
+		return d2APIKeyRefusal, true
+	}
+	return "", false
 }
 
 // hasAPIKeyInEnv reports whether any element of env would forward a *live*

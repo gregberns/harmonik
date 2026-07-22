@@ -14,12 +14,15 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // catFromFileRunnerBudget is a non-local CommandRunner stub: every Command()
@@ -29,6 +32,15 @@ import (
 // classifies it non-local ⇒ ReadReviewerBudgetSentinelVia routes through it.
 type catFromFileRunnerBudget struct {
 	srcPath string // "" → a nonexistent path so cat fails (simulates absent marker)
+}
+
+type exitCodeRunnerBudget struct {
+	code int
+}
+
+func (r exitCodeRunnerBudget) Command(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+	//nolint:gosec // G204: test fixture; r.code is an int set by the test table, not external input
+	return exec.CommandContext(ctx, "sh", "-c", fmt.Sprintf("exit %d", r.code))
 }
 
 func (r catFromFileRunnerBudget) Command(ctx context.Context, _ string, _ ...string) *exec.Cmd {
@@ -123,6 +135,39 @@ func TestReadReviewerBudgetSentinelVia_RemoteRunner_AbsentReturnsNil(t *testing.
 	}
 	if got != nil {
 		t.Errorf("got = %+v; want nil (absent marker)", got)
+	}
+}
+
+// TestReadReviewerBudgetSentinelVia_RemoteRunner_TransportFailureIsInconclusive
+// verifies that an unreachable worker is not misclassified as a missing marker.
+func TestReadReviewerBudgetSentinelVia_RemoteRunner_TransportFailureIsInconclusive(t *testing.T) {
+	t.Parallel()
+
+	got, err := ReadReviewerBudgetSentinelVia(context.Background(), exitCodeRunnerBudget{code: 255}, t.TempDir())
+	if !errors.Is(err, workspace.ErrRemoteTransport) {
+		t.Fatalf("error = %v; want ErrRemoteTransport", err)
+	}
+	if got != nil {
+		t.Fatalf("got = %+v; want nil on inconclusive transport failure", got)
+	}
+}
+
+// TestReadDotReviewerBudgetSentinel_TransportFailureReachesDOTCaller exercises
+// the production adapter used by dispatchDotAgenticNode after an absent verdict.
+// The wrapper may add node context, but must retain the transport classification
+// used by the DOT driver to distinguish retryable infrastructure failure from a
+// genuine reviewer no-verdict result.
+func TestReadDotReviewerBudgetSentinel_TransportFailureReachesDOTCaller(t *testing.T) {
+	t.Parallel()
+
+	got, err := readDotReviewerBudgetSentinel(
+		context.Background(), exitCodeRunnerBudget{code: 255}, t.TempDir(), "review",
+	)
+	if !errors.Is(err, workspace.ErrRemoteTransport) {
+		t.Fatalf("error = %v; want wrapped ErrRemoteTransport", err)
+	}
+	if got != nil {
+		t.Fatalf("got = %+v; want nil on inconclusive transport failure", got)
 	}
 }
 

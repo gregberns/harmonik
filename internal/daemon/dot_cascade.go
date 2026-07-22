@@ -1980,7 +1980,11 @@ func dispatchDotAgenticNode(
 			// hk-da3rr: distinguish a BUDGET kill from a true no-verdict, mirroring
 			// the builtin review-loop path (reviewloop.go). The marker file is written
 			// into the reviewer's worktree by writeReviewerBudgetSentinel.
-			if sentinel, sErr := ReadReviewerBudgetSentinelVia(ctx, runner, wtPath); sErr == nil && sentinel != nil {
+			sentinel, sentinelErr := readDotReviewerBudgetSentinel(ctx, runner, wtPath, node.ID)
+			if sentinelErr != nil {
+				return core.Outcome{}, sentinelErr
+			}
+			if sentinel != nil {
 				fmt.Fprintf(os.Stderr,
 					"daemon: dot: reviewer node %q budget exceeded (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
 					node.ID, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)
@@ -2081,6 +2085,17 @@ func dispatchDotAgenticNode(
 		}
 	}
 	return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
+}
+
+// readDotReviewerBudgetSentinel keeps remote transport failures distinct from
+// confirmed marker absence. The DOT driver must see the wrapped transport
+// classification instead of converting an unreachable worker into no-verdict.
+func readDotReviewerBudgetSentinel(ctx context.Context, runner tmux.CommandRunner, wtPath, nodeID string) (*reviewerBudgetSentinel, error) {
+	sentinel, err := ReadReviewerBudgetSentinelVia(ctx, runner, wtPath)
+	if err != nil {
+		return nil, fmt.Errorf("read reviewer budget sentinel for node %q: %w", nodeID, err)
+	}
+	return sentinel, nil
 }
 
 // runAutoStatusInspection runs the deterministic work-product inspection for

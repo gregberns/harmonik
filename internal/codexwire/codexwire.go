@@ -36,6 +36,7 @@ import (
 // FrameKind classifies a parsed line.
 type FrameKind int
 
+// Frame kinds describe the JSON-RPC envelope shape and message direction.
 const (
 	FrameKindClientRequest      FrameKind = iota // client→server: jsonrpc + id + method
 	FrameKindClientNotification                  // client→server: jsonrpc + method, no id
@@ -79,6 +80,7 @@ type Frame struct {
 // Direction distinguishes who originates a method.
 type Direction int
 
+// Directions identify which peer originates a registered method.
 const (
 	DirClient Direction = iota // client sends this method
 	DirServer                  // server sends this method
@@ -201,11 +203,11 @@ func Parse(line []byte) (Frame, error) {
 		return Frame{}, fmt.Errorf("codexwire: decode envelope: %w", err)
 	}
 
-	hasID := len(env.ID) > 0 && string(env.ID) != "null"
+	hasID := rawPresent(env.ID)
 	hasMethod := env.Method != ""
-	hasResult := len(env.Result) > 0 && string(env.Result) != "null"
-	hasError := len(env.Error) > 0 && string(env.Error) != "null"
-	hasParams := len(env.Params) > 0 && string(env.Params) != "null"
+	hasResult := rawPresent(env.Result)
+	hasError := rawPresent(env.Error)
+	hasParams := rawPresent(env.Params)
 
 	f := Frame{
 		JSONRPC:   env.JSONRPC,
@@ -220,40 +222,10 @@ func Parse(line []byte) (Frame, error) {
 
 	switch {
 	case hasID && hasMethod:
-		// id + method is a JSON-RPC request. Direction disambiguates: a method the
-		// client originates (registry Dir == DirClient — initialize / thread/start /
-		// turn/start) is our own outbound request; anything else — a server-only
-		// method or a method not yet modeled (e.g. an exec / apply-patch approval
-		// prompt) — is a request the app-server sends TO us and MUST be answered,
-		// never dropped (RU-07). Classify the latter as FrameKindServerRequest so
-		// the driver routes it instead of letting it fall through as a client echo.
-		if entry, ok := methodRegistry[env.Method]; ok && entry.Dir == DirClient {
-			f.Kind = FrameKindClientRequest
-		} else {
-			f.Kind = FrameKindServerRequest
-		}
-		if err := parseParams(&f, hasParams); err != nil {
-			return Frame{}, err
-		}
+		return parseRequest(f, hasParams)
 
 	case !hasID && hasMethod && !hasResult && !hasError:
-		// Notification (client or server determined by registry).
-		entry, ok := methodRegistry[env.Method]
-		if !ok {
-			f.Kind = FrameKindRaw
-			raw := make([]byte, len(line))
-			copy(raw, line)
-			f.Raw = raw
-			return f, nil
-		}
-		if entry.Dir == DirClient {
-			f.Kind = FrameKindClientNotification
-		} else {
-			f.Kind = FrameKindServerNotification
-		}
-		if err := parseParams(&f, hasParams); err != nil {
-			return Frame{}, err
-		}
+		return parseNotification(f, line, hasParams)
 
 	case hasID && !hasMethod:
 		// Server response. The result stays in f.RawResult (an explicit
@@ -270,6 +242,45 @@ func Parse(line []byte) (Frame, error) {
 		f.Raw = raw
 	}
 
+	return f, nil
+}
+
+// parseRequest classifies an id-and-method frame by its registered direction.
+func parseRequest(f Frame, hasParams bool) (Frame, error) {
+	// Unknown request methods originate from the server and must be answered,
+	// never dropped as raw frames (RU-07).
+	if entry, ok := methodRegistry[f.Method]; ok && entry.Dir == DirClient {
+		f.Kind = FrameKindClientRequest
+	} else {
+		f.Kind = FrameKindServerRequest
+	}
+	if err := parseParams(&f, hasParams); err != nil {
+		return Frame{}, err
+	}
+	return f, nil
+}
+
+// rawPresent reports whether a raw envelope field contains a non-null value.
+func rawPresent(raw json.RawMessage) bool {
+	return len(raw) > 0 && string(raw) != "null"
+}
+
+// parseNotification classifies a method-only frame and decodes known params.
+func parseNotification(f Frame, line []byte, hasParams bool) (Frame, error) {
+	entry, ok := methodRegistry[f.Method]
+	if !ok {
+		f.Kind = FrameKindRaw
+		f.Raw = append([]byte(nil), line...)
+		return f, nil
+	}
+	if entry.Dir == DirClient {
+		f.Kind = FrameKindClientNotification
+	} else {
+		f.Kind = FrameKindServerNotification
+	}
+	if err := parseParams(&f, hasParams); err != nil {
+		return Frame{}, err
+	}
 	return f, nil
 }
 
@@ -344,11 +355,17 @@ func marshalClientRequest(f Frame) ([]byte, error) {
 	}
 	m := map[string]json.RawMessage{}
 	if f.JSONRPC != "" {
-		b, _ := json.Marshal(f.JSONRPC)
+		b, err := json.Marshal(f.JSONRPC)
+		if err != nil {
+			return nil, fmt.Errorf("codexwire: marshal client request jsonrpc: %w", err)
+		}
 		m["jsonrpc"] = b
 	}
 	m["id"] = idRawOrNull(f.ID)
-	methodB, _ := json.Marshal(f.Method)
+	methodB, err := json.Marshal(f.Method)
+	if err != nil {
+		return nil, fmt.Errorf("codexwire: marshal client request method: %w", err)
+	}
 	m["method"] = methodB
 	if len(params) > 0 {
 		m["params"] = params
@@ -363,10 +380,16 @@ func marshalClientNotification(f Frame) ([]byte, error) {
 	}
 	m := map[string]json.RawMessage{}
 	if f.JSONRPC != "" {
-		b, _ := json.Marshal(f.JSONRPC)
+		b, err := json.Marshal(f.JSONRPC)
+		if err != nil {
+			return nil, fmt.Errorf("codexwire: marshal client notification jsonrpc: %w", err)
+		}
 		m["jsonrpc"] = b
 	}
-	methodB, _ := json.Marshal(f.Method)
+	methodB, err := json.Marshal(f.Method)
+	if err != nil {
+		return nil, fmt.Errorf("codexwire: marshal client notification method: %w", err)
+	}
 	m["method"] = methodB
 	if len(params) > 0 {
 		m["params"] = params
@@ -398,7 +421,10 @@ func marshalServerNotification(f Frame) ([]byte, error) {
 		return nil, fmt.Errorf("codexwire: marshal server notification params: %w", err)
 	}
 	m := map[string]json.RawMessage{}
-	methodB, _ := json.Marshal(f.Method)
+	methodB, err := json.Marshal(f.Method)
+	if err != nil {
+		return nil, fmt.Errorf("codexwire: marshal server notification method: %w", err)
+	}
 	m["method"] = methodB
 	if len(params) > 0 {
 		m["params"] = params
@@ -438,22 +464,28 @@ func marshalPayload(typed any, raw json.RawMessage) (json.RawMessage, error) {
 //	    if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 //	        return err
 //	    }
-//	    return parseExtra(data, fooParamsKnown, &p.Extra)
+//	    var err error
+//	    p.Extra, err = parseExtra(data, fooParamsKnown, p.Extra)
+//	    return err
 //	}
-func parseExtra(data []byte, known map[string]bool, extra *map[string]json.RawMessage) error {
+func parseExtra(
+	data []byte,
+	known map[string]bool,
+	extra map[string]json.RawMessage,
+) (map[string]json.RawMessage, error) {
 	var all map[string]json.RawMessage
 	if err := json.Unmarshal(data, &all); err != nil {
-		return err
+		return extra, err
 	}
 	for k, v := range all {
 		if !known[k] {
-			if *extra == nil {
-				*extra = make(map[string]json.RawMessage)
+			if extra == nil {
+				extra = make(map[string]json.RawMessage)
 			}
-			(*extra)[k] = v
+			extra[k] = v
 		}
 	}
-	return nil
+	return extra, nil
 }
 
 // mergeExtra merges extra fields into a marshaled JSON object byte slice.
@@ -480,7 +512,7 @@ func ExtraCount(extra map[string]json.RawMessage) int {
 
 // ─── Client request / notification params ─────────────────────────────────────
 
-// InitializeParams: client→server "initialize" request params.
+// InitializeParams describes client→server "initialize" request params.
 //
 // Corpus evidence:
 //
@@ -493,14 +525,18 @@ type InitializeParams struct {
 
 var initializeParamsKnown = map[string]bool{"clientInfo": true, "capabilities": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *InitializeParams) UnmarshalJSON(data []byte) error {
 	type alias InitializeParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, initializeParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, initializeParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p InitializeParams) MarshalJSON() ([]byte, error) {
 	type alias InitializeParams
 	b, err := json.Marshal(alias(p))
@@ -520,14 +556,18 @@ type ClientInfo struct {
 
 var clientInfoKnown = map[string]bool{"name": true, "title": true, "version": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (c *ClientInfo) UnmarshalJSON(data []byte) error {
 	type alias ClientInfo
 	if err := json.Unmarshal(data, (*alias)(c)); err != nil {
 		return err
 	}
-	return parseExtra(data, clientInfoKnown, &c.Extra)
+	var err error
+	c.Extra, err = parseExtra(data, clientInfoKnown, c.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (c ClientInfo) MarshalJSON() ([]byte, error) {
 	type alias ClientInfo
 	b, err := json.Marshal(alias(c))
@@ -537,7 +577,7 @@ func (c ClientInfo) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, c.Extra)
 }
 
-// ThreadStartParams: client→server "thread/start" request params.
+// ThreadStartParams describes client→server "thread/start" request params.
 //
 // Corpus evidence: {"cwd": "/Users/gb/github/harmonik"}
 // All fields optional per T0 findings ("all fields optional").
@@ -548,14 +588,18 @@ type ThreadStartParams struct {
 
 var threadStartParamsKnown = map[string]bool{"cwd": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *ThreadStartParams) UnmarshalJSON(data []byte) error {
 	type alias ThreadStartParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, threadStartParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, threadStartParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p ThreadStartParams) MarshalJSON() ([]byte, error) {
 	type alias ThreadStartParams
 	b, err := json.Marshal(alias(p))
@@ -586,7 +630,9 @@ func (p *ThreadResumeParams) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, threadResumeParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, threadResumeParamsKnown, p.Extra)
+	return err
 }
 
 // MarshalJSON encodes ThreadResumeParams, merging the preserved Extra fields back in.
@@ -599,7 +645,7 @@ func (p ThreadResumeParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// TurnStartParams: client→server "turn/start" request params.
+// TurnStartParams describes client→server "turn/start" request params.
 //
 // Corpus evidence: {"threadId": "...", "input": [{"type":"text","text":"...","text_elements":[]}]}
 // NOTE: text_elements:[] is REQUIRED in the text UserInput variant (T0 finding).
@@ -611,14 +657,18 @@ type TurnStartParams struct {
 
 var turnStartParamsKnown = map[string]bool{"threadId": true, "input": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *TurnStartParams) UnmarshalJSON(data []byte) error {
 	type alias TurnStartParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, turnStartParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, turnStartParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p TurnStartParams) MarshalJSON() ([]byte, error) {
 	type alias TurnStartParams
 	b, err := json.Marshal(alias(p))
@@ -639,14 +689,18 @@ type InputItem struct {
 
 var inputItemKnown = map[string]bool{"type": true, "text": true, "text_elements": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (i *InputItem) UnmarshalJSON(data []byte) error {
 	type alias InputItem
 	if err := json.Unmarshal(data, (*alias)(i)); err != nil {
 		return err
 	}
-	return parseExtra(data, inputItemKnown, &i.Extra)
+	var err error
+	i.Extra, err = parseExtra(data, inputItemKnown, i.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (i InputItem) MarshalJSON() ([]byte, error) {
 	type alias InputItem
 	b, err := json.Marshal(alias(i))
@@ -658,7 +712,7 @@ func (i InputItem) MarshalJSON() ([]byte, error) {
 
 // ─── Client request results ──────────────────────────────────────────────────
 
-// InitializeResult: server→client "initialize" response result.
+// InitializeResult describes server→client "initialize" response result.
 //
 // Corpus evidence: {"userAgent":"...","codexHome":"...","platformFamily":"...","platformOs":"..."}
 type InitializeResult struct {
@@ -673,14 +727,18 @@ var initializeResultKnown = map[string]bool{
 	"userAgent": true, "codexHome": true, "platformFamily": true, "platformOs": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (r *InitializeResult) UnmarshalJSON(data []byte) error {
 	type alias InitializeResult
 	if err := json.Unmarshal(data, (*alias)(r)); err != nil {
 		return err
 	}
-	return parseExtra(data, initializeResultKnown, &r.Extra)
+	var err error
+	r.Extra, err = parseExtra(data, initializeResultKnown, r.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (r InitializeResult) MarshalJSON() ([]byte, error) {
 	type alias InitializeResult
 	b, err := json.Marshal(alias(r))
@@ -690,7 +748,7 @@ func (r InitializeResult) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, r.Extra)
 }
 
-// ThreadStartResult: server→client "thread/start" response result.
+// ThreadStartResult describes server→client "thread/start" response result.
 //
 // Corpus evidence: large object with thread, model, sandbox, etc.
 // thread and most nested fields are stored as RawMessage to preserve all
@@ -719,14 +777,18 @@ var threadStartResultKnown = map[string]bool{
 	"activePermissionProfile": true, "reasoningEffort": true, "multiAgentMode": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (r *ThreadStartResult) UnmarshalJSON(data []byte) error {
 	type alias ThreadStartResult
 	if err := json.Unmarshal(data, (*alias)(r)); err != nil {
 		return err
 	}
-	return parseExtra(data, threadStartResultKnown, &r.Extra)
+	var err error
+	r.Extra, err = parseExtra(data, threadStartResultKnown, r.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (r ThreadStartResult) MarshalJSON() ([]byte, error) {
 	type alias ThreadStartResult
 	b, err := json.Marshal(alias(r))
@@ -746,7 +808,7 @@ func (r ThreadStartResult) MarshalJSON() ([]byte, error) {
 // (hk-160yb G2).
 type ThreadResumeResult = ThreadStartResult
 
-// TurnStartResult: server→client "turn/start" response result.
+// TurnStartResult describes server→client "turn/start" response result.
 //
 // Corpus evidence: {"turn":{"id":"...","items":[],"itemsView":"notLoaded","status":"inProgress",...}}
 type TurnStartResult struct {
@@ -756,14 +818,18 @@ type TurnStartResult struct {
 
 var turnStartResultKnown = map[string]bool{"turn": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (r *TurnStartResult) UnmarshalJSON(data []byte) error {
 	type alias TurnStartResult
 	if err := json.Unmarshal(data, (*alias)(r)); err != nil {
 		return err
 	}
-	return parseExtra(data, turnStartResultKnown, &r.Extra)
+	var err error
+	r.Extra, err = parseExtra(data, turnStartResultKnown, r.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (r TurnStartResult) MarshalJSON() ([]byte, error) {
 	type alias TurnStartResult
 	b, err := json.Marshal(alias(r))
@@ -796,14 +862,18 @@ var turnKnown = map[string]bool{
 	"error": true, "startedAt": true, "completedAt": true, "durationMs": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (t *Turn) UnmarshalJSON(data []byte) error {
 	type alias Turn
 	if err := json.Unmarshal(data, (*alias)(t)); err != nil {
 		return err
 	}
-	return parseExtra(data, turnKnown, &t.Extra)
+	var err error
+	t.Extra, err = parseExtra(data, turnKnown, t.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (t Turn) MarshalJSON() ([]byte, error) {
 	type alias Turn
 	b, err := json.Marshal(alias(t))
@@ -827,14 +897,18 @@ type ThreadStatus struct {
 
 var threadStatusKnown = map[string]bool{"type": true, "activeFlags": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (s *ThreadStatus) UnmarshalJSON(data []byte) error {
 	type alias ThreadStatus
 	if err := json.Unmarshal(data, (*alias)(s)); err != nil {
 		return err
 	}
-	return parseExtra(data, threadStatusKnown, &s.Extra)
+	var err error
+	s.Extra, err = parseExtra(data, threadStatusKnown, s.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (s ThreadStatus) MarshalJSON() ([]byte, error) {
 	type alias ThreadStatus
 	b, err := json.Marshal(alias(s))
@@ -846,7 +920,7 @@ func (s ThreadStatus) MarshalJSON() ([]byte, error) {
 
 // ─── Server notification params ──────────────────────────────────────────────
 
-// ConfigWarningParams: server→client "configWarning" notification params.
+// ConfigWarningParams describes server→client "configWarning" notification params.
 //
 // Corpus evidence: {"summary":"Project-local config...","details":null}
 type ConfigWarningParams struct {
@@ -857,14 +931,18 @@ type ConfigWarningParams struct {
 
 var configWarningParamsKnown = map[string]bool{"summary": true, "details": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *ConfigWarningParams) UnmarshalJSON(data []byte) error {
 	type alias ConfigWarningParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, configWarningParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, configWarningParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p ConfigWarningParams) MarshalJSON() ([]byte, error) {
 	type alias ConfigWarningParams
 	b, err := json.Marshal(alias(p))
@@ -874,7 +952,7 @@ func (p ConfigWarningParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// RemoteControlStatusChangedParams: server→client "remoteControl/status/changed".
+// RemoteControlStatusChangedParams describes server→client "remoteControl/status/changed".
 //
 // Corpus evidence: {"status":"disabled","serverName":"...","installationId":"...","environmentId":null}
 type RemoteControlStatusChangedParams struct {
@@ -889,14 +967,18 @@ var remoteControlStatusChangedParamsKnown = map[string]bool{
 	"status": true, "serverName": true, "installationId": true, "environmentId": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *RemoteControlStatusChangedParams) UnmarshalJSON(data []byte) error {
 	type alias RemoteControlStatusChangedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, remoteControlStatusChangedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, remoteControlStatusChangedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p RemoteControlStatusChangedParams) MarshalJSON() ([]byte, error) {
 	type alias RemoteControlStatusChangedParams
 	b, err := json.Marshal(alias(p))
@@ -906,7 +988,7 @@ func (p RemoteControlStatusChangedParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// ThreadStartedParams: server→client "thread/started" notification params.
+// ThreadStartedParams describes server→client "thread/started" notification params.
 //
 // Corpus evidence: {"thread":{...}}
 type ThreadStartedParams struct {
@@ -916,14 +998,18 @@ type ThreadStartedParams struct {
 
 var threadStartedParamsKnown = map[string]bool{"thread": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *ThreadStartedParams) UnmarshalJSON(data []byte) error {
 	type alias ThreadStartedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, threadStartedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, threadStartedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p ThreadStartedParams) MarshalJSON() ([]byte, error) {
 	type alias ThreadStartedParams
 	b, err := json.Marshal(alias(p))
@@ -933,7 +1019,7 @@ func (p ThreadStartedParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// MCPServerStartupStatusUpdatedParams: server→client "mcpServer/startupStatus/updated".
+// MCPServerStartupStatusUpdatedParams describes server→client "mcpServer/startupStatus/updated".
 //
 // Corpus evidence (2 frames):
 //
@@ -951,14 +1037,18 @@ var mcpServerStartupStatusUpdatedParamsKnown = map[string]bool{
 	"threadId": true, "name": true, "status": true, "error": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *MCPServerStartupStatusUpdatedParams) UnmarshalJSON(data []byte) error {
 	type alias MCPServerStartupStatusUpdatedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, mcpServerStartupStatusUpdatedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, mcpServerStartupStatusUpdatedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p MCPServerStartupStatusUpdatedParams) MarshalJSON() ([]byte, error) {
 	type alias MCPServerStartupStatusUpdatedParams
 	b, err := json.Marshal(alias(p))
@@ -968,7 +1058,7 @@ func (p MCPServerStartupStatusUpdatedParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// ThreadStatusChangedParams: server→client "thread/status/changed".
+// ThreadStatusChangedParams describes server→client "thread/status/changed".
 //
 // Corpus evidence:
 //
@@ -982,14 +1072,18 @@ type ThreadStatusChangedParams struct {
 
 var threadStatusChangedParamsKnown = map[string]bool{"threadId": true, "status": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *ThreadStatusChangedParams) UnmarshalJSON(data []byte) error {
 	type alias ThreadStatusChangedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, threadStatusChangedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, threadStatusChangedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p ThreadStatusChangedParams) MarshalJSON() ([]byte, error) {
 	type alias ThreadStatusChangedParams
 	b, err := json.Marshal(alias(p))
@@ -999,7 +1093,7 @@ func (p ThreadStatusChangedParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// TurnStartedParams: server→client "turn/started".
+// TurnStartedParams describes server→client "turn/started".
 //
 // Corpus evidence: {"threadId":"...","turn":{...}}
 type TurnStartedParams struct {
@@ -1010,14 +1104,18 @@ type TurnStartedParams struct {
 
 var turnStartedParamsKnown = map[string]bool{"threadId": true, "turn": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *TurnStartedParams) UnmarshalJSON(data []byte) error {
 	type alias TurnStartedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, turnStartedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, turnStartedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p TurnStartedParams) MarshalJSON() ([]byte, error) {
 	type alias TurnStartedParams
 	b, err := json.Marshal(alias(p))
@@ -1027,7 +1125,7 @@ func (p TurnStartedParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// ItemStartedParams: server→client "item/started".
+// ItemStartedParams describes server→client "item/started".
 //
 // Corpus evidence (2 variants — userMessage and agentMessage items):
 //
@@ -1047,14 +1145,18 @@ var itemStartedParamsKnown = map[string]bool{
 	"item": true, "threadId": true, "turnId": true, "startedAtMs": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *ItemStartedParams) UnmarshalJSON(data []byte) error {
 	type alias ItemStartedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, itemStartedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, itemStartedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p ItemStartedParams) MarshalJSON() ([]byte, error) {
 	type alias ItemStartedParams
 	b, err := json.Marshal(alias(p))
@@ -1064,7 +1166,7 @@ func (p ItemStartedParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// ItemCompletedParams: server→client "item/completed".
+// ItemCompletedParams describes server→client "item/completed".
 //
 // Same structure as ItemStartedParams but with completedAtMs instead of startedAtMs.
 type ItemCompletedParams struct {
@@ -1079,14 +1181,18 @@ var itemCompletedParamsKnown = map[string]bool{
 	"item": true, "threadId": true, "turnId": true, "completedAtMs": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *ItemCompletedParams) UnmarshalJSON(data []byte) error {
 	type alias ItemCompletedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, itemCompletedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, itemCompletedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p ItemCompletedParams) MarshalJSON() ([]byte, error) {
 	type alias ItemCompletedParams
 	b, err := json.Marshal(alias(p))
@@ -1105,6 +1211,9 @@ type RawItem struct {
 	Raw  json.RawMessage
 }
 
+// UnmarshalJSON records the "type" discriminator and retains the complete
+// original object bytes verbatim in Raw. RawItem models no fields of its own,
+// so nothing is dropped and there is no Extra map to populate.
 func (r *RawItem) UnmarshalJSON(data []byte) error {
 	// Extract the type discriminator.
 	var disc struct {
@@ -1119,6 +1228,8 @@ func (r *RawItem) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MarshalJSON re-emits the retained Raw bytes verbatim, so a round trip is
+// byte-preserving. A zero-value RawItem encodes as JSON null.
 func (r RawItem) MarshalJSON() ([]byte, error) {
 	if len(r.Raw) == 0 {
 		return []byte("null"), nil
@@ -1128,7 +1239,7 @@ func (r RawItem) MarshalJSON() ([]byte, error) {
 	return out, nil
 }
 
-// ItemAgentMessageDeltaParams: server→client "item/agentMessage/delta".
+// ItemAgentMessageDeltaParams describes server→client "item/agentMessage/delta".
 //
 // Corpus evidence: {"threadId":"...","turnId":"...","itemId":"msg_...","delta":"ok"}
 type ItemAgentMessageDeltaParams struct {
@@ -1143,14 +1254,18 @@ var itemAgentMessageDeltaParamsKnown = map[string]bool{
 	"threadId": true, "turnId": true, "itemId": true, "delta": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *ItemAgentMessageDeltaParams) UnmarshalJSON(data []byte) error {
 	type alias ItemAgentMessageDeltaParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, itemAgentMessageDeltaParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, itemAgentMessageDeltaParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p ItemAgentMessageDeltaParams) MarshalJSON() ([]byte, error) {
 	type alias ItemAgentMessageDeltaParams
 	b, err := json.Marshal(alias(p))
@@ -1160,7 +1275,7 @@ func (p ItemAgentMessageDeltaParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// ThreadTokenUsageUpdatedParams: server→client "thread/tokenUsage/updated".
+// ThreadTokenUsageUpdatedParams describes server→client "thread/tokenUsage/updated".
 //
 // Corpus evidence:
 //
@@ -1176,14 +1291,18 @@ var threadTokenUsageUpdatedParamsKnown = map[string]bool{
 	"threadId": true, "turnId": true, "tokenUsage": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *ThreadTokenUsageUpdatedParams) UnmarshalJSON(data []byte) error {
 	type alias ThreadTokenUsageUpdatedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, threadTokenUsageUpdatedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, threadTokenUsageUpdatedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p ThreadTokenUsageUpdatedParams) MarshalJSON() ([]byte, error) {
 	type alias ThreadTokenUsageUpdatedParams
 	b, err := json.Marshal(alias(p))
@@ -1203,14 +1322,18 @@ type TokenUsage struct {
 
 var tokenUsageKnown = map[string]bool{"total": true, "last": true, "modelContextWindow": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (u *TokenUsage) UnmarshalJSON(data []byte) error {
 	type alias TokenUsage
 	if err := json.Unmarshal(data, (*alias)(u)); err != nil {
 		return err
 	}
-	return parseExtra(data, tokenUsageKnown, &u.Extra)
+	var err error
+	u.Extra, err = parseExtra(data, tokenUsageKnown, u.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (u TokenUsage) MarshalJSON() ([]byte, error) {
 	type alias TokenUsage
 	b, err := json.Marshal(alias(u))
@@ -1237,14 +1360,18 @@ var tokenCountsKnown = map[string]bool{
 	"outputTokens": true, "reasoningOutputTokens": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (c *TokenCounts) UnmarshalJSON(data []byte) error {
 	type alias TokenCounts
 	if err := json.Unmarshal(data, (*alias)(c)); err != nil {
 		return err
 	}
-	return parseExtra(data, tokenCountsKnown, &c.Extra)
+	var err error
+	c.Extra, err = parseExtra(data, tokenCountsKnown, c.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (c TokenCounts) MarshalJSON() ([]byte, error) {
 	type alias TokenCounts
 	b, err := json.Marshal(alias(c))
@@ -1254,7 +1381,7 @@ func (c TokenCounts) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, c.Extra)
 }
 
-// AccountRateLimitsUpdatedParams: server→client "account/rateLimits/updated".
+// AccountRateLimitsUpdatedParams describes server→client "account/rateLimits/updated".
 type AccountRateLimitsUpdatedParams struct {
 	RateLimits RateLimits                 `json:"rateLimits"`
 	Extra      map[string]json.RawMessage `json:"-"`
@@ -1262,14 +1389,18 @@ type AccountRateLimitsUpdatedParams struct {
 
 var accountRateLimitsUpdatedParamsKnown = map[string]bool{"rateLimits": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *AccountRateLimitsUpdatedParams) UnmarshalJSON(data []byte) error {
 	type alias AccountRateLimitsUpdatedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, accountRateLimitsUpdatedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, accountRateLimitsUpdatedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p AccountRateLimitsUpdatedParams) MarshalJSON() ([]byte, error) {
 	type alias AccountRateLimitsUpdatedParams
 	b, err := json.Marshal(alias(p))
@@ -1302,14 +1433,18 @@ var rateLimitsKnown = map[string]bool{
 	"credits": true, "individualLimit": true, "planType": true, "rateLimitReachedType": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (r *RateLimits) UnmarshalJSON(data []byte) error {
 	type alias RateLimits
 	if err := json.Unmarshal(data, (*alias)(r)); err != nil {
 		return err
 	}
-	return parseExtra(data, rateLimitsKnown, &r.Extra)
+	var err error
+	r.Extra, err = parseExtra(data, rateLimitsKnown, r.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (r RateLimits) MarshalJSON() ([]byte, error) {
 	type alias RateLimits
 	b, err := json.Marshal(alias(r))
@@ -1333,14 +1468,18 @@ var rateLimitWindowKnown = map[string]bool{
 	"usedPercent": true, "windowDurationMins": true, "resetsAt": true,
 }
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (w *RateLimitWindow) UnmarshalJSON(data []byte) error {
 	type alias RateLimitWindow
 	if err := json.Unmarshal(data, (*alias)(w)); err != nil {
 		return err
 	}
-	return parseExtra(data, rateLimitWindowKnown, &w.Extra)
+	var err error
+	w.Extra, err = parseExtra(data, rateLimitWindowKnown, w.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (w RateLimitWindow) MarshalJSON() ([]byte, error) {
 	type alias RateLimitWindow
 	b, err := json.Marshal(alias(w))
@@ -1371,7 +1510,7 @@ func sortStrings(ss []string) {
 	}
 }
 
-// TurnCompletedParams: server→client "turn/completed".
+// TurnCompletedParams describes server→client "turn/completed".
 //
 // Corpus evidence: {"threadId":"...","turn":{...}}
 type TurnCompletedParams struct {
@@ -1382,14 +1521,18 @@ type TurnCompletedParams struct {
 
 var turnCompletedParamsKnown = map[string]bool{"threadId": true, "turn": true}
 
+// UnmarshalJSON decodes the value while preserving unmodeled fields in Extra.
 func (p *TurnCompletedParams) UnmarshalJSON(data []byte) error {
 	type alias TurnCompletedParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
 		return err
 	}
-	return parseExtra(data, turnCompletedParamsKnown, &p.Extra)
+	var err error
+	p.Extra, err = parseExtra(data, turnCompletedParamsKnown, p.Extra)
+	return err
 }
 
+// MarshalJSON encodes the value and merges preserved Extra fields.
 func (p TurnCompletedParams) MarshalJSON() ([]byte, error) {
 	type alias TurnCompletedParams
 	b, err := json.Marshal(alias(p))

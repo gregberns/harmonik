@@ -264,6 +264,17 @@ queuewiring-freeze-gate:  ## P2 E3: forbid new queue-ownership files or moved sy
 crewrun-freeze-gate:  ## P2 E2: forbid new crew-launch files or moved symbols in internal/daemon
 	scripts/crewrun-freeze-gate.sh
 
+# harnesscodex-freeze-gate: the P2 E1a extraction ratchet — the codex harness
+# implementation (the Harness impl, the launch-spec builder, the JSONL parser,
+# the stale-WAL and billing guards, the Refs-trailer fallback, the no-work
+# detector) left internal/daemon for internal/harness/codex, and depguard can
+# only fence the import edge, not the creation of a new file. This grep gate
+# fails if a codex-harness-shaped file or one of the moved symbols reappears in
+# internal/daemon. Wired into check-fast and check-short.
+.PHONY: harnesscodex-freeze-gate
+harnesscodex-freeze-gate:  ## P2 E1a: forbid new codex-harness files or moved symbols in internal/daemon
+	scripts/harnesscodex-freeze-gate.sh
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -452,6 +463,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
 	scripts/crewrun-freeze-gate.sh
+	scripts/harnesscodex-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -476,6 +488,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
 	scripts/crewrun-freeze-gate.sh
+	scripts/harnesscodex-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

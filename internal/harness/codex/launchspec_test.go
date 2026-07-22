@@ -1,4 +1,4 @@
-package daemon_test
+package codex_test
 
 // codexlaunchspec_test.go — unit tests for buildCodexLaunchSpec (hk-rgxwd C2/T7).
 //
@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,7 +27,7 @@ import (
 func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-initial",
 		BeadID:           "hk-test001",
 		Model:            "o4-mini",
@@ -35,7 +35,7 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("TestBuildCodexLaunchSpec_InitialTurn: unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 func TestBuildCodexLaunchSpec_CustomBinary(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		CodexBinary:      "/usr/local/bin/codex",
 		WorkspacePath:    "/tmp/wt-test-codex-bin",
 		BeadID:           "hk-test002",
@@ -76,7 +76,7 @@ func TestBuildCodexLaunchSpec_CustomBinary(t *testing.T) {
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("TestBuildCodexLaunchSpec_CustomBinary: unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestBuildCodexLaunchSpec_ResumeTurn(t *testing.T) {
 	t.Parallel()
 
 	threadID := "thread-abc-123"
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-resume",
 		BeadID:           "hk-test003",
 		PriorThreadID:    &threadID,
@@ -104,7 +104,7 @@ func TestBuildCodexLaunchSpec_ResumeTurn(t *testing.T) {
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("TestBuildCodexLaunchSpec_ResumeTurn: unexpected error: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestBuildCodexLaunchSpec_ResumeTurn(t *testing.T) {
 func TestBuildCodexLaunchSpec_CredentialStrip(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath: "/tmp/wt-test-codex-cred",
 		BeadID:        "hk-test004",
 		Model:         "o4-mini",
@@ -146,7 +146,7 @@ func TestBuildCodexLaunchSpec_CredentialStrip(t *testing.T) {
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("TestBuildCodexLaunchSpec_CredentialStrip: unexpected error: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
 		t.Fatalf("test setup: expected OPENAI_API_KEY and CODEX_API_KEY to be set in process env")
 	}
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath: "/tmp/wt-test-codex-procenv",
 		BeadID:        "hk-test-t10",
 		Model:         "o4-mini",
@@ -226,7 +226,7 @@ func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv: unexpected error: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestBuildCodexLaunchSpec_PATH_FallsBackToProcessPATH_WhenBaseEnvHasNone(t *
 		t.Skip("test process has no PATH set; cannot assert fallback value")
 	}
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-nopath",
 		BeadID:           "hk-test-07jrb",
 		Model:            "o4-mini",
@@ -287,7 +287,7 @@ func TestBuildCodexLaunchSpec_PATH_FallsBackToProcessPATH_WhenBaseEnvHasNone(t *
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestBuildCodexLaunchSpec_PATH_FallsBackToProcessPATH_WhenBaseEnvHasNone(t *
 func TestBuildCodexLaunchSpec_PATH_PreservedWhenBaseEnvHasOne(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-haspath",
 		BeadID:           "hk-test-07jrb-2",
 		Model:            "o4-mini",
@@ -322,7 +322,7 @@ func TestBuildCodexLaunchSpec_PATH_PreservedWhenBaseEnvHasOne(t *testing.T) {
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 
 	// Case 1: explicit CodexHome.
 	explicitHome := "/tmp/test-codex-home"
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-home",
 		BeadID:           "hk-test005",
 		Model:            "o4-mini",
@@ -357,7 +357,7 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("TestBuildCodexLaunchSpec_CodexHomeSet explicit: unexpected error: %v", err)
 	}
@@ -375,13 +375,13 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 	}
 
 	// Case 2: default (empty CodexHome → non-empty path derived from $HOME).
-	rc2 := daemon.ExportedCodexRunCtx{
+	rc2 := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-home2",
 		BeadID:           "hk-test005b",
 		Model:            "o4-mini",
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
-	spec2, err := daemon.ExportedBuildCodexLaunchSpec(rc2)
+	spec2, err := codex.ExportedBuildCodexLaunchSpec(rc2)
 	if err != nil {
 		t.Fatalf("TestBuildCodexLaunchSpec_CodexHomeSet default: unexpected error: %v", err)
 	}
@@ -408,10 +408,10 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 func TestBuildCodexLaunchSpec_EmptyWorkspacePath(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		BeadID: "hk-test006",
 	}
-	_, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	_, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty workspacePath; got nil")
 	}
@@ -422,10 +422,10 @@ func TestBuildCodexLaunchSpec_EmptyWorkspacePath(t *testing.T) {
 func TestBuildCodexLaunchSpec_EmptyBeadID(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath: "/tmp/wt-test",
 	}
-	_, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	_, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty beadID; got nil")
 	}
@@ -437,12 +437,12 @@ func TestBuildCodexLaunchSpec_EmptyPriorThreadID(t *testing.T) {
 	t.Parallel()
 
 	empty := ""
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath: "/tmp/wt-test",
 		BeadID:        "hk-test007",
 		PriorThreadID: &empty,
 	}
-	_, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	_, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty priorThreadID string; got nil")
 	}
@@ -457,13 +457,13 @@ func TestBuildCodexLaunchSpec_EmptyPriorThreadID(t *testing.T) {
 func TestBuildCodexLaunchSpec_EmptyModelInitialTurn(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath: "/tmp/wt-test-codex-nomodel",
 		BeadID:        "hk-test-empty-model",
 		// Model deliberately omitted: empty model → account-default (no --model flag).
 		SkipBillingGuard: true,
 	}
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("empty model on initial turn must not error (account-default path); got: %v", err)
 	}
@@ -505,13 +505,13 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 	// Non-empty model path.
 	t.Run("with model", func(t *testing.T) {
 		t.Parallel()
-		rc := daemon.ExportedCodexRunCtx{
+		rc := codex.ExportedCodexRunCtx{
 			WorkspacePath:    "/tmp/wt-test-codex-order",
 			BeadID:           "hk-test-order",
 			Model:            "o4-mini",
 			SkipBillingGuard: true,
 		}
-		spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+		spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -545,12 +545,12 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 	// Empty-model counterpart: seed last, no --model anywhere.
 	t.Run("empty model", func(t *testing.T) {
 		t.Parallel()
-		rc := daemon.ExportedCodexRunCtx{
+		rc := codex.ExportedCodexRunCtx{
 			WorkspacePath:    "/tmp/wt-test-codex-order-nomodel",
 			BeadID:           "hk-test-order-nomodel",
 			SkipBillingGuard: true,
 		}
-		spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+		spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -576,14 +576,14 @@ func TestBuildCodexLaunchSpec_EmptyModelResumeTurnOK(t *testing.T) {
 	t.Parallel()
 
 	threadID := "th_resume_nomodel"
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath: "/tmp/wt-test-codex-resume-nomodel",
 		BeadID:        "hk-test-resume-nomodel",
 		// Model omitted: resume turns do not require it.
 		PriorThreadID:    &threadID,
 		SkipBillingGuard: true,
 	}
-	_, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	_, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Errorf("empty model on resume turn must not error; got: %v", err)
 	}
@@ -594,13 +594,13 @@ func TestBuildCodexLaunchSpec_EmptyModelResumeTurnOK(t *testing.T) {
 func TestBuildCodexLaunchSpec_ModelInArgv(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-model-argv",
 		BeadID:           "hk-test-model-argv",
 		Model:            "o4-mini",
 		SkipBillingGuard: true,
 	}
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -614,14 +614,14 @@ func TestBuildCodexLaunchSpec_ModelNotInResumeArgv(t *testing.T) {
 	t.Parallel()
 
 	threadID := "th_resume_model_check"
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-resume-model",
 		BeadID:           "hk-test-resume-model",
 		Model:            "o4-mini",
 		PriorThreadID:    &threadID,
 		SkipBillingGuard: true,
 	}
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -660,13 +660,13 @@ func TestBuildCodexLaunchSpec_DangerFullAccess_hktckw3(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			rc := daemon.ExportedCodexRunCtx{
+			rc := codex.ExportedCodexRunCtx{
 				WorkspacePath:    worktree,
 				BeadID:           "hk-tckw3",
 				PriorThreadID:    tt.priorThreadID,
 				SkipBillingGuard: true,
 			}
-			spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+			spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

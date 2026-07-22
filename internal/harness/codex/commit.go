@@ -1,4 +1,4 @@
-package daemon
+package codex
 
 // codexcommit.go — Refs:<bead> trailer guarantee for the codex harness
 // (codex-harness C2/T9, hk-bpxci).
@@ -33,12 +33,12 @@ package daemon
 // # Three parts (matching the T9 bead)
 //
 //  1. INSTRUCT — codexSeedPromptTemplate (codexlaunchspec.go) already tells codex
-//     to commit with the Refs: trailer. ensureCodexRefsTrailer relies on that as
+//     to commit with the Refs: trailer. EnsureRefsTrailer relies on that as
 //     the happy path; the fallback only fires when codex disobeyed.
 //  2. VERIFY — shared.WorktreeHEADHasRefsTrailer (internal/harness/shared/
 //     refstrailer.go) inspects the worktree HEAD commit body for an exact
 //     "Refs: <bead-id>" line.
-//  3. FALLBACK — ensureCodexRefsTrailer:
+//  3. FALLBACK — EnsureRefsTrailer:
 //       - HEAD already carries the trailer → no-op (clean path).
 //       - HEAD does NOT carry the trailer but a commit exists for this turn
 //         (HEAD advanced past parent) → AMEND that commit to append the trailer
@@ -77,7 +77,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// ensureCodexRefsTrailer guarantees the worktree HEAD carries a
+// EnsureRefsTrailer guarantees the worktree HEAD carries a
 // "Refs: <beadID>" trailer after a codex turn exits, creating or amending a
 // commit deterministically when codex edited files but did not produce a
 // trailer-carrying commit.
@@ -104,12 +104,12 @@ import (
 //	HEAD advanced, no trailer                → amend HEAD to add trailer  → shared.RefsAmended
 //	HEAD == parentSHA, worktree dirty        → stage all + commit w/ trailer → shared.RefsCommitted
 //	HEAD == parentSHA, worktree clean        → shared.RefsNoChange (no commit fabricated)
-func ensureCodexRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (shared.RefsOutcome, error) {
+func EnsureRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (shared.RefsOutcome, error) {
 	if wtPath == "" {
-		return shared.RefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: wtPath must be non-empty")
+		return shared.RefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: wtPath must be non-empty")
 	}
 	if beadID == "" {
-		return shared.RefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: beadID must be non-empty")
+		return shared.RefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: beadID must be non-empty")
 	}
 
 	// VERIFY: does HEAD already carry the trailer? If so we are done — this is
@@ -124,7 +124,7 @@ func ensureCodexRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPa
 	// so REMOTE HEAD is read from the worker, matching the no-commit guard.
 	curHead, headErr := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 	if headErr != nil {
-		return shared.RefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: resolve HEAD: %w", headErr)
+		return shared.RefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: resolve HEAD: %w", headErr)
 	}
 
 	if parentSHA != "" && curHead != parentSHA {
@@ -133,7 +133,7 @@ func ensureCodexRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPa
 		// empty commit would be noise. This keeps a single work-commit carrying
 		// the trailer, matching the claude posture (one commit, trailer-bearing).
 		if err := shared.AmendHEADAddRefsTrailer(ctx, runner, wtPath, beadID); err != nil {
-			return shared.RefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: amend: %w", err)
+			return shared.RefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: amend: %w", err)
 		}
 		return shared.RefsAmended, nil
 	}
@@ -142,7 +142,7 @@ func ensureCodexRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPa
 	// (dirty worktree → deterministic commit) or did nothing (clean → no_change).
 	dirty, dirtyErr := shared.WorktreeDirty(ctx, runner, wtPath)
 	if dirtyErr != nil {
-		return shared.RefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: status: %w", dirtyErr)
+		return shared.RefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: status: %w", dirtyErr)
 	}
 	if !dirty {
 		// codex did no work. Do NOT fabricate a commit — let the caller route
@@ -152,7 +152,7 @@ func ensureCodexRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPa
 
 	// codex edited but never committed: stage everything and create the commit.
 	if err := commitAllWithRefsTrailer(ctx, runner, wtPath, beadID); err != nil {
-		return shared.RefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: commit: %w", err)
+		return shared.RefsNoChange, fmt.Errorf("daemon: EnsureRefsTrailer: commit: %w", err)
 	}
 	return shared.RefsCommitted, nil
 }

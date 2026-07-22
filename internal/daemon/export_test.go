@@ -24,6 +24,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -2592,86 +2593,29 @@ func (n *noopTmuxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) 
 var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// buildCodexLaunchSpec test seams (hk-rgxwd C2/T7)
+// codex launch-spec test seams (hk-rgxwd C2/T7) — RETAINED after P2 E1a-1
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// The codex harness moved to internal/harness/codex in P2 unit E1a-1. Its own
+// test seams moved with it (internal/harness/codex/export_test.go). These two
+// stay because their consumers stayed: crossharness_empty_model_test.go and
+// crossharness_seedprompt_test.go pin a pi-vs-codex invariant in ONE table and
+// cannot move until pi is out too (E1c). They are thin aliases onto the now-
+// exported codex.RunCtx / codex.BuildLaunchSpec, which exist for exactly this
+// reason and go back to unexported once E1c lands.
+//
+// Plan: plans/2026-07-21-p2-extraction/E1a-codex-harness.md §3b, §4 step 13.
 
-// ExportedCodexRunCtx is the exported shape of codexRunCtx for tests.
-// Fields mirror codexRunCtx verbatim with exported names.
+// ExportedCodexRunCtx is the exported shape of the codex per-launch run context.
 //
 // Bead refs: hk-rgxwd (T7), hk-tu48u (T11 billing-guard fields), hk-heh3t (model guard).
-type ExportedCodexRunCtx struct {
-	CodexBinary   string
-	WorkspacePath string
-	BeadID        string
-	// Model is the codex model name (e.g. "o4-mini"). OPTIONAL: an empty model on
-	// an initial turn omits the --model flag so codex resolves the account default
-	// from $CODEX_HOME/config.toml — the only working config on the HN-022
-	// ChatGPT-subscription path, where a named model 400s. The old fail-loud guard
-	// (empty → error) was retired with hk-heh3t; matches codexRunCtx.model.
-	Model          string
-	PriorThreadID  *string
-	IterationCount int
-	BaseEnv        []string
-	CodexHome      string
-	// BillingEmitter / RunID / SkipBillingGuard expose the C3/T11 positive
-	// billing-guard seams (hk-tu48u).
-	BillingEmitter   handlercontract.EventEmitter
-	RunID            core.RunID
-	SkipBillingGuard bool
-}
+type ExportedCodexRunCtx = codex.RunCtx
 
-// ExportedBuildCodexLaunchSpec exposes buildCodexLaunchSpec for tests in
-// package daemon_test. The ExportedCodexRunCtx is translated to the internal
-// codexRunCtx before calling.
+// ExportedBuildCodexLaunchSpec exposes codex.BuildLaunchSpec for tests in
+// package daemon_test.
 //
 // Bead ref: hk-rgxwd.
-func ExportedBuildCodexLaunchSpec(rc ExportedCodexRunCtx) (handler.LaunchSpec, error) {
-	return buildCodexLaunchSpec(codexRunCtx{
-		codexBinary:      rc.CodexBinary,
-		workspacePath:    rc.WorkspacePath,
-		beadID:           rc.BeadID,
-		model:            rc.Model,
-		priorThreadID:    rc.PriorThreadID,
-		iterationCount:   rc.IterationCount,
-		baseEnv:          rc.BaseEnv,
-		codexHome:        rc.CodexHome,
-		billingEmitter:   rc.BillingEmitter,
-		runID:            rc.RunID,
-		skipBillingGuard: rc.SkipBillingGuard,
-	})
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// codex billing guard test seams (hk-tu48u C3/T11)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedMaterializeForcedLoginMethod exposes materializeForcedLoginMethod for
-// tests in package daemon_test.
-//
-// Bead ref: hk-tu48u.
-func ExportedMaterializeForcedLoginMethod(codexHome string) error {
-	return materializeForcedLoginMethod(codexHome)
-}
-
-// ExportedAssertChatGPTPlan exposes the fail-closed assertChatGPTPlan for tests
-// in package daemon_test.
-//
-// Bead ref: hk-tu48u.
-func ExportedAssertChatGPTPlan(codexHome string) error {
-	return assertChatGPTPlan(codexHome)
-}
-
-// ExportedRunCodexBillingGuard exposes runCodexBillingGuard (materialize + assert
-// + emit) for tests in package daemon_test.
-//
-// Bead ref: hk-tu48u.
-func ExportedRunCodexBillingGuard(bus handlercontract.EventEmitter, beadID, codexHome string) error {
-	return runCodexBillingGuard(context.Background(), bus, core.RunID{}, beadID, codexHome)
-}
-
-// ExportedForcedLoginMethodValue is the value the guard materializes / asserts.
-// Bead ref: hk-tu48u.
-const ExportedForcedLoginMethodValue = forcedLoginMethodValue
+var ExportedBuildCodexLaunchSpec = codex.BuildLaunchSpec
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OperatorPauseController test seams (hk-ry8q1)
@@ -3039,133 +2983,30 @@ func ExportedRunCtxFromClaudeRunCtx(rc ExportedClaudeRunCtx) handlercontract.Run
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CodexHarness + codex JSONL parser test seams (hk-m57va C2/T8)
+// codex harness constructor seam (hk-m57va C2/T8) — RETAINED after P2 E1a-1
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// The JSONL-parser and thread-id seams that used to sit here moved with the
+// harness to internal/harness/codex/export_test.go. This one stays because
+// regression_golden_no_selection_hkhwwlk_test.go asserts, from package
+// daemon_test, that registering codex did not change claude's selection
+// behaviour — a daemon-composition claim, not a codex-unit claim.
 
-// ExportedNewCodexHarness re-exports NewCodexHarness for tests in package
+// ExportedNewCodexHarness re-exports codex.NewHarness for tests in package
 // daemon_test.
 //
 // Bead ref: hk-m57va.
-var ExportedNewCodexHarness = NewCodexHarness
-
-// ExportedCodexEventKind mirrors the internal codexEventKind enum for tests.
-type ExportedCodexEventKind = codexEventKind
-
-// Exported codexEventKind constants for table-driven parser tests.
-const (
-	ExportedCodexEventKindOther         = CodexEventKindOther
-	ExportedCodexEventKindThreadStarted = CodexEventKindThreadStarted
-	ExportedCodexEventKindTurnStarted   = CodexEventKindTurnStarted
-	ExportedCodexEventKindTurnCompleted = CodexEventKindTurnCompleted
-	ExportedCodexEventKindTurnFailed    = CodexEventKindTurnFailed
-)
-
-// ExportedCodexEvent is the exported projection of the parsed codexEvent for
-// test assertions.
-type ExportedCodexEvent struct {
-	Kind         ExportedCodexEventKind
-	RawType      string
-	ThreadID     string
-	TurnID       string
-	ErrorMessage string
-	InputTokens  int
-	OutputTokens int
-}
-
-// ExportedParseCodexJSONLEvent exposes parseCodexJSONLEvent for tests, returning
-// the exported event projection.
-//
-// Bead ref: hk-m57va.
-func ExportedParseCodexJSONLEvent(line []byte) (ExportedCodexEvent, error) {
-	ev, err := parseCodexJSONLEvent(line)
-	if err != nil {
-		return ExportedCodexEvent{}, err
-	}
-	return ExportedCodexEvent{
-		Kind:         ev.Kind,
-		RawType:      ev.RawType,
-		ThreadID:     ev.ThreadID,
-		TurnID:       ev.TurnID,
-		ErrorMessage: ev.ErrorMessage,
-		InputTokens:  ev.Usage.InputTokens,
-		OutputTokens: ev.Usage.OutputTokens,
-	}, nil
-}
-
-// ExportedCodexRunArtifacts is the exported projection of codexRunArtifacts for
-// thread-id-capture tests.
-type ExportedCodexRunArtifacts struct {
-	CapturedThreadID   string
-	TurnCompleted      bool
-	TurnFailed         bool
-	TurnFailureMessage string
-	InputTokens        int
-	OutputTokens       int
-}
-
-// ExportedCaptureCodexThreadStream folds an ordered slice of raw JSONL lines
-// through parseCodexJSONLEvent + captureCodexThreadID and returns the resulting
-// run artifacts. Malformed lines are surfaced as an error (the production stream
-// reader skips them, but tests assert exact behaviour). This exercises the
-// thread-id capture-into-run-state requirement of T8.
-//
-// Bead ref: hk-m57va.
-func ExportedCaptureCodexThreadStream(lines [][]byte) (ExportedCodexRunArtifacts, error) {
-	var arts codexRunArtifacts
-	for _, line := range lines {
-		ev, err := parseCodexJSONLEvent(line)
-		if err != nil {
-			return ExportedCodexRunArtifacts{}, err
-		}
-		captureCodexThreadID(&arts, ev)
-	}
-	return ExportedCodexRunArtifacts{
-		CapturedThreadID:   arts.capturedThreadID,
-		TurnCompleted:      arts.turnCompleted,
-		TurnFailed:         arts.turnFailed,
-		TurnFailureMessage: arts.turnFailureMessage,
-		InputTokens:        arts.inputTokens,
-		OutputTokens:       arts.outputTokens,
-	}, nil
-}
+var ExportedNewCodexHarness = codex.NewHarness
 
 // ─────────────────────────────────────────────────────────────────────────────
-// codex Refs:<bead> trailer guarantee test seams (hk-bpxci C2/T9)
+// Refs:<bead> trailer VERIFY seam (hk-bpxci C2/T9) — RETAINED after P2 E1a-1
 // ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedCodexRefsOutcome mirrors the shared.RefsOutcome enum for tests. The
-// enum moved to internal/harness/shared in P2 unit E1a-0; the seam name is kept
-// so the existing test files compile unchanged.
-type ExportedCodexRefsOutcome = shared.RefsOutcome
-
-// Exported shared.RefsOutcome constants for ensureCodexRefsTrailer assertions.
-const (
-	ExportedCodexRefsAlreadyPresent = shared.RefsAlreadyPresent
-	ExportedCodexRefsAmended        = shared.RefsAmended
-	ExportedCodexRefsCommitted      = shared.RefsCommitted
-	ExportedCodexRefsNoChange       = shared.RefsNoChange
-)
-
-// ExportedCodexNoWorkDurationFloorDefault exposes the default no-work duration
-// floor so tests can assert against the shipped value rather than restating it.
 //
-// Bead ref: hk-368i4.
-const ExportedCodexNoWorkDurationFloorDefault = codexNoWorkDurationFloorDefault
-
-// ExportedCodexNoWorkSuspected exposes codexNoWorkSuspected — the hk-368i4
-// detector pairing a shared.RefsNoChange outcome with a sub-floor phase duration.
-//
-// Bead ref: hk-368i4.
-func ExportedCodexNoWorkSuspected(outcome ExportedCodexRefsOutcome, phaseDuration, floorOverride time.Duration) bool {
-	return codexNoWorkSuspected(outcome, phaseDuration, floorOverride)
-}
-
-// ExportedCodexNoWorkFloor exposes codexNoWorkFloor (override resolution).
-//
-// Bead ref: hk-368i4.
-func ExportedCodexNoWorkFloor(override time.Duration) time.Duration {
-	return codexNoWorkFloor(override)
-}
+// The codex-specific decision-table seams (EnsureRefsTrailer, the outcome
+// constants, the seed-prompt instruction, the no-work detector) moved to
+// internal/harness/codex/export_test.go with the harness. This one stays
+// because picommit_test.go — a PI test — uses it to verify the shared VERIFY
+// half, and pi does not leave until E1c.
 
 // ExportedWorktreeHEADHasRefsTrailer exposes shared.WorktreeHEADHasRefsTrailer
 // (VERIFY). The nil argument is the tmux.CommandRunner — nil means bare local
@@ -3174,23 +3015,6 @@ func ExportedCodexNoWorkFloor(override time.Duration) time.Duration {
 // Bead ref: hk-bpxci.
 func ExportedWorktreeHEADHasRefsTrailer(ctx context.Context, wtPath string, beadID core.BeadID) (bool, error) {
 	return shared.WorktreeHEADHasRefsTrailer(ctx, nil, wtPath, beadID)
-}
-
-// ExportedEnsureCodexRefsTrailer exposes ensureCodexRefsTrailer (VERIFY +
-// deterministic commit-after-exit FALLBACK).
-//
-// Bead ref: hk-bpxci.
-func ExportedEnsureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadID core.BeadID) (ExportedCodexRefsOutcome, error) {
-	return ensureCodexRefsTrailer(ctx, nil, wtPath, parentSHA, beadID)
-}
-
-// ExportedCodexSeedPromptInstruction returns the codex seed prompt for beadID so
-// tests can assert the INSTRUCT part (the prompt tells codex to commit with the
-// Refs: trailer).
-//
-// Bead ref: hk-bpxci.
-func ExportedCodexSeedPromptInstruction(beadID core.BeadID) string {
-	return fmt.Sprintf(codexSeedPromptTemplate, string(beadID))
 }
 
 // ExportedShellQuoteArg exposes shellQuoteArg for unit tests in package daemon_test.
@@ -3258,19 +3082,6 @@ func ExportedEnsurePiRefsTrailer(ctx context.Context, wtPath, parentSHA string, 
 // Bead ref: hk-ypxwl (PI-100).
 func ExportedEnsurePiRefsTrailerViaRunner(ctx context.Context, runner tmuxPkg.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (ExportedPiRefsOutcome, error) {
 	return ensurePiRefsTrailer(ctx, runner, wtPath, parentSHA, beadID)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// codex thread_id interceptor test seams (hk-mzgh)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedNewCodexThreadIDInterceptor exposes newCodexThreadIDInterceptor for
-// tests in package daemon_test. It returns the concrete type so tests can call
-// TokenUsage() after draining the stream.
-//
-// Bead ref: hk-mzgh.
-func ExportedNewCodexThreadIDInterceptor(inner io.Reader, cb func(string)) *codexThreadIDInterceptor {
-	return newCodexThreadIDInterceptor(inner, cb)
 }
 
 // ExportedNewPiHarness re-exports NewPiHarness for tests in package daemon_test.

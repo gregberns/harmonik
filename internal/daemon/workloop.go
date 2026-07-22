@@ -60,6 +60,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
@@ -5105,14 +5106,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// ── ProcessExit daemon-side commit fallback (hk-gd9r / hk-mazln) ─────────
 	//
 	// codex: --sandbox workspace-write blocks writes to .git. The daemon runs
-	// git OUTSIDE the sandbox and calls ensureCodexRefsTrailer to stage+commit
+	// git OUTSIDE the sandbox and calls codex.EnsureRefsTrailer to stage+commit
 	// any worktree changes codex produced but could not commit.
 	//
 	// Pi: unsandboxed, so Pi can self-commit, but a weak free model may not (or
 	// may omit the trailer). ensurePiRefsTrailer applies the same deterministic
 	// fallback so the standard trailer-detection path succeeds.
 	//
-	// Shared decision table (see codexcommit.go / picommit.go):
+	// Shared decision table (see internal/harness/codex/commit.go / picommit.go):
 	//   • HEAD already carries "Refs: <beadID>" → no-op (agent self-committed).
 	//   • HEAD advanced but lacks the trailer → amend HEAD to add it.
 	//   • HEAD unchanged, worktree dirty → stage all + create trailer commit.
@@ -5135,7 +5136,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 						beadID, outcome)
 				}
 			} else {
-				outcome, ensureErr := ensureCodexRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
+				outcome, ensureErr := codex.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
 				if ensureErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
 						beadID, ensureErr)
@@ -5147,12 +5148,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					// Diagnostic only — the run is already failing via the
 					// no-commit guard; this records WHY, which is what was
 					// missing when hk-jcrzn went undetected.
-					if codexNoWorkSuspected(outcome, implementerPhaseDur, deps.codexNoWorkDurationFloor) {
-						floor := codexNoWorkFloor(deps.codexNoWorkDurationFloor)
+					if codex.NoWorkSuspected(outcome, implementerPhaseDur, deps.codexNoWorkDurationFloor) {
+						floor := codex.NoWorkFloor(deps.codexNoWorkDurationFloor)
 						fmt.Fprintf(os.Stderr,
 							"daemon: workloop: bead %s: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
 							beadID, implementerPhaseDur, floor)
-						emitImplementerNoWorkSuspected(ctx, deps.bus, runID, beadID, implementerPhaseDur, floor)
+						codex.EmitImplementerNoWorkSuspected(ctx, deps.bus, runID, beadID, implementerPhaseDur, floor)
 					}
 				}
 			}

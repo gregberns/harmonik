@@ -55,6 +55,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
 // sp47CodexStream is a realistic codex JSONL prefix. Two thread.started lines:
@@ -112,7 +113,7 @@ func (e *sp47CollectingEmitter) agentReady() []core.EventEnvelope {
 // as dot_cascade.go's StdoutWrapper does. Returns the captured ids.
 func sp47CaptureThroughRealInterceptor(t *testing.T, stream string, onCapture func(string)) []string {
 	t.Helper()
-	h := &daemon.CodexHarness{}
+	h := &codex.Harness{}
 	var ids []string
 	r := h.NewSessionIDInterceptor(strings.NewReader(stream), func(id string) {
 		ids = append(ids, id)

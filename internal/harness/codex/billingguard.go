@@ -1,4 +1,4 @@
-package daemon
+package codex
 
 // codexbillingguard.go — positive codex billing guard (codex-harness C3/T11,
 // hk-tu48u).

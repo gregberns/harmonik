@@ -27,6 +27,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -49,7 +50,7 @@ func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry
 	if err := reg.Register(core.AgentTypeClaudeCode, NewClaudeHarness()); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register claude harness: %w", err)
 	}
-	if err := reg.Register(core.AgentTypeCodex, NewCodexHarness("", "")); err != nil {
+	if err := reg.Register(core.AgentTypeCodex, codex.NewHarness("", "")); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register codex harness: %w", err)
 	}
 	piH := NewPiHarness(

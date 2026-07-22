@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
 // TestBuildCodexRoutedLaunchSpec_Remote_RoutesAgentTaskThroughRunner asserts
@@ -44,7 +45,7 @@ func TestBuildCodexRoutedLaunchSpec_Remote_RoutesAgentTaskThroughRunner(t *testi
 		runner:          rr,
 	}
 
-	h := NewCodexHarness("", "")
+	h := codex.NewHarness("", "")
 	if _, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypeCodex); err != nil {
 		t.Fatalf("buildCodexRoutedLaunchSpec (remote): %v", err)
 	}
@@ -99,7 +100,7 @@ func TestBuildCodexRoutedLaunchSpec_Local_UsesLocalFS(t *testing.T) {
 		runner:          nil, // LOCAL run
 	}
 
-	h := NewCodexHarness("", "")
+	h := codex.NewHarness("", "")
 	if _, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypeCodex); err != nil {
 		t.Fatalf("buildCodexRoutedLaunchSpec (local): %v", err)
 	}

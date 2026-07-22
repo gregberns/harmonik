@@ -1,6 +1,6 @@
-package daemon
+package codex
 
-// codexlaunchspec.go — buildCodexLaunchSpec helper (codex-harness C2/T7, hk-rgxwd).
+// codexlaunchspec.go — BuildLaunchSpec helper (codex-harness C2/T7, hk-rgxwd).
 //
 // Builds the argv/env spec for launching a codex subprocess for any workflow
 // phase:
@@ -50,7 +50,7 @@ var codexCredentialDenyKeys = []string{
 
 // codexSeedPromptTemplate is the seed prompt template passed to `codex exec` as
 // a positional argument. It instructs codex to read agent-task.md (written by
-// the shared launch path before buildCodexLaunchSpec is called), implement the
+// the shared launch path before BuildLaunchSpec is called), implement the
 // task, and commit with the required Refs: trailer so the daemon's
 // commit-detection path can confirm the work landed.
 //
@@ -59,26 +59,26 @@ var codexCredentialDenyKeys = []string{
 // (workloop.go beadAlreadySubsumedInMain). The instruction is deliberately
 // explicit — single work commit, trailer on its own line in the body — to
 // maximise the chance codex obeys it. The codex commit-after-exit fallback
-// (codexcommit.go ensureCodexRefsTrailer) is the deterministic backstop for when
+// (codexcommit.go EnsureRefsTrailer) is the deterministic backstop for when
 // codex edits files but does not produce a trailer-carrying commit; this prompt
 // is the happy-path INSTRUCT half of the T9 guarantee (hk-bpxci).
 //
 // %s is replaced with the bead ID.
 const codexSeedPromptTemplate = `Read .harmonik/agent-task.md to understand your task. Implement the changes described. When you are done, commit ALL your changes in a single git commit, and the commit message MUST include the line "Refs: %s" on its own line in the commit body. This trailer is required — without it the system cannot detect that your work is complete.`
 
-// codexRunCtx carries the per-launch inputs to buildCodexLaunchSpec.
-type codexRunCtx struct {
-	// codexBinary is the codex executable path. Empty is normalised to "codex".
-	codexBinary string
+// RunCtx carries the per-launch inputs to BuildLaunchSpec.
+type RunCtx struct {
+	// CodexBinary is the codex executable path. Empty is normalised to "codex".
+	CodexBinary string
 
-	// workspacePath is the absolute path to the worktree (-C flag).
-	workspacePath string
+	// WorkspacePath is the absolute path to the worktree (-C flag).
+	WorkspacePath string
 
-	// beadID is the bead correlation identifier, embedded in the seed prompt's
+	// BeadID is the bead correlation identifier, embedded in the seed prompt's
 	// Refs: trailer instruction and in the WorkDir.
-	beadID string
+	BeadID string
 
-	// model is the codex model name passed as --model on the initial turn
+	// Model is the codex model name passed as --model on the initial turn
 	// (e.g. "o4-mini", "o3"). OPTIONAL: an empty model means "launch with no
 	// --model flag", so codex resolves the model from $CODEX_HOME/config.toml —
 	// i.e. the account default. This is the ONLY working configuration on a
@@ -101,47 +101,47 @@ type codexRunCtx struct {
 	// default being a model the installed codex-cli can serve — a rotating default
 	// (e.g. gpt-5.6-sol vs codex-cli 0.142.5) can 400. See
 	// scenarios/core-loop-proof/known-red.md §"Operator caveat" (COORD c072).
-	model string
+	Model string
 
-	// priorThreadID is non-nil for resume turns (iteration >= 2). It holds the
+	// PriorThreadID is non-nil for resume turns (iteration >= 2). It holds the
 	// codex thread_id captured from the prior turn's first thread.started event.
 	// Nil means this is the initial turn.
-	priorThreadID *string
+	PriorThreadID *string
 
-	// iterationCount is the 1-based DOT iteration index. On a resume turn
-	// (priorThreadID != nil) it selects the reviewer-feedback.iter-<N-1>.md the
+	// IterationCount is the 1-based DOT iteration index. On a resume turn
+	// (PriorThreadID != nil) it selects the reviewer-feedback.iter-<N-1>.md the
 	// resume seed prompt points at. Zero on the initial turn. See
 	// implementerResumeSeedPrompt (agentseedprompt.go).
-	iterationCount int
+	IterationCount int
 
-	// baseEnv is the base environment inherited from daemon Config.HandlerEnv.
+	// BaseEnv is the base environment inherited from daemon Config.HandlerEnv.
 	// codexCredentialDenyKeys are stripped and re-emitted as empty overrides.
-	// CODEX_HOME is set to codexHome (overwriting any prior value).
-	baseEnv []string
+	// CODEX_HOME is set to CodexHome (overwriting any prior value).
+	BaseEnv []string
 
-	// codexHome is the path written to CODEX_HOME. Empty is normalised to
+	// CodexHome is the path written to CODEX_HOME. Empty is normalised to
 	// "$HOME/.codex" (using os.UserHomeDir). A non-writable path is not
 	// validated here; the pre-flight billing guard (C3/T11) enforces that.
-	codexHome string
+	CodexHome string
 
-	// billingEmitter, when non-nil, receives codex_billing_guard events from the
+	// BillingEmitter, when non-nil, receives codex_billing_guard events from the
 	// positive billing guard (C3/T11). Nil disables event emission; the guard's
 	// enforcement (materialize + fail-closed assert) still runs regardless.
-	billingEmitter handlercontract.EventEmitter
+	BillingEmitter handlercontract.EventEmitter
 
-	// runID correlates the codex_billing_guard events with a run. May be the zero
+	// RunID correlates the codex_billing_guard events with a run. May be the zero
 	// (uuid.Nil) RunID when the spec is built before a run_id is minted, in which
 	// case the events are emitted run-unscoped.
-	runID core.RunID
+	RunID core.RunID
 
-	// skipBillingGuard disables the positive billing guard (C3/T11). It exists
+	// SkipBillingGuard disables the positive billing guard (C3/T11). It exists
 	// solely so unit tests that only exercise argv/env shape do not have to
 	// materialize a config.toml. Production callers MUST leave it false so the
 	// fail-closed guard runs.
-	skipBillingGuard bool
+	SkipBillingGuard bool
 }
 
-// buildCodexLaunchSpec constructs a handler.LaunchSpec for launching a codex
+// BuildLaunchSpec constructs a handler.LaunchSpec for launching a codex
 // subprocess for one turn (initial or resume).
 //
 // The returned spec is suitable for passing directly to handler.Launch. The
@@ -149,21 +149,21 @@ type codexRunCtx struct {
 // calling this function (the spec does not write it).
 //
 // Spec: C2-codex-adapter-spec.md §Approach; C3-auth-billing-spec.md §Approach.
-func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
-	if rc.workspacePath == "" {
+func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
+	if rc.WorkspacePath == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
-			"buildCodexLaunchSpec: workspacePath must be non-empty")
+			"BuildLaunchSpec: workspacePath must be non-empty")
 	}
-	if rc.beadID == "" {
+	if rc.BeadID == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
-			"buildCodexLaunchSpec: beadID must be non-empty")
+			"BuildLaunchSpec: beadID must be non-empty")
 	}
-	if rc.priorThreadID != nil && *rc.priorThreadID == "" {
+	if rc.PriorThreadID != nil && *rc.PriorThreadID == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
-			"buildCodexLaunchSpec: priorThreadID must not be an empty string (pass nil for initial turn)")
+			"BuildLaunchSpec: priorThreadID must not be an empty string (pass nil for initial turn)")
 	}
 
-	binary := rc.codexBinary
+	binary := rc.CodexBinary
 	if binary == "" {
 		binary = "codex"
 	}
@@ -178,34 +178,34 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	// -c config override works for both initial and resume turns, so sandboxing
 	// uses that uniform mechanism. WorkDir sets the resume subprocess cwd.
 	//
-	// --model is emitted on the initial turn ONLY when rc.model is non-empty. An
+	// --model is emitted on the initial turn ONLY when rc.Model is non-empty. An
 	// empty model omits the flag so codex uses its $CODEX_HOME/config.toml default
 	// (the account default) — the only working config on the HN-022-mandated
-	// ChatGPT-subscription path, where a named model 400s (see the rc.model doc).
+	// ChatGPT-subscription path, where a named model 400s (see the rc.Model doc).
 	// Resume turns never carry --model: the thread context already encodes the
 	// model, and `codex exec resume` may reject a redundant --model.
-	seedPrompt := fmt.Sprintf(codexSeedPromptTemplate, rc.beadID)
+	seedPrompt := fmt.Sprintf(codexSeedPromptTemplate, rc.BeadID)
 	var args []string
-	if rc.priorThreadID != nil {
+	if rc.PriorThreadID != nil {
 		// Resume turns deliver the reviewer-feedback pointer via the shared resume
 		// prompt so a DOT back-edge re-entry gets an actionable instruction instead
 		// of the identical initial prompt it already satisfied (c073 defect; peer of
 		// pasteInjectImplementerResume for claude).
-		seedPrompt = shared.ImplementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
+		seedPrompt = shared.ImplementerResumeSeedPrompt(rc.BeadID, rc.IterationCount-1)
 		// codex exec resume does NOT accept -C (exit 2: "unexpected argument -C found").
 		// WorkDir in the returned LaunchSpec sets the subprocess working directory.
-		args = []string{"exec", "resume", *rc.priorThreadID, "--json", "-c", `sandbox_mode="danger-full-access"`}
+		args = []string{"exec", "resume", *rc.PriorThreadID, "--json", "-c", `sandbox_mode="danger-full-access"`}
 		args = append(args, seedPrompt)
 	} else {
 		args = []string{"exec", "--json", "-c", `sandbox_mode="danger-full-access"`}
-		if rc.model != "" {
-			args = append(args, "--model", rc.model)
+		if rc.Model != "" {
+			args = append(args, "--model", rc.Model)
 		}
-		args = append(args, "-C", rc.workspacePath, seedPrompt)
+		args = append(args, "-C", rc.WorkspacePath, seedPrompt)
 	}
 
 	// Build env: copy baseEnv, strip credential keys, set CODEX_HOME.
-	env := buildCodexEnv(rc.baseEnv, rc.codexHome)
+	env := buildCodexEnv(rc.BaseEnv, rc.CodexHome)
 
 	// Positive billing guard (C3/T11, hk-tu48u): materialize
 	// forced_login_method=chatgpt into $CODEX_HOME/config.toml and run a
@@ -216,9 +216,9 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	// resolveCodexHome here MUST match the CODEX_HOME the child receives (set by
 	// buildCodexEnv above) so the guard inspects exactly the config codex will
 	// read.
-	if !rc.skipBillingGuard {
-		guardedHome := resolveCodexHome(rc.codexHome)
-		if err := runCodexBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, guardedHome); err != nil {
+	if !rc.SkipBillingGuard {
+		guardedHome := resolveCodexHome(rc.CodexHome)
+		if err := runCodexBillingGuard(context.Background(), rc.BillingEmitter, rc.RunID, rc.BeadID, guardedHome); err != nil {
 			return handler.LaunchSpec{}, err
 		}
 	}
@@ -227,7 +227,7 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 		Binary:       binary,
 		Args:         args,
 		Env:          env,
-		WorkDir:      rc.workspacePath,
+		WorkDir:      rc.WorkspacePath,
 		Role:         "implementer",
 		StdinDevNull: true, // hk-rpr6: codex (ProcessExit) blocks on pane PTY stdin without EOF
 	}, nil

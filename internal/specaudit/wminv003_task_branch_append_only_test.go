@@ -403,7 +403,7 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// the scanner from flagging its own synthetic test payload.
 	"internal/specaudit/wminv003_task_branch_append_only_test.go": "self-exemption: synthetic violation strings are string literal payloads for temp-file tests, not actual exec calls",
 
-	// internal/daemon/codexcommit.go — the codex harness amends the most recent
+	// internal/harness/codex/commit.go — the codex harness amends the most recent
 	// HEAD commit on the run/* worktree branch ONLY to append the "Refs: <bead>"
 	// trailer when codex's one-shot process did not include it at commit time.
 	// This is the authorised post-exit trailer-guarantee for the codex harness
@@ -412,15 +412,24 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// targets the worktree HEAD before the branch is observed by any other process
 	// (workspace_leased is not yet emitted at this point), so it does NOT violate
 	// the append-only guarantee on an observed task branch.
+	//
+	// The key names internal/harness/codex/commit.go, not internal/daemon/
+	// codexcommit.go, because P2 unit E1a-1 relocated the file. The allowlist
+	// matches on literal relative path, so a stale key would (a) authorise
+	// nothing real and (b) silently exempt any future daemon file that happened
+	// to reappear under the old name. The E1a-0 split already moved the actual
+	// `git commit --amend` call down into internal/harness/shared/refstrailer.go
+	// (entry below); this entry keeps the codex decision table authorised for the
+	// day it needs the primitive back.
 	// Authorised: codex-harness spec C2/T9 (hk-bpxci); pre-observation amend only.
-	"internal/daemon/codexcommit.go": "codex-harness C2/T9 (hk-bpxci); post-exit Refs-trailer amend before workspace_leased; not a rewrite of an observed task branch",
+	"internal/harness/codex/commit.go": "codex-harness C2/T9 (hk-bpxci), relocated by P2 E1a-1; post-exit Refs-trailer amend before workspace_leased; not a rewrite of an observed task branch",
 
 	// internal/harness/shared/refstrailer.go — the SAME authorised amend, moved.
 	// P2 unit E1a-0 split the harness-agnostic half of codexcommit.go into
 	// internal/harness/shared because the pi harness consumed ten of its symbols
 	// (picommit.go's piRefsOutcome was a type alias of the codex enum). The
 	// `git commit --amend` in AmendHEADAddRefsTrailer is the identical pre-
-	// observation, message-only trailer append that the codexcommit.go entry
+	// observation, message-only trailer append that the codex commit.go entry
 	// above authorises — it is now shared by codex and pi rather than owned by
 	// codex. This allowlist keys on literal relative path, so the move needs its
 	// own entry or the audit fails.
@@ -437,11 +446,11 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// verdict, immediately before the fast-forward merge (workloop.go calls it
 	// right before lockedMergeRunBranchToMain), so the trailer-bearing commit is
 	// the one main fast-forwards to. No other process observes the branch at this
-	// point — this mirrors the codexcommit.go authorization (daemon-private,
+	// point — this mirrors the codex commit.go authorization (daemon-private,
 	// message-only, pre-merge amend), it is NOT a rewrite of an observed task
 	// branch. Authorised: hk-dyim review audit-trail embed; agent-reviewer skill
 	// contract §"How the verdict lands in git".
-	"internal/daemon/reviewtrailers_hkdyim.go": "hk-dyim review audit-trail trailer embed; daemon-private worktree HEAD message-only amend after implementer exit + reviewer APPROVE, immediately before the FF merge; tree unchanged, no concurrent observer — mirrors codexcommit.go; not a rewrite of an observed task branch",
+	"internal/daemon/reviewtrailers_hkdyim.go": "hk-dyim review audit-trail trailer embed; daemon-private worktree HEAD message-only amend after implementer exit + reviewer APPROVE, immediately before the FF merge; tree unchanged, no concurrent observer — mirrors the codex harness commit path; not a rewrite of an observed task branch",
 }
 
 // wmInv003FixtureScanGoSource walks all .go files under the given root (up to

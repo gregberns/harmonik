@@ -7,7 +7,7 @@ package main
 //
 // The codex launch path reads ONE key out of .harmonik/config.yaml —
 // codex.stale_wal_max_bytes — and that key is REQUIRED with NO compiled default
-// (internal/daemon/codexwalguard.go, the same fail-loud / zero-hardcoded-thresholds
+// (internal/harness/codex/walguard.go, the same fail-loud / zero-hardcoded-thresholds
 // mandate the governor and keeper follow). Before this file existed, `harmonik init`
 // wrote a config.yaml with keeper: and harnesses.pi: blocks but NO codex: block at
 // all, so the FIRST time a freshly-initialised project selected the codex harness
@@ -34,8 +34,8 @@ package main
 //
 // LOAD-BEARING round-trip invariant (asserted in
 // init_codex_block_hkyhvrh_test.go): the config.yaml the REAL writeConfigYAML emits,
-// fed to the REAL guard (reached via daemon.CodexHarness.LaunchSpec), must NOT
-// produce *daemon.ErrMissingCodexStaleWALMaxBytes. If a new REQUIRED-with-no-default
+// fed to the REAL guard (reached via codex.Harness.LaunchSpec), must NOT
+// produce *codex.ErrMissingStaleWALMaxBytes. If a new REQUIRED-with-no-default
 // key is added under `codex:` in internal/daemon, you MUST add a line here.
 //
 // Bead ref: hk-yhvrh.

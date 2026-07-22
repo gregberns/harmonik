@@ -52,6 +52,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -99,7 +100,7 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 			model:           "o4-mini",
 			runner:          nil, // LOCAL run — no worker
 		}
-		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, NewCodexHarness("", ""), core.AgentTypeCodex)
+		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, codex.NewHarness("", ""), core.AgentTypeCodex)
 		if err != nil {
 			t.Fatalf("buildCodexRoutedLaunchSpec (local codex): %v", err)
 		}
@@ -186,7 +187,7 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 			baseEnv:         []string{"PATH=/usr/bin"},
 			runner:          newNoOpRecorderZ8ek(), // REMOTE run (worker selected)
 		}
-		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, NewCodexHarness("", ""), core.AgentTypeCodex)
+		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, codex.NewHarness("", ""), core.AgentTypeCodex)
 		if err != nil {
 			t.Fatalf("buildCodexRoutedLaunchSpec (remote codex): %v", err)
 		}

@@ -1,4 +1,4 @@
-package daemon
+package codex
 
 // codexnowork_hk368i4.go — the sub-threshold-duration detector for a codex
 // implement phase that reported success without doing any work (hk-368i4).
@@ -56,17 +56,17 @@ import (
 // Bead ref: hk-368i4.
 const codexNoWorkDurationFloorDefault = 10 * time.Second
 
-// codexNoWorkFloor resolves the effective no-work duration floor: the per-deps
+// NoWorkFloor resolves the effective no-work duration floor: the per-deps
 // override when set, otherwise the package default. Zero and negative overrides
 // both fall back, so a zero-valued deps struct behaves as production does.
-func codexNoWorkFloor(override time.Duration) time.Duration {
+func NoWorkFloor(override time.Duration) time.Duration {
 	if override > 0 {
 		return override
 	}
 	return codexNoWorkDurationFloorDefault
 }
 
-// codexNoWorkSuspected reports whether an implement phase should be flagged as
+// NoWorkSuspected reports whether an implement phase should be flagged as
 // a no-work run: the refs-trailer fallback found nothing to commit AND the
 // phase finished faster than the floor.
 //
@@ -74,21 +74,21 @@ func codexNoWorkFloor(override time.Duration) time.Duration {
 // is treated as unmeasured and never flags — a missing measurement is not
 // evidence of anything, and flagging on it would make the detector fire on
 // every run whose clock plumbing is absent.
-func codexNoWorkSuspected(outcome shared.RefsOutcome, phaseDuration, floorOverride time.Duration) bool {
+func NoWorkSuspected(outcome shared.RefsOutcome, phaseDuration, floorOverride time.Duration) bool {
 	if outcome != shared.RefsNoChange {
 		return false
 	}
 	if phaseDuration <= 0 {
 		return false
 	}
-	return phaseDuration < codexNoWorkFloor(floorOverride)
+	return phaseDuration < NoWorkFloor(floorOverride)
 }
 
-// emitImplementerNoWorkSuspected emits the implementer_no_work_suspected event
+// EmitImplementerNoWorkSuspected emits the implementer_no_work_suspected event
 // (hk-368i4). Non-fatal: marshal/emit errors are discarded, since the run's
 // failure is already recorded by the no-commit path and this event is purely a
 // diagnostic.
-func emitImplementerNoWorkSuspected(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, phaseDuration, floor time.Duration) {
+func EmitImplementerNoWorkSuspected(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, phaseDuration, floor time.Duration) {
 	if bus == nil {
 		return
 	}

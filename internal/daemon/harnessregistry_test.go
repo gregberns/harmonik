@@ -32,6 +32,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,7 +128,7 @@ func TestHarnessRegistry_RegisteredTypes_AllHarnesses(t *testing.T) {
 }
 
 // TestHarnessRegistry_ForAgent_Codex_Registered verifies that after T12 codex IS
-// registered: ForAgent(codex) succeeds and returns a *CodexHarness.
+// registered: ForAgent(codex) succeeds and returns a *codex.Harness.
 func TestHarnessRegistry_ForAgent_Codex_Registered(t *testing.T) {
 	reg, err := daemon.ExportedNewHarnessRegistry()
 	if err != nil {
@@ -141,8 +142,8 @@ func TestHarnessRegistry_ForAgent_Codex_Registered(t *testing.T) {
 	if h == nil {
 		t.Fatal("ForAgent(codex): expected non-nil harness")
 	}
-	if _, ok := h.(*daemon.CodexHarness); !ok {
-		t.Errorf("ForAgent(codex) returned %T; want *daemon.CodexHarness", h)
+	if _, ok := h.(*codex.Harness); !ok {
+		t.Errorf("ForAgent(codex) returned %T; want *codex.Harness", h)
 	}
 }
 

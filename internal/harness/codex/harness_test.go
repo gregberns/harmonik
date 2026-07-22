@@ -1,4 +1,4 @@
-package daemon_test
+package codex_test
 
 // codexharness_test.go — CodexHarness unit tests (codex-harness C2/T8, hk-m57va).
 //
@@ -20,8 +20,8 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ import (
 func TestCodexHarness_AgentType(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	if got := h.AgentType(); got != core.AgentTypeCodex {
 		t.Errorf("AgentType = %q; want %q", got, core.AgentTypeCodex)
 	}
@@ -43,7 +43,7 @@ func TestCodexHarness_AgentType(t *testing.T) {
 func TestCodexHarness_SessionIDPolicy(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	if got := h.SessionIDPolicy(); got != handlercontract.SessionIDCaptured {
 		t.Errorf("SessionIDPolicy = %v; want SessionIDCaptured", got)
 	}
@@ -54,7 +54,7 @@ func TestCodexHarness_SessionIDPolicy(t *testing.T) {
 func TestCodexHarness_Completion(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	if got := h.Completion(); got != handlercontract.CompletionProcessExit {
 		t.Errorf("Completion = %v; want CompletionProcessExit", got)
 	}
@@ -69,7 +69,7 @@ func TestCodexHarness_Completion(t *testing.T) {
 func TestCodexHarness_DetectReady_AgentReady(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeAgentReady)}
 	if !h.DetectReady(ev) {
 		t.Error("DetectReady(agent_ready) = false; want true")
@@ -81,7 +81,7 @@ func TestCodexHarness_DetectReady_AgentReady(t *testing.T) {
 func TestCodexHarness_DetectReady_LaunchInitiated(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeLaunchInitiated)}
 	if h.DetectReady(ev) {
 		t.Error("DetectReady(launch_initiated) = true; want false (HC-041)")
@@ -93,7 +93,7 @@ func TestCodexHarness_DetectReady_LaunchInitiated(t *testing.T) {
 func TestCodexHarness_DetectReady_OtherEvent(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	ev := handlercontract.EventEnvelope{Type: "run_started"}
 	if h.DetectReady(ev) {
 		t.Error("DetectReady(run_started) = true; want false")
@@ -117,7 +117,7 @@ func TestCodexHarness_LaunchSpec_InitialDelegates(t *testing.T) {
 		BaseEnv:       []string{"PATH=/usr/bin"},
 	}
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -158,7 +158,7 @@ func TestCodexHarness_LaunchSpec_ResumeDelegates(t *testing.T) {
 		PriorSessionID: &threadID,
 	}
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -184,7 +184,7 @@ func TestCodexHarness_LaunchSpec_CustomBinary(t *testing.T) {
 		Model:         "o4-mini",
 	}
 
-	h := daemon.ExportedNewCodexHarness("/usr/local/bin/codex", "")
+	h := codex.ExportedNewCodexHarness("/usr/local/bin/codex", "")
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -216,7 +216,7 @@ func TestCodexHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 	// forced_login_method=chatgpt config.toml and PASS, exactly as the production
 	// cascade (T12) sets up CODEX_HOME. (An unwritable/real home would make the
 	// guard's mkdir/assert fail and short-circuit this credential-strip check.)
-	h := daemon.ExportedNewCodexHarness("", t.TempDir())
+	h := codex.ExportedNewCodexHarness("", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -257,7 +257,7 @@ func TestCodexHarness_LaunchSpec_CodexHomePresent(t *testing.T) {
 	// config.toml and PASS — the same setup the production cascade (T12) performs.
 	// The previous "/custom/codex/home" tripped mkdir on a read-only path.
 	codexHome := t.TempDir()
-	h := daemon.ExportedNewCodexHarness("", codexHome)
+	h := codex.ExportedNewCodexHarness("", codexHome)
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -277,7 +277,7 @@ func TestCodexHarness_LaunchSpec_EmptyWorkspaceErrors(t *testing.T) {
 		BeadID:        "hk-m57va-test-err",
 	}
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	if _, err := h.LaunchSpec(rc); err == nil {
 		t.Error("LaunchSpec with empty WorkspacePath: want error, got nil")
 	}
@@ -301,7 +301,7 @@ func TestCodexHarness_LaunchSpec_EmptyModelAccountDefault(t *testing.T) {
 	// t.TempDir() CODEX_HOME mirrors the positive sibling test: the billing guard
 	// materializes forced_login_method=chatgpt into a fresh home and asserts, so the
 	// launch shape is exercised without touching the operator's ~/.codex.
-	h := daemon.ExportedNewCodexHarness("", t.TempDir())
+	h := codex.ExportedNewCodexHarness("", t.TempDir())
 	spec, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("LaunchSpec with empty Model on initial turn: want account-default launch, got error: %v", err)
@@ -325,7 +325,7 @@ func TestCodexHarness_LaunchSpec_ModelFlagInInitialArgv(t *testing.T) {
 		Model:         "o4-mini",
 	}
 
-	h := daemon.ExportedNewCodexHarness("", t.TempDir())
+	h := codex.ExportedNewCodexHarness("", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("LaunchSpec: %v", err)
@@ -345,7 +345,7 @@ func TestCodexHarness_LaunchSpec_ModelFlagInInitialArgv(t *testing.T) {
 func TestCodexHarness_Seed_NoOp(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	if err := h.Seed(nil, handlercontract.RunCtx{}); err != nil {
 		t.Errorf("Seed = %v; want nil", err)
 	}
@@ -356,7 +356,7 @@ func TestCodexHarness_Seed_NoOp(t *testing.T) {
 func TestCodexHarness_Retask_NoOp(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	if err := h.Retask(nil, "some feedback", handlercontract.RunCtx{}); err != nil {
 		t.Errorf("Retask = %v; want nil", err)
 	}
@@ -367,7 +367,7 @@ func TestCodexHarness_Retask_NoOp(t *testing.T) {
 func TestCodexHarness_Teardown_NilSession(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	if err := h.Teardown(nil); err != nil {
 		t.Errorf("Teardown(nil) = %v; want nil", err)
 	}
@@ -379,7 +379,7 @@ func TestCodexHarness_Teardown_LiveSessionKilled(t *testing.T) {
 	t.Parallel()
 
 	sess := &codexHarnessFakeSession{}
-	h := daemon.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", "")
 	if err := h.Teardown(sess); err != nil {
 		t.Fatalf("Teardown(live) = %v; want nil", err)
 	}

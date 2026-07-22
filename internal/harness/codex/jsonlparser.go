@@ -1,4 +1,4 @@
-package daemon
+package codex
 
 // codexjsonlparser.go — codex `exec --json` JSONL event parser (codex-harness C2/T8, hk-m57va).
 //
@@ -7,7 +7,7 @@ package daemon
 // no TUI/paste/`/quit` path: it self-terminates on turn completion. So the
 // codex run-state has no minted session ID — the thread identifier is CAPTURED
 // from the first `thread.started` event and recorded so the next turn can be
-// launched with `codex exec resume <thread_id>` (buildCodexLaunchSpec resume
+// launched with `codex exec resume <thread_id>` (BuildLaunchSpec resume
 // path, hk-rgxwd C2/T7).
 //
 // This file owns two units, both standalone (T12 / hk-xhawy wires them into the
@@ -29,7 +29,7 @@ package daemon
 // The parser is intentionally permissive about unknown event types and unknown
 // fields: codex emits many item.* / token-count events the harness does not act
 // on, so an unrecognised "type" yields a codexEvent with Kind ==
-// CodexEventKindOther rather than an error. A genuinely malformed line (not a
+// EventKindOther rather than an error. A genuinely malformed line (not a
 // JSON object) is the only parse error.
 //
 // Spec refs:
@@ -47,46 +47,46 @@ import (
 
 // codexEventKind classifies a parsed codex JSONL event into the small set of
 // kinds the harness acts on. Every codex event whose "type" the harness does
-// not model maps to CodexEventKindOther; the raw type string is preserved in
+// not model maps to EventKindOther; the raw type string is preserved in
 // codexEvent.RawType for diagnostics.
 type codexEventKind int
 
 const (
-	// CodexEventKindOther is any codex event the harness does not specifically
+	// EventKindOther is any codex event the harness does not specifically
 	// model (item.*, token counts, reasoning deltas, etc.). RawType carries the
 	// original discriminator.
-	CodexEventKindOther codexEventKind = iota
+	EventKindOther codexEventKind = iota
 
-	// CodexEventKindThreadStarted is the "thread.started" event. ThreadID carries
+	// EventKindThreadStarted is the "thread.started" event. ThreadID carries
 	// the captured codex thread identifier used for `codex exec resume`.
-	CodexEventKindThreadStarted
+	EventKindThreadStarted
 
-	// CodexEventKindTurnStarted is the "turn.started" event. TurnID carries the
+	// EventKindTurnStarted is the "turn.started" event. TurnID carries the
 	// codex turn identifier when present.
-	CodexEventKindTurnStarted
+	EventKindTurnStarted
 
-	// CodexEventKindTurnCompleted is the "turn.completed" event signalling a clean
+	// EventKindTurnCompleted is the "turn.completed" event signalling a clean
 	// turn boundary. For codex this is the harness's analog of agent_completed:
 	// the process exits shortly after.
-	CodexEventKindTurnCompleted
+	EventKindTurnCompleted
 
-	// CodexEventKindTurnFailed is the "turn.failed" event. ErrorMessage carries the
+	// EventKindTurnFailed is the "turn.failed" event. ErrorMessage carries the
 	// codex-reported failure reason when present.
-	CodexEventKindTurnFailed
+	EventKindTurnFailed
 )
 
 // String renders a codexEventKind for diagnostics and test messages.
 func (k codexEventKind) String() string {
 	switch k {
-	case CodexEventKindThreadStarted:
+	case EventKindThreadStarted:
 		return "thread.started"
-	case CodexEventKindTurnStarted:
+	case EventKindTurnStarted:
 		return "turn.started"
-	case CodexEventKindTurnCompleted:
+	case EventKindTurnCompleted:
 		return "turn.completed"
-	case CodexEventKindTurnFailed:
+	case EventKindTurnFailed:
 		return "turn.failed"
-	case CodexEventKindOther:
+	case EventKindOther:
 		return "other"
 	default:
 		return fmt.Sprintf("codexEventKind(%d)", int(k))
@@ -99,7 +99,7 @@ func (k codexEventKind) String() string {
 // RawType field always carries the original "type" discriminator so callers can
 // log or branch on event types the harness does not yet model.
 type codexEvent struct {
-	// Kind is the classified event kind. CodexEventKindOther for unmodelled types.
+	// Kind is the classified event kind. EventKindOther for unmodelled types.
 	Kind codexEventKind
 
 	// RawType is the verbatim "type" discriminator from the JSONL line. Empty
@@ -107,7 +107,7 @@ type codexEvent struct {
 	RawType string
 
 	// ThreadID is the codex thread identifier. Populated for
-	// CodexEventKindThreadStarted; empty otherwise.
+	// EventKindThreadStarted; empty otherwise.
 	ThreadID string
 
 	// TurnID is the codex turn identifier. Populated for turn.* events when the
@@ -115,7 +115,7 @@ type codexEvent struct {
 	TurnID string
 
 	// ErrorMessage is the codex-reported failure reason. Populated for
-	// CodexEventKindTurnFailed when the line carries an error object; empty
+	// EventKindTurnFailed when the line carries an error object; empty
 	// otherwise.
 	ErrorMessage string
 
@@ -152,7 +152,7 @@ type codexJSONLLine struct {
 //
 // It returns an error only when line is not a JSON object (a genuinely malformed
 // line). An unrecognised "type" discriminator is NOT an error: it yields a
-// codexEvent with Kind == CodexEventKindOther and RawType set to the original
+// codexEvent with Kind == EventKindOther and RawType set to the original
 // value, so the caller can skip events the harness does not model without
 // aborting the stream.
 //
@@ -175,25 +175,25 @@ func parseCodexJSONLEvent(line []byte) (codexEvent, error) {
 
 	switch raw.Type {
 	case "thread.started":
-		ev.Kind = CodexEventKindThreadStarted
+		ev.Kind = EventKindThreadStarted
 		ev.ThreadID = raw.ThreadID
 	case "turn.started":
-		ev.Kind = CodexEventKindTurnStarted
+		ev.Kind = EventKindTurnStarted
 		ev.TurnID = raw.TurnID
 	case "turn.completed":
-		ev.Kind = CodexEventKindTurnCompleted
+		ev.Kind = EventKindTurnCompleted
 		ev.TurnID = raw.TurnID
 		if raw.Usage != nil {
 			ev.Usage = *raw.Usage
 		}
 	case "turn.failed":
-		ev.Kind = CodexEventKindTurnFailed
+		ev.Kind = EventKindTurnFailed
 		ev.TurnID = raw.TurnID
 		if raw.Error != nil {
 			ev.ErrorMessage = raw.Error.Message
 		}
 	default:
-		ev.Kind = CodexEventKindOther
+		ev.Kind = EventKindOther
 	}
 
 	return ev, nil
@@ -346,14 +346,14 @@ func (c *codexThreadIDInterceptor) TokenUsage() (inputTokens, outputTokens int) 
 // thread-id-capture boundary.
 func captureCodexThreadID(arts *codexRunArtifacts, ev codexEvent) bool {
 	switch ev.Kind {
-	case CodexEventKindThreadStarted:
+	case EventKindThreadStarted:
 		// First thread.started wins; ignore later ones (and empty ids).
 		if arts.capturedThreadID == "" && ev.ThreadID != "" {
 			arts.capturedThreadID = ev.ThreadID
 			return true
 		}
 		return false
-	case CodexEventKindTurnCompleted:
+	case EventKindTurnCompleted:
 		if !arts.turnCompleted {
 			arts.turnCompleted = true
 			arts.inputTokens = ev.Usage.InputTokens
@@ -361,7 +361,7 @@ func captureCodexThreadID(arts *codexRunArtifacts, ev codexEvent) bool {
 			return true
 		}
 		return false
-	case CodexEventKindTurnFailed:
+	case EventKindTurnFailed:
 		if !arts.turnFailed {
 			arts.turnFailed = true
 			arts.turnFailureMessage = ev.ErrorMessage

@@ -1,4 +1,4 @@
-package daemon_test
+package codex_test
 
 // codexjsonlparser_test.go — unit tests for the codex `exec --json` JSONL parser
 // (codex-harness C2/T8, hk-m57va).
@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 	tests := []struct {
 		name          string
 		line          string
-		wantKind      daemon.ExportedCodexEventKind
+		wantKind      codex.ExportedCodexEventKind
 		wantRawType   string
 		wantThreadID  string
 		wantTurnID    string
@@ -40,21 +40,21 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 		{
 			name:         "thread.started captures thread_id",
 			line:         `{"type":"thread.started","thread_id":"th_abc123"}`,
-			wantKind:     daemon.ExportedCodexEventKindThreadStarted,
+			wantKind:     codex.ExportedCodexEventKindThreadStarted,
 			wantRawType:  "thread.started",
 			wantThreadID: "th_abc123",
 		},
 		{
 			name:        "turn.started carries turn_id",
 			line:        `{"type":"turn.started","turn_id":"tr_1"}`,
-			wantKind:    daemon.ExportedCodexEventKindTurnStarted,
+			wantKind:    codex.ExportedCodexEventKindTurnStarted,
 			wantRawType: "turn.started",
 			wantTurnID:  "tr_1",
 		},
 		{
 			name:         "turn.completed carries turn_id and input tokens",
 			line:         `{"type":"turn.completed","turn_id":"tr_1","usage":{"input_tokens":10}}`,
-			wantKind:     daemon.ExportedCodexEventKindTurnCompleted,
+			wantKind:     codex.ExportedCodexEventKindTurnCompleted,
 			wantRawType:  "turn.completed",
 			wantTurnID:   "tr_1",
 			wantInTokens: 10,
@@ -62,7 +62,7 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 		{
 			name:          "turn.completed carries both input and output tokens",
 			line:          `{"type":"turn.completed","turn_id":"tr_2","usage":{"input_tokens":24763,"output_tokens":122}}`,
-			wantKind:      daemon.ExportedCodexEventKindTurnCompleted,
+			wantKind:      codex.ExportedCodexEventKindTurnCompleted,
 			wantRawType:   "turn.completed",
 			wantTurnID:    "tr_2",
 			wantInTokens:  24763,
@@ -71,14 +71,14 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 		{
 			name:        "turn.completed without usage object has zero token counts",
 			line:        `{"type":"turn.completed","turn_id":"tr_3"}`,
-			wantKind:    daemon.ExportedCodexEventKindTurnCompleted,
+			wantKind:    codex.ExportedCodexEventKindTurnCompleted,
 			wantRawType: "turn.completed",
 			wantTurnID:  "tr_3",
 		},
 		{
 			name:        "turn.failed carries error message",
 			line:        `{"type":"turn.failed","turn_id":"tr_2","error":{"message":"sandbox denied write"}}`,
-			wantKind:    daemon.ExportedCodexEventKindTurnFailed,
+			wantKind:    codex.ExportedCodexEventKindTurnFailed,
 			wantRawType: "turn.failed",
 			wantTurnID:  "tr_2",
 			wantErrMsg:  "sandbox denied write",
@@ -86,7 +86,7 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 		{
 			name:        "turn.failed without error object is still classified",
 			line:        `{"type":"turn.failed","turn_id":"tr_3"}`,
-			wantKind:    daemon.ExportedCodexEventKindTurnFailed,
+			wantKind:    codex.ExportedCodexEventKindTurnFailed,
 			wantRawType: "turn.failed",
 			wantTurnID:  "tr_3",
 			wantErrMsg:  "",
@@ -94,26 +94,26 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 		{
 			name:        "unmodelled item event maps to Other with RawType preserved",
 			line:        `{"type":"item.completed","item":{"id":"i_1","type":"agent_message"}}`,
-			wantKind:    daemon.ExportedCodexEventKindOther,
+			wantKind:    codex.ExportedCodexEventKindOther,
 			wantRawType: "item.completed",
 		},
 		{
 			name:        "token count event maps to Other",
 			line:        `{"type":"token_count","input_tokens":42}`,
-			wantKind:    daemon.ExportedCodexEventKindOther,
+			wantKind:    codex.ExportedCodexEventKindOther,
 			wantRawType: "token_count",
 		},
 		{
 			name:         "leading/trailing whitespace tolerated",
 			line:         "  \t" + `{"type":"thread.started","thread_id":"th_ws"}` + "  ",
-			wantKind:     daemon.ExportedCodexEventKindThreadStarted,
+			wantKind:     codex.ExportedCodexEventKindThreadStarted,
 			wantRawType:  "thread.started",
 			wantThreadID: "th_ws",
 		},
 		{
 			name:        "thread.started with empty id still classifies as thread.started",
 			line:        `{"type":"thread.started","thread_id":""}`,
-			wantKind:    daemon.ExportedCodexEventKindThreadStarted,
+			wantKind:    codex.ExportedCodexEventKindThreadStarted,
 			wantRawType: "thread.started",
 		},
 	}
@@ -123,7 +123,7 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			ev, err := daemon.ExportedParseCodexJSONLEvent([]byte(tc.line))
+			ev, err := codex.ExportedParseCodexJSONLEvent([]byte(tc.line))
 			if err != nil {
 				t.Fatalf("parseCodexJSONLEvent(%q): unexpected error: %v", tc.line, err)
 			}
@@ -174,7 +174,7 @@ func TestParseCodexJSONLEvent_Errors(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := daemon.ExportedParseCodexJSONLEvent([]byte(tc.line))
+			_, err := codex.ExportedParseCodexJSONLEvent([]byte(tc.line))
 			if err == nil {
 				t.Errorf("parseCodexJSONLEvent(%q): want error, got nil", tc.line)
 			}
@@ -199,7 +199,7 @@ func TestCaptureCodexThreadStream_HappyPath(t *testing.T) {
 		`{"type":"turn.completed","turn_id":"tr_1","usage":{"input_tokens":100}}`,
 	)
 
-	arts, err := daemon.ExportedCaptureCodexThreadStream(lines)
+	arts, err := codex.ExportedCaptureCodexThreadStream(lines)
 	if err != nil {
 		t.Fatalf("ExportedCaptureCodexThreadStream: unexpected error: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestCaptureCodexThreadStream_TokensFullUsage(t *testing.T) {
 		`{"type":"turn.completed","turn_id":"tr_1","usage":{"input_tokens":24763,"output_tokens":122}}`,
 	)
 
-	arts, err := daemon.ExportedCaptureCodexThreadStream(lines)
+	arts, err := codex.ExportedCaptureCodexThreadStream(lines)
 	if err != nil {
 		t.Fatalf("ExportedCaptureCodexThreadStream: unexpected error: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestCaptureCodexThreadStream_NoUsageOnCompletion(t *testing.T) {
 		`{"type":"turn.completed","turn_id":"tr_1"}`,
 	)
 
-	arts, err := daemon.ExportedCaptureCodexThreadStream(lines)
+	arts, err := codex.ExportedCaptureCodexThreadStream(lines)
 	if err != nil {
 		t.Fatalf("ExportedCaptureCodexThreadStream: unexpected error: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestCaptureCodexThreadStream_FirstThreadStartedWins(t *testing.T) {
 		`{"type":"turn.completed","turn_id":"tr_1"}`,
 	)
 
-	arts, err := daemon.ExportedCaptureCodexThreadStream(lines)
+	arts, err := codex.ExportedCaptureCodexThreadStream(lines)
 	if err != nil {
 		t.Fatalf("ExportedCaptureCodexThreadStream: unexpected error: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestCaptureCodexThreadStream_TurnFailed(t *testing.T) {
 		`{"type":"turn.failed","turn_id":"tr_1","error":{"message":"model error: rate limited"}}`,
 	)
 
-	arts, err := daemon.ExportedCaptureCodexThreadStream(lines)
+	arts, err := codex.ExportedCaptureCodexThreadStream(lines)
 	if err != nil {
 		t.Fatalf("ExportedCaptureCodexThreadStream: unexpected error: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestCaptureCodexThreadStream_NoThreadStarted(t *testing.T) {
 		`{"type":"turn.completed","turn_id":"tr_1"}`,
 	)
 
-	arts, err := daemon.ExportedCaptureCodexThreadStream(lines)
+	arts, err := codex.ExportedCaptureCodexThreadStream(lines)
 	if err != nil {
 		t.Fatalf("ExportedCaptureCodexThreadStream: unexpected error: %v", err)
 	}
@@ -365,7 +365,7 @@ func codexStreamLines(lines ...string) [][]byte {
 func TestParseCodexJSONLEvent_ErrorMessageMentionsLine(t *testing.T) {
 	t.Parallel()
 
-	_, err := daemon.ExportedParseCodexJSONLEvent([]byte(`{"type":}`))
+	_, err := codex.ExportedParseCodexJSONLEvent([]byte(`{"type":}`))
 	if err == nil {
 		t.Fatal("want error for malformed JSON, got nil")
 	}

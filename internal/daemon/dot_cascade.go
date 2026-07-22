@@ -84,6 +84,7 @@ import (
 	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/substrate"
@@ -2008,13 +2009,13 @@ func dispatchDotAgenticNode(
 
 	// codex --sandbox workspace-write cannot commit inside a worktree (.git points
 	// outside the sandbox root → self-commit fails 100%). After the process exits,
-	// the daemon stages+commits any changes codex produced via ensureCodexRefsTrailer
-	// (codexcommit.go, hk-gd9r). Mirrors workloop.go:4007-4019. Must run before
+	// the daemon stages+commits any changes codex produced via codex.EnsureRefsTrailer
+	// (internal/harness/codex/commit.go, hk-gd9r). Mirrors workloop.go:4007-4019. Must run before
 	// resolveDotWorktreeHEAD so the no-commit guard below sees any commit we create.
 	if deps.harnessRegistry != nil {
 		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil &&
 			h.Completion() == handlercontract.CompletionProcessExit {
-			codexOutcome, ensureErr := ensureCodexRefsTrailer(ctx, runner, wtPath, preHeadSHA, beadID)
+			codexOutcome, ensureErr := codex.EnsureRefsTrailer(ctx, runner, wtPath, preHeadSHA, beadID)
 			if ensureErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
 					beadID, ensureErr)
@@ -2024,12 +2025,12 @@ func dispatchDotAgenticNode(
 				// hk-368i4: same detector as the workloop path — a no-change
 				// outcome from a node that finished in seconds is a no-work run.
 				// Diagnostic only; the no-commit guard below still decides.
-				if codexNoWorkSuspected(codexOutcome, nodePhaseDur, deps.codexNoWorkDurationFloor) {
-					floor := codexNoWorkFloor(deps.codexNoWorkDurationFloor)
+				if codex.NoWorkSuspected(codexOutcome, nodePhaseDur, deps.codexNoWorkDurationFloor) {
+					floor := codex.NoWorkFloor(deps.codexNoWorkDurationFloor)
 					fmt.Fprintf(os.Stderr,
 						"daemon: dot: bead %s node %q: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
 						beadID, node.ID, nodePhaseDur, floor)
-					emitImplementerNoWorkSuspected(ctx, deps.bus, runID, beadID, nodePhaseDur, floor)
+					codex.EmitImplementerNoWorkSuspected(ctx, deps.bus, runID, beadID, nodePhaseDur, floor)
 				}
 			}
 		}

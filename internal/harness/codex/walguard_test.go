@@ -1,4 +1,4 @@
-package daemon
+package codex
 
 // codexwalguard_test.go — unit tests for cleanCodexStaleWAL (hk-2pb79, hk-xisvb).
 //
@@ -7,7 +7,7 @@ package daemon
 //   - SMALL WAL (well under threshold), no open handle => removed (hk-xisvb
 //     regression: the old size-gate left it in place; staleness is size-free).
 //   - config.yaml present but stale_wal_max_bytes absent => returns an error
-//     that wraps ErrMissingCodexStaleWALMaxBytes; WAL untouched.
+//     that wraps ErrMissingStaleWALMaxBytes; WAL untouched.
 //   - No config.yaml in projectRoot => returns nil; WAL untouched.
 //   - Explicit stale_wal_max_bytes: 0 => a non-empty WAL is removed.
 //   - walUnchanged re-check: size-change OR mtime-change => skip removal.
@@ -141,9 +141,9 @@ func TestCleanCodexStaleWAL_MissingKey_FailsLoud(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for missing key, got nil")
 	}
-	var target *ErrMissingCodexStaleWALMaxBytes
+	var target *ErrMissingStaleWALMaxBytes
 	if !errors.As(err, &target) {
-		t.Fatalf("expected ErrMissingCodexStaleWALMaxBytes, got %T: %v", err, err)
+		t.Fatalf("expected ErrMissingStaleWALMaxBytes, got %T: %v", err, err)
 	}
 	if _, statErr := os.Stat(wal); statErr != nil {
 		t.Fatalf("expected wal untouched on missing-key fail, stat err = %v", statErr)
@@ -158,9 +158,9 @@ func TestCleanCodexStaleWAL_CodexBlockNoKey_FailsLoud(t *testing.T) {
 	wal := writeWAL(t, codexHome, 4096)
 
 	err := cleanCodexStaleWAL(projectRoot, codexHome)
-	var target *ErrMissingCodexStaleWALMaxBytes
+	var target *ErrMissingStaleWALMaxBytes
 	if !errors.As(err, &target) {
-		t.Fatalf("expected ErrMissingCodexStaleWALMaxBytes for codex block w/o key, got %T: %v", err, err)
+		t.Fatalf("expected ErrMissingStaleWALMaxBytes for codex block w/o key, got %T: %v", err, err)
 	}
 	if _, statErr := os.Stat(wal); statErr != nil {
 		t.Fatalf("expected wal untouched on missing-key fail, stat err = %v", statErr)

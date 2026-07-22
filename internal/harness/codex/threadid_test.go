@@ -1,4 +1,4 @@
-package daemon_test
+package codex_test
 
 // codexthreadid_mzgh_test.go — unit tests for codex thread_id capture and
 // resume launchspec construction (hk-mzgh, G2 fix).
@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ func TestCodexThreadIDInterceptor_FiresOnThreadStarted_mzgh(t *testing.T) {
 		capturedID = id
 	}
 
-	interceptor := daemon.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), cb)
+	interceptor := codex.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), cb)
 	_, err := io.ReadAll(interceptor)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -68,7 +68,7 @@ func TestCodexThreadIDInterceptor_PassesThrough_mzgh(t *testing.T) {
 	jsonlStream := `{"type":"thread.started","thread_id":"th_passthrough"}` + "\n" +
 		`{"type":"turn.completed","turn_id":"tr_1"}` + "\n"
 
-	interceptor := daemon.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {})
+	interceptor := codex.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {})
 	got, err := io.ReadAll(interceptor)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -91,7 +91,7 @@ func TestCodexThreadIDInterceptor_FirstThreadStartedWins_mzgh(t *testing.T) {
 
 	var capturedID string
 	fired := 0
-	interceptor := daemon.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(id string) {
+	interceptor := codex.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(id string) {
 		fired++
 		capturedID = id
 	})
@@ -118,7 +118,7 @@ func TestCodexThreadIDInterceptor_NoThreadStarted_mzgh(t *testing.T) {
 	}, "\n") + "\n"
 
 	fired := 0
-	interceptor := daemon.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {
+	interceptor := codex.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {
 		fired++
 	})
 	if _, err := io.ReadAll(interceptor); err != nil {
@@ -142,7 +142,7 @@ func TestCodexThreadIDInterceptor_TokenUsage_mzgh(t *testing.T) {
 		`{"type":"turn.completed","turn_id":"tr_1","usage":{"input_tokens":24763,"output_tokens":122}}`,
 	}, "\n") + "\n"
 
-	interceptor := daemon.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {})
+	interceptor := codex.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {})
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestCodexThreadIDInterceptor_TokenUsage_NoUsage_mzgh(t *testing.T) {
 		`{"type":"turn.completed","turn_id":"tr_1"}`,
 	}, "\n") + "\n"
 
-	interceptor := daemon.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {})
+	interceptor := codex.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {})
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -187,14 +187,14 @@ func TestBuildCodexLaunchSpec_ResumeHasThreadID_mzgh(t *testing.T) {
 	t.Parallel()
 
 	threadID := "th_captured_mzgh_resume"
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-mzgh-resume",
 		BeadID:           "hk-mzgh-test-resume",
 		PriorThreadID:    &threadID,
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("ExportedBuildCodexLaunchSpec: %v", err)
 	}
@@ -209,14 +209,14 @@ func TestBuildCodexLaunchSpec_ResumeNoCFlag_mzgh(t *testing.T) {
 	t.Parallel()
 
 	threadID := "th_captured_mzgh_nocflag"
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-mzgh-nocflag",
 		BeadID:           "hk-mzgh-test-nocflag",
 		PriorThreadID:    &threadID,
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("ExportedBuildCodexLaunchSpec: %v", err)
 	}
@@ -234,14 +234,14 @@ func TestBuildCodexLaunchSpec_ResumeNoCFlag_mzgh(t *testing.T) {
 func TestBuildCodexLaunchSpec_InitialHasCFlag_mzgh(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-mzgh-initial-cflag",
 		BeadID:           "hk-mzgh-test-initial-cflag",
 		Model:            "o4-mini",
 		SkipBillingGuard: true,
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("ExportedBuildCodexLaunchSpec: %v", err)
 	}

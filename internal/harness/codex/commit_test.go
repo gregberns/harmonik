@@ -1,4 +1,4 @@
-package daemon_test
+package codex_test
 
 // codexcommit_test.go — Refs:<bead> trailer guarantee tests (codex-harness
 // C2/T9, hk-bpxci).
@@ -26,7 +26,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ func TestCodexInstruct_SeedPromptCarriesRefsTrailer(t *testing.T) {
 	t.Parallel()
 
 	beadID := core.BeadID("hk-bpxci-instruct")
-	prompt := daemon.ExportedCodexSeedPromptInstruction(beadID)
+	prompt := codex.ExportedCodexSeedPromptInstruction(beadID)
 
 	if !strings.Contains(prompt, string(beadID)) {
 		t.Errorf("seed prompt does not reference bead ID %q: %q", beadID, prompt)
@@ -135,7 +135,7 @@ func TestCodexVerify_TrailerPresentDetected(t *testing.T) {
 	codexCommitGit(t, dir, "add", ".")
 	codexCommitGit(t, dir, "commit", "-m", "work\n\nRefs: "+string(beadID))
 
-	has, err := daemon.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
+	has, err := codex.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
 	if err != nil {
 		t.Fatalf("worktreeHEADHasRefsTrailer: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestCodexVerify_TrailerAbsentNotDetected(t *testing.T) {
 	// Commit carries Refs: hk-foo.10 only.
 	codexCommitGit(t, dir, "commit", "-m", "work\n\nRefs: hk-foo.10")
 
-	has, err := daemon.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, core.BeadID("hk-foo.1"))
+	has, err := codex.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, core.BeadID("hk-foo.1"))
 	if err != nil {
 		t.Fatalf("worktreeHEADHasRefsTrailer: %v", err)
 	}
@@ -184,11 +184,11 @@ func TestCodexFallback_AlreadyCommittedWithTrailer_NoOp(t *testing.T) {
 	headBefore := codexCommitGitOut(t, dir, "rev-parse", "HEAD")
 	countBefore := codexCommitCount(t, dir)
 
-	outcome, err := daemon.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	outcome, err := codex.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
 	if err != nil {
 		t.Fatalf("ensureCodexRefsTrailer: %v", err)
 	}
-	if outcome != daemon.ExportedCodexRefsAlreadyPresent {
+	if outcome != codex.ExportedCodexRefsAlreadyPresent {
 		t.Errorf("outcome = %v; want already_present", outcome)
 	}
 	if got := codexCommitGitOut(t, dir, "rev-parse", "HEAD"); got != headBefore {
@@ -212,11 +212,11 @@ func TestCodexFallback_EditedButNotCommitted_CreatesCommit(t *testing.T) {
 	codexCommitWriteFile(t, dir, "new.txt", "new file from codex")
 	countBefore := codexCommitCount(t, dir)
 
-	outcome, err := daemon.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	outcome, err := codex.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
 	if err != nil {
 		t.Fatalf("ensureCodexRefsTrailer: %v", err)
 	}
-	if outcome != daemon.ExportedCodexRefsCommitted {
+	if outcome != codex.ExportedCodexRefsCommitted {
 		t.Errorf("outcome = %v; want committed", outcome)
 	}
 	// A new commit must exist past parent, carrying the trailer.
@@ -226,7 +226,7 @@ func TestCodexFallback_EditedButNotCommitted_CreatesCommit(t *testing.T) {
 	if got := codexCommitCount(t, dir); got != countBefore+1 {
 		t.Errorf("commit count = %d; want %d (one fallback commit)", got, countBefore+1)
 	}
-	has, err := daemon.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
+	has, err := codex.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
 	if err != nil {
 		t.Fatalf("verify trailer: %v", err)
 	}
@@ -253,11 +253,11 @@ func TestCodexFallback_CommittedWithoutTrailer_Amends(t *testing.T) {
 	treeBefore := codexCommitGitOut(t, dir, "rev-parse", "HEAD^{tree}")
 	countBefore := codexCommitCount(t, dir)
 
-	outcome, err := daemon.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	outcome, err := codex.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
 	if err != nil {
 		t.Fatalf("ensureCodexRefsTrailer: %v", err)
 	}
-	if outcome != daemon.ExportedCodexRefsAmended {
+	if outcome != codex.ExportedCodexRefsAmended {
 		t.Errorf("outcome = %v; want amended", outcome)
 	}
 	// Same tree (amend preserves the codex edits exactly).
@@ -269,7 +269,7 @@ func TestCodexFallback_CommittedWithoutTrailer_Amends(t *testing.T) {
 		t.Errorf("commit count = %d; want %d (amend, not follow-up)", got, countBefore)
 	}
 	// Trailer now present.
-	has, err := daemon.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
+	has, err := codex.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
 	if err != nil {
 		t.Fatalf("verify trailer: %v", err)
 	}
@@ -293,11 +293,11 @@ func TestCodexFallback_NoWork_NoCommitFabricated(t *testing.T) {
 	beadID := core.BeadID("hk-idle")
 	countBefore := codexCommitCount(t, dir)
 
-	outcome, err := daemon.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
+	outcome, err := codex.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, beadID)
 	if err != nil {
 		t.Fatalf("ensureCodexRefsTrailer: %v", err)
 	}
-	if outcome != daemon.ExportedCodexRefsNoChange {
+	if outcome != codex.ExportedCodexRefsNoChange {
 		t.Errorf("outcome = %v; want no_change", outcome)
 	}
 	if got := codexCommitGitOut(t, dir, "rev-parse", "HEAD"); got != parentSHA {
@@ -314,7 +314,7 @@ func TestCodexFallback_EmptyBeadIDErrors(t *testing.T) {
 	t.Parallel()
 
 	dir, parentSHA := codexCommitRepo(t)
-	if _, err := daemon.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, ""); err == nil {
+	if _, err := codex.ExportedEnsureCodexRefsTrailer(context.Background(), dir, parentSHA, ""); err == nil {
 		t.Error("ensureCodexRefsTrailer with empty beadID: want error, got nil")
 	}
 }

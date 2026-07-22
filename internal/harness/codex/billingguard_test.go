@@ -1,4 +1,4 @@
-package daemon_test
+package codex_test
 
 // codexbillingguard_test.go — unit tests for the positive codex billing guard
 // (codex-harness C3/T11, hk-tu48u).
@@ -27,7 +27,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/codex"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ func writeForcedConfig(t *testing.T, codexHome string) {
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		t.Fatalf("writeForcedConfig: mkdir: %v", err)
 	}
-	line := "forced_login_method = \"" + daemon.ExportedForcedLoginMethodValue + "\"\n"
+	line := "forced_login_method = \"" + codex.ExportedForcedLoginMethodValue + "\"\n"
 	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(line), 0o600); err != nil {
 		t.Fatalf("writeForcedConfig: write: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestMaterializeForcedLoginMethod_FreshHome(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	if err := daemon.ExportedMaterializeForcedLoginMethod(home); err != nil {
+	if err := codex.ExportedMaterializeForcedLoginMethod(home); err != nil {
 		t.Fatalf("materialize: unexpected error: %v", err)
 	}
 
@@ -120,14 +120,14 @@ func TestMaterializeForcedLoginMethod_Idempotent(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	if err := daemon.ExportedMaterializeForcedLoginMethod(home); err != nil {
+	if err := codex.ExportedMaterializeForcedLoginMethod(home); err != nil {
 		t.Fatalf("materialize #1: %v", err)
 	}
 	first, err := os.ReadFile(filepath.Join(home, "config.toml"))
 	if err != nil {
 		t.Fatalf("read #1: %v", err)
 	}
-	if err := daemon.ExportedMaterializeForcedLoginMethod(home); err != nil {
+	if err := codex.ExportedMaterializeForcedLoginMethod(home); err != nil {
 		t.Fatalf("materialize #2: %v", err)
 	}
 	second, err := os.ReadFile(filepath.Join(home, "config.toml"))
@@ -154,7 +154,7 @@ func TestMaterializeForcedLoginMethod_PreservesExisting(t *testing.T) {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	if err := daemon.ExportedMaterializeForcedLoginMethod(home); err != nil {
+	if err := codex.ExportedMaterializeForcedLoginMethod(home); err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
 	data, err := os.ReadFile(cfg)
@@ -188,7 +188,7 @@ func TestMaterializeForcedLoginMethod_RewritesWrongValue(t *testing.T) {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	if err := daemon.ExportedMaterializeForcedLoginMethod(home); err != nil {
+	if err := codex.ExportedMaterializeForcedLoginMethod(home); err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
 	data, err := os.ReadFile(cfg)
@@ -211,7 +211,7 @@ func TestMaterializeForcedLoginMethod_RewritesWrongValue(t *testing.T) {
 // is rejected.
 func TestMaterializeForcedLoginMethod_EmptyHomeErrors(t *testing.T) {
 	t.Parallel()
-	if err := daemon.ExportedMaterializeForcedLoginMethod(""); err == nil {
+	if err := codex.ExportedMaterializeForcedLoginMethod(""); err == nil {
 		t.Error("expected error for empty codexHome; got nil")
 	}
 }
@@ -292,7 +292,7 @@ func TestAssertChatGPTPlan_FailClosed(t *testing.T) {
 			home := t.TempDir()
 			tc.setup(t, home)
 
-			err := daemon.ExportedAssertChatGPTPlan(home)
+			err := codex.ExportedAssertChatGPTPlan(home)
 			if tc.wantErr && err == nil {
 				t.Errorf("%s: expected fail-closed error, got nil", tc.name)
 			}
@@ -306,7 +306,7 @@ func TestAssertChatGPTPlan_FailClosed(t *testing.T) {
 // TestAssertChatGPTPlan_EmptyHomeErrors verifies an empty codexHome is rejected.
 func TestAssertChatGPTPlan_EmptyHomeErrors(t *testing.T) {
 	t.Parallel()
-	if err := daemon.ExportedAssertChatGPTPlan(""); err == nil {
+	if err := codex.ExportedAssertChatGPTPlan(""); err == nil {
 		t.Error("expected error for empty codexHome; got nil")
 	}
 }
@@ -324,7 +324,7 @@ func TestRunCodexBillingGuard_Success_EmitsMaterializedThenAllowed(t *testing.T)
 	home := t.TempDir()
 	em := &capturingBillingEmitter{}
 
-	if err := daemon.ExportedRunCodexBillingGuard(em, "hk-guard-ok", home); err != nil {
+	if err := codex.ExportedRunCodexBillingGuard(em, "hk-guard-ok", home); err != nil {
 		t.Fatalf("guard returned error on a clean home: %v", err)
 	}
 
@@ -356,7 +356,7 @@ func TestRunCodexBillingGuard_ApiKeyLogin_EmitsDenied(t *testing.T) {
 		`{"OPENAI_API_KEY":"sk-pool-billing"}`)
 
 	em := &capturingBillingEmitter{}
-	err := daemon.ExportedRunCodexBillingGuard(em, "hk-guard-deny", home)
+	err := codex.ExportedRunCodexBillingGuard(em, "hk-guard-deny", home)
 	if err == nil {
 		t.Fatal("guard returned nil; expected fail-closed error on populated OPENAI_API_KEY")
 	}
@@ -377,7 +377,7 @@ func TestRunCodexBillingGuard_NilEmitter(t *testing.T) {
 	home := t.TempDir()
 	mustWrite(t, filepath.Join(home, "auth.json"), `{"OPENAI_API_KEY":"sk-pool"}`)
 
-	if err := daemon.ExportedRunCodexBillingGuard(nil, "hk-guard-nil", home); err == nil {
+	if err := codex.ExportedRunCodexBillingGuard(nil, "hk-guard-nil", home); err == nil {
 		t.Error("expected fail-closed error with nil emitter; got nil")
 	}
 }
@@ -396,7 +396,7 @@ func TestBuildCodexLaunchSpec_GuardFailClosed_NoSpec(t *testing.T) {
 	mustWrite(t, filepath.Join(home, "auth.json"), `{"OPENAI_API_KEY":"sk-pool-billing"}`)
 
 	em := &capturingBillingEmitter{}
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:  "/tmp/wt-test-codex-guard",
 		BeadID:         "hk-guard-e2e",
 		Model:          "o4-mini", // required; model guard runs before billing guard
@@ -405,7 +405,7 @@ func TestBuildCodexLaunchSpec_GuardFailClosed_NoSpec(t *testing.T) {
 		// SkipBillingGuard intentionally false: the guard MUST run.
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err == nil {
 		t.Fatalf("expected fail-closed error; got spec with binary %q and %d args", spec.Binary, len(spec.Args))
 	}
@@ -427,7 +427,7 @@ func TestBuildCodexLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
 
 	home := t.TempDir()
 	em := &capturingBillingEmitter{}
-	rc := daemon.ExportedCodexRunCtx{
+	rc := codex.ExportedCodexRunCtx{
 		WorkspacePath:  "/tmp/wt-test-codex-guard-ok",
 		BeadID:         "hk-guard-e2e-ok",
 		Model:          "o4-mini", // required; model guard runs before billing guard
@@ -436,7 +436,7 @@ func TestBuildCodexLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
 		BillingEmitter: em,
 	}
 
-	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	spec, err := codex.ExportedBuildCodexLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("guard should allow a clean home; got error: %v", err)
 	}

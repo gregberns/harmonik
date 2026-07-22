@@ -1,4 +1,4 @@
-package daemon
+package codex
 
 // codexwalguard_concurrency_test.go — concurrency-safety tests for the codex
 // stale-WAL guard (hk-qlelr).

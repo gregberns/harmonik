@@ -1,4 +1,4 @@
-package daemon
+package codex
 
 // codexwalguard.go — per-launch stale-WAL guard for the codex harness (hk-2pb79).
 //
@@ -11,7 +11,7 @@ package daemon
 // symptom is a fast-fail: codex exits in <10s with "exited without advancing
 // HEAD" because it never gets a usable session.
 //
-// This guard runs once per codex launch (CodexHarness.LaunchSpec) and cleans ANY
+// This guard runs once per codex launch (Harness.LaunchSpec) and cleans ANY
 // present, unheld stale WAL regardless of size. Staleness is a function of being
 // LEFT BEHIND BY A KILLED/SLEPT RUN, not of size — a SMALL stale WAL fast-fails
 // codex just as hard as a large one (field incident hk-xisvb: a 234 KB stale
@@ -117,15 +117,15 @@ type codexWALGuardConfig struct {
 	} `yaml:"codex"`
 }
 
-// ErrMissingCodexStaleWALMaxBytes is returned by cleanCodexStaleWAL when a
+// ErrMissingStaleWALMaxBytes is returned by cleanCodexStaleWAL when a
 // .harmonik/config.yaml exists but the required key codex.stale_wal_max_bytes is
 // absent. The key has NO compiled default (the "no hardcoded thresholds"
 // mandate): an absent key must fail the codex launch loud, not silently run with
 // the guard disabled. The key is a SECONDARY SIGNAL (it classifies the cleanup
 // log as large-vs-normal), NOT a cleanup gate — cleanup is unconditional on size.
-type ErrMissingCodexStaleWALMaxBytes struct{}
+type ErrMissingStaleWALMaxBytes struct{}
 
-func (e *ErrMissingCodexStaleWALMaxBytes) Error() string {
+func (e *ErrMissingStaleWALMaxBytes) Error() string {
 	return "daemon: codex stale-WAL guard: required key `codex.stale_wal_max_bytes` is not set; " +
 		"set it under a `codex:` block in .harmonik/config.yaml " +
 		"(e.g. `stale_wal_max_bytes: 1048576`) — there is no compiled default. " +
@@ -146,7 +146,7 @@ func (e *ErrMissingCodexStaleWALMaxBytes) Error() string {
 //     best-effort no-op (slog.Warn + return nil); a read error does not block a
 //     launch.
 //   - config.yaml present but codex.stale_wal_max_bytes absent => returns
-//     *ErrMissingCodexStaleWALMaxBytes (fail loud). A YAML parse error is also
+//     *ErrMissingStaleWALMaxBytes (fail loud). A YAML parse error is also
 //     returned.
 //   - Otherwise: for each $CODEX_HOME/state_*.sqlite-wal that is present AND not
 //     held open by any process (regardless of size), back up the wal + matching
@@ -181,7 +181,7 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 		return fmt.Errorf("daemon: codex stale-WAL guard: parse %s: %w", configPath, err)
 	}
 	if cfg.Codex.StaleWALMaxBytes == nil {
-		return &ErrMissingCodexStaleWALMaxBytes{}
+		return &ErrMissingStaleWALMaxBytes{}
 	}
 	maxBytes := *cfg.Codex.StaleWALMaxBytes
 

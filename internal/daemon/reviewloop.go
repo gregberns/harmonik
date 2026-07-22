@@ -1241,14 +1241,23 @@ func runReviewLoop(
 		// DOT reviewer_harness override is NOT applicable in review-loop mode because
 		// review-loop mode has no DOT node carrying the attribute; that override is
 		// threaded in dot_cascade.go (dispatchDotAgenticNode).
+		//
+		// hk-pkxju: the DEFAULT is INHERITANCE, and a reviewer must never inherit a
+		// SessionIDCaptured harness (codex, pi) — none of them can review today (no
+		// reviewer seed prompt, no agent_ready), so inheriting one meant every REVIEW
+		// node under HARMONIK_SUBSTRATE=codexdriver died on reviewer agent_ready_timeout.
+		// reviewerDefaultHarness swaps such an inherited harness for claude and returns
+		// a claude/SessionIDMinted implementer unchanged (all-claude byte-identical).
 		revSpecBuilder := deps.launchSpecBuilder
-		if deps.harnessRegistry != nil && implArtifacts.resolvedAgentType.Valid() {
+		revNodeDefault := reviewerDefaultHarness(
+			deps.harnessRegistry, implArtifacts.resolvedAgentType, string(beadID))
+		if deps.harnessRegistry != nil && revNodeDefault.Valid() {
 			revSpecBuilder = routedLaunchSpecBuilder(
 				deps.harnessRegistry,
-				core.BeadRecord{},               // tier-1 absent: bead labels already resolved into resolvedAgentType
-				core.AgentType(""),              // queue default: hk-4x3rg
-				implArtifacts.resolvedAgentType, // tier-3: implementer's resolved harness (DEFAULT)
-				core.AgentType(""),              // global default: built-in fallback = claude-code
+				core.BeadRecord{},  // tier-1 absent: bead labels already resolved into resolvedAgentType
+				core.AgentType(""), // queue default: hk-4x3rg
+				revNodeDefault,     // tier-3: implementer's resolved harness (DEFAULT), hk-pkxju-corrected
+				core.AgentType(""), // global default: built-in fallback = claude-code
 				deps.bus,
 			)
 		}

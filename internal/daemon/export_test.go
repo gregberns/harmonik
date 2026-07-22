@@ -710,6 +710,32 @@ func ExportedResolveHarnessAgentTypeQuiet(
 	return resolveHarnessAgentTypeQuiet(bead, queueDefault, nodeDefault, globalDefault)
 }
 
+// ExportedReviewerDefaultHarness exposes reviewerDefaultHarness for tests in
+// package daemon_test. See reviewerharness_hkiv748.go (hk-pkxju).
+func ExportedReviewerDefaultHarness(
+	reg *handlercontract.HarnessRegistry,
+	implementer core.AgentType,
+	beadID string,
+) core.AgentType {
+	return reviewerDefaultHarness(reg, implementer, beadID)
+}
+
+// ExportedDotReviewerInheritedHarnessOverride exposes
+// dotReviewerInheritedHarnessOverride for tests in package daemon_test.
+// See reviewerharness_hkiv748.go (hk-pkxju).
+func ExportedDotReviewerInheritedHarnessOverride(
+	reg *handlercontract.HarnessRegistry,
+	isReviewer bool,
+	reviewerHarnessOverride core.AgentType,
+	nodeHarness core.AgentType,
+	bead core.BeadRecord,
+	globalDefault core.AgentType,
+	beadID string,
+) core.AgentType {
+	return dotReviewerInheritedHarnessOverride(
+		reg, isReviewer, reviewerHarnessOverride, nodeHarness, bead, globalDefault, beadID)
+}
+
 // ExportedResolveGateAgentType exposes resolveGateAgentType for tests in package
 // daemon_test. See sandboxgate.go for semantics (hk-r4p0l).
 func ExportedResolveGateAgentType(implHarness handlercontract.Harness, fromArtifacts core.AgentType) core.AgentType {

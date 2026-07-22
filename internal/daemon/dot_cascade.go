@@ -1336,17 +1336,35 @@ func dispatchDotAgenticNode(
 	// (reviewer override > node harness= pin > run-level resolved harness);
 	// resolveHarnessAgentTypeQuiet is the same four-tier walk routedLaunchSpecBuilder
 	// performs at launch, run quietly here (no duplicate harness_selected events).
+	//
+	// hk-pkxju: reviewerInheritedHarness is the DEFAULT/INHERITED-leg correction — a
+	// reviewer never inherits a SessionIDCaptured harness. Computed ONCE here (it logs)
+	// and consumed by BOTH the model scoping immediately below and the specBuilder
+	// selection further down, so the two stay in agreement as this comment promises.
+	reviewerInheritedHarness := dotReviewerInheritedHarnessOverride(
+		deps.harnessRegistry,
+		isReviewer,
+		reviewerHarnessOverride,
+		core.AgentType(node.Harness),
+		beadRecord,
+		deps.defaultHarness,
+		string(beadID),
+	)
 	nodeModelHarness := core.AgentType(node.Harness)
 	if isReviewer && reviewerHarnessOverride.Valid() {
 		nodeModelHarness = reviewerHarnessOverride
 	}
 	if !nodeModelHarness.Valid() {
-		nodeModelHarness = resolveHarnessAgentTypeQuiet(
-			beadRecord,
-			core.AgentType(""), // queue default (hk-4x3rg not landed)
-			core.AgentType(""), // node default (already folded into node.Harness above)
-			deps.defaultHarness,
-		)
+		if reviewerInheritedHarness.Valid() {
+			nodeModelHarness = reviewerInheritedHarness // hk-pkxju
+		} else {
+			nodeModelHarness = resolveHarnessAgentTypeQuiet(
+				beadRecord,
+				core.AgentType(""), // queue default (hk-4x3rg not landed)
+				core.AgentType(""), // node default (already folded into node.Harness above)
+				deps.defaultHarness,
+			)
+		}
 	}
 	nodeModel := nodeModelForHarness(resolvedModel, node.Model, nodeModelHarness)
 	nodeEffort := resolvedEffort
@@ -1407,6 +1425,11 @@ func dispatchDotAgenticNode(
 	} else {
 		// Default or non-reviewer: use the node's own harness= attr.
 		effectiveNodeHarness = core.AgentType(node.Harness)
+	}
+	// hk-pkxju: leg 3 (DEFAULT/INHERITED) only — swap a SessionIDCaptured inherited
+	// harness for claude. Computed above so the model scoping and this selection agree.
+	if !effectiveNodeHarness.Valid() && reviewerInheritedHarness.Valid() {
+		effectiveNodeHarness = reviewerInheritedHarness
 	}
 	if effectiveNodeHarness.Valid() && deps.harnessRegistry != nil {
 		// hk-2jxqg: use pinnedHarnessLaunchSpecBuilder so the node-level pin wins

@@ -3605,3 +3605,31 @@ func ExportedNewCapturedSpawnProof(ctx context.Context, emitter handlercontract.
 	tap, _ := newPerRunEventTap(emitter, runID)
 	return newCapturedSpawnProof(ctx, tap, runID)
 }
+
+// ExportedCodexModeGuardVerdict mirrors the unexported codexModeGuardVerdict so
+// daemon_test (an external test package) can assert on every field the caller in
+// beadRunOne acts on. Test-only: it lives in export_test.go and is not built into
+// the package.
+type ExportedCodexModeGuardVerdict struct {
+	Refuse    bool
+	Emit      bool
+	Outcome   core.CodexModeGuardOutcome
+	Label     string
+	AgentType core.AgentType
+	Reason    string
+}
+
+// ExportedEvaluateCodexModeGuard exposes evaluateCodexModeGuard (hk-ofm89) so the
+// guard test drives the PRODUCTION decision function rather than a restatement of
+// it — a test that reimplemented the tier-1 walk would pass with the guard
+// unwired.
+func ExportedEvaluateCodexModeGuard(
+	reg *handlercontract.HarnessRegistry,
+	bead core.BeadRecord,
+	resolvedMode core.WorkflowMode,
+) ExportedCodexModeGuardVerdict {
+	// Field-identical to codexModeGuardVerdict, so a plain conversion carries every
+	// field. It also means adding a field to the verdict without adding it here is a
+	// compile error rather than a silently unasserted field.
+	return ExportedCodexModeGuardVerdict(evaluateCodexModeGuard(reg, bead, resolvedMode))
+}

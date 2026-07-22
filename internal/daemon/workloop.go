@@ -3307,6 +3307,24 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	bridge := newRunBridge(deps, rp, runID, beadID, workflowMode, emitRunTerminalEff)
 	failRun := func(reason, summary string) { bridge.fail(ctx, reason, summary) }
 
+	// hk-ofm89: refuse a tier-1 captured-harness label outside the DOT cascade.
+	//
+	// Placed here — after the bridge exists so the refusal rides the normal reopen
+	// spine, and before the worktree critical section — so a bead we will not run
+	// never gets a worktree provisioned for it. See codexmodeguard_hkofm89.go for
+	// the property, the live exposure (workflow:single closes codex work
+	// unreviewed) and why the guard keys on the RESOLVED mode rather than the
+	// global config line.
+	if verdict := evaluateCodexModeGuard(deps.harnessRegistry, beadRecord, workflowMode); verdict.Emit {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: %s (bead %s run %s)\n",
+			verdict.Reason, beadID, runID.String())
+		emitCodexModeGuard(ctx, deps.bus, runID, beadID, verdict, workflowMode)
+		if verdict.Refuse {
+			failRun(verdict.Reason, verdict.Reason)
+			return bridge.success()
+		}
+	}
+
 	// Resolve (model, effort) per EM-012b four-tier precedence walk.
 	// Resolved once at claim time; sealed into the run for its lifetime.
 	//

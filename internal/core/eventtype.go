@@ -396,6 +396,26 @@ const (
 	// Refs: hk-tu48u.
 	EventTypeCodexBillingGuard EventType = "codex_billing_guard"
 
+	// EventTypeCodexModeGuard is the codex_mode_guard event type. Emitted by the
+	// work loop when it REFUSES to dispatch a bead whose tier-1 harness:<...>
+	// label resolves to a SessionIDCaptured harness (codex, pi) while the bead's
+	// RESOLVED workflow mode is not dot.
+	//
+	// Why refuse rather than degrade: the per-bead harness label is only safe in
+	// the DOT cascade, where reviewer nodes carry an explicit harness pin. In any
+	// other mode the review half of "codex implements, claude reviews" is either
+	// absent (workflow:single closes the bead unreviewed) or depends entirely on
+	// runtime fallbacks. Two vectors defeat the boundary silently — the global
+	// workflow_mode config line and a per-bead workflow:<mode> label that is
+	// invisible in config review — so the guard keys on the RESOLVED mode.
+	//
+	// Payload fields: run_id, bead_id, harness_label, agent_type, resolved_mode,
+	// reason.
+	// Durability class: O (ordinary -- observability; the refusal is also the
+	// run's terminal failure reason, so the bead reopens with it recorded).
+	// Refs: hk-ofm89.
+	EventTypeCodexModeGuard EventType = "codex_mode_guard"
+
 	// EventTypePiBillingGuard is the pi_billing_guard event type. Emitted by the
 	// Pi launch path's fail-closed billing guard (PI-040/PI-042/PI-043, hk-l1bkp)
 	// at each observable step. Pi's guard is the INVERSE of the codex guard: Pi

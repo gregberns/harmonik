@@ -14,7 +14,8 @@ package daemon
 //
 //  1. INSTRUCT — the Pi seed prompt (pilaunchspec.go) instructs Pi to commit with
 //     the Refs: trailer. ensurePiRefsTrailer relies on that as the happy path.
-//  2. VERIFY — worktreeHEADHasRefsTrailer (codexcommit.go) inspects HEAD exactly.
+//  2. VERIFY — shared.WorktreeHEADHasRefsTrailer (internal/harness/shared/
+//     refstrailer.go) inspects HEAD exactly.
 //  3. FALLBACK — ensurePiRefsTrailer:
 //       - HEAD already carries the trailer → no-op.
 //       - HEAD advanced but lacks the trailer → AMEND the commit to append it.
@@ -26,9 +27,11 @@ package daemon
 //
 // LOAD-BEARING (PI-031): every git operation routes through the run's runner when
 // non-nil and falls back to local exec when nil, so the remote SSH substrate
-// works identically to local. Runner-routing is shared via
-// commitAllWithHarnessRefsTrailer (codexcommit.go); amendHEADAddRefsTrailer and
-// worktreeHEADHasRefsTrailer are also shared from codexcommit.go.
+// works identically to local. Runner-routing lives in internal/harness/shared/
+// refstrailer.go (CommitAllWithHarnessRefsTrailer, AmendHEADAddRefsTrailer,
+// WorktreeHEADHasRefsTrailer, WorktreeDirty) — pi and codex share one copy.
+// Before P2 unit E1a-0 those primitives lived in codexcommit.go, which made the
+// pi harness depend on the codex harness; the split removed that edge.
 //
 // Spec: specs/pi-harness.md §3 (PI-030/PI-031).
 // Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.5.
@@ -41,19 +44,21 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/gitprobe"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// piRefsOutcome is a type alias for codexRefsOutcome — the pi and codex harness
-// commit-fallback states are semantically identical. String() is inherited from
-// codexRefsOutcome (codexcommit.go). Bead: hk-6g5iu.
-type piRefsOutcome = codexRefsOutcome
+// piRefsOutcome is a type alias for shared.RefsOutcome — the pi and codex
+// harness commit-fallback states are semantically identical. String() is
+// inherited from shared.RefsOutcome (internal/harness/shared/refstrailer.go).
+// Bead: hk-6g5iu.
+type piRefsOutcome = shared.RefsOutcome
 
 const (
-	piRefsAlreadyPresent = codexRefsAlreadyPresent
-	piRefsAmended        = codexRefsAmended
-	piRefsCommitted      = codexRefsCommitted
-	piRefsNoChange       = codexRefsNoChange
+	piRefsAlreadyPresent = shared.RefsAlreadyPresent
+	piRefsAmended        = shared.RefsAmended
+	piRefsCommitted      = shared.RefsCommitted
+	piRefsNoChange       = shared.RefsNoChange
 )
 
 // ensurePiRefsTrailer guarantees the worktree HEAD carries a "Refs: <beadID>"
@@ -67,9 +72,10 @@ const (
 //	HEAD == parentSHA, worktree dirty  → stage all + commit w/ trailer → piRefsCommitted
 //	HEAD == parentSHA, worktree clean  → piRefsNoChange (no commit fabricated)
 //
-// Parameters mirror ensureCodexRefsTrailer (codexcommit.go:204–255) verbatim.
+// Parameters mirror ensureCodexRefsTrailer (codexcommit.go) verbatim.
 // Runner-routing (PI-031): all git ops route through runner when non-nil so the
-// remote SSH substrate works (mirrors codexcommit.go:129–149/161–175/266–291/302–338).
+// remote SSH substrate works — the primitives themselves are the shared ones in
+// internal/harness/shared/refstrailer.go.
 //
 // On error the caller MUST treat the run as failed.
 func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (piRefsOutcome, error) {
@@ -82,7 +88,7 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 
 	// VERIFY: does HEAD already carry the trailer? Happy path: Pi self-committed
 	// with the correct trailer (the seed prompt instructs this).
-	hasTrailer, trailerErr := worktreeHEADHasRefsTrailer(ctx, runner, wtPath, beadID)
+	hasTrailer, trailerErr := shared.WorktreeHEADHasRefsTrailer(ctx, runner, wtPath, beadID)
 	if trailerErr == nil && hasTrailer {
 		return piRefsAlreadyPresent, nil
 	}
@@ -99,7 +105,7 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 		// Pi committed but the commit lacks the trailer. Amend to append the
 		// trailer — the edits are already in the commit, so a follow-up empty
 		// commit would be noise. Keeps a single work-commit carrying the trailer.
-		if err := amendHEADAddRefsTrailer(ctx, runner, wtPath, beadID); err != nil {
+		if err := shared.AmendHEADAddRefsTrailer(ctx, runner, wtPath, beadID); err != nil {
 			return piRefsNoChange, fmt.Errorf("daemon: ensurePiRefsTrailer: amend: %w", err)
 		}
 		return piRefsAmended, nil
@@ -107,7 +113,7 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 
 	// HEAD did not advance. Either Pi edited files without committing (dirty →
 	// deterministic commit) or did nothing (clean → no_change).
-	dirty, dirtyErr := codexWorktreeDirty(ctx, runner, wtPath)
+	dirty, dirtyErr := shared.WorktreeDirty(ctx, runner, wtPath)
 	if dirtyErr != nil {
 		return piRefsNoChange, fmt.Errorf("daemon: ensurePiRefsTrailer: status: %w", dirtyErr)
 	}
@@ -125,9 +131,9 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 }
 
 // commitAllWithPiRefsTrailer is the pi harness wrapper around
-// commitAllWithHarnessRefsTrailer (codexcommit.go) with the pi-specific
-// fallback commit message. Runner-routing is shared (PI-031).
+// shared.CommitAllWithHarnessRefsTrailer (internal/harness/shared/refstrailer.go)
+// with the pi-specific fallback commit message. Runner-routing is shared (PI-031).
 func commitAllWithPiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath string, beadID core.BeadID) error {
-	return commitAllWithHarnessRefsTrailer(ctx, runner, wtPath, beadID,
+	return shared.CommitAllWithHarnessRefsTrailer(ctx, runner, wtPath, beadID,
 		"feat(pi): pi turn output (auto-committed by daemon fallback)")
 }

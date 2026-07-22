@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -70,8 +71,8 @@ func appendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 	existing := strings.TrimRight(string(out), "\n")
 
 	// Idempotency: skip if both trailers are already present.
-	hasReviewedBy := containsExactLine(existing, reviewedByLine)
-	hasReviewVerdict := containsExactLine(existing, reviewVerdictLine)
+	hasReviewedBy := shared.ContainsExactLine(existing, reviewedByLine)
+	hasReviewVerdict := shared.ContainsExactLine(existing, reviewVerdictLine)
 	if hasReviewedBy && hasReviewVerdict {
 		return nil
 	}

@@ -2,11 +2,25 @@
 // needs and none of them owns.
 //
 // It exists because P2 unit E1a lifts the codex harness out of internal/daemon:
-// the seed-prompt builder is used by both codex and pi, so leaving it in the
-// daemon would have forced the extracted harness to import the monolith it was
-// just separated from. The package is a leaf — stdlib only.
+// the seed-prompt builder (seedprompt.go), the Refs:<bead> commit-trailer
+// machinery (refstrailer.go) and the launch-spec env-key split (env.go) are all
+// used by both codex and pi, so leaving them in the daemon would have forced the
+// extracted harness to import the monolith it was just separated from.
 //
-// Origin: internal/daemon/agentseedprompt.go.
+// The package is a leaf WITH RESPECT TO THE DAEMON AND TO EVERY CONCRETE
+// HARNESS: it may reach the same seam packages the harness implementations reach
+// (internal/core, internal/handler, internal/handlercontract, internal/gitprobe,
+// internal/lifecycle/tmux) and nothing else. It must NEVER import
+// internal/daemon, internal/harness/codex, internal/harness/claude or
+// internal/harness/pi. A harness edge here would turn the leaf into a hub and
+// re-couple pi to codex through the back door — which is the exact coupling the
+// split exists to remove (picommit.go's piRefsOutcome was literally a type alias
+// of the codex enum). The rule is enforced in CI by the `harness-shared`
+// depguard block in .golangci.yml.
+//
+// Origin: internal/daemon/agentseedprompt.go, internal/daemon/codexcommit.go,
+// internal/daemon/codexlaunchspec.go.
+// Plan: plans/2026-07-21-p2-extraction/E1a-codex-harness.md.
 package shared
 
 import "fmt"

@@ -21,12 +21,12 @@ package daemon
 // WHY THE CONJUNCTION, AND WHY IT IS SAFE TO BE LOUD. Duration alone is not a
 // safe signal — a legitimately trivial bead (a one-line doc change) could in
 // principle complete fast, and failing such a run outright would be wrong.
-// Pairing sub-floor duration with codexRefsNoChange is what makes the detector
+// Pairing sub-floor duration with shared.RefsNoChange is what makes the detector
 // safe: a real fast run still produces a commit, so it never reaches the
 // no-change outcome. The two together are a shape no observed real run has
 // produced.
 //
-// THE DETECTOR DOES NOT DECIDE ANYTHING. codexRefsNoChange already routes to
+// THE DETECTOR DOES NOT DECIDE ANYTHING. shared.RefsNoChange already routes to
 // the standard no_commit failure path — the run is failing with or without
 // this event. What was missing was any record of WHY, which is precisely how
 // hk-jcrzn stayed invisible at every layer that was checked.
@@ -40,10 +40,11 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
 // codexNoWorkDurationFloorDefault is the default implement-phase duration below
-// which a codexRefsNoChange outcome is treated as corroborated evidence that the
+// which a shared.RefsNoChange outcome is treated as corroborated evidence that the
 // phase did no work.
 //
 // 10s sits in the empty band between the two measured populations (worst
@@ -73,8 +74,8 @@ func codexNoWorkFloor(override time.Duration) time.Duration {
 // is treated as unmeasured and never flags — a missing measurement is not
 // evidence of anything, and flagging on it would make the detector fire on
 // every run whose clock plumbing is absent.
-func codexNoWorkSuspected(outcome codexRefsOutcome, phaseDuration, floorOverride time.Duration) bool {
-	if outcome != codexRefsNoChange {
+func codexNoWorkSuspected(outcome shared.RefsOutcome, phaseDuration, floorOverride time.Duration) bool {
+	if outcome != shared.RefsNoChange {
 		return false
 	}
 	if phaseDuration <= 0 {

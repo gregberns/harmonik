@@ -30,7 +30,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -275,7 +274,7 @@ func buildCodexEnv(baseEnv []string, codexHome string) []string {
 	// Copy non-credential, non-CODEX_HOME entries from baseEnv.
 	hasPath := false
 	for _, kv := range baseEnv {
-		key := envKey(kv)
+		key := shared.EnvKey(kv)
 		if denySet[key] || key == "CODEX_HOME" {
 			continue
 		}
@@ -321,14 +320,4 @@ func buildCodexEnv(baseEnv []string, codexHome string) []string {
 	)
 
 	return env
-}
-
-// envKey returns the key portion of a "KEY=VALUE" environment entry.
-// Returns the whole string if no "=" is present.
-func envKey(kv string) string {
-	idx := strings.IndexByte(kv, '=')
-	if idx < 0 {
-		return kv
-	}
-	return kv[:idx]
 }

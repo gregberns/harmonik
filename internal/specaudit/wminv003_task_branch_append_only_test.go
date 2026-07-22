@@ -415,6 +415,19 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// Authorised: codex-harness spec C2/T9 (hk-bpxci); pre-observation amend only.
 	"internal/daemon/codexcommit.go": "codex-harness C2/T9 (hk-bpxci); post-exit Refs-trailer amend before workspace_leased; not a rewrite of an observed task branch",
 
+	// internal/harness/shared/refstrailer.go — the SAME authorised amend, moved.
+	// P2 unit E1a-0 split the harness-agnostic half of codexcommit.go into
+	// internal/harness/shared because the pi harness consumed ten of its symbols
+	// (picommit.go's piRefsOutcome was a type alias of the codex enum). The
+	// `git commit --amend` in AmendHEADAddRefsTrailer is the identical pre-
+	// observation, message-only trailer append that the codexcommit.go entry
+	// above authorises — it is now shared by codex and pi rather than owned by
+	// codex. This allowlist keys on literal relative path, so the move needs its
+	// own entry or the audit fails.
+	// Authorised: codex-harness spec C2/T9 (hk-bpxci) + pi PI-030/031 (hk-mazln);
+	// pre-observation amend only. Plan: plans/2026-07-21-p2-extraction/E1a-codex-harness.md §4 step 7.
+	"internal/harness/shared/refstrailer.go": "codex-harness C2/T9 (hk-bpxci), relocated by P2 E1a-0; post-exit Refs-trailer amend before workspace_leased; not a rewrite of an observed task branch",
+
 	// internal/daemon/reviewtrailers_hkdyim.go — appendReviewTrailersToHEAD
 	// amends the run/* worktree HEAD commit ONLY to append the review audit
 	// trail (Reviewed-By: agent-reviewer / Review-Verdict: <json>) after the

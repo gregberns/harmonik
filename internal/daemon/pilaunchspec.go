@@ -424,7 +424,7 @@ func buildPiEnv(baseEnv []string, apiKeyFile, apiKeyEnv string) []string {
 	}
 	// Extend with any *_API_KEY vars in baseEnv not already in the table.
 	for _, kv := range baseEnv {
-		key := envKey(kv)
+		key := shared.EnvKey(kv)
 		if key == apiKeyEnv {
 			continue
 		}
@@ -438,7 +438,7 @@ func buildPiEnv(baseEnv []string, apiKeyFile, apiKeyEnv string) []string {
 	// Pass through non-credential, non-apiKeyEnv entries from baseEnv.
 	hasPath := false
 	for _, kv := range baseEnv {
-		key := envKey(kv)
+		key := shared.EnvKey(kv)
 		if key == apiKeyEnv || strippedSet[key] {
 			continue
 		}

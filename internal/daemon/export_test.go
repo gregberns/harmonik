@@ -24,6 +24,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
@@ -3132,15 +3133,17 @@ func ExportedCaptureCodexThreadStream(lines [][]byte) (ExportedCodexRunArtifacts
 // codex Refs:<bead> trailer guarantee test seams (hk-bpxci C2/T9)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ExportedCodexRefsOutcome mirrors the internal codexRefsOutcome enum for tests.
-type ExportedCodexRefsOutcome = codexRefsOutcome
+// ExportedCodexRefsOutcome mirrors the shared.RefsOutcome enum for tests. The
+// enum moved to internal/harness/shared in P2 unit E1a-0; the seam name is kept
+// so the existing test files compile unchanged.
+type ExportedCodexRefsOutcome = shared.RefsOutcome
 
-// Exported codexRefsOutcome constants for ensureCodexRefsTrailer assertions.
+// Exported shared.RefsOutcome constants for ensureCodexRefsTrailer assertions.
 const (
-	ExportedCodexRefsAlreadyPresent = codexRefsAlreadyPresent
-	ExportedCodexRefsAmended        = codexRefsAmended
-	ExportedCodexRefsCommitted      = codexRefsCommitted
-	ExportedCodexRefsNoChange       = codexRefsNoChange
+	ExportedCodexRefsAlreadyPresent = shared.RefsAlreadyPresent
+	ExportedCodexRefsAmended        = shared.RefsAmended
+	ExportedCodexRefsCommitted      = shared.RefsCommitted
+	ExportedCodexRefsNoChange       = shared.RefsNoChange
 )
 
 // ExportedCodexNoWorkDurationFloorDefault exposes the default no-work duration
@@ -3150,7 +3153,7 @@ const (
 const ExportedCodexNoWorkDurationFloorDefault = codexNoWorkDurationFloorDefault
 
 // ExportedCodexNoWorkSuspected exposes codexNoWorkSuspected — the hk-368i4
-// detector pairing a codexRefsNoChange outcome with a sub-floor phase duration.
+// detector pairing a shared.RefsNoChange outcome with a sub-floor phase duration.
 //
 // Bead ref: hk-368i4.
 func ExportedCodexNoWorkSuspected(outcome ExportedCodexRefsOutcome, phaseDuration, floorOverride time.Duration) bool {
@@ -3164,11 +3167,13 @@ func ExportedCodexNoWorkFloor(override time.Duration) time.Duration {
 	return codexNoWorkFloor(override)
 }
 
-// ExportedWorktreeHEADHasRefsTrailer exposes worktreeHEADHasRefsTrailer (VERIFY).
+// ExportedWorktreeHEADHasRefsTrailer exposes shared.WorktreeHEADHasRefsTrailer
+// (VERIFY). The nil argument is the tmux.CommandRunner — nil means bare local
+// exec (NFR7), which is what these tests exercise.
 //
 // Bead ref: hk-bpxci.
 func ExportedWorktreeHEADHasRefsTrailer(ctx context.Context, wtPath string, beadID core.BeadID) (bool, error) {
-	return worktreeHEADHasRefsTrailer(ctx, nil, wtPath, beadID)
+	return shared.WorktreeHEADHasRefsTrailer(ctx, nil, wtPath, beadID)
 }
 
 // ExportedEnsureCodexRefsTrailer exposes ensureCodexRefsTrailer (VERIFY +

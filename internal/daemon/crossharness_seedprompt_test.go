@@ -1,5 +1,24 @@
 package daemon_test
 
+// crossharness_seedprompt_test.go — pi/codex resume-seed-prompt PARITY, asserted
+// through both harnesses' launch specs in one table.
+//
+// Was agentseedprompt_test.go. Its production half (ImplementerResumeSeedPrompt)
+// moved to internal/harness/shared/seedprompt.go in P2 unit E1a, leaving a test
+// file named after a file that no longer exists here. The direct unit tests for
+// the builder — including the iteration clamp — now live next to it in
+// internal/harness/shared/seedprompt_test.go. What is left here is the thing
+// that could never move: an INTEGRATION table proving the two harnesses deliver
+// the same reviewer-feedback pointer through their own launch-spec builders.
+// Same shape as crossharness_empty_model_test.go, hence the same name.
+//
+// It stays in package daemon_test until BOTH harnesses are extracted (E1a-1 for
+// codex, E1c for pi); until then it is the only place the parity is pinned, and
+// it reaches each harness through the daemon's Exported* seams. Once pi is out
+// too it moves to a cross-harness test package.
+//
+// Ref: plans/2026-07-21-p2-extraction/E1a-codex-harness.md §1.3.
+
 import (
 	"strings"
 	"testing"

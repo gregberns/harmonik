@@ -177,6 +177,63 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "gitprobe is a leaf: importing daemon would re-couple every harness that uses it (P2 E1a)" }
 
+        # harness-shared: the cross-harness leaf (P2 unit E1a-0). Holds the pieces
+        # that more than one harness implementation needs and none of them owns:
+        # the resume seed prompt (seedprompt.go), the Refs:<bead> trailer
+        # machinery (refstrailer.go, shared by codex and pi — picommit.go's
+        # piRefsOutcome is literally an alias of it) and the launch-spec env-key
+        # split (env.go). It may reach the same seam leaves the harness impls
+        # reach, and NOTHING else: not the daemon, and not any concrete harness.
+        # Allowing a harness edge here would turn the leaf into a hub and
+        # re-couple pi to codex through the back door — the exact coupling this
+        # split removed. Note this is a PER-PACKAGE rule, not a blanket
+        # **/internal/harness/** one: a single rule whose allow list named both
+        # shared and codex would silently permit shared -> codex.
+        # Rationale: plans/2026-07-21-p2-extraction/E1a-codex-harness.md §5.
+        harness-shared:
+          files: ["**/internal/harness/shared/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "harness/shared MUST NOT import daemon — the container links the harness, not the monolith (P2 E1a)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/codex", desc: "harness/shared is a leaf BELOW every harness impl; a codex edge re-couples pi to codex (P2 E1a)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/claude", desc: "harness/shared is a leaf BELOW every harness impl (P2 E1b)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/pi", desc: "harness/shared is a leaf BELOW every harness impl (P2 E1c)" }
+
+        # harness-codex: the codex harness implementation, lifted out of
+        # internal/daemon by P2 unit E1a-1. The rule is PRE-ARMED here in E1a-0 —
+        # it matches nothing today — so the brake exists before the mass arrives
+        # and the move cannot land unfenced. Its whole point is that a P3
+        # container can link THIS package without dragging the 57k-LOC daemon in
+        # with it, so the deny edge below is the unit's success criterion
+        # expressed in CI: if it ever goes green while codex imports daemon, the
+        # extraction has been silently undone. The allow list is the verified
+        # import set of the seven files E1a-1 moves — nothing speculative. A
+        # denied import is a FINDING: prove the dependency belongs before
+        # widening this list.
+        # Rationale: plans/2026-07-21-p2-extraction/E1a-codex-harness.md §5.
+        harness-codex:
+          files: ["**/internal/harness/codex/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+            - "github.com/gregberns/harmonik/internal/harness/codex"
+            - "github.com/google/uuid"
+            - "gopkg.in/yaml.v3"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "harness impls MUST NOT import daemon back — the container links the harness, not the monolith (P2 E1a)" }
+
         # transport: the remote-execution transport leaves (P2 unit E4). tunnel owns
         # the per-run `ssh -N -R` reverse tunnel + its readiness gate; codesync owns
         # the DD1 worker<->box-A git sync (fetch-base on the worker, direct ssh://

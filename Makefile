@@ -483,24 +483,11 @@ secret-scan:  ## Scan staged diff for API keys / credentials / .env files
 # satisfied after gofumpt runs.
 .PHONY: fmt
 fmt:  ## Auto-format all Go files with gofumpt + gci (writes in-place)
-	$(TOOLS_DIR)/gci write -s standard -s default -s 'prefix($(MODULE))' .
-	$(TOOLS_DIR)/gofumpt -w .
+	scripts/go-format.sh write
 
 .PHONY: fmt-check
 fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 'make fmt' to fix)
-	@UNFORMATTED=$$($(TOOLS_DIR)/gofumpt -l .); \
-	if [ -n "$$UNFORMATTED" ]; then \
-		echo "gofumpt: unformatted files (run 'make fmt' to fix):"; \
-		echo "$$UNFORMATTED"; \
-		$(TOOLS_DIR)/gofumpt -d .; \
-		exit 1; \
-	fi
-	@GCI_DIFF=$$($(TOOLS_DIR)/gci diff -s standard -s default -s 'prefix($(MODULE))' .); \
-	if [ -n "$$GCI_DIFF" ]; then \
-		echo "gci: import order drift detected (run 'make fmt' to fix):"; \
-		echo "$$GCI_DIFF"; \
-		exit 1; \
-	fi
+	scripts/go-format.sh check
 
 # ---------------------------------------------------------------------------
 # Tier 1 — check-fast (<15s target)
@@ -599,6 +586,13 @@ check:  ## Tier 2: fmt-check (fail-closed), full golangci-lint, go test -race, g
 	@rm -f go.mod.check go.sum.check
 	go run ./tools/forbid-import ./...
 	@if [ -x scripts/coverage-gate.sh ]; then scripts/coverage-gate.sh; else echo "coverage-gate.sh not yet present (hk-pvcs.5); skipping"; fi
+	@# cmd/** coverage ratchet. Lives in tier 2, not check-fast: it runs
+	@# `go test -covermode=atomic ./cmd/...`, which blows the 15s fast budget.
+	@# Runs under a private GOCACHE: measured on 2026-07-22, a shared-cache run
+	@# fails with "could not import flag ... no such file or directory" whenever a
+	@# concurrent process invalidates cache facts mid-run. The gate fails closed on
+	@# that, so without isolation it reports a spurious hard failure.
+	scripts/with-isolated-gocache.sh scripts/cmd-coverage-gate.sh
 	$(TOOLS_DIR)/govulncheck ./...
 
 # ---------------------------------------------------------------------------
@@ -672,8 +666,13 @@ lint:  ## golangci-lint run (shorthand)
 lint-full-count:  ## Publish the full-tree grandfathered lint finding count (not a gate)
 	@REPORT=$$(mktemp); \
 	trap 'rm -f "$$REPORT"' EXIT; \
-	$(TOOLS_DIR)/golangci-lint run --issues-exit-code=0 --max-issues-per-linter=0 --max-same-issues=0 \
-		--output.text.path=/dev/null --output.json.path="$$REPORT" >/dev/null; \
+	LINT_STATUS=0; \
+	scripts/with-isolated-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --issues-exit-code=0 --max-issues-per-linter=0 --max-same-issues=0 \
+		--output.text.path=/dev/null --output.json.path="$$REPORT" >/dev/null || LINT_STATUS=$$?; \
+	if [ "$$LINT_STATUS" -ne 0 ]; then \
+		echo "lint-full-count: golangci-lint failed (exit $$LINT_STATUS)" >&2; \
+		exit "$$LINT_STATUS"; \
+	fi; \
 	jq -er 'if any(.Issues[]; .FromLinter == "typecheck") then \
 		error("full lint count unavailable: typecheck failed; fix compilation first") \
 		else "full lint findings: \(.Issues | length)" end' "$$REPORT"

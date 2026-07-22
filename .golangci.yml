@@ -195,9 +195,7 @@ linters:
           allow:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/core"
-            - "github.com/gregberns/harmonik/internal/handler"
             - "github.com/gregberns/harmonik/internal/handlercontract"
-            - "github.com/gregberns/harmonik/internal/gitprobe"
             - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
             - "github.com/gregberns/harmonik/internal/harness/shared"
           deny:
@@ -405,16 +403,21 @@ linters:
           allow:
             - "$gostd"
             - "github.com/google/uuid"
+            - "pgregory.net/rapid"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/", desc: "core is a leaf; no subsystem imports" }
   
-        # Queue: core only at scaffold time. eventbus import added by T12 (hk-hn363)
-        # when queue-lifecycle events are wired. Spec ref: specs/queue-model.md §1.
+        # Queue production code imports core plus UUID for queue/event identity.
+        # External tests also need the self-import used by package queue_test.
+        # eventbus import added by T12 (hk-hn363) when queue-lifecycle events are
+        # wired. Spec ref: specs/queue-model.md §1.
         queue:
           files: ["**/internal/queue/**"]
           allow:
             - "$gostd"
+            - "github.com/google/uuid"
             - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/queue"
 
         # queuewiring: the daemon-side queue OWNERSHIP + operator-transition wiring
         # extracted out of internal/daemon (P2 unit E3a). The queue ENGINE is already a

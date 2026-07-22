@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Format or check exactly the Go files that belong to the current Git working
+# tree: tracked files plus non-ignored untracked files. Ignored worktrees and
+# scratch artifacts are excluded by Git's own ignore rules, while a newly
+# created (not-yet-tracked) production file is still checked.
+
+set -euo pipefail
+
+usage() {
+    echo "usage: scripts/go-format.sh check|write" >&2
+    exit 2
+}
+
+[[ $# -eq 1 ]] || usage
+mode=$1
+[[ "$mode" == "check" || "$mode" == "write" ]] || usage
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+gofumpt=${GOFUMPT:-"$repo_root/.tools/gofumpt"}
+gci=${GCI:-"$repo_root/.tools/gci"}
+module=$(go list -m -f '{{.Path}}')
+
+files=()
+while IFS= read -r -d '' file; do
+    # A tracked path can be deleted in the working tree; formatters should not
+    # receive a path that no longer exists.
+    [[ -f "$file" ]] && files+=("$file")
+done < <(git ls-files -z --cached --others --exclude-standard -- '*.go')
+
+[[ ${#files[@]} -gt 0 ]] || exit 0
+
+if [[ "$mode" == "write" ]]; then
+    "$gci" write -s standard -s default -s "prefix($module)" -- "${files[@]}"
+    "$gofumpt" -w -- "${files[@]}"
+    exit 0
+fi
+
+status=0
+unformatted=$("$gofumpt" -l -- "${files[@]}")
+if [[ -n "$unformatted" ]]; then
+    echo "gofumpt: unformatted files (run 'make fmt' to fix):"
+    echo "$unformatted"
+    "$gofumpt" -d -- "${files[@]}"
+    status=1
+fi
+
+gci_diff=$("$gci" diff -s standard -s default -s "prefix($module)" -- "${files[@]}")
+if [[ -n "$gci_diff" ]]; then
+    echo "gci: import order drift detected (run 'make fmt' to fix):"
+    echo "$gci_diff"
+    status=1
+fi
+
+exit "$status"

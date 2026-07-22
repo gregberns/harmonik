@@ -45,7 +45,7 @@ The fence refuses to launch codex unless an enabled ssh worker is bound; today t
 2. `cmd/harmonik/substrate_select.go` — `codexWorkerRoutingRunner.Command` (and `refusedIsolationBoundaryArgv0`, line 123): with `requireBoundary=false`, a nil/disabled/non-ssh registry state now falls through to `LocalRunner` instead of the refused-argv0 binary. The refused-argv0 diagnostic becomes dead code — delete it and its doc block.
 3. `internal/daemon/workloop.go:3626` — the `deps.codexRequireIsolationBoundary` refusal in `beadRunOne`. Fed by `Config.CodexRequireIsolationBoundary` (`daemon.go:586`), set at `cmd/harmonik/main.go:1357` and `run.go:715` from `codexRequireBoundary`. Once `selectSubstrate` returns `false`, this whole guard block is inert; remove the guard block and the now-always-false plumbing (`codexRequireIsolationBoundary` field `workloop.go:759,1198`; `Config` field; the two composition-root call sites).
 
-**Net:** `HARMONIK_SUBSTRATE=codexdriver` with no worker bound → codex runs on `LocalRunner`, on the daemon host, like Claude. The SSHRunner routing seam (`codexWorkerRoutingRunner`) can stay for now (it's inert with no registry) or be removed as cleanup — removing it is aligned with D4 (ssh scrapped) but is NOT required for this plan; recommend leaving it inert to keep the diff small, and letting the platform-architecture P3 work delete it.
+**Net:** a codex run with no worker bound → codex runs on `LocalRunner`, on the daemon host, like Claude. (This paragraph originally named `HARMONIK_SUBSTRATE=codexdriver` as the way in; that mechanism is superseded — see §3d — but the fence-drop it describes is unaffected, since the fence keyed off the codexdriver SELECTION and both are now gone.) The SSHRunner routing seam (`codexWorkerRoutingRunner`) can stay for now (it's inert with no registry) or be removed as cleanup — removing it is aligned with D4 (ssh scrapped) but is NOT required for this plan; recommend leaving it inert to keep the diff small, and letting the platform-architecture P3 work delete it.
 
 ### 3b. Turn the native sandbox OFF on the codex-exec path → `danger-full-access` (D3)
 
@@ -63,9 +63,38 @@ No code change — a confirmation the plan depends on. `ensureCodexRefsTrailer` 
 
 ### 3d. How Codex implementer crews get selected/staffed
 
-- **Substrate:** the crew's daemon runs with `HARMONIK_SUBSTRATE=codexdriver` (`substrate_select.go:31,76`). With 3a done, that no longer requires a worker.
-- **Per-node harness:** implement nodes resolve their harness via `harnessRegistry.ForAgent(artifactAgentType(...))` (`dot_cascade.go:1446`), so the implementer agent-type maps to codex while the **reviewer stays claude** (`reviewerSubstrate` is always the tmux/claude substrate — `substrate_select.go:76`). This is the desired split: codex implements, claude reviews the diff. Keep it.
-- **Captain lever:** staffing a "Codex crew" = starting a crew whose daemon is launched with `HARMONIK_SUBSTRATE=codexdriver`. The Captain's crew-start path must thread that env; verify it does (or add it) as part of §6 hardening.
+> **SUPERSEDED 2026-07-22 (hk-oulya; admiral ruling 07:58Z).** The substrate-flip
+> mechanism below is DEAD and must not be executed. It buys nothing and it breaks
+> claude beads. Read the replacement first; the original bullets are kept so
+> anyone following a stale pointer lands on the correction instead of the
+> instruction.
+>
+> **Do NOT set `HARMONIK_SUBSTRATE=codexdriver`.** Measured on two isolated
+> daemons differing only in configuration: a bead carrying the tier-1 label
+> `harness:codex` on a production-identical daemon produced the SAME live argv as
+> a daemon running `codexdriver` + `--default-harness codex`. The env var selects
+> a SUBSTRATE, not a HARNESS, and the codex launch discards it anyway — the DOT
+> cascade nils `spec.Substrate` for a `SessionIDCaptured` harness and execs. What
+> it does change is only damage: a CLAUDE-resolved implementer under that
+> substrate is handed a codex JSON-RPC-locked channel it cannot speak, emits no
+> `agent_ready` and no error, and hangs silently (hk-3eso9 — ~1.8h of zero
+> production commits).
+>
+> **The mechanism is the per-bead tier-1 `harness:codex` label.** No env, no
+> daemon restart, no binary swap — labels are read per bead at dispatch — and it
+> is reverted by removing the label.
+>
+> **Its safety boundary is load-bearing, not stylistic:** the label is safe in
+> **DOT cascade mode only**, and reviewer nodes must keep an explicit `harness=`
+> attr. Production's `workflow.dot` pins review and qa, which is the only reason
+> a tier-1 label does not also hijack the reviewer into codex, where no reviewer
+> can work (hk-pkxju). Two vectors defeat that boundary silently — the global
+> `workflow_mode` config line and an invisible per-bead `workflow:<mode>` label —
+> which is what hk-ofm89 exists to make self-enforcing.
+
+- ~~**Substrate:** the crew's daemon runs with `HARMONIK_SUBSTRATE=codexdriver` (`substrate_select.go:31,76`). With 3a done, that no longer requires a worker.~~ — superseded, see above.
+- **Per-node harness:** implement nodes resolve their harness via `harnessRegistry.ForAgent(artifactAgentType(...))` (`dot_cascade.go:1446`), so the implementer agent-type maps to codex while the **reviewer stays claude**. This is the desired split: codex implements, claude reviews the diff. Keep it. (The original text credited `reviewerSubstrate` for the reviewer staying claude; that carve-out is real but it is the SUBSTRATE channel. Under the label mechanism the reviewer stays claude because the DOT node carries an explicit harness pin, backstopped by `reviewerDefaultHarness`, which refuses to let a reviewer inherit a `SessionIDCaptured` harness — hk-pkxju.)
+- ~~**Captain lever:** staffing a "Codex crew" = starting a crew whose daemon is launched with `HARMONIK_SUBSTRATE=codexdriver`. The Captain's crew-start path must thread that env; verify it does (or add it) as part of §6 hardening.~~ — superseded. **Captain lever is now per-bead:** add the `harness:codex` label to the beads that should run on codex. Nothing is threaded through crew-start, and the crew-start path must NOT set the substrate env.
 
 ---
 
@@ -78,13 +107,13 @@ No code change — a confirmation the plan depends on. `ensureCodexRefsTrailer` 
 **Neither "keep" nor "revert" — supersede.** Under `danger-full-access` the writable_roots injection is inert dead code (`research/06`: moot on any danger-full-access path). Do NOT `git revert` the commit wholesale: 49d7fde3 also carried a real, still-needed bug fix — switching from the `--sandbox` flag (which `codex exec resume` rejects) to the `-c sandbox_mode` override. **Action:** keep the `-c` mechanism, change the value to `danger-full-access`, and delete only the now-dead writable-roots derivation (`codexExecWritableRoots`, `codexWritableRootsArg`, `codexWorktreeWritableRoots`, `codexGitCommonDir` and their tests/call sites). This is a clean forward change, not a revert.
 
 **(c) What is the live-verification that proves success?**
-A **real bead runs end-to-end on local Codex** with the daemon system up (this plan is design-only; verification happens at execution): `HARMONIK_SUBSTRATE=codexdriver`, no worker bound, `danger-full-access`. Success signals, all observed on one run: (1) implement node's codex process exits 0 and its edits land as a commit carrying `Refs:<bead>` (self-commit OR daemon fallback — either counts); (2) codex's own in-run shell step (`git status` / the commit_gate command) runs without an "Operation not permitted" denial (proves facet (a)); (3) the review node (claude) writes `.harmonik/review.json` and the DOT advances; (4) the bead reaches closed via the normal daemon terminal-transition. `research/05` finding #12 flags that the danger-full-access self-commit path is coded but **not yet live-verified on deployed codex 0.142.0** — this run retires that debt.
+A **real bead runs end-to-end on local Codex** with the daemon system up (this plan is design-only; verification happens at execution): the bead labelled `harness:codex`, no substrate env set (**CORRECTED 2026-07-22, hk-oulya** — see §3d), no worker bound, `danger-full-access`. Success signals, all observed on one run: (1) implement node's codex process exits 0 and its edits land as a commit carrying `Refs:<bead>` (self-commit OR daemon fallback — either counts); (2) codex's own in-run shell step (`git status` / the commit_gate command) runs without an "Operation not permitted" denial (proves facet (a)); (3) the review node (claude) writes `.harmonik/review.json` and the DOT advances; (4) the bead reaches closed via the normal daemon terminal-transition. `research/05` finding #12 flags that the danger-full-access self-commit path is coded but **not yet live-verified on deployed codex 0.142.0** — this run retires that debt.
 
 ---
 
 ## 5. Acceptance criteria (concrete, testable)
 
-1. **Local codex, no worker:** with `HARMONIK_SUBSTRATE=codexdriver` and zero workers configured, the daemon launches a codex implement node on `LocalRunner` — no refusal, no `refusedIsolationBoundaryArgv0`, no "isolation-boundary guard" stderr.
+1. **Local codex, no worker:** with a `harness:codex` labelled bead and zero workers configured, the daemon launches a codex implement node on `LocalRunner` — no refusal, no `refusedIsolationBoundaryArgv0`, no "isolation-boundary guard" stderr.
 2. **A real bead completes end-to-end on local codex:** implement → commit (Refs trailer present) → review verdict → bead closed, via the unmodified DOT flow.
 3. **Shell facet clear:** the run log shows codex's own `exec_command` / gate shell step executing without an EPERM/"Operation not permitted" denial (facet (a) retired).
 4. **Uniform posture:** the effective codex sandbox on both argv branches is `danger-full-access`; no `workspace-write` and no `writable_roots` remain in the codex-exec argv (`grep` the launch spec / a `--strict-config` echo).
@@ -98,11 +127,11 @@ A **real bead runs end-to-end on local Codex** with the daemon system up (this p
 
 **Smallest first step that PROVES it (one kerf task, one crew):**
 - Step 1 — **Flip the fence + posture (3a + 3b), minimal diff.** Land the three-seam guard drop and the exec-path `danger-full-access` switch. Ship with unit coverage at the argv tier (a `TestBuildCodexLaunchSpec` asserting `danger-full-access`, no `--sandbox`, no writable_roots on both branches — mirroring the existing hk-daegv test shape).
-- Step 2 — **Live-prove one bead (acceptance 1–4).** Bring the daemon up locally, `HARMONIK_SUBSTRATE=codexdriver`, no worker, run one trivial real bead through DOT. This is the linchpin proof and retires `research/05` #12 + facet (a). Do this BEFORE any hardening.
+- Step 2 — **Live-prove one bead (acceptance 1–4).** Bring the daemon up locally, no worker, run one trivial real bead through DOT. This is the linchpin proof and retires `research/05` #12 + facet (a). Do this BEFORE any hardening. **CORRECTED 2026-07-22 (hk-oulya):** the bead carries the tier-1 `harness:codex` label; do NOT set `HARMONIK_SUBSTRATE=codexdriver` (§3d). Verify BOTH absences on the live daemon rather than assuming them — `ps eww` on the daemon process for the env var, and the daemon's own argv for `--default-harness` — because a run with either present cannot distinguish the label mechanism from the global default. A proof that does not isolate the variable is not a proof of the label.
 
 **Then harden:**
 - Step 3 — **Delete the now-dead code** (refused-argv0, `codexWorktreeWritableRoots`/`codexGitCommonDir`, exec writable-roots helpers, `CodexRequireIsolationBoundary` plumbing) and their tests. Keep the inert `codexWorkerRoutingRunner` unless the P3 crew removes it.
-- Step 4 — **Crew staffing (3d, acceptance 5–6).** Verify/thread `HARMONIK_SUBSTRATE=codexdriver` through the Captain's crew-start path; run a crew that clears a bead with codex-implements / claude-reviews; capture the token-offload split.
+- Step 4 — **Crew staffing (3d, acceptance 5–6).** **RE-SCOPED 2026-07-22 (hk-oulya, hk-tckw3.3):** nothing is threaded through crew-start, and the crew-start path must NOT set the substrate env. Staffing is per-bead: label the beads that should run on codex with `harness:codex`, run a crew that clears one with codex-implements / claude-reviews, and capture the token-offload split. The ramp's safety boundary — DOT cascade only, reviewer nodes pinned — is procedural until hk-ofm89 makes it self-enforcing, which is the precondition for widening past the first wave.
 - Step 5 — **Widen** to a couple more beads of varying shape (a multi-node DOT, a review back-edge/resume turn) to confirm the resume argv branch and the fallback-committer both behave under `danger-full-access`.
 
 Each step is independently landable; Step 2 is the go/no-go gate — if the local bead doesn't clear, stop and fan out on the failure before hardening.

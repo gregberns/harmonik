@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -2582,7 +2583,7 @@ func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 				killRemoteProcessWithGrace(ctx, s.runner, s.pid, killGracePeriod)
 			}
 		} else if s.pid > 0 {
-			killProcessWithGrace(s.pid, killGracePeriod)
+			killProcessWithGrace(ctx, s.pid, killGracePeriod)
 		}
 		// Step 2: destroy the tmux window (cleans up pane/window state).
 		killErr = s.adapter.KillWindow(ctx, s.handle)
@@ -2595,26 +2596,93 @@ func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 	return killErr
 }
 
-// killProcessWithGrace sends SIGTERM to pid, waits up to grace for the process
-// to exit, then sends SIGKILL if it is still alive. It is a best-effort
-// helper: all errors are silently swallowed because the window cleanup in
-// KillWindow is the authoritative cleanup step.
-func killProcessWithGrace(pid int, grace time.Duration) {
-	// Send SIGTERM. Ignore errors: process may already be gone.
-	_ = syscall.Kill(pid, syscall.SIGTERM)
+// killProcessSignal is the raw signal syscall used by killProcessWithGrace.
+// It is a package-level var for ONE reason: so a test can prove that the
+// pid<=1 guard signals nothing at all (hk-bl2k6). Production always holds
+// syscall.Kill; tests that swap it must restore it and must not run in
+// parallel with anything that kills a process.
+var killProcessSignal = syscall.Kill
 
-	// Poll for process exit using kill(pid, 0) which returns ESRCH when gone.
+// killProcessWithGrace terminates the tmux pane identified by pid — the pane
+// shell AND everything it spawned — by signalling the pane's PROCESS GROUP:
+// SIGTERM, then up to grace for the group to drain, then SIGKILL.
+//
+// Why the group and not the pid (hk-bl2k6): pid is the shell tmux started via
+// new-window (see the Kill doc comment above); the hosted agent process is a
+// CHILD of that shell. Signalling the shell alone reparents the agent to init,
+// where it survives the daemon's kill, keeps burning CPU and holding a provider
+// slot. In the field this leaked orphan agents for 40+ minutes after a keeper
+// restart. tmux setsid()s every pane, so a pane PID is already a session and
+// process-group leader — kill(-pid, …) therefore names a real group containing
+// the shell and the agent. No spawn-side change is needed for this path (unlike
+// the handler path, whose children deliberately JOIN the daemon's group).
+//
+// Fallback: if the group signal reports ESRCH the pane was not a group leader
+// after all, so the whole sequence falls back to the positive pid. Behaviour
+// then is byte-identical to the pre-fix implementation — never "nothing gets
+// killed".
+//
+// It is a best-effort helper: all signal errors are swallowed because the
+// window cleanup in KillWindow is the authoritative cleanup step.
+func killProcessWithGrace(ctx context.Context, pid int, grace time.Duration) {
+	// GUARD — the single most dangerous line in this function is
+	// killProcessSignal(-pid, …). With pid==0 that signals the CALLER'S OWN
+	// process group, i.e. the daemon and every one of its siblings; with
+	// pid==1 kill(-1, …) signals every process the daemon may signal; negative
+	// pids are nonsense here. Refuse loudly and signal nothing.
+	if pid <= 1 {
+		slog.WarnContext(ctx, "kill_process_with_grace_invalid_pid",
+			"pid", pid,
+			"reason", "kill(-pid) with pid<=1 would signal the daemon's own process group or every process",
+			"bead", "hk-bl2k6")
+		return
+	}
+
+	// Prefer the process GROUP led by pid — but CONFIRM leadership first rather
+	// than inferring it from an ESRCH fallback. tmux setsid()s each pane, so a
+	// live pane genuinely is its own group leader and this check passes on every
+	// healthy path; it fails exactly in the dangerous one.
+	//
+	// Why confirming matters (hk-3d9df): pid is captured at spawn and never
+	// re-verified, so if the pane exited and the OS recycled its pid, a bare
+	// kill(-pid) would signal an entire UNRELATED process group. On macOS pids
+	// wrap below 2000, so this is reachable, not theoretical — and the daemon's
+	// own tests inject fabricated pane pids (999, 1000, 1234) that would
+	// otherwise become live group kills against whatever happens to own those
+	// groups on the operator's machine. Getpgid also returns ESRCH when pid is
+	// already gone, which correctly routes to the single-process path.
+	//
+	// Whichever target we settle on is used for the liveness poll and the
+	// SIGKILL escalation too, so the poll asks the same question the signal
+	// answered: "is the thing I am trying to kill still there?"
+	target := pid
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
+		target = -pid
+	} else {
+		slog.WarnContext(ctx, "kill_process_with_grace_not_group_leader",
+			"pid", pid, "pgid", pgid, "err", err,
+			"reason", "pid is not its own process-group leader; signalling the single process only, since kill(-pid) would reach an unrelated group",
+			"bead", "hk-3d9df")
+	}
+	_ = killProcessSignal(target, syscall.SIGTERM) //nolint:errcheck // best-effort; the process may already be gone and KillWindow is authoritative
+
+	// Poll with kill(target, 0), which returns ESRCH once the group is empty
+	// (or, on the fallback path, once the process is gone). Polling the group
+	// rather than the leader is load-bearing: a pane shell typically dies on
+	// the first SIGTERM while a hosted agent that traps or ignores SIGTERM
+	// lives on. Polling only the leader would see ESRCH immediately, return
+	// early, and skip the SIGKILL that actually reaps the orphan.
 	deadline := time.Now().Add(grace)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); err != nil {
-			// ESRCH means no such process — it has exited.
+		if err := killProcessSignal(target, 0); errors.Is(err, syscall.ESRCH) {
+			// No such process/group — everything has exited.
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Grace period elapsed; escalate to SIGKILL.
-	_ = syscall.Kill(pid, syscall.SIGKILL)
+	// Grace period elapsed; escalate to SIGKILL on the same target.
+	_ = killProcessSignal(target, syscall.SIGKILL) //nolint:errcheck // best-effort; KillWindow is authoritative
 }
 
 // killRemoteProcessWithGrace forcefully terminates a WORKER pane PID over the

@@ -12,16 +12,17 @@ import (
 // makeSkillDir creates a skill directory (bare name) under agentsDir/_skills/.
 func makeSkillDir(t *testing.T, agentsDir, skillName string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(agentsDir, "_skills", skillName), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(agentsDir, "_skills", skillName), 0o700); err != nil {
 		t.Fatalf("mkdir skill %q: %v", skillName, err)
 	}
 }
 
 // makeParentTypeFolder creates a minimal parent type folder with just a soul.md.
-func makeParentTypeFolder(t *testing.T, agentsDir, typeName string) {
+func makeParentTypeFolder(t *testing.T, agentsDir string) {
 	t.Helper()
+	const typeName = "captain"
 	dir := filepath.Join(agentsDir, typeName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir parent type %q: %v", typeName, err)
 	}
 	writeFile(t, filepath.Join(dir, "soul.md"), "**I am** "+typeName+".\n")
@@ -31,7 +32,7 @@ func makeParentTypeFolder(t *testing.T, agentsDir, typeName string) {
 func makePathBearingRef(t *testing.T, repoRoot, ref string) {
 	t.Helper()
 	full := filepath.Join(repoRoot, ref)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
 		t.Fatalf("mkdir for ref %q: %v", ref, err)
 	}
 	writeFile(t, full, "content\n")
@@ -45,7 +46,7 @@ func TestCheck_WellFormed_NoContext(t *testing.T) {
 	repoRoot := t.TempDir()
 
 	// Parent type "captain" must have a soul.md.
-	makeParentTypeFolder(t, agentsDir, "captain")
+	makeParentTypeFolder(t, agentsDir)
 
 	m := `
 type: mytype
@@ -62,7 +63,7 @@ lifecycle:
 markers:
   never_emits: []
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	if len(defects) != 0 {
@@ -75,7 +76,7 @@ func TestCheck_WellFormed_BareSkillRef(t *testing.T) {
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	makeParentTypeFolder(t, agentsDir, "captain")
+	makeParentTypeFolder(t, agentsDir)
 	makeSkillDir(t, agentsDir, "crew-launch")
 
 	m := `
@@ -87,7 +88,7 @@ identity:
 context:
   - { ref: crew-launch, as: skill, presence: injected }
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	if len(defects) != 0 {
@@ -100,7 +101,7 @@ func TestCheck_WellFormed_PathBearingRef(t *testing.T) {
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	makeParentTypeFolder(t, agentsDir, "captain")
+	makeParentTypeFolder(t, agentsDir)
 	makePathBearingRef(t, repoRoot, "docs/orchestration-protocol-v2.md")
 
 	m := `
@@ -112,7 +113,7 @@ identity:
 context:
   - { ref: docs/orchestration-protocol-v2.md, as: doc, presence: retrieved }
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	if len(defects) != 0 {
@@ -133,7 +134,7 @@ identity:
   soul: soul.md
   parent_intent: operator
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	if len(defects) != 0 {
@@ -164,7 +165,7 @@ func TestCheck_LoadError_MissingSoulFile(t *testing.T) {
 
 	// Write manifest + operating.md, omit soul.md.
 	dir := filepath.Join(agentsDir, "mytype")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	m := `
@@ -198,7 +199,7 @@ identity:
   soul: soul.md
   parent_intent: captain
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	if len(defects) == 0 {
@@ -222,7 +223,7 @@ func TestCheck_ParentIntent_ParentFolderExistsButNoSoul(t *testing.T) {
 	repoRoot := t.TempDir()
 
 	// Create parent type folder WITHOUT soul.md.
-	if err := os.MkdirAll(filepath.Join(agentsDir, "captain"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(agentsDir, "captain"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -233,7 +234,7 @@ identity:
   soul: soul.md
   parent_intent: captain
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	if len(defects) == 0 {
@@ -258,7 +259,7 @@ func TestCheck_ContextRef_UnknownBareRef(t *testing.T) {
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	makeParentTypeFolder(t, agentsDir, "captain")
+	makeParentTypeFolder(t, agentsDir)
 
 	// context ref "nonexistent-skill" is not in _skills/ or type folder.
 	m := `
@@ -270,7 +271,7 @@ identity:
 context:
   - { ref: nonexistent-skill, as: skill, presence: retrieved }
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	if len(defects) == 0 {
@@ -293,7 +294,7 @@ func TestCheck_ContextRef_PathBearingMissing(t *testing.T) {
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	makeParentTypeFolder(t, agentsDir, "captain")
+	makeParentTypeFolder(t, agentsDir)
 
 	// path-bearing ref that doesn't exist under repoRoot.
 	m := `
@@ -305,7 +306,7 @@ identity:
 context:
   - { ref: docs/missing-doc.md, as: doc, presence: retrieved }
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	if len(defects) == 0 {
@@ -339,7 +340,7 @@ context:
   - { ref: missing-skill-a, as: skill, presence: retrieved }
   - { ref: missing-skill-b, as: skill, presence: retrieved }
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	// At minimum: 1 parent_intent + 2 context refs = 3 defects.
@@ -353,11 +354,11 @@ func TestCheck_ContextRef_BareRefInTypeFolder(t *testing.T) {
 	agentsDir := t.TempDir()
 	repoRoot := t.TempDir()
 
-	makeParentTypeFolder(t, agentsDir, "captain")
+	makeParentTypeFolder(t, agentsDir)
 
 	// skill lives in the type's OWN folder (not _skills/).
 	typeDir := filepath.Join(agentsDir, "mytype")
-	if err := os.MkdirAll(filepath.Join(typeDir, "my-private-skill"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(typeDir, "my-private-skill"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -370,7 +371,7 @@ identity:
 context:
   - { ref: my-private-skill, as: skill, presence: injected }
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 
 	defects := agentmanifest.Check(agentsDir, "mytype", repoRoot)
 	if len(defects) != 0 {

@@ -5,6 +5,8 @@ package agentmanifest
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +18,7 @@ import (
 func makeTypeFolder(t *testing.T, agentsDir, typeName, parentIntent, soulLines, opLines string) {
 	t.Helper()
 	dir := filepath.Join(agentsDir, typeName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir %q: %v", dir, err)
 	}
 
@@ -36,21 +38,21 @@ func makeTypeFolder(t *testing.T, agentsDir, typeName, parentIntent, soulLines, 
 		"  self_restart: true\n" +
 		"markers:\n" +
 		"  never_emits: []\n"
-	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
 	if soulLines == "" {
 		soulLines = "I am " + typeName + " — the default test soul.\n"
 	}
-	if err := os.WriteFile(filepath.Join(dir, "soul.md"), []byte(soulLines), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "soul.md"), []byte(soulLines), 0o600); err != nil {
 		t.Fatalf("write soul: %v", err)
 	}
 
 	if opLines == "" {
 		opLines = "## Loop\n1. Do work.\n"
 	}
-	if err := os.WriteFile(filepath.Join(dir, "operating.md"), []byte(opLines), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "operating.md"), []byte(opLines), 0o600); err != nil {
 		t.Fatalf("write operating: %v", err)
 	}
 }
@@ -105,7 +107,7 @@ func TestBuildBootDoc_SoulByteIdentical(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -128,7 +130,7 @@ func TestBuildBootDoc_ParentIntentOperator(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -148,7 +150,7 @@ func TestBuildBootDoc_ParentIntentGrafted(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -169,12 +171,12 @@ func TestBuildBootDoc_ActiveTriggersOnly(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
 	dir := filepath.Join(agentsDir, "crew")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	manifest := `type: crew
@@ -196,13 +198,13 @@ lifecycle:
 markers:
   never_emits: []
 `
-	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "soul.md"), []byte("I am crew.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "soul.md"), []byte("I am crew.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "operating.md"), []byte("Loop.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "operating.md"), []byte("Loop.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -223,7 +225,7 @@ func TestBuildBootDoc_WakeDefault(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	makeTypeFolder(t, agentsDir, "crew", "operator", "", "")
@@ -242,14 +244,14 @@ func TestBuildBootDoc_HandoffRead(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	makeTypeFolder(t, agentsDir, "crew", "operator", "", "")
 
 	handoffContent := "# HANDOFF-crew\n\nOpen: bead hk-abc.\n"
 	handoffPath := filepath.Join(tmpDir, "HANDOFF-crew.md")
-	if err := os.WriteFile(handoffPath, []byte(handoffContent), 0o644); err != nil {
+	if err := os.WriteFile(handoffPath, []byte(handoffContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -267,7 +269,7 @@ func TestBuildBootDoc_HandoffAbsent(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	makeTypeFolder(t, agentsDir, "crew", "operator", "", "")
@@ -286,19 +288,25 @@ func TestBuildBootDoc_NoFilesystemWrites(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	makeTypeFolder(t, agentsDir, "crew", "operator", "", "")
 
-	beforeEntries, _ := os.ReadDir(tmpDir)
+	beforeEntries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDir before BuildBootDoc: %v", err)
+	}
 
-	_, err := BuildBootDoc(agentsDir, tmpDir, "crew", "crew", "fresh")
+	_, err = BuildBootDoc(agentsDir, tmpDir, "crew", "crew", "fresh")
 	if err != nil {
 		t.Fatalf("BuildBootDoc: %v", err)
 	}
 
-	afterEntries, _ := os.ReadDir(tmpDir)
+	afterEntries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDir after BuildBootDoc: %v", err)
+	}
 	if len(afterEntries) != len(beforeEntries) {
 		t.Errorf("BuildBootDoc wrote files: before=%d after=%d", len(beforeEntries), len(afterEntries))
 	}
@@ -310,7 +318,7 @@ func TestRenderMarkdown_SectionOrder(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	makeTypeFolder(t, agentsDir, "crew", "operator", "I am crew — test soul.\n", "## Loop\n1. Work.\n")
@@ -321,7 +329,9 @@ func TestRenderMarkdown_SectionOrder(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	RenderMarkdown(doc, &buf)
+	if err := RenderMarkdown(doc, &buf); err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
 	out := buf.String()
 
 	sections := []string{
@@ -350,14 +360,14 @@ func TestRenderMarkdown_SoulBeforeHandoff(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	soulContent := "I am crew — unique-soul-marker.\n"
 	makeTypeFolder(t, agentsDir, "crew", "operator", soulContent, "")
 
 	handoffContent := "# HANDOFF-crew\nunique-handoff-marker\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "HANDOFF-crew.md"), []byte(handoffContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "HANDOFF-crew.md"), []byte(handoffContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -366,7 +376,9 @@ func TestRenderMarkdown_SoulBeforeHandoff(t *testing.T) {
 		t.Fatalf("BuildBootDoc: %v", err)
 	}
 	var buf strings.Builder
-	RenderMarkdown(doc, &buf)
+	if err := RenderMarkdown(doc, &buf); err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
 	out := buf.String()
 
 	soulIdx := strings.Index(out, "unique-soul-marker")
@@ -385,13 +397,13 @@ func TestRenderMarkdown_HandoffClaimHeader(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	makeTypeFolder(t, agentsDir, "crew", "operator", "", "")
 
 	handoffContent := "# HANDOFF-crew\nsome prior-session claim\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "HANDOFF-crew.md"), []byte(handoffContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "HANDOFF-crew.md"), []byte(handoffContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -404,9 +416,15 @@ func TestRenderMarkdown_HandoffClaimHeader(t *testing.T) {
 	const wantOverride = "harmonik digest"
 
 	var mdBuf strings.Builder
-	RenderMarkdown(doc, &mdBuf)
+	if err := RenderMarkdown(doc, &mdBuf); err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
 	md := mdBuf.String()
-	handoffSection := md[strings.Index(md, "## Handoff"):]
+	handoffIndex := strings.Index(md, "## Handoff")
+	if handoffIndex < 0 {
+		t.Fatalf("RenderMarkdown output missing Handoff section:\n%s", md)
+	}
+	handoffSection := md[handoffIndex:]
 	if !strings.Contains(handoffSection, wantClaim) || !strings.Contains(handoffSection, wantOverride) {
 		t.Errorf("RenderMarkdown Handoff section missing CLAIM header, got:\n%s", handoffSection)
 	}
@@ -415,11 +433,44 @@ func TestRenderMarkdown_HandoffClaimHeader(t *testing.T) {
 	}
 
 	var toonBuf strings.Builder
-	RenderToon(doc, &toonBuf)
+	if err := RenderToon(doc, &toonBuf); err != nil {
+		t.Fatalf("RenderToon: %v", err)
+	}
 	toon := toonBuf.String()
-	toonHandoffSection := toon[strings.Index(toon, "HANDOFF"):]
+	toonHandoffIndex := strings.Index(toon, "HANDOFF")
+	if toonHandoffIndex < 0 {
+		t.Fatalf("RenderToon output missing Handoff section:\n%s", toon)
+	}
+	toonHandoffSection := toon[toonHandoffIndex:]
 	if !strings.Contains(toonHandoffSection, wantClaim) || !strings.Contains(toonHandoffSection, wantOverride) {
 		t.Errorf("RenderToon Handoff section missing CLAIM header, got:\n%s", toonHandoffSection)
+	}
+}
+
+type failingWriter struct {
+	err error
+}
+
+func (w failingWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func TestRenderers_PropagateWriteErrors(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("write failed")
+	doc := &BootDoc{}
+
+	for name, render := range map[string]func(*BootDoc, io.Writer) error{
+		"markdown": RenderMarkdown,
+		"toon":     RenderToon,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := render(doc, failingWriter{err: wantErr})
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("render error = %v, want %v", err, wantErr)
+			}
+		})
 	}
 }
 
@@ -429,12 +480,12 @@ func TestBuildBootDoc_CronTriggerActivityGuard(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
 	dir := filepath.Join(agentsDir, "admiral")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	manifest := `type: admiral
@@ -461,13 +512,13 @@ lifecycle:
 markers:
   never_emits: []
 `
-	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "soul.md"), []byte("I am admiral.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "soul.md"), []byte("I am admiral.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "operating.md"), []byte("## Loop\n1. Direct.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "operating.md"), []byte("## Loop\n1. Direct.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -487,7 +538,9 @@ markers:
 	}
 
 	var buf strings.Builder
-	RenderMarkdown(doc, &buf)
+	if err := RenderMarkdown(doc, &buf); err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
 	out := buf.String()
 	if !strings.Contains(out, "activity_guard: 24h") {
 		t.Errorf("rendered output missing activity_guard: 24h\noutput:\n%s", out)
@@ -503,12 +556,12 @@ func TestRenderMarkdown_EnabledFalseTriggersAbsent(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
 	dir := filepath.Join(agentsDir, "crew")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	manifest := `type: crew
@@ -535,13 +588,13 @@ lifecycle:
 markers:
   never_emits: []
 `
-	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "soul.md"), []byte("I am crew.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "soul.md"), []byte("I am crew.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "operating.md"), []byte("## Loop\n1. Work.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "operating.md"), []byte("## Loop\n1. Work.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -554,7 +607,9 @@ markers:
 	}
 
 	var buf strings.Builder
-	RenderMarkdown(doc, &buf)
+	if err := RenderMarkdown(doc, &buf); err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
 	out := buf.String()
 	if strings.Contains(out, "disabled-report") {
 		t.Errorf("disabled trigger 'disabled-report' appears in rendered output")
@@ -569,7 +624,7 @@ func TestRenderJSON_Roundtrip(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	makeTypeFolder(t, agentsDir, "crew", "operator", "I am crew.\n", "Loop.\n")

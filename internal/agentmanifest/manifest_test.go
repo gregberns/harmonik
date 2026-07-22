@@ -69,15 +69,16 @@ const validOperating = `## On wake
 `
 
 // makeTypeFolder creates a minimal valid type folder under agentsDir/typeName.
-func makeTypeFolder(t *testing.T, agentsDir, typeName, manifestYAML, soul, operating string) {
+func makeTypeFolder(t *testing.T, agentsDir, manifestYAML string) {
 	t.Helper()
+	const typeName = "mytype"
 	dir := filepath.Join(agentsDir, typeName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir %q: %v", dir, err)
 	}
 	writeFile(t, filepath.Join(dir, "manifest.yaml"), manifestYAML)
-	writeFile(t, filepath.Join(dir, "soul.md"), soul)
-	writeFile(t, filepath.Join(dir, "operating.md"), operating)
+	writeFile(t, filepath.Join(dir, "soul.md"), validSoul)
+	writeFile(t, filepath.Join(dir, "operating.md"), validOperating)
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -92,7 +93,7 @@ func writeFile(t *testing.T, path, content string) {
 func TestLoad_ValidType(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
-	makeTypeFolder(t, agentsDir, "mytype", validManifest, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, validManifest)
 
 	tf, err := agentmanifest.Load(agentsDir, "mytype")
 	if err != nil {
@@ -153,7 +154,7 @@ func TestLoad_LifecyclePersistent(t *testing.T) {
 
 	// Absent → defaults to false (validManifest declares only self_restart).
 	agentsDir := t.TempDir()
-	makeTypeFolder(t, agentsDir, "mytype", validManifest, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, validManifest)
 	tf, err := agentmanifest.Load(agentsDir, "mytype")
 	if err != nil {
 		t.Fatalf("Load: unexpected error: %v", err)
@@ -167,7 +168,7 @@ func TestLoad_LifecyclePersistent(t *testing.T) {
 		"lifecycle:\n  self_restart: true",
 		"lifecycle:\n  self_restart: true\n  persistent: true", 1)
 	agentsDir2 := t.TempDir()
-	makeTypeFolder(t, agentsDir2, "mytype", persistentManifest, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir2, persistentManifest)
 	tf2, err := agentmanifest.Load(agentsDir2, "mytype")
 	if err != nil {
 		t.Fatalf("Load (persistent): unexpected error: %v", err)
@@ -211,7 +212,7 @@ func TestLoad_MissingManifest(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
 	dir := filepath.Join(agentsDir, "orphan")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	// No manifest.yaml written.
@@ -226,7 +227,7 @@ func TestLoad_MissingSoul(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
 	dir := filepath.Join(agentsDir, "mytype")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(dir, "manifest.yaml"), validManifest)
@@ -243,7 +244,7 @@ func TestLoad_MissingOperating(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
 	dir := filepath.Join(agentsDir, "mytype")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(dir, "manifest.yaml"), validManifest)
@@ -259,7 +260,7 @@ func TestLoad_MissingOperating(t *testing.T) {
 func TestLoad_MalformedYAML(t *testing.T) {
 	t.Parallel()
 	agentsDir := t.TempDir()
-	makeTypeFolder(t, agentsDir, "mytype", ":::not valid yaml:::", validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, ":::not valid yaml:::")
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -277,7 +278,7 @@ identity:
   soul: soul.md
   parent_intent: captain
 `
-	makeTypeFolder(t, agentsDir, "mytype", mismatch, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, mismatch)
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -294,7 +295,7 @@ identity:
   soul: soul.md
   parent_intent: captain
 `
-	makeTypeFolder(t, agentsDir, "mytype", noType, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, noType)
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -311,7 +312,7 @@ identity:
   soul: soul.md
   parent_intent: captain
 `
-	makeTypeFolder(t, agentsDir, "mytype", noHarness, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, noHarness)
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -331,7 +332,7 @@ identity:
 context:
   - { ref: crew-launch, as: INVALID, presence: injected }
 `
-	makeTypeFolder(t, agentsDir, "mytype", badAs, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, badAs)
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -351,7 +352,7 @@ identity:
 context:
   - { ref: crew-launch, as: skill, presence: INVALID }
 `
-	makeTypeFolder(t, agentsDir, "mytype", badPresence, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, badPresence)
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -371,7 +372,7 @@ identity:
 triggers:
   - { id: mytrigger, source: INVALID, enabled: true }
 `
-	makeTypeFolder(t, agentsDir, "mytype", badSource, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, badSource)
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -391,7 +392,7 @@ identity:
 triggers:
   - { source: queue, enabled: true }
 `
-	makeTypeFolder(t, agentsDir, "mytype", noID, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, noID)
 
 	_, err := agentmanifest.Load(agentsDir, "mytype")
 	if !errors.Is(err, agentmanifest.ErrInvalid) {
@@ -412,7 +413,7 @@ identity:
   soul: soul.md
   parent_intent: captain
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 	tf, err := agentmanifest.Load(agentsDir, "mytype")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -433,7 +434,7 @@ identity:
   soul: soul.md
   parent_intent: captain
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 	tf, err := agentmanifest.Load(agentsDir, "mytype")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -447,7 +448,6 @@ func TestLoad_AllTriggerSources(t *testing.T) {
 	t.Parallel()
 	sources := []string{"queue", "cron", "interval", "event", "comms", "manual", "operator"}
 	for _, src := range sources {
-		src := src
 		t.Run(src, func(t *testing.T) {
 			t.Parallel()
 			agentsDir := t.TempDir()
@@ -460,7 +460,7 @@ identity:
 triggers:
   - { id: t1, source: ` + src + `, enabled: true }
 `
-			makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+			makeTypeFolder(t, agentsDir, m)
 			if _, err := agentmanifest.Load(agentsDir, "mytype"); err != nil {
 				t.Errorf("Load with source %q: unexpected error: %v", src, err)
 			}
@@ -485,7 +485,7 @@ triggers:
     deliver: comms
     message: "Post a priorities update."
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 	tf, err := agentmanifest.Load(agentsDir, "mytype")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -520,7 +520,7 @@ triggers:
     message: "Run the hourly audit."
     activity_guard: 24h
 `
-	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	makeTypeFolder(t, agentsDir, m)
 	tf, err := agentmanifest.Load(agentsDir, "mytype")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -554,11 +554,11 @@ func TestResolveRef_BareRef_SharedFirst(t *testing.T) {
 	agentsDir := t.TempDir()
 	// Create shared skill and per-type skill with the same name.
 	sharedSkill := filepath.Join(agentsDir, "_skills", "crew-launch")
-	if err := os.MkdirAll(sharedSkill, 0o755); err != nil {
+	if err := os.MkdirAll(sharedSkill, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	typeSkill := filepath.Join(agentsDir, "crew", "crew-launch")
-	if err := os.MkdirAll(typeSkill, 0o755); err != nil {
+	if err := os.MkdirAll(typeSkill, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -576,7 +576,7 @@ func TestResolveRef_BareRef_TypeFolderFallback(t *testing.T) {
 	agentsDir := t.TempDir()
 	// Only the per-type skill exists (not in _skills/).
 	typeSkill := filepath.Join(agentsDir, "crew", "private-skill")
-	if err := os.MkdirAll(typeSkill, 0o755); err != nil {
+	if err := os.MkdirAll(typeSkill, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -604,7 +604,7 @@ func TestResolveRef_BareRef_FileInTypeFolder(t *testing.T) {
 	agentsDir := t.TempDir()
 	// operating.md is a file in the type folder, not a directory.
 	typeDir := filepath.Join(agentsDir, "crew")
-	if err := os.MkdirAll(typeDir, 0o755); err != nil {
+	if err := os.MkdirAll(typeDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(typeDir, "operating.md"), "content")

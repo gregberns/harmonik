@@ -1,4 +1,4 @@
-// Package agentmanifest: check.go — full filesystem validation (harmonik agent check).
+// Package agentmanifest validates agent manifests and their filesystem references.
 // Spec: .kerf/works/agent-manifest/SPEC.md §3 (C-C checks).
 package agentmanifest
 
@@ -39,30 +39,39 @@ func Check(agentsDir, typeName, repoRoot string) []Defect {
 		return []Defect{{Field: "load", Message: err.Error()}}
 	}
 
-	var defects []Defect
+	defects := checkParentIntent(agentsDir, tf.Manifest.Identity.ParentIntent)
+	return append(defects, checkContextRefs(agentsDir, typeName, repoRoot, tf.Manifest.Context)...)
+}
 
-	// C-C parent-intent check (SPEC §3): must name an existing type with a
-	// readable soul.md, or the reserved terminal "operator".
-	pi := tf.Manifest.Identity.ParentIntent
-	if pi != "operator" {
-		parentSoul := filepath.Join(agentsDir, pi, soulFile)
-		if _, statErr := os.Stat(parentSoul); statErr != nil {
-			if errors.Is(statErr, os.ErrNotExist) {
-				defects = append(defects, Defect{
-					Field:   "identity.parent_intent",
-					Message: fmt.Sprintf("parent type %q has no soul.md (type folder does not exist or is missing soul.md)", pi),
-				})
-			} else {
-				defects = append(defects, Defect{
-					Field:   "identity.parent_intent",
-					Message: fmt.Sprintf("cannot stat parent type %q soul.md: %v", pi, statErr),
-				})
-			}
-		}
+// checkParentIntent implements the C-C parent-intent check from SPEC §3.
+func checkParentIntent(agentsDir, parentIntent string) []Defect {
+	if parentIntent == "operator" {
+		return nil
 	}
 
-	// Ref resolution check (SPEC §6): each context[].ref must resolve.
-	for i, c := range tf.Manifest.Context {
+	var defects []Defect
+	pi := parentIntent
+	parentSoul := filepath.Join(agentsDir, pi, soulFile)
+	if _, statErr := os.Stat(parentSoul); statErr != nil {
+		if errors.Is(statErr, os.ErrNotExist) {
+			defects = append(defects, Defect{
+				Field:   "identity.parent_intent",
+				Message: fmt.Sprintf("parent type %q has no soul.md (type folder does not exist or is missing soul.md)", pi),
+			})
+		} else {
+			defects = append(defects, Defect{
+				Field:   "identity.parent_intent",
+				Message: fmt.Sprintf("cannot stat parent type %q soul.md: %v", pi, statErr),
+			})
+		}
+	}
+	return defects
+}
+
+// checkContextRefs applies the context ref resolution rules from SPEC §6.
+func checkContextRefs(agentsDir, typeName, repoRoot string, context []ContextEntry) []Defect {
+	var defects []Defect
+	for i, c := range context {
 		field := fmt.Sprintf("context[%d].ref", i)
 		if strings.Contains(c.Ref, "/") {
 			// Path-bearing ref: taken literally, relative to repoRoot.
@@ -90,6 +99,5 @@ func Check(agentsDir, typeName, repoRoot string) []Defect {
 			}
 		}
 	}
-
 	return defects
 }

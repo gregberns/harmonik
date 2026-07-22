@@ -179,19 +179,17 @@ func runAgentBrief(args []string) int {
 
 	switch format {
 	case "markdown":
-		agentmanifest.RenderMarkdown(doc, os.Stdout)
+		err = agentmanifest.RenderMarkdown(doc, os.Stdout)
 	case "toon":
-		agentmanifest.RenderToon(doc, os.Stdout)
+		err = agentmanifest.RenderToon(doc, os.Stdout)
 	case "json":
-		if err := agentmanifest.RenderJSON(doc, os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik agent brief: json encode: %v\n", err)
-			return 1
-		}
+		err = agentmanifest.RenderJSON(doc, os.Stdout)
 	case "yaml":
-		if err := agentmanifest.RenderYAML(doc, os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik agent brief: yaml encode: %v\n", err)
-			return 1
-		}
+		err = agentmanifest.RenderYAML(doc, os.Stdout)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik agent brief: render %s: %v\n", format, err)
+		return 1
 	}
 	return 0
 }

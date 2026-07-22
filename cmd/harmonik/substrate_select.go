@@ -28,6 +28,29 @@ import (
 //
 // Value "codexdriver" selects the structured driver. Anything else (including
 // unset) keeps the tmux substrate — the safe pre-bake default.
+//
+// DO NOT SET THIS TO RUN CODEX IMPLEMENTERS (hk-oulya, 2026-07-22). It is not
+// the codex ramp mechanism, it never was, and it is actively harmful as one.
+// Measured, two isolated daemons differing only in configuration: a bead
+// carrying the tier-1 label harness:codex on a byte-identical-to-production
+// daemon produced the SAME live argv as a daemon running with codexdriver plus
+// --default-harness codex. The substrate env selects a SUBSTRATE, not a
+// HARNESS, and the codex launch discards it anyway — the DOT cascade nils
+// spec.Substrate for a SessionIDCaptured harness so the handler execs with a
+// real stdout pipe.
+//
+// What it does change is only damage: a CLAUDE-resolved implementer under this
+// substrate is handed a codex JSON-RPC-locked channel it cannot speak, emits no
+// agent_ready and no error, and hangs silently (hk-3eso9 — roughly 1.8h of zero
+// production commits). The reviewer channel has a carve-out (reviewerSubstrate,
+// hk-qxvc2); the implementer channel never got one.
+//
+// The ramp mechanism is the PER-BEAD tier-1 harness:codex label: no env, no
+// daemon restart, no binary swap, revertible by removing the label. It is safe
+// in DOT CASCADE mode only, and it carries a load-bearing invariant — reviewer
+// nodes must keep an explicit harness= attr. Production's workflow.dot pins
+// review and qa, which is the only reason a tier-1 label does not hijack the
+// reviewer into codex, where no reviewer can work (hk-pkxju).
 const substrateSelectEnv = "HARMONIK_SUBSTRATE"
 
 // Live-capture selection (AIS-013/AIS-014, m2-4-capture-tee design §2). Capture

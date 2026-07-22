@@ -28,6 +28,7 @@ import (
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -181,7 +182,7 @@ type WorkLoopDepsParams struct {
 	// the br-ready poll fallback (backward-compat for tests that don't use queues).
 	//
 	// Bead ref: hk-45ude.
-	QueueStore *QueueStore
+	QueueStore *queuewiring.QueueStore
 
 	// QueueLedger, when non-nil, is the queue.BeadLedger seam the dispatch loop
 	// uses to re-evaluate deferred-for-ledger-dep items on every tick (§2.8).
@@ -1960,7 +1961,7 @@ func ExportedSpendMeterSetDailyCapBytes(m *DaemonSpendMeter, b float64) {
 // package daemon_test (NQ-X1).
 //
 // Bead ref: hk-tigaf.11.
-func ExportedNewPerQueueSpendMeter(reg *RunRegistry, store *QueueStore, projectDir string) *PerQueueSpendMeter {
+func ExportedNewPerQueueSpendMeter(reg *RunRegistry, store *queuewiring.QueueStore, projectDir string) *PerQueueSpendMeter {
 	return NewPerQueueSpendMeter(reg, store, projectDir)
 }
 
@@ -1997,7 +1998,7 @@ func ExportedPerQueueSpendMeterSetGlobalCapUSD(m *PerQueueSpendMeter, usd float6
 // ExportedQueueStoreSetQueue installs q into the QueueStore for tests (NQ-X1).
 //
 // Bead ref: hk-tigaf.11.
-func ExportedQueueStoreSetQueue(s *QueueStore, q *queue.Queue) {
+func ExportedQueueStoreSetQueue(s *queuewiring.QueueStore, q *queue.Queue) {
 	s.SetQueue(q)
 }
 
@@ -2253,13 +2254,14 @@ func HandlerEnvOf(deps workLoopDeps) []string {
 // QueueStore test seams (hk-j808w)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ExportedNewQueueStore exposes newQueueStore for tests in package daemon_test.
-// QueueStore and its methods (SetQueue, Queue, ClearQueue, LockForMutation) are
-// exported; only the constructor is unexported.
+// ExportedNewQueueStore returns a queuewiring.QueueStore for tests in package
+// daemon_test. The store itself moved to internal/queuewiring (P2 E3a); this
+// shim is kept because 41 daemon_test files call it and none names the type, so
+// keeping it is the difference between a bounded diff and a 60-file one.
 //
 // Bead ref: hk-j808w.
-func ExportedNewQueueStore() *QueueStore {
-	return newQueueStore()
+func ExportedNewQueueStore() *queuewiring.QueueStore {
+	return queuewiring.NewQueueStore()
 }
 
 // ExportedNewWorkLoopDepsWithStore exposes newWorkLoopDeps for tests in package
@@ -2292,7 +2294,7 @@ func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopD
 // active queue after work-loop cycles in hk-45ude queue-dispatch tests.
 //
 // Bead ref: hk-45ude.
-func ExportedQueueStoreOf(deps workLoopDeps) *QueueStore {
+func ExportedQueueStoreOf(deps workLoopDeps) *queuewiring.QueueStore {
 	return deps.queueStore
 }
 
@@ -2501,32 +2503,24 @@ var ExportedLivePaneCommandSubstrings = &livePaneCommandSubstrings
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedQueueOperatorEventConsumerConfig is a type alias for
-// QueueOperatorEventConsumerConfig for tests in package daemon_test.
+// queuewiring.QueueOperatorEventConsumerConfig for tests in package daemon_test.
+// Kept after the P2 E3a move because operatornfr_pause_inflight_hk95a2r_test.go
+// (which stays in daemon) names it.
 //
 // Bead ref: hk-7urls.
-type ExportedQueueOperatorEventConsumerConfig = QueueOperatorEventConsumerConfig
+type ExportedQueueOperatorEventConsumerConfig = queuewiring.QueueOperatorEventConsumerConfig
 
-// ExportedNewQueueOperatorEventConsumer exposes NewQueueOperatorEventConsumer
-// for tests in package daemon_test.
+// ExportedNewQueueOperatorEventConsumer exposes
+// queuewiring.NewQueueOperatorEventConsumer for tests in package daemon_test.
 //
 // Bead ref: hk-7urls.
-var ExportedNewQueueOperatorEventConsumer = NewQueueOperatorEventConsumer
+var ExportedNewQueueOperatorEventConsumer = queuewiring.NewQueueOperatorEventConsumer
 
-// ExportedQueueOpConsumerHandlePauseStatus invokes the unexported
-// handleOperatorPauseStatus method for tests in package daemon_test.
-//
-// Bead ref: hk-7urls.
-func ExportedQueueOpConsumerHandlePauseStatus(c *QueueOperatorEventConsumer, ctx context.Context, evt core.Event) error {
-	return c.handleOperatorPauseStatus(ctx, evt)
-}
-
-// ExportedQueueOpConsumerHandleResuming invokes the unexported
-// handleOperatorResuming method for tests in package daemon_test.
-//
-// Bead ref: hk-7urls.
-func ExportedQueueOpConsumerHandleResuming(c *QueueOperatorEventConsumer, ctx context.Context, evt core.Event) error {
-	return c.handleOperatorResuming(ctx, evt)
-}
+// The two handler-invoking shims (ExportedQueueOpConsumerHandlePauseStatus /
+// ExportedQueueOpConsumerHandleResuming) moved to
+// internal/queuewiring/export_test.go with the consumer they drive (P2 E3a):
+// their bodies reach unexported methods package daemon can no longer see, and
+// every caller moved with them.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // runWait ctx-cancel test seams (hk-88nno)
@@ -2775,23 +2769,9 @@ func ExportedHandlerPauseControllerSetAutoResumeCfg(c *HandlerPauseController, a
 	c.SetAutoResumeConfig(agentType, cfg)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// brQueueLedger test seam (hk-dv8qv — ledger-dep direction regression)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedQueueLedger is the read seam tests use to exercise the production
-// brQueueLedger.BlocksEdge / LookupStatus against a real brcli.Adapter (wired
-// to a mock `br` binary). It mirrors the queue.BeadLedger surface.
-type ExportedQueueLedger interface {
-	LookupStatus(ctx context.Context, id core.BeadID) (queue.BeadStatus, error)
-	BlocksEdge(ctx context.Context, blocker, blocked core.BeadID) (bool, error)
-}
-
-// ExportedNewBRQueueLedger constructs the production brQueueLedger over adapter
-// so package daemon_test can verify the ledger-dep edge direction (hk-dv8qv).
-func ExportedNewBRQueueLedger(adapter *brcli.Adapter) ExportedQueueLedger {
-	return newBRQueueLedger(adapter)
-}
+// The brQueueLedger test seam (hk-dv8qv — ledger-dep direction regression) moved
+// to internal/queuewiring/export_test.go as ExportedQueueLedger /
+// ExportedNewBRQueueLedger, along with the bridge and its only caller (P2 E3a).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Escape-detector test seams (hk-ooexj — gitignored/pre-existing false positive)

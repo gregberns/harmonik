@@ -28,6 +28,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // pqBytesPerUSD mirrors the package-internal bytesPerUSD conversion (100_000
@@ -93,10 +94,10 @@ func pqRegisterRun(t *testing.T, reg *daemon.RunRegistry, queueName string) core
 // pqSetup wires a RunRegistry, a QueueStore preloaded with the given queues, and
 // a PerQueueSpendMeter (projectDir "" → no persistence). globalCapUSD defaults to
 // the env-derived value; callers override via the exported seam when needed.
-func pqSetup(t *testing.T, queues ...*queue.Queue) (*daemon.RunRegistry, *daemon.QueueStore, *daemon.PerQueueSpendMeter) {
+func pqSetup(t *testing.T, queues ...*queue.Queue) (*daemon.RunRegistry, *queuewiring.QueueStore, *daemon.PerQueueSpendMeter) {
 	t.Helper()
 	reg := daemon.NewRunRegistry()
-	store := daemon.NewQueueStore()
+	store := queuewiring.NewQueueStore()
 	for _, q := range queues {
 		daemon.ExportedQueueStoreSetQueue(store, q)
 	}

@@ -1,4 +1,4 @@
-package daemon_test
+package queuewiring_test
 
 // queuestore_namedqueues_hktigaf2_test.go — name-keyed QueueStore tests (hk-tigaf.2).
 //
@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // namedQueueFixture builds a minimal *queue.Queue with the given name.
@@ -43,7 +43,7 @@ func namedQueueFixture(t *testing.T, name string) *queue.Queue {
 func TestQueueStoreByNameBasicRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 
 	q := namedQueueFixture(t, "work")
 	qs.SetQueueByName("work", q)
@@ -62,7 +62,7 @@ func TestQueueStoreByNameBasicRoundTrip(t *testing.T) {
 func TestQueueStoreByNameMissingSlot(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	if qs.QueueByName("does-not-exist") != nil {
 		t.Fatal("QueueByName: expected nil for absent name, got non-nil")
 	}
@@ -73,7 +73,7 @@ func TestQueueStoreByNameMissingSlot(t *testing.T) {
 func TestQueueStoreClearQueueByName(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueueByName("work", namedQueueFixture(t, "work"))
 	qs.ClearQueueByName("work")
 
@@ -87,7 +87,7 @@ func TestQueueStoreClearQueueByName(t *testing.T) {
 func TestQueueStoreMultipleNamesIndependent(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 
 	qa := namedQueueFixture(t, "alpha")
 	qb := namedQueueFixture(t, "beta")
@@ -110,7 +110,7 @@ func TestQueueStoreMultipleNamesIndependent(t *testing.T) {
 func TestQueueStoreSetQueueUsesNameField(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	q := namedQueueFixture(t, queue.QueueNameMain)
 	qs.SetQueue(q)
 
@@ -127,7 +127,7 @@ func TestQueueStoreSetQueueUsesNameField(t *testing.T) {
 func TestQueueStoreSetQueueEmptyNameNormalisesToMain(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	q := &queue.Queue{
 		SchemaVersion: 1,
 		QueueID:       "test-empty-name",
@@ -151,7 +151,7 @@ func TestQueueStoreSetQueueEmptyNameNormalisesToMain(t *testing.T) {
 func TestQueueStoreAllQueues(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 
 	qa := namedQueueFixture(t, "alpha")
 	qb := namedQueueFixture(t, "beta")
@@ -175,7 +175,7 @@ func TestQueueStoreAllQueues(t *testing.T) {
 func TestQueueStoreAllQueuesIsSnapshot(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueueByName("main", namedQueueFixture(t, "main"))
 
 	snap := qs.AllQueues()
@@ -197,7 +197,7 @@ func TestQueueStoreNamedConcurrentReadSerialWrite(t *testing.T) {
 
 	nameList := []string{"alpha", "beta", "gamma", "delta"}
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	for _, n := range nameList {
 		qs.SetQueueByName(n, namedQueueFixture(t, n))
 	}

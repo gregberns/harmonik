@@ -243,6 +243,16 @@ codex-capture-pane-gate:  ## SC6: forbid `capture-pane` in the structured input-
 transport-freeze-gate:  ## P2 E4: forbid new reverse-tunnel files or moved symbols in internal/daemon
 	scripts/transport-freeze-gate.sh
 
+# queuewiring-freeze-gate: the P2 E3 extraction ratchet — the queue-ownership
+# concern (QueueStore, the brcli->queue.BeadLedger bridge, the operator
+# pause/resume consumer) left internal/daemon for internal/queuewiring, and
+# depguard can only fence the import edge, not the creation of a new file. This
+# grep gate fails if a queue-ownership-shaped file or one of the moved symbols
+# reappears in internal/daemon. Wired into check-fast and check-short.
+.PHONY: queuewiring-freeze-gate
+queuewiring-freeze-gate:  ## P2 E3: forbid new queue-ownership files or moved symbols in internal/daemon
+	scripts/queuewiring-freeze-gate.sh
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -429,6 +439,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	go build ./...
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=HEAD~1
 	scripts/transport-freeze-gate.sh
+	scripts/queuewiring-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -451,6 +462,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	go build ./...
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=origin/main
 	scripts/transport-freeze-gate.sh
+	scripts/queuewiring-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation
@@ -567,9 +579,18 @@ release-validate: build-all  ## Optional local sanity check (NOT on the release 
 # ---------------------------------------------------------------------------
 # Lint shorthand
 # ---------------------------------------------------------------------------
-.PHONY: lint
+.PHONY: lint lint-full-count
 lint:  ## golangci-lint run (shorthand)
 	$(TOOLS_DIR)/golangci-lint run
+
+lint-full-count:  ## Publish the full-tree grandfathered lint finding count (not a gate)
+	@REPORT=$$(mktemp); \
+	trap 'rm -f "$$REPORT"' EXIT; \
+	$(TOOLS_DIR)/golangci-lint run --issues-exit-code=0 --max-issues-per-linter=0 --max-same-issues=0 \
+		--output.text.path=/dev/null --output.json.path="$$REPORT" >/dev/null; \
+	jq -er 'if any(.Issues[]; .FromLinter == "typecheck") then \
+		error("full lint count unavailable: typecheck failed; fix compilation first") \
+		else "full lint findings: \(.Issues | length)" end' "$$REPORT"
 
 # ---------------------------------------------------------------------------
 # specaudit-lint — spec-drift lint (M1-1)

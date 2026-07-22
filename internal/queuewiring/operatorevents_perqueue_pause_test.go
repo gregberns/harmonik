@@ -1,6 +1,6 @@
-package daemon_test
+package queuewiring_test
 
-// queue_perqueue_pause_tigaf6_test.go — NQ-C1 per-queue pause/resume tests (hk-tigaf.6).
+// operatorevents_perqueue_pause_test.go — NQ-C1 per-queue pause/resume tests (hk-tigaf.6).
 //
 // Acceptance criteria (per bead spec):
 //   - Named pause halts only the named queue; other queues keep going.
@@ -14,9 +14,13 @@ package daemon_test
 //   - TestPerQueuePause_OtherQueueUnaffected             — non-targeted queue stays active
 //   - TestPerQueuePause_NamedResume_RestoresQueue        — named resume transitions back to active
 //   - TestPerQueuePause_GlobalPauseDrainsAll             — unnamed pause transitions all queues
-//   - TestPerQueuePause_DoesNotSetGlobalFlag             — IsPaused() stays false after named pause
 //   - TestPerQueuePause_EmitsQueuePausedEventForTarget   — queue_paused{operator_drain} emitted for named queue
 //   - TestPerQueuePause_GlobalResumeRestoresAll          — global resume restores all paused queues
+//
+// The seventh criterion — IsPaused() stays false after a named pause — is
+// asserted by TestPerQueuePause_DoesNotSetGlobalFlag, which stays in
+// internal/daemon/queue_perqueue_pause_globalflag_tigaf6_test.go because it
+// drives the daemon-owned OperatorPauseController (P2 unit E3a).
 //
 // Bead ref: hk-tigaf.6.
 
@@ -29,9 +33,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,19 +71,19 @@ func perQueueFixtureActiveQueue(t *testing.T, name string) *queue.Queue {
 	}
 }
 
-// perQueueFixtureConsumerWithBus builds a QueueOperatorEventConsumer + bus that
-// is not yet sealed (so callers can subscribe before sealing if needed).
-func perQueueFixtureConsumerWithBus(t *testing.T, qs *daemon.QueueStore) (*daemon.QueueOperatorEventConsumer, eventbus.EventBus) {
+// perQueueFixtureConsumerWithBus builds a QueueOperatorEventConsumer over a
+// freshly sealed bus.
+func perQueueFixtureConsumerWithBus(t *testing.T, qs *queuewiring.QueueStore) *queuewiring.QueueOperatorEventConsumer {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
-	c := daemon.ExportedNewQueueOperatorEventConsumer(daemon.ExportedQueueOperatorEventConsumerConfig{
+	c := queuewiring.NewQueueOperatorEventConsumer(queuewiring.QueueOperatorEventConsumerConfig{
 		QueueStore: qs,
 		Bus:        bus,
 	})
 	if err := bus.Seal(); err != nil {
 		t.Fatalf("perQueueFixtureConsumerWithBus: Seal: %v", err)
 	}
-	return c, bus
+	return c
 }
 
 func perQueueFixturePauseEvent(t *testing.T, status core.OperatorPauseStatusValue, queueName string) core.Event {
@@ -141,8 +145,8 @@ func perQueueFixtureResumingEvent(t *testing.T, queueName string) core.Event {
 func TestPerQueuePause_OnlyNamedQueueIsPaused(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
-	c, _ := perQueueFixtureConsumerWithBus(t, qs)
+	qs := queuewiring.NewQueueStore()
+	c := perQueueFixtureConsumerWithBus(t, qs)
 
 	investigateQ := perQueueFixtureActiveQueue(t, "investigate")
 	mainQ := perQueueFixtureActiveQueue(t, "main")
@@ -151,7 +155,7 @@ func TestPerQueuePause_OnlyNamedQueueIsPaused(t *testing.T) {
 
 	// Named pause targeting "investigate".
 	evt := perQueueFixturePauseEvent(t, core.OperatorPauseStatusValuePausing, "investigate")
-	if err := daemon.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
 	}
 
@@ -169,8 +173,8 @@ func TestPerQueuePause_OnlyNamedQueueIsPaused(t *testing.T) {
 func TestPerQueuePause_OtherQueueUnaffected(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
-	c, _ := perQueueFixtureConsumerWithBus(t, qs)
+	qs := queuewiring.NewQueueStore()
+	c := perQueueFixtureConsumerWithBus(t, qs)
 
 	investigateQ := perQueueFixtureActiveQueue(t, "investigate")
 	mainQ := perQueueFixtureActiveQueue(t, "main")
@@ -178,7 +182,7 @@ func TestPerQueuePause_OtherQueueUnaffected(t *testing.T) {
 	qs.SetQueue(mainQ)
 
 	evt := perQueueFixturePauseEvent(t, core.OperatorPauseStatusValuePausing, "investigate")
-	if err := daemon.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
 	}
 
@@ -196,15 +200,15 @@ func TestPerQueuePause_OtherQueueUnaffected(t *testing.T) {
 func TestPerQueuePause_NamedResume_RestoresQueue(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
-	c, _ := perQueueFixtureConsumerWithBus(t, qs)
+	qs := queuewiring.NewQueueStore()
+	c := perQueueFixtureConsumerWithBus(t, qs)
 
 	investigateQ := perQueueFixtureActiveQueue(t, "investigate")
 	investigateQ.Status = queue.QueueStatusPausedByDrain
 	qs.SetQueue(investigateQ)
 
 	evt := perQueueFixtureResumingEvent(t, "investigate")
-	if err := daemon.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorResuming: %v", err)
 	}
 
@@ -222,8 +226,8 @@ func TestPerQueuePause_NamedResume_RestoresQueue(t *testing.T) {
 func TestPerQueuePause_GlobalPauseDrainsAll(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
-	c, _ := perQueueFixtureConsumerWithBus(t, qs)
+	qs := queuewiring.NewQueueStore()
+	c := perQueueFixtureConsumerWithBus(t, qs)
 
 	investigateQ := perQueueFixtureActiveQueue(t, "investigate")
 	mainQ := perQueueFixtureActiveQueue(t, "main")
@@ -232,7 +236,7 @@ func TestPerQueuePause_GlobalPauseDrainsAll(t *testing.T) {
 
 	// Global pause: no queue name.
 	evt := perQueueFixturePauseEvent(t, core.OperatorPauseStatusValuePausing, "")
-	if err := daemon.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus (global): %v", err)
 	}
 
@@ -247,33 +251,15 @@ func TestPerQueuePause_GlobalPauseDrainsAll(t *testing.T) {
 	}
 }
 
-// TestPerQueuePause_DoesNotSetGlobalFlag verifies that a per-queue pause does
-// NOT set the OperatorPauseController.IsPaused() global flag (the EM-067
-// br-ready gate must remain false).
-func TestPerQueuePause_DoesNotSetGlobalFlag(t *testing.T) {
-	t.Parallel()
-
-	col := &stubEventCollector{}
-	ctrl := daemon.ExportedNewOperatorPauseController(col)
-
-	if err := ctrl.HandleOperatorPause(context.Background(), "investigate"); err != nil {
-		t.Fatalf("HandleOperatorPause(named): %v", err)
-	}
-
-	if ctrl.IsPaused() {
-		t.Error("IsPaused() = true after per-queue pause; br-ready gate should remain clear")
-	}
-}
-
 // TestPerQueuePause_EmitsQueuePausedEventForTarget verifies that exactly one
 // queue_paused{reason: "operator_drain"} event is emitted for the targeted
 // queue when a named pause triggers the consumer.
 func TestPerQueuePause_EmitsQueuePausedEventForTarget(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	bus := eventbus.NewBusImpl()
-	c := daemon.ExportedNewQueueOperatorEventConsumer(daemon.ExportedQueueOperatorEventConsumerConfig{
+	c := queuewiring.NewQueueOperatorEventConsumer(queuewiring.QueueOperatorEventConsumerConfig{
 		QueueStore: qs,
 		Bus:        bus,
 	})
@@ -309,7 +295,7 @@ func TestPerQueuePause_EmitsQueuePausedEventForTarget(t *testing.T) {
 	qs.SetQueue(mainQ)
 
 	evt := perQueueFixturePauseEvent(t, core.OperatorPauseStatusValuePausing, "investigate")
-	if err := daemon.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
 	}
 
@@ -330,8 +316,8 @@ func TestPerQueuePause_EmitsQueuePausedEventForTarget(t *testing.T) {
 func TestPerQueuePause_GlobalResumeRestoresAll(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
-	c, _ := perQueueFixtureConsumerWithBus(t, qs)
+	qs := queuewiring.NewQueueStore()
+	c := perQueueFixtureConsumerWithBus(t, qs)
 
 	for _, name := range []string{"investigate", "main", "extra"} {
 		q := perQueueFixtureActiveQueue(t, name)
@@ -340,7 +326,7 @@ func TestPerQueuePause_GlobalResumeRestoresAll(t *testing.T) {
 	}
 
 	evt := perQueueFixtureResumingEvent(t, "") // global resume
-	if err := daemon.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorResuming (global): %v", err)
 	}
 
@@ -360,8 +346,8 @@ func TestPerQueuePause_GlobalResumeRestoresAll(t *testing.T) {
 func TestPerQueuePause_NamedResumeDoesNotRestoreOtherQueues(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
-	c, _ := perQueueFixtureConsumerWithBus(t, qs)
+	qs := queuewiring.NewQueueStore()
+	c := perQueueFixtureConsumerWithBus(t, qs)
 
 	for _, name := range []string{"investigate", "main"} {
 		q := perQueueFixtureActiveQueue(t, name)
@@ -370,7 +356,7 @@ func TestPerQueuePause_NamedResumeDoesNotRestoreOtherQueues(t *testing.T) {
 	}
 
 	evt := perQueueFixtureResumingEvent(t, "investigate")
-	if err := daemon.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorResuming (named): %v", err)
 	}
 

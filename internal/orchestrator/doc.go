@@ -5,8 +5,9 @@
 // It is the M5-slice-3 work-loop-brain leaf, extracted from internal/daemon
 // WITHOUT semantic change (mirroring internal/policy). The daemon shell owns
 // every effect: it holds the QueueStore write lock, projects the live
-// *LockedQueueStore / *RunRegistry into the narrow FleetSnapshot below at the
-// call site (see internal/daemon/workloop.go snapshotFleet), calls the pure
+// *queuewiring.LockedQueueStore / *daemon.RunRegistry into the narrow
+// FleetSnapshot below at the call site (see internal/daemon/workloop.go
+// snapshotFleet), calls the pure
 // decision, then acts on the returned Selection (Phase-3 claim-time
 // re-validation, dispatch stamp, event emission all stay daemon-side).
 //

@@ -1,6 +1,6 @@
-package daemon
+package queuewiring
 
-// queueledger_bridge.go — bridges *brcli.Adapter to queue.BeadLedger.
+// beadledger.go — bridges *brcli.Adapter to queue.BeadLedger.
 //
 // queue.BeadLedger (in internal/queue/validation.go) requires LookupStatus
 // and BlocksEdge. brcli.Adapter exposes ShowBead (for status) and
@@ -20,17 +20,17 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// brQueueLedger wraps *brcli.Adapter and satisfies queue.BeadLedger.
+// BRQueueLedger wraps *brcli.Adapter and satisfies queue.BeadLedger.
 //
 // It is constructed once at daemon.Start (composition root) and shared
 // between queue.NewHandlerAdapter and lifecycle.LoadQueueAtStartup.
-type brQueueLedger struct {
+type BRQueueLedger struct {
 	adapter *brcli.Adapter
 }
 
-// newBRQueueLedger returns a brQueueLedger wrapping adapter.
-func newBRQueueLedger(adapter *brcli.Adapter) *brQueueLedger {
-	return &brQueueLedger{adapter: adapter}
+// NewBRQueueLedger returns a BRQueueLedger wrapping adapter.
+func NewBRQueueLedger(adapter *brcli.Adapter) *BRQueueLedger {
+	return &BRQueueLedger{adapter: adapter}
 }
 
 // LookupStatus implements queue.BeadLedger.LookupStatus.
@@ -39,7 +39,7 @@ func newBRQueueLedger(adapter *brcli.Adapter) *brQueueLedger {
 // queue.BeadStatus. Unknown/closed statuses are treated as not-found for
 // queue-submit validation purposes (the submission would fail on a different
 // rule if the bead is truly unworkable).
-func (b *brQueueLedger) LookupStatus(ctx context.Context, id core.BeadID) (queue.BeadStatus, error) {
+func (b *BRQueueLedger) LookupStatus(ctx context.Context, id core.BeadID) (queue.BeadStatus, error) {
 	record, err := b.adapter.ShowBead(ctx, id)
 	if err != nil {
 		// brcli.ErrBeadNotFound → BeadStatusNotFound; other errors surface as-is.
@@ -83,7 +83,7 @@ func (b *brQueueLedger) LookupStatus(ctx context.Context, id core.BeadID) (queue
 // direction. That made BlocksEdge(a,b) report true when a DEPENDS ON b,
 // inverting all queue ledger-dep deferral — roots of a chain were deferred
 // while leaves with open blockers were dispatched out of order.
-func (b *brQueueLedger) BlocksEdge(ctx context.Context, blocker, blocked core.BeadID) (bool, error) {
+func (b *BRQueueLedger) BlocksEdge(ctx context.Context, blocker, blocked core.BeadID) (bool, error) {
 	edges, err := b.adapter.ListDependencies(ctx, blocked)
 	if err != nil {
 		if errors.Is(err, brcli.ErrBeadNotFound) {

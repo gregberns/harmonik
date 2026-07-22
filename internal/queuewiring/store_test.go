@@ -1,4 +1,4 @@
-package daemon_test
+package queuewiring_test
 
 // queuestore_hkj808w_test.go — tests for QueueStore (hk-j808w).
 //
@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // queueStoreFixtureQueue constructs a minimal *queue.Queue for use in tests.
@@ -39,7 +39,7 @@ func queueStoreFixtureQueue(t *testing.T) *queue.Queue {
 func TestQueueStoreSingleInstance(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	if qs.Queue() != nil {
 		t.Fatal("new QueueStore: expected nil queue, got non-nil")
 	}
@@ -60,7 +60,7 @@ func TestQueueStoreSingleInstance(t *testing.T) {
 func TestQueueStoreClearQueue(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(queueStoreFixtureQueue(t))
 	qs.ClearQueue()
 
@@ -81,7 +81,7 @@ func TestQueueStoreConcurrentReadSerialWrite(t *testing.T) {
 	const numReaders = 64
 	const numWrites = 32
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 
 	// pre-seed one queue so readers start with a non-nil value.
 	qs.SetQueue(queueStoreFixtureQueue(t))
@@ -123,7 +123,7 @@ func TestQueueStoreConcurrentReadSerialWrite(t *testing.T) {
 func TestQueueStoreLockForMutation(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	original := queueStoreFixtureQueue(t)
 	qs.SetQueue(original)
 

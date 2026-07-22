@@ -65,6 +65,7 @@ import (
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/orchestrator"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/schedule"
@@ -566,7 +567,7 @@ type workLoopDeps struct {
 	// Spec ref: specs/execution-model.md §7.4 (TS-1 dispatch loop); §4.3.EM-015f
 	// (group-advance gate).
 	// Bead ref: hk-45ude.
-	queueStore *QueueStore
+	queueStore *queuewiring.QueueStore
 
 	// submitWakeC, when non-nil, is the channel returned by queueStore.WakeCh().
 	// The workloop's idle sleeps select on this channel so that a queue-submit
@@ -584,7 +585,7 @@ type workLoopDeps struct {
 	// re-evaluate deferred-for-ledger-dep items on every tick (queue-model.md
 	// §2.8: "when the blocking bead closes, the dispatcher MUST re-evaluate and
 	// transition the item back to pending"). Production wires
-	// newBRQueueLedger(brAdapter); tests inject a fake. When nil the re-evaluation
+	// queuewiring.NewBRQueueLedger(brAdapter); tests inject a fake. When nil the re-evaluation
 	// pass is skipped (queue.ReevaluateDeferred no-ops on a nil ledger), preserving
 	// legacy behaviour for callers that do not exercise ledger-dep deferral.
 	//
@@ -1172,16 +1173,16 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		remoteAgentReadyTimeout:    cfg.RemoteAgentReadyTimeout, // hk-96d7w: remote-worker agent_ready wait window
 		cancelOnQueueDrain:         cfg.CancelOnQueueDrain,
 		projectCfg:                 cfg.ProjectCfg,
-		defaultHarness:             cfg.DefaultHarness,        // hk-ytzj2: tier-4 global harness default wired from Config
-		queueStore:                 nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		queueLedger:                newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
-		staleBlockerCloser:         adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
-		strandedInProgressResetter: adapter,                   // hk-l2xd1: auto-reset in_progress bead with no run
-		strandedResetProjectHash:   projectHash,               // hk-l2xd1: idempotency key component
-		strandedResetDaemonNS:      time.Now().UnixNano(),     // hk-l2xd1: daemon-session epoch for idempotency key scoping
-		kerfPath:                   cfg.KerfPath,              // hk-9321v: kerf next for EM-062/EM-063 eager-refill
-		brPath:                     cfg.BrPath,                // hk-f722: staged-bead generator br create
-		followUpLedger:             make(map[string]struct{}), // hk-f722: at-most-once guard per daemon session
+		defaultHarness:             cfg.DefaultHarness,                    // hk-ytzj2: tier-4 global harness default wired from Config
+		queueStore:                 nil,                                   // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueLedger:                queuewiring.NewBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
+		staleBlockerCloser:         adapter,                               // hk-rnsjs: auto-close stale blockers on claim failure
+		strandedInProgressResetter: adapter,                               // hk-l2xd1: auto-reset in_progress bead with no run
+		strandedResetProjectHash:   projectHash,                           // hk-l2xd1: idempotency key component
+		strandedResetDaemonNS:      time.Now().UnixNano(),                 // hk-l2xd1: daemon-session epoch for idempotency key scoping
+		kerfPath:                   cfg.KerfPath,                          // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		brPath:                     cfg.BrPath,                            // hk-f722: staged-bead generator br create
+		followUpLedger:             make(map[string]struct{}),             // hk-f722: at-most-once guard per daemon session
 		followUpLedgerMu:           &sync.Mutex{},
 		followUpLedgerPath:         filepath.Join(cfg.ProjectDir, ".harmonik", followUpLedgerFileName), // hk-3ndb: durable ledger path
 		noAutoPull:                 cfg.NoAutoPull,                                                     // hk-exd7m: queue-only mode for flywheel topology
@@ -1435,7 +1436,7 @@ func effectiveQueueWorkers(q *queue.Queue, globalCap int) int {
 // stale dashboard.json. A gated queue contributes nothing to dispatch this
 // tick but — like a paused-by-failure queue — MUST NOT block sibling queues.
 // nil disables the gate (pre-hk-xg6rw behaviour).
-func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) (queueSelection, bool) {
+func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) (queueSelection, bool) {
 	// M5 slice 3A: the pure NQ-B1 decision moved to internal/orchestrator. This
 	// shell projects the live QueueStore/RunRegistry into a narrow FleetSnapshot
 	// under the (already-held) write lock, calls the pure selector, and maps the
@@ -1468,7 +1469,7 @@ func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor
 // QueueStore write lock (mirrors drainSnapshot in draindetect.go). WorkerCap is
 // precomputed here via effectiveQueueWorkers so orchestrator never imports
 // internal/queue; enum-typed status/kind fields are projected as booleans.
-func snapshotFleet(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) orchestrator.FleetSnapshot {
+func snapshotFleet(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) orchestrator.FleetSnapshot {
 	names := lq.LockedAllQueueNames()
 	queues := make([]orchestrator.QueueSnapshot, 0, len(names))
 	for _, name := range names {
@@ -6148,7 +6149,7 @@ func activateFirstPendingGroup(ctx context.Context, deps workLoopDeps) bool {
 //
 // Spec ref: specs/queue-model.md §5 QM-031; §8 QM-063.
 // Bead ref: hk-tigaf.4 (NQ-B1).
-func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq *LockedQueueStore, q *queue.Queue) (bool, []core.Event) {
+func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq *queuewiring.LockedQueueStore, q *queue.Queue) (bool, []core.Event) {
 	if q == nil {
 		return false, nil
 	}

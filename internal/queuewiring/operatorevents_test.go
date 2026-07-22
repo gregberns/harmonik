@@ -1,4 +1,4 @@
-package daemon_test
+package queuewiring_test
 
 // queue_operatoreventconsumer_7urls_test.go — unit + integration tests for
 // QueueOperatorEventConsumer (hk-7urls).
@@ -29,9 +29,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,11 +54,11 @@ func queueOpDrainFixtureSealedBus(t *testing.T) eventbus.EventBus {
 // subscribe the consumer before sealing.
 func queueOpDrainFixtureConsumer(
 	t *testing.T,
-	qs *daemon.QueueStore,
+	qs *queuewiring.QueueStore,
 	bus eventbus.EventBus,
-) *daemon.QueueOperatorEventConsumer {
+) *queuewiring.QueueOperatorEventConsumer {
 	t.Helper()
-	return daemon.ExportedNewQueueOperatorEventConsumer(daemon.ExportedQueueOperatorEventConsumerConfig{
+	return queuewiring.NewQueueOperatorEventConsumer(queuewiring.QueueOperatorEventConsumerConfig{
 		QueueStore: qs,
 		Bus:        bus,
 	})
@@ -136,14 +136,14 @@ func TestQueueOpDrain_ActiveToPausedByDrain_OnPausing(t *testing.T) {
 	t.Parallel()
 
 	bus := queueOpDrainFixtureSealedBus(t)
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
 
 	q := queueOpDrainFixtureActiveQueue(t)
 	qs.SetQueue(q)
 
 	evt := queueOpDrainFixturePauseEvent(t, core.OperatorPauseStatusValuePausing)
-	if err := daemon.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
 	}
 
@@ -162,13 +162,13 @@ func TestQueueOpDrain_ActiveToPausedByDrain_OnPaused(t *testing.T) {
 	t.Parallel()
 
 	bus := queueOpDrainFixtureSealedBus(t)
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
 
 	qs.SetQueue(queueOpDrainFixtureActiveQueue(t))
 
 	evt := queueOpDrainFixturePauseEvent(t, core.OperatorPauseStatusValuePaused)
-	if err := daemon.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
 	}
 
@@ -187,7 +187,7 @@ func TestQueueOpDrain_NoOpWhenAlreadyPausedByDrain(t *testing.T) {
 	t.Parallel()
 
 	bus := queueOpDrainFixtureSealedBus(t)
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
 
 	q := queueOpDrainFixtureActiveQueue(t)
@@ -195,7 +195,7 @@ func TestQueueOpDrain_NoOpWhenAlreadyPausedByDrain(t *testing.T) {
 	qs.SetQueue(q)
 
 	evt := queueOpDrainFixturePauseEvent(t, core.OperatorPauseStatusValuePausing)
-	if err := daemon.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus (duplicate): %v", err)
 	}
 
@@ -211,12 +211,12 @@ func TestQueueOpDrain_NoOpWhenNilQueue(t *testing.T) {
 	t.Parallel()
 
 	bus := queueOpDrainFixtureSealedBus(t)
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
 	// qs has no queue loaded
 
 	evt := queueOpDrainFixturePauseEvent(t, core.OperatorPauseStatusValuePausing)
-	if err := daemon.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus (nil queue): %v", err)
 	}
 
@@ -231,7 +231,7 @@ func TestQueueOpDrain_PausedByDrainToActive_OnResuming(t *testing.T) {
 	t.Parallel()
 
 	bus := queueOpDrainFixtureSealedBus(t)
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
 
 	q := queueOpDrainFixtureActiveQueue(t)
@@ -239,7 +239,7 @@ func TestQueueOpDrain_PausedByDrainToActive_OnResuming(t *testing.T) {
 	qs.SetQueue(q)
 
 	evt := queueOpDrainFixtureResumingEvent(t)
-	if err := daemon.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorResuming: %v", err)
 	}
 
@@ -258,13 +258,13 @@ func TestQueueOpDrain_ResumeNoOpWhenActive(t *testing.T) {
 	t.Parallel()
 
 	bus := queueOpDrainFixtureSealedBus(t)
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
 
 	qs.SetQueue(queueOpDrainFixtureActiveQueue(t))
 
 	evt := queueOpDrainFixtureResumingEvent(t)
-	if err := daemon.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorResuming (already active): %v", err)
 	}
 
@@ -281,7 +281,7 @@ func TestQueueOpDrain_PausedByFailureNotResumedByDrain(t *testing.T) {
 	t.Parallel()
 
 	bus := queueOpDrainFixtureSealedBus(t)
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
 
 	q := queueOpDrainFixtureActiveQueue(t)
@@ -289,7 +289,7 @@ func TestQueueOpDrain_PausedByFailureNotResumedByDrain(t *testing.T) {
 	qs.SetQueue(q)
 
 	evt := queueOpDrainFixtureResumingEvent(t)
-	if err := daemon.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorResuming (paused-by-failure): %v", err)
 	}
 
@@ -309,7 +309,7 @@ func TestQueueOpDrain_QueuePausedEventEmitted(t *testing.T) {
 	t.Parallel()
 
 	bus := eventbus.NewBusImpl()
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	c := queueOpDrainFixtureConsumer(t, qs, bus)
 
 	// Capture queue_paused events via a synchronous subscriber.
@@ -344,7 +344,7 @@ func TestQueueOpDrain_QueuePausedEventEmitted(t *testing.T) {
 	qs.SetQueue(q)
 
 	evt := queueOpDrainFixturePauseEvent(t, core.OperatorPauseStatusValuePausing)
-	if err := daemon.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
 	}
 

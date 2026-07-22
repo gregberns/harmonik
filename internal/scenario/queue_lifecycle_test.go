@@ -15,7 +15,7 @@ package scenario_test
 //
 // The tests exercise the queue state machine (queue.AdvanceGroup, queue.EligibleItems),
 // queue persistence (queue.Persist, queue.CompleteAndUnlink, queue.Load), and the
-// daemon.QueueStore ownership layer — all within the scenario-harness fixture
+// queuewiring.QueueStore ownership layer — all within the scenario-harness fixture
 // lifecycle (BootstrapFixture for isolated project root, SH-012).
 //
 // Helper prefix: queueLifecycleFixture (per implementer-protocol.md
@@ -38,8 +38,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/scenario"
 )
 
@@ -480,7 +480,7 @@ func TestQueueLifecycle_QueueStore_HoldsActiveQueue(t *testing.T) {
 	q := queueLifecycleFixtureTwoGroupQueue(t)
 	qCopy := q // store a copy
 
-	qs := daemon.NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(&q)
 
 	// Queue must be readable and match the fixture.

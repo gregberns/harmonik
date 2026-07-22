@@ -56,6 +56,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
@@ -180,7 +181,7 @@ type QuiesceArbiterConfig struct {
 
 	// QueueStore is the queue store used to determine which named queue has new
 	// pending items (wake routing for crew sessions).  REQUIRED.
-	QueueStore *QueueStore
+	QueueStore *queuewiring.QueueStore
 
 	// CommsBus, when non-nil, is used to emit park/wake comms messages.
 	// Optional: when nil the comms-send step is skipped (pane nudge is still

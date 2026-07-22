@@ -33,8 +33,8 @@
 //     serialization is the workspace lease-lock (internal/workspace wm013*)
 //     plus daemon workloop mutexes (mergeMu).
 //   - HC-016 per-role work queues (WorkQueueSet): the shipping dispatch
-//     surface is per-queue-name in internal/daemon (queuestore_hkj808w.go,
-//     perqueuespendmeter_tigaf11.go, queueledger_bridge.go), not
+//     surface is per-queue-name in internal/queuewiring (store.go,
+//     beadledger.go) and internal/daemon (perqueuespendmeter_tigaf11.go), not
 //     per-actor-role.
 //   - HC-018 cancellation bounds (CancelGoSideBound, CancelSubprocessBound):
 //     real bounded cancellation is context.WithTimeout / drain caps in

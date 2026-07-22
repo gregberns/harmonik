@@ -1,4 +1,4 @@
-package daemon_test
+package queuewiring_test
 
 // queuestore_wakeongap_hkekj_test.go — wake-gap fix tests (hk-ekj).
 //
@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -67,10 +67,10 @@ func wakeGapFixtureResumeEvent(t *testing.T, queueName string) core.Event {
 }
 
 // wakeGapFixtureConsumer builds a QueueOperatorEventConsumer over a sealed bus.
-func wakeGapFixtureConsumer(t *testing.T, qs *daemon.QueueStore) *daemon.QueueOperatorEventConsumer {
+func wakeGapFixtureConsumer(t *testing.T, qs *queuewiring.QueueStore) *queuewiring.QueueOperatorEventConsumer {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
-	c := daemon.ExportedNewQueueOperatorEventConsumer(daemon.ExportedQueueOperatorEventConsumerConfig{
+	c := queuewiring.NewQueueOperatorEventConsumer(queuewiring.QueueOperatorEventConsumerConfig{
 		QueueStore: qs,
 		Bus:        bus,
 	})
@@ -89,7 +89,7 @@ func wakeGapFixtureConsumer(t *testing.T, qs *daemon.QueueStore) *daemon.QueueOp
 func TestWakeGap_ResumeSignalsWakeCh(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	q := wakeGapFixturePausedQueue(t, "main")
 	qs.SetQueue(q)
 
@@ -110,7 +110,7 @@ func TestWakeGap_ResumeSignalsWakeCh(t *testing.T) {
 	c := wakeGapFixtureConsumer(t, qs)
 	evt := wakeGapFixtureResumeEvent(t, "main")
 
-	if err := daemon.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorResuming: %v", err)
 	}
 
@@ -137,7 +137,7 @@ func TestWakeGap_ResumeSignalsWakeCh(t *testing.T) {
 func TestWakeGap_ResumeNoop_NoSpuriousWake(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 
 	// Load an ACTIVE (not paused) queue.
 	q := &queue.Queue{
@@ -168,7 +168,7 @@ func TestWakeGap_ResumeNoop_NoSpuriousWake(t *testing.T) {
 	c := wakeGapFixtureConsumer(t, qs)
 	evt := wakeGapFixtureResumeEvent(t, "main")
 
-	if err := daemon.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
+	if err := queuewiring.ExportedQueueOpConsumerHandleResuming(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorResuming on already-active queue: %v", err)
 	}
 
@@ -187,7 +187,7 @@ func TestWakeGap_ResumeNoop_NoSpuriousWake(t *testing.T) {
 func TestWakeGap_StartupLoadWakesWorkloop(t *testing.T) {
 	t.Parallel()
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 
 	// Simulate startup: install a queue (mirroring the daemon.Start loop that
 	// calls qs.SetQueue for each loadedQueue), then fire a defensive Wake().

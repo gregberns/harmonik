@@ -1,4 +1,4 @@
-package daemon_test
+package queuewiring_test
 
 // queuestore_append_lostupdate_hkb1_test.go — B1 acceptance oracle.
 //
@@ -40,8 +40,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // b1OpenLedger marks every bead open with no dependency edges.
@@ -81,7 +81,7 @@ func TestQueueAppend_ConcurrentStatusMutation_NoLostUpdate(t *testing.T) {
 	require.Nil(t, rpcErr, "seed HandleQueueSubmit: %v", rpcErr)
 	require.NotNil(t, q)
 
-	qs := daemon.ExportedNewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(q)
 
 	adapter := queue.NewHandlerAdapter(ledger, projectDir, qs, nil)

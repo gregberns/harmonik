@@ -255,6 +255,37 @@ linters:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/core"
 
+        # queuewiring: the daemon-side queue OWNERSHIP + operator-transition wiring
+        # extracted out of internal/daemon (P2 unit E3a). The queue ENGINE is already a
+        # clean leaf (internal/queue); this package holds the in-memory QueueStore that
+        # satisfies queue.QueueSetter / queue.LockedQueueView / queue.MutationLocker, the
+        # brcli -> queue.BeadLedger bridge, and the operator pause/resume consumer. The
+        # daemon is the composition root and injects these; it MUST NOT be imported back,
+        # or the queue control surface silently re-couples to the 56k-LOC monolith.
+        # uuid + testify are needed by the moved external test files (depguard `files:`
+        # globs match _test.go too); the self-import row is the external-test-package
+        # pattern (queuewiring_test importing queuewiring). Note the `internal/queue` row
+        # is a PREFIX match and so already covers `internal/queuewiring` (see the
+        # bootconfig rule's comment below) — the explicit self-row is kept so the list
+        # stays correct if `internal/queue` is ever tightened to an exact match.
+        # CAVEAT: depguard checks DIRECT imports only. internal/{core,queue,eventbus,brcli}
+        # are verified daemon-free today; the transitive check is
+        # `go list -deps ./internal/queuewiring | grep internal/daemon`.
+        # Rationale: plans/2026-07-21-p2-extraction/E3-queue-wiring.md slice E3a.
+        queuewiring:
+          files: ["**/internal/queuewiring/**"]
+          allow:
+            - "$gostd"
+            - "github.com/google/uuid"
+            - "github.com/stretchr/testify/require"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/queue"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/brcli"
+            - "github.com/gregberns/harmonik/internal/queuewiring"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "queuewiring is the extracted queue-ownership layer; daemon composes it, never the reverse (P2 E3)" }
+
         # socketrouter: the pure protocol dispatch table (giant-retirement follow-up), a daemon
         # sub-package. Value-in/value-out routing: Classify + Router.Dispatch + neutral Result over
         # json.RawMessage. The daemon threads effectful handler closures IN (mergeq/runexec pattern);

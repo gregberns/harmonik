@@ -27,6 +27,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // fallbackWindowSize is used when the keeper gauge reports WindowSize==0.
@@ -37,7 +38,7 @@ const fallbackWindowSize int64 = 200_000
 // LiveStateBuilder gathers a StateSnapshot from in-daemon memory + disk.
 type LiveStateBuilder struct {
 	runs        *RunRegistry
-	queues      *QueueStore
+	queues      *queuewiring.QueueStore
 	drain       *DrainDetector
 	conc        *ConcurrencyController
 	globalCap   int // fallback when conc is nil
@@ -57,7 +58,7 @@ type LiveStateBuilder struct {
 // zero value (KeeperConfig{}) is safe and means all thresholds are unset.
 func NewLiveStateBuilder(
 	runs *RunRegistry,
-	queues *QueueStore,
+	queues *queuewiring.QueueStore,
 	drain *DrainDetector,
 	conc *ConcurrencyController,
 	globalCap int,

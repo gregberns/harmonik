@@ -22,6 +22,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -403,7 +404,7 @@ type Config struct {
 	// as before.
 	//
 	// Bead ref: hk-8jh26.
-	QueueStore *QueueStore
+	QueueStore *queuewiring.QueueStore
 
 	// HandlerPauseController, when non-nil, is wired into the work loop to
 	// enable the skip-on-paused dispatch gate (hk-kac8g).  When nil the gate
@@ -676,7 +677,7 @@ func newDaemonHookStore(bus eventbus.EventBus) *hookSessionStore {
 // Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
 // Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
 // Bead ref: hk-tigaf.3.
-func loadStartupQueues(ctx context.Context, cfg Config, hooks daemonTestHooks, bus eventbus.EventBus, qs *QueueStore, daemonStartTime time.Time) error {
+func loadStartupQueues(ctx context.Context, cfg Config, hooks daemonTestHooks, bus eventbus.EventBus, qs *queuewiring.QueueStore, daemonStartTime time.Time) error {
 	if cfg.ProjectDir == "" || cfg.BrPath == "" {
 		return nil
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // --- stubs ---
@@ -108,7 +109,7 @@ func (c *capturedComms) hasMsg(to, topic string) bool {
 
 // newTestQuiesceArbiter creates a QuiesceArbiter wired for unit testing.
 // Returns the arbiter, the nudge recorder, and the comms recorder.
-func newTestQuiesceArbiter(t *testing.T, projectDir string, qs *QueueStore, poll, maxSleep time.Duration) (*QuiesceArbiter, *capturedNudge, *capturedComms) {
+func newTestQuiesceArbiter(t *testing.T, projectDir string, qs *queuewiring.QueueStore, poll, maxSleep time.Duration) (*QuiesceArbiter, *capturedNudge, *capturedComms) {
 	t.Helper()
 	nudges := &capturedNudge{}
 	comms := &capturedComms{}
@@ -346,7 +347,7 @@ func TestQuiesceArbiterQueueSubmitWakesCrew(t *testing.T) {
 	captainPane := "harmonik-test0000-captain:0.0"
 
 	// Build a QueueStore with a named queue that has a pending item.
-	qs := NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	q := &queue.Queue{
 		SchemaVersion: 1,
 		Name:          "crew-paul-queue",
@@ -358,7 +359,11 @@ func TestQuiesceArbiterQueueSubmitWakesCrew(t *testing.T) {
 			},
 		},
 	}
-	qs.setQueueForTest("crew-paul-queue", q)
+	// SetQueueByName also fires the wake channel, which setQueueForTest (the
+	// in-package helper this replaced when QueueStore moved to
+	// internal/queuewiring, P2 E3a) deliberately did not. Harmless here: this
+	// test drives arbiter.handleQueueSubmit directly and never reads WakeCh.
+	qs.SetQueueByName("crew-paul-queue", q)
 
 	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), qs, 5*time.Second, time.Hour)
 
@@ -413,19 +418,6 @@ func TestQuiesceArbiterDuplicateWakeIsIdempotent(t *testing.T) {
 	if count != 1 {
 		t.Errorf("expected exactly 1 nudge on double wake; got %d; panes=%v", count, nudges.targets)
 	}
-}
-
-// --- helpers for QueueStore setup without a brAdapter ---
-
-// setQueueForTest inserts a queue directly into the QueueStore for test setup.
-// This bypasses the JSON-file round-trip used in production.
-func (s *QueueStore) setQueueForTest(name string, q *queue.Queue) {
-	s.queueMu.Lock()
-	defer s.queueMu.Unlock()
-	if s.queues == nil {
-		s.queues = make(map[string]*queue.Queue)
-	}
-	s.queues[name] = q
 }
 
 // Test that crew.List with empty projectDir returns empty (no panic).

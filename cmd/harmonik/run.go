@@ -69,6 +69,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // resolveGroupKind returns the queue.GroupKind that runBeadSubcommand would use
@@ -628,7 +629,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 
 	// qs is created here so that run.go can inspect final queue status after
 	// daemon.Start returns (Fix 2: exit code reflects bead outcome, hk-8jh26).
-	qs := daemon.NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 
 	// --- Create .harmonik subdirectories and resolve tmux session ---
 

@@ -1,6 +1,6 @@
-package daemon
+package queuewiring
 
-// queue_operatoreventconsumer_7urls.go — queue operator-event consumer (hk-7urls, hk-tigaf.6).
+// operatorevents.go — queue operator-event consumer (hk-7urls, hk-tigaf.6).
 //
 // QueueOperatorEventConsumer subscribes to daemon operator lifecycle events and
 // drives queue-level active ↔ paused-by-drain transitions per
@@ -27,9 +27,10 @@ package daemon
 // paused-by-drain to queue.json; queue.Load (QM-002 startup path) preserves the
 // status unchanged.  No additional startup logic is required.
 //
-// Architecture placement: internal/daemon/ — the consumer needs QueueStore and
-// the event bus, both of which are daemon composition-root concerns (same
-// reasoning as HandlerPausePolicyGoroutine).
+// Architecture placement: internal/queuewiring/ — the consumer needs QueueStore
+// (which lives here) and the event bus. The daemon composition root constructs
+// it and calls Subscribe before Seal (same reasoning as
+// HandlerPausePolicyGoroutine, which stays in internal/daemon).
 //
 // Spec ref: specs/queue-model.md §8.5 QM-054, §8.6 QM-055.
 // Bead ref: hk-7urls, hk-tigaf.6.

@@ -36,6 +36,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 )
 
@@ -607,7 +608,7 @@ func TestAdoptLiveRunSession_SessionDies_RevertsQueueItemToPending(t *testing.T)
 		},
 	}
 
-	qs := NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(q)
 
 	rec := runpkg.Record{

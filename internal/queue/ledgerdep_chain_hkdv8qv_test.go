@@ -9,8 +9,8 @@ package queue_test
 // deferred IFF at least one bead IT DEPENDS ON (its blockers) is still open,
 // and becomes eligible only when ALL its blockers are closed.
 //
-// The production inversion lived in daemon.brQueueLedger.BlocksEdge (pinned by
-// daemon/queueledger_bridge_hkdv8qv_test.go). This test pins the queue-side
+// The production inversion lived in queuewiring.BRQueueLedger.BlocksEdge (pinned
+// by queuewiring/beadledger_test.go). This test pins the queue-side
 // contract: given a fake ledger that reports blocks edges in the contract
 // direction — BlocksEdge(blocker, blocked)==true iff blocked depends on blocker
 // — a submitted dependency chain defers the dependents and leaves the root

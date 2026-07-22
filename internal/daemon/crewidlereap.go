@@ -62,7 +62,7 @@ type crewStopper interface {
 }
 
 // crewQueueLookup is the seam CrewIdleReaper uses to read a crew's bound
-// queue. Satisfied by *QueueStore.QueueByName.
+// queue. Satisfied by *queuewiring.QueueStore.QueueByName.
 type crewQueueLookup interface {
 	QueueByName(name string) *queue.Queue
 }

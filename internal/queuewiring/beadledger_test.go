@@ -1,4 +1,4 @@
-package daemon_test
+package queuewiring_test
 
 // queueledger_bridge_hkdv8qv_test.go — regression coverage for hk-dv8qv.
 //
@@ -26,7 +26,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // hkdv8qvMockBr writes a mock `br` shell script that answers the two read
@@ -111,7 +111,7 @@ func TestBlocksEdge_Direction_hkdv8qv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("brcli.New: %v", err)
 	}
-	ledger := daemon.ExportedNewBRQueueLedger(adapter)
+	ledger := queuewiring.ExportedNewBRQueueLedger(adapter)
 	ctx := context.Background()
 
 	// Contract: BlocksEdge(blocker, blocked) == true iff blocked depends on blocker.
@@ -161,7 +161,7 @@ func TestBlocksEdge_RootHasNoBlocker_hkdv8qv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("brcli.New: %v", err)
 	}
-	ledger := daemon.ExportedNewBRQueueLedger(adapter)
+	ledger := queuewiring.ExportedNewBRQueueLedger(adapter)
 	ctx := context.Background()
 
 	// No in-queue bead should be reported as a blocker of the root.

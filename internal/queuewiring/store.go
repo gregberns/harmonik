@@ -1,6 +1,11 @@
-package daemon
-
-// queuestore_hkj808w.go — daemon-owned queue registry with single-writer discipline.
+// Package queuewiring holds the daemon-side queue OWNERSHIP layer extracted out
+// of internal/daemon (P2 unit E3). The queue ENGINE is already a clean leaf
+// (internal/queue); this package holds the in-memory QueueStore that satisfies
+// queue.QueueSetter / queue.LockedQueueView / queue.MutationLocker, the brcli →
+// queue.BeadLedger bridge, and the operator pause/resume consumer. The daemon is
+// the composition root and injects these; it MUST NOT be imported back.
+//
+// store.go — daemon-owned queue registry with single-writer discipline.
 //
 // QueueStore is the composition-root holder for the name-keyed in-memory
 // queue registry. It enforces the QM-060 single-writer contract:
@@ -39,6 +44,7 @@ package daemon
 //	§4.11 EM-051 (max_concurrent configuration).
 //
 // Bead ref: hk-j808w (original), hk-tigaf.2 (name-keyed reshape).
+package queuewiring
 
 import (
 	"sync"

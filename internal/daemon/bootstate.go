@@ -15,6 +15,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // bootState threads the shared singletons constructed across the daemon
@@ -34,7 +35,7 @@ type bootState struct {
 	// P4 (constructBusAndRegistries) outputs.
 	bus                     eventbus.EventBus
 	clockRegressionDetected bool
-	qs                      *QueueStore
+	qs                      *queuewiring.QueueStore
 	handlerPauseCtrl        *HandlerPauseController
 	sharedRunRegistry       *RunRegistry
 	pollGate                *PollGate
@@ -124,7 +125,7 @@ func (bs *bootState) constructBusAndRegistries() (*eventbus.JSONLWriter, error) 
 	// later (post-Seal, when ProjectDir is checked).
 	qs := cfg.QueueStore
 	if qs == nil {
-		qs = newQueueStore()
+		qs = queuewiring.NewQueueStore()
 	}
 	bs.qs = qs
 	bs.handlerPauseCtrl = NewHandlerPauseController(bs.bus, nil)
@@ -170,7 +171,7 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 	}
 
 	// QueueOperatorEventConsumer (hk-7urls): active ↔ paused-by-drain transitions.
-	queueOpConsumer := NewQueueOperatorEventConsumer(QueueOperatorEventConsumerConfig{
+	queueOpConsumer := queuewiring.NewQueueOperatorEventConsumer(queuewiring.QueueOperatorEventConsumerConfig{
 		QueueStore: bs.qs,
 		ProjectDir: cfg.ProjectDir,
 		Bus:        bus,

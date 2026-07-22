@@ -55,7 +55,7 @@ var compositionRootWirings = []wiringEntry{
 	{
 		symbol:   "qs",
 		callSite: "daemon.go:488",
-		wires:    "newQueueStore (or cfg.QueueStore) → queueOpConsumer + work loop",
+		wires:    "queuewiring.NewQueueStore (or cfg.QueueStore) → queueOpConsumer + work loop",
 	},
 	{
 		symbol:   "handlerPauseCtrl",
@@ -90,7 +90,7 @@ var compositionRootWirings = []wiringEntry{
 	{
 		symbol:   "queueOpConsumer",
 		callSite: "daemon.go:524",
-		wires:    "NewQueueOperatorEventConsumer(qs, projectDir, bus)",
+		wires:    "queuewiring.NewQueueOperatorEventConsumer(qs, projectDir, bus)",
 	},
 	{
 		symbol:   "queueOpConsumer.Subscribe",

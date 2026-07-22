@@ -33,8 +33,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // ---------------------------------------------------------------------------
@@ -376,7 +376,7 @@ func TestNamedQueuesWorkers_QueueStore_HoldsBothNamedQueues(t *testing.T) {
 	mainQ := namedQueuesWorkersMainQueue()
 	invQ := namedQueuesWorkersInvestigateQueue()
 
-	qs := daemon.NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(&mainQ)
 	qs.SetQueueByName("investigate", &invQ)
 
@@ -429,7 +429,7 @@ func TestNamedQueuesWorkers_QueueStore_EligibleFromBothQueues(t *testing.T) {
 	mainQ := namedQueuesWorkersMainQueue()
 	invQ := namedQueuesWorkersInvestigateQueue()
 
-	qs := daemon.NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(&mainQ)
 	qs.SetQueueByName("investigate", &invQ)
 

@@ -8,7 +8,7 @@ requirement-prefix: PL
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.5.5
+version: 0.6.0
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-07-14
@@ -331,16 +331,34 @@ The daemon's startup sequence MUST execute the following steps in order, and eac
 
 The sequence (steps 0–9) is deterministic; no cognition participates. Investigator-workflow execution triggered by step 8 runs in parallel with `ready` and has its own per-workflow budget.
 
+**Rationale note — step ordering versus prior-generation pidfile content (non-normative).** Step 1
+acquires the pidfile lock, which truncates the pidfile per PL-002b; step 3 runs the orphan sweep.
+The prior generation's recorded PID, PGID, and `daemon_instance_id` are therefore zeroed two steps
+before the sweep runs. No requirement in this specification reads prior-generation pidfile content
+at sweep time, so the ordering is sound as written and is deliberately left unchanged. Any future
+design that does read prior-generation pidfile content at sweep time MUST first move that read
+ahead of step 1's truncation; otherwise it reads a file this sequence has already emptied. The
+trap is recorded here rather than pre-emptively fixed, per the principle that a startup sequence no
+current requirement needs changed is not changed.
+
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### PL-006 — Orphan sweep precedes reconciliation
 
-Before the daemon executes the Cat 0 pre-check (§PL-005 step 4), the daemon MUST enumerate and clean up residual resources from any prior daemon instance. Every candidate for removal MUST carry a project-scoped provenance marker (per PL-006a) identifying it as this project's orphan; candidates without a valid marker MUST NOT be touched.
+Before the daemon executes the Cat 0 pre-check (§PL-005 step 4), the daemon MUST enumerate and clean up residual resources from any prior daemon instance. Every candidate for removal MUST carry a project-scoped provenance marker (per §4.2a PL-006e) identifying it as this project's orphan; candidates without a valid marker MUST NOT be touched, and a marker that cannot be read is not a valid marker (PL-006f(3)).
 
 - **Tmux sessions.** The daemon MUST list tmux sessions matching the project's harmonik naming convention (prefix `harmonik-<project-hash>-` per PL-006a) and kill every matching session via `tmux kill-session`. Because the new daemon has no in-memory tracking at this point, every matching session in the project-scoped namespace is an orphan by definition. After kill, the daemon MUST poll for underlying process exit at a 100 ms cadence up to a 2-second ceiling (configurable per OQ-PL-002). After the ceiling expires, the daemon proceeds regardless; remaining processes are picked up by the re-parented-subprocess bullet below.
 - **Worktree locks.** The daemon MUST enumerate worktrees by filesystem scan of `<repo>/.harmonik/worktrees/*/` per [workspace-model.md §4.1 WM-002]. No in-memory registry is required at sweep time. For each worktree, lease-lock files meeting the staleness criterion of [workspace-model.md §4.3 WM-013a] / §4.8 WM-033] MUST be removed. (Canonical lease-lock path alignment across HC-044a, WM-013a, and this spec is tracked as OQ-PL-004.)
-- **Subprocess cleanup.** The daemon MUST identify processes that have been re-parented to init (parent pid 1) whose provenance marker per PL-006a matches this project's project hash, and kill them via SIGTERM followed by SIGKILL after a bounded 5-second interval consistent with [handler-contract.md §4.4 HC-018] cleanup bound. Identification MUST NOT rely on binary path alone; binary-path matching is insufficient on multi-project machines where the same handler binary serves multiple projects. Enumeration MUST cover BOTH (i) handler subprocesses (the agent-launching processes per PL-014) AND (ii) `br` (Beads CLI) subprocesses spawned via the BI adapter per [beads-integration.md §4.10 BI-029] — `br` subprocesses bear the same PL-006a provenance marker (env var + PGID) and re-parent to init on daemon crash exactly as handler subprocesses do; the SIGTERM-then-SIGKILL discipline is identical for both. The `br`-subprocess sweep extension was filed by the BI v0.4.0 R2 review (OQ-BI-010) and is pinned here in v0.4.1.
+- **Subprocess cleanup.** The daemon MUST identify processes that have been re-parented to init (parent pid 1) whose provenance marker per §4.2a PL-006e matches this project's project hash, and kill them via SIGTERM followed by SIGKILL after a bounded 5-second interval consistent with [handler-contract.md §4.4 HC-018] cleanup bound. Identification MUST follow the matcher discipline of PL-006f: argv, `comm`, and binary path are never provenance and may only narrow the candidate set **after** a marker match. Enumeration MUST cover BOTH (i) handler subprocesses (the agent-launching processes per PL-014) AND (ii) `br` (Beads CLI) subprocesses spawned via the BI adapter per [beads-integration.md §4.10 BI-029]; the SIGTERM-then-SIGKILL discipline is identical for both. The `br`-subprocess sweep extension was filed by the BI v0.4.0 R2 review (OQ-BI-010) and is pinned here in v0.4.1.
+
+  **Coverage boundary of this sweep — normative, and stated because its absence has been mistaken for coverage.** The `PPID==1` filter means this sweep reaches a process only once that process has been re-parented to init. It therefore covers:
+  - **direct-exec orphans** — handler subprocesses and `br` subprocesses whose daemon died, on both platforms; and
+  - **any descendant, at any depth and of either spawn regime, that has itself been orphaned to init** — including a descendant that called `setsid` and left its original session and group. This sweep is *origin-agnostic*: it does not ask how a process became parentless, only that it is parentless and carries the marker. A `setsid` origin does not exclude a candidate.
+
+  It does NOT cover a process whose parent is still alive. In particular a substrate-hosted process, whose parent is the live tmux server, is invisible to this sweep on both platforms for as long as that server runs; the substrate regime's reaper is PL-021b §7 (session-level sweep), and a descendant that has left the pane's session is reached by neither this sweep nor PL-021b until its root dies. That residual is declared in PL-021b §7 and MUST NOT be described as covered.
+
+  **Prior text corrected here (v0.6.0).** The clause previously asserted that `br` subprocesses "bear the same PL-006a provenance marker (env var + PGID)". They do not: the `br` adapter spawn site sets neither, and a `br` child inherits the daemon's environment, which does not carry the marker either. The write obligation that makes the sentence true is PL-006e(3); until a spawn site conforms, the sweep cannot see its children and MUST NOT fall back to a looser match to compensate.
 - **Stale intent files.** The daemon MUST enumerate `.harmonik/beads-intents/` for entries older than the current daemon's start time. Stale entries MUST be LEFT on disk for classification by the reconciliation Cat 3a detector per [reconciliation/spec.md §4.3 RC-013] during §PL-005 step 8; the orphan sweep itself MUST NOT invoke reconciliation detectors (which are gated on Cat 0 passing per [reconciliation/spec.md §4.3 RC-012] and would deadlock this pre-Cat-0 step). (Coordinated resolution with reconciliation is tracked as OQ-PL-006.)
 - **Stale reconciliation locks.** The daemon MUST enumerate `.harmonik/reconciliation-locks/*.lock` (the per-target-run reconciliation locks introduced by [reconciliation/spec.md §4.1 RC-002a]). For each lock file, the daemon MUST attempt `flock(LOCK_EX|LOCK_NB)` to determine liveness (kernel auto-releases the advisory lock on the prior lock-holder's termination per PL-002a discipline); a successful acquisition followed by `flock(LOCK_UN)` confirms no live process holds the lock. Stale lock files (acquirable + the recorded creator-PID does NOT respond to `kill(pid, 0)`) MUST be removed via `unlink` followed by `fsync(parent_directory_fd)`. The sweep MUST NOT racily unlink a lock file currently being acquired by another daemon process — the `flock(LOCK_EX|LOCK_NB)` probe is the serialization point; if `EWOULDBLOCK` is observed the lock is in active use and MUST NOT be removed. Note: a stale lock file whose investigator task branch carries a `Harmonik-Verdict-Executed: true` commit per [reconciliation/spec.md §4.1 RC-002b] is also unlinked here (the lock outlived its useful purpose); a stale lock file without the executed-commit trailer routes the target run through Cat 3b per RC-002b — the orphan sweep removes the lock either way and the trailer-discriminator question is RC's, not PL's.
 - **Stale `in_progress` bead markers.** The daemon MUST enumerate beads in coarse status `in_progress` via `br list --status in_progress --format json` (existing surface; see BI adapter `ListInFlightBeads`) and filter to those whose audit trail's most recent `in_progress` transition was authored by this project's daemon (provenance match via the `actor` field carrying this project's `project_hash` per PL-006a; OR — if Beads's audit `actor` field is unsuitable — by cross-referencing `claim` op entries in the daemon's own intent-log at `.harmonik/beads-intents/*.json`). For each such bead the daemon MUST apply the following exclusion conditions in order; a bead that satisfies ANY exclusion is NOT reset:
@@ -355,7 +373,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### PL-006a — Project hash and provenance marker
 
-The daemon MUST compute a stable `project_hash` at startup as the first 12 hexadecimal characters of `SHA-256(realpath(project_root))` (case-fold ambiguity remains tracked under OQ-PL-008). The hash MUST be stable across restarts (the same project root yields the same hash). The hash is used to:
+The daemon MUST compute a stable `project_hash` at startup as the first 12 hexadecimal characters of `SHA-256(realpath(project_root))` (case-fold ambiguity remains tracked under OQ-PL-008a). The hash MUST be stable across restarts (the same project root yields the same hash). The hash is used to:
 
 (a) Scope tmux session names (`harmonik-<project_hash>-<session_name>`). The launch-layer session names that MUST carry this prefix are, at minimum:
   - the daemon's own spawn-target session (`-default`) and per-run implementer/reviewer sessions (`-flywheel`), as established by PL-006a / PL-019;
@@ -365,15 +383,18 @@ The daemon MUST compute a stable `project_hash` at startup as the first 12 hexad
 
   The supervisor session MUST use a **distinct prefix** (`hk-<project_hash>-daemon-supervise`) so it remains OUTSIDE the swept `harmonik-<project_hash>-` orphan-sweep namespace and requires no PL-006d sentinel exemption. The single hashing scheme of this clause MUST be reused for every name above; no second hashing scheme is permitted. The canonical builder for `harmonik-`-prefixed names is `lifecycle.TmuxSessionName(project_hash, session_name)` = `"harmonik-" + project_hash + "-" + session_name`. The captain, keeper, and crew names are minted by the native launch tooling (`harmonik start captain`, `harmonik start crew <name>`) and are subject to this clause. The read-only `harmonik project-hash [--project DIR]` subcommand (per §PL-031) exposes the PL-006a hash to shell fallbacks without reimplementing SHA-256 outside the Go launcher.
 
-(b) Scope a provenance marker on every handler subprocess spawned by the daemon.
+(b) Scope a provenance marker on the processes harmonik spawns. **The marker itself — its schema, its write obligation, its platform readability, and the rules a matcher MUST follow when reading it — is specified in §4.2a (PL-006e, PL-006f, PL-006g).** PL-006a defines the `project_hash` primitive and the tmux session-name namespace only; it does not define the marker.
 
-The provenance marker MUST be implemented by BOTH of the following to permit disambiguation across OS and tool differences: (i) setting the environment variable `HARMONIK_PROJECT_HASH=<project_hash>` on every spawned subprocess (readable via `/proc/<pid>/environ` on Linux); (ii) setting the subprocess's process group (PGID) to a deterministic per-project value as concretized below.
+**RETIRED (v0.6.0) — the daemon-`setsid` MUST and the PGID half of the provenance marker.** Two requirements previously stated here are withdrawn. They are recorded rather than deleted, because a silent deletion leaves an implementer unable to tell a retirement from an oversight.
 
-The daemon MUST call `syscall.Setsid()` immediately on startup (PL-005 step 0) before spawning any subprocess, producing a session whose PGID equals the daemon's PID at that moment. This PGID MUST be recorded in the pidfile per PL-002b (line 2). On every handler subprocess spawn, the daemon MUST set Go's `SysProcAttr{Setpgid: true, Pgid: <recorded_pgid>}` and MUST retry once on `EACCES` (the child has already called `execve`).
+1. *"The provenance marker MUST be implemented by BOTH ... (ii) setting the subprocess's process group (PGID) to a deterministic per-project value."* **Withdrawn.** PGID is no longer a provenance value; it carries no ownership meaning anywhere in this spec. Its surviving role is as a **kill handle** (PL-006 subprocess cleanup, and [handler-contract.md §4.10 HC-044]), which is a separate concern from identity and is now kept separate in the text. The two cannot be recombined: a rule of the form "match processes whose PGID equals their own PID" matches every process-group leader on the machine, which is a machine-wide kill primitive, not a provenance test.
+2. *"The daemon MUST call `syscall.Setsid()` immediately on startup (PL-005 step 0) before spawning any subprocess."* **Withdrawn.** Its stated rationale — that the PGID is the only usable provenance signal on darwin — is void under PL-006e, which specifies a marker readable on both platforms. Its remaining rationale, a project-scoped group namespace for children that carry no marker of their own, is void because PL-006e(3) obliges **every** harmonik-spawned process to carry the marker, including the `br` children that motivated the clause. Implementation note for whoever removes the dead code: `lifecycle.SetsidDaemon` and `lifecycle.SpawnSysProcAttr`, whose documentation quotes the withdrawn sentence, have no production callers.
 
-Subprocess trees that internally call `setsid` (e.g., handler wrappers using nohup-style tricks) escape the PGID marker; such handlers are out of conformance with PL-INV-005 and the orphan sweep cannot reap their descendants. This hazard is tracked as OQ-PL-011 (handler-side PGID-break disclosure).
+The pidfile's recorded-PGID field (PL-002b line 2) is unaffected by this retirement in its *format*; see PL-002b for its own disposition.
 
-The orphan sweep (PL-006) MUST match on the environment variable on Linux and on the PGID on darwin (where `/proc/<pid>/environ` is not available); darwin-specific fallback mechanics are tracked as OQ-PL-008.
+The former hazard note about subprocess trees that internally call `setsid` (previously tracked as OQ-PL-011, "handler-side PGID-break disclosure") is superseded. Under PL-006e the marker is inherited across `setsid`, so such a descendant remains identifiable; what it escapes is the *kill handle*, not the *identity*. The resulting coverage split is stated normatively in PL-006 (subprocess cleanup) and PL-021b §7.
+
+**OQ-PL-008 is RESOLVED (v0.6.0)** to a single portable mechanism with a normative argv-strip rule; see PL-006e and PL-006f. The `realpath` case-fold ambiguity that was double-booked into the same open question is NOT resolved by it and remains open as OQ-PL-008a.
 
 > NOTE (window-naming carve-out): the `hk-<hash6>-` WINDOW-name prefix used for `$TMUX`-reuse mode per [workspace-model.md §4.1 WM-002a] / PL-021b §4 is a SESSION-INTERNAL window sentinel and is UNAFFECTED by this amendment. PL-006a clause (a) concerns SESSION names only.
 
@@ -470,9 +491,104 @@ Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 Refs: hk-hc3qq (orphan sweep kills flywheel pane on daemon restart).
 
+### 4.2a Process provenance
+
+This section defines how harmonik establishes that a process on the machine belongs to this project, and the rules a reaper MUST follow when acting on that answer. It replaces the provenance clauses formerly carried by PL-006a `(b)`.
+
+#### PL-006e — Provenance marker
+
+**(1) One mechanism, named.** The provenance marker is the environment variable `HARMONIK_PROJECT_HASH=<project_hash>`, set at spawn time, where `<project_hash>` is the PL-006a hash. It is the ONLY provenance mechanism in this system. A process group ID (PGID) is not a provenance value; neither is a process ID, a start time, a binary path, a command line, or a registry entry.
+
+**(2) The marker binds the process and its descendants.** The marker is an environment variable and is therefore inherited across `fork` and `exec` by every descendant, at any depth, including a descendant that calls `setsid` and leaves its original session and process group. Inheritance survives what group- and session-based mechanisms do not, and that property is the reason this spec uses an environment marker rather than a group.
+
+Inheritance is evidence of **descent**, not proof of **ownership**: a marked process is one this project's tooling caused to exist, which is a necessary but not sufficient condition for reaping it. PL-006f states the additional conjuncts a reaper MUST satisfy before killing.
+
+**(3) Write obligation.** Every process harmonik spawns MUST receive the marker. This obligation is not limited to handler subprocesses; it covers, at minimum:
+- handler subprocesses (direct-exec and substrate-hosted);
+- `br` (Beads CLI) subprocesses spawned via the BI adapter, per [beads-integration.md §4.10 BI-029];
+- launch-layer spawns — the supervisor, the daemon watchdog, the supervisor watchdog, and the agent and watcher processes started by `harmonik start captain` and `harmonik start crew <name>`;
+- build and verification subprocesses spawned by workflow execution.
+
+A spawn site that does not set the marker MUST appear in the PL-006g register with a stated reason. A spawn site that is absent from both the conformant set and the register is a defect in this spec's implementation, not a permitted case.
+
+**A reaper's coverage is bounded by this clause and by nothing else.** Where the marker is not written, the process is unowned as far as every mechanism in this spec is concerned, and it MUST NOT be reaped. Widening a matcher to compensate for a missing marker is specifically forbidden by PL-006f(2).
+
+**(4) Platform readability is conditional, and unreadable means unowned.**
+- **Linux:** the marker is read from `/proc/<pid>/environ`.
+- **darwin:** the marker is read from `ps -E` output, subject to the strip rule of PL-006f(1).
+
+darwin exposes a process's exec-time environment only for non-platform, non-hardened binaries. Harmonik's own binaries qualify; Apple platform binaries do not, and a process executing one exposes no environment at all. A candidate whose environment cannot be read MUST be treated as carrying **no marker**, therefore as **not ours**, therefore as **not reapable**. This is a fail-closed rule and it is stated rather than left to implementer judgement: the failure it prevents is a reaper that treats an unreadable environment as a permissive wildcard.
+
+The unreadable case is not a rare one and MUST NOT be implemented as an edge case. Measured on macOS 26.3.2 (2026-07-22): `/bin/sh`, `/bin/zsh`, and `/bin/sleep` each return an empty environment with no error, while harmonik's own Go binaries, package-manager-installed binaries, and framework-resident interpreters read correctly. Because a shell is the parent of most tool-invoked work, this population is produced continuously by ordinary operation. The resulting permanent non-coverage is declared as the fourth row of the PL-021b §7 table; an implementer MUST read this clause and that row together, since this clause states the mechanism's limit and that row states what the limit costs.
+
+**(5) Value shape.** The marker's value MUST be free of whitespace. The `project_hash` of PL-006a, a 12-character hexadecimal string, satisfies this. The constraint is mechanical rather than stylistic: on darwin the environment is recovered from a whitespace-delimited listing, so a value containing whitespace cannot be delimited unambiguously from what follows it. This is also why the marker carries a hash of the project path rather than the path itself.
+
+**(6) Generation nonce.** Processes spawned by an agent session MUST additionally carry `HARMONIK_SESSION_GEN=<nonce>`, a value that is constant within one session generation and different across generations. The marker answers *which project owns this process*; the nonce answers *which generation of that project's session caused it to exist*. Without the nonce, the criterion "reap watchers belonging to a **prior** generation" is undecidable except by command line, which PL-006f(2) forbids.
+
+A **generation** ends whenever a session's context is reset in place — including a session-keeper restart cycle, which clears and re-briefs the session without restarting the agent process. The nonce MUST therefore change on that event. It follows that the nonce MUST NOT be minted per `harmonik start <role>` invocation: a keeper restart does not re-invoke it, so a per-invocation nonce would be identical across exactly the generations it exists to distinguish. Nor can it be delivered by setting a variable in the enclosing terminal-multiplexer session: the environment of an already-running agent process is fixed at `exec`, and its children inherit from it, not from the multiplexer.
+
+The conforming mechanism is that the long-lived process records the current generation **at the moment it starts**, reading it from the harmonik-owned session-state file the keeper updates on every cycle — the managed-session write-back of [session-keeper.md §4.1 SK-003]. A candidate is of a prior generation when the value it recorded differs from the current value in that file. This clause depends on that value differing across generations; SK-003 supplies the per-cycle write-back, and stating the uniqueness property normatively is a coordination request against [session-keeper.md].
+
+**(7) Hazards this mechanism is evaluated against.** The following table is normative in the sense that an implementation MUST NOT weaken any row:
+
+| Hazard | Outcome under PL-006e + PL-006f |
+|---|---|
+| pid or pgid recycling | **Immune.** No pid and no pgid participates in identity. |
+| a live sibling with the same identity | **Not distinguished by the marker alone.** A live watcher and a leaked one are marker-identical and argv-identical. Resolved by the PL-006e(6) generation conjunct; where the conjunct cannot be evaluated, the candidate is spared. |
+| a peer project on the same machine | **Distinguished.** The marker is project-scoped by construction. |
+| darwin | **Readable, conditionally** — PL-006e(4); an opaque environment fails closed. |
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### PL-006f — Matcher discipline
+
+Every reaper in this system — the PL-006 orphan sweep, the PL-021b session sweep, the `br` sweep of [beads-integration.md §4.10 BI-014a], and any future sweep — MUST satisfy this requirement.
+
+**(1) The strip rule.** On darwin, `ps -E` appends a process's environment to the same column that carries its command line. A matcher MUST therefore derive the candidate's environment as *the `-E` listing minus the non-`-E` listing taken as a literal prefix*, and MUST evaluate the marker only against that remainder.
+
+Matching against the raw `-E` line is **forbidden**, and the reason is stated here so that a later simplification cannot quietly reintroduce it: any local process can place the text `HARMONIK_PROJECT_HASH=<hash>` in its own argument vector, which under a raw-line match is indistinguishable from carrying the marker in its environment. That yields a machine-wide kill primitive usable in both directions — a process can make harmonik kill it, or an attacker can name a victim and have harmonik kill that. The strip rule costs one additional `ps` invocation per candidate. That cost is stated in this spec so that it is understood to be deliberate.
+
+**(2) Argument vectors are never provenance.** Identification MUST rest on a marker the candidate could only have received from this project's tooling. The command line, the `comm` value, and the binary path are permissible **only as narrowing filters applied after a marker match has already succeeded**, and never as the match itself.
+
+The reason is specific to this system rather than general caution: harmonik's own operating contract manufactures command-line-identical live twins. Every crew is required to keep a message watcher armed for its whole session, so a leaked watcher from a previous generation and the live watcher of the current one are byte-identical on the command line. A matcher that identifies by command line cannot tell them apart, and the failure is not theoretical — it has killed live work on this project's own launch path.
+
+**(3) Fail closed, uniformly.** Any input a matcher requires — the marker, the generation nonce, or any input to an **exclusion** rule — that cannot be read MUST cause the candidate to be **skipped**, never killed. This applies to every exclusion, present and future, so that a new exclusion cannot reintroduce the hazard locally. The direction matters: an unreadable exclusion input means the reaper cannot prove the candidate is *not* protected, and an unproven exclusion is treated as protective.
+
+**(4) No pid or pgid identity, ever.** Neither alone nor in combination, and neither in place of the marker nor alongside it. Where a *generation* must be distinguished, PL-006e(6)'s nonce is the mechanism — not a recorded pid, and not a recorded start time. A start-time conjunct in particular has nothing to compare against at sweep time, because the process whose start time was recorded is by construction already dead when the sweep runs.
+
+**(5) Ordering.** A conforming matcher evaluates, in this order: marker match → generation conjunct, where the reaper's criterion is generational → narrowing filters → exclusions → kill. Each step may only *reduce* the candidate set. No step may add a candidate that an earlier step did not admit.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### PL-006g — Spawn-site register
+
+Each site at which harmonik spawns a process MUST appear in this register as either **conformant** (it sets the PL-006e marker) or **exempt** (it does not, with the reason recorded). The register exists so that PL-INV-005's provenance sensor is a predicate a reviewer can check against the implementation rather than an assertion that can drift silently.
+
+| Spawn site | Marker | Group | Note |
+|---|---|---|---|
+| Handler subprocess, direct-exec | conformant | own group | The kill handle is the group; see [handler-contract.md §4.10 HC-044]. |
+| Handler subprocess, substrate-hosted | conformant | **exempt** | The marker reaches the child through the multiplexer's environment-passing flag. The process group is assigned by the multiplexer server and is not harmonik's to set; the substrate regime's reaper is PL-021b §7. |
+| `br` subprocess, BI adapter | **required, not yet conformant** | exempt | Sets no marker today; a `br` child inherits the daemon's environment, which does not carry one either. [beads-integration.md §4.10 BI-014a] is amended in lockstep. |
+| Scheduled-tick subprocess | conformant | **exempt, deliberately** | Leads its own group so that it survives a daemon restart. The reason is recorded here rather than inferred from the code. |
+| Workflow-cascade agent subprocess | conformant | **exempt, deliberately** | Leads its own group so that it can be group-killed independently. |
+| Workflow-cascade local build and vet subprocesses | **required, not yet conformant** | exempt | Sets neither today. |
+| Supervisor, daemon watchdog, supervisor watchdog | **required, not yet conformant** | exempt | Launch-layer spawns. These are long-lived, and their absence from the marked population is the largest measured gap. |
+| Agent and watcher processes started by `harmonik start captain` / `harmonik start crew` | **required, not yet conformant** (marker and PL-006e(6) nonce) | exempt | The population that leaks, and the population the generational reaper targets. |
+
+**An exempt process is invisible to the reapers of this spec and MUST NOT be reaped by them.** Exemption declares non-coverage. It is not a waiver that licenses a looser match against the exempt process.
+
+**Sequencing obligation.** The marker write obligation of PL-006e(3) and the matcher discipline of PL-006f MUST take effect together. Widening the marked population without the matcher's conjuncts and fail-closed rule in place increases the candidate set of every sweep while removing none of the ways a sweep can be wrong.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 #### PL-007 — Orphan sweep is deterministic and complete before classification
 
-The orphan sweep MUST be deterministic given the filesystem + process state AND the project-scoped provenance marker of PL-006a. After the sweep completes, no harmonik-owned process bearing this project's provenance marker from a prior daemon instance is alive and no harmonik-owned worktree is locked by a prior-instance lease. The git walk (PL-005 step 5) and Beads query (step 6) operate against a quiescent project-scoped filesystem. The sweep MUST NOT match on binary path alone and MUST NOT kill a process lacking a valid project-scoped marker.
+The orphan sweep MUST be deterministic given the filesystem + process state AND the project-scoped provenance marker of §4.2a PL-006e. After the sweep completes, no harmonik-owned process bearing this project's provenance marker from a prior daemon instance is alive **and reachable by this sweep** (the coverage boundary is stated in PL-006 and PL-021b §7), and no harmonik-owned worktree is locked by a prior-instance lease. The git walk (PL-005 step 5) and Beads query (step 6) operate against a quiescent project-scoped filesystem.
+
+The sweep MUST NOT kill a process lacking a valid project-scoped marker, and MUST NOT use the command line, the `comm` value, or the binary path as the match. Per PL-006f(2) those may narrow the candidate set only after a marker match has succeeded. The earlier form of this sentence — "MUST NOT match on binary path **alone**" — is superseded: it permitted a matcher that combined two non-provenance signals and called the combination sufficient, which is the defect it was written to prevent.
 
 Tags: mechanism
 
@@ -649,6 +765,8 @@ Specifically:
 
 (b) The orphan-sweep §PL-006 MUST NOT target relay-grandchild subprocesses; they exit on their own when the agent subprocess completes its hook invocation, and any survivors (e.g., relay processes whose parent agent died mid-invocation) are reaped via OS init-reparenting at daemon death or by the agent subprocess's own process-tree cleanup at session-end.
 
+  This exclusion is an **exclusion input** in the sense of §4.2a PL-006f(3) and inherits that clause's fail-closed rule: a candidate whose command line cannot be read cannot be shown *not* to be a relay grandchild, and MUST therefore be skipped rather than killed. The input MUST be obtained by a portable means available on every supported platform. Stated explicitly because the direction is easy to invert, and inverting it arms a kill path: on a platform where the exclusion input is unavailable, the failure must be that harmonik reaps too little, never that it reaps a protected process.
+
 (c) The relay's daemon-socket connection regime is governed by [handler-contract.md §4.10 HC-045b] (one-shot NDJSON connections, each independent), NOT by HC-007's long-lived-stream model.
 
 Tags: mechanism
@@ -738,6 +856,42 @@ For the MVH the daemon MUST consume a direct-tmux substrate in place of the ntm 
 5. **No pane-output consumption.** The daemon MUST NOT read pane stdout/stderr through `tmux pipe-pane` or any other channel. All bridge-protocol messages ([claude-hook-bridge.md §4.7 CHB-018] pre-exec messages, [claude-hook-bridge.md §4.7 CHB-019] heartbeats, [claude-hook-bridge.md §4.7 CHB-020] terminal events, [claude-hook-bridge.md §4.10 CHB-025] outcome dedup) flow through the daemon's Unix socket per PL-003a and the `harmonik hook-relay` subcommand per [claude-hook-bridge.md §4.4 CHB-010]. The pty exists exclusively for operator ergonomics (interactive attach).
 6. **Substrate seam.** The handler-package `LaunchSpec` carries an optional substrate handle. When non-nil, `Handler.Launch` MUST route subprocess creation through the substrate. The substrate handle is constructed at the daemon composition root and threaded via the adapter registry; daemon code MUST NOT branch on `LaunchSpec.Binary` to decide substrate engagement ([claude-hook-bridge.md §4.8 CHB-022] twin-blindness).
 7. **Wait/kill discipline.** The substrate `Wait` operation MUST satisfy the PL-014 single-`cmd.Wait()` invariant in spirit — for substrate-hosted sessions the daemon has no `*exec.Cmd` to wait on; the substrate observes pane death by polling `tmux list-panes` at a 100ms cadence (matching PL-006 sweep cadence) and reports exit semantics via the Outcome type. The substrate `Kill` operation MUST issue `tmux kill-window`; SIGKILL escalation is delegated to tmux itself.
+
+   **Grandchild reach of this kill verb — normative declaration.** `tmux kill-window` reaches the processes that remain in the pane's session. It does NOT reach a descendant that has called `setsid`, because such a descendant has left that session; agent harnesses hosted in these panes do call `setsid` on the subprocesses they spawn, so this is the ordinary case and not an edge case. The resulting coverage, stated in full so that no reader can infer more than is true:
+
+   | Case | Reached by | Verb |
+   |---|---|---|
+   | Descendant remaining in the pane's session | this clause | `tmux kill-window` |
+   | Descendant that left the session and has since been orphaned to init | PL-006 subprocess cleanup — origin-agnostic, marker-based | SIGTERM then SIGKILL |
+   | Descendant that left the session while its root is still alive | **nothing** | **none** |
+   | Any descendant, on darwin, whose executable is an Apple-signed system binary | **nothing** | **none** |
+
+   **The fourth row is a second, orthogonal non-coverage, dated at this revision (2026-07-22) and
+   measured rather than inferred.** On darwin the marker is recovered by reading a candidate's
+   environment with `ps -E` per PL-006e(4). That read returns an *empty environment, with no error*,
+   for executables that are Apple-signed system binaries — measured on macOS 26.3.2 for `/bin/sh`,
+   `/bin/zsh`, and `/bin/sleep`, while our own Go binaries, package-manager-installed binaries, and
+   framework-resident interpreters all read correctly. An implementation therefore cannot distinguish
+   "this process carries no marker" from "this process's marker cannot be read," and PL-006f(3)
+   requires it to treat the unreadable case as unproven and **spare** the candidate.
+
+   This row is orthogonal to the third rather than contained by it: it applies to orphaned and
+   still-parented descendants alike, and it applies whether or not `setsid` was ever called. It is
+   not bounded by the root's lifetime — an Apple-signed system binary orphaned to init is invisible
+   to the PL-006 sweep permanently, not until some later event. It is a property of the executable,
+   not of the process's ownership or origin.
+
+   The polarity is safe by construction: the failure mode is under-reaping, never killing a process
+   this system does not own. An implementation MUST NOT respond to this row by relaxing the
+   fail-closed rule of PL-006f(3), by falling back to an argv or `comm` match — forbidden by
+   PL-006f(2) — or by treating an empty environment read as evidence of anything. The row exists so
+   that darwin coverage is not read as complete, because the population it describes is generated by
+   ordinary operation: a shell is the parent of most tool-invoked work, and each such shell becomes
+   an unreadable `PPID==1` orphan when its root dies.
+
+   The third row is a declared non-coverage, dated at this revision. It is bounded: it lasts only until the root dies, at which point the descendant is orphaned to init and PL-006 reaches it, provided the descendant carries the PL-006e marker. It MUST NOT be described as covered, and a reaper MUST NOT widen its matcher to reach into it — the reason the row exists is that the only mechanism which would reach a still-parented process without a parentage or session relationship is an unfiltered scan of every marked process on the machine, which is a materially different and more dangerous capability than any sweep specified here.
+
+   A mechanism that would close the third row (a periodic marker-scan reaper not filtered by parentage, or process-level containment) is out of scope for this revision. PL-006e is a precondition for the first of those.
 8. **Window-name observability.** The daemon MUST emit the resolved `tmux_window_name` as a field of the `agent_started` progress-stream message so that the window-naming determinism asserted in item 4 above is externally observable. This makes the tmux window name discoverable by the operator and by conformance tests without requiring a separate `tmux list-windows` call. The `agent_started` payload MUST include `tmux_window_name: <string>` set to the exact name passed to `tmux new-window -n`. This obligation applies only when the direct-tmux substrate is engaged (i.e., `LaunchSpec.substrate != nil`); non-substrate launches omit the field.
 
    Cross-spec coordination request: [event-model.md §6.3] `agent_started` payload schema requires a new optional `tmux_window_name string` field for this requirement (applicable when substrate = direct-tmux). Refs: hk-gql20.25.
@@ -747,24 +901,36 @@ For the MVH the daemon MUST consume a direct-tmux substrate in place of the ntm 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
-#### PL-021c — Pane orphan recovery within PL-006
+#### PL-021c — Pane orphan recovery within PL-006 (RETIRED v0.6.0)
 
-The orphan sweep of PL-006 MUST be extended to cover orphan tmux **windows** in addition to orphan tmux **sessions**. The extension is required because the PL-021b $TMUX-reuse mode places harmonik-created windows inside an operator-owned session whose name does NOT match the `harmonik-<project_hash>-` prefix that PL-006 enumerates.
+**RETIRED.** This requirement is withdrawn. It is recorded rather than deleted so that a reader can tell a deliberate retirement from an omission, and so that anyone who wants the coverage back knows exactly what it would cost.
 
-The extended sweep MUST:
+**Why.** Every step below is conditioned on a window whose name begins with the `hk-<hash6>-` sentinel. No production spawn path produces such a name: the handler sets the window name to the run's working-directory path, and the helper that builds the sentinel name has no production caller. The requirement therefore describes a sweep that cannot match anything, and has never matched anything, on any deployment. A normative promise attached to an unreachable code path is worse than no promise: it is read as coverage, and it is counted as coverage when someone asks whether pane orphans are handled.
 
-1. Enumerate all live tmux sessions via `tmux list-sessions -F '#{session_name}'`.
-2. For each session, enumerate its windows via `tmux list-windows -t <session> -F '#{window_name}'`.
-3. For every window whose name begins with `hk-<hash6>-` where `<hash6>` is the first 6 hex chars of *this* daemon's project hash, the daemon MUST issue `tmux kill-window -t <session>:<window>`.
-4. After issuing kill-window commands, the daemon MUST poll at 100 ms cadence up to a 2-second ceiling for the windows to disappear; after the ceiling, the daemon MUST proceed regardless.
-5. The `daemon_orphan_sweep_completed` event payload MUST gain a new field `tmux_windows_killed: <integer ≥ 0>`.
-6. **Post-ceiling survivor handling.** If the 2-second poll ceiling expires and one or more subprocesses backing a killed window are still alive (detectable via `kill(pid, 0)` against the pane's `#{pane_pid}` field), the daemon MUST: (a) log a structured warning at level WARN with message key `tmux_kill_window_survivor` naming each surviving PID; and (b) include a new field `tmux_kill_window_survivors []int` in the `daemon_orphan_sweep_completed` event payload listing the surviving PIDs. The daemon MUST NOT send SIGKILL to survivors at MVH: the operator-owned session context is not harmonik's to mass-kill, and PL-006's session-level sweep handles cases where the operator's session itself is harmonik-owned. Surviving window-subprocess PIDs are adopted by the OS init process and are not tracked further by this daemon instance.
+**What carries the regime instead.** PL-021b §7's session-level sweep, which does fire and does kill real sessions, together with PL-006's subprocess cleanup for anything that outlives its session and is orphaned to init. The coverage boundary of both is stated in PL-021b §7 and MUST be read as the honest extent of substrate-regime cleanup.
 
-   Cross-spec coordination request: [event-model.md §8.7] `daemon_orphan_sweep_completed` payload schema requires the `tmux_kill_window_survivors []int` field addition (companion to the `tmux_windows_killed` field from item 5).
+**What restoring this would require.** Wiring the sentinel at the substrate spawn site so that production windows actually carry the `hk-<hash6>-` prefix, at which point the steps below become implementable as written. That is a change to the spawn path, not to the sweep, and it belongs to whichever revision decides the `$TMUX`-reuse mode needs window-level cleanup in addition to session-level cleanup.
 
-The session-level sweep of PL-006 is NOT modified.
+The retired text follows, for reference only. It imposes no obligation.
 
-Cross-spec coordination: [event-model.md §8.7] `daemon_orphan_sweep_completed` payload schema requires the `tmux_windows_killed` field addition.
+> The orphan sweep of PL-006 MUST be extended to cover orphan tmux **windows** in addition to orphan tmux **sessions**. The extension is required because the PL-021b $TMUX-reuse mode places harmonik-created windows inside an operator-owned session whose name does NOT match the `harmonik-<project_hash>-` prefix that PL-006 enumerates.
+
+> The extended sweep MUST:
+>
+> 1. Enumerate all live tmux sessions via `tmux list-sessions -F '#{session_name}'`.
+> 2. For each session, enumerate its windows via `tmux list-windows -t <session> -F '#{window_name}'`.
+> 3. For every window whose name begins with `hk-<hash6>-` where `<hash6>` is the first 6 hex chars of *this* daemon's project hash, the daemon MUST issue `tmux kill-window -t <session>:<window>`.
+> 4. After issuing kill-window commands, the daemon MUST poll at 100 ms cadence up to a 2-second ceiling for the windows to disappear; after the ceiling, the daemon MUST proceed regardless.
+> 5. The `daemon_orphan_sweep_completed` event payload MUST gain a new field `tmux_windows_killed: <integer ≥ 0>`.
+> 6. **Post-ceiling survivor handling.** If the 2-second poll ceiling expires and one or more subprocesses backing a killed window are still alive (detectable via `kill(pid, 0)` against the pane's `#{pane_pid}` field), the daemon MUST: (a) log a structured warning at level WARN with message key `tmux_kill_window_survivor` naming each surviving PID; and (b) include a new field `tmux_kill_window_survivors []int` in the `daemon_orphan_sweep_completed` event payload listing the surviving PIDs. The daemon MUST NOT send SIGKILL to survivors at MVH: the operator-owned session context is not harmonik's to mass-kill, and PL-006's session-level sweep handles cases where the operator's session itself is harmonik-owned. Surviving window-subprocess PIDs are adopted by the OS init process and are not tracked further by this daemon instance.
+>
+>    Cross-spec coordination request: [event-model.md §8.7] `daemon_orphan_sweep_completed` payload schema requires the `tmux_kill_window_survivors []int` field addition (companion to the `tmux_windows_killed` field from item 5).
+>
+> The session-level sweep of PL-006 is NOT modified.
+>
+> Cross-spec coordination: [event-model.md §8.7] `daemon_orphan_sweep_completed` payload schema requires the `tmux_windows_killed` field addition.
+
+**Implementation note on the event payload.** The `tmux_windows_killed` and `tmux_kill_window_survivors` fields named in the retired text are already emitted by the implementation and are cited as an additive-extension precedent by PL-006 and PL-006d. Retiring this requirement does NOT oblige their removal; a field that reports zero is harmless, and removing it would break the N-1 payload compatibility those clauses rely on. Retirement withdraws the sweep obligation only.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -1130,9 +1296,20 @@ Tags: mechanism
 
 #### PL-INV-005 — Agent subprocess parentage is daemon-originated
 
-Every live handler subprocess spawned during normal operation MUST have the daemon (by PID) as its initial parent; post-crash re-parenting to init (PID 1) is the only legal parentage deviation, and is cleaned by the next daemon's orphan sweep (§PL-006). This invariant is load-bearing for the orphan sweep's detection rule (PL-006a provenance marker assumes the subprocess was spawned by a daemon of this project, not by a user shell).
+Every live handler subprocess spawned during normal operation MUST have a parent determined by its **spawn regime**, as follows. Post-crash re-parenting to init (PID 1) is a legal deviation for either regime and is cleaned by the next daemon's orphan sweep (§PL-006).
 
-Sensor: every spawn site MUST set the provenance marker of PL-006a (environment variable + PGID). A subprocess without the marker is not a harmonik-owned subprocess by definition and MUST NOT be reaped by PL-006.
+| Regime | Initial parent |
+|---|---|
+| Direct-exec | the daemon process |
+| Substrate-hosted | the multiplexer server, which the daemon directs to create the window per PL-021b |
+
+**Corrected at v0.6.0.** This invariant previously required the daemon to be the initial parent of *every* handler subprocess. That was descriptively false and self-contradictory: PL-021b mandates `tmux new-window` for the substrate regime, which necessarily makes the multiplexer server the parent, and the implementation correctly follows PL-021b. An invariant that a conforming implementation must violate is not a constraint on the implementation; it is a defect in the spec, and it obscured the fact that the two regimes need different reapers (PL-006 and PL-021b §7 respectively).
+
+What remains load-bearing is not the parentage but the **marker**: the orphan sweep's detection rule assumes a candidate was spawned by this project's tooling rather than by a user shell, and PL-006e is what establishes that.
+
+Sensor: every spawn site MUST either set the provenance marker of §4.2a PL-006e or appear in the PL-006g register as exempt with a stated reason. A process without the marker is not a harmonik-owned process by definition and MUST NOT be reaped by PL-006.
+
+The sensor is checkable rather than asserted: the PL-006g register enumerates the spawn sites, so a reviewer can diff the register against the spawn sites present in the implementation and find any site that is in neither column. A site that sets no marker and carries no exemption is a violation of this invariant, whether or not any sweep has yet mis-handled its children.
 
 Tags: mechanism
 
@@ -1355,12 +1532,24 @@ Owner: foundation-author
 Blocks: PL-002a edge-case path.
 Default-if-unresolved: On ambiguity (unable to probe, or probe returns a non-harmonik binary), the daemon treats the PID as stale, removes the pidfile, and proceeds with startup per PL-024. Warning logged.
 
-#### OQ-PL-008 — macOS provenance-marker mechanism
+#### OQ-PL-008 — macOS provenance-marker mechanism (RESOLVED v0.6.0)
 
-Question: On darwin, `/proc/<pid>/environ` is not available, so the PL-006a environment-variable side of the provenance marker is not readable by the orphan sweep. The PGID side remains available. Is PGID alone sufficient for darwin, or is a filesystem-based fallback (a per-pid marker file at `/tmp/harmonik-<project-hash>-<pid>.marker`) required?
+Question (as asked): On darwin, `/proc/<pid>/environ` is not available, so the PL-006a environment-variable side of the provenance marker is not readable by the orphan sweep. The PGID side remains available. Is PGID alone sufficient for darwin, or is a filesystem-based fallback required?
+
+**Resolved: neither.** The environment IS readable on darwin, via `ps -E`, subject to the strip rule and the conditional-readability limits now specified in §4.2a PL-006e(4) and PL-006f(1). PGID is not the answer and is no longer a provenance value at all. A filesystem fallback is not required, and a per-pid marker file was rejected on the additional ground that it introduces a second provenance scheme with its own lifecycle and garbage-collection problem.
+
+**What decided it was not the retrieval question.** The question assumes a marker that is written and asks how to read it. Measurement showed the long-lived population carries no marker to read, on either platform, because the launch layer and the `br` adapter do not write one. Every candidate answer was therefore a different way of retrieving nothing. The binding constraint is the write obligation, now PL-006e(3) and the PL-006g register.
+
+Superseded by: PL-006e, PL-006f, PL-006g.
+
+#### OQ-PL-008a — `realpath` case-fold ambiguity in `project_hash`
+
+Question: `project_hash` is `SHA-256(realpath(project_root))`. On a case-insensitive but case-preserving filesystem, two spellings of the same directory can produce two different hashes, so a process spawned under one spelling is unowned by a daemon started under the other.
 Owner: foundation-author
-Blocks: PL-006a darwin path; PL-INV-005 sensor correctness on darwin.
-Default-if-unresolved: PGID is the primary marker on darwin; environment variable is set for consistency but not read by the sweep. No filesystem fallback at MVH.
+Blocks: nothing today; latent split-identity hazard on case-insensitive filesystems.
+Default-if-unresolved: hash the `realpath` output as returned by the OS, without case normalization, and accept the split-identity risk.
+
+Note: this question was previously carried inside OQ-PL-008, which caused it to appear resolved when the provenance-mechanism half was resolved. It is split out so that resolving one cannot silently close the other.
 
 #### OQ-PL-009 — Post-`ready` degradation scope
 
@@ -1376,12 +1565,17 @@ Owner: foundation-author
 Blocks: nothing critical (PL-014a default is conservative).
 Default-if-unresolved: `FDS_PER_HANDLER=8`, `FALLBACK_CAP=1024`.
 
-#### OQ-PL-011 — Handler-side `setsid` / PGID-break disclosure
+#### OQ-PL-011 — Handler-side `setsid` / PGID-break disclosure (SUPERSEDED v0.6.0)
 
-Question: PL-006a relies on the recorded PGID for orphan-sweep coverage on darwin; handlers that internally call `setsid` (e.g., nohup-style wrappers) escape the marker and the orphan sweep cannot reap their descendants.
-Owner: handler-contract
-Blocks: PL-006a sweep coverage on darwin.
-Default-if-unresolved: Handlers MUST NOT internally `setsid`; the orphan sweep treats setsid-detached descendants as out-of-scope and may leak them on darwin.
+Question (as asked): PL-006a relies on the recorded PGID for orphan-sweep coverage on darwin; handlers that internally call `setsid` escape the marker and the orphan sweep cannot reap their descendants.
+
+**Superseded, and its premise is no longer true.** The premise was that `setsid` escapes *the marker*. Under PL-006e the marker is an environment variable, which is inherited across `setsid`, so such a descendant remains identifiable. What it escapes is the *kill handle* — its original group and session — not its identity.
+
+The residual is no longer an open question but a specified, bounded non-coverage: a `setsid` descendant that has been orphaned to init is reached by PL-006's subprocess cleanup, which is origin-agnostic; one whose root is still alive is reached by nothing, and that is declared in PL-021b §7.
+
+The disposition "handlers MUST NOT internally `setsid`" is withdrawn as unenforceable: the agent harnesses harmonik hosts do this, harmonik does not control them, and a prohibition addressed to a component outside the system is not a requirement.
+
+Superseded by: PL-006e(2), PL-006 subprocess-cleanup coverage boundary, PL-021b §7.
 
 #### OQ-PL-012 — `daemon_shutdown` durability class confirmation
 
@@ -1416,6 +1610,7 @@ Cross-ref: PL-021b §4 (window-naming determinism), PL-021b §8 (window-name in 
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-22 | 0.6.0 | agent (process-group-provenance / hk-o7x4w, hk-g1qby, hk-c6dt2, hk-n93gq, hk-5z4ww) | **Process provenance consolidated into a new §4.2a; PGID retired as a provenance value.** NEW: PL-006e (provenance marker — one mechanism, the `HARMONIK_PROJECT_HASH` environment variable; inheritance across `setsid`; a write obligation covering launch-layer and `br` spawns; conditional darwin readability with a fail-closed rule; a generation nonce for distinguishing session generations). NEW: PL-006f (matcher discipline — the darwin argv-strip rule, the prohibition on argv/`comm`/binary path as provenance, uniform fail-closed handling of unreadable inputs, no pid/pgid identity, and a fixed evaluation order). NEW: PL-006g (spawn-site register making PL-INV-005's sensor checkable). RETIRED: PL-006a's daemon-`setsid` MUST and the PGID half of the provenance marker; PL-021c (pane orphan recovery — conditioned on a window-name sentinel no production spawn path produces, so it has never been able to fire). AMENDED: PL-006 (false `br`-marker sentence removed; coverage boundary of the `PPID==1` filter stated, including that the sweep is origin-agnostic and does reach orphaned `setsid` descendants); PL-007 (binary-path clause strengthened from "not alone" to "never as the match"); PL-017a(b) (relay exclusion inherits the fail-closed rule — it previously failed open); PL-021b §7 (grandchild reach declared in full, with TWO dated non-coverage rows: a descendant that left the pane's session while its root is still alive, and — on darwin — any descendant whose executable is an Apple-signed system binary, whose environment `ps -E` returns empty with no error, measured on macOS 26.3.2; the second row is orthogonal to the first and is not bounded by the root's lifetime); PL-INV-005 (parentage stated per spawn regime — the previous daemon-is-parent clause contradicted PL-021b and the conforming implementation; sensor restated against PL-006e and the register). OQ-PL-008 RESOLVED and split, with the `realpath` case-fold half carried forward as OQ-PL-008a so resolving one cannot silently close the other. OQ-PL-011 SUPERSEDED — its premise, that `setsid` escapes the marker, is false for an inherited environment variable. |
 | 2026-07-14 | 0.5.5 | agent (agent-input-substrate / M2) | **AIS supersession of the daemon-run pane input path (PL-021b observation-only + PL-021d demotion).** M2 agent-input-substrate hands the daemon-run input path to the new `specs/agent-input.md` (AIS) structured input port (D5/D6/D10). **PL-021b** (AMENDED): adds an **Observation-only after AIS** subclause after item 8 — once AIS owns the daemon-run input path the direct-tmux substrate carries no input for daemon runs; `tmux capture-pane` MAY survive as a human-facing observation seam; the §5 READ boundary (no `pipe-pane` structured consumption) is unchanged; inspectability of a headless `stream-json` agent is satisfied by the AIS capture-tee + optional observation pane, NOT by tmux owning the child process. Items 1–4, 6–8 (spawn/naming/kill) are unchanged. **PL-021d** (DEMOTED, not deleted): retitled "Daemon→pane write mechanism (DEMOTED — superseded by AIS for daemon runs; retained for keeper + interactive-session nudge)". A demotion clause is inserted as the first paragraph — the `load-buffer` + `paste-buffer` mechanism is removed from the daemon RUN input path (now AIS-owned) but PRESERVED as NORMATIVE for two non-run consumers: (a) the session-keeper paste path (SK-002, `internal/keeper/injector.go`) per the D6 carve-out, and (b) the interactive-session nudge / boot-seed paths (`cmd/harmonik/{captain,crew,comms}.go`). The opening "needed for" rationale is edited so the daemon-run uses are AIS-owned; every `load-buffer`/`paste-buffer`/`send-keys -l` MUST sentence, buffer-name discipline, delete-buffer cleanup, and the `daemon_pane_write` audit are preserved verbatim (keeper + CLI still consume them). A **C6 deletion-boundary note** is added: post-bake (AIS-INV-001 acceptance-gated, C5 fault-harness N-green + output-or-stale oracle) the daemon-run paste-inject stack (`internal/daemon/pasteinject.go`, input portions of `tmuxsubstrate.go`, six type-asserted side-interfaces) is deleted; the tmux write verbs are NOT deleted while keeper + CLI nudge consume them; `capture-pane` retained; spawn verbs (`new-window`/`kill-window`/`list-panes`) retained (shared with crew spawn + M4 remote). **§9.3** gains an `[agent-input.md]` co-reference. No existing PL IDs renumbered. Refs: agent-input-substrate M2 (D5 process-ownership/inspectability reinterpretation, D6 keeper carve-out, D10 new `specs/agent-input.md` AIS prefix). |
 | 2026-06-25 | 0.5.4 | agent (hk-dyqy) | **Native launcher wording follow-up.** Replaced stale `captain-launch.sh` examples in PL-006a, PL-031, and PL-006d with the native launcher surface (`harmonik start captain`, `harmonik start crew <name>`) and shell-fallback wording. Clarified that native launchers and `harmonik project-hash` share the same lifecycle hash accessor. No requirement IDs added or renumbered. Refs: hk-dyqy. |
 | 2026-06-13 | 0.5.3 | agent (hk-9xi) | **PL-004b and PL-029(f) implementation verified; §10.2 test obligations added.** Two fleet-portability clauses now have code implementations. **PL-004b** (config.yaml `daemon:` block parsing) implemented in `internal/daemon/projectconfig.go` (commit `d15a090d`, hk-rcp7): extends `LoadProjectConfig` to parse `daemon.workflow_mode`, `daemon.max_concurrent`, and `daemon.target_branch`; adds `ErrWorkflowModeFloorViolation` enforcing the PL-004a review floor; flag-over-config precedence wired in `cmd/harmonik/main.go` via `flag.Visit`. Unit tests: `internal/daemon/projectconfig_hkrcp7_test.go` (13 tests, including the load-bearing `workflow_mode: single` floor violation assertion). **PL-029(f)** (phantom target-branch guard removal) implemented in `cmd/harmonik/init_cmd.go` (commit `abec9fec`, hk-7iyh): the legacy fail-closed `--target-branch ≠ main` guard (which referenced the nonexistent bead hk-m8vy2) is removed; `harmonik init --target-branch integration` now exits 0 and writes `integration` to `branching.yaml lands_on`; stale phantom-bead comment scrubbed from usage text and doc blocks. Asset-sync test `init_skills_sync_test.go` guards the embedded skill bundle. **§10.2** gains test-surface obligations for PL-004b and PL-029. Refs: hk-9xi, hk-rcp7, hk-7iyh. |

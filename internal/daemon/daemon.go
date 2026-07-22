@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -1021,6 +1022,33 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	if startupErr != nil {
 		return startupErr
 	}
+	// Register this after the JSONL-writer close defer so LIFO ordering emits
+	// and fsyncs the graceful-shutdown landmark while the writer is still open.
+	// A forced termination never runs defers and therefore correctly emits no
+	// daemon_shutdown event.
+	defer func() {
+		if ctx.Err() == nil {
+			return
+		}
+		shutdownAtNs, clockErr := lifecycle.MonotonicNsSinceBoot()
+		if clockErr != nil {
+			log.Printf("warn: daemon.Start: read shutdown monotonic clock: %v", clockErr)
+			return
+		}
+		payload := core.DaemonShutdownPayload{
+			ShutdownAt:            time.Now().UTC().Format(time.RFC3339),
+			ShutdownAtNsSinceBoot: shutdownAtNs,
+			Mode:                  core.ShutdownModeGraceful,
+		}
+		payloadBytes, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			log.Printf("warn: daemon.Start: marshal daemon_shutdown payload: %v", marshalErr)
+			return
+		}
+		if emitErr := bus.Emit(context.Background(), core.EventTypeDaemonShutdown, payloadBytes); emitErr != nil {
+			log.Printf("warn: daemon.Start: emit daemon_shutdown: %v", emitErr)
+		}
+	}()
 
 	// Step 3 (PL-005 / PL-006, hk-60uvn): orphan sweep + in-flight-run reconcile,
 	// BEFORE any socket or listener bind. Extracted into runStartupReconcile (and

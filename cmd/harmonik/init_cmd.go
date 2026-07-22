@@ -487,15 +487,19 @@ func writeConfigYAML(projectDir, targetBranch, rcPrefix string, force bool, stdo
 		fmt.Fprintln(stdout, "harmonik init: .harmonik/config.yaml already exists — skipping (use --force to overwrite)")
 		return 0
 	}
-	// Append the COMPLETE keeper: and harnesses.pi: blocks from their single
+	// Append the COMPLETE keeper:, codex: and harnesses.pi: blocks from their single
 	// sources of truth (shared with `harmonik keeper config --example` and
 	// `harmonik pi config --example`) so a generated project starts with a valid,
-	// operator-editable config: keeper has no runtime defaults, and folding in the
+	// operator-editable config: keeper has no runtime defaults, folding in the
 	// harnesses.pi block lets the daemon dispatch the Pi harness out of the box
-	// (the operator tunes the suggested provider/model/api_key_env). YAML key order
-	// is not semantic, so appending harnesses.pi after keeper is fine.
+	// (the operator tunes the suggested provider/model/api_key_env), and the codex:
+	// block carries codex.stale_wal_max_bytes — REQUIRED with no compiled default,
+	// so without it the FIRST codex launch in a fresh project fails loud at
+	// spec-build time (hk-yhvrh). YAML key order is not semantic, so appending these
+	// after the daemon/sentinel template is fine.
 	content := fmt.Sprintf(configYAMLContent, targetBranch, rcPrefix) +
 		keeperConfigExampleYAML() +
+		codexConfigExampleYAML() +
 		piConfigExampleYAML()
 	//nolint:gosec // G306: config file readable by owner only; 0644 matches conventions
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

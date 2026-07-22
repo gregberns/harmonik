@@ -13,17 +13,20 @@ package main
 //     ResolveKeeperConfig on it returns ZERO missing-value errors — a new project
 //     starts cleanly.
 //
-// The artifact under test is exactly what writeConfigYAML emits:
-// fmt.Sprintf(configYAMLContent, ...) + keeperConfigExampleYAML() + piConfigExampleYAML().
+// The artifact under test is exactly what writeConfigYAML emits — obtained by
+// CALLING writeConfigYAML, not by re-composing its parts (see renderedInitConfig).
 //
 // It also guards the init-template-drift fix (⑤): the generated config must set
 // sentinel.liveness_no_progress_n uncommented (else the daemon refuses to boot —
-// GovernorConfig fails loud, hk-drygf) and must fold in the harnesses.pi block so
-// the Pi harness is dispatchable out of the box.
+// GovernorConfig fails loud, hk-drygf), must fold in the harnesses.pi block so
+// the Pi harness is dispatchable out of the box, and must fold in the codex: block
+// so codex.stale_wal_max_bytes — REQUIRED with no compiled default — is set before
+// the first codex launch (hk-yhvrh; the round-trip through the real guard lives in
+// init_codex_block_hkyhvrh_test.go).
 
 import (
 	"errors"
-	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,12 +36,28 @@ import (
 	"github.com/gregberns/harmonik/internal/digest"
 )
 
-// renderedInitConfig returns the exact config.yaml body `harmonik init` writes
-// (daemon/sentinel template + the shared complete keeper block + harnesses.pi block).
-func renderedInitConfig() string {
-	return fmt.Sprintf(configYAMLContent, "main", "hk") +
-		keeperConfigExampleYAML() +
-		piConfigExampleYAML()
+// renderedInitConfig returns the exact config.yaml body `harmonik init` writes, by
+// running the REAL writeConfigYAML into a temp project and reading the file back.
+//
+// It deliberately does NOT re-compose `configYAMLContent + …ExampleYAML()` itself
+// (as it once did): a helper that rebuilds the composition stays green even when a
+// block is dropped from writeConfigYAML, so it pins the helper rather than the
+// production call site. Going through writeConfigYAML makes every assertion below
+// sensitive to the wiring an operator actually gets (hk-yhvrh).
+func renderedInitConfig(t *testing.T) string {
+	t.Helper()
+	projectRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectRoot, ".harmonik"), 0o755); err != nil {
+		t.Fatalf("mkdir .harmonik: %v", err)
+	}
+	if rc := writeConfigYAML(projectRoot, "main", "hk", false, io.Discard, io.Discard); rc != 0 {
+		t.Fatalf("writeConfigYAML returned %d, want 0", rc)
+	}
+	raw, err := os.ReadFile(filepath.Join(projectRoot, ".harmonik", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read generated config.yaml: %v", err)
+	}
+	return string(raw)
 }
 
 // writeRenderedInitConfig writes the rendered body into <tmp>/.harmonik/config.yaml
@@ -59,7 +78,7 @@ func writeRenderedInitConfig(t *testing.T, body string) string {
 // TestInitKeeperTemplate_SchemaAndKeeperBlockUncommented asserts schema_version: 1
 // is uncommented AND the keeper block (with its required tunables) is uncommented.
 func TestInitKeeperTemplate_SchemaAndKeeperBlockUncommented(t *testing.T) {
-	body := renderedInitConfig()
+	body := renderedInitConfig(t)
 
 	if !lineUncommented(body, "schema_version: 1") {
 		t.Fatalf("expected uncommented `schema_version: 1` line; template:\n%s", body)
@@ -83,6 +102,10 @@ func TestInitKeeperTemplate_SchemaAndKeeperBlockUncommented(t *testing.T) {
 		"provider: openrouter",
 		"model: openrouter/qwen/qwen3-coder",
 		"api_key_env: OPENROUTER_API_KEY",
+		// hk-yhvrh: the codex: block — REQUIRED with no compiled default, so a fresh
+		// project whose first run selects codex fails loud at spec-build without it.
+		"codex:",
+		"stale_wal_max_bytes: 1048576",
 	}
 	for _, key := range mustBeUncommented {
 		if !lineUncommented(body, key) {
@@ -94,7 +117,7 @@ func TestInitKeeperTemplate_SchemaAndKeeperBlockUncommented(t *testing.T) {
 // TestInitKeeperTemplate_ResolvesCleanly asserts the generated config parses AND
 // resolves with ZERO missing-value errors — a new project starts cleanly.
 func TestInitKeeperTemplate_ResolvesCleanly(t *testing.T) {
-	body := renderedInitConfig()
+	body := renderedInitConfig(t)
 	repoRoot := writeRenderedInitConfig(t, body)
 
 	cfg, err := daemon.LoadProjectConfig(repoRoot)

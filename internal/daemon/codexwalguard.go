@@ -38,6 +38,12 @@ package daemon
 // (codex_wal_guard_removed_large_stale), otherwise it logs as a normal cleanup
 // (codex_wal_guard_removed_stale). Cleanup happens either way.
 //
+// `harmonik init` SCAFFOLDS this key so a freshly-initialised project can select
+// codex without the first launch failing loud (hk-yhvrh). The template is the
+// single source of truth in cmd/harmonik/codex_config_example.go — if you add
+// another REQUIRED-with-no-default key under `codex:` here, you MUST add a line
+// there or every fresh project hits the next wall on its first codex launch.
+//
 // # No-config no-op
 //
 // If projectRoot is empty, or .harmonik/config.yaml does not exist, the guard is

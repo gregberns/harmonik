@@ -1342,7 +1342,7 @@ EXAMPLES
 
 	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
 	// the live worker registry into the Codex driver's runner (nil for tmux).
-	codexSubstrate, codexRegObserver, _, reviewerSubstrate := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag)
+	codexSubstrate, codexRegObserver, reviewerSubstrate := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag)
 
 	cfg := daemon.Config{
 		ProjectDir:               projectDir,

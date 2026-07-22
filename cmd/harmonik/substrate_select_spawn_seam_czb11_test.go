@@ -54,9 +54,19 @@ func TestCodexSubstrateOptions_RunnerSatisfiesRemoteCwd_czb11(t *testing.T) {
 func TestCodexSpawnSeam_ProductionRunner_RemoteCwd_czb11(t *testing.T) {
 	t.Setenv(substrateSelectEnv, "codexdriver")
 
-	sub, bindRegistry, requireBoundary, _ := selectSubstrate(nil, "codex")
-	if !requireBoundary || bindRegistry == nil {
-		t.Fatalf("codex path expected requireBoundary=true + non-nil bindRegistry; got %v / %v", requireBoundary, bindRegistry == nil)
+	// hk-5vapm: this precondition USED TO require requireBoundary=true from a third
+	// return value. That fail-closed fence was dropped deliberately by hk-tckw3.1
+	// Step 1 (D4 scrapped ssh-per-node, so nothing could supply the boundary; D3 put
+	// local codex on claude's host posture), and the always-false return has now been
+	// removed from the signature entirely.
+	//
+	// The rest of this test is UNAFFECTED and that is the point: bindRegistry is still
+	// non-nil, the worker-routing runner is still bindable, and the remote-cwd
+	// behaviour this test exists to pin is untouched. Only the dead precondition went.
+	sub, bindRegistry, _ := selectSubstrate(nil, "codex")
+	if bindRegistry == nil {
+		t.Fatal("codex path expected a non-nil bindRegistry: the worker-routing runner stays bindable " +
+			"(inert by default) so this remote-cwd seam remains reachable")
 	}
 	bindRegistry(oneWorkerRegistry(true)) // enabled ssh worker — production late-bind
 

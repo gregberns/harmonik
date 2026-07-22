@@ -61,23 +61,40 @@ const (
 // health/live-disable state — WITHOUT the driver ever learning about workers
 // (RS-017 twin-blindness: selection lives at the composition root, not the
 // driver). It is nil for the tmux path (nothing to bind).
-// The third return value, requireIsolationBoundary, is true ONLY on the
-// codexdriver path: a codex app-server crew runs with a permissive sandbox
-// posture (danger-full-access) that is safe solely inside a real isolation
-// boundary — an enabled remote ssh worker IS that boundary. It is the signal the
-// daemon's fail-closed guard keys off (hk-5h759): with it set, the work loop
-// REFUSES to launch a codex run that has no worker bound (which would otherwise
-// fall through codexWorkerRoutingRunner.Command to LocalRunner and run codex
-// UNSANDBOXED on the daemon host). False for the tmux path (no such posture).
 // reviewerSubstrate is always tmuxSub so a claude (SessionIDMinted) reviewer
 // runs on tmux/claude, not the codex app-server driver (hk-qxvc2).
-func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), requireIsolationBoundary bool, reviewerSubstrate handler.Substrate) {
+//
+// hk-5vapm: this used to return a third value, requireIsolationBoundary, meant
+// as the signal a daemon-side fail-closed guard would key off to refuse a codex
+// run with no ssh worker bound. IT IS GONE, and two things about it are worth
+// recording because the comments that described it outlived the design.
+//
+// First, hk-tckw3.1 Step 1 dropped the fence deliberately (plan section 3a). D4
+// scrapped ssh-per-node, so nothing can supply the boundary the fence demanded
+// — leaving it armed would not sandbox codex, it would only stop codex running
+// at all. D3 then put local codex on danger-full-access, the same host posture
+// claude already ran under, so this path is no more permissive than the default
+// it was singled out from. Both production callers had already been discarding
+// the value; it was always false and unparam flagged it.
+//
+// Second, and this is the part that was NOT true in the source: the daemon half
+// never existed. Comments here and in internal/codexdriver referred to a
+// workloop codexRequireIsolationBoundary that "REFUSES to launch" — no such
+// symbol is in the tree, and the only occurrences were those comments describing
+// it. The fence was only ever half-built: codexWorkerRoutingRunner.requireBoundary
+// still has live refusal logic below, but nothing has ever set it true. Anyone
+// auditing codex isolation would have read those comments and believed an
+// enforcement existed. They are corrected rather than carried forward.
+//
+// Containment for codex comes from harmonik's own srt sandbox (hk-scaj0), a
+// different mechanism entirely, so removing this dead signal forecloses nothing.
+func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), reviewerSubstrate handler.Substrate) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
-		return tmuxSub, nil, false, tmuxSub
+		return tmuxSub, nil, tmuxSub
 	}
 	router := &codexWorkerRoutingRunner{requireBoundary: false}
 	opts, _ := codexSubstrateOptions(codexBinary, router)
-	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, false, tmuxSub
+	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, tmuxSub
 }
 
 // codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that
@@ -104,14 +121,22 @@ type codexWorkerRoutingRunner struct {
 	// byte-identical to the pre-M4 hardcoded LocalRunner path (NFR7).
 	reg atomic.Pointer[workers.Registry]
 
-	// requireBoundary makes this runner FAIL CLOSED (hk-5h759). Set true on the
-	// codexdriver path (a codex crew runs danger-full-access, safe ONLY inside an
-	// enabled ssh worker/container). When set and no enabled ssh worker is bound,
-	// Command REFUSES rather than falling through to LocalRunner — which would run
-	// codex UNSANDBOXED on the daemon host. This is the authoritative, race-free
-	// enforcement point: it evaluates the SAME predicate that decides ssh-vs-local
-	// AT spawn time, so it closes the TOCTOU window a caller-side admission check
-	// alone cannot (a worker disabled between admission and spawn is caught here).
+	// requireBoundary would make this runner FAIL CLOSED (hk-5h759): when set and
+	// no enabled ssh worker is bound, Command REFUSES rather than falling through
+	// to LocalRunner.
+	//
+	// NOTHING SETS IT TRUE (hk-5vapm). The refusal logic below is live code but is
+	// unreachable in production. This comment used to say "Set true on the
+	// codexdriver path" and to call this "the authoritative, race-free enforcement
+	// point" — neither is accurate and both are corrected here rather than carried
+	// forward, because an auditor reading them would conclude that unsandboxed
+	// codex launches are refused somewhere. They are not.
+	//
+	// hk-tckw3.1 Step 1 dropped the fence deliberately: D4 scrapped the ssh worker
+	// that was the only thing able to supply the boundary, so arming this would
+	// stop codex launching rather than isolate it. Codex containment comes from the
+	// srt sandbox (hk-scaj0) instead. The field and its logic are left in place
+	// (inert) per the codex-first plan; a P3 removes the runner wholesale.
 	requireBoundary bool
 }
 
@@ -126,7 +151,10 @@ const refusedIsolationBoundaryArgv0 = "/nonexistent/harmonik-REFUSED-codex-dange
 // (hk-5h759) codex thread posture for headless crew orchestration: run codex
 // non-interactively with full workspace access so its writes and commits land.
 // This posture is safe ONLY inside the isolation boundary enforced by the
-// fail-closed guard (requireBoundary above / workloop codexRequireIsolationBoundary).
+// fail-closed guard (requireBoundary above). NOTE (hk-5vapm): nothing ever sets
+// requireBoundary true, so this refusal path is unreachable in production. There is
+// no daemon-side counterpart -- earlier comments here named a workloop
+// codexRequireIsolationBoundary that does not exist anywhere in the tree.
 const (
 	codexHeadlessSandbox        = "danger-full-access"
 	codexHeadlessApprovalPolicy = "never"

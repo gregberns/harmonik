@@ -178,18 +178,43 @@ func TestCodexRouter_SelectSubstrateWiresObserver(t *testing.T) {
 	}
 }
 
-// TestSelectSubstrate_RequireIsolationBoundary_HK5H759 is the composition-root
-// contract for the fail-closed guard signal: selectSubstrate returns
-// requireIsolationBoundary=true ONLY on the codexdriver path (permissive sandbox
-// posture) and false for the tmux default (nothing to guard). The daemon keys
-// its fail-closed refusal off this bool, so it must track the substrate choice.
-func TestSelectSubstrate_RequireIsolationBoundary_HK5H759(t *testing.T) {
+// TestSelectSubstrate_IsolationBoundaryDisabled_HK5H759 is the composition-root
+// contract for the isolation-boundary signal.
+//
+// hk-tckw3.1 (operator-directed, agent-reviewer APPROVE) DELIBERATELY DROPPED the
+// fail-closed codex isolation fence: selectSubstrate now returns
+// requireIsolationBoundary=FALSE on BOTH paths, and the codexdriver router is
+// constructed `&codexWorkerRoutingRunner{requireBoundary: false}`
+// (substrate_select.go:78). A codex crew therefore falls through to LocalRunner and
+// runs danger-full-access on the daemon host rather than refusing. That is the
+// intended posture, not a regression.
+//
+// This test previously asserted the OPPOSITE (requireBoundary=true) and was red.
+// It is INVERTED rather than deleted, deliberately (hk-5vapm):
+//
+//   - The fence MECHANISM is still live code — the requireBoundary field and both
+//     of its consumption sites (substrate_select.go:166 Command, :204 CommandInDir,
+//     returning refusedIsolationBoundaryArgv0) still exist and still work. Only the
+//     composition-root wiring is off. Deleting its last executable assertion would
+//     leave a security-relevant toggle with live machinery and NO test stating
+//     which way it is supposed to point — so a silent flip in EITHER direction
+//     would go uncaught.
+//   - The surrounding assertions in this function are NOT dead: they pin hk-qxvc2
+//     (a claude reviewer must run on the tmux substrate, never the codex app-server
+//     driver). That contract is load-bearing for the codex ramp and must survive.
+//
+// When hk-tckw3.4 Step 3 removes the requireBoundary plumbing outright, the two
+// boundary assertions here go with it; the hk-qxvc2 substrate assertions stay.
+func TestSelectSubstrate_IsolationBoundaryDisabled_HK5H759(t *testing.T) {
 	tmuxSpy := &hkqxvc2ReviewerSubstrateSpy{}
-	t.Run("codexdriver_requires_boundary", func(t *testing.T) {
+	t.Run("codexdriver_boundary_disabled", func(t *testing.T) {
 		t.Setenv(substrateSelectEnv, "codexdriver")
 		sub, _, requireBoundary, reviewerSubstrate := selectSubstrate(tmuxSpy, "codex")
-		if !requireBoundary {
-			t.Fatal("codexdriver path must require an isolation boundary (fail-closed signal)")
+		if requireBoundary {
+			t.Fatal("hk-tckw3.1: the codex isolation fence was deliberately dropped; " +
+				"selectSubstrate must report requireIsolationBoundary=false on the codexdriver path. " +
+				"If this fires, either the fence was re-enabled without updating this contract, or " +
+				"hk-tckw3.1 was reverted — establish WHICH before changing this test.")
 		}
 		if sub == tmuxSpy {
 			t.Fatal("codexdriver path must return the codex substrate as its primary substrate")

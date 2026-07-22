@@ -4,7 +4,7 @@ package daemon_test
 //
 // Key invariants tested:
 //
-//   - AC2.1: initial run argv configures workspace-write via -c overrides
+//   - AC2.1: initial run argv configures danger-full-access via -c overrides
 //   - AC2.2: resume run argv includes "resume <thread_id>" prefix
 //   - AC3.1: OPENAI_API_KEY and CODEX_API_KEY stripped from env (empty overrides present),
 //     including when inherited from the real process env via os.Environ() (C3/T10, hk-jxgnp)
@@ -49,11 +49,11 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 		t.Errorf("WorkDir = %q; want %q", spec.WorkDir, rc.WorkspacePath)
 	}
 
-	// argv: codex exec --json -c sandbox_mode=... -c writable_roots=... --model <model> -C <wt> <seed>
+	// argv: codex exec --json -c sandbox_mode="danger-full-access" --model <model> -C <wt> <seed>
 	// Note: -a/--ask-for-approval was removed in codex 0.139.0.
 	codexLaunchSpecAssertArgv(t, spec.Args, false, "")
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--json")
-	codexLaunchSpecAssertConfigValue(t, spec.Args, `sandbox_mode="workspace-write"`)
+	codexLaunchSpecAssertConfigValue(t, spec.Args, `sandbox_mode="danger-full-access"`)
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--model")
 	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "--model", rc.Model)
 	codexLaunchSpecAssertArgContains(t, spec.Args, "-C")
@@ -516,7 +516,7 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		idxSandbox := indexOf(spec.Args, `sandbox_mode="workspace-write"`)
+		idxSandbox := indexOf(spec.Args, `sandbox_mode="danger-full-access"`)
 		idxModel := indexOf(spec.Args, "--model")
 		idxC := indexOf(spec.Args, "-C")
 		if idxSandbox < 0 || idxModel < 0 || idxC < 0 {
@@ -557,7 +557,7 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 		if indexOf(spec.Args, "--model") != -1 {
 			t.Errorf("empty-model argv must not contain --model anywhere; args=%v", spec.Args)
 		}
-		idxSandbox := indexOf(spec.Args, `sandbox_mode="workspace-write"`)
+		idxSandbox := indexOf(spec.Args, `sandbox_mode="danger-full-access"`)
 		idxC := indexOf(spec.Args, "-C")
 		if idxSandbox < 0 || idxC < 0 || idxSandbox >= idxC {
 			t.Errorf("argv ordering wrong: want sandbox config(%d) < -C(%d); args=%v", idxSandbox, idxC, spec.Args)
@@ -633,13 +633,16 @@ func TestBuildCodexLaunchSpec_ModelNotInResumeArgv(t *testing.T) {
 	}
 }
 
-func TestBuildCodexLaunchSpec_WritableRoots_hkdaegv(t *testing.T) {
+// TestBuildCodexLaunchSpec_DangerFullAccess_hktckw3 asserts that both the initial
+// and resume argv configure sandbox_mode="danger-full-access" via -c, carry NO
+// sandbox_workspace_write.writable_roots override (retired with the native
+// sandbox in hk-tckw3.1), and never use the --sandbox flag.
+func TestBuildCodexLaunchSpec_DangerFullAccess_hktckw3(t *testing.T) {
 	t.Parallel()
 
 	const (
 		worktree = "/srv/repo/.harmonik/worktrees/run-x/wt"
-		modeArg  = `sandbox_mode="workspace-write"`
-		rootsArg = `sandbox_workspace_write.writable_roots=["/srv/repo/.harmonik/worktrees/run-x/wt","/srv/repo/.git"]`
+		modeArg  = `sandbox_mode="danger-full-access"`
 	)
 
 	tests := []struct {
@@ -648,7 +651,7 @@ func TestBuildCodexLaunchSpec_WritableRoots_hkdaegv(t *testing.T) {
 	}{
 		{name: "initial"},
 	}
-	threadID := "thread-hk-daegv"
+	threadID := "thread-hk-tckw3"
 	tests = append(tests, struct {
 		name          string
 		priorThreadID *string
@@ -659,7 +662,7 @@ func TestBuildCodexLaunchSpec_WritableRoots_hkdaegv(t *testing.T) {
 			t.Parallel()
 			rc := daemon.ExportedCodexRunCtx{
 				WorkspacePath:    worktree,
-				BeadID:           "hk-daegv",
+				BeadID:           "hk-tckw3",
 				PriorThreadID:    tt.priorThreadID,
 				SkipBillingGuard: true,
 			}
@@ -669,8 +672,10 @@ func TestBuildCodexLaunchSpec_WritableRoots_hkdaegv(t *testing.T) {
 			}
 
 			codexLaunchSpecAssertConfigValue(t, spec.Args, modeArg)
-			codexLaunchSpecAssertConfigValue(t, spec.Args, rootsArg)
 			for _, arg := range spec.Args {
+				if strings.Contains(arg, "writable_roots") {
+					t.Errorf("argv must not contain a writable_roots override; got %v", spec.Args)
+				}
 				if arg == "--sandbox" {
 					t.Errorf("argv must not contain --sandbox; got %v", spec.Args)
 				}

@@ -6,9 +6,9 @@ package daemon
 // phase:
 //
 //   - Initial turn (priorThreadID == nil):
-//       codex exec --json -c sandbox_mode=... -c writable_roots=... -C <worktree> <seed-prompt>
+//       codex exec --json -c sandbox_mode="danger-full-access" -C <worktree> <seed-prompt>
 //   - Resume turn (priorThreadID != nil):
-//       codex exec resume <thread_id> --json -c sandbox_mode=... -c writable_roots=... <seed-prompt>
+//       codex exec resume <thread_id> --json -c sandbox_mode="danger-full-access" <seed-prompt>
 //
 // The seed prompt instructs codex to read .harmonik/agent-task.md, implement
 // the task, and commit with a "Refs: <beadID>" trailer.
@@ -35,7 +35,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
-	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // codexCredentialDenyKeys lists the credential environment variable names that
@@ -142,36 +141,6 @@ type codexRunCtx struct {
 	skipBillingGuard bool
 }
 
-// codexExecWritableRoots derives the writable sandbox roots for a codex-exec run:
-// the worktree cwd plus the linked-worktree git common dir (<repo>/.git), which
-// holds index.lock and lives OUTSIDE the worktree cwd. Without it codex's own
-// `git commit` fails EPERM under workspace-write (hk-daegv). Mirrors
-// cmd/harmonik/substrate_select.go codexGitCommonDir; plain "/" ops because the
-// cwd may be a remote POSIX path. Returns nil for an empty/non-worktree cwd
-// (degrades to cwd-only, today's behavior).
-func codexExecWritableRoots(worktreeCwd string) []string {
-	if worktreeCwd == "" {
-		return nil
-	}
-	roots := []string{worktreeCwd}
-	marker := "/" + workspace.DefaultWorktreeRoot + "/" // "/.harmonik/worktrees/"
-	if idx := strings.LastIndex(worktreeCwd, marker); idx >= 0 {
-		roots = append(roots, worktreeCwd[:idx]+"/.git")
-	}
-	return roots
-}
-
-func codexWritableRootsArg(roots []string) (string, bool) {
-	if len(roots) == 0 {
-		return "", false
-	}
-	quoted := make([]string, len(roots))
-	for i, root := range roots {
-		quoted[i] = fmt.Sprintf("%q", root)
-	}
-	return fmt.Sprintf(`sandbox_workspace_write.writable_roots=[%s]`, strings.Join(quoted, ",")), true
-}
-
 // buildCodexLaunchSpec constructs a handler.LaunchSpec for launching a codex
 // subprocess for one turn (initial or resume).
 //
@@ -200,10 +169,10 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	}
 
 	// Build argv.
-	// Initial: codex exec --json -c sandbox_mode=... -c writable_roots=...
+	// Initial: codex exec --json -c sandbox_mode="danger-full-access"
 	//          [--model <model>] -C <wt> <seed>
-	// Resume:  codex exec resume <thread_id> --json -c sandbox_mode=...
-	//          -c writable_roots=... <seed>
+	// Resume:  codex exec resume <thread_id> --json
+	//          -c sandbox_mode="danger-full-access" <seed>
 	//
 	// Note: codex exec resume rejects --sandbox, --add-dir, and -C. The global
 	// -c config override works for both initial and resume turns, so sandboxing
@@ -216,8 +185,6 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	// Resume turns never carry --model: the thread context already encodes the
 	// model, and `codex exec resume` may reject a redundant --model.
 	seedPrompt := fmt.Sprintf(codexSeedPromptTemplate, rc.beadID)
-	wrRoots := codexExecWritableRoots(rc.workspacePath)
-	wrArg, hasWR := codexWritableRootsArg(wrRoots)
 	var args []string
 	if rc.priorThreadID != nil {
 		// Resume turns deliver the reviewer-feedback pointer via the shared resume
@@ -227,16 +194,10 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 		seedPrompt = implementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
 		// codex exec resume does NOT accept -C (exit 2: "unexpected argument -C found").
 		// WorkDir in the returned LaunchSpec sets the subprocess working directory.
-		args = []string{"exec", "resume", *rc.priorThreadID, "--json", "-c", `sandbox_mode="workspace-write"`}
-		if hasWR {
-			args = append(args, "-c", wrArg)
-		}
+		args = []string{"exec", "resume", *rc.priorThreadID, "--json", "-c", `sandbox_mode="danger-full-access"`}
 		args = append(args, seedPrompt)
 	} else {
-		args = []string{"exec", "--json", "-c", `sandbox_mode="workspace-write"`}
-		if hasWR {
-			args = append(args, "-c", wrArg)
-		}
+		args = []string{"exec", "--json", "-c", `sandbox_mode="danger-full-access"`}
 		if rc.model != "" {
 			args = append(args, "--model", rc.model)
 		}

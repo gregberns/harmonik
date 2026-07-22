@@ -702,27 +702,26 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 
 	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
 	// the live worker registry into the Codex runner (nil for the tmux path).
-	crewSubstrate, codexRegObserver, codexRequireBoundary, reviewerSubstrate := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions), daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir))), "") // fleet-portability T2
+	crewSubstrate, codexRegObserver, _, reviewerSubstrate := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions), daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir))), "") // fleet-portability T2
 
 	cfg := daemon.Config{
-		ProjectDir:                    projectDir,
-		BrPath:                        brPath,
-		JSONLLogPath:                  jsonlLogPath,
-		MaxConcurrent:                 maxConcurrent, // hk-w3cp1: user-controlled concurrency
-		Substrate:                     crewSubstrate,
-		ReviewerSubstrate:             reviewerSubstrate,
-		WorkerRegistryObserver:        codexRegObserver,     // M4-C3: late-bind live registry into Codex runner
-		CodexRequireIsolationBoundary: codexRequireBoundary, // hk-5h759: fail-closed — refuse codex crew w/o bound worker/container boundary
-		DaemonBinaryPath:              daemonBinaryPath,
-		BinaryCommitHash:              commitHash,
-		CancelOnQueueDrain:            cancelStopDispatch,           // stop dispatch on success (hk-icecw, hk-2o2i9)
-		CancelOnQueueExit:             cancelStopDispatch,           // stop dispatch on failure (hk-8jh26, hk-2o2i9)
-		StopDispatchCtx:               stopDispatchCtx,              // dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)
-		QueueStore:                    qs,                           // retained for post-Start status inspection (hk-8jh26 Fix 2)
-		NotifyStream:                  notifyWriter,                 // hk-ibilr: per-bead completion lines
-		TargetBranch:                  targetBranchFlag,             // hk-mkxw1: merge target branch
-		ProtectBranches:               protectBranchesFlag,          // hk-mkxw1: branches protected from daemon merges
-		ForbidUnprotectedDefault:      forbidUnprotectedDefaultFlag, // hk-mkxw1: guard against unprotected default branch
+		ProjectDir:               projectDir,
+		BrPath:                   brPath,
+		JSONLLogPath:             jsonlLogPath,
+		MaxConcurrent:            maxConcurrent, // hk-w3cp1: user-controlled concurrency
+		Substrate:                crewSubstrate,
+		ReviewerSubstrate:        reviewerSubstrate,
+		WorkerRegistryObserver:   codexRegObserver, // M4-C3: late-bind live registry into Codex runner
+		DaemonBinaryPath:         daemonBinaryPath,
+		BinaryCommitHash:         commitHash,
+		CancelOnQueueDrain:       cancelStopDispatch,           // stop dispatch on success (hk-icecw, hk-2o2i9)
+		CancelOnQueueExit:        cancelStopDispatch,           // stop dispatch on failure (hk-8jh26, hk-2o2i9)
+		StopDispatchCtx:          stopDispatchCtx,              // dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)
+		QueueStore:               qs,                           // retained for post-Start status inspection (hk-8jh26 Fix 2)
+		NotifyStream:             notifyWriter,                 // hk-ibilr: per-bead completion lines
+		TargetBranch:             targetBranchFlag,             // hk-mkxw1: merge target branch
+		ProtectBranches:          protectBranchesFlag,          // hk-mkxw1: branches protected from daemon merges
+		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag, // hk-mkxw1: guard against unprotected default branch
 	}
 
 	// hk-qd3f4: hard-exit watchdog — independent of dispatch state.

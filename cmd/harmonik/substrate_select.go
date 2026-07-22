@@ -75,9 +75,9 @@ func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
 		return tmuxSub, nil, false, tmuxSub
 	}
-	router := &codexWorkerRoutingRunner{requireBoundary: true}
+	router := &codexWorkerRoutingRunner{requireBoundary: false}
 	opts, _ := codexSubstrateOptions(codexBinary, router)
-	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, true, tmuxSub
+	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, false, tmuxSub
 }
 
 // codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that

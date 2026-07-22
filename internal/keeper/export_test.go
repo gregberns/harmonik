@@ -48,3 +48,17 @@ func DeriveContextTokensForTest(transcriptDir, sessionID string) (int64, bool) {
 func RecentTranscriptTurnForTest(transcriptDir, sessionID, role string) (time.Time, bool) {
 	return recentTranscriptTurn(transcriptDir, sessionID, role)
 }
+
+// StripNonceMarkersForTest exposes the pure stripNonceMarkers scrub to the
+// keeper_test package so its behavior can be pinned directly, character by
+// character, instead of only through a full cycle. Refs: hk-4tjyj.
+func StripNonceMarkersForTest(content string) string {
+	return stripNonceMarkers(content)
+}
+
+// ShellQuoteIfNeededForTest exposes the shell-quoting allowlist used to build the
+// injected reboot command. The output is pasted into a live pane and executed, so
+// the quoting rule is directly test-pinned. Refs: hk-4tjyj.
+func ShellQuoteIfNeededForTest(s string) string {
+	return shellQuoteIfNeeded(s)
+}

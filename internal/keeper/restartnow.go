@@ -150,7 +150,7 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	log.InfoContext(ctx, "keeper: restart-now: /clear injected")
 
 	// Step 6: agent brief re-pins identity from soul.md (I1, provenance rule).
-	if err := inject(ctx, cfg.TmuxTarget, briefRestartCmd); err != nil {
+	if err := inject(ctx, cfg.TmuxTarget, briefRestartCmd(cfg.AgentName, cfg.ProjectDir)); err != nil {
 		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "brief_inject_failed", "err", err)
 		return fmt.Errorf("keeper: restart-now: inject agent brief: %w", err)
 	}

@@ -14,9 +14,67 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// briefRestartCmd is injected after /clear to re-orient the agent via the
-// agent-manifest boot command. Identity re-pins from soul.md (I1, SPEC §4).
-const briefRestartCmd = "harmonik agent brief --wake keeper-restart"
+// briefRestartCmdBase is the bare boot command injected after /clear to
+// re-orient the agent via the agent-manifest. Identity re-pins from soul.md
+// (I1, SPEC §4). Prefer briefRestartCmd, which pins --agent/--project.
+const briefRestartCmdBase = "harmonik agent brief --wake keeper-restart"
+
+// briefRestartCmd renders the post-/clear boot command with the agent identity
+// and project root PINNED on the command line.
+//
+// The bare form (briefRestartCmdBase) resolved the agent from $HARMONIK_AGENT
+// and the project from the pane process's CWD. Both are ambient: a pane that
+// lost the env var (or whose shell had cd'd elsewhere) silently briefed the
+// wrong agent — or looked for HANDOFF-<agent>.md under the wrong root and
+// printed "(no handoff on record)" with no error at all. Passing both
+// explicitly makes the reboot self-describing; `harmonik agent brief` only
+// errors when --agent MISMATCHES $HARMONIK_AGENT (cmd/harmonik/agent.go), so
+// supplying both is safe. Refs: hk-4tjyj.
+func briefRestartCmd(agentName, projectDir string) string {
+	cmd := briefRestartCmdBase
+	if agentName != "" {
+		cmd += " --agent " + shellQuoteIfNeeded(agentName)
+	}
+	if projectDir != "" {
+		cmd += " --project " + shellQuoteIfNeeded(projectDir)
+	}
+	return cmd
+}
+
+// shellQuoteIfNeeded returns s safe to paste into a live shell.
+//
+// This string is PASTED INTO A TERMINAL PANE AND EXECUTED, so the rule is an
+// ALLOWLIST, never a denylist: only characters that are inert in every shell
+// context stay bare; anything else — `$`, backtick, `\`, `;`, `&`, `|`, glob
+// metacharacters, newlines, non-ASCII — puts the whole value in single quotes.
+// A denylist here is a command-injection surface: one unenumerated
+// metacharacter in a project path is enough.
+func shellQuoteIfNeeded(s string) string {
+	if s == "" {
+		return "''"
+	}
+	for i := 0; i < len(s); i++ {
+		if !shellSafeByte(s[i]) {
+			// Single quotes suppress ALL expansion; the only character that
+			// cannot appear inside them is `'` itself, closed-escaped-reopened.
+			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+	}
+	return s
+}
+
+// shellSafeByte reports whether b is inert unquoted in every shell context.
+func shellSafeByte(b byte) bool {
+	switch {
+	case b >= 'A' && b <= 'Z', b >= 'a' && b <= 'z', b >= '0' && b <= '9':
+		return true
+	}
+	switch b {
+	case '_', '@', '%', '+', '=', ':', ',', '.', '/', '-':
+		return true
+	}
+	return false
+}
 
 // CycleJournal is the on-disk state for an in-progress keeper reset cycle.
 // Written atomically to .harmonik/keeper/<agent>.cycle before any injection.
@@ -120,7 +178,12 @@ type CyclerConfig struct {
 	// recovery path (hk-fi78d) to decide whether the agent actually WROTE a fresh
 	// handoff despite the nonce echo never landing — in which case the brief
 	// injection must still survive rather than blindly aborting before /clear.
-	HandoffModTimeFn  func(path string) (time.Time, bool)
+	HandoffModTimeFn func(path string) (time.Time, bool)
+	// TruncateHandoffFn SCRUBS the keeper's own `<!-- KEEPER:... -->` nonce
+	// marker(s) out of the handoff file, preserving every other byte. The name is
+	// historical: it once truncated the whole file, which silently destroyed the
+	// crew's handoff on every cycle after the first (hk-4tjyj). Nil →
+	// defaultScrubHandoffNonces.
 	TruncateHandoffFn func(path string) error
 	// IdleMarkerModTimeFn reports the Stop-hook .idle marker's mtime and whether
 	// it exists — the PRIMARY model-done source (SK-014): in AwaitModelDone the
@@ -374,7 +437,7 @@ func (c *CyclerConfig) applyDefaults() {
 		c.HandoffModTimeFn = defaultHandoffModTime
 	}
 	if c.TruncateHandoffFn == nil {
-		c.TruncateHandoffFn = defaultTruncateHandoff
+		c.TruncateHandoffFn = defaultScrubHandoffNonces
 	}
 	if c.IdleMarkerModTimeFn == nil {
 		c.IdleMarkerModTimeFn = defaultIdleMarkerModTime
@@ -532,9 +595,137 @@ func defaultIdleMarkerModTime(projectDir, agent string) (time.Time, bool) {
 	return fi.ModTime(), true
 }
 
-func defaultTruncateHandoff(path string) error {
-	//nolint:gosec // G304,G306: path is operator-controlled; 0600 — keeper-owned
-	return os.WriteFile(path, []byte{}, 0o600)
+// defaultScrubHandoffNonces is the production TruncateHandoffFn: it removes the
+// keeper's own `<!-- KEEPER:... -->` marker(s) from the handoff file and
+// PRESERVES every other byte.
+//
+// The name TruncateHandoffFn/ActTruncateHandoff is historical. The original
+// implementation genuinely truncated the file to zero bytes, which destroyed the
+// crew's ENTIRE handoff — prose, decisions, next steps — on essentially every
+// cycle after the first, because every completed cycle leaves its own nonce
+// behind and that nonce reads as "stale" on the next cycle. The only thing the
+// stale-nonce clear ever needed to remove is the ~40-character marker itself, so
+// it cannot pre-satisfy the nonce poll (DEFECT-2 / hk-vpnp). Refs: hk-4tjyj.
+//
+// A missing file is a no-op, not an error. A file whose content is unchanged by
+// the scrub is left alone entirely, so its mtime stays put (the hk-fi78d
+// freshness sampler reads that mtime).
+func defaultScrubHandoffNonces(path string) error {
+	//nolint:gosec // G304: path derived from operator-controlled projectDir + agentName
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // nothing to scrub
+		}
+		return fmt.Errorf("keeper: read handoff %q: %w", path, err)
+	}
+	scrubbed := stripNonceMarkers(string(data))
+	if scrubbed == string(data) {
+		return nil // no keeper marker present — do not touch the file or its mtime
+	}
+	mode := os.FileMode(0o600)
+	if fi, statErr := os.Stat(path); statErr == nil {
+		mode = fi.Mode().Perm()
+	}
+	return writeFileAtomic(path, []byte(scrubbed), mode)
+}
+
+// stripNonceMarkers removes every well-formed keeper nonce marker from content,
+// leaving all other bytes byte-for-byte intact. A marker that occupies its own
+// line takes that line's newline with it (so no blank line is left behind); a
+// marker embedded in a line of prose is excised in place.
+//
+// Marker scanning follows the convention of isOnlyNonce — nonceMarkerPrefix
+// opens a marker and "-->" closes it — with one CRITICAL added bound: the closer
+// is only ever searched for on the marker's OWN LINE. nonceMarker() never emits
+// a newline, so a "-->" on a later line is by definition not this prefix's
+// closer. Without that bound an unclosed `<!-- KEEPER:` anywhere in the handoff
+// would swallow everything from itself through the next well-formed marker's
+// closer — deleting the crew's prose, the exact bug class this function exists
+// to fix. A crew writing a handoff ABOUT the keeper protocol produces a bare
+// prefix in prose very easily.
+//
+// A MALFORMED marker (a prefix with no closer on its own line) is therefore left
+// byte-for-byte untouched and scanning CONTINUES past it, so a genuine stale
+// marker later in the file is still removed. An unclosed prefix can never
+// contain a complete current-cycle marker, so leaving it cannot pre-satisfy the
+// poll. Refs: hk-4tjyj.
+func stripNonceMarkers(content string) string {
+	out := content
+	from := 0
+	for {
+		rel := strings.Index(out[from:], nonceMarkerPrefix)
+		if rel < 0 {
+			return out
+		}
+		i := from + rel
+		// Bound the closer search to the marker's own line (see doc comment).
+		lineEnd := len(out)
+		if nl := strings.IndexByte(out[i:], '\n'); nl >= 0 {
+			lineEnd = i + nl
+		}
+		end := strings.Index(out[i:lineEnd], "-->")
+		if end < 0 {
+			// Malformed: not one of ours. Delete NOTHING; resume scanning just
+			// past this prefix so later well-formed markers are still scrubbed.
+			from = i + len(nonceMarkerPrefix)
+			continue
+		}
+		start, stop := i, i+end+len("-->")
+		// Whole-line marker: swallow the line's leading whitespace and its
+		// trailing newline too.
+		lineStart := strings.LastIndexByte(out[:i], '\n') + 1
+		if strings.TrimSpace(out[lineStart:i]) == "" {
+			j := stop
+			for j < len(out) && (out[j] == ' ' || out[j] == '\t' || out[j] == '\r') {
+				j++
+			}
+			if j >= len(out) {
+				start, stop = lineStart, len(out)
+			} else if out[j] == '\n' {
+				start, stop = lineStart, j+1
+			}
+		}
+		out = out[:start] + out[stop:]
+		from = start
+	}
+}
+
+// writeFileAtomic writes data to path via a same-directory temp file + fsync +
+// rename, mirroring WriteManagedSessionID's durability discipline (keeper.go).
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	//nolint:gosec // G304: dir derived from the operator-controlled handoff path
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("keeper: create tmp for %q: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
+		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
+	}
+	if _, err := tmp.Write(data); err != nil {
+		cleanup()
+		return fmt.Errorf("keeper: write tmp %q: %w", tmpPath, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("keeper: fsync tmp %q: %w", tmpPath, err)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		cleanup()
+		return fmt.Errorf("keeper: chmod tmp %q: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
+		return fmt.Errorf("keeper: close tmp %q: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
+		return fmt.Errorf("keeper: rename %q: %w", path, err)
+	}
+	return nil
 }
 
 func writeJournalFile(path string, j *CycleJournal) error {
@@ -802,7 +993,7 @@ func (c *CyclerConfig) recentTurnFn() func(transcriptDir, sessionID, role string
 // RecoverFromCrash checks for an in-progress cycle journal on boot and takes
 // corrective action based on the last recorded phase.
 //
-//   - phase "cleared": /clear was issued before the crash; inject briefRestartCmd
+//   - phase "cleared": /clear was issued before the crash; inject the brief cmd
 //     to complete the interrupted cycle, update journal to "complete", emit
 //     session_keeper_cycle_recovered.
 //   - phase "opened" / "handoff_injected" / "confirmed": /clear was NOT issued;
@@ -812,7 +1003,7 @@ func (c *CyclerConfig) recentTurnFn() func(transcriptDir, sessionID, role string
 //
 // Respects the .managed guard: no injection if not managed.
 // Does NOT reuse the stale cycle_id nonce from the journal (DEFECT-2): the
-// recovery path injects briefRestartCmd directly without a nonce poll, so a
+// recovery path injects the brief command directly without a nonce poll, so a
 // stale nonce cannot trigger unintended behaviour.
 func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 	// Fail-closed: only act on a managed agent. Boot-time entry point (the

@@ -98,6 +98,33 @@ const goodStoppingPointSelfTest = "A good stopping point is one where nothing ne
 	"(iii) no unanswered operator question is held; and " +
 	"(iv) the next session resumes from the handoff plus durable substrate with no redo and no lost decision."
 
+// handoffWriteGuardHint tells the agent to Read the handoff file before writing
+// it. Claude Code's Write tool REFUSES to overwrite a file the current session
+// has not Read, and after a /clear the rebooted session has read nothing — so a
+// crew handed a pre-existing HANDOFF-<name>.md burns a round trip discovering
+// that. The session-handoff skill is user-global (not in this repo), so the
+// injected directive is the only place we control. Kept in one constant so the
+// auto-cycle directive, the leader defer body, and the keeper SKILL.md all say
+// the same thing. Refs: hk-4tjyj / hk-pgtt6.
+const handoffWriteGuardHint = "The handoff file already EXISTS: Read it first, then Write it — " +
+	"the Write tool refuses a file this session has not Read."
+
+// handoffDirective renders the /session-handoff directive the keeper pastes into
+// the agent's pane at the start of a cycle.
+//
+// It is ONE LINE on purpose (hk-pgtt6). The previous shape put "\n\n" between the
+// path and the IMPORTANT clause; Claude Code collapses a pasted multi-line block
+// into a single slash-command argument, so the newlines vanished entirely and the
+// crew saw `HANDOFF-<name>.mdIMPORTANT: include exactly this line…` — the path and
+// the instruction fused into one token. A VISIBLE separator (" — ") survives that
+// collapse; whitespace does not.
+func handoffDirective(path, nonce string) string {
+	return fmt.Sprintf(
+		"/session-handoff %s — IMPORTANT: include exactly this line verbatim in the handoff file: %s — %s",
+		path, nonce, handoffWriteGuardHint,
+	)
+}
+
 // LeaderDeferBody renders the compiled-default K2 leader defer nudge body: the
 // normative four-slot template (SK-026) — defer-A, defer-B, the verbatim SK-027
 // self-test, and the SK-030 restart-now command carrying the cycle nonce. This is
@@ -112,13 +139,14 @@ func LeaderDeferBody(agent, nonce string) string {
 			"If you are mid-task, %s first. "+
 			"%s "+
 			"Then self-restart: run /session-handoff — include the marker %s verbatim in your "+
-			"HANDOFF-<name>.md — then run `%s`.",
+			"HANDOFF-<name>.md — then run `%s`. %s",
 		goodStoppingPointToken,
 		deferOperatorExchangeToken,
 		deferInflightUnitToken,
 		goodStoppingPointSelfTest,
 		nonceMarker(nonce),
 		fmt.Sprintf(restartNowNonceCmdToken, agent, nonce),
+		handoffWriteGuardHint,
 	)
 }
 

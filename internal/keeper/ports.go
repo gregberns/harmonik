@@ -95,6 +95,8 @@ type HandoffPort interface {
 	HandoffPath() string
 	ReadHandoff() (string, error)
 	HandoffModTime() (time.Time, bool)
+	// TruncateHandoff SCRUBS the keeper nonce marker(s) from the handoff file,
+	// preserving the crew-authored body. Historical name (hk-4tjyj).
 	TruncateHandoff() error
 	WriteJournal(j *CycleJournal) error
 	ReadJournal() (*CycleJournal, error)

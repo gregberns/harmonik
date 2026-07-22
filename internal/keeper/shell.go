@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -39,6 +38,7 @@ func (c *Cycler) execute(ctx context.Context, a Action) error {
 	case ActEmit:
 		c.executeEmit(ctx, a)
 	case ActTruncateHandoff:
+		// Scrubs the stale nonce marker only — the handoff body survives (hk-4tjyj).
 		_ = c.handoff.TruncateHandoff() //nolint:errcheck // non-fatal; poll fails gracefully
 	case ActSendEscape:
 		_ = c.pane.SendEscape(ctx, c.cfg.TmuxTarget) //nolint:errcheck // non-fatal; clears partial input
@@ -47,7 +47,7 @@ func (c *Cycler) execute(ctx context.Context, a Action) error {
 	case ActInjectClear:
 		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, "/clear") //nolint:errcheck // non-fatal; a dropped /clear is caught by the Clearing poll
 	case ActInjectBrief:
-		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, briefRestartCmd) //nolint:errcheck // non-fatal; brief re-injection is retried by the reactor
+		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, briefRestartCmd(c.cfg.AgentName, c.cfg.ProjectDir)) //nolint:errcheck // non-fatal; brief re-injection is retried by the reactor
 	case ActSetTmuxEnv:
 		_ = c.pane.SetEnv(ctx, c.cfg.TmuxTarget, a.Key, a.Value) //nolint:errcheck // non-fatal; env is advisory, watcher rebinds on next tick
 	case ActSetManagedSession:
@@ -87,10 +87,7 @@ func (c *Cycler) executeWriteJournal(a Action) error {
 // at/after this moment.
 func (c *Cycler) executeInjectHandoffCmd(ctx context.Context, a Action) {
 	c.handoffInjectedAt = c.cfg.Clock.Now()
-	handoffCmd := fmt.Sprintf(
-		"/session-handoff %s\n\nIMPORTANT: include exactly this line verbatim in the handoff file: %s",
-		c.handoff.HandoffPath(), nonceMarker(a.CycleID),
-	)
+	handoffCmd := handoffDirective(c.handoff.HandoffPath(), nonceMarker(a.CycleID))
 	// Non-fatal: the confirm step catches any delivery failure.
 	_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, handoffCmd) //nolint:errcheck // non-fatal; the nonce-confirm step catches a dropped injection
 }
@@ -443,6 +440,29 @@ func (c *Cycler) fireOnCancel(ctx context.Context) {
 // see the long rationale that traveled with handoffWrittenAndFresh). On a
 // fresh handoff it feeds HandoffFreshSeen so the pure TimerFired edge takes
 // the recovery path.
+//
+// LOAD-BEARING INVARIANT (hk-4tjyj). The non-empty-content check below no longer
+// carries weight on the stale-nonce path: ActTruncateHandoff now SCRUBS the
+// keeper's marker and preserves the crew's body, where it used to zero the file.
+// The `mtime >= handoffInjectedAt` compare is therefore the sole discriminator
+// between "the agent wrote a handoff FOR THIS CYCLE" and "a handoff from an
+// earlier cycle is still sitting on disk". (It already was the sole
+// discriminator whenever no stale marker was present — the old truncate never
+// ran then either — so this narrows the content check's role rather than
+// removing a guard that was doing work.)
+//
+// That compare cannot be defeated, because handoffInjectedAt is re-stamped on
+// EVERY firing cycle, AFTER the scrub, on BOTH paths:
+//   - TmuxTarget != "": executeInjectHandoffCmd stamps it, and stepStartCycle
+//     orders ActTruncateHandoff BEFORE ActInjectHandoffCmd.
+//   - TmuxTarget == "": no inject action is emitted, so executeArmTimer stamps it
+//     instead (see the hk-fi78d parity block there) on the trailing
+//     ActArmTimer(handoff_timeout) — also after ActTruncateHandoff.
+//
+// So a scrub-rewritten handoff always carries an mtime strictly BEFORE the
+// anchor and reads as not-fresh → the cycle aborts and never /clears over an
+// unwritten handoff (SK-INV-001). Pinned by
+// TestCycler_EmptyTarget_ScrubbedStaleHandoff_StillAborts.
 func (c *Cycler) sampleHandoffFreshness(ctx context.Context, st CycleState, at time.Time) {
 	content, err := c.handoff.ReadHandoff()
 	if err != nil || strings.TrimSpace(content) == "" {

@@ -409,6 +409,7 @@ handoff, `.managed`, `HoldingDispatch`) remain intact.
 On a keeper context-warning:
 
 1. Refresh your `HANDOFF-<agent>.md` (so the eventual reset carries good state).
+   **Read the handoff file BEFORE you Write it.** `HANDOFF-<agent>.md` already exists, and the Write tool refuses a file the current session has not Read — after a `/clear` that is every file. Read first, then Write; do not burn a turn discovering the guard.
 2. **Keep working.** Let the keeper cycle you when it crosses ACT.
 
 ### Captain (OnDemandRestart warn text)
@@ -417,7 +418,7 @@ The captain's warn injection says: *"[KEEPER WARNING — automated] Proactive co
 
 At a **clean idle point** (no `.dispatching` in flight, not mid crew-spawn/merge/submit):
 1. Finish the current logical unit of work.
-2. Write `HANDOFF-captain.md` with a fresh KEEPER nonce.
+2. Write `HANDOFF-captain.md` with a fresh KEEPER nonce. **Read the handoff file BEFORE you Write it.** `HANDOFF-<agent>.md` already exists, and the Write tool refuses a file the current session has not Read — after a `/clear` that is every file. Read first, then Write; do not burn a turn discovering the guard.
 3. Run `harmonik keeper restart-now --agent captain`.
 4. Keep the turn OPEN, stop typing — the keeper fires the cycle on its next tick (≤5 s).
 5. **NEVER exit or terminate your own session on a warn.** The keeper owns the clear→resume cycle; self-terminating

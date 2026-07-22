@@ -214,12 +214,15 @@ func (rs *reactiveSession) handoffModTime(_ /*path*/ string) (time.Time, bool) {
 	return time.Now(), true
 }
 
-// truncate is the reactive TruncateHandoffFn — clears the handoff body the way
-// runCycle's pre-poll truncation does, so a stale nonce cannot pre-satisfy.
+// truncate is the reactive TruncateHandoffFn. It mirrors production
+// (defaultScrubHandoffNonces): strip the keeper's own "<!-- KEEPER:... -->"
+// marker(s) so a stale nonce cannot pre-satisfy the poll, and PRESERVE the rest
+// of the body. It used to wipe the whole body — the very defect hk-4tjyj fixed —
+// which would let a scenario test pass while production destroyed real handoffs.
 func (rs *reactiveSession) truncate(_ /*path*/ string) error {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
-	rs.handoffBody = ""
+	rs.handoffBody = nonceLineRE.ReplaceAllString(rs.handoffBody, "")
 	return nil
 }
 

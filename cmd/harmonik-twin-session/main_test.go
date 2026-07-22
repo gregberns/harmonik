@@ -53,8 +53,10 @@ func TestHandleLine_HandoffWritesNonce(t *testing.T) {
 }
 
 // TestHandleLine_MultiLineHandoffWritesNonce proves the twin extracts the nonce
-// from the REAL production directive shape, where the nonce is on a LATER line
-// than the "/session-handoff" trigger. cycle.go:553-556 emits exactly:
+// when it lands on a LATER line than the "/session-handoff" trigger. This was
+// the production directive shape until hk-pgtt6 collapsed it to one line
+// (keeper.handoffDirective); the multi-line path is retained because a pasted
+// or operator-authored directive can still arrive split:
 //
 //	/session-handoff <path>\n\nIMPORTANT: include exactly this line verbatim in the handoff file: <nonce>
 //
@@ -85,6 +87,61 @@ func TestHandleLine_MultiLineHandoffWritesNonce(t *testing.T) {
 	got := readHandoff(t, handoff)
 	if !contains(got, nonce) {
 		t.Fatalf("multi-line handoff did not land the nonce.\nwant substring: %q\ngot: %q", nonce, got)
+	}
+}
+
+// TestHandleLine_SingleLineProductionDirective_hkpgtt6 proves the twin still
+// extracts the nonce from the CURRENT production directive shape, which hk-pgtt6
+// collapsed to ONE line with a visible " — " separator (keeper.handoffDirective).
+// Claude Code fuses a pasted "\n\n" away entirely, so the old multi-line shape
+// reached the crew as `HANDOFF-<name>.mdIMPORTANT: …`. If the twin stopped
+// parsing the one-line shape, every keeper twin/e2e run would silently stop
+// confirming handoffs.
+func TestHandleLine_SingleLineProductionDirective_hkpgtt6(t *testing.T) {
+	st, handoff := newTestState(t)
+	const nonce = "<!-- KEEPER:cyc-20260721T200000-000001 -->"
+
+	// Mirrors keeper.handoffDirective verbatim (internal/keeper/injector.go).
+	line := "/session-handoff " + handoff +
+		" — IMPORTANT: include exactly this line verbatim in the handoff file: " + nonce +
+		" — The handoff file already EXISTS: Read it first, then Write it — " +
+		"the Write tool refuses a file this session has not Read."
+
+	if changed := st.handleLine(line); changed {
+		t.Fatalf("handoff should not report a token/session change")
+	}
+	got := readHandoff(t, handoff)
+	if !contains(got, nonce) {
+		t.Fatalf("twin did not extract the nonce from the one-line production directive.\nwant substring: %q\ngot: %q", nonce, got)
+	}
+}
+
+// TestHandleLine_HandoffPreservesExistingBody_hk4tjyj proves the twin APPENDS the
+// nonce to an existing handoff instead of overwriting the file with it.
+//
+// This is what gives the twin teeth against handoff-DESTRUCTION defects. While
+// the twin overwrote the file with a bare nonce line, a keeper that deleted the
+// crew's prose and a keeper that preserved it produced byte-identical twin
+// output — so hk-4tjyj (the keeper truncating HANDOFF-<agent>.md to zero bytes
+// on nearly every restart) was invisible to every twin-driven test and reached
+// the field. Without the append the scenario reproduction cannot exist.
+func TestHandleLine_HandoffPreservesExistingBody_hk4tjyj(t *testing.T) {
+	st, handoff := newTestState(t)
+	const nonce = "<!-- KEEPER:cyc-body-1 -->"
+	const body = "# HANDOFF-crew\n\nDECISION: hold the review gate.\nNEXT: drain the queue.\n"
+
+	if err := os.WriteFile(handoff, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed body: %v", err)
+	}
+
+	st.handleLine("/session-handoff " + handoff + " — include verbatim: " + nonce)
+
+	got := readHandoff(t, handoff)
+	if !contains(got, body) {
+		t.Errorf("the crew's handoff body was destroyed by the nonce write.\nwant to contain: %q\ngot: %q", body, got)
+	}
+	if !contains(got, nonce) {
+		t.Errorf("nonce missing after append.\nwant to contain: %q\ngot: %q", nonce, got)
 	}
 }
 

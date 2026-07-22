@@ -71,6 +71,7 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/sessiondata"
 	"github.com/gregberns/harmonik/internal/substrate"
+	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow"
@@ -406,7 +407,7 @@ type workLoopDeps struct {
 	// worktreeCreateMu governs worktree creation only, so the two operations can
 	// proceed independently (a merge does not block a create, and vice versa —
 	// unlike the current implicit serialisation under mergeMu which also serialises
-	// fetchBaseOnWorker with the create for hk-lt091 correctness; that invariant is
+	// the codesync fetch-base with the create for hk-lt091 correctness; that invariant is
 	// preserved because both fetch and create remain inside mergeMu).
 	//
 	// Production: newWorkLoopDeps always sets this to a non-nil &sync.Mutex{}.
@@ -3735,10 +3736,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// host/opts come from the worker SSHRunner so git's ssh:// fetch dials the
 		// worker exactly like the rest of the remote path.
 		workerHost, sshOpts, _ := tunnelpkg.SSHHostOpts(rbc.sshRunner)
-		if err := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
+		if err := codesyncpkg.FetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
 			// B11: SSH connection failure → emit worker_offline + disable worker.
 			if tmuxpkg.IsSSHConnectionFailure(err) {
-				notifyWorkerOffline("spawn", fmt.Sprintf("fetchRunBranchBoxA: %v", err))
+				notifyWorkerOffline("spawn", fmt.Sprintf("codesync.FetchRunBranchBoxA: %v", err))
 			}
 			return fmt.Sprintf("fetch run branch from worker on box A: %v", err)
 		}
@@ -3781,7 +3782,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// The create call site below reaches it via rp.Worktree — byte-identical to
 	// calling wtFactory directly (ports-design §6).
 	rp.Worktree = worktreePort(wtFactory)
-	// Serialize fetchBaseOnWorker (step a, DD1 code-sync) + 'git worktree add'
+	// Serialize codesync.EnsureBaseOnWorker (step a, DD1 code-sync) + 'git worktree add'
 	// inside the merge exclusion domain (mergeq, RSM-018) so concurrent
 	// beadRunOne goroutines do not run concurrent git operations on the same
 	// remote worker (hk-lt091) or race on projectDir/.git/index.lock (hk-h8u7p),
@@ -3790,10 +3791,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hk-lt091: before hk-zexsj added -o ControlMaster=no, all SSH commands to a
 	// worker shared one TCP connection, so the remote OS serialised them naturally.
 	// With ControlMaster=no each SSH command is an independent TCP connection; a
-	// sibling bead's fetchBaseOnWorker (git-fetch) can therefore race git-worktree-add
+	// sibling bead's codesync fetch-base (git-fetch) can therefore race git-worktree-add
 	// at the remote-OS level, leaving the worktree dir created but HEAD uninitialised
 	// — the empty-HEAD race that hk-iaj1w retries cannot fix because the race persists
-	// across all retry attempts. Running fetchBaseOnWorker + worktree-add as ONE
+	// across all retry attempts. Running codesync fetch-base + worktree-add as ONE
 	// critical section in the domain eliminates the race at its source.
 	var baseSyncErr error
 	var wtPath string
@@ -3803,11 +3804,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// Step (a): for remote runs, ensure baseSHA is on the worker before the
 		// worktree is created there (DD1 code-sync, remote-substrate B8).
 		if rbc != nil {
-			// hk-2hfyt: use ensureBaseOnWorker (not fetchBaseOnWorker directly) so
+			// hk-2hfyt: use codesync.EnsureBaseOnWorker (not a bare fetch-base) so
 			// an unpushed base commit triggers a direct push from box A to the worker
 			// rather than leaving an empty-HEAD worktree.
 			workerHostEBOW, sshOptsEBOW, _ := tunnelpkg.SSHHostOpts(rbc.sshRunner)
-			baseSyncErr = ensureBaseOnWorker(qctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA,
+			baseSyncErr = codesyncpkg.EnsureBaseOnWorker(qctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA,
 				nil, deps.projectDir, workerHostEBOW, sshOptsEBOW)
 		}
 		// baseSyncErr (a business outcome, handled after the critical section) does
@@ -3823,19 +3824,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		wtErr = subErr
 	}
 	if baseSyncErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: ensureBaseOnWorker bead %s run %s: %v (reopening)\n",
+		fmt.Fprintf(os.Stderr, "daemon: workloop: codesync.EnsureBaseOnWorker bead %s run %s: %v (reopening)\n",
 			beadID, runID.String(), baseSyncErr)
 		// B11: SSH connection failure → emit worker_offline + disable worker.
 		if tmuxpkg.IsSSHConnectionFailure(baseSyncErr) {
-			notifyWorkerOffline("spawn", fmt.Sprintf("ensureBaseOnWorker: %v", baseSyncErr))
+			notifyWorkerOffline("spawn", fmt.Sprintf("codesync.EnsureBaseOnWorker: %v", baseSyncErr))
 		}
 		reopenTID, tidErr := deps.tidGen.Next()
 		if tidErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: tidGen.Next (ensureBaseOnWorker reopen) bead %s: %v\n", beadID, tidErr)
+			fmt.Fprintf(os.Stderr, "daemon: workloop: tidGen.Next (codesync.EnsureBaseOnWorker reopen) bead %s: %v\n", beadID, tidErr)
 		}
 		if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 			fmt.Sprintf("ensure base on worker failed: %v", baseSyncErr)); reopenErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (ensureBaseOnWorker) bead %s run %s: %v\n",
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (codesync.EnsureBaseOnWorker) bead %s run %s: %v\n",
 				beadID, runID.String(), reopenErr)
 		}
 		return succeeded

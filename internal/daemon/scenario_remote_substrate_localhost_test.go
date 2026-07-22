@@ -7,7 +7,7 @@ package daemon_test
 // transport to localhost (bead hk-rs-b12-e2e-localhost).
 //
 // The per-bead unit tests prove the remote-substrate halves in isolation:
-//   - codesync_rs_b8_test.go  — argv ORDER of fetch-base / worktree-add /
+//   - internal/transport/codesync/codesync_test.go — argv ORDER of fetch-base /
 //     push-branch / box-A-fetch, but with every git call mocked (no real git).
 //   - remote_substrate_b11_test.go — IsSSHConnectionFailure / liveness-probe
 //     classification, with a RecordingRunner driving exit codes.

@@ -1,6 +1,6 @@
-package daemon
+package codesync
 
-// codesync_rs_b8_test.go — ordered-argv tests for the DD1 code-sync sequence
+// codesync_test.go — ordered-argv tests for the DD1 code-sync sequence
 // (remote-substrate B8, hk-rs-b8-codesync-3fk0; box-A direct-fetch rework hk-7bwx).
 //
 // Gate-runnable: all git subprocesses are intercepted by RecordingRunner with
@@ -83,8 +83,8 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 		// Step (c): fetch run-branch on box A DIRECTLY from the worker repo over SSH.
 		// hk-7bwx: NO worker→GitHub push precedes this; box A dials the worker via
 		// the ssh:// URL using its own credentials.
-		if err := fetchRunBranchBoxA(ctx, localRR, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
-			t.Fatalf("RSB8: fetchRunBranchBoxA: %v", err)
+		if err := FetchRunBranchBoxA(ctx, localRR, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
+			t.Fatalf("RSB8: FetchRunBranchBoxA: %v", err)
 		}
 
 		// ── Assert SSH call order ─────────────────────────────────────────
@@ -179,7 +179,7 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 		// The daemon calls worktree-add with the default (local) runner, then
 		// goes straight to mergeRunBranchToMain without any SSH or box-A fetch.
 		//
-		// Verify: calling fetchRunBranchBoxA with a recording (non-SSH) runner
+		// Verify: calling FetchRunBranchBoxA with a recording (non-SSH) runner
 		// produces NO SSH output and uses the direct ssh:// URL argv (hk-7bwx);
 		// fetchBaseOnWorker is simply never called for a local run.
 
@@ -189,8 +189,8 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 		// command itself always carries the direct-SSH worker URL (hk-7bwx);
 		// the local runner is the transport for the git process box A runs.
 		localRR := newNoOpRecorder()
-		if err := fetchRunBranchBoxA(ctx, localRR, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
-			t.Fatalf("RSB8/local: fetchRunBranchBoxA: %v", err)
+		if err := FetchRunBranchBoxA(ctx, localRR, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
+			t.Fatalf("RSB8/local: FetchRunBranchBoxA: %v", err)
 		}
 
 		// No SSH-runner calls should have been made.
@@ -232,7 +232,7 @@ func TestRSB8_IsRefNotFoundError(t *testing.T) {
 	}
 }
 
-// TestRSB8_FetchRunBranchRetries verifies that fetchRunBranchBoxA retries on
+// TestRSB8_FetchRunBranchRetries verifies that FetchRunBranchBoxA retries on
 // "couldn't find remote ref" and succeeds once the ref becomes visible.
 func TestRSB8_FetchRunBranchRetries(t *testing.T) {
 	t.Parallel()
@@ -259,8 +259,8 @@ func TestRSB8_FetchRunBranchRetries(t *testing.T) {
 		},
 	}
 
-	if err := fetchRunBranchBoxA(ctx, rr, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
-		t.Fatalf("fetchRunBranchBoxA: expected success after %d retries, got: %v", failCount, err)
+	if err := FetchRunBranchBoxA(ctx, rr, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
+		t.Fatalf("FetchRunBranchBoxA: expected success after %d retries, got: %v", failCount, err)
 	}
 	// Expect failCount failures + 1 success = failCount+1 total calls.
 	if callN != failCount+1 {
@@ -268,7 +268,7 @@ func TestRSB8_FetchRunBranchRetries(t *testing.T) {
 	}
 }
 
-// TestRSB8_FetchRunBranchNoRetryOnHardError verifies that fetchRunBranchBoxA
+// TestRSB8_FetchRunBranchNoRetryOnHardError verifies that FetchRunBranchBoxA
 // does NOT retry when the error is a hard failure (not a transient ref-not-found).
 func TestRSB8_FetchRunBranchNoRetryOnHardError(t *testing.T) {
 	t.Parallel()
@@ -291,7 +291,7 @@ func TestRSB8_FetchRunBranchNoRetryOnHardError(t *testing.T) {
 		},
 	}
 
-	err := fetchRunBranchBoxA(ctx, rr, projectDir, runID, workerHost, workerRepoPath, nil)
+	err := FetchRunBranchBoxA(ctx, rr, projectDir, runID, workerHost, workerRepoPath, nil)
 	if err == nil {
 		t.Fatal("expected error on hard failure, got nil")
 	}
@@ -301,7 +301,7 @@ func TestRSB8_FetchRunBranchNoRetryOnHardError(t *testing.T) {
 	}
 }
 
-// TestEnsureBaseOnWorker_PushFallback verifies that ensureBaseOnWorker falls
+// TestEnsureBaseOnWorker_PushFallback verifies that EnsureBaseOnWorker falls
 // back to pushBaseToWorker when fetch origin exits 0 but the SHA is absent on
 // the worker (hk-2hfyt: unpushed base commit).
 //
@@ -309,7 +309,7 @@ func TestRSB8_FetchRunBranchNoRetryOnHardError(t *testing.T) {
 //   - The worker-side runner (sshRR) simulates `git fetch origin <sha>` exiting
 //     0 (silent no-op) followed by `git cat-file -t <sha>` exiting 128 (SHA
 //     absent). fetchBaseOnWorker returns errBaseSHAAbsent.
-//   - ensureBaseOnWorker detects errBaseSHAAbsent and calls pushBaseToWorker
+//   - EnsureBaseOnWorker detects errBaseSHAAbsent and calls pushBaseToWorker
 //     via the local runner (localRR).
 //   - Verify localRR received exactly one call: `git push ssh://<host>/<repo> <sha>:refs/harmonik/base`.
 func TestEnsureBaseOnWorker_PushFallback(t *testing.T) {
@@ -346,10 +346,10 @@ func TestEnsureBaseOnWorker_PushFallback(t *testing.T) {
 	// localRR captures the push from box A to the worker (push fallback).
 	localRR := newNoOpRecorder()
 
-	err := ensureBaseOnWorker(ctx, sshRR, workerRepoPath, baseSHA,
+	err := EnsureBaseOnWorker(ctx, sshRR, workerRepoPath, baseSHA,
 		localRR, boxAProjectDir, workerHost, nil)
 	if err != nil {
-		t.Fatalf("ensureBaseOnWorker: expected nil after push fallback, got: %v", err)
+		t.Fatalf("EnsureBaseOnWorker: expected nil after push fallback, got: %v", err)
 	}
 
 	if fetchCalled != 1 {
@@ -376,7 +376,7 @@ func TestEnsureBaseOnWorker_PushFallback(t *testing.T) {
 }
 
 // TestEnsureBaseOnWorker_NoFallbackOnConnectionError verifies that
-// ensureBaseOnWorker does NOT attempt the push fallback when fetchBaseOnWorker
+// EnsureBaseOnWorker does NOT attempt the push fallback when fetchBaseOnWorker
 // returns a hard connection error (not errBaseSHAAbsent).
 func TestEnsureBaseOnWorker_NoFallbackOnConnectionError(t *testing.T) {
 	t.Parallel()
@@ -390,7 +390,7 @@ func TestEnsureBaseOnWorker_NoFallbackOnConnectionError(t *testing.T) {
 	}
 	localRR := newNoOpRecorder()
 
-	err := ensureBaseOnWorker(ctx, sshRR, "/repo", "aabbccdd",
+	err := EnsureBaseOnWorker(ctx, sshRR, "/repo", "aabbccdd",
 		localRR, "/project", "100.87.151.114", nil)
 	if err == nil {
 		t.Fatal("expected error on SSH connection failure, got nil")

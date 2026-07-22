@@ -37,8 +37,8 @@ package workspace
 // single-quoted (worktree paths are operator-sanctioned, never contain a single
 // quote, but the helper escapes one anyway for safety). This mirrors the
 // existing remote-command idiom in internal/transport/tunnel
-// (tunnel.EnsureWorkerHarmonikDir) and internal/daemon (fetchBaseOnWorker),
-// which all run `runner.Command(...).CombinedOutput()`.
+// (tunnel.EnsureWorkerHarmonikDir) and internal/transport/codesync (the DD1
+// fetch-base step), which all run `runner.Command(...).CombinedOutput()`.
 //
 // Spec refs:
 //   - claude-hook-bridge.md §4.1 CHB-001..005 (settings), §4.11 CHB-028

@@ -178,27 +178,32 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "gitprobe is a leaf: importing daemon would re-couple every harness that uses it (P2 E1a)" }
 
         # transport: the remote-execution transport leaves (P2 unit E4). tunnel owns
-        # the per-run `ssh -N -R` reverse tunnel + its readiness gate. Both sit
-        # BEHIND the pre-existing lifecycle/tmux.CommandRunner seam (runner.go:16)
-        # and address workers via internal/workers. They MUST NOT import daemon:
+        # the per-run `ssh -N -R` reverse tunnel + its readiness gate; codesync owns
+        # the DD1 worker<->box-A git sync (fetch-base on the worker, direct ssh://
+        # fetch of the run branch back to box A). Both sit BEHIND the pre-existing
+        # lifecycle/tmux.CommandRunner seam (runner.go:16) and address workers via
+        # internal/workers. They MUST NOT import daemon:
         # P3's remote/container dispatch links this transport, and a daemon
         # back-edge would drag the 57k-LOC monolith into every dispatcher — exactly
         # the coupling E4 exists to remove. Note the self-allow is the
         # "internal/transport" PREFIX, which does not collide with the daemon deny,
         # so sub-packages and their external _test packages resolve cleanly.
-        # CAVEAT: depguard only checks DIRECT imports. internal/workers and
-        # internal/lifecycle/tmux are verified daemon-free today; if either ever
-        # grows a daemon import this rule will NOT fire. The transitive check is
+        # CAVEAT: depguard only checks DIRECT imports. internal/workers,
+        # internal/workspace and internal/lifecycle/tmux are verified daemon-free
+        # today (workspace's own allow-list below has no daemon entry, so a daemon
+        # import there is itself a lint failure); if one ever grows a daemon import
+        # this rule will NOT fire. The transitive check is
         # `go list -deps ./internal/transport/... | grep internal/daemon`.
-        # E4b (internal/transport/codesync) additionally needs internal/workspace
-        # on this allow-list; it is deliberately absent until that slice lands.
-        # Rationale: plans/2026-07-21-p2-extraction/E4-ssh.md slice E4a.
+        # internal/workspace: codesync needs workspace.TaskBranchName to form the
+        # run-branch refspec (E4b).
+        # Rationale: plans/2026-07-21-p2-extraction/E4-ssh.md slices E4a, E4b.
         transport:
           files: ["**/internal/transport/**"]
           allow:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
             - "github.com/gregberns/harmonik/internal/workers"
+            - "github.com/gregberns/harmonik/internal/workspace"
             - "github.com/gregberns/harmonik/internal/transport"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "transport is a leaf: importing daemon would re-couple every remote dispatcher to the monolith (P2 E4)" }

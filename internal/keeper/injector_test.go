@@ -116,9 +116,13 @@ func TestInjectText_SettleConstants(t *testing.T) {
 // TestInjectText_SettleCanBeOverriddenInTests verifies that submitSettle is a
 // var (not a const), meaning tests can zero it out to skip the settle wait when
 // invoking InjectText with a real tmux target in integration tests.
+//
+// Deliberately NOT t.Parallel(): it mutates the package-level submitSettle,
+// which TestInjectText_SettleConstants (which IS parallel) reads. Go runs
+// sequential top-level tests to completion before resuming any paused parallel
+// one, so staying sequential is what keeps the mutation from interleaving with
+// that assertion.
 func TestInjectText_SettleCanBeOverriddenInTests(t *testing.T) {
-	t.Parallel()
-
 	original := submitSettle
 	defer func() { submitSettle = original }()
 

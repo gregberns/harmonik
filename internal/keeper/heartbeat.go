@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -213,7 +214,7 @@ func WriteCtxFile(projectDir, agent string, cf *CtxFile) error {
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
+		err = errors.Join(err, tmp.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: write heartbeat ctx tmp %q: %w", tmpPath, err)
 	}

@@ -1,9 +1,11 @@
 package schedule
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -568,12 +570,16 @@ func (s *Store) acquireFileLock() (*os.File, func(), error) {
 		return nil, nil, fmt.Errorf("schedule: lock: open %q: %w", lockPath, err)
 	}
 	if err := acquireExclusiveBounded(int(fd.Fd()), scheduleLockTimeout); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "schedule: acquireFileLock: close lockfile fd after acquire failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, nil, err
 	}
 	release := func() {
 		_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN) //nolint:errcheck // unlock error non-actionable; close also drops the advisory lock
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "schedule: acquireFileLock: close lockfile fd on release", "err", closeErr, "path", lockPath)
+		}
 	}
 	return fd, release, nil
 }
@@ -629,12 +635,12 @@ func (s *Store) persistJobs(jobsMap map[string]*ScheduledJob) (time.Time, error)
 		return time.Time{}, fmt.Errorf("schedule: persist: create temp %q: %w", tmpPath, err)
 	}
 	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
+		err = errors.Join(err, f.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on write failure
 		return time.Time{}, fmt.Errorf("schedule: persist: write temp %q: %w", tmpPath, err)
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
+		err = errors.Join(err, f.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on sync failure
 		return time.Time{}, fmt.Errorf("schedule: persist: fsync temp %q: %w", tmpPath, err)
 	}
@@ -658,7 +664,7 @@ func (s *Store) persistJobs(jobsMap map[string]*ScheduledJob) (time.Time, error)
 		return mod, fmt.Errorf("schedule: persist: open parent dir %q: %w", dir, err)
 	}
 	if err := d.Sync(); err != nil {
-		_ = d.Close()
+		err = errors.Join(err, d.Close())
 		return mod, fmt.Errorf("schedule: persist: fsync parent dir %q: %w", dir, err)
 	}
 	if err := d.Close(); err != nil {

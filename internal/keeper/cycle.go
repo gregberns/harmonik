@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -702,7 +703,9 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() {
-		_ = tmp.Close()
+		if closeErr := tmp.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "keeper: writeFileAtomic: close temp during cleanup", "err", closeErr, "path", tmpPath)
+		}
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 	}
 	if _, err := tmp.Write(data); err != nil {

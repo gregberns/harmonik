@@ -11,8 +11,11 @@ package sessiondata
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -349,7 +352,7 @@ func Collect(p CollectParams) error {
 }
 
 // Append appends rec as a JSONL line to <projectDir>/.harmonik/session-data.jsonl.
-func Append(projectDir string, rec Record) error {
+func Append(projectDir string, rec Record) (err error) {
 	path := SessionDataPath(projectDir)
 	if err := os.MkdirAll(filepath.Dir(path), core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("sessiondata: MkdirAll: %w", err)
@@ -358,7 +361,9 @@ func Append(projectDir string, rec Record) error {
 	if err != nil {
 		return fmt.Errorf("sessiondata: OpenFile: %w", err)
 	}
-	defer f.Close()
+	// Write path: the flush error surfaces at Close, so join it into the named
+	// return — a dropped Close can mean the record never durably landed.
+	defer func() { err = errors.Join(err, f.Close()) }()
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("sessiondata: json.Marshal: %w", err)
@@ -379,7 +384,11 @@ func ReadAll(projectDir, since, until string) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "sessiondata: close session-data.jsonl", "err", closeErr, "path", path)
+		}
+	}()
 
 	var records []Record
 	sc := bufio.NewScanner(f)
@@ -434,7 +443,11 @@ func buildRunEventData(eventsFile, runID string) (*runEventData, error) {
 	if err != nil {
 		return &runEventData{}, nil // absent = treat as no events
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "sessiondata: close events.jsonl", "err", closeErr, "path", eventsFile)
+		}
+	}()
 
 	d := &runEventData{}
 	sc := bufio.NewScanner(f)
@@ -527,7 +540,11 @@ func readTranscript(path string) ([]transcriptTurn, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "sessiondata: close transcript", "err", closeErr, "path", path)
+		}
+	}()
 
 	var turns []transcriptTurn
 	sc := bufio.NewScanner(f)

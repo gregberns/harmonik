@@ -394,3 +394,23 @@ func (deps *workLoopDeps) runEnv(
 		ItemWorkerTarget:   itemWorkerTarget,
 	}
 }
+
+// sharedHandles assembles the cross-goroutine handle bundle (ports-design §3).
+// Every field is populated and every one is the same handle — the same pointer,
+// the same channel, the same adapter — the run path reached directly off deps
+// before, so the bundle shares state by reference exactly as RSM-011 requires
+// and reaching a handle through the bundle is byte-identical to the pre-bundle
+// deps field access.
+//
+// Note the deliberate omission: deps.tidGen has no field here. Widening the
+// declared bundle is not this slice's call to make (RSM-011); the run path
+// keeps reading tidGen off deps.
+func (deps *workLoopDeps) sharedHandles() SharedHandles {
+	return SharedHandles{
+		RunRegistry:   deps.runRegistry,
+		LocalInFlight: deps.localInFlight,
+		AgentSpawnSem: deps.agentSpawnSem,
+		Workers:       deps.workerRegistry,
+		Budget:        deps.budgetPort(),
+	}
+}

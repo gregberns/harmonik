@@ -3070,6 +3070,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	itemWorkflowMode, itemWorkflowRef := env.ItemWorkflowMode, env.ItemWorkflowRef
 	itemTemplateParams, itemLocalOnly := env.ItemTemplateParams, env.ItemLocalOnly
 	itemWorkerTarget := env.ItemWorkerTarget
+	// RSM-011: the cross-goroutine handle bundle for this run. Named `handles`
+	// and not `shared` because `shared` is the harness/shared package, used
+	// throughout this function.
+	handles := deps.sharedHandles()
 	// mport.Submit() is the merge exclusion-domain submit surface (RSM-015).
 	mport := rp.Merge
 	beadID := beadRecord.BeadID
@@ -3082,8 +3086,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// cleanup.
 	relLocalSlot := localSlotHeld
 	defer func() {
-		if relLocalSlot && deps.localInFlight != nil {
-			deps.localInFlight.Add(-1)
+		if relLocalSlot && handles.LocalInFlight != nil {
+			handles.LocalInFlight.Add(-1)
 		}
 	}()
 
@@ -3472,8 +3476,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			// a local run. A worker slot became available between the gate and here
 			// so this run is actually remote. Correct the count immediately and
 			// disable the deferred cleanup.
-			if localSlotHeld && deps.localInFlight != nil {
-				deps.localInFlight.Add(-1)
+			if localSlotHeld && handles.LocalInFlight != nil {
+				handles.LocalInFlight.Add(-1)
 				relLocalSlot = false
 			}
 			// hk-4tjt6: mirror the Remote flag update so LenForQueueLocal
@@ -3977,7 +3981,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		// only the close-vs-reopen CHOICE the event carries.
 		budgetExhausted := false
 		if rlResult.needsAttention {
-			budgetExhausted = deps.budgetPort().ChargeReviewLoopFailure(
+			budgetExhausted = handles.Budget.ChargeReviewLoopFailure(
 				ctx, queueName, queueID, queueGroupIndex, queueItemIndex, beadID)
 		}
 		if budgetExhausted {
@@ -4557,9 +4561,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// agent_ready resolves (success/failure/timeout); the sync.Once + defer backstop
 	// guarantees the slot is returned on every exit path so it can never leak.
 	releaseSpawnSlot := func() {}
-	if rbc != nil && deps.agentSpawnSem != nil {
+	if rbc != nil && handles.AgentSpawnSem != nil {
 		select {
-		case deps.agentSpawnSem <- struct{}{}:
+		case handles.AgentSpawnSem <- struct{}{}:
 		case <-ctx.Done():
 			// ctx cancelled while waiting for a slot — reopen and bail before Launch.
 			reason := fmt.Sprintf("cancelled awaiting cold-start spawn slot: %v", ctx.Err())
@@ -4567,7 +4571,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			return
 		}
 		var once sync.Once
-		releaseSpawnSlot = func() { once.Do(func() { <-deps.agentSpawnSem }) }
+		releaseSpawnSlot = func() { once.Do(func() { <-handles.AgentSpawnSem }) }
 		defer releaseSpawnSlot() // leak backstop; explicit release after agent_ready below
 	}
 

@@ -74,9 +74,11 @@ any plan recipe.
    going well. "I verified the old text was wrong" is not evidence the new text is right.
 3. **Cite file + symbol, not file + line.** `internal/queue/cli/cancel.go
    (emitQueueCancelEvent)`, never `cancel.go:326`. Line numbers in this tree rot within
-   days — one session's de-rot sweeps replaced 66 distinct `file:line` citations across
-   three agent-facing docs: 24 in `keeper/SKILL.md`, 40 in `harmonik-lifecycle/SKILL.md`
-   and `watch/SKILL.md`, and 2 in a crew mission file. Symbols survive.
+   days — one session audited roughly 65 `file:line` citations across three embedded
+   skills (`keeper`, `harmonik-lifecycle`, `watch`); essentially all had rotted.
+   Approximate on purpose: two independent audits of the same sweeps reached different
+   exact totals, because a citation that repeats or spans a range is not a well-defined
+   unit. Do not re-pin this to a precise figure. Symbols survive.
 4. **Cite what the file actually demonstrates.** If it shows the idiom only in part, say
    which part. Do not stretch one verified example to cover a second file you did not
    read. Before asserting a file is *gone*, check for a rename (`git log --follow`,

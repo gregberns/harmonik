@@ -72,7 +72,7 @@ var forbiddenClaudeEnvVars = map[string]string{
 // ErrStructural.
 //
 // Spec: specs/claude-hook-bridge.md §4.2 CHB-007.
-func CheckForbiddenFlags(argv []string, env []string) error {
+func CheckForbiddenFlags(argv, env []string) error {
 	for _, arg := range argv {
 		if reason, bad := forbiddenClaudeFlags[arg]; bad {
 			return fmt.Errorf("handler: claude-code: forbidden flag %q: %s: %w",
@@ -220,6 +220,38 @@ func IsCredentialDenyListKey(key string) bool {
 // isCredentialDenyListKey is the unexported alias used within this package.
 func isCredentialDenyListKey(key string) bool { return IsCredentialDenyListKey(key) }
 
+// filterClaudeBaseEnv strips HARMONIK_SECRET_* and credential env deny-list keys
+// (specs/credential-isolation.md §4 CI-003) from baseEnv.
+//
+// It returns the surviving entries, the CLAUDE_CODE_OAUTH* keys that were seen
+// and stripped (so the caller can re-emit an explicit empty override for each),
+// and whether baseEnv already carried a PATH entry.
+func filterClaudeBaseEnv(baseEnv []string) (base, oauthKeysFromBase []string, hasPath bool) {
+	base = make([]string, 0, len(baseEnv))
+	for _, kv := range baseEnv {
+		key := kv
+		if idx := strings.IndexByte(kv, '='); idx >= 0 {
+			key = kv[:idx]
+		}
+		if strings.HasPrefix(key, "HARMONIK_SECRET_") {
+			continue
+		}
+		if isCredentialDenyListKey(key) {
+			// Track CLAUDE_CODE_OAUTH* variants seen in BaseEnv so the caller can
+			// emit an explicit empty override for each one.
+			if strings.HasPrefix(key, credentialDenyListPrefix) {
+				oauthKeysFromBase = append(oauthKeysFromBase, key)
+			}
+			continue
+		}
+		if key == "PATH" {
+			hasPath = true
+		}
+		base = append(base, kv)
+	}
+	return base, oauthKeysFromBase, hasPath
+}
+
 // ClaudeEnvVars builds the subprocess env slice per CHB-006.
 //
 // It starts from cfg.BaseEnv (if provided), removes any HARMONIK_SECRET_* keys
@@ -239,30 +271,7 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 	// Start from BaseEnv with HARMONIK_SECRET_* and credential deny-list keys
 	// stripped. Credential deny-list keys stripped from BaseEnv are tracked so
 	// CLAUDE_CODE_OAUTH* variants can be re-emitted as empty overrides below.
-	var base []string
-	var oauthKeysFromBase []string
-	hasPath := false
-	for _, kv := range cfg.BaseEnv {
-		key := kv
-		if idx := strings.IndexByte(kv, '='); idx >= 0 {
-			key = kv[:idx]
-		}
-		if strings.HasPrefix(key, "HARMONIK_SECRET_") {
-			continue
-		}
-		if isCredentialDenyListKey(key) {
-			// Track CLAUDE_CODE_OAUTH* variants seen in BaseEnv so we can
-			// emit an explicit empty override for each one below.
-			if strings.HasPrefix(key, credentialDenyListPrefix) {
-				oauthKeysFromBase = append(oauthKeysFromBase, key)
-			}
-			continue
-		}
-		if key == "PATH" {
-			hasPath = true
-		}
-		base = append(base, kv)
-	}
+	base, oauthKeysFromBase, hasPath := filterClaudeBaseEnv(cfg.BaseEnv)
 
 	// Guarantee a working PATH (hk-07jrb, same hazard as buildPiEnv's
 	// hk-6atjk fix). The tmux substrate's SubstrateSpawn fully replaces the
@@ -293,7 +302,12 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 		"HARMONIK_NODE_ID=" + cfg.NodeID,
 		"HARMONIK_AGENT_TYPE=claude-code",
 	}
-	env := append(base, required...)
+	// Copy into a slice this function owns rather than appending onto base: an
+	// append that fits base's spare capacity would write through the shared
+	// backing array, and every later append below compounds the aliasing.
+	env := make([]string, 0, len(base)+len(required)+len(cfg.SecretVars)+16)
+	env = append(env, base...)
+	env = append(env, required...)
 
 	// Shell rc-prompt suppression (hk-5s6re).
 	//

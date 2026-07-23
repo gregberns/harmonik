@@ -273,38 +273,7 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		return h.launchViaSubstrate(ctx, sessionID, spec)
 	}
 
-	// M4-C4 (T6): build the *exec.Cmd through spec.Runner when a worker was
-	// selected so the argv-driven agent process (pi/codex) spawns ON THE WORKER
-	// via the SSHRunner. spec.Runner == nil ⇒ exec.CommandContext, byte-identical
-	// to the pre-existing LOCAL path (NFR7). cmd.Dir/cmd.Env are applied below
-	// unchanged either way (the runner is the only host-selection axis).
-	var cmd *exec.Cmd
-	switch {
-	case spec.Runner != nil:
-		// hk-fufel: a worker-tunneling runner (ssh) runs the child ON THE WORKER,
-		// so spec.WorkDir is a REMOTE worktree path. Applying it as the LOCAL
-		// exec.Cmd.Dir fork/exec-ENOENTs the local `ssh …` process (the crit3
-		// crash), and without a remote `cd` the child runs in the ssh login $HOME.
-		// When the runner advertises RemoteCwdRunner, apply the cwd REMOTELY via
-		// CommandInDir and leave the local exec.Cmd.Dir UNSET; otherwise keep the
-		// byte-identical Command()+cmd.Dir=WorkDir path.
-		if rc, ok := spec.Runner.(RemoteCwdRunner); ok && spec.WorkDir != "" {
-			// hk-qxvc2: ssh does NOT forward the local process env (cmd.Env below),
-			// so spec.Env (e.g. CLAUDE_CONFIG_DIR) would never reach the remote agent.
-			// Deliver it via an `env KEY=VAL … <binary> <args>` argv prefix that the
-			// remote login-shell `exec`s in place. cmd.Env below stays load-bearing
-			// only for the LOCAL branches.
-			name, argv := RemoteExecArgv(spec.Env, spec.Binary, spec.Args)
-			cmd = rc.CommandInDir(ctx, spec.WorkDir, name, argv...)
-		} else {
-			cmd = spec.Runner.Command(ctx, spec.Binary, spec.Args...)
-			cmd.Dir = spec.WorkDir
-		}
-	default:
-		//nolint:gosec // G204: Binary is daemon-config-resolved; not user-controlled
-		cmd = exec.CommandContext(ctx, spec.Binary, spec.Args...)
-		cmd.Dir = spec.WorkDir
-	}
+	cmd := buildLaunchCmd(ctx, spec)
 	cmd.Env = spec.Env
 	cmd.SysProcAttr = lifecycle.SpawnChildSysProcAttr(lifecycle.RecordedPGID())
 
@@ -340,32 +309,12 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	// Launch indefinitely.
 	if spec.HandlerSpec != nil {
 		hs := spec.HandlerSpec
-		go func() {
-			// MarshalLaunchSpec validates the spec and returns compact JSON.
-			// Validation or encoding failure is a programmer error; log and
-			// close stdin so the subprocess sees EOF rather than hanging.
-			encoded, encErr := handlercontract.MarshalLaunchSpec(hs)
-			if encErr != nil {
-				fmt.Fprintf(os.Stderr, "handler: Launch: MarshalLaunchSpec: %v\n", encErr)
-				_ = sess.CloseStdin()
-				return
-			}
-			// SendInput writes the compact JSON line + '\n' (NDJSON framing).
-			// ctx bounds the write: if ctx is cancelled the subprocess stdin
-			// pipe will return an error and the goroutine exits.
-			if writeErr := sess.SendInput(ctx, string(encoded)); writeErr != nil {
-				// Subprocess may have already exited; log and continue to close.
-				fmt.Fprintf(os.Stderr, "handler: Launch: stdin write: %v\n", writeErr)
-			}
-			if closeErr := sess.CloseStdin(); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "handler: Launch: CloseStdin: %v\n", closeErr)
-			}
-		}()
+		go deliverHandlerSpec(ctx, sess, hs)
 	}
 
 	// Apply optional StdoutWrapper before wiring to SpawnWatcher (CHB-023).
 	// When StdoutWrapper is nil the raw pipe is used directly (no-op for existing callers).
-	progressStream := io.Reader(sess.Stdout())
+	progressStream := sess.Stdout()
 	if spec.StdoutWrapper != nil {
 		progressStream = spec.StdoutWrapper(progressStream)
 	}
@@ -408,6 +357,74 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	return sess, watcher, nil
 }
 
+// buildLaunchCmd builds the *exec.Cmd for the non-substrate Launch path.
+//
+// M4-C4 (T6): the command is built through spec.Runner when a worker was
+// selected so the argv-driven agent process (pi/codex) spawns ON THE WORKER via
+// the SSHRunner. spec.Runner == nil ⇒ exec.CommandContext, byte-identical to the
+// pre-existing LOCAL path (NFR7). cmd.Env and SysProcAttr are applied by the
+// caller unchanged either way (the runner is the only host-selection axis).
+func buildLaunchCmd(ctx context.Context, spec LaunchSpec) *exec.Cmd {
+	if spec.Runner == nil {
+		//nolint:gosec // G204: Binary is daemon-config-resolved; not user-controlled
+		cmd := exec.CommandContext(ctx, spec.Binary, spec.Args...)
+		cmd.Dir = spec.WorkDir
+		return cmd
+	}
+
+	// hk-fufel: a worker-tunneling runner (ssh) runs the child ON THE WORKER, so
+	// spec.WorkDir is a REMOTE worktree path. Applying it as the LOCAL
+	// exec.Cmd.Dir fork/exec-ENOENTs the local `ssh …` process (the crit3 crash),
+	// and without a remote `cd` the child runs in the ssh login $HOME. When the
+	// runner advertises RemoteCwdRunner, apply the cwd REMOTELY via CommandInDir
+	// and leave the local exec.Cmd.Dir UNSET; otherwise keep the byte-identical
+	// Command()+cmd.Dir=WorkDir path.
+	if rc, ok := spec.Runner.(RemoteCwdRunner); ok && spec.WorkDir != "" {
+		// hk-qxvc2: ssh does NOT forward the local process env (cmd.Env), so
+		// spec.Env (e.g. CLAUDE_CONFIG_DIR) would never reach the remote agent.
+		// Deliver it via an `env KEY=VAL … <binary> <args>` argv prefix that the
+		// remote login-shell `exec`s in place. cmd.Env stays load-bearing only for
+		// the LOCAL branches.
+		name, argv := RemoteExecArgv(spec.Env, spec.Binary, spec.Args)
+		return rc.CommandInDir(ctx, spec.WorkDir, name, argv...)
+	}
+
+	cmd := spec.Runner.Command(ctx, spec.Binary, spec.Args...)
+	cmd.Dir = spec.WorkDir
+	return cmd
+}
+
+// deliverHandlerSpec encodes hs as compact JSON, writes it to the session's
+// stdin as one NDJSON line, and closes the write end so the subprocess sees EOF
+// after reading exactly one JSON object (HC-005).
+//
+// It runs as a background goroutine, so failures cannot be returned to Launch;
+// each is reported to stderr and stdin is closed regardless so the subprocess
+// sees EOF rather than hanging on a read that will never be satisfied.
+func deliverHandlerSpec(ctx context.Context, sess Session, hs *handlercontract.LaunchSpec) {
+	// MarshalLaunchSpec validates the spec and returns compact JSON. Validation
+	// or encoding failure is a programmer error; log and close stdin so the
+	// subprocess sees EOF rather than hanging.
+	encoded, encErr := handlercontract.MarshalLaunchSpec(hs)
+	if encErr != nil {
+		fmt.Fprintf(os.Stderr, "handler: Launch: MarshalLaunchSpec: %v\n", encErr)
+		if closeErr := sess.CloseStdin(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "handler: Launch: CloseStdin after marshal failure: %v\n", closeErr)
+		}
+		return
+	}
+	// SendInput writes the compact JSON line + '\n' (NDJSON framing). ctx bounds
+	// the write: if ctx is cancelled the subprocess stdin pipe will return an
+	// error and the goroutine exits.
+	if writeErr := sess.SendInput(ctx, string(encoded)); writeErr != nil {
+		// Subprocess may have already exited; log and continue to close.
+		fmt.Fprintf(os.Stderr, "handler: Launch: stdin write: %v\n", writeErr)
+	}
+	if closeErr := sess.CloseStdin(); closeErr != nil {
+		fmt.Fprintf(os.Stderr, "handler: Launch: CloseStdin: %v\n", closeErr)
+	}
+}
+
 // launchViaSubstrate handles the non-nil Substrate path in Launch.
 //
 // It builds a SubstrateSpawn from spec and calls Substrate.SpawnWindow. The
@@ -444,7 +461,10 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 	if spec.HandlerSpec != nil {
 		subRunIDStr = spec.HandlerSpec.RunID.String()
 	}
-	adapted := newSubstrateAdapter(subSess, string(sessionID), subRunIDStr)
+	adapted, err := newSubstrateAdapter(subSess, string(sessionID), subRunIDStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("handler: Launch: %w", err)
+	}
 
 	// Wire SpawnWatcher only when the substrate exposes a stdout pipe.
 	// For tmux-hosted sessions Stdout() returns nil; in that case return a
@@ -454,7 +474,7 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 		return adapted, nil, nil
 	}
 
-	progressStream := io.Reader(stdout)
+	progressStream := stdout
 	if spec.StdoutWrapper != nil {
 		progressStream = spec.StdoutWrapper(progressStream)
 	}

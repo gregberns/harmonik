@@ -18,7 +18,7 @@ import "strings"
 //     auth. The deny-list targets a threat model that does not exist on this path.
 //   - DROP PATH and HOME. These are box-A(daemon-host)-specific; the worker's login shell
 //     provides its own. Overriding them would point the remote agent at nonexistent paths.
-func RemoteExecArgv(env []string, binary string, args []string) (string, []string) {
+func RemoteExecArgv(env []string, binary string, args []string) (name string, argv []string) {
 	prefix := make([]string, 0, len(env))
 	for _, kv := range env {
 		eq := strings.IndexByte(kv, '=')
@@ -39,7 +39,7 @@ func RemoteExecArgv(env []string, binary string, args []string) (string, []strin
 	if len(prefix) == 0 {
 		return binary, args
 	}
-	argv := make([]string, 0, len(prefix)+1+len(args))
+	argv = make([]string, 0, len(prefix)+1+len(args))
 	argv = append(argv, prefix...)
 	argv = append(argv, binary)
 	argv = append(argv, args...)

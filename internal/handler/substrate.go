@@ -13,6 +13,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
@@ -199,7 +200,12 @@ func (a *substrateSessionAdapter) Machine() *hclifecycle.Machine {
 // newSubstrateAdapter wraps subSess in a substrateSessionAdapter and eagerly
 // initialises its lifecycle Machine (Spawning→Initializing). The sessID and
 // runID are used to identify the machine in lifecycle_transition events.
-func newSubstrateAdapter(subSess SubstrateSession, sessID, runID string) *substrateSessionAdapter {
+//
+// Returns an error only if the FSM rejects the Spawning→Initializing edge, which
+// is statically valid and therefore indicates a defect in the state table rather
+// than a runtime condition. It is propagated rather than dropped so a regression
+// there cannot silently hand back an adapter whose machine is in the wrong state.
+func newSubstrateAdapter(subSess SubstrateSession, sessID, runID string) (*substrateSessionAdapter, error) {
 	if sessID == "" {
 		sessID = "substrate-unknown"
 	}
@@ -209,6 +215,8 @@ func newSubstrateAdapter(subSess SubstrateSession, sessID, runID string) *substr
 	m := hclifecycle.New(sessID, runID)
 	// Substrate sessions skip the exec.Cmd path, so we go directly to
 	// Initializing (the substrate has already spawned the process).
-	_ = m.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", "")
-	return &substrateSessionAdapter{inner: subSess, machine: m}
+	if err := m.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", ""); err != nil {
+		return nil, fmt.Errorf("handler: newSubstrateAdapter: lifecycle transition to initializing: %w: %w", err, ErrStructural)
+	}
+	return &substrateSessionAdapter{inner: subSess, machine: m}, nil
 }

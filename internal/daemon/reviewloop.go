@@ -680,7 +680,7 @@ func runReviewLoop(
 					postReadyCh := implTap.Subscribe()
 					go func() {
 						defer cancelFn()
-						if err := waitPostAgentReadyProgress(hangCtx, postReadyCh, deps.postAgentReadyHangTimeout); errors.Is(err, ErrPostAgentReadyHang) {
+						if err := waitPostAgentReadyProgress(hangCtx, deps.clock, postReadyCh, deps.postAgentReadyHangTimeout); errors.Is(err, ErrPostAgentReadyHang) {
 							close(implHangCh)
 							_ = implSess.Kill(hangCtx)
 						}
@@ -701,7 +701,7 @@ func runReviewLoop(
 				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 				// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3, hk-kunm4.
 				if implCompletionMode != handlercontract.CompletionProcessExit {
-					implBriefDelivered := pasteInjectOnLaunch(dctx, implPasteTarget, implArtifacts.ClaudeSessionID,
+					implBriefDelivered := pasteInjectOnLaunch(dctx, deps.clock, implPasteTarget, implArtifacts.ClaudeSessionID,
 						implPhase, state.iterationCount, wtPath, deps.bus, runID)
 
 					// Quit-on-commit: after the implementer's task commit lands in the worktree,
@@ -720,7 +720,7 @@ func runReviewLoop(
 							implInitialSHA = parentSHA // fallback to known-good parent SHA
 						}
 						implHBCh := implTap.Subscribe()
-						go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, deps.bus, runID)
+						go pasteInjectQuitOnCommit(ctx, deps.clock, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, deps.bus, runID)
 					}
 				}
 			},
@@ -788,7 +788,7 @@ func runReviewLoop(
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
-		_, implEI := waitWithSocketGrace(ctx, deps.hookStore, implWatcher, implSess,
+		_, implEI := waitWithSocketGrace(ctx, deps.clock, deps.hookStore, implWatcher, implSess,
 			runID.String(), implArtifacts.ClaudeSessionID)
 		// implEI carries exit code + stderr tail; surfaced into the no-commit
 		// failure summary below (hk-loga9, extends hk-ajhqw's single-mode fix).
@@ -1433,7 +1433,7 @@ func runReviewLoop(
 				// and sends /quit once the verdict is written — without this the
 				// reviewer claude hangs indefinitely at a prompt.
 				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
-				revBriefDelivered := pasteInjectOnLaunch(dctx, revPasteTarget, revArtifacts.ClaudeSessionID,
+				revBriefDelivered := pasteInjectOnLaunch(dctx, deps.clock, revPasteTarget, revArtifacts.ClaudeSessionID,
 					handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, revWtPath,
 					deps.bus, runID)
 				if qs, ok := revPasteTarget.(quitSender); ok {
@@ -1448,7 +1448,7 @@ func runReviewLoop(
 					// actively reasoning (recent agent_heartbeat), not only when the OS
 					// pane-liveness probe finds an active process.
 					revHBCh := revTap.Subscribe()
-					go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revInj, revArtifacts.ClaudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
+					go pasteInjectQuitOnReviewFile(ctx, deps.clock, qs, revSess, revInj, revArtifacts.ClaudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
 				}
 			},
 			killReady: func(kctx context.Context) {
@@ -1509,7 +1509,7 @@ func runReviewLoop(
 		// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
-		_, revEI := waitWithSocketGrace(ctx, deps.hookStore, revWatcher, revSess,
+		_, revEI := waitWithSocketGrace(ctx, deps.clock, deps.hookStore, revWatcher, revSess,
 			runID.String(), revArtifacts.ClaudeSessionID)
 		_ = revEI
 
@@ -1948,7 +1948,7 @@ func rlCopyReviewVerdict(srcWtPath, dstWtPath string) error {
 	if err != nil {
 		return fmt.Errorf("rlCopyReviewVerdict: read %q: %w", src, err)
 	}
-	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Dir(dst), core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("rlCopyReviewVerdict: MkdirAll %q: %w", filepath.Dir(dst), mkErr)
 	}
 	//nolint:gosec // G306: 0644 is intentional for a review artifact

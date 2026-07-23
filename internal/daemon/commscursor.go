@@ -70,6 +70,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // cursorLockTimeout bounds how long Advance waits to acquire the per-agent
@@ -151,7 +153,7 @@ func (s *CursorStore) Advance(name, eventID string) error {
 		return fmt.Errorf("commscursor: Advance %q: malformed event_id %q: %w", name, eventID, err)
 	}
 
-	if err := os.MkdirAll(s.dir, 0o755); err != nil { //nolint:gosec // G301: 0755 matches .harmonik conventions
+	if err := os.MkdirAll(s.dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: mkdir %q: %w", name, s.dir, err)
 	}
 
@@ -162,7 +164,7 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	// contend. Lockfiles live in a dedicated subdirectory so they never appear
 	// alongside cursor files. Held only for one RMW cycle, then released on close.
 	lockDir := s.lockDir()
-	if err := os.MkdirAll(lockDir, 0o755); err != nil { //nolint:gosec // G301: 0755 matches .harmonik conventions
+	if err := os.MkdirAll(lockDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: mkdir %q: %w", name, lockDir, err)
 	}
 	lockPath := s.lockPath(name)

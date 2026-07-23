@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -144,8 +145,7 @@ func WriteSessionMetadataSidecarAtomic(target string, s *SessionMetadataSidecar)
 	}
 
 	dir := filepath.Dir(target)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: MkdirAll %q: %w", dir, err)
 	}
 
@@ -178,13 +178,15 @@ func WriteSessionMetadataSidecarAtomic(target string, s *SessionMetadataSidecar)
 	}
 
 	// Step 5: parent-dir fsync — best-effort on macOS/APFS per spec.
+	//nolint:gosec // G304: dir is derived from the validated session metadata sidecar path
 	dirFD, err := os.Open(dir)
 	if err != nil {
 		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Open dir %q for fsync: %w", dir, err)
 	}
-	_ = dirFD.Sync() // best-effort on APFS per WM-026 / WM-013a precedent
-	if err := dirFD.Close(); err != nil {
-		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Close dir fd: %w", err)
+	syncErr := dirFD.Sync()
+	closeErr := dirFD.Close()
+	if syncErr != nil || closeErr != nil {
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: fsync/close dir fd: %w", errors.Join(syncErr, closeErr))
 	}
 
 	return nil

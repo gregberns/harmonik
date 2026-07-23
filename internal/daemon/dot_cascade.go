@@ -1572,7 +1572,13 @@ func dispatchDotAgenticNode(
 				var piStdoutFile *os.File
 				if shared.ArtifactAgentType(artifacts) == core.AgentTypePi {
 					piCaptureDir := filepath.Join(wtPath, ".harmonik", "pi-agent")
-					if mkErr := os.MkdirAll(piCaptureDir, 0o755); mkErr != nil {
+					// 0o700, NOT core.HarmonikDirMode: this is the same directory
+					// pi.BuildLaunchSpec creates as PI_CODING_AGENT_DIR
+					// (internal/harness/pi/launchspec.go), which holds agent
+					// credentials and is deliberately 0o700. MkdirAll does not chmod
+					// an existing dir, so whichever creator runs first decides the
+					// mode — matching the credential owner is the only safe choice.
+					if mkErr := os.MkdirAll(piCaptureDir, 0o700); mkErr != nil { //dirmode:allow tighter on purpose: pi agent credential dir, matches internal/harness/pi.BuildLaunchSpec
 						fmt.Fprintf(os.Stderr, "daemon: dot: hk-j6wm7: create pi capture dir %q: %v (stdout capture disabled)\n", piCaptureDir, mkErr)
 					} else if f, ferr := os.Create(filepath.Join(piCaptureDir, "pi-stdout.log")); ferr != nil {
 						fmt.Fprintf(os.Stderr, "daemon: dot: hk-j6wm7: create pi-stdout.log: %v (stdout capture disabled)\n", ferr)
@@ -1721,7 +1727,7 @@ func dispatchDotAgenticNode(
 	// invoked directly after the segment settles into Working, preserving the
 	// pre-RT8 fall-through ("paste-inject is a no-op for codex").
 	dotDeliver := func(dctx context.Context) {
-		briefDelivered := pasteInjectOnLaunch(dctx, pasteTarget, artifacts.ClaudeSessionID,
+		briefDelivered := pasteInjectOnLaunch(dctx, deps.clock, pasteTarget, artifacts.ClaudeSessionID,
 			phase, iterationCount, wtPath, deps.bus, runID)
 		if qs, ok := pasteTarget.(quitSender); ok {
 			if isReviewer {
@@ -1745,7 +1751,7 @@ func dispatchDotAgenticNode(
 				// so it can track agent_heartbeat events for the active-reasoning
 				// extension — independent of the tapCh used by the segment's ready pump.
 				reviewerHBCh := tap.Subscribe()
-				go pasteInjectQuitOnReviewFile(ctx, qs, sess, revInj, artifacts.ClaudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
+				go pasteInjectQuitOnReviewFile(ctx, deps.clock, qs, sess, revInj, artifacts.ClaudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
 			} else if dotCompletionMode != handlercontract.CompletionProcessExit {
 				// hk-o90sl (T13/C5): gate on Completion() policy (specs/harness-contract.md §2 N5).
 				// ProcessExit harnesses (codex) self-terminate when the turn completes; sess.Wait +
@@ -1760,7 +1766,7 @@ func dispatchDotAgenticNode(
 				// launch-suppression branch forever. The fan-out tap delivers each
 				// consumer its own copy of every event.
 				watchdogCh := tap.Subscribe()
-				go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, deps.bus, runID)
+				go pasteInjectQuitOnCommit(ctx, deps.clock, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, deps.bus, runID)
 			}
 		}
 	}
@@ -1923,7 +1929,7 @@ func dispatchDotAgenticNode(
 	// Working / Exited / Aborted: fall through to waitWithSocketGrace — the
 	// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
-	_, nodeEI := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
+	_, nodeEI := waitWithSocketGrace(ctx, deps.clock, deps.hookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {

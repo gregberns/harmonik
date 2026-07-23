@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // SessionLogDirPath returns the canonical session-log directory path for a
@@ -69,8 +71,7 @@ func SessionLogRootPath(workspacePath string) string {
 //   - workspace-model.md §6.2 — canonical on-disk paths table.
 func CreateSessionLogDir(workspacePath, sessionID string) error {
 	dirPath := SessionLogDirPath(workspacePath, sessionID)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+	if err := os.MkdirAll(dirPath, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: CreateSessionLogDir: MkdirAll %q: %w", dirPath, err)
 	}
 	return nil

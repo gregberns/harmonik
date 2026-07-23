@@ -253,8 +253,7 @@ func ExecuteVerdict(
 func commitVerdictEmitted(ctx context.Context, worktreePath string, ve core.VerdictEvent, verdictJSON []byte, targetWorktreePath string) error {
 	// Write verdict JSON file.
 	reconDir := filepath.Join(worktreePath, ".harmonik", "reconciliation", ve.InvestigatorRunID.String())
-	//nolint:gosec // G301: 0755 matches .harmonik subdir conventions
-	if err := os.MkdirAll(reconDir, 0o755); err != nil {
+	if err := os.MkdirAll(reconDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("commitVerdictEmitted: mkdir %q: %w", reconDir, err)
 	}
 	verdictFilePath := filepath.Join(reconDir, "verdict.json")
@@ -269,8 +268,7 @@ func commitVerdictEmitted(ctx context.Context, worktreePath string, ve core.Verd
 	// inaccessible (already cleaned up), the commit proceeds without capture.
 	if ve.Verdict == core.VerdictReopenBead && targetWorktreePath != "" {
 		wipDir := filepath.Join(reconDir, "wip-capture")
-		//nolint:gosec // G301: 0755 matches .harmonik subdir conventions
-		if mkErr := os.MkdirAll(wipDir, 0o755); mkErr == nil {
+		if mkErr := os.MkdirAll(wipDir, core.HarmonikDirMode); mkErr == nil {
 			if capture, capErr := workspace.CaptureWIP(targetWorktreePath); capErr == nil {
 				_ = workspace.WriteWIPCapture(capture, wipDir)
 			}

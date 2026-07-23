@@ -186,8 +186,8 @@ func runBrHistoryRotationPreflight(ctx context.Context, projectDir string, keepL
 	}
 
 	// Ensure the archive directory exists.
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(archiveDir, 0o755); mkErr != nil {
+	//nolint:gosec // G301: 0755 matches the .beads/ dir conventions
+	if mkErr := os.MkdirAll(archiveDir, 0o755); mkErr != nil { //dirmode:allow not a .harmonik state dir: .beads/.br_history-archive lives under .beads/, whose mode is br's convention, not harmonik's
 		slog.WarnContext(ctx, "br_history_rotation_mkdir_error",
 			"archive_dir", archiveDir,
 			"error", mkErr.Error(),

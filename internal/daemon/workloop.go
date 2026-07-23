@@ -4501,7 +4501,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	var piStdoutFile *os.File
 	if runIsPi {
 		piCaptureDir = filepath.Join(wtPath, ".harmonik", "pi-agent")
-		if mkErr := os.MkdirAll(piCaptureDir, 0o755); mkErr != nil {
+		// 0o700, NOT core.HarmonikDirMode: same directory as
+		// pi.BuildLaunchSpec's PI_CODING_AGENT_DIR (internal/harness/pi/
+		// launchspec.go), which holds agent credentials and is deliberately
+		// 0o700. MkdirAll does not chmod an existing dir, so the first creator
+		// decides the mode; match the credential owner, never widen it.
+		if mkErr := os.MkdirAll(piCaptureDir, 0o700); mkErr != nil { //dirmode:allow tighter on purpose: pi agent credential dir, matches internal/harness/pi.BuildLaunchSpec
 			fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: create pi capture dir %q: %v (stdout capture disabled)\n", piCaptureDir, mkErr)
 			piCaptureDir = ""
 		} else if f, ferr := os.Create(filepath.Join(piCaptureDir, "pi-stdout.log")); ferr != nil {
@@ -4786,7 +4791,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				//
 				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 				// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
-				briefDelivered := pasteInjectOnLaunch(dctx, runPasteTarget, artifacts.ClaudeSessionID,
+				briefDelivered := pasteInjectOnLaunch(dctx, deps.clock, runPasteTarget, artifacts.ClaudeSessionID,
 					rc.Phase, rc.IterationCount, wtPath,
 					deps.bus, runID)
 
@@ -4833,7 +4838,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				if qs, ok := runPasteTarget.(quitSender); ok {
 					noChangeTimeoutCh = make(chan struct{})
 					watchdogCh := tap.Subscribe()
-					go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, deps.bus, runID)
+					go pasteInjectQuitOnCommit(ctx, deps.clock, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, deps.bus, runID)
 				}
 			}
 		},
@@ -4994,7 +4999,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
 	// apply the stop-hook grace window for a pending outcome_emitted payload.
-	socketOutcome, ei := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
+	socketOutcome, ei := waitWithSocketGrace(ctx, deps.clock, deps.hookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	// hk-0z5x: per-run abort check — fired when the never-spawned reaper in

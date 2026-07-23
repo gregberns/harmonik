@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -341,8 +342,7 @@ func WriteReviewVerdictAtomic(workspacePath string, verdict *ReviewVerdict) erro
 	}
 
 	dir := filepath.Dir(target)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: MkdirAll %q: %w", dir, err)
 	}
 
@@ -377,9 +377,10 @@ func WriteReviewVerdictAtomic(workspacePath string, verdict *ReviewVerdict) erro
 	if err != nil {
 		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Open dir %q for fsync: %w", dir, err)
 	}
-	_ = dirFD.Sync() // best-effort on APFS per WM-013a precedent
-	if err := dirFD.Close(); err != nil {
-		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Close dir fd: %w", err)
+	syncErr := dirFD.Sync()
+	closeErr := dirFD.Close()
+	if syncErr != nil || closeErr != nil {
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: fsync/close dir fd: %w", errors.Join(syncErr, closeErr))
 	}
 
 	return nil
@@ -518,9 +519,10 @@ func ArchiveVerdict(workspacePath string, iterationN int) error {
 	if err != nil {
 		return fmt.Errorf("workspace: ArchiveVerdict: Open dir %q for fsync: %w", dir, err)
 	}
-	_ = dirFD.Sync() // best-effort on APFS per WM-026 / WM-013a precedent
-	if err := dirFD.Close(); err != nil {
-		return fmt.Errorf("workspace: ArchiveVerdict: Close dir fd: %w", err)
+	syncErr := dirFD.Sync()
+	closeErr := dirFD.Close()
+	if syncErr != nil || closeErr != nil {
+		return fmt.Errorf("workspace: ArchiveVerdict: fsync/close dir fd: %w", errors.Join(syncErr, closeErr))
 	}
 
 	return nil

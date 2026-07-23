@@ -377,8 +377,7 @@ func rcmProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 		filepath.Join(".harmonik", "beads-intents"),
 		filepath.Join(".harmonik", "queues"),
 	} {
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(filepath.Join(projectDir, sub), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(projectDir, sub), core.HarmonikDirMode); err != nil {
 			t.Fatalf("rcmProjectDir: mkdir %s: %v", sub, err)
 		}
 	}

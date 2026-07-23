@@ -794,8 +794,7 @@ func acquirePidfile(cfg Config) (*lifecycle.Pidfile, error) {
 	}
 	// mkdir-p <ProjectDir>/.harmonik/ so AcquirePidfile can open the file.
 	harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(harmonikDir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(harmonikDir, core.HarmonikDirMode); mkErr != nil {
 		return nil, fmt.Errorf("daemon.Start: mkdir-p .harmonik: %w", mkErr)
 	}
 

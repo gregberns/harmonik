@@ -740,8 +740,7 @@ func (a *QuiesceArbiter) nudgePane(ctx context.Context, agentName, paneTarget st
 // observers (e.g. the captain's crew-launch loop) to detect parked state.
 func (a *QuiesceArbiter) writeSleepMarker(sessionID string, source SleepSource, level SleepLevel) {
 	dir := filepath.Join(a.cfg.ProjectDir, sleepingMarkerDir)
-	//nolint:gosec // G301: .harmonik/ dir needs to be readable/writable by the project owner; 0755 is intentional
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: quiesce: mkdir %q: %v\n", dir, err)
 		return
 	}

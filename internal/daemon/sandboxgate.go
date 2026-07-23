@@ -119,7 +119,7 @@ func srtWrapArgv(spawn *SrtSpawnConfig, agentArgv []string) ([]string, error) {
 	// (e.g. `go build`'s "creating work dir" step) fails immediately without
 	// this. Best-effort MkdirAll: a pre-existing directory (created by a prior
 	// run, any permissions) is not an error here — os.MkdirAll is idempotent.
-	if err := os.MkdirAll(srtClaudeTmpDir, 0o700); err != nil {
+	if err := os.MkdirAll(srtClaudeTmpDir, 0o700); err != nil { //dirmode:allow not a .harmonik state dir: srt's hardcoded /tmp/claude sandbox scratch TMPDIR, 0o700 by design
 		return nil, fmt.Errorf("create srt scratch TMPDIR %s: %w", srtClaudeTmpDir, err)
 	}
 

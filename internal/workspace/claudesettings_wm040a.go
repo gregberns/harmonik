@@ -124,9 +124,14 @@ func bridgeMatcherGroupFor(eventKind, daemonBinaryPath string) bridgeMatcherGrou
 func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath string) error {
 	settingsPath := ClaudeSettingsPath(workspacePath)
 
-	// Ensure the .claude/ parent directory exists.
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+	// Ensure the .claude/ parent directory exists. This is the .claude/ tree,
+	// NOT .harmonik/, so it deliberately does not use core.HarmonikDirMode:
+	// `harmonik init`'s provisionSkills and sync-assets' writeFileEnsureDir both
+	// create .claude/ at 0o755, and tightening only this creator would open the
+	// same first-creator-wins split on the .claude side that the constant exists
+	// to close on the .harmonik side.
+	//nolint:gosec // G301: 0755 matches the .claude/ dir conventions
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil { //dirmode:allow not a .harmonik state dir: .claude/ is owned by the claude asset tree at 0o755
 		return fmt.Errorf("workspace: MaterializeClaudeSettings: MkdirAll .claude/: %w", err)
 	}
 
@@ -337,6 +342,7 @@ func atomicWriteWithParentFsync(path string, content []byte) error {
 	tmpPath := fmt.Sprintf("%s.tmp-%d", path, pid)
 
 	// (1) Write to temp file.
+	//nolint:gosec // G304: tmpPath is derived from the caller-selected workspace settings path
 	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("open tmp: %w", err)
@@ -372,6 +378,7 @@ func atomicWriteWithParentFsync(path string, content []byte) error {
 // appendToFile appends text to path, creating the file if absent.
 // Used for the CHB-004 overwrite-warning write to the session log.
 func appendToFile(path, text string) error {
+	//nolint:gosec // G304: path is the caller-selected workspace session log
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("appendToFile OpenFile %q: %w", path, err)

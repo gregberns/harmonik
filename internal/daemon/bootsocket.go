@@ -132,8 +132,7 @@ func (bs *bootState) bindSocket(ctx context.Context) error {
 	}
 	// .harmonik/ may not exist when ProjectDir is set with BrPath="" (test mode
 	// skipping pidfile). MkdirAll is idempotent.
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(filepath.Dir(sockPath), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Dir(sockPath), core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("daemon.Start: mkdir-p .harmonik (socket): %w", mkErr)
 	}
 

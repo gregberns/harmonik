@@ -136,8 +136,7 @@ func persistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID
 		}
 	}
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(contextDir, 0o755); err != nil {
+	if err := os.MkdirAll(contextDir, core.HarmonikDirMode); err != nil {
 		return persistClaudeSessionIDResult{}, fmt.Errorf(
 			"daemon: persistClaudeSessionID: mkdir %q: %w", contextDir, err)
 	}

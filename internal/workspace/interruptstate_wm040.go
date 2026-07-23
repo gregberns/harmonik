@@ -129,8 +129,7 @@ func WriteInterruptStateChangedMarker(
 	eventsPath := WorkspaceLocalEventsPath(workspacePath, workspaceID)
 	eventsDir := filepath.Dir(eventsPath)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: WriteInterruptStateChangedMarker: MkdirAll %q: %w", eventsDir, err)
 	}
 
@@ -184,8 +183,11 @@ func WriteInterruptStateChangedMarker(
 	// failure.
 	//nolint:gosec // G304: eventsDir is derived from workspacePath + .harmonik/events, not user input
 	if dirFd, openErr := os.Open(eventsDir); openErr == nil {
-		_ = dirFd.Sync()  //nolint:errcheck // dir fsync failure is non-fatal
-		_ = dirFd.Close() //nolint:errcheck // cleanup error unactionable
+		syncErr := dirFd.Sync()
+		closeErr := dirFd.Close()
+		if syncErr != nil || closeErr != nil {
+			return fmt.Errorf("workspace: write interrupt state: fsync/close events dir: %w", errors.Join(syncErr, closeErr))
+		}
 	}
 	return nil
 }

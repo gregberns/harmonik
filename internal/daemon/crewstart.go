@@ -27,6 +27,7 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // crewKeeperEventBus is the minimal event-emission seam used by the crew keeper
@@ -442,12 +443,18 @@ func (h *crewHandlerImpl) ensureQueue(ctx context.Context, queueName string) err
 //
 // Best-effort: errors are logged to stderr but do not fail the crew-start op.
 func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecter, sessionID, handoffPath string) {
+	// P2 E5 RT19c gave the shared paste helpers a ClockPort so the RUN path's
+	// Working-phase watchdogs become FakeClock-drivable. The crew-start handler is
+	// not a run-path dispatch and carries no ports bundle, so it stays on the
+	// system clock here rather than inventing a seam RT19c did not scope.
+	clk := substrate.ClockPort(substrate.SystemClock{})
+
 	// Dismiss the welcome splash with an Enter keypress before the paste.
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: crew-start: splash dismiss SendEnterToLastPane: %v\n", err)
 		}
-		splashDismissWait(ctx)
+		splashDismissWait(ctx, clk)
 	}
 
 	bufName := bufferName(sessionID, "crew-init")
@@ -465,7 +472,7 @@ func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecte
 	// submit only fires once the seed is demonstrably in the input bar. Marker
 	// "/session-resume" is a stable literal in the seed, guaranteed present on a
 	// successful render (the handoff path is variable, so it is not the marker).
-	if reason := injectAndVerifySeed(ctx, inj, bufName, []byte(msg), "/session-resume", "crew-init"); reason != "" {
+	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "/session-resume", "crew-init"); reason != "" {
 		fmt.Fprintf(os.Stderr, "daemon: crew-start: paste mission unverified: %s\n", reason)
 		return
 	}
@@ -475,9 +482,9 @@ func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecte
 	// state before the bounded submit-Enter retry. A redundant Enter at an
 	// already-submitted REPL is a harmless empty line, so the retry only ever
 	// helps: at least one keypress lands after the input handler is ready.
-	splashDismissWait(ctx)
+	splashDismissWait(ctx, clk)
 	if es, ok := inj.(enterSender); ok {
-		sendSubmitEnterWithRetry(ctx, es, "crew-init")
+		sendSubmitEnterWithRetry(ctx, clk, es, "crew-init")
 	}
 }
 
@@ -543,8 +550,7 @@ func (h *crewHandlerImpl) pasteCrewMissionToSession(ctx context.Context, sess ha
 // Idempotent: succeeds when the file already exists.
 func createCrewManagedMarker(projectDir, name string) error {
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("mkdir keeper: %w", err)
 	}
 	markerPath := filepath.Join(keeperDir, name+".managed")

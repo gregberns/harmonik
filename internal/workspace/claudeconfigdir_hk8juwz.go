@@ -140,7 +140,7 @@ func defaultIsolatedConfigSourcePath() (string, error) {
 //     realpath-normalized trust key matches what claude looks up.
 func PrepareIsolatedClaudeConfigDir(workspacePath string) (string, error) {
 	configDir := filepath.Join(workspacePath, ".harmonik", isolatedClaudeConfigDirName)
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
+	if err := os.MkdirAll(configDir, 0o700); err != nil { //dirmode:allow tighter on purpose: .harmonik/claude-config/ holds claude credentials, 0o700 (never widen to core.HarmonikDirMode)
 		return "", fmt.Errorf("workspace: PrepareIsolatedClaudeConfigDir: mkdir %s: %w", configDir, err)
 	}
 	absDir, err := filepath.Abs(configDir)

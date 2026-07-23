@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -42,8 +43,7 @@ func CreateReviewerWorktree(ctx context.Context, repoRoot, runID string, iterati
 	wtPath := ReviewerWorktreePath(repoRoot, runID, iterationCount, cfg)
 
 	parentDir := filepath.Dir(wtPath)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(parentDir, core.HarmonikDirMode); mkErr != nil {
 		return "", nil, fmt.Errorf("workspace: CreateReviewerWorktree: MkdirAll %q: %w", parentDir, mkErr)
 	}
 
@@ -71,9 +71,13 @@ func CreateReviewerWorktree(ctx context.Context, repoRoot, runID string, iterati
 		// off them) — context.WithoutCancel, not a bare Background.
 		cleanupCtx := context.WithoutCancel(ctx)
 		rmCmd := runner.Command(cleanupCtx, "git", "-C", repoRoot, "worktree", "remove", "--force", "--force", wtPath)
-		_ = rmCmd.Run()
+		if out, rmErr := rmCmd.CombinedOutput(); rmErr != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "workspace: reviewer worktree cleanup remove %q: %v\ngit output: %s\n", wtPath, rmErr, out)
+		}
 		pruneCmd := runner.Command(cleanupCtx, "git", "-C", repoRoot, "worktree", "prune")
-		_ = pruneCmd.Run()
+		if out, pruneErr := pruneCmd.CombinedOutput(); pruneErr != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "workspace: reviewer worktree cleanup prune %q: %v\ngit output: %s\n", repoRoot, pruneErr, out)
+		}
 	}
 
 	return wtPath, cleanupFn, nil
@@ -105,7 +109,9 @@ func CreateReviewerWorktree(ctx context.Context, repoRoot, runID string, iterati
 // # Parent directory
 //
 // CreateWorktree creates the parent directory (the worktree root) if it does
-// not exist, using [os.MkdirAll] at 0755 per the .harmonik dir convention.
+// not exist, using [os.MkdirAll] at [core.HarmonikDirMode] — the default
+// worktree root is <repoRoot>/.harmonik/worktrees, so it is part of the
+// .harmonik state tree and shares its one mode.
 // It does NOT create the worktree directory itself — git does that.
 //
 // # No provisioning at MVH
@@ -188,8 +194,7 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 			return fmt.Errorf("workspace: CreateWorktree: remote mkdir -p %q: %w\noutput: %s", parentDir, mkErr, out)
 		}
 	} else {
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		if err := os.MkdirAll(parentDir, core.HarmonikDirMode); err != nil {
 			return fmt.Errorf("workspace: CreateWorktree: MkdirAll %q: %w", parentDir, err)
 		}
 	}

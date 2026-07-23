@@ -30,6 +30,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // defaultRestartBackoffBase is the initial startup delay applied on the second
@@ -203,8 +205,7 @@ func readRestartRecord(path string) (restartRecord, error) {
 // The directory is created on demand.
 func writeRestartRecord(path string, rec restartRecord) error {
 	dir := filepath.Dir(path)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(dir, core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, mkErr)
 	}
 	data, marshalErr := json.MarshalIndent(rec, "", "  ")

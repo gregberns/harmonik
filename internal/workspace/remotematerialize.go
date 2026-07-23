@@ -56,6 +56,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/core"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -107,7 +108,7 @@ func removeRemoteFile(ctx context.Context, runner tmux.CommandRunner, absPath st
 // type (e.g. the DOT cognition-gate task brief, hk-9fe2).
 func WriteFileVia(ctx context.Context, runner tmux.CommandRunner, absPath string, content []byte, perm os.FileMode) error {
 	if runner == nil {
-		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(absPath), core.HarmonikDirMode); err != nil {
 			return fmt.Errorf("workspace: WriteFileVia mkdir: %w", err)
 		}
 		return os.WriteFile(absPath, content, perm)

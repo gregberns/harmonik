@@ -112,7 +112,6 @@ func TestClassifyHandlerFatal_Taxonomy(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range failureclassFixture107gzRows() {
-		row := row
 		t.Run(row.desc, func(t *testing.T) {
 			t.Parallel()
 

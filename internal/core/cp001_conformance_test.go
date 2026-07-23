@@ -34,7 +34,6 @@ func TestCP001_JSONRoundTrip_AllKinds(t *testing.T) {
 
 	kinds := []Kind{KindGate, KindHook, KindGuard, KindBudget}
 	for _, k := range kinds {
-		k := k
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
 
@@ -101,7 +100,6 @@ func TestCP001_KindPayloadDiscriminatorAfterRoundTrip(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.kind), func(t *testing.T) {
 			t.Parallel()
 

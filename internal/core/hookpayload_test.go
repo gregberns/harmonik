@@ -111,7 +111,6 @@ func TestHookPayloadValid_AllSideEffectKinds(t *testing.T) {
 		SideEffectKindExternalAction,
 	}
 	for _, k := range kinds {
-		k := k
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
 

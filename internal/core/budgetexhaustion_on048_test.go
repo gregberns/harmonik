@@ -43,7 +43,6 @@ func TestExhaustionProtocolStep_FourValuesAreDeclared(t *testing.T) {
 	}
 
 	for _, tc := range steps {
-		tc := tc
 		t.Run(tc.str, func(t *testing.T) {
 			t.Parallel()
 
@@ -81,7 +80,6 @@ func TestExhaustionSafeBoundary_ThreeValuesAreDeclared(t *testing.T) {
 	}
 
 	for _, tc := range boundaries {
-		tc := tc
 		t.Run(tc.str, func(t *testing.T) {
 			t.Parallel()
 
@@ -162,7 +160,6 @@ func TestSafeBoundaryForResource_AllKnownResourcesMapToBoundary(t *testing.T) {
 		BudgetResourceWallClockSeconds,
 	}
 	for _, r := range resources {
-		r := r
 		t.Run(string(r), func(t *testing.T) {
 			t.Parallel()
 
@@ -226,7 +223,6 @@ func TestExhaustionProtocolSequence_AllLabelsNonEmpty(t *testing.T) {
 	t.Parallel()
 
 	for i, step := range ExhaustionProtocolSequence() {
-		step := step
 		t.Run(string(step.Label), func(t *testing.T) {
 			t.Parallel()
 

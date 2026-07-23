@@ -42,7 +42,6 @@ func TestVerdictExecutedPayloadValid_AllVerdicts(t *testing.T) {
 		VerdictEscalateToHuman,
 	}
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 			p := verdictExecutedPayloadFixture(t)

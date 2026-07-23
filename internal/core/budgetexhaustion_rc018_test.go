@@ -50,7 +50,6 @@ func TestBudgetExhaustionStep_FiveValuesAreDeclared(t *testing.T) {
 	}
 
 	for _, tc := range steps {
-		tc := tc
 		t.Run(tc.str, func(t *testing.T) {
 			t.Parallel()
 
@@ -88,7 +87,6 @@ func TestBudgetExhaustionHandlerSequence_AllLabelsNonEmpty(t *testing.T) {
 	t.Parallel()
 
 	for i, step := range BudgetExhaustionHandlerSequence() {
-		step := step
 		t.Run(string(step.Label), func(t *testing.T) {
 			t.Parallel()
 

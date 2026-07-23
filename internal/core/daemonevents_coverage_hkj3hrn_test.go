@@ -30,7 +30,6 @@ func TestShutdownMode_Valid(t *testing.T) {
 		{"unknown", false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.mode), func(t *testing.T) {
 			t.Parallel()
 			if got := tc.mode.Valid(); got != tc.valid {
@@ -55,7 +54,6 @@ func TestOperatorPauseStatusValue_Valid(t *testing.T) {
 		{"running", false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.v), func(t *testing.T) {
 			t.Parallel()
 			if got := tc.v.Valid(); got != tc.valid {
@@ -87,7 +85,6 @@ func TestDaemonStartedPayload_Valid(t *testing.T) {
 		{"missing-commit-hash", DaemonStartedPayload{StartedAt: validTs, PID: validPID}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -118,7 +115,6 @@ func TestDaemonReadyPayload_Valid(t *testing.T) {
 		{"nil-run-id-in-investigators", DaemonReadyPayload{ReadyAt: "2026-05-09T12:00:00Z", ReadyAtNsSinceBoot: 100, InvestigatorRunIDs: []RunID{nilID}}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -146,7 +142,6 @@ func TestDaemonShutdownPayload_Valid(t *testing.T) {
 		{"invalid-mode", DaemonShutdownPayload{ShutdownAt: "2026-05-09T12:00:00Z", ShutdownAtNsSinceBoot: 200, Mode: "unknown"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -172,7 +167,6 @@ func TestDaemonStartupFailedPayload_Valid(t *testing.T) {
 		{"missing-failure-mode", DaemonStartupFailedPayload{FailedAt: "2026-05-09T12:00:00Z"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -198,7 +192,6 @@ func TestDaemonDegradedPayload_Valid(t *testing.T) {
 		{"invalid-reason", DaemonDegradedPayload{DetectedAt: "2026-05-09T12:00:00Z", Reason: "unknown_reason"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -225,7 +218,6 @@ func TestOperatorPauseStatusPayload_Valid(t *testing.T) {
 		{"missing-changed-at", OperatorPauseStatusPayload{Status: OperatorPauseStatusValuePaused}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -249,7 +241,6 @@ func TestOperatorResumingPayload_Valid(t *testing.T) {
 		{"zero-value", OperatorResumingPayload{}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -275,7 +266,6 @@ func TestOperatorStoppedPayload_Valid(t *testing.T) {
 		{"invalid-mode", OperatorStoppedPayload{StoppedAt: "2026-05-09T12:00:00Z", Mode: "unknown"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -301,7 +291,6 @@ func TestOperatorUpgradingPayload_Valid(t *testing.T) {
 		{"missing-started-at", OperatorUpgradingPayload{UpgradeVersion: "v1.2.3"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -328,7 +317,6 @@ func TestOperatorUpgradeCompletedPayload_Valid(t *testing.T) {
 		{"missing-commit-hash", OperatorUpgradeCompletedPayload{UpgradeVersion: "v1.2.3", CompletedAt: "2026-05-09T12:00:00Z"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -354,7 +342,6 @@ func TestOperatorUpgradeRejectedPayload_Valid(t *testing.T) {
 		{"invalid-reason", OperatorUpgradeRejectedPayload{RejectedAt: "2026-05-09T12:00:00Z", Reason: "unknown_reason"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -381,7 +368,6 @@ func TestOperatorCommandRejectedPayload_Valid(t *testing.T) {
 		{"missing-rejected-at", OperatorCommandRejectedPayload{Command: OperatorCommandPause, CurrentState: DaemonStatusReady}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -415,7 +401,6 @@ func TestDispatchDeferredPayload_Valid(t *testing.T) {
 		{"missing-deferred-at", DispatchDeferredPayload{Reason: DispatchDeferredReasonMachineCeilingExhausted}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -492,7 +477,6 @@ func TestDaemonOrphanSweepCompletedPayload_Valid(t *testing.T) {
 		}(), false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -519,7 +503,6 @@ func TestInfrastructureUnavailablePayload_Valid(t *testing.T) {
 		{"negative-retry-count", InfrastructureUnavailablePayload{FailedPrerequisite: InfrastructurePrerequisiteBrMissing, DetailString: "detail", RetryCount: -1}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -551,7 +534,6 @@ func TestOperatorCommandFailedPayload_Valid(t *testing.T) {
 		{"missing-failed-at", OperatorCommandFailedPayload{Command: OperatorCommandStop, FailureClass: FailureClassTransient}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -577,7 +559,6 @@ func TestDaemonConfigPayload_Valid(t *testing.T) {
 		{"empty-target-branch", DaemonConfigPayload{TargetBranch: ""}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -608,7 +589,6 @@ func TestOperatorEscalationClearedPayload_Valid(t *testing.T) {
 		{"invalid-clearance-reason", OperatorEscalationClearedPayload{ClearedAt: "2026-05-09T12:00:00Z", ClearanceReason: "unknown_reason"}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {

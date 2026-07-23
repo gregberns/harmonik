@@ -206,7 +206,6 @@ func TestCP021_GlobalGuard_AppliesToAllNodes(t *testing.T) {
 
 	nodeIDs := []NodeID{"node-a", "node-b", "node-c", "some-other-node"}
 	for _, nid := range nodeIDs {
-		nid := nid
 		t.Run(string(nid), func(t *testing.T) {
 			t.Parallel()
 
@@ -255,7 +254,6 @@ func TestCP021_MultipleGuards_AppliedInDeclarationOrder(t *testing.T) {
 	var callOrder []string
 	fns := map[string]GuardEvaluator{}
 	for _, n := range names {
-		n := n
 		fns[n] = cp021RecordingFn(n, &callOrder)
 	}
 

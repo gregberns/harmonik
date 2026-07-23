@@ -57,7 +57,6 @@ func TestVerdictActionKind_SixValuesAreDeclared(t *testing.T) {
 	}
 
 	for _, tc := range kinds {
-		tc := tc
 		t.Run(tc.str, func(t *testing.T) {
 			t.Parallel()
 
@@ -85,7 +84,6 @@ func TestVerdictActionKind_UnknownIsInvalid(t *testing.T) {
 	}
 
 	for _, k := range unknown {
-		k := k
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
 
@@ -199,7 +197,6 @@ func TestPlanForVerdict_AllVerdictsProduce_Valid(t *testing.T) {
 	}
 
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
@@ -476,7 +473,6 @@ func TestPlanForVerdict_IdempotencyMechanismIsNonEmptyForAllVerdicts(t *testing.
 	}
 
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
@@ -505,7 +501,6 @@ func TestPlanForVerdict_ActionSummaryIsNonEmptyForAllVerdicts(t *testing.T) {
 	}
 
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
@@ -534,7 +529,6 @@ func TestPlanForVerdict_PlanVerdictFieldMatchesInput(t *testing.T) {
 	}
 
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 

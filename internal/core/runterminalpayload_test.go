@@ -413,7 +413,6 @@ func TestRunFailedPayload_AllFailureClasses(t *testing.T) {
 	}
 
 	for _, fc := range classes {
-		fc := fc
 		t.Run(string(fc), func(t *testing.T) {
 			t.Parallel()
 			p := runterminalFixtureFailed(t)

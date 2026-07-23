@@ -231,7 +231,6 @@ func TestWorkflowValid_InvalidWorkflowClass(t *testing.T) {
 		"RECONCILIATION",
 	}
 	for _, cls := range cases {
-		cls := cls
 		t.Run(string(cls), func(t *testing.T) {
 			t.Parallel()
 			wf := b3f72WorkflowValid(t)

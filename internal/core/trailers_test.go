@@ -399,7 +399,6 @@ func TestValidateTrailerValue_Integer_Valid(t *testing.T) {
 
 	spec := validateTrailerValueFixtureSpec(TrailerTypeInteger, nil)
 	for _, v := range []string{"0", "1", "42", "100", "-1"} {
-		v := v
 		t.Run(v, func(t *testing.T) {
 			t.Parallel()
 			if err := ValidateTrailerValue(spec, v); err != nil {
@@ -416,7 +415,6 @@ func TestValidateTrailerValue_Integer_RejectsNonInteger(t *testing.T) {
 
 	spec := validateTrailerValueFixtureSpec(TrailerTypeInteger, nil)
 	for _, v := range []string{"1.5", "abc", "0x10", "1e3", " 1"} {
-		v := v
 		t.Run(v, func(t *testing.T) {
 			t.Parallel()
 			if err := ValidateTrailerValue(spec, v); err == nil {
@@ -458,7 +456,6 @@ func TestValidateTrailerValue_String_Valid(t *testing.T) {
 
 	spec := validateTrailerValueFixtureSpec(TrailerTypeString, nil)
 	for _, v := range []string{"abc", "hk-63oh", "any value", "123"} {
-		v := v
 		t.Run(v, func(t *testing.T) {
 			t.Parallel()
 			if err := ValidateTrailerValue(spec, v); err != nil {
@@ -480,7 +477,6 @@ func TestValidateTrailerValue_EmptyAlwaysErrors(t *testing.T) {
 		TrailerTypeString,
 	}
 	for _, typ := range types {
-		typ := typ
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 			spec := validateTrailerValueFixtureSpec(typ, []string{"true"})
@@ -565,7 +561,6 @@ func TestValidateTrailerValue_VerdictExecuted_RC023(t *testing.T) {
 	}
 	// Any other value is malformed per RC-023.
 	for _, bad := range []string{"false", "1", "yes", "TRUE", "True"} {
-		bad := bad
 		t.Run(bad, func(t *testing.T) {
 			t.Parallel()
 			if err := ValidateTrailerValue(spec, bad); err == nil {

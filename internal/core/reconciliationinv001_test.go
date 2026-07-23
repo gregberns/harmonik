@@ -158,7 +158,6 @@ func TestRCINV001_AuditSensorDistinguishesReconciliationFromOrdinary(t *testing.
 	}
 
 	for _, tc := range workflows {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

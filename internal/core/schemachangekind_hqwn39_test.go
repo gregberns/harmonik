@@ -61,7 +61,6 @@ func TestEV030_IsBreaking(t *testing.T) {
 	t.Parallel()
 
 	for _, fx := range ev030ChangeKindFixtures {
-		fx := fx
 		t.Run(fx.kind.String(), func(t *testing.T) {
 			t.Parallel()
 
@@ -80,7 +79,6 @@ func TestEV030_ReaderObligation(t *testing.T) {
 	t.Parallel()
 
 	for _, fx := range ev030ChangeKindFixtures {
-		fx := fx
 		t.Run(fx.kind.String(), func(t *testing.T) {
 			t.Parallel()
 
@@ -103,7 +101,6 @@ func TestEV030_Valid(t *testing.T) {
 	t.Parallel()
 
 	for _, fx := range ev030ChangeKindFixtures {
-		fx := fx
 		t.Run(fx.kind.String(), func(t *testing.T) {
 			t.Parallel()
 
@@ -129,7 +126,6 @@ func TestEV030_ParseSchemaChangeKind(t *testing.T) {
 	t.Parallel()
 
 	for _, fx := range ev030ChangeKindFixtures {
-		fx := fx
 		t.Run(fx.kind.String(), func(t *testing.T) {
 			t.Parallel()
 
@@ -169,7 +165,6 @@ func TestEV030_AdditiveChangesAreNonBreaking(t *testing.T) {
 	}
 
 	for _, k := range additiveKinds {
-		k := k
 		t.Run(k.String(), func(t *testing.T) {
 			t.Parallel()
 
@@ -195,7 +190,6 @@ func TestEV030_BreakingChangesRequireMigrationRelease(t *testing.T) {
 	}
 
 	for _, k := range breakingKinds {
-		k := k
 		t.Run(k.String(), func(t *testing.T) {
 			t.Parallel()
 

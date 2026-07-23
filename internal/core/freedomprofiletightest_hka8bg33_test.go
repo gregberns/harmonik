@@ -166,7 +166,6 @@ func TestIntersectFreedomProfiles_ModelTierLessCapableWins(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			a := FreedomProfile{Name: "a", ToolWhitelist: []string{}, WritablePaths: []string{}, ModelTier: strPtr(tt.tierA), MaxIterations: 5}

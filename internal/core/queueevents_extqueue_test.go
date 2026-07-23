@@ -705,7 +705,6 @@ func TestQueueEventsCohortRegistered(t *testing.T) {
 	}
 
 	for _, entry := range cohort {
-		entry := entry
 		t.Run(entry.typeName, func(t *testing.T) {
 			t.Parallel()
 

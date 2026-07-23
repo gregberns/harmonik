@@ -31,7 +31,6 @@ func TestEV029_AllRegisteredTypesHaveSchemaVersion(t *testing.T) {
 	}
 
 	for typeName, version := range versions {
-		typeName, version := typeName, version
 		t.Run(typeName, func(t *testing.T) {
 			t.Parallel()
 			if version < 1 {
@@ -67,7 +66,6 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 
 	// Every registered type must have a compat entry.
 	for typeName := range registered {
-		typeName := typeName
 		t.Run("registered/"+typeName, func(t *testing.T) {
 			t.Parallel()
 			if _, ok := declaredByName[typeName]; !ok {
@@ -79,7 +77,6 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 
 	// Every declared compat entry must correspond to a registered type.
 	for _, e := range declared {
-		e := e
 		t.Run("declared/"+e.TypeName, func(t *testing.T) {
 			t.Parallel()
 			if !registeredNames[e.TypeName] {
@@ -99,7 +96,7 @@ func TestEV029_InitialVersionIsOne(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		e := e
+
 		if e.PreviousVersion != 0 {
 			continue // not an initial-version entry; handled by TestEV029_NMinus1WindowHolds
 		}
@@ -132,7 +129,7 @@ func TestEV029_NMinus1WindowHolds(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		e := e
+
 		if e.PreviousVersion == 0 {
 			continue // initial version; vacuously satisfied, handled above
 		}
@@ -157,7 +154,6 @@ func TestEV029_AdditiveOnlyImpliesCompatWindowHolds(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		e := e
 		t.Run(e.TypeName, func(t *testing.T) {
 			t.Parallel()
 			if e.AdditiveOnly && !e.CompatWindowHolds {
@@ -178,7 +174,6 @@ func TestEV029_CompatEntryVersionsMatchRegistry(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		e := e
 		t.Run(e.TypeName, func(t *testing.T) {
 			t.Parallel()
 			registryVersion, ok := LookupTypeSchemaVersion(e.TypeName)
@@ -207,7 +202,6 @@ func TestEV029_NoDuplicateCompatEntries(t *testing.T) {
 		seen[e.TypeName]++
 	}
 	for typeName, count := range seen {
-		typeName, count := typeName, count
 		t.Run(typeName, func(t *testing.T) {
 			t.Parallel()
 			if count > 1 {
@@ -224,7 +218,6 @@ func TestEV029_CurrentVersionNeverLessThanOne(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		e := e
 		t.Run(e.TypeName, func(t *testing.T) {
 			t.Parallel()
 			if e.CurrentVersion < 1 {
@@ -241,7 +234,7 @@ func TestEV029_PreviousVersionLessThanCurrent(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		e := e
+
 		if e.PreviousVersion == 0 {
 			continue
 		}
@@ -274,7 +267,6 @@ func TestEV029_LookupPayloadCompatEntryRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		e := e
 		t.Run(e.TypeName, func(t *testing.T) {
 			t.Parallel()
 			got, ok := LookupPayloadCompatEntry(e.TypeName)

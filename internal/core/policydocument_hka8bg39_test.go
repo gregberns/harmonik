@@ -16,7 +16,6 @@ func TestValidateSchemaVersion_Positive(t *testing.T) {
 	t.Parallel()
 
 	for _, sv := range []int{1, 2, 10, 100} {
-		sv := sv
 		t.Run("schema_version_"+itoa(sv), func(t *testing.T) {
 			t.Parallel()
 
@@ -121,7 +120,6 @@ func TestPolicyDocumentAcceptsSchemaVersion_FutureAccepted(t *testing.T) {
 
 	const readerVersion = 2
 	for _, futureVersion := range []int{readerVersion + 1, readerVersion + 2, readerVersion + 10} {
-		futureVersion := futureVersion
 		t.Run("future_"+itoa(futureVersion), func(t *testing.T) {
 			t.Parallel()
 

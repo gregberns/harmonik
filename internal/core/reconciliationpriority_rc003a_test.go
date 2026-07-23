@@ -142,7 +142,6 @@ func TestRC003a_InfrastructureBeatsEverything(t *testing.T) {
 	}
 
 	for _, other := range others {
-		other := other
 		t.Run(string(other), func(t *testing.T) {
 			t.Parallel()
 			if !rc73PriorityFixtureHigherThan(cat0, other) {
@@ -174,9 +173,7 @@ func TestRC003a_IntegrityBeatsStoreDivergence(t *testing.T) {
 	}
 
 	for _, integ := range integrityCategories {
-		integ := integ
 		for _, store := range storeDivergenceCategories {
-			store := store
 			t.Run(string(integ)+"-vs-"+string(store), func(t *testing.T) {
 				t.Parallel()
 				if !rc73PriorityFixtureHigherThan(integ, store) {
@@ -261,7 +258,6 @@ func TestRC003a_IdempotentRerunIsLowestPriority(t *testing.T) {
 	}
 
 	for _, other := range others {
-		other := other
 		t.Run(string(other), func(t *testing.T) {
 			t.Parallel()
 			if !rc73PriorityFixtureHigherThan(other, cat1) {
@@ -290,7 +286,6 @@ func TestRC003a_CleanRestartBeatsSubcategoryStoreDivergence(t *testing.T) {
 	}
 
 	for _, cat := range storeCats {
-		cat := cat
 		t.Run(string(cat), func(t *testing.T) {
 			t.Parallel()
 			if !rc73PriorityFixtureHigherThan(cat5, cat) {
@@ -316,7 +311,6 @@ func TestRC003a_SpecificCat3SubcasesBeforeGenericCat3(t *testing.T) {
 	}
 
 	for _, sub := range subcases {
-		sub := sub
 		t.Run(string(sub), func(t *testing.T) {
 			t.Parallel()
 			if !rc73PriorityFixtureHigherThan(sub, ReconciliationCategoryCat3) {

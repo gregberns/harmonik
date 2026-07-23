@@ -124,7 +124,6 @@ func TestNodeRoleUnmarshalText(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var w wrapper
@@ -153,7 +152,6 @@ func TestDefaultIdempotencyClassForNodeRole_IdempotentRoles(t *testing.T) {
 	t.Parallel()
 
 	for _, role := range idemDefaultFixtureIdempotentRoles() {
-		role := role
 		t.Run(string(role), func(t *testing.T) {
 			t.Parallel()
 			got, ok := DefaultIdempotencyClassForNodeRole(role)
@@ -175,7 +173,6 @@ func TestDefaultIdempotencyClassForNodeRole_NonIdempotentRoles(t *testing.T) {
 	t.Parallel()
 
 	for _, role := range idemDefaultFixtureNonIdempotentRoles() {
-		role := role
 		t.Run(string(role), func(t *testing.T) {
 			t.Parallel()
 			got, ok := DefaultIdempotencyClassForNodeRole(role)
@@ -206,7 +203,6 @@ func TestDefaultIdempotencyClassForNodeRole_UnknownRole(t *testing.T) {
 	}
 
 	for _, role := range unknowns {
-		role := role
 		t.Run(string(role), func(t *testing.T) {
 			t.Parallel()
 			_, ok := DefaultIdempotencyClassForNodeRole(role)

@@ -295,7 +295,6 @@ func TestHQWN52_EV035_SecretPrefixReMatchesSecretNames(t *testing.T) {
 	}
 
 	for _, name := range shouldMatch {
-		name := name
 		t.Run("match_"+name, func(t *testing.T) {
 			t.Parallel()
 			if !secretPrefixRe.MatchString(name) {
@@ -305,7 +304,6 @@ func TestHQWN52_EV035_SecretPrefixReMatchesSecretNames(t *testing.T) {
 	}
 
 	for _, name := range shouldNotMatch {
-		name := name
 		t.Run("no_match_"+name, func(t *testing.T) {
 			t.Parallel()
 			if secretPrefixRe.MatchString(name) {

@@ -56,7 +56,6 @@ func TestCodexBillingGuardPayload_Valid(t *testing.T) {
 		{"denied is valid", func(p *CodexBillingGuardPayload) { p.Outcome = CodexBillingGuardDenied }, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			p := base

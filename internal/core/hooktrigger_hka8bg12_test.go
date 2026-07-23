@@ -249,8 +249,6 @@ func TestCP013_BaselineTriggerAccepted(t *testing.T) {
 	}
 
 	for i, trigger := range baseline {
-		trigger := trigger
-		i := i
 		t.Run(trigger, func(t *testing.T) {
 			t.Parallel()
 

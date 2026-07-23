@@ -721,7 +721,6 @@ func TestTwoPassReg_CP003_UnclassifiedEvaluatorRejected(t *testing.T) {
 	}
 
 	for _, mode := range unclassifiedModes {
-		mode := mode
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 
@@ -802,7 +801,6 @@ func TestTwoPassReg_CP003_MechanismAndCognitionBothAccepted(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

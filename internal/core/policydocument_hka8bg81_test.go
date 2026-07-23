@@ -159,7 +159,6 @@ func TestPolicyDocumentValidateSections_MissingSection(t *testing.T) {
 	t.Parallel()
 
 	for _, section := range requiredSections {
-		section := section
 		t.Run("missing_"+section, func(t *testing.T) {
 			t.Parallel()
 
@@ -327,7 +326,6 @@ func TestPolicyDocumentNMinusOneReadability(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

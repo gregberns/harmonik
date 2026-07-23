@@ -53,7 +53,6 @@ func TestAuditViolationKind_ValidAcceptsDeclared(t *testing.T) {
 	t.Parallel()
 
 	for _, k := range auditDetectFixtureAllKinds() {
-		k := k
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
 			if !k.Valid() {
@@ -82,7 +81,6 @@ func TestAuditViolationKind_ValidRejectsUnknown(t *testing.T) {
 		"violation",
 	}
 	for _, k := range invalid {
-		k := k
 		t.Run(string(k)+"_rejected", func(t *testing.T) {
 			t.Parallel()
 			if k.Valid() {
@@ -118,7 +116,6 @@ func TestAuditViolationKind_MarshalTextAcceptsDeclared(t *testing.T) {
 		AuditViolationKindRunIDPathMismatch:     "run-id-path-mismatch",
 	}
 	for k, wantStr := range want {
-		k, wantStr := k, wantStr
 		t.Run(wantStr, func(t *testing.T) {
 			t.Parallel()
 			got, err := k.MarshalText()
@@ -155,7 +152,6 @@ func TestAuditViolationKind_UnmarshalTextRoundTrip(t *testing.T) {
 	}
 
 	for _, k := range auditDetectFixtureAllKinds() {
-		k := k
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
 			data, err := json.Marshal(wrapper{Kind: k})
@@ -222,7 +218,6 @@ func TestAuditViolation_ValidHappyPath(t *testing.T) {
 	t.Parallel()
 
 	for _, k := range auditDetectFixtureAllKinds() {
-		k := k
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
 			av := auditDetectFixtureViolation(t, k)
@@ -318,7 +313,6 @@ func TestAuditViolation_KindsMapToConditions(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.want, func(t *testing.T) {
 			t.Parallel()
 			if string(tc.kind) != tc.want {

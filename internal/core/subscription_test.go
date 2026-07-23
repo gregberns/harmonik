@@ -49,7 +49,6 @@ func TestSubscriptionValid_AllConsumerClasses(t *testing.T) {
 	t.Parallel()
 
 	for _, cls := range []ConsumerClass{ConsumerClassSynchronous, ConsumerClassAsynchronous, ConsumerClassObserver} {
-		cls := cls
 		t.Run(string(cls), func(t *testing.T) {
 			t.Parallel()
 			s := subscriptionMinimal(t)
@@ -65,7 +64,6 @@ func TestSubscriptionValid_AllOnPanicPolicies(t *testing.T) {
 	t.Parallel()
 
 	for _, policy := range []OnPanic{OnPanicRecoverAndLog, OnPanicQuarantineConsumer, OnPanicFailDaemon} {
-		policy := policy
 		t.Run(string(policy), func(t *testing.T) {
 			t.Parallel()
 			s := subscriptionMinimal(t)

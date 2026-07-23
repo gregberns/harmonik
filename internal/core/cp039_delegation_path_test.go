@@ -317,7 +317,6 @@ func TestCP039_CognitionGate_PartialPath_FailsRegistration(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -400,7 +399,6 @@ func TestCP039_CognitionHook_PartialPath_FailsRegistration(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -452,7 +450,6 @@ func TestCP039_DelegationPath_FieldsReadable_AfterRegistration(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

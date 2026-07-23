@@ -244,7 +244,6 @@ func TestRC006_WorkflowClassIsOnlyReconciliationAtMVH(t *testing.T) {
 	}
 
 	for _, cls := range futureClasses {
-		cls := cls
 		t.Run(string(cls), func(t *testing.T) {
 			t.Parallel()
 			if cls.Valid() {

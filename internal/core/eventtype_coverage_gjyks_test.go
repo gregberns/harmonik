@@ -240,7 +240,6 @@ func TestAllEventTypeConstantsHaveRegistryEntries(t *testing.T) {
 	}
 
 	for _, entry := range allEventTypeCohort {
-		entry := entry // capture loop variable
 		t.Run(string(entry.et), func(t *testing.T) {
 			t.Parallel()
 

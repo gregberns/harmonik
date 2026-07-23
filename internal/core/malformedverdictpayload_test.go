@@ -40,7 +40,6 @@ func TestMalformedVerdictPayloadValid_AllMalformationReasons(t *testing.T) {
 		MalformationReasonVerdictAfterTerminal,
 	}
 	for _, r := range reasons {
-		r := r
 		t.Run(string(r), func(t *testing.T) {
 			t.Parallel()
 			m := malformedVerdictPayloadFixture(t)

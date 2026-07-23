@@ -172,7 +172,6 @@ func TestTightestBudget_AllThreeResources(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.resource), func(t *testing.T) {
 			t.Parallel()
 

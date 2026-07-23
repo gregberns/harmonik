@@ -18,7 +18,6 @@ func TestVerdictValid(t *testing.T) {
 		VerdictEscalateToHuman,
 	}
 	for _, v := range valid {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 			if !v.Valid() {
@@ -37,7 +36,6 @@ func TestVerdictValid(t *testing.T) {
 		"reset",
 	}
 	for _, v := range invalid {
-		v := v
 		t.Run("invalid/"+string(v), func(t *testing.T) {
 			t.Parallel()
 			if v.Valid() {
@@ -63,7 +61,6 @@ func TestVerdictMarshalText(t *testing.T) {
 		{VerdictEscalateToHuman, "escalate-to-human"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.want, func(t *testing.T) {
 			t.Parallel()
 			got, err := tc.verdict.MarshalText()
@@ -155,7 +152,6 @@ func TestVerdictUnmarshalText(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var w verdictWrapper

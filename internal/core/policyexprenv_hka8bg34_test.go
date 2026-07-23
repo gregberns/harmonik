@@ -150,7 +150,6 @@ func TestPolicyExprEnv_GateEnv_BindingNames(t *testing.T) {
 	evaluator := NewPolicyExprEvaluator(DefaultPolicyExprEvaluatorConfig())
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			prog, _, err := evaluator.Compile(tc.expr, env)
@@ -213,7 +212,6 @@ func TestPolicyExprEnv_HookEnv_EventBinding(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			prog, _, err := evaluator.Compile(tc.expr, env)
@@ -280,7 +278,6 @@ func TestPolicyExprEnv_GuardEnv_EdgesBinding(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			prog, _, err := evaluator.Compile(tc.expr, env)

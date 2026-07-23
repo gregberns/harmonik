@@ -56,8 +56,5 @@ type ImplementerPhaseCompletePayload struct {
 
 // Valid reports whether p is a well-formed ImplementerPhaseCompletePayload.
 func (p ImplementerPhaseCompletePayload) Valid() bool {
-	if uuid.UUID(p.RunID) == uuid.Nil {
-		return false
-	}
-	return true
+	return uuid.UUID(p.RunID) != uuid.Nil
 }

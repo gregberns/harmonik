@@ -80,7 +80,6 @@ func TestWorkspaceObservationValid_AllGitInProgressOps(t *testing.T) {
 		GitInProgressOpBisect,
 	}
 	for _, op := range ops {
-		op := op
 		t.Run(string(op), func(t *testing.T) {
 			t.Parallel()
 			w := workspaceObsFixture(t)

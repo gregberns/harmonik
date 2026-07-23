@@ -200,7 +200,6 @@ func TestRC005_S01DOTFilesExist(t *testing.T) {
 	t.Parallel()
 
 	for _, filename := range rc63oh9FixtureS01DOTFiles {
-		filename := filename
 		t.Run(filename, func(t *testing.T) {
 			t.Parallel()
 			// rc63oh9FixtureReadDOT fails the test if the file is missing.
@@ -224,7 +223,6 @@ func TestRC005_S01DOTFilesCarryNoDetectorNodes(t *testing.T) {
 	t.Parallel()
 
 	for _, filename := range rc63oh9FixtureS01DOTFiles {
-		filename := filename
 		t.Run(filename, func(t *testing.T) {
 			t.Parallel()
 			content := rc63oh9FixtureReadDOT(t, filename)
@@ -253,7 +251,6 @@ func TestRC005_S01DOTFilesCarryNoVerdictExecutionNodes(t *testing.T) {
 	t.Parallel()
 
 	for _, filename := range rc63oh9FixtureS01DOTFiles {
-		filename := filename
 		t.Run(filename, func(t *testing.T) {
 			t.Parallel()
 			content := rc63oh9FixtureReadDOT(t, filename)
@@ -303,7 +300,6 @@ func TestRC005_PermittedNodeRolesAreInvestigatorReasoningOnly(t *testing.T) {
 	}
 
 	for _, role := range rc63oh9FixturePermittedNodeRoles {
-		role := role
 		t.Run(role, func(t *testing.T) {
 			t.Parallel()
 
@@ -334,7 +330,6 @@ func TestRC005_S01DOTFilesContainOnlyPermittedRoles(t *testing.T) {
 	t.Parallel()
 
 	for _, filename := range rc63oh9FixtureS01DOTFiles {
-		filename := filename
 		t.Run(filename, func(t *testing.T) {
 			t.Parallel()
 			content := rc63oh9FixtureReadDOT(t, filename)
@@ -399,7 +394,6 @@ func TestRC005_WorkflowClassTagIsTheSoleReconciliationDiscriminatorInDOT(t *test
 	t.Parallel()
 
 	for _, filename := range rc63oh9FixtureS01DOTFiles {
-		filename := filename
 		t.Run(filename, func(t *testing.T) {
 			t.Parallel()
 			content := rc63oh9FixtureReadDOT(t, filename)

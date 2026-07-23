@@ -117,7 +117,7 @@ func (e *PolicyExprEvaluator) Compile(expression string, env any) (*vm.Program, 
 	if err != nil {
 		// Check if the error is from the MaxNodes ceiling.
 		if isMaxNodesError(err) {
-			return nil, BoundFiredASTSteps, fmt.Errorf("%w: %v", ErrCostCeiling, err)
+			return nil, BoundFiredASTSteps, fmt.Errorf("%w: %w", ErrCostCeiling, err)
 		}
 		return nil, "", err
 	}
@@ -203,7 +203,7 @@ func isMaxNodesError(err error) bool {
 
 // contains reports whether s contains substr (avoids strings import).
 func contains(s, substr string) bool {
-	if len(substr) == 0 {
+	if substr == "" {
 		return true
 	}
 	if len(s) < len(substr) {

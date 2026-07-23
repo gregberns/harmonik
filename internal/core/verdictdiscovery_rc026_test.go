@@ -49,7 +49,6 @@ func TestVerdictDiscoveryState_ThreeValuesAreDeclared(t *testing.T) {
 	}
 
 	for _, tc := range states {
-		tc := tc
 		t.Run(tc.str, func(t *testing.T) {
 			t.Parallel()
 
@@ -77,7 +76,6 @@ func TestVerdictDiscoveryState_UnknownIsInvalid(t *testing.T) {
 	}
 
 	for _, s := range unknown {
-		s := s
 		t.Run(string(s), func(t *testing.T) {
 			t.Parallel()
 
@@ -237,7 +235,6 @@ func TestDiscoverVerdictExecution_AllThreeStatesReturnValidCategory(t *testing.T
 	}
 
 	for _, e := range cases {
-		e := e
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 
@@ -402,7 +399,6 @@ func TestReconciliationClassificationGate_EmptyFieldsAreInvalid(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

@@ -368,7 +368,6 @@ func TestRC027_ApplyVetoPromotionResultsAreValidVerdicts(t *testing.T) {
 	t.Parallel()
 
 	for _, p := range []VetoPromotion{VetoPromotionNone, VetoPromotionEscalateToHuman} {
-		p := p
 		t.Run(string(p), func(t *testing.T) {
 			t.Parallel()
 

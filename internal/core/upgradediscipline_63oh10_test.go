@@ -114,7 +114,6 @@ func TestRC006_CoShipObligationsHaveSpecRefs(t *testing.T) {
 	t.Parallel()
 
 	for _, ob := range upgradeDisciplineFixtureCoShipObligations {
-		ob := ob
 		t.Run(ob.Component, func(t *testing.T) {
 			t.Parallel()
 

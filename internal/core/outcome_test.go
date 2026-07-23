@@ -109,7 +109,6 @@ func TestOutcomeValid_AllStatusValues(t *testing.T) {
 		OutcomeStatusPartialSuccess,
 	}
 	for _, s := range statuses {
-		s := s
 		t.Run(string(s), func(t *testing.T) {
 			t.Parallel()
 			o := outcomeValid(t)
@@ -322,7 +321,6 @@ func TestOutcomeValid_FailureClassPresentOnFail(t *testing.T) {
 		FailureClassCompilationLoop,
 	}
 	for _, fc := range classes {
-		fc := fc
 		t.Run(string(fc), func(t *testing.T) {
 			t.Parallel()
 			o := outcomeValid(t)

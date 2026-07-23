@@ -369,6 +369,29 @@ workersbootwire-freeze-gate:  ## P2 E4c: forbid new worker-registry boot-wiring 
 runloop-emitter-gate:  ## P2 E5 RT16: forbid bypassing EmitterPort with a raw bus-field read in internal/daemon
 	scripts/runloop-emitter-gate.sh
 
+# vet-tagged: typecheck the files that `go vet ./...` cannot see (hk-i1m20).
+# Static analyzers and the default build compile ONLY the untagged build, so a
+# call site behind a `//go:build <tag>` line emits zero signal when it breaks —
+# and an analyzer claim like unparam's "parameter X always receives value V" is
+# scoped to the build it analyzed, not to the repo. A real arity-increase break
+# in cmd/harmonik behind `//go:build scenario` survived two weeks undetected,
+# with five live assertions dead the whole time.
+#
+# ONE invocation, not a loop: build tags are ADDITIVE, so a single combined vet
+# compiles the union of all tagged files in ~4.6s cold / ~1.1s warm, where the
+# same tags as separate invocations cost ~25s for identical coverage.
+# `go vet` typechecks _test.go files but runs nothing, which is all this needs.
+#
+# Tag set = every tag with real files in the repo, minus `ignore` (deliberately
+# uncompiled) and the GOOS constraints (darwin/linux/windows), which are chosen
+# by the toolchain rather than by -tags. Add a tag here whenever one is
+# introduced, or its files go back to being invisible.
+TAGGED_BUILD_TAGS := specaudit,scenario,integration,e2e_real_claude,subprocess,crash
+
+.PHONY: vet-tagged
+vet-tagged:  ## hk-i1m20: typecheck every build-tagged file (invisible to plain `go vet ./...`)
+	go vet -tags=$(TAGGED_BUILD_TAGS) ./internal/... ./cmd/... ./test/...
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -540,6 +563,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...
+	$(MAKE) vet-tagged
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=HEAD~1
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
@@ -572,6 +596,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...
+	$(MAKE) vet-tagged
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=origin/main
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh

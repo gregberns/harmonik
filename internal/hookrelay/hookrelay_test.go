@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -31,8 +32,19 @@ func hookRelayFixtureEnv(workspacePath string) hookrelay.Env {
 	}
 }
 
+// hookRelayFixtureJSON marshals v, failing the test if it cannot be encoded.
+func hookRelayFixtureJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("hookRelayFixtureJSON: marshal %T: %v", v, err)
+	}
+	return b
+}
+
 // hookRelayFixtureStdin builds a JSON stdin payload for tests.
-func hookRelayFixtureStdin(sessionID, hookEventName string, extra map[string]interface{}) *bytes.Reader {
+func hookRelayFixtureStdin(t *testing.T, sessionID, hookEventName string, extra map[string]interface{}) *bytes.Reader {
+	t.Helper()
 	m := map[string]interface{}{
 		"session_id":      sessionID,
 		"hook_event_name": hookEventName,
@@ -43,11 +55,38 @@ func hookRelayFixtureStdin(sessionID, hookEventName string, extra map[string]int
 	for k, v := range extra {
 		m[k] = v
 	}
-	b, err := json.Marshal(m)
-	if err != nil {
-		panic(fmt.Sprintf("hookRelayFixtureStdin: marshal: %v", err))
+	return bytes.NewReader(hookRelayFixtureJSON(t, m))
+}
+
+// hookRelayFixtureEnvelope decodes a message the relay wrote to the fixture
+// socket into its envelope map and its decoded payload object.
+func hookRelayFixtureEnvelope(t *testing.T, what string, msgBytes []byte) (envelope map[string]json.RawMessage, payload map[string]interface{}) {
+	t.Helper()
+	if err := json.Unmarshal(msgBytes, &envelope); err != nil {
+		t.Fatalf("%s: unmarshal envelope %q: %v", what, msgBytes, err)
 	}
-	return bytes.NewReader(b)
+	raw, ok := envelope["payload"]
+	if !ok {
+		t.Fatalf("%s: envelope has no payload field: %q", what, msgBytes)
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("%s: unmarshal payload %q: %v", what, raw, err)
+	}
+	return envelope, payload
+}
+
+// hookRelayFixtureString decodes a string-valued envelope field.
+func hookRelayFixtureString(t *testing.T, what string, envelope map[string]json.RawMessage, field string) string {
+	t.Helper()
+	raw, ok := envelope[field]
+	if !ok {
+		t.Fatalf("%s: envelope has no %s field", what, field)
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatalf("%s: unmarshal %s field %q: %v", what, field, raw, err)
+	}
+	return s
 }
 
 // hookRelayFixtureShortSockDir creates a short-path temp dir suitable for Unix
@@ -58,8 +97,80 @@ func hookRelayFixtureShortSockDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("hookRelayFixtureShortSockDir: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("hookRelayFixtureShortSockDir: remove %s: %v", dir, err)
+		}
+	})
 	return dir
+}
+
+// hookRelayFixtureExchange reads one NDJSON line from conn, publishes a copy of
+// it on ch, and writes ackJSON back. The scan buffer is raised to the relay's
+// own 1 MiB NDJSON line limit (CHB-015): bufio's 64 KiB default would silently
+// drop any larger message and leave the test looking like a delivery failure.
+func hookRelayFixtureExchange(conn net.Conn, ackJSON string, ch chan<- []byte) error {
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	if scanner.Scan() {
+		// scanner.Bytes() aliases the scanner's own buffer, which is only valid
+		// until the next Scan. Hand the reader an independent copy.
+		select {
+		case ch <- bytes.Clone(scanner.Bytes()):
+		default:
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read request line: %w", err)
+	}
+	if _, err := fmt.Fprintln(conn, ackJSON); err != nil {
+		return fmt.Errorf("write ack %q: %w", ackJSON, err)
+	}
+	return nil
+}
+
+// hookRelayFixtureServe accepts up to len(ackSequence) connections and answers
+// each with the corresponding ACK. Accept failing with net.ErrClosed is the
+// listener being closed at teardown — the normal end of the loop; any other
+// Accept failure is reported.
+func hookRelayFixtureServe(ln net.Listener, ackSequence []string, ch chan<- []byte) error {
+	errs := make([]error, 0, 2*len(ackSequence))
+	for _, ack := range ackSequence {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			if !errors.Is(acceptErr, net.ErrClosed) {
+				errs = append(errs, fmt.Errorf("accept: %w", acceptErr))
+			}
+			break
+		}
+		errs = append(errs, hookRelayFixtureExchange(conn, ack, ch), conn.Close())
+	}
+	return errors.Join(errs...)
+}
+
+// hookRelayFixtureWatch runs serve on a background goroutine and reports the
+// errors it observed through t at teardown. Discarding them would hide a broken
+// fixture behind an unrelated "no message received on socket" failure. The
+// listener is closed first so a parked Accept unwinds; a server still blocked
+// after that grace window is one the test deliberately never dialled.
+func hookRelayFixtureWatch(t *testing.T, what string, ln net.Listener, serve func() error) {
+	t.Helper()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- serve() }()
+
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("%s: close listener: %v", what, err)
+		}
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Errorf("%s: fixture server: %v", what, err)
+			}
+		case <-time.After(2 * time.Second):
+		}
+	})
 }
 
 // hookRelayFixtureListenAndRespond starts a fake Unix domain socket listener
@@ -67,32 +178,7 @@ func hookRelayFixtureShortSockDir(t *testing.T) string {
 // Returns the socket path and a channel that receives the received message bytes.
 func hookRelayFixtureListenAndRespond(t *testing.T, ackJSON string) (socketPath string, received <-chan []byte) {
 	t.Helper()
-
-	dir := hookRelayFixtureShortSockDir(t)
-	sockPath := filepath.Join(dir, "d.sock")
-
-	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
-	if err != nil {
-		t.Fatalf("hookRelayFixtureListenAndRespond: listen: %v", err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-
-	ch := make(chan []byte, 1)
-	go func() {
-		conn, acceptErr := ln.Accept()
-		if acceptErr != nil {
-			return
-		}
-		defer func() { _ = conn.Close() }()
-
-		scanner := bufio.NewScanner(conn)
-		if scanner.Scan() {
-			ch <- scanner.Bytes()
-		}
-		_, _ = fmt.Fprintln(conn, ackJSON)
-	}()
-
-	return sockPath, ch
+	return hookRelayFixtureListenSequence(t, []string{ackJSON})
 }
 
 // hookRelayFixtureListenSequence starts a listener that responds to multiple
@@ -107,26 +193,11 @@ func hookRelayFixtureListenSequence(t *testing.T, ackSequence []string) (socketP
 	if err != nil {
 		t.Fatalf("hookRelayFixtureListenSequence: listen: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
 
 	ch := make(chan []byte, 1)
-	go func() {
-		for _, ack := range ackSequence {
-			conn, acceptErr := ln.Accept()
-			if acceptErr != nil {
-				return
-			}
-			scanner := bufio.NewScanner(conn)
-			if scanner.Scan() {
-				select {
-				case ch <- scanner.Bytes():
-				default:
-				}
-			}
-			_, _ = fmt.Fprintln(conn, ack)
-			_ = conn.Close()
-		}
-	}()
+	hookRelayFixtureWatch(t, "hookRelayFixtureListenSequence", ln, func() error {
+		return hookRelayFixtureServe(ln, ackSequence, ch)
+	})
 
 	return sockPath, ch
 }
@@ -142,27 +213,28 @@ func hookRelayFixtureListenDelayed(t *testing.T, delay time.Duration, ackJSON st
 	sockPath := filepath.Join(dir, "d.sock")
 
 	ch := make(chan []byte, 1)
+	errCh := make(chan error, 1)
 	go func() {
 		time.Sleep(delay)
-		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", sockPath)
-		if err != nil {
+		// Not t.Context(): the listener is created after the test body has
+		// already started and must survive independently of it.
+		ln, listenErr := (&net.ListenConfig{}).Listen(context.Background(), "unix", sockPath)
+		if listenErr != nil {
+			errCh <- fmt.Errorf("delayed listen on %s: %w", sockPath, listenErr)
 			return
 		}
-		defer func() { _ = ln.Close() }() //nolint:errcheck // test listener cleanup; close error non-actionable
-		conn, acceptErr := ln.Accept()
-		if acceptErr != nil {
-			return
-		}
-		defer func() { _ = conn.Close() }() //nolint:errcheck // test conn cleanup; close error non-actionable
-		scanner := bufio.NewScanner(conn)
-		if scanner.Scan() {
-			select {
-			case ch <- scanner.Bytes():
-			default:
-			}
-		}
-		_, _ = fmt.Fprintln(conn, ackJSON) //nolint:errcheck // test ack write; error non-actionable
+		errCh <- errors.Join(hookRelayFixtureServe(ln, []string{ackJSON}, ch), ln.Close())
 	}()
+
+	t.Cleanup(func() {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Errorf("hookRelayFixtureListenDelayed: fixture server: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+		}
+	})
 
 	return sockPath, ch
 }
@@ -210,7 +282,7 @@ func TestHookRelay_SessionStart_SynthesizesAgentReady(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e := hookRelayFixtureEnv(t.TempDir())
 	e.DaemonSocket = sockPath
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionStart", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "SessionStart", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("SessionStart", stdin, &stderr, &e)
 	if code != 0 {
@@ -220,22 +292,11 @@ func TestHookRelay_SessionStart_SynthesizesAgentReady(t *testing.T) {
 	// The relay should have sent an agent_ready message to the socket.
 	select {
 	case msgBytes := <-received:
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(msgBytes, &msg); err != nil {
-			t.Fatalf("SessionStart: unmarshal sent message: %v", err)
-		}
-		var msgType string
-		if err := json.Unmarshal(msg["type"], &msgType); err != nil {
-			t.Fatalf("SessionStart: unmarshal type field: %v", err)
-		}
-		if msgType != "agent_ready" {
+		msg, payload := hookRelayFixtureEnvelope(t, "SessionStart", msgBytes)
+		if msgType := hookRelayFixtureString(t, "SessionStart", msg, "type"); msgType != "agent_ready" {
 			t.Errorf("SessionStart: message type = %q; want %q", msgType, "agent_ready")
 		}
 		// Verify payload carries provenance="claude_session_start".
-		var payload map[string]interface{}
-		if err := json.Unmarshal(msg["payload"], &payload); err != nil {
-			t.Fatalf("SessionStart: unmarshal payload: %v", err)
-		}
 		if payload["provenance"] != "claude_session_start" {
 			t.Errorf("SessionStart: payload.provenance = %v; want %q", payload["provenance"], "claude_session_start")
 		}
@@ -249,7 +310,7 @@ func TestHookRelay_SessionEnd_NoOp(t *testing.T) {
 
 	// CHB-013: SessionEnd is no-op at MVH.
 	e := hookRelayFixtureEnv(t.TempDir())
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionEnd", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "SessionEnd", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("SessionEnd", stdin, &stderr, &e)
 	if code != 0 {
@@ -262,7 +323,7 @@ func TestHookRelay_SessionIDMismatch(t *testing.T) {
 
 	// CHB-012: session_id mismatch → exit 1 with bridge_session_id_mismatch on stderr.
 	e := hookRelayFixtureEnv(t.TempDir())
-	stdin := hookRelayFixtureStdin("wrong-session-id", "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, "wrong-session-id", "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 1 {
@@ -279,7 +340,7 @@ func TestHookRelay_EventKindMismatch(t *testing.T) {
 	// CHB-012: hook_event_name mismatch → exit 1 with bridge_event_kind_mismatch on stderr.
 	e := hookRelayFixtureEnv(t.TempDir())
 	// stdin says "Stop" but argv says "Notification"
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Notification", stdin, &stderr, &e)
 	if code != 1 {
@@ -315,7 +376,7 @@ func TestHookRelay_Stop_WorkComplete(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", map[string]interface{}{
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", map[string]interface{}{
 		"message": "Final assistant summary text",
 	})
 	var stderr bytes.Buffer
@@ -324,17 +385,10 @@ func TestHookRelay_Stop_WorkComplete(t *testing.T) {
 		t.Fatalf("Stop work_complete: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	msgBytes := <-received
-	var msg map[string]interface{}
-	if err := json.Unmarshal(msgBytes, &msg); err != nil {
-		t.Fatalf("Stop work_complete: unmarshal received: %v", err)
+	env, pl := hookRelayFixtureEnvelope(t, "Stop work_complete", <-received)
+	if got := hookRelayFixtureString(t, "Stop work_complete", env, "type"); got != "outcome_emitted" {
+		t.Errorf("Stop work_complete: type=%v, want outcome_emitted", got)
 	}
-	if msg["type"] != "outcome_emitted" {
-		t.Errorf("Stop work_complete: type=%v, want outcome_emitted", msg["type"])
-	}
-	payload, _ := json.Marshal(msg["payload"])
-	var pl map[string]interface{}
-	_ = json.Unmarshal(payload, &pl)
 	if pl["kind"] != "WORK_COMPLETE" {
 		t.Errorf("Stop work_complete: payload.kind=%v, want WORK_COMPLETE", pl["kind"])
 	}
@@ -361,27 +415,24 @@ func TestHookRelay_Stop_ReviewerVerdictPresent(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 0 {
 		t.Fatalf("Stop reviewer verdict: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	msgBytes := <-received
-	var msg map[string]interface{}
-	_ = json.Unmarshal(msgBytes, &msg)
-
-	if msg["type"] != "outcome_emitted" {
-		t.Errorf("reviewer verdict: type=%v, want outcome_emitted", msg["type"])
+	env, pl := hookRelayFixtureEnvelope(t, "reviewer verdict", <-received)
+	if got := hookRelayFixtureString(t, "reviewer verdict", env, "type"); got != "outcome_emitted" {
+		t.Errorf("reviewer verdict: type=%v, want outcome_emitted", got)
 	}
-	payload, _ := json.Marshal(msg["payload"])
-	var pl map[string]interface{}
-	_ = json.Unmarshal(payload, &pl)
 	if pl["kind"] != "REVIEWER_VERDICT" {
 		t.Errorf("reviewer verdict: payload.kind=%v, want REVIEWER_VERDICT", pl["kind"])
 	}
-	verdict, _ := pl["verdict"].(map[string]interface{})
+	verdict, ok := pl["verdict"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("reviewer verdict: payload.verdict is %T, want an object; payload=%v", pl["verdict"], pl)
+	}
 	if verdict["verdict"] != "APPROVE" {
 		t.Errorf("reviewer verdict: verdict.verdict=%v, want APPROVE", verdict["verdict"])
 	}
@@ -396,19 +447,14 @@ func TestHookRelay_Stop_ReviewerVerdictAbsent(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 0 {
 		t.Fatalf("reviewer verdict absent: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	msgBytes := <-received
-	var msg map[string]interface{}
-	_ = json.Unmarshal(msgBytes, &msg)
-	payload, _ := json.Marshal(msg["payload"])
-	var pl map[string]interface{}
-	_ = json.Unmarshal(payload, &pl)
+	_, pl := hookRelayFixtureEnvelope(t, "reviewer verdict absent", <-received)
 	if pl["error"] != "missing_review_file" {
 		t.Errorf("reviewer verdict absent: payload.error=%v, want missing_review_file", pl["error"])
 	}
@@ -434,19 +480,14 @@ func TestHookRelay_Stop_ReviewerVerdictMalformed(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 0 {
 		t.Fatalf("reviewer verdict malformed: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	msgBytes := <-received
-	var msg map[string]interface{}
-	_ = json.Unmarshal(msgBytes, &msg)
-	payload, _ := json.Marshal(msg["payload"])
-	var pl map[string]interface{}
-	_ = json.Unmarshal(payload, &pl)
+	_, pl := hookRelayFixtureEnvelope(t, "reviewer verdict malformed", <-received)
 	if pl["error"] != "malformed_review_file" {
 		t.Errorf("reviewer verdict malformed: payload.error=%v, want malformed_review_file", pl["error"])
 	}
@@ -460,7 +501,7 @@ func TestHookRelay_StopFailure_RateLimit(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "StopFailure", map[string]interface{}{
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "StopFailure", map[string]interface{}{
 		"error_type": "rate_limit",
 	})
 	var stderr bytes.Buffer
@@ -469,15 +510,10 @@ func TestHookRelay_StopFailure_RateLimit(t *testing.T) {
 		t.Fatalf("StopFailure rate_limit: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	msgBytes := <-received
-	var msg map[string]interface{}
-	_ = json.Unmarshal(msgBytes, &msg)
-	if msg["type"] != "agent_rate_limited" {
-		t.Errorf("StopFailure rate_limit: type=%v, want agent_rate_limited", msg["type"])
+	env, pl := hookRelayFixtureEnvelope(t, "StopFailure rate_limit", <-received)
+	if got := hookRelayFixtureString(t, "StopFailure rate_limit", env, "type"); got != "agent_rate_limited" {
+		t.Errorf("StopFailure rate_limit: type=%v, want agent_rate_limited", got)
 	}
-	payload, _ := json.Marshal(msg["payload"])
-	var pl map[string]interface{}
-	_ = json.Unmarshal(payload, &pl)
 	if pl["retry_after_seconds"] != float64(60) {
 		t.Errorf("StopFailure rate_limit: retry_after_seconds=%v, want 60", pl["retry_after_seconds"])
 	}
@@ -491,7 +527,7 @@ func TestHookRelay_StopFailure_ServerError(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "StopFailure", map[string]interface{}{
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "StopFailure", map[string]interface{}{
 		"error_type": "server_error",
 	})
 	var stderr bytes.Buffer
@@ -500,15 +536,10 @@ func TestHookRelay_StopFailure_ServerError(t *testing.T) {
 		t.Fatalf("StopFailure server_error: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	msgBytes := <-received
-	var msg map[string]interface{}
-	_ = json.Unmarshal(msgBytes, &msg)
-	if msg["type"] != "outcome_emitted" {
-		t.Errorf("StopFailure server_error: type=%v, want outcome_emitted", msg["type"])
+	env, pl := hookRelayFixtureEnvelope(t, "StopFailure server_error", <-received)
+	if got := hookRelayFixtureString(t, "StopFailure server_error", env, "type"); got != "outcome_emitted" {
+		t.Errorf("StopFailure server_error: type=%v, want outcome_emitted", got)
 	}
-	payload, _ := json.Marshal(msg["payload"])
-	var pl map[string]interface{}
-	_ = json.Unmarshal(payload, &pl)
 	if pl["kind"] != "FAILURE_SIGNAL" {
 		t.Errorf("StopFailure server_error: kind=%v, want FAILURE_SIGNAL", pl["kind"])
 	}
@@ -528,7 +559,7 @@ func TestHookRelay_StopFailure_Structural(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "StopFailure", map[string]interface{}{
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "StopFailure", map[string]interface{}{
 		"error_type": "authentication_failed",
 	})
 	var stderr bytes.Buffer
@@ -537,12 +568,7 @@ func TestHookRelay_StopFailure_Structural(t *testing.T) {
 		t.Fatalf("StopFailure structural: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	msgBytes := <-received
-	var msg map[string]interface{}
-	_ = json.Unmarshal(msgBytes, &msg)
-	payload, _ := json.Marshal(msg["payload"])
-	var pl map[string]interface{}
-	_ = json.Unmarshal(payload, &pl)
+	_, pl := hookRelayFixtureEnvelope(t, "StopFailure structural", <-received)
 	if pl["suggested_class"] != "structural" {
 		t.Errorf("StopFailure structural: suggested_class=%v, want structural", pl["suggested_class"])
 	}
@@ -563,7 +589,7 @@ func TestHookRelay_Notification_WaitingInput(t *testing.T) {
 			sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 			e.DaemonSocket = sockPath
 
-			stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Notification", map[string]interface{}{
+			stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Notification", map[string]interface{}{
 				"notification_type": notifType,
 			})
 			var stderr bytes.Buffer
@@ -572,15 +598,11 @@ func TestHookRelay_Notification_WaitingInput(t *testing.T) {
 				t.Fatalf("Notification %s: exit %d, want 0; stderr=%q", notifType, code, stderr.String())
 			}
 
-			msgBytes := <-received
-			var msg map[string]interface{}
-			_ = json.Unmarshal(msgBytes, &msg)
-			if msg["type"] != "agent_heartbeat" {
-				t.Errorf("Notification %s: type=%v, want agent_heartbeat", notifType, msg["type"])
+			what := "Notification " + notifType
+			env, pl := hookRelayFixtureEnvelope(t, what, <-received)
+			if got := hookRelayFixtureString(t, what, env, "type"); got != "agent_heartbeat" {
+				t.Errorf("Notification %s: type=%v, want agent_heartbeat", notifType, got)
 			}
-			payload, _ := json.Marshal(msg["payload"])
-			var pl map[string]interface{}
-			_ = json.Unmarshal(payload, &pl)
 			if pl["phase"] != "waiting_input" {
 				t.Errorf("Notification %s: phase=%v, want waiting_input", notifType, pl["phase"])
 			}
@@ -596,7 +618,7 @@ func TestHookRelay_Notification_Reasoning(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Notification", map[string]interface{}{
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Notification", map[string]interface{}{
 		"notification_type": "some_other_notification",
 	})
 	var stderr bytes.Buffer
@@ -605,12 +627,7 @@ func TestHookRelay_Notification_Reasoning(t *testing.T) {
 		t.Fatalf("Notification reasoning: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	msgBytes := <-received
-	var msg map[string]interface{}
-	_ = json.Unmarshal(msgBytes, &msg)
-	payload, _ := json.Marshal(msg["payload"])
-	var pl map[string]interface{}
-	_ = json.Unmarshal(payload, &pl)
+	_, pl := hookRelayFixtureEnvelope(t, "Notification reasoning", <-received)
 	if pl["phase"] != "reasoning" {
 		t.Errorf("Notification reasoning: phase=%v, want reasoning", pl["phase"])
 	}
@@ -629,7 +646,7 @@ func TestHookRelay_DialFailed_NonSocketFatal(t *testing.T) {
 	}
 	e.DaemonSocket = notASocket
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 1 {
@@ -654,7 +671,7 @@ func TestHookRelay_DialRetry_SocketAppearsLate(t *testing.T) {
 	sockPath, _ := hookRelayFixtureListenDelayed(t, 250*time.Millisecond, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 0 {
@@ -678,7 +695,7 @@ func TestHookRelay_DaemonNotReady_RetryThenSuccess(t *testing.T) {
 	})
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 0 {
@@ -696,24 +713,22 @@ func TestHookRelay_EnvelopeFields(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
-	_ = hookrelay.Run("Stop", stdin, &stderr, &e)
-
-	msgBytes := <-received
-	var msg map[string]interface{}
-	if err := json.Unmarshal(msgBytes, &msg); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
+	if code := hookrelay.Run("Stop", stdin, &stderr, &e); code != 0 {
+		t.Fatalf("envelope: exit %d, want 0; stderr=%q", code, stderr.String())
 	}
+
+	msg, _ := hookRelayFixtureEnvelope(t, "envelope", <-received)
 
 	// CHB-015: envelope must carry run_id and claude_session_id.
-	if msg["run_id"] != e.RunID {
-		t.Errorf("envelope: run_id=%v, want %v", msg["run_id"], e.RunID)
-	}
-	if msg["claude_session_id"] != e.ClaudeSessionID {
-		t.Errorf("envelope: claude_session_id=%v, want %v", msg["claude_session_id"], e.ClaudeSessionID)
-	}
-	if msg["handler_session_id"] != e.HandlerSessionID {
-		t.Errorf("envelope: handler_session_id=%v, want %v", msg["handler_session_id"], e.HandlerSessionID)
+	for _, tc := range []struct{ field, want string }{
+		{"run_id", e.RunID},
+		{"claude_session_id", e.ClaudeSessionID},
+		{"handler_session_id", e.HandlerSessionID},
+	} {
+		if got := hookRelayFixtureString(t, "envelope", msg, tc.field); got != tc.want {
+			t.Errorf("envelope: %s=%v, want %v", tc.field, got, tc.want)
+		}
 	}
 }

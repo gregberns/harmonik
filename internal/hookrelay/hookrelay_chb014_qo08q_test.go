@@ -19,7 +19,6 @@ package hookrelay_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,7 +55,7 @@ func chb014RunStop(t *testing.T, workspaceDir string) map[string]interface{} {
 	e.Phase = "reviewer"
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 0 {
@@ -65,14 +64,7 @@ func chb014RunStop(t *testing.T, workspaceDir string) map[string]interface{} {
 
 	select {
 	case msgBytes := <-received:
-		var env map[string]json.RawMessage
-		if err := json.Unmarshal(msgBytes, &env); err != nil {
-			t.Fatalf("chb014RunStop: unmarshal envelope: %v", err)
-		}
-		var pl map[string]interface{}
-		if err := json.Unmarshal(env["payload"], &pl); err != nil {
-			t.Fatalf("chb014RunStop: unmarshal payload: %v", err)
-		}
+		_, pl := hookRelayFixtureEnvelope(t, "chb014RunStop", msgBytes)
 		return pl
 	default:
 		t.Fatal("chb014RunStop: no message received on socket")
@@ -131,7 +123,10 @@ func TestHookRelay_CHB014_RequestChangesVerdict(t *testing.T) {
 	if pl["kind"] != "REVIEWER_VERDICT" {
 		t.Errorf("CHB-014 REQUEST_CHANGES: kind=%v, want REVIEWER_VERDICT", pl["kind"])
 	}
-	verdict, _ := pl["verdict"].(map[string]interface{})
+	verdict, ok := pl["verdict"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("CHB-014 REQUEST_CHANGES: payload.verdict is %T, want an object; payload=%v", pl["verdict"], pl)
+	}
 	if verdict["verdict"] != "REQUEST_CHANGES" {
 		t.Errorf("CHB-014 REQUEST_CHANGES: verdict.verdict=%v, want REQUEST_CHANGES", verdict["verdict"])
 	}
@@ -149,7 +144,10 @@ func TestHookRelay_CHB014_BlockVerdict(t *testing.T) {
 	if pl["kind"] != "REVIEWER_VERDICT" {
 		t.Errorf("CHB-014 BLOCK: kind=%v, want REVIEWER_VERDICT", pl["kind"])
 	}
-	verdict, _ := pl["verdict"].(map[string]interface{})
+	verdict, ok := pl["verdict"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("CHB-014 BLOCK: payload.verdict is %T, want an object; payload=%v", pl["verdict"], pl)
+	}
 	if verdict["verdict"] != "BLOCK" {
 		t.Errorf("CHB-014 BLOCK: verdict.verdict=%v, want BLOCK", verdict["verdict"])
 	}
@@ -169,7 +167,10 @@ func TestHookRelay_CHB014_NullFlagsNormalisedToEmpty(t *testing.T) {
 	if pl["kind"] != "REVIEWER_VERDICT" {
 		t.Errorf("CHB-014 null flags: kind=%v, want REVIEWER_VERDICT", pl["kind"])
 	}
-	verdict, _ := pl["verdict"].(map[string]interface{})
+	verdict, isObj := pl["verdict"].(map[string]interface{})
+	if !isObj {
+		t.Fatalf("CHB-014 null flags: payload.verdict is %T, want an object; payload=%v", pl["verdict"], pl)
+	}
 	flags, ok := verdict["flags"].([]interface{})
 	if !ok {
 		t.Fatalf("CHB-014 null flags: verdict.flags not a slice after normalisation; got %T %v", verdict["flags"], verdict["flags"])
@@ -226,7 +227,7 @@ func TestHookRelay_CHB014_SchemaVersionNotOne(t *testing.T) {
 	for _, sv := range []int{0, 2, 99} {
 		t.Run("schema_version_"+string(rune('0'+sv%10)), func(t *testing.T) {
 			t.Parallel()
-			verdictJSON, _ := json.Marshal(map[string]interface{}{
+			verdictJSON := hookRelayFixtureJSON(t, map[string]interface{}{
 				"schema_version": sv,
 				"verdict":        "APPROVE",
 				"flags":          []string{},
@@ -251,7 +252,7 @@ func TestHookRelay_CHB014_InvalidVerdictValue(t *testing.T) {
 	for _, bad := range []string{"MAYBE", "approve", "", "ACCEPT"} {
 		t.Run("verdict_"+bad, func(t *testing.T) {
 			t.Parallel()
-			verdictJSON, _ := json.Marshal(map[string]interface{}{
+			verdictJSON := hookRelayFixtureJSON(t, map[string]interface{}{
 				"schema_version": 1,
 				"verdict":        bad,
 				"flags":          []string{},
@@ -287,7 +288,7 @@ func TestHookRelay_CHB014_PhaseNotReviewerUsesWorkComplete(t *testing.T) {
 			e.Phase = phase
 			e.DaemonSocket = sockPath
 
-			stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+			stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 			var stderr bytes.Buffer
 			code := hookrelay.Run("Stop", stdin, &stderr, &e)
 			if code != 0 {
@@ -296,10 +297,7 @@ func TestHookRelay_CHB014_PhaseNotReviewerUsesWorkComplete(t *testing.T) {
 
 			select {
 			case msgBytes := <-received:
-				var env map[string]json.RawMessage
-				_ = json.Unmarshal(msgBytes, &env)
-				var pl map[string]interface{}
-				_ = json.Unmarshal(env["payload"], &pl)
+				_, pl := hookRelayFixtureEnvelope(t, "CHB-014 phase="+phase, msgBytes)
 				if pl["kind"] != "WORK_COMPLETE" {
 					t.Errorf("CHB-014 phase=%q: kind=%v, want WORK_COMPLETE (not REVIEWER_VERDICT)", phase, pl["kind"])
 				}

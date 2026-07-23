@@ -16,7 +16,6 @@ package hookrelay_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -39,7 +38,7 @@ func TestHookRelay_CHB012_SessionIDAbsent(t *testing.T) {
 		"cwd":             "/tmp/ws",
 		"permission_mode": "auto",
 	}
-	b, _ := json.Marshal(payload)
+	b := hookRelayFixtureJSON(t, payload)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", bytes.NewReader(b), &stderr, &e)
 
@@ -70,7 +69,7 @@ func TestHookRelay_CHB012_TranscriptPathAbsent(t *testing.T) {
 		"cwd":             "/tmp/ws",
 		"permission_mode": "auto",
 	}
-	b, _ := json.Marshal(payload)
+	b := hookRelayFixtureJSON(t, payload)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", bytes.NewReader(b), &stderr, &e)
 
@@ -97,7 +96,7 @@ func TestHookRelay_CHB012_HookEventNameAbsent(t *testing.T) {
 		"cwd":             "/tmp/ws",
 		"permission_mode": "auto",
 	}
-	b, _ := json.Marshal(payload)
+	b := hookRelayFixtureJSON(t, payload)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", bytes.NewReader(b), &stderr, &e)
 
@@ -131,7 +130,7 @@ func TestHookRelay_CHB012_AllRequiredPresent_MismatchStillFires(t *testing.T) {
 		"cwd":             "/tmp/ws",
 		"permission_mode": "auto",
 	}
-	b, _ := json.Marshal(payload)
+	b := hookRelayFixtureJSON(t, payload)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", bytes.NewReader(b), &stderr, &e)
 

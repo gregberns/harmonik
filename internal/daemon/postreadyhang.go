@@ -25,6 +25,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // defaultPostAgentReadyHangTimeout is the default timeout used by
@@ -52,12 +53,25 @@ var ErrPostAgentReadyHang = errors.New("daemon: post-agent_ready hang: implement
 //
 // The function is safe to call from a goroutine; it owns no shared mutable
 // state and exits cleanly on context cancellation.
-func waitPostAgentReadyProgress(ctx context.Context, eventCh <-chan core.EventEnvelope, timeout time.Duration) error {
+//
+// clk is the determinism port for the hang bound (P2 E5 RT19c) so a FakeClock
+// can drive the timeout branch without real elapsed time; nil is backstopped to
+// substrate.SystemClock{} for struct-literal test callers.
+func waitPostAgentReadyProgress(ctx context.Context, clk substrate.ClockPort, eventCh <-chan core.EventEnvelope, timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = defaultPostAgentReadyHangTimeout
 	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
+	// A one-shot ticker, not substrate.After, replaces the pre-RT19c
+	// time.NewTimer: ClockPort has no timer, and a ticker is the only ClockPort
+	// deadline that can still be RELEASED on an early return. The select reads it
+	// at most once, so the repeat is never observed, and Stop preserves the
+	// original `defer timer.Stop()` cleanup on the progress-observed and
+	// ctx-cancelled paths.
+	hang := clk.NewTicker(timeout)
+	defer hang.Stop()
 
 	select {
 	case _, ok := <-eventCh:
@@ -66,7 +80,7 @@ func waitPostAgentReadyProgress(ctx context.Context, eventCh <-chan core.EventEn
 		}
 		// closed channel: treat as hang (producer shut down without events)
 		return ErrPostAgentReadyHang
-	case <-timer.C:
+	case <-hang.C():
 		return ErrPostAgentReadyHang
 	case <-ctx.Done():
 		return ctx.Err()

@@ -47,6 +47,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -790,10 +791,17 @@ type sessionKiller interface {
 // becomes self-explaining.  Both may be nil (event emission is skipped); the
 // kill still fires.
 //
+// clk is the determinism port for EVERY wait and deadline in this watchdog
+// (P2 E5 RT19c).  The budget deadlines, the poll ticker and the kill graces are
+// all read from the SAME clock: a mixed pair (fake deadline, real ticker) would
+// leave the loop comparing virtual time against wall time and never terminate.
+// nil is backstopped to substrate.SystemClock{} for struct-literal test callers.
+//
 // Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
 // Beads: hk-cmybm, hk-trjef, hk-5s7tg, hk-930o3, hk-7srrd, hk-9vp51.
 func pasteInjectQuitOnCommit(
 	ctx context.Context,
+	clk substrate.ClockPort,
 	qs quitSender,
 	killer sessionKiller,
 	wtPath string,
@@ -804,6 +812,10 @@ func pasteInjectQuitOnCommit(
 	bus handlercontract.EventEmitter,
 	runID core.RunID,
 ) {
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
+
 	// hk-930o3: wait for brief delivery confirmation before entering the commit
 	// poll loop.  This prevents a /quit racing the brief when a stale tmux pane
 	// handle from a prior run is reused: without this gate the commit watcher
@@ -818,7 +830,7 @@ func pasteInjectQuitOnCommit(
 		case <-briefDelivered:
 			briefDeliveredFired = true
 			// Brief delivered — proceed to commit polling.
-		case <-time.After(bdTimeout):
+		case <-substrate.After(clk, bdTimeout): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 			fmt.Fprintf(os.Stderr,
 				"daemon: pasteinject: quit-on-commit: brief_delivered timeout after %v for %s; proceeding with commit poll (session may be broken)\n",
 				bdTimeout, wtPath)
@@ -862,7 +874,7 @@ func pasteInjectQuitOnCommit(
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(stalePaneKillDelay):
+			case <-substrate.After(clk, stalePaneKillDelay): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 			}
 			if killer != nil {
 				if kErr := killer.Kill(ctx); kErr != nil {
@@ -895,14 +907,14 @@ func pasteInjectQuitOnCommit(
 	// package var after the run returns does not race with the in-flight read.
 	reseedGrace := implementerReseedGrace
 
-	loopStart := time.Now()
+	loopStart := clk.Now()
 	// hk-9vp51: totalDeadline is the per-PROGRESS commit budget, extended on every
 	// genuine progress signal (agent_heartbeat) rather than a flat wall clock.
 	totalDeadline := loopStart.Add(pollTimeout)
 	// hk-9vp51: hardDeadline is the absolute backstop — never extended; bounds a
 	// truly-hung-but-pane-active session.
 	hardDeadline := loopStart.Add(hardCeiling)
-	lastHeartbeat := time.Now() // initialised to now; first real beat resets it
+	lastHeartbeat := clk.Now() // initialised to now; first real beat resets it
 	// hk-9vp51: lastProgress tracks the last genuine progress signal for the
 	// implementer_budget_exceeded diagnostic (since_last_progress_ms).
 	lastProgress := loopStart
@@ -910,7 +922,7 @@ func pasteInjectQuitOnCommit(
 	// hk-3gq0b: launch-verification window — starts after brief delivery.
 	// When heartbeatProvided, the first heartbeat must arrive within launchWindow
 	// or the session is killed (paste likely landed in an empty pane).
-	launchDeadline := time.Now().Add(launchWindow)
+	launchDeadline := clk.Now().Add(launchWindow)
 	// hk-jgxqc: absolute backstop for the launch-verification window. Unlike
 	// launchDeadline (which the suppress branch resets on every active-pane
 	// tick), this is NEVER extended — once it passes the suppression is no
@@ -965,7 +977,7 @@ func pasteInjectQuitOnCommit(
 	reseedEnterDeadline := loopStart.Add(reseedGrace)
 	reseedEnterFired := reseedES == nil
 
-	ticker := time.NewTicker(pollInterval)
+	ticker := clk.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	// fireNoChangePath sends /quit, waits killDelay, kills, and closes
@@ -984,7 +996,7 @@ func pasteInjectQuitOnCommit(
 		// hk-9vp51: emit the budget-exceeded diagnostic before tearing down so
 		// the event is durable even if the kill steps below block on ctx.Done().
 		if budgetExceeded {
-			now := time.Now()
+			now := clk.Now()
 			emitImplementerBudgetExceeded(ctx, bus, runID,
 				now.Sub(loopStart), now.Sub(lastProgress), reasonTag)
 		}
@@ -999,7 +1011,7 @@ func pasteInjectQuitOnCommit(
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(killDelay):
+		case <-substrate.After(clk, killDelay): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 		}
 		if killer != nil {
 			if kErr := killer.Kill(ctx); kErr != nil {
@@ -1029,7 +1041,7 @@ func pasteInjectQuitOnCommit(
 				continue
 			}
 			if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
-				now := time.Now()
+				now := clk.Now()
 				lastHeartbeat = now
 				firstHeartbeatSeen = true
 				// hk-9vp51: a genuine progress signal extends the per-progress
@@ -1040,8 +1052,8 @@ func pasteInjectQuitOnCommit(
 				totalDeadline = now.Add(pollTimeout)
 			}
 
-		case <-ticker.C:
-			now := time.Now()
+		case <-ticker.C():
+			now := clk.Now()
 
 			// hk-ukx: drain any heartbeats that arrived in eventCh between the
 			// last iteration and this tick.  Without this drain, the ticker case
@@ -1060,7 +1072,7 @@ func pasteInjectQuitOnCommit(
 							break drainHeartbeats
 						}
 						if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
-							drainNow := time.Now()
+							drainNow := clk.Now()
 							lastHeartbeat = drainNow
 							firstHeartbeatSeen = true
 							lastProgress = drainNow
@@ -1330,7 +1342,7 @@ func pasteInjectQuitOnCommit(
 						// sess.Wait blocked indefinitely. Kill is idempotent
 						// (killOnce guard). Use context.Background() so the tmux
 						// KillWindow command cannot be cancelled mid-flight.
-						<-time.After(grace)
+						<-substrate.After(clk, grace)
 						if kErr := killer.Kill(context.Background()); kErr != nil {
 							fmt.Fprintf(os.Stderr,
 								"daemon: pasteinject: quit-on-commit: post-quit Kill: %v\n", kErr)
@@ -1353,7 +1365,11 @@ func pasteInjectQuitOnCommit(
 //
 // Parameters:
 //   - ctx          — caller context; cancellation propagates into WriteLastPane.
-//   - substrate    — the handler.Substrate used for this launch; may be nil.
+//   - clk          — the determinism port for the splash/backoff/submit waits
+//     (P2 E5 RT19c); nil is backstopped to substrate.SystemClock{}.
+//   - subst        — the handler.Substrate used for this launch; may be nil.
+//     (Named `subst`, not `substrate`, so it does not shadow the
+//     internal/substrate package this file now imports.)
 //   - claudeSessID — the Claude session ID minted for this launch (used in the
 //     buffer name per PL-021d: "harmonik-<session-id>-<purpose>").
 //   - phase        — the review-loop phase (empty string = single-mode / implementer-initial).
@@ -1376,7 +1392,8 @@ func pasteInjectQuitOnCommit(
 // Bead: hk-fra5l (bus/runID parameters for pasteinject_failed emission).
 func pasteInjectOnLaunch(
 	ctx context.Context,
-	substrate handler.Substrate,
+	clk substrate.ClockPort,
+	subst handler.Substrate,
 	claudeSessID string,
 	phase handlercontract.ReviewLoopPhase,
 	iterCount int,
@@ -1384,13 +1401,16 @@ func pasteInjectOnLaunch(
 	bus handlercontract.EventEmitter,
 	runID core.RunID,
 ) <-chan struct{} {
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
-		if substrate == nil {
+		if subst == nil {
 			return
 		}
-		inj, ok := substrate.(pasteInjecter)
+		inj, ok := subst.(pasteInjecter)
 		if !ok {
 			return
 		}
@@ -1401,7 +1421,7 @@ func pasteInjectOnLaunch(
 		// local behaviour (NFR7).  For remote runs the SSHRunner is non-local, so
 		// runner is set and statTaskFileVia checks file existence on the worker.
 		var runner tmux.CommandRunner
-		if crp, ok2 := substrate.(commandRunnerProvider); ok2 {
+		if crp, ok2 := subst.(commandRunnerProvider); ok2 {
 			if r := crp.commandRunner(); !gitprobe.RunnerIsLocalFS(r) {
 				runner = r
 			}
@@ -1410,14 +1430,14 @@ func pasteInjectOnLaunch(
 		var failReason string
 		switch phase {
 		case handlercontract.ReviewLoopPhaseReviewer:
-			failReason = pasteInjectReviewer(ctx, inj, claudeSessID, wtPath, runner)
+			failReason = pasteInjectReviewer(ctx, clk, inj, claudeSessID, wtPath, runner)
 
 		case handlercontract.ReviewLoopPhaseImplementerResume:
-			failReason = pasteInjectImplementerResume(ctx, inj, claudeSessID, iterCount, wtPath, runner)
+			failReason = pasteInjectImplementerResume(ctx, clk, inj, claudeSessID, iterCount, wtPath, runner)
 
 		default:
 			// Single-mode or implementer-initial: deliver agent-task.md kick-off.
-			failReason = pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath, runner)
+			failReason = pasteInjectImplementerInitial(ctx, clk, inj, claudeSessID, wtPath, runner)
 		}
 
 		// hk-fra5l: emit pasteinject_failed when the delivery failed.
@@ -1491,10 +1511,13 @@ func emitImplementerBudgetExceeded(ctx context.Context, bus handlercontract.Even
 // splashDismissWait sleeps for splashDismissDelay or until ctx is cancelled.
 // Used after SendEnterToLastPane to give the Claude Code welcome splash time
 // to animate away before the paste-buffer write arrives (hk-rf4ux).
-func splashDismissWait(ctx context.Context) {
+//
+// clk is the determinism port (P2 E5 RT19c); callers reach this helper through a
+// backstopped entry point, so it is never nil here.
+func splashDismissWait(ctx context.Context, clk substrate.ClockPort) {
 	select {
 	case <-ctx.Done():
-	case <-time.After(splashDismissDelayDur()):
+	case <-substrate.After(clk, splashDismissDelayDur()): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 	}
 }
 
@@ -1517,7 +1540,7 @@ func splashDismissWait(ctx context.Context) {
 // not complete (e.g. task file absent, WriteLastPane error).  The caller
 // (pasteInjectOnLaunch) emits pasteinject_failed when the reason is non-empty.
 // Returns "" on success.
-func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string, runner tmux.CommandRunner) string {
+func pasteInjectImplementerInitial(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, claudeSessID, wtPath string, runner tmux.CommandRunner) string {
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
 	if err := statTaskFileVia(ctx, runner, taskFile); err != nil {
 		reason := fmt.Sprintf("implementer-initial: %v", err)
@@ -1533,7 +1556,7 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial SendEnterToLastPane: %v\n", err)
 		}
 		// Wait for splash to dismiss before delivering the paste.
-		splashDismissWait(ctx)
+		splashDismissWait(ctx, clk)
 	}
 
 	bufName := bufferName(claudeSessID, "task")
@@ -1542,7 +1565,7 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 	// silently-dropped paste, before submitting (hk-zexsj).  Marker "agent-task.md"
 	// is on the first line of the seed and guaranteed present on a successful
 	// render.  A non-empty reason means the paste never landed → fail loud/fast.
-	if reason := injectAndVerifySeed(ctx, inj, bufName, []byte(msg), "agent-task.md", "implementer-initial"); reason != "" {
+	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "agent-task.md", "implementer-initial"); reason != "" {
 		return reason
 	}
 	// Settle after the paste before submitting (hk-76n5g, mirrors hk-jzpqo).
@@ -1553,7 +1576,7 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 	// but-unsubmitted.  Waiting splashDismissDelay gives the REPL time to finish
 	// absorbing the paste and return to an input-ready state before the first
 	// retry Enter arrives.
-	splashDismissWait(ctx)
+	splashDismissWait(ctx, clk)
 	// Send Enter after paste to submit the message regardless of terminal
 	// bracketed-paste mode (hk-8cq23).  Under a concurrent cold-boot the splash
 	// can outlast the fixed splashDismissDelay, so a single submit Enter lands on
@@ -1561,7 +1584,7 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 	// (hk-7rgqs).  Send the submit Enter with the same bounded retry the resume
 	// path uses so at least one keypress lands after the splash clears.
 	if es, ok := inj.(enterSender); ok {
-		sendSubmitEnterWithRetry(ctx, es, "implementer-initial")
+		sendSubmitEnterWithRetry(ctx, clk, es, "implementer-initial")
 	}
 	return ""
 }
@@ -1584,13 +1607,13 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 //
 // Returns a non-empty failure reason string when the paste-inject step could not
 // complete.  Returns "" on success.
-func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string, runner tmux.CommandRunner) string {
+func pasteInjectImplementerResume(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string, runner tmux.CommandRunner) string {
 	// Dismiss the welcome splash first (hk-rf4ux) — same as implementer-initial.
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume SendEnterToLastPane: %v\n", err)
 		}
-		splashDismissWait(ctx)
+		splashDismissWait(ctx, clk)
 	}
 
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
@@ -1625,7 +1648,7 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	// Verify the combined task+feedback seed rendered into the input box before
 	// submitting, re-pasting on a silently-dropped paste (hk-zexsj).  Marker
 	// "agent-task.md" is on the first line of the seed and guaranteed present.
-	if reason := injectAndVerifySeed(ctx, inj, bufName, []byte(msg), "agent-task.md", "implementer-resume"); reason != "" {
+	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "agent-task.md", "implementer-resume"); reason != "" {
 		return reason
 	}
 	// Settle after the paste before submitting (hk-76n5g).
@@ -1640,7 +1663,7 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	// to finish absorbing the paste and return to an input-ready state, shifting
 	// the first retry Enter to ~750 ms post-paste where the input handler is
 	// reliably accepting keystrokes.  Mirrors the hk-jzpqo crew path fix.
-	splashDismissWait(ctx)
+	splashDismissWait(ctx, clk)
 	// Send Enter after paste to submit the message regardless of terminal
 	// bracketed-paste mode (hk-8cq23).  On the resume path the freshly-resumed
 	// REPL is intermittently not yet input-ready when this fires, so the single
@@ -1649,7 +1672,7 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	// after the input handler is ready; a redundant Enter at an already-submitted
 	// REPL is a harmless no-op.
 	if es, ok := inj.(enterSender); ok {
-		sendResumeSubmitEnter(ctx, es)
+		sendResumeSubmitEnter(ctx, clk, es)
 	}
 	return ""
 }
@@ -1700,7 +1723,7 @@ func submitSeedInput(ctx context.Context, inj pasteInjecter, bufName string, pay
 	return handler.Ack{}, inj.WriteLastPane(ctx, bufName, payload)
 }
 
-func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string, payload []byte, marker, phase string) string {
+func injectAndVerifySeed(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, bufName string, payload []byte, marker, phase string) string {
 	pc, canCapture := inj.(paneCapturer)
 	var lastErr error
 	// captureEverSucceeded records whether we ever captured the pane cleanly
@@ -1763,7 +1786,7 @@ func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string,
 			select {
 			case <-ctx.Done():
 				return fmt.Sprintf("%s: ctx cancelled during paste-verify: %v", phase, ctx.Err())
-			case <-time.After(pasteVerifyBackoffDur()):
+			case <-substrate.After(clk, pasteVerifyBackoffDur()): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 			}
 		}
 	}
@@ -1796,7 +1819,7 @@ func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string,
 // only in the diagnostic log line.
 //
 // Bead: hk-ip33d, hk-7rgqs.
-func sendSubmitEnterWithRetry(ctx context.Context, es enterSender, phase string) {
+func sendSubmitEnterWithRetry(ctx context.Context, clk substrate.ClockPort, es enterSender, phase string) {
 	if err := es.SendEnterToLastPane(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s post-paste SendEnterToLastPane: %v\n", phase, err)
 	}
@@ -1804,7 +1827,7 @@ func sendSubmitEnterWithRetry(ctx context.Context, es enterSender, phase string)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(resumeSubmitRetryDelayDur()):
+		case <-substrate.After(clk, resumeSubmitRetryDelayDur()): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 		}
 		if err := es.SendEnterToLastPane(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s submit-retry %d SendEnterToLastPane: %v\n", phase, i+1, err)
@@ -1815,8 +1838,8 @@ func sendSubmitEnterWithRetry(ctx context.Context, es enterSender, phase string)
 // sendResumeSubmitEnter is the implementer-resume call site of
 // sendSubmitEnterWithRetry (hk-ip33d).  Retained as a named wrapper so the
 // hk-ip33d resume path reads clearly and existing references stay stable.
-func sendResumeSubmitEnter(ctx context.Context, es enterSender) {
-	sendSubmitEnterWithRetry(ctx, es, "implementer-resume")
+func sendResumeSubmitEnter(ctx context.Context, clk substrate.ClockPort, es enterSender) {
+	sendSubmitEnterWithRetry(ctx, clk, es, "implementer-resume")
 }
 
 // reviewerSeedMaxLen bounds the reviewer kick-off seed so it can never grow back
@@ -1841,7 +1864,7 @@ const reviewerKickoffSeed = "Read .harmonik/review-target.md in this worktree" +
 //
 // Returns a non-empty failure reason string when the paste-inject step could not
 // complete.  Returns "" on success.
-func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string, runner tmux.CommandRunner) string {
+func pasteInjectReviewer(ctx context.Context, clk substrate.ClockPort, inj pasteInjecter, claudeSessID, wtPath string, runner tmux.CommandRunner) string {
 	reviewFile := filepath.Join(wtPath, ".harmonik", "review-target.md")
 	if err := statTaskFileVia(ctx, runner, reviewFile); err != nil {
 		reason := fmt.Sprintf("reviewer: %v", err)
@@ -1854,7 +1877,7 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 		if err := es.SendEnterToLastPane(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer SendEnterToLastPane: %v\n", err)
 		}
-		splashDismissWait(ctx)
+		splashDismissWait(ctx, clk)
 	}
 
 	bufName := bufferName(claudeSessID, "review")
@@ -1875,7 +1898,7 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 	// re-pasting on a silently-dropped paste (hk-zexsj).  Marker "review-target.md"
 	// is on the first line of the seed and guaranteed present on a successful
 	// render.  A non-empty reason means the paste never landed → fail loud/fast.
-	if reason := injectAndVerifySeed(ctx, inj, bufName, []byte(msg), "review-target.md", "reviewer"); reason != "" {
+	if reason := injectAndVerifySeed(ctx, clk, inj, bufName, []byte(msg), "review-target.md", "reviewer"); reason != "" {
 		return reason
 	}
 	// Send Enter after paste to submit the message regardless of terminal
@@ -1889,7 +1912,7 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 	// least one keypress lands after the splash clears.  The safety net in
 	// pasteInjectQuitOnReviewFile re-seeds once if even the retries lose the race.
 	if es, ok := inj.(enterSender); ok {
-		sendSubmitEnterWithRetry(ctx, es, "reviewer")
+		sendSubmitEnterWithRetry(ctx, clk, es, "reviewer")
 	}
 	return ""
 }
@@ -2329,8 +2352,15 @@ func ReadReviewerBudgetSentinelVia(ctx context.Context, runner tmux.CommandRunne
 //     only (matches the DOT timeout= attribute from the node graph).  This lets
 //     DOT authors author per-node reviewer timeouts for opus/high nodes that
 //     legitimately need more time than the default ceiling.
+//
+// clk is the determinism port for every wait and deadline here (P2 E5 RT19c) —
+// the diff-scaled budget, the heartbeat-extension ceiling, the poll ticker and
+// the kill graces all read the SAME clock, so a FakeClock can drive the
+// 60-minute ceiling branch without real elapsed time. nil is backstopped to
+// substrate.SystemClock{} for struct-literal test callers.
 func pasteInjectQuitOnReviewFile(
 	ctx context.Context,
+	clk substrate.ClockPort,
 	qs quitSender,
 	killer sessionKiller,
 	inj pasteInjecter,
@@ -2340,13 +2370,16 @@ func pasteInjectQuitOnReviewFile(
 	eventCh <-chan core.EventEnvelope, // hk-60t8: heartbeat tracking; nil = disabled
 	overrideCeiling time.Duration, // hk-60t8: 0 = use reviewFileHardCeiling
 ) {
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
 	if briefDelivered != nil {
 		bdTimeout := briefDeliveredTimeout
 		select {
 		case <-ctx.Done():
 			return
 		case <-briefDelivered:
-		case <-time.After(bdTimeout):
+		case <-substrate.After(clk, bdTimeout): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 			fmt.Fprintf(os.Stderr,
 				"daemon: pasteinject: quit-on-review-file: brief_delivered timeout after %v for %s; proceeding\n",
 				bdTimeout, wtPath)
@@ -2372,7 +2405,7 @@ func pasteInjectQuitOnReviewFile(
 		"daemon: pasteinject: quit-on-review-file: verdict budget %v for %s (changed_lines=%d, ceiling=%v)\n",
 		budget, wtPath, changedLines, effectiveCeiling)
 
-	loopStart := time.Now()
+	loopStart := clk.Now()
 	deadline := loopStart.Add(budget)
 	// hk-sah87: optional pane-liveness checker (same interface the implementer
 	// path uses).  When present, a deadline that lands while the reviewer pane
@@ -2424,7 +2457,7 @@ func pasteInjectQuitOnReviewFile(
 	reseedDeadline := loopStart.Add(reviewerReseedGrace)
 	reseeded := inj == nil
 
-	ticker := time.NewTicker(pollInterval)
+	ticker := clk.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -2441,11 +2474,11 @@ func pasteInjectQuitOnReviewFile(
 				continue
 			}
 			if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
-				lastHeartbeatAt = time.Now()
+				lastHeartbeatAt = clk.Now()
 			}
 
-		case <-ticker.C:
-			now := time.Now()
+		case <-ticker.C():
+			now := clk.Now()
 
 			// hk-60t8: drain any heartbeats buffered in eventCh since the last
 			// tick so that lastHeartbeatAt reflects all progress that has arrived
@@ -2494,7 +2527,7 @@ func pasteInjectQuitOnReviewFile(
 							reseedRunner = r
 						}
 					}
-					if reason := pasteInjectReviewer(ctx, inj, claudeSessID, wtPath, reseedRunner); reason != "" {
+					if reason := pasteInjectReviewer(ctx, clk, inj, claudeSessID, wtPath, reseedRunner); reason != "" {
 						fmt.Fprintf(os.Stderr,
 							"daemon: pasteinject: quit-on-review-file: re-seed failed for %s: %s\n",
 							wtPath, reason)
@@ -2548,15 +2581,15 @@ func pasteInjectQuitOnReviewFile(
 				}
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-review-file: %s after %v waiting for %s (budget=%v, changed_lines=%d); sending /quit\n",
-					reason, time.Since(loopStart), verdictPath, budget, changedLines)
+					reason, clk.Since(loopStart), verdictPath, budget, changedLines)
 				// hk-sah87: write the budget-kill marker so the caller can emit a
 				// distinct "reviewer budget exceeded" diagnostic instead of the
 				// generic "verdict absent".
-				writeReviewerBudgetSentinel(wtPath, budget, changedLines, time.Since(loopStart), reason)
+				writeReviewerBudgetSentinel(wtPath, budget, changedLines, clk.Since(loopStart), reason)
 				_ = qs.SendQuitToLastPane(ctx)
 				select {
 				case <-ctx.Done():
-				case <-time.After(killDelay):
+				case <-substrate.After(clk, killDelay): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
 					_ = killer.Kill(ctx)
@@ -2584,7 +2617,7 @@ func pasteInjectQuitOnReviewFile(
 				// Grace period for claude to process /quit before force-kill.
 				select {
 				case <-ctx.Done():
-				case <-time.After(postQuitKillGrace):
+				case <-substrate.After(clk, postQuitKillGrace): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
 					_ = killer.Kill(ctx)

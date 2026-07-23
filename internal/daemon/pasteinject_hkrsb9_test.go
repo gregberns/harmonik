@@ -37,6 +37,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,7 +297,7 @@ func TestRSB9_CommitDetect_ViaRunner(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	go pasteInjectQuitOnCommit(ctx, qs, nil, repoPath, initialSHA, nil, nil, nil, nil, core.RunID{})
+	go pasteInjectQuitOnCommit(ctx, substrate.SystemClock{}, qs, nil, repoPath, initialSHA, nil, nil, nil, nil, core.RunID{})
 
 	select {
 	case <-quitSent:

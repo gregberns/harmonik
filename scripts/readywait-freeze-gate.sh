@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# readywait-freeze-gate.sh — P2 unit E5 RT14 freeze tripwire
-# (plans/2026-07-21-p2-extraction/RT14-dispatchsegment-conversion.md §4 C7; _plan.md §3.2).
+# readywait-freeze-gate.sh — P2 unit E5 RT14 + RT19c freeze tripwire
+# (plans/2026-07-21-p2-extraction/RT14-dispatchsegment-conversion.md §4 C7;
+#  plans/2026-07-21-p2-extraction/RT19c-workingphase-watchdogs.md §6 step 3;
+#  _plan.md §3.2).
 #
 # The open-coded agent_ready WAIT left internal/daemon in slice RT14. Every
 # launch/ready/brief segment now runs on the runexec Dispatch machine via
@@ -10,11 +12,10 @@ set -euo pipefail
 # bound. depguard cannot express "do not re-hand-roll a wall-clock wait", so this
 # grep ratchet closes that door.
 #
-# NOT policed here (deliberately): the Working-phase watchdogs
-# (pasteinject.go, dot_gate.go's pasteInjectQuitOnGateFile, waitsocketgrace.go,
-# postreadyhang.go) still use raw wall-clock. dispatchsegment.go's header places
-# them OUTSIDE the RT8 segment boundary; slice RT19c owns them. Adding them here
-# would make this gate red on landing.
+# RT19c widened check (2) from the six dispatch-path files to the whole run path:
+# the Working-phase watchdogs (pasteinject.go, dot_gate.go's
+# pasteInjectQuitOnGateFile, waitsocketgrace.go, postreadyhang.go) now take a
+# substrate.ClockPort too, so raw wall-clock is forbidden in them as well.
 #
 # Exit 0: clean. Exit 1: the door was reopened.
 
@@ -35,16 +36,24 @@ for sym in waitAgentReady agentEventSource chanAgentEventSource newChanAgentEven
 done
 
 # (2) The run-path files that are wall-clock CLEAN today stay clean. The
-#     dispatch path must remain FakeClock-drivable end to end.
+#     dispatch path AND the Working-phase watchdogs must remain FakeClock-drivable
+#     end to end.
 #
 #     agentready.go is NOT in this list because RT14 deleted the file outright.
 #     RT19b-3 had already moved its four surviving policy scalars to
 #     internal/runlaunch, so once waitAgentReady + agentEventSource went, nothing
 #     was left. Check (1) is what keeps those symbols from coming back — pinning
 #     a deleted path here would make the gate fail on its own landing commit.
+#
+#     The last four entries are RT19c's: pasteinject.go (the two sibling commit /
+#     review-file watchdogs plus the three splash/backoff/submit stragglers),
+#     dot_gate.go (pasteInjectQuitOnGateFile), waitsocketgrace.go (the stop-hook
+#     grace) and postreadyhang.go (the post-agent_ready progress bound).
 for f in internal/daemon/dispatchsegment.go internal/daemon/runshell.go \
          internal/daemon/runbridge.go internal/daemon/reviewloop.go \
-         internal/daemon/dot_cascade.go internal/daemon/workloopeventsource.go; do
+         internal/daemon/dot_cascade.go internal/daemon/workloopeventsource.go \
+         internal/daemon/pasteinject.go internal/daemon/dot_gate.go \
+         internal/daemon/waitsocketgrace.go internal/daemon/postreadyhang.go; do
     if [ ! -f "$f" ]; then
         echo "readywait-freeze-gate: pinned file $f is gone — re-derive this gate's file list" >&2
         HITS=$((HITS + 1))

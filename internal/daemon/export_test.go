@@ -1393,8 +1393,17 @@ var ExportedErrPostAgentReadyHang = ErrPostAgentReadyHang
 var ExportedDefaultPostAgentReadyHangTimeout = &defaultPostAgentReadyHangTimeout
 
 // ExportedWaitPostAgentReadyProgress exposes waitPostAgentReadyProgress for
-// unit tests (hk-a2okh).
-var ExportedWaitPostAgentReadyProgress = waitPostAgentReadyProgress
+// unit tests (hk-a2okh) on the real system clock — the pre-RT19c shape.
+func ExportedWaitPostAgentReadyProgress(ctx context.Context, eventCh <-chan core.EventEnvelope, timeout time.Duration) error {
+	return waitPostAgentReadyProgress(ctx, substrate.SystemClock{}, eventCh, timeout)
+}
+
+// ExportedWaitPostAgentReadyProgressOn is ExportedWaitPostAgentReadyProgress with
+// the RT19c ClockPort exposed, so a FakeClock can drive the hang timeout in
+// virtual time (P2 E5 RT19c).
+func ExportedWaitPostAgentReadyProgressOn(ctx context.Context, clk substrate.ClockPort, eventCh <-chan core.EventEnvelope, timeout time.Duration) error {
+	return waitPostAgentReadyProgress(ctx, clk, eventCh, timeout)
+}
 
 // ExportedDefaultAgentReadyTimeout exposes runlaunch.DefaultAgentReadyTimeout
 // (HC-056, internal/runlaunch/deadlines.go) so the WS3-Claude-C timing
@@ -1452,7 +1461,7 @@ func ExportedWaitWithSocketGrace(
 	sess handler.Session,
 	runID, claudeSessID string,
 ) (*handler.ExportedOutcomeEmittedPayload, ExitInfoExported) {
-	outcome, ei := waitWithSocketGrace(ctx, store, watcher, sess, runID, claudeSessID)
+	outcome, ei := waitWithSocketGrace(ctx, substrate.SystemClock{}, store, watcher, sess, runID, claudeSessID)
 	return outcome, ExitInfoExported{ExitCode: ei.exitCode, WaitErr: ei.waitErr, StderrTail: ei.stderrTail}
 }
 
@@ -1544,14 +1553,14 @@ func ExportedSetPasteVerifyBackoff(d time.Duration) {
 // assert the reviewer kick-off delivery (splash-dismiss → paste → bounded submit
 // Enter) directly (hk-7rgqs).
 func ExportedPasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
-	return pasteInjectReviewer(ctx, inj, claudeSessID, wtPath, nil)
+	return pasteInjectReviewer(ctx, substrate.SystemClock{}, inj, claudeSessID, wtPath, nil)
 }
 
 // ExportedPasteInjectImplementerInitial exposes pasteInjectImplementerInitial for
 // unit tests that assert the implementer-initial robust-submit hardening
 // (hk-7rgqs).
 func ExportedPasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
-	return pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath, nil)
+	return pasteInjectImplementerInitial(ctx, substrate.SystemClock{}, inj, claudeSessID, wtPath, nil)
 }
 
 // ExportedPasteInjectQuitOnReviewFile exposes pasteInjectQuitOnReviewFile for
@@ -1576,7 +1585,7 @@ func ExportedPasteInjectQuitOnReviewFile(
 	eventCh <-chan core.EventEnvelope,
 	overrideCeiling time.Duration,
 ) {
-	pasteInjectQuitOnReviewFile(ctx, qs, killer, inj, claudeSessID, wtPath, briefDelivered, eventCh, overrideCeiling)
+	pasteInjectQuitOnReviewFile(ctx, substrate.SystemClock{}, qs, killer, inj, claudeSessID, wtPath, briefDelivered, eventCh, overrideCeiling)
 }
 
 // hk-sah87 diff-scaled reviewer-budget test seams.
@@ -1868,7 +1877,7 @@ func ExportedPasteInjectOnLaunch(
 	iterCount int,
 	wtPath string,
 ) <-chan struct{} {
-	return pasteInjectOnLaunch(ctx, subst, claudeSessID, phase, iterCount, wtPath, nil, core.RunID{})
+	return pasteInjectOnLaunch(ctx, substrate.SystemClock{}, subst, claudeSessID, phase, iterCount, wtPath, nil, core.RunID{})
 }
 
 // ExportedBufferName exposes the bufferName helper for tests in package
@@ -2232,7 +2241,7 @@ func ExportedPasteInjectQuitOnCommit(
 	briefDelivered <-chan struct{},
 	eventCh <-chan core.EventEnvelope,
 ) {
-	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered, eventCh, nil, core.RunID{})
+	pasteInjectQuitOnCommit(ctx, substrate.SystemClock{}, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered, eventCh, nil, core.RunID{})
 }
 
 // ExportedPasteInjectQuitOnCommitWithBus is like ExportedPasteInjectQuitOnCommit
@@ -2252,7 +2261,7 @@ func ExportedPasteInjectQuitOnCommitWithBus(
 	bus handlercontract.EventEmitter,
 	runID core.RunID,
 ) {
-	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered, eventCh, bus, runID)
+	pasteInjectQuitOnCommit(ctx, substrate.SystemClock{}, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered, eventCh, bus, runID)
 }
 
 // ExportedCommitHardCeiling is a pointer to the package-level commitHardCeiling

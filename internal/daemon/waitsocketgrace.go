@@ -27,6 +27,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // stopHookGrace is the time the daemon waits after cmd.Wait() returns for a
@@ -81,15 +82,23 @@ type exitInfo struct {
 // The returned *handler.ExportedOutcomeEmittedPayload is nil on branch 3.
 // exitInfo is always populated from the completed sess.Wait return.
 //
+// clk is the determinism port for the killWatcherReapGrace bound (P2 E5 RT19c);
+// nil is backstopped to substrate.SystemClock{} for struct-literal test callers.
+//
 // Spec: specs/claude-hook-bridge.md §4.7 CHB-020, §4.10 CHB-025.
 // Bead: hk-gql20.22.
 func waitWithSocketGrace(
 	ctx context.Context,
+	clk substrate.ClockPort,
 	store hookStoreIface,
 	watcher *handlercontract.Watcher,
 	sess handler.Session,
 	runID, claudeSessID string,
 ) (*handler.ExportedOutcomeEmittedPayload, exitInfo) {
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
+
 	// Step 1: race watcher completion vs context cancellation.
 	//
 	// Substrate path: watcher is nil when deps.substrate != nil (tmux-hosted
@@ -110,7 +119,7 @@ func waitWithSocketGrace(
 			_ = sess.Kill(ctx)
 			select {
 			case <-watcher.Done():
-			case <-time.After(killWatcherReapGrace):
+			case <-substrate.After(clk, killWatcherReapGrace): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (the ctx here is already cancelled)
 				// Watcher still draining (grandchild holds the pipe open). Proceed;
 				// the goroutine unblocks on its own once the grandchild exits.
 			}

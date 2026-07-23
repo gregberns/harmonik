@@ -22,6 +22,7 @@ import (
 	"time"
 
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +133,7 @@ func TestPasteInjectQuitOnReviewFile_RemoteRunner_DetectsVerdictViaRunner(t *tes
 		defer close(done)
 		pasteInjectQuitOnReviewFile(
 			ctx,
+			substrate.SystemClock{},
 			qs,
 			nil, // killer — nil is safe; function handles nil
 			nil, // inj — nil disables re-seed (irrelevant here)

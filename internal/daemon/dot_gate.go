@@ -506,9 +506,9 @@ func executeCognitionGate(
 		},
 		deliver: func(dctx context.Context) {
 			// Deliver gate-evaluator kick-off message and watch for verdict file.
-			briefDelivered := pasteInjectCognitionGate(dctx, pasteTarget, artifacts.ClaudeSessionID, wtPath, deps.bus, runID)
+			briefDelivered := pasteInjectCognitionGate(dctx, deps.clock, pasteTarget, artifacts.ClaudeSessionID, wtPath, deps.bus, runID)
 			if qs, ok := pasteTarget.(quitSender); ok {
-				go pasteInjectQuitOnGateFile(ctx, runner, qs, sess, wtPath, briefDelivered)
+				go pasteInjectQuitOnGateFile(ctx, deps.clock, runner, qs, sess, wtPath, briefDelivered)
 			}
 		},
 		killReady: func(kctx context.Context) {
@@ -572,7 +572,7 @@ func executeCognitionGate(
 	// Working / Exited / Aborted: fall through — the pre-RT14 posture for
 	// agent_ready-observed, watcher-exit-first, and ctx-cancel.
 
-	_, _ = waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
+	_, _ = waitWithSocketGrace(ctx, deps.clock, deps.hookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {
@@ -741,19 +741,23 @@ func gateVerdictExistsVia(ctx context.Context, runner ltmux.CommandRunner, path 
 // Returns a channel closed once the kick-off paste has been written.
 func pasteInjectCognitionGate(
 	ctx context.Context,
-	substrate handler.Substrate,
+	clk substrate.ClockPort,
+	subst handler.Substrate,
 	claudeSessID string,
 	wtPath string,
 	bus handlercontract.EventEmitter,
 	runID core.RunID,
 ) <-chan struct{} {
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
-		if substrate == nil {
+		if subst == nil {
 			return
 		}
-		inj, ok := substrate.(pasteInjecter)
+		inj, ok := subst.(pasteInjecter)
 		if !ok {
 			return
 		}
@@ -773,7 +777,7 @@ func pasteInjectCognitionGate(
 			if err := es.SendEnterToLastPane(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "daemon: pasteinject: cognition-gate SendEnterToLastPane: %v\n", err)
 			}
-			splashDismissWait(ctx)
+			splashDismissWait(ctx, clk)
 		}
 
 		bufName := bufferName(claudeSessID, "gate")
@@ -808,42 +812,52 @@ func pasteInjectCognitionGate(
 // pasteInjectQuitOnGateFile watches for gate-verdict.json to appear, then
 // sends /quit to terminate the gate evaluator session. Analogous to
 // pasteInjectQuitOnReviewFile for the reviewer path.
+//
+// clk is the determinism port for the whole watchdog (P2 E5 RT19c). The verdict
+// deadline and the poll ticker are read from the SAME clock so a FakeClock can
+// drive the 10-minute gateFileTimeout branch instantly; mixing a fake deadline
+// with a real ticker (or vice versa) would leave the loop unable to terminate.
+// nil is backstopped to substrate.SystemClock{} for struct-literal test callers.
 func pasteInjectQuitOnGateFile(
 	ctx context.Context,
+	clk substrate.ClockPort,
 	runner ltmux.CommandRunner,
 	qs quitSender,
 	killer sessionKiller,
 	wtPath string,
 	briefDelivered <-chan struct{},
 ) {
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
 	if briefDelivered != nil {
 		select {
 		case <-ctx.Done():
 			return
 		case <-briefDelivered:
-		case <-time.After(briefDeliveredTimeout):
+		case <-substrate.After(clk, briefDeliveredTimeout): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 			fmt.Fprintf(os.Stderr,
 				"daemon: pasteinject: quit-on-gate-file: brief_delivered timeout for %s; proceeding\n", wtPath)
 		}
 	}
 
 	verdictPath := filepath.Join(wtPath, gateVerdictRelPath)
-	deadline := time.Now().Add(gateFileTimeout)
-	ticker := time.NewTicker(gateFilePollInterval)
+	deadline := clk.Now().Add(gateFileTimeout)
+	ticker := clk.NewTicker(gateFilePollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if time.Now().After(deadline) {
+		case <-ticker.C():
+			if clk.Now().After(deadline) {
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-gate-file: timeout waiting for %s; sending /quit\n", verdictPath)
 				_ = qs.SendQuitToLastPane(ctx)
 				select {
 				case <-ctx.Done():
-				case <-time.After(noChangeKillDelay):
+				case <-substrate.After(clk, noChangeKillDelay): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
 					_ = killer.Kill(ctx)
@@ -856,7 +870,7 @@ func pasteInjectQuitOnGateFile(
 				_ = qs.SendQuitToLastPane(ctx)
 				select {
 				case <-ctx.Done():
-				case <-time.After(postQuitKillGrace):
+				case <-substrate.After(clk, postQuitKillGrace): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
 					_ = killer.Kill(ctx)

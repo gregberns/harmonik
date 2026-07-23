@@ -457,7 +457,9 @@ func (s *session) runWait(_ context.Context) {
 	case <-s.stderrDone:
 	case <-time.After(stderrDrainGrace):
 		if c, ok := s.stderr.(io.Closer); ok {
-			_ = c.Close()
+			if closeErr := c.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "handler: session: close stderr read-end: %v\n", closeErr)
+			}
 		}
 		<-s.stderrDone
 	}

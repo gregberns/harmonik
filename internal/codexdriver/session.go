@@ -711,7 +711,9 @@ func (s *codexSession) closeStdin() {
 		return
 	}
 	s.stdinWClosed = true
-	_ = s.stdinPipe.Close()
+	if closeErr := s.stdinPipe.Close(); closeErr != nil {
+		slog.WarnContext(context.Background(), "codexdriver_close_stdin", "err", closeErr)
+	}
 }
 
 // drainTimeout bounds how long a mid-turn CloseInput waits for the interrupted

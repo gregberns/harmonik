@@ -182,7 +182,13 @@ func readGoModRequires() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// Read-only scan runs after this defer, so keep the close deferred to
+	// function exit; the close error on a read handle is immaterial.
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "forbid-import: close go.mod: %v\n", closeErr)
+		}
+	}()
 
 	var modules []string
 	inRequire := false

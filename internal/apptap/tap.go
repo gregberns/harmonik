@@ -25,7 +25,9 @@
 package apptap
 
 import (
+	"context"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 )
@@ -126,8 +128,11 @@ func (t *Tap) Run() error {
 	go func() {
 		_, err := io.Copy(inDst, stdin)
 		// Close child stdin so the child sees EOF when the caller closes its
-		// end. Ignore close errors (child may have already exited).
-		_ = childIn.Close()
+		// end. The close error is immaterial (child may have already exited) —
+		// log and continue.
+		if closeErr := childIn.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "apptap: close child stdin", "err", closeErr)
+		}
 		inErr <- err
 	}()
 

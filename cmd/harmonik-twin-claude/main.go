@@ -233,7 +233,11 @@ func run() int {
 			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: dial %s: %v\n", *socketPath, err)
 			return 1
 		}
-		defer func() { _ = conn.Close() }()
+		defer func() {
+			if closeErr := conn.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik-twin-claude: close conn: %v\n", closeErr)
+			}
+		}()
 		out = conn
 	case scriptFile != nil || *replayPath != "":
 		// Scenario / script / replay mode without socket path: stdout fallback

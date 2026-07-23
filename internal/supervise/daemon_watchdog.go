@@ -428,7 +428,15 @@ func (dw *DaemonWatchdog) reviveWith(ctx context.Context, argv []string) error {
 		} else {
 			cmd.Stdout = f
 			cmd.Stderr = f
-			defer f.Close()
+			// Parent-side close after cmd.Start(): the detached child inherits its
+			// own duplicated fd and does the writing, so this Close carries no
+			// unflushed parent data. Keep it deferred to function exit; log and
+			// continue on error (recon §4 BUG 3 — idiom-only, not a durability fix).
+			defer func() {
+				if closeErr := f.Close(); closeErr != nil {
+					dw.log.WarnContext(ctx, "daemon-watchdog: close crash log", "err", closeErr, "path", dw.spec.CrashLogPath)
+				}
+			}()
 		}
 	}
 	return cmd.Start()

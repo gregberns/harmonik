@@ -13,10 +13,12 @@ package usage
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -531,7 +533,13 @@ func readTranscript(path, since, until string) ([]transcriptTurn, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// Read-only transcript scan runs after this defer, so keep the close deferred
+	// to function exit; the close error is immaterial for a read handle.
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "usage: close transcript", "err", closeErr, "path", path)
+		}
+	}()
 
 	var turns []transcriptTurn
 	sc := bufio.NewScanner(f)

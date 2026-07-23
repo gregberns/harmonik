@@ -1,9 +1,11 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -464,7 +466,14 @@ func trustUpsertOnce(worktreePath, cfgPath string, lockTimeout time.Duration) er
 	if err != nil {
 		return fmt.Errorf("workspace: EnsureWorktreeTrust: open lockfile %s: %w", lockPath, err)
 	}
-	defer lockFd.Close()
+	// Advisory flock held to function exit; the deferred closure preserves that
+	// timing (an early close would release the lock mid-critical-section). The
+	// close error on a lockfile carries no unflushed data — log and continue.
+	defer func() {
+		if closeErr := lockFd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "workspace: EnsureWorktreeTrust: close lockfile", "err", closeErr, "path", lockPath)
+		}
+	}()
 
 	if err := acquireExclusiveBounded(int(lockFd.Fd()), lockTimeout); err != nil {
 		return err
@@ -584,7 +593,14 @@ func ensureClaudeThemeAt(cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("workspace: EnsureClaudeTheme: open lockfile %s: %w", lockPath, err)
 	}
-	defer lockFd.Close()
+	// Advisory flock held to function exit; the deferred closure preserves that
+	// timing (an early close would release the lock mid-critical-section). The
+	// close error on a lockfile carries no unflushed data — log and continue.
+	defer func() {
+		if closeErr := lockFd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "workspace: EnsureClaudeTheme: close lockfile", "err", closeErr, "path", lockPath)
+		}
+	}()
 
 	if err := acquireExclusiveBounded(int(lockFd.Fd()), defaultTrustLockTimeout); err != nil {
 		return err
@@ -755,7 +771,14 @@ func pruneWorktreeTrustAt(worktreePath, cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("workspace: PruneWorktreeTrust: open lockfile %s: %w", lockPath, err)
 	}
-	defer lockFd.Close()
+	// Advisory flock held to function exit; the deferred closure preserves that
+	// timing (an early close would release the lock mid-critical-section). The
+	// close error on a lockfile carries no unflushed data — log and continue.
+	defer func() {
+		if closeErr := lockFd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "workspace: PruneWorktreeTrust: close lockfile", "err", closeErr, "path", lockPath)
+		}
+	}()
 
 	if err := acquireExclusiveBounded(int(lockFd.Fd()), defaultTrustLockTimeout); err != nil {
 		return err

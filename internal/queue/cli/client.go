@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -92,7 +93,11 @@ func sendRequest(ctx context.Context, harmonikDir string, payload []byte) (resp 
 		}
 		return socketResponse{}, exitTransportError
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			slog.WarnContext(ctx, "queue/cli: close daemon conn", "err", closeErr, "path", sockPath)
+		}
+	}()
 
 	// Write request.
 	if _, writeErr := conn.Write(payload); writeErr != nil {

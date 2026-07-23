@@ -61,6 +61,23 @@ func ValidBufferName(name string) bool {
 	return bufferNameRe.MatchString(name)
 }
 
+// SanitizeBufferSegment lowercases s and maps every character outside [a-z0-9]
+// to '-', returning "" when s carries nothing usable. It is the segment-level
+// half of [BufferName], exported for the one caller that needs the EMPTY answer
+// rather than the fallback: internal/daemon's perRunSubstrate.inputBufferName
+// chains run-session-id → pane-target → a literal, and has to know which link
+// sanitized away to nothing.
+//
+// Exported for the same reason as [ValidBufferName]: a restated copy in another
+// package drifts from this one and then proves nothing. There WAS such a copy,
+// byte-identical, in internal/daemon/tmuxsubstrate.go.
+//
+// Prefer [BufferName] for constructing a name. Reach for this only when the
+// empty case is load-bearing.
+func SanitizeBufferSegment(s string) string {
+	return sanitizeBufferSegment(s)
+}
+
 // bufferSegment sanitizes one segment and substitutes the fallback when nothing
 // usable survives.
 func bufferSegment(s string) string {

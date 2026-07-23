@@ -2632,8 +2632,23 @@ func pasteInjectQuitOnReviewFile(
 //
 // The sessionID component is the claudeSessionID for the current launch;
 // purpose is a short lowercase slug ("task", "feedback", "review").
+//
+// It delegates to [tmux.BufferName] so the result is valid BY CONSTRUCTION.
+// This was a bare fmt.Sprintf, which is valid only by luck: OSAdapter.LoadBuffer
+// and OSAdapter.PasteBuffer validate against bufferNameRe
+// (^harmonik-[a-z0-9-]+-[a-z0-9-]+$) before tmux is ever invoked, and a session
+// id carrying an uppercase letter, an underscore or a dot is rejected with
+// ErrStructural — so the payload is DROPPED at write time. The failure mode is a
+// wedged dispatch, not a clean error. It was not firing only because ids happen
+// to be minted as lowercase UUIDs today; a "20060102T150405Z"-style id fails on
+// the 'T'. That is precisely how hk-lckbv wedged the daemon and hk-9hvr0 wedged
+// the tmux substrate, and sanitizing at the one construction site makes the
+// character class unreachable instead of re-litigating it per call site.
+//
+// Callers: crewstart.go ("crew-init"), dot_gate.go ("gate"), this file
+// ("task" x2, "review") and perRunSubstrate.inputBufferName ("input").
 func bufferName(sessionID, purpose string) string {
-	return fmt.Sprintf("harmonik-%s-%s", sessionID, purpose)
+	return tmux.BufferName(sessionID, purpose)
 }
 
 // statTaskFile checks that path exists and is a non-empty regular file.

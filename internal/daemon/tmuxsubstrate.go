@@ -2271,19 +2271,14 @@ func (p *perRunSubstrate) inputBufferName() string {
 // bufferNameRe-valid buffer name. Leading/trailing hyphens are trimmed so the
 // segment never collapses the "harmonik-<id>-<purpose>" delimiters. Returns ""
 // when s has no usable characters.
+//
+// This was a byte-identical restatement of the tmux package's own sanitizer.
+// It now delegates, so the two cannot drift — the same reason tmux exports
+// ValidBufferName rather than letting callers restate the regex. The local name
+// is kept because inputBufferName below and its regression test both read as
+// prose against it.
 func sanitizeBufferSegment(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r - 'A' + 'a')
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return strings.Trim(b.String(), "-")
+	return tmux.SanitizeBufferSegment(s)
 }
 
 // SubmitInput is the interim tmux/paste implementation of handler.InputPort

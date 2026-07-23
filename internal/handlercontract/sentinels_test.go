@@ -29,7 +29,6 @@ func TestSentinelsDistinct(t *testing.T) {
 			if i == j {
 				continue
 			}
-			a, b := a, b // capture
 			t.Run(fmt.Sprintf("%s_not_is_%s", a.name, b.name), func(t *testing.T) {
 				t.Parallel()
 				if errors.Is(a.err, b.err) {
@@ -145,7 +144,6 @@ func TestClass(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := handlercontract.Class(tc.input)
@@ -175,7 +173,6 @@ func TestSentinelMessages(t *testing.T) {
 	}
 
 	for _, s := range sentinels {
-		s := s
 		t.Run(s.name, func(t *testing.T) {
 			t.Parallel()
 			msg := s.err.Error()

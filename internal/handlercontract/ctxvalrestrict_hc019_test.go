@@ -196,9 +196,7 @@ func TestCtxValRestrict_HC019_NoBusinessDataInContext(t *testing.T) {
 	}
 
 	for _, filePath := range sourceFiles {
-		filePath := filePath // capture
 		for _, keyPattern := range ctxValRestrictFixtureForbiddenKeyPatterns {
-			keyPattern := keyPattern // capture
 			t.Run(filepath.Base(filePath)+"/"+keyPattern, func(t *testing.T) {
 				t.Parallel()
 

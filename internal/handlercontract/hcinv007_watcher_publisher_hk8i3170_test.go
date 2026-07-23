@@ -89,8 +89,8 @@ func (r *hcInv007FixtureRecordingEmitter) Emit(_ context.Context, eventType core
 	return nil
 }
 
-func (r *hcInv007FixtureRecordingEmitter) EmitWithRunID(_ context.Context, _ core.RunID, eventType core.EventType, _ []byte) error {
-	return r.Emit(context.Background(), eventType, nil)
+func (r *hcInv007FixtureRecordingEmitter) EmitWithRunID(ctx context.Context, _ core.RunID, eventType core.EventType, _ []byte) error {
+	return r.Emit(ctx, eventType, nil)
 }
 
 // hcInv007FixtureMakeLine encodes the given type string as a minimal NDJSON line
@@ -289,7 +289,9 @@ func TestHCINV007_WatcherIsSolePublisher_DirectEmitIsDetectable(t *testing.T) {
 	// Simulate a rogue component bypassing the watcher by calling Emit directly.
 	// In production this would violate HC-INV-007.  We emit to bypassBus, not
 	// watcherBus, to model the separate-reference structural protection.
-	_ = bypassBus.Emit(t.Context(), core.EventType(handlercontract.ProgressMsgTypeAgentReady), nil)
+	if err := bypassBus.Emit(t.Context(), core.EventType(handlercontract.ProgressMsgTypeAgentReady), nil); err != nil {
+		t.Fatalf("bypassBus.Emit: %v", err)
+	}
 
 	// Watcher bus: agent_ready arrived via the correct path.
 	watcherReceived := make(map[string]struct{}, len(watcherBus.received))

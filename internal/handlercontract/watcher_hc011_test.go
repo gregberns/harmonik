@@ -47,8 +47,8 @@ func (p *watcherFixturePublisher) Emit(_ context.Context, eventType core.EventTy
 }
 
 // EmitWithRunID records eventType (run_id is not stored by this test stub).
-func (p *watcherFixturePublisher) EmitWithRunID(_ context.Context, _ core.RunID, eventType core.EventType, _ []byte) error {
-	return p.Emit(context.Background(), eventType, nil)
+func (p *watcherFixturePublisher) EmitWithRunID(ctx context.Context, _ core.RunID, eventType core.EventType, _ []byte) error {
+	return p.Emit(ctx, eventType, nil)
 }
 
 func (p *watcherFixturePublisher) EventTypes() []string {
@@ -84,21 +84,21 @@ func (d *watcherFixtureDeadLetter) Events() []string {
 }
 
 // watcherFixtureSpawn creates and starts a watcher using the provided NDJSON
-// bytes as the progress stream.  Returns the watcher and its publisher/dead-letter.
+// bytes as the progress stream.  Returns the watcher and its publisher.  Tests
+// that need to inspect the dead-letter sink build the config themselves.
 func watcherFixtureSpawn(
 	t *testing.T,
 	ndjson string,
-) (*handlercontract.Watcher, *watcherFixturePublisher, *watcherFixtureDeadLetter) {
+) (*handlercontract.Watcher, *watcherFixturePublisher) {
 	t.Helper()
 	pub := &watcherFixturePublisher{}
-	dl := &watcherFixtureDeadLetter{}
 	w := handlercontract.SpawnWatcher(t.Context(), handlercontract.SpawnWatcherConfig{
 		SessionID:      watcherFixtureSessionID(t),
 		ProgressStream: strings.NewReader(ndjson),
 		Publisher:      pub,
-		DeadLetter:     dl,
+		DeadLetter:     &watcherFixtureDeadLetter{},
 	})
-	return w, pub, dl
+	return w, pub
 }
 
 // watcherFixtureWait waits for the watcher to complete with a deadline.
@@ -195,7 +195,14 @@ func TestWatcher_SpawnWatcher_ReturnsBefore_StreamEOF(t *testing.T) {
 
 	// Block until the test says so; simulates a handler that hasn't closed yet.
 	pr, pw := io.Pipe()
-	defer func() { _ = pw.Close() }()
+	// Safety net for the t.Fatal path below. The happy path closes explicitly,
+	// so this is usually a second Close; io.PipeWriter tolerates that and any
+	// non-nil result would mean the pipe contract itself changed.
+	defer func() {
+		if cerr := pw.Close(); cerr != nil {
+			t.Errorf("deferred pipe close: %v", cerr)
+		}
+	}()
 
 	w := handlercontract.SpawnWatcher(t.Context(), handlercontract.SpawnWatcherConfig{
 		SessionID:      watcherFixtureSessionID(t),
@@ -218,7 +225,9 @@ func TestWatcher_SpawnWatcher_ReturnsBefore_StreamEOF(t *testing.T) {
 	}
 
 	// Close the stream; the watcher should finish shortly.
-	_ = pw.Close()
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close progress stream: %v", err)
+	}
 	watcherFixtureWait(t, w)
 }
 
@@ -227,7 +236,7 @@ func TestWatcher_SpawnWatcher_ReturnsBefore_StreamEOF(t *testing.T) {
 func TestWatcher_SpawnWatcher_SessionID(t *testing.T) {
 	t.Parallel()
 
-	w, _, _ := watcherFixtureSpawn(t, "")
+	w, _ := watcherFixtureSpawn(t, "")
 	watcherFixtureWait(t, w)
 
 	want := watcherFixtureSessionID(t)
@@ -241,7 +250,7 @@ func TestWatcher_SpawnWatcher_SessionID(t *testing.T) {
 func TestWatcher_CleanEOF_DoneClosedAndErrNil(t *testing.T) {
 	t.Parallel()
 
-	w, _, _ := watcherFixtureSpawn(t, "")
+	w, _ := watcherFixtureSpawn(t, "")
 	watcherFixtureWait(t, w)
 
 	if err := w.Err(); err != nil {
@@ -260,7 +269,11 @@ func TestWatcher_ContextCancel_DoneClosedAndErrCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 
 	pr, pw := io.Pipe()
-	defer func() { _ = pw.Close() }()
+	defer func() {
+		if cerr := pw.Close(); cerr != nil {
+			t.Errorf("close progress stream: %v", cerr)
+		}
+	}()
 
 	w := handlercontract.SpawnWatcher(ctx, handlercontract.SpawnWatcherConfig{
 		SessionID:      watcherFixtureSessionID(t),
@@ -272,10 +285,13 @@ func TestWatcher_ContextCancel_DoneClosedAndErrCanceled(t *testing.T) {
 	cancel()
 	watcherFixtureWait(t, w)
 
-	// Allow either: Err() is nil (if goroutine saw EOF-before-cancel) or wraps
-	// ErrCanceled. The key requirement is that Done is closed.
-	// For a blocked pipe the goroutine will observe cancel before next scan.
-	_ = w.Err() // may or may not be ErrCanceled depending on scheduler race
+	// Allow either: Err() is nil (if the goroutine saw EOF-before-cancel) or an
+	// error wrapping ErrCanceled — which of the two is a scheduler race. The key
+	// requirement is that Done is closed; anything OUTSIDE that pair is a defect,
+	// so assert the pair rather than discarding Err() entirely.
+	if err := w.Err(); err != nil && !errors.Is(err, handlercontract.ErrCanceled) {
+		t.Errorf("Watcher.Err() = %v; want nil or an error wrapping ErrCanceled", err)
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -292,7 +308,7 @@ func TestWatcher_ValidMessages_PublishedToPublisher(t *testing.T) {
 		watcherFixtureLine(t, map[string]string{"type": "agent_started"}) +
 		watcherFixtureLine(t, map[string]string{"type": "agent_heartbeat"})
 
-	w, pub, _ := watcherFixtureSpawn(t, lines)
+	w, pub := watcherFixtureSpawn(t, lines)
 	watcherFixtureWait(t, w)
 
 	types := pub.EventTypes()
@@ -317,7 +333,7 @@ func TestWatcher_UnknownMessageType_IgnoredNotError(t *testing.T) {
 	lines := watcherFixtureLine(t, map[string]string{"type": "future_unknown_type_v99"}) +
 		watcherFixtureLine(t, map[string]string{"type": "agent_heartbeat"})
 
-	w, pub, _ := watcherFixtureSpawn(t, lines)
+	w, pub := watcherFixtureSpawn(t, lines)
 	watcherFixtureWait(t, w)
 
 	if w.Err() != nil {
@@ -337,7 +353,7 @@ func TestWatcher_BlankLines_Skipped(t *testing.T) {
 
 	lines := "\n\n" + watcherFixtureLine(t, map[string]string{"type": "agent_ready"}) + "\n"
 
-	w, pub, _ := watcherFixtureSpawn(t, lines)
+	w, pub := watcherFixtureSpawn(t, lines)
 	watcherFixtureWait(t, w)
 
 	if w.Err() != nil {
@@ -366,7 +382,7 @@ func TestWatcher_LineTooLong_EmitsAgentFailed(t *testing.T) {
 		strings.Repeat("x", handlercontract.NDJSONMaxLineLenBytes) +
 		`"}` + "\n"
 
-	w, pub, _ := watcherFixtureSpawn(t, oversized)
+	w, pub := watcherFixtureSpawn(t, oversized)
 	watcherFixtureWait(t, w)
 
 	if w.Err() == nil {
@@ -403,7 +419,7 @@ func TestWatcher_MalformedJSON_EmitsAgentFailed(t *testing.T) {
 	// Syntactically invalid JSON followed by nothing.
 	ndjson := "{not valid json}\n"
 
-	w, pub, _ := watcherFixtureSpawn(t, ndjson)
+	w, pub := watcherFixtureSpawn(t, ndjson)
 	watcherFixtureWait(t, w)
 
 	if w.Err() == nil {
@@ -468,7 +484,7 @@ func TestWatcher_LastReadEventAt_AdvancesAfterRead(t *testing.T) {
 	t.Parallel()
 
 	ndjson := watcherFixtureLine(t, map[string]string{"type": "agent_heartbeat"})
-	w, _, _ := watcherFixtureSpawn(t, ndjson)
+	w, _ := watcherFixtureSpawn(t, ndjson)
 	watcherFixtureWait(t, w)
 
 	// After the goroutine finishes reading, LastReadEventAt must be non-zero.
@@ -486,7 +502,7 @@ func TestWatcher_LastReadEventAt_IsRecent(t *testing.T) {
 
 	before := time.Now()
 	ndjson := watcherFixtureLine(t, map[string]string{"type": "agent_heartbeat"})
-	w, _, _ := watcherFixtureSpawn(t, ndjson)
+	w, _ := watcherFixtureSpawn(t, ndjson)
 	watcherFixtureWait(t, w)
 	after := time.Now()
 

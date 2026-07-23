@@ -54,7 +54,6 @@ func cp051FixtureFindTypeDoc(t *testing.T, srcPath, typeName string) (string, bo
 	t.Helper()
 
 	fset := token.NewFileSet()
-	//nolint:gosec // G304: path derived from runtime.Caller + same-package dir; not user input.
 	f, err := parser.ParseFile(fset, srcPath, nil, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("cp051FixtureFindTypeDoc: parser.ParseFile(%q): %v", srcPath, err)

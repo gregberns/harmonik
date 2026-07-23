@@ -219,5 +219,10 @@ func TestHarnessRegistry_ZeroValuePanics(t *testing.T) {
 		}
 	}()
 	var reg handlercontract.HarnessRegistry
-	_, _ = reg.ForAgent(harnessRegistryFixtureValidType("zv"))
+	// Unreachable unless the zero value stops panicking; the deferred recover
+	// above is what asserts the panic. Checking err keeps a silent
+	// error-returning regression from looking like a pass.
+	if _, err := reg.ForAgent(harnessRegistryFixtureValidType("zv")); err != nil {
+		t.Errorf("zero-value HarnessRegistry.ForAgent returned error %v; expected panic", err)
+	}
 }

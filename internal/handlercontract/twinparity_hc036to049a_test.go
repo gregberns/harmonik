@@ -224,7 +224,7 @@ func TestHC040_AgentReadyTypeIsStableConstant(t *testing.T) {
 	t.Parallel()
 
 	const wantValue = "agent_ready"
-	got := string(handlercontract.ProgressMsgTypeAgentReady)
+	got := handlercontract.ProgressMsgTypeAgentReady
 	if got != wantValue {
 		t.Errorf("HC-040: ProgressMsgTypeAgentReady = %q; want %q (stable wire type for twin parity)", got, wantValue)
 	}
@@ -259,7 +259,7 @@ func TestHC049a_SkillsProvisionedTypeIsStableConstant(t *testing.T) {
 	t.Parallel()
 
 	const wantValue = "skills_provisioned"
-	got := string(handlercontract.ProgressMsgTypeSkillsProvisioned)
+	got := handlercontract.ProgressMsgTypeSkillsProvisioned
 	if got != wantValue {
 		t.Errorf("HC-049a: ProgressMsgTypeSkillsProvisioned = %q; want %q (stable wire type for twin wire-parity)", got, wantValue)
 	}

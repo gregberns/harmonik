@@ -23,7 +23,7 @@ func skillResolutionFixtureDir(t *testing.T, skills ...string) string {
 	t.Helper()
 	dir := t.TempDir()
 	for _, skill := range skills {
-		if err := os.MkdirAll(filepath.Join(dir, skill), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, skill), 0o700); err != nil {
 			t.Fatalf("skillResolutionFixtureDir: mkdir %q: %v", skill, err)
 		}
 	}
@@ -138,7 +138,7 @@ func TestHC047_ResolveSkill_FileNotDirectory(t *testing.T) {
 	dir := t.TempDir()
 	// Create a file (not a directory) with the skill name.
 	filePath := filepath.Join(dir, "not-a-dir-skill")
-	if err := os.WriteFile(filePath, []byte("not a skill"), 0o644); err != nil {
+	if err := os.WriteFile(filePath, []byte("not a skill"), 0o600); err != nil {
 		t.Fatalf("setup: WriteFile: %v", err)
 	}
 

@@ -183,15 +183,20 @@ func TestHC005_FileArgPreferredOverStdin(t *testing.T) {
 
 	specA := deliveryFixtureValidSpec(t)
 	specA.NodeID = "node-from-file"
-	dataA, _ := handlercontract.MarshalLaunchSpec(specA)
+	dataA, err := handlercontract.MarshalLaunchSpec(specA)
+	if err != nil {
+		t.Fatalf("HC-005: MarshalLaunchSpec(file spec): %v", err)
+	}
 
 	specB := deliveryFixtureValidSpec(t)
 	specB.NodeID = "node-from-stdin"
-	dataB, _ := handlercontract.MarshalLaunchSpec(specB)
+	dataB, err := handlercontract.MarshalLaunchSpec(specB)
+	if err != nil {
+		t.Fatalf("HC-005: MarshalLaunchSpec(stdin spec): %v", err)
+	}
 
 	specPath := filepath.Join(t.TempDir(), "launchspec.json")
-	//nolint:gosec // G306: 0644 is fine for a test file
-	if err := os.WriteFile(specPath, dataA, 0o644); err != nil {
+	if err := os.WriteFile(specPath, dataA, 0o600); err != nil {
 		t.Fatalf("HC-005: WriteFile: %v", err)
 	}
 

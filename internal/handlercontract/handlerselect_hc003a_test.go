@@ -80,7 +80,11 @@ func hc003aFixtureLoadLines(t *testing.T, path string) []string {
 	if err != nil {
 		t.Fatalf("hc003aFixtureLoadLines: open %s: %v", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Errorf("hc003aFixtureLoadLines: close %s: %v", path, cerr)
+		}
+	}()
 	var lines []string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -112,21 +116,19 @@ func TestHC003a_SpecSectionExists(t *testing.T) {
 	foundObservational := false
 
 	for i, line := range lines {
-		if hc003aFixtureHC003aHeading.MatchString(line) {
-			foundHeading = true
-			// Scan the body window for the observational clause.
-			end := i + 1 + windowLines
-			if end > len(lines) {
-				end = len(lines)
-			}
-			for _, bodyLine := range lines[i+1 : end] {
-				if hc003aFixtureModeAgnosticClause.MatchString(bodyLine) {
-					foundObservational = true
-					break
-				}
-			}
-			break
+		if !hc003aFixtureHC003aHeading.MatchString(line) {
+			continue
 		}
+		foundHeading = true
+		// Scan the body window for the observational clause.
+		end := min(i+1+windowLines, len(lines))
+		for _, bodyLine := range lines[i+1 : end] {
+			if hc003aFixtureModeAgnosticClause.MatchString(bodyLine) {
+				foundObservational = true
+				break
+			}
+		}
+		break
 	}
 
 	if !foundHeading {
@@ -228,7 +230,6 @@ func TestHC003a_AdaptersAreModeAgnostic(t *testing.T) {
 	}
 
 	for _, adapterPath := range adapterFiles {
-		adapterPath := adapterPath // capture
 		t.Run(filepath.Base(adapterPath), func(t *testing.T) {
 			t.Parallel()
 

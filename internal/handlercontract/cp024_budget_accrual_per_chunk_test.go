@@ -65,8 +65,8 @@ func (r *cp024FixtureOrderedEmitter) Emit(_ context.Context, eventType core.Even
 	return nil
 }
 
-func (r *cp024FixtureOrderedEmitter) EmitWithRunID(_ context.Context, _ core.RunID, eventType core.EventType, payload []byte) error {
-	return r.Emit(context.Background(), eventType, payload)
+func (r *cp024FixtureOrderedEmitter) EmitWithRunID(ctx context.Context, _ core.RunID, eventType core.EventType, payload []byte) error {
+	return r.Emit(ctx, eventType, payload)
 }
 
 // cp024FixtureChunkLine encodes one agent_output_chunk NDJSON line with the

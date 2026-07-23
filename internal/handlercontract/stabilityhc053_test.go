@@ -82,29 +82,30 @@ func stabilityFixtureHCSpec(t *testing.T) string {
 }
 
 // stabilityFixtureInterfaceMethods returns a sorted slice of method names for
-// the given interface type T (passed as reflect.Type).  Panics if T is not an
-// interface.
-func stabilityFixtureInterfaceMethods(t reflect.Type) []string {
-	if t.Kind() != reflect.Interface {
-		panic("stabilityFixtureInterfaceMethods: not an interface")
+// the interface type typ.  Fails the test if typ is not an interface.
+func stabilityFixtureInterfaceMethods(t *testing.T, typ reflect.Type) []string {
+	t.Helper()
+	if typ.Kind() != reflect.Interface {
+		t.Fatalf("stabilityFixtureInterfaceMethods: %v is a %s, not an interface", typ, typ.Kind())
 	}
-	methods := make([]string, t.NumMethod())
-	for i := range t.NumMethod() {
-		methods[i] = t.Method(i).Name
+	methods := make([]string, typ.NumMethod())
+	for i := range typ.NumMethod() {
+		methods[i] = typ.Method(i).Name
 	}
 	sort.Strings(methods)
 	return methods
 }
 
 // stabilityFixtureVisibleFields returns a sorted slice of exported field names
-// for the given struct type T.  Uses reflect.VisibleFields to include embedded
-// fields.  Panics if T is not a struct.
-func stabilityFixtureVisibleFields(t reflect.Type) []string {
-	if t.Kind() != reflect.Struct {
-		panic("stabilityFixtureVisibleFields: not a struct")
+// for the struct type typ.  Uses reflect.VisibleFields to include embedded
+// fields.  Fails the test if typ is not a struct.
+func stabilityFixtureVisibleFields(t *testing.T, typ reflect.Type) []string {
+	t.Helper()
+	if typ.Kind() != reflect.Struct {
+		t.Fatalf("stabilityFixtureVisibleFields: %v is a %s, not a struct", typ, typ.Kind())
 	}
 	var names []string
-	for _, f := range reflect.VisibleFields(t) {
+	for _, f := range reflect.VisibleFields(typ) {
 		if f.IsExported() {
 			names = append(names, f.Name)
 		}
@@ -134,7 +135,7 @@ func TestStabilityHC053_HandlerInterface(t *testing.T) {
 		"Launch",
 	}
 
-	got := stabilityFixtureInterfaceMethods(reflect.TypeOf((*handlercontract.Handler)(nil)).Elem())
+	got := stabilityFixtureInterfaceMethods(t, reflect.TypeOf((*handlercontract.Handler)(nil)).Elem())
 
 	if !reflect.DeepEqual(got, wantMethods) {
 		t.Errorf(
@@ -176,7 +177,7 @@ func TestStabilityHC053_SessionInterface(t *testing.T) {
 		"Wait",
 	}
 
-	got := stabilityFixtureInterfaceMethods(reflect.TypeOf((*handlercontract.Session)(nil)).Elem())
+	got := stabilityFixtureInterfaceMethods(t, reflect.TypeOf((*handlercontract.Session)(nil)).Elem())
 
 	if !reflect.DeepEqual(got, wantMethods) {
 		t.Errorf(
@@ -237,7 +238,7 @@ func TestStabilityHC053_LaunchSpecFields(t *testing.T) {
 		"WorkspacePath",
 	}
 
-	got := stabilityFixtureVisibleFields(reflect.TypeOf(handlercontract.LaunchSpec{}))
+	got := stabilityFixtureVisibleFields(t, reflect.TypeOf(handlercontract.LaunchSpec{}))
 
 	if !reflect.DeepEqual(got, wantFields) {
 		t.Errorf(

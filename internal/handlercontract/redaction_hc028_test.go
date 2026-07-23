@@ -42,7 +42,9 @@ package handlercontract_test
 // beads that implement those mechanisms.
 
 import (
+	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -109,6 +111,19 @@ var redactionFixtureSecretNamedFieldNames = []string{
 	"api-key",
 	"apikey",
 	"auth",
+}
+
+// redactionFixtureSafeFieldNames is the canonical list of field NAMES that MUST
+// NOT match HC-031's regex. It spans the control field on
+// redactionFixtureSecretNamedPayload and every field of
+// redactionFixtureSafePayload.
+var redactionFixtureSafeFieldNames = []string{
+	"node_id",
+	"run_id",
+	"status",
+	"exit_code",
+	"agent_type",
+	"worker_id",
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,6 +233,80 @@ var redactionFixturePerHandlerPatterns = []struct {
 // Sensor: HC-031 regex covers all fixture field names
 // ─────────────────────────────────────────────────────────────────────────────
 
+// redactionFixtureJSONFieldNames returns the `json` tag names of every field of
+// the struct type typ, in declaration order.
+func redactionFixtureJSONFieldNames(t *testing.T, typ reflect.Type) []string {
+	t.Helper()
+	if typ.Kind() != reflect.Struct {
+		t.Fatalf("redactionFixtureJSONFieldNames: %v is a %s, not a struct", typ, typ.Kind())
+	}
+	names := make([]string, 0, typ.NumField())
+	for i := range typ.NumField() {
+		tag, ok := typ.Field(i).Tag.Lookup("json")
+		if !ok {
+			t.Fatalf("redactionFixtureJSONFieldNames: %v field %q has no json tag", typ, typ.Field(i).Name)
+		}
+		names = append(names, strings.Split(tag, ",")[0])
+	}
+	return names
+}
+
+// TestRedaction_HC031_FixtureStructsMatchFieldNameLists asserts that the json
+// field names carried by the four fixture payload structs are exactly the
+// name lists the HC-031/HC-033 sensors assert against.
+//
+// The lists above are hand-maintained copies of the struct tags. Without this
+// sensor the two can drift silently — a field added to (or renamed on) a
+// fixture struct would simply stop being covered, and the sensors would keep
+// passing against a stale list while claiming to detect drift.
+//
+// Spec ref: specs/handler-contract.md §4.7.HC-031, §4.7.HC-033.
+func TestRedaction_HC031_FixtureStructsMatchFieldNameLists(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		typ  reflect.Type
+		want []string
+	}{
+		{
+			name: "secret_named_payload",
+			typ:  reflect.TypeOf(redactionFixtureSecretNamedPayload{}),
+			// The secret-named fields plus the documented safe control field.
+			want: append(append([]string{}, redactionFixtureSecretNamedFieldNames...), "worker_id"),
+		},
+		{
+			name: "safe_payload",
+			typ:  reflect.TypeOf(redactionFixtureSafePayload{}),
+			want: []string{"node_id", "run_id", "status", "exit_code", "agent_type"},
+		},
+		{
+			name: "secret_value_payload",
+			typ:  reflect.TypeOf(redactionFixtureSecretValuePayload{}),
+			want: []string{"provider_key", "alt_provider_key", "safe_value"},
+		},
+		{
+			name: "schema_violation",
+			typ:  reflect.TypeOf(redactionFixtureSchemaViolation{}),
+			want: []string{"password", "node_id"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := redactionFixtureJSONFieldNames(t, tc.typ)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf(
+					"%v json field names = %v; want %v — the fixture struct and the "+
+						"hand-maintained field-name list have drifted apart",
+					tc.typ, got, tc.want,
+				)
+			}
+		})
+	}
+}
+
 // TestRedaction_HC031_CommonPrefixRegexCoversFixtureFields asserts that every
 // field name in redactionFixtureSecretNamedFieldNames is matched by the HC-031
 // common-prefix regex.
@@ -232,7 +321,6 @@ func TestRedaction_HC031_CommonPrefixRegexCoversFixtureFields(t *testing.T) {
 	re := regexp.MustCompile(redactionFixtureCommonPrefixRegex)
 
 	for _, fieldName := range redactionFixtureSecretNamedFieldNames {
-		fieldName := fieldName
 		t.Run(fieldName, func(t *testing.T) {
 			t.Parallel()
 			if !re.MatchString(fieldName) {
@@ -255,19 +343,9 @@ func TestRedaction_HC031_CommonPrefixRegexCoversFixtureFields(t *testing.T) {
 func TestRedaction_HC031_CommonPrefixRegexDoesNotMatchSafeFields(t *testing.T) {
 	t.Parallel()
 
-	safeFields := []string{
-		"node_id",
-		"run_id",
-		"status",
-		"exit_code",
-		"agent_type",
-		"worker_id",
-	}
-
 	re := regexp.MustCompile(redactionFixtureCommonPrefixRegex)
 
-	for _, fieldName := range safeFields {
-		fieldName := fieldName
+	for _, fieldName := range redactionFixtureSafeFieldNames {
 		t.Run(fieldName, func(t *testing.T) {
 			t.Parallel()
 			if re.MatchString(fieldName) {
@@ -307,7 +385,6 @@ func TestRedaction_HC032_PerHandlerPatternsCompile(t *testing.T) {
 	t.Parallel()
 
 	for _, entry := range redactionFixturePerHandlerPatterns {
-		entry := entry
 		t.Run(entry.Name, func(t *testing.T) {
 			t.Parallel()
 			_, err := regexp.Compile(entry.Pattern)
@@ -384,7 +461,6 @@ func TestRedaction_HC032_AnthropicPatternDoesNotMatchSafeValue(t *testing.T) {
 
 	re := regexp.MustCompile(anthropicPattern)
 	for _, v := range safeValues {
-		v := v
 		t.Run(v, func(t *testing.T) {
 			t.Parallel()
 			if re.MatchString(v) {

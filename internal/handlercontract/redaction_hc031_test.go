@@ -57,7 +57,6 @@ func TestRedactionHC031_SecretNamedFieldsAreRedacted(t *testing.T) {
 	t.Parallel()
 
 	for _, fieldName := range redactionFixtureSecretNamedFieldNames {
-		fieldName := fieldName
 		t.Run(fieldName, func(t *testing.T) {
 			t.Parallel()
 
@@ -107,7 +106,6 @@ func TestRedactionHC031_SafeFieldsArePreserved(t *testing.T) {
 	got := handlercontract.RedactByFieldName(safePayload)
 
 	for k, want := range safePayload {
-		k, want := k, want
 		t.Run(k, func(t *testing.T) {
 			t.Parallel()
 			v, ok := got[k]
@@ -297,7 +295,6 @@ func TestRedactionHC031_CaseInsensitiveMatch(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.fieldName, func(t *testing.T) {
 			t.Parallel()
 

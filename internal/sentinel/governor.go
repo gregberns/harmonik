@@ -350,6 +350,12 @@ func computeWindowMovement(
 				sample.MovementScore += w
 				sample.TerminalEventCount++
 			}
+
+		default:
+			// Every other event type is deliberately not movement. The governor
+			// scores TERMINAL progress only (flywheel-motion §6.1), so activity
+			// events — heartbeats, dispatches, state transitions — must not
+			// contribute to MovementScore no matter how many of them appear.
 		}
 	}
 

@@ -1,3 +1,5 @@
+package sentinel
+
 // layera_hkl087e.go — Layer A per-run stall detectors for the stall-sentinel.
 //
 // Thin decision logic over the Snapshot produced by ComputeSnapshot (hk-mxxsl).
@@ -22,7 +24,6 @@
 //	02-analysis.md §Layer A, DESIGN.md §2.
 //
 // Bead: hk-l087e.
-package sentinel
 
 import (
 	"fmt"

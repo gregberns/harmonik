@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/gitprobe"
@@ -25,15 +26,30 @@ import (
 // re-running the full implementer+reviewer cycle. The APPROVE verdict is
 // preserved across retries.
 //
-// Retryable (transient race): rebase_conflict, non_ff_merge, merge_fmt_failed.
-// Non-retryable (structural): merge_build_failed, push_failed, strip_run_context_failed, etc.
+// Retryable (transient race): rebase_conflict, non_ff_merge, merge_fmt_failed,
+// and a merge_build_failed whose compiler output is the vanished-build-cache
+// signature (hk-pgtbr — see below).
+// Non-retryable (structural): every other merge_build_failed, push_failed,
+// strip_run_context_failed, etc.
 //
-// Bead: hk-f9xzs.
+// hk-pgtbr: a merge_build_failed whose errors are `could not import <stdlib
+// package> (open <gocache path>: no such file or directory)` is not a statement
+// about the bead's code at all — it is another process having deleted the shared
+// Go build cache mid-compile. Charging it to the bead records an infrastructure
+// fault as a code regression, which is indistinguishable from a real one in the
+// event log. Classifying it retryable re-prepares and rebuilds instead.
+// Bounded: the caller caps attempts (RunConfig.MaxMergeAttempts), so a
+// misclassification costs extra builds, never an unbounded loop.
+//
+// Beads: hk-f9xzs, hk-pgtbr.
 func IsRetryableReason(reason string) bool {
 	for _, prefix := range []string{"rebase_conflict", "non_ff_merge", "merge_fmt_failed"} {
 		if strings.HasPrefix(reason, prefix) {
 			return true
 		}
+	}
+	if strings.HasPrefix(reason, "merge_build_failed") && isMergeBuildColdCacheError([]byte(reason)) {
+		return true
 	}
 	return false
 }
@@ -418,23 +434,9 @@ func runMergeBuildGate(ctx context.Context, wtPath, projectDir string, runID cor
 		{"build", "./..."},
 		{"vet", "./..."},
 	} {
-		buildCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-		buildCmd.Dir = buildDir
-		out, buildErr := buildCmd.CombinedOutput()
+		out, buildErr := runMergeBuildStep(ctx, execGoInDir, buildDir, buildArgs, mergeBuildColdCacheBackoff)
 		if buildErr == nil {
 			continue
-		}
-		// Cold-cache retry (hk-44ab2): the go-cache reaper can wipe the cache in
-		// the TOCTOU window; retry once when the output matches the signature.
-		if isMergeBuildColdCacheError(out) {
-			retryCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-			retryCmd.Dir = buildDir
-			if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
-				continue
-			} else {
-				out = retryOut
-				buildErr = retryErr
-			}
 		}
 		emitMergeBuildFailed(ctx, bus, runID, beadID, buildErr, out)
 		return &Outcome{
@@ -443,6 +445,56 @@ func runMergeBuildGate(ctx context.Context, wtPath, projectDir string, runID cor
 		}
 	}
 	return nil
+}
+
+// mergeBuildRunner runs one `go <args>` in dir and returns its combined output.
+// A seam so runMergeBuildStep's retry schedule is testable without racing a real
+// `go clean -cache` against a real compile.
+type mergeBuildRunner func(ctx context.Context, dir string, args []string) ([]byte, error)
+
+// execGoInDir is the production mergeBuildRunner.
+func execGoInDir(ctx context.Context, dir string, args []string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Dir = dir
+	return cmd.CombinedOutput()
+}
+
+// mergeBuildColdCacheBackoff is the wait before each cold-cache retry of a
+// merge-gate build step; its length is the number of RETRIES (total attempts =
+// len+1).
+//
+// hk-44ab2 retried once, IMMEDIATELY. That is too eager to survive the failure
+// it targets: `go build` aborts within seconds of the first vanished cache
+// entry, while the `rm -rf` of a multi-GiB GOCACHE that caused it runs for
+// considerably longer, so the immediate retry re-enters the same deletion window
+// and fails again. hk-pgtbr recorded a merge-gate rejection on 2026-07-21 with
+// the single-retry code already in the tree since 2026-07-04 (9b8288ad).
+// Backing off puts the later attempts after the deletion rather than inside it.
+var mergeBuildColdCacheBackoff = []time.Duration{3 * time.Second, 9 * time.Second}
+
+// runMergeBuildStep runs one merge-gate build step, retrying only on the
+// cold-cache signature (isMergeBuildColdCacheError) per the backoff schedule.
+// Any other failure — a genuine compile error — returns on the FIRST attempt so
+// a real regression is never masked or delayed. Returns the last attempt's
+// output and error.
+func runMergeBuildStep(ctx context.Context, run mergeBuildRunner, dir string, args []string, backoff []time.Duration) ([]byte, error) {
+	out, err := run(ctx, dir, args)
+	for _, wait := range backoff {
+		if err == nil || !isMergeBuildColdCacheError(out) {
+			return out, err
+		}
+		if wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return out, err
+			case <-timer.C:
+			}
+		}
+		out, err = run(ctx, dir, args)
+	}
+	return out, err
 }
 
 // commitAdvanceRef is the Phase-A merge exclusion-domain critical section

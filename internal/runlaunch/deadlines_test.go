@@ -1,11 +1,14 @@
-package daemon
+package runlaunch
 
-// agentreadyremote_hk96d7w_test.go — hk-96d7w (LOCAL slice of hk-5z1f0):
+// deadlines_test.go — hk-96d7w (LOCAL slice of hk-5z1f0):
 // the agent_ready timeout is now a configurable knob with a separate, longer
 // default for REMOTE (SSH worker) dispatch — Config.RemoteAgentReadyTimeout /
 // --remote-agent-ready-timeout, resolved per-dispatch by
-// effectiveAgentReadyTimeout. White-box (package daemon) because
-// defaultAgentReadyTimeout / defaultRemoteAgentReadyTimeout are unexported.
+// EffectiveAgentReadyTimeout. In-package (package runlaunch) because it pins
+// the compiled-in default constants directly.
+//
+// Relocated from internal/daemon/agentreadyremote_hk96d7w_test.go by P2 unit
+// E5 RT19b, which moved the HC-056 deadline family out of internal/daemon.
 //
 // This is a pure-function unit test of the resolver only — no daemon spawn,
 // no worker, no network. It does not depend on a live remote worker
@@ -24,16 +27,16 @@ import (
 // implementer agent for CPU/disk on the same worker).
 func TestHK96D7W_DefaultRemoteAgentReadyTimeoutIsLongerThanLocal(t *testing.T) {
 	t.Parallel()
-	if defaultRemoteAgentReadyTimeout <= defaultAgentReadyTimeout {
-		t.Fatalf("defaultRemoteAgentReadyTimeout (%v) must be longer than defaultAgentReadyTimeout (%v) (hk-96d7w)",
-			defaultRemoteAgentReadyTimeout, defaultAgentReadyTimeout)
+	if DefaultRemoteAgentReadyTimeout <= DefaultAgentReadyTimeout {
+		t.Fatalf("DefaultRemoteAgentReadyTimeout (%v) must be longer than DefaultAgentReadyTimeout (%v) (hk-96d7w)",
+			DefaultRemoteAgentReadyTimeout, DefaultAgentReadyTimeout)
 	}
-	if got, want := defaultRemoteAgentReadyTimeout, 210*time.Second; got != want {
-		t.Fatalf("defaultRemoteAgentReadyTimeout = %v, want %v (hk-96d7w)", got, want)
+	if got, want := DefaultRemoteAgentReadyTimeout, 210*time.Second; got != want {
+		t.Fatalf("DefaultRemoteAgentReadyTimeout = %v, want %v (hk-96d7w)", got, want)
 	}
 }
 
-// TestHK96D7W_EffectiveAgentReadyTimeout exercises effectiveAgentReadyTimeout
+// TestHK96D7W_EffectiveAgentReadyTimeout exercises EffectiveAgentReadyTimeout
 // across the local/remote x configured/unconfigured matrix.
 func TestHK96D7W_EffectiveAgentReadyTimeout(t *testing.T) {
 	t.Parallel()
@@ -50,14 +53,14 @@ func TestHK96D7W_EffectiveAgentReadyTimeout(t *testing.T) {
 			local:    0,
 			remote:   0,
 			isRemote: false,
-			want:     defaultAgentReadyTimeout,
+			want:     DefaultAgentReadyTimeout,
 		},
 		{
 			name:     "remote dispatch, no overrides configured falls back to remote default",
 			local:    0,
 			remote:   0,
 			isRemote: true,
-			want:     defaultRemoteAgentReadyTimeout,
+			want:     DefaultRemoteAgentReadyTimeout,
 		},
 		{
 			name:     "local dispatch honors an explicit local override",
@@ -78,31 +81,30 @@ func TestHK96D7W_EffectiveAgentReadyTimeout(t *testing.T) {
 			local:    45 * time.Second,
 			remote:   0,
 			isRemote: true,
-			want:     defaultRemoteAgentReadyTimeout,
+			want:     DefaultRemoteAgentReadyTimeout,
 		},
 		{
 			name:     "local dispatch ignores a remote override",
 			local:    0,
 			remote:   300 * time.Second,
 			isRemote: false,
-			want:     defaultAgentReadyTimeout,
+			want:     DefaultAgentReadyTimeout,
 		},
 		{
 			name:     "negative override treated as unset",
 			local:    -1,
 			remote:   -1,
 			isRemote: false,
-			want:     defaultAgentReadyTimeout,
+			want:     DefaultAgentReadyTimeout,
 		},
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := effectiveAgentReadyTimeout(tc.local, tc.remote, tc.isRemote)
+			got := EffectiveAgentReadyTimeout(tc.local, tc.remote, tc.isRemote)
 			if got != tc.want {
-				t.Fatalf("effectiveAgentReadyTimeout(local=%v, remote=%v, isRemote=%v) = %v, want %v (hk-96d7w)",
+				t.Fatalf("EffectiveAgentReadyTimeout(local=%v, remote=%v, isRemote=%v) = %v, want %v (hk-96d7w)",
 					tc.local, tc.remote, tc.isRemote, got, tc.want)
 			}
 		})

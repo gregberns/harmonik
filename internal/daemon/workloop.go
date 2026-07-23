@@ -72,6 +72,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
@@ -132,27 +133,6 @@ type windowCleaner interface {
 //
 // Bead ref: hk-6pspu.
 const maxItemAttempts = queue.MaxItemAttempts
-
-// agentReadyKillReapTimeout bounds two operations in the HC-056
-// agent_ready_timeout path:
-//
-//  1. Watcher-reap: maximum time to wait for watcher.Done() after Kill().
-//     Kill() itself sends SIGTERM then SIGKILL (3 s grace); this 10 s covers
-//     watcher teardown after SIGKILL lands. If the watcher does not exit, the
-//     bead is still reopened — the stuck goroutine eventually unblocks when ctx
-//     is cancelled.
-//
-//  2. Session-reap (hk-4hso5): bounds sess.Wait in the ErrAgentReadyTimeout
-//     branch. For remote sessions where the pane stays alive after Kill,
-//     runWait polls WindowPanePID until ctx is cancelled (up to 30 min). This
-//     timeout caps that wait so ReopenBead is reached promptly regardless of
-//     pane liveness.
-//
-// Declared as var so tests can override without waiting real wall time.
-//
-// Spec ref: specs/handler-contract.md §4.9 HC-056.
-// Bead ref: hk-do7te, hk-4hso5.
-var agentReadyKillReapTimeout = 10 * time.Second
 
 // periodicCoordinatorReapInterval is the default minimum interval between
 // successive periodic coordinator-session reap passes in the work loop
@@ -521,7 +501,7 @@ type workLoopDeps struct {
 	spawnSubstrateReadyCh <-chan struct{}
 
 	// agentReadyTimeout is the maximum duration waitAgentReady blocks waiting
-	// for an agent_ready event per HC-056.  Zero → defaultAgentReadyTimeout (30s).
+	// for an agent_ready event per HC-056.  Zero → runlaunch.DefaultAgentReadyTimeout (30s).
 	// Sourced from Config.AgentReadyTimeout (also zero-value safe).
 	//
 	// Spec ref: specs/handler-contract.md §4.9 HC-056.
@@ -529,9 +509,9 @@ type workLoopDeps struct {
 	agentReadyTimeout time.Duration
 
 	// remoteAgentReadyTimeout is agentReadyTimeout's counterpart for a dispatch
-	// routed to a REMOTE (SSH worker) node. Zero → defaultRemoteAgentReadyTimeout
+	// routed to a REMOTE (SSH worker) node. Zero → runlaunch.DefaultRemoteAgentReadyTimeout
 	// (210s). Sourced from Config.RemoteAgentReadyTimeout (zero-value safe).
-	// Resolved via effectiveAgentReadyTimeout at each waitAgentReady call site
+	// Resolved via runlaunch.EffectiveAgentReadyTimeout at each waitAgentReady call site
 	// that has a remote/local signal in scope.
 	//
 	// Spec ref: specs/handler-contract.md §4.9 HC-056.
@@ -3744,7 +3724,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 	// useIndepSession is set true when this run is launched in an independent tmux
 	// session (runSessionSpawner path, hk-o85ye). Deferred cleanup (wtCleanup,
-	// forceTeardownSession) is skipped on daemon shutdown so the session and its
+	// runlaunch.ForceTeardownSession) is skipped on daemon shutdown so the session and its
 	// worktree survive SIGKILL; on normal exit cleanup runs as usual.
 	useIndepSession := false
 
@@ -4524,7 +4504,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// it must signal that a tmux window actually spawned, not merely that the
 	// daemon is about to try (which would mislead operators when SpawnWindow is
 	// wedged on a leaked spawn slot).
-	implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
+	implLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
 
 	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
 	// watcher events without a post-seal bus subscription (EV-009).
@@ -4581,14 +4561,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// saturated) instead of an opaque launch-error reopen.
 		if errors.Is(launchErr, ErrSpawnCapTimeout) {
 			inUse, capSize := substrateSpawnStats(deps.substrate)
-			emitSpawnCapBlocked(ctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt), inUse, capSize)
+			runlaunch.EmitSpawnCapBlocked(ctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt), inUse, capSize)
 		}
 		// hk-r1rup: a tmux-new-window-timeout launch failure is the hung-tmux
 		// signature (the no-spawn wedge). Emit tmux_new_window_timeout so operators
 		// see WHY the launch failed (tmux new-window did not return) instead of an
 		// opaque launch-error reopen.
 		if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
-			emitTmuxNewWindowTimeout(ctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt))
+			runlaunch.EmitTmuxNewWindowTimeout(ctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt))
 		}
 		reason := fmt.Sprintf("launch error: %v", launchErr)
 		failRun(reason, reason)
@@ -4600,7 +4580,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// wedged on a leaked slot (in that case Launch returns an error above and
 	// launch_initiated is never emitted).
 	if implLaunchInitiatedMsg != nil {
-		emitPreExecMessage(ctx, deps.bus, runID, implLaunchInitiatedMsg)
+		runlaunch.EmitPreExecMessage(ctx, deps.bus, runID, implLaunchInitiatedMsg)
 	}
 
 	// Store the session's lifecycle Machine in the RunHandle so the stale watcher
@@ -4651,7 +4631,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// the session must survive so the adoption pass on next boot can monitor it.
 	defer func() {
 		if !useIndepSession || ctx.Err() == nil {
-			forceTeardownSession(sess)
+			runlaunch.ForceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom); it deliberately reaps on context.Background() so the kill completes even after the run ctx is cancelled
 		}
 	}()
 
@@ -4669,7 +4649,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Without this call, hookSessionStore.notifyAgentReady finds agentReadyCallback
 	// == nil and is a no-op: tapCh stays empty and waitAgentReady always fires
-	// ErrAgentReadyTimeout (HC-056). This is the root cause identified in smoke v6
+	// runlaunch.ErrAgentReadyTimeout (HC-056). This is the root cause identified in smoke v6
 	// (docs/dogfood-smoke-run-2026-05-13-bridge-substrate-v6.md §9, bead hk-lj1p9.4).
 	//
 	// The callback is invoked from the socket-acceptor goroutine and MUST be
@@ -4736,7 +4716,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hk-d8u1y). Obtain the adapter from the registry for DetectReady.
 	//
 	// HC-056 timeout semantics: we only treat this as a hard failure requiring
-	// reopen if the SPECIFIC HC-056 timeout sentinel (ErrAgentReadyTimeout)
+	// reopen if the SPECIFIC HC-056 timeout sentinel (runlaunch.ErrAgentReadyTimeout)
 	// fires. If the watcher exits first (handler crash, clean exit without
 	// agent_ready) the watcher-done cancel fires first, returning
 	// context.Canceled — in that case we skip the reopen and fall through to
@@ -4785,37 +4765,37 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 			eventSrc := newChanAgentEventSource(tapCh)
 			// hk-96d7w: remote dispatch (rbc != nil) gets the longer remote window.
-			readyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, rbc != nil)
+			readyTimeout := runlaunch.EffectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, rbc != nil)
 			readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, readyTimeout)
 			readyCancel() // always release the watcher-done goroutine above
 
-			if errors.Is(readyErr, ErrAgentReadyTimeout) {
+			if errors.Is(readyErr, runlaunch.ErrAgentReadyTimeout) {
 				// HC-056: agent_ready_timeout — kill, reap, reopen.
 				fmt.Fprintf(os.Stderr, "daemon: workloop: waitAgentReady bead %s run %s: %v (reopening)\n",
 					beadID, runID.String(), readyErr)
 				_ = sess.Kill(ctx)
 				if watcher != nil {
 					// Wait for the watcher goroutine to exit, but do not block
-					// indefinitely — agentReadyKillReapTimeout guards against a
+					// indefinitely — runlaunch.KillReapTimeout guards against a
 					// hung watcher after SIGKILL. The bead is still reopened even
 					// if reaping times out; the watcher goroutine will unblock
 					// when the outer ctx is eventually cancelled.
 					// Bead ref: hk-do7te.
 					select {
 					case <-watcher.Done():
-					case <-substrate.After(deps.clock, agentReadyKillReapTimeout):
+					case <-substrate.After(deps.clock, runlaunch.KillReapTimeout):
 						fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
 							beadID, runID.String())
 					}
 				}
 				// hk-4hso5: bound sess.Wait so a remote pane that stays alive after
 				// Kill cannot hold this goroutine up to 30 min (never-spawned reaper
-				// deadline). agentReadyKillReapTimeout gives the pane time to close
+				// deadline). runlaunch.KillReapTimeout gives the pane time to close
 				// after SIGKILL; if not closed by then, proceed to ReopenBead anyway.
 				// context.Background() as parent makes this independent of the per-run
 				// ctx that the reaper may have already cancelled.
 				{
-					waitCtx, waitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
+					waitCtx, waitCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
 					_ = sess.Wait(waitCtx)
 					waitCancel()
 				}
@@ -4825,7 +4805,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// emission succeeds even when the never-spawned reaper has cancelled
 				// the per-run ctx before this point (the reopen hook applies the same
 				// Background fallback per RSM-022).
-				emitAgentReadyTimeout(context.Background(), deps.bus, runID, cbClaudeSessionID, deps.agentReadyTimeout)
+				runlaunch.EmitAgentReadyTimeout(context.Background(), deps.bus, runID, cbClaudeSessionID, deps.agentReadyTimeout)
 				// RT7 / RSM-031 row 1: the ready-timeout Dispatch terminal maps onto
 				// the Run reopen spine (reopen "agent_ready_timeout" + run_failed).
 				failRun("agent_ready_timeout", "agent_ready_timeout")
@@ -4987,7 +4967,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	{
 		curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA
-		emitImplementerPhaseComplete(ctx, deps.bus, runID, ei.exitCode, ei.stderrTail,
+		runlaunch.EmitImplementerPhaseComplete(ctx, deps.bus, runID, ei.exitCode, ei.stderrTail,
 			commitLanded, implementerPhaseDur)
 	}
 
@@ -5222,7 +5202,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// hk-o85ye: independent session path — leave session and worktree alive.
 				// The session survives SIGKILL; on next boot the adoption pass detects
 				// it, waits for Claude to finish, then resets the bead for re-dispatch.
-				// The deferred cleanup (wtCleanup, forceTeardownSession) is skipped by
+				// The deferred cleanup (wtCleanup, runlaunch.ForceTeardownSession) is skipped by
 				// the useIndepSession guard. No ReopenBead: bead stays in_progress so
 				// QM-002a on next boot leaves the queue item dispatched (alive) ✓.
 				if useIndepSession {
@@ -5583,103 +5563,6 @@ func resolveHEAD(ctx context.Context, repoRoot string) (string, error) {
 		return "", fmt.Errorf("daemon: resolveHEAD: git rev-parse HEAD returned empty output")
 	}
 	return sha, nil
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Worktree cleanup helpers (hk-fgdgz)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// forceTeardownSession force-terminates sess and blocks until the hosted
-// process has been reaped, using a non-cancellable background context.
-//
-// This is the load-bearing guard for hk-68pvl: the worktree-removal cleanup
-// (removeWorktree, run via the deferred wtCleanup in beadRunOne) must NEVER
-// delete the worktree directory while the implementer/reviewer claude is still
-// live inside it. On the tmux substrate path, tmuxSubstrateSession.Wait returns
-// ctx.Err() the instant the run ctx is cancelled even though the hosted process
-// may still be alive (runWait keeps polling in the background); the subsequent
-// `git worktree remove --force` then races a live `go test`, the agent's
-// `git add`/commit lands in a deleted directory, and the run is recorded as a
-// false `no_commit_during_implementer ... exit=0`.
-//
-// sess.Kill blocks until the process group is terminated on both paths:
-//   - substrate: killProcessWithGrace (SIGTERM → grace poll → SIGKILL) then
-//     KillWindow — synchronous, idempotent via killOnce.
-//   - exec: SIGTERM the process group, then await reap (escalating to SIGKILL
-//     on the background ctx, which never expires, so it waits for exit).
-//
-// Kill is safe to call more than once (idempotent on substrate; harmless ESRCH
-// on exec). Callers register this as a deferred backstop immediately after
-// Launch so EVERY return path (success, failure, early error, ctx-cancel) tears
-// the session down before the function returns — and therefore before the
-// beadRunOne-level deferred wtCleanup runs.
-//
-// Bead: hk-68pvl.
-func forceTeardownSession(sess handler.Session) {
-	if sess == nil {
-		return
-	}
-	_ = sess.Kill(context.Background())
-}
-
-// emitPreExecMessage emits a single CHB-018 pre-exec progress message on the
-// bus using the message's embedded "type" field as the event type.
-//
-// Each pre-exec message is compact JSON with a top-level "type" field matching
-// one of the §8.3 event-type constants (handler_capabilities,
-// session_log_location, skills_provisioned, agent_ready). Parsing the type
-// avoids emitting all four under a single catch-all envelope, which would
-// break per-type JSONL filtering for consumers.
-//
-// If the type field cannot be parsed the message is still emitted under the
-// agent_ready type as a safe fallback (no information is lost; the payload
-// is the ground truth).
-//
-// Spec: specs/claude-hook-bridge.md §4.7 CHB-018.
-// Bead: hk-gql20.14.
-func emitPreExecMessage(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, msg json.RawMessage) {
-	var envelope struct {
-		Type string `json:"type"`
-	}
-	eventType := core.EventTypeAgentReady // safe fallback
-	if err := json.Unmarshal(msg, &envelope); err == nil && envelope.Type != "" {
-		eventType = core.EventType(envelope.Type)
-	}
-	_ = bus.EmitWithRunID(ctx, runID, eventType, msg)
-}
-
-// preExecMsgType extracts the "type" field of a pre-exec message, or "" on
-// parse failure.
-func preExecMsgType(msg json.RawMessage) string {
-	var envelope struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(msg, &envelope); err == nil {
-		return envelope.Type
-	}
-	return ""
-}
-
-// emitPreExecBeforeLaunch emits every pre-exec message EXCEPT launch_initiated
-// and returns the launch_initiated message (if any) for the caller to emit
-// AFTER SpawnWindow/Launch returns.
-//
-// hk-4l7zs: launch_initiated previously fired BEFORE SpawnWindow. When the spawn
-// semaphore was wedged (a leaked slot), SpawnWindow blocked indefinitely yet the
-// daemon had already emitted launch_initiated — so operators (and the stale
-// watcher) saw a "launched" run that had, in fact, never spawned a tmux window.
-// Deferring launch_initiated until the window is actually live makes the event
-// mean what it says and lets launch_stall_detected fire correctly when the spawn
-// is wedged. Ordering of the other pre-exec messages is preserved.
-func emitPreExecBeforeLaunch(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, msgs []json.RawMessage) (launchInitiated json.RawMessage) {
-	for _, msg := range msgs {
-		if preExecMsgType(msg) == string(core.EventTypeLaunchInitiated) {
-			launchInitiated = msg
-			continue
-		}
-		emitPreExecMessage(ctx, bus, runID, msg)
-	}
-	return launchInitiated
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6340,121 +6223,6 @@ func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.R
 		return
 	}
 	_ = deps.bus.EmitWithRunID(ctx, runID, core.EventTypeEpicCompleted, b)
-}
-
-// emitImplementerPhaseComplete emits an implementer_phase_complete event
-// (hk-cd8yu) immediately after the implementer session ends.
-//
-// stderrTail is the raw stderr bytes captured by waitWithSocketGrace; only the
-// first 200 bytes are included in the event payload per the spec.
-// duration is the wall-clock time from implementer launch to session end.
-//
-// Spec ref: hk-cd8yu.
-func emitImplementerPhaseComplete(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, exitCode int, stderrTail []byte, commitLanded bool, duration time.Duration) {
-	const maxStderrHead = 200
-	stderrHead := ""
-	if len(stderrTail) > 0 {
-		head := stderrTail
-		if len(head) > maxStderrHead {
-			head = head[:maxStderrHead]
-		}
-		stderrHead = string(head)
-	}
-	pl := core.ImplementerPhaseCompletePayload{
-		RunID:           runID,
-		ExitCode:        exitCode,
-		StderrTailHead:  stderrHead,
-		CommitLanded:    commitLanded,
-		DurationSeconds: duration.Seconds(),
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerPhaseComplete, b)
-}
-
-// emitSpawnCapBlocked emits a spawn_cap_blocked event (hk-4l7zs) when a launch's
-// SpawnWindow times out waiting for a spawn-semaphore slot — the observable
-// signature of a slot leak (every slot held by an acquired-but-never-released
-// session). Non-fatal: emit-marshal errors are silently discarded; the launch
-// failure is already surfaced via the reopen/done path.
-//
-// capSize/slotsInUse describe the saturated pool; when unknown (0) the payload
-// still validates via a minimum capSize of 1 so the event is never dropped.
-func emitSpawnCapBlocked(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, waited time.Duration, slotsInUse, capSize int) {
-	if bus == nil {
-		return
-	}
-	if capSize <= 0 {
-		capSize = 1
-	}
-	waitedMS := waited.Milliseconds()
-	if waitedMS <= 0 {
-		waitedMS = 1
-	}
-	pl := core.SpawnCapBlockedPayload{
-		RunID:      runID.String(),
-		WaitedMS:   waitedMS,
-		SlotsInUse: slotsInUse,
-		CapSize:    capSize,
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeSpawnCapBlocked, b)
-}
-
-// emitTmuxNewWindowTimeout emits a tmux_new_window_timeout event (hk-r1rup) when
-// a launch's SpawnWindow times out waiting for the underlying `tmux new-window`
-// call to return — the observable signature of a hung tmux invocation (the
-// no-spawn wedge). Non-fatal: emit-marshal errors are silently discarded; the
-// launch failure is already surfaced via the reopen/done path.
-//
-// waited is the duration the new-window call blocked before the bound fired;
-// when unknown (<= 0) the payload still validates via a minimum waited_ms of 1
-// so the event is never dropped. Mirrors emitSpawnCapBlocked (hk-4l7zs).
-func emitTmuxNewWindowTimeout(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, waited time.Duration) {
-	if bus == nil {
-		return
-	}
-	waitedMS := waited.Milliseconds()
-	if waitedMS <= 0 {
-		waitedMS = 1
-	}
-	pl := core.TmuxNewWindowTimeoutPayload{
-		RunID:    runID.String(),
-		WaitedMS: waitedMS,
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeTmuxNewWindowTimeout, b)
-}
-
-// emitAgentReadyTimeout emits an agent_ready_timeout event (hk-5cox8) when
-// the HC-056 timeout fires — no agent_ready relay message arrived within the
-// configured deadline. The event carries run_id, claude_session_id, and
-// timeout_ms so post-hoc analysis can correlate which runs never became ready.
-//
-// effectiveTimeout: zero is replaced by defaultAgentReadyTimeout (30s) to
-// match the semantics of waitAgentReady.
-func emitAgentReadyTimeout(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, claudeSessionID string, effectiveTimeout time.Duration) {
-	if effectiveTimeout <= 0 {
-		effectiveTimeout = defaultAgentReadyTimeout
-	}
-	pl := core.AgentReadyTimeoutPayload{
-		RunID:           runID,
-		ClaudeSessionID: claudeSessionID,
-		TimeoutMs:       effectiveTimeout.Milliseconds(),
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeAgentReadyTimeout, b)
 }
 
 // transitionToTerminated advances the per-session lifecycle Machine from its

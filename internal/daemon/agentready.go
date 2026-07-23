@@ -13,9 +13,9 @@ package daemon
 // on each event; on first true it closes the ready channel.
 //
 // The outer function resolves the effective timeout (Config.AgentReadyTimeout
-// → defaultAgentReadyTimeout = 150s) and performs the three-way select:
+// → runlaunch.DefaultAgentReadyTimeout = 150s) and performs the three-way select:
 //   - ready: return nil
-//   - time.After(timeout): return ErrAgentReadyTimeout
+//   - time.After(timeout): return runlaunch.ErrAgentReadyTimeout
 //   - ctx.Done(): return ctx.Err()
 //
 // HC-056 §"last-second arrival": the ready channel is buffered (capacity 1) so
@@ -32,88 +32,12 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/runlaunch"
 )
-
-// defaultAgentReadyTimeout is the HC-056 default: 150 seconds.
-// Informed by claude cold-start latency (≤5s typical, 10–15s cold disk cache)
-// plus margin for skill provisioning, one-time .claude/ filesystem warm-up,
-// and concurrent-burst CPU/disk contention under --max-concurrent ≥ 4.
-//
-// The prior 30s default was tuned for single-instance cold-start; under
-// concurrent dispatch bursts with high disk utilisation (≥90%) multiple
-// agents compete for I/O and CPU during cold-start, pushing the longest-
-// waiting agent past 30s. 90s provided headroom for a 4-wide burst under
-// moderate disk pressure while remaining far below the 30-min implementer
-// commit budget (hk-hzj). Operators may adjust per-environment via
-// --agent-ready-timeout.
-//
-// hk-5z1f0: raised 90s→150s. Under the 10-concurrent ramp a remote worker
-// hosts a 2nd (REVIEW-stage) cold-start claude spawn that must additionally
-// clear reverse-SSH-tunnel readiness while competing with up to 6 concurrent
-// agents; 90s was too tight for that second spawn and recurrently tripped
-// agent_ready_timeout only on the remote worker. 150s covers the reviewer
-// cold-start over the tunnel; a companion per-worker cold-start spawn
-// semaphore (workLoopDeps.agentSpawnSem) bounds how many such spawns overlap.
-//
-// Spec ref: specs/handler-contract.md §4.9 HC-056.
-const defaultAgentReadyTimeout = 150 * time.Second
-
-// defaultRemoteAgentReadyTimeout is the HC-056 default applied to a REMOTE
-// (SSH worker) agent spawn: 210 seconds.
-//
-// hk-96d7w (LOCAL slice of hk-5z1f0): a remote spawn clears reverse-SSH-tunnel
-// readiness in addition to the claude cold-start itself, and — for the
-// reviewer node specifically — competes with a resident implementer agent for
-// CPU/disk on the same worker (up to agentSpawnSem's cap-3 concurrent
-// cold-starts). 60s of headroom over the local default (150s) covers that
-// additional tunnel + contention latency without masking a genuinely hung
-// spawn. Operators may override via Config.RemoteAgentReadyTimeout /
-// --remote-agent-ready-timeout.
-//
-// Spec ref: specs/handler-contract.md §4.9 HC-056.
-// Bead ref: hk-96d7w. Sibling: hk-5z1f0 (remote canary, parked for live verify).
-const defaultRemoteAgentReadyTimeout = 210 * time.Second
-
-// effectiveAgentReadyTimeout resolves the agent_ready wait window for a
-// single dispatch, given the configured local and remote overrides
-// (Config.AgentReadyTimeout / Config.RemoteAgentReadyTimeout, threaded through
-// workLoopDeps as agentReadyTimeout / remoteAgentReadyTimeout) and whether
-// this particular run targets a remote worker.
-//
-// A non-positive override falls back to the matching compiled-in default
-// (defaultAgentReadyTimeout for local, defaultRemoteAgentReadyTimeout for
-// remote) — mirroring the zero-value-safe fallback waitAgentReady already
-// applies for the local-only case.
-//
-// Bead ref: hk-96d7w.
-func effectiveAgentReadyTimeout(local, remote time.Duration, isRemote bool) time.Duration {
-	if isRemote {
-		if remote > 0 {
-			return remote
-		}
-		return defaultRemoteAgentReadyTimeout
-	}
-	if local > 0 {
-		return local
-	}
-	return defaultAgentReadyTimeout
-}
-
-// ErrAgentReadyTimeout is the typed sentinel returned when no agent_ready event
-// arrives within the configured timeout window.
-//
-// Callers (workloop integration hk-gql20.14/.15) MUST match this sentinel with
-// errors.Is and respond by cancelling the session context, reaping the subprocess,
-// emitting agent_failed{class=structural, sub_reason=agent_ready_timeout}, and
-// reopening the bead per HC-056 steps 1–4.
-//
-// Spec ref: specs/handler-contract.md §4.9 HC-056.
-var ErrAgentReadyTimeout = errors.New("agent_ready timeout: no agent_ready event within deadline (HC-056)")
 
 // agentEventSource is the narrow interface that delivers run-scoped bus events
 // to waitAgentReady. The implementation yields one core.EventEnvelope per
@@ -137,11 +61,11 @@ type agentEventSource interface {
 // waitAgentReady blocks until one of three outcomes:
 //
 //  1. An event from source satisfies adapter.DetectReady — returns nil.
-//  2. The effective timeout elapses — returns ErrAgentReadyTimeout.
+//  2. The effective timeout elapses — returns runlaunch.ErrAgentReadyTimeout.
 //  3. ctx is cancelled — returns ctx.Err().
 //
 // The effective timeout is cfg.AgentReadyTimeout when non-zero, falling back
-// to defaultAgentReadyTimeout (90s) per HC-056.
+// to runlaunch.DefaultAgentReadyTimeout (90s) per HC-056.
 //
 // HC-056 "last-second arrival" posture: if an agent_ready event arrives
 // concurrently with timeout expiry, the ready case is preferred. Go's select
@@ -159,7 +83,7 @@ func waitAgentReady(
 	timeout time.Duration,
 ) error {
 	if timeout <= 0 {
-		timeout = defaultAgentReadyTimeout
+		timeout = runlaunch.DefaultAgentReadyTimeout
 	}
 
 	// Buffered capacity 1: observer goroutine closes without blocking even if
@@ -199,7 +123,7 @@ func waitAgentReady(
 		case <-ready:
 			return nil
 		default:
-			return ErrAgentReadyTimeout
+			return runlaunch.ErrAgentReadyTimeout
 		}
 	case <-ctx.Done():
 		return ctx.Err()

@@ -315,6 +315,19 @@ harnesspi-freeze-gate:  ## P2 E1c: forbid new pi-harness files or moved symbols 
 runmerge-freeze-gate:  ## P2 E5 RT13: forbid new merge-path files or moved symbols in internal/daemon
 	scripts/runmerge-freeze-gate.sh
 
+# runlaunch-freeze-gate: the P2 E5 RT19b extraction ratchet — the run path's
+# launch-time effects (the CHB-018 pre-exec relay, the HC-056 readiness
+# deadlines and their sentinel, the spawn-cap / tmux-window / agent-ready
+# anomaly events, the implementer phase-complete report, the force-teardown
+# backstop) left internal/daemon for internal/runlaunch, internal/substrate and
+# internal/harness/shared. Symbol-anchored, not name-anchored: internal/daemon
+# legitimately keeps ~25 other emit* helpers that are E5 LIFT targets, so a
+# '*events*.go' file scan would fire on correct code. Wired into check-fast and
+# check-short.
+.PHONY: runlaunch-freeze-gate
+runlaunch-freeze-gate:  ## P2 E5 RT19b: forbid re-declaring the moved launch-effect symbols in internal/daemon
+	scripts/runlaunch-freeze-gate.sh
+
 # workersbootwire-freeze-gate: the P2 E4c extraction ratchet — the remote-worker
 # registry BOOT WIRING (BuildRegistry / BuildRegistryWithRunner /
 # BootHealthRunner, formerly buildWorkerRegistry & friends in workloop.go) left
@@ -506,6 +519,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/harnessclaude-freeze-gate.sh
 	scripts/harnesspi-freeze-gate.sh
 	scripts/runmerge-freeze-gate.sh
+	scripts/runlaunch-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
@@ -535,6 +549,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/harnessclaude-freeze-gate.sh
 	scripts/harnesspi-freeze-gate.sh
 	scripts/runmerge-freeze-gate.sh
+	scripts/runlaunch-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):

@@ -59,6 +59,7 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/substrate"
 	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
@@ -525,7 +526,7 @@ func runReviewLoop(
 		// so it signals a window actually spawned, not merely that the daemon is
 		// about to try (which misleads operators when SpawnWindow is wedged on a
 		// leaked spawn slot).
-		implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, implArtifacts.PreExecMsgs)
+		implLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, deps.bus, runID, implArtifacts.PreExecMsgs)
 
 		// Create a per-run tapping emitter so the dispatch segment's ready pump
 		// can observe watcher events from the implementer launch without a
@@ -584,9 +585,9 @@ func runReviewLoop(
 				IsResume:           state.iterationCount >= 2,
 				MaxInputAttempts:   1,
 				// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
-				ReadyTimeout:  effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
+				ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
 				InputAck:      dispatchSegmentInputAckWindow,
-				ReadyKillReap: agentReadyKillReapTimeout,
+				ReadyKillReap: runlaunch.KillReapTimeout,
 			},
 			adapter: implAdapter,
 			// hk-isq02 → M3-D7: iteration ≥ 2 launches `claude --resume <uuid>`,
@@ -616,13 +617,13 @@ func runReviewLoop(
 				// wedged on the spawn semaphore.
 				if errors.Is(launchErr, ErrSpawnCapTimeout) {
 					inUse, capSize := substrateSpawnStats(implSubstrate)
-					emitSpawnCapBlocked(lctx, deps.bus, runID, deps.clock.Since(implLaunchedAt), inUse, capSize)
+					runlaunch.EmitSpawnCapBlocked(lctx, deps.bus, runID, deps.clock.Since(implLaunchedAt), inUse, capSize)
 				}
 				// hk-r1rup: surface a hung `tmux new-window` (the no-spawn wedge) as a
 				// dedicated tmux_new_window_timeout event when the implementer launch is
 				// wedged on the new-window call.
 				if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
-					emitTmuxNewWindowTimeout(lctx, deps.bus, runID, deps.clock.Since(implLaunchedAt))
+					runlaunch.EmitTmuxNewWindowTimeout(lctx, deps.bus, runID, deps.clock.Since(implLaunchedAt))
 				}
 			},
 			onLaunched: func(lctx context.Context) {
@@ -631,7 +632,7 @@ func runReviewLoop(
 				// wedged-spawn path Launch returns an error and launch_initiated is
 				// never emitted, so the event stays truthful.
 				if implLaunchInitiatedMsg != nil {
-					emitPreExecMessage(lctx, deps.bus, runID, implLaunchInitiatedMsg)
+					runlaunch.EmitPreExecMessage(lctx, deps.bus, runID, implLaunchInitiatedMsg)
 				}
 				// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
 				// receives agent_heartbeat events (with run_id) after launch_initiated.
@@ -727,18 +728,18 @@ func runReviewLoop(
 				// HC-056: implementer agent_ready_timeout — kill, reap. The error
 				// result + cycle-complete emission follow at the segment return below.
 				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady implementer bead %s iter %d run %s: %v (error)\n",
-					beadID, state.iterationCount, runID.String(), ErrAgentReadyTimeout)
+					beadID, state.iterationCount, runID.String(), runlaunch.ErrAgentReadyTimeout)
 				_ = implSess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
 				if implWatcher != nil {
 					select {
 					case <-implWatcher.Done():
-					case <-substrate.After(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+					case <-substrate.After(deps.clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 						fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 							beadID, state.iterationCount, runID.String())
 					}
 				}
 				{
-					implWaitCtx, implWaitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
+					implWaitCtx, implWaitCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
 					_ = implSess.Wait(implWaitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
 					implWaitCancel()
 				}
@@ -747,11 +748,11 @@ func runReviewLoop(
 				}
 			},
 			emitReadyTimeout: func(ectx context.Context) {
-				emitAgentReadyTimeout(ectx, deps.bus, runID, implArtifacts.ClaudeSessionID, deps.agentReadyTimeout)
+				runlaunch.EmitAgentReadyTimeout(ectx, deps.bus, runID, implArtifacts.ClaudeSessionID, deps.agentReadyTimeout)
 			},
 			killAbort: func(context.Context) {
 				// Ctx-cancel abort edge: Kill is idempotent (the per-iteration
-				// forceTeardownSession backstop rides behind it either way).
+				// runlaunch.ForceTeardownSession backstop rides behind it either way).
 				if implSess != nil {
 					_ = implSess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
 				}
@@ -771,7 +772,7 @@ func runReviewLoop(
 		// reacquire for the next iteration's implementer) holds at most ONE spawn
 		// slot per phase.
 		implSessForTeardown := implSess
-		defer forceTeardownSession(implSessForTeardown) //nolint:contextcheck,gocritic // per-iteration LIFO defer, bounded by reviewLoopIterationCap (pre-RT8 idiom)
+		defer runlaunch.ForceTeardownSession(implSessForTeardown) //nolint:contextcheck,gocritic // per-iteration LIFO defer, bounded by reviewLoopIterationCap (pre-RT8 idiom)
 		if implHBDone != nil {
 			implHBDoneToClose := implHBDone
 			defer close(implHBDoneToClose) //nolint:gocritic // deferInLoop: per-iteration accumulation bounded by reviewLoopIterationCap (pre-RT8 idiom)
@@ -805,7 +806,7 @@ func runReviewLoop(
 		{
 			curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 			commitLanded := curHead != "" && curHead != parentSHA
-			emitImplementerPhaseComplete(ctx, deps.bus, runID, implEI.exitCode,
+			runlaunch.EmitImplementerPhaseComplete(ctx, deps.bus, runID, implEI.exitCode,
 				implEI.stderrTail, commitLanded, deps.clock.Since(implLaunchedAt))
 		}
 
@@ -1325,7 +1326,7 @@ func runReviewLoop(
 		//
 		// hk-4l7zs: launch_initiated is held back and emitted AFTER Launch returns
 		// (see implementer phase) so it signals a live reviewer window.
-		revLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, revArtifacts.PreExecMsgs)
+		revLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, deps.bus, runID, revArtifacts.PreExecMsgs)
 
 		// Create a per-phase tapping emitter so the dispatch segment's ready pump
 		// can observe watcher events from the reviewer launch without a post-seal
@@ -1365,9 +1366,9 @@ func runReviewLoop(
 				MaxInputAttempts: 1,
 				// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
 				// This is the remote reviewer-node agent_ready wait that hk-5z1f0 diagnosed.
-				ReadyTimeout:  effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
+				ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
 				InputAck:      dispatchSegmentInputAckWindow,
-				ReadyKillReap: agentReadyKillReapTimeout,
+				ReadyKillReap: runlaunch.KillReapTimeout,
 			},
 			adapter: revAdapter,
 			tap:     revTap,
@@ -1389,20 +1390,20 @@ func runReviewLoop(
 				// hk-4l7zs: spawn-cap saturation on the reviewer launch.
 				if errors.Is(launchErr, ErrSpawnCapTimeout) {
 					inUse, capSize := substrateSpawnStats(revSubstrate)
-					emitSpawnCapBlocked(lctx, deps.bus, runID, defaultSpawnAcquireTimeout, inUse, capSize)
+					runlaunch.EmitSpawnCapBlocked(lctx, deps.bus, runID, defaultSpawnAcquireTimeout, inUse, capSize)
 				}
 				// hk-r1rup: hung `tmux new-window` (no-spawn wedge) on the reviewer
 				// launch. No launch-time var here (mirrors the spawn-cap branch), so
 				// use defaultNewWindowTimeout as the proxy waited value.
 				if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
-					emitTmuxNewWindowTimeout(lctx, deps.bus, runID, defaultNewWindowTimeout)
+					runlaunch.EmitTmuxNewWindowTimeout(lctx, deps.bus, runID, defaultNewWindowTimeout)
 				}
 			},
 			onLaunched: func(lctx context.Context) {
 				// hk-4l7zs: emit the held-back reviewer launch_initiated now the window
 				// is live.
 				if revLaunchInitiatedMsg != nil {
-					emitPreExecMessage(lctx, deps.bus, runID, revLaunchInitiatedMsg)
+					runlaunch.EmitPreExecMessage(lctx, deps.bus, runID, revLaunchInitiatedMsg)
 				}
 				// Wire the reviewer's agent-ready callback into revTap so that
 				// relay-synthesized agent_ready envelopes from the hook-relay subprocess
@@ -1454,10 +1455,10 @@ func runReviewLoop(
 				// HC-056: reviewer agent_ready_timeout — kill, reap; the error result
 				// + cycle-complete emission follow at the segment return below.
 				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady reviewer bead %s iter %d run %s: %v (error)\n",
-					beadID, state.iterationCount, runID.String(), ErrAgentReadyTimeout)
+					beadID, state.iterationCount, runID.String(), runlaunch.ErrAgentReadyTimeout)
 				_ = revSess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
 				// Wait for the reviewer watcher goroutine to exit with a
-				// deadline — agentReadyKillReapTimeout prevents indefinite
+				// deadline — runlaunch.KillReapTimeout prevents indefinite
 				// blocking if the killed subprocess does not cooperate.
 				// Substrate path: revWatcher is nil when tmux-hosted (no
 				// stdout pipe — see handler.go:291); skip the watcher reap
@@ -1465,13 +1466,13 @@ func runReviewLoop(
 				if revWatcher != nil {
 					select {
 					case <-revWatcher.Done():
-					case <-substrate.After(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+					case <-substrate.After(deps.clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 						fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 							beadID, state.iterationCount, runID.String())
 					}
 				}
 				{
-					revWaitCtx, revWaitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
+					revWaitCtx, revWaitCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
 					_ = revSess.Wait(revWaitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
 					revWaitCancel()
 				}
@@ -1497,7 +1498,7 @@ func runReviewLoop(
 		// above so the deferred wtCleanup never removes the worktree while a
 		// substrate-hosted reviewer claude is still live in it. Idempotent.
 		revSessForTeardown := revSess
-		defer forceTeardownSession(revSessForTeardown) //nolint:contextcheck,gocritic // per-iteration LIFO defer, bounded by reviewLoopIterationCap (pre-RT8 idiom)
+		defer runlaunch.ForceTeardownSession(revSessForTeardown) //nolint:contextcheck,gocritic // per-iteration LIFO defer, bounded by reviewLoopIterationCap (pre-RT8 idiom)
 
 		if revDispatch.Phase == runexec.DispatchFailed && revDispatch.Reason == "agent_ready_timeout" {
 			result := rlErrorResult(fmt.Sprintf("reviewer agent_ready_timeout at iteration %d", state.iterationCount))

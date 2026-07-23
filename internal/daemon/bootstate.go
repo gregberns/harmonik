@@ -17,6 +17,7 @@ import (
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runlaunch"
 )
 
 // bootState threads the shared singletons constructed across the daemon
@@ -272,10 +273,10 @@ func (bs *bootState) wireWatchersAndObservers(ctx context.Context) error {
 	if hookSetter, ok := cfg.Substrate.(substrateDiagnosticHookSetter); ok {
 		hookSetter.setDiagnosticHooks(
 			func(waited time.Duration, inUse, capSize int) {
-				emitSpawnCapBlocked(ctx, bus, core.RunID{}, waited, inUse, capSize)
+				runlaunch.EmitSpawnCapBlocked(ctx, bus, core.RunID{}, waited, inUse, capSize)
 			},
 			func(waited time.Duration) {
-				emitTmuxNewWindowTimeout(ctx, bus, core.RunID{}, waited)
+				runlaunch.EmitTmuxNewWindowTimeout(ctx, bus, core.RunID{}, waited)
 			},
 		)
 	}

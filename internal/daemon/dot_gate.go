@@ -38,6 +38,7 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/policy"
+	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -412,7 +413,7 @@ func executeCognitionGate(
 	// single-mode path (workloop.go:2098/2137). Without this the cognition-gate
 	// node never emits launch_initiated and the stale watcher (stalewatch.go:296)
 	// flags a phantom launch stall on every gate dispatch.
-	gateLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
+	gateLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
 
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
@@ -425,7 +426,7 @@ func executeCognitionGate(
 	// hk-goczd: window is live — emit the held-back launch_initiated to clear the
 	// false stall. Mirrors workloop.go:2137-2139.
 	if gateLaunchInitiatedMsg != nil {
-		emitPreExecMessage(ctx, deps.bus, runID, gateLaunchInitiatedMsg)
+		runlaunch.EmitPreExecMessage(ctx, deps.bus, runID, gateLaunchInitiatedMsg)
 	}
 
 	// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
@@ -445,7 +446,7 @@ func executeCognitionGate(
 	// this defer covers the exec path and any early return (agent_ready timeout,
 	// ctx-cancel, verdict-read error). Kill is idempotent, so it is a no-op when
 	// the session was already torn down.
-	defer forceTeardownSession(sess)
+	defer runlaunch.ForceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom); it deliberately reaps on context.Background() so the kill completes even after the run ctx is cancelled
 
 	if deps.hookStore != nil {
 		capturedTap := tap
@@ -472,25 +473,25 @@ func executeCognitionGate(
 		}
 		eventSrc := newChanAgentEventSource(tapCh)
 		// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
-		readyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil)
+		readyTimeout := runlaunch.EffectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil)
 		readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, readyTimeout)
 		readyCancel()
 
-		if errors.Is(readyErr, ErrAgentReadyTimeout) {
+		if errors.Is(readyErr, runlaunch.ErrAgentReadyTimeout) {
 			fmt.Fprintf(os.Stderr, "daemon: dot: gate: waitAgentReady node %q run %s: %v\n",
 				node.ID, runID.String(), readyErr)
 			_ = sess.Kill(ctx)
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
-				case <-time.After(agentReadyKillReapTimeout):
+				case <-time.After(runlaunch.KillReapTimeout):
 				}
 			}
 			_ = sess.Wait(ctx)
 			if deps.hookStore != nil {
 				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
-			emitAgentReadyTimeout(ctx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
+			runlaunch.EmitAgentReadyTimeout(ctx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
 			return nil, fmt.Errorf("cognition gate %q: agent_ready_timeout", gateRef)
 		}
 	}

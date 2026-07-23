@@ -946,6 +946,43 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runmerge MUST NOT import daemon (leaf merge path; daemon drives it) — P2 E5 RT13" }
 
+        # runlaunch: the effects a bead run performs AROUND an agent launch,
+        # stranded in workloop.go outside both E5 extraction regions and drained
+        # here (P2 unit E5, RT19b). Four families, one concern — everything the
+        # run path does at launch/ready time that is not the launch itself:
+        #   - the CHB-018 pre-exec announcement relay (EmitPreExecMessage /
+        #     EmitPreExecBeforeLaunch), which holds launch_initiated back until
+        #     SpawnWindow returns (hk-4l7zs);
+        #   - the HC-056 readiness deadlines (DefaultAgentReadyTimeout 150s /
+        #     DefaultRemoteAgentReadyTimeout 210s / EffectiveAgentReadyTimeout /
+        #     ErrAgentReadyTimeout / KillReapTimeout), which populate
+        #     runexec.DispatchConfig.ReadyTimeout and .ReadyKillReap;
+        #   - the launch/ready anomaly events (EmitSpawnCapBlocked hk-4l7zs,
+        #     EmitTmuxNewWindowTimeout hk-r1rup, EmitAgentReadyTimeout hk-5cox8)
+        #     and EmitImplementerPhaseComplete (hk-cd8yu);
+        #   - ForceTeardownSession, the hk-68pvl kill-before-worktree-removal
+        #     backstop.
+        # It is the EFFECT vocabulary paired with internal/runexec's PURE Dispatch
+        # machine, which models the same launch -> ready -> working segment.
+        # It MUST be a leaf and not a runloop-private file: internal/daemon/
+        # bootstate.go calls EmitSpawnCapBlocked / EmitTmuxNewWindowTimeout
+        # from the BOOT path, and bootstate.go never moves.
+        # internal/handler is required for handler.Session (ForceTeardownSession);
+        # handlercontract for EventEmitter; core for the payload types.
+        # CAVEAT: depguard checks DIRECT imports only. The transitive check is
+        # `go list -deps ./internal/runlaunch | grep internal/daemon` (empty).
+        # Rationale: plans/2026-07-21-p2-extraction/RT19b-stranded-run-path-helpers.md.
+        runlaunch:
+          files: ["**/internal/runlaunch/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/runlaunch"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runlaunch is a leaf: the run path's launch-time effects must not re-couple to the monolith, and bootstate.go depends on them too (P2 E5 RT19b)" }
+
         # runexec: the two pure run-lifecycle reactors (Dispatch + Run machines,
         # RSM-001/028, codename:run-state-machine). Trimmed leaf allow-list
         # ($gostd + core + substrate + self, design 00b R8): core supplies the

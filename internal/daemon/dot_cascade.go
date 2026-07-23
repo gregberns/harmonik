@@ -89,6 +89,7 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/substrate"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workflow"
@@ -1659,7 +1660,7 @@ func dispatchDotAgenticNode(
 	// review-loop path (reviewloop.go:336). Holding launch_initiated until after a
 	// successful Launch also keeps it truthful: when SpawnWindow is wedged on a
 	// leaked slot, Launch returns an error below and launch_initiated never fires.
-	nodeLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
+	nodeLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
 
 	// hk-c73fs: emit reviewer_launched (§8.1a.2) for reviewer nodes before
 	// launch, matching the builtin review-loop path (reviewloop.go:922-923).
@@ -1772,9 +1773,9 @@ func dispatchDotAgenticNode(
 			IsResume:           phase == handlercontract.ReviewLoopPhaseImplementerResume,
 			MaxInputAttempts:   1,
 			// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
-			ReadyTimeout:  effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
+			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
 			InputAck:      dispatchSegmentInputAckWindow,
-			ReadyKillReap: agentReadyKillReapTimeout,
+			ReadyKillReap: runlaunch.KillReapTimeout,
 		},
 		adapter: adapter,
 		// M3-D7: the DOT back-edge resume previously had NO resume-ready
@@ -1809,10 +1810,10 @@ func dispatchDotAgenticNode(
 			// single-mode path already has.
 			if errors.Is(lErr, ErrSpawnCapTimeout) {
 				inUse, capSize := substrateSpawnStats(deps.substrate)
-				emitSpawnCapBlocked(lctx, deps.bus, runID, deps.clock.Since(nodeLaunchedAt), inUse, capSize)
+				runlaunch.EmitSpawnCapBlocked(lctx, deps.bus, runID, deps.clock.Since(nodeLaunchedAt), inUse, capSize)
 			}
 			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
-				emitTmuxNewWindowTimeout(lctx, deps.bus, runID, deps.clock.Since(nodeLaunchedAt))
+				runlaunch.EmitTmuxNewWindowTimeout(lctx, deps.bus, runID, deps.clock.Since(nodeLaunchedAt))
 			}
 		},
 		onLaunched: func(lctx context.Context) {
@@ -1821,7 +1822,7 @@ func dispatchDotAgenticNode(
 			// false-positive launch_stall_detected the DOT path otherwise triggered on
 			// every run. Mirrors workloop.go:2137-2139.
 			if nodeLaunchInitiatedMsg != nil {
-				emitPreExecMessage(lctx, deps.bus, runID, nodeLaunchInitiatedMsg)
+				runlaunch.EmitPreExecMessage(lctx, deps.bus, runID, nodeLaunchInitiatedMsg)
 			}
 			// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
 			// receives agent_heartbeat events (with run_id) after launch_initiated.
@@ -1866,12 +1867,12 @@ func dispatchDotAgenticNode(
 		deliver: dotDeliver,
 		killReady: func(kctx context.Context) {
 			fmt.Fprintf(os.Stderr, "daemon: dot: waitAgentReady node %q run %s: %v (failing node)\n",
-				node.ID, runID.String(), ErrAgentReadyTimeout)
+				node.ID, runID.String(), runlaunch.ErrAgentReadyTimeout)
 			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
-				case <-substrate.After(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+				case <-substrate.After(deps.clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 				}
 			}
 			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)
@@ -1880,7 +1881,7 @@ func dispatchDotAgenticNode(
 			}
 		},
 		emitReadyTimeout: func(ectx context.Context) {
-			emitAgentReadyTimeout(ectx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
+			runlaunch.EmitAgentReadyTimeout(ectx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
 		},
 		killAbort: func(context.Context) {
 			if sess != nil {
@@ -1901,7 +1902,7 @@ func dispatchDotAgenticNode(
 	// hk-4l7zs) is returned even on the exec path or any early return between
 	// here and that conditional kill. Kill is idempotent (killOnce), so this is
 	// a no-op when the session was already torn down.
-	defer forceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom)
+	defer runlaunch.ForceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom)
 	if nodeHBDone != nil {
 		nodeHBDoneToClose := nodeHBDone
 		defer close(nodeHBDoneToClose)
@@ -1940,7 +1941,7 @@ func dispatchDotAgenticNode(
 	if !isReviewer {
 		curHead, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		commitLanded := curHead != "" && curHead != preHeadSHA
-		emitImplementerPhaseComplete(ctx, deps.bus, runID, nodeEI.exitCode,
+		runlaunch.EmitImplementerPhaseComplete(ctx, deps.bus, runID, nodeEI.exitCode,
 			nodeEI.stderrTail, commitLanded, nodePhaseDur)
 	}
 

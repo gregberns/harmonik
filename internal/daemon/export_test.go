@@ -33,6 +33,7 @@ import (
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
@@ -120,7 +121,7 @@ type WorkLoopDepsParams struct {
 	Substrate handler.Substrate
 
 	// AgentReadyTimeout is the HC-056 timeout for waitAgentReady (hk-gql20.14).
-	// Zero → defaultAgentReadyTimeout (30s).
+	// Zero → runlaunch.DefaultAgentReadyTimeout (30s).
 	//
 	// Bead ref: hk-gql20.14.
 	AgentReadyTimeout time.Duration
@@ -651,14 +652,14 @@ func ExportedStoreLocalInFlight(deps workLoopDeps, n int32) {
 }
 
 // ExportedSetAgentReadyKillReapTimeout overrides the package-level
-// agentReadyKillReapTimeout for tests. Returns a restore function; pass it to
+// runlaunch.KillReapTimeout for tests. Returns a restore function; pass it to
 // t.Cleanup. NOT safe for use with t.Parallel() — modifies a package global.
 //
 // Bead ref: hk-4hso5.
 func ExportedSetAgentReadyKillReapTimeout(d time.Duration) func() {
-	orig := agentReadyKillReapTimeout
-	agentReadyKillReapTimeout = d
-	return func() { agentReadyKillReapTimeout = orig }
+	orig := runlaunch.KillReapTimeout
+	runlaunch.KillReapTimeout = d
+	return func() { runlaunch.KillReapTimeout = orig }
 }
 
 // ExportedResolveWorkflowMode exposes resolveWorkflowMode for tests in package
@@ -1123,10 +1124,10 @@ var ExportedProductionWorktreeFactory = productionWorktreeFactory
 // Bead ref: hk-f9xzs.
 var ExportedIsRetryableMergeReason = runmerge.IsRetryableReason
 
-// ExportedForceTeardownSession exposes forceTeardownSession for the hk-68pvl
+// ExportedForceTeardownSession exposes runlaunch.ForceTeardownSession for the hk-68pvl
 // worktree-teardown-ordering regression test.
 func ExportedForceTeardownSession(sess handler.Session) {
-	forceTeardownSession(sess)
+	runlaunch.ForceTeardownSession(sess)
 }
 
 // ExportedSpawnSlotsInUse exposes the spawn-semaphore slots-in-use count of a
@@ -1379,10 +1380,10 @@ func ExportedNewDaemonHeartbeatEmitter(bus handlercontract.EventEmitter, runID c
 // HC-056 test seams (hk-gql20.18)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ExportedErrAgentReadyTimeout exposes ErrAgentReadyTimeout for tests.
+// ExportedErrAgentReadyTimeout exposes runlaunch.ErrAgentReadyTimeout for tests.
 //
 // Bead ref: hk-gql20.18.
-var ExportedErrAgentReadyTimeout = ErrAgentReadyTimeout
+var ExportedErrAgentReadyTimeout = runlaunch.ErrAgentReadyTimeout
 
 // ExportedErrPostAgentReadyHang exposes ErrPostAgentReadyHang for tests (hk-a2okh).
 var ExportedErrPostAgentReadyHang = ErrPostAgentReadyHang
@@ -1395,16 +1396,17 @@ var ExportedDefaultPostAgentReadyHangTimeout = &defaultPostAgentReadyHangTimeout
 // unit tests (hk-a2okh).
 var ExportedWaitPostAgentReadyProgress = waitPostAgentReadyProgress
 
-// ExportedDefaultAgentReadyTimeout exposes defaultAgentReadyTimeout (HC-056,
-// agentready.go) so the WS3-Claude-C timing property/fuzz harness can PIN the
+// ExportedDefaultAgentReadyTimeout exposes runlaunch.DefaultAgentReadyTimeout
+// (HC-056, internal/runlaunch/deadlines.go) so the WS3-Claude-C timing
+// property/fuzz harness can PIN the
 // real threshold constant — if the production default drifts, the pin assertion
 // fails, surfacing that the harness's scaled band no longer models the real one.
-var ExportedDefaultAgentReadyTimeout = defaultAgentReadyTimeout
+var ExportedDefaultAgentReadyTimeout = runlaunch.DefaultAgentReadyTimeout
 
-// ExportedEmitAgentReadyTimeout exposes emitAgentReadyTimeout (hk-5cox8) so the
+// ExportedEmitAgentReadyTimeout exposes runlaunch.EmitAgentReadyTimeout (hk-5cox8) so the
 // WS3-Claude-C harness drives the REAL anomaly emitter (inv-3) rather than a
 // fabricated stand-in.
-var ExportedEmitAgentReadyTimeout = emitAgentReadyTimeout
+var ExportedEmitAgentReadyTimeout = runlaunch.EmitAgentReadyTimeout
 
 // ExportedEmitPostAgentReadyHang exposes emitPostAgentReadyHang (hk-a2okh) so the
 // WS3-Claude-C harness drives the REAL post-agent_ready-hang anomaly emitter.

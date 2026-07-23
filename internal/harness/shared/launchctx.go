@@ -213,3 +213,22 @@ type LaunchArtifacts struct {
 	// Zero value ("") means the caller should default to core.AgentTypeClaudeCode.
 	ResolvedAgentType core.AgentType
 }
+
+// ArtifactAgentType returns the resolved agent type from LaunchArtifacts,
+// falling back to core.AgentTypeClaudeCode when the field is empty (e.g. from a
+// legacy test fixture that builds artifacts directly without going through
+// routedLaunchSpecBuilder).
+//
+// Used to look up the correct Adapter via adapterRegistry.ForAgent instead of
+// hardcoding core.AgentTypeClaudeCode (T12, hk-xhawy).
+//
+// Kept a free function rather than a method on LaunchArtifacts: a method would
+// read better but is a signature change, which the P2 extraction plan forbids
+// inside a pure move. Origin: internal/daemon/workloop.go artifactAgentType,
+// moved by plans/2026-07-21-p2-extraction/RT19b-stranded-run-path-helpers.md.
+func ArtifactAgentType(a LaunchArtifacts) core.AgentType {
+	if a.ResolvedAgentType.Valid() {
+		return a.ResolvedAgentType
+	}
+	return core.AgentTypeClaudeCode
+}

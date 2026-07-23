@@ -368,7 +368,7 @@ func runReviewLoop(
 		implIsSessionIDCaptured := false
 		var implHarness handlercontract.Harness
 		if deps.harnessRegistry != nil {
-			if implH, implHErr := deps.harnessRegistry.ForAgent(artifactAgentType(implArtifacts)); implHErr == nil {
+			if implH, implHErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(implArtifacts)); implHErr == nil {
 				implIsSessionIDCaptured = implH.SessionIDPolicy() == handlercontract.SessionIDCaptured
 				implHarness = implH
 			}
@@ -562,17 +562,17 @@ func runReviewLoop(
 		// Spec: specs/harness-contract.md §2 N5.
 		implCompletionMode := handlercontract.CompletionEventStreamThenQuit
 		if deps.harnessRegistry != nil {
-			if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(implArtifacts)); hErr == nil {
+			if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(implArtifacts)); hErr == nil {
 				implCompletionMode = h.Completion()
 			}
 		}
 
-		implAdapter, implAdapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(implArtifacts))
+		implAdapter, implAdapterErr := deps.adapterRegistry.ForAgent(shared.ArtifactAgentType(implArtifacts))
 		if implAdapterErr != nil {
 			// No adapter for the resolved agent type — non-fatal; skip ready-wait
 			// (the segment feeds a synthetic ready so the brief is still delivered).
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(%s) implementer bead %s iter %d: %v (skipping ready-wait)\n",
-				artifactAgentType(implArtifacts), beadID, state.iterationCount, implAdapterErr)
+				shared.ArtifactAgentType(implArtifacts), beadID, state.iterationCount, implAdapterErr)
 			implAdapter = nil
 		}
 
@@ -1291,7 +1291,7 @@ func runReviewLoop(
 		// (review-loop reviewer runs box-A-local against the pushed SHA — hk-fxy9).
 		revReviewerHarnessIsClaude := false
 		if deps.harnessRegistry != nil {
-			if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(revArtifacts)); hErr == nil {
+			if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(revArtifacts)); hErr == nil {
 				revReviewerHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
 			}
 		}
@@ -1350,11 +1350,11 @@ func runReviewLoop(
 		var revWatcher *handlercontract.Watcher
 		var revLaunchErr error
 
-		revAdapter, revAdapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(revArtifacts))
+		revAdapter, revAdapterErr := deps.adapterRegistry.ForAgent(shared.ArtifactAgentType(revArtifacts))
 		if revAdapterErr != nil {
 			// No adapter for the resolved agent type — non-fatal; skip ready-wait.
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(%s) bead %s iter %d: %v (skipping ready-wait)\n",
-				artifactAgentType(revArtifacts), beadID, state.iterationCount, revAdapterErr)
+				shared.ArtifactAgentType(revArtifacts), beadID, state.iterationCount, revAdapterErr)
 			revAdapter = nil
 		}
 

@@ -1473,7 +1473,7 @@ func dispatchDotAgenticNode(
 	// reviewer is out of scope — spec.Substrate is nil'd below regardless.
 	reviewerHarnessIsClaude := false
 	if isReviewer && deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
 			reviewerHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
 		}
 	}
@@ -1527,11 +1527,11 @@ func dispatchDotAgenticNode(
 	// wire a real stdout pipe; apply srt argv-wrap; capture pi-stdout.log; set
 	// StdoutWrapper for session-id capture + PI-014 agent_end teardown.
 	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
 			if h.SessionIDPolicy() == handlercontract.SessionIDCaptured {
 				pasteTarget = nil
 				spec.Substrate = nil
-				sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(h, artifactAgentType(artifacts)), SandboxProfileInput{
+				sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(h, shared.ArtifactAgentType(artifacts)), SandboxProfileInput{
 					WorktreePath:   wtPath,
 					GitDir:         filepath.Join(deps.projectDir, ".git"),
 					RunID:          runID.String(),
@@ -1569,7 +1569,7 @@ func dispatchDotAgenticNode(
 				spec.Binary = wrapBin
 				spec.Args = wrapArgs
 				var piStdoutFile *os.File
-				if artifactAgentType(artifacts) == core.AgentTypePi {
+				if shared.ArtifactAgentType(artifacts) == core.AgentTypePi {
 					piCaptureDir := filepath.Join(wtPath, ".harmonik", "pi-agent")
 					if mkErr := os.MkdirAll(piCaptureDir, 0o755); mkErr != nil {
 						fmt.Fprintf(os.Stderr, "daemon: dot: hk-j6wm7: create pi capture dir %q: %v (stdout capture disabled)\n", piCaptureDir, mkErr)
@@ -1695,16 +1695,16 @@ func dispatchDotAgenticNode(
 	// Spec: specs/harness-contract.md §2 N5.
 	dotCompletionMode := handlercontract.CompletionEventStreamThenQuit
 	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
 			dotCompletionMode = h.Completion()
 		}
 	}
 
-	adapter, adapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(artifacts))
+	adapter, adapterErr := deps.adapterRegistry.ForAgent(shared.ArtifactAgentType(artifacts))
 	if adapterErr != nil {
 		// No adapter for the resolved agent type — non-fatal; skip ready-wait.
 		fmt.Fprintf(os.Stderr, "daemon: dot: ForAgent(%s) node %q: %v (skipping ready-wait)\n",
-			artifactAgentType(artifacts), node.ID, adapterErr)
+			shared.ArtifactAgentType(artifacts), node.ID, adapterErr)
 		adapter = nil
 	}
 
@@ -2022,7 +2022,7 @@ func dispatchDotAgenticNode(
 	// (internal/harness/codex/commit.go, hk-gd9r). Mirrors workloop.go:4007-4019. Must run before
 	// resolveDotWorktreeHEAD so the no-commit guard below sees any commit we create.
 	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil &&
+		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil &&
 			h.Completion() == handlercontract.CompletionProcessExit {
 			codexOutcome, ensureErr := codex.EnsureRefsTrailer(ctx, runner, wtPath, preHeadSHA, beadID)
 			if ensureErr != nil {
@@ -2067,7 +2067,7 @@ func dispatchDotAgenticNode(
 		// Mirror the builtin noChange-subsumed check (workloop.go:1831-1848,
 		// hk-trjef): if the bead's work already landed in main, close-subsumed
 		// rather than hard-fail. Bead: hk-9v5yo.
-		if beadAlreadySubsumedInMain(ctx, deps.projectDir, beadID) {
+		if shared.MainHistoryHasRefsTrailer(ctx, deps.projectDir, beadID) {
 			return core.Outcome{}, errDotNoChangeSubsumed
 		}
 		if iterationCount < 2 {

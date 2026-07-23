@@ -2307,11 +2307,14 @@ var ExportedLaunchSuppressionCeiling = &launchSuppressionCeiling
 // wrapper can accept it.
 type quitSenderExported = quitSender
 
-// ExportedBeadAlreadySubsumedInMain exposes beadAlreadySubsumedInMain for tests.
+// ExportedBeadAlreadySubsumedInMain exposes the main-history Refs-trailer probe
+// for tests. The implementation left internal/daemon for
+// shared.MainHistoryHasRefsTrailer (P2 E5 RT19b); this shim keeps the existing
+// daemon_test callers compiling unchanged.
 //
 // Bead: hk-trjef.
 func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
-	return beadAlreadySubsumedInMain(ctx, projectDir, beadID)
+	return shared.MainHistoryHasRefsTrailer(ctx, projectDir, beadID)
 }
 
 // ExportedBeadExplicitlyReopened exposes beadExplicitlyReopened for tests.

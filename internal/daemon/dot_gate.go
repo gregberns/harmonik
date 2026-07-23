@@ -378,7 +378,7 @@ func executeCognitionGate(
 	// spawns on the worker (hk-9fe2).
 	gateHarnessIsClaude := true
 	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
 			gateHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
 		}
 	}

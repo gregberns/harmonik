@@ -3806,7 +3806,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS, string(workflowMode))
 
 	// hk-f38n: the pre-dispatch subsumption check (hk-ly0hg Fix-2 / hk-wcv) was
-	// REMOVED here. That check called beadAlreadySubsumedInMain — a bare
+	// REMOVED here. That check called shared.MainHistoryHasRefsTrailer — a bare
 	// "Refs: <id>" git-log grep — and closed the bead pre-dispatch when it
 	// matched. For multi-aspect / partially-committed beads this was a
 	// false-positive: old partial commits carrying the same bead ID caused the
@@ -3818,7 +3818,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// before CloseBead completed) is correctly handled by the RUNTIME paths
 	// instead:
 	//   • noChange-timeout (pasteInjectQuitOnCommit): agent makes no commit →
-	//     noChangeTimeoutCh fires → beadAlreadySubsumedInMain → CloseBead.
+	//     noChangeTimeoutCh fires → shared.MainHistoryHasRefsTrailer → CloseBead.
 	//   • noCommitGuard (beadRunOne): no HEAD advance + Refs on main →
 	//     noCommitGuardShouldReopen=false → auto-close branch.
 	// Both paths inspect whether work is actually present before closing, so
@@ -4241,11 +4241,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// bandwidthTunerBackstop can filter Pi rate-limit events from the global
 	// tuner. The type is only known after specBuilder resolves the harness.
 	if rh, ok := deps.runRegistry.Get(runID); ok && rh != nil {
-		rh.SetAgentType(artifactAgentType(artifacts))
+		rh.SetAgentType(shared.ArtifactAgentType(artifacts))
 	}
 	// hk-j6wm7: record whether this run is a Pi run so the deferred wtCleanup can
 	// retain the worktree (and the captured pi output under it) on failure.
-	if artifactAgentType(artifacts) == core.AgentTypePi {
+	if shared.ArtifactAgentType(artifacts) == core.AgentTypePi {
 		runIsPi = true
 	}
 
@@ -4352,7 +4352,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	implIsSessionIDCapturedWL := false
 	var implHarnessWL handlercontract.Harness
 	if deps.harnessRegistry != nil {
-		if implH, implHErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); implHErr == nil {
+		if implH, implHErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); implHErr == nil {
 			implIsSessionIDCapturedWL = implH.SessionIDPolicy() == handlercontract.SessionIDCaptured
 			implHarnessWL = implH
 			sdHarness = string(implH.AgentType())
@@ -4361,7 +4361,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hk-6596l: srt sandbox argv-wrap wiring. hk-r4p0l: key the gate off the
 	// resolved harness identity (implHarnessWL.AgentType()), NOT the
 	// artifacts-derived agent type. The originally-shipped gate matched
-	// string(artifactAgentType(artifacts)); for a pi run that value could read
+	// string(shared.ArtifactAgentType(artifacts)); for a pi run that value could read
 	// "claude-code" and the wrap silently no-op'd even with backend=srt +
 	// harnesses:[pi]. resolveGateAgentType prefers implHarnessWL (the concrete
 	// Harness resolved via HarnessRegistry.ForAgent just above) whose AgentType()
@@ -4387,7 +4387,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//     runs. The wrap is instead applied directly to spec.Binary/spec.Args in
 	//     the SessionIDCaptured branch below. The two branches are mutually
 	//     exclusive, so there is no double-wrap.
-	sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(implHarnessWL, artifactAgentType(artifacts)), SandboxProfileInput{
+	sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(implHarnessWL, shared.ArtifactAgentType(artifacts)), SandboxProfileInput{
 		WorktreePath:           wtPath,
 		GitDir:                 filepath.Join(deps.projectDir, ".git"),
 		RunID:                  runID.String(),
@@ -4747,16 +4747,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// must be skipped for ProcessExit harnesses — same class as hk-f6g7).
 	completionMode := handlercontract.CompletionEventStreamThenQuit
 	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
 			completionMode = h.Completion()
 		}
 	}
 
-	adapter, adapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(artifacts))
+	adapter, adapterErr := deps.adapterRegistry.ForAgent(shared.ArtifactAgentType(artifacts))
 	if adapterErr != nil {
 		// No adapter for the resolved agent type — non-fatal; skip ready-wait.
 		fmt.Fprintf(os.Stderr, "daemon: workloop: ForAgent(%s) bead %s: %v (skipping ready-wait)\n",
-			artifactAgentType(artifacts), beadID, adapterErr)
+			shared.ArtifactAgentType(artifacts), beadID, adapterErr)
 	} else {
 		// hk-f6g7: skip waitAgentReady for ProcessExit harnesses (codex). These
 		// self-terminate on turn completion and never emit agent_ready; calling
@@ -5011,7 +5011,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// through the interactive TUI and self-commits; this block is a no-op for
 	// claude. On error we log and fall through to the no-commit guard.
 	if deps.harnessRegistry != nil {
-		agType := artifactAgentType(artifacts)
+		agType := shared.ArtifactAgentType(artifacts)
 		if h, hErr := deps.harnessRegistry.ForAgent(agType); hErr == nil &&
 			h.Completion() == handlercontract.CompletionProcessExit {
 			if agType == core.AgentTypePi {
@@ -5204,7 +5204,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// the bead was already subsumed by a prior run that landed on main.
 		select {
 		case <-noChangeTimeoutCh:
-			if beadAlreadySubsumedInMain(ctx, activeRepo, beadID) {
+			if shared.MainHistoryHasRefsTrailer(ctx, activeRepo, beadID) {
 				// RSM-035: subsumed-but-stalled closes with an approved outcome;
 				// the emit-approved flag + close summary ride the event.
 				bridge.feed(ctx, runexec.Event{
@@ -5306,7 +5306,7 @@ func isWatcherErrCanceled(err error) bool {
 // success (hk-4ie1z, observed live on hk-tigaf.4). The only legitimate
 // fall-through (the run made no commit, but the bead's work is genuinely on
 // main because a prior run subsumed it) is preserved via
-// beadAlreadySubsumedInMain. Mirrors the review-loop guard
+// shared.MainHistoryHasRefsTrailer. Mirrors the review-loop guard
 // (reviewloop.go ~567), which compares HEAD == parentSHA with no escape.
 //
 // Bead: hk-4ie1z.
@@ -5316,41 +5316,7 @@ func noCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, pare
 		return false
 	}
 	// No commit. Fail (reopen) UNLESS this bead's own work is already on main.
-	return !beadAlreadySubsumedInMain(ctx, projectDir, beadID)
-}
-
-// beadAlreadySubsumedInMain checks whether beadID appears as a "Refs: <id>"
-// trailer in any of the last 20 commits on main in projectDir.
-//
-// This is used after a noChange-timeout kill to determine whether the work
-// was already completed by a prior run that merged to main — in which case
-// the bead should be closed (not reopened).
-//
-// Returns false on any git error (conservative: treat as not subsumed).
-//
-// Bead: hk-trjef.
-func beadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
-	// hk-ly0hg: use --grep to pre-filter across the full main history rather
-	// than reading a fixed window of -20 commits. This prevents false negatives
-	// when a restart-interrupted run had its commit land >20 commits ago.
-	//
-	// --fixed-strings prevents regex interpretation of bead IDs.
-	// The line-exact check in Go prevents "Refs: hk-foo.1" from matching a
-	// commit whose message contains "Refs: hk-foo.10".
-	needle := "Refs: " + string(beadID)
-	cmd := exec.CommandContext(ctx, "git", "log", "main", "--format=%B",
-		"--fixed-strings", "--grep", needle)
-	cmd.Dir = projectDir
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.TrimRight(line, "\r") == needle {
-			return true
-		}
-	}
-	return false
+	return !shared.MainHistoryHasRefsTrailer(ctx, projectDir, beadID)
 }
 
 // beadExplicitlyReopened returns true when the bead's audit log contains a
@@ -5393,7 +5359,7 @@ func beadExplicitlyReopened(ctx context.Context, auditLogger func(context.Contex
 // The function:
 //  1. Calls ShowBead to confirm the bead's current status is CoarseStatusBlocked.
 //  2. Collects all bead IDs referenced in the bead's edge list (both directions).
-//  3. For each candidate blocker, calls beadAlreadySubsumedInMain.
+//  3. For each candidate blocker, calls shared.MainHistoryHasRefsTrailer.
 //  4. If subsumed, calls SweepCloseBead to close the stale record.
 //
 // On the next workloop retry the bead should no longer be blocked and
@@ -5430,7 +5396,7 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps
 		}
 	}
 	for blockerID := range seen {
-		if !beadAlreadySubsumedInMain(ctx, deps.projectDir, blockerID) {
+		if !shared.MainHistoryHasRefsTrailer(ctx, deps.projectDir, blockerID) {
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "daemon: workloop: claim-failure auto-close stale blocker %s (subsumed in main, unblocks %s)\n", blockerID, beadID)
@@ -6471,20 +6437,6 @@ func emitTmuxNewWindowTimeout(ctx context.Context, bus handlercontract.EventEmit
 // emitAgentReadyTimeout emits an agent_ready_timeout event (hk-5cox8) when
 // the HC-056 timeout fires — no agent_ready relay message arrived within the
 // configured deadline. The event carries run_id, claude_session_id, and
-// artifactAgentType returns the resolved agent type from shared.LaunchArtifacts,
-// falling back to core.AgentTypeClaudeCode when the field is empty (e.g. from a
-// legacy test fixture that builds artifacts directly without going through
-// routedLaunchSpecBuilder).
-//
-// Used to look up the correct Adapter via adapterRegistry.ForAgent instead of
-// hardcoding core.AgentTypeClaudeCode (T12, hk-xhawy).
-func artifactAgentType(a shared.LaunchArtifacts) core.AgentType {
-	if a.ResolvedAgentType.Valid() {
-		return a.ResolvedAgentType
-	}
-	return core.AgentTypeClaudeCode
-}
-
 // timeout_ms so post-hoc analysis can correlate which runs never became ready.
 //
 // effectiveTimeout: zero is replaced by defaultAgentReadyTimeout (30s) to

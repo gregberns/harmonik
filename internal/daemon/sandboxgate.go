@@ -9,7 +9,7 @@ package daemon
 //
 //   - resolveGateAgentType picks the AUTHORITATIVE harness identity for the
 //     gate. The originally-shipped gate (hk-6596l) keyed off
-//     artifactAgentType(artifacts). That is a defect for any harness whose
+//     shared.ArtifactAgentType(artifacts). That is a defect for any harness whose
 //     resolved identity is not reflected by the artifacts value read at the
 //     gate: a pi run could observe "claude-code" and silently skip the wrap.
 //     The resolved Harness (implHarnessWL, looked up via HarnessRegistry.ForAgent)

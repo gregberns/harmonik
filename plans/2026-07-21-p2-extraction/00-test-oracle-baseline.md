@@ -5,6 +5,18 @@ That gate is **not usable as written**: `internal/daemon` is already red before 
 This file records the measured baseline so each unit can be verified against a *differential* oracle —
 **no NEW failures** — instead of an unreachable zero.
 
+> **Read this before you re-derive anything by hand.** Three rules govern every use of this file.
+> They are stated once here and expanded in §"Known-flaky allowlist".
+>
+> 1. **A load-sensitive flake is confirmed by re-running it IN ISOLATION.** Isolated pass = load
+>    artifact, not a regression.
+> 2. **An isolation-sensitive flake is confirmed by re-running it IN THE FULL SUITE.** This is the
+>    *opposite* procedure, and applying the wrong one inverts the answer. Exactly one entry is in this
+>    class today: `TestMergeToMain_RealConflictWithBeadsLedger_Escalates`.
+> 3. **Compare stable INTERSECTIONS across repeated runs, never one run against one run.** Three runs
+>    of the *same* commit gave 123 / 3 / 9 failures; runs B and C shared 1 of 11 names. A single
+>    before/after pair is not evidence (PROGRESS.md §"Verification verdict (Phase 5)").
+
 ## Measurement
 
 Two runs, both `-count=1`:
@@ -113,43 +125,117 @@ Coverage transfer (each verified to exist, per the RT14 recipe §4 C3):
 `twinparity_timing_property_test.go` stays in the corpus with the same test names; its stage-1
 detector call was replaced by the timing predicate directly (same reason as the last row above).
 
-## Known-flaky allowlist (as of 2026-07-22)
+## Known-flaky allowlist (as of 2026-07-23)
+
+### The three classes, and how each one is confirmed
+
+Every entry belongs to exactly one class. **The confirmation procedure is different per class, and two
+of them are opposites** — running the wrong procedure gives you the wrong answer with full confidence.
+
+| Class | What it means | **How to confirm** |
+|---|---|---|
+| **load-sensitive** | Fails in the full suite, passes alone. A fixed wall-clock budget is exceeded because the machine is busy. | **Re-run IN ISOLATION**: `go test ./internal/daemon/ -run '^TestX$' -timeout 5m`. Isolated **pass** ⇒ load artifact, not a regression. Isolated **fail** ⇒ real. |
+| **isolation-sensitive** | The mirror image. Fails alone, **passes** inside the full suite. | **Re-run IN THE FULL SUITE** — the isolated failure is the artifact. Do **not** "confirm" it by re-running it alone; that reproduces the artifact and reads as a real regression. |
+| **known-red at HEAD** | Fails at the pre-change commit too. Not a regression under any procedure. | A/B the *unmodified* file at HEAD, ideally under `-count=8`. Never let one of these block a unit, and never "fix" one inside an extraction commit (§5.1 pure-move rule). |
+
+And regardless of class: **compare stable intersections across repeated runs, never one run against one
+run.** See the box at the top of this file.
+
+### Greppable name list
 
 ```
-# confirm these by re-running IN ISOLATION (isolated pass => load artifact)
-TestThroughput_TenBeadsAtMaxFour                            # hard pre-existing, out of P2 scope
-TestScenario_Hk6ynv4_SubscribeStream_EndToEnd               # load-sensitive
-TestStopHookE2E_TwinRelayFastPath                           # load-sensitive
-TestStopHookE2E_TwinRelayWaitGrace                          # load-sensitive
-TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace    # load-sensitive
-TestT6_10BeadSequentialDrain                                # load-sensitive
-TestPasteInjectCommitBudget_IdleActivePane_HKukx            # load-sensitive; ADDED 2026-07-22 (RT14 run)
-TestWorkLoop_ShutdownDrainsCommittedRun_hkdnrg              # load-sensitive; ADDED 2026-07-22 (RT15 run)
-TestT2_ExitZeroNoSignal                                     # load-sensitive; ADDED 2026-07-22 (RT15 run)
-TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency          # load-sensitive; ADDED 2026-07-22 (RT15 run)
-TestM4C7_D2Chokepoint_IsHarnessAgnostic                     # hard pre-existing (build-tagged fixture compile); out of P2 scope
+# LOAD-SENSITIVE — confirm by re-running IN ISOLATION (isolated pass => load artifact)
+TestScenario_Hk6ynv4_SubscribeStream_EndToEnd
+TestStopHookE2E_TwinRelayFastPath
+TestStopHookE2E_TwinRelayWaitGrace
+TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace
+TestT6_10BeadSequentialDrain
+TestWorkLoop_ShutdownDrainsCommittedRun_hkdnrg              # ADDED 2026-07-22 (RT15 run)
+TestT2_ExitZeroNoSignal                                     # ADDED 2026-07-22 (RT15 run)
+TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency          # ADDED 2026-07-22 (RT15 run)
+TestPasteInjectQuitOnCommit_BriefDeliveredGateOpensOnClose  # ADDED 2026-07-23 (hk-8cxxb)
+TestScenario_FailingImplementer_RunFailed                   # ADDED 2026-07-23 (hk-8cxxb)
+TestScenario_SupervisorRevive_DaemonStart_WiresKeepaliveGoroutine  # ADDED 2026-07-23 (hk-8cxxb)
+TestScenario_ReviewLoop_ResumeSubmitReliable                # ADDED 2026-07-23 (hk-8cxxb)
+TestRunBead_CancelNotCalledOnFailure                        # ADDED 2026-07-23 (hk-8cxxb)
+TestConcurrentRemoteAgentReady_BothBeadsReopened            # ADDED 2026-07-23 (hk-8cxxb)
+TestPasteInjectActivityAware_ProgressingPaneSurvivesCeiling # ADDED 2026-07-23 (hk-8cxxb)
+TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget       # ADDED 2026-07-23 (hk-8cxxb)
+TestScenarioGateEfficacy_GenuineRedBlocksMerge              # ADDED 2026-07-23 (hk-8cxxb)
+TestCodexHarness_LaunchSpec_ResumeDelegates                 # now in internal/harness/codex
+TestCodexHarness_LaunchSpec_InitialDelegates                # now in internal/harness/codex
+TestCodexHarness_LaunchSpec_CustomBinary                    # now in internal/harness/codex
 
-# confirm this one by re-running IN THE FULL SUITE (isolation is what breaks it)
-TestMergeToMain_RealConflictWithBeadsLedger_Escalates       # ISOLATION-sensitive; pre-dates P2
+# ISOLATION-SENSITIVE — confirm by re-running IN THE FULL SUITE (isolation is what breaks it)
+TestMergeToMain_RealConflictWithBeadsLedger_Escalates       # pre-dates P2
 
-# non-deterministic under parallel load; now in internal/harness/codex
-TestCodexHarness_LaunchSpec_ResumeDelegates                 # flaky
-TestCodexHarness_LaunchSpec_InitialDelegates                # flaky
-TestCodexHarness_LaunchSpec_CustomBinary                    # flaky
+# KNOWN-RED AT HEAD — not a regression under any procedure
+TestThroughput_TenBeadsAtMaxFour                            # out of P2 scope
+TestM4C7_D2Chokepoint_IsHarnessAgnostic                     # build-tagged fixture compile; out of P2 scope
+TestPasteInjectCommitBudget_IdleActivePane_HKukx            # RECLASSIFIED 2026-07-23 (was load-sensitive)
+TestPasteInjectQuitOnCommit_NewCommitNoKill                 # ADDED 2026-07-23 (hk-8cxxb)
 
 # any dispatch/throughput/timing failure while `df -h` shows <10 GiB free — see Addendum §3
 ```
 
-If a unit's after-set contains one of these and the before-set did not, **re-run that test in isolation**
-before calling it a regression. Isolated failure = real; isolated pass = load artifact.
+### Mechanism per entry
 
-**Added 2026-07-22 during RT14's differential run:**
-`TestPasteInjectCommitBudget_IdleActivePane_HKukx` failed in the full suite and **passed in
-isolation** (1.5s), so it is a load artifact by this file's own rule, not a regression. It post-dates
-the original baseline measurement (its file `pasteinject_hk9vp51_test.go` last landed at `5c1e0deb3`),
-which is why it was absent from the table above. RT14 never touched that file — it covers the
-Working-phase no-commit ceiling, which `dispatchsegment.go` places outside the RT8 segment boundary
-and which slice RT19c owns.
+A name alone is not enough: without the mechanism an agent cannot tell whether a *new* failure it is
+looking at is the same phenomenon. Each mechanism below was read out of the test source. Where the
+source did not establish one, the row says so rather than guessing.
+
+**Load-sensitive**
+
+| Test (file, all under `internal/daemon/` unless noted) | Mechanism |
+|---|---|
+| `TestPasteInjectQuitOnCommit_BriefDeliveredGateOpensOnClose` (`pasteinject_hk930o3_test.go`) | Gives itself a 5s ctx while a background goroutine sleeps 30ms then calls `hk930o3AddCommit`, which shells out to `git add` + `git commit`. Under load the two git subprocesses exceed the budget and the ctx expires before the 5ms poll sees the new HEAD. Observed at **5.74s** and **5.37s**. Nothing in production is involved. |
+| `TestScenario_FailingImplementer_RunFailed` (`scenario_failing_implementer_test.go`) | Real `daemon.Start` end-to-end against a real `br` wrapper script and the `harmonik-twin-claude` binary, with three stacked fixed wall-clock budgets: `AgentReadyTimeout` 5s, `runFailedPollBudget` 20s for `run_failed` to reach the JSONL, and 5s for `daemon.Start` to return after cancel. Every one is a subprocess-spawn budget, so every one stretches with machine load. |
+| `TestScenario_SupervisorRevive_DaemonStart_WiresKeepaliveGoroutine` (`scenario_supervisor_revive_default_selfheal_hku0pz_test.go`) | `t.Parallel()`. Asserts the keepalive goroutine that `daemon.Start` launches records ≥1 `EnsureSession` call within a fixed **2s** budget, polling every 2ms, with `daemon.WithSessionKeepalive(5ms)`. The assertion is on goroutine scheduling latency — a loaded scheduler *is* the failure mode. |
+| `TestScenario_ReviewLoop_ResumeSubmitReliable` (`reviewloop_resume_submit_hkip33d_test.go`) | Drives a full REQUEST_CHANGES→APPROVE cycle with `AgentReadyTimeout` 8s and `resumeSubmitRetryDelay` shrunk to 50ms, inside a 90s ctx, against a real `/bin/sh` handler script. Its own header names the second mechanism: it contends on the process-global `~/.claude.json` trust lock (`rlIsolateClaudeConfig`) — "the dominant intermittent `-short` red" — which is why it is deliberately **not** `t.Parallel()`. |
+| `TestRunBead_CancelNotCalledOnFailure` (`run_hkicecw_test.go`) | `t.Parallel()`. The pass path is to **wait out a 10s timer inside a 15s ctx**, leaving ~5s of headroom for git fixture setup, work-loop start and `/bin/sh -c 'exit 1'`. The tighter constraint is the inner fast path: once the first `ReopenBead` lands it gives the queue only **200ms** to settle into `queue.QueueStatusPausedByFailure` before asserting. |
+| `TestConcurrentRemoteAgentReady_BothBeadsReopened` (`concurrent_remote_agent_ready_hk4hso5_test.go`) | Production budgets are sub-second (`AgentReadyTimeout` 150ms, kill-reap overridden to 50ms) but the assertion is a hard **2s** `time.After` on `bothReopenedCh`, with `MaxConcurrent=2` driving two concurrent runs that each build a temp worktree and spawn `/bin/sh`. Not `t.Parallel()` (it mutates a package global via `ExportedSetAgentReadyKillReapTimeout`), but it still competes with the rest of the suite. |
+| `TestPasteInjectActivityAware_ProgressingPaneSurvivesCeiling` (`pasteinject_hkaz4fd_test.go`) | 5s ctx and a 5s commit budget. The background goroutine churns the worktree 12× at 25ms (≈300ms nominal) before shelling `git add` + `git commit`, and the production code under test shells `git status --porcelain` on **every 5ms poll** to compute the activity fingerprint — hundreds of git subprocesses inside a 5s window. Under load the commit lands after the deadline and the test fails with "the run hung instead of exiting on commit". |
+| `TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget` (`pasteinject_hksj6a_test.go`) | The tightest assertion in the set. Measures `time.Since(startedAt)` around `ExportedPasteInjectQuitOnReviewFile` and requires the result inside a **15ms–150ms** window (`>= budget-5ms`, `<= hardCeiling/2`) on a 5ms poll with a 5ms heartbeat pump. Any scheduler stall past ~150ms trips "Kill fired too late". |
+| `TestScenarioGateEfficacy_GenuineRedBlocksMerge` (`scenario_gate_efficacy_hkv5dyg_test.go`) | `t.Parallel()`, and its harness `runGateEfficacyWorkLoop` allows **85s** for a path that *compiles and runs* `go test -tags=scenario` on a freshly-written package inside a real git worktree and then merges to main. The harness comment sizes that budget for "cold-cache compilation"; a cold `GOCACHE` (which `with-isolated-gocache.sh` guarantees) plus load puts the compile alone in the same order as the budget. |
+| `TestWorkLoop_ShutdownDrainsCommittedRun_hkdnrg` (`workloop_shutdown_drain_committed_hkdnrg_test.go`) | A fixed `time.Sleep(300 * time.Millisecond)` "to give the handler a moment to launch" before cancelling the context. Under load the `/bin/sh -c 'sleep 60'` handler may not be running yet, so the cancel takes a different branch than the drain path being asserted. Its own skip comment says it "spawns sleep 60 + real git worktrees — heavy under parallel load", and it is `t.Parallel()`. Outer budgets: 20s to claim, 30s to drain. |
+| `TestT2_ExitZeroNoSignal` (`t2_scenarios_test.go`) | `t.Parallel()`, **6s** poll deadline inside an 8s ctx, for a path that runs `workloopFixturePreCommitWorktreeFactory` (real `git worktree add` + commit), spawns `/bin/sh`, then merges and closes the bead. 6s is thin for three git subprocess round-trips on a loaded box. |
+| `TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency` (`workloop_test.go`) | `t.Parallel()`, 10 beads through the real worktree factory and the real launch-spec path, each paying ~3s `stopHookGrace`, against a **25s** poll deadline / 30s ctx. At `MaxConcurrent=4` the nominal cost is already ~8s of pure grace before any git work. |
+| `TestCodexHarness_LaunchSpec_ResumeDelegates` / `_InitialDelegates` / `_CustomBinary` (`internal/harness/codex/harness_test.go`) | **Partly established.** The test bodies are pure argv assertions, but `codex.Harness.LaunchSpec` is **not** pure: before building argv it calls `os.Getwd()` and then `cleanCodexStaleWAL`, which reads `<cwd>/.harmonik/config.yaml`, globs `state_*.sqlite-wal` under the resolved `CODEX_HOME`, `os.Stat`s each match, shells out to **`lsof`** to decide whether the WAL is held, and can `os.Remove` it. All three tests are `t.Parallel()`, so they contend on machine-global state outside any `t.TempDir()` — including the operator's live `~/.codex` — and on `lsof`, whose latency is load-dependent. **Not established:** why *these three* and not the sibling `LaunchSpec` callers in the same file (e.g. `_CredentialKeysStripped`). Treat the selection as unexplained. |
+
+**Isolation-sensitive**
+
+| Test | Mechanism |
+|---|---|
+| `TestMergeToMain_RealConflictWithBeadsLedger_Escalates` (`mergetomain_hkpphof_test.go`) | **Mechanism: not yet established — do not guess.** What *is* established: the failure signature is the test's own 30s `context.WithTimeout` expiring without `ledger.doneCh` closing, identical at `34509e60`, `805a9d76`, `20cbd18d` and `bfb87bfd`; the test is `t.Parallel()` and drives a real rebase conflict on both `work.txt` and `.beads/issues.jsonl`. What is **ruled out**: load. It fails when the box is idle and passes when it is busy — the inverse of every other entry here — so the load-sensitive reasoning does not transfer. Confirm only by re-running it inside the full suite. |
+
+**Known-red at HEAD**
+
+| Test | Mechanism |
+|---|---|
+| `TestThroughput_TenBeadsAtMaxFour` (`t11_throughput_test.go`) | Not a timeout — a **wall-clock ratio assertion**: parallel per-bead must be < 3× sequential per-bead, measured by running a 3-bead `MaxConcurrent=1` daemon and a 10-bead `MaxConcurrent=4` daemon *concurrently in the same process* against the real `br` binary. The number it measures is a property of the machine, not of the code, so no code change makes it deterministic. Out of P2 scope. |
+| `TestPasteInjectCommitBudget_IdleActivePane_HKukx` (`pasteinject_hk9vp51_test.go`) | **Reclassified 2026-07-23** from load-sensitive. Asserts `elapsed < 100ms` for a kill whose nominal path is budget 40ms + kill delay 5ms + 3 polls ≈ 60ms — a ~40ms margin over a 5ms poll. Observed failure: `kill fired after 274ms — too close to hard ceiling (120ms)`. RT19.0 proved it pre-existing by A/B on the unmodified file under `-count=8` (6 failures pre-edit, 5 post-edit). The 2026-07-22 note below, which called it a load artifact on the strength of one isolated pass, is superseded — see rule 3 at the top of this file. |
+| `TestPasteInjectQuitOnCommit_NewCommitNoKill` (`pasteinject_hktrjef_test.go`) | 3s ctx while a background goroutine sleeps 30ms then shells `git add` + `git commit`. `commitPollTimeout` is 5s, so the **test's own 3s ctx**, not the production timeout, is the binding constraint: if the two git subprocesses do not finish inside 3s the poller never sees the new HEAD and `SendQuitToLastPane` stays at 0. Red at HEAD alongside `_IdleActivePane_HKukx` in the same RT19.0 A/B. |
+| `TestM4C7_D2Chokepoint_IsHarnessAgnostic` | **Mechanism: not re-derived this pass.** Carried forward from the 2026-07-22 entry: build-tagged fixture does not compile. Out of P2 scope. |
+
+If a unit's after-set contains one of these and the before-set did not, apply that entry's class
+procedure from the table above **before** calling it a regression.
+
+**Historical note, 2026-07-22 (RT14 differential run), superseded:**
+`TestPasteInjectCommitBudget_IdleActivePane_HKukx` failed in the full suite and passed in isolation
+once (1.5s), and was recorded as a load artifact on that basis. RT19.0's `-count=8` A/B on the
+unmodified file later showed it is red at HEAD, so it now sits in the known-red class. The general
+lesson is rule 3: **one isolated pass is not a classification.** It post-dates the original baseline
+measurement (its file `pasteinject_hk9vp51_test.go` last landed at `5c1e0deb3`), which is why it was
+absent from the table above. RT14 never touched that file — it covers the Working-phase no-commit
+ceiling, which `dispatchsegment.go` places outside the RT8 segment boundary and which slice RT19c owns.
+
+**Provenance of the 2026-07-23 additions (hk-8cxxb).** The nine `internal/daemon` names marked
+`ADDED 2026-07-23` were surfaced across six full `./internal/daemon/` runs during RT19c — four on a
+working tree, two on a detached clean worktree at HEAD — each observed failing in the full suite and
+passing in isolation. `TestPasteInjectQuitOnCommit_NewCommitNoKill` and the `_IdleActivePane_HKukx`
+reclassification come from RT19.0's A/B. Mechanisms above were derived by reading each test's source
+in this pass; **no test was executed while writing this entry** — the box was at 3.1 GiB free, below
+the 10 GiB watermark of Addendum §3, under which timing results are not trustworthy anyway.
 
 ## Suite cost
 

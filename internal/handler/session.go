@@ -294,8 +294,8 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 	// just started and fail the construction rather than handing back a session
 	// whose stdout/stderr can never reach EOF.
 	if closeErr := closeAll(stdoutW, stderrW); closeErr != nil {
-		abandonStartedCmd(cmd)
-		return nil, fmt.Errorf("handler: NewSession: close parent write ends: %w: %w", closeErr, ErrStructural)
+		return nil, abandonStartedSession(cmd, stdinPipe, stdoutR, stderrR,
+			fmt.Errorf("handler: NewSession: close parent write ends: %w: %w", closeErr, ErrStructural))
 	}
 
 	// HC-065: Spawning→Initializing — subprocess started successfully. An error
@@ -303,8 +303,8 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 	// surface it instead of handing back a session whose machine is in the wrong
 	// state (the watcher and workloop drive every later transition off it).
 	if tErr := machine.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", ""); tErr != nil {
-		abandonStartedCmd(cmd)
-		return nil, fmt.Errorf("handler: NewSession: lifecycle transition to initializing: %w: %w", tErr, ErrStructural)
+		return nil, abandonStartedSession(cmd, stdinPipe, stdoutR, stderrR,
+			fmt.Errorf("handler: NewSession: lifecycle transition to initializing: %w: %w", tErr, ErrStructural))
 	}
 
 	stdoutPR := bridgeStdout(stdoutR)
@@ -363,6 +363,38 @@ func abandonStartedCmd(cmd *exec.Cmd) {
 			fmt.Fprintf(os.Stderr, "handler: NewSession: reap abandoned child: %v\n", err)
 		}
 	}
+}
+
+// abandonStartedSession releases everything newSessionWithIDs owns once
+// cmd.Start has already succeeded but the constructor has decided not to hand
+// the session back, and returns the error the constructor should return.
+//
+// It closes the three parent-side handles the constructor opened — the stdin
+// write end and the stdout/stderr read ends — and then reaps the child via
+// abandonStartedCmd. Without the closes those descriptors leak: once the
+// constructor returns nil nothing in the process holds a reference to them, so
+// they survive until the garbage collector happens to run a finaliser, and a
+// burst of failed constructions can exhaust the descriptor limit first.
+//
+// The parent's stdout/stderr WRITE ends are deliberately not closed here. Every
+// caller reaches this point only after closeAll(stdoutW, stderrW) has run.
+//
+// Order matters. The stdin write end is closed BEFORE the reap: exec.Cmd.Wait
+// closes its own parentIOPipes list — which the StdinPipe write end is on — and
+// discards the result, so closing after the reap would surface a spurious
+// "file already closed" as a cleanup failure. Closing first also gives the
+// child stdin EOF on its way out.
+//
+// cause is returned unchanged when cleanup succeeds, and joined with the close
+// failures otherwise — the same reporting the cmd.Start failure path above uses,
+// so a cleanup failure is never swallowed by the failure that triggered it.
+func abandonStartedSession(cmd *exec.Cmd, stdinPipe io.Closer, stdoutR, stderrR *os.File, cause error) error {
+	closeErr := closeAll(stdinPipe, stdoutR, stderrR)
+	abandonStartedCmd(cmd)
+	if closeErr != nil {
+		return errors.Join(cause, fmt.Errorf("pipe cleanup: %w", closeErr))
+	}
+	return cause
 }
 
 // bridgeStdout copies stdoutR into an io.Pipe and returns the read end.

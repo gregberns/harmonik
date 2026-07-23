@@ -121,6 +121,24 @@ func waitWithSocketGrace(
 	}
 
 	// Step 2: reap the subprocess.
+	//
+	// On the ctx-cancel path above, this Wait now returns the child's real
+	// *exec.ExitError. It used to return nil there: handler.Session.Wait read
+	// lifecycle.WaitOwner's buffered(1) result channel, and Kill's reap-observer
+	// goroutine had already consumed the single delivery, so every later reader
+	// saw the closed-channel nil.
+	//
+	// That changes ONE emitted field on cancelled runs whose child exited
+	// non-zero: MapWaitReturnToTerminalEvent branch 3 keys its sub_reason off
+	// (waitErr, exitCode), so those runs now report `claude_crashed` where they
+	// previously reported `claude_exit_without_outcome`. This is the correction,
+	// not a regression — the class-derivation bullet of CHB-020 in
+	// specs/claude-hook-bridge.md §4.7 defines the split as "exit code 0 →
+	// claude_exit_without_outcome; non-zero exit code → claude_crashed", and a
+	// killed non-zero child is the second case. Class
+	// stays `structural` and Type stays `agent_failed`, so nothing routes
+	// differently: term.SubReason is read only to format the human-readable
+	// failReason in workloop.go's reopen path.
 	waitErr := sess.Wait(ctx)
 	outcome := sess.Outcome()
 	ei := exitInfo{exitCode: outcome.ExitCode, waitErr: waitErr, stderrTail: outcome.StderrTail}

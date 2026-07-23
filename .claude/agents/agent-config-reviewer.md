@@ -40,8 +40,8 @@ CLEAN — no action required.
 
 | Event | Invoke? |
 |---|---|
-| Session start (after reading SESSION_HANDOFF.md) | Yes — lightweight scan |
-| Session end (before writing SESSION_HANDOFF.md) | Yes — full scan |
+| Session start (after reading HANDOFF.md) | Yes — lightweight scan |
+| Session end (before writing HANDOFF.md) | Yes — full scan |
 | `kerf status <work> <next-pass>` about to run | Yes — full scan |
 | `kerf finalize` about to run | Yes — full scan with wider prompt (include new spec) |
 | Foundation-doc change | Yes — drift from those docs into agent-configuration.md |
@@ -59,7 +59,7 @@ The invoker provides (all in the invocation prompt):
 3. **`.claude/settings.json`** (if present) — Claude Code hook and permission config.
 4. **Skill manifest** — output of `ls .claude/skills/` and the frontmatter of each
    `SKILL.md` found.
-5. **Last N session handoffs** — `SESSION_HANDOFF.md` plus recent git log.
+5. **Last N session handoffs** — `HANDOFF.md` plus recent git log.
 6. **Kerf work artifacts** (for kerf-pass triggers only).
 7. **Changed foundation docs** (for automatic Tier-2 trigger only).
 
@@ -76,7 +76,9 @@ Perform all four checks in order.
 Compare the current `CLAUDE.md` / `AGENTS.md` content against the normative
 `agent-configuration.md`:
 
-- Is the entry ritual present and correct?
+- Is the entry ritual present and correct (read order: `AGENT_INDEX.md` → `STATUS.md`
+  → `.harmonik/context/captain-lanes.md` → `HANDOFF.md`)? `TASKS.md` and
+  `SESSION_HANDOFF.md` are dead paths from the older ritual; do not reinstate them.
 - Are the hard don'ts present?
 - Are pointers current — do the named docs still exist at the cited paths?
 - Is the file under 120 lines?

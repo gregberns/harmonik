@@ -41,8 +41,8 @@ applies, defers, or rejects.
 
 | Event | Invoke? |
 |---|---|
-| Session start (after reading SESSION_HANDOFF.md) | Yes — lightweight scan |
-| Session end (before writing SESSION_HANDOFF.md) | Yes — full scan |
+| Session start (after reading HANDOFF.md) | Yes — lightweight scan |
+| Session end (before writing HANDOFF.md) | Yes — full scan |
 | `kerf status <work> <next-pass>` about to run | Yes — full scan |
 | `kerf finalize` about to run | Yes — full scan with wider prompt (include new spec) |
 | Foundation-doc change (`quality-checks.md`, `subsystem-organization.md`, `testing.md`, `build-practices.md`) | Yes — drift from those docs into agent-configuration.md |
@@ -62,8 +62,8 @@ The invoker provides (all in the invocation prompt):
 3. **`.claude/settings.json`** (if present) — Claude Code hook and permission config.
 4. **Skill manifest** — output of `ls .claude/skills/` and the frontmatter of each
    `SKILL.md` found; the user-global `~/.claude/skills/` listing.
-5. **Last N session handoffs** — `SESSION_HANDOFF.md` (current) + `git log --oneline
-   -10 SESSION_HANDOFF.md` to spot repeated drift patterns.
+5. **Last N session handoffs** — `HANDOFF.md` (current) + `git log --oneline
+   -10 HANDOFF.md` to spot repeated drift patterns.
 6. **Kerf work artifacts** (for kerf-pass triggers only) — the artifacts produced in
    the pass just completed (problem-space doc, design doc, spec draft, etc.) that
    may surface new rules or skills.
@@ -87,7 +87,10 @@ Compare the current `CLAUDE.md` / `AGENTS.md` content against the normative
 `agent-configuration.md` (§Repo-root AGENTS.md — what it contains):
 
 - Is the entry ritual present and correct (read order: `AGENT_INDEX.md` → `STATUS.md`
-  → `TASKS.md` → `SESSION_HANDOFF.md`)?
+  → `.harmonik/context/captain-lanes.md` → `HANDOFF.md`)? Two paths from the older
+  ritual no longer resolve and MUST NOT be reinstated: `TASKS.md` was renamed to
+  `docs/historical/phase-0-1-tasks.md` (`334bb759e`, `R100`), and `SESSION_HANDOFF.md`
+  was deleted (`5b5193110`) after being superseded by `HANDOFF.md` (`b82b2affb`).
 - Are the hard don'ts present?
 - Are pointers current — do the named docs still exist at the cited paths?
 - Is the file under 120 lines (per §Repo-root AGENTS.md)?
@@ -350,9 +353,9 @@ before or after it.
 
 <PASTE OUTPUT OF: ls .claude/skills/ && for d in .claude/skills/*/; do echo "=== $d ==="; head -20 "$d/SKILL.md" 2>/dev/null || echo "(no SKILL.md)"; done>
 
-## Last N session handoffs (SESSION_HANDOFF.md + git log summary)
+## Last N session handoffs (HANDOFF.md + git log summary)
 
-<PASTE SESSION_HANDOFF.md CONTENT AND git log --oneline -10 SESSION_HANDOFF.md HERE>
+<PASTE HANDOFF.md CONTENT AND git log --oneline -10 HANDOFF.md HERE>
 
 ## Changed foundation docs (if applicable — omit section if not an automatic trigger)
 

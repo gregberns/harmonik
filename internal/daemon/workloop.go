@@ -3308,12 +3308,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		)
 	}
 
-	// effectiveMergeProtectBranches is deps.protectBranches for local runs.
+	// effectiveMergeProtectBranches is env.ProtectBranches for local runs.
 	// For cross-repo runs the daemon's ProtectBranches guards harmonik's branches,
 	// not the target repo's; pass nil so the merge gate doesn't refuse a legitimate
 	// target-repo branch (e.g. merging into kerf's "main" when harmonik protects its
 	// own "main"). Hk-xfuc.
-	effectiveMergeProtectBranches := deps.protectBranches
+	effectiveMergeProtectBranches := env.ProtectBranches
 	if activeRepo != deps.projectDir {
 		effectiveMergeProtectBranches = nil
 	}
@@ -3325,7 +3325,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// present but names a ref that does not exist locally, the error is
 	// surfaced as a typed StartFromRefError and the bead is reopened.
 	// Use activeRepo so cross-repo beads resolve against the target repository.
-	headSHA, headErr := resolveParentCommit(ctx, activeRepo, string(beadID), beadRecord.Description, deps.targetBranch)
+	headSHA, headErr := resolveParentCommit(ctx, activeRepo, string(beadID), beadRecord.Description, env.TargetBranch)
 	if headErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: resolveParentCommit for bead %s: %v (reopening)\n", beadID, headErr)
 		reopenTID, _ := deps.tidGen.Next()
@@ -3350,11 +3350,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// list governs the harmonik project's branches, not the target repo's; skip the
 	// protect check for cross-repo runs to avoid refusing legitimate target branches.
 	var baseBranch string
-	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, activeRepo, deps.targetBranch); brErr == nil {
+	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, activeRepo, env.TargetBranch); brErr == nil {
 		baseBranch = brCfg.LandsOn
 
 		if activeRepo == deps.projectDir {
-			for _, protected := range deps.protectBranches {
+			for _, protected := range env.ProtectBranches {
 				if baseBranch == protected {
 					protErr := &LandsOnProtectedError{LandsOn: baseBranch}
 					fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, protErr)
@@ -3371,13 +3371,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// on the same branch it was rebased onto (baseBranch = resolved lands_on),
 	// not the daemon-wide default target. baseBranch already carries the three-
 	// tier precedence (bead ## Branching > branching.yaml > default) resolved by
-	// resolveBranching above, and equals deps.targetBranch when no per-bead
+	// resolveBranching above, and equals env.TargetBranch when no per-bead
 	// override is present. It is empty only when resolveBranching errored; fall
 	// back to the daemon-wide target in that case so the merge is never directed
 	// at an empty ref (mergeRunBranchToMain fail-closes on empty target).
 	mergeTarget := baseBranch
 	if mergeTarget == "" {
-		mergeTarget = deps.targetBranch
+		mergeTarget = env.TargetBranch
 	}
 
 	// ── DD1 code-sync: select remote worker (remote-substrate B8) ───────────

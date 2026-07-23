@@ -62,7 +62,7 @@ func makeEventsFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	return dir // return project dir (parent of .harmonik/)
@@ -548,7 +548,7 @@ func TestGLiveness_ConfiguredN_TripsAfterN(t *testing.T) {
 	projectDir := makeEventsFile(t)
 	configPath := filepath.Join(projectDir, ".harmonik", "config.yaml")
 	configYAML := fmt.Sprintf("sentinel:\n  window: 30m\n  liveness_no_progress_n: %d\n", n)
-	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
@@ -831,8 +831,7 @@ func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func(
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -842,22 +841,21 @@ func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func(
 	run("init", "--initial-branch=main")
 	run("config", "user.email", "test@harmonik.local")
 	run("config", "user.name", "Harmonik Test")
-	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("init\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("init\n"), 0o600); err != nil {
 		t.Fatalf("makeGitProjectFixture: WriteFile: %v", err)
 	}
 	run("add", ".")
 	run("commit", "-m", "init")
 
 	originDir := t.TempDir()
-	//nolint:gosec // G204: git args are test-internal literals
-	if out, err := exec.Command("git", "init", "--bare", "--initial-branch=main", originDir).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir).CombinedOutput(); err != nil {
 		t.Fatalf("makeGitProjectFixture: git init --bare: %v\n%s", err, out)
 	}
 	run("remote", "add", "origin", originDir)
 	run("push", "origin", "main")
 
 	// Create events dir so the projectDir is valid for Evaluate.
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o750); err != nil {
 		t.Fatalf("makeGitProjectFixture: mkdir events: %v", err)
 	}
 
@@ -865,7 +863,7 @@ func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func(
 	pushNewCommit = func() {
 		counter++
 		fname := filepath.Join(dir, fmt.Sprintf("commit%d", counter))
-		if err := os.WriteFile(fname, []byte("work\n"), 0o644); err != nil {
+		if err := os.WriteFile(fname, []byte("work\n"), 0o600); err != nil {
 			t.Fatalf("makeGitProjectFixture: WriteFile commit%d: %v", counter, err)
 		}
 		run("add", ".")

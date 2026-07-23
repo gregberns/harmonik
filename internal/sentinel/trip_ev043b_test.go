@@ -19,7 +19,7 @@ func makeProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	for _, sub := range []string{".harmonik/events", ".harmonik/decision_acks"} {
-		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o750); err != nil {
 			t.Fatalf("mkdir %s: %v", sub, err)
 		}
 	}

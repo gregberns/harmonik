@@ -32,7 +32,7 @@ import (
 func makeSignalsProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	return dir

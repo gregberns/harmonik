@@ -30,18 +30,18 @@ func setupGitRepoWithCommit(t *testing.T, commitTime time.Time) string {
 	tmp := t.TempDir()
 
 	bareDir := filepath.Join(tmp, "origin.git")
-	if out, err := exec.Command("git", "init", "--bare", bareDir).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "--bare", bareDir).CombinedOutput(); err != nil {
 		t.Fatalf("git init --bare: %v\n%s", err, out)
 	}
 
 	projectDir := filepath.Join(tmp, "project")
-	if out, err := exec.Command("git", "init", projectDir).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "git", "init", projectDir).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
 
 	runGit := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir}, args...)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -51,13 +51,13 @@ func setupGitRepoWithCommit(t *testing.T, commitTime time.Time) string {
 	runGit(projectDir, "config", "user.name", "Test User")
 	runGit(projectDir, "remote", "add", "origin", bareDir)
 
-	if err := os.WriteFile(filepath.Join(projectDir, "x.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir, "x.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 	runGit(projectDir, "add", "x.txt")
 
 	dateStr := commitTime.UTC().Format(time.RFC3339)
-	cmd := exec.Command("git", "-C", projectDir, "commit", "-m", "test commit")
+	cmd := exec.CommandContext(t.Context(), "git", "-C", projectDir, "commit", "-m", "test commit")
 	cmd.Env = append(os.Environ(),
 		"GIT_COMMITTER_DATE="+dateStr,
 		"GIT_AUTHOR_DATE="+dateStr,
@@ -68,7 +68,7 @@ func setupGitRepoWithCommit(t *testing.T, commitTime time.Time) string {
 	// Push whatever branch is checked out to origin/main.
 	runGit(projectDir, "push", "origin", "HEAD:main")
 
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o750); err != nil {
 		t.Fatalf("mkdir events: %v", err)
 	}
 	return projectDir

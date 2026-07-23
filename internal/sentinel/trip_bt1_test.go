@@ -121,7 +121,7 @@ func TestEmitTrip_NeverClearsOnBareSelfAck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal fake acknowledgement event: %v", err)
 	}
-	f, openErr := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, openErr := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if openErr != nil {
 		t.Fatalf("open events.jsonl: %v", openErr)
 	}

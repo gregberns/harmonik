@@ -192,6 +192,25 @@ harmonik comms recv --follow
 
 `event_id` is the dedup key. See "Delivery guarantee" above.
 
+> **`recv --json` is FLAT; `log --json` is a NESTED envelope. They are not
+> interchangeable — a jq filter written for one silently matches nothing on the
+> other (hk-wwa4z).** `recv` emits the message fields at top level, exactly as
+> shown above: `.from`, `.to`, `.topic`, `.body`, `.event_id`, `.ts`. `log`
+> marshals the whole `core.Event` envelope, so the same fields live one level
+> down under `.payload`, and the timestamp key is `timestamp_wall`, not `ts`:
+>
+> ```json
+> {"event_id":"<UUIDv7>","schema_version":1,"type":"agent_message",
+>  "timestamp_wall":"2026-06-01T12:00:00Z","source_subsystem":"daemon",
+>  "payload":{"from":"sender-name","to":"myagent","topic":"status","body":"..."}}
+> ```
+>
+> The failure this causes is SILENT and looks like health: an agent that arms
+> its Monitor with `jq 'select(.payload.from == "operator")'` against a `recv
+> --follow` stream sees zero matches forever, while `ps` shows a live follower
+> and presence reads Online. Match `.from` on a `recv` stream; match
+> `.payload.from` on a `log` scan.
+
 ---
 
 ### `harmonik comms log` — operator view (no daemon needed)

@@ -112,10 +112,8 @@ func TestCodexThreadIDInterceptor_FirstThreadStartedWins_mzgh(t *testing.T) {
 func TestCodexThreadIDInterceptor_NoThreadStarted_mzgh(t *testing.T) {
 	t.Parallel()
 
-	jsonlStream := strings.Join([]string{
-		`{"type":"turn.started","turn_id":"tr_1"}`,
-		`{"type":"turn.completed","turn_id":"tr_1"}`,
-	}, "\n") + "\n"
+	jsonlStream := `{"type":"turn.started","turn_id":"tr_1"}` + "\n" +
+		`{"type":"turn.completed","turn_id":"tr_1"}` + "\n"
 
 	fired := 0
 	interceptor := codex.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {
@@ -161,10 +159,8 @@ func TestCodexThreadIDInterceptor_TokenUsage_mzgh(t *testing.T) {
 func TestCodexThreadIDInterceptor_TokenUsage_NoUsage_mzgh(t *testing.T) {
 	t.Parallel()
 
-	jsonlStream := strings.Join([]string{
-		`{"type":"thread.started","thread_id":"th_nousage"}`,
-		`{"type":"turn.completed","turn_id":"tr_1"}`,
-	}, "\n") + "\n"
+	jsonlStream := `{"type":"thread.started","thread_id":"th_nousage"}` + "\n" +
+		`{"type":"turn.completed","turn_id":"tr_1"}` + "\n"
 
 	interceptor := codex.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {})
 	if _, err := io.ReadAll(interceptor); err != nil {

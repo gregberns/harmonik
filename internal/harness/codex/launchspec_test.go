@@ -717,10 +717,8 @@ func codexLaunchSpecAssertArgv(t *testing.T, args []string, wantResume bool, thr
 				t.Errorf("unexpected extra 'resume' token at args[%d]", i+3)
 			}
 		}
-	} else {
-		if len(args) > 1 && args[1] == "resume" {
-			t.Errorf("AC2.1: initial turn must not have 'resume' in argv; got %v", args)
-		}
+	} else if len(args) > 1 && args[1] == "resume" {
+		t.Errorf("AC2.1: initial turn must not have 'resume' in argv; got %v", args)
 	}
 }
 

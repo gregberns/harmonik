@@ -18,6 +18,7 @@ package codex_test
 // is touched.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -134,7 +135,7 @@ func TestMaterializeForcedLoginMethod_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read #2: %v", err)
 	}
-	if string(first) != string(second) {
+	if !bytes.Equal(first, second) {
 		t.Errorf("idempotency violated:\nfirst:\n%s\nsecond:\n%s", string(first), string(second))
 	}
 }

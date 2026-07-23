@@ -80,14 +80,17 @@ func TestCleanCodexStaleWAL_LargerThanThreshold_Removed(t *testing.T) {
 	writeConfigYAML(t, projectRoot, "codex:\n  stale_wal_max_bytes: 1024\n")
 	wal := writeWAL(t, codexHome, 4096) // > 1024
 
-	if err := cleanCodexStaleWAL(projectRoot, codexHome); err != nil {
+	if err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, err := os.Stat(wal); !os.IsNotExist(err) {
 		t.Fatalf("expected wal removed, stat err = %v", err)
 	}
 	// A backup dir with a copy of the wal must exist.
-	entries, _ := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*", filepath.Base(wal)))
+	entries, globErr := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*", filepath.Base(wal)))
+	if globErr != nil {
+		t.Fatalf("glob backup dirs: %v", globErr)
+	}
 	if len(entries) == 0 {
 		t.Fatalf("expected a backup copy of the wal, found none")
 	}
@@ -117,14 +120,17 @@ func TestCleanCodexStaleWAL_SmallUnheldWAL_Removed(t *testing.T) {
 		t.Fatalf("test setup: small WAL is not actually under the threshold (size=%d)", info.Size())
 	}
 
-	if err := cleanCodexStaleWAL(projectRoot, codexHome); err != nil {
+	if err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, err := os.Stat(wal); !os.IsNotExist(err) {
 		t.Fatalf("expected small under-threshold wal REMOVED (hk-xisvb), stat err = %v", err)
 	}
 	// A backup copy of the small wal must exist.
-	entries, _ := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*", filepath.Base(wal)))
+	entries, globErr := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*", filepath.Base(wal)))
+	if globErr != nil {
+		t.Fatalf("glob backup dirs: %v", globErr)
+	}
 	if len(entries) == 0 {
 		t.Fatalf("expected a backup copy of the small wal, found none")
 	}
@@ -137,7 +143,7 @@ func TestCleanCodexStaleWAL_MissingKey_FailsLoud(t *testing.T) {
 	writeConfigYAML(t, projectRoot, "codex:\n  something_else: true\n")
 	wal := writeWAL(t, codexHome, 4096)
 
-	err := cleanCodexStaleWAL(projectRoot, codexHome)
+	err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome)
 	if err == nil {
 		t.Fatalf("expected error for missing key, got nil")
 	}
@@ -157,7 +163,7 @@ func TestCleanCodexStaleWAL_CodexBlockNoKey_FailsLoud(t *testing.T) {
 	writeConfigYAML(t, projectRoot, "codex:\n  model: gpt-5\n")
 	wal := writeWAL(t, codexHome, 4096)
 
-	err := cleanCodexStaleWAL(projectRoot, codexHome)
+	err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome)
 	var target *ErrMissingStaleWALMaxBytes
 	if !errors.As(err, &target) {
 		t.Fatalf("expected ErrMissingStaleWALMaxBytes for codex block w/o key, got %T: %v", err, err)
@@ -218,7 +224,7 @@ func TestCleanCodexStaleWAL_NoConfig_NoOp(t *testing.T) {
 	// No .harmonik/config.yaml written.
 	wal := writeWAL(t, codexHome, 4096)
 
-	if err := cleanCodexStaleWAL(projectRoot, codexHome); err != nil {
+	if err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome); err != nil {
 		t.Fatalf("expected nil for no-config no-op, got: %v", err)
 	}
 	if _, statErr := os.Stat(wal); statErr != nil {
@@ -235,7 +241,7 @@ func TestCleanCodexStaleWAL_ZeroThreshold_RemovesNonEmpty(t *testing.T) {
 	writeConfigYAML(t, projectRoot, "codex:\n  stale_wal_max_bytes: 0\n")
 	wal := writeWAL(t, codexHome, 64) // non-empty, > 0
 
-	if err := cleanCodexStaleWAL(projectRoot, codexHome); err != nil {
+	if err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, err := os.Stat(wal); !os.IsNotExist(err) {
@@ -244,7 +250,7 @@ func TestCleanCodexStaleWAL_ZeroThreshold_RemovesNonEmpty(t *testing.T) {
 }
 
 func TestCleanCodexStaleWAL_EmptyProjectRoot_NoOp(t *testing.T) {
-	if err := cleanCodexStaleWAL("", t.TempDir()); err != nil {
+	if err := cleanCodexStaleWAL(t.Context(), "", t.TempDir()); err != nil {
 		t.Fatalf("expected nil for empty projectRoot, got: %v", err)
 	}
 }
@@ -264,9 +270,12 @@ func TestReapCodexWALBackupDirs_KeepsLastN(t *testing.T) {
 		dirs = append(dirs, dir)
 	}
 
-	reapCodexWALBackupDirs(codexHome)
+	reapCodexWALBackupDirs(t.Context(), codexHome)
 
-	remaining, _ := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*"))
+	remaining, globErr := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*"))
+	if globErr != nil {
+		t.Fatalf("glob backup dirs: %v", globErr)
+	}
 	if len(remaining) != walBackupKeepLast {
 		t.Fatalf("expected %d backup dirs to remain, got %d: %v", walBackupKeepLast, len(remaining), remaining)
 	}
@@ -304,15 +313,22 @@ func TestCleanCodexStaleWAL_CopyFailure_DropsEmptyBackupDir(t *testing.T) {
 	if err := os.Chmod(wal, 0o000); err != nil {
 		t.Fatalf("chmod wal unreadable: %v", err)
 	}
-	defer os.Chmod(wal, 0o644)
+	defer func() {
+		if chmodErr := os.Chmod(wal, 0o600); chmodErr != nil {
+			t.Errorf("restore wal perms: %v", chmodErr)
+		}
+	}()
 
-	if err := cleanCodexStaleWAL(projectRoot, codexHome); err != nil {
+	if err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// The wal copy failed, so no backup dir should remain (empty ones are
 	// dropped rather than left as stubs).
-	entries, _ := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*"))
+	entries, globErr := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*"))
+	if globErr != nil {
+		t.Fatalf("glob backup dirs: %v", globErr)
+	}
 	if len(entries) != 0 {
 		t.Fatalf("expected no leftover backup dirs after copy failure, found: %v", entries)
 	}

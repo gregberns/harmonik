@@ -36,7 +36,7 @@ import (
 // codexCommitGit runs a git subcommand in dir, failing the test on error.
 func codexCommitGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
@@ -46,7 +46,7 @@ func codexCommitGit(t *testing.T, dir string, args ...string) {
 // codexCommitGitOut runs a git subcommand in dir and returns trimmed stdout.
 func codexCommitGitOut(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

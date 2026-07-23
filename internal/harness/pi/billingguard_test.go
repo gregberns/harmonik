@@ -276,7 +276,7 @@ func TestRunPiBillingGuard_FailClosed(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		envValue string // "" = unset/empty
+		envValue string // empty string means the env var is unset
 		wantErr  bool
 		wantMsg  string // substring expected in the error message
 	}{

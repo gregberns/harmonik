@@ -89,7 +89,7 @@ func ExportedNewPiSessionIDInterceptor(inner io.Reader, sessionIDCb func(string)
 // pi_test. Returns (kind, rawType, sessionID, usage, err).
 //
 // Bead ref: hk-4rmj1 (PI-012); hk-eval-prog-pi-tokens-sr316 (WS1d — usage added).
-func ExportedParsePiNDJSONEvent(line []byte) (piEventKind, string, string, ExportedPiTokenUsage, error) {
+func ExportedParsePiNDJSONEvent(line []byte) (kind piEventKind, rawType, sessionID string, usage ExportedPiTokenUsage, err error) {
 	ev, err := parsePiNDJSONEvent(line)
 	return ev.Kind, ev.RawType, ev.SessionID, ExportedPiTokenUsage{InputTokens: ev.Usage.InputTokens, OutputTokens: ev.Usage.OutputTokens}, err
 }

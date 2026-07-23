@@ -68,7 +68,7 @@ func TestCleanCodexStaleWAL_HeldWAL_NeverRemoved(t *testing.T) {
 		}
 	})
 
-	if err := cleanCodexStaleWAL(projectRoot, codexHome); err != nil {
+	if err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestCleanCodexStaleWAL_HeldBaseDB_NeverRemoved(t *testing.T) {
 		}
 	})
 
-	if err := cleanCodexStaleWAL(projectRoot, codexHome); err != nil {
+	if err := cleanCodexStaleWAL(t.Context(), projectRoot, codexHome); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -166,7 +166,7 @@ func TestCleanCodexStaleWAL_ConcurrentGuards_NeverLoseTheWAL(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-start // release all guards as simultaneously as the scheduler allows
-			errs[idx] = cleanCodexStaleWAL(projectRoot, codexHome)
+			errs[idx] = cleanCodexStaleWAL(t.Context(), projectRoot, codexHome)
 		}(i)
 	}
 	close(start)
@@ -237,7 +237,7 @@ func TestReapCodexWALBackupDirs_NeverReapsNewest(t *testing.T) {
 		t.Fatalf("write in-flight backup content: %v", err)
 	}
 
-	reapCodexWALBackupDirs(codexHome)
+	reapCodexWALBackupDirs(t.Context(), codexHome)
 
 	if _, err := os.Stat(newest); err != nil {
 		t.Fatalf("a just-created backup dir was reaped by a concurrent reap — the recovery path is racy; stat err = %v", err)

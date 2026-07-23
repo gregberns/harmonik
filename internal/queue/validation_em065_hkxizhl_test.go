@@ -218,7 +218,6 @@ func TestValidate_EM065_TerminalItems_NotBlocked(t *testing.T) {
 	const beadX core.BeadID = "hk-xizhl-bead-terminal"
 
 	for _, termStatus := range []queue.ItemStatus{queue.ItemStatusCompleted, queue.ItemStatusFailed} {
-		termStatus := termStatus
 		t.Run(string(termStatus), func(t *testing.T) {
 			t.Parallel()
 

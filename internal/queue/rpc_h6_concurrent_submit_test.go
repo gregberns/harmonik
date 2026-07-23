@@ -71,7 +71,7 @@ func TestHandlerAdapter_ConcurrentSubmit_SameName_ExactlyOneWins(t *testing.T) {
 	for i := range params {
 		req := queue.QueueSubmitRequest{
 			SchemaVersion: 1,
-			Groups:        []queue.Group{rpcFixtureWaveGroup(0, beads[i])},
+			Groups:        []queue.Group{rpcFixtureWaveGroup(beads[i])},
 		}
 		raw, err := json.Marshal(req)
 		if err != nil {

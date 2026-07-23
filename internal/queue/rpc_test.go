@@ -65,22 +65,22 @@ func rpcFixtureOpenLedger(ids ...core.BeadID) queue.BeadLedger {
 func rpcFixtureTempProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o700); err != nil {
 		t.Fatalf("rpcFixtureTempProjectDir: MkdirAll: %v", err)
 	}
 	return dir
 }
 
-// rpcFixtureWaveGroup returns a wave Group containing items for each bead ID,
-// all with ItemStatus pending and no timestamps set.
-func rpcFixtureWaveGroup(groupIndex int, ids ...core.BeadID) queue.Group {
+// rpcFixtureWaveGroup returns the group-0 wave Group containing items for each
+// bead ID, all with ItemStatus pending and no timestamps set. Every call site
+// wants index 0, so it is not a parameter.
+func rpcFixtureWaveGroup(ids ...core.BeadID) queue.Group {
 	items := make([]queue.Item, len(ids))
 	for i, id := range ids {
 		items[i] = queue.Item{BeadID: id, Status: queue.ItemStatusPending}
 	}
 	return queue.Group{
-		GroupIndex: groupIndex,
+		GroupIndex: 0,
 		Kind:       queue.GroupKindWave,
 		Status:     queue.GroupStatusPending,
 		Items:      items,
@@ -88,9 +88,10 @@ func rpcFixtureWaveGroup(groupIndex int, ids ...core.BeadID) queue.Group {
 	}
 }
 
-// rpcFixtureStreamGroup returns a stream Group for append tests.
-func rpcFixtureStreamGroup(groupIndex int, ids ...core.BeadID) queue.Group {
-	g := rpcFixtureWaveGroup(groupIndex, ids...)
+// rpcFixtureStreamGroup returns the group-0 stream Group used by the append
+// tests. Every call site wants index 0, so it is not a parameter.
+func rpcFixtureStreamGroup(ids ...core.BeadID) queue.Group {
+	g := rpcFixtureWaveGroup(ids...)
 	g.Kind = queue.GroupKindStream
 	return g
 }
@@ -113,7 +114,7 @@ func TestHandleQueueSubmit_HappyPath(t *testing.T) {
 	req := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Groups: []queue.Group{
-			rpcFixtureWaveGroup(0, beadA, beadB),
+			rpcFixtureWaveGroup(beadA, beadB),
 		},
 	}
 
@@ -161,7 +162,7 @@ func TestHandleQueueSubmit_ValidationError_AlreadyActive(t *testing.T) {
 
 	req := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(beadA)},
 	}
 
 	// First submit succeeds.
@@ -173,7 +174,7 @@ func TestHandleQueueSubmit_ValidationError_AlreadyActive(t *testing.T) {
 	// Second submit with different bead must fail with queue_already_active.
 	req2 := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadB)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(beadB)},
 	}
 	_, _, _, rpcErr2 := queue.HandleQueueSubmit(t.Context(), req2, ledger, projectDir, 1)
 	if rpcErr2 == nil {
@@ -200,7 +201,7 @@ func TestHandleQueueSubmit_PiQueue_MissingWorkersCap(t *testing.T) {
 		SchemaVersion:  1,
 		DefaultHarness: core.AgentTypePi,
 		// Workers deliberately omitted (zero) — must fail.
-		Groups: []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+		Groups: []queue.Group{rpcFixtureWaveGroup(beadA)},
 	}
 	_, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 4)
 	if rpcErr == nil {
@@ -229,7 +230,7 @@ func TestHandleQueueSubmit_PiQueue_ExplicitWorkersCap(t *testing.T) {
 		SchemaVersion:  1,
 		DefaultHarness: core.AgentTypePi,
 		Workers:        2, // explicit cap — must succeed
-		Groups:         []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+		Groups:         []queue.Group{rpcFixtureWaveGroup(beadA)},
 	}
 	_, q, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 4)
 	if rpcErr != nil {
@@ -426,7 +427,7 @@ func TestHandleQueueAppend_HappyPath(t *testing.T) {
 	// Submit a queue with a stream group containing beadA.
 	submitReq := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadA)},
+		Groups:        []queue.Group{rpcFixtureStreamGroup(beadA)},
 	}
 	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), submitReq, ledger, projectDir, 1)
 	if rpcErr != nil {
@@ -518,7 +519,7 @@ func TestHandleQueueStatus_WithActiveQueue(t *testing.T) {
 	// Submit a queue.
 	submitReq := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(beadA)},
 	}
 	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), submitReq, ledger, projectDir, 1)
 	if rpcErr != nil {
@@ -555,7 +556,7 @@ func TestHandleQueueStatus_ByName(t *testing.T) {
 	alphaResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "alpha",
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(beadA)},
 	}, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("submit alpha: unexpected RPCError: %v", rpcErr)
@@ -565,7 +566,7 @@ func TestHandleQueueStatus_ByName(t *testing.T) {
 	betaResp, _, _, rpcErr2 := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "beta",
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadB)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(beadB)},
 	}, ledger, projectDir, 1)
 	if rpcErr2 != nil {
 		t.Fatalf("submit beta: unexpected RPCError: %v", rpcErr2)
@@ -610,7 +611,7 @@ func TestHandleQueueStatus_ByQueueID(t *testing.T) {
 	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "flywheel",
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(beadA)},
 	}, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("submit flywheel: unexpected RPCError: %v", rpcErr)
@@ -665,7 +666,7 @@ func TestHandleQueueAppend_ByQueueID_NonMainQueue(t *testing.T) {
 	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "flywheel",
-		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadA)},
+		Groups:        []queue.Group{rpcFixtureStreamGroup(beadA)},
 	}, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("submit flywheel: unexpected RPCError: %v", rpcErr)
@@ -704,7 +705,7 @@ func TestHandleQueueDryRun_HappyPath(t *testing.T) {
 
 	req := queue.QueueDryRunRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadA, beadB)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(beadA, beadB)},
 	}
 
 	resp, rpcErr := queue.HandleQueueDryRun(t.Context(), req, ledger, projectDir)
@@ -741,7 +742,7 @@ func TestHandleQueueDryRun_ValidationError_BeadNotFound(t *testing.T) {
 
 	req := queue.QueueDryRunRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, "hk-unknown")},
+		Groups:        []queue.Group{rpcFixtureWaveGroup("hk-unknown")},
 	}
 
 	_, rpcErr := queue.HandleQueueDryRun(t.Context(), req, ledger, projectDir)
@@ -773,7 +774,7 @@ func TestHandleQueueDryRun_NamedQueue_IgnoresMainActive(t *testing.T) {
 	// checks the wrong per-name slot.
 	mainReq := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadA)},
+		Groups:        []queue.Group{rpcFixtureStreamGroup(beadA)},
 	}
 	if _, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), mainReq, ledger, projectDir, 1); rpcErr != nil {
 		t.Fatalf("setup: submit main queue: unexpected RPCError: %v", rpcErr)
@@ -784,7 +785,7 @@ func TestHandleQueueDryRun_NamedQueue_IgnoresMainActive(t *testing.T) {
 	dryReq := queue.QueueDryRunRequest{
 		SchemaVersion: 1,
 		Name:          "extqueue",
-		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadB)},
+		Groups:        []queue.Group{rpcFixtureStreamGroup(beadB)},
 	}
 	resp, rpcErr := queue.HandleQueueDryRun(t.Context(), dryReq, ledger, projectDir)
 	if rpcErr != nil {
@@ -818,7 +819,7 @@ func TestHandleQueueDryRun_NamedQueue_AlreadyActive(t *testing.T) {
 	submitReq := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
 		Name:          "extqueue",
-		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadA)},
+		Groups:        []queue.Group{rpcFixtureStreamGroup(beadA)},
 	}
 	if _, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), submitReq, ledger, projectDir, 1); rpcErr != nil {
 		t.Fatalf("setup: submit extqueue: unexpected RPCError: %v", rpcErr)
@@ -828,7 +829,7 @@ func TestHandleQueueDryRun_NamedQueue_AlreadyActive(t *testing.T) {
 	dryReq := queue.QueueDryRunRequest{
 		SchemaVersion: 1,
 		Name:          "extqueue",
-		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadB)},
+		Groups:        []queue.Group{rpcFixtureStreamGroup(beadB)},
 	}
 	_, rpcErr := queue.HandleQueueDryRun(t.Context(), dryReq, ledger, projectDir)
 	if rpcErr == nil {

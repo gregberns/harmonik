@@ -109,7 +109,6 @@ func TestResumeFromFailure_NoOpWhenNotPausedByFailure(t *testing.T) {
 		{"cancelled", queue.QueueStatusCancelled},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			q := resumeFixtureFailedQueue(queue.GroupKindStream)

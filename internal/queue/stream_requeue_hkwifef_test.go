@@ -75,7 +75,6 @@ func TestEligibleItems_Stream_RequeueAfterTerminal(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			g := stateFixtureGroup(0, queue.GroupKindStream, queue.GroupStatusActive, tc.items)

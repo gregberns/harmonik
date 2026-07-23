@@ -47,8 +47,7 @@ func queueCliFixtureTempDir(t *testing.T) string {
 		root = dir
 	}
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(root, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".harmonik"), 0o700); err != nil {
 		t.Fatalf("queueCliFixtureTempDir: MkdirAll .harmonik: %v", err)
 	}
 	return root
@@ -60,13 +59,12 @@ func queueCliFixtureTempDir(t *testing.T) string {
 //  2. Calls respFn(rawRequest) to get the response bytes.
 //  3. Writes the response and closes the connection.
 //
-// Returns a cancel function that stops the listener. The listener is also
-// cancelled via t.Cleanup.
+// The listener is stopped by t.Cleanup when the test ends.
 func queueCliFixtureStartEchoServer(
 	t *testing.T,
 	projectDir string,
 	respFn func(raw []byte) []byte,
-) context.CancelFunc {
+) {
 	t.Helper()
 
 	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
@@ -108,8 +106,6 @@ func queueCliFixtureStartEchoServer(
 
 	// Wait until the socket is accepting connections.
 	queueCliFixtureWaitReady(t, sockPath)
-
-	return cancel
 }
 
 // queueCliFixtureWaitReady polls until the socket is accepting connections.
@@ -156,8 +152,14 @@ func queueCliFixtureSuccessResponse(t *testing.T, result any) []byte {
 // error_code and error fields set.
 func queueCliFixtureErrorResponse(t *testing.T, code int, msg string) []byte {
 	t.Helper()
-	codeBytes, _ := json.Marshal(code) //nolint:errcheck // constant int; cannot fail
-	msgBytes, _ := json.Marshal(msg)   //nolint:errcheck // string literal; cannot fail
+	codeBytes, err := json.Marshal(code)
+	if err != nil {
+		t.Fatalf("queueCliFixtureErrorResponse: marshal code %d: %v", code, err)
+	}
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("queueCliFixtureErrorResponse: marshal message %q: %v", msg, err)
+	}
 	okBytes := json.RawMessage(`false`)
 	resp := map[string]json.RawMessage{
 		"ok":         okBytes,
@@ -287,7 +289,7 @@ func TestRunQueueSubmit_ValidationError(t *testing.T) {
 
 	projectDir := queueCliFixtureTempDir(t)
 	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
-		// -32010 = ErrorCodeQueueAlreadyActive
+		// Error code -32010 is ErrorCodeQueueAlreadyActive.
 		return queueCliFixtureErrorResponse(t, -32010, "queue_already_active")
 	})
 
@@ -390,10 +392,7 @@ func TestRunQueueAppend_FlagEqualsForm(t *testing.T) {
 	t.Parallel()
 
 	projectDir := queueCliFixtureTempDir(t)
-	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		// Check the queue_id was passed through.
-		var msg map[string]json.RawMessage
-		_ = json.Unmarshal(raw, &msg)
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
 		return queueCliFixtureSuccessResponse(t, map[string]any{"appended_count": 1, "new_tail_indices": []int{0}})
 	})
 
@@ -551,12 +550,8 @@ func TestRunQueueStatus_QueueFlag(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 	var capturedName string
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if nameBytes, ok := msg["name"]; ok {
-				_ = json.Unmarshal(nameBytes, &capturedName)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "name", &capturedName)
 		return queueCliFixtureSuccessResponse(t, map[string]any{
 			"queue": map[string]any{
 				"schema_version": 1,
@@ -591,12 +586,8 @@ func TestRunQueueStatus_QueueIDFlag(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 	var capturedQueueID string
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if qidBytes, ok := msg["queue_id"]; ok {
-				_ = json.Unmarshal(qidBytes, &capturedQueueID)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "queue_id", &capturedQueueID)
 		return queueCliFixtureSuccessResponse(t, map[string]any{"queue": nil})
 	})
 
@@ -710,7 +701,7 @@ func TestRunQueueDryRun_ValidationError(t *testing.T) {
 	t.Parallel()
 
 	projectDir := queueCliFixtureTempDir(t)
-	// -32016 = ErrorCodeDuplicateBeadID
+	// Error code -32016 is ErrorCodeDuplicateBeadID.
 	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
 		return queueCliFixtureErrorResponse(t, -32016, "duplicate_bead_id")
 	})
@@ -742,7 +733,6 @@ func TestExitCodes_ValidationRange(t *testing.T) {
 	validationCodes := []int{-32010, -32011, -32012, -32013, -32014, -32015, -32016, -32017, -32018, -32019}
 
 	for _, code := range validationCodes {
-		code := code // capture
 		t.Run("code"+strconv.Itoa(code), func(t *testing.T) {
 			t.Parallel()
 
@@ -895,15 +885,9 @@ func TestRunQueuePause_HappyPath(t *testing.T) {
 	var capturedOp string
 	var capturedQueue string
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if opBytes, ok := msg["op"]; ok {
-				_ = json.Unmarshal(opBytes, &capturedOp)
-			}
-			if qBytes, ok := msg["queue"]; ok {
-				_ = json.Unmarshal(qBytes, &capturedQueue)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "op", &capturedOp)
+		queueCliFixtureCapture(t, msg, "queue", &capturedQueue)
 		return queueCliFixtureSuccessResponse(t, map[string]any{})
 	})
 
@@ -935,12 +919,8 @@ func TestRunQueuePause_QueueFlag(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 	var capturedQueue string
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if qBytes, ok := msg["queue"]; ok {
-				_ = json.Unmarshal(qBytes, &capturedQueue)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "queue", &capturedQueue)
 		return queueCliFixtureSuccessResponse(t, map[string]any{})
 	})
 
@@ -964,12 +944,8 @@ func TestRunQueuePause_QueueFlagEquals(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 	var capturedQueue string
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if qBytes, ok := msg["queue"]; ok {
-				_ = json.Unmarshal(qBytes, &capturedQueue)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "queue", &capturedQueue)
 		return queueCliFixtureSuccessResponse(t, map[string]any{})
 	})
 
@@ -1030,15 +1006,9 @@ func TestRunQueueResume_HappyPath(t *testing.T) {
 	var capturedOp string
 	var capturedQueue string
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if opBytes, ok := msg["op"]; ok {
-				_ = json.Unmarshal(opBytes, &capturedOp)
-			}
-			if qBytes, ok := msg["queue"]; ok {
-				_ = json.Unmarshal(qBytes, &capturedQueue)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "op", &capturedOp)
+		queueCliFixtureCapture(t, msg, "queue", &capturedQueue)
 		return queueCliFixtureSuccessResponse(t, map[string]any{})
 	})
 
@@ -1069,12 +1039,8 @@ func TestRunQueueResume_QueueFlag(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 	var capturedQueue string
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if qBytes, ok := msg["queue"]; ok {
-				_ = json.Unmarshal(qBytes, &capturedQueue)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "queue", &capturedQueue)
 		return queueCliFixtureSuccessResponse(t, map[string]any{})
 	})
 
@@ -1119,12 +1085,8 @@ func TestRunQueueSubmit_QueueFlag(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 	var capturedName string
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if nameBytes, ok := msg["name"]; ok {
-				_ = json.Unmarshal(nameBytes, &capturedName)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "name", &capturedName)
 		return queueCliFixtureSuccessResponse(t, map[string]any{
 			"queue_id":    "88888888-0000-7000-8000-000000000000",
 			"status":      "active",
@@ -1158,12 +1120,8 @@ func TestRunQueueSubmit_DefaultsToMain(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 	var capturedName string
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if nameBytes, ok := msg["name"]; ok {
-				_ = json.Unmarshal(nameBytes, &capturedName)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "name", &capturedName)
 		return queueCliFixtureSuccessResponse(t, map[string]any{
 			"queue_id":    "99999999-0000-7000-8000-000000000000",
 			"status":      "active",
@@ -1202,12 +1160,8 @@ func TestRunQueueSubmit_BeadsCarryWorkflowModeReviewLoop(t *testing.T) {
 
 	var capturedGroups []json.RawMessage
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if gBytes, ok := msg["groups"]; ok {
-				_ = json.Unmarshal(gBytes, &capturedGroups)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "groups", &capturedGroups)
 		return queueCliFixtureSuccessResponse(t, map[string]any{
 			"queue_id":    "aabbccdd-2222-7000-8000-000000000000",
 			"status":      "active",
@@ -1262,12 +1216,8 @@ func TestRunQueueSubmit_BeadsWorkflowModeOverride(t *testing.T) {
 
 	var capturedGroups []json.RawMessage
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if gBytes, ok := msg["groups"]; ok {
-				_ = json.Unmarshal(gBytes, &capturedGroups)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "groups", &capturedGroups)
 		return queueCliFixtureSuccessResponse(t, map[string]any{
 			"queue_id":    "aabbccdd-3333-7000-8000-000000000000",
 			"status":      "active",
@@ -1318,15 +1268,9 @@ func TestQueueSubmit_RequestContainsOp(t *testing.T) {
 	var capturedSchemaVersion int
 
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if opBytes, ok := msg["op"]; ok {
-				_ = json.Unmarshal(opBytes, &capturedOp)
-			}
-			if svBytes, ok := msg["schema_version"]; ok {
-				_ = json.Unmarshal(svBytes, &capturedSchemaVersion)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "op", &capturedOp)
+		queueCliFixtureCapture(t, msg, "schema_version", &capturedSchemaVersion)
 		return queueCliFixtureSuccessResponse(t, map[string]any{
 			"queue_id":    "66666666-0000-7000-8000-000000000000",
 			"status":      "active",
@@ -1348,5 +1292,33 @@ func TestQueueSubmit_RequestContainsOp(t *testing.T) {
 	}
 	if capturedSchemaVersion != 1 {
 		t.Errorf("socket request schema_version = %d, want 1", capturedSchemaVersion)
+	}
+}
+
+// queueCliFixtureDecodeRequest decodes a raw socket request into its top-level
+// fields. It runs on the echo server's goroutine, so a failure is reported with
+// t.Errorf — t.Fatalf may only be called from the test goroutine.
+func queueCliFixtureDecodeRequest(t *testing.T, raw []byte) map[string]json.RawMessage {
+	t.Helper()
+	var msg map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		t.Errorf("decode socket request %s: %v", raw, err)
+		return nil
+	}
+	return msg
+}
+
+// queueCliFixtureCapture decodes one field of a socket request into dst,
+// leaving dst untouched when the field is absent. A decode failure is reported
+// rather than dropped: a silently undecoded capture leaves dst at its zero
+// value, which the assertions in these tests would otherwise accept.
+func queueCliFixtureCapture(t *testing.T, msg map[string]json.RawMessage, field string, dst any) {
+	t.Helper()
+	raw, ok := msg[field]
+	if !ok {
+		return
+	}
+	if err := json.Unmarshal(raw, dst); err != nil {
+		t.Errorf("decode field %q from socket request: %v", field, err)
 	}
 }

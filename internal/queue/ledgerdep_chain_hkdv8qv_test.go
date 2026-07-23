@@ -84,7 +84,7 @@ func TestLedgerDepChain_RootEligible_DependentsDeferred_hkdv8qv(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	req := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, R, A, B)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(R, A, B)},
 	}
 
 	_, q, _, rpcErr := queue.HandleQueueSubmit(context.Background(), req, ledger, projectDir, 1)
@@ -154,7 +154,7 @@ func TestLedgerDepChain_DependentEligibleAfterBlockerCloses_hkdv8qv(t *testing.T
 	projectDir := rpcFixtureTempProjectDir(t)
 	req := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, A, B)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(A, B)},
 	}
 
 	_, q, _, rpcErr := queue.HandleQueueSubmit(context.Background(), req, ledger, projectDir, 1)

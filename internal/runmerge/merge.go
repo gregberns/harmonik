@@ -160,8 +160,13 @@ func RunBranchToTarget(ctx context.Context, submit Submit, projectDir string, ru
 		addWtCmd := exec.CommandContext(ctx, "git", "worktree", "add", wtPath, runBranch)
 		addWtCmd.Dir = projectDir
 		if _, addErr := addWtCmd.CombinedOutput(); addErr == nil {
+			// WithoutCancel, not Background: the cleanup must still run when the
+			// merge ctx is already cancelled (that is precisely when a temporary
+			// worktree would otherwise be left behind), but it should keep the
+			// ctx values the rest of the merge path carries.
+			cleanupCtx := context.WithoutCancel(ctx)
 			defer func() {
-				RemoveWorktree(context.Background(), projectDir, wtPath)
+				RemoveWorktree(cleanupCtx, projectDir, wtPath)
 			}()
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -40,6 +41,19 @@ type mergeBuildFailedPayload struct {
 	Error  string `json:"error"`
 }
 
+// reportEmitFailure records a failure to publish one of this file's events.
+//
+// Every emitter here is informational and returns no error — the merge they
+// describe has already happened, so a publish failure must not change control
+// flow. It must not be invisible either: these events are the only record that
+// a refresh overwrote local edits, that a build gate failed, or that the bead
+// store went out of sync, so losing one silently loses the audit trail for a
+// merge that already landed. Reported on stderr, matching gitRebaseAbort and
+// the rest of this package.
+func reportEmitFailure(evType core.EventType, err error) {
+	fmt.Fprintf(os.Stderr, "daemon: runmerge: emit %s failed: %v\n", evType, err)
+}
+
 // EmitOutcomeEmitted emits an outcome_emitted event with the given kind and
 // optional reason. kind is "approved" on success, "rejected" on failure.
 //
@@ -54,9 +68,12 @@ func EmitOutcomeEmitted(ctx context.Context, bus handlercontract.EventEmitter, r
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
+		reportEmitFailure(core.EventTypeOutcomeEmitted, fmt.Errorf("marshal payload: %w", err))
 		return
 	}
-	_ = bus.Emit(ctx, core.EventTypeOutcomeEmitted, b)
+	if emitErr := bus.Emit(ctx, core.EventTypeOutcomeEmitted, b); emitErr != nil {
+		reportEmitFailure(core.EventTypeOutcomeEmitted, emitErr)
+	}
 }
 
 // emitWorkingTreeRefreshFailed emits a working_tree_refresh_failed event when
@@ -73,9 +90,12 @@ func emitWorkingTreeRefreshFailed(ctx context.Context, bus handlercontract.Event
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
+		reportEmitFailure(core.EventTypeWorkingTreeRefreshFailed, fmt.Errorf("marshal payload: %w", err))
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeRefreshFailed, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeRefreshFailed, b); emitErr != nil {
+		reportEmitFailure(core.EventTypeWorkingTreeRefreshFailed, emitErr)
+	}
 }
 
 // emitWorkingTreeLocalEditsOverwritten emits a
@@ -97,9 +117,12 @@ func emitWorkingTreeLocalEditsOverwritten(ctx context.Context, bus handlercontra
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
+		reportEmitFailure(core.EventTypeWorkingTreeLocalEditsOverwritten, fmt.Errorf("marshal payload: %w", err))
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeLocalEditsOverwritten, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeLocalEditsOverwritten, b); emitErr != nil {
+		reportEmitFailure(core.EventTypeWorkingTreeLocalEditsOverwritten, emitErr)
+	}
 }
 
 // emitMergeBuildFailed emits a merge_build_failed event when go build or go
@@ -119,9 +142,12 @@ func emitMergeBuildFailed(ctx context.Context, bus handlercontract.EventEmitter,
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
+		reportEmitFailure(core.EventTypeMergeBuildFailed, fmt.Errorf("marshal payload: %w", err))
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeMergeBuildFailed, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeMergeBuildFailed, b); emitErr != nil {
+		reportEmitFailure(core.EventTypeMergeBuildFailed, emitErr)
+	}
 }
 
 // emitBeadSyncFailed emits a bead_sync_failed event when `br sync --import-only`
@@ -143,7 +169,10 @@ func emitBeadSyncFailed(ctx context.Context, bus handlercontract.EventEmitter, r
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
+		reportEmitFailure(core.EventTypeBeadSyncFailed, fmt.Errorf("marshal payload: %w", err))
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeBeadSyncFailed, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeBeadSyncFailed, b); emitErr != nil {
+		reportEmitFailure(core.EventTypeBeadSyncFailed, emitErr)
+	}
 }

@@ -92,6 +92,10 @@ func locallyEditedPaths(ctx context.Context, projectDir, mainTip string, paths [
 	cmd.Dir = projectDir
 	out, err := cmd.Output()
 	if err != nil {
+		// Fail open by contract — but say so. This is the only signal that the
+		// local-edits diagnostic ran and produced nothing because it FAILED,
+		// rather than because there were genuinely no local edits to report.
+		fmt.Fprintf(os.Stderr, "daemon: RunBranchToTarget: WARNING: local-edits diagnostic failed against %s: %v\n", mainTip, err)
 		return nil
 	}
 	var edited []string
@@ -174,7 +178,7 @@ func DiscardDirtyChurn(ctx context.Context, wtPath string) {
 	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	statusCmd.Dir = wtPath
 	statusOut, statusErr := statusCmd.Output()
-	if statusErr != nil || len(strings.TrimSpace(string(statusOut))) == 0 {
+	if statusErr != nil || strings.TrimSpace(string(statusOut)) == "" {
 		return
 	}
 
@@ -407,8 +411,9 @@ func SnapshotUntrackedFiles(ctx context.Context, mainPath string) (map[string]st
 // `git status --porcelain` output, stripping the XY status prefix, resolving
 // rename "old -> new" to the destination, and unquoting special-char paths.
 func ParsePorcelainPaths(out string) []string {
-	var paths []string
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	paths := make([]string, 0, len(lines))
+	for _, line := range lines {
 		if line == "" {
 			continue
 		}
@@ -455,18 +460,19 @@ func ParsePorcelainPaths(out string) []string {
 //
 // Errors (e.g. git not in PATH) return (false, nil, err) so the caller can
 // treat the check as informational and skip without failing the run.
-func CheckMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}) (bool, []string, error) {
+func CheckMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}) (dirty bool, dirtyPaths []string, err error) {
 	if mainPath == "" {
 		return false, nil, fmt.Errorf("CheckMainWorkingTreeDirty: empty mainPath")
 	}
 	cmd := exec.CommandContext(ctx, "git", "-C", mainPath, "status", "--porcelain")
-	out, err := cmd.Output()
-	if err != nil {
-		return false, nil, fmt.Errorf("CheckMainWorkingTreeDirty: git status: %w", err)
+	out, statusErr := cmd.Output()
+	if statusErr != nil {
+		return false, nil, fmt.Errorf("CheckMainWorkingTreeDirty: git status: %w", statusErr)
 	}
 
-	var candidates []string
-	for _, path := range ParsePorcelainPaths(string(out)) {
+	reported := ParsePorcelainPaths(string(out))
+	candidates := make([]string, 0, len(reported))
+	for _, path := range reported {
 		if IsHarmonikChurn(path) {
 			continue
 		}
@@ -479,8 +485,8 @@ func CheckMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline ma
 	}
 	// hk-ooexj: drop any gitignored paths (defense-in-depth — git status already
 	// omits these by default, but a parent gitignore could surface them).
-	dirty := filterIgnoredPaths(ctx, mainPath, candidates)
-	return len(dirty) > 0, dirty, nil
+	kept := filterIgnoredPaths(ctx, mainPath, candidates)
+	return len(kept) > 0, kept, nil
 }
 
 // filterIgnoredPaths returns paths minus those git considers ignored under
@@ -510,7 +516,7 @@ func filterIgnoredPaths(ctx context.Context, mainPath string, paths []string) []
 			ignored[p] = struct{}{}
 		}
 	}
-	var kept []string
+	kept := make([]string, 0, len(paths))
 	for _, p := range paths {
 		if _, isIgnored := ignored[p]; isIgnored {
 			continue

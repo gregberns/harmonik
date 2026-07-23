@@ -38,7 +38,9 @@ package runmerge
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -60,6 +62,10 @@ const RunContextDirPrefix = ".harmonik/run-context"
 //   - wtPath does not exist (worktree already removed, very rare edge case), or
 //   - no .harmonik/run-context/** files are tracked in the worktree index.
 //
+// A stat failure that is NOT "does not exist" is an error, not a no-op: it
+// leaves the index state unknown, and reporting stripped=false would let the
+// caller fast-forward the target with run-context files still present.
+//
 // When a strip commit IS made, the run-branch HEAD advances by one commit and
 // the caller MUST re-resolve runTip to pick up the new SHA.
 //
@@ -68,6 +74,15 @@ const RunContextDirPrefix = ".harmonik/run-context"
 // Bead: hk-4je.
 func StripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool, err error) {
 	if _, statErr := os.Stat(wtPath); statErr != nil {
+		if !errors.Is(statErr, fs.ErrNotExist) {
+			// Any other stat failure (permission denied on a parent, EIO, a
+			// symlink loop, a non-directory component) says nothing about whether
+			// run-context files are tracked. Treating it as "already removed"
+			// would report stripped=false, and the caller would fast-forward the
+			// target with .harmonik/run-context/** still in the tree — exactly what
+			// this function exists to prevent. Fail the merge instead.
+			return false, fmt.Errorf("daemon: StripRunContextFromMerge: stat worktree %s: %w", wtPath, statErr)
+		}
 		// Worktree was already removed — nothing to strip.
 		return false, nil
 	}

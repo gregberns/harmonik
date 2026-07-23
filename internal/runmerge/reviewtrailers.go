@@ -79,12 +79,15 @@ func AppendReviewTrailersToHEAD(ctx context.Context, wtPath string, verdict *wor
 
 	// Append missing trailers. Trailers must be separated from the body by a
 	// blank line (git trailer convention). The two trailer lines are adjacent.
-	newMsg := existing
-	if !hasReviewedBy && !hasReviewVerdict {
+	var newMsg string
+	switch {
+	case !hasReviewedBy && !hasReviewVerdict:
+		// No trailer block yet: open one with the blank-line separator.
 		newMsg = existing + "\n\n" + reviewedByLine + "\n" + reviewVerdictLine
-	} else if !hasReviewedBy {
+	case !hasReviewedBy:
+		// A trailer block already ends the message; extend it without a gap.
 		newMsg = existing + "\n" + reviewedByLine
-	} else {
+	default:
 		newMsg = existing + "\n" + reviewVerdictLine
 	}
 

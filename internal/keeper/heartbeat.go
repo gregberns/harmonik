@@ -16,7 +16,7 @@ import (
 )
 
 // heartbeat.go — keeper-side gauge liveness (hk-81wk).
-//
+
 // MaxHeartbeatMisses is the number of consecutive ticks on which
 // deriveContextTokens may return false before the heartbeat stops writing the
 // gauge file. At the default 10 s tick cadence, 12 misses ≈ 2 minutes — roughly
@@ -84,7 +84,7 @@ const deriveContextTailBytes = 512 * 1024
 // Scan is bounded to the tail window (deriveContextTailBytes) because the last
 // usage turn is always near EOF; scanning the full file on every heartbeat tick
 // caused sustained 20-47% CPU on long captain sessions. Refs: hk-div6c.
-func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
+func deriveContextTokens(ctx context.Context, transcriptDir, sessionID string) (int64, bool) {
 	if transcriptDir == "" || sessionID == "" {
 		return 0, false
 	}
@@ -96,7 +96,7 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
-			slog.Warn("keeper: close transcript while deriving context", "err", closeErr, "path", path)
+			slog.WarnContext(ctx, "keeper: close transcript while deriving context", "err", closeErr, "path", path)
 		}
 	}()
 
@@ -177,11 +177,11 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 // miss-budget counter (heartbeatMissCount) increments correctly per tick.
 // Single-threaded: only the Run goroutine calls this via maybeHeartbeat.
 // Refs: hk-div6c.
-func (w *Watcher) deriveCachedTokens(transcriptDir, sid string, now time.Time) (int64, bool) {
+func (w *Watcher) deriveCachedTokens(ctx context.Context, transcriptDir, sid string, now time.Time) (int64, bool) {
 	if w.deriveCacheSID == sid && now.Before(w.deriveCacheExpiry) {
 		return w.deriveCacheTokens, true
 	}
-	tokens, ok := deriveContextTokens(transcriptDir, sid)
+	tokens, ok := deriveContextTokens(ctx, transcriptDir, sid)
 	if ok {
 		w.deriveCacheSID = sid
 		w.deriveCacheTokens = tokens
@@ -300,7 +300,7 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 	// O(filesize) JSONL re-scans on consecutive heartbeat ticks. Misses bypass
 	// the cache so the miss-budget counter increments correctly per tick.
 	// Refs: hk-div6c.
-	derivedTokens, derivedOk := w.deriveCachedTokens(transcriptDir, sid, now)
+	derivedTokens, derivedOk := w.deriveCachedTokens(ctx, transcriptDir, sid, now)
 	if derivedOk {
 		w.heartbeatMissCount = 0
 		fresh.Tokens = derivedTokens

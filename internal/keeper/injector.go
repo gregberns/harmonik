@@ -132,11 +132,6 @@ func AckLine(nonce, kind string) string {
 	return fmt.Sprintf("[KEEPER ACK %s] received %s", nonce, kind)
 }
 
-// bufferName is the tmux buffer name used for keeper injections. Using a
-// keeper-specific name avoids clobbering buffers owned by the daemon's own
-// paste-inject step (which uses buffers like "hk-<run_id>").
-const bufferName = "hk-keeper-warn"
-
 // submitSettle is the grace period between the bracketed-paste write and the
 // first submit Enter. Without it the post-paste Enter can land before the REPL
 // input handler has finished accepting the pasted text, and the line sits

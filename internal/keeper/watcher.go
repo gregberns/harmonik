@@ -28,6 +28,7 @@ type Emitter interface {
 // NoopEmitter is an Emitter that silently discards all events.
 type NoopEmitter struct{}
 
+// EmitWithRunID implements Emitter by discarding the event and reporting success.
 func (NoopEmitter) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
 	return nil
 }
@@ -1708,7 +1709,7 @@ func (w *Watcher) maybeReapOrphanedDecisions(ctx context.Context, lastReapAt *ti
 
 // gaugeUnavailable returns (true, reason) when the gauge file is absent or
 // stale. Used at boot for the initial no_gauge check.
-func (w *Watcher) gaugeUnavailable(ctx context.Context) (bool, string) {
+func (w *Watcher) gaugeUnavailable(ctx context.Context) (unavailable bool, reason string) {
 	_, modTime, err := ReadCtxFile(w.cfg.ProjectDir, w.cfg.AgentName)
 	if errors.Is(err, os.ErrNotExist) {
 		return true, "absent"

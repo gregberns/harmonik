@@ -76,25 +76,24 @@ const (
 	DefaultActPctCeil = defaultActPctCeil
 )
 
-// HardCeilingAbsTokens is the SID-independent absolute-token hard ceiling
-// (hk-34ac). When any watched pane's token count meets or exceeds this value
-// the keeper forces a handoff+restart regardless of whether the session_id
-// binding is correct. This is a last-resort backstop so a mis-bound keeper
-// cannot silently allow a session to overflow.
+// DefaultHardCeilingTokens is the SID-independent absolute-token hard ceiling
+// (hk-34ac) and the EXPORTED single source of truth for it. When any watched
+// pane's token count meets or exceeds this value the keeper forces a
+// handoff+restart regardless of whether the session_id binding is correct —
+// a last-resort backstop so a mis-bound keeper cannot silently allow a session
+// to overflow.
+//
+// WatcherConfig.applyDefaults bakes it into HardCeilingTokens when that field
+// is zero, and the live gate reads the config field (never this const directly)
+// so the ceiling is configurable per-construction. Refs: hk-n6kn (const→field).
 //
 // NOTE: This value is deliberately ABOVE the normal band (warn=200K /
 // act=215K / force_act=240K). It does NOT change the warn/act/force_act
 // thresholds; it is an additional independent trip-wire. Refs: hk-34ac.
-//
-// DefaultHardCeilingTokens is the EXPORTED single source of truth for the
-// hard-ceiling threshold; WatcherConfig.applyDefaults bakes it into
-// HardCeilingTokens when that field is zero, and the live gate reads the
-// config field (never this const directly) so the ceiling is configurable
-// per-construction. HardCeilingAbsTokens is kept as a byte-identical alias so
-// existing symbols/tests compile unchanged. Refs: hk-n6kn (const→field).
 const DefaultHardCeilingTokens int64 = 280_000
 
-// HardCeilingAbsTokens aliases DefaultHardCeilingTokens (value unchanged).
+// HardCeilingAbsTokens is a byte-identical alias of DefaultHardCeilingTokens,
+// kept so existing symbols and tests compile unchanged.
 const HardCeilingAbsTokens int64 = DefaultHardCeilingTokens
 
 // DefaultBootGracePeriod is the YOUNG-SESSION guard window: the minimum time a

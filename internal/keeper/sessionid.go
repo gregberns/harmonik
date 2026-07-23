@@ -71,21 +71,31 @@ func isUUIDv4(s string) bool {
 	if len(s) != 36 {
 		return false
 	}
-	if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
-		return false
-	}
 	if s[14] != '4' {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
+		if isUUIDHyphenIndex(i) {
+			if s[i] != '-' {
+				return false
+			}
 			continue
 		}
-		c := s[i]
-		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
-			continue
+		if !isLowerHexDigit(s[i]) {
+			return false
 		}
-		return false
 	}
 	return true
+}
+
+// isUUIDHyphenIndex reports whether i is one of the four hyphen positions in a
+// canonical 36-byte UUID (8-4-4-4-12).
+func isUUIDHyphenIndex(i int) bool {
+	return i == 8 || i == 13 || i == 18 || i == 23
+}
+
+// isLowerHexDigit reports whether c is 0-9 or a-f. Uppercase is deliberately
+// rejected — see isUUIDv4.
+func isLowerHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
 }

@@ -275,7 +275,7 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
-			slog.Warn("keeper: close transcript while finding recent turn", "err", closeErr, "path", path)
+			slog.WarnContext(context.Background(), "keeper: close transcript while finding recent turn", "err", closeErr, "path", path)
 		}
 	}()
 

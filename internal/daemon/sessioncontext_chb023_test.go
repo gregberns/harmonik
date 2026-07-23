@@ -44,7 +44,6 @@ func sessionContextFixtureGitRepo(t *testing.T, dir, runID string) string {
 	t.Helper()
 	run := func(args ...string) string {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
@@ -94,7 +93,6 @@ func sessionContextFixtureReadGitFile(t *testing.T, dir, relPath string) []byte 
 // sessionContextFixtureGetCommitMsg reads the HEAD commit message in dir.
 func sessionContextFixtureGetCommitMsg(t *testing.T, dir string) string {
 	t.Helper()
-	//nolint:gosec // G204: git args are test-internal literals; not user input
 	cmd := exec.CommandContext(t.Context(), "git", "log", "-1", "--format=%B")
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -436,7 +434,6 @@ func TestPersistClaudeSessionID_RecoveryInvariant(t *testing.T) {
 	}
 
 	// Simulate daemon restart: read the context file from the commit SHA directly.
-	//nolint:gosec // G204: git args are test-internal literals; not user input
 	relPath := ".harmonik/run-context/" + runID.String() + "/context.json"
 	showCmd := exec.CommandContext(t.Context(), "git", "show", sha+":"+relPath)
 	showCmd.Dir = dir
@@ -459,7 +456,6 @@ func TestPersistClaudeSessionID_RecoveryInvariant(t *testing.T) {
 	// Verify that before the persist call the context file did not exist
 	// (state (a) — no ID persisted). We can't go back in time, but we can
 	// verify the initial commit does NOT have the context file.
-	//nolint:gosec // G204: git args are test-internal literals; not user input
 	logCmd := exec.CommandContext(t.Context(), "git", "log", "--oneline")
 	logCmd.Dir = dir
 	logOut, logErr := logCmd.Output()

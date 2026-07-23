@@ -76,7 +76,6 @@ func i0377SetupRepo(t *testing.T) (mainDir, worktreeDir, gitDir, runID, runBranc
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
-		//nolint:gosec // G204: test-controlled literals
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -112,7 +111,6 @@ func i0377SetupRepo(t *testing.T) (mainDir, worktreeDir, gitDir, runID, runBranc
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		//nolint:gosec // G204: test-controlled path
 		_ = exec.CommandContext(ctx, "git", "-C", mainDir, "worktree", "prune").Run()
 	})
 
@@ -129,7 +127,6 @@ func i0377GitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	//nolint:gosec // G204: test-controlled literals
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()

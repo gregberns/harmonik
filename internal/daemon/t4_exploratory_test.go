@@ -858,7 +858,6 @@ func (o *t4OrderLedger) closeCallCount() int {
 
 func writeTestFile(t *testing.T, path, content string, mode uint32) error {
 	t.Helper()
-	//nolint:gosec // G306: test-only script; chmod required for execution
 	if err := os.WriteFile(path, []byte(content), os.FileMode(mode)); err != nil {
 		return err
 	}

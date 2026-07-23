@@ -186,7 +186,6 @@ func TestCHB022_DaemonHasNoTwinBranches(t *testing.T) {
 		}
 
 		srcPath := filepath.Join(daemonDir, name)
-		//nolint:gosec // G304: test-only static scan; path is constructed from ReadDir entries within a known package dir
 		f, parseErr := parser.ParseFile(fset, srcPath, nil, 0)
 		if parseErr != nil {
 			t.Errorf("CHB-022 static scan: parse %q: %v", name, parseErr)

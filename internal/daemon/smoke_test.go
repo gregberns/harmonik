@@ -79,7 +79,6 @@ func smokeFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(d string, args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = d
 		out, err := cmd.CombinedOutput()
@@ -177,7 +176,6 @@ func smokeFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPath stri
 	t.Helper()
 
 	// Step 1: br init — run in projectDir so br creates .beads/ there.
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "sm")
 	initCmd.Dir = projectDir
 	initOut, initErr := initCmd.CombinedOutput()
@@ -186,7 +184,6 @@ func smokeFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPath stri
 	}
 
 	// Step 2: br create via wrapper (--db is now valid since .beads/ exists).
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	createCmd := exec.CommandContext(t.Context(), brWrapperPath, "create", "smoke test bead", "--status", "open", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
 	if createErr != nil {
@@ -224,7 +221,6 @@ func smokeFixturePollBeadClosed(t *testing.T, brWrapperPath, beadID string, budg
 	t.Helper()
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
-		//nolint:gosec // G204: br args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), brWrapperPath, "show", beadID, "--format", "json")
 		out, err := cmd.Output()
 		if err == nil {

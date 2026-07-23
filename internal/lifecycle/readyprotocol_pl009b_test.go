@@ -340,7 +340,7 @@ func TestPL009b_SystemdNotify(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009b sd_notify: ListenPacket unixgram: %v", err)
 		}
-		defer func() { _ = pc.Close() }() //nolint:errcheck // cleanup error unactionable
+		defer func() { _ = pc.Close() }()
 
 		// Simulate the daemon detecting NOTIFY_SOCKET and sending READY=1.
 		// Real daemon: os.Getenv("NOTIFY_SOCKET") → sd_notify("READY=1").
@@ -359,7 +359,7 @@ func TestPL009b_SystemdNotify(t *testing.T) {
 				errCh <- fmt.Errorf("dial: %w", dialErr)
 				return
 			}
-			defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+			defer func() { _ = conn.Close() }()
 			if _, writeErr := conn.Write([]byte("READY=1\n")); writeErr != nil {
 				errCh <- fmt.Errorf("write: %w", writeErr)
 				return

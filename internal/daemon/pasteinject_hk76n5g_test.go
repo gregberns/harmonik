@@ -113,9 +113,7 @@ func hk76n5gGit(t *testing.T, dir string, args ...string) {
 // after the reseed-Enter submits its pending prompt.
 func hk76n5gGitCommit(dir string) {
 	_ = os.WriteFile(filepath.Join(dir, "impl.txt"), []byte("done"), 0o600)
-	//nolint:gosec // G204: test-internal literals
 	_ = exec.CommandContext(context.Background(), "git", "-C", dir, "add", "impl.txt").Run()
-	//nolint:gosec // G204: test-internal literals
 	_ = exec.CommandContext(context.Background(), "git", "-C", dir,
 		"-c", "user.email=test@harmonik.local",
 		"-c", "user.name=Harmonik Test",

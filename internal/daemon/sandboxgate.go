@@ -128,7 +128,6 @@ func srtWrapArgv(spawn *SrtSpawnConfig, agentArgv []string) ([]string, error) {
 		return nil, fmt.Errorf("generate srt profile: %w", err)
 	}
 	profilePath := filepath.Join(os.TempDir(), "harmonik-srt-"+spawn.ProfileInput.RunID+".json")
-	//nolint:gosec // G306: 0600 is correct — profile contains literal filesystem paths, readable only by daemon uid.
 	if err := os.WriteFile(profilePath, profileBytes, 0o600); err != nil {
 		return nil, fmt.Errorf("write srt profile to %s: %w", profilePath, err)
 	}
@@ -217,7 +216,6 @@ func verifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, canaryPath
 		return fmt.Errorf("verifySandboxEngaged: generate probe profile: %w", err)
 	}
 	profilePath := filepath.Join(os.TempDir(), "harmonik-srt-engagement-"+spawn.ProfileInput.RunID+".json")
-	//nolint:gosec // G306: 0600 is correct — profile contains literal filesystem paths, readable only by daemon uid.
 	if err := os.WriteFile(profilePath, profileBytes, 0o600); err != nil {
 		return fmt.Errorf("verifySandboxEngaged: write probe profile: %w", err)
 	}

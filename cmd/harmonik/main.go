@@ -631,7 +631,7 @@ EXAMPLES
 		}
 		for _, arg := range subArgs {
 			if arg == "--help" || arg == "-h" {
-				fmt.Print(keeperTopUsage) //nolint:forbidigo // help output to stdout is intentional (hk-fzzc6)
+				fmt.Print(keeperTopUsage)
 				return 0
 			}
 		}

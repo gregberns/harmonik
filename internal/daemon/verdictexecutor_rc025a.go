@@ -257,7 +257,6 @@ func commitVerdictEmitted(ctx context.Context, worktreePath string, ve core.Verd
 		return fmt.Errorf("commitVerdictEmitted: mkdir %q: %w", reconDir, err)
 	}
 	verdictFilePath := filepath.Join(reconDir, "verdict.json")
-	//nolint:gosec // G306: 0600 is appropriate for this daemon-written state file
 	if err := os.WriteFile(verdictFilePath, verdictJSON, 0o600); err != nil {
 		return fmt.Errorf("commitVerdictEmitted: write verdict.json: %w", err)
 	}

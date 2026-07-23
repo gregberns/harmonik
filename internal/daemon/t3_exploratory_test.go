@@ -65,7 +65,6 @@ func t3FixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -134,13 +133,11 @@ func t3FixtureFastHandlerScript(t *testing.T) string {
 // t3FixtureInitBr initialises a beads workspace in projectDir and returns a ready bead ID.
 func t3FixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapper string) string {
 	t.Helper()
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "t3")
 	initCmd.Dir = projectDir
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		t.Fatalf("t3FixtureInitBr: br init: %v\n%s", err, out)
 	}
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	createCmd := exec.CommandContext(t.Context(), brWrapper, "create", "t3 test bead", "--status", "open", "--silent")
 	out, err := createCmd.CombinedOutput()
 	if err != nil {
@@ -156,7 +153,6 @@ func t3FixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapper string) str
 // t3FixtureMarkBeadReady marks a bead as ready via `br update`.
 func t3FixtureMarkBeadReady(t *testing.T, brWrapper, beadID string) {
 	t.Helper()
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	cmd := exec.CommandContext(t.Context(), brWrapper, "update", beadID, "--status", "ready")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("t3FixtureMarkBeadReady: br update %s --status ready: %v\n%s", beadID, err, out)
@@ -166,7 +162,6 @@ func t3FixtureMarkBeadReady(t *testing.T, brWrapper, beadID string) {
 // t3FixtureBeadStatus returns the current status string for a bead.
 func t3FixtureBeadStatus(t *testing.T, brWrapper, beadID string) string {
 	t.Helper()
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")
 	out, err := cmd.Output()
 	if err != nil {
@@ -723,7 +718,7 @@ func TestT3_SignalBeforeHandlerLaunch(t *testing.T) {
 // t3StubLedger is a minimal beadLedger implementation for T3 stub-based tests.
 type t3StubLedger struct {
 	readyIDs []core.BeadID
-	mu       sync.Mutex //nolint:unused // see init below
+	mu       sync.Mutex
 	claims   int
 	reopens  int
 	closes   int

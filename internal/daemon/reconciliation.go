@@ -174,7 +174,7 @@ func RunCatBL1StartupSweep(ctx context.Context, cfg CatBL1StartupSweepConfig) er
 
 		// Orphan detected: emit orphaned_child_bead event.
 		orphanPayload := core.OrphanedChildBeadPayload{
-			BeadID:   string(rec.BeadID), //nolint:unconvert // BeadID is type alias of string; explicit for clarity
+			BeadID:   string(rec.BeadID),
 			ParentID: parentID,
 		}
 		if payloadBytes, marshalErr := json.Marshal(orphanPayload); marshalErr == nil {

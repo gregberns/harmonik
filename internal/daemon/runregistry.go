@@ -76,7 +76,7 @@ type RunHandle struct {
 	// Cancel is the context cancel function for this run's goroutine. Calling
 	// it signals the handler to stop. May be nil if the run was registered
 	// before a cancel function was available.
-	Cancel context.CancelFunc //nolint:containedctx // CancelFunc is not a Context; stored for operator signal routing
+	Cancel context.CancelFunc
 
 	// OwningEpicID is the BeadID of the parent epic for this run's bead (hk-7evda).
 	// Empty when the bead has no parent epic. Set at run start by beadRunOne via

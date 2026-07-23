@@ -122,7 +122,6 @@ func sweepQOInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrapper
 	t.Helper()
 
 	// br init — creates .beads/ and .beads/beads.db.
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "sqo")
 	initCmd.Dir = projectDir
 	initOut, initErr := initCmd.CombinedOutput()
@@ -131,7 +130,6 @@ func sweepQOInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrapper
 	}
 
 	// br create — produces a bead in open status.
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	createCmd := exec.CommandContext(t.Context(), brWrapper, "create",
 		"orphan sweep queue-owned test bead", "--status", "open", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()

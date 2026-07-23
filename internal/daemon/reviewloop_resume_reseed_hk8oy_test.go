@@ -281,7 +281,6 @@ func rl8oyProjectDir(t *testing.T) string {
 	}
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -315,7 +314,6 @@ func rl8oyWorktree(t *testing.T, projectDir string) (wtPath, parentSHA string) {
 
 	wtDir := t.TempDir()
 	wtPath = filepath.Join(wtDir, "wt")
-	//nolint:gosec // G204: git args are test-internal literals; not user input
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "--detach", wtPath, parentSHA)
 	addCmd.Dir = projectDir
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -326,7 +324,6 @@ func rl8oyWorktree(t *testing.T, projectDir string) (wtPath, parentSHA string) {
 		t.Fatalf("rl8oyWorktree: mkdir .harmonik: %v", err)
 	}
 	t.Cleanup(func() {
-		//nolint:gosec // G204: git args are test-internal; not user input
 		rmCmd := exec.Command("git", "worktree", "remove", "--force", "--force", wtPath)
 		rmCmd.Dir = projectDir
 		_ = rmCmd.Run()

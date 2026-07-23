@@ -71,7 +71,6 @@ func runWALCheckpointPreflight(ctx context.Context, projectDir string) error {
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 
 	// Stat the WAL file.
-	//nolint:gosec // G304: walPath is constructed from operator-supplied projectDir; not user input.
 	walInfo, statErr := os.Stat(walPath)
 	if statErr != nil {
 		if os.IsNotExist(statErr) {
@@ -138,7 +137,6 @@ func runWALCheckpointPreflight(ctx context.Context, projectDir string) error {
 
 	// Stat the WAL again to report the post-checkpoint size.
 	var newSizeBytes int64
-	//nolint:gosec // G304: walPath constructed from operator-supplied projectDir; not user input.
 	if postInfo, postErr := os.Stat(walPath); postErr == nil {
 		newSizeBytes = postInfo.Size()
 	}

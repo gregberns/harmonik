@@ -92,7 +92,6 @@ func hktvy3eProjectDir(t *testing.T) string {
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -122,7 +121,6 @@ func hktvy3eWorktree(t *testing.T, projectDir string) (wtPath, parentSHA string)
 
 	wtDir := t.TempDir()
 	wtPath = filepath.Join(wtDir, "wt")
-	//nolint:gosec // G204: git args are test-internal
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "--detach", wtPath, parentSHA)
 	addCmd.Dir = projectDir
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -133,7 +131,6 @@ func hktvy3eWorktree(t *testing.T, projectDir string) (wtPath, parentSHA string)
 		t.Fatalf("hktvy3eWorktree: mkdir .harmonik: %v", err)
 	}
 	t.Cleanup(func() {
-		//nolint:gosec // G204: git args are test-internal
 		rmCmd := exec.Command("git", "worktree", "remove", "--force", "--force", wtPath)
 		rmCmd.Dir = projectDir
 		_ = rmCmd.Run()
@@ -149,7 +146,6 @@ func hktvy3eCommit(t *testing.T, wtPath string) {
 	}
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = wtPath
 		if out, err := cmd.CombinedOutput(); err != nil {

@@ -73,7 +73,6 @@ func rl3FixtureGitRepo(t *testing.T, dir, runID string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
@@ -166,7 +165,6 @@ func rl3FixtureAssertResumeFlag(t *testing.T, args []string, wantSessionID strin
 // commit was made.
 func rl3FixtureAssertCHB023CommitExists(t *testing.T, dir string, runID core.RunID) {
 	t.Helper()
-	//nolint:gosec // G204: git args are test-internal literals; not user input
 	cmd := exec.CommandContext(t.Context(), "git", "log", "--oneline", "--grep=CHB-023")
 	cmd.Dir = dir
 	out, err := cmd.Output()

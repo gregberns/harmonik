@@ -65,7 +65,6 @@ func rlBridgeFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
@@ -101,7 +100,6 @@ func rlBridgeFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentSHA
 	wtDir := t.TempDir()
 	wtPath = filepath.Join(wtDir, "wt")
 
-	//nolint:gosec // G204: git args are test-internal literals; not user input
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "--detach", wtPath, parentSHA)
 	addCmd.Dir = projectDir
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -114,7 +112,6 @@ func rlBridgeFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentSHA
 	}
 
 	t.Cleanup(func() {
-		//nolint:gosec // G204: git args are test-internal; not user input
 		rmCmd := exec.Command("git", "worktree", "remove", "--force", "--force", wtPath)
 		rmCmd.Dir = projectDir
 		_ = rmCmd.Run()

@@ -108,7 +108,6 @@ func runBrHistoryRotationPreflight(ctx context.Context, projectDir string, keepL
 	defer pruneBrHistoryArchive(ctx, archiveDir, brHistoryArchiveKeep, brHistoryArchiveMaxAge, time.Now())
 
 	// Stat the history directory.
-	//nolint:gosec // G304: historyDir constructed from operator-supplied projectDir; not user input.
 	_, statErr := os.Stat(historyDir)
 	if statErr != nil {
 		if os.IsNotExist(statErr) {
@@ -154,7 +153,6 @@ func runBrHistoryRotationPreflight(ctx context.Context, projectDir string, keepL
 	}
 	statted := make([]entryWithMtime, 0, total)
 	for _, e := range entries {
-		//nolint:gosec // G304: path constructed from operator-supplied projectDir; not user input.
 		info, err := os.Stat(filepath.Join(historyDir, e.Name()))
 		if err != nil {
 			// Skip unstat-able entries; they won't be archived (safer).

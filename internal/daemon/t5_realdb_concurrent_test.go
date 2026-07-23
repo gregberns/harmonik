@@ -71,7 +71,6 @@ func t5RealDBFixtureSetup(t *testing.T) (projectDir, brWrapper, beadID string) {
 	brWrapper = smokeFixtureBrWrapperScript(t, realBrPath, dbPath)
 
 	// Seed exactly one ready bead.
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	createCmd := exec.CommandContext(t.Context(), brWrapper, "create",
 		"T5 concurrent claim integration bead", "--status", "open", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
@@ -103,7 +102,6 @@ func t5RealDBPollBeadStatus(t *testing.T, brWrapper, beadID, targetStatus string
 	t.Helper()
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
-		//nolint:gosec // G204: br args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")
 		out, err := cmd.Output()
 		if err == nil && strings.Contains(string(out), `"`+targetStatus+`"`) {

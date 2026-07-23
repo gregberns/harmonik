@@ -63,7 +63,6 @@ func rlFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
@@ -99,7 +98,6 @@ func rlFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentSHA strin
 	wtDir := t.TempDir()
 	wtPath = filepath.Join(wtDir, "wt")
 
-	//nolint:gosec // G204: git args are test-internal literals; not user input
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "--detach", wtPath, parentSHA)
 	addCmd.Dir = projectDir
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -112,7 +110,6 @@ func rlFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentSHA strin
 	}
 
 	t.Cleanup(func() {
-		//nolint:gosec // G204: git args are test-internal; not user input
 		rmCmd := exec.Command("git", "worktree", "remove", "--force", "--force", wtPath)
 		rmCmd.Dir = projectDir
 		_ = rmCmd.Run()
@@ -353,7 +350,6 @@ func TestReviewLoop_RequestChangesThenAPPROVE(t *testing.T) {
 	// .harmonik/review.iter-1.json. The daemon calls ArchiveVerdict(wtPath, 1)
 	// immediately after emitting reviewer_verdict for iteration 1, before looping
 	// to iteration 2. Verify the file exists at the canonical path.
-	//nolint:gosec // G304: test fixture path; wtPath is a t.TempDir()-derived value
 	archivePath := filepath.Join(wtPath, ".harmonik", "review.iter-1.json")
 	if _, err := os.Stat(archivePath); err != nil {
 		t.Errorf("T-WM-027: verdict archive file missing after RC→APPROVE cycle: %s: %v", archivePath, err)

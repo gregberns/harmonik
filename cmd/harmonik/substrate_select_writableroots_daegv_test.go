@@ -76,7 +76,7 @@ func TestCodexSubstrateOptions_WiresWritableRoots_daegv(t *testing.T) {
 	router := &codexWorkerRoutingRunner{requireBoundary: true}
 	opts, sess := codexSubstrateOptions("codex", router)
 	if sess != nil {
-		t.Cleanup(func() { _ = sess.Close() }) //nolint:errcheck // test cleanup, unactionable
+		t.Cleanup(func() { _ = sess.Close() })
 	}
 	if opts.WritableRoots == nil {
 		t.Fatal("hk-daegv: Options.WritableRoots is nil — the git-common-dir hook was not wired")

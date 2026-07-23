@@ -124,7 +124,6 @@ func parallelSmokeFixtureSetup(t *testing.T) (projectDir, jsonlPath, brWrapper, 
 // returns its ID.
 func parallelSmokeFixtureCreateBead(t *testing.T, brWrapper, title string) string {
 	t.Helper()
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	cmd := exec.CommandContext(t.Context(), brWrapper, "create", title, "--status", "open", "--silent")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -143,7 +142,6 @@ func parallelSmokeFixturePollBeadClosed(t *testing.T, brWrapper, beadID string, 
 	t.Helper()
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
-		//nolint:gosec // G204: br args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")
 		out, err := cmd.Output()
 		if err == nil {

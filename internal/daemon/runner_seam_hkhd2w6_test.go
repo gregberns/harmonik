@@ -185,7 +185,6 @@ func (r gateVerdictCatRunner) Command(ctx context.Context, name string, args ...
 		//nolint:gosec // G204: test-controlled temp path
 		return exec.CommandContext(ctx, "/bin/sh", "-c", "test -f "+src)
 	default:
-		//nolint:gosec // G204: test-controlled temp path
 		return exec.CommandContext(ctx, "false")
 	}
 }

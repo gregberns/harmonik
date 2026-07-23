@@ -41,7 +41,6 @@ func t6FixtureDir(t *testing.T) (projectDir, jsonlPath, brWrapper, handlerScript
 	// Init git repo
 	gitRun := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = projectDir
 		out, err := cmd.CombinedOutput()
@@ -66,7 +65,6 @@ func t6FixtureDir(t *testing.T) (projectDir, jsonlPath, brWrapper, handlerScript
 	originDir := t.TempDir()
 	gitRunIn := func(dir string, args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -170,7 +168,6 @@ func t6PollAllClosed(t *testing.T, brWrapper string, beadIDs []string, budget ti
 // CHB-028-rejection case), which t6PollAllClosed cannot express.
 func t6BeadStatus(t *testing.T, brWrapper, beadID string) (string, error) {
 	t.Helper()
-	//nolint:gosec // G204: test-internal literals
 	cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")
 	out, err := cmd.Output()
 	if err != nil {

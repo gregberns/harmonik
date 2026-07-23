@@ -222,7 +222,6 @@ func hki0377SrtShell(t *testing.T, ctx context.Context, srtBin, profilePath, she
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	hktch4tAcquireSrt()
-	//nolint:gosec // G204: srtBin from LookPath/stat; profilePath is t.TempDir-derived; shellCmd test-controlled
 	cmd := exec.CommandContext(cctx, srtBin, "--settings", profilePath, "sh", "-c", shellCmd)
 	out, err := cmd.CombinedOutput()
 	hktch4tReleaseSrt()
@@ -428,7 +427,6 @@ func TestSandboxAcceptance_BranchMergesBack_hki0377(t *testing.T) {
 // in the repo at dir.  Used to switch back for the merge step.
 func hki0377DefaultBranch(t *testing.T, ctx context.Context, dir string) string {
 	t.Helper()
-	//nolint:gosec // G204: dir is t.TempDir()-derived
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("hki0377DefaultBranch: git rev-parse HEAD: %v", err)

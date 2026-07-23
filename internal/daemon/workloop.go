@@ -3222,7 +3222,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		if runTipSHA != nil {
 			sdCommitSHA = *runTipSHA
 		}
-		go func() { //nolint:errcheck // best-effort; see comment above.
+		go func() {
 			_ = sessiondata.Collect(sessiondata.CollectParams{
 				RunID:             runID.String(),
 				BeadID:            string(beadID),

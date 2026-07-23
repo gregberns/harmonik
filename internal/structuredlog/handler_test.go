@@ -689,7 +689,7 @@ func TestON035Handler_ConcurrentHandleAndClose(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_ = h.Close() //nolint:errcheck // concurrent-close stress; the race detector is the assertion, close error non-actionable
+		_ = h.Close()
 	}()
 	wg.Wait()
 }

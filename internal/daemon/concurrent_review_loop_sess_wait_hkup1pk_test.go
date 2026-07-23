@@ -247,7 +247,6 @@ func (h *rlSessWaitBoundedHookStore) SetAgentReadyCallback(_, _ string, _ func()
 // the trimmed SHA.
 func rlSessWaitBoundedRevGitRevParse(t *testing.T, dir, ref string) string {
 	t.Helper()
-	//nolint:gosec // G204: test-only git args
 	out, err := exec.CommandContext(t.Context(), "git", "-C", dir, "rev-parse", ref).Output()
 	if err != nil {
 		t.Fatalf("rlSessWaitBoundedRevGitRevParse: git rev-parse %s in %s: %v", ref, dir, err)
@@ -260,7 +259,6 @@ func rlSessWaitBoundedRevMakeCommit(t *testing.T, dir, filename, msg string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: test-only git args
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()

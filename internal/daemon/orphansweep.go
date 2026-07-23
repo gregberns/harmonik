@@ -218,7 +218,7 @@ type OrphanSweepConfig struct {
 	// sweep is SKIPPED (BeadInProgressReset remains 0). Production callers
 	// MUST supply this (typically a *brcli.Adapter); unit-test callers that
 	// do not exercise the bead-reset path may leave it nil.
-	BeadLedger lifecycle.InFlightBeadLedger //nolint:revive // explicit name preserved for caller clarity
+	BeadLedger lifecycle.InFlightBeadLedger
 
 	// BeadResetter is the write surface (br update --status open via the BI
 	// adapter) for the bead-reset sweep. Nil → bead-reset sweep is SKIPPED.

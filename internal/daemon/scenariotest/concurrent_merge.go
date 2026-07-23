@@ -454,7 +454,6 @@ func rcmBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 // beads, returning their IDs in creation order.
 func rcmInitBrWithBeads(t *testing.T, realBrPath, projectDir, brWrapper, prefix string, n int) []string {
 	t.Helper()
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", prefix)
 	initCmd.Dir = projectDir
 	if out, err := initCmd.CombinedOutput(); err != nil {

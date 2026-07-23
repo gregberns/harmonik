@@ -104,7 +104,6 @@ func socketFixtureSendRecv(t *testing.T, conn net.Conn, req daemon.SocketRequest
 		t.Fatalf("socketFixtureSendRecv: write: %v", err)
 	}
 	// Half-close the write side so the server's json.Decoder can detect EOF.
-	//nolint:errorlint // *net.UnixConn specific; type assertion is intentional
 	if uw, ok := conn.(*net.UnixConn); ok {
 		_ = uw.CloseWrite() //nolint:errcheck // cleanup error unactionable
 	}
@@ -273,7 +272,7 @@ func socketFixtureCreateStaleSocket(t *testing.T, sockPath string) func() {
 
 	sa := &syscall.SockaddrUnix{Name: sockPath}
 	if err := syscall.Bind(fd, sa); err != nil {
-		_ = syscall.Close(fd) //nolint:errcheck // cleanup; fd close error unactionable
+		_ = syscall.Close(fd)
 		t.Fatalf("socketFixtureCreateStaleSocket: bind %q: %v", sockPath, err)
 	}
 	// Close the fd — the socket inode remains on disk (no automatic removal like
@@ -496,7 +495,6 @@ func hookRelayFixtureSendAndReadAck(t *testing.T, conn net.Conn, envBytes []byte
 	if _, err := conn.Write(envBytes); err != nil {
 		t.Fatalf("hookRelayFixtureSendAndReadAck: write: %v", err)
 	}
-	//nolint:errorlint // *net.UnixConn specific; type assertion is intentional
 	if uw, ok := conn.(*net.UnixConn); ok {
 		_ = uw.CloseWrite() //nolint:errcheck // cleanup error unactionable
 	}

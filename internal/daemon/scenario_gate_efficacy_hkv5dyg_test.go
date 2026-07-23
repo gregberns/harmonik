@@ -113,7 +113,6 @@ func scenarioGateWorktreeFactory(scenarioTestBody string) func(ctx context.Conte
 // mainTipSHA returns the SHA that `main` points at in the fixture project dir.
 func mainTipSHA(t *testing.T, projectDir string) string {
 	t.Helper()
-	//nolint:gosec // G204: test-internal literals
 	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "main")
 	cmd.Dir = projectDir
 	out, err := cmd.CombinedOutput()

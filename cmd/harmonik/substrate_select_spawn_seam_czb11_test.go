@@ -33,7 +33,7 @@ func TestCodexSubstrateOptions_RunnerSatisfiesRemoteCwd_czb11(t *testing.T) {
 	router := &codexWorkerRoutingRunner{requireBoundary: true}
 	opts, sess := codexSubstrateOptions("codex", router)
 	if sess != nil {
-		t.Cleanup(func() { _ = sess.Close() }) //nolint:errcheck // test cleanup, unactionable
+		t.Cleanup(func() { _ = sess.Close() })
 	}
 	if _, ok := opts.Runner.(codexdriver.RemoteCwdRunner); !ok {
 		t.Fatalf("hk-czb11 REGRESSION: production codexSubstrateOptions Options.Runner (%T) does NOT satisfy "+

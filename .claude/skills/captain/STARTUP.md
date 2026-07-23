@@ -320,7 +320,8 @@ verification.
 `{schema_version, crew_name, queue, epic_id, goal, captain_name}`):
 
 ```bash
-# .harmonik/crew/missions/<crew>.md  (gitignored — never shows in git status)
+# .harmonik/crew/missions/<crew>.md  (TRACKED in git — shows in git status; commit it.
+#                                     See specs/crew-handoff-schema.md §2.2.)
 # Use the Write tool; the harness blocks sub-agent .md writes — write it yourself.
 ```
 

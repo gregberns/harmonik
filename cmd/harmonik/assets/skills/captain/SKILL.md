@@ -377,8 +377,14 @@ renames** (`specs/crew-handoff-schema.md`):
 {schema_version, crew_name, queue, epic_id, goal, captain_name}
 ```
 
-**Path convention** (the `.harmonik/` tree is gitignored — never shows in
-`git status`, never committed):
+**Path convention** — mission files **are tracked in git**: they DO show up in
+`git status` and they ARE committed, on purpose, so a mission's self-terminate
+clause stays reviewable (hk-ev9e). `.gitignore` ignores the `.harmonik/` tree
+broadly and then re-includes `crew/missions/` (among others); what stays ignored
+is runtime state (`events/`, `queues/`, `runs/`, `worktrees/`, and the crew
+registry `crew/*.json`). Full breakdown: `specs/crew-handoff-schema.md` §2.2.
+Do NOT confuse this with the repo-root `HANDOFF.md` / `HANDOFF-<name>.md`
+batons — those really are gitignored and have no git history.
 
 ```
 .harmonik/crew/missions/<crew_name>.md

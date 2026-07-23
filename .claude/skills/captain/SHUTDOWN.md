@@ -236,7 +236,8 @@ For each crew that is NOT being stood down, refresh its mission file with curren
 state so a keeper restart re-hydrates correctly:
 
 ```
-.harmonik/crew/missions/<crew>.md   (gitignored; write via Write tool)
+.harmonik/crew/missions/<crew>.md   (tracked in git — commit the refresh;
+                                     write via Write tool)
 ```
 
 The YAML frontmatter is the machine contract (`schema_version, crew_name, queue,

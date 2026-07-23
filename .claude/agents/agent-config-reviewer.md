@@ -31,7 +31,7 @@ applies, defers, or rejects.
 
 Required fields: schema_version, verdict, notes, proposed_diff. flags may be [].
 DRIFT_MAJOR proposals require main-agent acknowledgment before continuing a pass.
-DRIFT_MINOR proposals may be deferred with a TASKS.md item.
+DRIFT_MINOR proposals may be deferred by filing a bead (`br create`).
 CLEAN — no action required.
 
 ---
@@ -178,5 +178,9 @@ Emit a single JSON object. No prose before or after it.
 | Verdict | Meaning | Main-agent action |
 |---|---|---|
 | `CLEAN` | No drift detected | No action; note in session log. |
-| `DRIFT_MINOR` | Small gap; not immediately blocking | Apply the proposed diff OR open a TASKS.md item. |
-| `DRIFT_MAJOR` | Significant gap | Acknowledge explicitly. Apply or defer with TASKS.md item. Do NOT silently continue. |
+| `DRIFT_MINOR` | Small gap; not immediately blocking | Apply the proposed diff OR file a bead. |
+| `DRIFT_MAJOR` | Significant gap | Acknowledge explicitly. Apply, or defer by filing a bead. Do NOT silently continue. |
+
+Deferred work is always a bead. Attach it to the owning epic when the finding was
+discovered inside one (`br create --parent <epic_id>`, which creates a parent-child
+dep); otherwise file it standalone (`br create`).

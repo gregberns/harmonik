@@ -19,7 +19,7 @@ description: >
     }
   Required fields: schema_version, verdict, notes, proposed_diff. flags may be [].
   DRIFT_MAJOR proposals require main-agent acknowledgment before continuing a pass.
-  DRIFT_MINOR proposals may be deferred with a TASKS.md item.
+  DRIFT_MINOR proposals may be deferred by filing a bead (`br create`).
   CLEAN — no action required.
 ---
 
@@ -273,7 +273,7 @@ Emit a single JSON object followed by the proposed diff block (if any).
   "schema_version": 1,
   "verdict": "DRIFT_MINOR",
   "flags": ["skill-missing"],
-  "notes": "beads-cli skill is absent from .claude/skills/. Required by agent-configuration.md §Skills. Add the skill or open a TASKS.md item to defer.",
+  "notes": "beads-cli skill is absent from .claude/skills/. Required by agent-configuration.md §Skills. Add the skill or file a bead (`br create`) to defer.",
   "proposed_diff": "--- /dev/null\n+++ .claude/skills/beads-cli/SKILL.md\n@@ -0,0 +1,3 @@\n+..."
 }
 ```
@@ -299,8 +299,22 @@ headers per file.
 | Verdict | Meaning | Main-agent action |
 |---|---|---|
 | `CLEAN` | No drift detected | No action; note in session log. |
-| `DRIFT_MINOR` | Small gap; not immediately blocking | Apply the proposed diff OR open a TASKS.md item naming the flag and the proposed change. Either response is acceptable. |
-| `DRIFT_MAJOR` | Significant gap; may mislead a future agent or cause a process violation | Acknowledge explicitly. Apply the proposed diff in this session OR record a decision to defer with a TASKS.md item and a note in the session log. Do NOT silently continue. |
+| `DRIFT_MINOR` | Small gap; not immediately blocking | Apply the proposed diff OR file a bead naming the flag and the proposed change. Either response is acceptable. |
+| `DRIFT_MAJOR` | Significant gap; may mislead a future agent or cause a process violation | Acknowledge explicitly. Apply the proposed diff in this session OR file a bead recording the deferral, plus a note in the session log. Do NOT silently continue. |
+
+**Deferred work is always a bead — never a file-based log.** If the finding was
+discovered inside an epic, attach it to that epic bead; otherwise file it standalone:
+
+```bash
+# Discovered inside an epic — --parent creates a parent-child dep on the epic
+br create --title "..." -t chore -p 2 --parent <epic_id>
+# Standalone
+br create --title "..." -t chore -p 2
+```
+
+Known property, not an objection: the bead store is gitignored by design (`.gitignore`
+ignores `.beads/*`, excepting only `queue-test-fixtures/`), so a bead filed on one
+machine does not reach another clone. File the bead anyway.
 
 A main agent that receives `DRIFT_MAJOR` and proceeds without acknowledgment has
 violated the update cadence (`agent-configuration.md §Update cadence`).
@@ -319,9 +333,9 @@ itself is stale:
 > rot. Main-agent self-check at Tier 1 is the fallback."
 
 If the main agent notices that this skill's check list has drifted from the normative
-surface (e.g., a new `agent-configuration.md` section is uncovered), it MUST open a
-TASKS.md item to update this skill's review surface even if not formally invoking
-itself as a Tier-2 run.
+surface (e.g., a new `agent-configuration.md` section is uncovered), it MUST file a
+bead to update this skill's review surface even if not formally invoking itself as a
+Tier-2 run.
 
 **Schema source-of-truth:** the canonical verdict schema lives in this skill's
 frontmatter (top of SKILL.md). If `agent-configuration.md §Update cadence` or any

@@ -183,15 +183,17 @@ The user's suggestion — "review task after every section" — becomes a two-ti
 **Tier 1 — Every session end (lightweight, mandatory).**
 Before writing `HANDOFF.md`, the main agent runs a self-check:
 1. Did any new rule emerge? → propose an edit to this doc.
-2. Did a skill fail or gap show up? → open a TASKS.md item to author/revise the skill.
+2. Did a skill fail or gap show up? → file a bead to author/revise the skill.
 3. Did a memory preference surface? → write the memory file.
 4. Did per-directory rules drift from repo-root rules? → flag.
 5. **Did `make check-full` pass for any code changes this session?** Outcome recorded in `HANDOFF.md`. Failure to record is a process violation. (Sessions that did not touch code MAY skip this item; note the skip.)
-6. **Did `agent-reviewer` run on every non-trivial commit this session?** Outcome recorded via the `Reviewed-By:` commit trailer on each commit. A session with non-trivial commits lacking `Reviewed-By:` trailers is a process violation; open a TASKS.md item to retroactively review and note the gap in the session log.
+6. **Did `agent-reviewer` run on every non-trivial commit this session?** Outcome recorded via the `Reviewed-By:` commit trailer on each commit. A session with non-trivial commits lacking `Reviewed-By:` trailers is a process violation; file a bead to retroactively review and note the gap in the session log.
 Output: a short `## Config review` stanza in the session log entry.
 
+Deferred work from any tier is always a bead — never a file-based log. Attach it to the owning epic bead when it was discovered inside one (`br create --parent <epic_id>`, which creates a parent-child dep); otherwise file it standalone (`br create`).
+
 **Tier 2 — Every kerf pass advance (heavier, reviewer subagent).**
-When `kerf status <work> <next-pass>` is about to run, invoke the `agent-config-reviewer` skill. It consumes: current `CLAUDE.md`, `AGENTS.md`, this doc, the kerf work's artifacts, the last N session handoffs. It emits a diff proposing updates. Main agent applies, defers (with a TASKS.md line), or rejects with reason in the log.
+When `kerf status <work> <next-pass>` is about to run, invoke the `agent-config-reviewer` skill. It consumes: current `CLAUDE.md`, `AGENTS.md`, this doc, the kerf work's artifacts, the last N session handoffs. It emits a diff proposing updates. Main agent applies, defers (by filing a bead), or rejects with reason in the log.
 
 **Tier 3 — Release / finalize (heaviest, explicit).**
 On `kerf finalize`, spec lands in `specs/`, and the finalize skill runs `agent-config-reviewer` with a wider prompt (include the new spec). This is the moment to register new skills the spec requires (e.g., if the spec introduces a new node type, add a skill for authoring it).

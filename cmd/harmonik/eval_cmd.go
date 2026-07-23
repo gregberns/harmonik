@@ -281,7 +281,11 @@ func evalReadExistingRunIDs(path string) (map[string]struct{}, error) {
 		}
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik eval: close %s: %v\n", path, closeErr)
+		}
+	}()
 
 	scanner := bufio.NewScanner(f)
 	setLargeScanBuffer(scanner)
@@ -311,7 +315,11 @@ func evalReadEvents(path, filterRunID string) (map[string]*evalRunState, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik eval: close %s: %v\n", path, closeErr)
+		}
+	}()
 
 	states := map[string]*evalRunState{}
 

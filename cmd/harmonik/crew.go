@@ -635,7 +635,11 @@ func crewDialAndSend(sockPath, verb string, reqBytes []byte) (crewSocketResponse
 		fmt.Fprintf(os.Stderr, "harmonik %s: dial %s: %v\n", verb, sockPath, dialErr)
 		return crewSocketResponse{}, 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik %s: close connection: %v\n", verb, closeErr)
+		}
+	}()
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik %s: write request: %v\n", verb, writeErr)

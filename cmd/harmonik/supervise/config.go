@@ -181,8 +181,10 @@ func WriteConfigAtomic(projectDir string, cfg Config) (retErr error) {
 		return fmt.Errorf("supervisecmd: WriteConfigAtomic: open parent dir: %w", err)
 	}
 	if err := dirFd.Sync(); err != nil {
-		_ = dirFd.Close()
-		return fmt.Errorf("supervisecmd: WriteConfigAtomic: fsync parent dir: %w", err)
+		return errors.Join(
+			fmt.Errorf("supervisecmd: WriteConfigAtomic: fsync parent dir: %w", err),
+			dirFd.Close(),
+		)
 	}
 	if err := dirFd.Close(); err != nil {
 		return fmt.Errorf("supervisecmd: WriteConfigAtomic: close parent dir: %w", err)

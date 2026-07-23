@@ -897,7 +897,9 @@ func daemonSocketUp(projectDir string) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	if closeErr := conn.Close(); closeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik sync-assets: close daemon probe connection: %v\n", closeErr)
+	}
 	return true
 }
 

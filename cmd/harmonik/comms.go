@@ -315,7 +315,11 @@ func runCommsSendSubcommand(subArgs []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: dial %s: %v\n", sockPath, dialErr)
 		return 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("harmonik comms send: close connection: %v", closeErr)
+		}
+	}()
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: write request: %v\n", writeErr)
@@ -1023,7 +1027,11 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		fmt.Fprintf(os.Stderr, "harmonik comms %s: dial %s: %v\n", verb, sockPath, dialErr)
 		return 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("harmonik comms %s: close connection: %v", verb, closeErr)
+		}
+	}()
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik comms %s: write request: %v\n", verb, writeErr)
@@ -1412,7 +1420,11 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik comms recv: dial %s: %v\n", sockPath, dialErr)
 		return 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("harmonik comms recv: close connection: %v", closeErr)
+		}
+	}()
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik comms recv: write request: %v\n", writeErr)
@@ -1557,7 +1569,11 @@ func sendPresenceRefreshBeat(ctx context.Context, sockPath, agent, sessionID str
 	if dialErr != nil {
 		return dialErr
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("harmonik comms presence-refresh: close connection: %v", closeErr)
+		}
+	}()
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
 		return writeErr
@@ -1612,7 +1628,11 @@ func sendPresenceLeaveBeat(ctx context.Context, sockPath, agent, sessionID strin
 	if dialErr != nil {
 		return dialErr
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("harmonik comms presence-leave: close connection: %v", closeErr)
+		}
+	}()
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
 		return writeErr
@@ -1767,7 +1787,9 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 		firstDial = false
 
 		if _, writeErr := conn.Write(reqBytes); writeErr != nil {
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				log.Printf("harmonik comms recv --follow: close connection after write failure: %v", closeErr)
+			}
 			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: write subscribe request: %v\n", writeErr)
 			return 1
 		}
@@ -1777,7 +1799,9 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 		go func() {
 			select {
 			case <-sigCtx.Done():
-				_ = conn.Close()
+				if closeErr := conn.Close(); closeErr != nil {
+					log.Printf("harmonik comms recv --follow: close connection on signal: %v", closeErr)
+				}
 			case <-connCloseOnce:
 			}
 		}()
@@ -1800,7 +1824,9 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 			}
 			if decErr := dec.Decode(&env); decErr != nil {
 				close(connCloseOnce) // stop the signal-closer goroutine
-				_ = conn.Close()
+				if closeErr := conn.Close(); closeErr != nil {
+					log.Printf("harmonik comms recv --follow: close connection after decode error: %v", closeErr)
+				}
 				if sigCtx.Err() != nil {
 					return 0 // clean signal exit
 				}
@@ -1832,7 +1858,9 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 			// because backoff resets on every successful TCP dial.
 			if env.Ok != nil && !*env.Ok {
 				close(connCloseOnce)
-				_ = conn.Close()
+				if closeErr := conn.Close(); closeErr != nil {
+					log.Printf("harmonik comms recv --follow: close connection after server error: %v", closeErr)
+				}
 				fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: server error: %s\n", env.Error)
 				return 1
 			}
@@ -2026,7 +2054,11 @@ func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID str
 		fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: dial %s: %v\n", sockPath, dialErr)
 		return 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("harmonik comms recv --wait: close connection: %v", closeErr)
+		}
+	}()
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: write subscribe request: %v\n", writeErr)
@@ -2044,7 +2076,9 @@ func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID str
 	}
 	go func() {
 		<-waitCtx.Done()
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("harmonik comms recv --wait: close connection on signal: %v", closeErr)
+		}
 	}()
 
 	dec := json.NewDecoder(conn)

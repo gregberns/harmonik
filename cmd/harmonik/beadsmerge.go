@@ -161,7 +161,11 @@ func parseBeadsJSONL(path string) ([]beadRow, error) {
 		}
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik beads-merge: close %s: %v\n", path, closeErr)
+		}
+	}()
 
 	var rows []beadRow
 	scanner := bufio.NewScanner(f)

@@ -49,7 +49,9 @@ func isDaemonUp(projectDir string) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	if closeErr := conn.Close(); closeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: close daemon probe connection: %v\n", closeErr)
+	}
 	return true
 }
 
@@ -99,7 +101,11 @@ func runBeadSubcommandViaDaemon(
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot connect to daemon socket for subscribe: %v\n", err)
 		return 1
 	}
-	defer func() { _ = subConn.Close() }()
+	defer func() {
+		if closeErr := subConn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik run: close subscribe connection: %v\n", closeErr)
+		}
+	}()
 
 	// Subscribe to the minimal set of events needed to detect group completion.
 	// run_started / run_completed / run_failed are needed for the append-fallback
@@ -146,7 +152,9 @@ func runBeadSubcommandViaDaemon(
 	// scanner loop below exits cleanly.
 	go func() {
 		<-signalCtx.Done()
-		_ = subConn.Close()
+		if closeErr := subConn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik run: close subscribe connection on signal: %v\n", closeErr)
+		}
 	}()
 
 	return viaWatchGroupCompletion(subConn, watchQueueID, watchGroupIndex, watchBeads, notifyWriter)

@@ -172,8 +172,10 @@ func WriteLoopStatusAtomic(projectDir string, rec LoopStatusRecord) (retErr erro
 		return fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: open parent dir: %w", err)
 	}
 	if err := dirFd.Sync(); err != nil {
-		_ = dirFd.Close()
-		return fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: fsync parent dir: %w", err)
+		return errors.Join(
+			fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: fsync parent dir: %w", err),
+			dirFd.Close(),
+		)
 	}
 	if err := dirFd.Close(); err != nil {
 		return fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: close parent dir: %w", err)

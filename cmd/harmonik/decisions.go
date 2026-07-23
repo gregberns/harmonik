@@ -408,7 +408,11 @@ func decisionsBlockedWait(absProject, sockPath, decisionID string) int {
 	if rc != 0 {
 		return rc
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik decisions wait: close connection: %v\n", closeErr)
+		}
+	}()
 
 	// Step 2 + 3: re-project the durable log for this decision_id. If a terminal
 	// is already logged (the answer landed before/at our arm), return immediately.
@@ -592,7 +596,11 @@ func decisionsDialOp(sockPath, op string, payload map[string]any, verb string) (
 		fmt.Fprintf(os.Stderr, "harmonik decisions %s: dial %s: %v\n", verb, sockPath, dialErr)
 		return nil, 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik decisions %s: close connection: %v\n", verb, closeErr)
+		}
+	}()
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik decisions %s: write request: %v\n", verb, writeErr)
@@ -655,7 +663,9 @@ func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, int)
 	}
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik decisions wait: close connection after write failure: %v\n", closeErr)
+		}
 		fmt.Fprintf(os.Stderr, "harmonik decisions wait: write subscribe request: %v\n", writeErr)
 		return nil, 1
 	}
@@ -663,7 +673,9 @@ func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, int)
 	// Close conn on signal so the blocking scan unblocks and we exit cleanly.
 	go func() {
 		<-ctx.Done()
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik decisions wait: close connection on signal: %v\n", closeErr)
+		}
 	}()
 
 	return conn, 0

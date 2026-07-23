@@ -155,7 +155,11 @@ func evalReadReportRecords(path string) ([]evalReportRecord, error) {
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik eval-report: close %s: %v\n", path, closeErr)
+		}
+	}()
 
 	var records []evalReportRecord
 	scanner := bufio.NewScanner(f)

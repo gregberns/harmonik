@@ -395,12 +395,22 @@ func smokeWatchSignals(
 		}
 		return result, 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: close daemon connection: %v\n", closeErr); writeErr != nil {
+				return
+			}
+		}
+	}()
 
 	// Close the connection when the context expires so the reader goroutine exits.
 	go func() {
 		<-ctx.Done()
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: close daemon connection on signal: %v\n", closeErr); writeErr != nil {
+				return
+			}
+		}
 	}()
 
 	// Send subscribe request for the relevant event types.

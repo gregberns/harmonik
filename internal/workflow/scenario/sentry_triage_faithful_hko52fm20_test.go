@@ -55,7 +55,6 @@ func stfDotPath(t *testing.T) string {
 	t.Helper()
 	repoRoot := filepath.Join("..", "..", "..")
 	dotPath := filepath.Join(repoRoot, "specs", "examples", "sentry-triage-faithful.dot")
-	//nolint:gosec // G304: path is test-internal, constructed from a fixed relative anchor
 	if _, err := os.Stat(dotPath); err != nil {
 		t.Fatalf("stfDotPath: fixture not found: %v", err)
 	}

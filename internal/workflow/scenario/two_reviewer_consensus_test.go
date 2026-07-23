@@ -59,8 +59,8 @@ func trcRun(t *testing.T) *core.Run {
 	}
 }
 
-func trcOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func trcOutcome(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -75,22 +75,22 @@ func trcOutcome(status core.OutcomeStatus, label string) core.Outcome {
 func trcWalkSpine(t *testing.T, graph *dot.Graph, run *core.Run, cycles *core.CycleCounter) {
 	t.Helper()
 
-	dec := workflow.DecideNextNode(graph, "start", trcOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", trcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "implement", trcOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implement", trcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer_a" {
 		t.Fatalf("implement→reviewer_a: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "reviewer_a", trcOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer_a", trcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer_b" {
 		t.Fatalf("reviewer_a→reviewer_b: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "reviewer_b", trcOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer_b", trcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "consolidate" {
 		t.Fatalf("reviewer_b→consolidate: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
@@ -113,13 +113,13 @@ func TestTRC_ApproveOnFirstPass(t *testing.T) {
 	trcWalkSpine(t, graph, run, cycles)
 
 	// consolidate(APPROVE) → close
-	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("consolidate→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", trcOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", trcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -143,36 +143,38 @@ func TestTRC_OneRequestChangesThenApprove(t *testing.T) {
 	trcWalkSpine(t, graph, run, cycles)
 
 	// Increment the cycle counter for the consolidate→implement back-edge.
-	cycles.Increment(run.RunID, "consolidate", "implement", nil)
+	if _, err := cycles.Increment(run.RunID, "consolidate", "implement", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter consolidate\u2192implement: %v", err)
+	}
 
 	// consolidate(REQUEST_CHANGES) → implement
-	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("consolidate→implement (RC): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// Second pass through the spine.
-	dec = workflow.DecideNextNode(graph, "implement", trcOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implement", trcOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer_a" {
 		t.Fatalf("implement→reviewer_a (2nd): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
-	dec = workflow.DecideNextNode(graph, "reviewer_a", trcOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer_a", trcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer_b" {
 		t.Fatalf("reviewer_a→reviewer_b (2nd): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
-	dec = workflow.DecideNextNode(graph, "reviewer_b", trcOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer_b", trcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "consolidate" {
 		t.Fatalf("reviewer_b→consolidate (2nd): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// consolidate(APPROVE) → close
-	dec = workflow.DecideNextNode(graph, "consolidate", trcOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "consolidate", trcOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("consolidate→close (2nd): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", trcOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", trcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -195,14 +197,14 @@ func TestTRC_BlockOnFirst(t *testing.T) {
 	trcWalkSpine(t, graph, run, cycles)
 
 	// consolidate(BLOCK) → close-needs-attention
-	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome(core.OutcomeStatusSuccess, "BLOCK"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("consolidate→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// close-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", trcOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", trcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -227,14 +229,16 @@ func TestTRC_CapHitFallback(t *testing.T) {
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of consolidate→implement
 	// (the cap declared in the DOT is 3).
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "consolidate", "implement", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "consolidate", "implement", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter consolidate\u2192implement: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is suppressed;
 	// the cascade reports a cap-hit failure.
-	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
 	}
@@ -264,7 +268,7 @@ func TestTRC_UnrecognizedLabelFallback(t *testing.T) {
 	trcWalkSpine(t, graph, run, cycles)
 
 	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
-	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome(core.OutcomeStatusSuccess, "UNKNOWN_LABEL"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "consolidate", trcOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
 			dec.Advance, dec.Failed, dec.FailureReason)
@@ -275,7 +279,7 @@ func TestTRC_UnrecognizedLabelFallback(t *testing.T) {
 	}
 
 	// close-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", trcOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", trcOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}

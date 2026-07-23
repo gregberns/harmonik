@@ -20,8 +20,10 @@ package workflow_test
 // Helper prefix: scenarioEM75 (per implementer-protocol.md §Helper-prefix discipline).
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,8 +65,8 @@ func scenarioEM75Run(t *testing.T) *core.Run {
 	}
 }
 
-func scenarioEM75OutcomeWithLabel(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func scenarioEM75OutcomeWithLabel(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -173,25 +175,25 @@ func TestScenarioEM75_ApprovePath(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Step 1: start → implementer (unconditional entry edge).
-	dec := workflow.DecideNextNode(graph, "start", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", scenarioEM75OutcomeWithLabel(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("step start→implementer: Advance=%v NextNodeID=%q, want implementer", dec.Advance, dec.NextNodeID)
 	}
 
 	// Step 2: implementer → reviewer (unconditional hand-off).
-	dec = workflow.DecideNextNode(graph, "implementer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implementer", scenarioEM75OutcomeWithLabel(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("step implementer→reviewer: Advance=%v NextNodeID=%q, want reviewer", dec.Advance, dec.NextNodeID)
 	}
 
 	// Step 3: reviewer → close (APPROVE label).
-	dec = workflow.DecideNextNode(graph, "reviewer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer", scenarioEM75OutcomeWithLabel("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("step reviewer→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// Step 4: close is terminal.
-	dec = workflow.DecideNextNode(graph, "close", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", scenarioEM75OutcomeWithLabel(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("step close terminal: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -291,13 +293,13 @@ func TestScenarioEM75_CascadeFallback_ReviewerUnconditional(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to reviewer.
-	workflow.DecideNextNode(graph, "start", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", scenarioEM75OutcomeWithLabel(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", scenarioEM75OutcomeWithLabel(""), run, cycles)
 
 	// REQUEST_CHANGES outcome at reviewer: the conditional edge to
 	// implementer wins over the unconditional fallback because conditional
 	// edges sort before unconditional edges at the same weight.
-	dec := workflow.DecideNextNode(graph, "reviewer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "reviewer", scenarioEM75OutcomeWithLabel("REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("expected Advance=true, got Failed=%v", dec.Failed)
 	}
@@ -322,24 +324,24 @@ func TestScenarioEM75_BlockPath(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → implementer → reviewer.
-	dec := workflow.DecideNextNode(graph, "start", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", scenarioEM75OutcomeWithLabel(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer failed")
 	}
-	dec = workflow.DecideNextNode(graph, "implementer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implementer", scenarioEM75OutcomeWithLabel(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("implementer→reviewer failed")
 	}
 
 	// reviewer → close-needs-attention (BLOCK).
-	dec = workflow.DecideNextNode(graph, "reviewer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, "BLOCK"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer", scenarioEM75OutcomeWithLabel("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("reviewer→close-needs-attention: Advance=%v NextNodeID=%q, want close-needs-attention",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// close-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", scenarioEM75OutcomeWithLabel(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention terminal: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -361,11 +363,11 @@ func TestScenarioEM75_NoLabel_FallbackToCloseNeedsAttention(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to reviewer.
-	workflow.DecideNextNode(graph, "start", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", scenarioEM75OutcomeWithLabel(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", scenarioEM75OutcomeWithLabel(""), run, cycles)
 
 	// reviewer with no label → unconditional fallback → close-needs-attention.
-	dec := workflow.DecideNextNode(graph, "reviewer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "reviewer", scenarioEM75OutcomeWithLabel(""), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("no-label fallback: Advance=%v Failed=%v", dec.Advance, dec.Failed)
 	}
@@ -396,10 +398,13 @@ func TestScenarioEM75_Validator_InvalidNodeType(t *testing.T) {
 		t.Fatal("expected parse error for invalid node type, got nil")
 	}
 	// The parser should reject "bogus-type" per WG-001.
-	if pe, ok := err.(dot.ParseErrors); ok {
+	var pe dot.ParseErrors
+	var single *dot.ParseError
+	switch {
+	case errors.As(err, &pe):
 		found := false
 		for _, e := range pe {
-			if e != nil && containsSubstring(e.Error(), "WG-001") {
+			if e != nil && strings.Contains(e.Error(), "WG-001") {
 				found = true
 				break
 			}
@@ -407,11 +412,11 @@ func TestScenarioEM75_Validator_InvalidNodeType(t *testing.T) {
 		if !found {
 			t.Errorf("expected WG-001 error in ParseErrors, got: %v", err)
 		}
-	} else if pe, ok := err.(*dot.ParseError); ok {
-		if !containsSubstring(pe.Error(), "WG-001") {
+	case errors.As(err, &single):
+		if !strings.Contains(single.Error(), "WG-001") {
 			t.Errorf("expected WG-001 error, got: %v", err)
 		}
-	} else {
+	default:
 		t.Fatalf("unexpected error type %T: %v", err, err)
 	}
 }
@@ -428,7 +433,7 @@ func TestScenarioEM75_Validator_MissingStartNode(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "no-start.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -436,7 +441,7 @@ func TestScenarioEM75_Validator_MissingStartNode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error for missing start_node")
 	}
-	if !containsSubstring(err.Error(), "WG-027") {
+	if !strings.Contains(err.Error(), "WG-027") {
 		t.Errorf("expected WG-027 in error, got: %v", err)
 	}
 }
@@ -459,7 +464,7 @@ func TestScenarioEM75_Validator_TerminalWithOutgoingEdge(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "terminal-outgoing.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -467,7 +472,7 @@ func TestScenarioEM75_Validator_TerminalWithOutgoingEdge(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error for terminal node with outgoing edges")
 	}
-	if !containsSubstring(err.Error(), "WG-023") {
+	if !strings.Contains(err.Error(), "WG-023") {
 		t.Errorf("expected WG-023 in error, got: %v", err)
 	}
 }
@@ -491,7 +496,7 @@ func TestScenarioEM75_Validator_CycleWithoutTraversalCap(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "unbounded-cycle.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -499,7 +504,7 @@ func TestScenarioEM75_Validator_CycleWithoutTraversalCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error for unbounded cycle")
 	}
-	if !containsSubstring(err.Error(), "WG-028") {
+	if !strings.Contains(err.Error(), "WG-028") {
 		t.Errorf("expected WG-028 in error, got: %v", err)
 	}
 }
@@ -534,19 +539,4 @@ func TestScenarioEM75_ReviewLoopDot_AgenticNodesHaveRequiredAttrs(t *testing.T) 
 			t.Errorf("node %q: idempotency_class is empty", id)
 		}
 	}
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────
-
-func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && findSubstring(s, substr))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

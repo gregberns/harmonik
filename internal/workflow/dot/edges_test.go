@@ -24,14 +24,14 @@ func ptrStr(s string) *string { return &s }
 func ptrFC(fc core.FailureClass) *core.FailureClass { return &fc }
 
 // makeOutcome builds a minimal valid Outcome with Status=SUCCESS and no extras.
-func makeOutcome(status core.OutcomeStatus) core.Outcome {
-	return core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func makeOutcome() core.Outcome {
+	return core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 }
 
 // ── nil condition (unconditional edge) ───────────────────────────────────────
 
 func TestEvalCondition_NilIsAlwaysTrue(t *testing.T) {
-	ok, err := EvalCondition(nil, makeOutcome(core.OutcomeStatusSuccess), nil)
+	ok, err := EvalCondition(nil, makeOutcome(), nil)
 	if err != nil || !ok {
 		t.Fatalf("nil condition: want (true, nil), got (%v, %v)", ok, err)
 	}
@@ -41,7 +41,7 @@ func TestEvalCondition_NilIsAlwaysTrue(t *testing.T) {
 
 func TestEvalCondition_OutcomeStatus_Match(t *testing.T) {
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.status", Op: "==", RHS: "SUCCESS"}}}
-	ok, err := EvalCondition(cond, makeOutcome(core.OutcomeStatusSuccess), nil)
+	ok, err := EvalCondition(cond, makeOutcome(), nil)
 	if err != nil || !ok {
 		t.Fatalf("want (true, nil), got (%v, %v)", ok, err)
 	}
@@ -49,7 +49,7 @@ func TestEvalCondition_OutcomeStatus_Match(t *testing.T) {
 
 func TestEvalCondition_OutcomeStatus_NoMatch(t *testing.T) {
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.status", Op: "==", RHS: "FAIL"}}}
-	ok, err := EvalCondition(cond, makeOutcome(core.OutcomeStatusSuccess), nil)
+	ok, err := EvalCondition(cond, makeOutcome(), nil)
 	if err != nil || ok {
 		t.Fatalf("want (false, nil), got (%v, %v)", ok, err)
 	}
@@ -57,7 +57,7 @@ func TestEvalCondition_OutcomeStatus_NoMatch(t *testing.T) {
 
 func TestEvalCondition_OutcomeStatus_NotEqual(t *testing.T) {
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.status", Op: "!=", RHS: "FAIL"}}}
-	ok, err := EvalCondition(cond, makeOutcome(core.OutcomeStatusSuccess), nil)
+	ok, err := EvalCondition(cond, makeOutcome(), nil)
 	if err != nil || !ok {
 		t.Fatalf("want (true, nil), got (%v, %v)", ok, err)
 	}
@@ -66,7 +66,7 @@ func TestEvalCondition_OutcomeStatus_NotEqual(t *testing.T) {
 // ── outcome.preferred_label ──────────────────────────────────────────────────
 
 func TestEvalCondition_PreferredLabel_Match(t *testing.T) {
-	o := makeOutcome(core.OutcomeStatusSuccess)
+	o := makeOutcome()
 	o.PreferredLabel = ptrStr("APPROVE")
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.preferred_label", Op: "==", RHS: "APPROVE"}}}
 	ok, err := EvalCondition(cond, o, nil)
@@ -76,7 +76,7 @@ func TestEvalCondition_PreferredLabel_Match(t *testing.T) {
 }
 
 func TestEvalCondition_PreferredLabel_Nil_NoMatch(t *testing.T) {
-	o := makeOutcome(core.OutcomeStatusSuccess)
+	o := makeOutcome()
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.preferred_label", Op: "==", RHS: "APPROVE"}}}
 	ok, err := EvalCondition(cond, o, nil)
 	if err != nil || ok {
@@ -96,7 +96,7 @@ func TestEvalCondition_FailureClass_Match(t *testing.T) {
 }
 
 func TestEvalCondition_FailureClass_Nil_NoMatch(t *testing.T) {
-	o := makeOutcome(core.OutcomeStatusSuccess)
+	o := makeOutcome()
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.failure_class", Op: "==", RHS: "transient"}}}
 	ok, err := EvalCondition(cond, o, nil)
 	if err != nil || ok {
@@ -107,7 +107,7 @@ func TestEvalCondition_FailureClass_Nil_NoMatch(t *testing.T) {
 // ── outcome.kind ─────────────────────────────────────────────────────────────
 
 func TestEvalCondition_OutcomeKind_Match(t *testing.T) {
-	o := makeOutcome(core.OutcomeStatusSuccess)
+	o := makeOutcome()
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.kind", Op: "==", RHS: "default"}}}
 	ok, err := EvalCondition(cond, o, nil)
 	if err != nil || !ok {
@@ -120,7 +120,7 @@ func TestEvalCondition_OutcomeKind_Match(t *testing.T) {
 func TestEvalCondition_ContextKey_Match(t *testing.T) {
 	ctx := map[string]string{"pr_url": "https://example.com/1"}
 	cond := &Condition{Clauses: []Equality{{LHS: "context.pr_url", Op: "==", RHS: "https://example.com/1"}}}
-	ok, err := EvalCondition(cond, makeOutcome(core.OutcomeStatusSuccess), ctx)
+	ok, err := EvalCondition(cond, makeOutcome(), ctx)
 	if err != nil || !ok {
 		t.Fatalf("want (true, nil), got (%v, %v)", ok, err)
 	}
@@ -128,7 +128,7 @@ func TestEvalCondition_ContextKey_Match(t *testing.T) {
 
 func TestEvalCondition_ContextKey_Missing_NoMatch(t *testing.T) {
 	cond := &Condition{Clauses: []Equality{{LHS: "context.absent", Op: "==", RHS: "x"}}}
-	ok, err := EvalCondition(cond, makeOutcome(core.OutcomeStatusSuccess), nil)
+	ok, err := EvalCondition(cond, makeOutcome(), nil)
 	if err != nil || ok {
 		t.Fatalf("missing context key: want (false, nil), got (%v, %v)", ok, err)
 	}
@@ -164,7 +164,7 @@ func TestEvalCondition_Conjunction_OneFalse(t *testing.T) {
 
 func TestEvalCondition_OutOfWhitelistLHS_ErrDeterministic(t *testing.T) {
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.notes", Op: "==", RHS: "anything"}}}
-	ok, err := EvalCondition(cond, makeOutcome(core.OutcomeStatusSuccess), nil)
+	ok, err := EvalCondition(cond, makeOutcome(), nil)
 	if !errors.Is(err, ErrDeterministic) {
 		t.Fatalf("out-of-whitelist LHS: want ErrDeterministic, got err=%v ok=%v", err, ok)
 	}
@@ -175,7 +175,7 @@ func TestEvalCondition_OutOfWhitelistLHS_ErrDeterministic(t *testing.T) {
 
 func TestEvalCondition_ContextEmptyKey_ErrDeterministic(t *testing.T) {
 	cond := &Condition{Clauses: []Equality{{LHS: "context.", Op: "==", RHS: "x"}}}
-	_, err := EvalCondition(cond, makeOutcome(core.OutcomeStatusSuccess), nil)
+	_, err := EvalCondition(cond, makeOutcome(), nil)
 	if !errors.Is(err, ErrDeterministic) {
 		t.Fatalf("empty context key: want ErrDeterministic, got %v", err)
 	}
@@ -184,7 +184,7 @@ func TestEvalCondition_ContextEmptyKey_ErrDeterministic(t *testing.T) {
 // ── determinism: equal inputs → equal outputs ────────────────────────────────
 
 func TestEvalCondition_Determinism(t *testing.T) {
-	o := makeOutcome(core.OutcomeStatusSuccess)
+	o := makeOutcome()
 	cond := &Condition{Clauses: []Equality{{LHS: "outcome.status", Op: "==", RHS: "SUCCESS"}}}
 	for i := 0; i < 5; i++ {
 		ok, err := EvalCondition(cond, o, nil)

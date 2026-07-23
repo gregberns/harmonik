@@ -59,8 +59,8 @@ func prfRun(t *testing.T) *core.Run {
 	}
 }
 
-func prfOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func prfOutcome(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -82,31 +82,31 @@ func TestPRF_ApproveOnFirstPass(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → draft_plan
-	dec := workflow.DecideNextNode(graph, "start", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "draft_plan" {
 		t.Fatalf("start→draft_plan: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// draft_plan → plan_review
-	dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan_review" {
 		t.Fatalf("draft_plan→plan_review: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// plan_review(APPROVE) → finalize_plan
-	dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "finalize_plan" {
 		t.Fatalf("plan_review→finalize_plan: Advance=%v NextNodeID=%q, want finalize_plan", dec.Advance, dec.NextNodeID)
 	}
 
 	// finalize_plan → plan-approved
-	dec = workflow.DecideNextNode(graph, "finalize_plan", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "finalize_plan", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan-approved" {
 		t.Fatalf("finalize_plan→plan-approved: Advance=%v NextNodeID=%q, want plan-approved", dec.Advance, dec.NextNodeID)
 	}
 
 	// plan-approved is terminal
-	dec = workflow.DecideNextNode(graph, "plan-approved", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "plan-approved", prfOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("plan-approved: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -128,7 +128,7 @@ func TestPRF_TwoRequestChangesThenApprove(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → draft_plan
-	dec := workflow.DecideNextNode(graph, "start", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "draft_plan" {
 		t.Fatalf("start→draft_plan: %+v", dec)
 	}
@@ -136,16 +136,18 @@ func TestPRF_TwoRequestChangesThenApprove(t *testing.T) {
 	// Loop twice: plan_review(REQUEST_CHANGES) → draft_plan
 	for i := 1; i <= 2; i++ {
 		// draft_plan → plan_review
-		dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+		dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(""), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "plan_review" {
 			t.Fatalf("iteration %d draft_plan→plan_review: %+v", i, dec)
 		}
 
 		// Increment cycle counter for the plan_review→draft_plan back-edge.
-		cycles.Increment(run.RunID, "plan_review", "draft_plan", nil)
+		if _, err := cycles.Increment(run.RunID, "plan_review", "draft_plan", nil); err != nil {
+			t.Fatalf("pre-fill cycle counter plan_review\u2192draft_plan: %v", err)
+		}
 
 		// plan_review(REQUEST_CHANGES) → draft_plan
-		dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+		dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome("REQUEST_CHANGES"), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "draft_plan" {
 			t.Fatalf("iteration %d plan_review→draft_plan: Advance=%v NextNodeID=%q",
 				i, dec.Advance, dec.NextNodeID)
@@ -153,22 +155,22 @@ func TestPRF_TwoRequestChangesThenApprove(t *testing.T) {
 	}
 
 	// Third pass: draft_plan → plan_review → APPROVE → finalize_plan → plan-approved
-	dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan_review" {
 		t.Fatalf("final draft_plan→plan_review: %+v", dec)
 	}
 
-	dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "finalize_plan" {
 		t.Fatalf("final plan_review→finalize_plan: Advance=%v NextNodeID=%q, want finalize_plan", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "finalize_plan", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "finalize_plan", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan-approved" {
 		t.Fatalf("finalize_plan→plan-approved: Advance=%v NextNodeID=%q, want plan-approved", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "plan-approved", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "plan-approved", prfOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("plan-approved: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -189,26 +191,26 @@ func TestPRF_BlockOnFirst(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → draft_plan
-	dec := workflow.DecideNextNode(graph, "start", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "draft_plan" {
 		t.Fatalf("start→draft_plan: %+v", dec)
 	}
 
 	// draft_plan → plan_review
-	dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan_review" {
 		t.Fatalf("draft_plan→plan_review: %+v", dec)
 	}
 
 	// plan_review(BLOCK) → plan-needs-attention
-	dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome(core.OutcomeStatusSuccess, "BLOCK"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan-needs-attention" {
 		t.Fatalf("plan_review→plan-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// plan-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "plan-needs-attention", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "plan-needs-attention", prfOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("plan-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -230,18 +232,20 @@ func TestPRF_CapHitFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → draft_plan → plan_review.
-	workflow.DecideNextNode(graph, "start", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "draft_plan", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", prfOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "draft_plan", prfOutcome(""), run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of plan_review→draft_plan.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "plan_review", "draft_plan", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "plan_review", "draft_plan", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter plan_review\u2192draft_plan: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is
 	// suppressed; the cascade reports a cap-hit failure.
-	dec := workflow.DecideNextNode(graph, "plan_review", prfOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "plan_review", prfOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
 	}
@@ -269,17 +273,17 @@ func TestPRF_UnrecognizedLabelFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → draft_plan → plan_review.
-	dec := workflow.DecideNextNode(graph, "start", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "draft_plan" {
 		t.Fatalf("start→draft_plan: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "draft_plan", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan_review" {
 		t.Fatalf("draft_plan→plan_review: %+v", dec)
 	}
 
 	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
-	dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome(core.OutcomeStatusSuccess, "UNKNOWN_LABEL"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "plan_review", prfOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
 			dec.Advance, dec.Failed, dec.FailureReason)
@@ -290,7 +294,7 @@ func TestPRF_UnrecognizedLabelFallback(t *testing.T) {
 	}
 
 	// plan-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "plan-needs-attention", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "plan-needs-attention", prfOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("plan-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -318,14 +322,14 @@ func TestPRF_FinalizeToTerminalByIdentity(t *testing.T) {
 
 	// Navigate to finalize_plan directly (simulating APPROVE path already taken).
 	// finalize_plan → plan-approved must advance (unconditional edge).
-	dec := workflow.DecideNextNode(graph, "finalize_plan", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "finalize_plan", prfOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "plan-approved" {
 		t.Fatalf("finalize_plan→plan-approved: Advance=%v NextNodeID=%q, want plan-approved",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// plan-approved must be classified as terminal (and therefore SUCCESS).
-	dec = workflow.DecideNextNode(graph, "plan-approved", prfOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "plan-approved", prfOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("plan-approved: IsTerminal=%v, want true (terminal-by-identity, WG-021)", dec.IsTerminal)
 	}

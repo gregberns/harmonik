@@ -79,8 +79,8 @@ func sbRun(t *testing.T) *core.Run {
 	}
 }
 
-func sbOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func sbOutcome(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -141,31 +141,31 @@ func TestSB_HappyPath(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → implement
-	dec := workflow.DecideNextNode(graph, "start", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", sbOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// implement → commit_gate
-	dec = workflow.DecideNextNode(graph, "implement", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implement", sbOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "commit_gate" {
 		t.Fatalf("implement→commit_gate: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// commit_gate(SUCCESS) → review
-	dec = workflow.DecideNextNode(graph, "commit_gate", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "commit_gate", sbOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review" {
 		t.Fatalf("commit_gate(SUCCESS)→review: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// review(APPROVE) → close
-	dec = workflow.DecideNextNode(graph, "review", sbOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "review", sbOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("review(APPROVE)→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", sbOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -181,8 +181,8 @@ func TestSB_GateDeterministicFixLoop(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to commit_gate via the normal path.
-	workflow.DecideNextNode(graph, "start", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implement", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", sbOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implement", sbOutcome(""), run, cycles)
 
 	// commit_gate(FAIL/deterministic) → implement (fix-loop)
 	det := sbOutcomeWithFailureClass(core.OutcomeStatusFail, core.FailureClassDeterministic)
@@ -203,8 +203,8 @@ func TestSB_GateTransientSelfLoop(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to commit_gate.
-	workflow.DecideNextNode(graph, "start", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implement", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", sbOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implement", sbOutcome(""), run, cycles)
 
 	// commit_gate(FAIL/transient) → commit_gate (self-loop)
 	tr := sbOutcomeWithFailureClass(core.OutcomeStatusFail, core.FailureClassTransient)
@@ -225,8 +225,8 @@ func TestSB_GateFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to commit_gate.
-	workflow.DecideNextNode(graph, "start", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implement", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", sbOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implement", sbOutcome(""), run, cycles)
 
 	// An outcome that matches neither SUCCESS nor FAIL+deterministic nor FAIL+transient
 	// falls through to the unconditional fallback. RETRY is a valid OutcomeStatus
@@ -239,7 +239,7 @@ func TestSB_GateFallback(t *testing.T) {
 	}
 
 	// close-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", sbOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -255,12 +255,12 @@ func TestSB_ReviewRequestChanges(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to review via the happy path through commit_gate.
-	workflow.DecideNextNode(graph, "start", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implement", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "commit_gate", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", sbOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implement", sbOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "commit_gate", sbOutcome(""), run, cycles)
 
 	// review(REQUEST_CHANGES) → implement
-	dec := workflow.DecideNextNode(graph, "review", sbOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "review", sbOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("review(REQUEST_CHANGES)→implement: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
@@ -277,19 +277,19 @@ func TestSB_ReviewBlock(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to review.
-	workflow.DecideNextNode(graph, "start", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implement", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "commit_gate", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", sbOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implement", sbOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "commit_gate", sbOutcome(""), run, cycles)
 
 	// review(BLOCK) → close-needs-attention
-	dec := workflow.DecideNextNode(graph, "review", sbOutcome(core.OutcomeStatusSuccess, "BLOCK"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "review", sbOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("review(BLOCK)→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// close-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", sbOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -305,12 +305,12 @@ func TestSB_ReviewFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to review.
-	workflow.DecideNextNode(graph, "start", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implement", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "commit_gate", sbOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", sbOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implement", sbOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "commit_gate", sbOutcome(""), run, cycles)
 
 	// Unrecognized label → unconditional fallback → close-needs-attention.
-	dec := workflow.DecideNextNode(graph, "review", sbOutcome(core.OutcomeStatusSuccess, "UNKNOWN_LABEL"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "review", sbOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("review(fallback)→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)

@@ -45,11 +45,15 @@ func fixtureOutcome(status core.OutcomeStatus) core.Outcome {
 }
 
 // mkCondEdge builds a *dot.Edge whose Condition is parsed from a simple
-// "outcome.STATUS == 'VALUE'" expression.
-func mkCondEdge(from, to, lhs, op, rhs string) *dot.Edge {
+// "outcome.STATUS == 'VALUE'" expression. Every caller routes from node "a",
+// so the source node is fixed rather than passed.
+const mkCondEdgeFromNode = "a"
+
+func mkCondEdge(to, lhs, rhs string) *dot.Edge {
+	const op = "=="
 	raw := lhs + " " + op + " '" + rhs + "'"
 	return &dot.Edge{
-		FromNodeID:   from,
+		FromNodeID:   mkCondEdgeFromNode,
 		ToNodeID:     to,
 		OrderingKey:  to,
 		Condition:    &dot.Condition{Clauses: []dot.Equality{{LHS: lhs, Op: op, RHS: rhs}}},
@@ -63,7 +67,7 @@ func mkUncondEdge(from, to string) *dot.Edge {
 }
 
 // mkGraph builds a minimal *dot.Graph.
-func mkGraph(startNode string, terminalNodes []string, nodeIDs []string, edges []*dot.Edge) *dot.Graph {
+func mkGraph(startNode string, terminalNodes, nodeIDs []string, edges []*dot.Edge) *dot.Graph {
 	g := &dot.Graph{
 		StartNodeID:     startNode,
 		TerminalNodeIDs: terminalNodes,
@@ -108,8 +112,8 @@ func TestDecideNextNode_Terminal(t *testing.T) {
 // TestDecideNextNode_ConditionalMatch_Success verifies the SUCCESS edge is
 // selected when outcome.status == SUCCESS.
 func TestDecideNextNode_ConditionalMatch_Success(t *testing.T) {
-	successEdge := mkCondEdge("a", "b", "outcome.status", "==", "SUCCESS")
-	failEdge := mkCondEdge("a", "c", "outcome.status", "==", "FAIL")
+	successEdge := mkCondEdge("b", "outcome.status", "SUCCESS")
+	failEdge := mkCondEdge("c", "outcome.status", "FAIL")
 	g := mkGraph("a", []string{"b", "c"}, []string{"a", "b", "c"},
 		[]*dot.Edge{successEdge, failEdge})
 	run := fixtureRun(t)
@@ -131,8 +135,8 @@ func TestDecideNextNode_ConditionalMatch_Success(t *testing.T) {
 // TestDecideNextNode_ConditionalMatch_Fail verifies the FAIL edge is selected
 // when outcome.status == FAIL.
 func TestDecideNextNode_ConditionalMatch_Fail(t *testing.T) {
-	successEdge := mkCondEdge("a", "b", "outcome.status", "==", "SUCCESS")
-	failEdge := mkCondEdge("a", "c", "outcome.status", "==", "FAIL")
+	successEdge := mkCondEdge("b", "outcome.status", "SUCCESS")
+	failEdge := mkCondEdge("c", "outcome.status", "FAIL")
 	g := mkGraph("a", []string{"b", "c"}, []string{"a", "b", "c"},
 		[]*dot.Edge{successEdge, failEdge})
 	run := fixtureRun(t)
@@ -182,7 +186,7 @@ func TestDecideNextNode_PreferredLabel(t *testing.T) {
 // TestDecideNextNode_UnconditionalFallback verifies that when no conditional
 // edge matches the unconditional edge is taken (WG-011 invariant).
 func TestDecideNextNode_UnconditionalFallback(t *testing.T) {
-	condEdge := mkCondEdge("a", "specific", "outcome.status", "==", "FAIL")
+	condEdge := mkCondEdge("specific", "outcome.status", "FAIL")
 	uncondEdge := mkUncondEdge("a", "default")
 	g := mkGraph("a", []string{"specific", "default"}, []string{"a", "specific", "default"},
 		[]*dot.Edge{condEdge, uncondEdge})
@@ -205,7 +209,7 @@ func TestDecideNextNode_UnconditionalFallback(t *testing.T) {
 // TestDecideNextNode_NoMatch_Structural verifies that when no edge matches the
 // cascade returns Failed=true with FailureClass=structural.
 func TestDecideNextNode_NoMatch_Structural(t *testing.T) {
-	failEdge := mkCondEdge("a", "b", "outcome.status", "==", "FAIL")
+	failEdge := mkCondEdge("b", "outcome.status", "FAIL")
 	g := mkGraph("a", []string{"b"}, []string{"a", "b"}, []*dot.Edge{failEdge})
 	run := fixtureRun(t)
 	// SUCCESS outcome: FAIL condition won't match; no unconditional fallback.
@@ -375,7 +379,7 @@ func TestNodeDispatchDecidedPayload_Valid(t *testing.T) {
 // TestDecideNextNode_ContextUpdate verifies that context updates in the outcome
 // are applied before the cascade evaluates edge conditions.
 func TestDecideNextNode_ContextUpdate(t *testing.T) {
-	condEdge := mkCondEdge("a", "b", "context.phase", "==", "done")
+	condEdge := mkCondEdge("b", "context.phase", "done")
 	g := mkGraph("a", []string{"b"}, []string{"a", "b"}, []*dot.Edge{condEdge})
 	run := fixtureRun(t)
 	outcome := core.Outcome{

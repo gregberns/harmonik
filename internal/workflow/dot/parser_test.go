@@ -18,6 +18,7 @@ package dot
 // Tags: mechanism
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -562,8 +563,8 @@ func TestDotFixtureMultipleStrictErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected multiple errors, got nil")
 	}
-	pe, ok := err.(ParseErrors)
-	if !ok {
+	var pe ParseErrors
+	if !errors.As(err, &pe) {
 		t.Fatalf("expected ParseErrors, got %T: %v", err, err)
 	}
 	if len(pe) < 3 {
@@ -578,7 +579,6 @@ func TestDotFixtureMultipleStrictErrors(t *testing.T) {
 // This satisfies the acceptance criterion "round-trips specs/examples/review-loop.dot
 // (if missing, use a test fixture)" from bead hk-nvzur.
 func TestDotFixtureReviewLoopFile(t *testing.T) {
-	//nolint:gosec // G304: path is a test-local constant, not user-supplied.
 	src, err := os.ReadFile("testdata/review-loop.dot")
 	if err != nil {
 		t.Fatalf("read testdata/review-loop.dot: %v", err)
@@ -634,7 +634,6 @@ func TestDotFixtureReviewLoopFile(t *testing.T) {
 // ── specs/examples/review-loop.dot round-trip ────────────────────────────────
 
 func TestDotFixtureSpecsExamplesReviewLoop(t *testing.T) {
-	//nolint:gosec // G304: path is a test-local constant, not user-supplied.
 	src, err := os.ReadFile("../../../specs/examples/review-loop.dot")
 	if err != nil {
 		t.Skipf("specs/examples/review-loop.dot not found (C5 not yet landed): %v", err)
@@ -693,7 +692,7 @@ func TestDotFixtureWG044GoalOnNodeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected strict error for goal on node, got nil")
 	}
-	if !containsString(err.Error(), "goal") {
+	if !strings.Contains(err.Error(), "goal") {
 		t.Errorf("error %q does not mention 'goal'", err.Error())
 	}
 }
@@ -714,22 +713,9 @@ func TestDotFixtureWG044GoalOnEdgeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected strict error for goal on edge, got nil")
 	}
-	if !containsString(err.Error(), "goal") {
+	if !strings.Contains(err.Error(), "goal") {
 		t.Errorf("error %q does not mention 'goal'", err.Error())
 	}
-}
-
-// containsString is a local helper (avoid importing strings in package dot test).
-func containsString(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
-		func() bool {
-			for i := 0; i <= len(s)-len(sub); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
-			return false
-		}())
 }
 
 func TestDotFixtureConditionRawRetained(t *testing.T) {

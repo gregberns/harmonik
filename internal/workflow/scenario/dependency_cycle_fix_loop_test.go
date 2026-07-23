@@ -58,8 +58,8 @@ func dcflRun(t *testing.T) *core.Run {
 	}
 }
 
-func dcflOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func dcflOutcome(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -87,19 +87,19 @@ func TestDCFL_AcyclicOnFirstCheck(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → cycle_check
-	dec := workflow.DecideNextNode(graph, "start", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", dcflOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "cycle_check" {
 		t.Fatalf("start→cycle_check: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// cycle_check(ACYCLIC) → close
-	dec = workflow.DecideNextNode(graph, "cycle_check", dcflOutcome(core.OutcomeStatusSuccess, "ACYCLIC"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "cycle_check", dcflOutcome("ACYCLIC"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("cycle_check→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", dcflOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -120,34 +120,36 @@ func TestDCFL_CycleOnceThenAcyclic(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → cycle_check
-	dec := workflow.DecideNextNode(graph, "start", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", dcflOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "cycle_check" {
 		t.Fatalf("start→cycle_check: %+v", dec)
 	}
 
 	// cycle_check(CYCLE) → fix_cycle
-	dec = workflow.DecideNextNode(graph, "cycle_check", dcflOutcome(core.OutcomeStatusSuccess, "CYCLE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "cycle_check", dcflOutcome("CYCLE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "fix_cycle" {
 		t.Fatalf("cycle_check→fix_cycle: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// Increment cycle counter for the fix_cycle→cycle_check back-edge.
-	cycles.Increment(run.RunID, "fix_cycle", "cycle_check", nil)
+	if _, err := cycles.Increment(run.RunID, "fix_cycle", "cycle_check", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter fix_cycle\u2192cycle_check: %v", err)
+	}
 
 	// fix_cycle → cycle_check (unconditional, traversal_cap=3)
-	dec = workflow.DecideNextNode(graph, "fix_cycle", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "fix_cycle", dcflOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "cycle_check" {
 		t.Fatalf("fix_cycle→cycle_check: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// cycle_check(ACYCLIC) → close
-	dec = workflow.DecideNextNode(graph, "cycle_check", dcflOutcome(core.OutcomeStatusSuccess, "ACYCLIC"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "cycle_check", dcflOutcome("ACYCLIC"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("cycle_check→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", dcflOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -168,7 +170,7 @@ func TestDCFL_StructuralFailure(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → cycle_check
-	dec := workflow.DecideNextNode(graph, "start", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", dcflOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "cycle_check" {
 		t.Fatalf("start→cycle_check: %+v", dec)
 	}
@@ -181,7 +183,7 @@ func TestDCFL_StructuralFailure(t *testing.T) {
 	}
 
 	// close-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", dcflOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -203,18 +205,20 @@ func TestDCFL_CapHitFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → cycle_check → fix_cycle.
-	workflow.DecideNextNode(graph, "start", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "cycle_check", dcflOutcome(core.OutcomeStatusSuccess, "CYCLE"), run, cycles)
+	workflow.DecideNextNode(graph, "start", dcflOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "cycle_check", dcflOutcome("CYCLE"), run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of fix_cycle→cycle_check.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "fix_cycle", "cycle_check", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "fix_cycle", "cycle_check", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter fix_cycle\u2192cycle_check: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the back-edge is suppressed; the cascade
 	// reports a cap-hit failure.
-	dec := workflow.DecideNextNode(graph, "fix_cycle", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "fix_cycle", dcflOutcome(""), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
 	}
@@ -242,13 +246,13 @@ func TestDCFL_UnrecognizedLabelFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → cycle_check
-	dec := workflow.DecideNextNode(graph, "start", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", dcflOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "cycle_check" {
 		t.Fatalf("start→cycle_check: %+v", dec)
 	}
 
 	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
-	dec = workflow.DecideNextNode(graph, "cycle_check", dcflOutcome(core.OutcomeStatusSuccess, "UNKNOWN_LABEL"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "cycle_check", dcflOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
 			dec.Advance, dec.Failed, dec.FailureReason)
@@ -259,7 +263,7 @@ func TestDCFL_UnrecognizedLabelFallback(t *testing.T) {
 	}
 
 	// close-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", dcflOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", dcflOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}

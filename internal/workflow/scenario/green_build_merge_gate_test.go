@@ -67,12 +67,8 @@ func gbmgRun(t *testing.T) *core.Run {
 	}
 }
 
-func gbmgOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
-	if label != "" {
-		o.PreferredLabel = &label
-	}
-	return o
+func gbmgOutcome(status core.OutcomeStatus) core.Outcome {
+	return core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
 }
 
 // gbmgOutcomeFC builds a FAIL outcome carrying failure_class.
@@ -105,25 +101,25 @@ func TestGBMG_HappyPath(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → make_change
-	dec := workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "make_change" {
 		t.Fatalf("start→make_change: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// make_change(SUCCESS) → green_build
-	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "green_build" {
 		t.Fatalf("make_change→green_build: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// green_build(SUCCESS) → close
-	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("green_build(SUCCESS)→close: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -142,21 +138,23 @@ func TestGBMG_DeterministicFixLoop(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → make_change
-	dec := workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "make_change" {
 		t.Fatalf("start→make_change: %+v", dec)
 	}
 
 	// make_change(SUCCESS) → green_build
-	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "green_build" {
 		t.Fatalf("make_change→green_build: %+v", dec)
 	}
 
 	// green_build(FAIL+deterministic): build fails → back to make_change.
 	// Increment cycle counter to model this traversal of the back-edge.
-	cap := 3
-	cycles.Increment(run.RunID, "green_build", "make_change", &cap)
+	traversalCap := 3
+	if _, err := cycles.Increment(run.RunID, "green_build", "make_change", &traversalCap); err != nil {
+		t.Fatalf("pre-fill cycle counter green_build\u2192make_change: %v", err)
+	}
 
 	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcomeFC(core.FailureClassDeterministic), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "make_change" {
@@ -165,19 +163,19 @@ func TestGBMG_DeterministicFixLoop(t *testing.T) {
 	}
 
 	// Second make_change attempt → green_build
-	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "green_build" {
 		t.Fatalf("make_change (2nd)→green_build: %+v", dec)
 	}
 
 	// green_build(SUCCESS) → close
-	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("green_build(SUCCESS)→close: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -194,13 +192,15 @@ func TestGBMG_DeterministicCapHit(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to green_build via start → make_change.
-	workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
+	workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 
 	// Pre-fill the cycle counter: 3 traversals of green_build→make_change at cap=3.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "green_build", "make_change", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "green_build", "make_change", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter green_build\u2192make_change: %v", err)
+		}
 	}
 
 	// With the cap exhausted, FAIL+deterministic can no longer take the back-edge.
@@ -227,21 +227,23 @@ func TestGBMG_TransientSelfRetry(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → make_change
-	dec := workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "make_change" {
 		t.Fatalf("start→make_change: %+v", dec)
 	}
 
 	// make_change(SUCCESS) → green_build
-	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "green_build" {
 		t.Fatalf("make_change→green_build: %+v", dec)
 	}
 
 	// green_build(FAIL+transient): infra glitch → self-loop back to green_build.
 	// Increment cycle counter to model this self-loop traversal.
-	cap := 2
-	cycles.Increment(run.RunID, "green_build", "green_build", &cap)
+	traversalCap := 2
+	if _, err := cycles.Increment(run.RunID, "green_build", "green_build", &traversalCap); err != nil {
+		t.Fatalf("pre-fill cycle counter green_build\u2192green_build: %v", err)
+	}
 
 	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcomeFC(core.FailureClassTransient), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "green_build" {
@@ -250,13 +252,13 @@ func TestGBMG_TransientSelfRetry(t *testing.T) {
 	}
 
 	// green_build(SUCCESS) → close  (second attempt succeeds)
-	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("green_build(SUCCESS)→close: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -273,13 +275,15 @@ func TestGBMG_TransientCapHit(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to green_build via start → make_change.
-	workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
+	workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 
 	// Pre-fill the cycle counter: 2 traversals of the green_build self-loop at cap=2.
-	cap := 2
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "green_build", "green_build", &cap)
+	traversalCap := 2
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "green_build", "green_build", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter green_build\u2192green_build: %v", err)
+		}
 	}
 
 	// With the cap exhausted, FAIL+transient can no longer take the self-loop edge.
@@ -307,27 +311,27 @@ func TestGBMG_StructuralFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → make_change
-	dec := workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "make_change" {
 		t.Fatalf("start→make_change: %+v", dec)
 	}
 
 	// make_change(SUCCESS) → green_build
-	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "make_change", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "green_build" {
 		t.Fatalf("make_change→green_build: %+v", dec)
 	}
 
 	// green_build(RETRY): does not match any conditional edge.
 	// The unconditional fallback fires → close-needs-attention.
-	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcome(core.OutcomeStatusRetry, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "green_build", gbmgOutcome(core.OutcomeStatusRetry), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("green_build(RETRY) fallback→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// close-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", gbmgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", gbmgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}

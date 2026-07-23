@@ -34,11 +34,17 @@ import (
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
-// subwfFixturePin builds a valid SubWorkflowExpansionPin.
-func subwfFixturePin(ref string, ver string) core.SubWorkflowExpansionPin {
+// subwfFixturePin builds a valid SubWorkflowExpansionPin. Every caller pins the
+// same sub-workflow at the same version, so both are fixed rather than passed.
+const (
+	subwfFixtureRef     = "sub-wf"
+	subwfFixtureVersion = "1.0"
+)
+
+func subwfFixturePin() core.SubWorkflowExpansionPin {
 	return core.SubWorkflowExpansionPin{
-		SubWorkflowRef:     core.SubWorkflowRef(ref),
-		SubWorkflowVersion: core.WorkflowVersion(ver),
+		SubWorkflowRef:     core.SubWorkflowRef(subwfFixtureRef),
+		SubWorkflowVersion: core.WorkflowVersion(subwfFixtureVersion),
 		ResolvedWorkflowID: core.WorkflowID(uuid.MustParse("01960000-0000-7000-8000-000000001001")),
 	}
 }
@@ -115,7 +121,7 @@ func TestExpandSubWorkflowGraph_NodeIDsNamespaced(t *testing.T) {
 	t.Parallel()
 
 	parentID := core.NodeID("review")
-	pin := subwfFixturePin("sub-wf", "1.0")
+	pin := subwfFixturePin()
 	subGraph := subwfFixtureSubGraph()
 
 	exp, err := ExpandSubWorkflowGraph(parentID, pin, subGraph)
@@ -145,7 +151,7 @@ func TestExpandSubWorkflowGraph_EdgesNamespaced(t *testing.T) {
 	t.Parallel()
 
 	parentID := core.NodeID("review")
-	pin := subwfFixturePin("sub-wf", "1.0")
+	pin := subwfFixturePin()
 	subGraph := subwfFixtureSubGraph()
 
 	exp, err := ExpandSubWorkflowGraph(parentID, pin, subGraph)
@@ -169,7 +175,7 @@ func TestExpandSubWorkflowGraph_EdgesNamespaced(t *testing.T) {
 func TestExpandSubWorkflowGraph_ExpansionValid(t *testing.T) {
 	t.Parallel()
 
-	exp, err := ExpandSubWorkflowGraph("review", subwfFixturePin("sub-wf", "1.0"), subwfFixtureSubGraph())
+	exp, err := ExpandSubWorkflowGraph("review", subwfFixturePin(), subwfFixtureSubGraph())
 	if err != nil {
 		t.Fatalf("ExpandSubWorkflowGraph returned error: %v", err)
 	}
@@ -182,7 +188,7 @@ func TestExpandSubWorkflowGraph_ExpansionValid(t *testing.T) {
 func TestExpandSubWorkflowGraph_NilSubGraph(t *testing.T) {
 	t.Parallel()
 
-	_, err := ExpandSubWorkflowGraph("review", subwfFixturePin("sub-wf", "1.0"), nil)
+	_, err := ExpandSubWorkflowGraph("review", subwfFixturePin(), nil)
 	if err == nil {
 		t.Error("want error on nil subGraph, got nil")
 	}
@@ -261,7 +267,7 @@ func TestDispatchSubWorkflow_EmitsEnteredAndExited(t *testing.T) {
 	t.Parallel()
 
 	run := subwfFixtureRun(t)
-	pin := subwfFixturePin("sub-wf", "1.0")
+	pin := subwfFixturePin()
 	subGraph := subwfFixtureSubGraph()
 	exp, err := ExpandSubWorkflowGraph("review", pin, subGraph)
 	if err != nil {
@@ -299,7 +305,7 @@ func TestDispatchSubWorkflow_TerminalOutcomeEscapes(t *testing.T) {
 	t.Parallel()
 
 	run := subwfFixtureRun(t)
-	pin := subwfFixturePin("sub-wf", "1.0")
+	pin := subwfFixturePin()
 	subGraph := subwfFixtureSubGraph()
 	exp, err := ExpandSubWorkflowGraph("review", pin, subGraph)
 	if err != nil {
@@ -341,7 +347,7 @@ func TestDispatchSubWorkflow_NodeRunnerErrorPropagates(t *testing.T) {
 	t.Parallel()
 
 	run := subwfFixtureRun(t)
-	pin := subwfFixturePin("sub-wf", "1.0")
+	pin := subwfFixturePin()
 	subGraph := subwfFixtureSubGraph()
 	exp, err := ExpandSubWorkflowGraph("review", pin, subGraph)
 	if err != nil {
@@ -372,7 +378,7 @@ func TestDispatchSubWorkflow_ExitedPayloadCarriesTerminalStatus(t *testing.T) {
 	t.Parallel()
 
 	run := subwfFixtureRun(t)
-	pin := subwfFixturePin("sub-wf", "1.0")
+	pin := subwfFixturePin()
 	subGraph := subwfFixtureSubGraph()
 	exp, err := ExpandSubWorkflowGraph("review", pin, subGraph)
 	if err != nil {

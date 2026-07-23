@@ -116,7 +116,6 @@ func TestDotFixtureHarnessInvalidValueStrictError(t *testing.T) {
 		{"reviewer_harness empty invalid", `reviewer_harness=""`},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			src := `digraph bad {
   schema_version="1";

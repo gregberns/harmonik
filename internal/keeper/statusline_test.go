@@ -47,7 +47,8 @@ func TestKeeperStatuslineScript(t *testing.T) {
 	// Legacy payload: only used_percentage, no total_input_tokens or context_window_size.
 	sampleJSON := `{"session_id":"test-session-42","context_window":{"used_percentage":65.3}}`
 
-	cmd := exec.Command("bash", script)
+	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
+	cmd := exec.CommandContext(t.Context(), "bash", script)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+projectDir,
 		"HARMONIK_AGENT=test-agent",
@@ -60,6 +61,7 @@ func TestKeeperStatuslineScript(t *testing.T) {
 	}
 
 	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "test-agent.ctx")
+	//nolint:gosec // G304: ctxPath is derived from this test's t.TempDir fixture
 	raw, err := os.ReadFile(ctxPath)
 	if err != nil {
 		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
@@ -104,7 +106,8 @@ func TestKeeperStatuslineScript_WithTokenCounts(t *testing.T) {
 	// Full payload including absolute token counts (modern Claude Code format).
 	sampleJSON := `{"session_id":"tok-session-1","context_window":{"used_percentage":28.0,"total_input_tokens":280000},"context_window_size":1000000}`
 
-	cmd := exec.Command("bash", script)
+	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
+	cmd := exec.CommandContext(t.Context(), "bash", script)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+projectDir,
 		"HARMONIK_AGENT=tok-agent",
@@ -117,6 +120,7 @@ func TestKeeperStatuslineScript_WithTokenCounts(t *testing.T) {
 	}
 
 	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "tok-agent.ctx")
+	//nolint:gosec // G304: ctxPath is derived from this test's t.TempDir fixture
 	raw, err := os.ReadFile(ctxPath)
 	if err != nil {
 		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
@@ -159,7 +163,8 @@ func TestKeeperStatuslineScript_1MModelInference(t *testing.T) {
 	// [1m] model payload: context_window_size is absent (Claude Code omits it for Opus-4.8 [1m]).
 	sampleJSON := `{"session_id":"opus-1m-session","model":"claude-opus-4-8 [1m]","context_window":{"used_percentage":15.0,"total_input_tokens":150000}}`
 
-	cmd := exec.Command("bash", script)
+	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
+	cmd := exec.CommandContext(t.Context(), "bash", script)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+projectDir,
 		"HARMONIK_AGENT=opus-agent",
@@ -172,6 +177,7 @@ func TestKeeperStatuslineScript_1MModelInference(t *testing.T) {
 	}
 
 	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "opus-agent.ctx")
+	//nolint:gosec // G304: ctxPath is derived from this test's t.TempDir fixture
 	raw, err := os.ReadFile(ctxPath)
 	if err != nil {
 		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
@@ -211,7 +217,8 @@ func TestKeeperStatuslineScript_EnvWindowSizeOverride(t *testing.T) {
 	// Payload with no context_window_size and no recognizable model.
 	sampleJSON := `{"session_id":"env-override-session","context_window":{"used_percentage":20.0,"total_input_tokens":200000}}`
 
-	cmd := exec.Command("bash", script)
+	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
+	cmd := exec.CommandContext(t.Context(), "bash", script)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+projectDir,
 		"HARMONIK_AGENT=env-agent",
@@ -225,6 +232,7 @@ func TestKeeperStatuslineScript_EnvWindowSizeOverride(t *testing.T) {
 	}
 
 	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "env-agent.ctx")
+	//nolint:gosec // G304: ctxPath is derived from this test's t.TempDir fixture
 	raw, err := os.ReadFile(ctxPath)
 	if err != nil {
 		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
@@ -258,7 +266,8 @@ func TestKeeperStatuslineScript_1MModelObjectFormInference(t *testing.T) {
 	// context_window_size is absent (Claude Code omits it for [1m] models in this format).
 	sampleJSON := `{"session_id":"opus-obj-session","model":{"id":"claude-opus-4-8[1m]","display_name":"Opus"},"context_window":{"used_percentage":12.0,"total_input_tokens":120000}}`
 
-	cmd := exec.Command("bash", script)
+	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
+	cmd := exec.CommandContext(t.Context(), "bash", script)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+projectDir,
 		"HARMONIK_AGENT=obj-agent",
@@ -271,6 +280,7 @@ func TestKeeperStatuslineScript_1MModelObjectFormInference(t *testing.T) {
 	}
 
 	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "obj-agent.ctx")
+	//nolint:gosec // G304: ctxPath is derived from this test's t.TempDir fixture
 	raw, err := os.ReadFile(ctxPath)
 	if err != nil {
 		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
@@ -312,7 +322,8 @@ func TestKeeperStatuslineScript_NestedContextWindowSize(t *testing.T) {
 	// not at the top level. No top-level .context_window_size field is present.
 	sampleJSON := `{"session_id":"nested-ws-session","context_window":{"used_percentage":25.0,"total_input_tokens":250000,"context_window_size":1000000}}`
 
-	cmd := exec.Command("bash", script)
+	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
+	cmd := exec.CommandContext(t.Context(), "bash", script)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+projectDir,
 		"HARMONIK_AGENT=nested-agent",
@@ -325,6 +336,7 @@ func TestKeeperStatuslineScript_NestedContextWindowSize(t *testing.T) {
 	}
 
 	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "nested-agent.ctx")
+	//nolint:gosec // G304: ctxPath is derived from this test's t.TempDir fixture
 	raw, err := os.ReadFile(ctxPath)
 	if err != nil {
 		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
@@ -363,7 +375,8 @@ func TestKeeperStatuslineScript_1M_EffectivePct(t *testing.T) {
 	// After the fix: pct = 372000/500000*100 = 74.4, window_size = 500000.
 	sampleJSON := `{"session_id":"1m-effective-pct","model":"claude-opus-4-8 [1m]","context_window":{"used_percentage":37.2,"total_input_tokens":372000}}`
 
-	cmd := exec.Command("bash", script)
+	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
+	cmd := exec.CommandContext(t.Context(), "bash", script)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+projectDir,
 		"HARMONIK_AGENT=effective-pct-agent",
@@ -376,6 +389,7 @@ func TestKeeperStatuslineScript_1M_EffectivePct(t *testing.T) {
 	}
 
 	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "effective-pct-agent.ctx")
+	//nolint:gosec // G304: ctxPath is derived from this test's t.TempDir fixture
 	raw, err := os.ReadFile(ctxPath)
 	if err != nil {
 		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
@@ -417,7 +431,8 @@ func TestKeeperStatuslineScript_1M_FractionOverride(t *testing.T) {
 	// 600k tokens; with fraction=0.6 → effective window = floor(1M*0.6) = 600000.
 	sampleJSON := `{"session_id":"fraction-override","model":"claude-opus-4-8 [1m]","context_window":{"used_percentage":60.0,"total_input_tokens":600000}}`
 
-	cmd := exec.Command("bash", script)
+	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
+	cmd := exec.CommandContext(t.Context(), "bash", script)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+projectDir,
 		"HARMONIK_AGENT=fraction-agent",
@@ -431,6 +446,7 @@ func TestKeeperStatuslineScript_1M_FractionOverride(t *testing.T) {
 	}
 
 	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "fraction-agent.ctx")
+	//nolint:gosec // G304: ctxPath is derived from this test's t.TempDir fixture
 	raw, err := os.ReadFile(ctxPath)
 	if err != nil {
 		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
@@ -467,7 +483,8 @@ func TestKeeperStatuslineScript_SkipsOnMissingPct(t *testing.T) {
 	// JSON with no context_window field (e.g. right after /clear).
 	sampleJSON := `{"session_id":"after-clear"}`
 
-	cmd := exec.Command("bash", script)
+	//nolint:gosec // G204: test invokes the repository statusline script with a controlled bash path and arguments
+	cmd := exec.CommandContext(t.Context(), "bash", script)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+projectDir,
 		"HARMONIK_AGENT=test-agent",

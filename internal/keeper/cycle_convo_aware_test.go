@@ -53,6 +53,7 @@ func writeTranscriptLine(t *testing.T, transcriptDir, sessionID, role, ts string
 	}
 	line := fmt.Sprintf(`{"type":%q,"timestamp":%q,"message":{"content":%s}}`,
 		role, ts, content)
+	//nolint:gosec // G304: path is constructed under this test's t.TempDir fixture.
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open transcript: %v", err)

@@ -19,6 +19,7 @@ import (
 func readCtxFor(t *testing.T, projectDir, agent string) (keeper.CtxFile, time.Time) {
 	t.Helper()
 	path := filepath.Join(projectDir, ".harmonik", "keeper", agent+".ctx")
+	//nolint:gosec // G304: path is constructed under this test's t.TempDir fixture.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read ctx: %v", err)

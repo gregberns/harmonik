@@ -163,7 +163,9 @@ func TestPrintSummary(t *testing.T) {
 	result.Window.Since = "2026-06-21T00:00:00Z"
 	result.Window.Until = "2026-06-22T00:00:00Z"
 	var sb strings.Builder
-	PrintSummary(result, &sb)
+	if err := PrintSummary(result, &sb); err != nil {
+		t.Fatalf("PrintSummary: %v", err)
+	}
 	if !strings.Contains(sb.String(), "HARMONIK TOKEN USAGE ANALYSIS") {
 		t.Errorf("PrintSummary output missing header: %q", sb.String())
 	}

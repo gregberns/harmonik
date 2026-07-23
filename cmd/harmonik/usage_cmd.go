@@ -168,7 +168,12 @@ func runUsageSubcommand(args []string) int {
 			return 1
 		}
 	default:
-		usage.PrintSummary(result, os.Stdout)
+		if printErr := usage.PrintSummary(result, os.Stdout); printErr != nil {
+			if _, writeErr := fmt.Fprintf(os.Stderr, "harmonik usage: print summary: %v\n", printErr); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
 	}
 
 	return 0

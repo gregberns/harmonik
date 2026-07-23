@@ -620,8 +620,14 @@ func fmtTokens(n int64) string {
 }
 
 // PrintSummary writes a one-screen human-readable summary to w.
-func PrintSummary(r *AnalysisResult, w io.Writer) {
-	p := func(format string, args ...any) { fmt.Fprintf(w, format+"\n", args...) }
+func PrintSummary(r *AnalysisResult, w io.Writer) error {
+	var writeErr error
+	p := func(format string, args ...any) {
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(w, format+"\n", args...)
+	}
 	gu := r.GlobalUsage
 
 	p("======================================================================")
@@ -759,6 +765,7 @@ func PrintSummary(r *AnalysisResult, w io.Writer) {
 	}
 
 	p("======================================================================")
+	return writeErr
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-22 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + **RT14** landed.
+**Last updated:** 2026-07-22 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + **RT15** landed.
 The concurrent quality lane's working tree is fully drained to disk (§8).
 
 > ## ⚠️ We nearly collided at 08:00 — read this
@@ -45,7 +45,7 @@ plans, then began landing them one commit at a time.
 | **3. Execute (P2 core)** | 9 slices, sequential | **DONE — 9/9, every verify `is_pure_move: true`** |
 | **4. Punch list** | verifier findings applied | **DONE** — `ffc5415a` |
 | **5. Differential verification** | clean before/after pair, identical scope | **DONE — no regression** (see below) |
-| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, **RT14** landed; RT16 + RT15/17/18/19/19c/lift planned | **IN PROGRESS** |
+| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, **RT15** landed; RT16/17/18/19/19c/lift planned | **IN PROGRESS** |
 | **7. E4d re-plan** | overturned "impossible"; 3 prep slices ready, E4d-3 parked | **DONE** |
 
 ### Verification verdict (Phase 5)
@@ -524,6 +524,81 @@ disappears with `waitAgentReady`. It was an artifact of that function's wall-clo
 channels; the machine resolves the same edge deterministically on one goroutine. Stage 1 still drives
 the REAL emitter. The alternative — a segment-level fixture — was named and NOT built; what was
 rejected outright is keeping dead production code alive to serve one test.
+
+### RT15 — `RunEnv` / `SharedHandles` threaded into `beadRunOne` (COMPLETE)
+
+Seven commits, one per chunk, each ending green. **This slice moves nothing out of `internal/daemon`;
+it makes RT18 possible.** Reading its `+124` LOC as the outcome misreads the slice — the added lines
+are two constructors, an alias preamble and their godoc.
+
+| Metric | Before | After |
+|---|---:|---:|
+| `beadRunOne` parameters | 16 | **6** |
+| `deps.` reads inside `beadRunOne` | 185 | **126** |
+| `RunEnv` / `SharedHandles` references in production | 0 (declared, dead) | **live, constructed per run** |
+| `export_test.go` diff across the whole slice | — | **zero** (exit gate) |
+| top-level non-test files | 102 | 102 |
+| top-level non-test LOC | 48,591 | 48,715 |
+
+| # | Commit | What changed |
+|---|---|---|
+| C1 | `f33af3a5` | `(*workLoopDeps).runEnv` in `runports.go` (all 19 fields) + `env :=` in `beadRunOne` + 2 readers |
+| C2 | `7f32b420` | `targetBranch` ×3, `protectBranches` ×2 |
+| C3 | `d04c0438` | `projectDir` ×20 (+4 comments) |
+| C4 | `4a70d2be` | `defaultHarness` ×2, `projectCfg` ×3 |
+| C5 | `e3d014a5` | **the signature**: 11 params → `env RunEnv` + alias preamble; production call site + 6 test call sites |
+| C6 | `7794ab53` | `(*workLoopDeps).sharedHandles` (all 5 fields) + `localInFlight` ×4, `agentSpawnSem` ×3, `budgetPort` ×1 |
+| C7 | `3ea214fb` | `runRegistry` ×6, `workerRegistry` ×8 |
+
+**Why `export_test.go` never moved.** The 157 files referencing `ExportedWorkLoopDeps` /
+`WorkLoopDepsParams` drive `ExportedRunWorkLoop(ctx, deps)`, never `beadRunOne`. Because `env` is a
+DERIVED LOCAL rather than a replacement for `deps`, and no `workLoopDeps` field is deleted, the shim
+needs no compatibility `RunEnv` and those files needed zero edits. The real blast radius was 7 call
+sites, not 156 files.
+
+**The trap held.** `itemWorkflowRef` is the only one of the eleven values `beadRunOne` reassigns —
+`resolveWorkflowRef` applies the EM-012a tier-0/tier-1 resolution ~110 lines into the body and two
+later dot-path readers depend on the resolved value. C5's preamble keeps it a LOCAL; reading
+`env.ItemWorkflowRef` at either reader would have silently dropped the resolution with a green build.
+Gate `grep -c 'env\.ItemWorkflowRef' internal/daemon/workloop.go` = 0 through C4 and 1 after C5, as
+specified.
+
+**Three recipe corrections — the same recurring classes, fifth consecutive slice:**
+
+1. **Every line number stale again.** Every symbol was re-located by `grep -n`. The recipe's *counts*
+   were right for C2/C4/C6/C7 but wrong for C3 (`projectDir` is 24 hits: 20 code + 4 comments, not
+   20), and it never mentioned the six prose comments across C2/C3 that name the converted fields.
+2. **§C6's prescribed local name does not compile.** The recipe says
+   `shared := deps.sharedHandles()`. `shared` is the `harness/shared` package, which `beadRunOne`
+   references eleven times below that point (`shared.LaunchCtx`, `shared.ArtifactAgentType`). The
+   local is named `handles`, with a comment at the site saying why.
+3. **C5 re-anchors three grandfathered complexity findings.** Rewriting the declaration line makes
+   `funlen`, `gocognit` (398) and `cyclop` (223) "new" under `--new-from-rev`. They ship as one
+   justified, specific `//nolint:funlen,gocognit,cyclop` naming the RT stream that retires them —
+   the only honest fix is splitting a 2,280-line function, which is exactly what a
+   behaviour-preserving slice must not do inline and what RT16–RT20 exist to do.
+
+**One deliberate logic delta, in C3.** The run-registry removal defer discarded `runpkg.Remove`'s
+error into the blank identifier; touching that line re-exposed the grandfathered `errcheck` finding.
+Per the standing instruction it was FIXED rather than suppressed: `ErrNotFound` (the already-cleaned
+case) stays silent as before, any other failure now reports to stderr in the shape
+`adoptDeadRunSessions` already uses for the identical call. Control flow unchanged.
+
+**What RT15 deliberately did NOT do.** No `shared SharedHandles` parameter (all five fields have
+readers outside `beadRunOne`, so passing the bundle while `deps` is still passed is pure duplication
+across a signature boundary — **RT18 owns it**). None of the six copy-mutation sites (`workloop.go`
+3179/3977/3987 pre-slice, `dot_cascade.go` 219/1259, `reviewloop.go` 229) — **RT17 owns the two
+`launchSpecBuilder` ones, RT18 the four `clock` ones**. `deps.tidGen` stays on `deps` (RSM-011;
+**RT18's call**). `RunEnv.BrPath` is populated but has zero readers in `beadRunOne` — **RT18 surface**.
+
+**Three newly-observed load-sensitive flakes**, all passing strictly in isolation and all added to
+`00-test-oracle-baseline.md`: `TestWorkLoop_ShutdownDrainsCommittedRun_hkdnrg`,
+`TestT2_ExitZeroNoSignal`, `TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency`.
+
+**Review gate honesty note.** The Agent tool was not exposed to the session that ran RT15, so no
+independent `agent-reviewer` sub-agent pass was possible on any of the seven commits. Each carries
+`Reviewed-By: self` and a verdict that says so explicitly rather than claiming independence. **These
+seven commits are the ones in the E5 stream that still want an independent pair of eyes.**
 
 ---
 

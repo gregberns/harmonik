@@ -40,6 +40,14 @@ E4c ───┴──► RT19b ──► RT14 ──► PC ──► RT16 ─�
                                                               RT19c (watchdog clocks) ┘  [unowned; see §3.6]
 ```
 
+**Landed as of 2026-07-22: RT13, E4c, RT19b, RT14, and RT15 (all seven chunks).** RT15 ran BEFORE PC
+and RT16, which the diagram draws after them. That is correct, not a violation: §7.6 already records
+that PC is a *value* ordering for RT15 and not a compile ordering, and RT16 → RT15 is not an edge in
+the table below at all — RT16's edges are to RT17/RT18. Both `RunEnv` and `SharedHandles` stayed in
+`package daemon` for all seven chunks, so `ProjectCfg ProjectConfig` and `*RunRegistry` type-checked
+with zero work. **PC and RT16 are still worth landing before RT17/RT18**, and nothing about them
+changed. Remaining in the chain: PC, RT16, RT17, RT18, RT19, RT19c, RT20+.
+
 | Edge | Mechanism (why it is strict, not preference) |
 |---|---|
 | RT13 → everything | **Same file, uncommitted.** RT13 has `workloop.go` and `runports.go` dirty and cuts lines 6397–8011. Every downstream slice edits `workloop.go`. Two uncommitted rewrites of one file is the `_plan.md` R3 failure. |
@@ -173,8 +181,8 @@ command that returns a number.
 |---|---|---|---|---|
 | 1 | `deps.` reads in the three mode files: `grep -c 'deps\.' internal/daemon/{reviewloop,dot_cascade,dot_gate}.go` | **137 / 88 / 41** | **0 / 0 / 0** | RT16 → RT17 (RT17's own exit gate) |
 | 2 | Run-path `deps.bus` bypass: same grep for `deps\.bus` over `reviewloop`, `dot_cascade`, `dot_gate`, `runbridge`, `sub_workflow_runner` | 51 / 23 / 7 / 3 / 2 | **0 across all five**; `workloop.go` stays at exactly **10** (the outer `runWorkLoop` sites, which correctly never move) | RT16 (108 of 118 sites) |
-| 3 | **The by-value copy-mutation idiom is gone.** `grep -n 'deps\.clock = \|deps\.launchSpecBuilder = ' internal/daemon/*.go` | **6 sites** — `workloop.go:3179/:3977/:3987`, `dot_cascade.go:219/:1259`, `reviewloop.go:229` (E5 §3a said 4; RT15-chunks re-measured 6) | **0** | the 2 builder sites = RT17; the 4 clock sites = RT18. **Any port work that does not delete these is cosmetic** (E5 §7.2). |
-| 4 | `RunEnv` / `SharedHandles` are live | **dead code — zero references outside their own declarations** at `runports.go:293`/`:322` | constructed at the dispatch site and consumed by `beadRunOne(ctx, env, ports, shared)` | RT15-C1/C5 (env), RT15-C6/C7 + RT18 (shared) |
+| 3 | **The by-value copy-mutation idiom is gone.** `grep -n 'deps\.clock = \|deps\.launchSpecBuilder = ' internal/daemon/*.go` | **6 sites** — line numbers shift every slice, grep for them; RT15 confirmed all six are still present and untouched (E5 §3a said 4; RT15-chunks re-measured 6) | **0** | the 2 builder sites = RT17; the 4 clock sites = RT18. **Any port work that does not delete these is cosmetic** (E5 §7.2). |
+| 4 | `RunEnv` / `SharedHandles` are live | **DONE (RT15, 2026-07-22).** `runEnv()` / `sharedHandles()` constructors exist; `RunEnv` is built at the dispatch site and passed as a parameter, `SharedHandles` is built inside `beadRunOne` as a local named `handles` (`shared` is the harness/shared package — do not use that name) | remaining: `SharedHandles` becomes a PARAMETER when `deps` is dropped | RT15-C1/C5 (env) and RT15-C6/C7 (shared, as a local) — **DONE**; the `shared` parameter is RT18 |
 | 5 | `RunEnv.ProjectCfg` is a daemon-free type | `daemon.ProjectConfig` (`projectconfig.go:1235`, a 2,139-LOC daemon file) | `projectconfig.ProjectConfig` (leaf) **or** a narrowed run-scoped view | PC — **needs §3.1 first** |
 | 6 | `SharedHandles.RunRegistry` is not a daemon concrete type | `*RunRegistry` | 3-method interface | RT20 precondition (§3.2) |
 | 7 | Raw wall-clock on the run path | `dot_gate.go` 6, `waitsocketgrace.go` 1, `postreadyhang.go` 1 (`beadRunOne`, `dot_cascade`, `reviewloop`, `dispatchsegment`, `runbridge`, `runshell` verified **clean**) | RT14 closes `dot_gate.go:486`. The other 7 must be **either closed by RT19c or formally re-filed post-lift with a named owner** — not silently dropped | RT14 + §3.6 ruling |

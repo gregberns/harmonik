@@ -1,7 +1,31 @@
 # RT15 — `RunEnv` / `SharedHandles` / `beadRunOne` re-signature, cut into 7 chunks
 
-**Status:** plan only. Not executable until RT13 commits (RT13 currently has `runports.go` and
-`workloop.go` dirty; RT15-C1 edits both).
+**Status: LANDED 2026-07-22, all seven chunks.** `f33af3a5` (C1) · `7f32b420` (C2) · `d04c0438` (C3) ·
+`4a70d2be` (C4) · `e3d014a5` (C5) · `7794ab53` (C6) · `3ea214fb` (C7). `export_test.go` shows a zero
+diff across the whole slice, as the exit gate requires. Outcome, corrections and the three things this
+slice deliberately left to RT17/RT18 are in `PROGRESS.md` §"RT15". Everything below is the plan as
+written; read §"Where this document was wrong" first.
+
+## Where this document was wrong (measured while executing it)
+
+1. **All line numbers are stale.** Fifth consecutive slice. Every symbol was re-located by `grep -n`.
+   Counts held for C2/C4/C6/C7; C3's `projectDir` is **24 hits — 20 code + 4 comments**, and six
+   further prose comments across C2/C3 name the converted fields and were never listed.
+2. **§C6's `shared := deps.sharedHandles()` does not compile.** `shared` is the `harness/shared`
+   package, referenced eleven times inside `beadRunOne` below the construction point. The local is
+   named **`handles`**.
+3. **C5 re-anchors three grandfathered complexity findings** (`funlen`, `gocognit` 398, `cyclop` 223)
+   onto the rewritten declaration line under `--new-from-rev`. §"Gate" below says a 19-field `RunEnv`
+   travels lint-clean, which is true and is not the issue — the issue is the signature line itself.
+   They ship as one justified `//nolint:funlen,gocognit,cyclop`.
+4. **C3 re-anchors an `errcheck` finding** on `_ = runpkg.Remove(...)` in the run-registry removal
+   defer. Fixed, not suppressed: `ErrNotFound` stays silent, anything else reports to stderr in the
+   shape `adoptDeadRunSessions` already uses. This is the slice's one logic delta.
+
+---
+
+**Original status (superseded):** plan only. Not executable until RT13 commits (RT13 currently has
+`runports.go` and `workloop.go` dirty; RT15-C1 edits both).
 
 ## The one idea that makes this decomposition work
 

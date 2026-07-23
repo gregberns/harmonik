@@ -124,6 +124,10 @@ TestStopHookE2E_TwinRelayWaitGrace                          # load-sensitive
 TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace    # load-sensitive
 TestT6_10BeadSequentialDrain                                # load-sensitive
 TestPasteInjectCommitBudget_IdleActivePane_HKukx            # load-sensitive; ADDED 2026-07-22 (RT14 run)
+TestWorkLoop_ShutdownDrainsCommittedRun_hkdnrg              # load-sensitive; ADDED 2026-07-22 (RT15 run)
+TestT2_ExitZeroNoSignal                                     # load-sensitive; ADDED 2026-07-22 (RT15 run)
+TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency          # load-sensitive; ADDED 2026-07-22 (RT15 run)
+TestM4C7_D2Chokepoint_IsHarnessAgnostic                     # hard pre-existing (build-tagged fixture compile); out of P2 scope
 
 # confirm this one by re-running IN THE FULL SUITE (isolation is what breaks it)
 TestMergeToMain_RealConflictWithBeadsLedger_Escalates       # ISOLATION-sensitive; pre-dates P2

@@ -71,7 +71,7 @@ linters:
     - forbidigo       # ban specific calls (see config)
     - depguard        # import-graph + component-layer rules (subsystem-organization.md)
 linters-settings:
-  errcheck: { check-type-assertions: true, check-blank: true, exclude-functions: ["(io.Closer).Close"] }
+  errcheck: { check-type-assertions: true, check-blank: true, exclude-functions: ["(io.Closer).Close", "(*os.File).Close", "(net.Conn).Close", "(net.Listener).Close"] }
   revive:   { rules: [{name: exported}, {name: package-comments}, {name: var-naming}, {name: error-return}, {name: error-naming}, {name: if-return}] }
   gocritic: { enabled-tags: [diagnostic, performance, style], disabled-checks: [hugeParam, rangeValCopy] }
   nolintlint: { require-explanation: true, require-specific: true, allow-unused: false }
@@ -108,7 +108,7 @@ They ratchet via `--new-from-rev`, so existing functions are grandfathered but a
 
 Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Style-taste linters; noise without catching real defects at MVH scope.
 
-**Path-scoped exclusions worth knowing** (`.golangci.yml §exclusions.rules`): `tools/` is excluded from the *whole* `forbidigo` and `noctx` linters; `internal/testhelpers/` from the whole `forbidigo` linter — so both get `panic` **and** `fmt.Print*` for free, not just one of them.
+**Path-scoped exclusions worth knowing** (`.golangci.yml §exclusions.rules`): `tools/` is excluded from the *whole* `forbidigo` and `noctx` linters; `internal/testhelpers/` from the whole `forbidigo` linter — so both get `panic` **and** `fmt.Print*` for free, not just one of them. `cmd/` gets a narrower third carve-out: only the `fmt.Print*` ban (printing to stdout is what a CLI does), so `panic` stays banned there.
 
 ## Error handling conventions
 
@@ -119,12 +119,14 @@ Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `
 - **Prefer `%w` wrapping at subsystem boundaries** (crossing S01..S09). `errorlint` enforces correctness WHEN wrapping (e.g., non-`%w` for an error arg, direct `==` comparison where `errors.Is` is required), but it CANNOT detect missing-wraps — that needs semantic boundary knowledge, which is a custom `go/analysis` pass (deferred). Until that analyzer ships: reviewer-agents flag missing-wraps on subsystem-boundary imports during review. Do NOT wrap within a subsystem; wrapping the same error up-and-up produces noise without new context.
 - **Sentinel errors** as `var ErrFoo = errors.New("foo")`; typed errors as structs with `Error()`.
 - **No `panic` in production paths** — `forbidigo` blocks it outside `main`/`init`. Run supervisor handles recovery.
-- **Deferred `Close()` — bare `defer x.Close()` is NOT acceptable.** `.golangci.yml` sets `errcheck: { check-blank: true, exclude-functions: ["(io.Closer).Close"] }`. That exclusion matches only a receiver whose **static type is literally `io.Closer`** — not every type that satisfies the interface. Nearly every close in this tree is on something else (`*os.File`, `net.Conn`, the `io.ReadCloser` off an `exec.Cmd` pipe), so the exclusion does not apply and **both** of these are errcheck findings (verified against the pinned `.tools/golangci-lint` with the repo's own settings block):
+- **Deferred `Close()` — the reviewer enforces this, not the linter.** `.golangci.yml` sets `errcheck: { check-blank: true, exclude-functions: ["(io.Closer).Close", "(*os.File).Close", "(net.Conn).Close", "(net.Listener).Close"] }`. errcheck names a method by the type that DECLARES it, so `(io.Closer).Close` on its own matched only interfaces whose `Close` is promoted from `io.Closer` (`io.ReadCloser`, `io.WriteCloser`, the `exec.Cmd` pipes); every close on a concrete `*os.File`, a `net.Conn` or a `net.Listener` still fired, in both forms, and the tree answered with ~220 `//nolint:errcheck` directives. The four common receivers are therefore excluded outright (verified against the pinned `.tools/golangci-lint` with the repo's own settings block):
 
   ```go
-  defer f.Close()                  // finding
-  defer func() { _ = f.Close() }() // finding — check-blank
+  defer f.Close()                  // no longer a finding on the four excluded receivers
+  defer func() { _ = f.Close() }() // likewise
   ```
+
+  errcheck cannot separate a read close from a write close — the exclusion key is a method signature and `(*os.File).Close` is one method either way — so this is a deliberate trade of a linter check for a reviewed idiom. **A dropped close on a write/commit/fsync path is still a defect and is a review finding even though lint is green.** Closes on other receivers (a project type, `CloseWrite` on a `*net.UnixConn`) still produce errcheck findings.
 
   Use one of the three forms landed in this tree. Pick by whether the close error is material; each is cited to its real home:
 

@@ -63,6 +63,21 @@ linters:
       - path: ^internal/testhelpers/
         linters:
           - forbidigo
+      # cmd/ is the CLI. Printing to stdout IS its output, so "use the structured
+      # logger" is a false positive there by construction — it accounted for 184
+      # of the tree's 235 forbidigo findings. tools/ and internal/testhelpers/
+      # above are the same carve-out; this extends it to the one tree whose whole
+      # job is to print.
+      #
+      # Deliberately NARROWER than those two: they exclude the WHOLE forbidigo
+      # linter, which also hands them the `panic` ban for free. This rule matches
+      # only the fmt.Print* ban (by its msg text), so `panic` stays forbidden in
+      # cmd/ — a CLI that panics instead of returning an exit code is still a
+      # defect, and the ban's own wording ("panics only in main/init") says so.
+      - linters:
+          - forbidigo
+        text: 'use the structured logger'
+        path: ^cmd/
       # SC6 (agent-input-substrate T9): the time.Sleep/After/NewTimer ban is
       # PATH-SCOPED to the structured input-driver packages. This rule EXCLUDES
       # the SC6-DRIVER-CLOCKPORT finding for every file EXCEPT those packages
@@ -81,7 +96,49 @@ linters:
         text: 'SC6-DRIVER-CLOCKPORT'
         path: _test\.go$
   settings:
-    errcheck: { check-type-assertions: true, check-blank: true, exclude-functions: ["(io.Closer).Close"] }
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      # WHY THIS LIST IS LONGER THAN `(io.Closer).Close`
+      #
+      # errcheck names a method by the type that DECLARES it, not by the static
+      # type of the expression. `(io.Closer).Close` therefore matches an
+      # interface whose Close is *promoted* from io.Closer (io.ReadCloser,
+      # io.WriteCloser, the exec.Cmd pipes) and NOTHING else — verified against
+      # the pinned linter with this settings block. Every close on a concrete
+      # *os.File, on a net.Conn, or on a net.Listener still fired, in BOTH the
+      # `defer f.Close()` and the `defer func(){ _ = f.Close() }()` form. That is
+      # the finding class the tree answered with ~220 //nolint:errcheck
+      # directives — volume that hid the suppressions that actually matter.
+      #
+      # errcheck CANNOT express the distinction that matters here. The exclusion
+      # key is a method signature, and `(*os.File).Close` is one method whether
+      # the file was opened for read or for write; the finding text carries only
+      # the receiver's variable name, so golangci-lint's `text:` rules cannot
+      # split them either. There is no narrower configuration.
+      #
+      # So this trades a linter check for a documented idiom: write-path close
+      # discipline is now carried by .claude/skills/agent-reviewer/SKILL.md §2
+      # ("Deferred Close() — the forms that actually pass"), not by errcheck.
+      # That trade is safe here because the check was not what enforced it. The
+      # durability-critical closes in this tree already check the error on the
+      # SUCCESS path and so never produced a finding to begin with —
+      # internal/queue/cli/cancel.go (emitQueueCancelEvent) and
+      # internal/supervise/daemon_watchdog.go (openCrashLog) both fold the close
+      # error in with errors.Join; internal/crew/registry.go (Write) and
+      # cmd/harmonik/supervise/config.go (WriteConfigAtomic) both write
+      # `if err := f.Close(); err != nil { … }` before the rename. What errcheck
+      # was flagging was the OTHER close in those same functions: the cleanup
+      # close on an already-failing path, and the read-only close. Neither can
+      # lose data.
+      #
+      # Read-path and cleanup closes only. A close whose failure means the write
+      # may not have landed is still a defect — the reviewer catches it now.
+      exclude-functions:
+        - "(io.Closer).Close"
+        - "(*os.File).Close"
+        - "(net.Conn).Close"
+        - "(net.Listener).Close"
     revive:   { rules: [{name: exported}, {name: package-comments}, {name: var-naming}, {name: error-return}, {name: error-naming}, {name: if-return}] }
     gocritic: { enabled-tags: [diagnostic, performance, style], disabled-checks: [hugeParam, rangeValCopy] }
     nolintlint: { require-explanation: true, require-specific: true, allow-unused: false }
@@ -495,13 +552,19 @@ linters:
 
         # schedule: generic recurring-job primitive (codename:schedule, hk-0es).
         # Pure types + next-fire clock + durable single-writer store. Leaf:
-        # stdlib + self-import only (no core dep today; action execution + the
-        # work-loop tick live in internal/daemon which imports this package).
+        # stdlib + core + self-import (action execution + the work-loop tick live
+        # in internal/daemon, which imports this package).
+        # core: the store creates .harmonik/ lazily and needs core.HarmonikDirMode
+        # — os.MkdirAll does NOT chmod an existing directory, so a package that
+        # hardcodes its own mode leaves the result dependent on which package
+        # created the tree first (internal/core/harmonikdirmode.go). core is the
+        # universal leaf and imports nothing back, so no cycle is possible.
         # MUST NOT import daemon. Spec ref: hk-0es brief (operator-locked D1/D2).
         schedule:
           files: ["**/internal/schedule/**"]
           allow:
             - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/schedule"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "schedule MUST NOT import daemon (hk-0es: leaf primitive)" }
@@ -573,13 +636,19 @@ linters:
         # owns no file format (RS-016); this package is the caller-supplied
         # writer that does persistence + HC-032 OUTPUT scrub + keep-N/age-prune
         # retention + the mechanical CAPTURE-LOG ledger. It may import substrate
-        # (ClockPort for the age-prune cutoff, RS-015) and self only. It MUST
-        # NEVER import daemon (composition root injects, never the reverse), the
-        # codex vertical, or tmux.
+        # (ClockPort for the age-prune cutoff, RS-015), core, and self only. It
+        # MUST NEVER import daemon (composition root injects, never the reverse),
+        # the codex vertical, or tmux.
+        # core: it creates .harmonik/sessions/ lazily and needs
+        # core.HarmonikDirMode for the same reason schedule does — os.MkdirAll
+        # does NOT chmod an existing directory, so a private mode constant makes
+        # the result depend on creation order (internal/core/harmonikdirmode.go).
+        # core is the universal leaf and imports nothing back; no cycle.
         sessioncapture:
           files: ["**/internal/sessioncapture/**"]
           allow:
             - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/substrate"
             - "github.com/gregberns/harmonik/internal/sessioncapture"
           deny:

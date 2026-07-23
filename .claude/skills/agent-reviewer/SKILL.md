@@ -135,16 +135,20 @@ against the repo's own `errcheck` / `gosec` / `noctx` / `nolintlint` settings.
 - No `panic` and no `fmt.Print*` (forbidigo). Two paths are excluded from the **whole
   `forbidigo` linter**, not from one pattern: `internal/testhelpers/` (helpers take
   `*testing.T` and call `t.Fatalf`) and `tools/` (which is also excluded from `noctx`).
-  Both therefore get `panic` *and* `fmt.Print*` for free. Everything else uses
-  `log/slog`. Note the ban pattern is `^fmt\.Print.*$`: `fmt.Fprintf(w, …)` is not
-  forbidden, only unrouted stdout writes.
+  Both therefore get `panic` *and* `fmt.Print*` for free. `cmd/` has a THIRD,
+  narrower carve-out: only the `fmt.Print*` ban is excluded there (matched by its
+  "use the structured logger" message), because printing to stdout is what a CLI
+  does — `panic` stays banned in `cmd/`. Everything else uses `log/slog`. Note the
+  ban pattern is `^fmt\.Print.*$`: `fmt.Fprintf(w, …)` is not forbidden, only
+  unrouted stdout writes.
 - In `internal/codexinput/` and `internal/codexdriver/`, `time.Sleep` / `time.After` /
   `time.NewTimer` are banned in production files — every wait goes through
   `substrate.ClockPort` (forbidigo, marker `SC6-DRIVER-CLOCKPORT`; `_test.go` exempt).
 - Comma-ok on every type assertion: `v, ok := x.(T)`. A bare `x.(T)` or `v, _ := x.(T)`
   is a finding (errcheck `check-type-assertions: true`).
 - **Never discard an error into the blank identifier.** `_ = f()` is an errcheck
-  finding, not an idiom — `check-blank: true` is set. See §Deferred `Close()` below.
+  finding, not an idiom — `check-blank: true` is set. The exception is the four
+  excluded close receivers; see §Deferred `Close()` below.
 - `errors.Is(err, io.EOF)` not `err != io.EOF` (errorlint).
 - Error wrapping at subsystem boundaries (`%w`); no wrapping within a subsystem.
 - Enum `switch`es are exhaustive or carry a `default` (exhaustive,
@@ -163,21 +167,33 @@ against the repo's own `errcheck` / `gosec` / `noctx` / `nolintlint` settings.
 - gofmt / gofumpt / gci clean. This is enforced by `make fmt-check`, **not** by
   golangci-lint — no formatting linter is enabled in `.golangci.yml`.
 
-#### Deferred `Close()` — the forms that actually pass
+#### Deferred `Close()` — the reviewer owns this, not the linter
 
 `.golangci.yml` sets `errcheck: { check-blank: true, exclude-functions:
-["(io.Closer).Close"] }`. That exclusion matches only a call whose receiver's **static
-type is literally `io.Closer`** — not any type that merely satisfies it. Nearly every
-close in this tree is on something else (`*os.File`, `net.Conn`, the `io.ReadCloser`
-from an `exec.Cmd` pipe), so the exclusion does not apply and **both of these are
-errcheck findings**:
+["(io.Closer).Close", "(*os.File).Close", "(net.Conn).Close",
+"(net.Listener).Close"] }`. errcheck names a method by the type that DECLARES it,
+so `(io.Closer).Close` alone matched only interfaces whose `Close` is promoted from
+`io.Closer` (`io.ReadCloser`, `io.WriteCloser`, the `exec.Cmd` pipes) — every close
+on a concrete `*os.File`, a `net.Conn` or a `net.Listener` still fired, in BOTH
+forms. The tree answered that with ~220 `//nolint:errcheck` directives, which is
+what hid the suppressions that mattered, so the four common close receivers are now
+excluded outright:
 
 ```go
-defer f.Close()                  // finding
-defer func() { _ = f.Close() }() // finding — check-blank
+defer f.Close()                  // no longer a finding on *os.File / net.Conn / net.Listener
+defer func() { _ = f.Close() }() // likewise
 ```
 
-Use one of the three landed forms instead. Pick by whether the close error is material.
+**This is a trade, and the reviewer is the thing traded to.** errcheck cannot tell a
+read close from a write close — the exclusion key is a method signature and
+`(*os.File).Close` is one method either way — so it could only keep flagging both or
+neither, and flagging both was producing suppressions rather than fixes. A close
+whose failure means the bytes may not have landed is still a defect; nothing
+mechanical catches it now. **Flag a dropped close on any write/commit/fsync path as
+`idiom-violation`, even though lint is green.** Closes on other receivers (a project
+type, `CloseWrite` on a `*net.UnixConn`) still produce findings.
+
+Use one of the three landed forms. Pick by whether the close error is material.
 Each form below is followed by its real home in this tree — cite those, not this file:
 
 ```go
@@ -251,7 +267,9 @@ is a finding unless the suppression is the only available outcome. Apply this te
      G301 does not fire at all, so `//nolint:gosec // G301` here is *always* masking.
    - gosec **G306** on `os.WriteFile(p, b, 0o644)` → use `0o600`. Same: the finding
      disappears, so the suppression is never the right answer.
-   - errcheck on a discarded `Close()` → use one of the three forms above.
+   - errcheck on a discarded `Close()` → use one of the three forms above. Note the
+     four common receivers no longer produce a finding at all, so a
+     `//nolint:errcheck` on one of those is now *unused* and `nolintlint` fails it.
 2. **Is the finding structural — does no code change remove it?** Then a suppression is
    legitimate. The real case in this tree is gosec **G304** on `os.Open` /
    `os.ReadFile` with a constructed path: the path is a runtime value by construction,

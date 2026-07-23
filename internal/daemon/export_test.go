@@ -599,15 +599,6 @@ func ExportedDiskCheckDiskLow(ms *ExportedMaintState) bool {
 	return ms.m.diskLow
 }
 
-// ExportedDiskCheckSetGoCacheCleanInterval overrides the proactive-reap
-// interval on deps so tests don't have to wait 60 minutes. A zero override
-// restores the production default (goCacheCleanInterval).
-//
-// Bead ref: hk-guez.
-func ExportedDiskCheckSetGoCacheCleanInterval(deps *workLoopDeps, d time.Duration) {
-	deps.goCacheCleanIntervalOverride = d
-}
-
 // ExportedDiskCheckSetCheckInterval overrides the disk-probe interval on deps
 // so tests fire immediately. A zero override restores the production default
 // (diskCheckInterval).
@@ -2867,7 +2858,7 @@ func ExportedLoadQueueProvenance(ctx context.Context, projectDir string) (lifecy
 // restatement of it. A test that rebuilds the closure itself passes with the
 // production wiring reverted — verified, and it is how the first draft of the
 // hk-47u9z test was a false green.
-func ExportedNewCapturedSpawnProof(emitter handlercontract.EventEmitter, runID core.RunID) func() {
+func ExportedNewCapturedSpawnProof(ctx context.Context, emitter handlercontract.EventEmitter, runID core.RunID) func() {
 	tap, _ := newPerRunEventTap(emitter, runID)
-	return newCapturedSpawnProof(tap, runID)
+	return newCapturedSpawnProof(ctx, tap, runID)
 }

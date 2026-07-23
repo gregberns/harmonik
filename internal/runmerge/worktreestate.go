@@ -115,7 +115,10 @@ func locallyEditedPaths(ctx context.Context, projectDir, mainTip string, paths [
 // Bead: hk-7qmpp.
 func writeRecoveryPatch(ctx context.Context, projectDir string, runID core.RunID, mainTip string, paths []string) string {
 	dir := filepath.Join(projectDir, ".harmonik", "recovery")
-	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
+	// 0o700, deliberately TIGHTER than core.HarmonikDirMode: this directory holds
+	// rescued uncommitted work, so it is owner-only by intent. The constant's own
+	// doc sanctions this — it is the default for the .harmonik tree, not a ceiling.
+	if err := os.MkdirAll(dir, 0o700); err != nil { //dirmode:allow tighter on purpose: .harmonik/recovery/ holds rescued uncommitted work, 0o700 (never widen to core.HarmonikDirMode)
 		return ""
 	}
 	args := append([]string{"diff", mainTip, "--"}, paths...)

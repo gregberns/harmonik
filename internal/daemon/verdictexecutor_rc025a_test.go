@@ -384,7 +384,11 @@ func TestExecuteVerdict_LockReleasedOnError(t *testing.T) {
 	for {
 		lock2, err := lifecycle.AcquireReconciliationLock(projectDir, ve.TargetRunID.String())
 		if err == nil {
-			_ = lock2.Release()
+			// This probe lock is ours now; failing to hand it back would leak the
+			// very resource this test asserts is not leaked.
+			if relErr := lock2.Release(); relErr != nil {
+				t.Errorf("release probe reconciliation lock: %v", relErr)
+			}
 			return
 		}
 		lastErr = err

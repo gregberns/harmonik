@@ -1497,7 +1497,7 @@ func dispatchDotAgenticNode(
 	// internal/substrate package for the rest of this function, where the
 	// agent-ready reap guard below calls substrate.After (P2 E5 RT19b).
 	runSubstrate := baseSubstrate
-	var pasteTarget handler.Substrate = baseSubstrate
+	pasteTarget := baseSubstrate
 	if prs != nil {
 		// hk-538l: for a REMOTE run tell the per-run substrate which tmux session to
 		// ENSURE + spawn into ON THE WORKER and the cwd to create it with (the worker's
@@ -1663,7 +1663,7 @@ func dispatchDotAgenticNode(
 
 	// hk-47u9z: arm the SessionIDCaptured spawn proof now that the per-run tap
 	// exists.
-	emitCapturedSpawnProof = newCapturedSpawnProof(tap, runID)
+	emitCapturedSpawnProof = newCapturedSpawnProof(ctx, tap, runID)
 
 	// hk-goczd: emit the CHB-018 pre-exec progress messages (handler_capabilities,
 	// session_log_location, skills_provisioned) BEFORE Launch, holding back
@@ -2842,12 +2842,18 @@ func emitDotImplementerResumed(
 // correct and do nothing — precisely the hk-wths failure shape this bug rhymes
 // with. Extracted as a named function so tests exercise this exact closure
 // rather than a restatement of it.
-func newCapturedSpawnProof(tap *perRunEventTap, runID core.RunID) func() {
+// The context is detached with WithoutCancel rather than derived directly: this
+// proof fires from a spawn callback that can outlive the run context (the whole
+// point is to record that the agent DID spawn, which stays true even once the
+// run is cancelled), but it should still carry the caller's values instead of an
+// empty root.
+func newCapturedSpawnProof(ctx context.Context, tap *perRunEventTap, runID core.RunID) func() {
+	emitCtx := context.WithoutCancel(ctx)
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			//nolint:errcheck // best-effort emit; the reaper disarm is a guard, not a correctness gate (pre-RT8 idiom)
-			_ = tap.EmitWithRunID(context.Background(), runID, core.EventTypeAgentReady, nil)
+			_ = tap.EmitWithRunID(emitCtx, runID, core.EventTypeAgentReady, nil)
 		})
 	}
 }

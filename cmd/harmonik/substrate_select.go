@@ -63,32 +63,52 @@ const (
 // health/live-disable state — WITHOUT the driver ever learning about workers
 // (RS-017 twin-blindness: selection lives at the composition root, not the
 // driver). It is nil for the tmux path (nothing to bind).
-// The third return value, requireIsolationBoundary, is true ONLY on the
-// codexdriver path: a codex app-server crew runs with a permissive sandbox
-// posture (danger-full-access) that is safe solely inside a real isolation
-// boundary — an enabled remote ssh worker IS that boundary. False for the tmux
-// path (no such posture).
-//
-// The refusal it describes IS enforced, but at the runner, not the work loop:
-// codexWorkerRoutingRunner.Command / CommandInDir return a command at
-// refusedIsolationBoundaryArgv0 when no healthy worker is bound, so the spawn
-// fails rather than falling through to LocalRunner and running codex
-// UNSANDBOXED on the daemon host.
-//
-// NOTE: both production call sites (main.go, run.go) currently DISCARD this
-// value, and no work-loop admission guard in internal/daemon reads it. Only
-// tests consume it. It is therefore a correct-but-dead signal today; the
-// security property rests entirely on the runner-level refusal above. Wiring it
-// into a daemon-side guard is what would make this return value load-bearing.
 // reviewerSubstrate is always tmuxSub so a claude (SessionIDMinted) reviewer
 // runs on tmux/claude, not the codex app-server driver (hk-qxvc2).
-func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), requireIsolationBoundary bool, reviewerSubstrate handler.Substrate) {
+//
+// hk-5vapm: this used to return a third value, requireIsolationBoundary, meant
+// as the signal a daemon-side fail-closed guard would key off to refuse a codex
+// run with no ssh worker bound. IT IS GONE, and two things about it are worth
+// recording because the comments that described it outlived the design.
+//
+// First, hk-tckw3.1 Step 1 dropped the fence deliberately (plan section 3a). D4
+// scrapped ssh-per-node, so nothing can supply the boundary the fence demanded
+// — leaving it armed would not sandbox codex, it would only stop codex running
+// at all. D3 then put local codex on danger-full-access, the same host posture
+// claude already ran under, so this path is no more permissive than the default
+// it was singled out from. Both production callers had already been discarding
+// the value; it was always false and unparam flagged it.
+//
+// Second, and this is the part that was NOT true in the source: the daemon half
+// never existed. Comments here and in internal/codexdriver referred to a
+// workloop codexRequireIsolationBoundary that "REFUSES to launch" — no such
+// symbol is in the tree, and the only occurrences were those comments describing
+// it. The fence was only ever half-built: codexWorkerRoutingRunner.requireBoundary
+// still has live refusal logic below. Anyone auditing codex isolation would have
+// read those comments and believed an enforcement existed. They are corrected
+// rather than carried forward.
+//
+// Containment for codex comes from harmonik's own srt sandbox (hk-scaj0), a
+// different mechanism entirely, so removing this dead signal forecloses nothing.
+//
+// ⚠ OPEN OPERATOR DECISION (recorded at the 2026-07-23 origin merge, NOT decided
+// here). The paragraphs above were written against `requireBoundary: false`. The
+// composition root below now passes `requireBoundary: true`, set by the local
+// commit 7273e95dc ("make SH-033 deterministic and drop exec.Command from the
+// CLI"), which re-armed the fence AFTER hk-tckw3.1 Step 1 had dropped it. So the
+// fence IS armed in this tree, and the "nothing sets it true" statements below
+// describe the intent of hk-5vapm, not the current code. The merge deliberately
+// changed neither side: it left the local value in place and did not restore
+// origin's. Which one stands is an operator call — arming it means a codex run
+// with no enabled ssh worker bound REFUSES to launch, and D4 scrapped the
+// ssh-per-node worker that was the only thing able to supply that boundary.
+func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), reviewerSubstrate handler.Substrate) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
-		return tmuxSub, nil, false, tmuxSub
+		return tmuxSub, nil, tmuxSub
 	}
 	router := &codexWorkerRoutingRunner{requireBoundary: true}
 	opts, _ := codexSubstrateOptions(codexBinary, router)
-	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, true, tmuxSub
+	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, tmuxSub
 }
 
 // codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that
@@ -116,14 +136,24 @@ type codexWorkerRoutingRunner struct {
 	// (NFR7) — it no longer does when requireBoundary is set; see below.
 	reg atomic.Pointer[workers.Registry]
 
-	// requireBoundary makes this runner FAIL CLOSED (hk-5h759). Set true on the
-	// codexdriver path (a codex crew runs danger-full-access, safe ONLY inside an
-	// enabled ssh worker/container). When set and no enabled ssh worker is bound,
-	// Command REFUSES rather than falling through to LocalRunner — which would run
-	// codex UNSANDBOXED on the daemon host. This is the authoritative, race-free
-	// enforcement point: it evaluates the SAME predicate that decides ssh-vs-local
-	// AT spawn time, so it closes the TOCTOU window a caller-side admission check
-	// alone cannot (a worker disabled between admission and spawn is caught here).
+	// requireBoundary would make this runner FAIL CLOSED (hk-5h759): when set and
+	// no enabled ssh worker is bound, Command REFUSES rather than falling through
+	// to LocalRunner.
+	//
+	// hk-5vapm intended this to be inert: it called this field "the authoritative,
+	// race-free enforcement point", which it is not — there is no daemon-side
+	// counterpart, and an auditor reading the old wording would have concluded that
+	// unsandboxed codex launches are refused somewhere they are not.
+	//
+	// hk-tckw3.1 Step 1 dropped the fence deliberately: D4 scrapped the ssh worker
+	// that was the only thing able to supply the boundary, so arming this would
+	// stop codex launching rather than isolate it. Codex containment comes from the
+	// srt sandbox (hk-scaj0) instead.
+	//
+	// ⚠ BUT IT IS SET TRUE TODAY, by selectSubstrate above (local commit 7273e95dc,
+	// re-arming it after hk-5vapm disarmed it). That contradiction is an OPEN
+	// OPERATOR DECISION — see the note on selectSubstrate. Do not "tidy" either the
+	// literal or these comments into agreement without that decision.
 	requireBoundary bool
 }
 
@@ -138,7 +168,11 @@ const refusedIsolationBoundaryArgv0 = "/nonexistent/harmonik-REFUSED-codex-dange
 // (hk-5h759) codex thread posture for headless crew orchestration: run codex
 // non-interactively with full workspace access so its writes and commits land.
 // This posture is safe ONLY inside the isolation boundary enforced by the
-// fail-closed guard (requireBoundary above / workloop codexRequireIsolationBoundary).
+// fail-closed guard (requireBoundary above). NOTE (hk-5vapm): there is no
+// daemon-side counterpart -- earlier comments here named a workloop
+// codexRequireIsolationBoundary that does not exist anywhere in the tree. Whether
+// the runner-level guard should be armed at all is an OPEN OPERATOR DECISION; see
+// the note on selectSubstrate.
 const (
 	codexHeadlessSandbox        = "danger-full-access"
 	codexHeadlessApprovalPolicy = "never"

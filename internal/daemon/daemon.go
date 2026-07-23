@@ -1042,7 +1042,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			log.Printf("warn: daemon.Start: marshal daemon_shutdown payload: %v", marshalErr)
 			return
 		}
-		if emitErr := bus.Emit(context.Background(), core.EventTypeDaemonShutdown, payloadBytes); emitErr != nil {
+		// WithoutCancel, not Background: this defer runs precisely BECAUSE ctx was
+		// cancelled, so the emit must outlive it — but it should still carry ctx's
+		// values (tracing/request scope) rather than starting from an empty root.
+		if emitErr := bus.Emit(context.WithoutCancel(ctx), core.EventTypeDaemonShutdown, payloadBytes); emitErr != nil {
 			log.Printf("warn: daemon.Start: emit daemon_shutdown: %v", emitErr)
 		}
 	}()

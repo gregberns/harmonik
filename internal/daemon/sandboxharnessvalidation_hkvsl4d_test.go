@@ -38,11 +38,11 @@ func hkvsl4dWriteConfig(t *testing.T, harnessesYAML string) string {
 
 	projectDir := t.TempDir()
 	cfgDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatalf("hk-vsl4d: MkdirAll: %v", err)
 	}
 	body := "schema_version: 1\nsandbox:\n  backend: srt\n  harnesses:\n" + harnessesYAML
-	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatalf("hk-vsl4d: WriteFile: %v", err)
 	}
 	return projectDir

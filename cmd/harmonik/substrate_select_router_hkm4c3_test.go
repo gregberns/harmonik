@@ -96,7 +96,16 @@ func nonSSHWorkerRegistry() *workers.Registry {
 }
 
 // TestCodexRouter_RequireBoundary_RefusesUnsandboxed_HK5H759 pins the fail-closed
-// runner: when requireBoundary is set (the codexdriver crew path), Command must
+// runner behaviour itself.
+//
+// hk-5vapm: NOTHING SETS requireBoundary TRUE in production — this doc used to say
+// "the codexdriver crew path" does, and that stopped being true when hk-tckw3.1
+// Step 1 dropped the fence. The logic below is live and correct, but unreachable
+// as wired. The test is kept because the behaviour must stay correct for whenever
+// something does arm it; it must NOT be read as evidence that unsandboxed codex
+// launches are refused today. They are not.
+//
+// When requireBoundary is set, Command must
 // return the deliberately-nonexistent refusal argv0 for EVERY non-(enabled+ssh)
 // state — no registry, nil registry, a disabled ssh worker, or an enabled non-ssh
 // worker — so exec.Start fails instead of running codex danger-full-access
@@ -178,19 +187,40 @@ func TestCodexRouter_SelectSubstrateWiresObserver(t *testing.T) {
 	}
 }
 
-// TestSelectSubstrate_RequireIsolationBoundary_HK5H759 is the composition-root
-// contract for the fail-closed guard signal: selectSubstrate returns
-// requireIsolationBoundary=true ONLY on the codexdriver path (permissive sandbox
-// posture) and false for the tmux default (nothing to guard). The daemon keys
-// its fail-closed refusal off this bool, so it must track the substrate choice.
-func TestSelectSubstrate_RequireIsolationBoundary_HK5H759(t *testing.T) {
+// TestSelectSubstrate_SubstrateWiring_HK5H759 pins what selectSubstrate returns
+// on each arm: the codexdriver path yields the codex substrate with the tmux
+// substrate as the REVIEWER substrate (hk-qxvc2), and the default path yields
+// tmux for both.
+//
+// hk-5vapm: this test was named ..._RequireIsolationBoundary_HK5H759 and its
+// whole subject was a third return value, requireIsolationBoundary — the signal
+// a daemon-side fail-closed guard was supposed to key off to refuse a codex run
+// with no ssh worker bound. THAT RETURN VALUE IS GONE and the test is renamed to
+// what it actually covers.
+//
+// Two reasons it went, both worth keeping in view:
+//   - hk-tckw3.1 Step 1 dropped the fence on purpose (plan section 3a). D4
+//     scrapped ssh-per-node, so nothing can supply the boundary it demanded;
+//     arming it would stop codex launching rather than isolate it. D3 put local
+//     codex on danger-full-access, the same host posture claude already ran
+//     under. Both production callers already discarded the value and unparam
+//     flagged it as always-false.
+//   - The daemon half NEVER EXISTED. The workloop symbol those comments named is
+//     nowhere in the tree; the only occurrences were the comments describing it.
+//
+// The runner-level refusal logic is still exercised, by
+// TestCodexRouter_RequireBoundary_RefusesUnsandboxed_HK5H759 below — that guard
+// is intact and still meaningful if anything ever sets requireBoundary true.
+// Nothing does today.
+//
+// THIS IS NOT A CLAIM THAT UNSANDBOXED IS THE END STATE. Codex containment comes
+// from harmonik's srt sandbox (hk-scaj0), a different mechanism. When codex is
+// listed in sandbox.harnesses, revisit this deliberately.
+func TestSelectSubstrate_SubstrateWiring_HK5H759(t *testing.T) {
 	tmuxSpy := &hkqxvc2ReviewerSubstrateSpy{}
-	t.Run("codexdriver_requires_boundary", func(t *testing.T) {
+	t.Run("codexdriver_wires_codex_substrate_tmux_reviewer", func(t *testing.T) {
 		t.Setenv(substrateSelectEnv, "codexdriver")
-		sub, _, requireBoundary, reviewerSubstrate := selectSubstrate(tmuxSpy, "codex")
-		if !requireBoundary {
-			t.Fatal("codexdriver path must require an isolation boundary (fail-closed signal)")
-		}
+		sub, _, reviewerSubstrate := selectSubstrate(tmuxSpy, "codex")
 		if sub == tmuxSpy {
 			t.Fatal("codexdriver path must return the codex substrate as its primary substrate")
 		}
@@ -198,12 +228,9 @@ func TestSelectSubstrate_RequireIsolationBoundary_HK5H759(t *testing.T) {
 			t.Fatalf("hk-qxvc2: codexdriver reviewer substrate = %T, want tmux spy", reviewerSubstrate)
 		}
 	})
-	t.Run("tmux_default_no_boundary", func(t *testing.T) {
+	t.Run("tmux_default_wires_tmux_for_both", func(t *testing.T) {
 		t.Setenv(substrateSelectEnv, "")
-		sub, _, requireBoundary, reviewerSubstrate := selectSubstrate(tmuxSpy, "codex")
-		if requireBoundary {
-			t.Fatal("tmux default has no permissive posture; must NOT require a boundary")
-		}
+		sub, _, reviewerSubstrate := selectSubstrate(tmuxSpy, "codex")
 		if sub != tmuxSpy || reviewerSubstrate != tmuxSpy {
 			t.Fatalf("hk-qxvc2: tmux path substrates = %T / %T, want tmux spy for both", sub, reviewerSubstrate)
 		}

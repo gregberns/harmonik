@@ -64,7 +64,6 @@ func twinCocFixtureWorktree(t *testing.T) string {
 	// Helper to run a git command in dir, failing the test on error.
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git command with controlled args; test helper
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
@@ -93,6 +92,15 @@ func twinCocFixtureWorktree(t *testing.T) string {
 	return dir
 }
 
+func twinCocFixtureString(t *testing.T, m map[string]any, field string) string {
+	t.Helper()
+	value, ok := m[field].(string)
+	if !ok {
+		t.Fatalf("%s missing or not a string: %v", field, m[field])
+	}
+	return value
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Unit: commit_on_cue step
 // ────────────────────────────────────────────────────────────────────────────
@@ -118,12 +126,12 @@ func TestRunCommitOnCue_HappyPath(t *testing.T) {
 	m := msgs[0]
 
 	// type must be twin_committed.
-	if got, _ := m["type"].(string); got != "twin_committed" {
+	if got := twinCocFixtureString(t, m, "type"); got != "twin_committed" {
 		t.Errorf("type = %q, want %q", got, "twin_committed")
 	}
 
 	// commit_sha must be non-empty.
-	sha, _ := m["commit_sha"].(string)
+	sha := twinCocFixtureString(t, m, "commit_sha")
 	if sha == "" {
 		t.Error("commit_sha is empty, want non-empty git SHA")
 	}
@@ -150,7 +158,6 @@ func TestRunCommitOnCue_HappyPath(t *testing.T) {
 	}
 
 	// Verify the commit landed on HEAD.
-	//nolint:gosec // G204: constant git args; test only
 	revCmd := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD")
 	revCmd.Dir = dir
 	revOut, revErr := revCmd.Output()
@@ -179,7 +186,7 @@ func TestRunCommitOnCue_NoWorktreePath(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message (twin_error), got %d", len(msgs))
 	}
-	if got, _ := msgs[0]["type"].(string); got != "twin_error" {
+	if got := twinCocFixtureString(t, msgs[0], "type"); got != "twin_error" {
 		t.Errorf("type = %q, want twin_error", got)
 	}
 }
@@ -210,7 +217,9 @@ func TestRunCommitOnCue_NoWorktreePathSubprocess(t *testing.T) {
 	//nolint:gosec // G204: controlled args; test only
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestRunCommitOnCue_NoWorktreePathSubprocess", "-test.v")
 	cmd.Env = append(os.Environ(), "HARMONIK_TWIN_TEST_SUBPROCESS=1")
-	_ = cmd.Run() // ignore error; we check ExitCode below
+	if err := cmd.Run(); err == nil {
+		t.Fatal("subprocess exited successfully, want non-zero")
+	}
 	if cmd.ProcessState == nil {
 		t.Fatal("subprocess did not run")
 	}
@@ -241,7 +250,7 @@ func TestRunCommitOnCue_NonZeroExitDoesNotFailScript(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
 	m := msgs[0]
-	if got, _ := m["type"].(string); got != "twin_committed" {
+	if got := twinCocFixtureString(t, m, "type"); got != "twin_committed" {
 		t.Errorf("type = %q, want twin_committed", got)
 	}
 	// exit_code must be non-zero.
@@ -267,10 +276,10 @@ func TestEmitTwinCommitted_SuccessShape(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
 	m := msgs[0]
-	if got, _ := m["type"].(string); got != "twin_committed" {
+	if got := twinCocFixtureString(t, m, "type"); got != "twin_committed" {
 		t.Errorf("type = %q, want twin_committed", got)
 	}
-	if got, _ := m["commit_sha"].(string); got != sha {
+	if got := twinCocFixtureString(t, m, "commit_sha"); got != sha {
 		t.Errorf("commit_sha = %q, want %q", got, sha)
 	}
 	if code, ok := m["exit_code"].(float64); !ok || int(code) != 0 {
@@ -297,13 +306,13 @@ func TestEmitTwinCommitted_FailureShape(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
 	m := msgs[0]
-	if got, _ := m["commit_sha"].(string); got != "" {
+	if got := twinCocFixtureString(t, m, "commit_sha"); got != "" {
 		t.Errorf("commit_sha = %q, want empty on failure", got)
 	}
 	if code, ok := m["exit_code"].(float64); !ok || int(code) == 0 {
 		t.Errorf("exit_code = %v, want non-zero", m["exit_code"])
 	}
-	if excerpt, _ := m["stderr_excerpt"].(string); !strings.Contains(excerpt, "git repository") {
+	if excerpt := twinCocFixtureString(t, m, "stderr_excerpt"); !strings.Contains(excerpt, "git repository") {
 		t.Errorf("stderr_excerpt = %q, want to contain 'git repository'", excerpt)
 	}
 }
@@ -455,19 +464,19 @@ func TestScenarioCommitOnCueStartupDelay_Smoke(t *testing.T) {
 	if len(msgs) != len(wantTypes) {
 		var got []string
 		for _, m := range msgs {
-			got = append(got, m["type"].(string))
+			got = append(got, twinCocFixtureString(t, m, "type"))
 		}
 		t.Fatalf("expected %d messages %v, got %d: %v", len(wantTypes), wantTypes, len(msgs), got)
 	}
 	for i, want := range wantTypes {
-		if got, _ := msgs[i]["type"].(string); got != want {
+		if got := twinCocFixtureString(t, msgs[i], "type"); got != want {
 			t.Errorf("msgs[%d].type = %q, want %q", i, got, want)
 		}
 	}
 
 	// twin_committed must have exit_code=0 and non-empty commit_sha.
 	committed := msgs[3]
-	if sha, _ := committed["commit_sha"].(string); sha == "" {
+	if sha := twinCocFixtureString(t, committed, "commit_sha"); sha == "" {
 		t.Error("twin_committed.commit_sha is empty, want non-empty SHA")
 	}
 	if code, ok := committed["exit_code"].(float64); !ok || int(code) != 0 {

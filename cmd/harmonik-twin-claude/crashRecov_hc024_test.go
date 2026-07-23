@@ -55,6 +55,24 @@ import (
 	"time"
 )
 
+func crashRecovMustString(t *testing.T, values map[string]any, key string) string {
+	t.Helper()
+	value, ok := values[key].(string)
+	if !ok {
+		t.Fatalf("field %q: got %T, want string", key, values[key])
+	}
+	return value
+}
+
+func crashRecovMustFloat(t *testing.T, values map[string]any, key string) float64 {
+	t.Helper()
+	value, ok := values[key].(float64)
+	if !ok {
+		t.Fatalf("field %q: got %T, want JSON number", key, values[key])
+	}
+	return value
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Kill-point enum and sub_reason mapping (HC-024 + §8.2)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -595,15 +613,15 @@ func TestCrashRecov_HC024_AgentFailedPayloadShape(t *testing.T) {
 			}
 
 			// Type.
-			if got := m["type"].(string); got != "agent_failed" {
+			if got := crashRecovMustString(t, m, "type"); got != "agent_failed" {
 				t.Errorf("%q: type = %q, want agent_failed", tc.name, got)
 			}
 			// error_category.
-			if got := m["error_category"].(string); got != tc.errorCategory {
+			if got := crashRecovMustString(t, m, "error_category"); got != tc.errorCategory {
 				t.Errorf("%q: error_category = %q, want %q", tc.name, got, tc.errorCategory)
 			}
 			// reason.
-			if got := m["reason"].(string); got != tc.reason {
+			if got := crashRecovMustString(t, m, "reason"); got != tc.reason {
 				t.Errorf("%q: reason = %q, want %q", tc.name, got, tc.reason)
 			}
 			// sub_reason: present iff non-empty.
@@ -726,10 +744,10 @@ func TestCrashRecov_HC024a_FirstOccurrenceIsTransient(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if got := m["error_category"].(string); got != "transient" {
+	if got := crashRecovMustString(t, m, "error_category"); got != "transient" {
 		t.Errorf("first-occurrence socket-I/O: error_category = %q, want transient (HC-024a)", got)
 	}
-	if got := m["reason"].(string); got != "socket_io_error" {
+	if got := crashRecovMustString(t, m, "reason"); got != "socket_io_error" {
 		t.Errorf("first-occurrence socket-I/O: reason = %q, want socket_io_error (HC-024a)", got)
 	}
 }
@@ -758,10 +776,10 @@ func TestCrashRecov_HC024a_SustainedIsStructural(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if got := m["error_category"].(string); got != "structural" {
+	if got := crashRecovMustString(t, m, "error_category"); got != "structural" {
 		t.Errorf("sustained socket-I/O: error_category = %q, want structural (HC-024a)", got)
 	}
-	if got := m["reason"].(string); got != "progress_stream_broken" {
+	if got := crashRecovMustString(t, m, "reason"); got != "progress_stream_broken" {
 		t.Errorf("sustained socket-I/O: reason = %q, want progress_stream_broken (HC-024a)", got)
 	}
 }
@@ -811,10 +829,10 @@ func TestCrashRecov_HC044a_OrphanPayloadShape(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if got := m["error_category"].(string); got != "structural" {
+	if got := crashRecovMustString(t, m, "error_category"); got != "structural" {
 		t.Errorf("orphan: error_category = %q, want structural (HC-044a)", got)
 	}
-	if got := m["reason"].(string); got != "workspace_held_by_orphan" {
+	if got := crashRecovMustString(t, m, "reason"); got != "workspace_held_by_orphan" {
 		t.Errorf("orphan: reason = %q, want workspace_held_by_orphan (HC-044a)", got)
 	}
 
@@ -856,7 +874,7 @@ func TestCrashRecov_HCINV006_TerminalEventSetComplete(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimRight(bufC.Bytes(), "\n"), &mC); err != nil {
 		t.Fatalf("unmarshal agent_completed: %v", err)
 	}
-	if got := mC["type"].(string); got != "agent_completed" {
+	if got := crashRecovMustString(t, mC, "type"); got != "agent_completed" {
 		t.Errorf("agent_completed shape: type = %q, want agent_completed", got)
 	}
 
@@ -869,7 +887,7 @@ func TestCrashRecov_HCINV006_TerminalEventSetComplete(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimRight(bufF.Bytes(), "\n"), &mF); err != nil {
 		t.Fatalf("unmarshal agent_failed: %v", err)
 	}
-	if got := mF["type"].(string); got != "agent_failed" {
+	if got := crashRecovMustString(t, mF, "type"); got != "agent_failed" {
 		t.Errorf("agent_failed shape: type = %q, want agent_failed", got)
 	}
 }
@@ -948,7 +966,7 @@ func TestCrashRecov_HCINV005_BinaryPathVerificationShape(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if got := m["error_category"].(string); got != expectedClass {
+	if got := crashRecovMustString(t, m, "error_category"); got != expectedClass {
 		t.Errorf("binary path verification failure: error_category = %q, want %q (HC-INV-005 + §8.2)", got, expectedClass)
 	}
 }
@@ -985,7 +1003,7 @@ func TestCrashRecov_HC008a_DirtyExitInShutdownWindowIsCompleted(t *testing.T) {
 	}
 
 	// Type is still agent_completed (not agent_failed).
-	if got := m["type"].(string); got != "agent_completed" {
+	if got := crashRecovMustString(t, m, "type"); got != "agent_completed" {
 		t.Errorf(
 			"dirty-exit-in-shutdown-window: type = %q, want agent_completed "+
 				"(HC-008a + HC-INV-006: dirty exit inside shutdown window is completed, not failed)",
@@ -993,7 +1011,7 @@ func TestCrashRecov_HC008a_DirtyExitInShutdownWindowIsCompleted(t *testing.T) {
 		)
 	}
 	// exit_code must carry the non-zero value.
-	if got := m["exit_code"].(float64); int(got) != shutdownExitCode {
+	if got := crashRecovMustFloat(t, m, "exit_code"); int(got) != shutdownExitCode {
 		t.Errorf("dirty-exit-in-shutdown-window: exit_code = %v, want %d (shutdown_exit_code per HC-008a)", got, shutdownExitCode)
 	}
 	// outcome_ref must be non-empty (outcome is durable).

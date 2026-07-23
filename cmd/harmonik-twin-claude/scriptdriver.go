@@ -64,6 +64,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -391,7 +392,7 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRu
 		// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
 		if msg.Type == commitOnCueStep {
 			stepCfg := cfg
-			if name, _ := msg.Payload["sentinel_name"].(string); name != "" {
+			if name, ok := msg.Payload["sentinel_name"].(string); ok && name != "" {
 				stepCfg.sentinelName = name
 			}
 			if err := runCommitOnCue(ctx, e, stepCfg); err != nil {
@@ -430,6 +431,13 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRu
 	return nil
 }
 
+func emitTwinErrorResult(e *wireEmitter, message string, primary error) error {
+	if emitErr := e.emitTwinError(message); emitErr != nil {
+		return errors.Join(primary, fmt.Errorf("emit twin_error: %w", emitErr))
+	}
+	return primary
+}
+
 // runCallStopHook handles the call_stop_hook script step.
 //
 // Error policy per bead spec:
@@ -439,13 +447,15 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRu
 func runCallStopHook(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) error {
 	if cfg.settings == nil {
 		// Settings were never loaded (--worktree-path not supplied).
-		_ = e.emitTwinError("call_stop_hook: settings not loaded (--worktree-path was not supplied)")
-		return fmt.Errorf("call_stop_hook: settings not loaded; --worktree-path is required for this step")
+		return emitTwinErrorResult(e,
+			"call_stop_hook: settings not loaded (--worktree-path was not supplied)",
+			fmt.Errorf("call_stop_hook: settings not loaded; --worktree-path is required for this step"))
 	}
 	if !cfg.settings.stopHookPresent {
 		// Settings were loaded but no Stop hook was found.
-		_ = e.emitTwinError("call_stop_hook: no Stop hook command found in .claude/settings.json")
-		return fmt.Errorf("call_stop_hook: no Stop hook command in settings.json")
+		return emitTwinErrorResult(e,
+			"call_stop_hook: no Stop hook command found in .claude/settings.json",
+			fmt.Errorf("call_stop_hook: no Stop hook command in settings.json"))
 	}
 
 	exitCode, durationMs := callStopHook(ctx, cfg.settings.stopHookCommand, cfg.worktreePath)
@@ -473,8 +483,9 @@ func runCallStopHook(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) e
 // Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
 func runCommitOnCue(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) error {
 	if cfg.worktreePath == "" {
-		_ = e.emitTwinError("commit_on_cue: --worktree-path was not supplied")
-		return fmt.Errorf("commit_on_cue: --worktree-path is required for this step")
+		return emitTwinErrorResult(e,
+			"commit_on_cue: --worktree-path was not supplied",
+			fmt.Errorf("commit_on_cue: --worktree-path is required for this step"))
 	}
 
 	// Use nanosecond timestamp in the filename so parallel invocations don't collide.
@@ -491,14 +502,15 @@ func runCommitOnCue(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) er
 
 	//nolint:gosec // G306: sentinel file is world-readable; not sensitive.
 	if err := os.WriteFile(sentinelPath, []byte(sentinelContent), 0o644); err != nil {
-		_ = e.emitTwinError("commit_on_cue: write sentinel: " + err.Error())
-		return fmt.Errorf("commit_on_cue: write sentinel %q: %w", sentinelPath, err)
+		return emitTwinErrorResult(e,
+			"commit_on_cue: write sentinel: "+err.Error(),
+			fmt.Errorf("commit_on_cue: write sentinel %q: %w", sentinelPath, err))
 	}
 
 	start := time.Now()
 
 	// Git author/committer identity set via env vars to avoid touching git config.
-	gitEnv := append(os.Environ(), //nolint:gocritic // appendAssign: intentional new slice
+	gitEnv := append(os.Environ(),
 		"GIT_AUTHOR_NAME=harmonik-twin",
 		"GIT_AUTHOR_EMAIL=twin@harmonik.local",
 		"GIT_COMMITTER_NAME=harmonik-twin",
@@ -515,7 +527,9 @@ func runCommitOnCue(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) er
 			stderrExcerpt = stderrExcerpt[:200]
 		}
 		durationMs := int(time.Since(start).Milliseconds())
-		_ = e.emitTwinCommitted("", 1, durationMs, stderrExcerpt)
+		if emitErr := e.emitTwinCommitted("", 1, durationMs, stderrExcerpt); emitErr != nil {
+			return fmt.Errorf("commit_on_cue: emit twin_committed (git add error): %w", emitErr)
+		}
 		// Non-zero git exit → do NOT return error; let script continue per bead policy.
 		return nil
 	}
@@ -542,7 +556,7 @@ func runCommitOnCue(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) er
 	}
 
 	// Extract the commit SHA from HEAD.
-	revCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD") //nolint:gosec // G204: constant args
+	revCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
 	revCmd.Dir = cfg.worktreePath
 	revCmd.Env = gitEnv
 	shaOut, shaErr := revCmd.Output()
@@ -571,16 +585,18 @@ func runCommitOnCue(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) er
 // Cite: specs/handler-contract.md §4.6.HC-024, §4.5.HC-020, CHB-018 §7.1.
 func runSignalInterrupt(ctx context.Context, e *wireEmitter, msg ScriptMessage) error {
 	// Extract error_category (required).
-	errorCategory, _ := msg.Payload["error_category"].(string)
-	if errorCategory == "" {
-		_ = e.emitTwinError("signal_interrupt: error_category is required and must be non-empty")
-		return fmt.Errorf("signal_interrupt: error_category missing or empty")
+	errorCategory, ok := msg.Payload["error_category"].(string)
+	if !ok || errorCategory == "" {
+		return emitTwinErrorResult(e,
+			"signal_interrupt: error_category is required and must be non-empty",
+			fmt.Errorf("signal_interrupt: error_category missing or empty"))
 	}
 	// Extract reason (required).
-	reason, _ := msg.Payload["reason"].(string)
-	if reason == "" {
-		_ = e.emitTwinError("signal_interrupt: reason is required and must be non-empty")
-		return fmt.Errorf("signal_interrupt: reason missing or empty")
+	reason, ok := msg.Payload["reason"].(string)
+	if !ok || reason == "" {
+		return emitTwinErrorResult(e,
+			"signal_interrupt: reason is required and must be non-empty",
+			fmt.Errorf("signal_interrupt: reason missing or empty"))
 	}
 	// Extract delay_ms (optional; 0 means emit immediately).
 	var delayMs int

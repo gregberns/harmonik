@@ -82,14 +82,21 @@ func TestScenarioSilentHang_TruncatedSequence(t *testing.T) {
 	if len(msgs) != len(wantTypes) {
 		var gotTypes []string
 		for _, m := range msgs {
-			gotTypes = append(gotTypes, m["type"].(string))
+			got, ok := m["type"].(string)
+			if !ok {
+				t.Fatalf("silent-hang scenario: message type has type %T, want string", m["type"])
+			}
+			gotTypes = append(gotTypes, got)
 		}
 		t.Fatalf("silent-hang scenario: got %d messages %v, want %d %v (HC-056 truncated preamble only)",
 			len(msgs), gotTypes, len(wantTypes), wantTypes)
 	}
 
 	for i, want := range wantTypes {
-		got, _ := msgs[i]["type"].(string)
+		got, ok := msgs[i]["type"].(string)
+		if !ok {
+			t.Fatalf("msgs[%d].type has type %T, want string", i, msgs[i]["type"])
+		}
 		if got != want {
 			t.Errorf("msgs[%d].type = %q, want %q", i, got, want)
 		}

@@ -16,13 +16,31 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func codexTwinFixtureContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func codexTwinFixtureString(t *testing.T, m map[string]any, key string) string {
+	t.Helper()
+	value, ok := m[key].(string)
+	if !ok {
+		t.Fatalf("%s = %v (type %T), want string", key, m[key], m[key])
+	}
+	return value
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test helpers
@@ -71,10 +89,11 @@ func codexTwinFixtureGitRepo(t *testing.T) string {
 		"GIT_COMMITTER_NAME=test",
 		"GIT_COMMITTER_EMAIL=test@test.local",
 	)
+	ctx := codexTwinFixtureContext(t)
 
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = dir
 		cmd.Env = gitEnv
 		out, err := cmd.CombinedOutput()
@@ -91,7 +110,7 @@ func codexTwinFixtureGitRepo(t *testing.T) string {
 // codexTwinFixtureGitLog returns the one-line log of the HEAD commit in dir.
 func codexTwinFixtureGitLog(t *testing.T, dir string) string {
 	t.Helper()
-	cmd := exec.Command("git", "log", "--oneline", "-1")
+	cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "log", "--oneline", "-1")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -103,7 +122,7 @@ func codexTwinFixtureGitLog(t *testing.T, dir string) string {
 // codexTwinFixtureGitCommitMsg returns the full commit message of HEAD in dir.
 func codexTwinFixtureGitCommitMsg(t *testing.T, dir string) string {
 	t.Helper()
-	cmd := exec.Command("git", "log", "--format=%B", "-1")
+	cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "log", "--format=%B", "-1")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -116,7 +135,7 @@ func codexTwinFixtureGitCommitMsg(t *testing.T, dir string) string {
 // uncommitted changes (tracked or untracked).
 func codexTwinFixtureGitStatusClean(t *testing.T, dir string) bool {
 	t.Helper()
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "status", "--porcelain")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -178,10 +197,10 @@ func TestEmitThreadStarted(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if got := msgs[0]["type"].(string); got != "thread.started" {
+	if got := codexTwinFixtureString(t, msgs[0], "type"); got != "thread.started" {
 		t.Errorf("type = %q, want thread.started", got)
 	}
-	if got := msgs[0]["thread_id"].(string); got != "test-thread-001" {
+	if got := codexTwinFixtureString(t, msgs[0], "thread_id"); got != "test-thread-001" {
 		t.Errorf("thread_id = %q, want test-thread-001", got)
 	}
 }
@@ -198,7 +217,7 @@ func TestEmitTurnCompleted(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
 	m := msgs[0]
-	if got := m["type"].(string); got != "turn.completed" {
+	if got := codexTwinFixtureString(t, m, "type"); got != "turn.completed" {
 		t.Errorf("type = %q, want turn.completed", got)
 	}
 	if _, ok := m["usage"]; !ok {
@@ -218,14 +237,14 @@ func TestEmitTurnFailed(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
 	m := msgs[0]
-	if got := m["type"].(string); got != "turn.failed" {
+	if got := codexTwinFixtureString(t, m, "type"); got != "turn.failed" {
 		t.Errorf("type = %q, want turn.failed", got)
 	}
 	errObj, ok := m["error"].(map[string]any)
 	if !ok {
 		t.Fatalf("turn.failed missing error object; got %T: %v", m["error"], m["error"])
 	}
-	if got := errObj["message"].(string); got != "test error message" {
+	if got := codexTwinFixtureString(t, errObj, "message"); got != "test error message" {
 		t.Errorf("error.message = %q, want test error message", got)
 	}
 }
@@ -246,10 +265,10 @@ func TestScenarioNoEditsJSONL(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d: %v", len(msgs), msgs)
 	}
-	if got := msgs[0]["type"].(string); got != "thread.started" {
+	if got := codexTwinFixtureString(t, msgs[0], "type"); got != "thread.started" {
 		t.Errorf("msgs[0].type = %q, want thread.started", got)
 	}
-	if got := msgs[1]["type"].(string); got != "turn.completed" {
+	if got := codexTwinFixtureString(t, msgs[1], "type"); got != "turn.completed" {
 		t.Errorf("msgs[1].type = %q, want turn.completed", got)
 	}
 }
@@ -263,7 +282,7 @@ func TestScenarioNoEditsThreadID(t *testing.T) {
 	}
 	msgs := codexTwinFixtureDecodeAll(t, &buf)
 	want := threadIDForScenario(ScenarioNoEdits)
-	if got := msgs[0]["thread_id"].(string); got != want {
+	if got := codexTwinFixtureString(t, msgs[0], "thread_id"); got != want {
 		t.Errorf("thread_id = %q, want %q", got, want)
 	}
 }
@@ -301,10 +320,10 @@ func TestScenarioTurnFailedJSONL(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d: %v", len(msgs), msgs)
 	}
-	if got := msgs[0]["type"].(string); got != "thread.started" {
+	if got := codexTwinFixtureString(t, msgs[0], "type"); got != "thread.started" {
 		t.Errorf("msgs[0].type = %q, want thread.started", got)
 	}
-	if got := msgs[1]["type"].(string); got != "turn.failed" {
+	if got := codexTwinFixtureString(t, msgs[1], "type"); got != "turn.failed" {
 		t.Errorf("msgs[1].type = %q, want turn.failed", got)
 	}
 }
@@ -321,7 +340,7 @@ func TestScenarioTurnFailedErrorField(t *testing.T) {
 	if !ok {
 		t.Fatalf("turn.failed missing error object")
 	}
-	msg, _ := errObj["message"].(string)
+	msg := codexTwinFixtureString(t, errObj, "message")
 	if msg == "" {
 		t.Error("turn.failed error.message is empty")
 	}
@@ -360,10 +379,10 @@ func TestScenarioEditsNoCommitJSONL(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d: %v", len(msgs), msgs)
 	}
-	if got := msgs[0]["type"].(string); got != "thread.started" {
+	if got := codexTwinFixtureString(t, msgs[0], "type"); got != "thread.started" {
 		t.Errorf("msgs[0].type = %q, want thread.started", got)
 	}
-	if got := msgs[1]["type"].(string); got != "turn.completed" {
+	if got := codexTwinFixtureString(t, msgs[1], "type"); got != "turn.completed" {
 		t.Errorf("msgs[1].type = %q, want turn.completed", got)
 	}
 }
@@ -423,10 +442,10 @@ func TestScenarioTrailerCommitJSONL(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d: %v", len(msgs), msgs)
 	}
-	if got := msgs[0]["type"].(string); got != "thread.started" {
+	if got := codexTwinFixtureString(t, msgs[0], "type"); got != "thread.started" {
 		t.Errorf("msgs[0].type = %q, want thread.started", got)
 	}
-	if got := msgs[1]["type"].(string); got != "turn.completed" {
+	if got := codexTwinFixtureString(t, msgs[1], "type"); got != "turn.completed" {
 		t.Errorf("msgs[1].type = %q, want turn.completed", got)
 	}
 }
@@ -692,7 +711,9 @@ func TestWriteVersion(t *testing.T) {
 	defer func() { commitHash = orig }()
 
 	var buf bytes.Buffer
-	writeVersion(&buf)
+	if err := writeVersion(&buf); err != nil {
+		t.Fatalf("writeVersion: %v", err)
+	}
 
 	got := buf.String()
 	if !strings.HasPrefix(got, "harmonik-twin-codex commit=") {
@@ -736,7 +757,7 @@ func TestThreadStartedAlwaysFirst(t *testing.T) {
 			if len(msgs) == 0 {
 				t.Fatal("no JSONL output emitted")
 			}
-			if got := msgs[0]["type"].(string); got != "thread.started" {
+			if got := codexTwinFixtureString(t, msgs[0], "type"); got != "thread.started" {
 				t.Errorf("first message type = %q, want thread.started", got)
 			}
 		})
@@ -773,7 +794,7 @@ func TestTerminalEventIsLast(t *testing.T) {
 				t.Fatal("no JSONL output emitted")
 			}
 			last := msgs[len(msgs)-1]
-			if got := last["type"].(string); got != tc.wantEnd {
+			if got := codexTwinFixtureString(t, last, "type"); got != tc.wantEnd {
 				t.Errorf("last message type = %q, want %q", got, tc.wantEnd)
 			}
 		})
@@ -836,7 +857,7 @@ func TestTrailerCommitSentinelFilesUnique(t *testing.T) {
 	}
 
 	// Each run creates exactly one new commit; two runs → two commits ahead of the initial.
-	cmd := exec.Command("git", "log", "--oneline", "-3")
+	cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "log", "--oneline", "-3")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -860,9 +881,12 @@ func TestEditsNoCommitSentinelFileCreated(t *testing.T) {
 
 	// Capture the list of untracked files before.
 	untrackedBefore := func() []string {
-		cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
+		cmd := exec.CommandContext(codexTwinFixtureContext(t), "git", "ls-files", "--others", "--exclude-standard")
 		cmd.Dir = dir
-		out, _ := cmd.CombinedOutput()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git ls-files: %v\n%s", err, out)
+		}
 		return strings.Fields(string(out))
 	}
 

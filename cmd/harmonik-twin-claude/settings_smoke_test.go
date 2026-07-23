@@ -40,9 +40,9 @@ func twinSettingsSmokeFixtureBinary(t *testing.T) string {
 	if wdErr != nil {
 		t.Fatalf("twinSettingsSmokeFixtureBinary: getwd: %v", wdErr)
 	}
-	pkgPath := filepath.Join(wd)
+	pkgPath := wd
 
-	cmd := exec.Command(goTool, "build", "-o", binPath, pkgPath) //nolint:gosec // G204: goTool from LookPath
+	cmd := exec.CommandContext(t.Context(), goTool, "build", "-o", binPath, pkgPath) //nolint:gosec // G204: goTool from LookPath
 	var buildStderr bytes.Buffer
 	cmd.Stderr = &buildStderr
 	if err := cmd.Run(); err != nil {
@@ -90,7 +90,10 @@ func twinSettingsSmokeFixtureWorktree(t *testing.T) (worktreePath, sentinelPath 
 			},
 		},
 	}
-	settingsBytes, _ := json.MarshalIndent(settings, "", "  ")
+	settingsBytes, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatalf("twinSettingsSmokeFixtureWorktree: marshal settings: %v", err)
+	}
 	settingsPath := filepath.Join(claudeDir, "settings.json")
 	if err := os.WriteFile(settingsPath, settingsBytes, 0o600); err != nil {
 		t.Fatalf("twinSettingsSmokeFixtureWorktree: write settings.json: %v", err)
@@ -147,7 +150,7 @@ func TestTwinSettingsSmoke(t *testing.T) {
 	scriptPath := twinSettingsSmokeFixtureScript(t)
 
 	// Run the twin in scenario=stdout mode (no --socket-path).
-	cmd := exec.Command(binPath, //nolint:gosec // G204: binPath from temp build above
+	cmd := exec.CommandContext(t.Context(), binPath, //nolint:gosec // G204: binPath from temp build above
 		"--script-path", scriptPath,
 		"--worktree-path", worktreePath,
 	)

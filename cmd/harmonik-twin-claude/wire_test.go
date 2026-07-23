@@ -21,20 +21,47 @@ func twinWireFixtureEmitter(t *testing.T) (*wireEmitter, *bytes.Buffer) {
 	return newWireEmitter(&buf), &buf
 }
 
-// twinWireFixtureDecode decodes the nth NDJSON line (0-indexed) from buf into
-// a map[string]any and returns it.  It calls t.Fatalf if the line does not
-// exist or is not valid JSON.
-func twinWireFixtureDecode(t *testing.T, buf *bytes.Buffer, n int) map[string]any {
+// twinWireFixtureDecode decodes the sole NDJSON line from buf into a
+// map[string]any. It calls t.Fatalf if the line does not exist or is not valid
+// JSON.
+func twinWireFixtureDecode(t *testing.T, buf *bytes.Buffer) map[string]any {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	if n >= len(lines) {
-		t.Fatalf("twinWireFixtureDecode: want line %d, only %d lines in buffer", n, len(lines))
+	if len(lines) != 1 {
+		t.Fatalf("twinWireFixtureDecode: want 1 line, got %d lines in buffer", len(lines))
 	}
 	var m map[string]any
-	if err := json.Unmarshal([]byte(lines[n]), &m); err != nil {
-		t.Fatalf("twinWireFixtureDecode: line %d unmarshal: %v — raw: %q", n, err, lines[n])
+	if err := json.Unmarshal([]byte(lines[0]), &m); err != nil {
+		t.Fatalf("twinWireFixtureDecode: unmarshal: %v — raw: %q", err, lines[0])
 	}
 	return m
+}
+
+func twinWireFixtureString(t *testing.T, m map[string]any, field string) string {
+	t.Helper()
+	value, ok := m[field].(string)
+	if !ok {
+		t.Fatalf("%s missing or not a string: %v", field, m[field])
+	}
+	return value
+}
+
+func twinWireFixtureNumber(t *testing.T, m map[string]any, field string) float64 {
+	t.Helper()
+	value, ok := m[field].(float64)
+	if !ok {
+		t.Fatalf("%s missing or not a number: %v", field, m[field])
+	}
+	return value
+}
+
+func twinWireFixtureObject(t *testing.T, value any, field string) map[string]any {
+	t.Helper()
+	object, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("%s is not an object: %v", field, value)
+	}
+	return object
 }
 
 // twinWireFixtureAssertType checks that a decoded message map has the expected
@@ -106,13 +133,13 @@ func TestEmitHandlerCapabilities(t *testing.T) {
 		t.Fatalf("emitHandlerCapabilities: %v", err)
 	}
 
-	m := twinWireFixtureDecode(t, buf, 0)
+	m := twinWireFixtureDecode(t, buf)
 	twinWireFixtureAssertType(t, m, "handler_capabilities")
 
-	if got := m["run_id"].(string); got != "run-001" {
+	if got := twinWireFixtureString(t, m, "run_id"); got != "run-001" {
 		t.Errorf("run_id = %q, want %q", got, "run-001")
 	}
-	if got := m["session_id"].(string); got != "sess-001" {
+	if got := twinWireFixtureString(t, m, "session_id"); got != "sess-001" {
 		t.Errorf("session_id = %q, want %q", got, "sess-001")
 	}
 	vers, ok := m["protocol_versions_supported"].([]any)
@@ -136,7 +163,7 @@ func TestEmitSessionLogLocation(t *testing.T) {
 		); err != nil {
 			t.Fatalf("emitSessionLogLocation: %v", err)
 		}
-		m := twinWireFixtureDecode(t, buf, 0)
+		m := twinWireFixtureDecode(t, buf)
 		twinWireFixtureAssertType(t, m, "session_log_location")
 		if _, exists := m["bead_id"]; exists {
 			t.Error("bead_id present in message without bead_id arg; want omitted")
@@ -152,7 +179,7 @@ func TestEmitSessionLogLocation(t *testing.T) {
 		); err != nil {
 			t.Fatalf("emitSessionLogLocation: %v", err)
 		}
-		m := twinWireFixtureDecode(t, buf, 0)
+		m := twinWireFixtureDecode(t, buf)
 		twinWireFixtureAssertType(t, m, "session_log_location")
 		if got, ok := m["bead_id"].(string); !ok || got != bid {
 			t.Errorf("bead_id = %v, want %q", m["bead_id"], bid)
@@ -178,7 +205,7 @@ func TestEmitSkillsProvisioned(t *testing.T) {
 		t.Fatalf("emitSkillsProvisioned: %v", err)
 	}
 
-	m := twinWireFixtureDecode(t, buf, 0)
+	m := twinWireFixtureDecode(t, buf)
 	twinWireFixtureAssertType(t, m, "skills_provisioned")
 
 	arr, ok := m["skills"].([]any)
@@ -186,11 +213,11 @@ func TestEmitSkillsProvisioned(t *testing.T) {
 		t.Fatalf("skills field: want 2-element array, got %v", m["skills"])
 	}
 	// Second skill has version; first does not.
-	s0 := arr[0].(map[string]any)
+	s0 := twinWireFixtureObject(t, arr[0], "skills[0]")
 	if _, hasVer := s0["version"]; hasVer {
 		t.Errorf("first skill should have no version field, got %v", s0)
 	}
-	s1 := arr[1].(map[string]any)
+	s1 := twinWireFixtureObject(t, arr[1], "skills[1]")
 	if s1["version"] != "1.2.3" {
 		t.Errorf("second skill version = %v, want 1.2.3", s1["version"])
 	}
@@ -209,7 +236,7 @@ func TestEmitAgentReady(t *testing.T) {
 		t.Fatalf("emitAgentReady: %v", err)
 	}
 
-	m := twinWireFixtureDecode(t, buf, 0)
+	m := twinWireFixtureDecode(t, buf)
 	twinWireFixtureAssertType(t, m, "agent_ready")
 
 	caps, ok := m["capabilities"].([]any)
@@ -233,7 +260,7 @@ func TestEmitAgentStarted(t *testing.T) {
 		t.Fatalf("emitAgentStarted: %v", err)
 	}
 
-	m := twinWireFixtureDecode(t, buf, 0)
+	m := twinWireFixtureDecode(t, buf)
 	twinWireFixtureAssertType(t, m, "agent_started")
 
 	// HC-029: no environment variables in the payload.
@@ -274,13 +301,13 @@ func TestEmitAgentHeartbeat(t *testing.T) {
 			if err := e.emitAgentHeartbeat("sess-001", phase); err != nil {
 				t.Fatalf("emitAgentHeartbeat(%q): %v", phase, err)
 			}
-			m := twinWireFixtureDecode(t, buf, 0)
+			m := twinWireFixtureDecode(t, buf)
 			twinWireFixtureAssertType(t, m, "agent_heartbeat")
 
-			if got := m["session_id"].(string); got != "sess-001" {
+			if got := twinWireFixtureString(t, m, "session_id"); got != "sess-001" {
 				t.Errorf("session_id = %q, want sess-001", got)
 			}
-			if got := m["phase"].(string); got != string(phase) {
+			if got := twinWireFixtureString(t, m, "phase"); got != string(phase) {
 				t.Errorf("phase = %q, want %q", got, phase)
 			}
 		})
@@ -300,12 +327,12 @@ func TestEmitAgentOutputChunk(t *testing.T) {
 		if err := e.emitAgentOutputChunk("run-1", "sess-1", 0, 256, nil); err != nil {
 			t.Fatalf("emitAgentOutputChunk: %v", err)
 		}
-		m := twinWireFixtureDecode(t, buf, 0)
+		m := twinWireFixtureDecode(t, buf)
 		twinWireFixtureAssertType(t, m, "agent_output_chunk")
-		if got := m["chunk_index"].(float64); got != 0 {
+		if got := twinWireFixtureNumber(t, m, "chunk_index"); got != 0 {
 			t.Errorf("chunk_index = %v, want 0", got)
 		}
-		if got := m["bytes_emitted"].(float64); got != 256 {
+		if got := twinWireFixtureNumber(t, m, "bytes_emitted"); got != 256 {
 			t.Errorf("bytes_emitted = %v, want 256", got)
 		}
 		if _, exists := m["chunk_digest"]; exists {
@@ -319,7 +346,7 @@ func TestEmitAgentOutputChunk(t *testing.T) {
 		if err := e.emitAgentOutputChunk("run-1", "sess-1", 3, 512, &digest); err != nil {
 			t.Fatalf("emitAgentOutputChunk: %v", err)
 		}
-		m := twinWireFixtureDecode(t, buf, 0)
+		m := twinWireFixtureDecode(t, buf)
 		twinWireFixtureAssertType(t, m, "agent_output_chunk")
 		if got, ok := m["chunk_digest"].(string); !ok || got != digest {
 			t.Errorf("chunk_digest = %v, want %q", m["chunk_digest"], digest)
@@ -340,7 +367,7 @@ func TestEmitAgentRateLimited(t *testing.T) {
 		if err := e.emitAgentRateLimited("run-1", "sess-1", nil, nil, ts); err != nil {
 			t.Fatalf("emitAgentRateLimited: %v", err)
 		}
-		m := twinWireFixtureDecode(t, buf, 0)
+		m := twinWireFixtureDecode(t, buf)
 		twinWireFixtureAssertType(t, m, "agent_rate_limited")
 		if _, exists := m["rate_limit_source"]; exists {
 			t.Error("rate_limit_source present for nil arg; want omitted")
@@ -361,12 +388,12 @@ func TestEmitAgentRateLimited(t *testing.T) {
 		if err := e.emitAgentRateLimited("run-1", "sess-1", &src, &retryAfter, ts); err != nil {
 			t.Fatalf("emitAgentRateLimited: %v", err)
 		}
-		m := twinWireFixtureDecode(t, buf, 0)
+		m := twinWireFixtureDecode(t, buf)
 		twinWireFixtureAssertType(t, m, "agent_rate_limited")
 		if got, ok := m["rate_limit_source"].(string); !ok || got != src {
 			t.Errorf("rate_limit_source = %v, want %q", m["rate_limit_source"], src)
 		}
-		if got := m["retry_after_seconds"].(float64); got != 30 {
+		if got := twinWireFixtureNumber(t, m, "retry_after_seconds"); got != 30 {
 			t.Errorf("retry_after_seconds = %v, want 30", got)
 		}
 	})
@@ -384,7 +411,7 @@ func TestEmitAgentRateLimitCleared(t *testing.T) {
 	if err := e.emitAgentRateLimitCleared("run-1", "sess-1", ts); err != nil {
 		t.Fatalf("emitAgentRateLimitCleared: %v", err)
 	}
-	m := twinWireFixtureDecode(t, buf, 0)
+	m := twinWireFixtureDecode(t, buf)
 	twinWireFixtureAssertType(t, m, "agent_rate_limit_cleared")
 	if got, ok := m["run_id"].(string); !ok || got != "run-1" {
 		t.Errorf("run_id = %v, want run-1", m["run_id"])
@@ -416,10 +443,10 @@ func TestEmitOutcomeEmitted(t *testing.T) {
 		t.Fatalf("emitOutcomeEmitted: %v", err)
 	}
 
-	m := twinWireFixtureDecode(t, buf, 0)
+	m := twinWireFixtureDecode(t, buf)
 	twinWireFixtureAssertType(t, m, "outcome_emitted")
 
-	if got := m["outcome_status"].(string); got != "success" {
+	if got := twinWireFixtureString(t, m, "outcome_status"); got != "success" {
 		t.Errorf("outcome_status = %q, want success", got)
 	}
 }
@@ -438,18 +465,18 @@ func TestEmitAgentCompleted(t *testing.T) {
 		t.Fatalf("emitAgentCompleted: %v", err)
 	}
 
-	m := twinWireFixtureDecode(t, buf, 0)
+	m := twinWireFixtureDecode(t, buf)
 	twinWireFixtureAssertType(t, m, "agent_completed")
 
-	if got := m["exit_code"].(float64); got != 0 {
+	if got := twinWireFixtureNumber(t, m, "exit_code"); got != 0 {
 		t.Errorf("exit_code = %v, want 0", got)
 	}
-	if got := m["outcome_ref"].(string); got != "outcome-ref-001" {
+	if got := twinWireFixtureString(t, m, "outcome_ref"); got != "outcome-ref-001" {
 		t.Errorf("outcome_ref = %q, want outcome-ref-001", got)
 	}
 
 	// ended_at must parse as RFC3339Nano.
-	eat := m["ended_at"].(string)
+	eat := twinWireFixtureString(t, m, "ended_at")
 	if _, err := time.Parse(time.RFC3339Nano, eat); err != nil {
 		t.Errorf("ended_at %q not RFC3339Nano: %v", eat, err)
 	}
@@ -468,9 +495,9 @@ func TestEmitAgentFailed(t *testing.T) {
 		if err := e.emitAgentFailed("run-1", "sess-1", endedAt, "structural", "silent_hang", ""); err != nil {
 			t.Fatalf("emitAgentFailed: %v", err)
 		}
-		m := twinWireFixtureDecode(t, buf, 0)
+		m := twinWireFixtureDecode(t, buf)
 		twinWireFixtureAssertType(t, m, "agent_failed")
-		if got := m["error_category"].(string); got != "structural" {
+		if got := twinWireFixtureString(t, m, "error_category"); got != "structural" {
 			t.Errorf("error_category = %q, want structural", got)
 		}
 		// sub_reason must be omitted when empty (omitempty).
@@ -485,8 +512,8 @@ func TestEmitAgentFailed(t *testing.T) {
 		if err := e.emitAgentFailed("run-1", "sess-1", endedAt, "structural", "protocol_mismatch", "ndjson_line_too_long"); err != nil {
 			t.Fatalf("emitAgentFailed: %v", err)
 		}
-		m := twinWireFixtureDecode(t, buf, 0)
-		if got := m["sub_reason"].(string); got != "ndjson_line_too_long" {
+		m := twinWireFixtureDecode(t, buf)
+		if got := twinWireFixtureString(t, m, "sub_reason"); got != "ndjson_line_too_long" {
 			t.Errorf("sub_reason = %q, want ndjson_line_too_long", got)
 		}
 	})
@@ -500,7 +527,7 @@ func TestEmitAgentFailed(t *testing.T) {
 // the version_selected control message sent by the daemon after the handshake
 // (§7.2).
 func TestWireReaderVersionSelected(t *testing.T) {
-	raw := `{"type":"version_selected","selected_version":1}` + "\n"
+	raw := "{\"type\":\"version_selected\",\"selected_version\":1}\n"
 	r := newWireReader(strings.NewReader(raw))
 
 	msg, err := r.readControlMsg()
@@ -518,7 +545,7 @@ func TestWireReaderVersionSelected(t *testing.T) {
 // TestWireReaderUnknownTypeIgnored verifies that an unrecognised control
 // message type is returned without error — forward-compatibility per §6.4.
 func TestWireReaderUnknownTypeIgnored(t *testing.T) {
-	raw := `{"type":"future_unknown_control","extra_field":"foo"}` + "\n"
+	raw := "{\"type\":\"future_unknown_control\",\"extra_field\":\"foo\"}\n"
 	r := newWireReader(strings.NewReader(raw))
 
 	msg, err := r.readControlMsg()
@@ -543,10 +570,7 @@ func TestWireReaderEOF(t *testing.T) {
 // TestWireReaderMultipleMessages verifies sequential decoding across multiple
 // NDJSON lines.
 func TestWireReaderMultipleMessages(t *testing.T) {
-	raw := strings.Join([]string{
-		`{"type":"version_selected","selected_version":1}`,
-		`{"type":"cancel"}`,
-	}, "\n") + "\n"
+	raw := `{"type":"version_selected","selected_version":1}` + "\n" + `{"type":"cancel"}` + "\n"
 
 	r := newWireReader(strings.NewReader(raw))
 

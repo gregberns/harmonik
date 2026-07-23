@@ -80,7 +80,10 @@ func run() int {
 	}
 
 	if *showVersion {
-		writeVersion(os.Stdout)
+		if err := writeVersion(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "write version: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 

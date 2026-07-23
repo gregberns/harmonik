@@ -117,7 +117,6 @@ func run() int {
 	// Validate precondition: if --launch-spec is provided, the file must exist.
 	// The actual LaunchSpec parsing is deferred to hk-ahvq.48.2.
 	if *launchSpecPath != "" {
-		//nolint:gosec // G304: path is operator-supplied via --launch-spec flag; provenance is the daemon
 		if _, err := os.Stat(*launchSpecPath); err != nil {
 			fmt.Fprintf(os.Stderr, "harmonik-twin-generic: --launch-spec file not found: %v\n", err)
 			return 1

@@ -72,9 +72,8 @@ func extractExitCode(err error) int {
 func callStopHook(ctx context.Context, hookCommand, worktreePath string) (exitCode, durationMs int) {
 	start := time.Now()
 
-	env := append(os.Environ(), "CLAUDE_HOOK_TYPE=Stop") //nolint:gocritic // appendAssign: intentional new slice, not appended to os.Environ itself
+	env := append(os.Environ(), "CLAUDE_HOOK_TYPE=Stop")
 
-	//nolint:gosec // G204: hookCommand is extracted from settings.json at operator-controlled worktreePath
 	cmd := exec.CommandContext(ctx, hookCommand)
 	cmd.Dir = worktreePath
 	cmd.Env = env

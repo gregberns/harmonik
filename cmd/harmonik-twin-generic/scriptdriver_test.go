@@ -15,14 +15,23 @@ import (
 
 // twinScriptFixtureWriteFile writes content to a temp file under t.TempDir()
 // with the given filename and returns the absolute path.
-func twinScriptFixtureWriteFile(t *testing.T, filename, content string) string {
+func twinScriptFixtureWriteFile(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
-	p := filepath.Join(dir, filename)
+	p := filepath.Join(dir, "script.yaml")
 	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatalf("twinScriptFixtureWriteFile: %v", err)
 	}
 	return p
+}
+
+func twinScriptFixtureString(t *testing.T, m map[string]any, field string) string {
+	t.Helper()
+	value, ok := m[field].(string)
+	if !ok {
+		t.Fatalf("%s missing or not a string: %v", field, m[field])
+	}
+	return value
 }
 
 // twinScriptFixtureDecodeAll splits buf into NDJSON lines and decodes all into
@@ -73,7 +82,6 @@ func TestHeartbeatModeValid(t *testing.T) {
 		{"unknown", false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.hm), func(t *testing.T) {
 			if got := tc.hm.Valid(); got != tc.wantOK {
 				t.Errorf("heartbeatMode(%q).Valid() = %v, want %v", tc.hm, got, tc.wantOK)
@@ -89,7 +97,7 @@ func TestHeartbeatModeValid(t *testing.T) {
 // TestLoadScriptFileDefaults verifies that absent heartbeat_mode defaults to
 // "wall_clock" and an empty messages list is valid.
 func TestLoadScriptFileDefaults(t *testing.T) {
-	p := twinScriptFixtureWriteFile(t, "script.yaml", "messages: []\n")
+	p := twinScriptFixtureWriteFile(t, "messages: []\n")
 
 	sf, err := loadScriptFile(p)
 	if err != nil {
@@ -115,7 +123,7 @@ messages:
       phase: starting
     relative_timestamp_ms: 100
 `
-	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+	p := twinScriptFixtureWriteFile(t, content)
 
 	sf, err := loadScriptFile(p)
 	if err != nil {
@@ -150,7 +158,7 @@ messages:
   - payload:
       session_id: sess-001
 `
-	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+	p := twinScriptFixtureWriteFile(t, content)
 
 	_, err := loadScriptFile(p)
 	if err == nil {
@@ -169,7 +177,7 @@ messages:
     payload:
       session_id: sess-001
 `
-	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+	p := twinScriptFixtureWriteFile(t, content)
 
 	_, err := loadScriptFile(p)
 	if err == nil {
@@ -185,7 +193,7 @@ messages:
   - type: agent_started
   - type: ""
 `
-	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+	p := twinScriptFixtureWriteFile(t, content)
 
 	_, err := loadScriptFile(p)
 	if err == nil {
@@ -206,7 +214,7 @@ messages:
       phase: reasoning
   - type: outcome_emitted
 `
-	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+	p := twinScriptFixtureWriteFile(t, content)
 
 	sf, err := loadScriptFile(p)
 	if err != nil {
@@ -220,7 +228,7 @@ messages:
 // TestLoadScriptFileUnknownMode verifies that an unknown heartbeat_mode value
 // returns an error.
 func TestLoadScriptFileUnknownMode(t *testing.T) {
-	p := twinScriptFixtureWriteFile(t, "script.yaml", "heartbeat_mode: turbo\nmessages: []\n")
+	p := twinScriptFixtureWriteFile(t, "heartbeat_mode: turbo\nmessages: []\n")
 
 	_, err := loadScriptFile(p)
 	if err == nil {
@@ -239,7 +247,7 @@ func TestLoadScriptFileMissing(t *testing.T) {
 // TestLoadScriptFileMalformedYAML verifies that a malformed YAML file returns
 // a parse error.
 func TestLoadScriptFileMalformedYAML(t *testing.T) {
-	p := twinScriptFixtureWriteFile(t, "script.yaml", ":\n  bad: [unclosed\n")
+	p := twinScriptFixtureWriteFile(t, ":\n  bad: [unclosed\n")
 
 	_, err := loadScriptFile(p)
 	if err == nil {
@@ -266,7 +274,7 @@ messages:
       run_id: run-1
       outcome_status: success
 `
-	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+	p := twinScriptFixtureWriteFile(t, content)
 
 	sf, err := loadScriptFile(p)
 	if err != nil {
@@ -313,10 +321,10 @@ func TestEmitScriptMessageTypeField(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
 	m := msgs[0]
-	if got := m["type"].(string); got != "agent_heartbeat" {
+	if got := twinScriptFixtureString(t, m, "type"); got != "agent_heartbeat" {
 		t.Errorf("type = %q, want agent_heartbeat (payload type must be overwritten)", got)
 	}
-	if got := m["session_id"].(string); got != "sess-xyz" {
+	if got := twinScriptFixtureString(t, m, "session_id"); got != "sess-xyz" {
 		t.Errorf("session_id = %q, want sess-xyz", got)
 	}
 }
@@ -339,7 +347,7 @@ func TestEmitScriptMessageNoPayload(t *testing.T) {
 	if len(m) != 1 {
 		t.Errorf("expected exactly 1 key (type), got %d: %v", len(m), m)
 	}
-	if got := m["type"].(string); got != "cancel" {
+	if got := twinScriptFixtureString(t, m, "type"); got != "cancel" {
 		t.Errorf("type = %q, want cancel", got)
 	}
 }
@@ -381,7 +389,7 @@ func TestRunScriptWallClockIgnoresTimestamps(t *testing.T) {
 	}
 	wantTypes := []string{"agent_started", "agent_heartbeat", "outcome_emitted"}
 	for i, want := range wantTypes {
-		if got := msgs[i]["type"].(string); got != want {
+		if got := twinScriptFixtureString(t, msgs[i], "type"); got != want {
 			t.Errorf("messages[%d].type = %q, want %q", i, got, want)
 		}
 	}

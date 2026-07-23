@@ -32,6 +32,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,7 +104,6 @@ func chbE2EFixtureInitGitRepo(t *testing.T) string {
 
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git with controlled args; test helper
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
@@ -336,7 +336,10 @@ func chbE2EFixtureParseNDJSONTypes(t *testing.T, buf *bytes.Buffer) []string {
 		}
 		var typStr string
 		if raw, ok := obj["type"]; ok {
-			_ = json.Unmarshal(raw, &typStr)
+			if err := json.Unmarshal(raw, &typStr); err != nil {
+				t.Errorf("chbE2EFixtureParseNDJSONTypes: unmarshal type %q: %v", string(raw), err)
+				continue
+			}
 		}
 		if typStr != "" {
 			types = append(types, typStr)
@@ -565,13 +568,19 @@ func TestCHB021_TwinParity_RelayFailure_DialFailed(t *testing.T) {
 	}
 
 	// CHB §8: bridge_dial_failed must be the reason.
-	reason, _ := agentFailedPayload["reason"].(string)
+	reason, ok := agentFailedPayload["reason"].(string)
+	if !ok {
+		t.Fatalf("relay-failure (twin): agent_failed.reason is not a string: %T", agentFailedPayload["reason"])
+	}
 	if reason != "bridge_dial_failed" {
 		t.Errorf("relay-failure (twin): agent_failed.reason = %q, want %q (CHB §8 bridge_dial_failed)", reason, "bridge_dial_failed")
 	}
 
 	// CHB §8: bridge_dial_failed maps to ErrTransient.
-	errCat, _ := agentFailedPayload["error_category"].(string)
+	errCat, ok := agentFailedPayload["error_category"].(string)
+	if !ok {
+		t.Fatalf("relay-failure (twin): agent_failed.error_category is not a string: %T", agentFailedPayload["error_category"])
+	}
 	if errCat != "transient" {
 		t.Errorf("relay-failure (twin): agent_failed.error_category = %q, want %q (CHB §8 ErrTransient)", errCat, "transient")
 	}
@@ -594,7 +603,11 @@ func chbE2EFixtureParseAgentFailedPayload(t *testing.T, buf *bytes.Buffer) map[s
 			t.Errorf("chbE2EFixtureParseAgentFailedPayload: unmarshal line %q: %v", string(line), err)
 			continue
 		}
-		typStr, _ := obj["type"].(string)
+		typStr, ok := obj["type"].(string)
+		if !ok {
+			t.Errorf("chbE2EFixtureParseAgentFailedPayload: type is not a string: %T", obj["type"])
+			continue
+		}
 		if typStr != "agent_failed" {
 			continue
 		}
@@ -609,9 +622,5 @@ func chbE2EFixtureParseAgentFailedPayload(t *testing.T, buf *bytes.Buffer) map[s
 
 // isExitError reports whether err is *exec.ExitError and stores it in target.
 func isExitError(err error, target **exec.ExitError) bool {
-	if ee, ok := err.(*exec.ExitError); ok {
-		*target = ee
-		return true
-	}
-	return false
+	return errors.As(err, target)
 }

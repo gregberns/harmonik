@@ -21,6 +21,7 @@ package main
 // Cite: hk-q3u57; docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -64,7 +65,7 @@ func TestRunCommitOnCue_SentinelNamePayload(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if got, _ := msgs[0]["type"].(string); got != "twin_committed" {
+	if got := crashRecovMustString(t, msgs[0], "type"); got != "twin_committed" {
 		t.Errorf("type = %q, want twin_committed", got)
 	}
 	if code, ok := msgs[0]["exit_code"].(float64); !ok || int(code) != 0 {
@@ -132,7 +133,6 @@ func TestRunCommitOnCue_TwoTwinSameFileRace(t *testing.T) {
 	// runGit runs a git command in mainDir and returns trimmed stdout.
 	runGit := func(args ...string) string {
 		t.Helper()
-		//nolint:gosec // G204: test helper with controlled args
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = mainDir
 		cmd.Env = gitEnv
@@ -164,13 +164,13 @@ func TestRunCommitOnCue_TwoTwinSameFileRace(t *testing.T) {
 	if len(msgsA) != 1 {
 		t.Fatalf("twin-a: expected 1 message, got %d", len(msgsA))
 	}
-	if got, _ := msgsA[0]["type"].(string); got != "twin_committed" {
+	if got := crashRecovMustString(t, msgsA[0], "type"); got != "twin_committed" {
 		t.Errorf("twin-a: type = %q, want twin_committed", got)
 	}
 	if code, ok := msgsA[0]["exit_code"].(float64); !ok || int(code) != 0 {
 		t.Errorf("twin-a: exit_code = %v, want 0", msgsA[0]["exit_code"])
 	}
-	shaA, _ := msgsA[0]["commit_sha"].(string)
+	shaA := crashRecovMustString(t, msgsA[0], "commit_sha")
 	if shaA == "" {
 		t.Fatal("twin-a: commit_sha is empty, want non-empty SHA")
 	}
@@ -188,13 +188,13 @@ func TestRunCommitOnCue_TwoTwinSameFileRace(t *testing.T) {
 	if len(msgsB) != 1 {
 		t.Fatalf("twin-b: expected 1 message, got %d", len(msgsB))
 	}
-	if got, _ := msgsB[0]["type"].(string); got != "twin_committed" {
+	if got := crashRecovMustString(t, msgsB[0], "type"); got != "twin_committed" {
 		t.Errorf("twin-b: type = %q, want twin_committed", got)
 	}
 	if code, ok := msgsB[0]["exit_code"].(float64); !ok || int(code) != 0 {
 		t.Errorf("twin-b: exit_code = %v, want 0", msgsB[0]["exit_code"])
 	}
-	shaB, _ := msgsB[0]["commit_sha"].(string)
+	shaB := crashRecovMustString(t, msgsB[0], "commit_sha")
 	if shaB == "" {
 		t.Fatal("twin-b: commit_sha is empty, want non-empty SHA")
 	}
@@ -241,12 +241,12 @@ func TestRunCommitOnCue_TwoTwinSameFileRace(t *testing.T) {
 	// twin wrote a unique nanosecond timestamp as the file body). This confirms
 	// that the rebase the daemon would attempt would encounter a real content
 	// conflict, not a no-op.
-	contentA, errA := os.ReadFile(filepath.Join(wtAPath, sharedFile))
-	contentB, errB := os.ReadFile(filepath.Join(wtBPath, sharedFile))
+	contentA, errA := os.ReadFile(filepath.Join(wtAPath, sharedFile)) //nolint:gosec // G304: path is an isolated test worktree.
+	contentB, errB := os.ReadFile(filepath.Join(wtBPath, sharedFile)) //nolint:gosec // G304: path is an isolated test worktree.
 	if errA != nil || errB != nil {
 		t.Fatalf("ReadFile sentinel: twin-a err=%v twin-b err=%v", errA, errB)
 	}
-	if string(contentA) == string(contentB) {
+	if bytes.Equal(contentA, contentB) {
 		t.Errorf("sentinel file content is identical in both worktrees; "+
 			"expected different timestamps to create a rebase conflict: %q", string(contentA))
 	}

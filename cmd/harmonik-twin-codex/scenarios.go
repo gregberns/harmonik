@@ -202,7 +202,7 @@ func commitWithRefsTrailer(worktreePath, beadID string) error {
 	}
 	commitMsg := "codex twin commit\n\nRefs: " + refsLine
 
-	commitCmd := exec.CommandContext(context.Background(), "git", "commit", "-m", commitMsg) //nolint:gosec // G204: commitMsg is a controlled literal
+	commitCmd := exec.CommandContext(context.Background(), "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = worktreePath
 	commitCmd.Env = gitEnv
 	if out, err := commitCmd.CombinedOutput(); err != nil {

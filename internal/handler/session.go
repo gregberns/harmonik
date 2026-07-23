@@ -11,11 +11,11 @@
 // single-owner discipline. Callers that need the exit status receive it via
 // Session.Wait — they never call cmd.Wait directly.
 //
-// Session.Wait returns the error runWait captured from that single WaitAndReap
-// call rather than reading WaitOwner's result channel itself: the channel is
-// buffered(1), written once, then closed, so it delivers the exit error to its
-// FIRST reader only and every later reader observes the closed-channel nil.
-// Reading the captured value makes Wait's result the same for every caller.
+// WaitOwner caches the exit error and re-delivers it to every caller of its
+// Wait, so Session.Wait can simply forward it; it blocks on outcomeDone first
+// so Outcome() is fully populated by the time Wait returns. Kill needs a
+// select-able exit edge rather than a blocking wait, and takes that from
+// WaitOwner.Done() — reading Done never consumes the exit error (hk-qun49).
 //
 // # stdout/stderr exposure
 //
@@ -187,22 +187,6 @@ type session struct {
 	// after Wait() returns.
 	outcomeDone chan struct{}
 
-	// waitErr is the error returned by WaitAndReap. It is written by runWait —
-	// the single WaitAndReap owner — before outcomeDone is closed, and read only
-	// after outcomeDone is closed, so it needs no further synchronisation.
-	//
-	// Wait() returns this rather than calling waitOwner.Wait(): WaitOwner's result
-	// channel yields the exit error to its FIRST reader only (it is buffered(1),
-	// written once, then closed — every later read observes the closed-channel
-	// zero value). Reading the value runWait already owns makes every Wait() call
-	// return the same exit error regardless of ordering or caller count.
-	waitErr error
-
-	// reaped is closed by runWait the instant WaitAndReap returns, i.e. as soon
-	// as the subprocess has been reaped and before the stderr drain is joined.
-	// Kill selects on it to detect exit without spawning an observer goroutine.
-	reaped chan struct{}
-
 	// machine is the per-session lifecycle FSM (HC-064..HC-067).
 	// Constructed in NewSession and transitions to StateSpawning→StateInitializing
 	// on successful cmd.Start. The Machine() accessor exposes it to the watcher
@@ -321,7 +305,6 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 		stderrBuf:   ring,
 		stderrDone:  make(chan struct{}),
 		outcomeDone: make(chan struct{}),
-		reaped:      make(chan struct{}),
 		machine:     machine,
 	}
 
@@ -447,11 +430,10 @@ func (s *session) drainStderr(r io.Reader) {
 // per PL-014.  It populates s.outcome once Wait returns.
 func (s *session) runWait(_ context.Context) {
 	startedAt := s.startedAt
+	// WaitAndReap closes waitOwner.Done() before it returns, so Kill's exit edge
+	// fires the instant the child is reaped and is not delayed by the stderr
+	// drain join below.
 	waitErr := s.waitOwner.WaitAndReap()
-	s.waitErr = waitErr
-	// Signal reap immediately — Kill waits on this and must not be delayed by the
-	// stderr drain join below.
-	close(s.reaped)
 
 	// Wait for drainStderr to finish before reading stderrBuf so that concurrent
 	// ringBuffer.Write and ringBuffer.Bytes calls don't race.
@@ -562,11 +544,11 @@ func (s *session) Kill(ctx context.Context) error {
 	}
 
 	// Wait for process exit or ctx deadline; on deadline, escalate to SIGKILL.
-	// s.reaped is closed by runWait the moment WaitAndReap returns, so repeated
-	// Kill calls all observe the same edge without any of them spawning an
-	// observer goroutine of its own.
+	// waitOwner.Done() is closed the moment the child is reaped, so repeated Kill
+	// calls all observe the same edge; unlike a Wait, observing Done consumes
+	// nothing, so a later Wait still reports the child's exit error.
 	select {
-	case <-s.reaped:
+	case <-s.waitOwner.Done():
 		// Process exited cleanly after SIGTERM.
 		return nil
 	case <-ctx.Done():
@@ -583,10 +565,11 @@ func (s *session) Kill(ctx context.Context) error {
 // been fully populated (including stderr tail).  After Wait returns, Outcome()
 // is guaranteed to reflect the final process state.
 func (s *session) Wait(_ context.Context) error {
-	// Block until runWait has populated s.outcome (and s.waitErr) so callers can
-	// call Outcome() immediately after Wait without racing the drain goroutine.
+	// Block until runWait has populated s.outcome so callers can call Outcome()
+	// immediately after Wait without racing the drain goroutine. waitOwner.Wait
+	// then returns the cached exit error, identically for every caller.
 	<-s.outcomeDone
-	return s.waitErr
+	return s.waitOwner.Wait()
 }
 
 // Outcome returns the exit metadata populated once Wait returns.  Before Wait

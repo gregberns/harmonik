@@ -115,9 +115,9 @@ func TestPL014_WaitOwner_WaitAndReapIdempotent(t *testing.T) {
 		t.Errorf("PL-014 WaitOwner idempotent: first WaitAndReap: %v", err)
 	}
 
-	// Second call must not panic and must return zero value (the once.Do guard
-	// prevents a second cmd.Wait(); result is the zero-value error from the
-	// outer variable, not a second Wait).
+	// Second call must not panic and must return the memoized result of the one
+	// cmd.Wait() that ran — nil here, because this child exits 0. The non-zero
+	// case is covered by TestPL014_WaitOwner_SecondWaitAndReapReturnsCachedExitError.
 	if secondErr := owner.WaitAndReap(); secondErr != nil {
 		t.Errorf("PL-014 WaitOwner idempotent: second WaitAndReap returned %v, want the memoized nil", secondErr)
 	}

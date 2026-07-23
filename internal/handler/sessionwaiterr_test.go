@@ -6,10 +6,10 @@ package handler_test
 // Helper prefix: sessionWaitErrFixture (per implementer-protocol.md
 // §Helper-prefix discipline).
 //
-// Session.Wait used to return lifecycle.WaitOwner.Wait() directly. WaitOwner's
-// result channel is buffered(1), written once, then closed — so it yields the
-// exit error to its FIRST reader only; every later read observes the
-// closed-channel zero value (nil). Two production paths hit that:
+// lifecycle.WaitOwner used to broadcast the exit error over a buffered(1)
+// channel that was written once and then closed — so it yielded the error to
+// its FIRST reader only; every later read observed the closed-channel zero
+// value (nil). Two production paths hit that:
 //
 //   - Any caller that calls sess.Wait twice, or two goroutines that both wait
 //     on the same session: exactly one sees the *exec.ExitError, the other sees
@@ -20,9 +20,13 @@ package handler_test
 //     so a post-Kill sess.Wait returned nil for a subprocess that had in fact
 //     exited non-zero or been signalled.
 //
-// Session.Wait now returns the error runWait captured from the single
-// WaitAndReap call, and Kill observes a dedicated `reaped` channel instead of
-// draining the result channel. Both tests below fail against the old code.
+// Fixed at the root in hk-qun49: WaitOwner now stores the exit error and Wait
+// re-delivers it to every caller, and Kill selects on WaitOwner.Done() — an
+// edge that broadcasts and consumes nothing — instead of draining the result.
+//
+// Two of the three tests below (IsStableAcrossCalls, SurvivesConcurrentWaiters)
+// fail if Wait goes back to delivering once; SurvivesKill does not, and says so
+// in its own doc comment.
 
 import (
 	"bufio"
@@ -65,7 +69,7 @@ func sessionWaitErrFixtureAwaitReady(t *testing.T, sess handler.Session) {
 
 // TestSession_Wait_ExitErrorIsStableAcrossCalls verifies that every Wait call on
 // a session whose subprocess exited non-zero reports that failure — not just the
-// first one to reach the WaitOwner result channel.
+// first caller to read WaitOwner's memoized exit error.
 func TestSession_Wait_ExitErrorIsStableAcrossCalls(t *testing.T) {
 	t.Parallel()
 
@@ -130,9 +134,17 @@ func TestSession_Wait_ExitErrorSurvivesConcurrentWaiters(t *testing.T) {
 }
 
 // TestSession_Wait_ExitErrorSurvivesKill verifies that a Wait following a Kill
-// still reports the subprocess failure. Kill previously spawned a reap-observer
+// still reports the subprocess failure. Kill originally spawned a reap-observer
 // goroutine that drained the WaitOwner result channel, so this Wait returned nil
-// whenever that goroutine got there first.
+// whenever that goroutine got there first; Kill now selects on WaitOwner.Done().
+//
+// Unlike the other two tests in this file, this one no longer pins the caching:
+// because Kill consumes nothing, a hypothetical single-delivery Wait still
+// leaves this Wait as the FIRST reader and the test passes (measured with a
+// go test -overlay that made Wait deliver once). It is kept as defence in depth
+// against Kill regrowing a consuming observer, not as a caching regression
+// guard — TestSession_Wait_ExitErrorIsStableAcrossCalls and
+// ...SurvivesConcurrentWaiters are the two that fail without the root fix.
 func TestSession_Wait_ExitErrorSurvivesKill(t *testing.T) {
 	t.Parallel()
 

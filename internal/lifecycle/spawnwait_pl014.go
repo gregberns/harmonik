@@ -37,9 +37,23 @@ import (
 // Spec ref: process-lifecycle.md §4.6 PL-016 — "The handler-contract watcher
 // goroutine is the exclusive cmd.Wait() caller for its session's subprocess."
 type WaitOwner struct {
-	cmd      *exec.Cmd
-	once     sync.Once
-	resultCh chan error // buffered(1); written once by WaitAndReap, then closed
+	cmd  *exec.Cmd
+	once sync.Once
+
+	// result is the value cmd.Wait returned. It is written exactly once, inside
+	// once.Do, before done is closed; every read happens after a receive on done
+	// (or after once.Do has returned), so it needs no further synchronisation.
+	//
+	// The result is a stored field rather than a channel payload on purpose: a
+	// channel delivers a value to ONE receiver, so an error broadcast that way
+	// reaches the first reader and leaves every later reader observing the
+	// closed-channel nil — a failed subprocess reported as a clean exit
+	// (hk-qun49). done carries only the "reaped" edge, which broadcasts safely.
+	result error
+
+	// done is closed once result is populated. Closing (rather than sending)
+	// makes the edge observable by any number of waiters, any number of times.
+	done chan struct{}
 }
 
 // NewWaitOwner wraps a started *exec.Cmd in a WaitOwner. The caller MUST have
@@ -49,8 +63,8 @@ type WaitOwner struct {
 // responsible for calling WaitAndReap() in the owning goroutine.
 func NewWaitOwner(cmd *exec.Cmd) *WaitOwner {
 	return &WaitOwner{
-		cmd:      cmd,
-		resultCh: make(chan error, 1),
+		cmd:  cmd,
+		done: make(chan struct{}),
 	}
 }
 
@@ -59,26 +73,39 @@ func NewWaitOwner(cmd *exec.Cmd) *WaitOwner {
 // returns, the exit error is broadcast to all goroutines blocked in Wait().
 //
 // Subsequent calls to WaitAndReap are no-ops (the sync.Once guard prevents a
-// second cmd.Wait() call). The returned error is the value from cmd.Wait().
+// second cmd.Wait() call) and return the cached error from the one call that
+// did run. A concurrent second caller blocks inside once.Do until the first
+// completes, then sees the same value.
 //
 // Spec ref: process-lifecycle.md §4.5 PL-014; §4.6 PL-016.
 func (o *WaitOwner) WaitAndReap() error {
-	var result error
 	o.once.Do(func() {
-		result = o.cmd.Wait()
-		o.resultCh <- result
-		close(o.resultCh)
+		o.result = o.cmd.Wait()
+		close(o.done)
 	})
-	return result
+	// sync.Once.Do returns only after f has completed, and establishes the
+	// happens-before edge that makes o.result safe to read here.
+	return o.result
 }
 
 // Wait returns the exit error of the subprocess. If WaitAndReap has not yet
-// been called (or has not yet returned), Wait blocks until it does. Subsequent
-// calls return the same cached error without blocking.
+// been called (or has not yet returned), Wait blocks until it does. Every call
+// — from any goroutine, any number of times — returns that same cached error;
+// subsequent calls do not block.
 //
 // Wait is safe to call from any goroutine at any time.
 func (o *WaitOwner) Wait() error {
-	return <-o.resultCh
+	<-o.done
+	return o.result
+}
+
+// Done returns a channel that is closed once the subprocess has been reaped and
+// the exit error is available from Wait. Use it to select on process exit
+// against a context or timeout; unlike a value channel, closing broadcasts, so
+// any number of observers see the edge. Reading from Done never consumes the
+// exit error — call Wait for that.
+func (o *WaitOwner) Done() <-chan struct{} {
+	return o.done
 }
 
 // Cmd returns the underlying *exec.Cmd. Callers MAY inspect the Cmd (e.g., to

@@ -886,6 +886,19 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				rn.id, node.Harness, node.AgentRuntime),
 		})
 	}
+	// hk-ozbio: resolve the alias AT THE PARSE BOUNDARY. The two spellings are
+	// asserted equivalent above, but every consumer reads only Node.Harness
+	// (internal/daemon/dot_cascade.go), so a node written with agent_runtime=
+	// alone parsed clean and dispatched UNPINNED — a tier-1 harness:<x> bead
+	// label then decided a reviewer node's harness, which is exactly the hole
+	// pinnedHarnessLaunchSpecBuilder exists to close. Normalising here means no
+	// consumer has to know the second spelling exists. AgentRuntime is left
+	// populated so the parsed AST still reports the source spelling; parameter
+	// substitution (internal/workflow/params_graph.go) walks both fields, and
+	// since they now hold the same string they stay in agreement.
+	if node.Harness == "" && node.AgentRuntime != "" {
+		node.Harness = node.AgentRuntime
+	}
 	return node, errs, warns
 }
 

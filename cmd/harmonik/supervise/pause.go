@@ -36,7 +36,9 @@ func RunPause(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, pauseUsage)
+			if pauseWritef(stdout, "%s", pauseUsage) != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--project" && i+1 < len(args):
 			i++
@@ -44,7 +46,9 @@ func RunPause(args []string, stdout, stderr io.Writer) int {
 		case strings.HasPrefix(args[i], "--project="):
 			projectDir = strings.TrimPrefix(args[i], "--project=")
 		default:
-			fmt.Fprintf(stderr, "harmonik supervise pause: unknown argument %q\n", args[i])
+			if pauseWritef(stderr, "harmonik supervise pause: unknown argument %q\n", args[i]) != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -52,7 +56,9 @@ func RunPause(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise pause: cannot determine working directory: %v\n", err)
+			if pauseWritef(stderr, "harmonik supervise pause: cannot determine working directory: %v\n", err) != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -64,7 +70,9 @@ func RunPause(args []string, stdout, stderr io.Writer) int {
 	sockPath := lifecycle.SocketPath(projectDir)
 	code := sendOperatorOp(ctx, sockPath, "operator-pause", stderr)
 	if code == 0 {
-		fmt.Fprintln(stdout, "harmonik supervise pause: daemon paused")
+		if pauseWritef(stdout, "harmonik supervise pause: daemon paused\n") != nil {
+			return 1
+		}
 	}
 	return code
 }
@@ -94,32 +102,40 @@ NOTES
 
 // sendOperatorOp dials sockPath, sends {"op": op}, and interprets the response.
 // Returns 0 on success, 1 on protocol/I/O error, 17 when the daemon is down.
-func sendOperatorOp(ctx context.Context, sockPath, op string, stderr io.Writer) int {
+func sendOperatorOp(ctx context.Context, sockPath, op string, stderr io.Writer) (code int) {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 	if err != nil {
 		if isSocketAbsentOrRefused(err) {
-			fmt.Fprintf(stderr, "harmonik supervise %s: daemon not running (exit 17)\n", opVerb(op))
+			if pauseWritef(stderr, "harmonik supervise %s: daemon not running (exit 17)\n", opVerb(op)) != nil {
+				return 1
+			}
 			return 17
 		}
-		fmt.Fprintf(stderr, "harmonik supervise %s: dial: %v\n", opVerb(op), err)
+		if pauseWritef(stderr, "harmonik supervise %s: dial: %v\n", opVerb(op), err) != nil {
+			return 1
+		}
 		return 1
 	}
 	defer func() { _ = conn.Close() }() //nolint:errcheck
 
 	payload, err := json.Marshal(map[string]string{"op": op})
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise %s: marshal: %v\n", opVerb(op), err)
+		if pauseWritef(stderr, "harmonik supervise %s: marshal: %v\n", opVerb(op), err) != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if _, writeErr := conn.Write(payload); writeErr != nil {
-		fmt.Fprintf(stderr, "harmonik supervise %s: write: %v\n", opVerb(op), writeErr)
+		if pauseWritef(stderr, "harmonik supervise %s: write: %v\n", opVerb(op), writeErr) != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Half-close write side so the daemon's json.Decoder sees EOF.
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite() //nolint:errcheck
+		_ = uw.CloseWrite() //nolint:errcheck // the daemon can decode, respond and close before this statement runs, at which point CloseWrite returns ENOTCONN for an operation that already succeeded
 	}
 
 	var resp struct {
@@ -127,16 +143,25 @@ func sendOperatorOp(ctx context.Context, sockPath, op string, stderr io.Writer) 
 		Error string `json:"error,omitempty"`
 	}
 	if decErr := json.NewDecoder(bufio.NewReader(conn)).Decode(&resp); decErr != nil {
-		fmt.Fprintf(stderr, "harmonik supervise %s: decode response: %v\n", opVerb(op), decErr)
+		if pauseWritef(stderr, "harmonik supervise %s: decode response: %v\n", opVerb(op), decErr) != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if !resp.Ok {
-		fmt.Fprintf(stderr, "harmonik supervise %s: daemon error: %s\n", opVerb(op), resp.Error)
+		if pauseWritef(stderr, "harmonik supervise %s: daemon error: %s\n", opVerb(op), resp.Error) != nil {
+			return 1
+		}
 		return 1
 	}
 
 	return 0
+}
+
+func pauseWritef(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
 }
 
 // opVerb returns the human-readable verb for an op string ("operator-pause" → "pause").

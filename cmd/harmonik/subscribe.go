@@ -219,7 +219,7 @@ func runSubscribeSubcommand(subArgs []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik subscribe: dial %s: %v\n", sockPath, err)
 		return 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { closeSubscribeConn(conn) }()
 
 	// Send the subscribe request as a single JSON object.
 	if _, err := conn.Write(reqBytes); err != nil {
@@ -232,7 +232,7 @@ func runSubscribeSubcommand(subArgs []string) int {
 	defer stop()
 	go func() {
 		<-ctx.Done()
-		_ = conn.Close()
+		closeSubscribeConn(conn)
 	}()
 
 	// Copy the NDJSON stream to stdout until EOF.
@@ -334,7 +334,7 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 		firstDial = false
 
 		if _, writeErr := conn.Write(reqBytes); writeErr != nil {
-			_ = conn.Close()
+			closeSubscribeConn(conn)
 			fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: write request: %v\n", writeErr)
 			return 1
 		}
@@ -344,7 +344,7 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 		go func() {
 			select {
 			case <-sigCtx.Done():
-				_ = conn.Close()
+				closeSubscribeConn(conn)
 			case <-connCloseOnce:
 			}
 		}()
@@ -358,7 +358,7 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 			var rawMsg json.RawMessage
 			if decErr := dec.Decode(&rawMsg); decErr != nil {
 				close(connCloseOnce)
-				_ = conn.Close()
+				closeSubscribeConn(conn)
 				if sigCtx.Err() != nil {
 					return 0
 				}
@@ -396,14 +396,14 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 				Ok    *bool  `json:"ok"`
 				Error string `json:"error"`
 			}
-			_ = json.Unmarshal(rawMsg, &env)
+			_ = json.Unmarshal(rawMsg, &env) //nolint:errcheck // envelope extraction is best-effort — a line that does not fit the envelope is still forwarded verbatim
 
 			// hk-62r8w: SocketResponse error — server rejected the subscribe request
 			// permanently. Exit with error instead of forwarding the rejection to the
 			// writer and reconnecting in an ~1s loop.
 			if env.Ok != nil && !*env.Ok {
 				close(connCloseOnce)
-				_ = conn.Close()
+				closeSubscribeConn(conn)
 				fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: server error: %s\n", env.Error)
 				return 1
 			}
@@ -422,7 +422,7 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 			if _, writeErr := fmt.Fprintln(w, string(rawMsg)); writeErr != nil {
 				// Writer closed (e.g. pipe broken) — exit cleanly.
 				close(connCloseOnce)
-				_ = conn.Close()
+				closeSubscribeConn(conn)
 				return 0
 			}
 		}
@@ -451,8 +451,20 @@ func touchSubscribeHeartbeatFile(path string) {
 	if err != nil {
 		return
 	}
-	_ = f.Close()
-	_ = os.Chtimes(path, now, now)
+	if err := f.Close(); err != nil {
+		return
+	}
+	if err := os.Chtimes(path, now, now); err != nil {
+		return
+	}
+}
+
+// closeSubscribeConn reports unexpected close failures while allowing callers
+// that are already handling a stream shutdown to keep their control flow.
+func closeSubscribeConn(conn net.Conn) {
+	if err := conn.Close(); err != nil && !strings.Contains(err.Error(), "use of closed") {
+		fmt.Fprintf(os.Stderr, "harmonik subscribe: close connection: %v\n", err)
+	}
 }
 
 func subscribeUsage() {

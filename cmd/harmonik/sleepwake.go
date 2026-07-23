@@ -35,7 +35,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -68,7 +67,9 @@ func runSleepSubcommand(ctx context.Context, subArgs []string) int {
 			projectDir = strings.TrimPrefix(arg, "--project=")
 			i++
 		case arg == "--help" || arg == "-h":
-			sleepUsage()
+			if err := sleepUsage(); err != nil {
+				return 1
+			}
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "harmonik sleep: unrecognized argument %q\n", arg)
@@ -81,13 +82,19 @@ func runSleepSubcommand(ctx context.Context, subArgs []string) int {
 		return code
 	}
 
-	payload, _ := json.Marshal(struct {
+	payload, marshalErr := json.Marshal(struct {
 		Force bool `json:"force"`
 	}{Force: force})
-	reqBody, _ := json.Marshal(struct {
+	if marshalErr != nil {
+		return 2
+	}
+	reqBody, marshalErr := json.Marshal(struct {
 		Op      string          `json:"op"`
 		Payload json.RawMessage `json:"payload"`
 	}{Op: "daemon-sleep", Payload: payload})
+	if marshalErr != nil {
+		return 2
+	}
 
 	resp, earlyExit := sendSleepWakeRequest(ctx, sockPath, reqBody, "sleep")
 	if earlyExit != 0 {
@@ -99,9 +106,13 @@ func runSleepSubcommand(ctx context.Context, subArgs []string) int {
 		return 2
 	}
 	if force {
-		fmt.Fprintln(os.Stdout, "sleep: fleet parked (forced)")
+		if _, err := fmt.Fprintln(os.Stdout, "sleep: fleet parked (forced)"); err != nil {
+			return 1
+		}
 	} else {
-		fmt.Fprintln(os.Stdout, "sleep: fleet parked")
+		if _, err := fmt.Fprintln(os.Stdout, "sleep: fleet parked"); err != nil {
+			return 1
+		}
 	}
 	return 0
 }
@@ -132,7 +143,9 @@ func runWakeSubcommand(ctx context.Context, subArgs []string) int {
 			projectDir = strings.TrimPrefix(arg, "--project=")
 			i++
 		case arg == "--help" || arg == "-h":
-			wakeUsage()
+			if err := wakeUsage(); err != nil {
+				return 1
+			}
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "harmonik wake: unrecognized argument %q\n", arg)
@@ -141,8 +154,12 @@ func runWakeSubcommand(ctx context.Context, subArgs []string) int {
 	}
 
 	if !wakeAll && agentName == "" {
-		fmt.Fprintln(os.Stderr, "harmonik wake: provide --agent <name> or --all")
-		wakeUsage()
+		if _, err := fmt.Fprintln(os.Stderr, "harmonik wake: provide --agent <name> or --all"); err != nil {
+			return 1
+		}
+		if err := wakeUsage(); err != nil {
+			return 1
+		}
 		return 1
 	}
 	if wakeAll && agentName != "" {
@@ -155,14 +172,20 @@ func runWakeSubcommand(ctx context.Context, subArgs []string) int {
 		return code
 	}
 
-	payload, _ := json.Marshal(struct {
+	payload, marshalErr := json.Marshal(struct {
 		Agent string `json:"agent,omitempty"`
 		All   bool   `json:"all"`
 	}{Agent: agentName, All: wakeAll})
-	reqBody, _ := json.Marshal(struct {
+	if marshalErr != nil {
+		return 2
+	}
+	reqBody, marshalErr := json.Marshal(struct {
 		Op      string          `json:"op"`
 		Payload json.RawMessage `json:"payload"`
 	}{Op: "daemon-wake", Payload: payload})
+	if marshalErr != nil {
+		return 2
+	}
 
 	resp, earlyExit := sendSleepWakeRequest(ctx, sockPath, reqBody, "wake")
 	if earlyExit != 0 {
@@ -174,9 +197,13 @@ func runWakeSubcommand(ctx context.Context, subArgs []string) int {
 		return 2
 	}
 	if wakeAll {
-		fmt.Fprintln(os.Stdout, "wake: all sleeping sessions nudged")
+		if _, err := fmt.Fprintln(os.Stdout, "wake: all sleeping sessions nudged"); err != nil {
+			return 1
+		}
 	} else {
-		fmt.Fprintf(os.Stdout, "wake: %s nudged\n", agentName)
+		if _, err := fmt.Fprintf(os.Stdout, "wake: %s nudged\n", agentName); err != nil {
+			return 1
+		}
 	}
 	return 0
 }
@@ -184,7 +211,7 @@ func runWakeSubcommand(ctx context.Context, subArgs []string) int {
 // resolveSleepWakeSock resolves the daemon socket path for the given project
 // directory (cwd when empty). Returns the socket path and exit code 0 on
 // success, or ("", non-zero) on error.
-func resolveSleepWakeSock(projectDir, verb string) (string, int) {
+func resolveSleepWakeSock(projectDir, verb string) (sockPath string, exitCode int) {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -203,7 +230,7 @@ func resolveSleepWakeSock(projectDir, verb string) (string, int) {
 
 // sendSleepWakeRequest dials the daemon socket, sends payload, and reads the
 // response. Returns (resp, 0) on success, or (empty, exitCode) on error.
-func sendSleepWakeRequest(ctx context.Context, sockPath string, payload []byte, verb string) (sleepWakeSocketResponse, int) {
+func sendSleepWakeRequest(ctx context.Context, sockPath string, payload []byte, verb string) (resp sleepWakeSocketResponse, exitCode int) {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 	if err != nil {
 		if isSleepWakeSocketAbsent(err) || isSleepWakeConnRefused(err) {
@@ -220,10 +247,9 @@ func sendSleepWakeRequest(ctx context.Context, sockPath string, payload []byte, 
 		return sleepWakeSocketResponse{}, 2
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite() //nolint:errcheck
+		_ = uw.CloseWrite() //nolint:errcheck // the daemon can decode, respond and close before this statement runs, at which point CloseWrite returns ENOTCONN for an operation that already succeeded
 	}
 
-	var resp sleepWakeSocketResponse
 	if decErr := json.NewDecoder(conn).Decode(&resp); decErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik %s: decode response: %v\n", verb, decErr)
 		return sleepWakeSocketResponse{}, 2
@@ -277,7 +303,9 @@ func runSleepGateSubcommand(subArgs []string) int {
 			projectDir = strings.TrimPrefix(arg, "--project=")
 			i++
 		case arg == "--help" || arg == "-h":
-			sleepGateUsage()
+			if err := sleepGateUsage(); err != nil {
+				return 2
+			}
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "harmonik sleep-gate: unrecognized argument %q\n", arg)
@@ -304,8 +332,8 @@ func runSleepGateSubcommand(subArgs []string) int {
 	return 1 // fleet is awake
 }
 
-func sleepGateUsage() {
-	_, _ = io.WriteString(os.Stdout, `harmonik sleep-gate — check whether the fleet is sleeping (for harness cron gates)
+func sleepGateUsage() error {
+	_, err := os.Stdout.WriteString(`harmonik sleep-gate — check whether the fleet is sleeping (for harness cron gates)
 
 USAGE
   harmonik sleep-gate [--project DIR]
@@ -331,10 +359,11 @@ EXAMPLES
   harmonik sleep-gate
   harmonik sleep-gate --project /path/to/project
 `)
+	return err
 }
 
-func sleepUsage() {
-	_, _ = io.WriteString(os.Stdout, `harmonik sleep — park all LLM sessions now (manual quiesce override)
+func sleepUsage() error {
+	_, err := os.Stdout.WriteString(`harmonik sleep — park all LLM sessions now (manual quiesce override)
 
 USAGE
   harmonik sleep [--force] [--project DIR]
@@ -359,10 +388,11 @@ EXAMPLES
   harmonik sleep --force
   harmonik sleep --project /path/to/project
 `)
+	return err
 }
 
-func wakeUsage() {
-	_, _ = io.WriteString(os.Stdout, `harmonik wake — wake sleeping LLM sessions (manual quiesce override)
+func wakeUsage() error {
+	_, err := os.Stdout.WriteString(`harmonik wake — wake sleeping LLM sessions (manual quiesce override)
 
 USAGE
   harmonik wake (--agent <name> | --all) [--project DIR]
@@ -389,4 +419,5 @@ EXAMPLES
   harmonik wake --agent captain
   harmonik wake --agent crew-investigate --project /path/to/project
 `)
+	return err
 }

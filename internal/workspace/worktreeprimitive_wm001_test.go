@@ -75,9 +75,10 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 	if _, err := os.Stat(badPath); !os.IsNotExist(err) {
 		t.Errorf("WM-001: atomicity: worktree dir %q still exists after failed git worktree add", badPath)
 	}
-	out3, _ := exec.Command("git", "-C", repo, "rev-parse", "--verify", badBranch).Output()
-	if strings.TrimSpace(string(out3)) != "" {
-		t.Errorf("WM-001: atomicity: branch %q still exists after failed git worktree add", badBranch)
+	out3, verifyErr := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", badBranch).Output()
+	if verifyErr == nil || strings.TrimSpace(string(out3)) != "" {
+		t.Errorf("WM-001: atomicity: branch %q still exists after failed git worktree add (rev-parse err=%v, out=%q)",
+			badBranch, verifyErr, strings.TrimSpace(string(out3)))
 	}
 }
 

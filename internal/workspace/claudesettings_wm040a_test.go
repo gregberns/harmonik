@@ -72,8 +72,9 @@ func claudeSettingsFixtureBridgeGroupPresent(arr []interface{}, eventKind, wantC
 		if !ok {
 			continue
 		}
-		matcher, _ := m["matcher"].(string)
-		if matcher != "" {
+		// The bridge group is the one with an empty matcher; a missing or
+		// non-string matcher is some other group and is skipped the same way.
+		if matcher, ok := m["matcher"].(string); !ok || matcher != "" {
 			continue
 		}
 		hooks, ok := m["hooks"].([]interface{})
@@ -307,7 +308,10 @@ func TestWM040a_DisableAllHooksStripped(t *testing.T) {
 		"disableAllHooks": true,
 		"hooks":           map[string]interface{}{},
 	}
-	raw, _ := json.Marshal(userSettings)
+	raw, err := json.Marshal(userSettings)
+	if err != nil {
+		t.Fatalf("WM-040a: marshal disableAllHooks settings: %v", err)
+	}
 	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("WM-040a: WriteFile disableAllHooks settings: %v", err)
 	}
@@ -588,8 +592,8 @@ func TestWM040a_HookCommandIsAbsolutePath(t *testing.T) {
 			if !ok {
 				continue
 			}
-			cmd, _ := h["command"].(string)
-			if cmd == "harmonik" {
+			cmd, ok := h["command"].(string)
+			if ok && cmd == "harmonik" {
 				t.Errorf("hk-kqdpf.6 regression: hook command for %q is bare \"harmonik\"; must be absolute path", kind)
 			}
 		}

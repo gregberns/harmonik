@@ -204,7 +204,11 @@ func TestCHB028_AtomicTempCleanupOnFailure(t *testing.T) {
 	if err := os.Chmod(harmonikDir, 0o555); err != nil {
 		t.Fatalf("Chmod .harmonik read-only: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(harmonikDir, 0o700) })
+	t.Cleanup(func() {
+		if err := os.Chmod(harmonikDir, 0o700); err != nil {
+			t.Errorf("restore .harmonik permissions: %v", err)
+		}
+	})
 
 	payload := AgentTaskPayload{
 		BeadID:        "hk-abc05",

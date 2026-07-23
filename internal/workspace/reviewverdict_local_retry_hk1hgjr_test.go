@@ -81,7 +81,9 @@ func TestReadReviewVerdictLocalRetry_TruncatedThenValid(t *testing.T) {
 		if err := os.WriteFile(tmp, reviewVerdictFixtureValidJSON(t), 0o600); err != nil {
 			return
 		}
-		_ = os.Rename(tmp, target)
+		if err := os.Rename(tmp, target); err != nil {
+			t.Errorf("publish valid verdict: rename %q → %q: %v", tmp, target, err)
+		}
 	}()
 
 	v, err := ReadReviewVerdictLocalRetry(context.Background(), workspacePath)

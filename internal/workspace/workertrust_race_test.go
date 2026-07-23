@@ -145,7 +145,11 @@ func TestWorkerTrustUpsert_UnlockedLosesUpdatesUnderBarrier(t *testing.T) {
 		go func(p string) {
 			defer wg.Done()
 			// 0.5s barrier guarantees all copies read the empty config before any write.
-			_ = runTrustUpsert(t, home, unlockedTrustUpsertProgramWithBarrier, p, "HK_TEST_SLEEP=0.5")
+			// A lost update is what this test measures, so an upsert that loses the
+			// race is not a failure; a writer that could not run at all is.
+			if err := runTrustUpsert(t, home, unlockedTrustUpsertProgramWithBarrier, p, "HK_TEST_SLEEP=0.5"); err != nil {
+				t.Errorf("concurrent trust upsert for %q did not run: %v", p, err)
+			}
 		}(paths[i])
 	}
 	wg.Wait()
@@ -178,7 +182,10 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 		}
 	}
 	seed := map[string]interface{}{"theme": "dark", "projects": projects}
-	raw, _ := json.MarshalIndent(seed, "", "  ")
+	raw, err := json.MarshalIndent(seed, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal seed config: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(home, ".claude.json"), append(raw, '\n'), 0o600); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
@@ -215,7 +222,7 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 	if got["theme"] != "dark" {
 		t.Errorf("top-level key clobbered: theme=%v", got["theme"])
 	}
-	gotProjects, _ := got["projects"].(map[string]interface{})
+	gotProjects := mustJSONObject(t, got, "projects", "config after concurrent writers")
 	if _, ok := gotProjects["/preexisting/run-00000"]; !ok {
 		t.Errorf("pre-existing project key was clobbered by the concurrent writers")
 	}

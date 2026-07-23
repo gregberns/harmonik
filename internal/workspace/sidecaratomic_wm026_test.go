@@ -69,13 +69,11 @@ func sessionLogFixtureWriteSidecarAtomic(sidecarPath string, content []byte) err
 		return fmt.Errorf("open tmp: %w", err)
 	}
 	if _, err := f.Write(content); err != nil {
-		f.Close()
-		return fmt.Errorf("write tmp: %w", err)
+		return withCleanupErrs(fmt.Errorf("write tmp: %w", err), f.Close())
 	}
 	// (ii) fsync temp file.
 	if err := f.Sync(); err != nil {
-		f.Close()
-		return fmt.Errorf("fsync tmp: %w", err)
+		return withCleanupErrs(fmt.Errorf("fsync tmp: %w", err), f.Close())
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close tmp: %w", err)
@@ -93,8 +91,7 @@ func sessionLogFixtureWriteSidecarAtomic(sidecarPath string, content []byte) err
 		return fmt.Errorf("open parent dir: %w", err)
 	}
 	if err := d.Sync(); err != nil {
-		d.Close()
-		return fmt.Errorf("fsync parent dir: %w", err)
+		return withCleanupErrs(fmt.Errorf("fsync parent dir: %w", err), d.Close())
 	}
 	return d.Close()
 }

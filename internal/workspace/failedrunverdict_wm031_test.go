@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -334,9 +335,13 @@ func TestWM033_OperatorWorktreeLockRespected(t *testing.T) {
 		t.Fatalf("git worktree lock: %v\n%s", err, out)
 	}
 	t.Cleanup(func() {
-		unlockCmd := exec.CommandContext(t.Context(), "git", "worktree", "unlock", worktreePath)
+		// t.Context() is already cancelled by the time cleanups run, so derive a
+		// non-cancellable context for the unlock.
+		unlockCmd := exec.CommandContext(context.WithoutCancel(t.Context()), "git", "worktree", "unlock", worktreePath)
 		unlockCmd.Dir = repo
-		_, _ = unlockCmd.CombinedOutput()
+		if out, err := unlockCmd.CombinedOutput(); err != nil {
+			t.Errorf("git worktree unlock (cleanup): %v\n%s", err, out)
+		}
 	})
 
 	// `git worktree prune` MUST NOT remove the locked worktree entry.
@@ -742,7 +747,7 @@ func TestWM038a_InterruptStateChangedMarkerWritten(t *testing.T) {
 
 	// Write the marker as the workspace manager would.
 	marker := failedRunFixtureBuildInterruptStateMarker(
-		workspaceID, runID, priorInterruptState, newInterruptState, cause,
+		t, workspaceID, runID, priorInterruptState, newInterruptState, cause,
 	)
 	// WorkspaceLocalEventsPath is the production function (WM-013b / §6.2).
 	eventsFile := WorkspaceLocalEventsPath(dir, workspaceID)
@@ -779,8 +784,10 @@ func TestWM038a_InterruptStateChangedMarkerWritten(t *testing.T) {
 // failedRunFixtureBuildInterruptStateMarker builds the interrupt_state_changed
 // JSONL marker per WM-038a.
 func failedRunFixtureBuildInterruptStateMarker(
+	t *testing.T,
 	workspaceID, runID, priorInterruptState, newInterruptState, cause string,
 ) []byte {
+	t.Helper()
 	m := map[string]string{
 		"event":                 "interrupt_state_changed",
 		"workspace_id":          workspaceID,
@@ -790,7 +797,10 @@ func failedRunFixtureBuildInterruptStateMarker(
 		"cause":                 cause,
 		"changed_at":            time.Now().UTC().Format(time.RFC3339),
 	}
-	b, _ := json.Marshal(m)
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("failedRunFixtureBuildInterruptStateMarker: marshal: %v", err)
+	}
 	return b
 }
 
@@ -813,12 +823,10 @@ func failedRunFixtureAppendJSONLMarker(t *testing.T, path string, marker []byte)
 	line = append(line, marker...)
 	line = append(line, '\n')
 	if _, err := f.Write(line); err != nil {
-		_ = f.Close()
-		t.Fatalf("failedRunFixtureAppendJSONLMarker Write: %v", err)
+		t.Fatalf("failedRunFixtureAppendJSONLMarker Write: %v", withCleanupErrs(err, f.Close()))
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		t.Fatalf("failedRunFixtureAppendJSONLMarker Sync: %v", err)
+		t.Fatalf("failedRunFixtureAppendJSONLMarker Sync: %v", withCleanupErrs(err, f.Close()))
 	}
 	if err := f.Close(); err != nil {
 		t.Fatalf("failedRunFixtureAppendJSONLMarker Close: %v", err)

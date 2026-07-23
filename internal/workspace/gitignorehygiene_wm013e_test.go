@@ -95,13 +95,11 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		}
 		for _, entry := range missing {
 			if _, err := f.WriteString(entry + "\n"); err != nil {
-				_ = f.Close()
-				t.Fatalf("WM-013e: WriteString %q: %v", entry, err)
+				t.Fatalf("WM-013e: WriteString %q: %v", entry, withCleanupErrs(err, f.Close()))
 			}
 		}
 		if err := f.Sync(); err != nil {
-			_ = f.Close()
-			t.Fatalf("WM-013e: Sync .gitignore: %v", err)
+			t.Fatalf("WM-013e: Sync .gitignore: %v", withCleanupErrs(err, f.Close()))
 		}
 		if err := f.Close(); err != nil {
 			t.Fatalf("WM-013e: Close .gitignore: %v", err)
@@ -184,7 +182,9 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		}
 		// Restore write permission on test cleanup so t.TempDir() cleanup can proceed.
 		t.Cleanup(func() {
-			_ = os.Chmod(repo, 0o700)
+			if err := os.Chmod(repo, 0o700); err != nil {
+				t.Errorf("WM-013e: restore repo write permission: %v", err)
+			}
 		})
 
 		// Attempt to write .gitignore — MUST fail with a permission error.

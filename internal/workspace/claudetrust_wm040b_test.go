@@ -70,7 +70,10 @@ func TestWM040b_ExistingConfigPreserved(t *testing.T) {
 			},
 		},
 	}
-	raw, _ := json.MarshalIndent(initial, "", "  ")
+	raw, err := json.MarshalIndent(initial, "", "  ")
+	if err != nil {
+		t.Fatalf("WM-040b: marshal initial config: %v", err)
+	}
 	if err := os.WriteFile(cfgPath, append(raw, '\n'), 0o600); err != nil {
 		t.Fatalf("WM-040b: WriteFile initial config: %v", err)
 	}
@@ -90,7 +93,7 @@ func TestWM040b_ExistingConfigPreserved(t *testing.T) {
 		t.Errorf("WM-040b: top-level 'theme' key lost; got %v", cfg["theme"])
 	}
 
-	projects, _ := cfg["projects"].(map[string]interface{})
+	projects := mustJSONObject(t, cfg, "projects", "WM-040b: merged config")
 
 	// Existing project entry MUST be preserved.
 	other, ok := projects["/some/other/project"].(map[string]interface{})
@@ -106,7 +109,7 @@ func TestWM040b_ExistingConfigPreserved(t *testing.T) {
 	if !ok {
 		t.Fatalf("WM-040b: new worktree entry missing for %s", worktreePath)
 	}
-	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+	if !trustDialogAccepted(entry) {
 		t.Errorf("WM-040b: hasTrustDialogAccepted not true for new worktree")
 	}
 }
@@ -132,12 +135,12 @@ func TestWM040b_Idempotent(t *testing.T) {
 		t.Fatalf("WM-040b idempotent: Unmarshal: %v", err)
 	}
 
-	projects, _ := cfg["projects"].(map[string]interface{})
-	entry, ok := projects[worktreePath].(map[string]interface{})
+	projects := mustJSONObject(t, cfg, "projects", "WM-040b idempotent: config")
+	entry, ok := jsonObject(projects, worktreePath)
 	if !ok {
 		t.Fatal("WM-040b idempotent: entry missing after second call")
 	}
-	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+	if !trustDialogAccepted(entry) {
 		t.Error("WM-040b idempotent: hasTrustDialogAccepted not true after second call")
 	}
 }
@@ -157,7 +160,10 @@ func TestWM040b_UntrustedEntryUpgraded(t *testing.T) {
 			},
 		},
 	}
-	raw, _ := json.MarshalIndent(initial, "", "  ")
+	raw, err := json.MarshalIndent(initial, "", "  ")
+	if err != nil {
+		t.Fatalf("WM-040b: marshal initial config: %v", err)
+	}
 	if err := os.WriteFile(cfgPath, append(raw, '\n'), 0o600); err != nil {
 		t.Fatalf("WM-040b upgrade: WriteFile: %v", err)
 	}
@@ -168,10 +174,12 @@ func TestWM040b_UntrustedEntryUpgraded(t *testing.T) {
 
 	data := mustReadFile(t, cfgPath)
 	var cfg map[string]interface{}
-	_ = json.Unmarshal(data, &cfg)
-	projects, _ := cfg["projects"].(map[string]interface{})
-	entry, _ := projects[worktreePath].(map[string]interface{})
-	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("WM-040b upgrade: Unmarshal: %v", err)
+	}
+	projects := mustJSONObject(t, cfg, "projects", "WM-040b upgrade: config")
+	entry := mustJSONObject(t, projects, worktreePath, "WM-040b upgrade: projects")
+	if !trustDialogAccepted(entry) {
 		t.Error("WM-040b upgrade: hasTrustDialogAccepted should have been upgraded to true")
 	}
 }

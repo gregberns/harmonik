@@ -116,8 +116,8 @@ func hkqx065AssertClobbererContentSurvived(t *testing.T, cfgPath string, generat
 			"instead of merging onto it (lost update: harmonik became the clobberer)",
 			hkqx065ClobberGenerationKey, got, want)
 	}
-	projects, _ := cfg["projects"].(map[string]interface{})
-	entry, ok := projects[hkqx065ClobberAddedProject].(map[string]interface{})
+	projects := mustJSONObject(t, cfg, "projects", "hk-qx065: config after repair")
+	entry, ok := jsonObject(projects, hkqx065ClobberAddedProject)
 	if !ok {
 		t.Fatalf("hk-qx065: the clobberer's own project entry %q was erased by the repair write — "+
 			"a sibling worker's trust entry would be lost the same way", hkqx065ClobberAddedProject)
@@ -157,10 +157,9 @@ func hkqx065Trusted(t *testing.T, cfgPath, worktreePath string) bool {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("hk-qx065: unmarshal %s: %v", cfgPath, err)
 	}
-	projects, _ := cfg["projects"].(map[string]interface{})
-	entry, _ := projects[worktreePath].(map[string]interface{})
-	trusted, _ := entry["hasTrustDialogAccepted"].(bool)
-	return trusted
+	projects, _ := jsonObject(cfg, "projects")
+	entry, _ := jsonObject(projects, worktreePath)
+	return trustDialogAccepted(entry)
 }
 
 // TestHkqx065_HappyPath_OneAttemptVerified is the baseline: with nobody
@@ -203,7 +202,10 @@ func TestHkqx065_TransientClobber_Recovers(t *testing.T) {
 			"/some/other/project": map[string]interface{}{"hasTrustDialogAccepted": true},
 		},
 	}
-	raw, _ := json.MarshalIndent(seed, "", "  ")
+	raw, err := json.MarshalIndent(seed, "", "  ")
+	if err != nil {
+		t.Fatalf("hk-qx065: marshal seed: %v", err)
+	}
 	if err := os.WriteFile(cfgPath, append(raw, '\n'), 0o600); err != nil {
 		t.Fatalf("hk-qx065: seed config: %v", err)
 	}
@@ -236,7 +238,7 @@ func TestHkqx065_TransientClobber_Recovers(t *testing.T) {
 	if got["theme"] != "dark" {
 		t.Errorf("hk-qx065: repair clobbered a top-level key; theme=%v", got["theme"])
 	}
-	projects, _ := got["projects"].(map[string]interface{})
+	projects := mustJSONObject(t, got, "projects", "hk-qx065: config after repair")
 	if _, ok := projects["/some/other/project"]; !ok {
 		t.Error("hk-qx065: repair dropped an unrelated project entry")
 	}
@@ -400,7 +402,10 @@ func TestHkqx065_TornRead_Retried(t *testing.T) {
 			"/other": map[string]interface{}{"hasTrustDialogAccepted": true},
 		},
 	}
-	raw, _ := json.MarshalIndent(settled, "", "  ")
+	raw, err := json.MarshalIndent(settled, "", "  ")
+	if err != nil {
+		t.Fatalf("hk-qx065: marshal settled config: %v", err)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)

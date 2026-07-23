@@ -31,14 +31,18 @@ import (
 //
 // agentType must be either an agentic class ("agentic-claude", etc.) or a
 // mechanical class ("non-agentic", "generator", "merge-node").
-func conflictResFixtureMetaJSON(runID, sessionID, agentType string, launchedAt time.Time) []byte {
-	b, _ := json.Marshal(map[string]string{
+func conflictResFixtureMetaJSON(t *testing.T, runID, sessionID, agentType string, launchedAt time.Time) []byte {
+	t.Helper()
+	b, err := json.Marshal(map[string]string{
 		"run_id":         runID,
 		"session_id":     sessionID,
 		"agent_type":     agentType,
 		"launched_at":    launchedAt.UTC().Format(time.RFC3339),
 		"schema_version": "1",
 	})
+	if err != nil {
+		t.Fatalf("conflictResFixtureMetaJSON: marshal: %v", err)
+	}
 	return b
 }
 
@@ -151,11 +155,11 @@ func TestWM022_SidecarWalkIdentifiesImplementer(t *testing.T) {
 
 		// Session 1: mechanical (earlier).
 		conflictResFixtureWriteSidecar(t, dir, "sess-01",
-			conflictResFixtureMetaJSON(runID, "sess-01", "non-agentic", t0))
+			conflictResFixtureMetaJSON(t, runID, "sess-01", "non-agentic", t0))
 
 		// Session 2: agentic (most recent).
 		conflictResFixtureWriteSidecar(t, dir, "sess-02",
-			conflictResFixtureMetaJSON(runID, "sess-02", "agentic-claude", t1))
+			conflictResFixtureMetaJSON(t, runID, "sess-02", "agentic-claude", t1))
 
 		metas := conflictResFixtureSidecarWalk(t, dir)
 		if len(metas) != 2 {
@@ -187,11 +191,11 @@ func TestWM022_SidecarWalkIdentifiesImplementer(t *testing.T) {
 
 		// Session 1: agentic (older).
 		conflictResFixtureWriteSidecar(t, dir, "sess-01",
-			conflictResFixtureMetaJSON(runID, "sess-01", "agentic-claude", t0))
+			conflictResFixtureMetaJSON(t, runID, "sess-01", "agentic-claude", t0))
 
 		// Session 2: mechanical (most recent) — does NOT displace the agentic ref.
 		conflictResFixtureWriteSidecar(t, dir, "sess-02",
-			conflictResFixtureMetaJSON(runID, "sess-02", "merge-node", t1))
+			conflictResFixtureMetaJSON(t, runID, "sess-02", "merge-node", t1))
 
 		metas := conflictResFixtureSidecarWalk(t, dir)
 		// Walk is newest-first; the merge-node appears first but is non-agentic,
@@ -289,9 +293,9 @@ func TestWM022a_AllMechanicalBranchEscalatesDirectly(t *testing.T) {
 
 		// Only non-agentic sessions.
 		conflictResFixtureWriteSidecar(t, dir, "sess-01",
-			conflictResFixtureMetaJSON(runID, "sess-01", "generator", t0))
+			conflictResFixtureMetaJSON(t, runID, "sess-01", "generator", t0))
 		conflictResFixtureWriteSidecar(t, dir, "sess-02",
-			conflictResFixtureMetaJSON(runID, "sess-02", "merge-node", t0.Add(10*time.Minute)))
+			conflictResFixtureMetaJSON(t, runID, "sess-02", "merge-node", t0.Add(10*time.Minute)))
 
 		metas := conflictResFixtureSidecarWalk(t, dir)
 		_, found := conflictResFixtureFirstAgenticRef(metas)

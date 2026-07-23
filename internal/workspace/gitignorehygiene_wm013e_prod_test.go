@@ -231,7 +231,11 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		if err := os.Chmod(repo, 0o555); err != nil {
 			t.Fatalf("WM-013e: Chmod repo 0o555: %v", err)
 		}
-		t.Cleanup(func() { _ = os.Chmod(repo, 0o700) })
+		t.Cleanup(func() {
+			if err := os.Chmod(repo, 0o700); err != nil {
+				t.Errorf("restore repo permissions: %v", err)
+			}
+		})
 
 		err := EnsureGitignoreHygiene(t.Context(), repo)
 		if err == nil {

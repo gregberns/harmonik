@@ -61,26 +61,24 @@ func leaseFixtureWriteLockAtomic(t *testing.T, target string, content []byte) {
 	}
 
 	if _, err := f.Write(content); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		t.Fatalf("leaseFixtureWriteLockAtomic: Write: %v", err)
+		t.Fatalf("leaseFixtureWriteLockAtomic: Write: %v",
+			withCleanupErrs(err, f.Close(), os.Remove(tmpPath)))
 	}
 
 	// fsync the temp file before rename so the data is durable.
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		t.Fatalf("leaseFixtureWriteLockAtomic: Sync (pre-rename): %v", err)
+		t.Fatalf("leaseFixtureWriteLockAtomic: Sync (pre-rename): %v",
+			withCleanupErrs(err, f.Close(), os.Remove(tmpPath)))
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		t.Fatalf("leaseFixtureWriteLockAtomic: Close (pre-rename): %v", err)
+		t.Fatalf("leaseFixtureWriteLockAtomic: Close (pre-rename): %v",
+			withCleanupErrs(err, os.Remove(tmpPath)))
 	}
 
 	// Atomic rename: POSIX rename(2) is atomic within the same filesystem.
 	if err := os.Rename(tmpPath, target); err != nil {
-		_ = os.Remove(tmpPath)
-		t.Fatalf("leaseFixtureWriteLockAtomic: Rename %q → %q: %v", tmpPath, target, err)
+		t.Fatalf("leaseFixtureWriteLockAtomic: Rename %q → %q: %v", tmpPath, target,
+			withCleanupErrs(err, os.Remove(tmpPath)))
 	}
 
 	// Parent-directory fsync to durably record the rename.

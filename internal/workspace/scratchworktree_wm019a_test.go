@@ -137,9 +137,10 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	gitRun(repo, "branch", "-D", scratchBranch)
 
 	// Assert scratch branch is gone.
-	out2, _ := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", scratchBranch).Output()
-	if strings.TrimSpace(string(out2)) != "" {
-		t.Errorf("WM-019a: transient branch %q still exists after deletion", scratchBranch)
+	out2, verifyErr := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", scratchBranch).Output()
+	if verifyErr == nil || strings.TrimSpace(string(out2)) != "" {
+		t.Errorf("WM-019a: transient branch %q still exists after deletion (rev-parse err=%v, out=%q)",
+			scratchBranch, verifyErr, strings.TrimSpace(string(out2)))
 	}
 
 	// Assert integration branch now has exactly ONE new commit relative to sha.

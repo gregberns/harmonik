@@ -166,3 +166,36 @@ func mustReadFile(t *testing.T, path string) []byte {
 func isLowerHexDigit(r rune) bool {
 	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
 }
+
+// jsonObject returns parent[key] as a nested JSON object.
+//
+// The tests that walk ~/.claude.json used to spell this `x, _ := parent[key].(T)`
+// and then nil-check x, which discarded the type-assertion result and made a
+// wrong-typed value indistinguishable from an absent one.
+func jsonObject(parent map[string]any, key string) (map[string]any, bool) {
+	obj, ok := parent[key].(map[string]any)
+	return obj, ok
+}
+
+// mustJSONObject is jsonObject, failing the test when key is absent or is not
+// a JSON object. context names what was being looked up, for the failure message.
+func mustJSONObject(t *testing.T, parent map[string]any, key, context string) map[string]any {
+	t.Helper()
+
+	obj, ok := jsonObject(parent, key)
+	if !ok {
+		t.Fatalf("%s: %q is absent or is not a JSON object; got %#v", context, key, parent[key])
+	}
+	return obj
+}
+
+// trustDialogAccepted reports whether a ~/.claude.json project entry carries
+// hasTrustDialogAccepted: true.
+//
+// An absent key, and a key holding any non-bool, both read as false — the same
+// semantics as the blank-discard type assertions this replaces, and the same
+// reading Claude Code itself applies (anything but an explicit true re-prompts).
+func trustDialogAccepted(entry map[string]any) bool {
+	accepted, ok := entry["hasTrustDialogAccepted"].(bool)
+	return ok && accepted
+}

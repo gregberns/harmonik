@@ -297,20 +297,21 @@ func TestEnsureWorktreeTrustVia_RealPythonWritesTrust(t *testing.T) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("parse ~/.claude.json: %v\n%s", err, data)
 	}
-	projects, _ := cfg["projects"].(map[string]interface{})
-	if projects == nil {
-		t.Fatalf("no projects map in written config:\n%s", data)
+	projects := mustJSONObject(t, cfg, "projects", "written config")
+	// Key is the realpath-normalized worktree path; fall back to the raw path
+	// when the temp home is not behind a symlink.
+	realWt, symErr := filepath.EvalSymlinks(wt)
+	if symErr != nil {
+		realWt = wt
 	}
-	// Key is the realpath-normalized worktree path.
-	realWt, _ := filepath.EvalSymlinks(wt)
-	entry, _ := projects[realWt].(map[string]interface{})
-	if entry == nil {
-		entry, _ = projects[wt].(map[string]interface{})
+	entry, ok := jsonObject(projects, realWt)
+	if !ok {
+		entry, ok = jsonObject(projects, wt)
 	}
-	if entry == nil {
+	if !ok {
 		t.Fatalf("no trust entry for worktree %q (or %q) in:\n%s", realWt, wt, data)
 	}
-	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+	if !trustDialogAccepted(entry) {
 		t.Errorf("hasTrustDialogAccepted not true for worktree entry:\n%s", data)
 	}
 }

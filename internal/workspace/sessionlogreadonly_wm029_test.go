@@ -54,7 +54,11 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WM-029: O_RDONLY open sidecar failed: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("WM-029: Close sidecar: %v", err)
+		}
+	}()
 
 	var parsed map[string]interface{}
 	if err := json.NewDecoder(f).Decode(&parsed); err != nil {
@@ -73,7 +77,11 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WM-029: O_RDONLY open session.log failed: %v", err)
 	}
-	defer logF.Close()
+	defer func() {
+		if err := logF.Close(); err != nil {
+			t.Errorf("WM-029: Close session.log: %v", err)
+		}
+	}()
 
 	// Assert: we can read from the log.
 	buf := make([]byte, 256)

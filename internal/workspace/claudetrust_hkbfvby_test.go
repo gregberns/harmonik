@@ -245,7 +245,10 @@ func TestHkbfvby_PruneWorktreeTrust_RemovesEntry(t *testing.T) {
 			keep:   map[string]interface{}{"hasTrustDialogAccepted": true},
 		},
 	}
-	raw, _ := json.MarshalIndent(cfg, "", "  ")
+	raw, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("hk-bfvby: marshal config: %v", err)
+	}
 	if err := os.WriteFile(cfgPath, append(raw, '\n'), 0o600); err != nil {
 		t.Fatalf("hk-bfvby: write config: %v", err)
 	}
@@ -262,7 +265,7 @@ func TestHkbfvby_PruneWorktreeTrust_RemovesEntry(t *testing.T) {
 	if got["theme"] != "dark" {
 		t.Errorf("hk-bfvby: prune lost top-level key; theme=%v", got["theme"])
 	}
-	projects, _ := got["projects"].(map[string]interface{})
+	projects := mustJSONObject(t, got, "projects", "hk-bfvby: config after prune")
 	if _, present := projects[target]; present {
 		t.Errorf("hk-bfvby: prune did not remove target entry %s", target)
 	}

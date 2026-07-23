@@ -133,11 +133,11 @@ br sync --flush-only  # Export DB to JSONL
 git status              # Check what changed
 git add <files>         # Stage code changes (explicit pathspec; never `git add -A`)
 br sync --flush-only    # Reconcile local DB → JSONL. Stages NOTHING: .beads/ is gitignored.
-git commit -F msg.txt   # See the trailer requirement below — `-m "..."` alone will be REJECTED
+git commit -F msg.txt   # See the trailer requirement below — `-m "..."` alone omits the required trailers
 git push                # Push to remote
 ```
 
-**The commit-msg hook is not optional and `git commit -m "..."` usually fails it.** `scripts/validate-commit-msg.sh` (wired via `lefthook.yml`) enforces:
+**Commit-message validation is required policy — now agent-enforced, not a git hook** (hooks are retired; the `/check` flow runs `scripts/validate-commit-msg.sh`). It enforces:
 
 1. Conventional-Commits subject from a **closed** type set — `feat fix refactor test docs chore spec build perf`. No `ci`, `revert`, or `style`.
 2. Subject ≤72 chars, no trailing period.
@@ -147,7 +147,9 @@ Because those trailers are multi-line-ish and JSON-quoted, write the message to 
 
 <!-- end-bv-agent-instructions -->
 
-> **Maintainer note — the block above is machine-regenerable.** `br agents --update` rewrites everything between the `bv-agent-instructions-v2` markers from br's generic upstream template. Two harmonik-specific corrections live inside it and WILL be reverted to upstream's (false) wording if you run that command: (1) the bead ledger is gitignored and machine-local, not "stored in `.beads/` and tracked in git"; (2) `git commit -m "..."` alone does not pass this repo's commit-msg hook. Re-apply both after any `br agents --update`, and diff the block before accepting the result.
+> **Maintainer note — the block above is machine-regenerable.** `br agents --update` rewrites everything between the `bv-agent-instructions-v2` markers from br's generic upstream template. Three harmonik-specific corrections live inside it and WILL be reverted to upstream's (false) wording if you run that command: (1) the bead ledger is gitignored and machine-local, not "stored in `.beads/` and tracked in git"; (2) `git commit -m "..."` alone omits this repo's required trailers; (3) commit-message validation is agent-enforced via the `/check` flow — git hooks (lefthook) are retired, not "wired via `lefthook.yml`". Re-apply all three after any `br agents --update`, and diff the block before accepting the result.
+
+**Validate after committing — git hooks are gone.** Git hooks are uninstalled; validation is agent-driven. After a non-trivial commit, run **`/check`** (or `make check` directly) to verify the committed code passes the full gate; if it comes back red, fix the root cause and re-commit. Fast/full split: `make check-fast` per commit, `make check` at push/milestone boundaries.
 
 ````markdown
 ## UBS Quick Reference for AI Agents

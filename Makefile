@@ -526,8 +526,9 @@ twins: build-twin-generic build-twin-pi  ## Build all twin binaries into twins/ 
 build-all: build twins  ## go build ./... + all twins (full build artifact set)
 
 # ---------------------------------------------------------------------------
-# Secret scan — runs as the first pre-commit command (lefthook secret-scan).
-# Also callable standalone to audit a working tree before staging.
+# Secret scan — blocks staging content that adds API keys, credential
+# patterns, or .env files. Invoked by the agent-driven validation command
+# (git hooks are retired); also callable standalone to audit a working tree.
 # ---------------------------------------------------------------------------
 .PHONY: secret-scan
 secret-scan:  ## Scan staged diff for API keys / credentials / .env files
@@ -796,38 +797,26 @@ check-verdict:  ## Cross-check diff-keyed verdict: APPROVE → pass; absent/REQU
 	@scripts/check-verdict.sh --diff HEAD~1
 
 # ---------------------------------------------------------------------------
-# Tool installation + git-hooks setup
+# Tool installation
 # Pins dev tools into ./.tools/ to avoid polluting the global GOPATH.
-# Fresh-clone setup: make bootstrap  (installs tools + wires git hooks)
+# Fresh-clone setup: make bootstrap  (installs tools)
+#
+# NOTE: git hooks are RETIRED. lefthook (and its self-re-arming `install`)
+# was removed — validation now runs via the agent-driven validation command,
+# not a pre-commit/pre-push/commit-msg hook. scripts/validate-commit-msg.sh
+# and scripts/secret-scan.sh remain callable directly by that command.
 # ---------------------------------------------------------------------------
 .PHONY: tools
-tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck, lefthook)
+tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck)
 	@mkdir -p $(TOOLS_DIR)
 	$(GOBIN_TOOLS) go install mvdan.cc/gofumpt@v0.7.0
 	$(GOBIN_TOOLS) go install github.com/daixiang0/gci@v0.13.5
 	$(GOBIN_TOOLS) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.3.0
 	$(GOBIN_TOOLS) go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-	$(GOBIN_TOOLS) go install github.com/evilmartians/lefthook@v1.11.13
 
-# install-hooks: wire lefthook.yml hooks into .git/hooks/ so pre-commit,
-# pre-push, and commit-msg gates run automatically on every commit.
-# Prereq: lefthook binary must exist in .tools/ (run `make tools` first).
-.PHONY: install-hooks
-install-hooks:  ## Wire lefthook.yml hooks into .git/hooks/ (run after make tools)
-	$(TOOLS_DIR)/lefthook install
-
-# check-hooks: assert that the hooks installed in .git/hooks/ match lefthook.yml.
-# Fails if any hook declared in lefthook.yml is absent or does not invoke lefthook.
-# Run in CI after install-hooks to detect drift.
-.PHONY: check-hooks
-check-hooks:  ## Assert installed git hooks match lefthook.yml (CI drift check)
-	scripts/check-hooks.sh
-
-# bootstrap: one-stop fresh-clone setup — installs pinned tools then wires hooks.
-# Run this once after cloning; subsequent `make tools` re-pins tools without
-# re-running lefthook install (though re-running bootstrap is harmless).
+# bootstrap: one-stop fresh-clone setup — installs pinned tools.
 .PHONY: bootstrap
-bootstrap: tools install-hooks  ## Fresh-clone setup: install tools + wire git hooks (lefthook install)
+bootstrap: tools  ## Fresh-clone setup: install pinned dev tools
 
 # ---------------------------------------------------------------------------
 # Help

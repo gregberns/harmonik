@@ -5,27 +5,25 @@
 - Go 1.25+
 - git
 
-Dev tools (gofumpt, gci, golangci-lint, govulncheck, lefthook) are installed locally via `make tools`; no global installs required.
+Dev tools (gofumpt, gci, golangci-lint, govulncheck) are installed locally via `make tools`; no global installs required.
 
 ## First-time setup
 
 ```sh
 git clone https://github.com/gregberns/harmonik
 cd harmonik
-make bootstrap      # installs pinned dev tools + wires git hooks
+make bootstrap      # installs pinned dev tools
 ```
 
 `make bootstrap` is the single command for a fresh clone: it runs `make tools`
-(pinned gofumpt, gci, golangci-lint, govulncheck, lefthook into `.tools/`) then
-`make install-hooks` (wires `lefthook.yml` pre-commit / pre-push / commit-msg
-hooks into `.git/hooks/`).
+(pins gofumpt, gci, golangci-lint, govulncheck into `.tools/`).
 
-To re-run either step independently:
-
-```sh
-make tools          # re-pin tools only (skips hook re-registration)
-make install-hooks  # re-wire hooks only (requires .tools/lefthook to exist)
-```
+Git hooks are **retired**: lefthook was removed (it re-armed itself on every
+commit). Validation — format/lint gates, secret scan, and commit-message
+trailers — now runs via the agent-driven validation command rather than a
+pre-commit/pre-push/commit-msg hook. The underlying scripts
+(`scripts/validate-commit-msg.sh`, `scripts/secret-scan.sh`) remain callable
+directly.
 
 ## The three-tier check gauntlet
 
@@ -35,7 +33,9 @@ make install-hooks  # re-wire hooks only (requires .tools/lefthook to exist)
 | `make check` | Default; pre-push | Full golangci-lint, go test -race, go mod tidy check, coverage gate, govulncheck (~3–5 min) |
 | `make check-full` | Before declaring work done | Everything in `check` + integration + scenario + crash test suites (~10–15 min) |
 
-The pre-commit hook runs `check-fast` on staged files. The pre-push hook runs `check`.
+Run `check-fast` while authoring and `check` before pushing. (These were
+formerly wired as pre-commit / pre-push git hooks; hooks are now retired and
+the checks run via the agent-driven validation command instead.)
 
 ## Declared-done ritual (agents)
 

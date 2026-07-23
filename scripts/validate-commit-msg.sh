@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# scripts/validate-commit-msg.sh — commit-msg hook called by lefthook.
+# scripts/validate-commit-msg.sh — commit-message validator (run via the
+# agent-driven /check flow; git hooks are retired).
 #
 # Usage: validate-commit-msg.sh <commit-msg-file>
 #

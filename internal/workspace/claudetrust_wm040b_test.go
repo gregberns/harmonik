@@ -31,10 +31,7 @@ func TestWM040b_FreshConfig(t *testing.T) {
 		t.Fatalf("WM-040b: ensureWorktreeTrustAt (fresh): %v", err)
 	}
 
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("WM-040b: ReadFile after fresh write: %v", err)
-	}
+	data := mustReadFile(t, cfgPath)
 
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
@@ -82,7 +79,7 @@ func TestWM040b_ExistingConfigPreserved(t *testing.T) {
 		t.Fatalf("WM-040b: ensureWorktreeTrustAt (merge): %v", err)
 	}
 
-	data, _ := os.ReadFile(cfgPath)
+	data := mustReadFile(t, cfgPath)
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("WM-040b: Unmarshal merged config: %v", err)
@@ -129,7 +126,7 @@ func TestWM040b_Idempotent(t *testing.T) {
 		t.Fatalf("WM-040b idempotent: second call: %v", err)
 	}
 
-	data, _ := os.ReadFile(cfgPath)
+	data := mustReadFile(t, cfgPath)
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("WM-040b idempotent: Unmarshal: %v", err)
@@ -169,7 +166,7 @@ func TestWM040b_UntrustedEntryUpgraded(t *testing.T) {
 		t.Fatalf("WM-040b upgrade: ensureWorktreeTrustAt: %v", err)
 	}
 
-	data, _ := os.ReadFile(cfgPath)
+	data := mustReadFile(t, cfgPath)
 	var cfg map[string]interface{}
 	_ = json.Unmarshal(data, &cfg)
 	projects, _ := cfg["projects"].(map[string]interface{})
@@ -208,10 +205,7 @@ func TestWM040b_EnvVarOverride(t *testing.T) {
 		t.Fatalf("WM-040b env-override: EnsureWorktreeTrust: %v", err)
 	}
 
-	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: cfgPath is a temp path set by t.Setenv
-	if err != nil {
-		t.Fatalf("WM-040b env-override: ReadFile: %v", err)
-	}
+	data := mustReadFile(t, cfgPath)
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("WM-040b env-override: Unmarshal: %v", err)
@@ -263,10 +257,7 @@ func TestEnsureWorktreeTrust_ConcurrentWrites(t *testing.T) {
 		}
 	}
 
-	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: cfgPath is a temp path set by t.Setenv
-	if err != nil {
-		t.Fatalf("WM-040b concurrent: ReadFile: %v", err)
-	}
+	data := mustReadFile(t, cfgPath)
 
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {

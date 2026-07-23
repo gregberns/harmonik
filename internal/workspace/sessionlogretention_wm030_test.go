@@ -70,7 +70,7 @@ func TestWM030_PostMergeSessionLogRetention(t *testing.T) {
 
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
@@ -82,7 +82,7 @@ func TestWM030_PostMergeSessionLogRetention(t *testing.T) {
 
 	// Also write a session.log to simulate handler output.
 	sessionLog := filepath.Join(sessionDir, "session.log")
-	if err := os.WriteFile(sessionLog, []byte("session output\n"), 0o644); err != nil {
+	if err := os.WriteFile(sessionLog, []byte("session output\n"), 0o600); err != nil {
 		t.Fatalf("WM-030: WriteFile session.log: %v", err)
 	}
 
@@ -182,14 +182,11 @@ func TestWM030_GitignoreMisconfigurationDetected(t *testing.T) {
 		repo, _ := tempRepo(t)
 		gitignorePath := filepath.Join(repo, ".gitignore")
 		badContent := "# harmonik worktrees\n**/sessions/\n*.swp\n"
-		if err := os.WriteFile(gitignorePath, []byte(badContent), 0o644); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte(badContent), 0o600); err != nil {
 			t.Fatalf("WriteFile .gitignore: %v", err)
 		}
 
-		content, err := os.ReadFile(gitignorePath)
-		if err != nil {
-			t.Fatalf("ReadFile .gitignore: %v", err)
-		}
+		content := mustReadFile(t, gitignorePath)
 		if err := sessionLogFixtureDetectGitignoreMisconfiguration(string(content)); err == nil {
 			t.Errorf("WM-030: expected misconfiguration error for bad .gitignore, got nil")
 		}

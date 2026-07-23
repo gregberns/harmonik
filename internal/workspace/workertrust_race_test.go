@@ -92,10 +92,7 @@ func runTrustUpsert(t *testing.T, home, program, worktreePath string, env ...str
 // (projects[realpath].hasTrustDialogAccepted == true) in home/.claude.json.
 func countTrustedWorktrees(t *testing.T, home string, worktreePaths []string) int {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
-	if err != nil {
-		t.Fatalf("read .claude.json: %v", err)
-	}
+	data := mustReadFile(t, filepath.Join(home, ".claude.json"))
 	var cfg struct {
 		Projects map[string]struct {
 			HasTrustDialogAccepted bool `json:"hasTrustDialogAccepted"`
@@ -124,7 +121,7 @@ func makeWorktreePaths(t *testing.T, home string, n int) []string {
 	paths := make([]string, n)
 	for i := 0; i < n; i++ {
 		p := filepath.Join(home, "worktrees", fmt.Sprintf("run-%03d", i))
-		if err := os.MkdirAll(p, 0o755); err != nil {
+		if err := os.MkdirAll(p, 0o700); err != nil {
 			t.Fatalf("mkdir worktree %d: %v", i, err)
 		}
 		paths[i] = p
@@ -210,7 +207,7 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 	}
 
 	// The pre-existing keys and top-level content must be preserved too.
-	data, _ := os.ReadFile(filepath.Join(home, ".claude.json"))
+	data := mustReadFile(t, filepath.Join(home, ".claude.json"))
 	var got map[string]interface{}
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal final config: %v", err)

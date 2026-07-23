@@ -31,7 +31,7 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
 	// Create the parent directory so that git can place the worktree there.
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -231,7 +231,7 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 
@@ -272,7 +272,7 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 
@@ -288,12 +288,12 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 		// of WM-016).
 		sessionID := "sess-0196a1b2-c3d4-7ef0-8a1b-000000000001"
 		sidecarDir := filepath.Join(worktreePath, ".harmonik", "sessions", sessionID)
-		if err := os.MkdirAll(sidecarDir, 0o755); err != nil {
+		if err := os.MkdirAll(sidecarDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll sidecarDir: %v", err)
 		}
 		sidecarPath := filepath.Join(sidecarDir, "harmonik.meta.json")
 		sidecarContent := `{"run_id":"` + runID + `","session_id":"` + sessionID + `","schema_version":"1"}`
-		if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o644); err != nil {
+		if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
 			t.Fatalf("WriteFile sidecar: %v", err)
 		}
 

@@ -88,8 +88,7 @@ func TestReadReviewVerdictVia_RemoteRunner_ReadsViaRunner(t *testing.T) {
 
 	// "Worker-side" verdict file (lives at an arbitrary box-A path the stub cats).
 	workerVerdict := filepath.Join(t.TempDir(), "worker-review.json")
-	//nolint:gosec // G306: test fixture
-	if err := os.WriteFile(workerVerdict, reviewVerdictFixtureValidJSON(t), 0o644); err != nil {
+	if err := os.WriteFile(workerVerdict, reviewVerdictFixtureValidJSON(t), 0o600); err != nil {
 		t.Fatalf("write worker verdict: %v", err)
 	}
 

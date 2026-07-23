@@ -19,7 +19,7 @@ func TestCHB028_FreshWrite(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -38,10 +38,7 @@ func TestCHB028_FreshWrite(t *testing.T) {
 	}
 
 	target := AgentTaskPath(workspacePath)
-	data, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("ReadFile agent-task.md: %v", err)
-	}
+	data := mustReadFile(t, target)
 	content := string(data)
 
 	checks := []string{
@@ -76,7 +73,7 @@ func TestCHB028_LaunchOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -100,10 +97,7 @@ func TestCHB028_LaunchOverwrites(t *testing.T) {
 		t.Fatalf("WriteAgentTask second (overwrite) write: %v", err)
 	}
 
-	got, err := os.ReadFile(AgentTaskPath(workspacePath))
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
+	got := mustReadFile(t, AgentTaskPath(workspacePath))
 	if !strings.Contains(string(got), "Reviewer body.") {
 		t.Errorf("second launch should have overwritten file; got %q", string(got))
 	}
@@ -119,7 +113,7 @@ func TestCHB028_ReAttachIdempotency(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -140,10 +134,7 @@ func TestCHB028_ReAttachIdempotency(t *testing.T) {
 	}
 
 	// Record original content.
-	original, err := os.ReadFile(AgentTaskPath(workspacePath))
-	if err != nil {
-		t.Fatalf("ReadFile original: %v", err)
-	}
+	original := mustReadFile(t, AgentTaskPath(workspacePath))
 
 	// Re-attach write with different body — must NOT overwrite.
 	reAttachPayload := payload
@@ -154,10 +145,7 @@ func TestCHB028_ReAttachIdempotency(t *testing.T) {
 		t.Fatalf("WriteAgentTask (re-attach): %v", err)
 	}
 
-	after, err := os.ReadFile(AgentTaskPath(workspacePath))
-	if err != nil {
-		t.Fatalf("ReadFile after re-attach: %v", err)
-	}
+	after := mustReadFile(t, AgentTaskPath(workspacePath))
 
 	if string(after) != string(original) {
 		t.Errorf("CHB-028 re-attach: file was overwritten; original:\n%s\nafter:\n%s",
@@ -172,7 +160,7 @@ func TestCHB028_EmptyBodyRejection(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -207,7 +195,7 @@ func TestCHB028_AtomicTempCleanupOnFailure(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -215,7 +203,7 @@ func TestCHB028_AtomicTempCleanupOnFailure(t *testing.T) {
 	if err := os.Chmod(harmonikDir, 0o555); err != nil {
 		t.Fatalf("Chmod .harmonik read-only: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(harmonikDir, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(harmonikDir, 0o700) })
 
 	payload := AgentTaskPayload{
 		BeadID:        "hk-abc05",
@@ -252,7 +240,7 @@ func TestCHB028_ImplementerResumePhase(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -273,7 +261,7 @@ func TestCHB028_ImplementerResumePhase(t *testing.T) {
 		t.Fatalf("WriteAgentTask (implementer-resume): %v", err)
 	}
 
-	data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+	data := mustReadFile(t, AgentTaskPath(workspacePath))
 	content := string(data)
 
 	if !strings.Contains(content, "## Prior-Iteration Context") {
@@ -294,7 +282,7 @@ func TestCHB028_ReviewerPhase(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -314,7 +302,7 @@ func TestCHB028_ReviewerPhase(t *testing.T) {
 		t.Fatalf("WriteAgentTask (reviewer): %v", err)
 	}
 
-	data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+	data := mustReadFile(t, AgentTaskPath(workspacePath))
 	content := string(data)
 
 	if !strings.Contains(content, "## Prior-Iteration Context") {
@@ -339,14 +327,14 @@ func TestHkJvzc2_WriteAgentTaskDoesNotTouchGitignore(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
 	// Seed a pre-existing operator-style .gitignore so we can assert byte-equality.
 	gitignorePath := filepath.Join(workspacePath, ".gitignore")
 	seed := "# operator setup\n.harmonik/\n"
-	if err := os.WriteFile(gitignorePath, []byte(seed), 0o644); err != nil {
+	if err := os.WriteFile(gitignorePath, []byte(seed), 0o600); err != nil {
 		t.Fatalf("seed .gitignore: %v", err)
 	}
 
@@ -364,11 +352,7 @@ func TestHkJvzc2_WriteAgentTaskDoesNotTouchGitignore(t *testing.T) {
 		t.Fatalf("WriteAgentTask: %v", err)
 	}
 
-	//nolint:gosec // G304: controlled test path
-	data, err := os.ReadFile(gitignorePath)
-	if err != nil {
-		t.Fatalf("ReadFile .gitignore: %v", err)
-	}
+	data := mustReadFile(t, gitignorePath)
 	if string(data) != seed {
 		t.Errorf("hk-jvzc2: WriteAgentTask mutated .gitignore:\nwant:\n%q\ngot:\n%q", seed, string(data))
 	}
@@ -410,10 +394,7 @@ func TestCHB028_SessionCompletionInstruction(t *testing.T) {
 				t.Fatalf("WriteAgentTask phase=%q: %v", phase, err)
 			}
 
-			data, err := os.ReadFile(AgentTaskPath(subWorkspacePath))
-			if err != nil {
-				t.Fatalf("ReadFile phase=%q: %v", phase, err)
-			}
+			data := mustReadFile(t, AgentTaskPath(subWorkspacePath))
 			content := string(data)
 
 			if !strings.Contains(content, "## Session Completion") {
@@ -441,7 +422,7 @@ func TestEM015dRFD_FreshWrite(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -460,10 +441,7 @@ func TestEM015dRFD_FreshWrite(t *testing.T) {
 	}
 
 	target := ReviewerFeedbackPath(workspacePath, 1)
-	data, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("ReadFile reviewer-feedback: %v", err)
-	}
+	data := mustReadFile(t, target)
 	content := string(data)
 
 	checks := []string{
@@ -488,7 +466,7 @@ func TestEM015dRFD_EmptyFlags(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -504,7 +482,7 @@ func TestEM015dRFD_EmptyFlags(t *testing.T) {
 		t.Fatalf("WriteReviewerFeedback (empty flags): %v", err)
 	}
 
-	data, _ := os.ReadFile(ReviewerFeedbackPath(workspacePath, 2))
+	data := mustReadFile(t, ReviewerFeedbackPath(workspacePath, 2))
 	if !strings.Contains(string(data), "(none)") {
 		t.Errorf("EM-015d-RFD empty flags: expected '(none)'; got:\n%s", string(data))
 	}
@@ -521,7 +499,7 @@ func TestEM015dRIA_Iteration1(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -541,10 +519,7 @@ func TestEM015dRIA_Iteration1(t *testing.T) {
 	}
 
 	target := ReviewTargetPath(workspacePath)
-	data, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("ReadFile review-target.md: %v", err)
-	}
+	data := mustReadFile(t, target)
 	content := string(data)
 
 	checks := []string{
@@ -576,7 +551,7 @@ func TestEM015dRIA_Iteration2(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -602,7 +577,7 @@ func TestEM015dRIA_Iteration2(t *testing.T) {
 		t.Fatalf("WriteReviewTarget (iter 2): %v", err)
 	}
 
-	data, _ := os.ReadFile(ReviewTargetPath(workspacePath))
+	data := mustReadFile(t, ReviewTargetPath(workspacePath))
 	content := string(data)
 
 	if !strings.Contains(content, "## Prior verdicts") {
@@ -626,7 +601,7 @@ func TestEM015dRIA_ReviewerHints(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
@@ -645,7 +620,7 @@ func TestEM015dRIA_ReviewerHints(t *testing.T) {
 		t.Fatalf("WriteReviewTarget (hints): %v", err)
 	}
 
-	data, _ := os.ReadFile(ReviewTargetPath(workspacePath))
+	data := mustReadFile(t, ReviewTargetPath(workspacePath))
 	content := string(data)
 
 	if !strings.Contains(content, "## Hints") {
@@ -661,7 +636,7 @@ func TestEM015dRIA_ReviewerHints(t *testing.T) {
 	if err := WriteReviewTarget(payload2); err != nil {
 		t.Fatalf("WriteReviewTarget (no hints): %v", err)
 	}
-	data2, _ := os.ReadFile(ReviewTargetPath(workspacePath))
+	data2 := mustReadFile(t, ReviewTargetPath(workspacePath))
 	if strings.Contains(string(data2), "## Hints") {
 		t.Error("EM-015d-RIA no-hints: unexpected ## Hints section when ReviewerHints is empty")
 	}
@@ -682,7 +657,7 @@ func TestCHB028_ExtraContextSection(t *testing.T) {
 		dir := t.TempDir()
 		workspacePath := filepath.Join(dir, "workspace")
 		harmonikDir := filepath.Join(workspacePath, ".harmonik")
-		if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 
@@ -701,7 +676,7 @@ func TestCHB028_ExtraContextSection(t *testing.T) {
 			t.Fatalf("WriteAgentTask: %v", err)
 		}
 
-		data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+		data := mustReadFile(t, AgentTaskPath(workspacePath))
 		content := string(data)
 
 		if !strings.Contains(content, "## Extra Context") {
@@ -723,7 +698,7 @@ func TestCHB028_ExtraContextSection(t *testing.T) {
 		dir := t.TempDir()
 		workspacePath := filepath.Join(dir, "workspace")
 		harmonikDir := filepath.Join(workspacePath, ".harmonik")
-		if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 
@@ -742,7 +717,7 @@ func TestCHB028_ExtraContextSection(t *testing.T) {
 			t.Fatalf("WriteAgentTask: %v", err)
 		}
 
-		data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+		data := mustReadFile(t, AgentTaskPath(workspacePath))
 		if strings.Contains(string(data), "## Extra Context") {
 			t.Error("ExtraContext empty: unexpected ## Extra Context section when ExtraContext is empty")
 		}
@@ -753,7 +728,7 @@ func TestCHB028_ExtraContextSection(t *testing.T) {
 		dir := t.TempDir()
 		workspacePath := filepath.Join(dir, "workspace")
 		harmonikDir := filepath.Join(workspacePath, ".harmonik")
-		if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 
@@ -772,7 +747,7 @@ func TestCHB028_ExtraContextSection(t *testing.T) {
 			t.Fatalf("WriteAgentTask: %v", err)
 		}
 
-		data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+		data := mustReadFile(t, AgentTaskPath(workspacePath))
 		if strings.Contains(string(data), "## Extra Context") {
 			t.Error("ExtraContext whitespace: unexpected ## Extra Context section for whitespace-only value")
 		}
@@ -790,7 +765,7 @@ func TestCHB028_AutoCreatesDotHarmonikDir(t *testing.T) {
 	dir := t.TempDir()
 	// workspacePath exists but .harmonik/ is deliberately NOT pre-created.
 	workspacePath := filepath.Join(dir, "workspace-no-harmonik")
-	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+	if err := os.MkdirAll(workspacePath, 0o700); err != nil {
 		t.Fatalf("MkdirAll workspace: %v", err)
 	}
 
@@ -826,7 +801,7 @@ func TestCHB028_WhitespaceBodyRejected(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -858,7 +833,7 @@ func TestCHB028_ReAttachWritesWhenFileAbsent(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -877,10 +852,7 @@ func TestCHB028_ReAttachWritesWhenFileAbsent(t *testing.T) {
 		t.Fatalf("WriteAgentTask (ReAttach=true, file absent): %v", err)
 	}
 
-	data, err := os.ReadFile(AgentTaskPath(workspacePath))
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
+	data := mustReadFile(t, AgentTaskPath(workspacePath))
 	if !strings.Contains(string(data), "Body that must be written on first re-attach.") {
 		t.Errorf("ReAttach-absent: body not written; content:\n%s", string(data))
 	}
@@ -894,7 +866,7 @@ func TestCHB028_ImplementerResumeWithDerivedVerdictPath(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -913,7 +885,7 @@ func TestCHB028_ImplementerResumeWithDerivedVerdictPath(t *testing.T) {
 		t.Fatalf("WriteAgentTask (derived verdict path): %v", err)
 	}
 
-	data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+	data := mustReadFile(t, AgentTaskPath(workspacePath))
 	content := string(data)
 
 	// Derived path: .harmonik/review.iter-2.json (iteration 3 → prior = 2).
@@ -932,7 +904,7 @@ func TestCHB028_ImplementerResumeIterationClamp(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -952,7 +924,7 @@ func TestCHB028_ImplementerResumeIterationClamp(t *testing.T) {
 		t.Fatalf("WriteAgentTask (iteration clamp): %v", err)
 	}
 
-	data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+	data := mustReadFile(t, AgentTaskPath(workspacePath))
 	content := string(data)
 
 	// Clamped: priorN=1 → .harmonik/review.iter-1.json, NOT review.iter-0.json.
@@ -976,7 +948,7 @@ func TestEM015dRFD_WritesMultipleIterations(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -1019,7 +991,7 @@ func TestEM015dRIA_WriteTargetOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -1049,7 +1021,7 @@ func TestEM015dRIA_WriteTargetOverwrite(t *testing.T) {
 		t.Fatalf("WriteReviewTarget (second): %v", err)
 	}
 
-	data, _ := os.ReadFile(ReviewTargetPath(workspacePath))
+	data := mustReadFile(t, ReviewTargetPath(workspacePath))
 	content := string(data)
 
 	if strings.Contains(content, "First body text.") {
@@ -1068,7 +1040,7 @@ func TestEM015dRIA_MultiplePriorVerdictsWithNilFlags(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -1100,7 +1072,7 @@ func TestEM015dRIA_MultiplePriorVerdictsWithNilFlags(t *testing.T) {
 		t.Fatalf("WriteReviewTarget (multiple prior verdicts): %v", err)
 	}
 
-	data, _ := os.ReadFile(ReviewTargetPath(workspacePath))
+	data := mustReadFile(t, ReviewTargetPath(workspacePath))
 	content := string(data)
 
 	// Both iterations must appear.
@@ -1143,7 +1115,7 @@ func TestEM015dRIA_CoverageCheckSection(t *testing.T) {
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -1161,10 +1133,7 @@ func TestEM015dRIA_CoverageCheckSection(t *testing.T) {
 		t.Fatalf("WriteReviewTarget: %v", err)
 	}
 
-	data, err := os.ReadFile(ReviewTargetPath(workspacePath))
-	if err != nil {
-		t.Fatalf("ReadFile review-target.md: %v", err)
-	}
+	data := mustReadFile(t, ReviewTargetPath(workspacePath))
 	content := string(data)
 
 	// Coverage Check section must be present.

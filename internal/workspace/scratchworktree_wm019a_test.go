@@ -55,7 +55,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 
 	// (i) Create scratch merge-worktree at <repo>/.harmonik/worktrees/merge-<merge_id>/.
 	scratchPath := filepath.Join(repo, ".harmonik", "worktrees", "merge-"+mergeID)
-	if err := os.MkdirAll(filepath.Dir(scratchPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(scratchPath), 0o700); err != nil {
 		t.Fatalf("MkdirAll scratch parent: %v", err)
 	}
 	scratchBranch := "merge-" + mergeID

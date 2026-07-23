@@ -19,8 +19,7 @@ func archiveVerdictFixtureMakeWorkspace(t *testing.T) string {
 	t.Helper()
 	workspacePath := t.TempDir()
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("archiveVerdictFixtureMakeWorkspace: MkdirAll: %v", err)
 	}
 	return workspacePath
@@ -32,8 +31,7 @@ func archiveVerdictFixtureWriteSource(t *testing.T, workspacePath string) {
 	t.Helper()
 	payload := []byte(`{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Looks good."}`)
 	target := ReviewVerdictPath(workspacePath)
-	//nolint:gosec // G306: test fixture; 0644 is appropriate
-	if err := os.WriteFile(target, payload, 0o644); err != nil {
+	if err := os.WriteFile(target, payload, 0o600); err != nil {
 		t.Fatalf("archiveVerdictFixtureWriteSource: WriteFile: %v", err)
 	}
 }
@@ -98,8 +96,7 @@ func TestWM016_ArchivePreservesContent(t *testing.T) {
 	workspacePath := archiveVerdictFixtureMakeWorkspace(t)
 	payload := []byte(`{"schema_version":1,"verdict":"REQUEST_CHANGES","flags":["FLAG-A"],"notes":"Needs work."}`)
 	target := ReviewVerdictPath(workspacePath)
-	//nolint:gosec // G306: test fixture; 0644 is appropriate
-	if err := os.WriteFile(target, payload, 0o644); err != nil {
+	if err := os.WriteFile(target, payload, 0o600); err != nil {
 		t.Fatalf("WriteFile source: %v", err)
 	}
 
@@ -108,11 +105,7 @@ func TestWM016_ArchivePreservesContent(t *testing.T) {
 	}
 
 	dst := ReviewVerdictArchivePath(workspacePath, 2)
-	//nolint:gosec // G304: test fixture path from t.TempDir(); not user input
-	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("ReadFile archived file: %v", err)
-	}
+	got := mustReadFile(t, dst)
 	if string(got) != string(payload) {
 		t.Errorf("archived content mismatch: got %q, want %q", got, payload)
 	}

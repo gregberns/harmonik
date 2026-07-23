@@ -63,7 +63,7 @@ func tempRepo(t *testing.T) (repoPath, initialSHA string) {
 	// Create an initial commit so that HEAD is resolvable and worktree add can
 	// use it as a <parent_commit> start-point.
 	initFile := filepath.Join(dir, "README")
-	if err := os.WriteFile(initFile, []byte("harmonik test repo\n"), 0o644); err != nil {
+	if err := os.WriteFile(initFile, []byte("harmonik test repo\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile README: %v", err)
 	}
 	run("add", "README")
@@ -145,4 +145,22 @@ func classifyCrashEvidence(repo, runID string) (string, error) {
 		return "sidecar-without-lease", nil
 	}
 	return "bare-worktree-no-lease", nil
+}
+
+// mustReadFile reads path or fails the test.
+//
+// It replaces the `data, _ := os.ReadFile(path)` idiom that used to appear
+// throughout this package's tests. Discarding the error there meant an
+// unreadable or missing file surfaced as a confusing downstream assertion
+// failure ("missing section X") instead of naming the real problem, and it
+// hid the case where the production code under test never created the file
+// at all — the assertion then ran against an empty string.
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("mustReadFile %q: %v", path, err)
+	}
+	return data
 }

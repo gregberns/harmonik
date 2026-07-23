@@ -289,11 +289,7 @@ func TestWM040_WriteInterruptStateChangedMarker_IsAppendOnly(t *testing.T) {
 	}
 
 	eventsFile := WorkspaceLocalEventsPath(dir, workspaceID)
-	//nolint:gosec // G304: path constructed from t.TempDir() + known relative segments, not user input
-	data, err := os.ReadFile(eventsFile)
-	if err != nil {
-		t.Fatalf("WM-040 append-only: ReadFile: %v", err)
-	}
+	data := mustReadFile(t, eventsFile)
 
 	// Count newlines: two appends → two JSONL lines.
 	lineCount := 0

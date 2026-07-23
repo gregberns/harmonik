@@ -254,10 +254,7 @@ func TestEnsureWorktreeTrustVia_PipesProgramOnStdin(t *testing.T) {
 	if err := EnsureWorktreeTrustVia(ctx, rr, z8ekWorkerWt); err != nil {
 		t.Fatalf("EnsureWorktreeTrustVia: %v", err)
 	}
-	got, err := os.ReadFile(capFile)
-	if err != nil {
-		t.Fatalf("read captured stdin: %v (nothing piped on stdin?)", err)
-	}
+	got := mustReadFile(t, capFile)
 	if string(got) != workerTrustUpsertProgram {
 		t.Errorf("stdin-piped program mismatch.\n got: %q\nwant: %q", got, workerTrustUpsertProgram)
 	}
@@ -276,7 +273,7 @@ func TestEnsureWorktreeTrustVia_RealPythonWritesTrust(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()
 	wt := filepath.Join(t.TempDir(), "worktrees", "run-gglt")
-	if err := os.MkdirAll(wt, 0o755); err != nil {
+	if err := os.MkdirAll(wt, 0o700); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
 
@@ -295,10 +292,7 @@ func TestEnsureWorktreeTrustVia_RealPythonWritesTrust(t *testing.T) {
 		t.Fatalf("EnsureWorktreeTrustVia (real python): %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
-	if err != nil {
-		t.Fatalf("read temp ~/.claude.json: %v (the upsert did not run — the bug)", err)
-	}
+	data := mustReadFile(t, filepath.Join(home, ".claude.json"))
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("parse ~/.claude.json: %v\n%s", err, data)
@@ -381,10 +375,7 @@ func TestWriteReviewTargetVia_LocalDelegates(t *testing.T) {
 	if err := WriteReviewTargetVia(ctx, nil, payload); err != nil {
 		t.Fatalf("WriteReviewTargetVia (local): %v", err)
 	}
-	got, err := os.ReadFile(ReviewTargetPath(wt))
-	if err != nil {
-		t.Fatalf("local review-target.md not written: %v", err)
-	}
+	got := mustReadFile(t, ReviewTargetPath(wt))
 	if string(got) != buildReviewTargetContent(payload) {
 		t.Errorf("local review-target content differs from builder output")
 	}
@@ -423,10 +414,10 @@ func TestRemoveReviewVerdictVia_LocalDelegates(t *testing.T) {
 
 	// Create a stale verdict, then remove it via the local path.
 	verdictPath := ReviewVerdictPath(wt)
-	if err := os.MkdirAll(filepath.Dir(verdictPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(verdictPath), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(verdictPath, []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(verdictPath, []byte("{}"), 0o600); err != nil {
 		t.Fatalf("write stale verdict: %v", err)
 	}
 	if err := RemoveReviewVerdictVia(ctx, nil, wt); err != nil {
@@ -475,10 +466,7 @@ func TestVia_LocalDelegatesToLocalFS(t *testing.T) {
 	if err := EnsureWorktreeTrustVia(ctx, nil, wt); err != nil {
 		t.Fatalf("EnsureWorktreeTrustVia (local): %v", err)
 	}
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("read local trust config: %v", err)
-	}
+	data := mustReadFile(t, cfgPath)
 	if !strings.Contains(string(data), "hasTrustDialogAccepted") {
 		t.Errorf("local trust config missing hasTrustDialogAccepted:\n%s", data)
 	}

@@ -249,11 +249,11 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		// Branch A: edit README line 1 with "branch-A content".
 		branchA := "conflict-branch-A"
 		pathA := filepath.Join(repo, ".harmonik", "worktrees", "conflict-A")
-		if err := os.MkdirAll(filepath.Dir(pathA), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(pathA), 0o700); err != nil {
 			t.Fatalf("MkdirAll A: %v", err)
 		}
 		gitRun(repo, "worktree", "add", "-b", branchA, pathA, sha)
-		if err := os.WriteFile(filepath.Join(pathA, "README"), []byte("branch-A content\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(pathA, "README"), []byte("branch-A content\n"), 0o600); err != nil {
 			t.Fatalf("WriteFile README A: %v", err)
 		}
 		gitRun(pathA, "add", "README")
@@ -262,11 +262,11 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		// Branch B: edit same README line 1 with "branch-B content".
 		branchB := "conflict-branch-B"
 		pathB := filepath.Join(repo, ".harmonik", "worktrees", "conflict-B")
-		if err := os.MkdirAll(filepath.Dir(pathB), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(pathB), 0o700); err != nil {
 			t.Fatalf("MkdirAll B: %v", err)
 		}
 		gitRun(repo, "worktree", "add", "-b", branchB, pathB, sha)
-		if err := os.WriteFile(filepath.Join(pathB, "README"), []byte("branch-B content\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(pathB, "README"), []byte("branch-B content\n"), 0o600); err != nil {
 			t.Fatalf("WriteFile README B: %v", err)
 		}
 		gitRun(pathB, "add", "README")

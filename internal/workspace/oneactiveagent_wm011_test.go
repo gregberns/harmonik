@@ -36,7 +36,7 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
@@ -57,10 +57,7 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 		}
 
 		// Read the lock content and verify it identifies the owning run.
-		data, err := os.ReadFile(leaseLockPath)
-		if err != nil {
-			t.Fatalf("WM-011: ReadFile lease-lock: %v", err)
-		}
+		data := mustReadFile(t, leaseLockPath)
 		content := string(data)
 
 		// Verify run_id is present in the lock content.
@@ -86,7 +83,7 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 		for i, runID := range runIDs {
 			branch := "run/" + runID
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
 			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)

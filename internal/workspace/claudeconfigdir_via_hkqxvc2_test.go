@@ -117,10 +117,7 @@ func TestPrepareIsolatedClaudeConfigDirVia_PipesProgramOnStdin(t *testing.T) {
 	if _, err := PrepareIsolatedClaudeConfigDirVia(ctx, rr, z8ekWorkerWt); err != nil {
 		t.Fatalf("PrepareIsolatedClaudeConfigDirVia: %v", err)
 	}
-	got, err := os.ReadFile(capFile) //nolint:gosec // G304: test-controlled temp path
-	if err != nil {
-		t.Fatalf("read captured stdin: %v (nothing piped on stdin?)", err)
-	}
+	got := mustReadFile(t, capFile)
 	if string(got) != workerIsolatedConfigProgram {
 		t.Errorf("stdin-piped program mismatch.\n got: %q\nwant: %q", got, workerIsolatedConfigProgram)
 	}
@@ -171,10 +168,7 @@ func TestPrepareIsolatedClaudeConfigDirVia_RealPythonSeedsAndTrusts(t *testing.T
 		t.Errorf("returned dir = %q, want %q", dir, wantDir)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, ".claude.json")) //nolint:gosec // G304: test-controlled temp path
-	if err != nil {
-		t.Fatalf("read isolated config: %v (preparation did not run)", err)
-	}
+	data := mustReadFile(t, filepath.Join(dir, ".claude.json"))
 	var cfg isoCfgProbe
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("isolated config not valid JSON: %v\n%s", err, data)
@@ -224,10 +218,7 @@ func TestPrepareIsolatedClaudeConfigDirVia_RealPythonFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareIsolatedClaudeConfigDirVia (fallback): %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, ".claude.json")) //nolint:gosec // G304: test-controlled temp path
-	if err != nil {
-		t.Fatalf("read isolated config: %v", err)
-	}
+	data := mustReadFile(t, filepath.Join(dir, ".claude.json"))
 	var cfg isoCfgProbe
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("isolated config not valid JSON: %v\n%s", err, data)

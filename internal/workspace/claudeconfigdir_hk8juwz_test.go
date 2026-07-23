@@ -179,10 +179,7 @@ func TestPrepareIsolatedClaudeConfigDir_DirPermissions(t *testing.T) {
 	}
 
 	// Sanity: the seeded config parses as JSON.
-	data, err := os.ReadFile(filepath.Join(dir, ".claude.json")) //nolint:gosec // G304: test-controlled path under a temp worktree
-	if err != nil {
-		t.Fatalf("read isolated config: %v", err)
-	}
+	data := mustReadFile(t, filepath.Join(dir, ".claude.json"))
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Errorf("isolated config is not valid JSON: %v\n%s", err, data)

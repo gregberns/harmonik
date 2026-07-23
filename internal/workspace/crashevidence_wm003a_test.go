@@ -58,12 +58,12 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 		// Synthesize a session sidecar to simulate crash after sidecar write
 		// but before lease-lock fsync (between steps c and d of WM-016).
 		sidecarDir := filepath.Join(SessionLogRootPath(worktreePath), sessionID)
-		if err := os.MkdirAll(sidecarDir, 0o755); err != nil {
+		if err := os.MkdirAll(sidecarDir, 0o700); err != nil {
 			t.Fatalf("WM-003a: MkdirAll sidecarDir: %v", err)
 		}
 		sidecarPath := filepath.Join(sidecarDir, "harmonik.meta.json")
 		sidecarContent := `{"run_id":"` + runID + `","session_id":"` + sessionID + `","schema_version":1}`
-		if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o644); err != nil {
+		if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
 			t.Fatalf("WM-003a: WriteFile sidecar: %v", err)
 		}
 
@@ -130,7 +130,7 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 
 		// Create sessions dir but no sidecar inside.
 		sessionsRoot := SessionLogRootPath(worktreePath)
-		if err := os.MkdirAll(sessionsRoot, 0o755); err != nil {
+		if err := os.MkdirAll(sessionsRoot, 0o700); err != nil {
 			t.Fatalf("WM-003a: MkdirAll sessionsRoot: %v", err)
 		}
 

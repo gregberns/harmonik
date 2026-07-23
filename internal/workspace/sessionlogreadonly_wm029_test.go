@@ -31,7 +31,7 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
@@ -44,7 +44,7 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 
 	// Also write a session.log to simulate handler output in the session dir.
 	sessionLog := filepath.Join(sessionDir, "session.log")
-	if err := os.WriteFile(sessionLog, []byte("handler output line 1\n"), 0o644); err != nil {
+	if err := os.WriteFile(sessionLog, []byte("handler output line 1\n"), 0o600); err != nil {
 		t.Fatalf("WM-029: WriteFile session.log: %v", err)
 	}
 

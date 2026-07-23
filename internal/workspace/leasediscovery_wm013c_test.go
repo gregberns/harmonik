@@ -40,7 +40,7 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		for _, runID := range runIDs {
 			branch := "run/" + runID
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll %q: %v", worktreePath, err)
 			}
 			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
@@ -92,11 +92,7 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 			leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
 
-			//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-			data, err := os.ReadFile(leaseLockPath)
-			if err != nil {
-				t.Fatalf("WM-013c: ReadFile lease-lock for %q: %v", runID, err)
-			}
+			data := mustReadFile(t, leaseLockPath)
 
 			var lock struct {
 				RunID     string `json:"run_id"`
@@ -137,13 +133,13 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		repo, _ := tempRepo(t)
 
 		worktreeRoot := filepath.Join(repo, ".harmonik", "worktrees")
-		if err := os.MkdirAll(worktreeRoot, 0o755); err != nil {
+		if err := os.MkdirAll(worktreeRoot, 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 
 		orphanRunID := "0196a1b2-c3d4-713c-8a1b-orphanorphan"
 		orphanPath := filepath.Join(worktreeRoot, orphanRunID)
-		if err := os.MkdirAll(orphanPath, 0o755); err != nil {
+		if err := os.MkdirAll(orphanPath, 0o700); err != nil {
 			t.Fatalf("MkdirAll orphan: %v", err)
 		}
 
@@ -167,7 +163,7 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
@@ -182,11 +178,7 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, wantPID, wantCreatedAt, 3600))
 
 		// Simulate discovery: parse the lock file.
-		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-		data, err := os.ReadFile(lp)
-		if err != nil {
-			t.Fatalf("WM-013c: ReadFile: %v", err)
-		}
+		data := mustReadFile(t, lp)
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(data, &parsed); err != nil {
 			t.Fatalf("WM-013c: Unmarshal: %v", err)

@@ -72,10 +72,7 @@ const hkqx065ClobberGenerationKey = "clobbererGeneration"
 // harmonik the clobberer of a sibling worker's trust entry.
 func hkqx065Clobber(t *testing.T, cfgPath, worktreePath string, generation int) {
 	t.Helper()
-	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: test-controlled temp path
-	if err != nil {
-		t.Fatalf("hk-qx065: clobber read %s: %v", cfgPath, err)
-	}
+	data := mustReadFile(t, cfgPath)
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("hk-qx065: clobber unmarshal %s: %v", cfgPath, err)
@@ -109,10 +106,7 @@ func hkqx065Clobber(t *testing.T, cfgPath, worktreePath string, generation int) 
 // writer's file, never revert it.
 func hkqx065AssertClobbererContentSurvived(t *testing.T, cfgPath string, generation int) {
 	t.Helper()
-	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: test-controlled temp path
-	if err != nil {
-		t.Fatalf("hk-qx065: read %s: %v", cfgPath, err)
-	}
+	data := mustReadFile(t, cfgPath)
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("hk-qx065: unmarshal %s: %v", cfgPath, err)
@@ -158,10 +152,7 @@ func hkqx065ClobberHook(t *testing.T, cfgPath, worktreePath string, times int, a
 // hkqx065Trusted reports whether cfgPath records worktreePath as trusted.
 func hkqx065Trusted(t *testing.T, cfgPath, worktreePath string) bool {
 	t.Helper()
-	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: test-controlled temp path
-	if err != nil {
-		t.Fatalf("hk-qx065: read %s: %v", cfgPath, err)
-	}
+	data := mustReadFile(t, cfgPath)
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("hk-qx065: unmarshal %s: %v", cfgPath, err)
@@ -237,7 +228,7 @@ func TestHkqx065_TransientClobber_Recovers(t *testing.T) {
 	}
 
 	// The pre-existing content must survive.
-	data, _ := os.ReadFile(cfgPath) //nolint:gosec // G304: test-controlled temp path
+	data := mustReadFile(t, cfgPath)
 	var got map[string]interface{}
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("hk-qx065: unmarshal after repair: %v", err)

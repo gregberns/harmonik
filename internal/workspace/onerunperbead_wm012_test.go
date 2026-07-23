@@ -43,7 +43,7 @@ func TestWM012_OneRunPerBeadAtATime(t *testing.T) {
 		runIDA := "0196a1b2-c3d4-7012-8a1b-aaaaaaaaaaaa"
 		branchA := "run/" + runIDA
 		worktreePathA := filepath.Join(repo, ".harmonik", "worktrees", runIDA)
-		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o700); err != nil {
 			t.Fatalf("MkdirAll A: %v", err)
 		}
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
@@ -77,7 +77,7 @@ func TestWM012_OneRunPerBeadAtATime(t *testing.T) {
 		runIDA := "0196a1b2-c3d4-7012-8a1b-aaaabbbbcccc"
 		branchA := "run/" + runIDA
 		worktreePathA := filepath.Join(repo, ".harmonik", "worktrees", runIDA)
-		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o700); err != nil {
 			t.Fatalf("MkdirAll A: %v", err)
 		}
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
@@ -102,7 +102,7 @@ func TestWM012_OneRunPerBeadAtATime(t *testing.T) {
 		if worktreePathA == worktreePathB {
 			t.Fatalf("WM-012: run A and run B have the same canonical path; want distinct paths")
 		}
-		if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o700); err != nil {
 			t.Fatalf("MkdirAll B: %v", err)
 		}
 		cmd2 := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchB, worktreePathB, sha)

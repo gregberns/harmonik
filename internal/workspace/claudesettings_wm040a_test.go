@@ -25,11 +25,7 @@ func claudeSettingsFixturePath(workspacePath string) string {
 // unmarshals it into a map, failing the test on error.
 func claudeSettingsFixtureReadJSON(t *testing.T, path string) map[string]interface{} {
 	t.Helper()
-	//nolint:gosec // G304: path is a test-controlled temp path
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("claudeSettingsFixtureReadJSON: ReadFile %q: %v", path, err)
-	}
+	raw := mustReadFile(t, path)
 	var m map[string]interface{}
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("claudeSettingsFixtureReadJSON: Unmarshal: %v", err)
@@ -204,15 +200,14 @@ func TestWM040a_MergeWithExistingUserHooks(t *testing.T) {
 		"theme": "dark",
 	}
 	settingsPath := claudeSettingsFixturePath(workspacePath)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 		t.Fatalf("WM-040a: MkdirAll: %v", err)
 	}
 	raw, err := json.Marshal(userHooks)
 	if err != nil {
 		t.Fatalf("WM-040a: marshal user hooks: %v", err)
 	}
-	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("WM-040a: WriteFile user settings: %v", err)
 	}
 
@@ -260,12 +255,11 @@ func TestWM040a_MalformedJSONOverwrite(t *testing.T) {
 	workspacePath := t.TempDir()
 
 	settingsPath := claudeSettingsFixturePath(workspacePath)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 		t.Fatalf("WM-040a: MkdirAll: %v", err)
 	}
 	// Write deliberately malformed JSON.
-	if err := os.WriteFile(settingsPath, []byte(`{bad json`), 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, []byte(`{bad json`), 0o600); err != nil {
 		t.Fatalf("WM-040a: WriteFile malformed: %v", err)
 	}
 
@@ -287,11 +281,7 @@ func TestWM040a_MalformedJSONOverwrite(t *testing.T) {
 	}
 
 	// Assert: warning line was written to session log.
-	//nolint:gosec // G304: controlled test path
-	logData, err := os.ReadFile(sessionLogPath)
-	if err != nil {
-		t.Fatalf("WM-040a: ReadFile session log: %v", err)
-	}
+	logData := mustReadFile(t, sessionLogPath)
 	if !strings.Contains(string(logData), "malformed") && !strings.Contains(string(logData), "overwritten") {
 		t.Errorf("WM-040a: session log missing expected warning; got: %q", logData)
 	}
@@ -308,8 +298,7 @@ func TestWM040a_DisableAllHooksStripped(t *testing.T) {
 	workspacePath := t.TempDir()
 
 	settingsPath := claudeSettingsFixturePath(workspacePath)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 		t.Fatalf("WM-040a: MkdirAll: %v", err)
 	}
 
@@ -319,7 +308,7 @@ func TestWM040a_DisableAllHooksStripped(t *testing.T) {
 		"hooks":           map[string]interface{}{},
 	}
 	raw, _ := json.Marshal(userSettings)
-	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("WM-040a: WriteFile disableAllHooks settings: %v", err)
 	}
 
@@ -358,7 +347,7 @@ func TestHkJvzc2_MaterializeClaudeSettingsDoesNotTouchGitignore(t *testing.T) {
 
 	// Seed a pre-existing operator-style .gitignore.
 	preExisting := "# operator setup\n.harmonik/\n.claude/settings.json\n"
-	if err := os.WriteFile(gitignorePath, []byte(preExisting), 0o644); err != nil {
+	if err := os.WriteFile(gitignorePath, []byte(preExisting), 0o600); err != nil {
 		t.Fatalf("seed .gitignore: %v", err)
 	}
 	preStat, err := os.Stat(gitignorePath)
@@ -375,11 +364,7 @@ func TestHkJvzc2_MaterializeClaudeSettingsDoesNotTouchGitignore(t *testing.T) {
 	}
 
 	// Assert: byte-identical content.
-	//nolint:gosec // G304: controlled test path
-	postData, err := os.ReadFile(gitignorePath)
-	if err != nil {
-		t.Fatalf("read post-call .gitignore: %v", err)
-	}
+	postData := mustReadFile(t, gitignorePath)
 	if string(postData) != preExisting {
 		t.Errorf("hk-jvzc2: .gitignore was mutated by MaterializeClaudeSettings:\nwant:\n%q\ngot:\n%q",
 			preExisting, string(postData))
@@ -429,11 +414,7 @@ func TestWM040a_OrderingSettingsBeforeWorkspaceLeased(t *testing.T) {
 
 	// Conceptual gate: workspace_leased would emit here.
 	// The file MUST be readable at this point.
-	//nolint:gosec // G304: controlled test path
-	raw, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatalf("WM-040a ordering: ReadFile settings.json: %v", err)
-	}
+	raw := mustReadFile(t, settingsPath)
 	if len(raw) == 0 {
 		t.Errorf("WM-040a ordering: settings.json is empty; must contain bridge content before workspace_leased")
 	}
@@ -663,8 +644,7 @@ func TestWM040a_PermissionsAllowPreservedOnMerge(t *testing.T) {
 
 	workspacePath := t.TempDir()
 	settingsPath := claudeSettingsFixturePath(workspacePath)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: MkdirAll: %v", err)
 	}
 
@@ -680,8 +660,7 @@ func TestWM040a_PermissionsAllowPreservedOnMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: json.Marshal: %v", err)
 	}
-	//nolint:gosec // G306: 0644 matches existing test fixture conventions in this file
-	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: WriteFile: %v", err)
 	}
 
@@ -747,8 +726,7 @@ func TestWM040a_AutoLoadedSkillsDisabled(t *testing.T) {
 		t.Parallel()
 		workspacePath := t.TempDir()
 		settingsPath := claudeSettingsFixturePath(workspacePath)
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		// Pre-existing settings WITHOUT the autoload key (simulates the committed
@@ -761,7 +739,7 @@ func TestWM040a_AutoLoadedSkillsDisabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("json.Marshal: %v", err)
 		}
-		if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+		if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
 		if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
@@ -779,8 +757,7 @@ func TestWM040a_AutoLoadedSkillsDisabled(t *testing.T) {
 		t.Parallel()
 		workspacePath := t.TempDir()
 		settingsPath := claudeSettingsFixturePath(workspacePath)
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		// Pre-existing settings with autoLoadedSkillsDirectories set to a
@@ -793,7 +770,7 @@ func TestWM040a_AutoLoadedSkillsDisabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("json.Marshal: %v", err)
 		}
-		if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+		if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
 		if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
@@ -867,8 +844,7 @@ func TestDispatchConsentFix_NoPermissionsAllowInjected(t *testing.T) {
 			},
 		}
 		settingsPath := claudeSettingsFixturePath(workspacePath)
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		raw, err := json.Marshal(userSettings)

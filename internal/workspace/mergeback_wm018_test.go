@@ -27,7 +27,7 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	taskBranch := "run/" + runID
 	taskPath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	// Create integration branch from main (sha), merge from the task worktree.
 	integBranch := "harmonik/integration"
 	integPath := filepath.Join(repo, ".harmonik", "worktrees", "integ-"+runID)
-	if err := os.MkdirAll(filepath.Dir(integPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(integPath), 0o700); err != nil {
 		t.Fatalf("MkdirAll integ: %v", err)
 	}
 	gitCmd(repo, "worktree", "add", "-b", integBranch, integPath, sha)
@@ -116,7 +116,7 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 // post-merge `redeclared in this block` collisions with sibling implementers.
 func mergeBackFixtureWriteFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile %s: %v", name, err)
 	}
 }

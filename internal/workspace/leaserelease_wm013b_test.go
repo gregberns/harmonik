@@ -68,7 +68,7 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 			workspaceID := "ws-" + runID
 
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
 			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
@@ -106,11 +106,7 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 
 			// Assert marker file exists and has valid content BEFORE unlink.
 			eventsFile := WorkspaceLocalEventsPath(worktreePath, workspaceID)
-			//nolint:gosec // G304: path constructed from t.TempDir() + known relative segments, not user input
-			markerData, err := os.ReadFile(eventsFile)
-			if err != nil {
-				t.Fatalf("WM-013b[%s]: ReadFile events JSONL: %v", tc.name, err)
-			}
+			markerData := mustReadFile(t, eventsFile)
 
 			// Parse the JSONL marker line.
 			lines := strings.Split(strings.TrimRight(string(markerData), "\n"), "\n")
@@ -189,7 +185,7 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 		workspaceID := "ws-" + runID
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)

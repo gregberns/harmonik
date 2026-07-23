@@ -56,7 +56,7 @@ func sessionLogFixtureWriteSidecarAtomic(sidecarPath string, content []byte) err
 	tmpPath := fmt.Sprintf("%s.tmp-%d", sidecarPath, pid)
 
 	// (i) Write to temp file.
-	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("open tmp: %w", err)
 	}
@@ -135,7 +135,7 @@ func TestWM026_SidecarAtomicWrite(t *testing.T) {
 
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
@@ -163,10 +163,7 @@ func TestWM026_SidecarAtomicWrite(t *testing.T) {
 	}
 
 	// Assert: the file content parses and contains required fields.
-	raw, err := os.ReadFile(sidecarPath)
-	if err != nil {
-		t.Fatalf("WM-026: ReadFile: %v", err)
-	}
+	raw := mustReadFile(t, sidecarPath)
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		t.Fatalf("WM-026: sidecar is not valid JSON: %v", err)
@@ -195,14 +192,14 @@ func TestWM026_OrphanTmpSweep(t *testing.T) {
 
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
 	// Simulate a crashed write: pre-write a .tmp-<somepid> orphan with no canonical file.
 	orphanPID := 99999
 	orphanPath := filepath.Join(sessionDir, fmt.Sprintf("harmonik.meta.json.tmp-%d", orphanPID))
-	if err := os.WriteFile(orphanPath, []byte(`{"partial":true}`), 0o644); err != nil {
+	if err := os.WriteFile(orphanPath, []byte(`{"partial":true}`), 0o600); err != nil {
 		t.Fatalf("WriteFile orphan: %v", err)
 	}
 

@@ -143,7 +143,7 @@ func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []stri
 	taskBranch := "run/" + runID
 	taskPath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o700); err != nil {
 		t.Fatalf("mergeBackFixtureSetupTaskBranch MkdirAll: %v", err)
 	}
 
@@ -161,7 +161,7 @@ func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []stri
 	for i, subj := range subjects {
 		fname := filepath.Join(taskPath, "node"+strings.ReplaceAll(subj, " ", "_")+".txt")
 		content := subj + " output\n"
-		if err := os.WriteFile(fname, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(fname, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile node %d: %v", i, err)
 		}
 		gitRun(taskPath, "add", ".")
@@ -180,7 +180,7 @@ func mergeBackFixtureMakeIntegWorktree(t *testing.T, repo, sha, suffix string) s
 	branch := "harmonik/integration/" + suffix
 	path := filepath.Join(repo, ".harmonik", "worktrees", suffix)
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("mergeBackFixtureMakeIntegWorktree MkdirAll: %v", err)
 	}
 

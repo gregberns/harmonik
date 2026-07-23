@@ -167,8 +167,7 @@ func TestWM035_WorktreeDirExistsAfterRollback(t *testing.T) {
 			branch := "run/" + runID
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-			//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
 
@@ -244,8 +243,7 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -259,7 +257,7 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 	// work has been done). After applying reset-to-checkpoint, HEAD MUST
 	// revert to initialSHA (the rollback target).
 	extraFile := filepath.Join(worktreePath, "progress.txt")
-	if err := os.WriteFile(extraFile, []byte("work in progress\n"), 0o644); err != nil {
+	if err := os.WriteFile(extraFile, []byte("work in progress\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	addFiles := exec.CommandContext(t.Context(), "git", "add", "progress.txt")

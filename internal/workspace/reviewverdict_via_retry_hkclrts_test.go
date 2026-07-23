@@ -61,8 +61,7 @@ func (r *sequenceCatRunner) callCount() int {
 func writeTempVerdictFile(t *testing.T, name string, data []byte) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
-	//nolint:gosec // G306: test fixture
-	if err := os.WriteFile(p, data, 0o644); err != nil {
+	if err := os.WriteFile(p, data, 0o600); err != nil {
 		t.Fatalf("writeTempVerdictFile(%s): %v", name, err)
 	}
 	return p

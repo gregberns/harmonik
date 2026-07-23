@@ -29,7 +29,7 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
@@ -66,7 +66,7 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
@@ -84,10 +84,7 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 		}
 
 		// Read the lock file using the reconstructed path — no index needed.
-		data, err := os.ReadFile(reconstructedLeasePath)
-		if err != nil {
-			t.Fatalf("WM-013: ReadFile via reconstructed path: %v", err)
-		}
+		data := mustReadFile(t, reconstructedLeasePath)
 		if !leaseFixtureFindSubstring(string(data), runID) {
 			t.Errorf("WM-013: lease-lock content at reconstructed path does not contain run_id %q", runID)
 		}

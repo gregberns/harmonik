@@ -49,8 +49,7 @@ func TestWM031_FailedRunWorktreePersists(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -254,8 +253,7 @@ func TestWM033_GitWorktreePruneAfterSweep(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -320,8 +318,7 @@ func TestWM033_OperatorWorktreeLockRespected(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -385,8 +382,7 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 	branchA := "run/" + runIDA
 	worktreePathA := filepath.Join(repo, ".harmonik", "worktrees", runIDA)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o700); err != nil {
 		t.Fatalf("MkdirAll A: %v", err)
 	}
 	addA := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
@@ -424,8 +420,7 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 		t.Fatalf("WM-034: run A and run B share canonical path %q; want distinct paths", worktreePathA)
 	}
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o700); err != nil {
 		t.Fatalf("MkdirAll B: %v", err)
 	}
 	addB := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchB, worktreePathB, sha)
@@ -759,11 +754,7 @@ func TestWM038a_InterruptStateChangedMarkerWritten(t *testing.T) {
 	failedRunFixtureAppendJSONLMarker(t, eventsFile, marker)
 
 	// Read back and verify the marker fields.
-	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-	data, err := os.ReadFile(eventsFile)
-	if err != nil {
-		t.Fatalf("WM-038a: ReadFile events: %v", err)
-	}
+	data := mustReadFile(t, eventsFile)
 	var parsed map[string]string
 	if err := json.Unmarshal(data[:len(data)-1], &parsed); err != nil { // trim trailing newline
 		t.Fatalf("WM-038a: parse marker: %v\nraw: %s", err, data)
@@ -813,12 +804,11 @@ func failedRunFixtureBuildInterruptStateMarker(
 func failedRunFixtureAppendJSONLMarker(t *testing.T, path string, marker []byte) {
 	t.Helper()
 	dir := filepath.Dir(path)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("failedRunFixtureAppendJSONLMarker MkdirAll %q: %v", dir, err)
 	}
 	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatalf("failedRunFixtureAppendJSONLMarker OpenFile %q: %v", path, err)
 	}
@@ -951,8 +941,7 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -964,7 +953,7 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 
 	// Add a normal checkpoint commit (append-only — valid).
 	f := filepath.Join(worktreePath, "checkpoint.txt")
-	if err := os.WriteFile(f, []byte("checkpoint content\n"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("checkpoint content\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile checkpoint: %v", err)
 	}
 	gitRun := func(dir string, args ...string) {

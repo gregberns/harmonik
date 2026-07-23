@@ -183,7 +183,7 @@ func TestRFDA7b_PersistenceCRUD_MultipleTerminalPaths(t *testing.T) {
 			dir := t.TempDir()
 			// Fabricate a workspace-like directory structure without a real git worktree.
 			harmonikDir := filepath.Join(dir, ".harmonik")
-			if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+			if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 				t.Fatalf("MkdirAll harmonikDir: %v", err)
 			}
 
@@ -291,10 +291,7 @@ func TestRFDA7b_PersistenceCRUD_InterruptStateIntegration(t *testing.T) {
 
 			// Marker file must exist.
 			eventsFile := WorkspaceLocalEventsPath(dir, workspaceID)
-			data, err := os.ReadFile(eventsFile)
-			if err != nil {
-				t.Fatalf("ReadFile events JSONL: %v", err)
-			}
+			data := mustReadFile(t, eventsFile)
 			if len(data) == 0 {
 				t.Fatal("events JSONL is empty; want interrupt_state_changed marker")
 			}

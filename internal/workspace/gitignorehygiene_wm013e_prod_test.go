@@ -27,7 +27,7 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 
 		// Write all required entries.
 		content := strings.Join(RequiredGitignoreEntries, "\n") + "\n"
-		if err := os.WriteFile(gitignorePath, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile .gitignore: %v", err)
 		}
 
@@ -37,10 +37,7 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		}
 
 		// File content must be unchanged.
-		got, err := os.ReadFile(gitignorePath) //nolint:gosec // G304: controlled test path
-		if err != nil {
-			t.Fatalf("WM-013e: ReadFile .gitignore: %v", err)
-		}
+		got := mustReadFile(t, gitignorePath)
 		if string(got) != content {
 			t.Errorf("WM-013e: .gitignore content changed unexpectedly:\ngot:  %q\nwant: %q", got, content)
 		}
@@ -61,10 +58,7 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 			t.Fatalf("WM-013e: EnsureGitignoreHygiene (absent .gitignore): %v", err)
 		}
 
-		got, err := os.ReadFile(gitignorePath) //nolint:gosec // G304: controlled test path
-		if err != nil {
-			t.Fatalf("WM-013e: ReadFile .gitignore after ensure: %v", err)
-		}
+		got := mustReadFile(t, gitignorePath)
 		content := string(got)
 		for _, entry := range RequiredGitignoreEntries {
 			if !gitignoreEntryPresent(content, entry) {
@@ -81,7 +75,7 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 
 		// Write a partial .gitignore (only first two entries).
 		partial := strings.Join(RequiredGitignoreEntries[:2], "\n") + "\n"
-		if err := os.WriteFile(gitignorePath, []byte(partial), 0o644); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte(partial), 0o600); err != nil {
 			t.Fatalf("WM-013e: WriteFile .gitignore: %v", err)
 		}
 
@@ -89,10 +83,7 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 			t.Fatalf("WM-013e: EnsureGitignoreHygiene (partial .gitignore): %v", err)
 		}
 
-		got, err := os.ReadFile(gitignorePath) //nolint:gosec // G304: controlled test path
-		if err != nil {
-			t.Fatalf("WM-013e: ReadFile .gitignore after ensure: %v", err)
-		}
+		got := mustReadFile(t, gitignorePath)
 		content := string(got)
 
 		// All four entries must be present.
@@ -211,11 +202,7 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		if err := EnsureGitignoreHygiene(t.Context(), repo); err != nil {
 			t.Fatalf("WM-013e: EnsureGitignoreHygiene: %v", err)
 		}
-		//nolint:gosec // G304: path is constructed from repo + ".gitignore" in tempRepo, not user input
-		got, err := os.ReadFile(gitignorePath)
-		if err != nil {
-			t.Fatalf("WM-013e: ReadFile .gitignore: %v", err)
-		}
+		got := mustReadFile(t, gitignorePath)
 		content := string(got)
 		if !gitignoreEntryPresent(content, reviewJSON) {
 			t.Errorf("WM-013e: generated .gitignore missing %q", reviewJSON)
@@ -244,7 +231,7 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		if err := os.Chmod(repo, 0o555); err != nil {
 			t.Fatalf("WM-013e: Chmod repo 0o555: %v", err)
 		}
-		t.Cleanup(func() { _ = os.Chmod(repo, 0o755) })
+		t.Cleanup(func() { _ = os.Chmod(repo, 0o700) })
 
 		err := EnsureGitignoreHygiene(t.Context(), repo)
 		if err == nil {

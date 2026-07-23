@@ -254,7 +254,7 @@ func TestHkbfvby_PruneWorktreeTrust_RemovesEntry(t *testing.T) {
 		t.Fatalf("hk-bfvby: pruneWorktreeTrustAt: %v", err)
 	}
 
-	data, _ := os.ReadFile(cfgPath)
+	data := mustReadFile(t, cfgPath)
 	var got map[string]interface{}
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("hk-bfvby: unmarshal after prune: %v", err)

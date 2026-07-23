@@ -307,7 +307,7 @@ func TestWM015_LeasedEmittedAfterWM016Gates(t *testing.T) {
 	// Step (a)+(b): git worktree add -b creates the worktree and task branch atomically.
 	branch := ws.BranchName
 	worktreePath := ws.Path
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("WM-015: MkdirAll worktree parent: %v", err)
 	}
 	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
@@ -332,7 +332,7 @@ func TestWM015_LeasedEmittedAfterWM016Gates(t *testing.T) {
 	// Step (c): write first session sidecar atomically (WM-026 discipline).
 	sessionID := "sess-" + runID + "-01"
 	sessionDir := filepath.Join(worktreePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("WM-015: MkdirAll sessionDir: %v", err)
 	}
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
@@ -833,7 +833,7 @@ func TestWM015_CreatedStateHasNoLeaseLock(t *testing.T) {
 	// Create the worktree (WM-003).
 	branch := ws.BranchName
 	worktreePath := ws.Path
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("WM-015: MkdirAll: %v", err)
 	}
 	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)

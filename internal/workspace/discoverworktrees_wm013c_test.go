@@ -88,7 +88,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 
 		// Pre-create the sessions root (simulating session start).
 		sessionsRoot := SessionLogRootPath(worktreePath)
-		if err := os.MkdirAll(sessionsRoot, 0o755); err != nil {
+		if err := os.MkdirAll(sessionsRoot, 0o700); err != nil {
 			t.Fatalf("MkdirAll sessions root: %v", err)
 		}
 
@@ -115,7 +115,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 
 		// Manually create the directory without going through `git worktree add`.
 		orphanPath := filepath.Join(repo, ".harmonik", "worktrees", orphanRunID)
-		if err := os.MkdirAll(orphanPath, 0o755); err != nil {
+		if err := os.MkdirAll(orphanPath, 0o700); err != nil {
 			t.Fatalf("MkdirAll orphan: %v", err)
 		}
 
@@ -158,7 +158,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 
 		worktreeRoot := filepath.Join(repo, ".harmonik", "worktrees")
 		for _, name := range []string{".gitkeep", "not_valid", "also.invalid"} {
-			if err := os.MkdirAll(filepath.Join(worktreeRoot, name), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(worktreeRoot, name), 0o700); err != nil {
 				t.Fatalf("MkdirAll %q: %v", name, err)
 			}
 		}

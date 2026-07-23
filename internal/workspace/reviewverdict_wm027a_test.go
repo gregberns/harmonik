@@ -36,13 +36,11 @@ func reviewVerdictFixtureWrite(t *testing.T, data []byte) string {
 	t.Helper()
 	workspacePath := t.TempDir()
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("reviewVerdictFixtureWrite: MkdirAll: %v", err)
 	}
 	target := ReviewVerdictPath(workspacePath)
-	//nolint:gosec // G306: test fixture; 0644 is appropriate
-	if err := os.WriteFile(target, data, 0o644); err != nil {
+	if err := os.WriteFile(target, data, 0o600); err != nil {
 		t.Fatalf("reviewVerdictFixtureWrite: WriteFile: %v", err)
 	}
 	return workspacePath

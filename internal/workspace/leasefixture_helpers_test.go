@@ -43,7 +43,7 @@ func leaseFixtureWriteLockAtomic(t *testing.T, target string, content []byte) {
 	t.Helper()
 
 	dir := filepath.Dir(target)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("leaseFixtureWriteLockAtomic: MkdirAll %q: %v", dir, err)
 	}
 
@@ -51,7 +51,7 @@ func leaseFixtureWriteLockAtomic(t *testing.T, target string, content []byte) {
 	// guaranteeing rename(2) is atomic).
 	tmpPath := target + fmt.Sprintf(".tmp-%d", os.Getpid())
 	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o644)
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o600)
 	if err != nil {
 		t.Fatalf("leaseFixtureWriteLockAtomic: OpenFile %q: %v", tmpPath, err)
 	}
@@ -153,7 +153,7 @@ func leaseFixtureWriteReleaseMarker(t *testing.T, workspacePath, runID, workspac
 	t.Helper()
 
 	eventsDir := leaseFixtureWorkspaceLocalEventsDir(workspacePath)
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o700); err != nil {
 		t.Fatalf("leaseFixtureWriteReleaseMarker: MkdirAll %q: %v", eventsDir, err)
 	}
 
@@ -164,7 +164,7 @@ func leaseFixtureWriteReleaseMarker(t *testing.T, workspacePath, runID, workspac
 	) + "\n"
 
 	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-	f, err := os.OpenFile(eventsFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(eventsFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatalf("leaseFixtureWriteReleaseMarker: OpenFile %q: %v", eventsFile, err)
 	}

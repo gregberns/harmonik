@@ -31,7 +31,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		runIDA := "0196a1b2-c3d4-713d-8a1b-aaaaaaaaaaaa"
 		branchA := "run/" + runIDA
 		worktreePathA := filepath.Join(repo, ".harmonik", "worktrees", runIDA)
-		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o700); err != nil {
 			t.Fatalf("MkdirAll A: %v", err)
 		}
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
@@ -64,7 +64,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 			t.Errorf("WM-013d: run A and run B canonical paths are identical %q; want distinct", worktreePathA)
 		}
 
-		if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o700); err != nil {
 			t.Fatalf("MkdirAll B: %v", err)
 		}
 		cmd2 := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchB, worktreePathB, sha)
@@ -98,7 +98,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		runIDA := "0196a1b2-c3d4-713d-8a1b-cccccccccccc"
 		branchA := "run/" + runIDA
 		worktreePathA := filepath.Join(repo, ".harmonik", "worktrees", runIDA)
-		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o700); err != nil {
 			t.Fatalf("MkdirAll A: %v", err)
 		}
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
@@ -125,16 +125,13 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		// In production, the workspace manager MUST NOT do this. We write it here
 		// to verify that the path/run_id disagreement is detectable.
 		badLockContent := leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now(), 3600)
-		if err := os.WriteFile(leaseLockPathA, badLockContent, 0o644); err != nil {
+		if err := os.WriteFile(leaseLockPathA, badLockContent, 0o600); err != nil {
 			t.Fatalf("WM-013d: WriteFile (simulated violation): %v", err)
 		}
 
 		// Detection: the lock file at run A's path contains run B's run_id.
 		// A well-formed workspace manager would detect this mismatch.
-		data, err := os.ReadFile(leaseLockPathA)
-		if err != nil {
-			t.Fatalf("WM-013d: ReadFile: %v", err)
-		}
+		data := mustReadFile(t, leaseLockPathA)
 		// The path contains runIDA but the content claims runIDB — a violation.
 		if leaseFixtureFindSubstring(string(data), runIDA) {
 			t.Errorf("WM-013d: lock at run A's path claims run A's run_id; want run B's (simulated violation)")

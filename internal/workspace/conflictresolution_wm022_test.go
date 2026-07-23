@@ -47,12 +47,11 @@ func conflictResFixtureMetaJSON(runID, sessionID, agentType string, launchedAt t
 func conflictResFixtureWriteSidecar(t *testing.T, workspacePath, sessionID string, content []byte) {
 	t.Helper()
 	dir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("conflictResFixtureWriteSidecar MkdirAll %q: %v", dir, err)
 	}
 	sidecarPath := filepath.Join(dir, "harmonik.meta.json")
-	if err := os.WriteFile(sidecarPath, content, 0o644); err != nil {
+	if err := os.WriteFile(sidecarPath, content, 0o600); err != nil {
 		t.Fatalf("conflictResFixtureWriteSidecar WriteFile %q: %v", sidecarPath, err)
 	}
 }

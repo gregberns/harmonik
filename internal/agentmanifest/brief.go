@@ -35,7 +35,8 @@ type SkillEntry struct {
 
 // BootDoc is the structured boot document emitted by BuildBootDoc.
 // Sections are ordered per SPEC §4: identity → wake → operating+skills → triggers → handoff.
-// Handoff is empty string when no HANDOFF-<agent>.md file exists.
+// Handoff is the empty string BOTH when no HANDOFF-<agent>.md exists and when one
+// exists but is zero-byte; HandoffPresent disambiguates the two. Refs: hk-4tjyj.
 type BootDoc struct {
 	AgentName      string       `json:"agent_name"      yaml:"agent_name"`
 	TypeName       string       `json:"type_name"       yaml:"type_name"`
@@ -47,6 +48,13 @@ type BootDoc struct {
 	Docs           []SkillEntry `json:"docs"            yaml:"docs"`
 	ActiveTriggers []Trigger    `json:"active_triggers" yaml:"active_triggers"`
 	Handoff        string       `json:"handoff"         yaml:"handoff"`
+	// HandoffPresent reports whether HANDOFF-<agent>.md EXISTS on disk, regardless
+	// of its size. Handoff=="" && HandoffPresent is an EMPTY handoff file — the
+	// prior session's state was lost, not never written. That distinction was
+	// invisible before hk-4tjyj: both rendered "(no handoff on record)", which made
+	// a keeper-destroyed handoff indistinguishable from a first boot, and is why
+	// the destruction went undiagnosed fleet-wide for as long as it did.
+	HandoffPresent bool `json:"handoff_present" yaml:"handoff_present"`
 }
 
 // BuildBootDoc assembles the boot document for an agent.
@@ -91,6 +99,8 @@ func BuildBootDoc(agentsDir, repoRoot, agentName, typeName, wake string) (*BootD
 		wake = "fresh"
 	}
 
+	handoffContent, handoffPresent := readHandoff(repoRoot, agentName)
+
 	return &BootDoc{
 		AgentName:      agentName,
 		TypeName:       typeName,
@@ -101,7 +111,8 @@ func BuildBootDoc(agentsDir, repoRoot, agentName, typeName, wake string) (*BootD
 		Skills:         skills,
 		Docs:           docs,
 		ActiveTriggers: activeTriggers,
-		Handoff:        readHandoff(repoRoot, agentName),
+		Handoff:        handoffContent,
+		HandoffPresent: handoffPresent,
 	}, nil
 }
 
@@ -242,15 +253,30 @@ func readSkillShortDesc(skillMDPath string) string {
 	return ""
 }
 
-// readHandoff reads HANDOFF-<agentName>.md from repoRoot. Returns "" if absent.
-func readHandoff(repoRoot, agentName string) string {
+// readHandoff reads HANDOFF-<agentName>.md from repoRoot. It returns the content
+// and whether the file EXISTS. ("", false) = absent; ("", true) = present but
+// zero-byte — a LOST handoff, which the renderers must call out loudly rather
+// than silently conflate with "never written". Refs: hk-4tjyj.
+func readHandoff(repoRoot, agentName string) (string, bool) {
 	path := filepath.Join(repoRoot, fmt.Sprintf("HANDOFF-%s.md", agentName))
 	//nolint:gosec // G304: agentName is validated by the caller
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return string(data)
+	return string(data), true
+}
+
+// emptyHandoffWarning is the loud, distinct rendering for a handoff file that
+// EXISTS but is empty. It must never read like "no handoff on record": the two
+// mean opposite things to a rebooting agent, and conflating them is precisely
+// what hid hk-4tjyj (the keeper zeroing the handoff it exists to preserve).
+func emptyHandoffWarning(agentName string) string {
+	return fmt.Sprintf(
+		"**WARNING — HANDOFF-%s.md EXISTS but is EMPTY.** The previous session's handoff was "+
+			"lost (not \"never written\"). Do NOT assume there was nothing to carry over: "+
+			"re-ground from `harmonik digest`, the bead ledger, and recent git history before acting.",
+		agentName)
 }
 
 // RenderMarkdown writes the boot document in markdown format to w.
@@ -315,10 +341,13 @@ func RenderMarkdown(doc *BootDoc, w io.Writer) error {
 	out.println()
 	out.println(handoffClaimHeader)
 	out.println()
-	if doc.Handoff == "" {
-		out.println("_(no handoff on record)_")
-	} else {
+	switch {
+	case doc.Handoff != "":
 		writeContent(out, doc.Handoff)
+	case doc.HandoffPresent:
+		out.println(emptyHandoffWarning(doc.AgentName))
+	default:
+		out.println("_(no handoff on record)_")
 	}
 	return out.err
 }
@@ -369,10 +398,13 @@ func RenderToon(doc *BootDoc, w io.Writer) error {
 	boxHeader("HANDOFF")
 	out.println(handoffClaimHeader)
 	out.println()
-	if doc.Handoff == "" {
-		out.println("(no handoff on record)")
-	} else {
+	switch {
+	case doc.Handoff != "":
 		writeContent(out, doc.Handoff)
+	case doc.HandoffPresent:
+		out.println(emptyHandoffWarning(doc.AgentName))
+	default:
+		out.println("(no handoff on record)")
 	}
 	return out.err
 }

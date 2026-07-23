@@ -281,6 +281,106 @@ func TestBuildBootDoc_HandoffAbsent(t *testing.T) {
 	if doc.Handoff != "" {
 		t.Errorf("Handoff = %q, want empty (no HANDOFF-leto.md)", doc.Handoff)
 	}
+	if doc.HandoffPresent {
+		t.Errorf("HandoffPresent = true, want false (no HANDOFF-leto.md on disk)")
+	}
+}
+
+// TestBuildBootDoc_HandoffEmptyFileIsDistinctFromAbsent is the hk-4tjyj
+// diagnosability regression.
+//
+// A zero-byte HANDOFF-<agent>.md and an ABSENT one both produced Handoff == "",
+// and both renderers printed the same "(no handoff on record)". That is what
+// made the keeper's handoff destruction so hard to diagnose in the field: the
+// rebooted crew could not tell "there was never a handoff" from "the handoff was
+// deleted out from under me". HandoffPresent distinguishes them, and the empty
+// case must render a LOUDER, distinct message naming the file.
+func TestBuildBootDoc_HandoffEmptyFileIsDistinctFromAbsent(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	makeTypeFolder(t, agentsDir, "crew", "operator", "", "")
+
+	// A zero-byte handoff — exactly what the keeper's old truncate left behind.
+	handoffPath := filepath.Join(tmpDir, "HANDOFF-chani.md")
+	if err := os.WriteFile(handoffPath, []byte{}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := BuildBootDoc(agentsDir, tmpDir, "chani", "crew", "keeper-restart")
+	if err != nil {
+		t.Fatalf("BuildBootDoc: %v", err)
+	}
+	if doc.Handoff != "" {
+		t.Errorf("Handoff = %q, want empty (the file is zero-byte)", doc.Handoff)
+	}
+	if !doc.HandoffPresent {
+		t.Fatalf("HandoffPresent = false; want true — an EMPTY handoff file must be " +
+			"distinguishable from an absent one (hk-4tjyj)")
+	}
+
+	// Both renderers must say something LOUDER and different than the
+	// never-written wording.
+	renderers := map[string]func(*BootDoc, io.Writer) error{
+		"markdown": RenderMarkdown,
+		"toon":     RenderToon,
+	}
+	for name, render := range renderers {
+		var buf strings.Builder
+		if err := render(doc, &buf); err != nil {
+			t.Fatalf("%s render: %v", name, err)
+		}
+		out := buf.String()
+		if strings.Contains(out, "no handoff on record") {
+			t.Errorf("%s render used the absent-handoff wording for an EMPTY handoff file "+
+				"(hk-4tjyj); output:\n%s", name, out)
+		}
+		if !strings.Contains(out, "EMPTY") {
+			t.Errorf("%s render does not call out that the handoff file is EMPTY; output:\n%s", name, out)
+		}
+		if !strings.Contains(out, "HANDOFF-chani.md") {
+			t.Errorf("%s render does not name the empty handoff file; output:\n%s", name, out)
+		}
+	}
+}
+
+// TestBuildBootDoc_HandoffPresentWithContent pins the third state: a handoff that
+// EXISTS and has a body renders the body, and never the empty-file warning.
+func TestBuildBootDoc_HandoffPresentWithContent(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	makeTypeFolder(t, agentsDir, "crew", "operator", "", "")
+
+	const body = "# HANDOFF-chani\n\nDECISION: hold the review gate.\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "HANDOFF-chani.md"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := BuildBootDoc(agentsDir, tmpDir, "chani", "crew", "keeper-restart")
+	if err != nil {
+		t.Fatalf("BuildBootDoc: %v", err)
+	}
+	if !doc.HandoffPresent {
+		t.Errorf("HandoffPresent = false, want true")
+	}
+	if doc.Handoff != body {
+		t.Errorf("Handoff = %q, want %q", doc.Handoff, body)
+	}
+
+	var buf strings.Builder
+	if err := RenderMarkdown(doc, &buf); err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
+	if strings.Contains(buf.String(), "EMPTY") {
+		t.Errorf("a non-empty handoff must not render the empty-file warning; output:\n%s", buf.String())
+	}
 }
 
 // TestBuildBootDoc_NoFilesystemWrites verifies zero writes during BuildBootDoc.

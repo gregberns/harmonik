@@ -46,6 +46,8 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/release"
+	"github.com/gregberns/harmonik/internal/schedule"
+	"github.com/gregberns/harmonik/internal/sessioncapture"
 	"github.com/gregberns/harmonik/internal/sessiondata"
 	"github.com/gregberns/harmonik/internal/structuredlog"
 	"github.com/gregberns/harmonik/internal/watch"
@@ -232,6 +234,43 @@ func TestStateDirCreatorsUseHarmonikDirMode(t *testing.T) {
 				}
 			},
 		},
+		{
+			// Unblocked by the hk-8dtiv depguard change: internal/schedule may
+			// now import internal/core, so its lazy .harmonik/ creation uses the
+			// shared constant instead of a private 0o755.
+			name:   "schedule.Store.Add",
+			relDir: ".harmonik",
+			create: func(t *testing.T, pd string) {
+				t.Helper()
+				if err := schedule.NewStore(pd).Add(schedule.ScheduledJob{
+					ID:       "job-1",
+					Schedule: schedule.Schedule{Kind: "every", Interval: "1h"},
+					Action:   schedule.Action{Kind: "command", Argv: []string{"true"}},
+					Enabled:  true,
+				}); err != nil {
+					t.Fatalf("schedule.NewStore().Add: %v", err)
+				}
+			},
+		},
+		{
+			// Same unblocking for internal/sessioncapture, which creates
+			// .harmonik/sessions/<id>/ on Open.
+			name:   "sessioncapture.Open",
+			relDir: ".harmonik/sessions/sid-1",
+			create: func(t *testing.T, pd string) {
+				t.Helper()
+				sess, err := sessioncapture.Open(context.Background(), sessioncapture.Config{
+					WorkspacePath: pd,
+					SessionID:     "sid-1",
+				})
+				if err != nil {
+					t.Fatalf("sessioncapture.Open: %v", err)
+				}
+				if closeErr := sess.Close(); closeErr != nil {
+					t.Fatalf("sessioncapture.Session.Close: %v", closeErr)
+				}
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -324,13 +363,12 @@ var dirModeAllowlist = map[string]string{
 	"internal/scenario/resultemit.go":       "not a .harmonik state dir: scenario-result JSON output dir",
 	"cmd/harmonik-twin-session/main.go":     "not a .harmonik state dir: operator-supplied HANDOFF path (single site)",
 
-	// Still divergent — BLOCKED, not deliberate, and not a scheduling deferral.
-	// The depguard component matrix (.golangci.yml rules "schedule" = stdlib +
-	// self, "sessioncapture" = stdlib + substrate + self) fences both packages
-	// off from internal/core, so adopting the constant needs an enforced-config
-	// change. That is an operator decision, tracked as hk-8dtiv.
-	"internal/schedule/store.go":                "STILL DIVERGENT (blocked, hk-8dtiv): creates .harmonik/ at 0o755; depguard fences schedule off from core",
-	"internal/sessioncapture/sessioncapture.go": "STILL DIVERGENT (blocked, hk-8dtiv): creates .harmonik/sessions/ at 0o755; depguard fences sessioncapture off from core",
+	// hk-8dtiv used to park internal/schedule/store.go and
+	// internal/sessioncapture/sessioncapture.go here as STILL DIVERGENT: the
+	// depguard component matrix fenced both packages off from internal/core, so
+	// neither could name the constant. The matrix now allows the core edge and
+	// both packages use core.HarmonikDirMode, so the entries are gone and both
+	// files are covered by the scan below AND by a driven case above.
 }
 
 // excludedDirs are source trees this scan does not walk.

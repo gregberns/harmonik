@@ -119,7 +119,7 @@ Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `
 - **Prefer `%w` wrapping at subsystem boundaries** (crossing S01..S09). `errorlint` enforces correctness WHEN wrapping (e.g., non-`%w` for an error arg, direct `==` comparison where `errors.Is` is required), but it CANNOT detect missing-wraps — that needs semantic boundary knowledge, which is a custom `go/analysis` pass (deferred). Until that analyzer ships: reviewer-agents flag missing-wraps on subsystem-boundary imports during review. Do NOT wrap within a subsystem; wrapping the same error up-and-up produces noise without new context.
 - **Sentinel errors** as `var ErrFoo = errors.New("foo")`; typed errors as structs with `Error()`.
 - **No `panic` in production paths** — `forbidigo` blocks it outside `main`/`init`. Run supervisor handles recovery.
-- **Deferred `Close()` — the reviewer enforces this, not the linter.** `.golangci.yml` sets `errcheck: { check-blank: true, exclude-functions: ["(io.Closer).Close", "(*os.File).Close", "(net.Conn).Close", "(net.Listener).Close"] }`. errcheck names a method by the type that DECLARES it, so `(io.Closer).Close` on its own matched only interfaces whose `Close` is promoted from `io.Closer` (`io.ReadCloser`, `io.WriteCloser`, the `exec.Cmd` pipes); every close on a concrete `*os.File`, a `net.Conn` or a `net.Listener` still fired, in both forms, and the tree answered with ~220 `//nolint:errcheck` directives. The four common receivers are therefore excluded outright (verified against the pinned `.tools/golangci-lint` with the repo's own settings block):
+- **Deferred `Close()` — the reviewer enforces this, not the linter.** `.golangci.yml` sets `errcheck: { check-blank: true, exclude-functions: ["(io.Closer).Close", "(*os.File).Close", "(net.Conn).Close", "(net.Listener).Close"] }`. errcheck names a method by the type that DECLARES it, so `(io.Closer).Close` on its own matched only interfaces whose `Close` is promoted from `io.Closer` (`io.ReadCloser`, `io.WriteCloser`, the `exec.Cmd` pipes); every close on a concrete `*os.File`, a `net.Conn` or a `net.Listener` still fired, in both forms, and the tree answered with suppressions — 197 of its 545 `//nolint:errcheck` directives sat on a `.Close()` line just before the exclusion was widened (`b544687d5^`, if you want to re-measure). The four common receivers are therefore excluded outright (verified against the pinned `.tools/golangci-lint` with the repo's own settings block):
 
   ```go
   defer f.Close()                  // no longer a finding on the four excluded receivers
@@ -127,6 +127,29 @@ Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `
   ```
 
   errcheck cannot separate a read close from a write close — the exclusion key is a method signature and `(*os.File).Close` is one method either way — so this is a deliberate trade of a linter check for a reviewed idiom. **A dropped close on a write/commit/fsync path is still a defect and is a review finding even though lint is green.** Closes on other receivers (a project type, `CloseWrite` on a `*net.UnixConn`) still produce errcheck findings.
+
+  **A narrower configuration existed; the blanket exclusion is defended on cost, not on capability.** An earlier revision of this section and of `.golangci.yml` claimed "there is no narrower configuration." That was false and is corrected here. errcheck genuinely cannot express read-vs-write, but the distinction that removes the noise is **test-vs-production**, and golangci-lint scopes by path with the same `text:`-plus-`path:` machinery the two `SC6-DRIVER-CLOCKPORT` rules already use. Measured on a clean `git archive HEAD` export with the pinned `.tools/golangci-lint` v2.3.0, errcheck cut back to `(io.Closer).Close` alone: **409** `Close` findings — **303** in `_test.go`, **106** in production. Adding one rule:
+
+  ```yaml
+  - linters: [errcheck]
+    text: 'Close` is not checked'
+    path: _test\.go$
+  ```
+
+  takes the test findings to **0** and leaves **all 106** production findings standing (re-measured on the same export, same linter) — ~74% of the noise removed with the mechanical write-path check still covering 100% of production code. It was declined because those 106 production findings would each still have needed hand-handling, which is the cost the change existed to avoid. Reopen the trade on that ground.
+
+  Likewise, "nothing mechanical can catch a dropped write-path close" overstates it. **No linter in this config** catches it. Read-vs-write is expressible by a custom `go/analysis` pass that tracks a file's open flags forward to its close, and golangci-lint can host one as a module plugin. Nobody has written it — a cost, not an impossibility, and the same shape as the deferred missing-wrap analyzer noted above.
+
+  **What the exclusion actually de-linted.** The 106 production findings are exactly the production closes the widening silenced; regenerate the list any time by cutting errcheck back to `(io.Closer).Close` and running the pinned linter. A site-by-site read of that list (review of `b544687d5`, spot-re-verified here) found **no durability-critical write-path close left unguarded**: every queue record, bead-ledger write, lease lock, review verdict, comms cursor, pidfile, session-metadata sidecar, keeper gauge, schedule store and supervisor config write is still an atomic temp + fsync + **checked** close + rename. `cmd/harmonik/handler.go` `atomicWriteHandlerState` is the reference shape — it checks the close *before* the rename; only its two cleanup closes on already-failing paths lost their check. Four **non-critical** write-path closes did lose their mechanical check and are recorded here so the "never produced a finding at all" claim is not read as covering everything:
+
+  | Site | Handle | Why it is not durability-critical |
+  |---|---|---|
+  | `internal/daemon/workloop.go` `piStdoutFile` | `os.OpenFile` write handle passed to `io.TeeReader` | Agent-stdout mirror for diagnosis; the authoritative record is the event log. |
+  | `internal/daemon/dot_cascade.go` `piStdoutFile` | same pattern, DOT-cascade path | Same. |
+  | `internal/supervise/daemon_watchdog.go` `reviveWith` | crash-log handle from `openCrashLog` | `openCrashLog` checks the close on its own header-write failure path (`errors.Join`); `reviveWith`'s `defer f.Close()` is the one that is bare. Loses at most trailing crash-log output. |
+  | `cmd/harmonik/handler.go` `emitHandlerResumedEvent` | `os.OpenFile(…O_WRONLY\|O_CREATE\|O_APPEND)` on `events.jsonl` | Explicitly best-effort per event-model §8.11 — `handler-state.json` is authoritative and is written atomically with a checked close. |
+
+  These four are the standing exposure of the trade. They are named, not fixed: `internal/daemon` and `cmd/harmonik/handler.go` were held by other lanes when this was written.
 
   Use one of the three forms landed in this tree. Pick by whether the close error is material; each is cited to its real home:
 

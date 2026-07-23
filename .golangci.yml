@@ -108,14 +108,38 @@ linters:
       # the pinned linter with this settings block. Every close on a concrete
       # *os.File, on a net.Conn, or on a net.Listener still fired, in BOTH the
       # `defer f.Close()` and the `defer func(){ _ = f.Close() }()` form. That is
-      # the finding class the tree answered with ~220 //nolint:errcheck
-      # directives — volume that hid the suppressions that actually matter.
+      # the finding class the tree answered with suppressions: 197 of its 545
+      # //nolint:errcheck directives sat on a .Close() line at b544687d5^
+      # (git grep, re-measured) — volume that hid the suppressions that matter.
       #
-      # errcheck CANNOT express the distinction that matters here. The exclusion
-      # key is a method signature, and `(*os.File).Close` is one method whether
-      # the file was opened for read or for write; the finding text carries only
-      # the receiver's variable name, so golangci-lint's `text:` rules cannot
-      # split them either. There is no narrower configuration.
+      # errcheck cannot express READ-vs-WRITE, and that much is true: the
+      # exclusion key is a method signature, `(*os.File).Close` is one method
+      # whether the file was opened for read or for write, and the finding text
+      # carries only the receiver's variable name, so a `text:` rule cannot split
+      # them either.
+      #
+      # BUT A NARROWER CONFIGURATION DID EXIST, and this exclusion is defended on
+      # COST, not on a missing knob. An earlier version of this comment claimed
+      # "there is no narrower configuration"; that was false and is corrected
+      # here. The split that removes the noise is not read-vs-write, it is
+      # TEST-vs-PRODUCTION, and golangci-lint scopes by path trivially. Measured
+      # on a clean `git archive HEAD` export with the pinned .tools/golangci-lint
+      # v2.3.0 and this settings block cut back to `(io.Closer).Close` alone:
+      # 409 Close findings — 303 in _test.go, 106 in production. Adding one
+      # exclusions.rules entry, the same text:-plus-path: machinery the two
+      # SC6-DRIVER-CLOCKPORT rules above already use —
+      #
+      #   - linters: [errcheck]
+      #     text: 'Close` is not checked'
+      #     path: _test\.go$
+      #
+      # — takes the test findings to 0 and leaves all 106 production findings
+      # standing (re-measured on the same export, same linter). That is 74% of
+      # the noise gone with the mechanical write-path check intact over 100% of
+      # production code. It was declined because the 106 production findings
+      # would then each still have needed hand-handling, which is the cost this
+      # change existed to avoid. Reopen the trade on that ground, not on a
+      # capability claim.
       #
       # So this trades a linter check for a documented idiom: write-path close
       # discipline is now carried by .claude/skills/agent-reviewer/SKILL.md §2
@@ -133,7 +157,17 @@ linters:
       # lose data.
       #
       # Read-path and cleanup closes only. A close whose failure means the write
-      # may not have landed is still a defect — the reviewer catches it now.
+      # may not have landed is still a defect — the reviewer catches it now. "No
+      # linter in THIS config catches it" is the accurate statement, not "nothing
+      # mechanical can": read-vs-write is expressible by a custom go/analysis
+      # pass that tracks the open flags forward to the close, and golangci-lint
+      # can host one as a module plugin. Nobody has written it; that is a cost,
+      # not an impossibility.
+      #
+      # Four non-critical write-path closes lost their mechanical check here and
+      # are named in docs/foundation/project-level/quality-checks.md §Error
+      # handling conventions. The durability-critical closes were never findings
+      # in the first place, per the paragraph above.
       exclude-functions:
         - "(io.Closer).Close"
         - "(*os.File).Close"

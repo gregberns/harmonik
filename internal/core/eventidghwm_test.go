@@ -31,6 +31,9 @@ func hwmFixtureMakeID(t *testing.T, wallClock time.Time) EventID {
 		t.Fatalf("hwmFixtureMakeID: uuid.NewV7(): %v", err)
 	}
 	// Overwrite the high-48-bit ms timestamp to match wallClock.
+	if wallClock.UnixMilli() < 0 {
+		t.Fatalf("hwmFixtureMakeID: negative Unix millisecond timestamp %v", wallClock)
+	}
 	ms := uint64(wallClock.UnixMilli())
 	u[0] = byte(ms >> 40)
 	u[1] = byte(ms >> 32)
@@ -66,7 +69,7 @@ func TestReadEventIDHWM_Corrupt(t *testing.T) {
 	path := filepath.Join(dir, "event_id_hwm")
 
 	for _, corrupt := range []string{"", "not-hex!", "deadbeef" /* too short */} {
-		if writeErr := os.WriteFile(path, []byte(corrupt), 0o644); writeErr != nil {
+		if writeErr := os.WriteFile(path, []byte(corrupt), 0o600); writeErr != nil {
 			t.Fatalf("setup: write corrupt HWM: %v", writeErr)
 		}
 		_, _, err := ReadEventIDHWM(path)
@@ -112,10 +115,18 @@ func TestWriteEventIDHWMAtomicNoSync_Overwrite(t *testing.T) {
 	path := filepath.Join(dir, "event_id_hwm")
 	gen := NewEventIDGenerator()
 
-	first, _ := gen.Next()
-	_ = WriteEventIDHWMAtomicNoSync(path, first)
+	first, err := gen.Next()
+	if err != nil {
+		t.Fatalf("first gen.Next(): %v", err)
+	}
+	if err := WriteEventIDHWMAtomicNoSync(path, first); err != nil {
+		t.Fatalf("EV-002c: first write: %v", err)
+	}
 
-	second, _ := gen.Next()
+	second, err := gen.Next()
+	if err != nil {
+		t.Fatalf("second gen.Next(): %v", err)
+	}
 	if writeErr := WriteEventIDHWMAtomicNoSync(path, second); writeErr != nil {
 		t.Fatalf("EV-002c: second write: %v", writeErr)
 	}

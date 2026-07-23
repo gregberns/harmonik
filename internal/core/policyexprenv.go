@@ -309,7 +309,9 @@ func newOutcomeView(o Outcome) PolicyExprOutcomeView {
 func newEventView(e Event) PolicyExprEventView {
 	payload := make(map[string]any)
 	if len(e.Payload) > 0 {
-		_ = json.Unmarshal(e.Payload, &payload) // error → empty map; non-fatal
+		if err := json.Unmarshal(e.Payload, &payload); err != nil {
+			payload = make(map[string]any)
+		}
 	}
 	return PolicyExprEventView{
 		Type:    e.Type,

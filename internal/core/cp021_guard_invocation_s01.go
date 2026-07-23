@@ -88,7 +88,7 @@ func S01BuildGuardEvaluator(reg Registry, nodeID NodeID, fns map[string]GuardEva
 	})
 
 	// Collect wired evaluators in declaration order; skip guards with no fn.
-	var chain []GuardEvaluator
+	chain := make([]GuardEvaluator, 0, len(applicable))
 	for _, cp := range applicable {
 		fn, ok := fns[cp.Name]
 		if !ok {

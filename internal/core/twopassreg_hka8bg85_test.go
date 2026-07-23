@@ -575,7 +575,9 @@ func TestTwoPassReg_ReplayRebuildsFromPolicyYAML(t *testing.T) {
 
 	// Crashed state: registry has in-memory state from incomplete pass.
 	crashedReg := newTwoPassRegRegistry()
-	_ = crashedReg.Register(twoPassRegGateFixture())
+	if err := crashedReg.Register(twoPassRegGateFixture()); err != nil {
+		t.Fatalf("fixture Register: %v", err)
+	}
 	// At crash, the registry has 1 entry.
 	if len(crashedReg.All()) != 1 {
 		t.Fatal("fixture setup: crashed registry should have 1 entry")

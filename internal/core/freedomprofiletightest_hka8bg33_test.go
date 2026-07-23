@@ -340,11 +340,11 @@ func TestIntersectFreedomProfiles_ThreeProfilesChained(t *testing.T) {
 	if len(got.ToolWhitelist) != 1 || got.ToolWhitelist[0] != "read" {
 		t.Errorf("ToolWhitelist: got %v, want [read]", got.ToolWhitelist)
 	}
-	// MaxIterations: min(100, 50, 20) = 20
+	// The smallest iteration allowance among the three profiles is 20.
 	if got.MaxIterations != 20 {
 		t.Errorf("MaxIterations: got %d, want 20", got.MaxIterations)
 	}
-	// ModelTier: min(opus, sonnet, haiku) = haiku
+	// Haiku is the least-capable model tier in this profile set.
 	if got.ModelTier == nil || *got.ModelTier != "haiku" {
 		t.Errorf("ModelTier: got %v, want \"haiku\"", got.ModelTier)
 	}

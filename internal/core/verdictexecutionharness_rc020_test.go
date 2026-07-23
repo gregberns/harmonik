@@ -816,7 +816,6 @@ func TestRC026a_DurableRetryCounterFileCanBeWrittenAtomically(t *testing.T) {
 
 	// Simulate the atomic temp+rename write pattern (WM-026).
 	tmpPath := counterPath + ".tmp"
-	//nolint:gosec // G306: 0600 is correct for a private state file
 	if err := os.WriteFile(tmpPath, []byte(`{"attempt":1}`), 0o600); err != nil {
 		t.Fatalf("RC-026a: WriteFile tmp: %v", err)
 	}
@@ -835,7 +834,6 @@ func TestRC026a_DurableRetryCounterFileCanBeWrittenAtomically(t *testing.T) {
 	}
 
 	// Increment to attempt 2 using the same atomic pattern.
-	//nolint:gosec // G306: 0600 is correct for a private state file
 	if err := os.WriteFile(tmpPath, []byte(`{"attempt":2}`), 0o600); err != nil {
 		t.Fatalf("RC-026a: WriteFile attempt 2: %v", err)
 	}

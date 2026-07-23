@@ -83,7 +83,11 @@ func TestCP045_S02PolicyEngine_RegistryStableWithinDaemon(t *testing.T) {
 
 	// Register via r1 and verify visibility in r2 and r3 — proving same table.
 	cp := cp002FixtureGate(t, "stable-registry-gate")
-	if err := r1.(interface{ Register(ControlPoint) error }).Register(cp); err != nil {
+	registrar, ok := r1.(interface{ Register(ControlPoint) error })
+	if !ok {
+		t.Fatal("r1 does not implement Register(ControlPoint) error")
+	}
+	if err := registrar.Register(cp); err != nil {
 		t.Fatalf("r1.Register: %v", err)
 	}
 

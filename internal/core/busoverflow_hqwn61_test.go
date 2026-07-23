@@ -27,9 +27,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/google/uuid"
 )
 
 // ---------------------------------------------------------------------------
@@ -67,47 +64,6 @@ type busOverflowFixtureConsumerDesc struct {
 	// ExpectedShedPolicy is the shed_policy the bus MUST emit in bus_overflow
 	// when this consumer's queue is full and an event arrives.
 	ExpectedShedPolicy busOverflowFixtureShedPolicy
-}
-
-// busOverflowFixtureScenario groups the consumer descriptions and event inputs
-// for one scenario run. Implementers construct a real bus from the consumers,
-// fill the queues, and then inject the overflow event, asserting that:
-//   - bus_overflow is emitted with the correct consumer_name and shed_policy.
-//   - F-class events appear in the spill file; O and L events are dropped.
-type busOverflowFixtureScenario struct {
-	// Name is the human-readable scenario label.
-	Name string
-	// Consumers are the subscriptions that must be registered before sealing.
-	Consumers []busOverflowFixtureConsumerDesc
-	// EventType is the §8 event type string of the overflow-triggering event.
-	EventType string
-	// EventDurabilityClass is "F", "O", or "L" — the durability class of the
-	// event that triggers overflow (determines shed_policy).
-	EventDurabilityClass string
-}
-
-// busOverflowFixtureBuildEvent returns a minimal valid Event with the given
-// type, durability class annotation, and a fresh UUIDv7 event ID. The payload
-// carries a single "scenario" key for test identification.
-//
-// Implementers: the durability class annotation here is advisory for test
-// scaffolding; the actual bus reads durability class from the §8 registry at
-// emit time. Align the registered event type's class with EventDurabilityClass
-// when wiring up the real bus.
-func busOverflowFixtureBuildEvent(t *testing.T, eventType, durabilityClass string) Event {
-	t.Helper()
-	id, err := uuid.NewV7()
-	if err != nil {
-		t.Fatalf("busOverflowFixtureBuildEvent: uuid.NewV7: %v", err)
-	}
-	return Event{
-		EventID:         EventID(id),
-		SchemaVersion:   1,
-		Type:            eventType,
-		TimestampWall:   time.Now(),
-		SourceSubsystem: "core.test.busoverflow",
-		Payload:         []byte(`{"scenario":"` + durabilityClass + `"}`),
-	}
 }
 
 // busOverflowFixtureSpillPath returns the expected spill-file path for a

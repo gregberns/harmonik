@@ -60,13 +60,13 @@ func TestEventEnvelope_AliasInterchangeable(t *testing.T) {
 	env := eventEnvelopeFixture(t)
 
 	// Assign EventEnvelope to Event: no conversion required because it is an alias.
-	var ev Event = env
+	ev := env
 	if !ev.Valid() {
 		t.Error("Event assigned from EventEnvelope: Valid() = false, want true")
 	}
 
 	// Assign Event back to EventEnvelope.
-	var env2 EventEnvelope = ev
+	env2 := ev
 	if !env2.Valid() {
 		t.Error("EventEnvelope re-assigned from Event: Valid() = false, want true")
 	}

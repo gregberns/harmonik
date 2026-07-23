@@ -153,8 +153,8 @@ func TestContextRestoreEnforce_NewDaemonInitiated(t *testing.T) {
 	if tr.ActorRole != ActorRoleDaemon {
 		t.Errorf("ActorRole = %q, want %q (EM-046)", tr.ActorRole, ActorRoleDaemon)
 	}
-	synthesized, _ := tr.Evidence[EvidenceKeySynthesizedOutcome].(bool)
-	if !synthesized {
+	synthesized, ok := tr.Evidence[EvidenceKeySynthesizedOutcome].(bool)
+	if !ok || !synthesized {
 		t.Errorf("Evidence[%q] = %v, want true (EM-023a synthesized-outcome marker)", EvidenceKeySynthesizedOutcome, tr.Evidence[EvidenceKeySynthesizedOutcome])
 	}
 }
@@ -245,7 +245,8 @@ func TestContextRestoreEnforce_NewSynthesizedOutcomeMarker(t *testing.T) {
 	if !ok {
 		t.Errorf("Evidence[%q] absent, want true (EM-023a)", EvidenceKeySynthesizedOutcome)
 	}
-	if b, _ := val.(bool); !b {
+	b, ok := val.(bool)
+	if !ok || !b {
 		t.Errorf("Evidence[%q] = %v, want true (EM-023a)", EvidenceKeySynthesizedOutcome, val)
 	}
 }
@@ -268,8 +269,8 @@ func TestContextRestoreEnforce_NewPreservesExistingEvidence(t *testing.T) {
 	if tr.Evidence["custom_key"] != "custom_value" {
 		t.Error("NewContextRestoreTransition must preserve existing evidence keys")
 	}
-	synthesized, _ := tr.Evidence[EvidenceKeySynthesizedOutcome].(bool)
-	if !synthesized {
+	synthesized, ok := tr.Evidence[EvidenceKeySynthesizedOutcome].(bool)
+	if !ok || !synthesized {
 		t.Errorf("Evidence[%q] = %v, want true (EM-023a)", EvidenceKeySynthesizedOutcome, tr.Evidence[EvidenceKeySynthesizedOutcome])
 	}
 }

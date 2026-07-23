@@ -198,7 +198,7 @@ func TestBudgetRehydrat_SingleRunSumFromRunStarted(t *testing.T) {
 		t.Error("run_started event not found during rehydration; cannot start counter")
 	}
 
-	// Expected: 500 + 300 + 200 = 1000
+	// The fixture's three recorded deltas total 1000.
 	expectedAccrued := run.Accrued()
 	if accrued != expectedAccrued {
 		t.Errorf("rehydrated accrual = %d, want %d", accrued, expectedAccrued)
@@ -279,7 +279,7 @@ func TestBudgetRehydrat_RehydrationMustCompleteBeforeDispatch(t *testing.T) {
 		Delta int64
 	}
 
-	var state daemonState = daemonStateRehydrating
+	state := daemonStateRehydrating
 
 	// Before rehydration: dispatch must be rejected.
 	canDispatch := func() bool { return state == daemonStateReady }
@@ -398,7 +398,7 @@ func TestBudgetRehydrat_WallClockOuterBoundComposition(t *testing.T) {
 		AccruedDeltas:  []int64{1000},
 		RunStartedSeen: true,
 	}
-	// innerBudget.Remaining() = 9000
+	// The inner budget has 9000 tokens remaining.
 
 	// Outer budget: wall-clock seconds — nearly exhausted.
 	outerBudget := budgetRehydratRunFixture{

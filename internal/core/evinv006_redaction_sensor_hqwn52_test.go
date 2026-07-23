@@ -80,11 +80,17 @@ type hqwn52FixtureAuthPayload struct {
 // hqwn52FixtureLocalCtors builds an isolated constructor map containing only
 // the provided (typeName, constructor) pairs. Tests use local maps to keep
 // each test case self-contained and independent of global-registry state.
-func hqwn52FixtureLocalCtors(pairs ...any) map[string]func() EventPayload {
+func hqwn52FixtureLocalCtors(t *testing.T, pairs ...any) map[string]func() EventPayload {
 	m := make(map[string]func() EventPayload)
 	for i := 0; i+1 < len(pairs); i += 2 {
-		name := pairs[i].(string)
-		ctor := pairs[i+1].(func() EventPayload)
+		name, nameOK := pairs[i].(string)
+		if !nameOK {
+			t.Fatal("hqwn52FixtureLocalCtors: fixture name must be a string")
+		}
+		ctor, ctorOK := pairs[i+1].(func() EventPayload)
+		if !ctorOK {
+			t.Fatal("hqwn52FixtureLocalCtors: fixture constructor must return EventPayload")
+		}
 		m[name] = ctor
 	}
 	return m
@@ -104,7 +110,7 @@ func hqwn52FixtureLocalCtors(pairs ...any) map[string]func() EventPayload {
 func TestHQWN52_EV036_CleanPayloadPassesScan(t *testing.T) {
 	t.Parallel()
 
-	ctors := hqwn52FixtureLocalCtors(
+	ctors := hqwn52FixtureLocalCtors(t,
 		"test.hqwn52.clean.v1", func() EventPayload { return &hqwn52FixtureCleanPayload{} },
 	)
 	if err := scanConstructors(ctors); err != nil {
@@ -120,7 +126,7 @@ func TestHQWN52_EV036_CleanPayloadPassesScan(t *testing.T) {
 func TestHQWN52_EV036_SecretFieldCausesScanError(t *testing.T) {
 	t.Parallel()
 
-	ctors := hqwn52FixtureLocalCtors(
+	ctors := hqwn52FixtureLocalCtors(t,
 		"test.hqwn52.secret.v1", func() EventPayload { return &hqwn52FixtureSecretPayload{} },
 	)
 	err := scanConstructors(ctors)
@@ -139,7 +145,7 @@ func TestHQWN52_EV036_SecretFieldCausesScanError(t *testing.T) {
 func TestHQWN52_EV036_TokenFieldCausesScanError(t *testing.T) {
 	t.Parallel()
 
-	ctors := hqwn52FixtureLocalCtors(
+	ctors := hqwn52FixtureLocalCtors(t,
 		"test.hqwn52.token.v1", func() EventPayload { return &hqwn52FixtureTokenPayload{} },
 	)
 	err := scanConstructors(ctors)
@@ -158,7 +164,7 @@ func TestHQWN52_EV036_TokenFieldCausesScanError(t *testing.T) {
 func TestHQWN52_EV036_PasswordFieldCausesScanError(t *testing.T) {
 	t.Parallel()
 
-	ctors := hqwn52FixtureLocalCtors(
+	ctors := hqwn52FixtureLocalCtors(t,
 		"test.hqwn52.password.v1", func() EventPayload { return &hqwn52FixturePasswordPayload{} },
 	)
 	err := scanConstructors(ctors)
@@ -177,7 +183,7 @@ func TestHQWN52_EV036_PasswordFieldCausesScanError(t *testing.T) {
 func TestHQWN52_EV036_APIKeyFieldCausesScanError(t *testing.T) {
 	t.Parallel()
 
-	ctors := hqwn52FixtureLocalCtors(
+	ctors := hqwn52FixtureLocalCtors(t,
 		"test.hqwn52.apikey.v1", func() EventPayload { return &hqwn52FixtureAPIKeyPayload{} },
 	)
 	err := scanConstructors(ctors)
@@ -196,7 +202,7 @@ func TestHQWN52_EV036_APIKeyFieldCausesScanError(t *testing.T) {
 func TestHQWN52_EV036_AuthFieldCausesScanError(t *testing.T) {
 	t.Parallel()
 
-	ctors := hqwn52FixtureLocalCtors(
+	ctors := hqwn52FixtureLocalCtors(t,
 		"test.hqwn52.auth.v1", func() EventPayload { return &hqwn52FixtureAuthPayload{} },
 	)
 	err := scanConstructors(ctors)
@@ -227,7 +233,7 @@ func TestHQWN52_EV036_EmptyConstructorMapPassesScan(t *testing.T) {
 func TestHQWN52_EV036_MixedRegistryDetectsViolation(t *testing.T) {
 	t.Parallel()
 
-	ctors := hqwn52FixtureLocalCtors(
+	ctors := hqwn52FixtureLocalCtors(t,
 		"test.hqwn52.mixed.clean.v1", func() EventPayload { return &hqwn52FixtureCleanPayload{} },
 		"test.hqwn52.mixed.secret.v1", func() EventPayload { return &hqwn52FixtureSecretPayload{} },
 	)

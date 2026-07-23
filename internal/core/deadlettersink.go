@@ -97,10 +97,12 @@ func (s *jsonlDeadLetterSink) Close() error {
 // Bead ref: hk-2m3bq.
 type NoopDeadLetterSink struct{}
 
+// Record discards a dead-letter record.
 func (NoopDeadLetterSink) Record(_ context.Context, _ EventEnvelope, _ string) error {
 	return nil
 }
 
+// Close releases no resources and always succeeds.
 func (NoopDeadLetterSink) Close() error {
 	return nil
 }

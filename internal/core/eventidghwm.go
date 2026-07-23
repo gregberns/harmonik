@@ -20,6 +20,7 @@ import (
 //
 // Spec ref: event-model.md §4.1 EV-002c.
 func ReadEventIDHWM(path string) (EventID, bool, error) {
+	// #nosec G304 -- caller supplies the project-scoped HWM path; this API must read that exact file.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -96,7 +97,12 @@ const hwmClockRegressionThreshold = time.Second
 func ExtractUUIDv7Timestamp(id EventID) time.Time {
 	ms := uint64(id[0])<<40 | uint64(id[1])<<32 | uint64(id[2])<<24 |
 		uint64(id[3])<<16 | uint64(id[4])<<8 | uint64(id[5])
-	return time.UnixMilli(int64(ms)).UTC()
+	const maxInt64 = uint64(^uint64(0) >> 1)
+	if ms > maxInt64 {
+		return time.Time{}
+	}
+	milliseconds := int64(ms)
+	return time.UnixMilli(milliseconds).UTC()
 }
 
 // IsHWMClockRegression reports whether wallClock is more than

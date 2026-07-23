@@ -63,7 +63,7 @@ func S01BuildGateEvaluator(reg Registry, attachPoint AttachPoint, fns map[string
 	}
 
 	// Collect wired evaluators in declaration order; skip gates with no fn.
-	var chain []GateEvaluator
+	chain := make([]GateEvaluator, 0, len(applicable))
 	for _, cp := range applicable {
 		fn, ok := fns[cp.Name]
 		if !ok {

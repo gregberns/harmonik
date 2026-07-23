@@ -196,7 +196,11 @@ func TestPolicyEngine_Interface_RegistryAccessible(t *testing.T) {
 	var eng PolicyEngine = NewS02PolicyEngine()
 
 	cp := s02FixtureGateCP(t, "policy.gate.interface")
-	if err := eng.(*S02PolicyEngine).RegisterControlPoints([]ControlPoint{cp}); err != nil {
+	concreteEngine, ok := eng.(*S02PolicyEngine)
+	if !ok {
+		t.Fatal("PolicyEngine implementation is not *S02PolicyEngine")
+	}
+	if err := concreteEngine.RegisterControlPoints([]ControlPoint{cp}); err != nil {
 		t.Fatalf("RegisterControlPoints: %v", err)
 	}
 
@@ -204,8 +208,8 @@ func TestPolicyEngine_Interface_RegistryAccessible(t *testing.T) {
 	if reg == nil {
 		t.Fatal("PolicyEngine.Registry() = nil through interface, want non-nil")
 	}
-	_, ok := reg.LookupByName("policy.gate.interface")
-	if !ok {
+	_, found := reg.LookupByName("policy.gate.interface")
+	if !found {
 		t.Error("Registry().LookupByName through PolicyEngine interface: not found")
 	}
 }

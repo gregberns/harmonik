@@ -109,6 +109,8 @@ func (a OutcomeAction) ValidForKind(k Kind) bool {
 		switch a {
 		case OutcomeActionAllow, OutcomeActionDeny, OutcomeActionEscalateToHuman:
 			return true
+		default:
+			return false
 		}
 	case KindHook:
 		return a == OutcomeActionSideEffect
@@ -118,7 +120,10 @@ func (a OutcomeAction) ValidForKind(k Kind) bool {
 		switch a {
 		case OutcomeActionAdmit, OutcomeActionWarn, OutcomeActionDeny:
 			return true
+		default:
+			return false
 		}
+	default:
+		return false
 	}
-	return false
 }

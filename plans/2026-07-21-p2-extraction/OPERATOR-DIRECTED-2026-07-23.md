@@ -4,6 +4,28 @@ Three items the operator routed INTO the P2 plan on 2026-07-23. Each is to be
 **developed and reviewed by dedicated agents** — not hand-fixed inline by the
 orchestrator. Beads are machine-local, so this tracked doc is the durable record.
 
+> ## STATUS — updated 2026-07-23 (session `dd3b5e34`)
+>
+> - **Item 1 `hk-p58vo` — DONE** (commit `96f0273c`, reviewed APPROVE). Interim
+>   simple form delivered: `.claude/commands/check.md` (`/check` runs `make check`
+>   post-commit, fix + re-commit if red) + a standing reminder in `AGENTS.md`. The
+>   richer auto-trigger (a `PostToolUse` hook that injects the reminder on `git
+>   commit`) is intentionally DEFERRED as the "later evolution" the operator named.
+> - **Item 2 `hk-e1ant` — DONE** (same commit `96f0273c`, reviewed APPROVE).
+>   lefthook fully retired: `lefthook.yml` + `scripts/check-hooks.sh` deleted;
+>   `install-hooks`/`check-hooks` Makefile targets + the CI `hooks` job removed;
+>   `bootstrap` == `make tools`; `validate-commit-msg.sh` + `secret-scan.sh`
+>   preserved for the agent-driven flow; docs reconciled. Both beads CLOSED.
+> - **Item 3 `hk-8dtiv` — RECON DONE, migration IN PROGRESS.** Full linter-verified
+>   plan at [`hk-8dtiv-close-errcheck-recon.md`](hk-8dtiv-close-errcheck-recon.md):
+>   **99** production Close sites newly fire (17 daemon = deferred with the
+>   extraction; **82 non-daemon = this batch**, 16 packages); `_test.go` exclusion
+>   keeps test noise at 0. Bug 1 (sessiondata lost-flush) + Bug 2 (handlerpause
+>   dropped dir-fsync) confirmed real; Bug 3 is idiom-only. 7-commit batching,
+>   bug-fixes first, **config flip LAST** — and the flip is gated on the 15
+>   remaining daemon sites, which stay sequenced with the `internal/daemon`
+>   extraction lane (Bug 2's fix is pulled forward as a standalone bugfix).
+
 > **How to work these (operator directive, 2026-07-23):** parallelize as much as
 > possible and structure the work with **ultrawork** (multi-agent workflows /
 > fan-out) wherever the task decomposes. These three are largely independent of

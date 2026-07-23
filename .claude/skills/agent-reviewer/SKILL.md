@@ -80,10 +80,12 @@ against the repo's own `errcheck` / `gosec` / `noctx` / `nolintlint` settings.
   `net.Dial`; `(*net.ListenConfig).Listen` not `net.Listen`;
   `http.NewRequestWithContext` + `Client.Do` not `http.Get` (noctx). `tools/` is
   path-excluded from noctx.
-- No `panic` and no `fmt.Print*` (forbidigo). `internal/testhelpers/` is excluded
-  from the `panic` ban — helpers take `*testing.T` and call `t.Fatalf`; `tools/` is
-  excluded from both. Everything else uses `log/slog`. Note the ban pattern is
-  `^fmt\.Print.*$`: `fmt.Fprintf(w, …)` is not forbidden, only unrouted stdout writes.
+- No `panic` and no `fmt.Print*` (forbidigo). Two paths are excluded from the **whole
+  `forbidigo` linter**, not from one pattern: `internal/testhelpers/` (helpers take
+  `*testing.T` and call `t.Fatalf`) and `tools/` (which is also excluded from `noctx`).
+  Both therefore get `panic` *and* `fmt.Print*` for free. Everything else uses
+  `log/slog`. Note the ban pattern is `^fmt\.Print.*$`: `fmt.Fprintf(w, …)` is not
+  forbidden, only unrouted stdout writes.
 - In `internal/codexinput/` and `internal/codexdriver/`, `time.Sleep` / `time.After` /
   `time.NewTimer` are banned in production files — every wait goes through
   `substrate.ClockPort` (forbidigo, marker `SC6-DRIVER-CLOCKPORT`; `_test.go` exempt).
@@ -123,12 +125,22 @@ defer f.Close()                  // finding
 defer func() { _ = f.Close() }() // finding — check-blank
 ```
 
-Use one of the three landed forms instead. Pick by whether the close error is material:
+Use one of the three landed forms instead. Pick by whether the close error is material.
+Each form below is followed by its real home in this tree — cite those, not this file:
 
 ```go
 // MATERIAL (write / commit / fsync) — join it into a named return.
-func write(p string, b []byte) (err error) {
-	f, err := os.Create(p)
+// Note os.OpenRoot/root.Create rather than os.Create: a variable path through
+// os.Create is a gosec G304 finding, and the rooted form clears it outright.
+// Landed: internal/supervise/daemon_watchdog.go (non-deferred variant, folding a
+// close failure into an in-flight write error); internal/run/registry.go.
+func write(dir, name string, b []byte) (err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	f, err := root.Create(name)
 	if err != nil {
 		return err
 	}
@@ -138,13 +150,16 @@ func write(p string, b []byte) (err error) {
 }
 
 // MATERIAL but must not mask an earlier failure — first error wins.
+// Landed: internal/keeper/watcher.go (FileEmitter.EmitWithRunID).
 defer func() {
-	if closeErr := f.Close(); closeErr != nil && err == nil {
+	if closeErr := file.Close(); closeErr != nil && err == nil {
 		err = closeErr
 	}
 }()
 
 // IMMATERIAL (read-only open) but observable — log and continue.
+// Landed: internal/keeper/heartbeat.go (deriveContextTokens),
+// internal/keeper/tmuxresolve.go (recentTranscriptTurn).
 defer func() {
 	if closeErr := f.Close(); closeErr != nil {
 		slog.Warn("keeper: close transcript", "err", closeErr, "path", path)
@@ -152,9 +167,10 @@ defer func() {
 }()
 ```
 
-Landed examples of all three: `internal/keeper/watcher.go`, `heartbeat.go`,
-`tmuxresolve.go` (commit `5a199ed3`). A `//nolint:errcheck` on a discarded close is a
-suppression, not an idiom — hold it to the bar below.
+Commit `5a199ed3` landed the second and third forms in `internal/keeper`; it did **not**
+introduce an `errors.Join` close there, so do not cite `internal/keeper` for the first
+form. A `//nolint:errcheck` on a discarded close is a suppression, not an idiom — hold
+it to the bar below.
 
 #### Suppression discipline (`//nolint`)
 
@@ -301,7 +317,7 @@ object and places it verbatim in the `Review-Verdict:` commit trailer.
   "schema_version": 1,
   "verdict": "APPROVE",
   "flags": [],
-  "notes": "All five checks pass. Diff matches bead scope and spec alignment."
+  "notes": "All eight checks pass. Diff matches bead scope and spec alignment."
 }
 ```
 
@@ -331,7 +347,7 @@ The implementer records your output as two commit trailers:
 
 ```
 Reviewed-By: agent-reviewer
-Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"All five checks pass."}
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"All eight checks pass."}
 ```
 
 The pre-commit hook (`lefthook.yml` wired to `make check-fast`) validates that

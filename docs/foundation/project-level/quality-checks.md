@@ -96,15 +96,62 @@ linters-settings:
 issues: { max-issues-per-linter: 0, max-same-issues: 0, exclude-use-default: false }
 ```
 
-Explicit **NO** on: `wsl`, `lll`, `funlen`, `gocyclo`, `cyclop`, `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Style-taste linters; noise without catching real defects at MVH scope.
+> **The block above is an illustrative excerpt, not a mirror.** `.golangci.yml` in the repo root is the authority and has moved on from it (v2 schema, an `exclusions.rules` block, path-scoped `forbidigo` entries, the complexity linters below). Read the file; do not treat this excerpt as the enabled set.
+
+**Complexity ceilings are ENABLED** (Track C), contrary to earlier drafts of this section that listed them under "explicit NO":
+
+- `funlen` — 100 lines / 60 statements, `ignore-comments: true`.
+- `cyclop` — `max-complexity: 15` per function; `package-average: 0` (package averaging disabled).
+- `gocognit` — `min-complexity: 20` (stricter than the golangci default of 30).
+
+They ratchet via `--new-from-rev`, so existing functions are grandfathered but a function a diff rewrites is not. Excluded paths: `_test.go`, `internal/scenario/`, `internal/specaudit/`.
+
+Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Style-taste linters; noise without catching real defects at MVH scope.
+
+**Path-scoped exclusions worth knowing** (`.golangci.yml §exclusions.rules`): `tools/` is excluded from the *whole* `forbidigo` and `noctx` linters; `internal/testhelpers/` from the whole `forbidigo` linter — so both get `panic` **and** `fmt.Print*` for free, not just one of them.
 
 ## Error handling conventions
 
-- **Always handle errors.** `errcheck` is blocking; only ignore with explicit `_ =` + `//nolint:errcheck // <reason>` (nolintlint forces justification).
+> **Source of truth for Go idioms:** `.claude/skills/agent-reviewer/SKILL.md §2 — Idiom compliance`, which is itself a description of the enforced `.golangci.yml`. Where this section and §2 disagree, §2 wins; where §2 and `.golangci.yml` disagree, the config wins and the prose is the bug. Never document an idiom the linter rejects — verify by running the pinned `.tools/golangci-lint` against the repo's own settings block.
+
+- **Always handle errors.** `errcheck` is blocking and runs with `check-blank: true`, so `_ = f()` is **itself a finding**, not an escape hatch. Discarding an error requires an explicit `//nolint:errcheck // <reason>` (nolintlint forces justification), and the quality lanes operate under *add no new `//nolint`* — reach for one only when no code change clears the finding. See `agent-reviewer §2 — Suppression discipline`.
+- **Comma-ok on every type assertion** — `v, ok := x.(T)`. `check-type-assertions: true` makes a bare `x.(T)` and `v, _ := x.(T)` findings.
 - **Prefer `%w` wrapping at subsystem boundaries** (crossing S01..S09). `errorlint` enforces correctness WHEN wrapping (e.g., non-`%w` for an error arg, direct `==` comparison where `errors.Is` is required), but it CANNOT detect missing-wraps — that needs semantic boundary knowledge, which is a custom `go/analysis` pass (deferred). Until that analyzer ships: reviewer-agents flag missing-wraps on subsystem-boundary imports during review. Do NOT wrap within a subsystem; wrapping the same error up-and-up produces noise without new context.
 - **Sentinel errors** as `var ErrFoo = errors.New("foo")`; typed errors as structs with `Error()`.
 - **No `panic` in production paths** — `forbidigo` blocks it outside `main`/`init`. Run supervisor handles recovery.
-- **`defer x.Close()` is acceptable** without error check (errcheck exclusion). When a close-error is material (commit, fsync) use named return + `defer func() { err = errors.Join(err, x.Close()) }()`.
+- **Deferred `Close()` — bare `defer x.Close()` is NOT acceptable.** `.golangci.yml` sets `errcheck: { check-blank: true, exclude-functions: ["(io.Closer).Close"] }`. That exclusion matches only a receiver whose **static type is literally `io.Closer`** — not every type that satisfies the interface. Nearly every close in this tree is on something else (`*os.File`, `net.Conn`, the `io.ReadCloser` off an `exec.Cmd` pipe), so the exclusion does not apply and **both** of these are errcheck findings (verified against the pinned `.tools/golangci-lint` with the repo's own settings block):
+
+  ```go
+  defer f.Close()                  // finding
+  defer func() { _ = f.Close() }() // finding — check-blank
+  ```
+
+  Use one of the three forms landed in this tree. Pick by whether the close error is material; each is cited to its real home:
+
+  ```go
+  // MATERIAL (write / commit / fsync) — join it into a named return.
+  // internal/supervise/daemon_watchdog.go, internal/run/registry.go
+  // (both fold the close into an in-flight failure rather than deferring).
+  defer func() { err = errors.Join(err, f.Close()) }()
+
+  // MATERIAL but must not mask an earlier failure — first error wins.
+  // internal/keeper/watcher.go (FileEmitter.EmitWithRunID), commit 5a199ed3
+  defer func() {
+      if closeErr := file.Close(); closeErr != nil && err == nil {
+          err = closeErr
+      }
+  }()
+
+  // IMMATERIAL (read-only open) but observable — log and continue.
+  // internal/keeper/heartbeat.go, internal/keeper/tmuxresolve.go, commit 5a199ed3
+  defer func() {
+      if closeErr := f.Close(); closeErr != nil {
+          slog.Warn("keeper: close transcript", "err", closeErr, "path", path)
+      }
+  }()
+  ```
+
+  Note `internal/keeper` carries **no** `errors.Join` close — do not cite it for the first form. When you need to open the file too, prefer `os.OpenRoot(dir)` + `root.Open`/`root.Create(name)` over `os.Open`/`os.Create` with a constructed path: the rooted form clears gosec **G304** by construction (verified), where the plain form fires it and tempts a `//nolint`. Full treatment, including which suppressions are legitimate: `agent-reviewer §2 — Deferred Close()`.
 
 ## Logging
 

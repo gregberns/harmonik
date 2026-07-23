@@ -365,7 +365,7 @@ Full recommendation at `docs/foundation/project-level/agent-configuration.md` (p
 
 Prevents prompt injection; enables audit/metrics. Schema lives in the `agent-reviewer` skill docs; versioned via `schema_version` field.
 
-**Skills at `.claude/skills/` in repo** (load-bearing MVH set): `beads-cli`, `kerf-workflow`, `go-subsystem-add`, `project-quality-gates`, `git-task-commit`, `spec-finalize`, `agent-config-reviewer`, `agent-reviewer` (load-bearing, must not rot).
+**Skills at `.claude/skills/` in repo**: the normative registry is `agent-configuration.md §Skills` — do not restate the list here, it drifts. Load-bearing members (must not rot): `agent-reviewer`, `agent-config-reviewer`, `agent-comms`, `beads-cli`, `orchestrator-rules`, `harmonik-lifecycle`, `keeper`.
 
 **Rule categories**: git ops (direct-to-main, agent-reviewer-every-commit), Go procedures (`make check-full` before declared-done), commit style (Conventional Commits + required trailers), commit creation (Why/What/Spec/Test/Risk in body), spec adherence, Protected rule files.
 

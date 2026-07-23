@@ -115,21 +115,41 @@ Compare the live skill set (`.claude/skills/` directory listing + each skill's
 frontmatter `name` and `description`) against the normative skill table in
 `agent-configuration.md §Skills`:
 
-- Are all eight load-bearing skills present?
+**`agent-configuration.md §Skills` is the source of truth for this table.** The list
+below is a convenience mirror so this check can run without re-deriving the registry.
+When the two disagree, the foundation doc wins and this mirror is the bug: emit
+`skill-registry-drift` naming the mirror, not `skill-missing`. Both must be updated in
+the same commit whenever a directory is added to or removed from `.claude/skills/`.
+
+- Are all fifteen registered skills present? (Mirror of `agent-configuration.md
+  §Skills`, verified 2026-07-22.)
 
   | Skill | Path |
   |---|---|
-  | `beads-cli` | `.claude/skills/beads-cli/SKILL.md` |
-  | `kerf-workflow` | `.claude/skills/kerf-workflow/SKILL.md` |
-  | `go-subsystem-add` | `.claude/skills/go-subsystem-add/SKILL.md` |
-  | `go-test-run` | `.claude/skills/go-test-run/SKILL.md` |
-  | `project-quality-gates` | `.claude/skills/project-quality-gates/SKILL.md` |
-  | `git-task-commit` | `.claude/skills/git-task-commit/SKILL.md` |
-  | `spec-finalize` | `.claude/skills/spec-finalize/SKILL.md` |
-  | `agent-reviewer` | `.claude/skills/agent-reviewer/SKILL.md` |
+  | `agent-comms` | `.claude/skills/agent-comms/SKILL.md` |
   | `agent-config-reviewer` | `.claude/skills/agent-config-reviewer/SKILL.md` |
-  | `crew-launch` | `.claude/skills/crew-launch/SKILL.md` |
+  | `agent-reviewer` | `.claude/skills/agent-reviewer/SKILL.md` |
+  | `beads-cli` | `.claude/skills/beads-cli/SKILL.md` |
   | `captain` | `.claude/skills/captain/SKILL.md` |
+  | `crew-launch` | `.claude/skills/crew-launch/SKILL.md` |
+  | `go-subsystem-add` | `.claude/skills/go-subsystem-add/SKILL.md` |
+  | `harmonik-dispatch` | `.claude/skills/harmonik-dispatch/SKILL.md` |
+  | `harmonik-lifecycle` | `.claude/skills/harmonik-lifecycle/SKILL.md` |
+  | `keeper` | `.claude/skills/keeper/SKILL.md` |
+  | `major-issue-fanout` | `.claude/skills/major-issue-fanout/SKILL.md` |
+  | `no-jargon` | `.claude/skills/no-jargon/SKILL.md` |
+  | `orchestrator-rules` | `.claude/skills/orchestrator-rules/SKILL.md` |
+  | `status-report` | `.claude/skills/status-report/SKILL.md` |
+  | `watch` | `.claude/skills/watch/SKILL.md` |
+
+- **Scope: project-local only.** `~/.claude/skills/` holds user-global skills
+  (`orchestrator`, `session-handoff`, `session-resume`, `sentry-cli`, …). List them for
+  context, but a global-only skill is NOT registry drift — the registry governs
+  `.claude/skills/` in the repo. Never emit `skill-missing` because a global skill is
+  absent from the table.
+- **A directory is only a skill if it contains a `SKILL.md`.** `playing-field/` holds
+  `board.sh` and no `SKILL.md`; it is documented as a known non-skill directory in
+  `agent-configuration.md §Skills` and is not drift.
 
 - Is the `agent-reviewer` skill current? Specifically: does its check list match the
   check categories in `build-practices.md §Agent review on every commit`? If a
@@ -144,14 +164,12 @@ frontmatter `name` and `description`) against the normative skill table in
   table needs to catch up with, or orphans.)
 - Do skill frontmatter `name` fields match the directory names?
 
-⚑ The table above mirrors `agent-configuration.md §Skills`, and that section is itself
-stale as of 2026-07-22: it names `kerf-workflow`, `go-test-run`,
-`project-quality-gates`, `git-task-commit`, and `spec-finalize`, none of which exist in
-`.claude/skills/`, and omits eight that do (`agent-comms`, `harmonik-dispatch`,
-`harmonik-lifecycle`, `keeper`, `major-issue-fanout`, `orchestrator-rules`,
-`status-report`, `watch`). Do not emit `skill-missing` for the five phantom rows —
-the correct finding is `foundation-doc-stale` against `agent-configuration.md §Skills`,
-which needs reconciling with the live directory before this check is trustworthy again.
+⚑ Both lists were reconciled with the live directory on 2026-07-22 (the five phantom
+rows — `kerf-workflow`, `go-test-run`, `project-quality-gates`, `git-task-commit`,
+`spec-finalize` — were removed, and the nine real skills they omitted were added).
+Before emitting `skill-missing`, re-derive the live set with `ls .claude/skills/*/SKILL.md`
+rather than trusting either table: a table that has drifted again is `skill-registry-drift`
+against the table, not a missing skill.
 
 Findings → flag: `skill-registry-drift`
 

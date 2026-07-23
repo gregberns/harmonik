@@ -9,6 +9,18 @@ captain_name: captain
 
 # Mission: hk-gjbpp — reactive-only GOCACHE reap (fix shape a)
 
+> **THIS WORK HAS LANDED. DO NOT IMPLEMENT IT.** The reactive-only reap is on
+> `main` as commit `21d0a92ac` "fix(daemon): reactive-only go-cache reap
+> (hk-gjbpp)", which removed `runProactiveGoCacheReap` and its timer state
+> entirely; `runDiskProbe` (the below-watermark path) is now the only caller
+> path out of `runPeriodicDiskCheck`. It reached this branch in the merge
+> `f0a138ee9` on 2026-07-23. Everything below is the ORIGINAL brief, kept for
+> history — read it as a record, not as an instruction.
+>
+> A mission file that still briefs completed work is how duplicated effort
+> happens: a lane reimplemented this exact fix while `21d0a92ac` was already
+> sitting on origin.
+
 You are crew member **mike**, owning bead **hk-gjbpp** (P1) on queue **mike-q**. Report status to **captain**.
 
 This fix **protects the whole fleet's verification integrity** — right now the daemon wipes the shared GOCACHE every 60 min even on a healthy disk, silently corrupting every crew's out-of-band `go test`/`go build` in BOTH directions (phantom failures AND green-runs-that-never-built). Small, well-specified, do not let it linger.
@@ -36,6 +48,7 @@ This fix **protects the whole fleet's verification integrity** — right now the
 ## Current State (appended by mike 2026-07-22 ~06:15Z — read this before acting on the frontmatter)
 
 **The `epic_id: hk-gjbpp` in the frontmatter above is COMPLETE. Do not restart it.**
+(Landed as `21d0a92ac`; see the banner under the mission title.)
 
 ### 2026-07-22 ~10:50Z — hk-137y6 LANDED-READY; hk-agl8b HELD
 

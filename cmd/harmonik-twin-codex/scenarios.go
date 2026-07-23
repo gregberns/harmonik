@@ -31,6 +31,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -181,14 +182,14 @@ func commitWithRefsTrailer(worktreePath, beadID string) error {
 		return fmt.Errorf("commitWithRefsTrailer: write sentinel: %w", err)
 	}
 
-	gitEnv := append(os.Environ(), //nolint:gocritic // appendAssign: intentional new slice
+	gitEnv := append(os.Environ(),
 		"GIT_AUTHOR_NAME=harmonik-twin-codex",
 		"GIT_AUTHOR_EMAIL=codex-twin@harmonik.local",
 		"GIT_COMMITTER_NAME=harmonik-twin-codex",
 		"GIT_COMMITTER_EMAIL=codex-twin@harmonik.local",
 	)
 
-	addCmd := exec.Command("git", "add", sentinelName) //nolint:gosec // G204: sentinelName is a timestamp-derived literal
+	addCmd := exec.CommandContext(context.Background(), "git", "add", sentinelName) //nolint:gosec // G204: sentinelName is a timestamp-derived literal
 	addCmd.Dir = worktreePath
 	addCmd.Env = gitEnv
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -201,7 +202,7 @@ func commitWithRefsTrailer(worktreePath, beadID string) error {
 	}
 	commitMsg := "codex twin commit\n\nRefs: " + refsLine
 
-	commitCmd := exec.Command("git", "commit", "-m", commitMsg) //nolint:gosec // G204: commitMsg is a controlled literal
+	commitCmd := exec.CommandContext(context.Background(), "git", "commit", "-m", commitMsg) //nolint:gosec // G204: commitMsg is a controlled literal
 	commitCmd.Dir = worktreePath
 	commitCmd.Env = gitEnv
 	if out, err := commitCmd.CombinedOutput(); err != nil {

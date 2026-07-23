@@ -10,7 +10,7 @@ import (
 
 // newTestState builds a twinState with a deterministic seed session_id and an
 // isolated HANDOFF path under t.TempDir() — no exec, no tmux, no real scripts.
-func newTestState(t *testing.T) (*twinState, string) {
+func newTestState(t *testing.T) (state *twinState, handoffPath string) {
 	t.Helper()
 	handoff := filepath.Join(t.TempDir(), "HANDOFF-twin.md")
 	return &twinState{
@@ -291,7 +291,10 @@ func TestBuildStatusJSON_WindowSetPresentAndCorrect(t *testing.T) {
 	if !ok || int64(top) != 1_000_000 {
 		t.Fatalf(".context_window_size missing/wrong; json: %s", raw)
 	}
-	cw := generic["context_window"].(map[string]any)
+	cw, ok := generic["context_window"].(map[string]any)
+	if !ok {
+		t.Fatalf(".context_window missing/wrong; json: %s", raw)
+	}
 	// Nested fallback path (.context_window.context_window_size).
 	nested, ok := cw["context_window_size"].(float64)
 	if !ok || int64(nested) != 1_000_000 {
@@ -461,7 +464,7 @@ func isHex(r rune) bool {
 }
 
 func contains(haystack, needle string) bool {
-	return len(needle) == 0 || (len(haystack) >= len(needle) && indexOfTest(haystack, needle) >= 0)
+	return needle == "" || (len(haystack) >= len(needle) && indexOfTest(haystack, needle) >= 0)
 }
 
 func indexOfTest(h, n string) int {

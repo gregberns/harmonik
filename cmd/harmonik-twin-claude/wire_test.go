@@ -269,7 +269,6 @@ func TestEmitAgentHeartbeat(t *testing.T) {
 		heartbeatPhaseShuttingDown,
 	}
 	for _, phase := range phases {
-		phase := phase
 		t.Run(string(phase), func(t *testing.T) {
 			e, buf := twinWireFixtureEmitter(t)
 			if err := e.emitAgentHeartbeat("sess-001", phase); err != nil {

@@ -43,6 +43,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -99,7 +100,10 @@ func run() int {
 
 	// Handle --version before any further validation.
 	if *showVersion {
-		writeVersion(os.Stdout)
+		if err := writeVersion(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik-twin-generic: write version: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 
@@ -141,7 +145,11 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "harmonik-twin-generic: dial %s: %v\n", *socketPath, err)
 		return 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			log.Printf("harmonik-twin-generic: close socket: %v", closeErr)
+		}
+	}()
 
 	// Script-driver loop (hk-ahvq.48.3): when a script file is loaded, run the
 	// declared message stream on the wire-protocol path.  This satisfies HC-036

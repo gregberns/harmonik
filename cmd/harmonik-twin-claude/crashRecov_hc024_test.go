@@ -434,7 +434,6 @@ func TestCrashRecov_HC024_KillPointEnumCoverage(t *testing.T) {
 	}
 
 	for _, kp := range allKillPoints {
-		kp := kp
 		t.Run(string(kp), func(t *testing.T) {
 			t.Parallel()
 			if _, ok := crashRecovFixtureExpectedSubReason[kp]; !ok {
@@ -473,7 +472,6 @@ func TestCrashRecov_HC024_KillPointScriptsWellFormed(t *testing.T) {
 	}
 
 	for _, kp := range allKillPoints {
-		kp := kp
 		t.Run(string(kp), func(t *testing.T) {
 			t.Parallel()
 			sf := crashRecovFixtureKillPointScript(kp)
@@ -583,7 +581,6 @@ func TestCrashRecov_HC024_AgentFailedPayloadShape(t *testing.T) {
 	}
 
 	for _, tc := range crashSubReasons {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var buf bytes.Buffer

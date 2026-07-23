@@ -73,7 +73,6 @@ func TestHeartbeatModeValid(t *testing.T) {
 		{"unknown", false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.hm), func(t *testing.T) {
 			if got := tc.hm.Valid(); got != tc.wantOK {
 				t.Errorf("heartbeatMode(%q).Valid() = %v, want %v", tc.hm, got, tc.wantOK)

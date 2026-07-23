@@ -859,7 +859,6 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 			heartbeatPhaseShuttingDown,
 		}
 		for _, phase := range phasesReset {
-			phase := phase
 			t.Run(string(phase), func(t *testing.T) {
 				t.Parallel()
 				var buf bytes.Buffer

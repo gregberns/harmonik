@@ -39,6 +39,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"flag"
@@ -470,7 +471,6 @@ func writeHandoffNonce(path, nonce string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // G301: matches .harmonik conventions
 		return err
 	}
-	//nolint:gosec // G306: 0600 — keeper-owned handoff file
 	return os.WriteFile(path, []byte(nonce+"\n"), 0o600)
 }
 
@@ -478,7 +478,9 @@ func writeHandoffNonce(path, nonce string) error {
 // the scripts read (HARMONIK_PROJECT, HARMONIK_AGENT) plus the inherited
 // environment so HARMONIK_KEEPER_WINDOW_SIZE passes through. Best-effort.
 func runStatusline(cfg config, jsonLine []byte) {
-	cmd := exec.Command(cfg.statusline) //nolint:gosec // G204: operator-supplied script path
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, cfg.statusline) //nolint:gosec // G204: operator-supplied script path
 	cmd.Stdin = bytes.NewReader(jsonLine)
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+cfg.project,
@@ -492,7 +494,9 @@ func runStatusline(cfg config, jsonLine []byte) {
 // HARMONIK_KEEPER_AGENT for backward compat (hk-p9kw). Pass the agent positionally
 // as belt-and-suspenders.
 func runIdleHook(cfg config) {
-	cmd := exec.Command(cfg.idleHook, cfg.agent) //nolint:gosec // G204: operator-supplied script path
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, cfg.idleHook, cfg.agent) //nolint:gosec // G204: operator-supplied script path
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+cfg.project,
 		"HARMONIK_AGENT="+cfg.agent,

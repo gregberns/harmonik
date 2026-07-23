@@ -334,7 +334,6 @@ func TestWireFixtureMalformedJSONClosesWithError(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			r := newWireReader(strings.NewReader(tc.line))
 			msg, err := r.readControlMsg()

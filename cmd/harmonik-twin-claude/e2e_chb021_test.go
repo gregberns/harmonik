@@ -391,7 +391,6 @@ func TestCHB021_AllScenariosRecognised(t *testing.T) {
 	}
 
 	for _, sc := range scenarios {
-		sc := sc
 		t.Run(sc.name, func(t *testing.T) {
 			t.Parallel()
 

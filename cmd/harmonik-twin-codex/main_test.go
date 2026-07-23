@@ -722,7 +722,6 @@ func TestThreadStartedAlwaysFirst(t *testing.T) {
 	}
 
 	for _, tc := range scenarios {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			// Each trailer-commit or edits-no-commit needs a fresh git dir.
@@ -760,7 +759,6 @@ func TestTerminalEventIsLast(t *testing.T) {
 	}
 
 	for _, tc := range scenarios {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			if tc.name == ScenarioTrailerCommit {

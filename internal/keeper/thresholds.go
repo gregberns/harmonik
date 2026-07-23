@@ -119,7 +119,8 @@ const DefaultBootGracePeriod = 5 * time.Minute
 // part of this sweep. Refs: hk-gwz6.
 //
 // INTENTIONAL EXCLUSIONS (left at their construction sites, not promoted here):
-// DefaultBootGracePeriod (opt-in per construction site — see :74-85 above), the
+// DefaultBootGracePeriod (opt-in per construction site — see its doc comment
+// above), the
 // WarnCooldown negative-disabled sentinel, the MaxHandoffTimeouts==0
 // no-escalation sentinel, and the HeartbeatThreshold = Staleness/2 derivation.
 const (

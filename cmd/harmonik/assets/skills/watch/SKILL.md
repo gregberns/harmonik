@@ -234,7 +234,11 @@ this gate passes.
 
 ### Respawn owner (no in-daemon auto-respawn)
 
-There is **no in-daemon crew auto-respawn** (`crewstart.go:281-284`). If the watch
+There is **no in-daemon crew auto-respawn** — see the invariant-I1 comment on the
+independent-session path in `HandleCrewStart`
+(`internal/daemon/crewstart.go`): crew restart is driven by the keeper or
+externally via crew stop+start, so no agent-only respawn exists in that package.
+If the watch
 goes down, the respawn path is:
 
 1. ops-monitor detects watch-down (component-liveness probe: last_seen >10 min OR

@@ -16,15 +16,28 @@ orchestrator. Beads are machine-local, so this tracked doc is the durable record
 >   `install-hooks`/`check-hooks` Makefile targets + the CI `hooks` job removed;
 >   `bootstrap` == `make tools`; `validate-commit-msg.sh` + `secret-scan.sh`
 >   preserved for the agent-driven flow; docs reconciled. Both beads CLOSED.
-> - **Item 3 `hk-8dtiv` — RECON DONE, migration IN PROGRESS.** Full linter-verified
->   plan at [`hk-8dtiv-close-errcheck-recon.md`](hk-8dtiv-close-errcheck-recon.md):
->   **99** production Close sites newly fire (17 daemon = deferred with the
->   extraction; **82 non-daemon = this batch**, 16 packages); `_test.go` exclusion
->   keeps test noise at 0. Bug 1 (sessiondata lost-flush) + Bug 2 (handlerpause
->   dropped dir-fsync) confirmed real; Bug 3 is idiom-only. 7-commit batching,
->   bug-fixes first, **config flip LAST** — and the flip is gated on the 15
->   remaining daemon sites, which stay sequenced with the `internal/daemon`
->   extraction lane (Bug 2's fix is pulled forward as a standalone bugfix).
+> - **Item 3 `hk-8dtiv` — ALL 82 NON-DAEMON SITES DONE; config flip + daemon
+>   sites REMAIN.** Full linter-verified plan at
+>   [`hk-8dtiv-close-errcheck-recon.md`](hk-8dtiv-close-errcheck-recon.md).
+>   Landed this session, each independently reviewed APPROVE:
+>     - Bug 1 — sessiondata Append lost-flush (`91beb147`)
+>     - Bug 2 — daemon handlerpause dropped parent-dir fsync barrier (`35d98885`,
+>       pulled forward from the daemon-deferred set)
+>     - lifecycle 20 (`680efbf0`) · cmd/harmonik 28 (`309ee66b`) · 10 leaf
+>       packages 13 (`ea4a47c7`) · keeper+schedule+crew 17 (`762bb9ad`)
+>       — plus sessiondata's 3 read sites folded into Bug 1. **= all 82.**
+>   **REMAINING (do NOT skip before the flip):**
+>     1. The ~16 `internal/daemon` Close sites (recon §3b, minus Bug 2's :229) —
+>        sequenced with the `internal/daemon` extraction lane, NOT done here.
+>     2. **The `.golangci.yml` config flip (recon §5) — lands LAST**, only after
+>        the daemon sites, or the full `golangci-lint run` goes red on the
+>        unmigrated daemon Closes. It also must reconcile the ~70-line rationale
+>        block + the agent-reviewer SKILL.md (and its byte-identical embed source)
+>        + `quality-checks.md` prose, or agent-config-reviewer flags enforced-config
+>        drift.
+>   Note: the migrations are behavior-preserving pre-compliance — the exclusions
+>   are still armed until the flip, so nothing enforces them yet; the value is the
+>   handled errors + a smaller, safer eventual flip.
 
 > **How to work these (operator directive, 2026-07-23):** parallelize as much as
 > possible and structure the work with **ultrawork** (multi-agent workflows /

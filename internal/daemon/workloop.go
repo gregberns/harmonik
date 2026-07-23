@@ -3048,6 +3048,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// RSM-010: the run-lifecycle port bundle for this run. Reaching a dependency
 	// through rp.<Port> is byte-identical to the pre-port deps field access.
 	rp := deps.runPorts()
+	// RSM-010: the immutable per-run value bundle. env is a read-only projection
+	// of deps plus the dispatched item's identity; reading env.<Field> is
+	// byte-identical to the deps/parameter read it replaces.
+	env := deps.runEnv(runID, beadRecord, queueName, queueID, queueGroupIndex, queueItemIndex,
+		itemWorkflowMode, itemWorkflowRef, itemTemplateParams, itemLocalOnly, itemWorkerTarget)
 	// mport.Submit() is the merge exclusion-domain submit surface (RSM-015).
 	mport := rp.Merge
 	beadID := beadRecord.BeadID
@@ -3165,7 +3170,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hk-hiqrl: itemWorkflowMode is a tier-0 per-item override set by the
 	// CLI --review-loop flag via queue.Item.WorkflowMode. When set and valid
 	// it takes precedence over the full EM-012a walk.
-	workflowMode := resolveWorkflowMode(ctx, beadRecord, deps.workflowModeDefault, deps.bus)
+	workflowMode := resolveWorkflowMode(ctx, beadRecord, env.WorkflowModeDefault, deps.bus)
 	if itemWorkflowMode != "" {
 		if candidate := core.WorkflowMode(itemWorkflowMode); candidate.Valid() {
 			workflowMode = candidate
@@ -3287,7 +3292,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// against the correct repository.
 	earlyBrCfg, _ := parseBranchingSection(beadRecord.Description) // errors treated as absent per BI-009b
 	if earlyBrCfg.TargetRepo != "" && earlyBrCfg.TargetRepo != deps.projectDir {
-		if !isInAllowedRepos(earlyBrCfg.TargetRepo, deps.allowedRepos) {
+		if !isInAllowedRepos(earlyBrCfg.TargetRepo, env.AllowedRepos) {
 			crErr := &CrossRepoUnsafeError{TargetRepo: earlyBrCfg.TargetRepo, ProjectDir: deps.projectDir}
 			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, crErr)
 			reopenTID, _ := deps.tidGen.Next()

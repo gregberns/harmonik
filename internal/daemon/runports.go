@@ -342,3 +342,55 @@ func (deps *workLoopDeps) runPorts() RunPorts {
 		Clock:   deps.clock,
 	}
 }
+
+// runEnv assembles the immutable per-run value bundle: the daemon-level
+// configuration read off deps plus the dispatched item's identity and
+// per-item overrides passed in by the caller. Every RunEnv field is
+// populated — a partially-built bundle is a trap for the next reader — and
+// each one is a straight copy of the value the run path read directly
+// before, so reaching a value through env.<Field> is byte-identical to the
+// pre-bundle deps field access (RSM-010).
+//
+// ItemWorkflowRef holds the ref exactly as dispatched, BEFORE the EM-012a
+// tier-0/tier-1 resolveWorkflowRef resolution that beadRunOne applies to its
+// own local. Nothing on the run path may read env.ItemWorkflowRef.
+func (deps *workLoopDeps) runEnv(
+	runID core.RunID,
+	beadRecord core.BeadRecord,
+	queueName string,
+	queueID *string,
+	queueGroupIndex *int,
+	queueItemIndex int,
+	itemWorkflowMode string,
+	itemWorkflowRef string,
+	itemTemplateParams map[string]string,
+	itemLocalOnly bool,
+	itemWorkerTarget string,
+) RunEnv {
+	return RunEnv{
+		ProjectDir:   deps.projectDir,
+		TargetBranch: deps.targetBranch,
+		BrPath:       deps.brPath,
+
+		ProtectBranches: deps.protectBranches,
+		AllowedRepos:    deps.allowedRepos,
+
+		WorkflowModeDefault: deps.workflowModeDefault,
+		DefaultHarness:      deps.defaultHarness,
+		ProjectCfg:          deps.projectCfg,
+
+		RunID:      runID,
+		BeadRecord: beadRecord,
+
+		QueueName:       queueName,
+		QueueID:         queueID,
+		QueueGroupIndex: queueGroupIndex,
+		QueueItemIndex:  queueItemIndex,
+
+		ItemWorkflowMode:   itemWorkflowMode,
+		ItemWorkflowRef:    itemWorkflowRef,
+		ItemTemplateParams: itemTemplateParams,
+		ItemLocalOnly:      itemLocalOnly,
+		ItemWorkerTarget:   itemWorkerTarget,
+	}
+}

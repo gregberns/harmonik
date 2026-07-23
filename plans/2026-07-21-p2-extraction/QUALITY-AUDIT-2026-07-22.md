@@ -64,6 +64,10 @@ core subsystems, a 90% floor for other `internal/**`, and a 0.3pp regression cap
   wiring it would break every merge, because `internal/substrate` sits at 83.1%;
 - `is_internal` is computed from an `internal/` prefix, so **`cmd/**` is outside every gate** —
   that is 26,830 non-test LOC with no coverage floor and no baseline entry;
+  > **[Correction 2026-07-23]** No longer true: commit `42010150d` (2026-07-22) added
+  > `scripts/cmd-coverage-gate.sh` + `scripts/cmd-coverage.baseline`, wired into tier-2 `make check`.
+  > It is a **ratchet** (per-package regression cap), not yet an absolute floor. The remaining gap is
+  > *floor + drain*, not *existence*. See `plans/2026-07-21-p2-extraction/cmd-coverage-drain-plan.md`.
 - the committed `coverage.baseline` itself records packages far below the 90% floor it claims to
   enforce: `eventbus` 58.4, `daemon` 58.9, `queue/cli` 65.3, `queue` 66.6, `crew` 68.1,
   `keeper` 72.6, `lifecycle` 76.5, `workspace` 80.8, `handler` 83.0.
@@ -175,6 +179,9 @@ is identified down to the line. What follows is only what no unit owns.
    `main.go:run` (254), `runBeadSubcommandIO` (140), `runCommsRecvFollowIO` (119),
    `runHarnessWithSigs` (112), `runKeeperDoctor` (66) — are exactly the "extract me" shape E5 exists
    to address in the daemon, with no equivalent plan.
+   > **[Correction 2026-07-23]** cmd/harmonik now measures **45.9%** coverage (not 0/ungated) and IS
+   > gated as of `42010150d` (a ratchet — `scripts/cmd-coverage-gate.sh`). Drain plan with a 9-chunk
+   > parallelizable decomposition and a floor proposal: `cmd-coverage-drain-plan.md`.
 
 2. **`internal/codexwire` — 1,400 LOC in a single file, 57.9/kLOC, of which 74 are `revive`.**
    Zero mentions anywhere in `plans/2026-07-21-p2-extraction/`. Given the Codex-first priority, a

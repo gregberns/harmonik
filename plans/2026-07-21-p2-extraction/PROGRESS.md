@@ -1,8 +1,7 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-23 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c landed.
-**RT16 is VERIFIED AND UNCOMMITTED**, awaiting the independent review gate — see the RT16 section below.
+**Last updated:** 2026-07-23 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c + **RT16** landed.
 The concurrent quality lane's working tree is fully drained to disk (§8).
 
 > ## ⚠️ We nearly collided at 08:00 — read this
@@ -46,7 +45,7 @@ plans, then began landing them one commit at a time.
 | **3. Execute (P2 core)** | 9 slices, sequential | **DONE — 9/9, every verify `is_pure_move: true`** |
 | **4. Punch list** | verifier findings applied | **DONE** — `ffc5415a` |
 | **5. Differential verification** | clean before/after pair, identical scope | **DONE — no regression** (see below) |
-| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, RT19c landed; **RT16 verified, in the working tree, NOT yet committed** (awaiting review); RT17/18/19/lift planned | **IN PROGRESS** |
+| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, RT19c, **RT16** landed; RT17/18/19/lift planned | **IN PROGRESS** |
 | **7. E4d re-plan** | overturned "impossible"; 3 prep slices ready, E4d-3 parked | **DONE** |
 
 ### Verification verdict (Phase 5)
@@ -78,6 +77,8 @@ against one run. Recorded in `00-test-oracle-baseline.md`.
 | 12 | **E4c** | worker-registry boot wiring → `internal/workers` | **LANDED — verify PASS**; `pure_move: false` **by design** (one declared signature change, confirmed the only delta) | `646748f3` |
 | 13 | **RT19b** | the stranded run-path helpers → `internal/substrate`, `internal/harness/shared`, new `internal/runlaunch` | **COMPLETE — 3/3 commits, reviewer APPROVE on each**, pure move throughout | `e82311b9` · `efeeb047` · `fd608c01` |
 | 14 | **RT14** | *nothing* — the open-coded agent_ready WAIT is RETIRED, not relocated. Both call sites bind onto the pre-existing `dispatchSegment` seam | **COMPLETE — 3/3 commits, reviewer BLOCK→APPROVE on A, APPROVE on B and C.** Metric is **seam uniformity, not LOC** (see below) | `229e6e91` · `cb89e35e` · `7d448afb` |
+| 15 | **RT16** | *nothing* — the run path stops bypassing the pre-existing `EmitterPort` seam. 108 raw field reads → 8 port reads | **COMPLETE — reviewer REQUEST_CHANGES → fixed → landed.** Both defects were in the freeze gate, neither in the conversion | `4cd9179d6` |
+| 16 | **buffer-name** | *nothing* — `internal/daemon`'s `bufferName` routed through `tmux.BufferName`, duplicated sanitizer deleted | **LANDED — reviewer APPROVE**; failing-first proven on ten hostile session ids | `5a3ac7877` |
 
 ### Result
 
@@ -601,14 +602,13 @@ independent `agent-reviewer` sub-agent pass was possible on any of the seven com
 `Reviewed-By: self` and a verdict that says so explicitly rather than claiming independence. **These
 seven commits are the ones in the E5 stream that still want an independent pair of eyes.**
 
-### RT16 — the run path reaches its bus through EmitterPort (VERIFIED, NOT YET COMMITTED)
+### RT16 — the run path reaches its bus through EmitterPort (COMPLETE)
 
-> **Status, stated precisely so this document does not assert something git cannot confirm:** the slice
-> is complete and every gate below has been run and passed, but it is **in the working tree, not in
-> `git log`**. It is held for the independent review gate. Do not read the numbers below as describing
-> a commit — check `git log` before believing any "landed" claim in this file, including this one.
+Landed as `4cd9179d6`, after an independent review returned **REQUEST_CHANGES** on the freeze gate
+(two defects, both fixed before the commit — see the correction block below). The conversion itself
+was cleared exhaustively rather than sampled and needed no change.
 
-One commit's worth of work. **This slice moves nothing out of `internal/daemon` and changes no behaviour at all** —
+One commit. **This slice moves nothing out of `internal/daemon` and changes no behaviour at all** —
 reading its `+25` LOC as the outcome misreads it. The added lines are five port bindings and their
 godoc. What it buys is that RT18's re-signature of the five run-path functions becomes an 8-line
 change instead of a 108-line one.

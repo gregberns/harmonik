@@ -44,6 +44,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -317,7 +318,9 @@ func newSessionIDInterceptor(inner io.Reader, cb func(string)) *SessionIDInterce
 			"daemon: version negotiation: handler_capabilities absent within %s: %w",
 			capsAbsentTimeout, handlercontract.ErrProtocolMismatch)
 		if c, ok := s.inner.(io.Closer); ok {
-			_ = c.Close()
+			if closeErr := c.Close(); closeErr != nil {
+				slog.WarnContext(context.Background(), "daemon: version negotiation: close inner reader to unwedge Read", "err", closeErr)
+			}
 		}
 	})
 	return s

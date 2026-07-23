@@ -4569,7 +4569,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: create pi-stdout.log: %v (stdout capture disabled)\n", ferr)
 		} else {
 			piStdoutFile = f
-			defer func() { _ = piStdoutFile.Close() }()
+			defer func() {
+				if closeErr := piStdoutFile.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: close pi-stdout.log: %v\n", closeErr)
+				}
+			}()
 		}
 	}
 	if implIsSessionIDCapturedWL {

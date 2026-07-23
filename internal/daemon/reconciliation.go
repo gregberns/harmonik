@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -343,7 +344,9 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 		return fmt.Errorf("reconciliation Cat-BL3: open %s: %w", logPath, openErr)
 	}
 	conflicts, beadIDs := parseConflictLog(f)
-	_ = f.Close()
+	if closeErr := f.Close(); closeErr != nil {
+		slog.WarnContext(ctx, "reconciliation Cat-BL3: close conflict log", "err", closeErr, "path", logPath)
+	}
 
 	if len(conflicts) == 0 {
 		// File was non-empty but no parseable lines — truncate anyway to avoid

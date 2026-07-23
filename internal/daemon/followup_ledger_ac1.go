@@ -16,8 +16,10 @@ package daemon
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 )
 
@@ -39,7 +41,11 @@ func loadFollowUpLedger(path string) (map[string]struct{}, error) {
 		}
 		return nil, fmt.Errorf("loadFollowUpLedger: open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "loadFollowUpLedger: close ledger", "err", closeErr, "path", path)
+		}
+	}()
 
 	result := make(map[string]struct{})
 	scanner := bufio.NewScanner(f)

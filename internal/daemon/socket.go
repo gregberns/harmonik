@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -244,7 +246,9 @@ func removeStaleSocket(sockPath string) error {
 	conn, err := (&net.Dialer{}).DialContext(probeCtx, "unix", sockPath)
 	if err == nil {
 		// Dial succeeded → a live daemon owns this socket.
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "daemon: stale-socket probe: close probe conn", "err", closeErr)
+		}
 		return errLiveDaemon
 	}
 	// Any dial error (ECONNREFUSED, context deadline, no-such-file, etc.)
@@ -394,7 +398,20 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	if err != nil {
 		return fmt.Errorf("daemon: Serve: listen unix %q: %w", sockPath, err)
 	}
-	defer func() { _ = ln.Close() }()
+	// ln is closed from two paths — the Serve-return defer and the ctx-cancel
+	// goroutine below (which unblocks Accept). sync.Once collapses that
+	// deliberate double-close to a single Close so a genuine close error is
+	// surfaced once, without the "use of closed network connection" noise a
+	// second Close would log on every clean shutdown.
+	var closeListenerOnce sync.Once
+	closeListener := func() {
+		closeListenerOnce.Do(func() {
+			if closeErr := ln.Close(); closeErr != nil {
+				slog.WarnContext(ctx, "daemon: Serve: close listener", "err", closeErr)
+			}
+		})
+	}
+	defer closeListener()
 
 	// Restrict access to the daemon's own uid per specs/process-lifecycle.md PL-003.
 	if err := os.Chmod(sockPath, 0o600); err != nil {
@@ -404,7 +421,7 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	// Close the listener when ctx is cancelled so Accept unblocks.
 	go func() {
 		<-ctx.Done()
-		_ = ln.Close()
+		closeListener()
 	}()
 
 	// Build the router ONCE, before the Accept loop (never per-connection).
@@ -445,7 +462,11 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 // best-effort bad_envelope ack — the relay will have exited already, so the
 // write is best-effort.
 func handleSocketConn(ctx context.Context, conn net.Conn, hr HookRelayHandler, sub SubscribeHandler, router *socketrouter.Router) {
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			slog.WarnContext(ctx, "daemon: handleSocketConn: close conn", "err", closeErr)
+		}
+	}()
 
 	raw, err := decodeRawMap(conn)
 	if err != nil {

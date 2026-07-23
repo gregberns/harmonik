@@ -60,8 +60,10 @@ package daemon
 // Spec ref: agent-comms spec §5 Q1 / T7 (07-tasks.md).
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,7 +174,11 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	if err != nil {
 		return fmt.Errorf("commscursor: Advance %q: open lockfile %q: %w", name, lockPath, err)
 	}
-	defer lockFd.Close()
+	defer func() {
+		if closeErr := lockFd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "commscursor: Advance: close lockfile", "err", closeErr, "path", lockPath)
+		}
+	}()
 
 	if err := acquireCursorLock(int(lockFd.Fd()), cursorLockTimeout); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: acquire lock: %w", name, err)
@@ -208,8 +214,10 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	tmpPath := tmp.Name()
 	ok := false
 	defer func() {
-		_ = tmp.Close()
 		if !ok {
+			if closeErr := tmp.Close(); closeErr != nil {
+				slog.WarnContext(context.Background(), "commscursor: Advance: close temp during cleanup", "err", closeErr, "path", tmpPath)
+			}
 			_ = os.Remove(tmpPath) //nolint:errcheck // cleanup; unactionable
 		}
 	}()

@@ -26,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -221,9 +222,11 @@ func writeRestartRecord(path string, rec restartRecord) error {
 	tmpPath := tmp.Name()
 	ok := false
 	defer func() {
-		_ = tmp.Close()
 		if !ok {
-			_ = os.Remove(tmpPath)
+			if closeErr := tmp.Close(); closeErr != nil {
+				slog.WarnContext(context.Background(), "restartbackoff: close temp during cleanup", "err", closeErr, "path", tmpPath)
+			}
+			_ = os.Remove(tmpPath) //nolint:errcheck // cleanup; unactionable
 		}
 	}()
 	if _, writeErr := tmp.Write(data); writeErr != nil {

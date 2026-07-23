@@ -203,12 +203,12 @@ func atomicWriteHandlerStateDaemon(statePath string, snapshots []HandlerPauseSta
 
 	// Steps 2–4: write, fsync, close.
 	if _, writeErr := tmp.Write(data); writeErr != nil {
-		_ = tmp.Close()
+		writeErr = errors.Join(writeErr, tmp.Close())
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: write %s: %w", tmpPath, writeErr)
 	}
 	if syncErr := tmp.Sync(); syncErr != nil {
-		_ = tmp.Close()
+		syncErr = errors.Join(syncErr, tmp.Close())
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: fsync %s: %w", tmpPath, syncErr)
 	}

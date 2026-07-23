@@ -64,7 +64,7 @@ func b3aROPTempProject(t *testing.T, brPath string) (adapter *brcli.Adapter, pro
 	t.Helper()
 	projectDir = t.TempDir()
 
-	initCmd := exec.Command(brPath, "init")
+	initCmd := exec.CommandContext(t.Context(), brPath, "init")
 	initCmd.Dir = projectDir
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		t.Fatalf("b3aROPTempProject: br init in %s: %v\n%s", projectDir, err, out)
@@ -82,7 +82,7 @@ func b3aROPTempProject(t *testing.T, brPath string) (adapter *brcli.Adapter, pro
 func b3aROPCreateBead(t *testing.T, brPath, projectDir, title string) core.BeadID {
 	t.Helper()
 
-	cmd := exec.Command(brPath, "create", "--title", title, "--type", "task")
+	cmd := exec.CommandContext(t.Context(), brPath, "create", "--title", title, "--type", "task")
 	cmd.Dir = projectDir
 
 	var out bytes.Buffer
@@ -113,7 +113,7 @@ func b3aROPSetInProgress(t *testing.T, brPath, projectDir string, beadID core.Be
 	t.Helper()
 
 	//nolint:gosec // G204: brPath from exec.LookPath; args are static
-	cmd := exec.Command(brPath, "update", string(beadID), "--status", "in_progress")
+	cmd := exec.CommandContext(t.Context(), brPath, "update", string(beadID), "--status", "in_progress")
 	cmd.Dir = projectDir
 
 	var out bytes.Buffer

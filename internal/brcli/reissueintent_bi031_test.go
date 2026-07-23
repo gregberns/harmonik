@@ -45,7 +45,7 @@ func reissueFixtureEntry(t *testing.T, beadID core.BeadID) core.IntentLogEntry {
 // colons replaced by underscores (same encoding used by DeleteIntentLogAndSyncParent).
 func reissueFixtureIntentFile(t *testing.T, intentLogDir string, entry core.IntentLogEntry) string {
 	t.Helper()
-	if err := os.MkdirAll(intentLogDir, 0o755); err != nil {
+	if err := os.MkdirAll(intentLogDir, 0o700); err != nil {
 		t.Fatalf("reissueFixtureIntentFile: MkdirAll: %v", err)
 	}
 	jsonStr := `{"idempotency_key":"` + entry.IdempotencyKey +

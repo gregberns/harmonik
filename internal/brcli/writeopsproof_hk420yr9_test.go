@@ -68,15 +68,14 @@ func b3bWOPTempProject(t *testing.T, brPath string) (adapter *brcli.Adapter, pro
 	t.Helper()
 	projectDir = t.TempDir()
 
-	initCmd := exec.Command(brPath, "init")
+	initCmd := exec.CommandContext(t.Context(), brPath, "init")
 	initCmd.Dir = projectDir
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		t.Fatalf("b3bWOPTempProject: br init in %s: %v\n%s", projectDir, err, out)
 	}
 
 	intentLogDir = filepath.Join(projectDir, ".harmonik", "beads-intents")
-	//nolint:gosec // G301: 0755 matches production .harmonik directory convention
-	if err := os.MkdirAll(intentLogDir, 0o755); err != nil {
+	if err := os.MkdirAll(intentLogDir, 0o700); err != nil {
 		t.Fatalf("b3bWOPTempProject: MkdirAll %s: %v", intentLogDir, err)
 	}
 
@@ -92,7 +91,7 @@ func b3bWOPTempProject(t *testing.T, brPath string) (adapter *brcli.Adapter, pro
 func b3bWOPCreateBead(t *testing.T, brPath, projectDir string) core.BeadID {
 	t.Helper()
 
-	cmd := exec.Command(brPath, "create", "--title", "b3b-write-ops-test", "--type", "task")
+	cmd := exec.CommandContext(t.Context(), brPath, "create", "--title", "b3b-write-ops-test", "--type", "task")
 	cmd.Dir = projectDir
 
 	var out bytes.Buffer
@@ -507,7 +506,7 @@ func TestB3b_ConcurrentClose_SerializesNoDoubleClose_RealBr(t *testing.T) {
 			// to avoid directory-fsync races (terminalMu serializes writes but
 			// using distinct dirs keeps intent files cleanly scoped per call).
 			closeIntentDir := filepath.Join(intentLogDir, fmt.Sprintf("close%d", idx))
-			if mkErr := os.MkdirAll(closeIntentDir, 0o755); mkErr != nil {
+			if mkErr := os.MkdirAll(closeIntentDir, 0o700); mkErr != nil {
 				errs[idx] = fmt.Errorf("MkdirAll closeIntentDir[%d]: %w", idx, mkErr)
 				return
 			}

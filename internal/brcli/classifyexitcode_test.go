@@ -18,7 +18,7 @@ func b87228FixtureMockBinary(t *testing.T, exitCode int) string {
 	path := filepath.Join(dir, "br")
 	script := fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("b87228FixtureMockBinary: write mock: %v", err)
 	}
 	return path

@@ -21,7 +21,7 @@ func timeoutFixtureMockBinary(t *testing.T, stdout, stderr string, exitCode int)
 	path := filepath.Join(dir, "br")
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' %q\nprintf '%%s' %q >&2\nexit %d\n", stdout, stderr, exitCode)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("timeoutFixtureMockBinary: write mock: %v", err)
 	}
 	return path
@@ -39,7 +39,7 @@ func timeoutFixtureSleepBinary(t *testing.T, d time.Duration) string {
 	seconds := d.Seconds()
 	script := fmt.Sprintf("#!/bin/sh\nsleep %.3f\nexit 0\n", seconds)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("timeoutFixtureSleepBinary: write mock: %v", err)
 	}
 	return path

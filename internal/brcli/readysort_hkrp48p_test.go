@@ -45,7 +45,9 @@ func TestReadyPinsSortPriority_hkrp48p(t *testing.T) {
 	// Ready will produce a parse error because the spy binary writes empty
 	// stdout. That is expected and not under test here — we only care about
 	// the argv forwarded to br.
-	_, _ = adapter.Ready(context.Background())
+	if _, readyErr := adapter.Ready(context.Background()); readyErr == nil {
+		t.Fatal("Ready: expected parse error from empty spy output")
+	}
 
 	//nolint:gosec // G304: argsFile path is constructed from t.TempDir() — test-controlled
 	raw, readErr := os.ReadFile(argsFile)

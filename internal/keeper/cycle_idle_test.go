@@ -13,16 +13,14 @@ import (
 
 // newIdleCycler builds a Cycler for idle-restart tests. Mirrors the
 // newPrecompactCycler / newTestCycler helpers: same fakes, no real disk/tmux.
-// actAbsTokens is passed explicitly so tests can push tokens above/below the
-// act threshold without depending on the production default.
+// The helper uses the constants below so the tests share a fixed threshold
+// split without depending on production defaults.
 func newIdleCycler(
 	t *testing.T,
 	projectDir string,
 	em keeper.Emitter,
 	crispIdle bool,
 	holdingDispatch bool,
-	actAbsTokens int64,
-	idleRestartAbsTokens int64,
 	idleRestartCooldown time.Duration,
 	readHandoff func(string) (string, error),
 	readGaugeFn func(string, string) (*keeper.CtxFile, time.Time, error),
@@ -50,7 +48,7 @@ func newIdleCycler(
 		AgentName:           "idle-agent",
 		ProjectDir:          projectDir,
 		TmuxTarget:          "fake-pane",
-		ActAbsTokens:        actAbsTokens,
+		ActAbsTokens:        actAbsForIdleTests,
 		ActPct:              90.0,
 		WarnPct:             80.0,
 		HandoffTimeout:      500 * time.Millisecond,
@@ -70,7 +68,7 @@ func newIdleCycler(
 		WriteJournalFn:           jc.write,
 		SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
 		ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
-		IdleRestartAbsTokens:     idleRestartAbsTokens,
+		IdleRestartAbsTokens:     defaultIdleTokenThreshold,
 		IdleRestartCooldown:      idleRestartCooldown,
 	}
 	return keeper.NewCycler(cfg, em)
@@ -97,8 +95,6 @@ func TestCycler_RunForIdle_EmitsEventBelowThreshold(t *testing.T) {
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true,  // crispIdle
 		false, // holdingDispatch
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
 		30*time.Minute,
 		nil, nil,
 	)
@@ -158,8 +154,6 @@ func TestCycler_RunForIdle_FiresAboveThreshold(t *testing.T) {
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true,  // crispIdle
 		false, // holdingDispatch
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
 		30*time.Minute,
 		readHandoff, readGaugeFn,
 	)
@@ -193,8 +187,6 @@ func TestCycler_RunForIdle_SkipsAboveActThreshold(t *testing.T) {
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true,  // crispIdle
 		false, // holdingDispatch
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
 		30*time.Minute,
 		nil, nil,
 	)
@@ -224,8 +216,6 @@ func TestCycler_RunForIdle_SkipsWhenHoldingDispatch(t *testing.T) {
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true, // crispIdle
 		true, // holdingDispatch — should suppress
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
 		30*time.Minute,
 		nil, nil,
 	)
@@ -265,10 +255,8 @@ func TestCycler_RunForIdle_RespectsCooldown(t *testing.T) {
 
 	// Use a 1-hour cooldown so the second call is always within the window.
 	cycler := newIdleCycler(t, t.TempDir(), em,
-		true,  // crispIdle
-		false, // holdingDispatch
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
+		true,        // crispIdle
+		false,       // holdingDispatch
 		1*time.Hour, // long cooldown
 		readHandoff, readGaugeFn,
 	)
@@ -318,10 +306,8 @@ func TestCycler_RunForIdle_AbortDoesNotArmCooldown(t *testing.T) {
 	// 1-hour cooldown: if the abort start-stamped it, the second call would be
 	// gated for the whole window. The fix unwinds the stamp on abort.
 	cycler := newIdleCycler(t, t.TempDir(), em,
-		true,  // crispIdle
-		false, // holdingDispatch
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
+		true,        // crispIdle
+		false,       // holdingDispatch
 		1*time.Hour, // long cooldown
 		readHandoff, readGaugeFn,
 	)
@@ -377,9 +363,7 @@ func TestCycler_RunForIdle_AntiLoop(t *testing.T) {
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true,  // crispIdle
 		false, // holdingDispatch
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
-		0, // no cooldown
+		0,     // no cooldown
 		readHandoff, readGaugeFn,
 	)
 
@@ -408,8 +392,6 @@ func TestCycler_RunForIdle_DeduplicatesIdleBelowThreshold(t *testing.T) {
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true,  // crispIdle
 		false, // holdingDispatch
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
 		30*time.Minute,
 		nil, nil,
 	)
@@ -441,8 +423,6 @@ func TestCycler_RunForIdle_ReemitsOnNewSID(t *testing.T) {
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		true,  // crispIdle
 		false, // holdingDispatch
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
 		30*time.Minute,
 		nil, nil,
 	)
@@ -480,8 +460,6 @@ func TestCycler_RunForIdle_SkipsWhenNotIdle(t *testing.T) {
 	cycler := newIdleCycler(t, t.TempDir(), em,
 		false, // crispIdle = false → pane busy
 		false, // holdingDispatch
-		actAbsForIdleTests,
-		defaultIdleTokenThreshold,
 		30*time.Minute,
 		nil, nil,
 	)

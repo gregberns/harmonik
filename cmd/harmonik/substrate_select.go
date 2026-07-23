@@ -91,22 +91,21 @@ const (
 // Containment for codex comes from harmonik's own srt sandbox (hk-scaj0), a
 // different mechanism entirely, so removing this dead signal forecloses nothing.
 //
-// ⚠ OPEN OPERATOR DECISION (recorded at the 2026-07-23 origin merge, NOT decided
-// here). The paragraphs above were written against `requireBoundary: false`. The
-// composition root below now passes `requireBoundary: true`, set by the local
-// commit 7273e95dc ("make SH-033 deterministic and drop exec.Command from the
-// CLI"), which re-armed the fence AFTER hk-tckw3.1 Step 1 had dropped it. So the
-// fence IS armed in this tree, and the "nothing sets it true" statements below
-// describe the intent of hk-5vapm, not the current code. The merge deliberately
-// changed neither side: it left the local value in place and did not restore
-// origin's. Which one stands is an operator call — arming it means a codex run
-// with no enabled ssh worker bound REFUSES to launch, and D4 scrapped the
-// ssh-per-node worker that was the only thing able to supply that boundary.
+// OPERATOR DECISION (2026-07-23): the fence is REMOVED. `requireBoundary: false`
+// below restores hk-tckw3.1 Step 3a — the operator-directed, reviewer-approved
+// drop that lets local codex-first runs launch. Local commit 7273e95dc ("make
+// SH-033 deterministic and drop exec.Command from the CLI") had silently re-armed
+// it (`true`) hours later, citing neither hk-tckw3.1 nor hk-5h759; that was an
+// unauthorized reversal of a locked decision, not a fix. The fence isolates
+// nothing (there is no daemon-side counterpart; codex containment comes from the
+// srt sandbox, hk-scaj0), it only stops codex launching, and D4 scrapped the
+// ssh-per-node worker that was the only thing able to satisfy it. Restored to
+// `false` per the operator's standing "Codex must work" decision.
 func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), reviewerSubstrate handler.Substrate) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
 		return tmuxSub, nil, tmuxSub
 	}
-	router := &codexWorkerRoutingRunner{requireBoundary: true}
+	router := &codexWorkerRoutingRunner{requireBoundary: false}
 	opts, _ := codexSubstrateOptions(codexBinary, router)
 	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, tmuxSub
 }
@@ -145,15 +144,15 @@ type codexWorkerRoutingRunner struct {
 	// counterpart, and an auditor reading the old wording would have concluded that
 	// unsandboxed codex launches are refused somewhere they are not.
 	//
-	// hk-tckw3.1 Step 1 dropped the fence deliberately: D4 scrapped the ssh worker
+	// hk-tckw3.1 Step 3a dropped the fence deliberately: D4 scrapped the ssh worker
 	// that was the only thing able to supply the boundary, so arming this would
 	// stop codex launching rather than isolate it. Codex containment comes from the
 	// srt sandbox (hk-scaj0) instead.
 	//
-	// ⚠ BUT IT IS SET TRUE TODAY, by selectSubstrate above (local commit 7273e95dc,
-	// re-arming it after hk-5vapm disarmed it). That contradiction is an OPEN
-	// OPERATOR DECISION — see the note on selectSubstrate. Do not "tidy" either the
-	// literal or these comments into agreement without that decision.
+	// selectSubstrate above passes `false` per the 2026-07-23 operator decision, so
+	// the composition-root runner never refuses. The refusal logic below is retained
+	// only for the explicit ssh-worker path (and its tests), which construct their
+	// own runner with requireBoundary: true.
 	requireBoundary bool
 }
 
@@ -191,8 +190,10 @@ func (r *codexWorkerRoutingRunner) setRegistry(reg *workers.Registry) {
 // ssh, the codex process is spawned on that worker via SSHRunner{Host}. Any
 // other state (no registry bound, no worker, disabled/unhealthy worker,
 // non-ssh transport) falls through to LocalRunner — byte-identical local codex
-// (NFR7) — EXCEPT when requireBoundary is set, which is the codexdriver path.
-// There the same states are refused instead, by returning a command at
+// (NFR7). The composition root passes requireBoundary: false (2026-07-23 operator
+// decision), so the codexdriver path takes this local fallthrough. requireBoundary
+// is retained only for the explicit ssh-worker path and its tests: when set, the
+// same states are refused instead, by returning a command at
 // refusedIsolationBoundaryArgv0 so the spawn fails closed rather than running
 // codex unsandboxed on the daemon host.
 //

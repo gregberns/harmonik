@@ -24,7 +24,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,7 +37,9 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/policy"
+	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -258,6 +259,16 @@ func executeCognitionGate(
 	workerSessionName string,
 	workerSessionCwd string,
 ) (*core.GateDecisionPayload, error) {
+	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
+	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
+	// deps is by-value, so this default propagates to every downstream site.
+	// RT14: this site needs it because the dispatch segment is ClockPort-timed,
+	// where the open-coded ready wait it replaces used a raw time.After. The
+	// three other segment consumers (reviewloop.go, dot_cascade.go ×2) already
+	// carry the identical backstop; this is the last one.
+	if deps.clock == nil {
+		deps.clock = substrate.SystemClock{}
+	}
 	// Remove any stale verdict from a prior attempt. Routed through runner so a
 	// REMOTE run (runner != nil) clears the verdict on the WORKER's filesystem,
 	// not box A's (hk-9fe2).
@@ -388,17 +399,17 @@ func executeCognitionGate(
 		gateBaseSubstrate = deps.reviewerSubstrate
 	}
 	prs := newPerRunSubstrate(gateBaseSubstrate, deps.handlerBinary, runner)
-	var substrate handler.Substrate = gateBaseSubstrate
+	runSubstrate := gateBaseSubstrate
 	var pasteTarget handler.Substrate = gateBaseSubstrate
 	if prs != nil {
-		substrate = prs
+		runSubstrate = prs
 		pasteTarget = prs
 		if runner != nil && workerSessionName != "" {
 			prs.workerSessionName = workerSessionName
 			prs.workerSessionCwd = workerSessionCwd
 		}
 	}
-	spec.Substrate = substrate
+	spec.Substrate = runSubstrate
 
 	if deps.hookStore != nil {
 		deps.hookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
@@ -415,92 +426,151 @@ func executeCognitionGate(
 	// flags a phantom launch stall on every gate dispatch.
 	gateLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
 
-	sess, watcher, launchErr := runH.Launch(ctx, spec)
-	if launchErr != nil {
-		if deps.hookStore != nil {
-			deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
-		}
-		return nil, fmt.Errorf("cognition gate %q: launch: %w", gateRef, launchErr)
-	}
+	// RT14: predeclared so the dispatch segment's launch / onLaunched hooks can
+	// assign them from inside their closures. Safe because RunDispatch drives
+	// every effector inline on this goroutine (runshell.go RunDispatch).
+	var sess handler.Session
+	var watcher *handlercontract.Watcher
+	var launchErr error
+	var gateHBDone chan struct{}
 
-	// hk-goczd: window is live — emit the held-back launch_initiated to clear the
-	// false stall. Mirrors workloop.go:2137-2139.
-	if gateLaunchInitiatedMsg != nil {
-		runlaunch.EmitPreExecMessage(ctx, deps.bus, runID, gateLaunchInitiatedMsg)
-	}
-
-	// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
-	// receives agent_heartbeat events (with run_id) after launch_initiated.
-	// Without this, lastEventType stays frozen at "launch_initiated" for the
-	// full run duration, causing false-positive run_stale on every gate dispatch.
-	// Mirrors the single-mode path (workloop.go Step 5).
-	gateHBDone := make(chan struct{})
-	go handler.RunHeartbeatLoop(ctx, artifacts.HandlerSessionID,
-		handler.HeartbeatInterval, gateHBDone,
-		newDaemonHeartbeatEmitter(tap, runID))
-	defer close(gateHBDone)
-
-	// hk-goczd / hk-68pvl: slot-reclaim backstop — guarantee the spawn-semaphore
-	// slot (hk-xb5yi / hk-4l7zs) is released on EVERY return path. The success path
-	// below kills the session only when watcher == nil (dot_gate.go ~line 397);
-	// this defer covers the exec path and any early return (agent_ready timeout,
-	// ctx-cancel, verdict-read error). Kill is idempotent, so it is a no-op when
-	// the session was already torn down.
-	defer runlaunch.ForceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom); it deliberately reaps on context.Background() so the kill completes even after the run ctx is cancelled
-
-	if deps.hookStore != nil {
-		capturedTap := tap
-		deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() {
-			_ = capturedTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
-		})
-	}
-
-	// HC-056: wait for agent_ready before paste-inject.
+	// HC-056: the adapter supplies DetectReady for the segment's ready pump.
+	// hk-01vs0: the cognition gate is claude-pinned, so the agent type is
+	// hardcoded and there is no completionMode to resolve — the gate never runs a
+	// ProcessExit harness, hence cfg.SkipReadyHandshake stays false.
 	adapter, adapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
 	if adapterErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: dot: gate: ForAgent(claude-code) node %q: %v (skipping ready-wait)\n",
 			node.ID, adapterErr)
-	} else {
-		readyCtx, readyCancel := context.WithCancel(ctx)
-		if watcher != nil {
-			go func() {
-				select {
-				case <-watcher.Done():
-					readyCancel()
-				case <-readyCtx.Done():
-				}
-			}()
-		}
-		eventSrc := newChanAgentEventSource(tapCh)
-		// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
-		readyTimeout := runlaunch.EffectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil)
-		readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, readyTimeout)
-		readyCancel()
+		adapter = nil
+	}
 
-		if errors.Is(readyErr, runlaunch.ErrAgentReadyTimeout) {
-			fmt.Fprintf(os.Stderr, "daemon: dot: gate: waitAgentReady node %q run %s: %v\n",
-				node.ID, runID.String(), readyErr)
-			_ = sess.Kill(ctx)
-			if watcher != nil {
-				select {
-				case <-watcher.Done():
-				case <-time.After(runlaunch.KillReapTimeout):
-				}
+	gateSeg := &dispatchSegment{
+		clock: deps.clock,
+		runID: runID,
+		cfg: runexec.DispatchConfig{
+			SkipReadyHandshake: false,
+			IsResume:           false,
+			MaxInputAttempts:   1,
+			// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
+			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
+			InputAck:      dispatchSegmentInputAckWindow,
+			ReadyKillReap: runlaunch.KillReapTimeout,
+		},
+		// nil adapter (no claude-code adapter registered) → the segment feeds a
+		// synthetic ready so the gate brief is still delivered without a wait.
+		adapter: adapter,
+		// pre-RT14 parity: the gate always launches fresh, never `claude --resume`.
+		probeResume: false,
+		tap:         tap,
+		tapCh:       tapCh,
+		launch: func(lctx context.Context) (<-chan struct{}, error) {
+			sess, watcher, launchErr = runH.Launch(lctx, spec)
+			if launchErr != nil {
+				return nil, launchErr
 			}
-			_ = sess.Wait(ctx)
+			if watcher != nil {
+				return watcher.Done(), nil
+			}
+			return nil, nil
+		},
+		onLaunchFailed: func(context.Context, error) {
 			if deps.hookStore != nil {
 				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
-			runlaunch.EmitAgentReadyTimeout(ctx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
-			return nil, fmt.Errorf("cognition gate %q: agent_ready_timeout", gateRef)
-		}
+		},
+		onLaunched: func(lctx context.Context) {
+			// hk-goczd: window is live — emit the held-back launch_initiated to clear the
+			// false stall. Mirrors workloop.go's single-mode path.
+			if gateLaunchInitiatedMsg != nil {
+				runlaunch.EmitPreExecMessage(lctx, deps.bus, runID, gateLaunchInitiatedMsg)
+			}
+
+			// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
+			// receives agent_heartbeat events (with run_id) after launch_initiated.
+			// Without this, lastEventType stays frozen at "launch_initiated" for the
+			// full run duration, causing false-positive run_stale on every gate dispatch.
+			// Mirrors the single-mode path (workloop.go Step 5). Closed via the defer
+			// registered after the segment returns.
+			gateHBDone = make(chan struct{})
+			go handler.RunHeartbeatLoop(ctx, artifacts.HandlerSessionID,
+				handler.HeartbeatInterval, gateHBDone,
+				newDaemonHeartbeatEmitter(tap, runID))
+
+			if deps.hookStore != nil {
+				capturedTap := tap
+				deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+					_ = capturedTap.Emit(context.Background(), core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
+				})
+			}
+		},
+		deliver: func(dctx context.Context) {
+			// Deliver gate-evaluator kick-off message and watch for verdict file.
+			briefDelivered := pasteInjectCognitionGate(dctx, pasteTarget, artifacts.ClaudeSessionID, wtPath, deps.bus, runID)
+			if qs, ok := pasteTarget.(quitSender); ok {
+				go pasteInjectQuitOnGateFile(ctx, runner, qs, sess, wtPath, briefDelivered)
+			}
+		},
+		killReady: func(kctx context.Context) {
+			fmt.Fprintf(os.Stderr, "daemon: dot: gate: waitAgentReady node %q run %s: %v\n",
+				node.ID, runID.String(), runlaunch.ErrAgentReadyTimeout)
+			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
+			if watcher != nil {
+				select {
+				case <-watcher.Done():
+				case <-substrate.After(deps.clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+				}
+			}
+			// The gate's reap Wait is deliberately UNBOUNDED — it does not carry
+			// workloop.go's hk-4hso5 bounded context; adding one would be a logic change.
+			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)
+			if deps.hookStore != nil {
+				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
+			}
+		},
+		emitReadyTimeout: func(ectx context.Context) {
+			runlaunch.EmitAgentReadyTimeout(ectx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
+		},
+		killAbort: func(context.Context) {
+			// Ctx-cancel abort edge: Kill is idempotent (the runlaunch.ForceTeardownSession
+			// backstop registered below rides behind it either way — unlike workloop.go's
+			// single-mode path, this site's teardown is unconditional).
+			if sess != nil {
+				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
+			}
+		},
+	}
+	gateDispatch := gateSeg.run(ctx)
+
+	if launchErr != nil {
+		return nil, fmt.Errorf("cognition gate %q: launch: %w", gateRef, launchErr)
 	}
 
-	// Deliver gate-evaluator kick-off message and watch for verdict file.
-	briefDelivered := pasteInjectCognitionGate(ctx, pasteTarget, artifacts.ClaudeSessionID, wtPath, deps.bus, runID)
-	if qs, ok := pasteTarget.(quitSender); ok {
-		go pasteInjectQuitOnGateFile(ctx, runner, qs, sess, wtPath, briefDelivered)
+	// RT14: the two cleanup defers are registered here, in their pre-RT14 textual
+	// order, and BEFORE the ready-timeout terminal check below so LIFO firing
+	// order is preserved on the agent_ready_timeout path. The order matters and is
+	// this site's OWN, not the dot_cascade template's: pre-RT14 close(gateHBDone)
+	// was registered first and ForceTeardownSession second, so under LIFO the
+	// session is torn down BEFORE the heartbeat loop is stopped. Registering them
+	// the other way round would silently invert that.
+	if gateHBDone != nil {
+		gateHBDoneToClose := gateHBDone
+		defer close(gateHBDoneToClose)
 	}
+
+	// hk-goczd / hk-68pvl: slot-reclaim backstop — guarantee the spawn-semaphore
+	// slot (hk-xb5yi / hk-4l7zs) is released on EVERY return path. The success path
+	// below kills the session only when watcher == nil; this defer covers the exec
+	// path and any early return (agent_ready timeout, ctx-cancel, verdict-read
+	// error). Kill is idempotent, so it is a no-op when the session was already
+	// torn down.
+	defer runlaunch.ForceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom); it deliberately reaps on context.Background() so the kill completes even after the run ctx is cancelled
+
+	if gateDispatch.Phase == runexec.DispatchFailed && gateDispatch.Reason == "agent_ready_timeout" {
+		return nil, fmt.Errorf("cognition gate %q: agent_ready_timeout", gateRef)
+	}
+	// Working / Exited / Aborted: fall through — the pre-RT14 posture for
+	// agent_ready-observed, watcher-exit-first, and ctx-cancel.
 
 	_, _ = waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)

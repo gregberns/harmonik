@@ -72,13 +72,14 @@ done < <(find internal/daemon -type f \
              ! -name '*_test.go')
 
 # (3) The run path must not re-acquire a raw time.After for the ready/reap
-#     bound. dot_gate.go is a NAMED, TEMPORARY carve-out: it is the last
-#     surviving wall-clock site on this bound (dot_gate.go's gate-node ready
-#     wait was never converted to the ClockPort seam), and RT14 closes it.
-#     Converting it here would be a logic change inside an extraction, which
-#     _plan.md §5.1 forbids. When RT14 lands, DELETE the --exclude below and
-#     this gate becomes absolute.
-MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' --exclude='dot_gate.go' -E \
+#     bound. This check is ABSOLUTE: it covers every non-test file under
+#     internal/daemon. RT19b-3 landed it with a named, temporary
+#     --exclude='dot_gate.go' because the gate node's ready wait was the last
+#     surviving wall-clock site on this bound and converting it there would have
+#     been a logic change inside an extraction (_plan.md §5.1). RT14 phase B
+#     converted that site to substrate.After(deps.clock, …), so the exclusion —
+#     which was a blind spot, not a policy — is deleted.
+MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E \
     'time\.After\((agentReadyKillReapTimeout|runlaunch\.KillReapTimeout)\)' internal/daemon 2>/dev/null || true)"
 if [ -n "$MATCHES" ]; then
     echo "runlaunch-freeze-gate: FORBIDDEN wall-clock time.After on the reap bound — use substrate.After(clk, runlaunch.KillReapTimeout):" >&2

@@ -6,6 +6,7 @@ package main
 // (--no-load flag) and without touching ~/Library/LaunchAgents in CI.
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +24,7 @@ func stubProjectDir(t *testing.T) string {
 	if err := os.MkdirAll(scriptsDir, 0o750); err != nil {
 		t.Fatalf("mkdir scripts: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(scriptsDir, "ops-monitor-check.sh"), []byte("#!/bin/bash\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(scriptsDir, "ops-monitor-check.sh"), []byte("#!/bin/bash\n"), 0o700); err != nil {
 		t.Fatalf("write stub script: %v", err)
 	}
 	return dir
@@ -31,11 +32,23 @@ func stubProjectDir(t *testing.T) string {
 
 func TestOpsMonitorHelp(t *testing.T) {
 	old := os.Stdout
-	_, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdout pipe: %v", err)
+	}
 	os.Stdout = w
 	code := runOpsMonitorSubcommand([]string{"--help"})
-	w.Close()
+	closeWriterErr := w.Close()
 	os.Stdout = old
+	if closeWriterErr != nil {
+		t.Fatalf("close stdout pipe writer: %v", closeWriterErr)
+	}
+	if _, readErr := io.Copy(io.Discard, r); readErr != nil {
+		t.Fatalf("drain stdout pipe: %v", readErr)
+	}
+	if closeReaderErr := r.Close(); closeReaderErr != nil {
+		t.Fatalf("close stdout pipe reader: %v", closeReaderErr)
+	}
 	if code != 0 {
 		t.Fatalf("exit %d, want 0 for --help", code)
 	}
@@ -50,7 +63,10 @@ func TestOpsMonitorUnknownVerb(t *testing.T) {
 
 func TestOpsMonitorPlistLabelFor(t *testing.T) {
 	dir := t.TempDir()
-	realDir, _ := filepath.EvalSymlinks(dir)
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("resolve temporary project directory %q: %v", dir, err)
+	}
 	wantHash := lifecycle.ComputeProjectHash(realDir).String()
 	want := "com.harmonik.ops-monitor." + wantHash
 	got := opsMonitorPlistLabelFor(realDir)
@@ -59,7 +75,10 @@ func TestOpsMonitorPlistLabelFor(t *testing.T) {
 	}
 	// Label must be unique across projects.
 	dir2 := t.TempDir()
-	realDir2, _ := filepath.EvalSymlinks(dir2)
+	realDir2, err := filepath.EvalSymlinks(dir2)
+	if err != nil {
+		t.Fatalf("resolve second temporary project directory %q: %v", dir2, err)
+	}
 	got2 := opsMonitorPlistLabelFor(realDir2)
 	if got == got2 {
 		t.Errorf("two different dirs produced the same label %q", got)
@@ -78,10 +97,7 @@ func TestOpsMonitorInstallNoLoad_WritesPlist(t *testing.T) {
 
 	// Override home via a wrapper: can't easily monkey-patch os.UserHomeDir.
 	// Instead, call buildOpsMonitorPlistData directly and verify, then write manually.
-	data, err := buildOpsMonitorPlistData(projDir)
-	if err != nil {
-		t.Fatalf("buildOpsMonitorPlistData: %v", err)
-	}
+	data := buildOpsMonitorPlistData(projDir)
 	if !strings.HasPrefix(data.Label, "com.harmonik.ops-monitor.") {
 		t.Errorf("label = %q, want com.harmonik.ops-monitor.* prefix", data.Label)
 	}
@@ -100,10 +116,7 @@ func TestOpsMonitorInstallNoLoad_WritesPlist(t *testing.T) {
 
 func TestOpsMonitorInstallNoLoad_PlistContents(t *testing.T) {
 	projDir := stubProjectDir(t)
-	data, err := buildOpsMonitorPlistData(projDir)
-	if err != nil {
-		t.Fatalf("buildOpsMonitorPlistData: %v", err)
-	}
+	data := buildOpsMonitorPlistData(projDir)
 
 	var buf strings.Builder
 	if terr := opsMonitorPlistTmpl.Execute(&buf, data); terr != nil {

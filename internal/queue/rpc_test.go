@@ -298,7 +298,7 @@ func TestHandleQueueSubmit_RetainsPerItemWorkflowFields(t *testing.T) {
 	}
 
 	// 1. The in-memory queue handed to SetQueue must retain the fields.
-	assertWorkflowFields(t, "returned queue", q, wantMode, wantRef, wantContext, wantParams)
+	assertWorkflowFields(t, "returned queue", q, wantParams)
 
 	// 2. The PERSISTED queue (what the workloop re-reads via Load after SetQueue)
 	//    must retain them too — guards against an omitempty/round-trip drop.
@@ -306,25 +306,27 @@ func TestHandleQueueSubmit_RetainsPerItemWorkflowFields(t *testing.T) {
 	if loadErr != nil {
 		t.Fatalf("Load persisted queue: %v", loadErr)
 	}
-	assertWorkflowFields(t, "persisted queue", loaded, wantMode, wantRef, wantContext, wantParams)
+	assertWorkflowFields(t, "persisted queue", loaded, wantParams)
 }
 
 // assertWorkflowFields asserts the first item of the first group carries the
 // expected per-item workflow fields.
-func assertWorkflowFields(t *testing.T, label string, q *queue.Queue, mode, ref, ctx string, params map[string]string) {
+func assertWorkflowFields(t *testing.T, label string, q *queue.Queue, params map[string]string) {
 	t.Helper()
 	if q == nil || len(q.Groups) == 0 || len(q.Groups[0].Items) == 0 {
 		t.Fatalf("%s: no items to assert", label)
 	}
 	got := q.Groups[0].Items[0]
-	if got.WorkflowMode != mode {
-		t.Errorf("%s: WorkflowMode = %q, want %q (DROPPED by item-rebuild — hk-u6zp)", label, got.WorkflowMode, mode)
+	if got.WorkflowMode != "dot" {
+		t.Errorf("%s: WorkflowMode = %q, want %q (DROPPED by item-rebuild — hk-u6zp)", label, got.WorkflowMode, "dot")
 	}
-	if got.WorkflowRef != ref {
-		t.Errorf("%s: WorkflowRef = %q, want %q (DROPPED by item-rebuild — hk-u6zp)", label, got.WorkflowRef, ref)
+	const workflowRef = ".harmonik/workflows/opus-triple-review.dot"
+	if got.WorkflowRef != workflowRef {
+		t.Errorf("%s: WorkflowRef = %q, want %q (DROPPED by item-rebuild — hk-u6zp)", label, got.WorkflowRef, workflowRef)
 	}
-	if got.Context != ctx {
-		t.Errorf("%s: Context = %q, want %q (DROPPED by item-rebuild — hk-u6zp)", label, got.Context, ctx)
+	const workflowContext = "extra context body"
+	if got.Context != workflowContext {
+		t.Errorf("%s: Context = %q, want %q (DROPPED by item-rebuild — hk-u6zp)", label, got.Context, workflowContext)
 	}
 	if got.TemplateParams[paramKey] != params[paramKey] {
 		t.Errorf("%s: TemplateParams[%q] = %q, want %q (DROPPED by item-rebuild — hk-u6zp)",
@@ -397,7 +399,7 @@ func TestHandleQueueAppend_PreservesSubmitTimeWorkflowFields(t *testing.T) {
 
 	// The submit-time item (index 0) must still carry its workflow fields after
 	// the append mutated the queue.
-	assertWorkflowFields(t, "after append (in-memory)", mutated, wantMode, wantRef, wantContext, wantParams)
+	assertWorkflowFields(t, "after append (in-memory)", mutated, wantParams)
 
 	// Re-persist the mutated queue exactly as HandlerAdapter.HandleQueueAppend
 	// does, then Load it — what the workloop re-reads after the append's
@@ -409,7 +411,7 @@ func TestHandleQueueAppend_PreservesSubmitTimeWorkflowFields(t *testing.T) {
 	if loadErr != nil {
 		t.Fatalf("Load persisted queue: %v", loadErr)
 	}
-	assertWorkflowFields(t, "after append (persisted)", loaded, wantMode, wantRef, wantContext, wantParams)
+	assertWorkflowFields(t, "after append (persisted)", loaded, wantParams)
 }
 
 // TestHandleQueueAppend_HappyPath verifies that appending to a stream group

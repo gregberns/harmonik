@@ -380,6 +380,24 @@ Append each lane's before/after counts, files, tests, and deferred findings here
   external partial edit compiles; scoped reductions above are not folded into a
   speculative global number.
 
+### Q19 — current 3,974 baseline and path toward ~1,000
+
+- Shared daemon work settled long enough for build, formatter, and an authoritative
+  isolated count: **3,974** findings. Distribution is daemon 1,633; main CLI
+  1,406; all other packages 935. Therefore the operator's earlier daemon exclusion
+  creates a mathematical floor of 1,633; reaching ~1,000 eventually requires
+  permission to enter daemon after its active work settles.
+- Root core **109 → 93**, digest **18 → 8**, sessiondata **22 → 16**. Workspace
+  scoped lint is **126 → 121**, but its first full validation exposed a regression
+  in the delegated cleanup: seven advisory-lock `defer Close` calls had been
+  deleted while removing suppressions, leaking locks and causing long trust-test
+  timeouts. Root restored all production/test lock releases; focused hk-qx065,
+  hk-bfvby, and concurrent-write tests now pass.
+- Scenario, queue, brcli, eventbus, and lifecycle received additional safe scoped
+  reductions, but global recount is currently blocked again by concurrent daemon
+  clock-port signature work and active main-CLI version/captain changes. No edits
+  from this stream enter either active area.
+
 ### Q3 — small dense packages
 
 - 2026-07-22: active ownership claimed for `internal/hookrelay/**` and
@@ -417,3 +435,97 @@ Append each lane's before/after counts, files, tests, and deferred findings here
   compiles again as of `efeeb047`, which moved both into
   `internal/harness/shared`. A fresh authoritative full-tree count is therefore
   unblocked; the last recorded number remains **5,400** until one is taken.
+
+### Q20 — non-daemon breadth continuation
+
+- `cmd/harmonik-twin-claude` moved from **125 → 4** scoped findings. The
+  remaining four are production complexity/length findings.
+  Unsafe JSON assertions, unchecked fixture operations, stale suppressions, and
+  version-output error handling were corrected; focused package tests pass.
+- `cmd/harmonik-twin-generic` moved from **53 → 44** in the first pass, with a
+  second test-only unchecked-operation pass completing at **0**. `internal/workers`
+  is down to eight intentional/structural findings. Queue's four stale
+  directives are removed, with its remaining safe helper/comment cleanup in
+  progress.
+- Digest is **18 → 4**, now production complexity/API naming only. Sessiondata
+  test-security findings are cleared, and sentinel's remaining test-controlled
+  command/path findings are being drained file by file.
+- Global recount is still gated by concurrent daemon and main-CLI edits. This
+  stream continues to avoid both collision zones and uses isolated package
+  lint/test runs to make reductions measurable meanwhile.
+
+### Q21 — authoritative recount and remaining floor
+
+- A stable-tree isolated full lint completed at **3,204**, down **770** from the
+  prior 3,974 baseline. Current concentration: daemon 1,539; main CLI 1,088;
+  every other package combined 577.
+- The earlier daemon exclusion therefore still creates a hard floor above the
+  requested ~1,000. Even eliminating every non-daemon finding would leave
+  1,539. Work continues in clean main-CLI files and test-only workspace lanes
+  while the P2 extraction agent owns daemon.
+- Twin results are now Claude **125 → 4**, generic **53 → 0**, Codex **26 → 0**;
+  digest is **18 → 4**. Workspace test-controlled subprocess/path findings and
+  lifecycle stale directives are being removed in bounded, non-overlapping
+  files with focused tests.
+- The subsequent bounded sweep completed at **3,020** authoritative findings,
+  another **184 removed** in this wave and **954 removed** from the 3,974
+  baseline. Workspace is **120 → 9** with its full package suite green; harness
+  is **44 → 19**, lifecycle **34 → 22**, BRCLI **22 → 14**, and core **91 → 72**.
+  Core plus all harness package tests pass, as do focused lifecycle/BRCLI checks.
+- Final concentration is daemon **1,539**, main CLI **1,072**, and all remaining
+  packages **409**. Reaching ~1,000 is impossible without entering daemon:
+  daemon alone exceeds the target by 539.
+
+### Q22 — main CLI safe-finding sweep and lint-cache audit
+
+- A first full-tree report appeared to be **2,255**, but cache validation proved
+  that number was not authoritative: golangci-lint replayed old findings after
+  source changes, and combining `--output.text.path=/dev/null` with JSON output
+  left the old JSON file untouched. That provisional count is withdrawn.
+- With a genuinely fresh `GOLANGCI_LINT_CACHE`, broad `./...` and main-CLI runs
+  currently exit zero before writing either requested report, while a bounded
+  package run works and reports current findings. The monolithic quality command
+  is therefore fail-open and cannot presently produce a trustworthy total.
+  Cached output still says 3,020 and demonstrably points at lines that are now
+  checked, so it must not be used as the current count.
+- Main CLI fell from **1,072 → 315** through checked output/error propagation,
+  context-bound subprocesses, focused security rationale, and test-helper
+  cleanup in the last usable scoped report; additional safe findings were fixed
+  after that checkpoint. The complete `cmd/harmonik/supervise` safe-finding sweep is done;
+  its remaining findings are structural complexity only. Isolated CLI and
+  supervise compile/tests pass, and the full repository builds.
+- The last usable (now stale) concentration was daemon **1,539**, main CLI **315**, core **72**,
+  scenario **33**, evaltasks **27**, queue **26**, lifecycle **22**, keeper and
+  harness **19 each**. Its non-daemon subtotal was **716**; subsequent bounded
+  package sweeps have removed more findings, but no false-precision replacement
+  total is recorded until the fresh-cache full runner is fixed.
+- The daemon exclusion remains the mathematical floor: even removing all 716
+  editable findings would leave 1,539. Work therefore continues across core
+  and the smaller packages while the P2 agent retains daemon ownership.
+
+### Q23 — trustworthy runner and second breadth reduction
+
+- Root cause of the apparently fail-open fresh-cache runs was operational:
+  `with-isolated-gocache.sh` starts its child asynchronously, and the execution
+  session yielded while several analyzer processes remained live. The redundant
+  exact lint PIDs were terminated, then one direct fresh-cache run was monitored
+  through real process completion.
+- The first trustworthy fresh-cache report was **2,180**: daemon **1,539** and
+  all non-daemon packages **641**. After clearing the remaining safe findings in
+  the largest CLI files and another broad small-package wave, the second
+  monitored report is **1,979**: daemon **1,539**, non-daemon **440**.
+- This wave cleared safe findings from `init_cmd.go`,
+  `keeper_enable_doctor_cmd.go`, `handler.go`, and `harness.go`; completed the
+  supervise safe-finding sweep; and drained bounded findings across core,
+  scenario, lifecycle, transport, sessiondata, runmerge, keeper, harness,
+  testhelpers, codextest, sentinel, workflow, eval tasks, and BRCLI.
+- The repository builds, focused affected-package tests pass, formatting and
+  diff hygiene pass. Further explicit errchecks are being drained after the
+  1,979 checkpoint. Remaining non-daemon debt is dominated by structural
+  complexity and architectural naming/forbidigo findings rather than unchecked
+  operations.
+- A final monitored fresh-cache recount after that drain is **1,948**: daemon
+  **1,539**, all non-daemon packages **409**. Non-daemon `errcheck` is now
+  **zero**; all 544 remaining unchecked-error findings are in the excluded
+  daemon tree. This is a verified **2,026-finding reduction** from the reliable
+  3,974 baseline.

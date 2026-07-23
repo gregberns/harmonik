@@ -161,7 +161,7 @@ func windowSweepAnyRemain(
 	type windowKey struct{ session, window string }
 	killedSet := make(map[windowKey]struct{}, len(targets))
 	for _, tgt := range targets {
-		killedSet[windowKey{tgt.session, tgt.window}] = struct{}{}
+		killedSet[windowKey(tgt)] = struct{}{}
 	}
 
 	for session := range sessionSet {

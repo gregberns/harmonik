@@ -97,9 +97,16 @@ func RecoverWithLogFlush(logFlusher LogFlusher, busFlusher BusFlusher, logger *l
 	if busFlusher != nil {
 		func() {
 			defer func() {
-				_ = recover() // contain any secondary panic from bus flush
+				// Contain any secondary panic from the bus flush, but do not
+				// erase it: a flusher that panics on every recovery path is
+				// otherwise indistinguishable from one that works.
+				if secondary := recover(); secondary != nil && logger != nil {
+					logger.Printf("lifecycle: RecoverWithLogFlush: secondary panic during bus flush (contained): %v", secondary)
+				}
 			}()
-			_ = busFlusher.Flush() // best-effort: errors intentionally discarded
+			if err := busFlusher.Flush(); err != nil && logger != nil {
+				logger.Printf("lifecycle: RecoverWithLogFlush: bus Flush error during panic recovery: %v", err)
+			}
 		}()
 	}
 

@@ -163,37 +163,51 @@ func SweepOrphanTmuxSessions(
 		return 0, nil
 	}
 
-	// Poll for process exit at 100 ms cadence up to the ceiling.
-	// The sweep does NOT track individual session PIDs here — the polling is
-	// best-effort after the kill-session commands have been sent.
+	waitForTmuxSessionsGone(ctx, lister, prefix, logger)
+
+	return killed, nil
+}
+
+// waitForTmuxSessionsGone polls at tmuxPollInterval, up to tmuxPollCeiling, for
+// every session matching prefix to disappear after kill-session.
+//
+// The sweep does NOT track individual session PIDs — the polling is best-effort
+// confirmation after the kill-session commands have been sent, and the caller
+// proceeds regardless of the outcome (PL-006: "after the ceiling expires, the
+// daemon proceeds").
+func waitForTmuxSessionsGone(ctx context.Context, lister TmuxSessionLister, prefix string, logger *log.Logger) {
 	deadline := time.Now().Add(tmuxPollCeiling)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			orphanLog(logger, "SweepOrphanTmuxSessions: context cancelled during poll; proceeding")
-			return killed, nil
+			return
 		case <-time.After(tmuxPollInterval):
 		}
 
-		// Re-list to check whether our target sessions are still present.
+		// A failed re-list says nothing about whether the sessions exited, so it
+		// must not end the wait — a single transient tmux hiccup used to abort
+		// exit verification entirely. Keep polling; the 2 s ceiling bounds it.
 		remaining, listErr := lister.ListTmuxSessions(ctx)
 		if listErr != nil {
-			break // list failed; treat as done
+			orphanLog(logger, "SweepOrphanTmuxSessions: re-list during exit poll failed (retrying): %v", listErr)
+			continue
 		}
-		anyRemain := false
-		for _, name := range remaining {
-			if strings.HasPrefix(name, prefix) {
-				anyRemain = true
-				break
-			}
-		}
-		if !anyRemain {
+		if !anyNameHasPrefix(remaining, prefix) {
 			orphanLog(logger, "SweepOrphanTmuxSessions: all matching sessions exited after kill")
-			break
+			return
 		}
 	}
+}
 
-	return killed, nil
+// anyNameHasPrefix reports whether any name in names starts with prefix.
+func anyNameHasPrefix(names []string, prefix string) bool {
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -237,8 +251,8 @@ func (OSHandlerProcessLister) ListOrphanHandlerPIDs(ctx context.Context, project
 		return nil, fmt.Errorf("lifecycle: OSHandlerProcessLister: ps: %w", err)
 	}
 
-	var candidates []int
 	lines := strings.Split(string(out), "\n")
+	candidates := make([]int, 0, len(lines))
 	for _, line := range lines[1:] { // skip header
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -260,7 +274,7 @@ func (OSHandlerProcessLister) ListOrphanHandlerPIDs(ctx context.Context, project
 		candidates = append(candidates, pid)
 	}
 
-	var matched []int
+	matched := make([]int, 0, len(candidates))
 	for _, pid := range candidates {
 		env, err := ReadProcessEnviron(pid)
 		if err != nil {
@@ -615,10 +629,7 @@ func GCRetiredIntentsWithRedrive(ctx context.Context, cfg GCRetiredIntentsConfig
 
 	// fsync the parent directory once after all removals.
 	if result.Removed > 0 {
-		if dirFd, openErr := os.Open(intentsDir); openErr == nil {
-			_ = dirFd.Sync()  //nolint:errcheck
-			_ = dirFd.Close() //nolint:errcheck
-		}
+		fsyncDirBestEffort(intentsDir, cfg.Logger, "GCRetiredIntentsWithRedrive")
 	}
 
 	return result, nil
@@ -1015,4 +1026,26 @@ func EnumerateStaleIntents(projectDir string, daemonStartTime time.Time) (count 
 		}
 	}
 	return count, nil
+}
+
+// fsyncDirBestEffort fsyncs a directory so preceding unlinks/renames survive a
+// crash. It is best-effort: the directory entries are already gone from the
+// live filesystem, so a failure does not invalidate the caller's pass.
+//
+// "Best-effort" means the caller does not abort — not that the failure is
+// invisible. Every step reports through logger, because a filesystem that
+// silently refuses every directory fsync is exactly the condition an operator
+// needs to know about before trusting crash-recovery behaviour.
+func fsyncDirBestEffort(dir string, logger *log.Logger, caller string) {
+	dirFd, openErr := os.Open(dir)
+	if openErr != nil {
+		orphanLog(logger, "%s: open %q for fsync failed (proceeding): %v", caller, dir, openErr)
+		return
+	}
+	if syncErr := dirFd.Sync(); syncErr != nil {
+		orphanLog(logger, "%s: fsync %q failed (proceeding): %v", caller, dir, syncErr)
+	}
+	if closeErr := dirFd.Close(); closeErr != nil {
+		orphanLog(logger, "%s: close %q after fsync failed: %v", caller, dir, closeErr)
+	}
 }

@@ -136,7 +136,7 @@ func RunTmuxStart(
 //
 // Spec ref: process-lifecycle.md §4.10 PL-028 refinement step iv —
 // "execve `tmux attach-session -t <session-name>`, replacing the process."
-func SyscallExec(argv0 string, argv []string, envv []string) error {
+func SyscallExec(argv0 string, argv, envv []string) error {
 	return syscall.Exec(argv0, argv, envv)
 }
 

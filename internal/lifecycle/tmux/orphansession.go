@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 	"syscall"
@@ -187,8 +188,12 @@ func countNonShellWindows(windows []string) int {
 }
 
 // isESRCH reports whether err is ESRCH (no such process).
+//
+// Uses errors.Is, not ==: a wrapped ESRCH must still read as "process gone", or
+// the sweep silently reclassifies a dead pane's session as live and never
+// reclaims it. This matches orphanSweepIsPidLive in the parent package.
 func isESRCH(err error) bool {
-	return err == syscall.ESRCH
+	return errors.Is(err, syscall.ESRCH)
 }
 
 // sessionSweepLog writes a formatted log message to logger if non-nil.

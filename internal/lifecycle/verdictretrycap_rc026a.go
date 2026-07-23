@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,41 +79,86 @@ func WriteVerdictAttemptAtomic(projectDir string, record *core.VerdictExecutionA
 	}
 
 	if _, err := f.Write(content); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Write: %w", err)
+		return withCleanupErrs(
+			fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Write: %w", err),
+			f.Close(), removeTempFile(tmpPath),
+		)
 	}
 
 	// Step 4: fsync the temp file before rename so data is durable.
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Sync (pre-rename): %w", err)
+		return withCleanupErrs(
+			fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Sync (pre-rename): %w", err),
+			f.Close(), removeTempFile(tmpPath),
+		)
 	}
 
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Close (pre-rename): %w", err)
+		return withCleanupErrs(
+			fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Close (pre-rename): %w", err),
+			removeTempFile(tmpPath),
+		)
 	}
 
 	// Step 5: atomic rename — POSIX rename(2) is atomic within the same filesystem.
 	if err := os.Rename(tmpPath, target); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Rename %q → %q: %w", tmpPath, target, err)
+		return withCleanupErrs(
+			fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Rename %q → %q: %w", tmpPath, target, err),
+			removeTempFile(tmpPath),
+		)
 	}
 
 	// Step 6: fsync the parent directory to durably record the rename.
-	// Best-effort on macOS/APFS per WM-026; sync error is intentionally suppressed.
+	// Best-effort on macOS/APFS per WM-026: APFS can reject a directory fsync,
+	// and the rename has already landed, so a Sync failure must not fail a write
+	// whose record is readable. It is carried onto the Close failure path rather
+	// than dropped, so a filesystem that fails both is not silent about either.
 	dirFD, err := os.Open(dir)
 	if err != nil {
 		return fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Open dir %q for fsync: %w", dir, err)
 	}
-	_ = dirFD.Sync() // best-effort on APFS per WM-026
-	if err := dirFD.Close(); err != nil {
-		return fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Close dir fd: %w", err)
+	syncErr := dirFD.Sync()
+	if closeErr := dirFD.Close(); closeErr != nil {
+		return withCleanupErrs(
+			fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: Close dir fd: %w", closeErr),
+			syncErr,
+		)
 	}
 
 	return nil
+}
+
+// removeTempFile removes a temp file left behind on a write error path.
+//
+// An already-absent temp file is not a failure — the interesting case is a
+// leftover that the next O_EXCL create trips over, which is precisely the
+// symptom that discarding this error used to hide.
+func removeTempFile(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("lifecycle: remove temp file %q: %w", path, err)
+	}
+	return nil
+}
+
+// withCleanupErrs annotates cause with any failures reported by the cleanup
+// steps that ran on an error path (temp-file Close, temp-file Remove, …).
+//
+// cause is returned unchanged when every cleanup step succeeded, so the common
+// path preserves the original error's message and identity verbatim. When a
+// cleanup step did fail, the result is an [errors.Join] of cause first and the
+// failures after it — errors.Is/As still find every sentinel cause wraps.
+func withCleanupErrs(cause error, cleanup ...error) error {
+	joined := make([]error, 0, len(cleanup)+1)
+	joined = append(joined, cause)
+	for _, c := range cleanup {
+		if c != nil {
+			joined = append(joined, c)
+		}
+	}
+	if len(joined) == 1 {
+		return cause
+	}
+	return errors.Join(joined...)
 }
 
 // ReadVerdictAttempt reads and parses the Cat 3b retry attempt counter record

@@ -417,7 +417,7 @@ func scanTaskBranchTips(ctx context.Context, reader BranchTipReader, terminalBea
 		return nil, fmt.Errorf("lifecycle: scanTaskBranchTips: %w", err)
 	}
 
-	var entries []ActiveRunEntry
+	entries := make([]ActiveRunEntry, 0, len(tips))
 	for _, tip := range tips {
 		if tip.RunID == "" {
 			// No Harmonik-Run-ID on the tip commit — not a harmonik checkpoint; skip.

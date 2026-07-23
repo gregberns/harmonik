@@ -85,7 +85,7 @@ func (p *Pidfile) Release() error {
 // error and closes the fd.
 //
 // Spec ref: process-lifecycle.md §4.1 PL-002, PL-002a, PL-002b.
-func AcquirePidfile(projectDir string, pid int, pgid int, instanceID string) (*Pidfile, error) {
+func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfile, error) {
 	pidfilePath := filepath.Join(projectDir, ".harmonik", "daemon.pid")
 
 	// Step 1: O_RDWR|O_CREAT|O_CLOEXEC, mode 0600, NO O_TRUNC.
@@ -188,7 +188,7 @@ func IsDeadPID(pid int) bool {
 // one-line pidfiles for backward compatibility with v0.2.x format and
 // two-line pidfiles for backward compatibility with v0.4.0 format; a missing
 // line 3 is treated as daemon_instance_id = unknown."
-func ReadPidfile(projectDir string) (pid int, pgid int, instanceID string, err error) {
+func ReadPidfile(projectDir string) (pid, pgid int, instanceID string, err error) {
 	pidfilePath := filepath.Join(projectDir, ".harmonik", "daemon.pid")
 	//nolint:gosec // G304: pidfilePath derived from projectDir, an operator-controlled parameter (daemon startup arg); not user input
 	data, err := os.ReadFile(pidfilePath)

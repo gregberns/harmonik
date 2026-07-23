@@ -55,10 +55,10 @@ func sunPathMax() int {
 //
 // Bead ref: hk-ta6dg.
 func ValidateSocketPathLength(sockPath string) error {
-	max := sunPathMax()
+	limit := sunPathMax()
 	// One byte of the array is reserved for the NUL terminator the kernel
-	// writes, so the usable path length is max-1.
-	if len(sockPath) < max {
+	// writes, so the usable path length is limit-1.
+	if len(sockPath) < limit {
 		return nil
 	}
 	return fmt.Errorf(
@@ -66,6 +66,6 @@ func ValidateSocketPathLength(sockPath string) error {
 			"(%d usable, incl. NUL terminator) — bind/connect will fail with EINVAL/ENAMETOOLONG; "+
 			"move the project to a shorter path (e.g. a shallower directory or a shorter symlink) "+
 			"so <projectDir>/.harmonik/daemon.sock fits",
-		sockPath, len(sockPath), max, max-1,
+		sockPath, len(sockPath), limit, limit-1,
 	)
 }

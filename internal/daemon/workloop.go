@@ -3156,7 +3156,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				CommitSHA:         sdCommitSHA,
 				StartedAt:         sdStartedAt,
 				EndedAt:           sdEndedAt,
-				ProjectDir:        deps.projectDir,
+				ProjectDir:        env.ProjectDir,
 				ClaudeProjectsDir: filepath.Join(os.Getenv("HOME"), ".claude", "projects"),
 			})
 		}()
@@ -3273,27 +3273,27 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// commits happen, and merges are pushed (hk-xfuc cross-repo dispatch).
 	//
 	// For local beads (no target_repo or target_repo == projectDir):
-	//   activeRepo = deps.projectDir  (unchanged behaviour)
+	//   activeRepo = env.ProjectDir  (unchanged behaviour)
 	//
 	// For cross-repo beads (target_repo declared in ## Branching):
 	//   1. Check the allowed_repos safelist — refuse with CrossRepoUnsafeError
 	//      when the target is not in the list (prevents arbitrary path injection).
 	//   2. Set activeRepo = target_repo; all git-touching operations below use
-	//      activeRepo instead of deps.projectDir.
+	//      activeRepo instead of env.ProjectDir.
 	//
-	// Note: deps.projectDir remains the harmonik project root for non-git
+	// Note: env.ProjectDir remains the harmonik project root for non-git
 	// operations (daemon socket, queue persistence, br adapter, workflow.dot).
 	//
 	// Bead: hk-xfuc (cross-repo dispatch follow-up to hk-3r3 guard).
-	activeRepo := deps.projectDir
+	activeRepo := env.ProjectDir
 
 	// Parse the bead body cheaply (tier-1 only; no I/O) to extract target_repo
 	// so we can determine activeRepo before resolveParentCommit, which must run
 	// against the correct repository.
 	earlyBrCfg, _ := parseBranchingSection(beadRecord.Description) // errors treated as absent per BI-009b
-	if earlyBrCfg.TargetRepo != "" && earlyBrCfg.TargetRepo != deps.projectDir {
+	if earlyBrCfg.TargetRepo != "" && earlyBrCfg.TargetRepo != env.ProjectDir {
 		if !isInAllowedRepos(earlyBrCfg.TargetRepo, env.AllowedRepos) {
-			crErr := &CrossRepoUnsafeError{TargetRepo: earlyBrCfg.TargetRepo, ProjectDir: deps.projectDir}
+			crErr := &CrossRepoUnsafeError{TargetRepo: earlyBrCfg.TargetRepo, ProjectDir: env.ProjectDir}
 			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, crErr)
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
@@ -3304,7 +3304,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		slog.InfoContext(ctx, "cross_repo_dispatch",
 			"bead_id", string(beadID),
 			"active_repo", activeRepo,
-			"project_dir", deps.projectDir,
+			"project_dir", env.ProjectDir,
 		)
 	}
 
@@ -3314,7 +3314,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// target-repo branch (e.g. merging into kerf's "main" when harmonik protects its
 	// own "main"). Hk-xfuc.
 	effectiveMergeProtectBranches := env.ProtectBranches
-	if activeRepo != deps.projectDir {
+	if activeRepo != env.ProjectDir {
 		effectiveMergeProtectBranches = nil
 	}
 
@@ -3353,7 +3353,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, activeRepo, env.TargetBranch); brErr == nil {
 		baseBranch = brCfg.LandsOn
 
-		if activeRepo == deps.projectDir {
+		if activeRepo == env.ProjectDir {
 			for _, protected := range env.ProtectBranches {
 				if baseBranch == protected {
 					protErr := &LandsOnProtectedError{LandsOn: baseBranch}
@@ -3513,7 +3513,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				beadID, runID.String(), mkErr)
 		}
 
-		daemonHookSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+		daemonHookSock := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
 		// hk-ta6dg: `ssh -N -R <port>:<daemonHookSock>` never validates this local
 		// forward destination at tunnel start — only when a connection actually
 		// needs forwarding — so a too-long daemonHookSock would let the tunnel
@@ -3613,7 +3613,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// host/opts come from the worker SSHRunner so git's ssh:// fetch dials the
 		// worker exactly like the rest of the remote path.
 		workerHost, sshOpts, _ := tunnelpkg.SSHHostOpts(rbc.sshRunner)
-		if err := codesyncpkg.FetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
+		if err := codesyncpkg.FetchRunBranchBoxA(ctx, nil, env.ProjectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
 			// B11: SSH connection failure → emit worker_offline + disable worker.
 			if tmuxpkg.IsSSHConnectionFailure(err) {
 				notifyWorkerOffline("spawn", fmt.Sprintf("codesync.FetchRunBranchBoxA: %v", err))
@@ -3686,7 +3686,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// rather than leaving an empty-HEAD worktree.
 			workerHostEBOW, sshOptsEBOW, _ := tunnelpkg.SSHHostOpts(rbc.sshRunner)
 			baseSyncErr = codesyncpkg.EnsureBaseOnWorker(qctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA,
-				nil, deps.projectDir, workerHostEBOW, sshOptsEBOW)
+				nil, env.ProjectDir, workerHostEBOW, sshOptsEBOW)
 		}
 		// baseSyncErr (a business outcome, handled after the critical section) does
 		// not fail the critical section itself; only skip the worktree-add on it.
@@ -3748,8 +3748,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Remove the run registry entry on normal exit (session completed).
 	// Registered first (LIFO) so it runs LAST — after session teardown + worktree removal.
 	defer func() {
-		if useIndepSession && ctx.Err() == nil && deps.projectDir != "" {
-			_ = runpkg.Remove(deps.projectDir, runID.String())
+		if useIndepSession && ctx.Err() == nil && env.ProjectDir != "" {
+			// Non-fatal: an absent record is the already-cleaned case, and any
+			// other failure is retried by the next boot's adoption sweep. Report
+			// it rather than discarding it (errcheck check-blank), matching
+			// adoptDeadRunSessions' handling of the same call.
+			if remErr := runpkg.Remove(env.ProjectDir, runID.String()); remErr != nil &&
+				!errors.Is(remErr, runpkg.ErrNotFound) {
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: Remove run registry entry %s: %v\n", runID.String(), remErr)
+			}
 		}
 	}()
 
@@ -3820,7 +3828,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// normally (spec §REVIEW FLOOR item b: fall through to review-loop, NEVER single).
 	var preloadedDotGraph *dot.Graph
 	if workflowMode == core.WorkflowModeDot && itemWorkflowRef == "" {
-		defaultDotPath := filepath.Join(deps.projectDir, "workflow.dot")
+		defaultDotPath := filepath.Join(env.ProjectDir, "workflow.dot")
 		if _, statErr := os.Stat(defaultDotPath); os.IsNotExist(statErr) {
 			g, embErr := loadStandardGraph(itemTemplateParams)
 			if embErr != nil {
@@ -3994,12 +4002,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		} else {
 			// Tier 1 or 2: explicit ref or <projectDir>/workflow.dot.
 			// WG-046 ordering: read → substitute(itemTemplateParams) → parse → validate → dispatch.
-			dotPath := filepath.Join(deps.projectDir, "workflow.dot")
+			dotPath := filepath.Join(env.ProjectDir, "workflow.dot")
 			if itemWorkflowRef != "" {
 				if filepath.IsAbs(itemWorkflowRef) {
 					dotPath = itemWorkflowRef
 				} else {
-					dotPath = filepath.Join(deps.projectDir, itemWorkflowRef)
+					dotPath = filepath.Join(env.ProjectDir, itemWorkflowRef)
 				}
 			}
 			var loadErr error
@@ -4157,7 +4165,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// ─── Single-mode dispatch (production path) ───────────────────────────────
 
 	// Step 1: build the Claude launch spec via buildClaudeLaunchSpec.
-	daemonSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+	daemonSock := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
 	// gap #7 bead 2: a REMOTE worker cannot reach box A's local daemon.sock. For
 	// remote runs, the implementer agent must dial the worker-side reverse-tunnel
 	// TCP endpoint (rbc.workerHookSock, tcp://127.0.0.1:<port>) instead, which the
@@ -4287,7 +4295,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// supports independent session creation (sessionCreator). Adapters that lack
 		// sessionCreator (e.g. test stubs, the $TMUX-reuse mode) fall through to the
 		// standard shared-session path — no behavior change for them.
-		if rbc == nil && deps.projectDir != "" {
+		if rbc == nil && env.ProjectDir != "" {
 			canIndepSession := false
 			if ts, tsOK := deps.substrate.(*tmuxSubstrate); tsOK {
 				_, canIndepSession = ts.adapter.(sessionCreator)
@@ -4310,7 +4318,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				if queueGroupIndex != nil {
 					queueGroupIdx = *queueGroupIndex
 				}
-				if writeErr := runpkg.Write(deps.projectDir, runpkg.Record{
+				if writeErr := runpkg.Write(env.ProjectDir, runpkg.Record{
 					SchemaVersion: 1,
 					RunID:         runID.String(),
 					BeadID:        string(beadID),
@@ -4374,7 +4382,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//     exclusive, so there is no double-wrap.
 	sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(implHarnessWL, shared.ArtifactAgentType(artifacts)), SandboxProfileInput{
 		WorktreePath:           wtPath,
-		GitDir:                 filepath.Join(deps.projectDir, ".git"),
+		GitDir:                 filepath.Join(env.ProjectDir, ".git"),
 		RunID:                  runID.String(),
 		DaemonSockPath:         agentDaemonSock,
 		AllowedDomains:         deps.sandboxCfg.Network.AllowedDomains,
@@ -4394,7 +4402,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// trustworthy for this run; refuse to launch the agent unsandboxed and
 	// hard-fail the run loud rather than treating it as green.
 	if sandboxSpawn != nil {
-		canaryPath := srtEngagementCanaryPath(deps.projectDir, runID.String())
+		canaryPath := srtEngagementCanaryPath(env.ProjectDir, runID.String())
 		if engageErr := verifySandboxEngaged(ctx, sandboxSpawn, canaryPath, func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s: "+format+"\n",
 				append([]any{beadID, runID.String()}, args...)...)
@@ -5199,7 +5207,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// REMOTE: route the worktree-HEAD probe via runRunner so the no-commit guard
 	// reads the WORKER's run-branch HEAD (nil runRunner ⇒ box-A-local, NFR7). The
 	// noCommitGuardShouldReopen checks if THIS bead's code landed in the target
-	// repo's main branch (cross-repo: activeRepo; local: deps.projectDir).
+	// repo's main branch (cross-repo: activeRepo; local: env.ProjectDir).
 	if curHeadSHA, curHeadErr := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath); curHeadErr == nil &&
 		noCommitGuardShouldReopen(ctx, activeRepo, curHeadSHA, headSHA, beadID) {
 		// hk-4ie1z: the implementer's worktree HEAD never advanced past the

@@ -16,6 +16,7 @@ package supervisecmd
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,7 +126,7 @@ type AssetSyncConfig struct {
 
 // WriteConfigAtomic writes cfg to .harmonik/cognition/config.json atomically
 // via temp+rename+fsync per WM-026.
-func WriteConfigAtomic(projectDir string, cfg Config) error {
+func WriteConfigAtomic(projectDir string, cfg Config) (retErr error) {
 	configPath := ConfigPath(projectDir)
 	dir := filepath.Dir(configPath)
 	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
@@ -144,10 +145,17 @@ func WriteConfigAtomic(projectDir string, cfg Config) error {
 	}
 	tmpPath := tmp.Name()
 	success := false
+	tmpClosed := false
 	defer func() {
-		_ = tmp.Close()
+		if !tmpClosed {
+			if err := tmp.Close(); err != nil && retErr == nil {
+				retErr = fmt.Errorf("supervisecmd: WriteConfigAtomic: close temp: %w", err)
+			}
+		}
 		if !success {
-			_ = os.Remove(tmpPath)
+			if err := os.Remove(tmpPath); err != nil && !errors.Is(err, os.ErrNotExist) && retErr == nil {
+				retErr = fmt.Errorf("supervisecmd: WriteConfigAtomic: remove temp: %w", err)
+			}
 		}
 	}()
 
@@ -160,6 +168,7 @@ func WriteConfigAtomic(projectDir string, cfg Config) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("supervisecmd: WriteConfigAtomic: close: %w", err)
 	}
+	tmpClosed = true
 	if err := os.Rename(tmpPath, configPath); err != nil {
 		return fmt.Errorf("supervisecmd: WriteConfigAtomic: rename: %w", err)
 	}
@@ -167,9 +176,16 @@ func WriteConfigAtomic(projectDir string, cfg Config) error {
 
 	// fsync parent directory to make rename durable.
 	//nolint:gosec // G304: dir is derived from operator-controlled projectDir
-	if dirFd, err := os.Open(dir); err == nil {
-		_ = dirFd.Sync()
+	dirFd, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("supervisecmd: WriteConfigAtomic: open parent dir: %w", err)
+	}
+	if err := dirFd.Sync(); err != nil {
 		_ = dirFd.Close()
+		return fmt.Errorf("supervisecmd: WriteConfigAtomic: fsync parent dir: %w", err)
+	}
+	if err := dirFd.Close(); err != nil {
+		return fmt.Errorf("supervisecmd: WriteConfigAtomic: close parent dir: %w", err)
 	}
 	return nil
 }

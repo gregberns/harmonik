@@ -27,7 +27,9 @@ func RunAttach(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, attachUsage)
+			if _, err := io.WriteString(stdout, attachUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--project" && i+1 < len(args):
 			i++
@@ -40,7 +42,9 @@ func RunAttach(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise attach: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise attach: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -50,13 +54,18 @@ func RunAttach(args []string, stdout, stderr io.Writer) int {
 
 	tmuxBin, err := exec.LookPath("tmux")
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise attach: tmux not found: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise attach: tmux not found: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	argv := []string{"tmux", "attach-session", "-t", sessionName}
+	//nolint:gosec // G204: tmuxBin is resolved by exec.LookPath and Exec preserves required attach-session replacement semantics
 	if execErr := syscall.Exec(tmuxBin, argv, os.Environ()); execErr != nil {
-		fmt.Fprintf(stderr, "harmonik supervise attach: exec: %v\n", execErr)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise attach: exec: %v\n", execErr); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	// Never reached on success.

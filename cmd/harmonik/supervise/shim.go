@@ -33,9 +33,11 @@ import (
 // This is an internal subcommand not meant for direct operator use.
 //
 // Spec ref: process-lifecycle.md §4.5 PL-019c-f, §4.10 PL-028d.
-func RunShim(args []string, stdout, stderr io.Writer) int {
+func RunShim(args []string, stdout, stderr io.Writer) (exitCode int) {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "harmonik supervise _shim: missing project directory argument")
+		if shimWritef(stderr, "harmonik supervise _shim: missing project directory argument\n") != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -50,25 +52,37 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 	// Acquire supervisor.lock (fd-lifetime; kernel releases on shim exit).
 	lockFd, err := os.OpenFile(LockPath(projectDir), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise _shim: open lock: %v\n", err)
+		if shimWritef(stderr, "harmonik supervise _shim: open lock: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	// Blocking flock: wait until any prior holder releases (brief race window
 	// after start exits).
 	if err := syscall.Flock(int(lockFd.Fd()), syscall.LOCK_EX); err != nil {
-		_ = lockFd.Close()
-		fmt.Fprintf(stderr, "harmonik supervise _shim: flock: %v\n", err)
+		if closeErr := lockFd.Close(); closeErr != nil {
+			return 1
+		}
+		if shimWritef(stderr, "harmonik supervise _shim: flock: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	// lockFd is intentionally kept open for the shim's lifetime.
 	defer func() {
-		_ = lockFd.Close()
-		_ = cleanup(projectDir)
+		if closeErr := lockFd.Close(); closeErr != nil && exitCode == 0 {
+			exitCode = 1
+		}
+		if cleanupErr := cleanup(projectDir); cleanupErr != nil && exitCode == 0 {
+			exitCode = 1
+		}
 	}()
 
 	// Write own PID (PL-019d).
 	if err := WritePidfile(projectDir, os.Getpid()); err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise _shim: write pidfile: %v\n", err)
+		if shimWritef(stderr, "harmonik supervise _shim: write pidfile: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -76,7 +90,9 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 	// NOT hot-reload.
 	cfg, err := ReadConfig(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise _shim: read config: %v\n", err)
+		if shimWritef(stderr, "harmonik supervise _shim: read config: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -103,11 +119,16 @@ func runDirect(cfg Config, stderr io.Writer) int {
 	// Use exec.LookPath for correct PATH resolution including exec-bit check.
 	resolved, err := exec.LookPath(bin)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise _shim: command not found %q: %v\n", bin, err)
+		if shimWritef(stderr, "harmonik supervise _shim: command not found %q: %v\n", bin, err) != nil {
+			return 1
+		}
 		return 1
 	}
+	//nolint:gosec // G204: cfg.Command is the operator-provided supervisee argv from the trusted project config.
 	if execErr := syscall.Exec(resolved, cfg.Command, buildPiEnv(cfg.APIKey)); execErr != nil {
-		fmt.Fprintf(stderr, "harmonik supervise _shim: exec %q: %v\n", resolved, execErr)
+		if shimWritef(stderr, "harmonik supervise _shim: exec %q: %v\n", resolved, execErr) != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0 // never reached
@@ -203,7 +224,9 @@ func runWithSupervisor(cfg Config, projectDir string, stderr io.Writer) int {
 		dw := supervise.NewDaemonWatchdog(dwSpec, log)
 		go func() {
 			if err := dw.Run(ctx); err != nil && ctx.Err() == nil {
-				fmt.Fprintf(stderr, "daemon-watchdog: exited: %v\n", err)
+				if writeErr := shimWritef(stderr, "daemon-watchdog: exited: %v\n", err); writeErr != nil {
+					log.ErrorContext(ctx, "write daemon-watchdog failure", "err", writeErr)
+				}
 			}
 		}()
 	}
@@ -211,10 +234,14 @@ func runWithSupervisor(cfg Config, projectDir string, stderr io.Writer) int {
 	if err := sv.Run(ctx); err != nil {
 		state := sv.Snapshot()
 		if state.Status == supervise.StatusCrashLoop {
-			fmt.Fprintf(stderr, "harmonik supervise: crash-loop detected after %d restarts\n",
-				state.RestartCount)
+			if writeErr := shimWritef(stderr, "harmonik supervise: crash-loop detected after %d restarts\n",
+				state.RestartCount); writeErr != nil {
+				return 1
+			}
 		} else {
-			fmt.Fprintf(stderr, "harmonik supervise: supervisor exited: %v\n", err)
+			if writeErr := shimWritef(stderr, "harmonik supervise: supervisor exited: %v\n", err); writeErr != nil {
+				return 1
+			}
 		}
 		return 1
 	}
@@ -234,7 +261,9 @@ func runWatchdogOnly(cfg Config, projectDir string, stdout, stderr io.Writer) in
 
 	daemonCmd := buildDaemonCmd(projectDir, cfg.MaxConcurrent)
 	if len(daemonCmd) == 0 {
-		fmt.Fprintf(stderr, "harmonik supervise _shim: watchdog-only: cannot resolve daemon binary\n")
+		if shimWritef(stderr, "harmonik supervise _shim: watchdog-only: cannot resolve daemon binary\n") != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -246,12 +275,21 @@ func runWatchdogOnly(cfg Config, projectDir string, stdout, stderr io.Writer) in
 	dwSpec.CrashLogPath = filepath.Join(projectDir, ".harmonik", "state", "daemon.crash.log")
 	dw := supervise.NewDaemonWatchdog(dwSpec, log)
 
-	fmt.Fprintln(stdout, "harmonik supervise: watchdog-only mode (no supervisee configured)")
+	if shimWritef(stdout, "harmonik supervise: watchdog-only mode (no supervisee configured)\n") != nil {
+		return 1
+	}
 	if err := dw.Run(ctx); err != nil && ctx.Err() == nil {
-		fmt.Fprintf(stderr, "daemon-watchdog: exited: %v\n", err)
+		if shimWritef(stderr, "daemon-watchdog: exited: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0
+}
+
+func shimWritef(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
 }
 
 // buildDaemonCmd constructs the harmonik daemon revival argv from the current

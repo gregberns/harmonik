@@ -52,7 +52,9 @@ func RunPs(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, psUsage)
+			if _, err := fmt.Fprint(stdout, psUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--json":
 			jsonOut = true
@@ -67,7 +69,9 @@ func RunPs(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise ps: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise ps: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -75,36 +79,69 @@ func RunPs(args []string, stdout, stderr io.Writer) int {
 
 	result, err := buildPsResult(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise ps: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise ps: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if jsonOut {
 		data, err := json.Marshal(result)
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise ps: marshal: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise ps: marshal: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintf(stdout, "%s\n", data)
+		if _, writeErr := fmt.Fprintf(stdout, "%s\n", data); writeErr != nil {
+			return 1
+		}
 		return 0
 	}
 
-	fmt.Fprintf(stdout, "project:      %s\n", result.ProjectDir)
-	fmt.Fprintf(stdout, "project_hash: %s\n", result.ProjectHash)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "process_signatures:")
-	for _, sig := range result.ProcessSignatures {
-		fmt.Fprintf(stdout, "  %-24s %s\n", sig.Name+":", sig.Pattern)
-		fmt.Fprintf(stdout, "  %-24s %s\n", "", sig.Command)
-	}
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "tmux_sessions:")
-	for _, sess := range result.TmuxSessions {
-		fmt.Fprintf(stdout, "  %-24s %s\n", sess.Name+":", sess.Session)
-		fmt.Fprintf(stdout, "  %-24s %s\n", "", sess.Command)
+	if err := printPsResult(stdout, result); err != nil {
+		return 1
 	}
 
 	return 0
+}
+
+func printPsResult(w io.Writer, result PsResult) error {
+	if _, err := fmt.Fprintf(w, "project:      %s\n", result.ProjectDir); err != nil {
+		return fmt.Errorf("print project directory: %w", err)
+	}
+	if _, err := fmt.Fprintf(w, "project_hash: %s\n", result.ProjectHash); err != nil {
+		return fmt.Errorf("print project hash: %w", err)
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return fmt.Errorf("separate process signatures: %w", err)
+	}
+	if _, err := fmt.Fprintln(w, "process_signatures:"); err != nil {
+		return fmt.Errorf("print process signature heading: %w", err)
+	}
+	for _, sig := range result.ProcessSignatures {
+		if _, err := fmt.Fprintf(w, "  %-24s %s\n", sig.Name+":", sig.Pattern); err != nil {
+			return fmt.Errorf("print %s process pattern: %w", sig.Name, err)
+		}
+		if _, err := fmt.Fprintf(w, "  %-24s %s\n", "", sig.Command); err != nil {
+			return fmt.Errorf("print %s process command: %w", sig.Name, err)
+		}
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return fmt.Errorf("separate tmux sessions: %w", err)
+	}
+	if _, err := fmt.Fprintln(w, "tmux_sessions:"); err != nil {
+		return fmt.Errorf("print tmux session heading: %w", err)
+	}
+	for _, sess := range result.TmuxSessions {
+		if _, err := fmt.Fprintf(w, "  %-24s %s\n", sess.Name+":", sess.Session); err != nil {
+			return fmt.Errorf("print %s tmux session: %w", sess.Name, err)
+		}
+		if _, err := fmt.Fprintf(w, "  %-24s %s\n", "", sess.Command); err != nil {
+			return fmt.Errorf("print %s tmux command: %w", sess.Name, err)
+		}
+	}
+	return nil
 }
 
 func buildPsResult(projectDir string) (PsResult, error) {

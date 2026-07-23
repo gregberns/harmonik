@@ -1,6 +1,7 @@
 package supervisecmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -26,7 +27,9 @@ func RunLogs(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, logsUsage)
+			if _, err := fmt.Fprint(stdout, logsUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--project" && i+1 < len(args):
 			i++
@@ -36,13 +39,17 @@ func RunLogs(args []string, stdout, stderr io.Writer) int {
 		case args[i] == "--lines" && i+1 < len(args):
 			i++
 			if _, err := fmt.Sscanf(args[i], "%d", &lines); err != nil {
-				fmt.Fprintf(stderr, "harmonik supervise logs: invalid --lines value %q\n", args[i])
+				if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise logs: invalid --lines value %q\n", args[i]); writeErr != nil {
+					return 1
+				}
 				return 1
 			}
 		case strings.HasPrefix(args[i], "--lines="):
 			val := strings.TrimPrefix(args[i], "--lines=")
 			if _, err := fmt.Sscanf(val, "%d", &lines); err != nil {
-				fmt.Fprintf(stderr, "harmonik supervise logs: invalid --lines value %q\n", val)
+				if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise logs: invalid --lines value %q\n", val); writeErr != nil {
+					return 1
+				}
 				return 1
 			}
 		}
@@ -51,7 +58,9 @@ func RunLogs(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise logs: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise logs: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -61,7 +70,7 @@ func RunLogs(args []string, stdout, stderr io.Writer) int {
 	startLine := fmt.Sprintf("-%d", lines)
 
 	//nolint:gosec // G204: sessionName derived from project hash; startLine is a negative integer string
-	cmd := exec.Command("tmux", "capture-pane", "-p", "-S", startLine, "-t", sessionName)
+	cmd := exec.CommandContext(context.Background(), "tmux", "capture-pane", "-p", "-S", startLine, "-t", sessionName)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -70,11 +79,12 @@ func RunLogs(args []string, stdout, stderr io.Writer) int {
 			exitCode = cmd.ProcessState.ExitCode()
 		}
 		if exitCode != 0 {
-			fmt.Fprintf(stderr, "harmonik supervise logs: tmux capture-pane failed (exit %d); is the session alive?\n", exitCode)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise logs: tmux capture-pane failed (exit %d); is the session alive?\n", exitCode); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 	}
-	_ = os.Stderr.Sync()
 	return 0
 }
 

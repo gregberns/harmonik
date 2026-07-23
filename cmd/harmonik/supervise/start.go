@@ -51,7 +51,9 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, startUsage)
+			if _, err := fmt.Fprint(stdout, startUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--watch-restart":
 			watchRestart = true
@@ -80,7 +82,9 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise start: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -88,7 +92,9 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 
 	projectCfg, err := daemon.LoadProjectConfig(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise start: load .harmonik/config.yaml: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: load .harmonik/config.yaml: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -109,7 +115,9 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 
 	// Ensure cognition dir exists before opening the lock file.
 	if err := os.MkdirAll(CognitionDir(projectDir), core.HarmonikDirMode); err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise start: mkdir cognition: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: mkdir cognition: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -122,7 +130,9 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	// (blocking) once start exits and releases it.
 	lockFd, err := os.OpenFile(LockPath(projectDir), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise start: open lock: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: open lock: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	// lockFd is released at the bottom after session creation (or on any error
@@ -130,17 +140,25 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	lockReleased := false
 	defer func() {
 		if !lockReleased {
-			_ = lockFd.Close()
+			if closeErr := lockFd.Close(); closeErr != nil {
+				if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: close lock: %v\n", closeErr); writeErr != nil {
+					return
+				}
+			}
 		}
 	}()
 
 	if err := syscall.Flock(int(lockFd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if isWouldBlock(err) {
-			fmt.Fprintf(stderr, "harmonik supervise start: supervisor already running (lock held: %s)\n",
-				PidfilePath(projectDir))
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: supervisor already running (lock held: %s)\n",
+				PidfilePath(projectDir)); writeErr != nil {
+				return 1
+			}
 			return ExitCodeSupervisorRunning
 		}
-		fmt.Fprintf(stderr, "harmonik supervise start: flock error: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: flock error: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -151,25 +169,35 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	// --watch-restart) may still be relying on to survive the next daemon orphan
 	// sweep (PL-006d, PL-019c, hk-li14r).
 	sessionName := FlywheelSessionName(projectDir)
-	//nolint:gosec // G204: sessionName derived from operator-controlled projectDir
-	if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err == nil {
-		fmt.Fprintf(stderr,
+	// #nosec G204 -- sessionName is passed as a discrete tmux argument, never through a shell.
+	if err := exec.CommandContext(ctx, "tmux", "has-session", "-t", sessionName).Run(); err == nil {
+		if _, writeErr := fmt.Fprintf(stderr,
 			"harmonik supervise start: flywheel session already exists (%s) — run 'harmonik supervise stop' first\n",
-			sessionName)
+			sessionName); writeErr != nil {
+			return 1
+		}
 		return ExitCodeFlywheelSessionExists
 	}
 
 	// Write sentinel before launching (PL-006d).
 	if err := WriteSentinel(projectDir); err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise start: write sentinel: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: write sentinel: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Resolve the API key before writing config — fail-closed when required (CI-006).
 	apiKey, err := resolveAPIKey(projectDir, requireAPIKey)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise start: %v\n", err)
-		_ = RemoveSentinel(projectDir)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: %v\n", err); writeErr != nil {
+			return 1
+		}
+		if removeErr := RemoveSentinel(projectDir); removeErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: remove sentinel after API-key failure: %v\n", removeErr); writeErr != nil {
+				return 1
+			}
+		}
 		return 1
 	}
 
@@ -188,8 +216,14 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	}
 	applySuperviseProjectConfig(&cfg, projectCfg.Supervise)
 	if err := WriteConfigAtomic(projectDir, cfg); err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise start: write config: %v\n", err)
-		_ = RemoveSentinel(projectDir)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: write config: %v\n", err); writeErr != nil {
+			return 1
+		}
+		if removeErr := RemoveSentinel(projectDir); removeErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: remove sentinel after config failure: %v\n", removeErr); writeErr != nil {
+				return 1
+			}
+		}
 		return 1
 	}
 
@@ -206,8 +240,8 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	}
 	shimCmd := exe + " " + strings.Join(shimArgs, " ")
 
-	//nolint:gosec // G204: sessionName and shimCmd are derived from operator-controlled inputs
-	createCmd := exec.Command("tmux", "new-session", "-d", "-s", sessionName,
+	// #nosec G204 -- sessionName and shimCmd are passed as direct tmux arguments, never through a shell.
+	createCmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", sessionName,
 		"-c", projectDir, shimCmd)
 	if out, err := createCmd.CombinedOutput(); err != nil {
 		if strings.Contains(string(out), "duplicate session") {
@@ -215,20 +249,38 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 			// that check and now an external process created the session. We wrote
 			// sentinel and config above, so remove them as cleanup before exiting.
 			// Normal remain-on-exit cases are caught by the pre-flight check above.
-			fmt.Fprintf(stderr,
+			if _, writeErr := fmt.Fprintf(stderr,
 				"harmonik supervise start: flywheel session already exists (%s) — run 'harmonik supervise stop' first\n",
-				sessionName)
-			_ = RemoveSentinel(projectDir)
+				sessionName); writeErr != nil {
+				return 1
+			}
+			if removeErr := RemoveSentinel(projectDir); removeErr != nil {
+				if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: remove sentinel after duplicate session: %v\n", removeErr); writeErr != nil {
+					return 1
+				}
+			}
 			return ExitCodeFlywheelSessionExists
 		}
-		fmt.Fprintf(stderr, "harmonik supervise start: tmux new-session: %v: %s\n", err, strings.TrimSpace(string(out)))
-		_ = RemoveSentinel(projectDir)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: tmux new-session: %v: %s\n", err, strings.TrimSpace(string(out))); writeErr != nil {
+			return 1
+		}
+		if removeErr := RemoveSentinel(projectDir); removeErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: remove sentinel after tmux failure: %v\n", removeErr); writeErr != nil {
+				return 1
+			}
+		}
 		return 1
 	}
 
 	// Set remain-on-exit on the flywheel session (PL-019f).
-	//nolint:gosec // G204
-	_ = exec.Command("tmux", "set-option", "-t", sessionName, "remain-on-exit", "on").Run()
+	// #nosec G204 -- sessionName is passed as a discrete tmux argument, never through a shell.
+	setOptionCmd := exec.CommandContext(ctx, "tmux", "set-option", "-t", sessionName, "remain-on-exit", "on")
+	if setOptionErr := setOptionCmd.Run(); setOptionErr != nil {
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: tmux set remain-on-exit: %v\n", setOptionErr); writeErr != nil {
+			return 1
+		}
+		return 1
+	}
 
 	// Boot auto-reap (Tier 3): a fresh supervisor start cleans up stale
 	// flywheel orphans left by prior killed/crashed daemons (dead pane,
@@ -242,9 +294,16 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	// The shim will immediately acquire it (blocking flock). Releasing here
 	// rather than via the defer lets the defer no-op cleanly.
 	lockReleased = true
-	_ = lockFd.Close()
+	if closeErr := lockFd.Close(); closeErr != nil {
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: close lock: %v\n", closeErr); writeErr != nil {
+			return 1
+		}
+		return 1
+	}
 
-	fmt.Fprintf(stdout, "harmonik supervise start: supervisor launched (session: %s)\n", sessionName)
+	if _, writeErr := fmt.Fprintf(stdout, "harmonik supervise start: supervisor launched (session: %s)\n", sessionName); writeErr != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -254,14 +313,23 @@ func probeDaemonSocket(ctx context.Context, sockPath string, stderr io.Writer) i
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 	if err != nil {
 		if isSocketAbsent(err) || isConnectionRefused(err) {
-			fmt.Fprintf(stderr,
-				"harmonik supervise start: daemon not running; start with: harmonik daemon\n")
+			if _, writeErr := fmt.Fprintf(stderr,
+				"harmonik supervise start: daemon not running; start with: harmonik daemon\n"); writeErr != nil {
+				return 1
+			}
 			return ExitCodeDaemonDown
 		}
-		fmt.Fprintf(stderr, "harmonik supervise start: dial daemon socket: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: dial daemon socket: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return ExitCodeDaemonDown
 	}
-	_ = conn.Close()
+	if closeErr := conn.Close(); closeErr != nil {
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: close daemon socket: %v\n", closeErr); writeErr != nil {
+			return 1
+		}
+		return 1
+	}
 	return 0
 }
 

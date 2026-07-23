@@ -1,6 +1,7 @@
 package supervisecmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -57,7 +58,9 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, statusUsage)
+			if _, err := fmt.Fprint(stdout, statusUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--json":
 			jsonOut = true
@@ -72,7 +75,9 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise status: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise status: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -83,36 +88,58 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 	if jsonOut {
 		data, err := json.Marshal(result)
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise status: marshal: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise status: marshal: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintf(stdout, "%s\n", data)
+		if _, err := fmt.Fprintf(stdout, "%s\n", data); err != nil {
+			return 1
+		}
 		return 0
 	}
 
 	// Human-readable output.
-	fmt.Fprintf(stdout, "status:        %s\n", result.Status)
-	if result.PID != 0 {
-		fmt.Fprintf(stdout, "pid:           %d\n", result.PID)
+	if _, err := fmt.Fprintf(stdout, "status:        %s\n", result.Status); err != nil {
+		return 1
 	}
-	fmt.Fprintf(stdout, "sentinel:      %v\n", result.SentinelOK)
+	if result.PID != 0 {
+		if _, err := fmt.Fprintf(stdout, "pid:           %d\n", result.PID); err != nil {
+			return 1
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "sentinel:      %v\n", result.SentinelOK); err != nil {
+		return 1
+	}
 	if result.PresenceSource != "" {
-		fmt.Fprintf(stdout, "presence_src:  %s\n", result.PresenceSource)
+		if _, err := fmt.Fprintf(stdout, "presence_src:  %s\n", result.PresenceSource); err != nil {
+			return 1
+		}
 	}
 	if result.StartedAt != "" {
-		fmt.Fprintf(stdout, "started_at:    %s\n", result.StartedAt)
+		if _, err := fmt.Fprintf(stdout, "started_at:    %s\n", result.StartedAt); err != nil {
+			return 1
+		}
 	}
 	if result.RestartPolicy != "" {
-		fmt.Fprintf(stdout, "restart_policy:%s (max %d)\n", result.RestartPolicy, result.RestartMax)
+		if _, err := fmt.Fprintf(stdout, "restart_policy:%s (max %d)\n", result.RestartPolicy, result.RestartMax); err != nil {
+			return 1
+		}
 	}
 	if result.DaemonID != "" {
-		fmt.Fprintf(stdout, "daemon_id:     %s\n", result.DaemonID)
+		if _, err := fmt.Fprintf(stdout, "daemon_id:     %s\n", result.DaemonID); err != nil {
+			return 1
+		}
 	}
 	if result.LoopStatus != "" {
-		fmt.Fprintf(stdout, "loop_status:   %s\n", result.LoopStatus)
+		if _, err := fmt.Fprintf(stdout, "loop_status:   %s\n", result.LoopStatus); err != nil {
+			return 1
+		}
 	}
 	if result.PauseReason != "" {
-		fmt.Fprintf(stdout, "pause_reason:  %s\n", result.PauseReason)
+		if _, err := fmt.Fprintf(stdout, "pause_reason:  %s\n", result.PauseReason); err != nil {
+			return 1
+		}
 	}
 	return 0
 }
@@ -202,7 +229,7 @@ func buildStatusWithProbe(projectDir string, keeperProbe func(string) bool) Stat
 func keeperLoopAlive(projectDir string) bool {
 	// 1. Process signature: pgrep -f "hk-keeper.sh" or "hk-supervise.sh".
 	for _, pattern := range []string{"hk-keeper.sh", "hk-supervise.sh"} {
-		cmd := exec.Command("pgrep", "-f", pattern) //nolint:gosec // G204: fixed literals
+		cmd := exec.CommandContext(context.Background(), "pgrep", "-f", pattern) //nolint:gosec // G204: fixed literals
 		if err := cmd.Run(); err == nil {
 			return true
 		}
@@ -214,7 +241,7 @@ func keeperLoopAlive(projectDir string) bool {
 	hash := supervisorProjectHash(projectDir)
 	for _, suffix := range []string{"daemon-supervise", "keeper"} {
 		sessionName := "hk-" + hash + "-" + suffix
-		cmd := exec.Command("tmux", "has-session", "-t", sessionName) //nolint:gosec // G204: fixed prefix
+		cmd := exec.CommandContext(context.Background(), "tmux", "has-session", "-t", sessionName) //nolint:gosec // G204: fixed prefix
 		if err := cmd.Run(); err == nil {
 			return true
 		}

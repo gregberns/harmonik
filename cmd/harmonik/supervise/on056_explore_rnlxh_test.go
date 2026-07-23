@@ -23,6 +23,7 @@ package supervisecmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -41,7 +42,11 @@ func socketSafeTempDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("socketSafeTempDir: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			t.Errorf("remove socket-safe temporary directory %q: %v", dir, removeErr)
+		}
+	})
 	return dir
 }
 
@@ -56,9 +61,8 @@ type fakeSocketResp struct {
 }
 
 // startFakeSocketServer starts a Unix-socket listener that reads a JSON op
-// request and responds with {ok: true}. It returns the socket path and a
-// cleanup function. The server closes after the first response.
-func startFakeSocketServer(t *testing.T, dir string) string {
+// request and responds with {ok: true}. The server closes after the first response.
+func startFakeSocketServer(t *testing.T, dir string) {
 	t.Helper()
 
 	// Replicate the socket path that RunPause/RunResume compute internally:
@@ -69,7 +73,7 @@ func startFakeSocketServer(t *testing.T, dir string) string {
 	}
 	sockPath := filepath.Join(sockDir, "daemon.sock")
 
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("listen %q: %v", sockPath, err)
 	}
@@ -81,23 +85,33 @@ func startFakeSocketServer(t *testing.T, dir string) string {
 				return // listener closed
 			}
 			go func(c net.Conn) {
-				defer func() { _ = c.Close() }() //nolint:errcheck
+				defer func() {
+					if closeErr := c.Close(); closeErr != nil {
+						t.Errorf("close fake daemon connection: %v", closeErr)
+					}
+				}()
 
 				var req struct {
 					Op string `json:"op"`
 				}
-				_ = json.NewDecoder(c).Decode(&req)
+				if err := json.NewDecoder(c).Decode(&req); err != nil {
+					return
+				}
 
 				resp := fakeSocketResp{Ok: true}
+				_ = req
 				if err := json.NewEncoder(c).Encode(resp); err != nil {
-					_ = err
+					return
 				}
 			}(conn)
 		}
 	}()
 
-	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck
-	return dir
+	t.Cleanup(func() {
+		if closeErr := ln.Close(); closeErr != nil {
+			t.Errorf("close fake daemon listener: %v", closeErr)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -227,23 +241,15 @@ func TestON056_NoPauseOrResumeInUsageText_NoInteractivePrompt(t *testing.T) {
 
 	for _, tc := range []struct {
 		verb string
-		fn   func([]string, interface{ Write([]byte) (int, error) }, interface{ Write([]byte) (int, error) }) int
+		fn   func([]string, io.Writer, io.Writer) int
 	}{
-		{"pause", func(args []string, out, _ interface{ Write([]byte) (int, error) }) int {
-			var buf bytes.Buffer
-			code := RunPause([]string{"--help"}, &buf, &buf)
-			_, _ = out.Write(buf.Bytes())
-			return code
-		}},
-		{"resume", func(args []string, out, _ interface{ Write([]byte) (int, error) }) int {
-			var buf bytes.Buffer
-			code := RunResume([]string{"--help"}, &buf, &buf)
-			_, _ = out.Write(buf.Bytes())
-			return code
-		}},
+		{"pause", RunPause},
+		{"resume", RunResume},
 	} {
 		var buf bytes.Buffer
-		tc.fn(nil, &buf, &buf)
+		if code := tc.fn([]string{"--help"}, &buf, &buf); code != 0 {
+			t.Errorf("ON-056: %q --help exit code = %d, want 0", tc.verb, code)
+		}
 		usage := buf.String()
 		for _, marker := range interactiveMarkers {
 			if strings.Contains(usage, marker) {

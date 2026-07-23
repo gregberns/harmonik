@@ -36,7 +36,9 @@ func RunReap(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, reapUsage)
+			if _, err := fmt.Fprint(stdout, reapUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--json":
 			asJSON = true
@@ -51,7 +53,9 @@ func RunReap(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise reap: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise reap: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -74,13 +78,20 @@ func RunReap(args []string, stdout, stderr io.Writer) int {
 	for _, ev := range result.Events {
 		b, mErr := json.Marshal(ev)
 		if mErr != nil {
-			continue
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise reap: marshal event for session %q: %v\n", ev.Session, mErr); writeErr != nil {
+				return 1
+			}
+			return 1
 		}
-		fmt.Fprintln(stdout, string(b))
+		if _, writeErr := fmt.Fprintln(stdout, string(b)); writeErr != nil {
+			return 1
+		}
 	}
 
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "harmonik supervise reap: %v\n", err) //nolint:errcheck // best-effort
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise reap: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -97,14 +108,24 @@ func RunReap(args []string, stdout, stderr io.Writer) int {
 		if summary.Reaped == nil {
 			summary.Reaped = []string{}
 		}
-		b, _ := json.Marshal(summary)
-		fmt.Fprintln(stdout, string(b))
+		b, marshalErr := json.Marshal(summary)
+		if marshalErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise reap: marshal summary: %v\n", marshalErr); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
+		if _, writeErr := fmt.Fprintln(stdout, string(b)); writeErr != nil {
+			return 1
+		}
 		return 0
 	}
 
-	fmt.Fprintf(stdout,
+	if _, writeErr := fmt.Fprintf(stdout,
 		"harmonik supervise reap: scanned %d flywheel session(s), reaped %d, skipped %d\n",
-		result.Scanned, len(result.Reaped), result.Skipped)
+		result.Scanned, len(result.Reaped), result.Skipped); writeErr != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -120,7 +141,12 @@ func bootReapOrphanFlywheels(projectDir, protectSession string) supervise.ReapRe
 		DaemonStartTime: resolveDaemonStartTime(projectDir),
 		ProtectSession:  protectSession,
 	}
-	result, _ := supervise.ReapOrphanFlywheelSessions(ctx, supervise.OSReapAdapter(), opts)
+	result, err := supervise.ReapOrphanFlywheelSessions(ctx, supervise.OSReapAdapter(), opts)
+	if err != nil {
+		if _, writeErr := fmt.Fprintf(os.Stderr, "harmonik supervise start: boot orphan reap: %v\n", err); writeErr != nil {
+			return result
+		}
+	}
 	return result
 }
 

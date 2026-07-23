@@ -35,5 +35,5 @@ func TestHC044_SpawnChildSysProcAttr_LinuxPdeathsig(t *testing.T) {
 	if attr == nil {
 		t.Fatal("HC-044 Linux: SpawnChildSysProcAttr returned nil")
 	}
-	i3151VerifyPdeathsig(t, attr)
+	i3151PlatformVerifyPdeathsig(t, attr)
 }

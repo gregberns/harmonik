@@ -62,7 +62,9 @@ func RunTmuxStart(
 
 	// Step i — refuse if already inside tmux ($TMUX set).
 	if tmuxEnv := tmuxEnvLookup(env, "TMUX"); tmuxEnv != "" {
-		fmt.Fprintf(stdout, "hk tmux-start: already inside a tmux session (%s); nothing to do.\n", tmuxEnv)
+		if _, err := fmt.Fprintf(stdout, "hk tmux-start: already inside a tmux session (%s); nothing to do.\n", tmuxEnv); err != nil {
+			return 24
+		}
 		return 0
 	}
 
@@ -74,9 +76,11 @@ func RunTmuxStart(
 			hash := tmuxStartHashDir(projectDir)
 			prefix := "harmonik-" + hash + "-"
 			if !strings.HasPrefix(sessionName, prefix) {
-				fmt.Fprintf(stderr,
+				if _, err := fmt.Fprintf(stderr,
 					"hk tmux-start: --session-name %q does not carry required prefix %q\n",
-					sessionName, prefix)
+					sessionName, prefix); err != nil {
+					return 24
+				}
 				return 24
 			}
 		}
@@ -84,7 +88,9 @@ func RunTmuxStart(
 	} else {
 		// Default: harmonik-<project_hash>-default per PL-006a.
 		if projectDir == "" {
-			fmt.Fprintln(stderr, "hk tmux-start: project directory is required when --session-name is not provided")
+			if _, err := fmt.Fprintln(stderr, "hk tmux-start: project directory is required when --session-name is not provided"); err != nil {
+				return 24
+			}
 			return 24
 		}
 		hash := tmuxStartHashDir(projectDir)
@@ -99,7 +105,9 @@ func RunTmuxStart(
 	// A missing binary is a probe-class failure → exit 22.
 	tmuxBin, err := tmuxStartLookupBin(env)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "hk tmux-start: cannot locate tmux binary: %v\n", err) //nolint:errcheck // best-effort diagnostic to stderr
+		if _, writeErr := fmt.Fprintf(stderr, "hk tmux-start: cannot locate tmux binary: %v\n", err); writeErr != nil {
+			return 22
+		}
 		return 22
 	}
 
@@ -107,13 +115,17 @@ func RunTmuxStart(
 	ctx := context.Background()
 	adapter := OSAdapter{}.WithRunner(tmuxBinRunner{bin: tmuxBin})
 	if err := adapter.ProbeTmux(ctx); err != nil {
-		fmt.Fprintf(stderr, "hk tmux-start: tmux probe failed: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "hk tmux-start: tmux probe failed: %v\n", err); writeErr != nil {
+			return 22
+		}
 		return 22
 	}
 
 	// Step iii — ensure the session exists.
 	if err := adapter.EnsureSession(ctx, computedName, projectDir); err != nil {
-		fmt.Fprintf(stderr, "hk tmux-start: failed to ensure tmux session %q: %v\n", computedName, err)
+		if _, writeErr := fmt.Fprintf(stderr, "hk tmux-start: failed to ensure tmux session %q: %v\n", computedName, err); writeErr != nil {
+			return 24
+		}
 		return 24
 	}
 
@@ -123,7 +135,9 @@ func RunTmuxStart(
 	if execErr := execFn(tmuxBin, argv, env); execErr != nil {
 		// execFn returns only when exec fails; on success the process is replaced.
 		if !errors.Is(execErr, errTmuxStartExecSkipped) {
-			fmt.Fprintf(stderr, "hk tmux-start: exec tmux attach-session: %v\n", execErr)
+			if _, writeErr := fmt.Fprintf(stderr, "hk tmux-start: exec tmux attach-session: %v\n", execErr); writeErr != nil {
+				return 24
+			}
 			return 24
 		}
 		// errTmuxStartExecSkipped is the test-stub signal — treat as success.

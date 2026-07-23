@@ -35,4 +35,5 @@ func TestHC044_SpawnChildSysProcAttr_DarwinNoPdeathsig(t *testing.T) {
 	if !attr.Setpgid {
 		t.Error("HC-044 darwin: Setpgid = false, want true")
 	}
+	i3151PlatformVerifyPdeathsig(t, attr)
 }

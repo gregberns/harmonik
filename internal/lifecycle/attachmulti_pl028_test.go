@@ -163,8 +163,15 @@ func (srv *cliFixtureMultiAttachServer) handleAttach(conn net.Conn) {
 		ID:      1,
 		Error:   nil,
 	}
-	data, _ := json.Marshal(resp)          //nolint:errcheck,errchkjson // encoding a known-good struct; RawMessage field is nil
-	_, _ = fmt.Fprintf(conn, "%s\n", data) //nolint:errcheck // stub write errors are not actionable
+	data, err := json.Marshal(resp)
+	if err != nil {
+		srv.t.Errorf("handleAttach: marshal attach-started response: %v", err)
+		return
+	}
+	if _, err := fmt.Fprintf(conn, "%s\n", data); err != nil {
+		srv.t.Errorf("handleAttach: write attach-started response: %v", err)
+		return
+	}
 
 	// Read until the client closes (detach signal).
 	scanner := bufio.NewScanner(conn)
@@ -189,7 +196,10 @@ func cliFixtureSimulateAttach(t *testing.T, sockPath string, id int) error {
 
 	// Send attach request.
 	req := jsonrpcRequest{JSONRPC: "2.0", ID: id, Method: "attach.session"}
-	reqBytes, _ := json.Marshal(req) //nolint:errcheck,errchkjson // encoding a known-good struct; interface{} Params field is always nil
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("cliFixtureSimulateAttach[%d]: marshal request: %w", id, err)
+	}
 	if _, err := fmt.Fprintf(conn, "%s\n", reqBytes); err != nil {
 		return fmt.Errorf("cliFixtureSimulateAttach[%d]: write: %w", id, err)
 	}

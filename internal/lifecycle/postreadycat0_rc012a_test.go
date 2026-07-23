@@ -306,6 +306,7 @@ func TestRC012a_SpecCorpusClause(t *testing.T) {
 	root := cat0PostReadyFixtureModuleRoot(t)
 	specPath := filepath.Join(root, "specs", "reconciliation", "spec.md")
 
+	//nolint:gosec // G304: specPath is derived from this repository's test module root
 	content, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("reading reconciliation/spec.md: %v", err)

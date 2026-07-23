@@ -93,7 +93,10 @@ func readyFixtureServeDegradedConn(conn net.Conn, state *readyFixtureDaemonState
 		result["investigator_run_ids"] = investigators
 	}
 
-	resultBytes, _ := json.Marshal(result) //nolint:errcheck,errchkjson // stub: encoding a known-good map never fails
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return
+	}
 	raw := json.RawMessage(resultBytes)
 	resp := struct {
 		JSONRPC string           `json:"jsonrpc"`
@@ -101,8 +104,13 @@ func readyFixtureServeDegradedConn(conn net.Conn, state *readyFixtureDaemonState
 		Result  *json.RawMessage `json:"result,omitempty"`
 	}{JSONRPC: "2.0", ID: req.ID, Result: &raw}
 
-	respBytes, _ := json.Marshal(resp)          //nolint:errcheck,errchkjson // stub: encoding a known-good struct never fails
-	_, _ = fmt.Fprintf(conn, "%s\n", respBytes) //nolint:errcheck // stub: write errors intentionally ignored
+	respBytes, err := json.Marshal(resp)
+	if err != nil {
+		return
+	}
+	if _, err := fmt.Fprintf(conn, "%s\n", respBytes); err != nil {
+		return
+	}
 }
 
 // readyFixtureProbeStatusFull returns both status and failing_prerequisite
@@ -121,7 +129,10 @@ func readyFixtureProbeStatusFull(t *testing.T, projectDir string) (status, faili
 		ID      int    `json:"id"`
 		Method  string `json:"method"`
 	}{JSONRPC: "2.0", ID: 2, Method: "status"}
-	reqBytes, _ := json.Marshal(req) //nolint:errcheck,errchkjson // encoding a known-good struct
+	reqBytes, marshalErr := json.Marshal(req)
+	if marshalErr != nil {
+		return "", "", fmt.Errorf("readyFixtureProbeStatusFull: marshal request: %w", marshalErr)
+	}
 	if _, writeErr := fmt.Fprintf(conn, "%s\n", reqBytes); writeErr != nil {
 		return "", "", fmt.Errorf("readyFixtureProbeStatusFull: write: %w", writeErr)
 	}
@@ -226,7 +237,10 @@ func TestPL009a_AutoResolverFailureRoutesToCat3WithoutBlockingReady(t *testing.T
 			ID      int    `json:"id"`
 			Method  string `json:"method"`
 		}{JSONRPC: "2.0", ID: 3, Method: "status"}
-		reqBytes, _ := json.Marshal(req) //nolint:errcheck // encoding a known-good struct
+		reqBytes, marshalErr := json.Marshal(req)
+		if marshalErr != nil {
+			t.Fatalf("PL-009a investigator-ids: marshal request: %v", marshalErr)
+		}
 		if _, err := fmt.Fprintf(conn, "%s\n", reqBytes); err != nil {
 			t.Fatalf("PL-009a investigator-ids: write: %v", err)
 		}

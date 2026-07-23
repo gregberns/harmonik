@@ -230,6 +230,7 @@ func TestCaptainLaunch_WritesSentinelAndPID_hkbcd0(t *testing.T) {
 	}
 
 	sentinel := filepath.Join(proj, ".harmonik", "cognition", "captain.sentinel")
+	//nolint:gosec // G304: sentinel is constructed from this test's temporary project directory and a fixed filename.
 	b, err := os.ReadFile(sentinel)
 	if err != nil {
 		t.Fatalf("captain.sentinel not written: %v", err)
@@ -239,6 +240,7 @@ func TestCaptainLaunch_WritesSentinelAndPID_hkbcd0(t *testing.T) {
 	}
 
 	pidFile := filepath.Join(proj, ".harmonik", "cognition", "captain.pid")
+	//nolint:gosec // G304: pidFile is constructed from this test's temporary project directory and a fixed filename.
 	pb, err := os.ReadFile(pidFile)
 	if err != nil {
 		t.Fatalf("captain.pid not written: %v", err)

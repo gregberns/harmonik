@@ -23,7 +23,7 @@ import (
 // captureStderr runs fn with os.Stderr redirected to a pipe and returns whatever
 // fn wrote to stderr. Several keeper run-entry functions write directly to
 // os.Stderr (not an injectable writer), so the test captures it at the FD level.
-func captureStderr(t *testing.T, fn func() int) (int, string) {
+func captureStderr(t *testing.T, fn func() int) (code int, stderr string) {
 	t.Helper()
 	orig := os.Stderr
 	r, w, err := os.Pipe()
@@ -48,13 +48,18 @@ func captureStderr(t *testing.T, fn func() int) (int, string) {
 		done <- sb.String()
 	}()
 
-	code := fn()
+	code = fn()
 
-	_ = w.Close()
+	closeWriterErr := w.Close()
 	os.Stderr = orig
-	out := <-done
-	_ = r.Close()
-	return code, out
+	if closeWriterErr != nil {
+		t.Fatalf("close captured stderr writer: %v", closeWriterErr)
+	}
+	stderr = <-done
+	if err := r.Close(); err != nil {
+		t.Fatalf("close captured stderr reader: %v", err)
+	}
+	return code, stderr
 }
 
 // TestKeeperSubcommands_RejectPositional_HkNbft is the hk-nbft regression guard:

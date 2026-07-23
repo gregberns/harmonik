@@ -71,9 +71,13 @@ func mainFixtureSaveRestoreEnv(t *testing.T, key, val string, unset bool) {
 	}
 	t.Cleanup(func() {
 		if wasSet {
-			_ = os.Setenv(key, orig)
+			if err := os.Setenv(key, orig); err != nil {
+				t.Errorf("restore os.Setenv(%q): %v", key, err)
+			}
 		} else {
-			_ = os.Unsetenv(key)
+			if err := os.Unsetenv(key); err != nil {
+				t.Errorf("restore os.Unsetenv(%q): %v", key, err)
+			}
 		}
 	})
 }
@@ -303,6 +307,7 @@ func TestRunBeadSubcmd_TmuxUnset_SelfWraps(t *testing.T) {
 	// Write a minimal fake tmux script and prepend its dir to PATH.
 	binDir := t.TempDir()
 	fakeTmux := filepath.Join(binDir, "tmux")
+	//nolint:gosec // G306: executable mode is required for the fake tmux script fixture
 	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
 	}
@@ -430,11 +435,17 @@ func TestVersionSubcommand_ExitsZeroAndPrintsVersionLine(t *testing.T) {
 	exitCode := run()
 
 	// Close the write-end so the reader sees EOF.
-	_ = w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stdout writer: %v", err)
+	}
 
 	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
-	_ = r.Close()
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("copy captured stdout: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close stdout reader: %v", err)
+	}
 
 	if exitCode != 0 {
 		t.Errorf("run() with 'version' subcommand: exit code %d, want 0", exitCode)

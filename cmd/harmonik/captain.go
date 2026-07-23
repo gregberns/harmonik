@@ -328,15 +328,21 @@ func buildCaptainKeeperConfig(name, projectDir string) (enableConfig, error) {
 // but never block the launch. Called on every start captain/crew to close the
 // portability gap on foreign projects that have not run harmonik init (hk-2nmbq).
 // Mirrors the keeper-scripts embed-and-extract approach (hk-ybmqp).
-func ensureBootAssets(projectDir string, stdout, stderr io.Writer) {
+func ensureBootAssets(projectDir string, stdout, stderr io.Writer) error {
 	if code := provisionSkills(projectDir, false, stdout, stderr); code != 0 {
-		fmt.Fprintf(stderr, "harmonik: warning: skill provisioning failed (code %d) — agent may lack .claude/skills/\n", code)
+		if _, err := fmt.Fprintf(stderr, "harmonik: warning: skill provisioning failed (code %d) — agent may lack .claude/skills/\n", code); err != nil {
+			return err
+		}
 	}
 	if code := provisionScaffolds(projectDir, false, stdout, stderr); code != 0 {
-		fmt.Fprintf(stderr, "harmonik: warning: scaffold provisioning failed (code %d)\n", code)
+		if _, err := fmt.Fprintf(stderr, "harmonik: warning: scaffold provisioning failed (code %d)\n", code); err != nil {
+			return err
+		}
 	}
 	if code := provisionContextTiers(projectDir, false, stdout, stderr); code != 0 {
-		fmt.Fprintf(stderr, "harmonik: warning: context-tier provisioning failed (code %d)\n", code)
+		if _, err := fmt.Fprintf(stderr, "harmonik: warning: context-tier provisioning failed (code %d)\n", code); err != nil {
+			return err
+		}
 	}
 	// renderAgentsMD substitutes $TARGET_BRANCH; read from config when available.
 	targetBranch := "main"
@@ -344,8 +350,11 @@ func ensureBootAssets(projectDir string, stdout, stderr io.Writer) {
 		targetBranch = pc.Daemon.TargetBranch
 	}
 	if code := renderAgentsMD(projectDir, targetBranch, false, stdout, stderr); code != 0 {
-		fmt.Fprintf(stderr, "harmonik: warning: AGENTS.md provisioning failed (code %d)\n", code)
+		if _, err := fmt.Fprintf(stderr, "harmonik: warning: AGENTS.md provisioning failed (code %d)\n", code); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // captainTmuxSessionName resolves the tmux session name for the captain:
@@ -514,7 +523,9 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	// files the agent reads at boot. Create-if-missing (force=false): existing
 	// files are never overwritten. Non-fatal: failures WARN, never block launch.
 	// Mirrors the keeper-scripts embed-and-extract approach (hk-ybmqp, hk-2nmbq).
-	ensureBootAssets(project, os.Stdout, os.Stderr)
+	if err := ensureBootAssets(project, os.Stdout, os.Stderr); err != nil {
+		return 1
+	}
 
 	// Wire keeper hooks BEFORE launching tmux so the new `claude` session reads
 	// the statusLine + Stop + PreCompact stanzas at session start. A failure here

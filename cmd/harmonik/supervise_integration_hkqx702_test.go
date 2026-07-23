@@ -128,11 +128,15 @@ func TestSupervise_StartRefuses_LockHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 	sockPath := harmonikDir + "/daemon.sock"
-	l, err := net.Listen("unix", sockPath)
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("create unix listener: %v", err)
 	}
-	defer func() { _ = l.Close() }()
+	defer func() {
+		if err := l.Close(); err != nil {
+			t.Errorf("close unix listener: %v", err)
+		}
+	}()
 
 	// Acquire the supervisor lock exclusively.
 	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o750); err != nil {
@@ -215,11 +219,15 @@ func TestSupervise_StartCommandFlagSetsConfigCommand(t *testing.T) {
 	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", harmonikDir+"/daemon.sock")
 	if err != nil {
 		t.Fatalf("create unix listener: %v", err)
 	}
-	defer func() { _ = l.Close() }()
+	defer func() {
+		if err := l.Close(); err != nil {
+			t.Errorf("close unix listener: %v", err)
+		}
+	}()
 
 	// RunStart with --command. It will fail at the tmux step (no tmux in CI)
 	// but by then it has already written config.json. We treat any exit code
@@ -263,11 +271,15 @@ func TestSupervise_StartDoubleDashCommand(t *testing.T) {
 	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", harmonikDir+"/daemon.sock")
 	if err != nil {
 		t.Fatalf("create unix listener: %v", err)
 	}
-	defer func() { _ = l.Close() }()
+	defer func() {
+		if err := l.Close(); err != nil {
+			t.Errorf("close unix listener: %v", err)
+		}
+	}()
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -312,11 +324,15 @@ func TestSupervise_StartHoldsLockDuringSessionCreation(t *testing.T) {
 	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", harmonikDir+"/daemon.sock")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer func() { _ = l.Close() }()
+	defer func() {
+		if err := l.Close(); err != nil {
+			t.Errorf("close unix listener: %v", err)
+		}
+	}()
 
 	// Pre-acquire the lock to simulate a running supervisor.
 	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o750); err != nil {

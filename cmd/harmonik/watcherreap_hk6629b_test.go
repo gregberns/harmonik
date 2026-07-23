@@ -83,7 +83,7 @@ func startWatcherReapMockDaemon(t *testing.T, project, sessionID, crewName strin
 		t.Fatalf("startWatcherReapMockDaemon: mkdir: %v", err)
 	}
 	sockPath := filepath.Join(harmonikDir, "daemon.sock")
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("startWatcherReapMockDaemon: listen: %v", err)
 	}
@@ -94,17 +94,35 @@ func startWatcherReapMockDaemon(t *testing.T, project, sessionID, crewName strin
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
-				result, _ := json.Marshal(struct {
+				defer func() {
+					if err := c.Close(); err != nil {
+						t.Logf("close mock conn: %v", err)
+					}
+				}()
+				result, err := json.Marshal(struct {
 					SessionID string `json:"session_id"`
 					Name      string `json:"name"`
 				}{SessionID: sessionID, Name: crewName})
-				resp, _ := json.Marshal(crewSocketResponse{Ok: true, Result: result})
-				_, _ = fmt.Fprintf(c, "%s\n", resp)
+				if err != nil {
+					t.Errorf("marshal mock result: %v", err)
+					return
+				}
+				resp, err := json.Marshal(crewSocketResponse{Ok: true, Result: result})
+				if err != nil {
+					t.Errorf("marshal mock response: %v", err)
+					return
+				}
+				if _, err := fmt.Fprintf(c, "%s\n", resp); err != nil {
+					t.Errorf("write mock response: %v", err)
+				}
 			}(conn)
 		}
 	}()
-	return func() { _ = ln.Close() }
+	return func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("close mock listener: %v", err)
+		}
+	}
 }
 
 // TestCrewStart_ReapsPriorAgentWatchers_Hk6629b verifies that

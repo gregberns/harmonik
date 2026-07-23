@@ -24,8 +24,8 @@ import (
 func TestCommsLogSurfacesKeeperProducer_hk6nz2j(t *testing.T) {
 	ts := "2026-07-18T23:00:00Z"
 	lines := []string{
-		commsLogEvent("01986000-0000-7000-8000-000000000001", ts, "keeper", "delta", "keeper", "leader warn: restart soon"),
-		commsLogEvent("01986000-0000-7000-8000-000000000002", ts, "alice", "bob", "status", "unrelated"),
+		commsLogEvent(t, "01986000-0000-7000-8000-000000000001", ts, "keeper", "delta", "keeper", "leader warn: restart soon"),
+		commsLogEvent(t, "01986000-0000-7000-8000-000000000002", ts, "alice", "bob", "status", "unrelated"),
 	}
 	dir := commsLogFixture(t, lines)
 

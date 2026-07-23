@@ -202,7 +202,9 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, syncAssetsUsage)
+			if syncAssetsWritef(stdout, "%s", syncAssetsUsage) != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--project" && i+1 < len(args):
 			i++
@@ -219,8 +221,12 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 		case args[i] == "--force":
 			force = true
 		default:
-			fmt.Fprintf(stderr, "harmonik sync-assets: unrecognised argument %q\n", args[i])
-			fmt.Fprint(stderr, syncAssetsUsage)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: unrecognised argument %q\n", args[i]) != nil {
+				return 1
+			}
+			if syncAssetsWritef(stderr, "%s", syncAssetsUsage) != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -233,43 +239,65 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: cannot determine working directory: %v\n", err)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: cannot determine working directory: %v\n", err) != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
 	}
 	absProject, err := filepath.Abs(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: cannot resolve project path %q: %v\n", projectDir, err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: cannot resolve project path %q: %v\n", projectDir, err) != nil {
+			return 1
+		}
 		return 1
 	}
 	projectDir = absProject
 	if _, err := os.Stat(projectDir); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: project directory %q does not exist or is not accessible: %v\n", projectDir, err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: project directory %q does not exist or is not accessible: %v\n", projectDir, err) != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Compute the plan.
 	manifest, err := BuildManifest()
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: build manifest: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: build manifest: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	lock, err := ReadLock(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: read lock: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: read lock: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	disk, err := buildDiskHashes(projectDir, manifest)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: hash project files: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: hash project files: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	plan := Reconcile(manifest, lock, disk)
 
 	if dryRun {
-		printPlanTable(plan, stdout)
-		fmt.Fprintln(stdout, "\nharmonik sync-assets: dry-run — no files written. Re-run with --apply to update.")
+		if err := printPlanTable(plan, stdout); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write plan: %v\n", err) != nil {
+				return 1
+			}
+			return 1
+		}
+		if _, err := fmt.Fprintln(stdout, "\nharmonik sync-assets: dry-run — no files written. Re-run with --apply to update."); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write dry-run summary: %v\n", err) != nil {
+				return 1
+			}
+			return 1
+		}
 		return 0
 	}
 
@@ -277,13 +305,21 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 	if !force {
 		dispatching, reason, gerr := daemonDispatchGate(projectDir)
 		if gerr != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: daemon-lull check failed: %v\n", gerr)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: daemon-lull check failed: %v\n", gerr) != nil {
+				return 1
+			}
 			return 1
 		}
 		if dispatching {
-			fmt.Fprintf(stderr, "harmonik sync-assets: REFUSING to apply — the daemon is actively dispatching (%s).\n", reason)
-			fmt.Fprintln(stderr, "  Editing the main working tree mid-dispatch trips implementer_escaped_worktree and fails in-flight beads.")
-			fmt.Fprintln(stderr, "  Wait for a lull (no active queue items), or re-run with --force to override.")
+			if syncAssetsWritef(stderr, "harmonik sync-assets: REFUSING to apply — the daemon is actively dispatching (%s).\n", reason) != nil {
+				return 1
+			}
+			if syncAssetsWritef(stderr, "  Editing the main working tree mid-dispatch trips implementer_escaped_worktree and fails in-flight beads.\n") != nil {
+				return 1
+			}
+			if syncAssetsWritef(stderr, "  Wait for a lull (no active queue items), or re-run with --force to override.\n") != nil {
+				return 1
+			}
 			return 3
 		}
 	}
@@ -302,11 +338,18 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 	// until the operator reconciles it (disk hash matches embed).
 	newLock := lockFromOutcomes(lock, outcomes)
 	if err := WriteLock(projectDir, newLock); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: write lock: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: write lock: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 
-	printApplySummary(outcomes, stdout)
+	if err := printApplySummary(outcomes, stdout); err != nil {
+		if syncAssetsWritef(stderr, "harmonik sync-assets: write apply summary: %v\n", err) != nil {
+			return 1
+		}
+		return 1
+	}
 
 	if commit {
 		if code := commitSync(projectDir, outcomes, stdout, stderr); code != 0 {
@@ -314,6 +357,11 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+func syncAssetsWritef(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
 }
 
 // applyPlan executes each ReconcileItem per its class policy. It returns the
@@ -343,7 +391,9 @@ func applyPlan(projectDir string, m Manifest, plan []ReconcileItem, stdout, stde
 		full := filepath.Join(projectDir, dest)
 		embedData, rerr := initSkillAssets.ReadFile(item.Path)
 		if rerr != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: read embedded asset %s: %v\n", item.Path, rerr)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: read embedded asset %s: %v\n", item.Path, rerr) != nil {
+				return outcomes, 1
+			}
 			return outcomes, 1
 		}
 		// Render template substitutions for the AGENTS template (matches init).
@@ -440,7 +490,9 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 	switch action {
 	case ActionFastForward, ActionCreate:
 		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -449,7 +501,9 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 	case ActionConflict:
 		newPath := full + ".harmonik-new"
 		if err := writeFileEnsureDir(newPath, dest, embedData); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.conflic = true
@@ -458,7 +512,9 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 		// applyPlan filters both of these out before dispatch. Reaching here means
 		// that filter and this switch have drifted apart, which would silently
 		// write nothing while reporting success.
-		fmt.Fprintf(stderr, "harmonik sync-assets: internal error: action %q reached applyManaged for %s\n", action, dest)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: internal error: action %q reached applyManaged for %s\n", action, dest) != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0
@@ -474,7 +530,9 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 
 	if action == ActionCreate {
 		if err := writeFileEnsureDir(full, dest, []byte(rendered)); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -489,7 +547,9 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 		// Disk missing where the planner thought it present: fall back to create.
 		if os.IsNotExist(rerr) {
 			if err := writeFileEnsureDir(full, dest, []byte(rendered)); err != nil {
-				fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+				if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+					return 1
+				}
 				return 1
 			}
 			out.written = true
@@ -497,7 +557,9 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 			out.note = "router (re)created from template"
 			return 0
 		}
-		fmt.Fprintf(stderr, "harmonik sync-assets: read %s: %v\n", dest, rerr)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: read %s: %v\n", dest, rerr) != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -507,7 +569,9 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 		// project's file; write the fresh template alongside for manual reconcile.
 		newPath := full + ".harmonik-new"
 		if err := writeFileEnsureDir(newPath, dest, []byte(rendered)); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.conflic = true
@@ -521,7 +585,9 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 		return 0
 	}
 	if err := writeFileEnsureDir(full, dest, []byte(merged)); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+			return 1
+		}
 		return 1
 	}
 	out.written = true
@@ -536,7 +602,9 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 	switch action {
 	case ActionCreate:
 		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -547,7 +615,9 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 		if rerr != nil {
 			if os.IsNotExist(rerr) {
 				if err := writeFileEnsureDir(full, dest, embedData); err != nil {
-					fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+					if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+						return 1
+					}
 					return 1
 				}
 				out.written = true
@@ -555,7 +625,9 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 				out.note = "created from template"
 				return 0
 			}
-			fmt.Fprintf(stderr, "harmonik sync-assets: read %s: %v\n", dest, rerr)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: read %s: %v\n", dest, rerr) != nil {
+				return 1
+			}
 			return 1
 		}
 		merged, ok := replaceTierHeader(string(current), string(embedData))
@@ -571,7 +643,9 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 			return 0
 		}
 		if err := writeFileEnsureDir(full, dest, []byte(merged)); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -584,7 +658,9 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 		// applyPlan filters both of these out before dispatch. Reaching here means
 		// that filter and this switch have drifted apart, which would silently
 		// write nothing while reporting success.
-		fmt.Fprintf(stderr, "harmonik sync-assets: internal error: action %q reached applyContentOwned for %s\n", action, dest)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: internal error: action %q reached applyContentOwned for %s\n", action, dest) != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0
@@ -596,7 +672,9 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 func applyScaffold(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	if action == ActionCreate {
 		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -781,7 +859,7 @@ func writeFileEnsureDir(path, dest string, data []byte) error {
 // daemonDispatchGate reports whether the daemon is up AND actively dispatching.
 // Returns (dispatching, reason, err). When the daemon socket is absent or refuses
 // the connection, the daemon is down → (false, "", nil) and apply proceeds.
-func daemonDispatchGate(projectDir string) (bool, string, error) {
+func daemonDispatchGate(projectDir string) (dispatching bool, reason string, err error) {
 	up := daemonSocketUp(projectDir)
 	if !up {
 		return false, "", nil
@@ -819,7 +897,7 @@ func daemonSocketUp(projectDir string) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close() //nolint:errcheck
+	_ = conn.Close()
 	return true
 }
 
@@ -833,7 +911,7 @@ func daemonSocketUp(projectDir string) bool {
 // then would trip implementer_escaped_worktree and fail that in-flight bead. So
 // ANY in-flight item in an active queue blocks --apply (unless --force). Returns
 // (true, reason) on the first such item, else (false, "").
-func dispatchingQueue(queues []*queue.Queue) (bool, string) {
+func dispatchingQueue(queues []*queue.Queue) (dispatching bool, reason string) {
 	for _, q := range queues {
 		if q == nil || q.Status != queue.QueueStatusActive {
 			continue
@@ -865,9 +943,10 @@ func queueLabel(q *queue.Queue) string {
 // ---------------------------------------------------------------------------
 
 // printPlanTable prints the dry-run plan as a path | class | action table.
-func printPlanTable(plan []ReconcileItem, out io.Writer) {
-	fmt.Fprintln(out, "harmonik sync-assets — plan (dry-run)")
-	fmt.Fprintln(out, "")
+func printPlanTable(plan []ReconcileItem, out io.Writer) error {
+	p := syncAssetsPrinter{out: out}
+	p.println("harmonik sync-assets — plan (dry-run)")
+	p.println("")
 	// Column widths.
 	maxPath := len("PATH")
 	for _, it := range plan {
@@ -880,8 +959,8 @@ func printPlanTable(plan []ReconcileItem, out io.Writer) {
 			maxPath = len(label)
 		}
 	}
-	fmt.Fprintf(out, "  %-*s  %-14s  %s\n", maxPath, "PATH", "CLASS", "ACTION")
-	fmt.Fprintf(out, "  %-*s  %-14s  %s\n", maxPath, strings.Repeat("-", maxPath), "--------------", "------")
+	p.printf("  %-*s  %-14s  %s\n", maxPath, "PATH", "CLASS", "ACTION")
+	p.printf("  %-*s  %-14s  %s\n", maxPath, strings.Repeat("-", maxPath), "--------------", "------")
 	// Sort by destination for stable, readable output.
 	rows := make([]ReconcileItem, len(plan))
 	copy(rows, plan)
@@ -896,13 +975,14 @@ func printPlanTable(plan []ReconcileItem, out io.Writer) {
 		if !ok {
 			label = it.Path
 		}
-		fmt.Fprintf(out, "  %-*s  %-14s  %s\n", maxPath, label, it.Class, it.Action)
+		p.printf("  %-*s  %-14s  %s\n", maxPath, label, it.Class, it.Action)
 	}
+	return p.err
 }
 
 // printApplySummary prints the applied/created/conflicted/skipped tallies and
 // prominently lists any .harmonik-new conflicts the operator must reconcile.
-func printApplySummary(outcomes []applyOutcome, out io.Writer) {
+func printApplySummary(outcomes []applyOutcome, out io.Writer) error {
 	var applied, created, conflicted, skipped int
 	var conflicts []applyOutcome
 	for _, o := range outcomes {
@@ -919,16 +999,37 @@ func printApplySummary(outcomes []applyOutcome, out io.Writer) {
 			skipped++
 		}
 	}
-	fmt.Fprintln(out, "\nharmonik sync-assets — apply summary")
-	fmt.Fprintf(out, "  applied:    %d  (created: %d)\n", applied, created)
-	fmt.Fprintf(out, "  conflicted: %d\n", conflicted)
-	fmt.Fprintf(out, "  skipped:    %d\n", skipped)
+	p := syncAssetsPrinter{out: out}
+	p.println("\nharmonik sync-assets — apply summary")
+	p.printf("  applied:    %d  (created: %d)\n", applied, created)
+	p.printf("  conflicted: %d\n", conflicted)
+	p.printf("  skipped:    %d\n", skipped)
 	if len(conflicts) > 0 {
-		fmt.Fprintln(out, "\n  CONFLICTS — review and reconcile these by hand:")
+		p.println("\n  CONFLICTS — review and reconcile these by hand:")
 		for _, c := range conflicts {
-			fmt.Fprintf(out, "    - %s: %s\n", c.dest, c.note)
+			p.printf("    - %s: %s\n", c.dest, c.note)
 		}
 	}
+	return p.err
+}
+
+type syncAssetsPrinter struct {
+	out io.Writer
+	err error
+}
+
+func (p *syncAssetsPrinter) printf(format string, args ...any) {
+	if p.err != nil {
+		return
+	}
+	_, p.err = fmt.Fprintf(p.out, format, args...)
+}
+
+func (p *syncAssetsPrinter) println(args ...any) {
+	if p.err != nil {
+		return
+	}
+	_, p.err = fmt.Fprintln(p.out, args...)
 }
 
 // commitSync stages and commits the applied changes. The orchestrator normally
@@ -943,7 +1044,9 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 		}
 	}
 	if !anyChange {
-		fmt.Fprintln(stdout, "harmonik sync-assets: nothing to commit (no files changed)")
+		if syncAssetsWritef(stdout, "harmonik sync-assets: nothing to commit (no files changed)\n") != nil {
+			return 1
+		}
 		return 0
 	}
 	// Stage ONLY the paths this run touched — NEVER `git add -A`, which would
@@ -976,10 +1079,14 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 	commit.Stdout = stdout
 	commit.Stderr = stderr
 	if err := commit.Run(); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: git commit failed: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: git commit failed: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "harmonik sync-assets: committed asset sync")
+	if syncAssetsWritef(stdout, "harmonik sync-assets: committed asset sync\n") != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -994,7 +1101,9 @@ func gitAddPath(projectDir, relPath string, stdout, stderr io.Writer) int {
 	add.Stdout = stdout
 	add.Stderr = stderr
 	if err := add.Run(); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: git add %s failed: %v\n", relPath, err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: git add %s failed: %v\n", relPath, err) != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0

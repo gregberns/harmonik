@@ -48,14 +48,26 @@ func graphValidateFixtureCaptureOutput(t *testing.T, fn func()) (stdout, stderr 
 
 	fn()
 
-	wOut.Close()
-	wErr.Close()
+	if err := wOut.Close(); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: close stdout writer: %v", err)
+	}
+	if err := wErr.Close(); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: close stderr writer: %v", err)
+	}
 
 	var bufOut, bufErr bytes.Buffer
-	bufOut.ReadFrom(rOut)
-	bufErr.ReadFrom(rErr)
-	rOut.Close()
-	rErr.Close()
+	if _, err := bufOut.ReadFrom(rOut); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: read stdout: %v", err)
+	}
+	if _, err := bufErr.ReadFrom(rErr); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: read stderr: %v", err)
+	}
+	if err := rOut.Close(); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: close stdout reader: %v", err)
+	}
+	if err := rErr.Close(); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: close stderr reader: %v", err)
+	}
 
 	return bufOut.String(), bufErr.String()
 }

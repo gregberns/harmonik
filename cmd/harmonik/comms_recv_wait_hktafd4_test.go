@@ -43,7 +43,9 @@ func waitTestStartHub(t *testing.T, eventsPath string, cs *daemon.CursorStore) s
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = daemon.RunSocketListenerWithSubscribe(ctx, sockPath, nil, nil, hub)
+		if err := daemon.RunSocketListenerWithSubscribe(ctx, sockPath, nil, nil, hub); err != nil && ctx.Err() == nil {
+			t.Errorf("RunSocketListenerWithSubscribe: %v", err)
+		}
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -65,10 +67,19 @@ func waitTestStartHub(t *testing.T, eventsPath string, cs *daemon.CursorStore) s
 // suitable as the since_event_id cursor.
 func waitTestSeedAgentMessage(t *testing.T, eventsPath, to, from, body string) (anchorID, msgID string) {
 	t.Helper()
-	anchor, _ := uuid.NewV7()
+	anchor, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new anchor UUID: %v", err)
+	}
 	time.Sleep(2 * time.Millisecond)
-	mid, _ := uuid.NewV7()
-	payload, _ := json.Marshal(map[string]any{"from": from, "to": to, "body": body})
+	mid, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new message UUID: %v", err)
+	}
+	payload, err := json.Marshal(map[string]any{"from": from, "to": to, "body": body})
+	if err != nil {
+		t.Fatalf("marshal agent message payload: %v", err)
+	}
 	ev := core.Event{
 		EventID:         core.EventID(mid),
 		SchemaVersion:   1,
@@ -80,6 +91,7 @@ func waitTestSeedAgentMessage(t *testing.T, eventsPath, to, from, body string) (
 	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o750); err != nil {
 		t.Fatalf("mkdir events: %v", err)
 	}
+	//nolint:gosec // G304: eventsPath is constructed beneath this test's t.TempDir fixture.
 	f, err := os.Create(eventsPath)
 	if err != nil {
 		t.Fatalf("create events.jsonl: %v", err)
@@ -87,7 +99,9 @@ func waitTestSeedAgentMessage(t *testing.T, eventsPath, to, from, body string) (
 	if encErr := json.NewEncoder(f).Encode(ev); encErr != nil {
 		t.Fatalf("encode event: %v", encErr)
 	}
-	_ = f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatalf("close events.jsonl: %v", err)
+	}
 	return anchor.String(), mid.String()
 }
 
@@ -102,7 +116,9 @@ func captureStdoutDuring(t *testing.T, fn func()) string {
 	}
 	os.Stdout = w
 	fn()
-	_ = w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stdout pipe writer: %v", err)
+	}
 	os.Stdout = old
 	var b strings.Builder
 	buf := make([]byte, 4096)
@@ -115,7 +131,9 @@ func captureStdoutDuring(t *testing.T, fn func()) string {
 			break
 		}
 	}
-	_ = r.Close()
+	if err := r.Close(); err != nil {
+		t.Fatalf("close stdout pipe reader: %v", err)
+	}
 	return b.String()
 }
 
@@ -155,7 +173,11 @@ func TestCommsRecvWait_DeliversOneAndAdvancesCursor(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	var cursor string
 	for time.Now().Before(deadline) {
-		cursor, _ = cs.Get("alice")
+		var err error
+		cursor, err = cs.Get("alice")
+		if err != nil {
+			t.Fatalf("get durable cursor: %v", err)
+		}
 		if cursor == msgID {
 			break
 		}
@@ -180,7 +202,10 @@ func TestCommsRecvWait_TimeoutExit(t *testing.T) {
 	}
 	sockPath := waitTestStartHub(t, eventsPath, nil)
 
-	anchor, _ := uuid.NewV7()
+	anchor, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new timeout anchor UUID: %v", err)
+	}
 	start := time.Now()
 	code := runCommsRecvWait(sockPath, "ghost", "", "", anchor.String(), false, 300*time.Millisecond)
 	elapsed := time.Since(start)

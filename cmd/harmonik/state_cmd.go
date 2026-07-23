@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"text/tabwriter"
@@ -131,38 +132,58 @@ func printStateHuman(snap daemon.StateSnapshot) error {
 	if snap.Daemon.Up {
 		daemonStatus = fmt.Sprintf("up (pid %d)", snap.Daemon.Pid)
 	}
-	fmt.Fprintf(w, "daemon\t%s\n", daemonStatus)
-	fmt.Fprintf(w, "activity\t%s\n", string(snap.ActivityLabel))
-	fmt.Fprintf(w, "captured_at\t%s\n", snap.CapturedAt)
+	if err := writeStateRow(w, "daemon\t%s\n", daemonStatus); err != nil {
+		return err
+	}
+	if err := writeStateRow(w, "activity\t%s\n", string(snap.ActivityLabel)); err != nil {
+		return err
+	}
+	if err := writeStateRow(w, "captured_at\t%s\n", snap.CapturedAt); err != nil {
+		return err
+	}
 
 	if !snap.ReadQuality.Ok {
-		fmt.Fprintf(w, "read_quality\tunsure\n")
+		if err := writeStateRow(w, "read_quality\tunsure\n"); err != nil {
+			return err
+		}
 		for _, r := range snap.ReadQuality.Reasons {
-			fmt.Fprintf(w, "  reason\t%s\n", r)
+			if err := writeStateRow(w, "  reason\t%s\n", r); err != nil {
+				return err
+			}
 		}
 	}
 
 	if len(snap.Runs) > 0 {
-		fmt.Fprintf(w, "\nruns (%d)\t\n", len(snap.Runs))
+		if err := writeStateRow(w, "\nruns (%d)\t\n", len(snap.Runs)); err != nil {
+			return err
+		}
 		for _, r := range snap.Runs {
-			fmt.Fprintf(w, "  %s\tbead=%s queue=%s state=%s\n", r.RunID, r.BeadID, r.QueueName, r.LifecycleState)
+			if err := writeStateRow(w, "  %s\tbead=%s queue=%s state=%s\n", r.RunID, r.BeadID, r.QueueName, r.LifecycleState); err != nil {
+				return err
+			}
 		}
 	}
 
 	if len(snap.Queues) > 0 {
-		fmt.Fprintf(w, "\nqueues (%d)\t\n", len(snap.Queues))
+		if err := writeStateRow(w, "\nqueues (%d)\t\n", len(snap.Queues)); err != nil {
+			return err
+		}
 		for _, q := range snap.Queues {
 			eligible := ""
 			if q.EligibleNow {
 				eligible = " [eligible]"
 			}
-			fmt.Fprintf(w, "  %s\tstatus=%s items=%d active=%d cap=%d%s\n",
-				q.Name, q.Status, q.ItemCount, q.ActiveCount, q.EffectiveWorkerCap, eligible)
+			if err := writeStateRow(w, "  %s\tstatus=%s items=%d active=%d cap=%d%s\n",
+				q.Name, q.Status, q.ItemCount, q.ActiveCount, q.EffectiveWorkerCap, eligible); err != nil {
+				return err
+			}
 		}
 	}
 
 	if len(snap.Sessions) > 0 {
-		fmt.Fprintf(w, "\nsessions (%d)\t\n", len(snap.Sessions))
+		if err := writeStateRow(w, "\nsessions (%d)\t\n", len(snap.Sessions)); err != nil {
+			return err
+		}
 		for _, s := range snap.Sessions {
 			status := "alive"
 			if !s.Alive {
@@ -175,11 +196,20 @@ func printStateHuman(snap daemon.StateSnapshot) error {
 			if s.Cognition != nil {
 				ctx = fmt.Sprintf(" fill=%.1f%%", s.Cognition.Context.FillFrac*100)
 			}
-			fmt.Fprintf(w, "  %s\t%s%s\n", s.Agent, status, ctx)
+			if err := writeStateRow(w, "  %s\t%s%s\n", s.Agent, status, ctx); err != nil {
+				return err
+			}
 		}
 	}
 
 	if err := w.Flush(); err != nil {
+		return fmt.Errorf("write state summary: %w", err)
+	}
+	return nil
+}
+
+func writeStateRow(w io.Writer, format string, args ...any) error {
+	if _, err := fmt.Fprintf(w, format, args...); err != nil {
 		return fmt.Errorf("write state summary: %w", err)
 	}
 	return nil

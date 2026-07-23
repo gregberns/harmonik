@@ -76,6 +76,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -321,7 +322,10 @@ func runCommsSendSubcommand(subArgs []string) int {
 	}
 	// Signal end of write so the daemon's decoder sees EOF on its read side.
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite()
+		if closeErr := uw.CloseWrite(); closeErr != nil {
+			log.Printf("harmonik comms send: close write: %v", closeErr)
+			return 1
+		}
 	}
 
 	var resp struct {
@@ -1019,7 +1023,10 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		return 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite()
+		if closeErr := uw.CloseWrite(); closeErr != nil {
+			log.Printf("harmonik comms %s: close write: %v", verb, closeErr)
+			return 1
+		}
 	}
 
 	var resp struct {
@@ -1405,7 +1412,10 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite()
+		if closeErr := uw.CloseWrite(); closeErr != nil {
+			log.Printf("harmonik comms recv: close write: %v", closeErr)
+			return 1
+		}
 	}
 
 	var resp struct {
@@ -1513,7 +1523,7 @@ var commsFollowPresenceBeatInterval = 60 * time.Second
 // sendPresenceRefreshBeat sends a lightweight comms-presence refresh op to the
 // daemon for agent, keeping it Online in `comms who` without touching the
 // message read path. Shared by the idle --follow presence-beat below.
-func sendPresenceRefreshBeat(sockPath, agent, sessionID string) error {
+func sendPresenceRefreshBeat(ctx context.Context, sockPath, agent, sessionID string) error {
 	payload := map[string]any{
 		"agent":  agent,
 		"status": "online",
@@ -1534,7 +1544,7 @@ func sendPresenceRefreshBeat(sockPath, agent, sessionID string) error {
 		return err
 	}
 
-	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	cancel()
 	if dialErr != nil {
@@ -1546,7 +1556,9 @@ func sendPresenceRefreshBeat(sockPath, agent, sessionID string) error {
 		return writeErr
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite()
+		if closeErr := uw.CloseWrite(); closeErr != nil {
+			return closeErr
+		}
 	}
 
 	var resp struct {
@@ -1566,7 +1578,7 @@ func sendPresenceRefreshBeat(sockPath, agent, sessionID string) error {
 // marking it offline in `comms who`. Used by the --follow teardown path (hk-ru45u)
 // so a clean exit is immediately reflected in the registry rather than waiting for
 // the 120s TTL to expire. Best-effort: the caller should ignore the error.
-func sendPresenceLeaveBeat(sockPath, agent, sessionID string) error {
+func sendPresenceLeaveBeat(ctx context.Context, sockPath, agent, sessionID string) error {
 	payload := map[string]any{
 		"agent":  agent,
 		"status": "offline",
@@ -1587,7 +1599,7 @@ func sendPresenceLeaveBeat(sockPath, agent, sessionID string) error {
 		return err
 	}
 
-	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	cancel()
 	if dialErr != nil {
@@ -1599,7 +1611,9 @@ func sendPresenceLeaveBeat(sockPath, agent, sessionID string) error {
 		return writeErr
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite()
+		if closeErr := uw.CloseWrite(); closeErr != nil {
+			return closeErr
+		}
 	}
 
 	var resp struct {
@@ -1645,7 +1659,9 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 	beatSessionID := resolveSessionID()
 	defer func() {
 		if agent != "" && sigCtx.Err() != nil {
-			_ = sendPresenceLeaveBeat(sockPath, agent, beatSessionID)
+			if leaveErr := sendPresenceLeaveBeat(context.WithoutCancel(sigCtx), sockPath, agent, beatSessionID); leaveErr != nil {
+				log.Printf("harmonik comms recv --follow: presence leave: %v", leaveErr)
+			}
 		}
 	}()
 
@@ -1661,7 +1677,9 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 			case <-sigCtx.Done():
 				return
 			case <-beatTicker.C:
-				_ = sendPresenceRefreshBeat(sockPath, agent, beatSessionID)
+				if refreshErr := sendPresenceRefreshBeat(sigCtx, sockPath, agent, beatSessionID); refreshErr != nil {
+					log.Printf("harmonik comms recv --follow: presence refresh: %v", refreshErr)
+				}
 			}
 		}
 	}()
@@ -1864,18 +1882,38 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 				line, marshalErr := json.Marshal(msg)
 				if marshalErr != nil {
 					close(connCloseOnce)
-					_ = conn.Close()
+					if closeErr := conn.Close(); closeErr != nil {
+						log.Printf("harmonik comms recv --follow: close connection after marshal failure: %v", closeErr)
+					}
 					fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: marshal message: %v\n", marshalErr)
 					return 1
 				}
-				fmt.Fprintln(w, string(line))
+				if _, writeErr := fmt.Fprintln(w, string(line)); writeErr != nil {
+					close(connCloseOnce)
+					if closeErr := conn.Close(); closeErr != nil {
+						log.Printf("harmonik comms recv --follow: close connection after write failure: %v", closeErr)
+					}
+					return 1
+				}
 			} else {
 				ts := env.TimestampWall
 				direction := fmt.Sprintf("%s → %s", p.From, p.To)
 				if p.Topic != "" {
-					fmt.Fprintf(w, "%s  %-30s  [%s]  %s\n", ts, direction, p.Topic, p.Body)
+					if _, writeErr := fmt.Fprintf(w, "%s  %-30s  [%s]  %s\n", ts, direction, p.Topic, p.Body); writeErr != nil {
+						close(connCloseOnce)
+						if closeErr := conn.Close(); closeErr != nil {
+							log.Printf("harmonik comms recv --follow: close connection after write failure: %v", closeErr)
+						}
+						return 1
+					}
 				} else {
-					fmt.Fprintf(w, "%s  %-30s  %s\n", ts, direction, p.Body)
+					if _, writeErr := fmt.Fprintf(w, "%s  %-30s  %s\n", ts, direction, p.Body); writeErr != nil {
+						close(connCloseOnce)
+						if closeErr := conn.Close(); closeErr != nil {
+							log.Printf("harmonik comms recv --follow: close connection after write failure: %v", closeErr)
+						}
+						return 1
+					}
 				}
 			}
 
@@ -1886,7 +1924,9 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 			// session MUST NOT re-arm --follow until after a pane-nudge WAKE.
 			if p.Topic == "park" && p.From == "daemon" {
 				close(connCloseOnce)
-				_ = conn.Close()
+				if closeErr := conn.Close(); closeErr != nil {
+					log.Printf("harmonik comms recv --follow: close connection after park message: %v", closeErr)
+				}
 				return 0
 			}
 		}

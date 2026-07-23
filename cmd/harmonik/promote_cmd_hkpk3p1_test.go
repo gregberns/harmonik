@@ -42,7 +42,7 @@ func gitLogBody(t *testing.T, dir, ref string) string {
 
 // setupPromoteRepo creates a minimal git repo with a remote that has a "main"
 // branch. It returns the repo root (the "local" clone) and a cleanup function.
-func setupPromoteRepo(t *testing.T) (string, func()) {
+func setupPromoteRepo(t *testing.T) (repoRoot string, cleanup func()) {
 	t.Helper()
 
 	// Create the "remote" bare repo.
@@ -59,10 +59,10 @@ func setupPromoteRepo(t *testing.T) (string, func()) {
 	writeFile(t, local, "main.go", "package main\n\nfunc main() {}\n")
 
 	runGit(t, local, "add", ".")
-	runGitWithEnv(t, local, nil, "commit", "-m", "init")
+	runGit(t, local, "commit", "-m", "init")
 	runGit(t, local, "push", "-u", "origin", "main")
 
-	cleanup := func() {}
+	cleanup = func() {}
 	return local, cleanup
 }
 
@@ -308,7 +308,7 @@ func setupCommitOnBranch(t *testing.T, repoRoot, branch, commitMsg string) strin
 	runGit(t, repoRoot, "checkout", "-b", branch)
 	writeFile(t, repoRoot, branch+".go", "package main\n// "+branch+"\n")
 	runGit(t, repoRoot, "add", branch+".go")
-	runGitWithEnv(t, repoRoot, nil, "commit", "-m", commitMsg)
+	runGit(t, repoRoot, "commit", "-m", commitMsg)
 	sha := gitRevParse(t, repoRoot, "HEAD")
 	runGit(t, repoRoot, "checkout", "main")
 	return sha

@@ -14,6 +14,7 @@ package main
 // Spec ref: codename:session-keeper (hk-ekap1); bead hk-kzqml.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,7 +95,9 @@ func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs,
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, keeperEnableUsage)
+			if _, err := fmt.Fprint(stdout, keeperEnableUsage); err != nil {
+				return enableArgs{}, 1
+			}
 			return enableArgs{}, 0
 		case args[i] == "--agent" && i+1 < len(args):
 			i++
@@ -123,8 +126,12 @@ func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs,
 			// treating it as the positional agent name (the CLASS-A false-green).
 			// This catch-all MUST stay AFTER every recognized flag case above so
 			// --yes-destructive et al. are not swept into the reject.
-			fmt.Fprintf(stderr, "harmonik keeper enable: unrecognized flag %q\n", args[i])
-			fmt.Fprint(stderr, keeperEnableUsage)
+			if _, err := fmt.Fprintf(stderr, "harmonik keeper enable: unrecognized flag %q\n", args[i]); err != nil {
+				return enableArgs{}, 1
+			}
+			if _, err := fmt.Fprint(stderr, keeperEnableUsage); err != nil {
+				return enableArgs{}, 1
+			}
 			return enableArgs{}, 2
 		default:
 			rest = append(rest, args[i])
@@ -134,17 +141,25 @@ func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs,
 	// FLAG-ONLY (hk-nbft): any positional argument is rejected with the SAME
 	// message resolveKeeperAgent uses for the other keeper verbs, exit 2.
 	if len(rest) > 0 {
-		fmt.Fprintf(stderr,
+		if _, err := fmt.Fprintf(stderr,
 			"harmonik keeper enable: unexpected positional argument(s) %q — this command is flag-only; use --agent <name>\n",
-			strings.Join(rest, " "))
-		fmt.Fprint(stderr, keeperEnableUsage)
+			strings.Join(rest, " ")); err != nil {
+			return enableArgs{}, 1
+		}
+		if _, err := fmt.Fprint(stderr, keeperEnableUsage); err != nil {
+			return enableArgs{}, 1
+		}
 		return enableArgs{}, 2
 	}
 
 	pa.agentName = agentFlag
 	if pa.agentName == "" {
-		fmt.Fprintln(stderr, "harmonik keeper enable: --agent <name> is required")
-		fmt.Fprint(stderr, keeperEnableUsage)
+		if _, err := fmt.Fprintln(stderr, "harmonik keeper enable: --agent <name> is required"); err != nil {
+			return enableArgs{}, 1
+		}
+		if _, err := fmt.Fprint(stderr, keeperEnableUsage); err != nil {
+			return enableArgs{}, 1
+		}
 		return enableArgs{}, 1
 	}
 	return pa, -1
@@ -166,14 +181,18 @@ func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik keeper enable: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik keeper enable: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
 	}
 	absProject, err := filepath.Abs(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik keeper enable: cannot resolve project path %q: %v\n", projectDir, err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik keeper enable: cannot resolve project path %q: %v\n", projectDir, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	projectDir = absProject
@@ -187,7 +206,9 @@ func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
 	// Resolve settings path.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik keeper enable: cannot determine home directory: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik keeper enable: cannot determine home directory: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
@@ -207,30 +228,38 @@ func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
 func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	// Validate agent name (no path traversal).
 	if strings.Contains(cfg.agentName, "/") || strings.Contains(cfg.agentName, "..") {
-		fmt.Fprintf(stderr, "harmonik keeper enable: agent name %q must not contain '/' or '..'\n", cfg.agentName)
+		if err := keeperWritef(stderr, "harmonik keeper enable: agent name %q must not contain '/' or '..'\n", cfg.agentName); err != nil {
+			return 1
+		}
 		return 1
 	}
 	if cfg.agentName == "" {
-		fmt.Fprintln(stderr, "harmonik keeper enable: agent name is required")
+		if err := keeperWritef(stderr, "harmonik keeper enable: agent name is required\n"); err != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Guard: refuse known live agents without --yes-destructive.
 	if knownLiveAgents[cfg.agentName] && !cfg.yesDestructive {
-		fmt.Fprintf(stderr,
+		if err := keeperWritef(stderr,
 			"harmonik keeper enable: %q is a known live agent (flywheel/named-queues/controlpoints).\n"+
 				"Wiring keeper hooks for a live session carries risk: a misconfigured .managed marker\n"+
 				"could trigger /clear on an active orchestrator session.\n"+
 				"Pass --yes-destructive to proceed.\n",
-			cfg.agentName)
+			cfg.agentName); err != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Validate scripts dir and verify scripts exist.
 	if cfg.scriptsDir == "" {
-		fmt.Fprintf(stderr,
+		if err := keeperWritef(stderr,
 			"harmonik keeper enable: cannot locate scripts directory.\n"+
-				"Pass --scripts-dir=/path/to/harmonik/scripts (the scripts/ directory in the harmonik repo).\n")
+				"Pass --scripts-dir=/path/to/harmonik/scripts (the scripts/ directory in the harmonik repo).\n"); err != nil {
+			return 1
+		}
 		return 1
 	}
 	requiredScripts := []string{
@@ -242,7 +271,9 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	for _, name := range requiredScripts {
 		p := filepath.Join(cfg.scriptsDir, name)
 		if _, err := os.Stat(p); err != nil {
-			fmt.Fprintf(stderr, "harmonik keeper enable: script not found: %s\n  (pass --scripts-dir to specify the harmonik scripts/ directory)\n", p)
+			if writeErr := keeperWritef(stderr, "harmonik keeper enable: script not found: %s\n  (pass --scripts-dir to specify the harmonik scripts/ directory)\n", p); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -250,7 +281,9 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	// Read existing settings.json (or start fresh).
 	settings, err := readGlobalSettings(cfg.settingsPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik keeper enable: read %s: %v\n", cfg.settingsPath, err)
+		if writeErr := keeperWritef(stderr, "harmonik keeper enable: read %s: %v\n", cfg.settingsPath, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -258,10 +291,14 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	if _, statErr := os.Stat(cfg.settingsPath); statErr == nil {
 		backupPath := fmt.Sprintf("%s.bak-%s", cfg.settingsPath, time.Now().UTC().Format("20060102T150405Z"))
 		if copyErr := copyFile(cfg.settingsPath, backupPath); copyErr != nil {
-			fmt.Fprintf(stderr, "harmonik keeper enable: backup %s → %s: %v\n", cfg.settingsPath, backupPath, copyErr)
+			if writeErr := keeperWritef(stderr, "harmonik keeper enable: backup %s → %s: %v\n", cfg.settingsPath, backupPath, copyErr); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintf(stdout, "keeper enable: backed up settings.json → %s\n", backupPath)
+		if err := keeperWritef(stdout, "keeper enable: backed up settings.json → %s\n", backupPath); err != nil {
+			return 1
+		}
 	}
 
 	// Build canonical commands.
@@ -300,42 +337,66 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	precompactAction := mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir, precompactHookCmd)
 	sessionStartAction := mergeHookStanza(settings, "SessionStart", "keeper-sessionstart-hook.sh", cfg.projectDir, sessionStartHookCmd)
 
-	fmt.Fprintf(stdout, "keeper enable: statusLine     — %s\n", statusLineAction)
-	fmt.Fprintf(stdout, "keeper enable: Stop hook      — %s\n", stopAction)
-	fmt.Fprintf(stdout, "keeper enable: PreCompact hook — %s\n", precompactAction)
-	fmt.Fprintf(stdout, "keeper enable: SessionStart hook — %s\n", sessionStartAction)
+	if _, err := fmt.Fprintf(stdout, "keeper enable: statusLine     — %s\n", statusLineAction); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(stdout, "keeper enable: Stop hook      — %s\n", stopAction); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(stdout, "keeper enable: PreCompact hook — %s\n", precompactAction); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(stdout, "keeper enable: SessionStart hook — %s\n", sessionStartAction); err != nil {
+		return 1
+	}
 
 	// Write updated settings.json.
 	if err := writeGlobalSettings(cfg.settingsPath, settings); err != nil {
-		fmt.Fprintf(stderr, "harmonik keeper enable: write %s: %v\n", cfg.settingsPath, err)
+		if writeErr := keeperWritef(stderr, "harmonik keeper enable: write %s: %v\n", cfg.settingsPath, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "keeper enable: wrote %s\n", cfg.settingsPath)
+	if _, err := fmt.Fprintf(stdout, "keeper enable: wrote %s\n", cfg.settingsPath); err != nil {
+		return 1
+	}
 
 	// Seed HANDOFF-<agent>.md if absent.
 	handoffPath := filepath.Join(cfg.projectDir, fmt.Sprintf("HANDOFF-%s.md", cfg.agentName))
 	if _, err := os.Stat(handoffPath); os.IsNotExist(err) {
 		if writeErr := writeHandoffStub(handoffPath, cfg.agentName); writeErr != nil {
-			fmt.Fprintf(stderr, "harmonik keeper enable: seed handoff stub: %v\n", writeErr)
+			if err := keeperWritef(stderr, "harmonik keeper enable: seed handoff stub: %v\n", writeErr); err != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintf(stdout, "keeper enable: seeded %s\n", handoffPath)
+		if _, err := fmt.Fprintf(stdout, "keeper enable: seeded %s\n", handoffPath); err != nil {
+			return 1
+		}
 	} else {
-		fmt.Fprintf(stdout, "keeper enable: %s already exists — skipping handoff seed\n", handoffPath)
+		if _, err := fmt.Fprintf(stdout, "keeper enable: %s already exists — skipping handoff seed\n", handoffPath); err != nil {
+			return 1
+		}
 	}
 
 	// Validate tmux pane if --tmux was provided.
 	if cfg.tmuxTarget != "" {
 		ok, checkErr := tmuxPaneExists(cfg.tmuxTarget)
 		if checkErr != nil {
-			fmt.Fprintf(stdout, "keeper enable: tmux check skipped (%v)\n", checkErr)
+			if _, err := fmt.Fprintf(stdout, "keeper enable: tmux check skipped (%v)\n", checkErr); err != nil {
+				return 1
+			}
 		} else if !ok {
-			fmt.Fprintf(stdout,
+			if _, err := fmt.Fprintf(stdout,
 				"keeper enable: WARNING — tmux pane %q not found or not named.\n"+
 					"  Name the pane: tmux rename-window -t %s <agent-name>\n",
-				cfg.tmuxTarget, cfg.tmuxTarget)
+				cfg.tmuxTarget, cfg.tmuxTarget); err != nil {
+				return 1
+			}
 		} else {
-			fmt.Fprintf(stdout, "keeper enable: tmux pane %q is live\n", cfg.tmuxTarget)
+			if _, err := fmt.Fprintf(stdout, "keeper enable: tmux pane %q is live\n", cfg.tmuxTarget); err != nil {
+				return 1
+			}
 		}
 	}
 
@@ -343,32 +404,49 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	if cfg.yesDestructive {
 		managedPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".managed")
 		if err := os.MkdirAll(filepath.Dir(managedPath), core.HarmonikDirMode); err != nil {
-			fmt.Fprintf(stderr, "harmonik keeper enable: create keeper dir: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik keeper enable: create keeper dir: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		if _, err := os.Stat(managedPath); os.IsNotExist(err) {
 			if writeErr := os.WriteFile(managedPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600); writeErr != nil {
-				fmt.Fprintf(stderr, "harmonik keeper enable: create .managed: %v\n", writeErr)
+				if _, err := fmt.Fprintf(stderr, "harmonik keeper enable: create .managed: %v\n", writeErr); err != nil {
+					return 1
+				}
 				return 1
 			}
-			fmt.Fprintf(stdout, "keeper enable: created .managed marker (DESTRUCTIVE CONSENT — handoff cycle is now LIVE)\n")
+			if _, err := fmt.Fprintln(stdout, "keeper enable: created .managed marker (DESTRUCTIVE CONSENT — handoff cycle is now LIVE)"); err != nil {
+				return 1
+			}
 		} else {
-			fmt.Fprintf(stdout, "keeper enable: .managed already present\n")
+			if _, err := fmt.Fprintln(stdout, "keeper enable: .managed already present"); err != nil {
+				return 1
+			}
 		}
 	} else {
-		fmt.Fprintf(stdout,
+		if _, err := fmt.Fprintf(stdout,
 			"\nkeeper enable: .managed NOT created (handoff cycle is passive).\n"+
 				"  To enable LIVE handoff (DESTRUCTIVE — triggers /clear + resume):\n"+
 				"    harmonik keeper enable %s --yes-destructive ...\n"+
 				"  Or manually: touch %s/.harmonik/keeper/%s.managed\n",
-			cfg.agentName, cfg.projectDir, cfg.agentName)
+			cfg.agentName, cfg.projectDir, cfg.agentName); err != nil {
+			return 1
+		}
 	}
 
 	// Print the run command.
 	runCmd := buildKeeperRunCmd(cfg)
-	fmt.Fprintf(stdout, "\nkeeper enable: to start the keeper, run:\n  %s\n", runCmd)
+	if err := keeperWritef(stdout, "\nkeeper enable: to start the keeper, run:\n  %s\n", runCmd); err != nil {
+		return 1
+	}
 
 	return 0
+}
+
+func keeperWritef(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
 }
 
 // ── doctorConfig ─────────────────────────────────────────────────────────────
@@ -417,7 +495,9 @@ func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs,
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, keeperDoctorUsage)
+			if err := keeperWritef(stdout, "%s", keeperDoctorUsage); err != nil {
+				return doctorArgs{}, 1
+			}
 			return doctorArgs{}, 0
 		case args[i] == "--agent" && i+1 < len(args):
 			i++
@@ -433,8 +513,12 @@ func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs,
 			// Unrecognized leading-dash token: reject loudly. THE CLASS-A killer —
 			// `doctor --agent X` previously checked an agent literally named
 			// "--agent" (false-green doctor at keeper boot; captain hit this live).
-			fmt.Fprintf(stderr, "harmonik keeper doctor: unrecognized flag %q\n", args[i])
-			fmt.Fprint(stderr, keeperDoctorUsage)
+			if err := keeperWritef(stderr, "harmonik keeper doctor: unrecognized flag %q\n", args[i]); err != nil {
+				return doctorArgs{}, 1
+			}
+			if err := keeperWritef(stderr, "%s", keeperDoctorUsage); err != nil {
+				return doctorArgs{}, 1
+			}
 			return doctorArgs{}, 2
 		default:
 			rest = append(rest, args[i])
@@ -444,17 +528,25 @@ func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs,
 	// FLAG-ONLY (hk-nbft): any positional argument is rejected with the SAME
 	// message resolveKeeperAgent uses for the other keeper verbs, exit 2.
 	if len(rest) > 0 {
-		fmt.Fprintf(stderr,
+		if err := keeperWritef(stderr,
 			"harmonik keeper doctor: unexpected positional argument(s) %q — this command is flag-only; use --agent <name>\n",
-			strings.Join(rest, " "))
-		fmt.Fprint(stderr, keeperDoctorUsage)
+			strings.Join(rest, " ")); err != nil {
+			return doctorArgs{}, 1
+		}
+		if err := keeperWritef(stderr, "%s", keeperDoctorUsage); err != nil {
+			return doctorArgs{}, 1
+		}
 		return doctorArgs{}, 2
 	}
 
 	da.agentName = agentFlag
 	if da.agentName == "" {
-		fmt.Fprintln(stderr, "harmonik keeper doctor: --agent <name> is required")
-		fmt.Fprint(stderr, keeperDoctorUsage)
+		if err := keeperWritef(stderr, "harmonik keeper doctor: --agent <name> is required\n"); err != nil {
+			return doctorArgs{}, 1
+		}
+		if err := keeperWritef(stderr, "%s", keeperDoctorUsage); err != nil {
+			return doctorArgs{}, 1
+		}
 		return doctorArgs{}, 1
 	}
 	return da, -1
@@ -472,21 +564,27 @@ func runKeeperDoctorEntry(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik keeper doctor: cannot determine working directory: %v\n", err)
+			if writeErr := keeperWritef(stderr, "harmonik keeper doctor: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
 	}
 	absProject, err := filepath.Abs(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik keeper doctor: cannot resolve project path %q: %v\n", projectDir, err)
+		if writeErr := keeperWritef(stderr, "harmonik keeper doctor: cannot resolve project path %q: %v\n", projectDir, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	projectDir = absProject
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik keeper doctor: cannot determine home directory: %v\n", err)
+		if writeErr := keeperWritef(stderr, "harmonik keeper doctor: cannot determine home directory: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
@@ -591,8 +689,8 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		if !settingsPresent {
 			check("Stop hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
 		} else {
-			found, _ := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir)
-			if !found {
+			found, command := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir)
+			if !found || command == "" {
 				check("Stop hook", false, "keeper-stop-hook.sh not found in hooks.Stop for this project — run: harmonik keeper enable "+cfg.agentName+" ...")
 			} else {
 				check("Stop hook", true, "keeper-stop-hook.sh wired")
@@ -605,8 +703,8 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		if !settingsPresent {
 			check("PreCompact hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
 		} else {
-			found, _ := findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir)
-			if !found {
+			found, command := findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir)
+			if !found || command == "" {
 				check("PreCompact hook", false, "keeper-precompact-hook.sh not found in hooks.PreCompact for this project — run: harmonik keeper enable "+cfg.agentName+" ...")
 			} else {
 				check("PreCompact hook", true, "keeper-precompact-hook.sh wired")
@@ -622,8 +720,8 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		if !settingsPresent {
 			check("SessionStart hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
 		} else {
-			found, _ := findHookForScript(settings, "SessionStart", "keeper-sessionstart-hook.sh", cfg.projectDir)
-			if !found {
+			found, command := findHookForScript(settings, "SessionStart", "keeper-sessionstart-hook.sh", cfg.projectDir)
+			if !found || command == "" {
 				check("SessionStart hook", false, "keeper-sessionstart-hook.sh not found in hooks.SessionStart for this project — single-writer .sid channel will be absent; run: harmonik keeper enable "+cfg.agentName+" ...")
 			} else {
 				check("SessionStart hook", true, "keeper-sessionstart-hook.sh wired (single-writer .sid channel)")
@@ -685,13 +783,42 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// Watcher liveness is sampled ONCE and consumed by BOTH check 7 (.managed)
+	// and check 7c (live-watcher). LiveKeeperPresent probes the exclusive flock
+	// on .harmonik/keeper/<agent>.lock, which the kernel drops when the process
+	// dies — so it distinguishes a RUNNING keeper from a stale corpse lockfile,
+	// and from a merely-fresh gauge file (the gauge is written by the statusline
+	// hook on every Claude Code repaint, entirely independent of the watcher).
+	watcherLive := func() bool {
+		fn := cfg.liveKeeperFn
+		if fn == nil {
+			fn = keeper.LiveKeeperPresent
+		}
+		return fn(cfg.projectDir, cfg.agentName)
+	}()
+
 	// 7. .managed present; and when both managed and live SIDs are set, they must agree.
 	// A mismatch means the keeper is bound to a dead session and will never act (blind).
+	//
+	// `.managed` is an OPT-IN CONSENT marker on disk. It is never evidence that
+	// anything is running, and reporting it green on its own cost a live captain
+	// most of a session: the watcher had died, every other surface stayed green
+	// (config, hooks, fresh gauge, .managed, live pane), and the captain sat at a
+	// typed-but-unsent /clear waiting for a restart cycle that could never fire.
+	// `.managed` present with NO watcher process is a SILENT DEADLOCK, not a
+	// degraded mode, so it reads RED here and names the missing watcher rather
+	// than leaving the reader to correlate two checks by eye. Refs: hk-220lv.
 	{
 		managedPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".managed")
-		if _, statErr := os.Stat(managedPath); statErr != nil {
+		deadlockHint := " — but NO live keeper watcher is running: the handoff cycle is DEADLOCKED, " +
+			"not live (a /clear will never be driven). Start one with: harmonik keeper --agent " + cfg.agentName
+		_, managedStatErr := os.Stat(managedPath)
+		switch {
+		case managedStatErr != nil:
 			check("managed", false, ".managed marker absent — keeper is in passive mode (no handoff cycle). Add with: harmonik keeper enable --yes-destructive, or: touch "+managedPath)
-		} else {
+		case !watcherLive:
+			check("managed", false, ".managed present (handoff cycle CONSENTED)"+deadlockHint)
+		default:
 			managedSID, readErr := keeper.ReadManagedSessionID(cfg.projectDir, cfg.agentName)
 			switch {
 			case readErr != nil:
@@ -712,11 +839,7 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 	// Uses LiveKeeperPresent (shared-flock probe) so it correctly distinguishes a
 	// running keeper from a stale corpse lockfile.
 	{
-		fn := cfg.liveKeeperFn
-		if fn == nil {
-			fn = keeper.LiveKeeperPresent
-		}
-		if fn(cfg.projectDir, cfg.agentName) {
+		if watcherLive {
 			check("live-watcher", true, "live keeper process is running")
 		} else {
 			check("live-watcher", false, "no live keeper watcher detected — start with: harmonik keeper --agent "+cfg.agentName)
@@ -778,11 +901,15 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 			symbol = "✗"
 			allOK = false
 		}
-		fmt.Fprintf(stdout, "  %s %-20s %s\n", symbol, r.name, r.message)
+		if _, err := fmt.Fprintf(stdout, "  %s %-20s %s\n", symbol, r.name, r.message); err != nil {
+			return 1
+		}
 	}
 
 	if allOK {
-		fmt.Fprintf(stdout, "\nkeeper doctor: all checks passed for agent %q\n", cfg.agentName)
+		if _, err := fmt.Fprintf(stdout, "\nkeeper doctor: all checks passed for agent %q\n", cfg.agentName); err != nil {
+			return 1
+		}
 		return 0
 	}
 	failCount := 0
@@ -791,7 +918,9 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 			failCount++
 		}
 	}
-	fmt.Fprintf(stderr, "\nkeeper doctor: %d check(s) failed for agent %q\n", failCount, cfg.agentName)
+	if err := keeperWritef(stderr, "\nkeeper doctor: %d check(s) failed for agent %q\n", failCount, cfg.agentName); err != nil {
+		return 1
+	}
 	return 1
 }
 
@@ -806,7 +935,9 @@ func runKeeperDoctorAtBoot(projectDir, agentName, settingsPath string) {
 	// Use a prefix writer to mark all output as boot-time diagnostics.
 	code := runKeeperDoctor(cfg, os.Stderr, os.Stderr)
 	if code != 0 {
-		fmt.Fprintf(os.Stderr, "keeper: boot doctor found gaps for agent %q (above) — some keeper features may be inactive\n", agentName)
+		if err := keeperWritef(os.Stderr, "keeper: boot doctor found gaps for agent %q (above) — some keeper features may be inactive\n", agentName); err != nil {
+			return
+		}
 	}
 }
 
@@ -833,7 +964,7 @@ func readGlobalSettings(settingsPath string) (map[string]interface{}, error) {
 // Creates the parent directory if needed. NOT atomic (suitable for user's
 // home-dir settings file; backup is taken by the caller first).
 func writeGlobalSettings(settingsPath string, settings map[string]interface{}) error {
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil { //dirmode:allow parent of the user's ~/.claude/settings.json, not .harmonik state
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o750); err != nil {
 		return fmt.Errorf("MkdirAll %q: %w", filepath.Dir(settingsPath), err)
 	}
 	content, err := json.MarshalIndent(settings, "", "  ")
@@ -911,7 +1042,10 @@ func getStatusLineCommand(settings map[string]interface{}) string {
 	if !ok {
 		return ""
 	}
-	cmd, _ := slMap["command"].(string)
+	cmd, ok := slMap["command"].(string)
+	if !ok {
+		return ""
+	}
 	return cmd
 }
 
@@ -928,8 +1062,8 @@ func statusLineTypeIsCommand(settings map[string]interface{}) bool {
 	if !ok {
 		return false
 	}
-	t, _ := slMap["type"].(string)
-	return t == "command"
+	t, ok := slMap["type"].(string)
+	return ok && t == "command"
 }
 
 // getOrCreateStatusLine returns the statusLine map, creating it if absent.
@@ -985,7 +1119,10 @@ func findHookForScript(settings map[string]interface{}, eventName, scriptBasenam
 			if !ok {
 				continue
 			}
-			cmd, _ := eMap["command"].(string)
+			cmd, ok := eMap["command"].(string)
+			if !ok {
+				continue
+			}
 			if !strings.Contains(cmd, scriptBasename) {
 				continue
 			}
@@ -1028,7 +1165,10 @@ func updateHookCommand(settings map[string]interface{}, eventName, scriptBasenam
 			if !ok {
 				continue
 			}
-			cmd, _ := eMap["command"].(string)
+			cmd, ok := eMap["command"].(string)
+			if !ok {
+				continue
+			}
 			if !strings.Contains(cmd, scriptBasename) {
 				continue
 			}
@@ -1209,7 +1349,7 @@ func tmuxPaneExists(target string) (bool, error) {
 		return false, fmt.Errorf("tmux not found on PATH: %w", err)
 	}
 	//nolint:gosec // G204: target is operator-supplied tmux pane address
-	cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#W")
+	cmd := exec.CommandContext(context.Background(), tmuxPath, "display-message", "-t", target, "-p", "#W")
 	if runErr := cmd.Run(); runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
@@ -1297,7 +1437,8 @@ CHECKS (all read-only; no filesystem mutations)
   gauge          .harmonik/keeper/<agent>.ctx exists and is fresh (<5 min)
   sid channel    .harmonik/keeper/<agent>.sid present and a well-formed primary id
   idle marker    .harmonik/keeper/<agent>.idle has been written (Stop hook fired)
-  managed        .harmonik/keeper/<agent>.managed present (handoff cycle live)
+  managed        .harmonik/keeper/<agent>.managed present AND a watcher is running
+                 (the marker alone is consent, not liveness — RED without a watcher)
   live-watcher   live keeper process holds the flock (watcher is actually running)
   api-key-risk   ANTHROPIC_API_KEY not set in environment
 

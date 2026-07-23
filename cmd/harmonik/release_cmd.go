@@ -485,7 +485,11 @@ EXAMPLES
 		return 3
 	}
 
-	lastGood, _ := release.ReadLastGoodBinary(statePath)
+	lastGood, readErr := release.ReadLastGoodBinary(statePath)
+	if readErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik release rollback: read restored last-good state: %v\n", readErr)
+		return 3
+	}
 	fmt.Printf("harmonik release rollback: restored %s from %s\n", binPath, lastGood)
 	fmt.Println("harmonik release rollback: restart the daemon to use the restored binary")
 	return 0

@@ -32,6 +32,7 @@ func TestSeedSID_WritesFile(t *testing.T) {
 	seedSID(projectDir, name, sessionID)
 
 	sidPath := filepath.Join(projectDir, ".harmonik", "keeper", name+".sid")
+	//nolint:gosec // G304: sidPath is constructed beneath this test's t.TempDir fixture.
 	raw, err := os.ReadFile(sidPath)
 	if err != nil {
 		t.Fatalf("seedSID: .sid file not created at %q: %v", sidPath, err)
@@ -57,6 +58,7 @@ func TestSeedSID_Idempotent(t *testing.T) {
 	seedSID(projectDir, name, sid2) // must not error
 
 	sidPath := filepath.Join(projectDir, ".harmonik", "keeper", name+".sid")
+	//nolint:gosec // G304: sidPath is constructed beneath this test's t.TempDir fixture.
 	raw, err := os.ReadFile(sidPath)
 	if err != nil {
 		t.Fatalf("second seedSID: cannot read .sid: %v", err)

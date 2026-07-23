@@ -671,5 +671,10 @@ func emitKeeperConfigRejected(projectDir, agentName string, err error) {
 		return
 	}
 	emitter := keeper.NewFileEmitter(projectDir)
-	_ = emitter.EmitWithRunID(context.Background(), core.RunID{}, "session_keeper_config_rejected", payload)
+	if emitErr := emitter.EmitWithRunID(context.Background(), core.RunID{}, "session_keeper_config_rejected", payload); emitErr != nil {
+		// The state/configuration error is authoritative; event persistence is
+		// observational, so preserve the original fail-loud path even if this
+		// supplemental event cannot be recorded.
+		return
+	}
 }

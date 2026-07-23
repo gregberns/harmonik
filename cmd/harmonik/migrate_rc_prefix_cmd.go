@@ -21,6 +21,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -48,7 +49,9 @@ func runMigrateRCPrefix(args []string, stdin io.Reader, stdout, stderr io.Writer
 		case strings.HasPrefix(args[i], "--project="):
 			projectDir = strings.TrimPrefix(args[i], "--project=")
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, migrateRCPrefixUsage)
+			if _, err := fmt.Fprint(stdout, migrateRCPrefixUsage); err != nil {
+				return 1
+			}
 			return 0
 		}
 	}
@@ -56,32 +59,42 @@ func runMigrateRCPrefix(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
 	}
 	absProject, err := filepath.Abs(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: cannot resolve project path %q: %v\n", projectDir, err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: cannot resolve project path %q: %v\n", projectDir, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	projectDir = absProject
 
 	cfgPath := filepath.Join(projectDir, ".harmonik", "config.yaml")
 	if _, err := os.Stat(cfgPath); err != nil {
-		fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: %s not found — run 'harmonik init' first\n", cfgPath)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: %s not found — run 'harmonik init' first\n", cfgPath); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Load current config to check whether the prefix is already set.
 	cfg, err := daemon.LoadProjectConfig(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: load config: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: load config: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if cfg.Daemon.RemoteControlPrefix != "" {
-		fmt.Fprintf(stdout, "harmonik migrate-rc-prefix: daemon.remote_control_prefix is already set to %q — nothing to do\n", cfg.Daemon.RemoteControlPrefix)
+		if _, writeErr := fmt.Fprintf(stdout, "harmonik migrate-rc-prefix: daemon.remote_control_prefix is already set to %q — nothing to do\n", cfg.Daemon.RemoteControlPrefix); writeErr != nil {
+			return 1
+		}
 		return 0
 	}
 
@@ -92,11 +105,21 @@ func runMigrateRCPrefix(args []string, stdin io.Reader, stdout, stderr io.Writer
 	}
 
 	// Prompt the user.
-	fmt.Fprintf(stdout, "harmonik migrate-rc-prefix: daemon.remote_control_prefix is not set.\n")
-	fmt.Fprintf(stdout, "This prefix is prepended to Claude Code remote-control session labels\n")
-	fmt.Fprintf(stdout, "(e.g. %q → %q-captain, %q-paul) so concurrent projects are\n", suggestion, suggestion, suggestion)
-	fmt.Fprintf(stdout, "distinguishable in the global session picker. Empty = bare label (legacy).\n\n")
-	fmt.Fprintf(stdout, "Enter prefix [%s]: ", suggestion)
+	if _, err := fmt.Fprintf(stdout, "harmonik migrate-rc-prefix: daemon.remote_control_prefix is not set.\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(stdout, "This prefix is prepended to Claude Code remote-control session labels\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(stdout, "(e.g. %q → %q-captain, %q-paul) so concurrent projects are\n", suggestion, suggestion, suggestion); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(stdout, "distinguishable in the global session picker. Empty = bare label (legacy).\n\n"); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintf(stdout, "Enter prefix [%s]: ", suggestion); err != nil {
+		return 1
+	}
 
 	sc := bufio.NewScanner(stdin)
 	sc.Scan()
@@ -106,16 +129,24 @@ func runMigrateRCPrefix(args []string, stdin io.Reader, stdout, stderr io.Writer
 	}
 
 	if err := patchRCPrefixInConfig(cfgPath, chosen); err != nil {
-		fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: patch config: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: patch config: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if chosen == "" {
-		fmt.Fprintf(stdout, "harmonik migrate-rc-prefix: set daemon.remote_control_prefix to \"\" (bare label — no prefix)\n")
+		if _, err := fmt.Fprintf(stdout, "harmonik migrate-rc-prefix: set daemon.remote_control_prefix to \"\" (bare label — no prefix)\n"); err != nil {
+			return 1
+		}
 	} else {
-		fmt.Fprintf(stdout, "harmonik migrate-rc-prefix: set daemon.remote_control_prefix to %q\n", chosen)
+		if _, err := fmt.Fprintf(stdout, "harmonik migrate-rc-prefix: set daemon.remote_control_prefix to %q\n", chosen); err != nil {
+			return 1
+		}
 	}
-	fmt.Fprintf(stdout, "Run 'harmonik daemon restart' for the change to take effect.\n")
+	if _, err := fmt.Fprintf(stdout, "Run 'harmonik daemon restart' for the change to take effect.\n"); err != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -128,7 +159,7 @@ func readBeadsIssuePrefix(projectDir string) string {
 		return ""
 	}
 	//nolint:gosec // G204: brPath from LookPath; projectDir operator-controlled
-	cmd := exec.Command(brPath, "config", "get", "issue_prefix")
+	cmd := exec.CommandContext(context.Background(), brPath, "config", "get", "issue_prefix")
 	cmd.Dir = projectDir
 	var out bytes.Buffer
 	cmd.Stdout = &out

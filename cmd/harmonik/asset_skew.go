@@ -139,20 +139,20 @@ func PrintSkewHintIfStale(projectDir string, stderr io.Writer) {
 
 	switch {
 	case res.NeverSynced:
-		fmt.Fprintf(stderr,
+		fmt.Fprintf(stderr, //nolint:errcheck // best-effort operator hint must never block start/init when its writer is unavailable
 			"harmonik: WARNING  %d on-disk instruction file(s) have not been synced to this binary version\n",
 			res.ChangedCount)
 	case res.ConflictCount > 0:
-		fmt.Fprintf(stderr,
+		fmt.Fprintf(stderr, //nolint:errcheck // best-effort operator hint must never block start/init when its writer is unavailable
 			"harmonik: WARNING  %d on-disk instruction file(s) are stale vs the running binary (%d conflict(s) require manual review)\n",
 			res.ChangedCount, res.ConflictCount)
 	default:
-		fmt.Fprintf(stderr,
+		fmt.Fprintf(stderr, //nolint:errcheck // best-effort operator hint must never block start/init when its writer is unavailable
 			"harmonik: WARNING  %d on-disk instruction file(s) are stale vs the running binary\n",
 			res.ChangedCount)
 	}
-	fmt.Fprintln(stderr, "harmonik:   → run: harmonik sync-assets --dry-run   (review what would change)")
-	fmt.Fprintln(stderr, "harmonik:          harmonik sync-assets --apply      (apply updates)")
+	fmt.Fprintln(stderr, "harmonik:   → run: harmonik sync-assets --dry-run   (review what would change)") //nolint:errcheck // best-effort operator hint
+	fmt.Fprintln(stderr, "harmonik:          harmonik sync-assets --apply      (apply updates)")           //nolint:errcheck // best-effort operator hint
 }
 
 // Digest returns a single sha256 (hex) over the lock's sorted "path:sha\n" lines,

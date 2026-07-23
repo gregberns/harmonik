@@ -185,7 +185,8 @@ func TestHiddenDouble(t *testing.T) {
 		{"git", "-C", dir, "commit", "-m", "add hidden test"},
 	}
 	for _, c := range commitCmds {
-		if out, err := exec.Command(c[0], c[1:]...).CombinedOutput(); err != nil {
+		// #nosec G204 -- command and arguments are fixed test-fixture git commands.
+		if out, err := exec.CommandContext(t.Context(), c[0], c[1:]...).CombinedOutput(); err != nil {
 			t.Fatalf("%v: %v\n%s", c, err, out)
 		}
 	}

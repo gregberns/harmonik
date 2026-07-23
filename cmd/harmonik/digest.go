@@ -115,8 +115,8 @@ EXAMPLES
 		lim = digest.FullLimits()
 	}
 
-	brPath, _ := exec.LookPath("br")
-	kerfPath, _ := exec.LookPath("kerf")
+	brPath := optionalExecutablePath("br")
+	kerfPath := optionalExecutablePath("kerf")
 
 	in := digest.BuildInput{
 		ProjectDir:   projectDir,
@@ -160,6 +160,16 @@ EXAMPLES
 	// Human-readable output.
 	printHumanDigest(d)
 	return 0
+}
+
+// optionalExecutablePath resolves name when installed and preserves the
+// existing empty-path behavior when the optional tool is absent.
+func optionalExecutablePath(name string) string {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 // printHumanDigest renders d as a compact human-readable status sheet.

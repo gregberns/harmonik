@@ -227,6 +227,7 @@ func TestCrewRestartRehydrationReadsOnDiskMission(t *testing.T) {
 
 	// The restart re-hydration path reads the on-disk default directly (the crew
 	// boot does this; here we exercise the same read to pin the contract).
+	//nolint:gosec // G304: onDiskDefault is rooted in this test's t.TempDir project fixture
 	got, err := os.ReadFile(onDiskDefault)
 	if err != nil {
 		t.Fatalf("restart re-hydration could not read on-disk mission %q: %v", onDiskDefault, err)

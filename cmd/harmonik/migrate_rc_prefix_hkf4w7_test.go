@@ -105,7 +105,11 @@ func TestMigrateRCPrefix_AbsentField_UserAcceptsDefault(t *testing.T) {
 	wantPrefix := rest[:end]
 
 	// config.yaml must contain that exact value.
-	updated, _ := os.ReadFile(filepath.Join(dir, ".harmonik", "config.yaml"))
+	//nolint:gosec // G304: path is assembled beneath this test's t.TempDir fixture.
+	updated, err := os.ReadFile(filepath.Join(dir, ".harmonik", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
 	if !strings.Contains(string(updated), "remote_control_prefix: "+wantPrefix) {
 		t.Errorf("config.yaml: expected 'remote_control_prefix: %s'; got:\n%s", wantPrefix, updated)
 	}
@@ -122,7 +126,11 @@ func TestMigrateRCPrefix_AbsentField_UserEntersCustom(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	updated, _ := os.ReadFile(filepath.Join(dir, ".harmonik", "config.yaml"))
+	//nolint:gosec // G304: path is assembled beneath this test's t.TempDir fixture.
+	updated, err := os.ReadFile(filepath.Join(dir, ".harmonik", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
 	if !strings.Contains(string(updated), "remote_control_prefix: myslug") {
 		t.Errorf("config.yaml: expected 'remote_control_prefix: myslug'; got:\n%s", updated)
 	}
@@ -141,7 +149,11 @@ func TestMigrateRCPrefix_EmptyField_UserEntersPrefix(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	updated, _ := os.ReadFile(filepath.Join(dir, ".harmonik", "config.yaml"))
+	//nolint:gosec // G304: path is assembled beneath this test's t.TempDir fixture.
+	updated, err := os.ReadFile(filepath.Join(dir, ".harmonik", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
 	if !strings.Contains(string(updated), "remote_control_prefix: ab") {
 		t.Errorf("config.yaml: expected 'remote_control_prefix: ab'; got:\n%s", updated)
 	}
@@ -170,7 +182,11 @@ func TestMigrateRCPrefix_NoDaemonBlock(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
 
-	updated, _ := os.ReadFile(filepath.Join(dir, ".harmonik", "config.yaml"))
+	//nolint:gosec // G304: path is assembled beneath this test's t.TempDir fixture.
+	updated, err := os.ReadFile(filepath.Join(dir, ".harmonik", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
 	if !strings.Contains(string(updated), "remote_control_prefix: nd") {
 		t.Errorf("config.yaml: expected 'remote_control_prefix: nd'; got:\n%s", updated)
 	}
@@ -342,6 +358,7 @@ func writeTmpConfig(t *testing.T, content string) string {
 
 func readTmpConfig(t *testing.T, path string) string {
 	t.Helper()
+	// #nosec G304 -- path is returned by writeTmpConfig under t.TempDir.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read tmp config: %v", err)

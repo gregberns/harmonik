@@ -37,6 +37,7 @@ package main
 // launcher. Bead refs: hk-z1rj (this), hk-opuv (the behavior), hk-z036 (nesting).
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -84,7 +85,8 @@ func runCaptainRespawnTmux(cmd *exec.Cmd) ([]byte, error) { return cmd.Output() 
 // operator edits it between launch and a native 'harmonik captain respawn' call,
 // the picker label will diverge from the one produced at launch time.
 func buildCaptainRespawnWindowCmd(name, tmuxTarget, sessionID, rcPrefix string) *exec.Cmd {
-	return exec.Command(
+	//nolint:gosec // G204: executable and argv shape are fixed; dynamic values remain distinct argv elements
+	return exec.CommandContext(context.Background(),
 		"tmux", "respawn-window", "-k",
 		"-t", tmuxTarget,
 		"-e", "HARMONIK_AGENT="+name,
@@ -98,7 +100,7 @@ func buildCaptainRespawnWindowCmd(name, tmuxTarget, sessionID, rcPrefix string) 
 //
 //	tmux display-message -p -t <session>:agent #{pane_pid}
 func buildCaptainPanePIDCmd(tmuxTarget string) *exec.Cmd {
-	return exec.Command(
+	return exec.CommandContext(context.Background(),
 		"tmux", "display-message", "-p",
 		"-t", tmuxTarget,
 		"#{pane_pid}",
@@ -151,24 +153,32 @@ func runCaptainRespawn(subArgs []string, run captainRespawnRunFn, stdout, stderr
 
 	name := *nameFlag
 	if name == "" {
-		fmt.Fprintln(stderr, "harmonik captain respawn: --name must not be empty")
+		if _, err := fmt.Fprintln(stderr, "harmonik captain respawn: --name must not be empty"); err != nil {
+			return 1
+		}
 		return 1
 	}
 	if *tmuxFlag == "" {
-		fmt.Fprintln(stderr, "harmonik captain respawn: --tmux is required (the captain agent-window target)")
+		if _, err := fmt.Fprintln(stderr, "harmonik captain respawn: --tmux is required (the captain agent-window target)"); err != nil {
+			return 1
+		}
 		return 1
 	}
 	sessionID := *sessionIDFlag
 	if sessionID == "" {
-		fmt.Fprintln(stderr, "harmonik captain respawn: --session-id is required (the minted SID to --resume)")
+		if _, err := fmt.Fprintln(stderr, "harmonik captain respawn: --session-id is required (the minted SID to --resume)"); err != nil {
+			return 1
+		}
 		return 1
 	}
 	// The keeper's clear→resume cycle only trusts a canonical lowercase UUIDv4;
 	// the same gate the launcher (captain.go) applies — reuse keeper.IsPrimarySID
 	// so respawn and launch agree on identity.
 	if !keeper.IsPrimarySID(sessionID) {
-		fmt.Fprintf(stderr, "harmonik captain respawn: --session-id %q is not a canonical lowercase UUIDv4 "+
-			"(the keeper's resume binding requires it)\n", sessionID)
+		if _, err := fmt.Fprintf(stderr, "harmonik captain respawn: --session-id %q is not a canonical lowercase UUIDv4 "+
+			"(the keeper's resume binding requires it)\n", sessionID); err != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -176,7 +186,9 @@ func runCaptainRespawn(subArgs []string, run captainRespawnRunFn, stdout, stderr
 	if project == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik captain respawn: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik captain respawn: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		project = wd
@@ -194,7 +206,9 @@ func runCaptainRespawn(subArgs []string, run captainRespawnRunFn, stdout, stderr
 		if pc, perr := daemon.LoadProjectConfig(project); perr == nil {
 			rcPrefix = pc.Daemon.RemoteControlPrefix
 		} else {
-			fmt.Fprintf(stderr, "harmonik captain respawn: could not load .harmonik/config.yaml for rc-prefix (%v) — respawning with a bare --remote-control label\n", perr)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik captain respawn: could not load .harmonik/config.yaml for rc-prefix (%v) — respawning with a bare --remote-control label\n", perr); writeErr != nil {
+				return 1
+			}
 		}
 	}
 
@@ -203,7 +217,9 @@ func runCaptainRespawn(subArgs []string, run captainRespawnRunFn, stdout, stderr
 	// 1) Respawn ONLY the agent window, resuming the same session-id. A failure
 	//    here is fatal — there is nothing to refresh if the relaunch did not run.
 	if _, err := run(buildCaptainRespawnWindowCmd(name, target, sessionID, rcPrefix)); err != nil {
-		fmt.Fprintf(stderr, "harmonik captain respawn: respawn-window %q: %v\n", target, err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik captain respawn: respawn-window %q: %v\n", target, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -211,11 +227,15 @@ func runCaptainRespawn(subArgs []string, run captainRespawnRunFn, stdout, stderr
 	//    sweep keeps skipping the relaunched session. Best-effort: a failure WARNS
 	//    but the captain is already back up.
 	if err := refreshCaptainPID(run, project, target); err != nil {
-		fmt.Fprintf(stderr, "harmonik captain respawn: %v — the daemon orphan sweep may reap this captain "+
-			"until captain.pid is refreshed\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik captain respawn: %v — the daemon orphan sweep may reap this captain "+
+			"until captain.pid is refreshed\n", err); writeErr != nil {
+			return 1
+		}
 	}
 
-	fmt.Fprintf(stdout, "captain respawn: agent window %q relaunched with --resume %s (agent window only, keeper window survives, no dup keeper)\n", target, sessionID)
+	if _, err := fmt.Fprintf(stdout, "captain respawn: agent window %q relaunched with --resume %s (agent window only, keeper window survives, no dup keeper)\n", target, sessionID); err != nil {
+		return 1
+	}
 	return 0
 }
 

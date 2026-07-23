@@ -378,8 +378,10 @@ func viaWatchGroupCompletion(
 				payload.QueueID, payload.GroupIndex, payload.FinalStatus,
 				payload.SuccessCount, payload.FailCount)
 			if notifyWriter != nil {
-				_, _ = fmt.Fprintf(notifyWriter, "group_completed queue_id=%s group=%d status=%s\n",
-					payload.QueueID, payload.GroupIndex, payload.FinalStatus)
+				if _, writeErr := fmt.Fprintf(notifyWriter, "group_completed queue_id=%s group=%d status=%s\n",
+					payload.QueueID, payload.GroupIndex, payload.FinalStatus); writeErr != nil {
+					return 1
+				}
 			}
 			if len(watchBeads) > 0 {
 				// Append-fallback path: exit reflects OUR beads, not the group.

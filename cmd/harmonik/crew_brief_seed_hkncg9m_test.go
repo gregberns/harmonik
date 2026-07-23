@@ -34,7 +34,8 @@ func startCrewBriefSeedMockDaemon(t *testing.T, project, sessionID, crewName str
 		t.Fatalf("startCrewBriefSeedMockDaemon: mkdir: %v", err)
 	}
 	sockPath := filepath.Join(harmonikDir, "daemon.sock")
-	ln, err := net.Listen("unix", sockPath)
+	var listenConfig net.ListenConfig
+	ln, err := listenConfig.Listen(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("startCrewBriefSeedMockDaemon: listen: %v", err)
 	}
@@ -45,17 +46,35 @@ func startCrewBriefSeedMockDaemon(t *testing.T, project, sessionID, crewName str
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
-				result, _ := json.Marshal(struct {
+				defer func() {
+					if err := c.Close(); err != nil {
+						t.Errorf("close mock connection: %v", err)
+					}
+				}()
+				result, err := json.Marshal(struct {
 					SessionID string `json:"session_id"`
 					Name      string `json:"name"`
 				}{SessionID: sessionID, Name: crewName})
-				resp, _ := json.Marshal(crewSocketResponse{Ok: true, Result: result})
-				_, _ = fmt.Fprintf(c, "%s\n", resp)
+				if err != nil {
+					t.Errorf("marshal mock result: %v", err)
+					return
+				}
+				resp, err := json.Marshal(crewSocketResponse{Ok: true, Result: result})
+				if err != nil {
+					t.Errorf("marshal mock response: %v", err)
+					return
+				}
+				if _, err := fmt.Fprintf(c, "%s\n", resp); err != nil {
+					t.Errorf("write mock response: %v", err)
+				}
 			}(conn)
 		}
 	}()
-	return func() { _ = ln.Close() }
+	return func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("close mock listener: %v", err)
+		}
+	}
 }
 
 // TestCrewStartCoreWith_CallsBriefSeedAfterRPC verifies that runCrewStartCoreWith

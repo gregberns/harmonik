@@ -91,7 +91,8 @@ func TestWriteFileEnsureDirModePerTree(t *testing.T) {
 // runGit helper, which does not surface stdout.)
 func gitOutSync(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...) //nolint:gosec
+	//nolint:gosec // G204: git arguments and fixture directory are test-controlled.
+	cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir}, args...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
@@ -112,11 +113,30 @@ func writeFileT(t *testing.T, path string, data []byte) {
 
 func readFileT(t *testing.T, path string) []byte {
 	t.Helper()
+	//nolint:gosec // G304: path is constructed under a test-controlled temporary project.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return b
+}
+
+func readLockT(t *testing.T, dir string) Lock {
+	t.Helper()
+	lock, err := ReadLock(dir)
+	if err != nil {
+		t.Fatalf("ReadLock(%s): %v", dir, err)
+	}
+	return lock
+}
+
+func readEmbedT(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := initSkillAssets.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read embed %s: %v", path, err)
+	}
+	return data
 }
 
 func hexSha(b []byte) string {
@@ -207,7 +227,7 @@ func TestSyncAssetsManagedConflict(t *testing.T) {
 
 	// Move the lock BEHIND the embed for this path so embed != lock and disk !=
 	// both → Conflict.
-	lock, _ := ReadLock(dir)
+	lock := readLockT(t, dir)
 	le := lock.Files[skill.Path]
 	le.Sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 	lock.Files[skill.Path] = le
@@ -226,7 +246,7 @@ func TestSyncAssetsManagedConflict(t *testing.T) {
 	}
 	// .harmonik-new must exist and equal the embed content.
 	newPath := full + ".harmonik-new"
-	embedData, _ := initSkillAssets.ReadFile(skill.Path)
+	embedData := readEmbedT(t, skill.Path)
 	if got := readFileT(t, newPath); !bytes.Equal(got, embedData) {
 		t.Errorf(".harmonik-new content != embed")
 	}
@@ -247,7 +267,7 @@ func TestSyncAssetsManagedRegionPreservesDeltas(t *testing.T) {
 	// Read the rendered template, find its managed region, and craft an on-disk
 	// AGENTS.md that has (a) a STALE managed region body and (b) bespoke project
 	// text outside the markers that MUST survive.
-	embedRaw, _ := initSkillAssets.ReadFile(tpl.Path)
+	embedRaw := readEmbedT(t, tpl.Path)
 	rendered := renderAgentsTemplate(string(embedRaw), dir)
 	regs := findManagedRegions(rendered)
 	if len(regs) == 0 {
@@ -270,7 +290,7 @@ func TestSyncAssetsManagedRegionPreservesDeltas(t *testing.T) {
 	// is impossible (disk != lock) so it's Conflict — but for ManagedRegion the
 	// executor splices the region on BOTH FastForward and Conflict. Set lock to
 	// disk's hash to get a clean FastForward path.
-	lock, _ := ReadLock(dir)
+	lock := readLockT(t, dir)
 	le := lock.Files[tpl.Path]
 	le.Sha256 = hexSha([]byte(onDisk))
 	lock.Files[tpl.Path] = le
@@ -309,7 +329,7 @@ func TestSyncAssetsContentOwnedHeaderOnly(t *testing.T) {
 	dest, _ := destFor(co.Path)
 	full := filepath.Join(dir, dest)
 
-	embedRaw, _ := initSkillAssets.ReadFile(co.Path)
+	embedRaw := readEmbedT(t, co.Path)
 	hdr, ok := tierHeaderSpan(string(embedRaw))
 	if !ok {
 		t.Skipf("content-owned asset %s has no TIER header; skipping", co.Path)
@@ -324,7 +344,7 @@ func TestSyncAssetsContentOwnedHeaderOnly(t *testing.T) {
 	writeFileT(t, full, []byte(onDisk))
 
 	// Lock == disk hash, embed advanced → FastForward.
-	lock, _ := ReadLock(dir)
+	lock := readLockT(t, dir)
 	le := lock.Files[co.Path]
 	le.Sha256 = hexSha([]byte(onDisk))
 	lock.Files[co.Path] = le
@@ -365,7 +385,7 @@ func TestSyncAssetsContentOwnedConflictUntouched(t *testing.T) {
 	writeFileT(t, full, edited)
 
 	// Behind-lock so embed != lock and disk != lock and disk != embed → Conflict.
-	lock, _ := ReadLock(dir)
+	lock := readLockT(t, dir)
 	le := lock.Files[co.Path]
 	le.Sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
 	lock.Files[co.Path] = le
@@ -400,7 +420,10 @@ func TestSyncAssetsLockReStampSecondApplyNoop(t *testing.T) {
 		t.Fatalf("lock not written after apply: %v", err)
 	}
 	// Snapshot every destination's hash.
-	m, _ := BuildManifest()
+	m, err := BuildManifest()
+	if err != nil {
+		t.Fatalf("BuildManifest: %v", err)
+	}
 	before := map[string]string{}
 	for _, f := range m.Files {
 		dest, ok := destFor(f.Path)
@@ -408,9 +431,7 @@ func TestSyncAssetsLockReStampSecondApplyNoop(t *testing.T) {
 			continue
 		}
 		full := filepath.Join(dir, dest)
-		if b, err := os.ReadFile(full); err == nil {
-			before[dest] = hexSha(b)
-		}
+		before[dest] = hexSha(readFileT(t, full))
 	}
 
 	// Second apply: should be an all-Skip no-op.
@@ -496,7 +517,7 @@ func TestSyncAssetsConflictNotBuriedInLock(t *testing.T) {
 	dest, _ := destFor(skill.Path)
 	full := filepath.Join(dir, dest)
 
-	embedData, _ := initSkillAssets.ReadFile(skill.Path)
+	embedData := readEmbedT(t, skill.Path)
 	embedSha := hexSha(embedData)
 
 	// Local edit so disk != embed.
@@ -506,7 +527,7 @@ func TestSyncAssetsConflictNotBuriedInLock(t *testing.T) {
 	// Move the lock BEHIND the embed for this path → Conflict (disk != lock,
 	// disk != embed, embed != lock).
 	priorLockSha := "0000000000000000000000000000000000000000000000000000000000000000"
-	lock, _ := ReadLock(dir)
+	lock := readLockT(t, dir)
 	le := lock.Files[skill.Path]
 	le.Sha256 = priorLockSha
 	lock.Files[skill.Path] = le
@@ -525,7 +546,7 @@ func TestSyncAssetsConflictNotBuriedInLock(t *testing.T) {
 
 	// The lock entry for the conflicted path must NOT have advanced to the embed
 	// sha — it must keep its prior (behind) value so the conflict re-surfaces.
-	postLock, _ := ReadLock(dir)
+	postLock := readLockT(t, dir)
 	got := postLock.Files[skill.Path].Sha256
 	if got == embedSha {
 		t.Fatalf("lock entry for conflicted path was advanced to embed sha — conflict buried")

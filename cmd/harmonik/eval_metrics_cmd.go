@@ -29,6 +29,7 @@ package main
 // Bead: hk-eval-prog-quality-feeders-k5bxl (WS3b).
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -92,10 +93,14 @@ func runEvalMetrics(args []string, stdout, stderr io.Writer, getwd func() (strin
 	workdirFlag := fs.String("workdir", "", "Eval worktree root (default: cwd)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprint(stdout, evalMetricsHelp)
+			if _, writeErr := fmt.Fprint(stdout, evalMetricsHelp); writeErr != nil {
+				return 1
+			}
 			return 0
 		}
-		fmt.Fprintf(stderr, "harmonik eval metrics: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval metrics: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -103,36 +108,48 @@ func runEvalMetrics(args []string, stdout, stderr io.Writer, getwd func() (strin
 	if workdir == "" {
 		wd, err := getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik eval metrics: cwd: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik eval metrics: cwd: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		workdir = wd
 	}
 	abs, err := filepath.Abs(workdir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval metrics: abs: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval metrics: abs: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	rec, err := evalComputeMetrics(abs)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval metrics: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval metrics: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	out, err := json.Marshal(rec)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval metrics: marshal: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval metrics: marshal: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	outPath := filepath.Join(abs, ".harmonik", "metrics.json")
 	if err := os.WriteFile(outPath, append(out, '\n'), 0o600); err != nil {
-		fmt.Fprintf(stderr, "harmonik eval metrics: write %s: %v\n", outPath, err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval metrics: write %s: %v\n", outPath, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "harmonik eval metrics: wrote %s\n", outPath)
+	if _, err := fmt.Fprintf(stdout, "harmonik eval metrics: wrote %s\n", outPath); err != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -156,7 +173,10 @@ func evalComputeMetrics(workdir string) (evalMetricsRecord, error) {
 	evaltaskDir := "evaltasks/" + taskID
 	rec.CrossCheckSample = evalShouldCrossCheckSample(beadID)
 
-	labels, _ := evalFetchBeadLabels(beadID, workdir)
+	labels, labelsErr := evalFetchBeadLabels(beadID, workdir)
+	if labelsErr != nil {
+		labels = nil
+	}
 	if v := evalLabelValue(labels, "expected_big_o"); v != "" {
 		rec.ExpectedBigO = &v
 	}
@@ -166,13 +186,19 @@ func evalComputeMetrics(workdir string) (evalMetricsRecord, error) {
 		}
 	}
 
-	changedFiles, _ := evalChangedGoFiles(workdir)
+	changedFiles, changedFilesErr := evalChangedGoFiles(workdir)
+	if changedFilesErr != nil {
+		changedFiles = []string{}
+	}
 
 	rec.GofmtClean, rec.GofmtUnformatted = evalGofmtCheck(workdir, changedFiles)
 	rec.VetClean, rec.VetIssues = evalVetCheck(workdir, evaltaskDir)
 	rec.GocycloMax = evalGocycloMax(workdir, changedFiles)
 
-	diff, _ := evalGetHeadDiff(workdir)
+	diff, diffErr := evalGetHeadDiff(workdir)
+	if diffErr != nil {
+		diff = ""
+	}
 	rec.TodoCount, rec.FixmeCount, rec.StubCount = evalCountDiffMarkers(diff)
 	rec.DiffAddedLines = evalCountDiffAddedLines(diff)
 	rec.SelfIDMatches = evalScrubSelfID(diff)
@@ -195,6 +221,7 @@ func evalComputeMetrics(workdir string) (evalMetricsRecord, error) {
 
 // evalReadBeadIDFromTask reads the bead_id field from .harmonik/agent-task.md.
 func evalReadBeadIDFromTask(workdir string) (string, error) {
+	// #nosec G304 -- task metadata is read from the eval worktree selected by the local operator.
 	data, err := os.ReadFile(filepath.Join(workdir, ".harmonik", "agent-task.md"))
 	if err != nil {
 		return "", err
@@ -219,7 +246,8 @@ func evalDeriveTaskID(beadID string) string {
 
 // evalChangedGoFiles returns non-test .go files changed in HEAD.
 func evalChangedGoFiles(workdir string) ([]string, error) {
-	cmd := exec.Command("git", "diff-tree", "--no-commit-id", "-r", "--name-only", "HEAD")
+	// #nosec G204 -- git arguments are fixed; workdir is the locally selected eval worktree.
+	cmd := exec.CommandContext(context.Background(), "git", "diff-tree", "--no-commit-id", "-r", "--name-only", "HEAD")
 	cmd.Dir = workdir
 	out, err := cmd.Output()
 	if err != nil {
@@ -240,9 +268,13 @@ func evalGofmtCheck(workdir string, files []string) (clean bool, unformatted []s
 		return true, []string{}
 	}
 	args := append([]string{"-l"}, files...)
-	cmd := exec.Command("gofmt", args...)
+	// #nosec G204 -- file paths come from git's changed-file listing in the selected worktree.
+	cmd := exec.CommandContext(context.Background(), "gofmt", args...)
 	cmd.Dir = workdir
-	out, _ := cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		return false, []string{}
+	}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if line != "" {
 			unformatted = append(unformatted, line)
@@ -256,7 +288,8 @@ func evalGofmtCheck(workdir string, files []string) (clean bool, unformatted []s
 
 // evalVetCheck runs go vet and returns clean status and any issues.
 func evalVetCheck(workdir, evaltaskDir string) (clean bool, issues []string) {
-	cmd := exec.Command("go", "vet", "./"+evaltaskDir+"/...")
+	// #nosec G204 -- evaltaskDir is derived from the bead ID read from local task metadata.
+	cmd := exec.CommandContext(context.Background(), "go", "vet", "./"+evaltaskDir+"/...")
 	cmd.Dir = workdir
 	out, err := cmd.CombinedOutput()
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -279,7 +312,8 @@ func evalGocycloMax(workdir string, files []string) *int {
 		return nil
 	}
 	args := append([]string{}, files...)
-	cmd := exec.Command("gocyclo", args...)
+	// #nosec G204 -- file paths come from git's changed-file listing in the selected worktree.
+	cmd := exec.CommandContext(context.Background(), "gocyclo", args...)
 	cmd.Dir = workdir
 	out, err := cmd.Output()
 	if err != nil {
@@ -307,7 +341,8 @@ func evalGocycloMax(workdir string, files []string) *int {
 
 // evalGetHeadDiff returns the unified diff of the HEAD commit.
 func evalGetHeadDiff(workdir string) (string, error) {
-	cmd := exec.Command("git", "show", "HEAD")
+	// #nosec G204 -- git arguments are fixed; workdir is the locally selected eval worktree.
+	cmd := exec.CommandContext(context.Background(), "git", "show", "HEAD")
 	cmd.Dir = workdir
 	out, err := cmd.Output()
 	return string(out), err
@@ -354,7 +389,8 @@ func evalCountDiffAddedLines(diff string) int {
 // and returns pass status and count. -run matches the full "TestXxx" name, so
 // the pattern must not anchor past the mandatory "Test" prefix.
 func evalRunHiddenTest(workdir, evaltaskDir string) (pass *bool, count *int) {
-	cmd := exec.Command("go", "test", "./"+evaltaskDir+"/...", "-run", "Hidden", "-timeout", "60s", "-v")
+	// #nosec G204 -- evaltaskDir is derived from the bead ID read from local task metadata.
+	cmd := exec.CommandContext(context.Background(), "go", "test", "./"+evaltaskDir+"/...", "-run", "Hidden", "-timeout", "60s", "-v")
 	cmd.Dir = workdir
 	out, err := cmd.CombinedOutput()
 	p := err == nil
@@ -374,7 +410,8 @@ func evalDeadcodeCheck(workdir, evaltaskDir string) []string {
 	if _, err := exec.LookPath("deadcode"); err != nil {
 		return []string{}
 	}
-	cmd := exec.Command("deadcode", "./"+evaltaskDir+"/...")
+	// #nosec G204 -- evaltaskDir is derived from the bead ID read from local task metadata.
+	cmd := exec.CommandContext(context.Background(), "deadcode", "./"+evaltaskDir+"/...")
 	cmd.Dir = workdir
 	out, err := cmd.Output()
 	if err != nil {

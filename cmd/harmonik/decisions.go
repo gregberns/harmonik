@@ -599,7 +599,12 @@ func decisionsDialOp(sockPath, op string, payload map[string]any, verb string) (
 		return nil, 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite()
+		if closeWriteErr := uw.CloseWrite(); closeWriteErr != nil {
+			if _, err := fmt.Fprintf(os.Stderr, "harmonik decisions %s: close request write side: %v\n", verb, closeWriteErr); err != nil {
+				return nil, 1
+			}
+			return nil, 1
+		}
 	}
 
 	var resp struct {

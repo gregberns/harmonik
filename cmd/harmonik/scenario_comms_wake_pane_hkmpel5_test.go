@@ -139,12 +139,12 @@ func TestCommsWakePaneCandidates_Scenario6_L0(t *testing.T) {
 		t.Parallel()
 
 		base := t.TempDir()
-		real := filepath.Join(base, "real-project")
-		if err := os.Mkdir(real, 0o750); err != nil {
+		realProject := filepath.Join(base, "real-project")
+		if err := os.Mkdir(realProject, 0o750); err != nil {
 			t.Fatalf("D: mkdir real: %v", err)
 		}
 		link := filepath.Join(base, "link-project")
-		if err := os.Symlink(real, link); err != nil {
+		if err := os.Symlink(realProject, link); err != nil {
 			// Symlink creation can fail on some CI sandbox environments.
 			t.Skipf("D: symlink creation not supported: %v", err)
 		}
@@ -210,12 +210,12 @@ func TestResolveProjectPath_Scenario6_L0(t *testing.T) {
 	t.Run("symlink returns resolved target", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
-		real := filepath.Join(base, "real")
-		if err := os.Mkdir(real, 0o750); err != nil {
+		realProject := filepath.Join(base, "real")
+		if err := os.Mkdir(realProject, 0o750); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
 		link := filepath.Join(base, "link")
-		if err := os.Symlink(real, link); err != nil {
+		if err := os.Symlink(realProject, link); err != nil {
 			t.Skipf("symlink creation not supported: %v", err)
 		}
 		resolved, err := filepath.EvalSymlinks(link)

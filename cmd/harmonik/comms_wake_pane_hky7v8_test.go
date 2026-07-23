@@ -111,12 +111,12 @@ func TestCommsWakePaneCandidates_SymlinkedProjectMatchesTmuxSessionHash(t *testi
 	// the same hash as a tmux session spawned from the symlink path (which
 	// EvalSymlinks-resolves to `real`).
 	base := t.TempDir()
-	real := filepath.Join(base, "real-project")
-	if err := os.Mkdir(real, 0o750); err != nil {
+	realProject := filepath.Join(base, "real-project")
+	if err := os.Mkdir(realProject, 0o750); err != nil {
 		t.Fatalf("mkdir real: %v", err)
 	}
 	link := filepath.Join(base, "link-project")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realProject, link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
 

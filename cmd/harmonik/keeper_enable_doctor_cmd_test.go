@@ -20,6 +20,7 @@ func makeScriptsDir(t *testing.T) string {
 	dir := t.TempDir()
 	for _, name := range []string{"keeper-statusline.sh", "keeper-stop-hook.sh", "keeper-precompact-hook.sh", "keeper-sessionstart-hook.sh"} {
 		p := filepath.Join(dir, name)
+		//nolint:gosec // G306: executable mode is required for shell-script fixtures
 		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatalf("makeScriptsDir: write %s: %v", name, err)
 		}
@@ -28,13 +29,13 @@ func makeScriptsDir(t *testing.T) string {
 }
 
 // makeEnableCfg returns an enableConfig wired to temp directories.
-func makeEnableCfg(t *testing.T, agent string) (enableConfig, string) {
+func makeEnableCfg(t *testing.T, agent string) (cfg enableConfig, settingsPath string) {
 	t.Helper()
 	projectDir := t.TempDir()
 	settingsDir := t.TempDir()
 	scriptsDir := makeScriptsDir(t)
-	settingsPath := filepath.Join(settingsDir, "settings.json")
-	cfg := enableConfig{
+	settingsPath = filepath.Join(settingsDir, "settings.json")
+	cfg = enableConfig{
 		agentName:      agent,
 		projectDir:     projectDir,
 		scriptsDir:     scriptsDir,
@@ -47,6 +48,7 @@ func makeEnableCfg(t *testing.T, agent string) (enableConfig, string) {
 // readSettingsJSON reads and parses a settings.json from path.
 func readSettingsJSON(t *testing.T, path string) map[string]interface{} {
 	t.Helper()
+	//nolint:gosec // G304: path is supplied by this package's temporary settings fixtures
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("readSettingsJSON: %v", err)
@@ -56,6 +58,33 @@ func readSettingsJSON(t *testing.T, path string) map[string]interface{} {
 		t.Fatalf("readSettingsJSON parse: %v", err)
 	}
 	return m
+}
+
+func keeperFixtureMarshal(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+	return raw
+}
+
+func keeperFixtureMarshalIndent(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+	return raw
+}
+
+func keeperFixtureString(t *testing.T, value any, field string) string {
+	t.Helper()
+	got, ok := value.(string)
+	if !ok {
+		t.Fatalf("%s has type %T, want string", field, value)
+	}
+	return got
 }
 
 // ── enable tests ──────────────────────────────────────────────────────────────
@@ -80,7 +109,7 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 	if !ok {
 		t.Fatal("statusLine missing or wrong type")
 	}
-	cmd, _ := sl["command"].(string)
+	cmd := keeperFixtureString(t, sl["command"], "statusLine.command")
 	if !strings.Contains(cmd, "keeper-statusline.sh") {
 		t.Errorf("statusLine.command does not contain keeper-statusline.sh: %q", cmd)
 	}
@@ -96,7 +125,7 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 	}
 	// hk-hs1: statusLine MUST carry "type":"command". Without it Claude Code
 	// rejects the entire settings.json and disables ALL hooks.
-	if got, _ := sl["type"].(string); got != "command" {
+	if got := keeperFixtureString(t, sl["type"], "statusLine.type"); got != "command" {
 		t.Errorf(`statusLine.type = %q; want "command" (hk-hs1)`, got)
 	}
 
@@ -147,7 +176,7 @@ func TestKeeperEnable_Idempotent(t *testing.T) {
 	settings := readSettingsJSON(t, settingsPath)
 	countStatusLine := 0
 	if sl, ok := settings["statusLine"].(map[string]interface{}); ok {
-		if cmd, _ := sl["command"].(string); strings.Contains(cmd, "keeper-statusline.sh") {
+		if cmd := keeperFixtureString(t, sl["command"], "statusLine.command"); strings.Contains(cmd, "keeper-statusline.sh") {
 			countStatusLine++
 		}
 	}
@@ -231,7 +260,7 @@ func TestKeeperEnable_NormalizesStaleAgentCmd(t *testing.T) {
 			},
 		},
 	}
-	raw, _ := json.MarshalIndent(initial, "", "  ")
+	raw := keeperFixtureMarshalIndent(t, initial)
 	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -266,7 +295,7 @@ func TestKeeperEnable_BacksUpExistingFile(t *testing.T) {
 
 	// Write initial settings.json.
 	initial := map[string]interface{}{"foo": "bar"}
-	raw, _ := json.Marshal(initial)
+	raw := keeperFixtureMarshal(t, initial)
 	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -304,6 +333,7 @@ func TestKeeperEnable_SeedsHandoffStub(t *testing.T) {
 	}
 
 	handoffPath := filepath.Join(cfg.projectDir, "HANDOFF-orchestrator.md")
+	//nolint:gosec // G304: handoffPath is rooted in this test's t.TempDir project fixture
 	content, err := os.ReadFile(handoffPath)
 	if err != nil {
 		t.Fatalf("HANDOFF-orchestrator.md not created: %v", err)
@@ -331,7 +361,10 @@ func TestKeeperEnable_HandoffStubIdempotent(t *testing.T) {
 		t.Fatalf("want 0, got %d\n%s", code, out.String())
 	}
 
-	content, _ := os.ReadFile(handoffPath)
+	content, err := os.ReadFile(handoffPath)
+	if err != nil {
+		t.Fatalf("read handoff stub: %v", err)
+	}
 	if string(content) != original {
 		t.Errorf("handoff stub was overwritten; want %q, got %q", original, string(content))
 	}
@@ -403,7 +436,7 @@ func TestKeeperEnable_PreservesExistingSettings(t *testing.T) {
 			"allow": []interface{}{"Read"},
 		},
 	}
-	raw, _ := json.MarshalIndent(initial, "", "  ")
+	raw := keeperFixtureMarshalIndent(t, initial)
 	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -430,18 +463,18 @@ func TestKeeperEnable_PreservesExistingSettings(t *testing.T) {
 
 // makeDoctorCfg returns a doctorConfig wired to temp dirs, optionally with a
 // fake settings.json and keeper files already created.
-func makeDoctorCfg(t *testing.T, agent string) (doctorConfig, func()) {
+func makeDoctorCfg(t *testing.T, agent string) (cfg doctorConfig, cleanup func()) {
 	t.Helper()
 	projectDir := t.TempDir()
 	settingsDir := t.TempDir()
 	settingsPath := filepath.Join(settingsDir, "settings.json")
 
-	cfg := doctorConfig{
+	cfg = doctorConfig{
 		agentName:    agent,
 		projectDir:   projectDir,
 		settingsPath: settingsPath,
 	}
-	cleanup := func() {}
+	cleanup = func() {}
 	return cfg, cleanup
 }
 
@@ -481,7 +514,7 @@ func TestKeeperDoctor_HookGapDetected(t *testing.T) {
 	// Write settings with only statusLine (no hooks).
 	settings := map[string]interface{}{}
 	mergeStatusLineStanza(settings, "HARMONIK_PROJECT="+cfg.projectDir+" HARMONIK_AGENT=orchestrator "+filepath.Join(scriptsDir, "keeper-statusline.sh"))
-	raw, _ := json.MarshalIndent(settings, "", "  ")
+	raw := keeperFixtureMarshalIndent(t, settings)
 	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -641,7 +674,7 @@ func TestKeeperDoctor_StatusLineTypeMissing(t *testing.T) {
 			"command": statusLineCmd,
 		},
 	}
-	raw, _ := json.MarshalIndent(settings, "", "  ")
+	raw := keeperFixtureMarshalIndent(t, settings)
 	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -676,7 +709,7 @@ func TestKeeperDoctor_StatusLineTypePresent(t *testing.T) {
 			"command": statusLineCmd,
 		},
 	}
-	raw, _ := json.MarshalIndent(settings, "", "  ")
+	raw := keeperFixtureMarshalIndent(t, settings)
 	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -709,7 +742,7 @@ func TestKeeperDoctor_StatusLineAgentPollution(t *testing.T) {
 			"command": statusLineCmd,
 		},
 	}
-	raw, _ := json.MarshalIndent(settings, "", "  ")
+	raw := keeperFixtureMarshalIndent(t, settings)
 	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -745,7 +778,7 @@ func TestKeeperDoctor_StatusLineAgentPollutionShellExpansionOK(t *testing.T) {
 			"command": statusLineCmd,
 		},
 	}
-	raw, _ := json.MarshalIndent(settings, "", "  ")
+	raw := keeperFixtureMarshalIndent(t, settings)
 	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -1052,7 +1085,7 @@ func TestKeeperEnable_MultiProjectCoexistence(t *testing.T) {
 	if !ok {
 		t.Fatal("statusLine missing or wrong type")
 	}
-	slCmd, _ := sl["command"].(string)
+	slCmd := keeperFixtureString(t, sl["command"], "statusLine.command")
 	if !strings.Contains(slCmd, "keeper-statusline.sh") {
 		t.Errorf("statusLine.command missing keeper-statusline.sh: %q", slCmd)
 	}
@@ -1142,7 +1175,10 @@ func countHookEntriesForScript(settings map[string]interface{}, eventName, scrip
 			if !ok {
 				continue
 			}
-			cmd, _ := eMap["command"].(string)
+			cmd, ok := eMap["command"].(string)
+			if !ok {
+				continue
+			}
 			if strings.Contains(cmd, scriptBasename) {
 				count++
 			}

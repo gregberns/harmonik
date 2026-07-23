@@ -18,15 +18,24 @@ import (
 // evalWriteEvents writes a slice of raw JSON lines to a file.
 func evalWriteEvents(t *testing.T, path string, lines []string) {
 	t.Helper()
+	// #nosec G304 -- path is rooted in this test's temporary fixture directory.
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create events file: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close events file: %v", err)
+		}
+	}()
 	w := bufio.NewWriter(f)
 	for _, l := range lines {
-		w.WriteString(l)
-		w.WriteByte('\n')
+		if _, err := w.WriteString(l); err != nil {
+			t.Fatalf("write event: %v", err)
+		}
+		if err := w.WriteByte('\n'); err != nil {
+			t.Fatalf("write newline: %v", err)
+		}
 	}
 	if err := w.Flush(); err != nil {
 		t.Fatalf("flush events file: %v", err)
@@ -34,7 +43,8 @@ func evalWriteEvents(t *testing.T, path string, lines []string) {
 }
 
 // evalEventLine builds a minimal event JSONL line.
-func evalEventLine(eventType, runID string, payload map[string]any) string {
+func evalEventLine(t *testing.T, eventType, runID string, payload map[string]any) string {
+	t.Helper()
 	env := map[string]any{
 		"event_id":         "00000000-0000-0000-0000-000000000001",
 		"schema_version":   1,
@@ -44,12 +54,16 @@ func evalEventLine(eventType, runID string, payload map[string]any) string {
 		"source_subsystem": "test",
 		"payload":          payload,
 	}
-	b, _ := json.Marshal(env)
+	b, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
 	return string(b)
 }
 
 // evalEventLineAt builds an event line with a specific wall timestamp.
-func evalEventLineAt(eventType, runID, wallTS string, payload map[string]any) string {
+func evalEventLineAt(t *testing.T, eventType, runID, wallTS string, payload map[string]any) string {
+	t.Helper()
 	env := map[string]any{
 		"event_id":         "00000000-0000-0000-0000-000000000001",
 		"schema_version":   1,
@@ -59,7 +73,10 @@ func evalEventLineAt(eventType, runID, wallTS string, payload map[string]any) st
 		"source_subsystem": "test",
 		"payload":          payload,
 	}
-	b, _ := json.Marshal(env)
+	b, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
 	return string(b)
 }
 
@@ -70,40 +87,40 @@ func TestEvalReadEvents_GradePass(t *testing.T) {
 	runID := "019f0000-0000-7000-0000-000000000001"
 
 	evalWriteEvents(t, evPath, []string{
-		evalEventLine("run_started", runID, map[string]any{
+		evalEventLine(t, "run_started", runID, map[string]any{
 			"bead_id":    "hk-abc",
 			"started_at": "2026-07-02T22:00:00Z",
 		}),
-		evalEventLine("harness_selected", runID, map[string]any{
+		evalEventLine(t, "harness_selected", runID, map[string]any{
 			"bead_id":    "hk-abc",
 			"agent_type": "pi",
 			"tier":       1,
 		}),
-		evalEventLine("implementer_phase_complete", runID, map[string]any{
+		evalEventLine(t, "implementer_phase_complete", runID, map[string]any{
 			"run_id":           runID,
 			"exit_code":        0,
 			"stderr_tail_head": "",
 			"commit_landed":    true,
 			"duration_seconds": 191.2,
 		}),
-		evalEventLine("node_dispatch_requested", runID, map[string]any{
+		evalEventLine(t, "node_dispatch_requested", runID, map[string]any{
 			"run_id":       runID,
 			"node_id":      "grade",
 			"requested_at": "2026-07-02T22:02:00Z",
 		}),
-		evalEventLine("outcome_emitted", runID, map[string]any{
+		evalEventLine(t, "outcome_emitted", runID, map[string]any{
 			"run_id":         runID,
 			"session_id":     "00000000-0000-0000-0000-000000000002",
 			"node_id":        "judge",
 			"outcome_status": "SUCCESS",
 		}),
-		evalEventLine("checkpoint_written", runID, map[string]any{
+		evalEventLine(t, "checkpoint_written", runID, map[string]any{
 			"run_id":        runID,
 			"state_id":      "00000000-0000-0000-0000-000000000003",
 			"transition_id": "00000000-0000-0000-0000-000000000004",
 			"commit_hash":   "abcd1234567890",
 		}),
-		evalEventLineAt("run_completed", runID, "2026-07-02T22:03:34Z", map[string]any{
+		evalEventLineAt(t, "run_completed", runID, "2026-07-02T22:03:34Z", map[string]any{
 			"run_id":            runID,
 			"terminal_state_id": "00000000-0000-0000-0000-000000000005",
 			"ended_at":          "2026-07-02T22:03:34Z",
@@ -151,12 +168,12 @@ func TestEvalReadEvents_GradeFail(t *testing.T) {
 	runID := "019f0000-0000-7000-0000-000000000002"
 
 	evalWriteEvents(t, evPath, []string{
-		evalEventLine("run_started", runID, map[string]any{
+		evalEventLine(t, "run_started", runID, map[string]any{
 			"bead_id":    "hk-def",
 			"started_at": "2026-07-02T22:00:00Z",
 		}),
 		// Grade was dispatched (non-agentic shell node — no outcome_emitted).
-		evalEventLine("node_dispatch_requested", runID, map[string]any{
+		evalEventLine(t, "node_dispatch_requested", runID, map[string]any{
 			"run_id":       runID,
 			"node_id":      "grade",
 			"requested_at": "2026-07-02T22:01:00Z",
@@ -188,11 +205,11 @@ func TestEvalReadEvents_NonEvalRun(t *testing.T) {
 	runID := "019f0000-0000-7000-0000-000000000003"
 
 	evalWriteEvents(t, evPath, []string{
-		evalEventLine("run_started", runID, map[string]any{
+		evalEventLine(t, "run_started", runID, map[string]any{
 			"bead_id":    "hk-ghi",
 			"started_at": "2026-07-02T22:00:00Z",
 		}),
-		evalEventLine("outcome_emitted", runID, map[string]any{
+		evalEventLine(t, "outcome_emitted", runID, map[string]any{
 			"run_id":         runID,
 			"session_id":     "00000000-0000-0000-0000-000000000007",
 			"node_id":        "commit_gate", // not "grade"
@@ -221,8 +238,8 @@ func TestEvalReadEvents_FilterRunID(t *testing.T) {
 	runB := "019f0000-0000-7000-0000-000000000005"
 
 	evalWriteEvents(t, evPath, []string{
-		evalEventLine("run_started", runA, map[string]any{"bead_id": "hk-a", "started_at": "2026-07-02T22:00:00Z"}),
-		evalEventLine("run_started", runB, map[string]any{"bead_id": "hk-b", "started_at": "2026-07-02T22:00:00Z"}),
+		evalEventLine(t, "run_started", runA, map[string]any{"bead_id": "hk-a", "started_at": "2026-07-02T22:00:00Z"}),
+		evalEventLine(t, "run_started", runB, map[string]any{"bead_id": "hk-b", "started_at": "2026-07-02T22:00:00Z"}),
 	})
 
 	states, err := evalReadEvents(evPath, runA)
@@ -337,34 +354,34 @@ func TestRunEvalCollect_EndToEnd(t *testing.T) {
 	runID := "019f0000-0000-7000-0000-000000000010"
 
 	evalWriteEvents(t, evPath, []string{
-		evalEventLine("run_started", runID, map[string]any{
+		evalEventLine(t, "run_started", runID, map[string]any{
 			"bead_id":    "hk-xyz",
 			"started_at": "2026-07-02T22:00:00Z",
 		}),
-		evalEventLine("harness_selected", runID, map[string]any{
+		evalEventLine(t, "harness_selected", runID, map[string]any{
 			"bead_id":    "hk-xyz",
 			"agent_type": "claude-code",
 			"tier":       4,
 		}),
-		evalEventLine("implementer_phase_complete", runID, map[string]any{
+		evalEventLine(t, "implementer_phase_complete", runID, map[string]any{
 			"run_id":           runID,
 			"exit_code":        0,
 			"stderr_tail_head": "",
 			"commit_landed":    true,
 			"duration_seconds": 100.0,
 		}),
-		evalEventLine("node_dispatch_requested", runID, map[string]any{
+		evalEventLine(t, "node_dispatch_requested", runID, map[string]any{
 			"run_id":       runID,
 			"node_id":      "grade",
 			"requested_at": "2026-07-02T22:01:30Z",
 		}),
-		evalEventLine("outcome_emitted", runID, map[string]any{
+		evalEventLine(t, "outcome_emitted", runID, map[string]any{
 			"run_id":         runID,
 			"session_id":     "00000000-0000-0000-0000-000000000011",
 			"node_id":        "judge",
 			"outcome_status": "SUCCESS",
 		}),
-		evalEventLineAt("run_completed", runID, "2026-07-02T22:02:00Z", map[string]any{
+		evalEventLineAt(t, "run_completed", runID, "2026-07-02T22:02:00Z", map[string]any{
 			"run_id":            runID,
 			"terminal_state_id": "00000000-0000-0000-0000-000000000012",
 			"ended_at":          "2026-07-02T22:02:00Z",
@@ -431,11 +448,11 @@ func TestRunEvalCollect_SkipsNonEvalRuns(t *testing.T) {
 	runID := "019f0000-0000-7000-0000-000000000020"
 
 	evalWriteEvents(t, evPath, []string{
-		evalEventLine("run_started", runID, map[string]any{
+		evalEventLine(t, "run_started", runID, map[string]any{
 			"bead_id":    "hk-nograde",
 			"started_at": "2026-07-02T22:00:00Z",
 		}),
-		evalEventLine("outcome_emitted", runID, map[string]any{
+		evalEventLine(t, "outcome_emitted", runID, map[string]any{
 			"run_id":         runID,
 			"session_id":     "00000000-0000-0000-0000-000000000021",
 			"node_id":        "review", // not "grade"
@@ -455,7 +472,10 @@ func TestRunEvalCollect_SkipsNonEvalRuns(t *testing.T) {
 	// Output file should not exist or be empty.
 	info, err := os.Stat(outPath)
 	if err == nil && info.Size() > 0 {
-		data, _ := os.ReadFile(outPath)
+		data, readErr := os.ReadFile(outPath)
+		if readErr != nil {
+			t.Fatalf("read unexpected output: %v", readErr)
+		}
 		t.Errorf("expected empty output, got: %s", data)
 	}
 }

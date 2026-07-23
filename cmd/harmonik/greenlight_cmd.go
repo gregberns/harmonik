@@ -96,7 +96,9 @@ func runGreenlightSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	fmt.Fprintf(os.Stdout, "greenlit %s: needs-greenlight label removed; bead is now dispatchable\n", beadID)
+	if _, err := fmt.Fprintf(os.Stdout, "greenlit %s: needs-greenlight label removed; bead is now dispatchable\n", beadID); err != nil {
+		return 1
+	}
 	return 0
 }
 

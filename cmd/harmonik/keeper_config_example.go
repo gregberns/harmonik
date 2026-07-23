@@ -108,19 +108,29 @@ func runKeeperConfigTo(args []string, stdout, stderr io.Writer) int {
 		case "--example":
 			example = true
 		case "-h", "--help":
-			fmt.Fprint(stderr, keeperConfigUsage)
+			if _, err := fmt.Fprint(stderr, keeperConfigUsage); err != nil {
+				return 1
+			}
 			return 0
 		default:
-			fmt.Fprintf(stderr, "harmonik keeper config: unknown argument %q\n\n", a)
-			fmt.Fprint(stderr, keeperConfigUsage)
+			if _, err := fmt.Fprintf(stderr, "harmonik keeper config: unknown argument %q\n\n", a); err != nil {
+				return 1
+			}
+			if _, err := fmt.Fprint(stderr, keeperConfigUsage); err != nil {
+				return 1
+			}
 			return 2
 		}
 	}
 	if !example {
-		fmt.Fprint(stderr, keeperConfigUsage)
+		if _, err := fmt.Fprint(stderr, keeperConfigUsage); err != nil {
+			return 1
+		}
 		return 2
 	}
-	fmt.Fprint(stdout, keeperConfigExampleYAML())
+	if _, err := fmt.Fprint(stdout, keeperConfigExampleYAML()); err != nil {
+		return 1
+	}
 	return 0
 }
 

@@ -199,21 +199,14 @@ func TestEvalGofmtCheck_NoFiles(t *testing.T) {
 
 // metricsTestRepo sets up a minimal git repo with an evaltask package and
 // .harmonik/agent-task.md so evalComputeMetrics can run.  Returns the repo dir.
-func metricsTestRepo(t *testing.T, beadID, taskID string, goSrc string) string {
+func metricsTestRepo(t *testing.T, beadID, taskID, goSrc string) string {
 	t.Helper()
 	dir := t.TempDir()
 
 	// git init
-	cmds := [][]string{
-		{"git", "-C", dir, "init"},
-		{"git", "-C", dir, "config", "user.email", "test@test.com"},
-		{"git", "-C", dir, "config", "user.name", "Test"},
-	}
-	for _, c := range cmds {
-		if out, err := exec.Command(c[0], c[1:]...).CombinedOutput(); err != nil {
-			t.Fatalf("%v: %v\n%s", c, err, out)
-		}
-	}
+	runMetricsGit(t, dir, "init")
+	runMetricsGit(t, dir, "config", "user.email", "test@test.com")
+	runMetricsGit(t, dir, "config", "user.name", "Test")
 
 	// .harmonik/agent-task.md
 	hDir := filepath.Join(dir, ".harmonik")
@@ -241,17 +234,19 @@ func metricsTestRepo(t *testing.T, beadID, taskID string, goSrc string) string {
 	}
 
 	// commit everything
-	addCmds := [][]string{
-		{"git", "-C", dir, "add", "."},
-		{"git", "-C", dir, "commit", "-m", "initial"},
-	}
-	for _, c := range addCmds {
-		if out, err := exec.Command(c[0], c[1:]...).CombinedOutput(); err != nil {
-			t.Fatalf("%v: %v\n%s", c, err, out)
-		}
-	}
+	runMetricsGit(t, dir, "add", ".")
+	runMetricsGit(t, dir, "commit", "-m", "initial")
 
 	return dir
+}
+
+func runMetricsGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+
+	commandArgs := append([]string{"-C", dir}, args...)
+	if out, err := exec.CommandContext(t.Context(), "git", commandArgs...).CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(commandArgs, " "), err, out)
+	}
 }
 
 func TestEvalComputeMetrics_BasicPass(t *testing.T) {
@@ -336,6 +331,7 @@ func TestRunEvalMetrics_WritesFile(t *testing.T) {
 	}
 
 	outPath := filepath.Join(dir, ".harmonik", "metrics.json")
+	//nolint:gosec // G304: outPath is constructed from this test's temporary workdir and a fixed metrics filename.
 	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read metrics.json: %v", err)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,11 @@ func TestSetDispatching_RelativeProjectResolvesLikeAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Getwd: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(origWd) })
+	t.Cleanup(func() {
+		if restoreErr := os.Chdir(origWd); restoreErr != nil {
+			t.Errorf("restore working directory to %q: %v", origWd, restoreErr)
+		}
+	})
 
 	// CD to the parent so a relative "<base>" path names absProject.
 	parent := filepath.Dir(absProject)
@@ -74,13 +79,12 @@ func TestSetDispatching_WarnsWhenNoLiveKeeper(t *testing.T) {
 
 	code := runKeeperSetDispatching([]string{"--project", projectDir, "--agent", agent})
 
-	pw.Close()
+	closeErr := pw.Close()
 	os.Stderr = origStderr
-
-	buf := make([]byte, 8192)
-	n, _ := pr.Read(buf)
-	pr.Close()
-	output := string(buf[:n])
+	if closeErr != nil {
+		t.Fatalf("close stderr pipe writer: %v", closeErr)
+	}
+	output := readPipeOutput(t, pr)
 
 	// Fail-OPEN: exit stays 0 — a keeper may legitimately start later.
 	if code != 0 {
@@ -107,13 +111,12 @@ func TestUnknownKeeperSubcommand_ExitsNonZero(t *testing.T) {
 
 	code := run()
 
-	pw.Close()
+	closeErr := pw.Close()
 	os.Stderr = origStderr
-
-	buf := make([]byte, 16384)
-	n, _ := pr.Read(buf)
-	pr.Close()
-	output := string(buf[:n])
+	if closeErr != nil {
+		t.Fatalf("close stderr pipe writer: %v", closeErr)
+	}
+	output := readPipeOutput(t, pr)
 
 	if code == 0 {
 		t.Fatalf("unknown keeper subcommand: want non-zero exit, got 0")
@@ -124,4 +127,17 @@ func TestUnknownKeeperSubcommand_ExitsNonZero(t *testing.T) {
 	if strings.Contains(output, "flag-only") {
 		t.Errorf("unknown verb must NOT print the misleading 'flag-only' message; got:\n%s", output)
 	}
+}
+
+func readPipeOutput(t *testing.T, pr *os.File) string {
+	t.Helper()
+
+	output, readErr := io.ReadAll(pr)
+	if readErr != nil {
+		t.Fatalf("read stderr pipe: %v", readErr)
+	}
+	if closeErr := pr.Close(); closeErr != nil {
+		t.Fatalf("close stderr pipe reader: %v", closeErr)
+	}
+	return string(output)
 }

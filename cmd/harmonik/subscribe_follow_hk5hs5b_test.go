@@ -57,24 +57,40 @@ func TestSubscribeFollow_Exit17WhenDaemonAbsentOnFirstDial(t *testing.T) {
 // Uses /tmp for the socket to stay within the 104-byte macOS sun_path limit.
 func TestSubscribeFollow_Reconnect(t *testing.T) {
 	sockPath := "/tmp/hk5hs5b-sub.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove socket during cleanup: %v", err)
+		}
+	})
 
 	// Two events with distinct IDs.
-	ev1ID, _ := uuid.NewV7()
+	ev1ID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new event 1 UUID: %v", err)
+	}
 	time.Sleep(2 * time.Millisecond)
-	ev2ID, _ := uuid.NewV7()
+	ev2ID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new event 2 UUID: %v", err)
+	}
 
 	// reconnectSince captures the since_event_id seen by the second connection.
 	reconnectSince := make(chan string, 1)
 
 	var connCount int32
 
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("close listener: %v", err)
+		}
+	})
 
 	go func() {
 		for {
@@ -84,7 +100,11 @@ func TestSubscribeFollow_Reconnect(t *testing.T) {
 			}
 			n := atomic.AddInt32(&connCount, 1)
 			go func(c net.Conn, num int32) {
-				defer func() { _ = c.Close() }()
+				defer func() {
+					if err := c.Close(); err != nil {
+						t.Errorf("close connection: %v", err)
+					}
+				}()
 
 				// Read and discard the subscribe request.
 				var req map[string]any
@@ -99,12 +119,18 @@ func TestSubscribeFollow_Reconnect(t *testing.T) {
 						"type":     "run_completed",
 						"event_id": ev1ID.String(),
 					}
-					_ = json.NewEncoder(c).Encode(ev)
+					if err := json.NewEncoder(c).Encode(ev); err != nil {
+						t.Errorf("encode event 1: %v", err)
+					}
 					// conn closed on return
 
 				case 2:
 					// Capture since_event_id from the reconnect request.
-					since, _ := req["since_event_id"].(string)
+					since, ok := req["since_event_id"].(string)
+					if !ok {
+						t.Errorf("reconnect since_event_id has type %T, want string", req["since_event_id"])
+						since = ""
+					}
 					reconnectSince <- since
 
 					// Send event 2 so the follow loop has output to write.
@@ -112,15 +138,24 @@ func TestSubscribeFollow_Reconnect(t *testing.T) {
 						"type":     "run_completed",
 						"event_id": ev2ID.String(),
 					}
-					_ = json.NewEncoder(c).Encode(ev)
+					if err := json.NewEncoder(c).Encode(ev); err != nil {
+						t.Errorf("encode event 2: %v", err)
+					}
 					// conn closed on return; follow loop will retry — fine for this test.
 				}
 			}(conn, n)
 		}
 	}()
 
-	outFile, _ := os.CreateTemp(t.TempDir(), "sub-follow-*.txt")
-	t.Cleanup(func() { _ = outFile.Close() })
+	outFile, err := os.CreateTemp(t.TempDir(), "sub-follow-*.txt")
+	if err != nil {
+		t.Fatalf("create follow output file: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := outFile.Close(); err != nil {
+			t.Errorf("close follow output file: %v", err)
+		}
+	})
 
 	// Cancel + join in cleanup so the reconnect goroutine cannot outlive the
 	// test and race a later os.Stderr swap (hk-me8ru).
@@ -150,8 +185,13 @@ func TestSubscribeFollow_Reconnect(t *testing.T) {
 	var out string
 	pollDeadline := time.After(15 * time.Second)
 	for {
-		_ = outFile.Sync()
-		raw, _ := os.ReadFile(outFile.Name())
+		if err := outFile.Sync(); err != nil {
+			t.Fatalf("sync follow output: %v", err)
+		}
+		raw, err := os.ReadFile(outFile.Name())
+		if err != nil {
+			t.Fatalf("read follow output: %v", err)
+		}
 		out = string(raw)
 		if strings.Contains(out, ev1ID.String()) && strings.Contains(out, ev2ID.String()) {
 			break
@@ -183,20 +223,33 @@ func TestSubscribeFollow_Reconnect(t *testing.T) {
 // period leaves the watermark stale and the daemon re-replays all events.
 func TestSubscribeFollow_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 	sockPath := "/tmp/hk5hs5b-hb.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove socket during cleanup: %v", err)
+		}
+	})
 
-	hbID, _ := uuid.NewV7()
+	hbID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("new heartbeat UUID: %v", err)
+	}
 	heartbeatLastEventID := hbID.String()
 
 	reconnectSince := make(chan string, 1)
 	var connCount int32
 
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("close listener: %v", err)
+		}
+	})
 
 	go func() {
 		for {
@@ -206,7 +259,11 @@ func TestSubscribeFollow_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 			}
 			n := atomic.AddInt32(&connCount, 1)
 			go func(c net.Conn, num int32) {
-				defer func() { _ = c.Close() }()
+				defer func() {
+					if err := c.Close(); err != nil {
+						t.Errorf("close connection: %v", err)
+					}
+				}()
 
 				var req map[string]any
 				if decErr := json.NewDecoder(c).Decode(&req); decErr != nil {
@@ -220,24 +277,43 @@ func TestSubscribeFollow_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 						"type":          "heartbeat",
 						"last_event_id": heartbeatLastEventID,
 					}
-					_ = json.NewEncoder(c).Encode(hb)
+					if err := json.NewEncoder(c).Encode(hb); err != nil {
+						t.Errorf("encode heartbeat: %v", err)
+					}
 
 				case 2:
 					// Capture since_event_id from the reconnect request.
-					since, _ := req["since_event_id"].(string)
+					since, ok := req["since_event_id"].(string)
+					if !ok {
+						t.Errorf("reconnect since_event_id has type %T, want string", req["since_event_id"])
+						since = ""
+					}
 					reconnectSince <- since
 
 					// Send one event so the loop has something to process.
-					ev2ID, _ := uuid.NewV7()
+					ev2ID, err := uuid.NewV7()
+					if err != nil {
+						t.Errorf("new event 2 UUID: %v", err)
+						return
+					}
 					ev := map[string]any{"type": "run_completed", "event_id": ev2ID.String()}
-					_ = json.NewEncoder(c).Encode(ev)
+					if err := json.NewEncoder(c).Encode(ev); err != nil {
+						t.Errorf("encode event 2: %v", err)
+					}
 				}
 			}(conn, n)
 		}
 	}()
 
-	outFile, _ := os.CreateTemp(t.TempDir(), "sub-hb-*.txt")
-	t.Cleanup(func() { _ = outFile.Close() })
+	outFile, err := os.CreateTemp(t.TempDir(), "sub-hb-*.txt")
+	if err != nil {
+		t.Fatalf("create heartbeat output file: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := outFile.Close(); err != nil {
+			t.Errorf("close heartbeat output file: %v", err)
+		}
+	})
 
 	// Cancel + join in cleanup so the reconnect goroutine cannot outlive the
 	// test and race a later os.Stderr swap (hk-me8ru).

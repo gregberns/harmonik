@@ -365,7 +365,11 @@ func TestResolvePiConfig_APIKeyFile_TildeExpanded(t *testing.T) {
 	if err := os.WriteFile(keyFile, []byte("sk-or-tilde-test"), 0o600); err != nil {
 		t.Fatalf("setup: write key file: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Remove(keyFile) })
+	t.Cleanup(func() {
+		if err := os.Remove(keyFile); err != nil && !os.IsNotExist(err) {
+			t.Errorf("cleanup key file: %v", err)
+		}
+	})
 
 	cfg := fullPiCfg()
 	cfg.APIKeyFile = "~/.harmonik-test-xmfoi-expand.key"

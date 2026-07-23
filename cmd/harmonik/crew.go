@@ -329,7 +329,9 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
 	// before the daemon spawns the crew so a foreign project (never run harmonik
 	// init) has the files the crew agent reads at boot. (hk-2nmbq)
-	ensureBootAssets(absProject, os.Stdout, os.Stderr)
+	if err := ensureBootAssets(absProject, os.Stdout, os.Stderr); err != nil {
+		return 1
+	}
 
 	// Wire keeper hooks BEFORE sending the RPC so the new crew session reads the
 	// statusLine + Stop + PreCompact + SessionStart stanzas at session start.
@@ -640,7 +642,12 @@ func crewDialAndSend(sockPath, verb string, reqBytes []byte) (crewSocketResponse
 		return crewSocketResponse{}, 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite()
+		if closeWriteErr := uw.CloseWrite(); closeWriteErr != nil {
+			if _, err := fmt.Fprintf(os.Stderr, "harmonik %s: close request write side: %v\n", verb, closeWriteErr); err != nil {
+				return crewSocketResponse{}, 1
+			}
+			return crewSocketResponse{}, 1
+		}
 	}
 
 	var resp crewSocketResponse

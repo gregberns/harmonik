@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -172,7 +173,7 @@ func TestBeadsDedup_DryRun_DoesNotModify(t *testing.T) {
 		t.Fatalf("read after: %v", err)
 	}
 
-	if string(before) != string(after) {
+	if !bytes.Equal(before, after) {
 		t.Error("--dry-run must not modify the file")
 	}
 }

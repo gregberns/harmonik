@@ -263,7 +263,9 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 
 		// --help / -h (hk-vudz0)
 		case arg == "--help" || arg == "-h":
-			runUsage(stdout)
+			if err := runUsage(stdout); err != nil {
+				return 1
+			}
 			return 0
 
 		case strings.HasPrefix(arg, "-"):
@@ -498,7 +500,9 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	// hk-cebjc: --dry-run / --plan-only prints the intended spawn plan and exits
 	// without persisting queue.json, touching the bead ledger, or launching claude.
 	if dryRun {
-		printDryRunPlan(stdout, beadRecords, itemWorkflowMode, itemWorkflowRef, maxConcurrent, resolveGroupKind(subArgs))
+		if err := printDryRunPlan(stdout, beadRecords, itemWorkflowMode, itemWorkflowRef, maxConcurrent, resolveGroupKind(subArgs)); err != nil {
+			return 1
+		}
 		return 0
 	}
 
@@ -823,13 +827,13 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 //	No changes written. Run without --dry-run to execute.
 //
 // Bead ref: hk-cebjc.
-func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode string, workflowRef string, maxConcurrent int, groupKind queue.GroupKind) {
+func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode, workflowRef string, maxConcurrent int, groupKind queue.GroupKind) error {
 	// reviewLoopMaxReviewers mirrors the unexported reviewLoopIterationCap = 3
 	// in internal/daemon/reviewloop.go (hk-cebjc).
 	const reviewLoopMaxReviewers = 3
 
 	n := len(beadRecords)
-	fmt.Fprintf(out, "harmonik run --dry-run: plan for %d bead(s) (max-concurrent=%d, queue=%s)\n\n",
+	plan := fmt.Sprintf("harmonik run --dry-run: plan for %d bead(s) (max-concurrent=%d, queue=%s)\n\n",
 		n, maxConcurrent, groupKind)
 
 	totalImplementers := 0
@@ -859,29 +863,31 @@ func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode 
 			totalImplementers++
 		}
 
-		fmt.Fprintf(out, "  %-12s  %-52s  workflow=%-12s  → %s\n",
+		plan += fmt.Sprintf("  %-12s  %-52s  workflow=%-12s  → %s\n",
 			string(rec.BeadID), fmt.Sprintf("%q", title), workflowMode, spawnDesc)
 	}
 
-	fmt.Fprintln(out)
+	plan += "\n"
 	switch core.WorkflowMode(workflowMode) {
 	case core.WorkflowModeReviewLoop:
-		fmt.Fprintf(out, "Total: %d implementer(s) + up to %d reviewer(s) across %d bead(s) (max-concurrent=%d)\n",
+		plan += fmt.Sprintf("Total: %d implementer(s) + up to %d reviewer(s) across %d bead(s) (max-concurrent=%d)\n",
 			totalImplementers, totalMaxReviewers, n, maxConcurrent)
 	case core.WorkflowModeDot:
-		fmt.Fprintf(out, "Total: %d+ agent(s) across %d bead(s) — exact count depends on graph (max-concurrent=%d)\n",
+		plan += fmt.Sprintf("Total: %d+ agent(s) across %d bead(s) — exact count depends on graph (max-concurrent=%d)\n",
 			totalImplementers, n, maxConcurrent)
 	default:
-		fmt.Fprintf(out, "Total: %d implementer(s) across %d bead(s) (max-concurrent=%d)\n",
+		plan += fmt.Sprintf("Total: %d implementer(s) across %d bead(s) (max-concurrent=%d)\n",
 			totalImplementers, n, maxConcurrent)
 	}
-	fmt.Fprintln(out, "No changes written. Run without --dry-run to execute.")
+	plan += "No changes written. Run without --dry-run to execute.\n"
+	_, err := io.WriteString(out, plan)
+	return err
 }
 
 // runUsage prints help for `harmonik run --help` to w. Output goes to
 // stdout so it can be captured by agents without stderr redirection (hk-vudz0).
-func runUsage(w io.Writer) {
-	fmt.Fprint(w, `harmonik run — legacy/solo-bootstrap bead execution
+func runUsage(w io.Writer) error {
+	_, err := io.WriteString(w, `harmonik run — legacy/solo-bootstrap bead execution
 
   Not the primary dispatcher. For ongoing work, start one persistent daemon
   (queue-only) and submit beads with 'harmonik queue submit'. 'harmonik run'
@@ -932,4 +938,5 @@ EXAMPLES
   harmonik run --beads hk-abc123,hk-def456 --dry-run
   harmonik run --beads hk-abc123,hk-def456 --plan-only --max-concurrent 4
 `)
+	return err
 }

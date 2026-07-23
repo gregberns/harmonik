@@ -25,12 +25,19 @@ func TestKeeperPctFlagsAreHonoredNotInert(t *testing.T) {
 	// emitted before the agent check.
 	runKeeperSubcommand([]string{"--warn-pct", "30", "--act-pct", "35"})
 
-	pw.Close()
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close stderr writer: %v", err)
+	}
 	os.Stderr = origStderr
 
 	buf := make([]byte, 8192)
-	n, _ := pr.Read(buf)
-	pr.Close()
+	n, err := pr.Read(buf)
+	if err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	if err := pr.Close(); err != nil {
+		t.Fatalf("close stderr reader: %v", err)
+	}
 	output := string(buf[:n])
 
 	// The NEW contract: explicit pct flags are honored, not declared inert.

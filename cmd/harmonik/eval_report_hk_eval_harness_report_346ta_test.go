@@ -19,7 +19,8 @@ func evalReportWriteResults(t *testing.T, path string, lines []string) {
 	}
 }
 
-func evalReportLine(model, difficulty string, pass bool, wallTimeS float64, judgeGrade *float64) string {
+func evalReportLine(t *testing.T, model, difficulty string, pass bool, wallTimeS float64, judgeGrade *float64) string {
+	t.Helper()
 	rec := map[string]any{
 		"model":       model,
 		"difficulty":  difficulty,
@@ -31,7 +32,10 @@ func evalReportLine(model, difficulty string, pass bool, wallTimeS float64, judg
 	} else {
 		rec["judge_grade"] = nil
 	}
-	b, _ := json.Marshal(rec)
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal eval report record: %v", err)
+	}
 	return string(b)
 }
 
@@ -41,10 +45,10 @@ func TestEvalReport_GroupsByModelAndDifficulty(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "eval-results.jsonl")
 	evalReportWriteResults(t, input, []string{
-		evalReportLine("claude-code", "simple", true, 100, floatPtr(5)),
-		evalReportLine("claude-code", "simple", false, 200, floatPtr(3)),
-		evalReportLine("claude-code", "hard", true, 300, nil),
-		evalReportLine("pi", "simple", true, 50, floatPtr(4)),
+		evalReportLine(t, "claude-code", "simple", true, 100, floatPtr(5)),
+		evalReportLine(t, "claude-code", "simple", false, 200, floatPtr(3)),
+		evalReportLine(t, "claude-code", "hard", true, 300, nil),
+		evalReportLine(t, "pi", "simple", true, 50, floatPtr(4)),
 	})
 
 	var stdout, stderr bytes.Buffer
@@ -107,7 +111,7 @@ func TestEvalReport_TableFormat(t *testing.T) {
 	dir := t.TempDir()
 	input := filepath.Join(dir, "eval-results.jsonl")
 	evalReportWriteResults(t, input, []string{
-		evalReportLine("claude-code", "simple", true, 100, floatPtr(5)),
+		evalReportLine(t, "claude-code", "simple", true, 100, floatPtr(5)),
 	})
 
 	var stdout, stderr bytes.Buffer

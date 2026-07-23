@@ -77,9 +77,12 @@ func ru45uFixtureStartListener(t *testing.T, sockPath string) (*[]core.Event, *s
 	deadline := time.Now().Add(3 * time.Second)
 	var lastDialErr error
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("unix", sockPath, 50*time.Millisecond)
+		dialer := net.Dialer{Timeout: 50 * time.Millisecond}
+		conn, err := dialer.DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				t.Fatalf("ru45uFixtureStartListener: close readiness connection: %v", closeErr)
+			}
 			lastDialErr = nil
 			break
 		}
@@ -91,6 +94,20 @@ func ru45uFixtureStartListener(t *testing.T, sockPath string) (*[]core.Event, *s
 	}
 
 	return &captured, &mu
+}
+
+func ru45uRemoveSocket(t *testing.T, sockPath string) {
+	t.Helper()
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove stale socket %q: %v", sockPath, err)
+	}
+}
+
+func ru45uCleanupSocket(t *testing.T, sockPath string) {
+	t.Helper()
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Errorf("remove socket %q during cleanup: %v", sockPath, err)
+	}
 }
 
 // ru45uCapturedByReason returns all captured events whose payload.reason equals reason.
@@ -119,8 +136,8 @@ func ru45uCapturedByReason(captured []core.Event, mu *sync.Mutex, reason string)
 // is treated as a non-persistent heartbeat tick (hk-ru45u).
 func TestCommsJoin_ReasonRefreshFlag(t *testing.T) {
 	sockPath := "/tmp/hkru45u-join-refresh.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	ru45uRemoveSocket(t, sockPath)
+	t.Cleanup(func() { ru45uCleanupSocket(t, sockPath) })
 
 	captured, mu := ru45uFixtureStartListener(t, sockPath)
 
@@ -166,8 +183,8 @@ func TestCommsJoin_ReasonRefreshFlag(t *testing.T) {
 // still emits reason:"join" (backward-compatible default).
 func TestCommsJoin_DefaultReasonIsJoin(t *testing.T) {
 	sockPath := "/tmp/hkru45u-join-default.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	ru45uRemoveSocket(t, sockPath)
+	t.Cleanup(func() { ru45uCleanupSocket(t, sockPath) })
 
 	captured, mu := ru45uFixtureStartListener(t, sockPath)
 
@@ -221,8 +238,8 @@ func TestCommsJoin_ReasonUnknownRejected(t *testing.T) {
 // leave verb: the reason is always "leave".
 func TestCommsLeave_ReasonFlagIgnored(t *testing.T) {
 	sockPath := "/tmp/hkru45u-leave-reason.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	ru45uRemoveSocket(t, sockPath)
+	t.Cleanup(func() { ru45uCleanupSocket(t, sockPath) })
 
 	captured, mu := ru45uFixtureStartListener(t, sockPath)
 
@@ -252,8 +269,8 @@ func TestCommsLeave_ReasonFlagIgnored(t *testing.T) {
 // beat for the subscribing agent (leave-on-teardown, hk-ru45u).
 func TestCommsRecvFollow_LeaveBeatOnTeardown(t *testing.T) {
 	sockPath := "/tmp/hkru45u-follow-leave.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	ru45uRemoveSocket(t, sockPath)
+	t.Cleanup(func() { ru45uCleanupSocket(t, sockPath) })
 
 	captured, mu := ru45uFixtureStartListener(t, sockPath)
 
@@ -262,8 +279,15 @@ func TestCommsRecvFollow_LeaveBeatOnTeardown(t *testing.T) {
 	commsFollowPresenceBeatInterval = 5 * time.Second
 	t.Cleanup(func() { commsFollowPresenceBeatInterval = origInterval })
 
-	outFile, _ := os.CreateTemp(t.TempDir(), "follow-leave-*.txt")
-	t.Cleanup(func() { _ = outFile.Close() })
+	outFile, err := os.CreateTemp(t.TempDir(), "follow-leave-*.txt")
+	if err != nil {
+		t.Fatalf("create follow output file: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := outFile.Close(); err != nil {
+			t.Errorf("close follow output file: %v", err)
+		}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

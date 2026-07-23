@@ -118,10 +118,11 @@ const (
 
 // dx9Event builds one EV-001 JSONL envelope line, mirroring how the daemon
 // writes events (and the K3 test's dprojEvent).
-func dx9Event(eventID, evType string, payload any) string {
+func dx9Event(t *testing.T, eventID, evType string, payload any) string {
+	t.Helper()
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		panic(fmt.Sprintf("dx9Event: marshal payload: %v", err))
+		t.Fatalf("dx9Event: marshal payload: %v", err)
 	}
 	ev := map[string]any{
 		"event_id":         eventID,
@@ -133,13 +134,13 @@ func dx9Event(eventID, evType string, payload any) string {
 	}
 	line, err := json.Marshal(ev)
 	if err != nil {
-		panic(fmt.Sprintf("dx9Event: marshal envelope: %v", err))
+		t.Fatalf("dx9Event: marshal envelope: %v", err)
 	}
 	return string(line)
 }
 
-func dx9Needed(eventID, question string, options []string, blockedAgent, contextLink string) string {
-	return dx9Event(eventID, "decision_needed", map[string]any{
+func dx9Needed(t *testing.T, eventID, question string, options []string, blockedAgent, contextLink string) string {
+	return dx9Event(t, eventID, "decision_needed", map[string]any{
 		"question":      question,
 		"options":       options,
 		"blocked_agent": blockedAgent,
@@ -147,16 +148,16 @@ func dx9Needed(eventID, question string, options []string, blockedAgent, context
 	})
 }
 
-func dx9Resolved(eventID, decisionID, chosenOption string) string {
-	return dx9Event(eventID, "decision_resolved", map[string]any{
+func dx9Resolved(t *testing.T, eventID, decisionID, chosenOption string) string {
+	return dx9Event(t, eventID, "decision_resolved", map[string]any{
 		"decision_id":   decisionID,
 		"chosen_option": chosenOption,
 		"resolver":      "operator",
 	})
 }
 
-func dx9Withdrawn(eventID, decisionID, reason, by string) string {
-	return dx9Event(eventID, "decision_withdrawn", map[string]any{
+func dx9Withdrawn(t *testing.T, eventID, decisionID, reason, by string) string {
+	return dx9Event(t, eventID, "decision_withdrawn", map[string]any{
 		"decision_id": decisionID,
 		"reason":      reason,
 		"by":          by,
@@ -173,6 +174,7 @@ func dx9BuildEventsFile(t *testing.T, lines []string) string {
 		t.Fatalf("dx9BuildEventsFile: mkdir: %v", err)
 	}
 	path := filepath.Join(eventsDir, "events.jsonl")
+	// #nosec G304 -- path is rooted in this test's temporary fixture directory.
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("dx9BuildEventsFile: create: %v", err)
@@ -201,15 +203,15 @@ func dx9OpenKeys(open map[string]decisionRow) []string {
 
 func TestDecisionsClientProjection_OpenSet(t *testing.T) {
 	lines := []string{
-		dx9Needed(dx9D1, "Ship to prod?", []string{"yes", "no"}, "alice", "hk-aaa"),
-		dx9Needed(dx9D2, "Pick region", []string{"us", "eu"}, "bob", "hk-bbb"),
-		dx9Needed(dx9D3, "Approve spend", []string{"approve", "deny"}, "carol", "hk-ccc"),
-		dx9Needed(dx9D4, "Rename field?", []string{"keep", "rename"}, "dave", "hk-ddd"),
+		dx9Needed(t, dx9D1, "Ship to prod?", []string{"yes", "no"}, "alice", "hk-aaa"),
+		dx9Needed(t, dx9D2, "Pick region", []string{"us", "eu"}, "bob", "hk-bbb"),
+		dx9Needed(t, dx9D3, "Approve spend", []string{"approve", "deny"}, "carol", "hk-ccc"),
+		dx9Needed(t, dx9D4, "Rename field?", []string{"keep", "rename"}, "dave", "hk-ddd"),
 		// DUPLICATE delivery of the D1 decision_needed event (N2): fold once.
-		dx9Needed(dx9D1, "Ship to prod?", []string{"yes", "no"}, "alice", "hk-aaa"),
+		dx9Needed(t, dx9D1, "Ship to prod?", []string{"yes", "no"}, "alice", "hk-aaa"),
 		// Resolve D2, withdraw D3 (keyed by payload.decision_id).
-		dx9Resolved(dx9R2, dx9D2, "eu"),
-		dx9Withdrawn(dx9W3, dx9D3, "self_obsoleted", "carol"),
+		dx9Resolved(t, dx9R2, dx9D2, "eu"),
+		dx9Withdrawn(t, dx9W3, dx9D3, "self_obsoleted", "carol"),
 	}
 	eventsPath := dx9BuildEventsFile(t, lines)
 
@@ -243,11 +245,11 @@ func TestDecisionsClientProjection_MissingFileEmpty(t *testing.T) {
 
 func TestDecisionTerminalInLog_Resolved(t *testing.T) {
 	lines := []string{
-		dx9Needed(dx9D2, "Pick region", []string{"us", "eu"}, "bob", "hk-bbb"),
-		dx9Resolved(dx9R2, dx9D2, "eu"),
+		dx9Needed(t, dx9D2, "Pick region", []string{"us", "eu"}, "bob", "hk-bbb"),
+		dx9Resolved(t, dx9R2, dx9D2, "eu"),
 		// A SECOND resolve of the same decision_id — N3 first-writer-wins: the
 		// first ("eu") must win; this later one must NOT change the outcome.
-		dx9Resolved(dx9R2b, dx9D2, "us"),
+		dx9Resolved(t, dx9R2b, dx9D2, "us"),
 	}
 	eventsPath := dx9BuildEventsFile(t, lines)
 
@@ -265,8 +267,8 @@ func TestDecisionTerminalInLog_Resolved(t *testing.T) {
 
 func TestDecisionTerminalInLog_Withdrawn(t *testing.T) {
 	lines := []string{
-		dx9Needed(dx9D3, "Approve spend", []string{"approve", "deny"}, "carol", "hk-ccc"),
-		dx9Withdrawn(dx9W3, dx9D3, "self_obsoleted", "carol"),
+		dx9Needed(t, dx9D3, "Approve spend", []string{"approve", "deny"}, "carol", "hk-ccc"),
+		dx9Withdrawn(t, dx9W3, dx9D3, "self_obsoleted", "carol"),
 	}
 	eventsPath := dx9BuildEventsFile(t, lines)
 
@@ -284,7 +286,7 @@ func TestDecisionTerminalInLog_Withdrawn(t *testing.T) {
 
 func TestDecisionTerminalInLog_StillOpen(t *testing.T) {
 	lines := []string{
-		dx9Needed(dx9D1, "Ship to prod?", []string{"yes", "no"}, "alice", "hk-aaa"),
+		dx9Needed(t, dx9D1, "Ship to prod?", []string{"yes", "no"}, "alice", "hk-aaa"),
 	}
 	eventsPath := dx9BuildEventsFile(t, lines)
 

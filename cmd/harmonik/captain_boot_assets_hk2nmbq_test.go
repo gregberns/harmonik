@@ -59,6 +59,7 @@ func TestCaptainLaunch_SkillsIdempotentOnInitedProject_hk2nmbq(t *testing.T) {
 		t.Fatalf("runCaptainLaunchWithOps exit = %d, want 0", code)
 	}
 
+	//nolint:gosec // G304: skillPath is constructed beneath this test's t.TempDir fixture.
 	got, err := os.ReadFile(skillPath)
 	if err != nil {
 		t.Fatalf("read %s after launch: %v", skillPath, err)

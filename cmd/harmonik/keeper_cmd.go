@@ -831,6 +831,10 @@ func runKeeperRestartNow(args []string) int {
 	nonceFlag := fs.String("nonce", "",
 		"provenance nonce carried on the [KEEPER ACK <nonce>] line and the emitted "+
 			"session_keeper_restart_now event; carry-for-audit, never validated (default: rn-<ms> timestamp)")
+	forceFlag := fs.Bool("force", false,
+		"restart even when the agent has in-flight queue work (.dispatching marker present). "+
+			"Restarting mid-run cancels the crew's in-flight tool work and can leak orphaned "+
+			"processes (hk-bl2k6); use only when you know the marker is stale")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 1
@@ -873,6 +877,7 @@ func runKeeperRestartNow(args []string) int {
 		AgentName:   agent,
 		TmuxTarget:  tmuxTarget,
 		RequestedAt: requestedAt,
+		Force:       *forceFlag,
 		// Durable audit record carrying the nonce (SK-030). FileEmitter appends to
 		// <projectDir>/.harmonik/events/events.jsonl.
 		Emitter: keeper.NewFileEmitter(projectDir),

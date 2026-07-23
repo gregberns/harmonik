@@ -53,6 +53,7 @@ func renderedInitConfig(t *testing.T) string {
 	if rc := writeConfigYAML(projectRoot, "main", "hk", false, io.Discard, io.Discard); rc != 0 {
 		t.Fatalf("writeConfigYAML returned %d, want 0", rc)
 	}
+	//nolint:gosec // G304: the path is constructed from this test's temporary project root and fixed components.
 	raw, err := os.ReadFile(filepath.Join(projectRoot, ".harmonik", "config.yaml"))
 	if err != nil {
 		t.Fatalf("read generated config.yaml: %v", err)

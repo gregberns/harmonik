@@ -470,6 +470,7 @@ func TestHandlerResume_PausedHandler(t *testing.T) {
 
 	// Verify handler-state.json was updated to live.
 	stateFile := filepath.Join(projectDir, ".harmonik", "handler-state.json")
+	//nolint:gosec // G304: stateFile is rooted in this test's t.TempDir project fixture
 	rawState, err := os.ReadFile(stateFile)
 	if err != nil {
 		t.Fatalf("cannot read handler-state.json: %v", err)
@@ -637,6 +638,7 @@ func TestHandlerResume_EmitsEvent(t *testing.T) {
 
 	// Verify events.jsonl contains a handler_resumed line.
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+	//nolint:gosec // G304: eventsPath is rooted in this test's t.TempDir event fixture
 	eventsData, err := os.ReadFile(eventsPath)
 	if err != nil {
 		t.Fatalf("cannot read events.jsonl: %v", err)
@@ -713,11 +715,16 @@ func TestHandlerResume_AtomicWrite_TempDirUnwritable(t *testing.T) {
 
 	// Make .harmonik directory read-only so CreateTemp fails.
 	harmDir := filepath.Join(projectDir, ".harmonik")
+	//nolint:gosec // G302: read-only directory mode is required to exercise the atomic-write failure path
 	if err := os.Chmod(harmDir, 0o555); err != nil {
 		t.Fatalf("chmod .harmonik: %v", err)
 	}
 	// Restore permissions on cleanup so t.TempDir cleanup can remove the dir.
-	t.Cleanup(func() { _ = os.Chmod(harmDir, 0o755) })
+	t.Cleanup(func() {
+		if err := os.Chmod(harmDir, 0o750); err != nil {
+			t.Errorf("cleanup chmod .harmonik: %v", err)
+		}
+	})
 
 	var out, errOut bytes.Buffer
 	code := runHandlerSubcommandIO(
@@ -731,12 +738,14 @@ func TestHandlerResume_AtomicWrite_TempDirUnwritable(t *testing.T) {
 	}
 
 	// Restore permissions so we can read the file.
+	//nolint:gosec // G302: directory restore uses the repository's private group-readable mode
 	if err := os.Chmod(harmDir, 0o750); err != nil {
 		t.Fatalf("restore chmod .harmonik: %v", err)
 	}
 
 	// The original handler-state.json must be intact (not corrupted).
 	stateFile := filepath.Join(harmDir, "handler-state.json")
+	//nolint:gosec // G304: stateFile is rooted in this test's t.TempDir project fixture
 	rawState, err := os.ReadFile(stateFile)
 	if err != nil {
 		t.Fatalf("cannot read handler-state.json after failed resume: %v", err)

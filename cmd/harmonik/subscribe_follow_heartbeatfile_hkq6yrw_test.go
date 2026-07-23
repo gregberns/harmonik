@@ -32,14 +32,24 @@ import (
 // having sent anything.
 func TestSubscribeFollow_HeartbeatFileTouchedOnHeartbeatLine_Q6YRW(t *testing.T) {
 	sockPath := "/tmp/hkq6yrw-hbfile.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove socket during cleanup: %v", err)
+		}
+	})
 
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("close listener: %v", err)
+		}
+	})
 
 	var connCount int32
 	go func() {
@@ -50,14 +60,20 @@ func TestSubscribeFollow_HeartbeatFileTouchedOnHeartbeatLine_Q6YRW(t *testing.T)
 			}
 			atomic.AddInt32(&connCount, 1)
 			go func(c net.Conn) {
-				defer func() { _ = c.Close() }()
+				defer func() {
+					if err := c.Close(); err != nil {
+						t.Errorf("close connection: %v", err)
+					}
+				}()
 				var req map[string]any
 				if decErr := json.NewDecoder(c).Decode(&req); decErr != nil {
 					return
 				}
 				// A pure idle heartbeat — no event_id, nothing escalation-worthy.
 				hb := map[string]any{"type": "heartbeat", "last_event_id": ""}
-				_ = json.NewEncoder(c).Encode(hb)
+				if err := json.NewEncoder(c).Encode(hb); err != nil {
+					t.Errorf("encode heartbeat: %v", err)
+				}
 				// Keep the connection open briefly so the client has time to
 				// decode before the test asserts; then let it close naturally
 				// on test cleanup (follow loop will just reconnect, which is
@@ -68,8 +84,15 @@ func TestSubscribeFollow_HeartbeatFileTouchedOnHeartbeatLine_Q6YRW(t *testing.T)
 	}()
 
 	heartbeatFile := filepath.Join(t.TempDir(), "stream.heartbeat")
-	outFile, _ := os.CreateTemp(t.TempDir(), "sub-hbfile-*.txt")
-	t.Cleanup(func() { _ = outFile.Close() })
+	outFile, err := os.CreateTemp(t.TempDir(), "sub-hbfile-*.txt")
+	if err != nil {
+		t.Fatalf("create follow output file: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := outFile.Close(); err != nil {
+			t.Errorf("close follow output file: %v", err)
+		}
+	})
 
 	// Cancel + join in cleanup so the reconnect goroutine cannot outlive the
 	// test and race a later os.Stderr swap (hk-me8ru).
@@ -106,7 +129,10 @@ func TestSubscribeFollow_NoHeartbeatFileWhenPathEmpty_Q6YRW(t *testing.T) {
 	if code != 17 {
 		t.Fatalf("runSubscribeFollowIO with missing socket: exit %d, want 17", code)
 	}
-	entries, _ := os.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read heartbeat fixture directory: %v", err)
+	}
 	if len(entries) != 0 {
 		t.Fatalf("expected no files created in %s when heartbeat-file path is empty, found %d", dir, len(entries))
 	}

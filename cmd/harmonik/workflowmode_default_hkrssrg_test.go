@@ -42,7 +42,9 @@ func wfDefaultFixtureParseWorkflowMode(t *testing.T, args []string) string {
 	fs.StringVar(&wfMode, "workflow-mode", string(core.WorkflowModeDot), "")
 	// Ignore other flags (project, max-concurrent, etc.) for this narrowly-scoped test.
 	fs.Usage = func() {}
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("parse workflow-mode flags: %v", err)
+	}
 	return wfMode
 }
 

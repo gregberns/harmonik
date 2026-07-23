@@ -67,8 +67,8 @@ import (
 )
 
 // reconcileUsage prints the help text for `harmonik reconcile` to w.
-func reconcileUsage(w io.Writer) {
-	fmt.Fprint(w, `harmonik reconcile — close in_progress beads whose implementation has merged
+func reconcileUsage(w io.Writer) error {
+	if _, err := fmt.Fprint(w, `harmonik reconcile — close in_progress beads whose implementation has merged
 
 USAGE
   harmonik reconcile [--project DIR] [--target-branch BRANCH] [--run RUN_ID]
@@ -88,7 +88,10 @@ EXAMPLES
   harmonik reconcile --target-branch develop
   harmonik reconcile --project /path/to/project --target-branch main
   harmonik reconcile --run 019e8273-753b-7f3a-bc25-798c33bb8e63
-`)
+`); err != nil {
+		return err
+	}
+	return nil
 }
 
 // runReconcileSubcommand implements `harmonik reconcile [--project DIR] [--target-branch BRANCH] [--run RUN_ID]`.
@@ -109,7 +112,9 @@ func runReconcileSubcommandIO(subArgs []string, stdout io.Writer) int {
 	for i := 0; i < len(subArgs); i++ {
 		switch {
 		case subArgs[i] == "--help" || subArgs[i] == "-h":
-			reconcileUsage(stdout)
+			if err := reconcileUsage(stdout); err != nil {
+				return 1
+			}
 			return 0
 		case subArgs[i] == "--project" && i+1 < len(subArgs):
 			i++

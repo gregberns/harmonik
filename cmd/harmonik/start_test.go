@@ -210,38 +210,38 @@ func TestRunStart_Parser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cap := &captureDispatch{}
+			capture := &captureDispatch{}
 			var stdout, stderr bytes.Buffer
 
-			got := runStartWith(tt.args, cap.dispatch(), &stdout, &stderr)
+			got := runStartWith(tt.args, capture.dispatch(), &stdout, &stderr)
 			if got != tt.wantExit {
 				t.Fatalf("exit = %d, want %d (stderr=%q)", got, tt.wantExit, stderr.String())
 			}
 
 			switch tt.wantRole {
 			case "captain":
-				if !cap.captainCalled {
+				if !capture.captainCalled {
 					t.Fatalf("expected captain dispatch, got none")
 				}
-				if cap.crewCalled {
+				if capture.crewCalled {
 					t.Fatalf("unexpected crew dispatch")
 				}
-				if !reflect.DeepEqual(cap.captainArgv, tt.wantArgv) {
-					t.Fatalf("captain argv = %#v, want %#v", cap.captainArgv, tt.wantArgv)
+				if !reflect.DeepEqual(capture.captainArgv, tt.wantArgv) {
+					t.Fatalf("captain argv = %#v, want %#v", capture.captainArgv, tt.wantArgv)
 				}
 			case "crew":
-				if !cap.crewCalled {
+				if !capture.crewCalled {
 					t.Fatalf("expected crew dispatch, got none")
 				}
-				if cap.captainCalled {
+				if capture.captainCalled {
 					t.Fatalf("unexpected captain dispatch")
 				}
-				if !reflect.DeepEqual(cap.crewArgv, tt.wantArgv) {
-					t.Fatalf("crew argv = %#v, want %#v", cap.crewArgv, tt.wantArgv)
+				if !reflect.DeepEqual(capture.crewArgv, tt.wantArgv) {
+					t.Fatalf("crew argv = %#v, want %#v", capture.crewArgv, tt.wantArgv)
 				}
 			case "none":
-				if cap.captainCalled || cap.crewCalled {
-					t.Fatalf("expected NO dispatch on error, got captain=%v crew=%v", cap.captainCalled, cap.crewCalled)
+				if capture.captainCalled || capture.crewCalled {
+					t.Fatalf("expected NO dispatch on error, got captain=%v crew=%v", capture.captainCalled, capture.crewCalled)
 				}
 			}
 
@@ -256,17 +256,17 @@ func TestRunStart_Parser(t *testing.T) {
 // flag (no positional name) and forwarded so the downstream launcher prints its
 // own full flag listing.
 func TestRunStart_HelpForwarding(t *testing.T) {
-	cap := &captureDispatch{}
+	capture := &captureDispatch{}
 	var stdout, stderr bytes.Buffer
 
-	if got := runStartWith([]string{"crew", "--help"}, cap.dispatch(), &stdout, &stderr); got != 0 {
+	if got := runStartWith([]string{"crew", "--help"}, capture.dispatch(), &stdout, &stderr); got != 0 {
 		t.Fatalf("exit = %d, want 0", got)
 	}
-	if !cap.crewCalled {
+	if !capture.crewCalled {
 		t.Fatalf("expected crew dispatch for --help forwarding")
 	}
-	if !reflect.DeepEqual(cap.crewArgv, []string{"start", "--help"}) {
-		t.Fatalf("crew argv = %#v, want [start --help]", cap.crewArgv)
+	if !reflect.DeepEqual(capture.crewArgv, []string{"start", "--help"}) {
+		t.Fatalf("crew argv = %#v, want [start --help]", capture.crewArgv)
 	}
 }
 
@@ -285,8 +285,8 @@ func TestRunStart_SkewHintCalledForValidRoles(t *testing.T) {
 		{"help", []string{"--help"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cap := &captureDispatch{}
-			d := cap.dispatch()
+			capture := &captureDispatch{}
+			d := capture.dispatch()
 			hintCalled := false
 			var hintDir string
 			d.skewHint = func(projectDir string, _ io.Writer) {
@@ -308,13 +308,13 @@ func TestRunStart_SkewHintCalledForValidRoles(t *testing.T) {
 // TestRunStart_TopLevelHelp: `start --help` prints umbrella usage and exits 0
 // WITHOUT dispatching to a role.
 func TestRunStart_TopLevelHelp(t *testing.T) {
-	cap := &captureDispatch{}
+	capture := &captureDispatch{}
 	var stdout, stderr bytes.Buffer
 
-	if got := runStartWith([]string{"--help"}, cap.dispatch(), &stdout, &stderr); got != 0 {
+	if got := runStartWith([]string{"--help"}, capture.dispatch(), &stdout, &stderr); got != 0 {
 		t.Fatalf("exit = %d, want 0", got)
 	}
-	if cap.captainCalled || cap.crewCalled {
+	if capture.captainCalled || capture.crewCalled {
 		t.Fatalf("top-level --help must not dispatch a role")
 	}
 	if !strings.Contains(stdout.String(), "harmonik start") {

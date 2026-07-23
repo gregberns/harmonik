@@ -1191,11 +1191,11 @@ EXAMPLES
 	// hk-sm6j7: resolve br binary via PATH so the work loop is reachable.
 	// If br is not on PATH, BrPath remains empty and daemon.Start skips the
 	// work loop (existing nil-path guard at daemon.go:251 is preserved).
-	brPath, _ := exec.LookPath("br")
+	brPath := optionalExecutablePath("br")
 
 	// hk-9321v: resolve kerf binary via PATH for EM-062/EM-063 eager-refill.
 	// If kerf is not on PATH, KerfPath remains empty and eager-refill is disabled.
-	kerfPath, _ := exec.LookPath("kerf")
+	kerfPath := optionalExecutablePath("kerf")
 	// M6 WS4-3: HARMONIK_DISABLE_EAGER_REFILL forces eager-refill off without
 	// removing kerf from PATH. The core-loop-proof matrix needs queue-submit to
 	// be the SOLE deterministic dispatcher: otherwise the daemon auto-dispatches

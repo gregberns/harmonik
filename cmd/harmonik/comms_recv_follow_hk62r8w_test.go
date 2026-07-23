@@ -22,6 +22,31 @@ import (
 	"time"
 )
 
+func commsFollowFixtureRemoveSocket(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove socket %q: %v", path, err)
+	}
+}
+
+func commsFollowFixtureListen(t *testing.T, path string) net.Listener {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", path)
+	if err != nil {
+		t.Fatalf("listen %q: %v", path, err)
+	}
+	return ln
+}
+
+func commsFollowFixtureDial(t *testing.T, path string) net.Conn {
+	t.Helper()
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", path)
+	if err != nil {
+		t.Fatalf("dial %q: %v", path, err)
+	}
+	return conn
+}
+
 // TestCommsRecvFollow_ServerErrorExitsWithCode1 verifies that a SocketResponse
 // error from the server causes --follow to exit with code 1, not enter an
 // infinite reconnect loop. Pre-fix the client would skip {"ok":false,...},
@@ -35,15 +60,12 @@ func TestCommsRecvFollow_ServerErrorExitsWithCode1(t *testing.T) {
 	t.Parallel()
 
 	sockPath := "/tmp/hk62r8w-commsrecv.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	commsFollowFixtureRemoveSocket(t, sockPath)
+	t.Cleanup(func() { commsFollowFixtureRemoveSocket(t, sockPath) })
 
 	var connCount int32
 
-	ln, lnErr := net.Listen("unix", sockPath)
-	if lnErr != nil {
-		t.Fatalf("listen: %v", lnErr)
-	}
+	ln := commsFollowFixtureListen(t, sockPath)
 	t.Cleanup(func() { _ = ln.Close() })
 
 	// Server: drain the subscribe request then send a SocketResponse error.
@@ -58,13 +80,20 @@ func TestCommsRecvFollow_ServerErrorExitsWithCode1(t *testing.T) {
 				defer func() { _ = c.Close() }()
 				// Drain the subscribe request so the TCP buffer is cleared.
 				var req map[string]any
-				_ = json.NewDecoder(c).Decode(&req)
+				if err := json.NewDecoder(c).Decode(&req); err != nil {
+					return
+				}
 				// Write a SocketResponse error (no "type" field — that's the crux of the bug).
-				errResp, _ := json.Marshal(map[string]any{
+				errResp, err := json.Marshal(map[string]any{
 					"ok":    false,
 					"error": "subscribe_capacity_exceeded",
 				})
-				_, _ = c.Write(errResp)
+				if err != nil {
+					return
+				}
+				if _, err := c.Write(errResp); err != nil {
+					return
+				}
 				// Close immediately — server side done.
 			}(conn)
 		}
@@ -73,7 +102,7 @@ func TestCommsRecvFollow_ServerErrorExitsWithCode1(t *testing.T) {
 	// Wait for listener to be ready.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.Dial("unix", sockPath)
+		c, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
 			_ = c.Close()
 			break
@@ -82,7 +111,10 @@ func TestCommsRecvFollow_ServerErrorExitsWithCode1(t *testing.T) {
 	}
 
 	// Discard stdout output.
-	devNull, _ := os.Open(os.DevNull)
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
 	defer func() { _ = devNull.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -118,13 +150,10 @@ func TestCommsRecvFollow_ServerErrorExitsWithCode1_MultipleErrors(t *testing.T) 
 	t.Parallel()
 
 	sockPath := "/tmp/hk62r8w-commsrecv2.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	commsFollowFixtureRemoveSocket(t, sockPath)
+	t.Cleanup(func() { commsFollowFixtureRemoveSocket(t, sockPath) })
 
-	ln, lnErr := net.Listen("unix", sockPath)
-	if lnErr != nil {
-		t.Fatalf("listen: %v", lnErr)
-	}
+	ln := commsFollowFixtureListen(t, sockPath)
 	t.Cleanup(func() { _ = ln.Close() })
 
 	go func() {
@@ -136,16 +165,20 @@ func TestCommsRecvFollow_ServerErrorExitsWithCode1_MultipleErrors(t *testing.T) 
 			go func(c net.Conn) {
 				defer func() { _ = c.Close() }()
 				var req map[string]any
-				_ = json.NewDecoder(c).Decode(&req)
+				if err := json.NewDecoder(c).Decode(&req); err != nil {
+					return
+				}
 				// Minimal SocketResponse error with no error text.
-				_, _ = c.Write([]byte(`{"ok":false}`))
+				if _, err := c.Write([]byte(`{"ok":false}`)); err != nil {
+					return
+				}
 			}(conn)
 		}
 	}()
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.Dial("unix", sockPath)
+		c, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
 			_ = c.Close()
 			break
@@ -180,15 +213,12 @@ func TestSubscribeFollow_ServerErrorExitsWithCode1(t *testing.T) {
 	t.Parallel()
 
 	sockPath := "/tmp/hk62r8w-subfollow.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	commsFollowFixtureRemoveSocket(t, sockPath)
+	t.Cleanup(func() { commsFollowFixtureRemoveSocket(t, sockPath) })
 
 	var connCount int32
 
-	ln, lnErr := net.Listen("unix", sockPath)
-	if lnErr != nil {
-		t.Fatalf("listen: %v", lnErr)
-	}
+	ln := commsFollowFixtureListen(t, sockPath)
 	t.Cleanup(func() { _ = ln.Close() })
 
 	go func() {
@@ -201,19 +231,26 @@ func TestSubscribeFollow_ServerErrorExitsWithCode1(t *testing.T) {
 			go func(c net.Conn) {
 				defer func() { _ = c.Close() }()
 				var req map[string]any
-				_ = json.NewDecoder(c).Decode(&req)
-				errResp, _ := json.Marshal(map[string]any{
+				if err := json.NewDecoder(c).Decode(&req); err != nil {
+					return
+				}
+				errResp, err := json.Marshal(map[string]any{
 					"ok":    false,
 					"error": "subscribe_capacity_exceeded",
 				})
-				_, _ = c.Write(errResp)
+				if err != nil {
+					return
+				}
+				if _, err := c.Write(errResp); err != nil {
+					return
+				}
 			}(conn)
 		}
 	}()
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.Dial("unix", sockPath)
+		c, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
 			_ = c.Close()
 			break
@@ -258,21 +295,19 @@ func TestCommsRecvFollow_ServerErrorAfterMessages(t *testing.T) {
 	t.Parallel()
 
 	sockPath := "/tmp/hk62r8w-midstream.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	commsFollowFixtureRemoveSocket(t, sockPath)
+	t.Cleanup(func() { commsFollowFixtureRemoveSocket(t, sockPath) })
 
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "out.txt")
+	//nolint:gosec // G304: outPath is constructed under this test's t.TempDir fixture.
 	outFile, err := os.Create(outPath)
 	if err != nil {
 		t.Fatalf("create outFile: %v", err)
 	}
 	t.Cleanup(func() { _ = outFile.Close() })
 
-	ln, lnErr := net.Listen("unix", sockPath)
-	if lnErr != nil {
-		t.Fatalf("listen: %v", lnErr)
-	}
+	ln := commsFollowFixtureListen(t, sockPath)
 	t.Cleanup(func() { _ = ln.Close() })
 
 	// Server loops so the readiness-probe connection (which sends no data) is
@@ -293,7 +328,7 @@ func TestCommsRecvFollow_ServerErrorAfterMessages(t *testing.T) {
 				}
 				enc := json.NewEncoder(c)
 				// Send one valid agent_message.
-				_ = enc.Encode(map[string]any{
+				if err := enc.Encode(map[string]any{
 					"type":     "agent_message",
 					"event_id": "019f0000-0000-7000-8000-000000000001",
 					"payload": map[string]any{
@@ -301,20 +336,27 @@ func TestCommsRecvFollow_ServerErrorAfterMessages(t *testing.T) {
 						"to":   "alice",
 						"body": "hello",
 					},
-				})
+				}); err != nil {
+					return
+				}
 				// Then send a SocketResponse error.
-				errResp, _ := json.Marshal(map[string]any{
+				errResp, err := json.Marshal(map[string]any{
 					"ok":    false,
 					"error": "session_terminated",
 				})
-				_, _ = c.Write(errResp)
+				if err != nil {
+					return
+				}
+				if _, err := c.Write(errResp); err != nil {
+					return
+				}
 			}(conn)
 		}
 	}()
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.Dial("unix", sockPath)
+		c, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
 			_ = c.Close()
 			break

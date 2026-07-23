@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -38,7 +39,10 @@ func cleanupFlywheelSession(t *testing.T, dir string) {
 	t.Cleanup(func() {
 		// Exact-name kill only ("=" anchor defeats tmux prefix/fuzzy matching).
 		// Best-effort: an absent session (test never created one) is a no-op.
-		_ = exec.Command("tmux", "kill-session", "-t", "="+sessionName).Run()
+		// #nosec G204 -- exact session name is derived from this test fixture directory.
+		if err := exec.CommandContext(t.Context(), "tmux", "kill-session", "-t", "="+sessionName).Run(); err != nil {
+			t.Logf("cleanup tmux session %q: %v", sessionName, err)
+		}
 	})
 }
 
@@ -55,22 +59,33 @@ func TestSupervise_StopReapsFlywheelSession(t *testing.T) {
 
 	// Create the flywheel tmux session as start would.
 	sessionName := supervisecmd.FlywheelSessionName(dir)
-	createOut, err := exec.Command("tmux", "new-session", "-d", "-s", sessionName).CombinedOutput()
+	// #nosec G204 -- exact session name is derived from this test fixture directory.
+	createOut, err := exec.CommandContext(t.Context(), "tmux", "new-session", "-d", "-s", sessionName).CombinedOutput()
 	if err != nil {
 		t.Skipf("tmux new-session failed (may lack a server): %v: %s", err, createOut)
 	}
 	t.Cleanup(func() {
 		// Best-effort: kill session if test didn't clean it up.
-		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+		// #nosec G204 -- exact session name is derived from this test fixture directory.
+		if err := exec.CommandContext(t.Context(), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
+			t.Logf("cleanup tmux session %q: %v", sessionName, err)
+		}
 	})
 
 	// Start a real background process as the fake supervisor so RunStop has a
 	// live PID to SIGTERM without killing the test process itself.
-	fakeSupervisor := exec.Command("sleep", "300")
+	fakeSupervisor := exec.CommandContext(t.Context(), "sleep", "300")
 	if err := fakeSupervisor.Start(); err != nil {
 		t.Fatalf("start fake supervisor: %v", err)
 	}
-	t.Cleanup(func() { _ = fakeSupervisor.Process.Kill(); _ = fakeSupervisor.Wait() })
+	t.Cleanup(func() {
+		if err := fakeSupervisor.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("kill fake supervisor: %v", err)
+		}
+		if err := fakeSupervisor.Wait(); err != nil {
+			t.Logf("wait fake supervisor: %v", err)
+		}
+	})
 
 	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o750); err != nil {
 		t.Fatal(err)
@@ -90,10 +105,14 @@ func TestSupervise_StopReapsFlywheelSession(t *testing.T) {
 	}
 
 	// Verify the tmux session is gone.
-	checkOut, _ := exec.Command("tmux", "has-session", "-t", sessionName).CombinedOutput()
-	_ = checkOut
-	if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err == nil {
+	// #nosec G204 -- exact session name is derived from this test fixture directory.
+	checkCmd := exec.CommandContext(t.Context(), "tmux", "has-session", "-t", sessionName)
+	checkOut, checkErr := checkCmd.CombinedOutput()
+	if checkErr == nil {
 		t.Errorf("tmux session %q still exists after RunStop — expected it to be reaped", sessionName)
+	}
+	if checkErr != nil && len(checkOut) == 0 {
+		t.Logf("tmux has-session exited after reap: %v", checkErr)
 	}
 }
 
@@ -115,20 +134,28 @@ func TestSupervise_StartRefuses_FlywheelSessionExists(t *testing.T) {
 	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", harmonikDir+"/daemon.sock")
 	if err != nil {
 		t.Fatalf("create unix listener: %v", err)
 	}
-	defer func() { _ = l.Close() }()
+	defer func() {
+		if err := l.Close(); err != nil {
+			t.Errorf("close listener: %v", err)
+		}
+	}()
 
 	// Pre-create the flywheel session (simulates remain-on-exit pane after shim crash).
 	sessionName := supervisecmd.FlywheelSessionName(dir)
-	createOut, err := exec.Command("tmux", "new-session", "-d", "-s", sessionName).CombinedOutput()
+	// #nosec G204 -- exact session name is derived from this test fixture directory.
+	createOut, err := exec.CommandContext(t.Context(), "tmux", "new-session", "-d", "-s", sessionName).CombinedOutput()
 	if err != nil {
 		t.Skipf("tmux new-session failed (may lack a server): %v: %s", err, createOut)
 	}
 	t.Cleanup(func() {
-		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+		// #nosec G204 -- exact session name is derived from this test fixture directory.
+		if err := exec.CommandContext(t.Context(), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
+			t.Logf("cleanup tmux session: %v", err)
+		}
 	})
 
 	// Lock must NOT be held (shim crashed and released it).
@@ -163,21 +190,29 @@ func TestSupervise_StartDoesNotCorruptExistingSentinel(t *testing.T) {
 	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", harmonikDir+"/daemon.sock")
 	if err != nil {
 		t.Fatalf("create unix listener: %v", err)
 	}
-	defer func() { _ = l.Close() }()
+	defer func() {
+		if err := l.Close(); err != nil {
+			t.Errorf("close listener: %v", err)
+		}
+	}()
 
 	// Pre-create the flywheel tmux session (simulates remain-on-exit pane after
 	// shim crash with the Pi still alive via reparenting).
 	sessionName := supervisecmd.FlywheelSessionName(dir)
-	createOut, err := exec.Command("tmux", "new-session", "-d", "-s", sessionName).CombinedOutput()
+	// #nosec G204 -- exact session name is derived from this test fixture directory.
+	createOut, err := exec.CommandContext(t.Context(), "tmux", "new-session", "-d", "-s", sessionName).CombinedOutput()
 	if err != nil {
 		t.Skipf("tmux new-session failed (may lack a server): %v: %s", err, createOut)
 	}
 	t.Cleanup(func() {
-		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+		// #nosec G204 -- exact session name is derived from this test fixture directory.
+		if err := exec.CommandContext(t.Context(), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
+			t.Logf("cleanup tmux session: %v", err)
+		}
 	})
 
 	// Write a pre-existing sentinel file (as the crashed shim would have left it).
@@ -212,13 +247,17 @@ func TestSupervise_StartRefuses_FlywheelSessionExists_LockAlreadyHeld(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove temp dir: %v", err)
+		}
+	})
 
 	harmonikDir := dir + "/.harmonik"
 	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", harmonikDir+"/daemon.sock")
 	if err != nil {
 		t.Fatalf("create unix listener: %v", err)
 	}

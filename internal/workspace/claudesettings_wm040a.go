@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // ClaudeSettingsPath returns the canonical path for the Claude Code settings
@@ -338,30 +337,24 @@ func atomicWriteWithParentFsync(path string, content []byte) error {
 	tmpPath := fmt.Sprintf("%s.tmp-%d", path, pid)
 
 	// (1) Write to temp file.
-	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("open tmp: %w", err)
 	}
 	if _, err := f.Write(content); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write tmp: %w", err)
+		return withCleanupErrs(fmt.Errorf("write tmp: %w", err), f.Close(), os.Remove(tmpPath))
 	}
 	// (2) fsync temp file.
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("fsync tmp: %w", err)
+		return withCleanupErrs(fmt.Errorf("fsync tmp: %w", err), f.Close(), os.Remove(tmpPath))
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close tmp: %w", err)
+		return withCleanupErrs(fmt.Errorf("close tmp: %w", err), os.Remove(tmpPath))
 	}
 
 	// (3) Atomic rename.
 	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename: %w", err)
+		return withCleanupErrs(fmt.Errorf("rename: %w", err), os.Remove(tmpPath))
 	}
 
 	// (4) fsync the parent directory.
@@ -371,34 +364,20 @@ func atomicWriteWithParentFsync(path string, content []byte) error {
 		return fmt.Errorf("open parent dir: %w", err)
 	}
 	if err := d.Sync(); err != nil {
-		_ = d.Close()
-		return fmt.Errorf("fsync parent dir: %w", err)
+		return withCleanupErrs(fmt.Errorf("fsync parent dir: %w", err), d.Close())
 	}
 	return d.Close()
-}
-
-// gitignoreLinePresent reports whether line appears on its own line in content.
-// Retained as a test helper after hk-jvzc2 removed the per-launch worktree
-// .gitignore-append path; the function continues to back assertion-only callers.
-func gitignoreLinePresent(content, line string) bool {
-	for _, l := range strings.Split(content, "\n") {
-		if strings.TrimSpace(l) == line {
-			return true
-		}
-	}
-	return false
 }
 
 // appendToFile appends text to path, creating the file if absent.
 // Used for the CHB-004 overwrite-warning write to the session log.
 func appendToFile(path, text string) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("appendToFile OpenFile %q: %w", path, err)
 	}
 	if _, err := f.WriteString(text); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("appendToFile WriteString %q: %w", path, err)
+		return withCleanupErrs(fmt.Errorf("appendToFile WriteString %q: %w", path, err), f.Close())
 	}
 	return f.Close()
 }

@@ -63,17 +63,17 @@ var ErrConflictResolutionCapOutOfRange = errors.New(
 	"workspace: conflict-resolution attempt cap must be in [1, 10]",
 )
 
-// ValidateConflictResolutionAttemptCap checks that cap is within the
+// ValidateConflictResolutionAttemptCap checks that attemptCap is within the
 // operator-configurable bound [1, 10] per workspace-model.md §4.6 WM-024.
 //
 // Operator overrides outside [1, 10] MUST be rejected at daemon startup.
-// Returns an error wrapping ErrConflictResolutionCapOutOfRange when cap is
-// outside the valid range; returns nil when cap is within [1, 10].
-func ValidateConflictResolutionAttemptCap(cap int) error {
-	if cap < ConflictResolutionAttemptCapMin || cap > ConflictResolutionAttemptCapMax {
+// Returns an error wrapping ErrConflictResolutionCapOutOfRange when attemptCap
+// is outside the valid range; returns nil when attemptCap is within [1, 10].
+func ValidateConflictResolutionAttemptCap(attemptCap int) error {
+	if attemptCap < ConflictResolutionAttemptCapMin || attemptCap > ConflictResolutionAttemptCapMax {
 		return fmt.Errorf(
 			"workspace: conflict-resolution attempt cap %d is outside [%d, %d]: %w",
-			cap, ConflictResolutionAttemptCapMin, ConflictResolutionAttemptCapMax,
+			attemptCap, ConflictResolutionAttemptCapMin, ConflictResolutionAttemptCapMax,
 			ErrConflictResolutionCapOutOfRange,
 		)
 	}
@@ -118,7 +118,7 @@ const (
 	ConflictResolveEscalateRetiredHandler ConflictResolveDecision = "escalate-retired-handler"
 
 	// ConflictResolveEscalateCapExhausted indicates the attempt cap has been
-	// reached (attemptCount >= cap). The workspace manager MUST route to
+	// reached (attemptCount >= attemptCap). The workspace manager MUST route to
 	// merge_conflict_escalation per WM-022a / WM-023.
 	ConflictResolveEscalateCapExhausted ConflictResolveDecision = "escalate-cap-exhausted"
 )
@@ -132,7 +132,7 @@ const (
 //     task branch; the workspace manager MUST skip re-dispatch per WM-022a.
 //  2. If isRetired(ref) is true: EscalateRetiredHandler — the recorded handler class
 //     has been retired; route to WM-023 escalation per WM-024 terminal clause.
-//  3. If attemptCount >= cap: EscalateCapExhausted — attempt cap reached; route to
+//  3. If attemptCount >= attemptCap: EscalateCapExhausted — attempt cap reached; route to
 //     merge_conflict_escalation per WM-022a / WM-023.
 //  4. Otherwise: Dispatch — the workspace manager MUST build a fresh LaunchSpec and
 //     dispatch to the implementer handler.
@@ -141,14 +141,14 @@ const (
 //   - ref: the workspace's ImplementerHandlerRef (nil = null / all-mechanical).
 //   - attemptCount: number of conflict-resolution re-dispatch attempts already
 //     recorded for this merge-pending cycle (0 on first conflict detection).
-//   - cap: the effective attempt cap (use EffectiveConflictResolutionAttemptCap).
+//   - attemptCap: the effective attempt cap (use EffectiveConflictResolutionAttemptCap).
 //   - isRetired: a function that reports whether the given handler class has been
 //     retired in the handler registry per WM-024 terminal clause. Callers pass
 //     the registry lookup; test callers pass a stub.
 func ShouldDispatchConflictResolver(
 	ref *core.HandlerRef,
 	attemptCount int,
-	cap int,
+	attemptCap int,
 	isRetired func(core.HandlerRef) bool,
 ) ConflictResolveDecision {
 	// Priority 1: null ref — all-mechanical task branch (WM-022a).
@@ -162,7 +162,7 @@ func ShouldDispatchConflictResolver(
 	}
 
 	// Priority 3: attempt cap exhausted (WM-024 / WM-023).
-	if attemptCount >= cap {
+	if attemptCount >= attemptCap {
 		return ConflictResolveEscalateCapExhausted
 	}
 

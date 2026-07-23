@@ -22,7 +22,7 @@ var runIDRegexProduction = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 // construction. Post-MVH ID-scheme extensions must preserve this invariant or
 // declare an escape rule before adoption (WM-002).
 func RunIDValid(s string) bool {
-	if len(s) == 0 {
+	if s == "" {
 		return false
 	}
 	return runIDRegexProduction.MatchString(s)
@@ -137,7 +137,7 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 		return nil, fmt.Errorf("workspace: DiscoverWorktrees: git worktree list: %w", err)
 	}
 
-	var results []DiscoveredWorktree
+	results := make([]DiscoveredWorktree, 0, len(entries))
 
 	for _, entry := range entries {
 		if !entry.IsDir() {

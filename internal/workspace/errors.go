@@ -240,3 +240,29 @@ func Class(err error) string {
 		return ""
 	}
 }
+
+// withCleanupErrs annotates cause with any failures reported by the cleanup
+// steps that ran on an error path (temp-file Close, temp-file Remove, …).
+//
+// Cleanup failures used to be discarded with `_ =`, which hides the exact
+// symptom operators later see: a rename/link failed AND its temp file could not
+// be removed, so the next attempt trips over the leftover. Joining them keeps
+// that second failure visible.
+//
+// cause is returned unchanged when every cleanup step succeeded, so the common
+// path preserves the original error's message and identity verbatim. When a
+// cleanup step did fail, the result is an [errors.Join] of cause first and the
+// failures after it — errors.Is/As still find every sentinel cause wraps.
+func withCleanupErrs(cause error, cleanup ...error) error {
+	joined := make([]error, 0, len(cleanup)+1)
+	joined = append(joined, cause)
+	for _, c := range cleanup {
+		if c != nil {
+			joined = append(joined, c)
+		}
+	}
+	if len(joined) == 1 {
+		return cause
+	}
+	return errors.Join(joined...)
+}

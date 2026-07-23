@@ -106,12 +106,10 @@ func EnsureGitignoreHygiene(ctx context.Context, repoRoot string) error {
 	}
 
 	if _, err := f.WriteString(toAppend); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("workspace: EnsureGitignoreHygiene: WriteString: %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: EnsureGitignoreHygiene: WriteString: %w", err), f.Close())
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("workspace: EnsureGitignoreHygiene: Sync: %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: EnsureGitignoreHygiene: Sync: %w", err), f.Close())
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("workspace: EnsureGitignoreHygiene: Close: %w", err)

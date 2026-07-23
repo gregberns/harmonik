@@ -247,7 +247,7 @@ func WriteAgentTask(workspacePath string, payload AgentTaskPayload) error {
 	// Post-write assertion: file MUST exist and be non-empty.
 	fi, err := os.Stat(target)
 	if err != nil {
-		return fmt.Errorf("%w: stat after write failed for %q: %v", ErrTaskFileEmpty, target, err)
+		return fmt.Errorf("%w: stat after write failed for %q: %w", ErrTaskFileEmpty, target, err)
 	}
 	if fi.Size() == 0 {
 		return fmt.Errorf("%w: file is zero bytes after write at %q", ErrTaskFileEmpty, target)

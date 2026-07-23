@@ -248,3 +248,60 @@ func TestWM008_DiscoveryOrphanSentinels(t *testing.T) {
 		})
 	}
 }
+
+// TestWithCleanupErrs covers the contract of [withCleanupErrs], the helper the
+// atomic-write paths use so a cleanup failure on an error path is reported
+// rather than discarded. Its two load-bearing guarantees are that the common
+// path (all cleanups succeeded) is byte-identical to the un-annotated error,
+// and that annotating never breaks errors.Is on the cause's sentinel — Class()
+// and every caller that switches on a workspace sentinel depend on it.
+func TestWithCleanupErrs(t *testing.T) {
+	t.Parallel()
+
+	cause := fmt.Errorf("write tmp: %w", ErrSidecarWriteFailed)
+	cleanupFailure := errors.New("remove tmp: permission denied")
+
+	t.Run("all cleanups succeeded returns cause unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		got := withCleanupErrs(cause, nil, nil)
+		if got.Error() != cause.Error() {
+			t.Errorf("message = %q, want the cause's message verbatim %q", got.Error(), cause.Error())
+		}
+		if !errors.Is(got, ErrSidecarWriteFailed) {
+			t.Errorf("errors.Is(got, ErrSidecarWriteFailed) = false, want the cause returned untouched")
+		}
+	})
+
+	t.Run("no cleanup args returns cause unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		if got := withCleanupErrs(cause); got.Error() != cause.Error() {
+			t.Errorf("message = %q, want the cause's message verbatim %q", got.Error(), cause.Error())
+		}
+	})
+
+	t.Run("cleanup failure is joined and cause identity survives", func(t *testing.T) {
+		t.Parallel()
+
+		got := withCleanupErrs(cause, nil, cleanupFailure)
+		if !errors.Is(got, ErrSidecarWriteFailed) {
+			t.Errorf("errors.Is(got, ErrSidecarWriteFailed) = false; the sentinel must survive annotation")
+		}
+		if Class(got) != "SidecarWriteFailed" {
+			t.Errorf("Class(got) = %q, want %q", Class(got), "SidecarWriteFailed")
+		}
+		if !errors.Is(got, cleanupFailure) {
+			t.Errorf("errors.Is(got, cleanupFailure) = false; the discarded cleanup failure must be reachable")
+		}
+	})
+
+	t.Run("nil cause with a cleanup failure still reports the failure", func(t *testing.T) {
+		t.Parallel()
+
+		got := withCleanupErrs(nil, cleanupFailure)
+		if !errors.Is(got, cleanupFailure) {
+			t.Errorf("errors.Is(got, cleanupFailure) = false, want the cleanup failure to be reported")
+		}
+	})
+}

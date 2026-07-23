@@ -157,26 +157,24 @@ func WriteSessionMetadataSidecarAtomic(target string, s *SessionMetadataSidecar)
 	}
 
 	if _, err := f.Write(content); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Write: %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Write: %w", err),
+			f.Close(), os.Remove(tmpPath))
 	}
 
 	// Step 3: fsync temp file before rename.
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Sync (pre-rename): %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Sync (pre-rename): %w", err),
+			f.Close(), os.Remove(tmpPath))
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Close (pre-rename): %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Close (pre-rename): %w", err),
+			os.Remove(tmpPath))
 	}
 
 	// Step 4: atomic rename.
 	if err := os.Rename(tmpPath, target); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Rename %q → %q: %w", tmpPath, target, err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Rename %q → %q: %w", tmpPath, target, err),
+			os.Remove(tmpPath))
 	}
 
 	// Step 5: parent-dir fsync — best-effort on macOS/APFS per spec.

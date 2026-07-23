@@ -664,7 +664,12 @@ func alreadyTrustedAt(worktreePath, cfgPath string) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	trusted, _ := entry["hasTrustDialogAccepted"].(bool)
+	// A non-bool (or absent) hasTrustDialogAccepted is "not trusted", same as an
+	// explicit false — Claude Code re-prompts in both cases.
+	trusted, ok := entry["hasTrustDialogAccepted"].(bool)
+	if !ok {
+		return false, nil
+	}
 	return trusted, nil
 }
 

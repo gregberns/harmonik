@@ -73,7 +73,7 @@ func FindImplementerHandlerRef(workspacePath string) (*core.HandlerRef, error) {
 		agentType  core.AgentType
 	}
 
-	var sidecars []parsedSidecar
+	sidecars := make([]parsedSidecar, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue

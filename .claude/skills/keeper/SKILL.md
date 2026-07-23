@@ -348,7 +348,7 @@ find out the ACTUAL deployed keeper state.** Checks
 | `PreCompact hook` | `keeper-precompact-hook.sh` wired in `hooks.PreCompact` |
 | `gauge` | `.harmonik/keeper/<agent>.ctx` exists and is `<5` min old |
 | `idle marker` | `.harmonik/keeper/<agent>.idle` written (Stop hook has fired) |
-| `managed` | `.harmonik/keeper/<agent>.managed` present (reset cycle LIVE) |
+| `managed` | `.harmonik/keeper/<agent>.managed` present **and** a watcher is running. The marker is *consent*, never *liveness*: marker-present-with-no-watcher is a silent deadlock and reads RED here (hk-220lv) |
 | `api-key-risk` | `ANTHROPIC_API_KEY` NOT set (else keeper-launched claude bills the API pool, not the subscription) |
 
 **Exit codes** (`keeper_enable_doctor_cmd.go` `runKeeperDoctorSubcommand`): `0` all
@@ -428,6 +428,7 @@ handoff, `.managed`, `HoldingDispatch`) remain intact.
 On a keeper context-warning:
 
 1. Refresh your `HANDOFF-<agent>.md` (so the eventual reset carries good state).
+   **Read the handoff file BEFORE you Write it.** `HANDOFF-<agent>.md` already exists, and the Write tool refuses a file the current session has not Read — after a `/clear` that is every file. Read first, then Write; do not burn a turn discovering the guard.
 2. **Keep working.** Let the keeper cycle you when it crosses ACT.
 
 ### Captain (OnDemandRestart warn text)
@@ -436,7 +437,7 @@ The captain's warn injection says: *"[KEEPER WARNING — automated] Proactive co
 
 At a **clean idle point** (no `.dispatching` in flight, not mid crew-spawn/merge/submit):
 1. Finish the current logical unit of work.
-2. Write `HANDOFF-captain.md` with a fresh KEEPER nonce.
+2. Write `HANDOFF-captain.md` with a fresh KEEPER nonce. **Read the handoff file BEFORE you Write it.** `HANDOFF-<agent>.md` already exists, and the Write tool refuses a file the current session has not Read — after a `/clear` that is every file. Read first, then Write; do not burn a turn discovering the guard.
 3. Run `harmonik keeper restart-now --agent captain`.
 4. Keep the turn OPEN, stop typing — the keeper fires the cycle on its next tick (≤5 s).
 5. **NEVER exit or terminate your own session on a warn.** The keeper owns the clear→resume cycle; self-terminating
@@ -475,6 +476,16 @@ running. A fresh gauge file does NOT mean a keeper is active.
 (flag-only, hk-nbft). The `live-watcher` check uses `LiveKeeperPresent` (flock
 probe) to distinguish a running keeper from a stale corpse lockfile — it is the
 authoritative liveness signal, not gauge mtime.
+
+**`.managed` present with no watcher is a DEADLOCK, not a degraded mode** (hk-220lv).
+A live captain once sat at a typed-but-unsent `/clear` waiting for a restart cycle
+that could never fire: the watcher had died and every other surface — config, hooks,
+fresh gauge, `.managed`, live pane — was still green. Nothing on the box supervises
+the watcher: the daemon's only liveness probe (`probeKeeperLiveness`) is one-shot at
+crew spawn, warn-only, and DISABLED unless `keeper.timings.flock_acquire_grace` is
+set in `.harmonik/config.yaml`. So if `doctor` shows `managed` red naming a missing
+watcher, start one by hand — `harmonik keeper --agent <agent>` — before you rely on
+the restart cycle.
 
 Crew keepers are auto-armed by the daemon (`HandleCrewStart → SpawnCrewSession`,
 hk-rmy1, hk-lcga, hk-tt9q). On `crew start` the daemon adds a sibling `keeper`

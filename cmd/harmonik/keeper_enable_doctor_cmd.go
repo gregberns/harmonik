@@ -837,13 +837,12 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 
 	// 7c. Live keeper watcher: does a live keeper process hold the exclusive flock?
 	// Uses LiveKeeperPresent (shared-flock probe) so it correctly distinguishes a
-	// running keeper from a stale corpse lockfile.
-	{
-		if watcherLive {
-			check("live-watcher", true, "live keeper process is running")
-		} else {
-			check("live-watcher", false, "no live keeper watcher detected — start with: harmonik keeper --agent "+cfg.agentName)
-		}
+	// running keeper from a stale corpse lockfile. Sampled once above, into
+	// watcherLive, because check 7 (.managed) consumes the same answer.
+	if watcherLive {
+		check("live-watcher", true, "live keeper process is running")
+	} else {
+		check("live-watcher", false, "no live keeper watcher detected — start with: harmonik keeper --agent "+cfg.agentName)
 	}
 
 	// 7d. Tmux pane liveness: verify the auto-resolved keeper inject-target

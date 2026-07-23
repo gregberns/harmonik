@@ -330,6 +330,18 @@ func TestCycler_HappyPath(t *testing.T) {
 	if !containsSubstr(texts[0], nonce) {
 		t.Errorf("inject[0] should contain nonce %q; got %q", nonce, texts[0])
 	}
+	// hk-pgtt6: the directive must be ONE line with a VISIBLE separator. Claude
+	// Code collapses a pasted "\n\n" away entirely, fusing the handoff path onto
+	// the instruction; a trailing space is not enough. See
+	// inject_directive_shape_hkpgtt6_test.go for the full collapse assertion.
+	if containsSubstr(texts[0], "\n") {
+		t.Errorf("inject[0] must be a single line (hk-pgtt6); got %q", texts[0])
+	}
+	// hk-4tjyj: the reboot command must be self-describing, not dependent on
+	// $HARMONIK_AGENT and the pane's CWD.
+	if !containsSubstr(texts[2], "--agent ") || !containsSubstr(texts[2], "--project ") {
+		t.Errorf("inject[2] should pin --agent and --project (hk-4tjyj); got %q", texts[2])
+	}
 	if texts[1] != "/clear" {
 		t.Errorf("inject[1] = %q; want \"/clear\"", texts[1])
 	}

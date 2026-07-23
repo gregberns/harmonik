@@ -36,22 +36,23 @@ import (
 type EventType string
 
 const (
-	// Connection lifecycle. These events carry Seq=0 (bypass dedup).
-	EventTypeConnected    EventType = "connected"
+	// EventTypeConnected marks a connection lifecycle event; it carries Seq=0.
+	EventTypeConnected EventType = "connected"
+	// EventTypeDisconnected marks a disconnected connection lifecycle event.
 	EventTypeDisconnected EventType = "disconnected"
 
-	// Turn lifecycle (server-side notifications from the codex app-server).
+	// EventTypeTurnStarted marks a server-side turn lifecycle notification.
 	EventTypeTurnStarted   EventType = "turn_started"
 	EventTypeTurnCompleted EventType = "turn_completed"
 
-	// Content streaming.
+	// EventTypeMessageDelta marks a streamed content delta.
 	EventTypeMessageDelta EventType = "message_delta"
 
-	// Thread telemetry.
+	// EventTypeThreadStatus marks thread telemetry.
 	EventTypeThreadStatus EventType = "thread_status"
 	EventTypeTokenUsage   EventType = "token_usage"
 
-	// Error reported by the server or transport layer.
+	// EventTypeError marks an error reported by the server or transport layer.
 	EventTypeError EventType = "error"
 )
 

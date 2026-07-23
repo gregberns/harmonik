@@ -57,7 +57,11 @@ func runScenario(t *testing.T, name string) {
 	if err != nil {
 		t.Fatalf("open scenario %q: %v", name, err)
 	}
-	defer f.Close()
+	t.Cleanup(func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close event file: %v", closeErr)
+		}
+	})
 
 	r := codexreactor.New()
 
@@ -105,7 +109,10 @@ func formatActions(actions []codexreactor.Action) string {
 	if len(actions) == 0 {
 		return "[]"
 	}
-	b, _ := json.Marshal(actions)
+	b, err := json.Marshal(actions)
+	if err != nil {
+		return "<marshal error: " + err.Error() + ">"
+	}
 	return string(b)
 }
 
@@ -333,8 +340,12 @@ func TestFakeEffector_RecordAndReset(t *testing.T) {
 	a1 := codexreactor.Action{Type: codexreactor.ActionTypeEmitOutput, Delta: "a"}
 	a2 := codexreactor.Action{Type: codexreactor.ActionTypeCompleteTurn, Status: "completed"}
 
-	_ = eff.Execute(ctx, a1)
-	_ = eff.Execute(ctx, a2)
+	if err := eff.Execute(ctx, a1); err != nil {
+		t.Fatalf("execute first action: %v", err)
+	}
+	if err := eff.Execute(ctx, a2); err != nil {
+		t.Fatalf("execute second action: %v", err)
+	}
 
 	got := eff.Actions()
 	if len(got) != 2 {

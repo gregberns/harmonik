@@ -179,10 +179,13 @@ names). This is the most self-contained work in the stream.
 
 ## Rejected
 
-- **A `shared SharedHandles` parameter in RT15.** All five fields have readers outside `beadRunOne`
-  (`runRegistry` also in diskcheck/eagerfill/wiringlog/bootworkloop; `workerRegistry` in bootworkloop;
-  8/12/3/12 total `workloop.go` reads vs 4/6/3/8 inside `beadRunOne`), so the `deps` fields cannot be
-  deleted. Adding the parameter while `deps` is still passed is **pure duplication across a signature
+- **A `shared SharedHandles` parameter in RT15.** Three of the five fields have readers outside
+  `beadRunOne` (`runRegistry` also in diskcheck/eagerfill/wiringlog/bootworkloop; `workerRegistry` in
+  bootworkloop; `localInFlight` likewise), so those `deps` fields cannot be deleted — which is enough
+  to carry the decision. The other two do not: after C6/C7 the only production reference to
+  `agentSpawnSem` or `budgetPort` is `sharedHandles()` itself. An earlier draft of this section said
+  all five had outside readers; that was wrong for those two, and an independent review of the RT15
+  chunks caught it. The conclusion is unaffected. Adding the parameter while `deps` is still passed is **pure duplication across a signature
   boundary** — the exact two-idiom hazard this decomposition exists to avoid — and it buys nothing:
   RT18 is editing those 7 call sites anyway when it drops `deps`. **RT18 owns the `shared` parameter.**
 - **Splitting C5 into "add `env` alongside the 11 params" then "delete the 11".** Step 1 would leave

@@ -28,13 +28,19 @@ Nothing goes back into the production daemon until you have proven this commit o
 isolated daemon. Do not use the production daemon for any part of this. Do not restart it.
 
 **What this commit claims to deliver** (both are needed for the codex-first proof):
-- `2b921fde` (hk-9hvr0) — the daemon's input-paste call site at
-  `internal/daemon/tmuxsubstrate.go:2246` used the legacy constant
-  `inputBufferName="harmonik-input"`, which violates the tmux buffer-name invariant added on
-  this branch at `internal/lifecycle/tmux/osadapter.go:382` (requires
-  `harmonik-<session-id>-<purpose>`). Result was `pasteinject_failed`: workers reached
-  `agent_ready` and then idled forever, never receiving their task prompt. The fix constructs
-  a valid per-run buffer name at the call site.
+- `2b921fde` (hk-9hvr0) — the daemon's input-paste call site (`perRunSubstrate.SubmitInput`
+  in `internal/daemon/tmuxsubstrate.go`) used the legacy constant
+  `inputBufferName="harmonik-input"`, which fails **harmonik's own** buffer-name validator —
+  `bufferNameRe` (`^harmonik-[a-z0-9-]+-[a-z0-9-]+$`) in `internal/lifecycle/tmux/adapter.go`,
+  enforced by `OSAdapter.LoadBuffer` / `PasteBuffer` in `internal/lifecycle/tmux/osadapter.go`
+  *before* tmux is ever invoked. It requires `harmonik-<session-id>-<purpose>`, and
+  `harmonik-input` has no interior hyphen after the prefix, so it cannot match.
+  **This is not a tmux constraint.** Verified empirically on tmux 3.6a: `tmux load-buffer -b
+  harmonik-input` and `tmux paste-buffer -b harmonik-input` both exit 0 — tmux rejects only an
+  *empty* buffer name. Do not go read tmux's source looking for this rule; it is a regex in
+  this repo. Result was `pasteinject_failed`: workers reached `agent_ready` and then idled
+  forever, never receiving their task prompt. The fix constructs a valid per-run buffer name
+  (`harmonik-<run-id>-input`) at the call site.
 - `d59d5d32` (hk-tckw3.1) — codex-first Step 1: drops the fail-closed isolation fence that
   forbade launching Codex without an enabled remote ssh worker, and sets the exec path to
   `danger-full-access`. Per locked decisions D1 and D3

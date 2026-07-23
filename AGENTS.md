@@ -57,9 +57,9 @@ Non-trivial changes are planned with **kerf** (spec-first; create a kerf work be
 ## Key conventions
 
 - **Specs live in `specs/`** at the repo root. These are normative: the spec is always right, and code is expected to match it. Spec drafts produced by kerf are copied here on `kerf finalize`.
-- **Kerf process artifacts** (problem space, research, design, drafts, tasks, reviews) live on the **global bench** at `~/.kerf/projects/{id}/{codename}/`, NOT under the repo's `.kerf/`. The repo-local `.kerf/` directory is a partial mirror and not the authoritative working directory. Agents must write pass artifacts to the bench path printed by `kerf new` / `kerf show`, or they will silently produce orphan files. Run `kerf localize` to reconcile any files written to the wrong location.
+- **Kerf process artifacts** (problem space, research, design, drafts, tasks, reviews) live in the repo at **`.kerf/works/{codename}/`**. This project has already been localized (`.kerf/config.yaml` sets `storage: local`), so the repo — not the global bench — is the authoritative working directory. The bench path `~/.kerf/projects/gregberns-harmonik/` still resolves: it is a **symlink** to `.kerf/works/`, so either spelling reaches the same files. Write pass artifacts to the path `kerf new` / `kerf show` prints, or you will silently produce orphan files. **Do NOT run `kerf localize` to tidy up misplaced files** — it is not a file reconciler, it is the one-time bench→repo storage migration, and it has already been run here. There is no automated command for a misplaced artifact: move it into the work's directory by hand.
 - **Knowledge base docs** (`docs/`) capture problems, goals, concepts, components, subsystems, ideas, and the collaboration log. These are inputs to kerf works; they are not themselves normative specs.
-- **Ten architectural decisions** are locked in as of 2026-04-19. See [STATUS.md](STATUS.md#decisions-locked-in-2026-04-19). Reopening one requires strong new evidence.
+- **Ten architectural decisions** are locked in as of 2026-04-19. See [STATUS.md](STATUS.md#10-locked-decisions-2026-04-19) — note that section is a stub pointing at git history for the decision text itself. Reopening one requires strong new evidence.
 - **Bead label convention for kerf work codenames:** use the `codename:<name>` prefix (e.g. `codename:handler-pause`, `codename:claude-hook-bridge`). Kerf work `bead_filter` clauses must match the same form. Functional/topical labels (e.g. `queue`, `spec-drift`) remain bare — only labels whose sole purpose is to identify a kerf work codename get the prefix.
 
 ## Don't
@@ -74,7 +74,13 @@ Non-trivial changes are planned with **kerf** (spec-first; create a kerf work be
 
 ## Beads Workflow Integration
 
-This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking and [kerf](docs/components/internal/kerf.md) for prioritization and triage. Issues are stored in `.beads/` and tracked in git.
+This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking and [kerf](docs/components/internal/kerf.md) for prioritization and triage.
+
+**The bead ledger is machine-local, NOT tracked in git.** `.gitignore` ignores `.beads/*` (the sole tracked exception is `.beads/queue-test-fixtures/`), so `issues.jsonl` and the SQLite DB live only on this machine. This is deliberate and MUST NOT be "fixed" by tracking the ledger: `br sync --flush-only` rewrites `issues.jsonl` continuously, and a tracked copy makes the working tree perpetually dirty, which trips the daemon's `implementer_escaped_worktree` detector and false-fails dispatched beads (refs `hk-yru`).
+
+Two consequences you must plan around:
+- **Beads do not travel between clones.** A bead filed on this machine is invisible on another checkout or in CI. Never assume a teammate or a fresh worktree can `br show` an ID you just created — put anything that must survive into a tracked doc or the commit message.
+- **`br sync --flush-only` produces no committable change.** It is still worth running (it keeps the local DB and JSONL consistent), but do not expect it to stage anything, and do not go hunting for the "missing" beads diff before a commit.
 
 ### Prioritization: use kerf, not bv
 
@@ -123,13 +129,23 @@ br sync --flush-only  # Export DB to JSONL
 
 ```bash
 git status              # Check what changed
-git add <files>         # Stage code changes
-br sync --flush-only    # Export beads changes to JSONL
-git commit -m "..."     # Commit everything
+git add <files>         # Stage code changes (explicit pathspec; never `git add -A`)
+br sync --flush-only    # Reconcile local DB → JSONL. Stages NOTHING: .beads/ is gitignored.
+git commit -F msg.txt   # See the trailer requirement below — `-m "..."` alone will be REJECTED
 git push                # Push to remote
 ```
 
+**The commit-msg hook is not optional and `git commit -m "..."` usually fails it.** `scripts/validate-commit-msg.sh` (wired via `lefthook.yml`) enforces:
+
+1. Conventional-Commits subject from a **closed** type set — `feat fix refactor test docs chore spec build perf`. No `ci`, `revert`, or `style`.
+2. Subject ≤72 chars, no trailing period.
+3. On every **non-trivial** commit, both a `Reviewed-By:` trailer and a `Review-Verdict:` trailer whose value is well-formed JSON with `schema_version: 1` and a `verdict` of `APPROVE` / `REQUEST_CHANGES` (agent-reviewer) or `CLEAN` / `DRIFT_MINOR` / `DRIFT_MAJOR` (agent-config-reviewer). A `BLOCK` verdict is rejected outright — fix the code, don't commit it.
+
+Because those trailers are multi-line-ish and JSON-quoted, write the message to a file and use `git commit -F`. The only bypasses are a literal `Trivial: true` trailer (typos and whitespace only) and merge / `fixup!` / `squash!` subjects. `--no-verify` is forbidden.
+
 <!-- end-bv-agent-instructions -->
+
+> **Maintainer note — the block above is machine-regenerable.** `br agents --update` rewrites everything between the `bv-agent-instructions-v2` markers from br's generic upstream template. Two harmonik-specific corrections live inside it and WILL be reverted to upstream's (false) wording if you run that command: (1) the bead ledger is gitignored and machine-local, not "stored in `.beads/` and tracked in git"; (2) `git commit -m "..."` alone does not pass this repo's commit-msg hook. Re-apply both after any `br agents --update`, and diff the block before accepting the result.
 
 ````markdown
 ## UBS Quick Reference for AI Agents

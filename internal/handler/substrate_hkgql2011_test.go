@@ -221,8 +221,11 @@ func TestHandler_Launch_SubstrateNonNilStdout_WatcherIsWired(t *testing.T) {
 	ndjson := `{"type":"agent_ready"}` + "\n"
 	pr, pw := io.Pipe()
 	go func() {
-		_, _ = io.WriteString(pw, ndjson)
-		_ = pw.Close()
+		_, writeErr := io.WriteString(pw, ndjson)
+		// CloseWithError(nil) is exactly Close(); passing writeErr instead makes a
+		// failed fixture write surface as a read error on pr rather than as a
+		// silent empty stream that the assertions below would misreport.
+		_ = pw.CloseWithError(writeErr)
 	}()
 
 	fakeSess := &fakeSubstrateSession{stdout: pr}
@@ -347,8 +350,11 @@ func TestSubstrateSpawn_StdoutWrapperApplied(t *testing.T) {
 	ndjson := `{"type":"agent_ready"}` + "\n"
 	pr, pw := io.Pipe()
 	go func() {
-		_, _ = io.WriteString(pw, ndjson)
-		_ = pw.Close()
+		_, writeErr := io.WriteString(pw, ndjson)
+		// CloseWithError(nil) is exactly Close(); passing writeErr instead makes a
+		// failed fixture write surface as a read error on pr rather than as a
+		// silent empty stream that the assertions below would misreport.
+		_ = pw.CloseWithError(writeErr)
 	}()
 
 	wrapperCalled := false

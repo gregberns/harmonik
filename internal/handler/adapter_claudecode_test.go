@@ -62,7 +62,9 @@ func ptr[T any](v T) *T { return &v }
 func TestClaudeCodeAdapter_ImplementsAdapterInterface(t *testing.T) {
 	t.Parallel()
 	var _ handlercontract.Adapter = handler.ClaudeCodeAdapter{}
-	var _ handlercontract.Adapter = handler.NewClaudeCodeAdapter()
+	if handler.NewClaudeCodeAdapter() == nil {
+		t.Fatal("NewClaudeCodeAdapter returned a nil Adapter")
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,7 +107,6 @@ func TestClaudeCodeAdapter_DetectReady_FalseForNonAgentReady(t *testing.T) {
 
 	a := handler.NewClaudeCodeAdapter()
 	for _, evType := range nonReadyTypes {
-		evType := evType
 		t.Run(evType, func(t *testing.T) {
 			t.Parallel()
 			ev := claudeCodeFixtureMakeEvent(t, evType, nil)
@@ -189,7 +190,6 @@ func TestClaudeCodeAdapter_DetectRateLimit_FalseForNonRateLimited(t *testing.T) 
 
 	a := handler.NewClaudeCodeAdapter()
 	for _, evType := range nonRateLimitedTypes {
-		evType := evType
 		t.Run(evType, func(t *testing.T) {
 			t.Parallel()
 			ev := claudeCodeFixtureMakeEvent(t, evType, nil)

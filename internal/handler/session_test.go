@@ -14,6 +14,7 @@ package handler_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -98,8 +99,11 @@ func TestSession_Kill(t *testing.T) {
 	waitCtx, waitCancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer waitCancel()
 
-	// Wait should return (with a non-nil error since the child was killed).
-	_ = sess.Wait(waitCtx) // error expected (signal); ignore value
+	// Wait must report the abnormal termination — a nil here would mean the
+	// exit status was lost on the way back to the caller.
+	if waitErr := sess.Wait(waitCtx); waitErr == nil {
+		t.Error("Wait after Kill returned nil; want the child's non-zero/signalled exit")
+	}
 
 	o := sess.Outcome()
 	if o.Duration <= 0 {
@@ -141,7 +145,9 @@ func TestSession_Outcome_NonZeroExit(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 
-	_ = sess.Wait(t.Context())
+	if waitErr := sess.Wait(t.Context()); waitErr == nil {
+		t.Error("Wait returned nil for a child that exited 42")
+	}
 
 	o := sess.Outcome()
 	if o.ExitCode != 42 {
@@ -162,7 +168,13 @@ func TestSession_Outcome_StderrTail(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 
-	_ = sess.Wait(t.Context())
+	// The child exits 1 deliberately, so Wait must report that status.
+	var exitErr *exec.ExitError
+	if waitErr := sess.Wait(t.Context()); !errors.As(waitErr, &exitErr) {
+		t.Fatalf("sess.Wait: want *exec.ExitError for the child's exit 1, got %v", waitErr)
+	} else if got := exitErr.ExitCode(); got != 1 {
+		t.Errorf("sess.Wait: exit code = %d, want 1", got)
+	}
 
 	o := sess.Outcome()
 	tail := string(o.StderrTail)
@@ -188,8 +200,12 @@ func TestSession_Stdout_Exposed(t *testing.T) {
 	}
 
 	// Drain stdout so the child can exit and Wait doesn't block.
-	_, _ = io.ReadAll(sess.Stdout())
-	_ = sess.Wait(t.Context())
+	if _, readErr := io.ReadAll(sess.Stdout()); readErr != nil {
+		t.Fatalf("drain stdout: %v", readErr)
+	}
+	if waitErr := sess.Wait(t.Context()); waitErr != nil {
+		t.Fatalf("sess.Wait: %v", waitErr)
+	}
 }
 
 // TestSession_Kill_ReapsImmediateChildPromptly verifies that Kill reaps the
@@ -251,7 +267,12 @@ func TestSession_Kill_ReapsImmediateChildPromptly(t *testing.T) {
 	}
 	// Ensure the orphaned grandchild does not leak out of the test regardless of
 	// outcome (the daemon's orphan sweep owns this in production).
-	defer func() { _ = syscall.Kill(grandchildPID, syscall.SIGKILL) }()
+	defer func() {
+		// ESRCH just means the grandchild already exited, which is the good case.
+		if killErr := syscall.Kill(grandchildPID, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+			t.Errorf("cleanup: kill orphaned grandchild %d: %v", grandchildPID, killErr)
+		}
+	}()
 
 	// Confirm the grandchild is alive before Kill.
 	if probeErr := syscall.Kill(grandchildPID, 0); probeErr != nil {
@@ -312,7 +333,9 @@ func TestSession_Kill_SIGKILL_Escalation(t *testing.T) {
 	waitCtx, waitCancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer waitCancel()
 
-	_ = sess.Wait(waitCtx) // killed by signal; error expected
+	if waitErr := sess.Wait(waitCtx); waitErr == nil {
+		t.Error("Wait after SIGKILL escalation returned nil; want the child's signalled exit")
+	}
 
 	o := sess.Outcome()
 	if o.Duration <= 0 {

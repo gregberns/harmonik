@@ -29,7 +29,7 @@ func claudeHandlerFixtureWorkspace(t *testing.T) string {
 
 // claudeHandlerFixtureWriteSettingsLocal writes a .claude/settings.local.json
 // with the provided content to the workspace, creating parent dirs as needed.
-func claudeHandlerFixtureWriteSettingsLocal(t *testing.T, workspacePath string, content string) {
+func claudeHandlerFixtureWriteSettingsLocal(t *testing.T, workspacePath, content string) {
 	t.Helper()
 	dir := filepath.Join(workspacePath, ".claude")
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions

@@ -240,7 +240,6 @@ func TestCHB008_NonResumePhases_ResumeModeFalse(t *testing.T) {
 
 	phases := []string{"", "implementer-initial", "reviewer"}
 	for _, phase := range phases {
-		phase := phase
 		t.Run("phase="+phase, func(t *testing.T) {
 			t.Parallel()
 			res, err := handler.MintClaudeSessionID(phase, nil)

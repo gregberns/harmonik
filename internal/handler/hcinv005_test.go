@@ -330,7 +330,6 @@ func TestHCINV005_GateFailuresAreStructural(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := handler.VerifyTwinLaunch(tc.root, tc.cfg)

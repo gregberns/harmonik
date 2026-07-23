@@ -31,7 +31,7 @@ func twinLaunchFixtureBinaryWithHash(t *testing.T, dir, name string) string {
 	content := append([]byte("twin-binary-prefix\x00"), []byte(twinLaunchFixtureKnownHash)...)
 	content = append(content, []byte("\x00twin-binary-suffix")...)
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, content, 0o700); err != nil {
+	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatalf("twinLaunchFixtureBinaryWithHash: write: %v", err)
 	}
 	return path
@@ -43,7 +43,7 @@ func twinLaunchFixtureBinaryWithHash(t *testing.T, dir, name string) string {
 func twinLaunchFixtureBinaryWithoutHash(t *testing.T, dir, name string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("wrong binary content\n"), 0o700); err != nil {
+	if err := os.WriteFile(path, []byte("wrong binary content\n"), 0o600); err != nil {
 		t.Fatalf("twinLaunchFixtureBinaryWithoutHash: write: %v", err)
 	}
 	return path

@@ -1,7 +1,9 @@
 # RT19c — clock-port the Working-phase watchdogs
 
-**Status:** **READY TO PLAN** — descoped out of RT14, not yet recipe-grade. No operator decision
-required; no new seam invented.
+**Status:** **LANDED** — `f839121ff` (2026-07-23), inside the RT stream, plus a follow-up that widened
+the freeze-gate regex and closed six review findings. No operator decision was required and no new seam
+was invented. What follows is the recipe as planned; §2's inventory undercounted by two (see the note in
+§1) and everything below reads as history now, not as instructions.
 **Filed by:** RT14 (2026-07-22), which closed the dispatch path's last raw wall-clock site and
 proved these were a separate concern.
 **Depends on:** nothing hard. RT14 is landed, so `substrate.After` / `substrate.ClockPort` are
@@ -29,8 +31,18 @@ different concerns**, and RT14 descoped seven of the eight after verifying the s
 Converting one copy of a watchdog without its siblings would **diverge three implementations of the
 same pattern** and close nothing. Hence: one slice that takes all of them together.
 
-RT14's `scripts/readywait-freeze-gate.sh` deliberately does **not** police these files. Adding them
-to that gate is RT19c's closing move, not something to do earlier — it would make the gate red.
+RT14's `scripts/readywait-freeze-gate.sh` deliberately did **not** police these files — adding them
+earlier would have made the gate red, so it was RT19c's closing move. **Done:** all four are pinned in
+check (2) as of `f839121ff`, and the Makefile comment that called them "deliberately OUT of scope" is
+gone.
+
+The gate's forbidden-pattern regex was also **widened** past the one this document's §2 inventory used.
+`time\.(After|Now|NewTimer|NewTicker|Tick|Sleep)\(` has no `Since`, which is exactly why §2 reports 30
+sites when the real count was 32: it missed the two `time.Since(loopStart)` reads in
+`pasteInjectQuitOnReviewFile`, which had to be converted anyway or the loop would have mixed wall
+elapsed with a virtual deadline. The gate now also polices `Since`, `Until` and `AfterFunc`
+(`time.After(` does not match `time.AfterFunc(`). `time.Now().Sub(x)` needs no separate alternative —
+`Now` already covers it.
 
 ---
 

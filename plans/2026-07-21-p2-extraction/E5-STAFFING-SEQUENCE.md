@@ -37,16 +37,16 @@ Ordering is not "depends on" hand-waving. Each edge below names its mechanism.
 RT13 ──┐
 E4c ───┴──► RT19b ──► RT14 ──► PC ──► RT16 ──► RT15(C1..C7) ──► RT17 ──► RT18 ──► RT19 ──► RT20+ (THE LIFT)
                                                                                     │
-                                                              RT19c (watchdog clocks) ┘  [unowned; see §3.6]
+                                                              RT19c (watchdog clocks) ┘  [LANDED f839121ff; see §3.6]
 ```
 
-**Landed as of 2026-07-22: RT13, E4c, RT19b, RT14, and RT15 (all seven chunks).** RT15 ran BEFORE PC
+**Landed as of 2026-07-23: RT13, E4c, RT19b, RT14, RT15 (all seven chunks), and RT19c.** RT15 ran BEFORE PC
 and RT16, which the diagram draws after them. That is correct, not a violation: §7.6 already records
 that PC is a *value* ordering for RT15 and not a compile ordering, and RT16 → RT15 is not an edge in
 the table below at all — RT16's edges are to RT17/RT18. Both `RunEnv` and `SharedHandles` stayed in
 `package daemon` for all seven chunks, so `ProjectCfg ProjectConfig` and `*RunRegistry` type-checked
 with zero work. **PC and RT16 are still worth landing before RT17/RT18**, and nothing about them
-changed. Remaining in the chain: PC, RT16, RT17, RT18, RT19, RT19c, RT20+.
+changed. Remaining in the chain: PC, RT16, RT17, RT18, RT19, RT20+.
 
 | Edge | Mechanism (why it is strict, not preference) |
 |---|---|
@@ -90,7 +90,7 @@ Do not staff two RT slices. Staff **one RT agent**, and fill the remaining capac
 | **B — QUEUE WIRING** | E3b-PREP, then E3b-MOVE | `perqueuespendmeter_tigaf11.go`, `spendmeter_hkk3f8g.go`, `bootstate.go`, `daemon.go`, `testopts_test.go`, `cognition_loop_scenario_hkc7lxc_test.go`, **`export_test.go`** (8 shims), **`.golangci.yml`** | **Genuinely parallel with Lane A — but only while Lane A is on a slice that touches neither `export_test.go` nor `.golangci.yml`.** That is RT16 and RT15 (RT15's exit gate is a *zero diff* on `export_test.go`, and it adds no depguard block). It is NOT safe beside RT19b (touches both) or RT14 (deletes 22 `export_test.go` lines). |
 | **C — COLD TEST MOVES (RT19 front half)** | `git mv internal/daemon/runshell_test.go` and `dispatchsegment_test.go` → `internal/runlooptest/`; scaffold the package | those 2 test files only | **Parallel with anything.** Both are already free of daemon internals (E5 §4 step 19). The rest of RT19 (relocating `stubEventCollector`, 146 consumers, and splitting `export_test.go`) is Lane A and must not be split off. |
 | **D — NON-P2 (fully free)** | Everything in `PROGRESS.md` §4: `cmd/harmonik` (26,830 LOC, no coverage gate), `internal/{codexwire,keeper,lifecycle,workspace,eventbus}`, the small dense packages, the 8 `nilerr` bugs outside daemon, the 1,736 dead `//nolint:gosec` directives outside daemon, the `core`→yaml/expr layering breach | none of Lane A's | **Parallel with everything.** This is the real second crew. **Exception:** if PC's write-lock escalation (§3.1) is granted, `cmd/harmonik/**` becomes Lane A for the duration of that one slice. |
-| **E — RT19c (watchdog clock-port)** | the 7 raw wall-clock sites RT14 descoped: `dot_gate.go:753/760/761/769/775/788` (`pasteInjectQuitOnGateFile`), `waitsocketgrace.go:113`, `postreadyhang.go:59`, plus the 22 siblings in `pasteinject.go` | `pasteinject.go`, `dot_gate.go`, `waitsocketgrace.go`, `postreadyhang.go` | **NOT safe beside RT14/RT16/RT17** (all edit `dot_gate.go`). `pasteinject.go` alone is free. Currently **unowned** — see §3.6. |
+| **E — RT19c (watchdog clock-port)** | the 7 raw wall-clock sites RT14 descoped (`pasteInjectQuitOnGateFile` in `dot_gate.go`, `waitsocketgrace.go`, `postreadyhang.go`) plus the 22 siblings in `pasteinject.go`, and two `time.Since` reads in `pasteInjectQuitOnReviewFile` the inventory grep missed — 32 in all | `pasteinject.go`, `dot_gate.go`, `waitsocketgrace.go`, `postreadyhang.go` | **LANDED** `f839121ff`. Was NOT safe beside RT14/RT16/RT17 (all edit `dot_gate.go`); lane closed — see §3.6. |
 
 ### 2.3 What looks parallel and is not
 
@@ -162,13 +162,19 @@ other sessions' scratchpad worktrees plus `.claude/worktrees/agent-*` abandoned 
 repo** (which is also why `make fmt-check` fails). **Nobody will delete another session's data without
 your say-so.** Until it is resolved, every timing failure in a gate run is *suspect, not real*.
 
-### 3.6 RT19c is unowned
+### 3.6 RT19c — RESOLVED, landed in the RT stream
 
 RT14 §0 correctly descoped 7 of the 8 raw wall-clock sites E5 §4 step 16 claimed, because they live in
-`pasteInjectQuitOnGateFile` and the Working-phase completion wait — code `dispatchsegment.go:17-20`
+`pasteInjectQuitOnGateFile` and the Working-phase completion wait — code `dispatchsegment.go`'s header
 explicitly places *outside* the RT8 segment boundary, with 22 further sibling sites in `pasteinject.go`.
-Converting one copy of three watchdogs closes nothing and diverges them. **Decision needed: is RT19c in
-the RT stream's definition of done, or filed as post-lift work?** Recommend **post-lift** — see §4.7.
+Converting one copy of three watchdogs closes nothing and diverges them. The open question was whether
+RT19c belonged in the RT stream's definition of done or post-lift.
+
+**Answered by landing it: `f839121ff` (2026-07-23), inside the stream.** All four files now take an
+injected `substrate.ClockPort` (32 sites, including two `time.Since` reads the inventory grep did not
+cover), the four files are pinned in `scripts/readywait-freeze-gate.sh` check (2), and the three
+minutes-to-hours timeout branches have FakeClock tests that run in microseconds of wall time. Row 7 of
+§4 is therefore closed rather than re-filed.
 
 ---
 
@@ -185,7 +191,7 @@ command that returns a number.
 | 4 | `RunEnv` / `SharedHandles` are live | **DONE (RT15, 2026-07-22).** `runEnv()` / `sharedHandles()` constructors exist; `RunEnv` is built at the dispatch site and passed as a parameter, `SharedHandles` is built inside `beadRunOne` as a local named `handles` (`shared` is the harness/shared package — do not use that name) | remaining: `SharedHandles` becomes a PARAMETER when `deps` is dropped | RT15-C1/C5 (env) and RT15-C6/C7 (shared, as a local) — **DONE**; the `shared` parameter is RT18 |
 | 5 | `RunEnv.ProjectCfg` is a daemon-free type | `daemon.ProjectConfig` (`projectconfig.go:1235`, a 2,139-LOC daemon file) | `projectconfig.ProjectConfig` (leaf) **or** a narrowed run-scoped view | PC — **needs §3.1 first** |
 | 6 | `SharedHandles.RunRegistry` is not a daemon concrete type | `*RunRegistry` | 3-method interface | RT20 precondition (§3.2) |
-| 7 | Raw wall-clock on the run path | `dot_gate.go` 6, `waitsocketgrace.go` 1, `postreadyhang.go` 1 (`beadRunOne`, `dot_cascade`, `reviewloop`, `dispatchsegment`, `runbridge`, `runshell` verified **clean**) | RT14 closes `dot_gate.go:486`. The other 7 must be **either closed by RT19c or formally re-filed post-lift with a named owner** — not silently dropped | RT14 + §3.6 ruling |
+| 7 | Raw wall-clock on the run path | **DONE.** RT14 closed the one in-segment site; RT19c (`f839121ff`) closed the other 7 plus the 22 `pasteinject.go` siblings and two `time.Since` reads. All ten pinned run-path files are wall-clock **clean** and `scripts/readywait-freeze-gate.sh` check (2) now ratchets them, over a regex widened to include `Since`/`Until`/`AfterFunc` | **0** | RT14 + RT19c — **closed**, not re-filed |
 | 8 | **Export drain: 201 symbols need exporting across the whole unit** | RT13 drains **21**; RT19b drains **15** → **36 / 201 (18%)** | the remaining ~165 are the lift's, and each must appear in RT19's or RT20's enumerated list before the lift starts. A symbol with no named slice is a build break waiting at lift time. | RT19 (enumerate), RT20 (apply) |
 | 9 | **Back-edge drain: ~20 back-edges survive RT19** (E5 §7.15) | RT19b drains 11 of the "third band" + the 4 HC-056 deadline symbols. The 3 E1-owned harness calls are **already discharged** (E1a/b/c landed). | remaining and each with an owner: the 4 `sessioncontext_chb023.go` calls (RT18), `standardgraph`/`modelpreference`/`moderesolve`/`harnessresolve`/`sandboxprofile` (RT17), `ProjectConfig` (PC), `*RunRegistry` (RT20), the 5 `dot_cascade → reviewloop` symbols (**dissolved by landing one package, §3.2b**) | — |
 | 10 | `export_test.go` split | 3,628 LOC; 183 `Exported*` funcs + 59 exported types; the only route 173 external test files have into the run loop | split, with a target set from a **measured** post-split number. The recon's "under 1,500 LOC" gate is retired as mis-calibrated. | RT19 |
@@ -282,8 +288,8 @@ correctly stay in daemon forever).
    ordering, not a compile ordering.
 7. **RT14's raw-clock scope.** E5 §4 step 16 says delete 8 raw-time sites. Only **1** is in RT14's blast
    radius (`dot_gate.go:486`). The other 7 belong to `pasteInjectQuitOnGateFile` and the Working-phase
-   completion wait, with 22 further siblings in `pasteinject.go` → re-filed as **RT19c**, currently
-   unowned (§3.6).
+   completion wait, with 22 further siblings in `pasteinject.go` → re-filed as **RT19c**, which has since
+   **landed** (`f839121ff`, §3.6).
 8. **`artifactAgentType` is no longer blocked on E1b.** E5 §3a says it "cannot be resolved until E1b
    re-homes `claudeRunArtifacts`". E1b-prep (`c3fff27d`) already did: the signature is now
    `func artifactAgentType(a shared.LaunchArtifacts) core.AgentType` over a daemon-free leaf type. It is

@@ -1398,13 +1398,6 @@ func ExportedWaitPostAgentReadyProgress(ctx context.Context, eventCh <-chan core
 	return waitPostAgentReadyProgress(ctx, substrate.SystemClock{}, eventCh, timeout)
 }
 
-// ExportedWaitPostAgentReadyProgressOn is ExportedWaitPostAgentReadyProgress with
-// the RT19c ClockPort exposed, so a FakeClock can drive the hang timeout in
-// virtual time (P2 E5 RT19c).
-func ExportedWaitPostAgentReadyProgressOn(ctx context.Context, clk substrate.ClockPort, eventCh <-chan core.EventEnvelope, timeout time.Duration) error {
-	return waitPostAgentReadyProgress(ctx, clk, eventCh, timeout)
-}
-
 // ExportedDefaultAgentReadyTimeout exposes runlaunch.DefaultAgentReadyTimeout
 // (HC-056, internal/runlaunch/deadlines.go) so the WS3-Claude-C timing
 // property/fuzz harness can PIN the

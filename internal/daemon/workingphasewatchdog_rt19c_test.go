@@ -19,6 +19,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -105,6 +106,30 @@ func rt19cAwait(t *testing.T, ch <-chan struct{}, what string) {
 	}
 }
 
+// rt19cBlockUntil is substrate.FakeClock.BlockUntil under the same rt19cWallBudget
+// rt19cAwait enforces.
+//
+// The raw BlockUntil spins with NO deadline, which makes it the one place these
+// tests can lose their own wall-clock assertion: if a converted site regresses to
+// package time it never registers a FakeClock sleeper or ticker, the count never
+// reaches n, and the test blocks until the whole test binary panics on its
+// -timeout — taking every other internal/daemon test down with it. A partial
+// regression should fail ONE test with the diagnostic below, not detonate the
+// package, so the wait is raced against the budget here too.
+func rt19cBlockUntil(t *testing.T, clk *substrate.FakeClock, n int, what string) {
+	t.Helper()
+	armed := make(chan struct{})
+	go func() {
+		clk.BlockUntil(n)
+		close(armed)
+	}()
+	select {
+	case <-armed:
+	case <-time.After(rt19cWallBudget):
+		t.Fatalf("timed out (%v of REAL time) waiting for %d FakeClock sleeper(s)/ticker(s) to arm (%s) — a converted site is probably still on the wall clock", rt19cWallBudget, n, what)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // postreadyhang.go — waitPostAgentReadyProgress
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,7 +149,10 @@ func TestRT19cPostAgentReadyHang_FiresOnFakeClock(t *testing.T) {
 	}()
 
 	wallStart := time.Now()
-	clk.BlockUntil(1) // the substrate.After sleeper is armed
+	// The hang bound is a one-shot clk.NewTicker, not a substrate.After sleeper —
+	// RT19c's deliberate delta, because a ticker is the only ClockPort deadline
+	// that can still be Stop()ped on an early return.
+	rt19cBlockUntil(t, clk, 1, "the hang-bound ticker")
 	clk.Advance(timeout + time.Second)
 
 	select {
@@ -138,6 +166,53 @@ func TestRT19cPostAgentReadyHang_FiresOnFakeClock(t *testing.T) {
 
 	if wall := time.Since(wallStart); wall > rt19cWallBudget {
 		t.Fatalf("drove a %v virtual timeout in %v of REAL time; want well under %v", timeout, wall, rt19cWallBudget)
+	}
+}
+
+// TestRT19cPostAgentReadyHang_NonPositiveDefaultStillErrors pins the one place
+// RT19c's timer→ticker swap was NOT behaviour-preserving.
+//
+// waitPostAgentReadyProgress substitutes defaultPostAgentReadyHangTimeout for a
+// non-positive caller timeout but did not re-check the substituted value — and
+// that default is a MUTABLE package var, exposed to tests as
+// ExportedDefaultPostAgentReadyHangTimeout and already rewritten by
+// postreadyhang_hka2okh_test.go. The pre-RT19c time.NewTimer(0) fired
+// immediately; time.NewTicker(0) PANICS, so a zero default turned a documented
+// error return into a daemon panic (and, on a FakeClock, into a permanent block,
+// since FakeClock.nextEventBefore only considers instants strictly after now).
+//
+// SystemClock deliberately: the panic is time.NewTicker's and only the real
+// clock reaches it. The call runs in a goroutine with recover so a regression
+// fails THIS test with a readable message instead of aborting the test binary.
+func TestRT19cPostAgentReadyHang_NonPositiveDefaultStillErrors(t *testing.T) {
+	// Deliberately NOT t.Parallel: this rewrites the same shared package var that
+	// TestPostReadyHang_zeroTimeoutUsesDefault rewrites, and a sequential test
+	// never overlaps this binary's parallel ones.
+	orig := defaultPostAgentReadyHangTimeout
+	defaultPostAgentReadyHangTimeout = 0
+	t.Cleanup(func() { defaultPostAgentReadyHangTimeout = orig })
+
+	ctx, cancel := context.WithTimeout(context.Background(), rt19cWallBudget)
+	defer cancel()
+	eventCh := make(chan core.EventEnvelope) // never receives
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errCh <- fmt.Errorf("waitPostAgentReadyProgress panicked: %v", r)
+			}
+		}()
+		errCh <- waitPostAgentReadyProgress(ctx, substrate.SystemClock{}, eventCh, 0)
+	}()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, ErrPostAgentReadyHang) {
+			t.Fatalf("waitPostAgentReadyProgress with a zero default = %v; want ErrPostAgentReadyHang", err)
+		}
+	case <-time.After(rt19cWallBudget):
+		t.Fatalf("waitPostAgentReadyProgress did not return within %v of REAL time with a zero default", rt19cWallBudget)
 	}
 }
 
@@ -179,11 +254,11 @@ func TestRT19cQuitOnGateFile_TimeoutFiresOnFakeClock(t *testing.T) {
 
 	wallStart := time.Now()
 
-	clk.BlockUntil(1) // poll ticker armed
+	rt19cBlockUntil(t, clk, 1, "the gate-verdict poll ticker")
 	clk.Advance(verdictTimeout + pollInterval)
 	rt19cAwait(t, qk.quitSent, "/quit after the gate-verdict timeout")
 
-	clk.BlockUntil(2) // ticker + the post-quit kill-grace sleeper
+	rt19cBlockUntil(t, clk, 2, "the poll ticker plus the post-quit kill-grace sleeper")
 	clk.Advance(rt19cOvershoot)
 	rt19cAwait(t, qk.killed, "Kill after the post-quit grace")
 	rt19cAwait(t, done, "pasteInjectQuitOnGateFile to return")
@@ -239,11 +314,11 @@ func TestRT19cQuitOnCommit_HardCeilingFiresOnFakeClock(t *testing.T) {
 	// wall cost. One jump also means the loop evaluates the hardDeadline check
 	// (which is FIRST in the tick body) at a `now` already past every deadline, so
 	// the hard-ceiling branch is the one taken, deterministically.
-	clk.BlockUntil(1) // poll ticker armed
+	rt19cBlockUntil(t, clk, 1, "the commit poll ticker")
 	clk.Advance(rt19cOvershoot)
 	rt19cAwait(t, qk.quitSent, "/quit after the commit hard ceiling")
 
-	clk.BlockUntil(2) // ticker + the noChange kill-delay sleeper
+	rt19cBlockUntil(t, clk, 2, "the poll ticker plus the noChange kill-delay sleeper")
 	clk.Advance(rt19cOvershoot)
 	rt19cAwait(t, qk.killed, "Kill after the noChange kill delay")
 	rt19cAwait(t, noChangeTimeoutCh, "noChangeTimeoutCh to close")

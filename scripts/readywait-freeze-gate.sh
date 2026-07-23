@@ -17,12 +17,40 @@ set -euo pipefail
 # pasteInjectQuitOnGateFile, waitsocketgrace.go, postreadyhang.go) now take a
 # substrate.ClockPort too, so raw wall-clock is forbidden in them as well.
 #
+# The forbidden set is WALLCLOCK_RE below, and it is deliberately WIDER than the
+# regex RT19c's own inventory used: that one had no Since/Until and so missed the
+# two time.Since(loopStart) reads in pasteInjectQuitOnReviewFile that RT19c then
+# had to convert anyway.
+#
 # Exit 0: clean. Exit 1: the door was reopened.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 HITS=0
+
+# WALLCLOCK_RE — the wall-clock entry points forbidden in the pinned files. ONE
+# definition, used by checks (2) and (3), so the two can never drift apart.
+#
+# Since/Until are here because RT19c's own planning grep omitted them and so
+# missed the two time.Since(loopStart) calls in pasteInjectQuitOnReviewFile — an
+# elapsed-time read is exactly as clock-bound as a deadline, and mixing a wall
+# elapsed with a virtual deadline is the failure mode this gate exists to stop.
+# AfterFunc is here because time.After( does NOT match time.AfterFunc(.
+#
+# time.Now().Sub(x) — Since spelled the long way — needs no separate alternative:
+# Now already covers it. Deliberately NOT policed: time.Duration(n)*time.Second
+# (a unit conversion, no clock read, and dot_cascade.go legitimately has four),
+# and context.WithTimeout/WithDeadline (wall-bound, but ctx deadlines are not yet
+# on the ClockPort and dot_cascade.go already carries one — pinning it would make
+# the gate red on arrival rather than ratchet anything).
+#
+# The match is plain text — COMMENTS COUNT. Stripping them would need a Go parser
+# (or a sed hack that silently creates false negatives), and a gate that misses a
+# real site is worse than one that occasionally objects to prose. So: in these ten
+# files, describe a forbidden call without writing its literal call syntax
+# ("a stdlib ticker panics on a non-positive interval", not the code).
+WALLCLOCK_RE='time\.(After|AfterFunc|Now|NewTimer|NewTicker|Tick|Sleep|Since|Until)\('
 
 # (1) No re-declaration of the retired ready-wait symbols anywhere in the daemon
 #     (recursive — a sub-package is the obvious evasion).
@@ -59,10 +87,10 @@ for f in internal/daemon/dispatchsegment.go internal/daemon/runshell.go \
         HITS=$((HITS + 1))
         continue
     fi
-    N="$(grep -cE 'time\.(After|Now|NewTimer|NewTicker|Tick|Sleep)\(' "$f" || true)"
+    N="$(grep -cE "$WALLCLOCK_RE" "$f" || true)"
     if [ "$N" -ne 0 ]; then
         echo "readywait-freeze-gate: FORBIDDEN raw wall-clock in $f ($N site(s)) — use substrate.After / the ClockPort:" >&2
-        grep -nE 'time\.(After|Now|NewTimer|NewTicker|Tick|Sleep)\(' "$f" >&2
+        grep -nE "$WALLCLOCK_RE" "$f" >&2
         HITS=$((HITS + 1))
     fi
 done
@@ -73,7 +101,7 @@ START="$(grep -n '^func beadRunOne' internal/daemon/workloop.go | head -1 | cut 
 END="$(awk -v s="$START" 'NR>s && /^func /{print NR; exit}' internal/daemon/workloop.go)"
 if [ -n "$START" ] && [ -n "$END" ]; then
     MATCHES="$(awk -v s="$START" -v e="$END" 'NR>=s && NR<=e' internal/daemon/workloop.go \
-               | grep -nE 'time\.(After|Now|NewTimer|NewTicker|Tick|Sleep)\(' || true)"
+               | grep -nE "$WALLCLOCK_RE" || true)"
     if [ -n "$MATCHES" ]; then
         echo "readywait-freeze-gate: FORBIDDEN raw wall-clock inside beadRunOne (offsets from line $START):" >&2
         printf '%s\n' "$MATCHES" >&2

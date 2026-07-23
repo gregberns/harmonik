@@ -37,6 +37,13 @@ import (
 // truly hung.
 var defaultPostAgentReadyHangTimeout = 7 * time.Minute
 
+// minPostAgentReadyHangTimeout is the floor waitPostAgentReadyProgress clamps to
+// when both the caller's timeout AND defaultPostAgentReadyHangTimeout are
+// non-positive. It exists only to keep a zero out of NewTicker, which panics on
+// one; the fire-immediately semantics it produces match the stdlib timer this
+// bound used before P2 E5 RT19c.
+const minPostAgentReadyHangTimeout = time.Nanosecond
+
 // ErrPostAgentReadyHang is returned by waitPostAgentReadyProgress when the
 // implementer emitted agent_ready but no subsequent event arrived within the
 // configured timeout (hk-a2okh).
@@ -60,6 +67,18 @@ var ErrPostAgentReadyHang = errors.New("daemon: post-agent_ready hang: implement
 func waitPostAgentReadyProgress(ctx context.Context, clk substrate.ClockPort, eventCh <-chan core.EventEnvelope, timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = defaultPostAgentReadyHangTimeout
+	}
+	// Re-check AFTER the substitution. defaultPostAgentReadyHangTimeout is a
+	// mutable package var that export_test.go hands to tests, so the substituted
+	// value can itself be non-positive — and the RT19c ticker is far less
+	// forgiving than the timer it replaced: a stdlib timer with a non-positive
+	// duration fired immediately, but a stdlib ticker PANICS on one, and a
+	// FakeClock ticker would hang instead (nextEventBefore only considers
+	// instants strictly after now). Clamping to the smallest positive interval
+	// keeps the pre-RT19c behaviour: the bound fires at once and the caller gets
+	// ErrPostAgentReadyHang.
+	if timeout <= 0 {
+		timeout = minPostAgentReadyHangTimeout
 	}
 	if clk == nil {
 		clk = substrate.SystemClock{}

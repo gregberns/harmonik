@@ -336,10 +336,11 @@ runlaunch-freeze-gate:  ## P2 E5 RT19b: forbid re-declaring the moved launch-eff
 # re-hand-roll a wall-clock wait", so this grep ratchet closes that door: no
 # re-declaration of the retired symbols, no raw wall-clock in the run-path files
 # that are clean today or inside beadRunOne, and all four launch sites still bind
-# through the seam. The Working-phase watchdogs (pasteinject.go,
-# pasteInjectQuitOnGateFile, waitsocketgrace.go, postreadyhang.go) are
-# deliberately OUT of scope — they sit outside the RT8 segment boundary and slice
-# RT19c owns them. Wired into check-fast and check-short.
+# through the seam. Slice RT19c (landed f839121ff) clock-ported the Working-phase
+# watchdogs (pasteinject.go, dot_gate.go's pasteInjectQuitOnGateFile,
+# waitsocketgrace.go, postreadyhang.go) onto the injected ClockPort and added all
+# four to check (2), so they are now IN scope, not out. Wired into check-fast and
+# check-short.
 .PHONY: readywait-freeze-gate
 readywait-freeze-gate:  ## P2 E5 RT14: forbid re-hand-rolling the agent_ready wait in internal/daemon
 	scripts/readywait-freeze-gate.sh

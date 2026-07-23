@@ -414,8 +414,9 @@ func commsWakePaneCandidates(projectDir, agentName string) []string {
 		// handle format: "<session>:<window>" → pane = handle + ".0"
 		candidates = append(candidates, rec.Handle+".0")
 	}
-	candidates = append(candidates, lifecycle.TmuxSessionName(hash, "crew-"+agentName))
-	candidates = append(candidates, lifecycle.TmuxSessionName(hash, agentName))
+	candidates = append(candidates,
+		lifecycle.TmuxSessionName(hash, "crew-"+agentName),
+		lifecycle.TmuxSessionName(hash, agentName))
 	return candidates
 }
 
@@ -794,13 +795,6 @@ func parseFriendlyDuration(s string) (time.Duration, error) {
 // SPEC §5 / N9 (the K5 reaper reuses this same Offline determination).
 // Bead refs: hk-7t27s (T10, original), hk-6vwi3 (fix #1), hk-061 (this lift).
 
-// presenceTTL / presenceStaleCutoff alias the canonical windows in
-// internal/presence (TTL=120s, StaleCutoff=10m).
-const (
-	presenceTTL         = presence.TTL
-	presenceStaleCutoff = presence.StaleCutoff
-)
-
 // PresenceRecord aliases presence.Record (the registry projection entry).
 type PresenceRecord = presence.Record
 
@@ -1063,7 +1057,7 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 // runCommsWhoSubcommand implements `harmonik comms who` (agent-comms spec §2.3, bead hk-ofxd0 T11).
 //
 // Reads the presence projection (T10's ComputePresenceRegistry) and prints agents
-// that are online within the 120s staleness window (presenceTTL). Read-only; emits
+// that are online within the 120s staleness window (presence.TTL). Read-only; emits
 // nothing, advances no cursor. No daemon connection required.
 //
 // subArgs is os.Args[3:].
@@ -1112,8 +1106,8 @@ func runCommsWhoSubcommand(subArgs []string) int {
 	registry := ComputePresenceRegistry(eventsPath)
 
 	// Collect online and stale agents in deterministic order (sorted by name).
-	// Stale agents (presenceTTL..presenceStaleCutoff) are included with a
-	// degraded annotation; offline agents (>presenceStaleCutoff or leave beat) are omitted.
+	// Stale agents (presence.TTL..presence.StaleCutoff) are included with a
+	// degraded annotation; offline agents (>presence.StaleCutoff or leave beat) are omitted.
 	type whoEntry struct {
 		Agent    string    `json:"agent"`
 		LastSeen time.Time `json:"last_seen"`

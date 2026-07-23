@@ -532,13 +532,13 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir 
 
 	// ── cross-field invariants (fail-loud — NEVER revert to defaults) ──
 	// Band ordering: warn < act < force_act < hard_ceiling.
-	if !(out.WarnAbsTokens < out.ActAbsTokens) {
+	if out.WarnAbsTokens >= out.ActAbsTokens {
 		return ResolvedKeeperConfig{}, &KeeperConfigError{
 			Field:  "warn<act",
 			Reason: fmt.Sprintf("band inversion: warn_abs_tokens (%d) must be < act_abs_tokens (%d)", out.WarnAbsTokens, out.ActAbsTokens),
 		}
 	}
-	if !(out.ActAbsTokens < out.ForceActAbsTokens) {
+	if out.ActAbsTokens >= out.ForceActAbsTokens {
 		return ResolvedKeeperConfig{}, &KeeperConfigError{
 			Field:  "act<force_act",
 			Reason: fmt.Sprintf("band inversion: act_abs_tokens (%d) must be < force_act_abs_tokens (%d)", out.ActAbsTokens, out.ForceActAbsTokens),
@@ -564,7 +564,7 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir 
 				Reason: fmt.Sprintf("restart-mode hard ceiling (%d) must be > force_act_abs_tokens (%d): a restart ceiling at/below force_act is nonsensical (force_act already restarts via the cycle there)", out.HardCeilingAbsTokens, out.ForceActAbsTokens),
 			}
 		}
-		if !(out.ForceActAbsTokens < out.HardCeilingAbsTokens) {
+		if out.ForceActAbsTokens >= out.HardCeilingAbsTokens {
 			return ResolvedKeeperConfig{}, &KeeperConfigError{
 				Field:  "force_act<hard_ceiling",
 				Reason: fmt.Sprintf("band inversion: force_act_abs_tokens (%d) must be < hard_ceiling_abs_tokens (%d)", out.ForceActAbsTokens, out.HardCeilingAbsTokens),

@@ -105,7 +105,7 @@ func runBeadSubcommandViaDaemon(
 	// run_started / run_completed / run_failed are needed for the append-fallback
 	// path, which attributes the exit code to the caller's OWN beads rather than
 	// the whole of group 0; they are ignored on the fresh-submit path.
-	subReqBytes, _ := json.Marshal(map[string]any{ //nolint:errcheck // constant map; cannot fail
+	subReqBytes, marshalErr := json.Marshal(map[string]any{
 		"op": "subscribe",
 		"types": []string{
 			"queue_group_completed", "queue_paused", "heartbeat",
@@ -113,6 +113,10 @@ func runBeadSubcommandViaDaemon(
 		},
 		"heartbeat_seconds": 60,
 	})
+	if marshalErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: cannot build subscribe request: %v\n", marshalErr)
+		return 1
+	}
 	if _, writeErr := subConn.Write(subReqBytes); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot send subscribe request: %v\n", writeErr)
 		return 1
@@ -240,7 +244,11 @@ func viaAppendToActiveQueue(
 	items []queue.Item,
 ) (queueID string, groupIndex int, appended bool, exitCode int) {
 	// Query the active queue to get its queue_id.
-	statusPayload, _ := json.Marshal(map[string]string{"op": "queue-status"}) //nolint:errcheck
+	statusPayload, marshalErr := json.Marshal(map[string]string{"op": "queue-status"})
+	if marshalErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: cannot build queue-status request: %v\n", marshalErr)
+		return "", 0, false, 1
+	}
 	statusResp, earlyExit := viaSendRequest(ctx, harmonikDir, statusPayload)
 	if earlyExit != 0 {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot query daemon queue status for append fallback\n")

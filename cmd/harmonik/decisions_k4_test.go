@@ -45,7 +45,7 @@ func dk4Presence(eventID, agent, status, lastSeen, reason string) string {
 func TestFlagOrphanedPending_OfflineFlaggedOthersNot(t *testing.T) {
 	now := time.Now().UTC()
 	fresh := now.Format(time.RFC3339)
-	// 15 minutes ago is past presenceStaleCutoff (10m) → Offline by age.
+	// 15 minutes ago is past presence.StaleCutoff (10m) → Offline by age.
 	stale := now.Add(-15 * time.Minute).Format(time.RFC3339)
 
 	// Three open decisions, three distinct blocked agents:

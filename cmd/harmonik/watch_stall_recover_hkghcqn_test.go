@@ -31,12 +31,12 @@ import (
 	"testing"
 )
 
-// hkghcqn_repoRoot returns the absolute path to the repository root.
-func hkghcqn_repoRoot(t *testing.T) string {
+// hkghcqnRepoRoot returns the absolute path to the repository root.
+func hkghcqnRepoRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Fatal("hkghcqn_repoRoot: runtime.Caller(0) failed")
+		t.Fatal("hkghcqnRepoRoot: runtime.Caller(0) failed")
 	}
 	return filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 }
@@ -46,7 +46,7 @@ func hkghcqn_repoRoot(t *testing.T) string {
 // The variable must use all three inputs: stall confirmed, session alive, and
 // enough time since last nudge. (RED until hk-ghcqn fix lands.)
 func TestWatchStallNudgeVar_GHCQN_P1(t *testing.T) {
-	root := hkghcqn_repoRoot(t)
+	root := hkghcqnRepoRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "ops-monitor-check.sh")
 	raw, err := os.ReadFile(scriptPath) //nolint:gosec // path constructed from repo root, not user input
 	if err != nil {
@@ -89,7 +89,7 @@ func TestWatchStallNudgeVar_GHCQN_P1(t *testing.T) {
 // DO_NUDGE == "true". Without this, the do_nudge flag exists in the snapshot but
 // no recovery action is ever taken. (RED until hk-ghcqn fix lands.)
 func TestWatchStallShellNudgeBlock_GHCQN_P2(t *testing.T) {
-	root := hkghcqn_repoRoot(t)
+	root := hkghcqnRepoRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "ops-monitor-check.sh")
 	raw, err := os.ReadFile(scriptPath) //nolint:gosec // path constructed from repo root, not user input
 	if err != nil {
@@ -134,7 +134,7 @@ func TestWatchStallShellNudgeBlock_GHCQN_P2(t *testing.T) {
 // snapshot dict written to latest.json. This allows the captain to observe whether
 // ops-monitor attempted a stall recovery this tick. (RED until hk-ghcqn fix lands.)
 func TestWatchNudgeInSnapshot_GHCQN_P3(t *testing.T) {
-	root := hkghcqn_repoRoot(t)
+	root := hkghcqnRepoRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "ops-monitor-check.sh")
 	raw, err := os.ReadFile(scriptPath) //nolint:gosec // path constructed from repo root, not user input
 	if err != nil {

@@ -258,7 +258,9 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 func deriveBeadPrefix(projectDir string) string {
 	base := strings.ToLower(filepath.Base(projectDir))
 	words := strings.FieldsFunc(base, func(r rune) bool {
-		return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9')
+		isLower := 'a' <= r && r <= 'z'
+		isDigit := '0' <= r && r <= '9'
+		return !isLower && !isDigit
 	})
 	if len(words) == 0 {
 		return "hk"
@@ -266,7 +268,7 @@ func deriveBeadPrefix(projectDir string) string {
 	if len(words) >= 2 {
 		var slug strings.Builder
 		for _, w := range words {
-			if len(w) > 0 {
+			if w != "" {
 				slug.WriteByte(w[0])
 			}
 			if slug.Len() >= 4 {
@@ -302,7 +304,7 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 		// Also check for worktrees (where .git is a file, not a directory).
 		gitFile := filepath.Join(projectDir, ".git")
 		info, ferr := os.Stat(gitFile)
-		if ferr != nil || info.IsDir() == false {
+		if ferr != nil || !info.IsDir() {
 			// More accurate: try `git -C <dir> rev-parse --git-dir`.
 			// context.Background(): `harmonik init` is a synchronous CLI entry
 			// point with no cancellable context in scope, and this probe is a

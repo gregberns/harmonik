@@ -192,8 +192,9 @@ func validateDot(src string) []diagnostic {
 		return diags
 	}
 
-	var diags []diagnostic
-	for _, d := range dot.Validate(graph) {
+	findings := dot.Validate(graph)
+	diags := make([]diagnostic, 0, len(findings))
+	for _, d := range findings {
 		if d.Severity != dot.SeverityError {
 			continue
 		}

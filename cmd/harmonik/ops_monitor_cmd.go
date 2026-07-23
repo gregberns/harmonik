@@ -153,11 +153,11 @@ func resolveOpsMonitorProjectDir(args []string) (projectDir string, remaining []
 	if aerr != nil {
 		return "", nil, fmt.Errorf("cannot resolve path %q: %w", projectDir, aerr)
 	}
-	real, rerr := filepath.EvalSymlinks(abs)
+	resolved, rerr := filepath.EvalSymlinks(abs)
 	if rerr != nil {
 		return "", nil, fmt.Errorf("cannot resolve real path of %q: %w", abs, rerr)
 	}
-	return real, remaining, nil
+	return resolved, remaining, nil
 }
 
 func opsMonitorPlistPath(projectDir string) (string, error) {

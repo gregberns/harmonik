@@ -62,7 +62,7 @@ func RunPause(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	sockPath := lifecycle.SocketPath(projectDir)
-	code := sendOperatorOp(ctx, sockPath, "operator-pause", stdout, stderr)
+	code := sendOperatorOp(ctx, sockPath, "operator-pause", stderr)
 	if code == 0 {
 		fmt.Fprintln(stdout, "harmonik supervise pause: daemon paused")
 	}
@@ -94,7 +94,7 @@ NOTES
 
 // sendOperatorOp dials sockPath, sends {"op": op}, and interprets the response.
 // Returns 0 on success, 1 on protocol/I/O error, 17 when the daemon is down.
-func sendOperatorOp(ctx context.Context, sockPath, op string, stdout, stderr io.Writer) int {
+func sendOperatorOp(ctx context.Context, sockPath, op string, stderr io.Writer) int {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 	if err != nil {
 		if isSocketAbsentOrRefused(err) {

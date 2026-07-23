@@ -1093,7 +1093,7 @@ var keeperScriptNames = []string{
 // $GOPATH/bin with no scripts/ nearby; the embedded-extract fallback handles that
 // case so `harmonik start captain` works on any foreign project without --scripts-dir.
 func autoDetectScriptsDir(hints ...string) string {
-	var candidates []string
+	candidates := make([]string, 0, len(hints)+3)
 
 	// Caller hints first (project root, cwd) — these win for go-install'd binaries.
 	for _, h := range hints {

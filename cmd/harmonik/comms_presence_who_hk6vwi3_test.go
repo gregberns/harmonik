@@ -142,7 +142,7 @@ func extractProjectDir(eventsPath string) string {
 // ---------------------------------------------------------------------------
 
 // TestPresenceWho_ActivityDerivedLiveness verifies fix #1: an agent whose latest
-// presence beat is 200s old (beyond presenceTTL=120s) but who sent a message
+// presence beat is 200s old (beyond presence.TTL=120s) but who sent a message
 // 30s ago is reported as online by ComputePresenceRegistry.
 func TestPresenceWho_ActivityDerivedLiveness(t *testing.T) {
 	beatTS := time.Now().Add(-200 * time.Second).UTC().Format(time.RFC3339)
@@ -170,7 +170,7 @@ func TestPresenceWho_ActivityDerivedLiveness(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPresenceWho_RefreshBeatKeepsOnline verifies that a refresh beat emitted
-// within the presenceTTL window (e.g., by a comms-recv handler — fix #2) keeps
+// within the presence.TTL window (e.g., by a comms-recv handler — fix #2) keeps
 // a receive-only agent visible as online.
 func TestPresenceWho_RefreshBeatKeepsOnline(t *testing.T) {
 	// Agent never sent a message but received a refresh beat 30s ago.
@@ -196,7 +196,7 @@ func TestPresenceWho_RefreshBeatKeepsOnline(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPresenceWho_StaleAgent verifies that an agent last seen 5 minutes ago
-// (beyond presenceTTL=120s but within presenceStaleCutoff=10m) is in state
+// (beyond presence.TTL=120s but within presence.StaleCutoff=10m) is in state
 // PresenceStateStale — not offline or absent — and appears in "comms who" output.
 func TestPresenceWho_StaleAgent(t *testing.T) {
 	beatTS := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)

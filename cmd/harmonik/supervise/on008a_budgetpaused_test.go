@@ -23,7 +23,6 @@ package supervisecmd
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 )
@@ -187,7 +186,6 @@ func TestON008a_BuildStatusIncludesLoopStatus(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -338,13 +336,3 @@ func TestON008a_UnknownStatusStringRejected(t *testing.T) {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
-
-// readFile is a thin wrapper used in tests that need to verify the raw JSON.
-func readFile(t *testing.T, path string) []byte {
-	t.Helper()
-	data, err := os.ReadFile(path) //nolint:gosec
-	if err != nil {
-		t.Fatalf("readFile %q: %v", path, err)
-	}
-	return data
-}

@@ -157,7 +157,7 @@ func sha256File(path string) (string, error) {
 // buildDiskHashes computes the on-disk sha256 for every manifest path, keyed by
 // the EMBED path (so it lines up with the manifest + lock keys the planner uses).
 // Absent files map to "" per the planner's contract.
-func buildDiskHashes(projectDir string, m Manifest, stderr io.Writer) (map[string]string, error) {
+func buildDiskHashes(projectDir string, m Manifest) (map[string]string, error) {
 	disk := make(map[string]string, len(m.Files))
 	for _, f := range m.Files {
 		dest, ok := destFor(f.Path)
@@ -258,7 +258,7 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "harmonik sync-assets: read lock: %v\n", err)
 		return 1
 	}
-	disk, err := buildDiskHashes(projectDir, manifest, stderr)
+	disk, err := buildDiskHashes(projectDir, manifest)
 	if err != nil {
 		fmt.Fprintf(stderr, "harmonik sync-assets: hash project files: %v\n", err)
 		return 1
@@ -350,22 +350,22 @@ func applyPlan(projectDir string, m Manifest, plan []ReconcileItem, stdout, stde
 
 		switch item.Class {
 		case Managed:
-			code := applyManaged(full, dest, embedData, item.Action, &out, stdout, stderr)
+			code := applyManaged(full, dest, embedData, item.Action, &out, stderr)
 			if code != 0 {
 				return outcomes, code
 			}
 		case ManagedRegion:
-			code := applyManagedRegion(projectDir, full, dest, embedData, item.Action, &out, stdout, stderr)
+			code := applyManagedRegion(projectDir, full, dest, embedData, item.Action, &out, stderr)
 			if code != 0 {
 				return outcomes, code
 			}
 		case ContentOwned:
-			code := applyContentOwned(full, dest, embedData, item.Action, &out, stdout, stderr)
+			code := applyContentOwned(full, dest, embedData, item.Action, &out, stderr)
 			if code != 0 {
 				return outcomes, code
 			}
 		case Scaffold:
-			code := applyScaffold(full, dest, embedData, item.Action, &out, stdout, stderr)
+			code := applyScaffold(full, dest, embedData, item.Action, &out, stderr)
 			if code != 0 {
 				return outcomes, code
 			}
@@ -434,7 +434,7 @@ func lockFromOutcomes(prior Lock, outcomes []applyOutcome) Lock {
 
 // applyManaged handles product-owned skill files: overwrite on FastForward/Create;
 // on Conflict write <dest>.harmonik-new and NEVER touch the edited file.
-func applyManaged(full, dest string, embedData []byte, action Action, out *applyOutcome, stdout, stderr io.Writer) int {
+func applyManaged(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	switch action {
 	case ActionFastForward, ActionCreate:
 		if err := writeFileEnsureDir(full, embedData); err != nil {
@@ -452,6 +452,12 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 		}
 		out.conflic = true
 		out.note = "CONFLICT: local edits — embed written to " + dest + ".harmonik-new (original untouched)"
+	case ActionSkip, ActionLeave:
+		// applyPlan filters both of these out before dispatch. Reaching here means
+		// that filter and this switch have drifted apart, which would silently
+		// write nothing while reporting success.
+		fmt.Fprintf(stderr, "harmonik sync-assets: internal error: action %q reached applyManaged for %s\n", action, dest)
+		return 1
 	}
 	return 0
 }
@@ -459,7 +465,7 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 // applyManagedRegion handles the AGENTS router: replace only the marker-delimited
 // managed region(s); preserve everything outside the markers. Markers missing →
 // treat as Conflict.
-func applyManagedRegion(projectDir, full, dest string, embedData []byte, action Action, out *applyOutcome, stdout, stderr io.Writer) int {
+func applyManagedRegion(projectDir, full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	// Render template substitutions exactly as init does, so the managed region
 	// we splice in matches what init would have written.
 	rendered := renderAgentsTemplate(string(embedData), projectDir)
@@ -524,7 +530,7 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 // applyContentOwned handles the project-owned context tiers: Create writes the
 // template; FastForward refreshes ONLY the TIER header region, body untouched;
 // Conflict reports only.
-func applyContentOwned(full, dest string, embedData []byte, action Action, out *applyOutcome, stdout, stderr io.Writer) int {
+func applyContentOwned(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	switch action {
 	case ActionCreate:
 		if err := writeFileEnsureDir(full, embedData); err != nil {
@@ -572,6 +578,12 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 		// Body is project-owned: report only, write nothing.
 		out.skipped = true
 		out.note = "CONFLICT on content-owned file — body is project-owned; left untouched (reconcile manually)"
+	case ActionSkip, ActionLeave:
+		// applyPlan filters both of these out before dispatch. Reaching here means
+		// that filter and this switch have drifted apart, which would silently
+		// write nothing while reporting success.
+		fmt.Fprintf(stderr, "harmonik sync-assets: internal error: action %q reached applyContentOwned for %s\n", action, dest)
+		return 1
 	}
 	return 0
 }
@@ -579,7 +591,7 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 // applyScaffold handles create-once stub files: write only on Create; otherwise
 // leave (the planner only emits Create/Skip/Leave/Conflict for these — Conflict
 // and FastForward on a create-once stub are treated as leave-untouched).
-func applyScaffold(full, dest string, embedData []byte, action Action, out *applyOutcome, stdout, stderr io.Writer) int {
+func applyScaffold(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	if action == ActionCreate {
 		if err := writeFileEnsureDir(full, embedData); err != nil {
 			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
@@ -734,7 +746,7 @@ func daemonDispatchGate(projectDir string) (bool, string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	var queues []*queue.Queue
+	queues := make([]*queue.Queue, 0, len(names))
 	for _, name := range names {
 		q, lerr := queue.Load(ctx, projectDir, name)
 		if lerr != nil || q == nil {

@@ -153,7 +153,6 @@ func TestResolvePiConfig_ModelShape_ValidVariants(t *testing.T) {
 		strings.Repeat("a", 128), // exactly 128 chars
 	}
 	for _, m := range validModels {
-		m := m
 		t.Run(m[:min(len(m), 30)], func(t *testing.T) {
 			t.Parallel()
 			cfg := fullPiCfg()
@@ -177,7 +176,6 @@ func TestResolvePiConfig_ModelShape_InvalidChars(t *testing.T) {
 		"model\x00null",
 	}
 	for _, m := range invalidModels {
-		m := m
 		t.Run(m, func(t *testing.T) {
 			t.Parallel()
 			cfg := fullPiCfg()

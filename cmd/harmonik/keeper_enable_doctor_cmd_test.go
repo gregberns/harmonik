@@ -445,28 +445,6 @@ func makeDoctorCfg(t *testing.T, agent string) (doctorConfig, func()) {
 	return cfg, cleanup
 }
 
-// writeFullSettings writes a settings.json with all keeper stanzas
-// (statusLine + Stop + PreCompact + SessionStart).
-// agent is unused in the command strings — hk-nm32w removed agent from commands.
-// ON-058b: statusLine is project-agnostic (no HARMONIK_PROJECT= prefix).
-// ON-058a: Stop/PreCompact hooks carry HARMONIK_PROJECT= for project-keyed dedup.
-func writeFullSettings(t *testing.T, settingsPath, projectDir, scriptsDir, _ string) {
-	t.Helper()
-	settings := map[string]interface{}{}
-	statusLineCmd := filepath.Join(scriptsDir, "keeper-statusline.sh")
-	stopCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-stop-hook.sh")
-	pcCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-precompact-hook.sh")
-	ssCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-sessionstart-hook.sh")
-	mergeStatusLineStanza(settings, statusLineCmd)
-	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, stopCmd)
-	mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", projectDir, pcCmd)
-	mergeHookStanza(settings, "SessionStart", "keeper-sessionstart-hook.sh", projectDir, ssCmd)
-	raw, _ := json.MarshalIndent(settings, "", "  ")
-	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
-		t.Fatalf("writeFullSettings: %v", err)
-	}
-}
-
 // TestKeeperDoctor_AllGapsWhenNoSetup verifies that doctor reports failures
 // when nothing has been set up.
 func TestKeeperDoctor_AllGapsWhenNoSetup(t *testing.T) {

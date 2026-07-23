@@ -101,9 +101,9 @@ const validDOT = `digraph workflow {
 }
 `
 
-// invalidDOT_badNodeType has an unrecognised node type value ("banana"),
+// invalidDOTBadNodeType has an unrecognised node type value ("banana"),
 // which the unified validator rejects (WG-001 node-type enum).
-const invalidDOT_badNodeType = `digraph workflow {
+const invalidDOTBadNodeType = `digraph workflow {
     schema_version="1";
     version="0.1.0";
     workflow_id="018f1e2b-0040-7000-8000-000000000100";
@@ -162,7 +162,7 @@ func TestGraphValidate_ValidFile_JSONMode(t *testing.T) {
 }
 
 func TestGraphValidate_InvalidFile_BadNodeType_ExitNonZero(t *testing.T) {
-	path := graphValidateFixtureWriteFile(t, "bad-type.dot", invalidDOT_badNodeType)
+	path := graphValidateFixtureWriteFile(t, "bad-type.dot", invalidDOTBadNodeType)
 
 	var exitCode int
 	stdout, _ := graphValidateFixtureCaptureOutput(t, func() {
@@ -181,7 +181,7 @@ func TestGraphValidate_InvalidFile_BadNodeType_ExitNonZero(t *testing.T) {
 }
 
 func TestGraphValidate_InvalidFile_BadNodeType_JSONMode(t *testing.T) {
-	path := graphValidateFixtureWriteFile(t, "bad-type.dot", invalidDOT_badNodeType)
+	path := graphValidateFixtureWriteFile(t, "bad-type.dot", invalidDOTBadNodeType)
 
 	var exitCode int
 	stdout, _ := graphValidateFixtureCaptureOutput(t, func() {

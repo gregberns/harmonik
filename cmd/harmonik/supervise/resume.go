@@ -59,7 +59,7 @@ func RunResume(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	sockPath := lifecycle.SocketPath(projectDir)
-	code := sendOperatorOp(ctx, sockPath, "operator-resume", stdout, stderr)
+	code := sendOperatorOp(ctx, sockPath, "operator-resume", stderr)
 	if code == 0 {
 		fmt.Fprintln(stdout, "harmonik supervise resume: daemon resumed")
 	}

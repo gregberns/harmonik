@@ -330,13 +330,6 @@ func ensureBootAssets(projectDir string, stdout, stderr io.Writer) {
 	}
 }
 
-// runCaptainLaunch keeps the hk-ly0n/hk-igek signature for back-compat with the
-// existing argv + keeper-enable tests. It delegates to runCaptainLaunchWithOps
-// with the production tmux ops.
-func runCaptainLaunch(subArgs []string, run captainLaunchRunFn, enableKeeper keeperEnableFn) int {
-	return runCaptainLaunchWithOps(subArgs, run, enableKeeper, osCaptainTmuxOps{adapter: ltmux.OSAdapter{}})
-}
-
 // captainTmuxSessionName resolves the tmux session name for the captain:
 //   - an explicit --tmux value wins (operator override / back-compat);
 //   - otherwise the HASHED namespace harmonik-<hash>-captain, computed in-process

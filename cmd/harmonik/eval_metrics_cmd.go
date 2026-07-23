@@ -285,15 +285,15 @@ func evalGocycloMax(workdir string, files []string) *int {
 	if err != nil {
 		return nil
 	}
-	max := 0
+	maxSeen := 0
 	found := false
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.Fields(line)
 		if len(parts) >= 1 {
 			if n, err := strconv.Atoi(parts[0]); err == nil {
 				found = true
-				if n > max {
-					max = n
+				if n > maxSeen {
+					maxSeen = n
 				}
 			}
 		}
@@ -302,7 +302,7 @@ func evalGocycloMax(workdir string, files []string) *int {
 		// No parseable gocyclo output — distinct from a real max of 0.
 		return nil
 	}
-	return &max
+	return &maxSeen
 }
 
 // evalGetHeadDiff returns the unified diff of the HEAD commit.

@@ -35,12 +35,12 @@ import (
 	"testing"
 )
 
-// hkgioct_repoRoot returns the absolute path to the repository root.
-func hkgioct_repoRoot(t *testing.T) string {
+// hkgioctRepoRoot returns the absolute path to the repository root.
+func hkgioctRepoRoot(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Fatal("hkgioct_repoRoot: runtime.Caller(0) failed")
+		t.Fatal("hkgioctRepoRoot: runtime.Caller(0) failed")
 	}
 	return filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 }
@@ -50,7 +50,7 @@ func hkgioct_repoRoot(t *testing.T) string {
 // The variable must appear in the Python analysis block with both those inputs.
 // (RED until hk-gioct fix lands.)
 func TestWatchStallStreamLivenessVar_GIOCT_P1(t *testing.T) {
-	root := hkgioct_repoRoot(t)
+	root := hkgioctRepoRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "ops-monitor-check.sh")
 	raw, err := os.ReadFile(scriptPath) //nolint:gosec // path constructed from repo root, not user input
 	if err != nil {
@@ -87,7 +87,7 @@ func TestWatchStallStreamLivenessVar_GIOCT_P1(t *testing.T) {
 // of stream liveness, producing false watch-stalled alerts during long agent turns.
 // (RED until hk-gioct fix lands.)
 func TestWatchStallCounterHoldsWhenStreamLive_GIOCT_P2(t *testing.T) {
-	root := hkgioct_repoRoot(t)
+	root := hkgioctRepoRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "ops-monitor-check.sh")
 	raw, err := os.ReadFile(scriptPath) //nolint:gosec // path constructed from repo root, not user input
 	if err != nil {
@@ -138,7 +138,7 @@ func TestWatchStallCounterHoldsWhenStreamLive_GIOCT_P2(t *testing.T) {
 // in the snapshot dict written to latest.json. This allows the captain to observe
 // stream liveness when reading the ops-monitor snapshot. (RED until hk-gioct fix lands.)
 func TestWatchStreamLiveInSnapshot_GIOCT_P3(t *testing.T) {
-	root := hkgioct_repoRoot(t)
+	root := hkgioctRepoRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "ops-monitor-check.sh")
 	raw, err := os.ReadFile(scriptPath) //nolint:gosec // path constructed from repo root, not user input
 	if err != nil {

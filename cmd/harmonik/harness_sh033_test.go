@@ -201,7 +201,6 @@ func TestHarnessSH033_StderrMentionsSignal(t *testing.T) {
 		{syscall.SIGINT, "SIGINT"},
 		{syscall.SIGTERM, "SIGTERM"},
 	} {
-		tc := tc
 		t.Run(tc.sigName, func(t *testing.T) {
 			t.Parallel()
 

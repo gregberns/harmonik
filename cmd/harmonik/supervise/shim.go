@@ -93,7 +93,7 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Watch-restart mode: use internal/supervise.Supervisor.
-	return runWithSupervisor(cfg, projectDir, stdout, stderr)
+	return runWithSupervisor(cfg, projectDir, stderr)
 }
 
 // runDirect exec-replaces the shim with the supervisee command.
@@ -141,7 +141,7 @@ func buildPiEnv(apiKey string) []string {
 // runWithSupervisor runs the supervisee under internal/supervise.Supervisor
 // with restart policy from config.json, and concurrently runs a DaemonWatchdog
 // that revives the harmonik daemon if it dies (supervisor-owned revival, CL-083).
-func runWithSupervisor(cfg Config, projectDir string, stdout, stderr io.Writer) int {
+func runWithSupervisor(cfg Config, projectDir string, stderr io.Writer) int {
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	policy := supervise.PolicyOnFailure

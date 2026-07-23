@@ -53,7 +53,6 @@ func TestResolveCrewStartArgs_QueueDefaulting(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			args, help, usageErr := resolveCrewStartArgs(tc.argv)
@@ -139,7 +138,6 @@ func TestResolveCrewStartArgs_MissionRule(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			args, help, usageErr := resolveCrewStartArgs(tc.argv)

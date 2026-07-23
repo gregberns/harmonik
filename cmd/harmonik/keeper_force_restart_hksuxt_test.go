@@ -10,11 +10,11 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// writeSidFile_hksuxt writes the single-writer <agent>.sid identity channel under
+// writeSidFileHksuxt writes the single-writer <agent>.sid identity channel under
 // projectDir so the keeperForceRestartFn closure can re-verify identity at the
 // moment of firing (the handoff-timeout escalation re-checks .sid via
 // NewLiveRecoverViaRespawn, mirroring the live-pane path).
-func writeSidFile_hksuxt(t *testing.T, projectDir, agent, sid string) {
+func writeSidFileHksuxt(t *testing.T, projectDir, agent, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -55,7 +55,7 @@ func TestKeeperForceRestartFn_RunsRespawnWhenTrusted_hksuxt(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	const agent = "captain-hksuxt"
-	writeSidFile_hksuxt(t, projectDir, agent, "11111111-1111-4111-8111-111111111111")
+	writeSidFileHksuxt(t, projectDir, agent, "11111111-1111-4111-8111-111111111111")
 
 	sentinel := filepath.Join(projectDir, "respawned.sentinel")
 	fn := keeperForceRestartFn(true, projectDir, "touch "+sentinel)
@@ -78,7 +78,7 @@ func TestKeeperForceRestartFn_RefusesNonUUIDv4SID_hksuxt(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	const agent = "captain-hksuxt"
-	writeSidFile_hksuxt(t, projectDir, agent, "not-a-valid-uuid")
+	writeSidFileHksuxt(t, projectDir, agent, "not-a-valid-uuid")
 
 	sentinel := filepath.Join(projectDir, "respawned.sentinel")
 	fn := keeperForceRestartFn(true, projectDir, "touch "+sentinel)

@@ -40,7 +40,7 @@ func init() {
 			BuildManifest,
 			func() (Lock, error) { return ReadLock(projectDir) },
 			func(m Manifest) (map[string]string, error) {
-				return buildDiskHashes(projectDir, m, io.Discard)
+				return buildDiskHashes(projectDir, m)
 			},
 		)
 		if err != nil {
@@ -59,9 +59,7 @@ func init() {
 
 	// AutoApplyGateHook wraps daemonDispatchGate so the supervisecmd package can
 	// check for an active dispatch without importing package main.
-	supervisecmd.AutoApplyGateHook = func(projectDir string) (bool, string, error) {
-		return daemonDispatchGate(projectDir)
-	}
+	supervisecmd.AutoApplyGateHook = daemonDispatchGate
 
 	// AutoApplyHook applies only the safe (Managed + FastForward) reconcile items,
 	// re-stamps the lock, and returns the count of files written.
@@ -74,7 +72,7 @@ func init() {
 		if err != nil {
 			return 0, fmt.Errorf("auto-apply: read lock: %w", err)
 		}
-		disk, err := buildDiskHashes(projectDir, m, io.Discard)
+		disk, err := buildDiskHashes(projectDir, m)
 		if err != nil {
 			return 0, fmt.Errorf("auto-apply: hash project files: %w", err)
 		}
@@ -132,7 +130,7 @@ func PrintSkewHintIfStale(projectDir string, stderr io.Writer) {
 		BuildManifest,
 		func() (Lock, error) { return ReadLock(projectDir) },
 		func(m Manifest) (map[string]string, error) {
-			return buildDiskHashes(projectDir, m, io.Discard)
+			return buildDiskHashes(projectDir, m)
 		},
 	)
 	if err != nil || !res.Skewed || res.ChangedCount == 0 {

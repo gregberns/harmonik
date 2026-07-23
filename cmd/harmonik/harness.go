@@ -331,7 +331,7 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		}
 	}
 
-	var completedResults []scenario.ScenarioResult
+	completedResults := make([]scenario.ScenarioResult, 0, len(discovered))
 
 	// executedRunIDs accumulates the distinct run_ids observed across every
 	// scenario's captured event log. It feeds the SH-INV-002 post-suite leak
@@ -819,7 +819,7 @@ func harnessDiscoverScenarios(
 	}
 
 	// Apply cadence filter.
-	var scenarios []harnessScenarioEntry
+	scenarios := make([]harnessScenarioEntry, 0, len(allLoaded))
 	for _, entry := range allLoaded {
 		if !cadenceFilter.Includes(entry.CadenceTag) {
 			if verbose {

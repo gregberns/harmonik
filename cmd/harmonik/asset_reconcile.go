@@ -260,11 +260,11 @@ func Reconcile(m Manifest, lock Lock, diskHashes map[string]string) []ReconcileI
 		case !inLock:
 			// New asset: shipped but never installed here.
 			item.Class = ef.Class
-			switch {
-			case diskSha == "":
+			switch diskSha {
+			case "":
 				item.Action = ActionCreate
 				item.Reason = "new embedded asset, absent on disk; create"
-			case diskSha == ef.Sha256:
+			case ef.Sha256:
 				item.Action = ActionSkip
 				item.Reason = "new embedded asset but disk already matches embed; skip (lock should be re-stamped)"
 			default:

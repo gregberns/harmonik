@@ -56,7 +56,6 @@ func TestKeeperSubcommandsRejectBogusFlag(t *testing.T) {
 		"watcher":           runKeeperSubcommand,
 	}
 	for name, run := range runners {
-		run := run
 		t.Run(name+"/leading", func(t *testing.T) {
 			if code := run([]string{"--bogus"}); code != 2 {
 				t.Fatalf("%s --bogus: want exit 2, got %d", name, code)

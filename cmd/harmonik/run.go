@@ -100,9 +100,7 @@ const signalGracePeriod = 5 * time.Second
 // runBeadSelfWrapExec is the exec function used when $TMUX is unset and
 // runBeadSubcommand self-wraps into a new tmux session. Replaced in tests so
 // the test process is not replaced by a real execve call.
-var runBeadSelfWrapExec = func(argv0 string, argv []string, envv []string) error {
-	return syscall.Exec(argv0, argv, envv)
-}
+var runBeadSelfWrapExec = syscall.Exec
 
 // runBeadSubcommand implements `harmonik run <bead-id> [flags]`.
 // subArgs is os.Args[2:] (everything after "run").

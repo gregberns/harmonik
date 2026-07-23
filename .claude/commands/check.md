@@ -1,5 +1,5 @@
 ---
-description: Validate the just-committed code with the full make check gate; fix and re-commit if red.
+description: Validate the code you just committed with the repo's delta-scoped gate; fix and re-commit if red.
 ---
 
 # /check — post-commit validation gate
@@ -8,23 +8,27 @@ Git hooks are OUT (lefthook is uninstalled; `.git/hooks/` holds only samples). V
 
 ## What to do
 
-1. Run the full gate on the committed tree:
+1. Run the fast per-commit gate on what you just committed:
 
    ```bash
-   make check
+   make check-fast
    ```
 
-   `check` is the tier-2 gate: `fmt-check`, `go vet`, `go build`, full `golangci-lint`, `go test -race`, `go mod tidy` drift check, coverage gate, and `govulncheck`.
+   `check-fast` is Tier 1: `fmt-check` (fail-closed), `go vet`, `go build`, `golangci-lint --new-from-rev=HEAD~1`, and `go test -short`. The `--new-from-rev` scope is the point — it judges **the lines your commit changed**, not the whole repo, so it answers "did my change pass" and can actually go green.
 
 2. Read the output.
    - **Green (exit 0):** done. The commit stands.
-   - **Red (non-zero):** something the commit introduced is broken. FIX THE ROOT CAUSE, then re-commit (amend or a follow-up fix commit). Do NOT suppress the finding, do NOT lower the gate, and do NOT `--no-verify` your way past it. Re-run `/check` until it comes back green.
+   - **Red (non-zero):** something your commit introduced is broken. FIX THE ROOT CAUSE, then re-commit (amend or a follow-up fix commit). Do NOT suppress the finding, do NOT lower the gate, do NOT `--no-verify`. Re-run `/check` until green.
 
-## If a full check per commit is too slow
+## Before you push / at a milestone
 
-`make check` is a few minutes. If running it after *every* commit drags, split it:
+```bash
+make check-short   # CI Tier 2 merge gate: fmt-check + golangci-lint --new-from-rev=origin/main + go test -short -race
+make check-full    # Tier 3: + integration + scenario + crash suites (~10–15 min)
+```
 
-- **`make check-fast`** per commit — fmt-check, vet, build, `golangci-lint --new-from-rev`, and `go test -short` on changed packages (~15s target).
-- **`make check`** at push / milestone boundaries — the full race + coverage + vuln gate.
+`check-short` is exactly what CI gates merges on; it must be green before you push.
 
-Fast-per-commit is a convenience, not a license to skip the full gate: `make check` must be green before you push.
+## Do NOT use bare `make check` as the pass/fail gate
+
+`make check`'s lint step is a **full** `golangci-lint run` (no `--new-from-rev`). By design that reports **~2,000 pre-existing legacy findings** and always exits non-zero (see `Makefile` §"LINT IS A MERGE-TIME GATE" ~lines 719–723) — it is a whole-repo legacy-debt audit / trend view, **not** a per-commit pass/fail gate. Its other steps (`-race` tests, `go mod tidy` check, coverage gate, `govulncheck`) are useful, but judge whether *your commit* passes by the `--new-from-rev` gates above, never by the full-lint exit code.

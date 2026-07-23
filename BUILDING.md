@@ -29,13 +29,21 @@ directly.
 
 | Target | When to run | What it does |
 |---|---|---|
-| `make check-fast` | During authoring, on every save cycle | gofumpt + gci diff, go vet, go build, golangci-lint --new-from-rev, go test -short on changed packages (<15s target) |
-| `make check` | Default; pre-push | Full golangci-lint, go test -race, go mod tidy check, coverage gate, govulncheck (~3–5 min) |
-| `make check-full` | Before declaring work done | Everything in `check` + integration + scenario + crash test suites (~10–15 min) |
+| `make check-fast` | During authoring / after each commit | gofumpt + gci diff, go vet, go build, golangci-lint `--new-from-rev=HEAD~1`, go test -short on changed packages (<15s target) |
+| `make check-short` | Before push (the CI Tier-2 merge gate) | fmt-check + golangci-lint `--new-from-rev=origin/main` + go test -short -race |
+| `make check` | Whole-repo audit (see caveat) | Full golangci-lint, go test -race, go mod tidy check, coverage gate, govulncheck (~3–5 min) |
+| `make check-full` | Heavy suites | Everything in `check` + integration + scenario + crash test suites (~10–15 min) |
 
-Run `check-fast` while authoring and `check` before pushing. (These were
-formerly wired as pre-commit / pre-push git hooks; hooks are now retired and
-the checks run via the agent-driven validation command instead.)
+Run `check-fast` after each commit (via `/check`) and `check-short` before pushing.
+(These were formerly wired as pre-commit / pre-push git hooks; hooks are now
+retired and the checks run via the agent-driven validation command instead.)
+
+> **Caveat on bare `make check` / `make check-full`.** Their lint step is a
+> *full* `golangci-lint run` (no `--new-from-rev`), which reports ~2k pre-existing
+> legacy findings and exits non-zero by design (see `Makefile` §"LINT IS A
+> MERGE-TIME GATE"). Treat that as a legacy-debt trend view, not a pass/fail gate —
+> judge a change with the `--new-from-rev` gates above. The `-race` / coverage /
+> `govulncheck` steps in `check` are still worth running on their own merits.
 
 ## Declared-done ritual (agents)
 

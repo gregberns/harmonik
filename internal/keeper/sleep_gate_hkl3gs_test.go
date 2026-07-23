@@ -7,6 +7,7 @@ package keeper_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -196,7 +197,9 @@ func TestWatcher_InjectDeliveredAfterWake(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx)
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Watcher.Run: %v", err)
+		}
 	}()
 
 	// Let a few ticks fire while sleeping — no inject should happen.
@@ -352,7 +355,9 @@ func TestCyclerMaybeRun_SleepingGateReachedWhenAwake(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
 
-	_ = cycler.MaybeRun(ctx, cf)
+	if err := cycler.MaybeRun(ctx, cf); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("MaybeRun with a pre-cancelled context: %v", err)
+	}
 
 	// SleepingCheckFn must have been called: Gate 5b was reached, which
 	// confirms the sleeping gate is on the hot path and not bypassed.

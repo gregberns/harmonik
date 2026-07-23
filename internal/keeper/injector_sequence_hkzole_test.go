@@ -165,9 +165,9 @@ func TestInjectText_SettleAndRetriesExecuted(t *testing.T) {
 	}
 	// settle (3ms) + submitRetries*retryDelay (2*2ms) must all have elapsed:
 	// the sequence cannot have skipped the settle/retry waits.
-	min := submitSettle + time.Duration(submitRetries)*submitRetryDelay
-	if elapsed < min {
-		t.Errorf("elapsed %v < min %v — settle/retry waits were skipped", elapsed, min)
+	minElapsed := submitSettle + time.Duration(submitRetries)*submitRetryDelay
+	if elapsed < minElapsed {
+		t.Errorf("elapsed %v < min %v — settle/retry waits were skipped", elapsed, minElapsed)
 	}
 }
 
@@ -233,7 +233,9 @@ func TestInjectText_RetryEntersAreBestEffort(t *testing.T) {
 		if len(args) > 0 && args[0] == "send-keys" {
 			skSeen++
 			if skSeen >= 2 { // first Enter ok; retries fail
-				_, _ = f.run(ctx, stdin, args...) // record only
+				if _, recErr := f.run(ctx, stdin, args...); recErr != nil {
+					t.Errorf("recording send-keys retry #%d: %v", skSeen, recErr)
+				}
 				return []byte("retry boom"), errors.New("retry dropped")
 			}
 		}

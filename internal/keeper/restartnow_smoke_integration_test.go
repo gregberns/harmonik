@@ -102,7 +102,7 @@ func smokeWriteFreshHandoff(t *testing.T, projectDir, agent string) string {
 	t.Helper()
 	path := filepath.Join(projectDir, "HANDOFF-"+agent+".md")
 	content := "# HANDOFF smoke test\n\nThis is a test-only handoff file.\n"
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil { //nolint:gosec // G306: readable handoff
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("smoke: write handoff: %v", err)
 	}
 	return path

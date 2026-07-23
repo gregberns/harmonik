@@ -1,6 +1,9 @@
 package keeper
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // export_test.go — test-only helpers that expose internal Cycler state to the
 // keeper_test package. Only compiled during `go test`. Refs: hk-wjzf.
@@ -39,8 +42,8 @@ func SetCyclerLastFiredSID(c *Cycler, sid string) {
 // DeriveContextTokensForTest exposes deriveContextTokens to the keeper_test
 // package so the transcript token-derivation logic can be exercised directly.
 // Refs: hk-81wk.
-func DeriveContextTokensForTest(transcriptDir, sessionID string) (int64, bool) {
-	return deriveContextTokens(transcriptDir, sessionID)
+func DeriveContextTokensForTest(ctx context.Context, transcriptDir, sessionID string) (int64, bool) {
+	return deriveContextTokens(ctx, transcriptDir, sessionID)
 }
 
 // RecentTranscriptTurnForTest exposes recentTranscriptTurn to the keeper_test

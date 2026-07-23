@@ -23,6 +23,7 @@ package keeper_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -35,8 +36,8 @@ import (
 
 // holdMarkerPathForTest reconstructs the production hold-marker path
 // (<projectDir>/.harmonik/keeper/<agent>.hold.<sessionID>) for direct inspection.
-func holdMarkerPathForTest(projectDir, agent, sid string) string {
-	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".hold."+sid)
+func holdMarkerPathForTest(projectDir, agent string) string {
+	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".hold."+primarySID)
 }
 
 // secondSID is a SECOND valid UUIDv4, distinct from primarySID/gaugeSID, used to
@@ -60,7 +61,7 @@ func TestHold_H1_SetReadRoundtrip(t *testing.T) {
 	if sid != primarySID {
 		t.Errorf("SetHold returned sid %q; want %q (the .sid contents)", sid, primarySID)
 	}
-	marker := holdMarkerPathForTest(dir, agent, primarySID)
+	marker := holdMarkerPathForTest(dir, agent)
 	raw, readErr := os.ReadFile(marker) //nolint:gosec // test-controlled path
 	if readErr != nil {
 		t.Fatalf("read hold marker %q: %v", marker, readErr)
@@ -132,7 +133,7 @@ func TestHold_H3_TimerExpiry(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	stale := time.Now().UTC().Add(-keeper.DefaultHoldTTL - time.Minute).Format(time.RFC3339)
-	marker := holdMarkerPathForTest(dir, agent, primarySID)
+	marker := holdMarkerPathForTest(dir, agent)
 	if err := os.WriteFile(marker, []byte(stale+"\n"), 0o600); err != nil {
 		t.Fatalf("write stale marker: %v", err)
 	}
@@ -161,7 +162,7 @@ func TestHold_H4_Release(t *testing.T) {
 	if keeper.IsHeld(dir, agent, keeper.DefaultHoldTTL) {
 		t.Error("IsHeld: want false after ReleaseHold")
 	}
-	if _, statErr := os.Stat(holdMarkerPathForTest(dir, agent, primarySID)); statErr == nil {
+	if _, statErr := os.Stat(holdMarkerPathForTest(dir, agent)); statErr == nil {
 		t.Error("hold marker still present after ReleaseHold")
 	}
 
@@ -187,7 +188,10 @@ func TestHold_H5_NoTrustworthySid(t *testing.T) {
 			t.Error("SetHold with no .sid: want error, got nil")
 		}
 		// No marker of any kind should have been written.
-		matches, _ := filepath.Glob(filepath.Join(dir, ".harmonik", "keeper", agent+".hold.*"))
+		matches, globErr := filepath.Glob(filepath.Join(dir, ".harmonik", "keeper", agent+".hold.*"))
+		if globErr != nil {
+			t.Fatalf("Glob hold markers: %v", globErr)
+		}
 		if len(matches) != 0 {
 			t.Errorf("SetHold with no .sid wrote %d marker(s); want 0", len(matches))
 		}
@@ -241,7 +245,7 @@ func TestHold_H6_CorruptMarkerContent(t *testing.T) {
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	marker := holdMarkerPathForTest(dir, agent, primarySID)
+	marker := holdMarkerPathForTest(dir, agent)
 	if err := os.WriteFile(marker, []byte("not-a-timestamp\n"), 0o600); err != nil {
 		t.Fatalf("write corrupt marker: %v", err)
 	}
@@ -401,7 +405,9 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 		// gate-reached, mirroring the sleep-gate "GateReachedWhenAwake" idiom.
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_ = cycler.MaybeRun(ctx, cf)
+		if err := cycler.MaybeRun(ctx, cf); err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("MaybeRun with a pre-cancelled context: %v", err)
+		}
 		if !heldCalled {
 			t.Error("HeldCheckFn not called; Gate 5c bypassed when not held (gate off the hot path?)")
 		}
@@ -483,7 +489,7 @@ func TestWatcher_LivePaneRecoverSuppressedWhenHeld(t *testing.T) {
 		t.Helper()
 		dir := t.TempDir()
 		agent := "lpr-hold-agent"
-		writeGauge(t, dir, agent, gaugeSID)
+		writeGauge(t, dir, agent)
 		writeSidFile(t, dir, agent, primarySID)
 
 		rec := &lprHoldRecorder{}

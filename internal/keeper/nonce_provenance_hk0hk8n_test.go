@@ -39,7 +39,7 @@ func TestNonceProvenance_MarkerAndRestartNowEventShareJoinKey(t *testing.T) {
 	const cycleID = "cyc-20260718T000000-000042"
 	handoffPath := filepath.Join(dir, "HANDOFF-"+agent+".md")
 	content := "# handoff\n\n" + nonceMarker(cycleID) + "\n\nsome handoff body.\n"
-	if err := os.WriteFile(handoffPath, []byte(content), 0o600); err != nil { //nolint:gosec // G306: test fixture under t.TempDir()
+	if err := os.WriteFile(handoffPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fresh := requested.Add(time.Second)
@@ -73,7 +73,7 @@ func TestNonceProvenance_MarkerAndRestartNowEventShareJoinKey(t *testing.T) {
 	// surface the join query runs against. A daemon-initialized project already
 	// has .harmonik/events/; create it here to mirror that (the FileEmitter
 	// O_CREATEs the file, not its parent dir).
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o700); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	rec := &recordingInjector{}

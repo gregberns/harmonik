@@ -441,7 +441,7 @@ func TestKeeperStatuslineScript_1M_FractionOverride(t *testing.T) {
 		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
 	}
 
-	// floor(1000000 * 0.6) = 600000
+	// window_size is floor of one million times 0.6, i.e. 600000.
 	if cf.WindowSize != 600000 {
 		t.Errorf("window_size = %d; want 600000 (floor(1M*0.6))", cf.WindowSize)
 	}

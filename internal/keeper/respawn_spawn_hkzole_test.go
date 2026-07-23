@@ -66,7 +66,6 @@ func TestRespawn_GateBlocksUntrustedSidWithRealCmd(t *testing.T) {
 		"garbage": "not-a-uuid",
 	}
 	for name, sid := range cases {
-		sid := sid
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()

@@ -246,7 +246,6 @@ func TestWriteManagedSessionID_ConcurrentWrites(t *testing.T) {
 	errs := make([]error, writers)
 	sids := make([]string, writers)
 	for i := range writers {
-		i := i
 		sid := fmt.Sprintf("sess-%04d", i)
 		sids[i] = sid
 		go func() {

@@ -107,7 +107,7 @@ func TestWatcher_WarnOnly_NoLivePaneRecover(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "crew-warn-only-lpr-test"
 
-	writeGauge(t, projectDir, agent, gaugeSID)     // stale gauge
+	writeGauge(t, projectDir, agent)               // stale gauge
 	writeSidFile(t, projectDir, agent, primarySID) // valid .sid
 
 	rec := &warnOnlyRespawnRecorder{}
@@ -151,7 +151,7 @@ func TestWatcher_WarnOnly_False_RespawnStillFires(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "crew-warnonly-false-test"
 
-	writeGauge(t, projectDir, agent, gaugeSID) // stale gauge
+	writeGauge(t, projectDir, agent) // stale gauge
 
 	rec := &warnOnlyRespawnRecorder{}
 

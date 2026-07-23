@@ -56,7 +56,7 @@ func (r *lprRecorder) count() int {
 // RespawnCmd is intentionally empty so the idle-respawn path is inert and the
 // ONLY recovery that can fire is live-pane recovery. Callers flip individual
 // gates to test fail-closed behavior. EventsJSONLPath is left to applyDefaults.
-func lprConfig(projectDir, agent string, recover func(context.Context, string) error) keeper.WatcherConfig {
+func lprConfig(projectDir, agent string, recoverFn func(context.Context, string) error) keeper.WatcherConfig {
 	return keeper.WatcherConfig{
 		AgentName:           agent,
 		ProjectDir:          projectDir,
@@ -67,7 +67,7 @@ func lprConfig(projectDir, agent string, recover func(context.Context, string) e
 		TmuxTarget:          "dummy-pane",
 		IsPaneAliveFn:       func(_ context.Context, _ string) bool { return true },
 		OperatorAttachedFn:  func(_ string) bool { return false },
-		LiveRecoverFn:       recover,
+		LiveRecoverFn:       recoverFn,
 		InjectFn:            func(_ context.Context, _ string) error { return nil },
 	}
 }
@@ -85,7 +85,7 @@ func TestWatcher_LivePaneRecover_FiresWhenStalePaneAliveValidSid(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "lpr-fire-agent"
 
-	writeGauge(t, projectDir, agent, gaugeSID)     // .ctx exists → STALE branch (not absent)
+	writeGauge(t, projectDir, agent)               // .ctx exists → STALE branch (not absent)
 	writeSidFile(t, projectDir, agent, primarySID) // valid UUIDv4 bound identity
 
 	rec := &lprRecorder{}
@@ -123,7 +123,7 @@ func TestWatcher_LivePaneRecover_SkippedWhenPaneIdle(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	agent := "lpr-idle-agent"
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	rec := &lprRecorder{}
@@ -146,7 +146,7 @@ func TestWatcher_LivePaneRecover_SkippedWhenOperatorAttached(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	agent := "lpr-operator-agent"
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	rec := &lprRecorder{}
@@ -169,7 +169,7 @@ func TestWatcher_LivePaneRecover_FailsClosedWhenSidAbsent(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	agent := "lpr-nosid-agent"
-	writeGauge(t, projectDir, agent, gaugeSID) // gauge present, but NO .sid written
+	writeGauge(t, projectDir, agent) // gauge present, but NO .sid written
 
 	rec := &lprRecorder{}
 	em := &keeper.RecordingEmitter{}
@@ -190,7 +190,7 @@ func TestWatcher_LivePaneRecover_FailsClosedWhenSidInvalid(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	agent := "lpr-badsid-agent"
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, "33333333-3333-7333-8333-333333333333") // UUIDv7
 
 	rec := &lprRecorder{}
@@ -211,7 +211,7 @@ func TestWatcher_LivePaneRecover_SkippedBeforeGrace(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	agent := "lpr-grace-agent"
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	rec := &lprRecorder{}
@@ -234,7 +234,7 @@ func TestWatcher_LivePaneRecover_CooldownPreventsDouble(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
 	agent := "lpr-cooldown-agent"
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	rec := &lprRecorder{}
@@ -261,7 +261,7 @@ func TestWatcher_LivePaneRecover_ExemptWhenBlockedOnDecision(t *testing.T) {
 	ctx := context.Background()
 	projectDir := t.TempDir()
 	agent := "lpr-blocked-agent"
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	// Open decision for this agent + a fresh presence beat (now → Online).

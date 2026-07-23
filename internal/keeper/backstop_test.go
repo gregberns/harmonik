@@ -13,6 +13,7 @@ package keeper_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -179,7 +180,9 @@ func TestBlindKeeperAlarm_LatchClearedOnReadableGauge(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx) //nolint:errcheck
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Watcher.Run: %v", err)
+		}
 	}()
 
 	// Phase 1: run a few ticks with foreign gauge — no blind event (5 min not crossed).
@@ -269,7 +272,9 @@ func TestBlindKeeperAlarm_EmitsAfterInjectedThreshold(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx) //nolint:errcheck
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Watcher.Run: %v", err)
+		}
 	}()
 
 	// Phase 1: foreign streak well past the 30ms threshold (≈ many ticks). The

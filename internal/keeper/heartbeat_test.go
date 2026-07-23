@@ -186,7 +186,7 @@ func TestDeriveContextTokens(t *testing.T) {
 		t.Fatalf("write transcript: %v", err)
 	}
 
-	got, ok := keeper.DeriveContextTokensForTest(dir, sid)
+	got, ok := keeper.DeriveContextTokensForTest(t.Context(), dir, sid)
 	if !ok {
 		t.Fatalf("expected derivation to succeed")
 	}
@@ -194,7 +194,7 @@ func TestDeriveContextTokens(t *testing.T) {
 		t.Fatalf("derived tokens = %d, want %d (last usage turn: input+cache_read+cache_creation+output)", got, want)
 	}
 
-	if _, ok := keeper.DeriveContextTokensForTest(dir, "no-such-session"); ok {
+	if _, ok := keeper.DeriveContextTokensForTest(t.Context(), dir, "no-such-session"); ok {
 		t.Fatalf("expected derivation to fail for a missing transcript")
 	}
 }
@@ -248,7 +248,7 @@ func TestDeriveContextTokens_TailWindow_LargeFile(t *testing.T) {
 		t.Fatalf("write transcript: %v", err)
 	}
 
-	got, ok := keeper.DeriveContextTokensForTest(dir, sid)
+	got, ok := keeper.DeriveContextTokensForTest(t.Context(), dir, sid)
 	if !ok {
 		t.Fatalf("expected derivation to succeed on large file")
 	}

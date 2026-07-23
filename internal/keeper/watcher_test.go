@@ -453,11 +453,17 @@ func TestWatcher_WarnResetOnDropBelow(t *testing.T) {
 	}
 
 	writeCtxFile := func(pct float64) {
-		data, _ := json.Marshal(keeper.CtxFile{ //nolint:errcheck // test helper
+		t.Helper()
+		data, marshalErr := json.Marshal(keeper.CtxFile{
 			Pct: pct,
 			Ts:  time.Now().UTC().Format(time.RFC3339),
 		})
-		_ = os.WriteFile(ctxPath, append(data, '\n'), 0o600) //nolint:errcheck // test helper
+		if marshalErr != nil {
+			t.Fatalf("marshal gauge: %v", marshalErr)
+		}
+		if writeErr := os.WriteFile(ctxPath, append(data, '\n'), 0o600); writeErr != nil {
+			t.Fatalf("write gauge: %v", writeErr)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

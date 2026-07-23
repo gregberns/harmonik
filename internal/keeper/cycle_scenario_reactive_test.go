@@ -147,7 +147,7 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 	if handoffIdx == -1 || clearIdx == -1 || briefIdx == -1 {
 		t.Fatalf("missing injected commands: handoff=%d clear=%d brief=%d (%v)", handoffIdx, clearIdx, briefIdx, inj)
 	}
-	if !(handoffIdx < clearIdx && clearIdx < briefIdx) {
+	if handoffIdx >= clearIdx || clearIdx >= briefIdx {
 		t.Errorf("injection order wrong: handoff=%d clear=%d brief=%d; want handoff<clear<brief", handoffIdx, clearIdx, briefIdx)
 	}
 	if rs.liveSID() != s2 {
@@ -306,7 +306,7 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 	if briefIdx == -1 {
 		t.Fatalf("briefRestartCmd (--wake keeper-restart) was NOT injected; injected=%v", inj)
 	}
-	if !(clearIdx != -1 && clearIdx < briefIdx) {
+	if clearIdx == -1 || clearIdx >= briefIdx {
 		t.Errorf("injection order wrong: clear=%d brief=%d; want clear<brief (%v)", clearIdx, briefIdx, inj)
 	}
 

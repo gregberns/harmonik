@@ -221,14 +221,20 @@ func TestWatcher_OperatorWarnFn_ThrottledByWarnCooldown(t *testing.T) {
 	ctxPath := filepath.Join(keeperDir, agent+".ctx")
 
 	writeGaugeFile := func(pct float64, tokens int64) {
-		data, _ := json.Marshal(keeper.CtxFile{ //nolint:errcheck // test helper
+		t.Helper()
+		data, marshalErr := json.Marshal(keeper.CtxFile{
 			Pct:        pct,
 			Tokens:     tokens,
 			WindowSize: 200_000,
 			SessionID:  "11111111-2222-4333-8444-555555555555",
 			Ts:         time.Now().UTC().Format(time.RFC3339),
 		})
-		_ = os.WriteFile(ctxPath, append(data, '\n'), 0o600) //nolint:errcheck // test helper
+		if marshalErr != nil {
+			t.Fatalf("marshal gauge: %v", marshalErr)
+		}
+		if writeErr := os.WriteFile(ctxPath, append(data, '\n'), 0o600); writeErr != nil {
+			t.Fatalf("write gauge: %v", writeErr)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

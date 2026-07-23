@@ -59,10 +59,10 @@ func writeSidAndCtx(t *testing.T, dir, agent, sid string) {
 	}
 }
 
-func writeFreshHandoff(t *testing.T, dir, agent string, mtime time.Time) string {
+func writeFreshHandoff(t *testing.T, dir, agent string, mtime time.Time) {
 	t.Helper()
 	p := filepath.Join(dir, "HANDOFF-"+agent+".md")
-	if err := os.WriteFile(p, []byte("# handoff\n"), 0o600); err != nil { //nolint:gosec
+	if err := os.WriteFile(p, []byte("# handoff\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if !mtime.IsZero() {
@@ -70,7 +70,6 @@ func writeFreshHandoff(t *testing.T, dir, agent string, mtime time.Time) string 
 			t.Fatal(err)
 		}
 	}
-	return p
 }
 
 const goodSID = "11111111-1111-4111-8111-111111111111"

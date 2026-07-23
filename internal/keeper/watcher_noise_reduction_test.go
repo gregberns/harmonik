@@ -9,6 +9,7 @@ package keeper_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,7 +108,9 @@ func TestWatcher_WarnCooldown_SuppressesImmediateRefire(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx) //nolint:errcheck
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Watcher.Run: %v", err)
+		}
 	}()
 
 	// Above threshold → first warn.
@@ -201,7 +204,9 @@ func TestWatcher_SelfHint_InjectedOncePerSession(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx) //nolint:errcheck
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Watcher.Run: %v", err)
+		}
 	}()
 
 	// Let it run for 200ms — ~40 ticks, all above threshold.
@@ -259,7 +264,7 @@ func TestWatcher_SelfHint_SleepGated(t *testing.T) {
 	agent := "hint-sleep-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o700); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -308,7 +313,9 @@ func TestWatcher_SelfHint_SleepGated(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx) //nolint:errcheck // background watcher; returns on ctx cancel, error unactionable here
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Watcher.Run: %v", err)
+		}
 	}()
 
 	// Phase 1 — sleeping: ~40 above-threshold ticks, all suppressed by the gate.

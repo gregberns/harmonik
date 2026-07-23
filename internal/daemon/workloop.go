@@ -2995,7 +2995,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			defer deps.runRegistry.Unregister(runID)
 			// The run outcome is the Run machine's terminal state, returned by
 			// beadRunOne (RSM-022) and read here for EM-015f group-advance.
-			runOK := beadRunOne(runCtx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, extraCtx, itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget, preSelected, localSlotHeld)
+			// RSM-010: build the per-run value bundle from THIS goroutine's
+			// explicitly-captured parameters, not the loop variables, so the
+			// capture guard the parameter list exists for still holds.
+			env := deps.runEnv(runID, beadRecord, qname, qid, qgidx, itemIdx,
+				itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget)
+			runOK := beadRunOne(runCtx, deps, env, extraCtx, preSelected, localSlotHeld)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				// hk-ly0hg Fix-1: if the daemon context was cancelled (shutdown),
@@ -3027,7 +3032,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // (UUID generation, worktree setup) are surfaced to stderr and cause the bead
 // to be reopened rather than aborting the daemon.
 //
-// queueID and queueGroupIndex are optional: when non-nil they are stamped into
+// env carries the immutable per-run values (RSM-010): the daemon-level config
+// plus the dispatched item's identity and per-item overrides. env.QueueID and
+// env.QueueGroupIndex are optional: when non-nil they are stamped into
 // run_started / run_completed / run_failed payloads per EM-015a/EM-015b and
 // QM-011/QM-012. They are nil for non-queue-dispatched runs.
 //
@@ -3038,7 +3045,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // exists) report false.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, extraContext, itemWorkflowMode, itemWorkflowRef string, itemTemplateParams map[string]string, itemLocalOnly bool, itemWorkerTarget string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
+//
+//nolint:funlen,gocognit,cyclop // pre-existing: beadRunOne is the run-path giant the RT ports stream (RT15-RT20) exists to decompose; the signature change re-anchors the grandfathered findings and splitting the body here would defeat the behaviour-preserving property of the slice
+func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
 	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
 	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
 	// deps is by-value, so this default propagates to every downstream site.
@@ -3048,11 +3057,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// RSM-010: the run-lifecycle port bundle for this run. Reaching a dependency
 	// through rp.<Port> is byte-identical to the pre-port deps field access.
 	rp := deps.runPorts()
-	// RSM-010: the immutable per-run value bundle. env is a read-only projection
-	// of deps plus the dispatched item's identity; reading env.<Field> is
-	// byte-identical to the deps/parameter read it replaces.
-	env := deps.runEnv(runID, beadRecord, queueName, queueID, queueGroupIndex, queueItemIndex,
-		itemWorkflowMode, itemWorkflowRef, itemTemplateParams, itemLocalOnly, itemWorkerTarget)
+	// RSM-010: alias the eleven per-run values off env under the names the body
+	// already uses. Aliasing rather than rewriting ~140 reads is what keeps the
+	// signature change behaviour-obvious — in particular itemWorkflowRef stays a
+	// LOCAL, because the EM-012a tier-0/tier-1 resolveWorkflowRef resolution
+	// below reassigns it and two later readers depend on the resolved value.
+	// The bundle's own copy of that field must never be read on the run path;
+	// the alias below is its one and only reader.
+	runID, beadRecord := env.RunID, env.BeadRecord
+	queueName, queueID := env.QueueName, env.QueueID
+	queueGroupIndex, queueItemIndex := env.QueueGroupIndex, env.QueueItemIndex
+	itemWorkflowMode, itemWorkflowRef := env.ItemWorkflowMode, env.ItemWorkflowRef
+	itemTemplateParams, itemLocalOnly := env.ItemTemplateParams, env.ItemLocalOnly
+	itemWorkerTarget := env.ItemWorkerTarget
 	// mport.Submit() is the merge exclusion-domain submit surface (RSM-015).
 	mport := rp.Merge
 	beadID := beadRecord.BeadID

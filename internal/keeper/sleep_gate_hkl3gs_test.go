@@ -21,11 +21,11 @@ import (
 func writeSleepMarker(t *testing.T, projectDir, sessionID string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("MkdirAll harmonik dir: %v", err)
 	}
 	path := filepath.Join(dir, ".sleeping."+sessionID)
-	if err := os.WriteFile(path, []byte(`{"session_id":"`+sessionID+`"}`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"session_id":"`+sessionID+`"}`), 0o600); err != nil {
 		t.Fatalf("write sleep marker: %v", err)
 	}
 }
@@ -232,7 +232,7 @@ func TestCyclerMaybeRun_DeferredWhenSleeping(t *testing.T) {
 
 	// Managed marker required for Gate 1.
 	keeperDirPath := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDirPath, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDirPath, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	managedPath := filepath.Join(keeperDirPath, agent+".managed")
@@ -297,7 +297,7 @@ func TestCyclerMaybeRun_SleepingGateReachedWhenAwake(t *testing.T) {
 	sessionID := "sess-cycler-awake"
 
 	keeperDirPath := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDirPath, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDirPath, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	managedPath := filepath.Join(keeperDirPath, agent+".managed")

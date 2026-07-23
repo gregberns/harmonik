@@ -69,7 +69,7 @@ func NewFileEmitterWithClock(projectDir string, clock substrate.ClockPort) *File
 // EmitWithRunID appends a typed event line to the harmonik events JSONL file.
 // runID is embedded when non-zero. On write error the event is also logged via
 // slog so it is never fully silent.
-func (f *FileEmitter) EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error {
+func (f *FileEmitter) EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) (err error) {
 	eventID, genErr := f.idGen.Next()
 	if genErr != nil {
 		slog.WarnContext(ctx, "keeper: FileEmitter: generate event_id", "err", genErr)
@@ -105,7 +105,11 @@ func (f *FileEmitter) EmitWithRunID(ctx context.Context, runID core.RunID, event
 		slog.WarnContext(ctx, "keeper: FileEmitter: open events.jsonl", "err", openErr, "path", f.path)
 		return openErr
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	_, writeErr := file.Write(append(raw, '\n'))
 	if writeErr != nil {

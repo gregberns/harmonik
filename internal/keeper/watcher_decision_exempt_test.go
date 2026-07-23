@@ -49,7 +49,7 @@ func k6EventsPath(projectDir string) string {
 func k6Emit(t *testing.T, ctx context.Context, projectDir string, evType core.EventType, payload any) {
 	t.Helper()
 	path := k6EventsPath(projectDir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("k6Emit: mkdir events dir: %v", err)
 	}
 	writer, err := eventbus.OpenJSONLWriter(path)
@@ -188,7 +188,7 @@ func TestWatcher_K6_ReapsAgentWithEmptyOpenSet(t *testing.T) {
 	agent := "no-decisions-agent"
 
 	// Make .harmonik/events dir exist but emit NO decisions.
-	if err := os.MkdirAll(filepath.Dir(k6EventsPath(projectDir)), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(k6EventsPath(projectDir)), 0o700); err != nil {
 		t.Fatalf("mkdir events dir: %v", err)
 	}
 

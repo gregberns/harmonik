@@ -215,7 +215,7 @@ func TestWatcher_OperatorWarnFn_ThrottledByWarnCooldown(t *testing.T) {
 	}
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	ctxPath := filepath.Join(keeperDir, agent+".ctx")

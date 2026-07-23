@@ -81,7 +81,7 @@ func smokeStartSession(t *testing.T, name string) {
 func smokeWriteGaugeAndSID(t *testing.T, projectDir, agent, sid string) {
 	t.Helper()
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("smoke: mkdir keeper dir: %v", err)
 	}
 	// .ctx gauge file
@@ -102,7 +102,7 @@ func smokeWriteFreshHandoff(t *testing.T, projectDir, agent string) string {
 	t.Helper()
 	path := filepath.Join(projectDir, "HANDOFF-"+agent+".md")
 	content := "# HANDOFF smoke test\n\nThis is a test-only handoff file.\n"
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil { //nolint:gosec // G306: readable handoff
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil { //nolint:gosec // G306: readable handoff
 		t.Fatalf("smoke: write handoff: %v", err)
 	}
 	return path
@@ -283,7 +283,7 @@ func TestSmoke_RestartNow_Integration(t *testing.T) {
 
 		// Write .sid but NOT .ctx — gauge read should fail.
 		keeperDir := filepath.Join(project, ".harmonik", "keeper")
-		if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 			t.Fatalf("smoke: GaugeMissing: mkdir: %v", err)
 		}
 		const primarySID = "aaaabbbb-cccc-4ddd-8eee-ffffffffffff"

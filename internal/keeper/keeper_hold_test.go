@@ -128,7 +128,7 @@ func TestHold_H3_TimerExpiry(t *testing.T) {
 
 	// Write the marker manually with a stale timestamp (TTL + 1m in the past).
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	stale := time.Now().UTC().Add(-keeper.DefaultHoldTTL - time.Minute).Format(time.RFC3339)
@@ -238,7 +238,7 @@ func TestHold_H6_CorruptMarkerContent(t *testing.T) {
 	writeSidFile(t, dir, agent, primarySID)
 
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	marker := holdMarkerPathForTest(dir, agent, primarySID)
@@ -317,7 +317,7 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 	mkManaged := func(t *testing.T, projectDir, agent, sessionID string) {
 		t.Helper()
 		keeperDirPath := filepath.Join(projectDir, ".harmonik", "keeper")
-		if err := os.MkdirAll(keeperDirPath, 0o755); err != nil {
+		if err := os.MkdirAll(keeperDirPath, 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		if err := os.WriteFile(filepath.Join(keeperDirPath, agent+".managed"), []byte(sessionID+"\n"), 0o600); err != nil {
@@ -457,7 +457,7 @@ func TestWatcher_RespawnSuppressedWhenHeld(t *testing.T) {
 		}
 		// No gauge file → immediately absent/stale; keeper dir must exist.
 		keeperDir := filepath.Join(dir, ".harmonik", "keeper")
-		if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		runWatcherFor(context.Background(), cfg, em, 300*time.Millisecond)
@@ -556,7 +556,7 @@ func TestWatcher_WarnFiresUnderHold(t *testing.T) {
 	agent := "warn-hold-agent"
 
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -783,7 +783,7 @@ func TestWatcher_OlderBinaryIgnoresHoldMarker(t *testing.T) {
 		HeldCheckFn: func(_, _ string) bool { return false },
 	}
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	runWatcherFor(context.Background(), cfg, em, 300*time.Millisecond)

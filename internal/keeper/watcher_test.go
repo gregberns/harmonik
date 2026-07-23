@@ -98,7 +98,7 @@ func (s *spyInjector) count() int {
 func writeCtxFile(t *testing.T, projectDir, agent string, pct float64, sessionID string) {
 	t.Helper()
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	data, err := json.Marshal(keeper.CtxFile{
@@ -121,7 +121,7 @@ func writeCtxFile(t *testing.T, projectDir, agent string, pct float64, sessionID
 func writeCtxFileTokens(t *testing.T, projectDir, agent string, pct float64, tokens, windowSize int64, sessionID string) {
 	t.Helper()
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	data, err := json.Marshal(keeper.CtxFile{
@@ -159,7 +159,7 @@ func TestWatcher_EmitsOneWarnOnUpwardCrossing(t *testing.T) {
 
 	// Create managed marker so keep is a no-op guard check is bypassed.
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -215,7 +215,7 @@ func TestWatcher_NoWarnWhenGaugeIsStale(t *testing.T) {
 	agent := "stale-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -379,7 +379,7 @@ func TestWatcher_InjectDeliveredAfterQuiescence(t *testing.T) {
 	agent := "inject-quiesce-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -448,7 +448,7 @@ func TestWatcher_WarnResetOnDropBelow(t *testing.T) {
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	ctxPath := filepath.Join(keeperDir, agent+".ctx")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -502,7 +502,7 @@ func TestWatcher_IgnoresForeignSessionGauge(t *testing.T) {
 	agent := "binding-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -550,7 +550,7 @@ func TestWatcher_AdoptsSameAgentNewSidAfterExternalClear(t *testing.T) {
 	agent := "adopt-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -607,7 +607,7 @@ func TestWatcher_RejectsConcurrentDifferentSession(t *testing.T) {
 	agent := "concurrent-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -653,7 +653,7 @@ func TestWatcher_NoAdoptWhenSidMalformed(t *testing.T) {
 	agent := "malformed-sid-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -706,7 +706,7 @@ func TestWatcher_AcceptsManagedSession(t *testing.T) {
 	agent := "match-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -765,7 +765,7 @@ func TestWatcher_RespawnFiredWhenGauseAbsentAndPaneIdle(t *testing.T) {
 
 	// Deliberately write NO gauge file so the gauge is immediately absent.
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -817,7 +817,7 @@ func TestWatcher_RespawnSkippedWhenPaneNotIdle(t *testing.T) {
 	}
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -854,7 +854,7 @@ func TestWatcher_RespawnCooldownPreventsDoubleSpawn(t *testing.T) {
 	}
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -882,7 +882,7 @@ func TestWatcher_ForeignSessionEmitsNoGauge(t *testing.T) {
 	agent := "foreign-alarm-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 

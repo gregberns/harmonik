@@ -92,7 +92,11 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.Warn("keeper: close transcript while deriving context", "err", closeErr, "path", path)
+		}
+	}()
 
 	type usage struct {
 		InputTokens         int64 `json:"input_tokens"`

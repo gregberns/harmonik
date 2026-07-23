@@ -273,7 +273,11 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 	if err != nil {
 		return time.Time{}, false
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.Warn("keeper: close transcript while finding recent turn", "err", closeErr, "path", path)
+		}
+	}()
 
 	// Seek to the tail so the scan is O(recentTranscriptTailBytes), not O(filesize).
 	partialStart := false

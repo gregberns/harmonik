@@ -47,7 +47,7 @@ func (r *recordingInjector) texts() []string {
 func writeSidAndCtx(t *testing.T, dir, agent, sid string) {
 	t.Helper()
 	kdir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(kdir, 0o755); err != nil {
+	if err := os.MkdirAll(kdir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(kdir, agent+".sid"), []byte(sid+"\n"), 0o600); err != nil {
@@ -62,7 +62,7 @@ func writeSidAndCtx(t *testing.T, dir, agent, sid string) {
 func writeFreshHandoff(t *testing.T, dir, agent string, mtime time.Time) string {
 	t.Helper()
 	p := filepath.Join(dir, "HANDOFF-"+agent+".md")
-	if err := os.WriteFile(p, []byte("# handoff\n"), 0o644); err != nil { //nolint:gosec
+	if err := os.WriteFile(p, []byte("# handoff\n"), 0o600); err != nil { //nolint:gosec
 		t.Fatal(err)
 	}
 	if !mtime.IsZero() {

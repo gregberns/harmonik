@@ -22,11 +22,11 @@ import (
 func writeGauge(t *testing.T, projectDir, agent, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir keeper dir: %v", err)
 	}
 	body := `{"pct":42.0,"tokens":1000,"window_size":200000,"session_id":"` + sid + `","ts":"2026-06-16T00:00:00Z"}` + "\n"
-	if err := os.WriteFile(filepath.Join(dir, agent+".ctx"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, agent+".ctx"), []byte(body), 0o600); err != nil {
 		t.Fatalf("write ctx: %v", err)
 	}
 }
@@ -37,10 +37,10 @@ func writeGauge(t *testing.T, projectDir, agent, sid string) {
 func writeSidFile(t *testing.T, projectDir, agent, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir keeper dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, agent+".sid"), []byte(sid+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, agent+".sid"), []byte(sid+"\n"), 0o600); err != nil {
 		t.Fatalf("write sid: %v", err)
 	}
 }
@@ -120,11 +120,11 @@ func TestReadSessionIDFile_LowercasesAndTrims(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	// Trailing newline + surrounding whitespace; the value itself is lowercase v4.
-	if err := os.WriteFile(filepath.Join(keeperDir, "captain.sid"), []byte("  "+primarySID+"  \n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(keeperDir, "captain.sid"), []byte("  "+primarySID+"  \n"), 0o600); err != nil {
 		t.Fatalf("write sid: %v", err)
 	}
 	got, _, err := keeper.ReadSessionIDFile(dir, "captain")

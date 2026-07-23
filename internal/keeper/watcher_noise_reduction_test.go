@@ -37,7 +37,7 @@ func TestWatcher_NoGauge_TransitionOnly(t *testing.T) {
 	// Ensure the keeper dir exists so ReadCtxFile returns ErrNotExist rather
 	// than an error reading the directory, triggering the absent branch cleanly.
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	// Do NOT write any .ctx file — gauge is permanently absent.
@@ -79,7 +79,7 @@ func TestWatcher_WarnCooldown_SuppressesImmediateRefire(t *testing.T) {
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	ctxPath := filepath.Join(keeperDir, agent+".ctx")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestWatcher_SelfHint_InjectedOncePerSession(t *testing.T) {
 	agent := "hint-once-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -259,7 +259,7 @@ func TestWatcher_SelfHint_SleepGated(t *testing.T) {
 	agent := "hint-sleep-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
 		t.Fatalf("MkdirAll: %v", err)
 	}
 

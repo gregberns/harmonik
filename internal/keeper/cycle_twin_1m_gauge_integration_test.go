@@ -99,7 +99,7 @@ func twWriteBrokenStatusline(t *testing.T, dir string) string {
 	broken := strings.Replace(string(src), marker, "WINDOW_SIZE=0  # [1m] inference DISABLED (regression-guard probe)", 1)
 	path := filepath.Join(dir, "keeper-statusline-broken.sh")
 	//nolint:gosec // G306: test-local executable script
-	if err := os.WriteFile(path, []byte(broken), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(broken), 0o700); err != nil {
 		t.Fatalf("tw: write broken statusline: %v", err)
 	}
 	return path

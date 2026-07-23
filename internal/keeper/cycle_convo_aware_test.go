@@ -31,7 +31,7 @@ import (
 // turns) or real text response (for "assistant" turns).
 func writeTranscriptLine(t *testing.T, transcriptDir, sessionID, role, ts string, isReal bool) {
 	t.Helper()
-	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
+	if err := os.MkdirAll(transcriptDir, 0o700); err != nil {
 		t.Fatalf("mkdir transcriptDir: %v", err)
 	}
 	path := filepath.Join(transcriptDir, sessionID+".jsonl")
@@ -378,7 +378,7 @@ func TestCycler_Gate5d_WritesHoldMarker(t *testing.T) {
 
 	// Seed the .sid file so SetHold can resolve the live session id.
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("mkdir keeper dir: %v", err)
 	}
 	sidPath := filepath.Join(keeperDir, agent+".sid")

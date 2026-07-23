@@ -31,7 +31,7 @@ func foreignSessionConfig(t *testing.T, projectDir, agent string, tokens int64) 
 	t.Helper()
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestBlindKeeperAlarm_LatchClearedOnReadableGauge(t *testing.T) {
 	agent := "blind-latch-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -234,7 +234,7 @@ func TestBlindKeeperAlarm_EmitsAfterInjectedThreshold(t *testing.T) {
 	agent := "blind-emit-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -552,7 +552,7 @@ func TestHardCeiling_NormalPath_NeverActsOnCeiling(t *testing.T) {
 	agent := "hard-ceiling-normal-path-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	// SID-MATCHED gauge ("sess-managed") above the ceiling — the NORMAL path.

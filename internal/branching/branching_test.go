@@ -16,11 +16,11 @@ import (
 func writeFile(t *testing.T, dir, content string) string {
 	t.Helper()
 	d := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(d, 0o755); err != nil {
+	if err := os.MkdirAll(d, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	p := filepath.Join(d, "branching.yaml")
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	return p
@@ -279,7 +279,7 @@ defaults:
   lands_on: main
   landing_strategy: squash
 `
-	if err := os.WriteFile(p, []byte(newContent), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(newContent), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	// Explicitly set a future mtime so the cache detects the change even in

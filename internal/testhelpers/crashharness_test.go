@@ -283,7 +283,6 @@ func TestB87254_MockBr_ExitCode(t *testing.T) {
 		{"conflict", 2},
 		{"schema-mismatch", 4},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

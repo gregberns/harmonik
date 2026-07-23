@@ -76,7 +76,6 @@ func TestTwoProjectLabelIsolation_hk25bg(t *testing.T) {
 	agents := []string{"captain", "paul", "chani"}
 
 	for _, agentName := range agents {
-		agentName := agentName
 		t.Run(agentName, func(t *testing.T) {
 			t.Parallel()
 
@@ -133,9 +132,7 @@ func TestTwoProjectKeeperResumeParity_hk25bg(t *testing.T) {
 	agents := []string{"captain", "paul"}
 
 	for _, proj := range projects {
-		proj := proj
 		for _, agentName := range agents {
-			agentName := agentName
 			t.Run(proj.prefix+"/"+agentName, func(t *testing.T) {
 				t.Parallel()
 
@@ -167,7 +164,6 @@ func TestTwoProjectSessionIDIndependence_hk25bg(t *testing.T) {
 	t.Parallel()
 
 	for _, resume := range []bool{false, true} {
-		resume := resume
 		t.Run(map[bool]string{false: "fresh", true: "resume"}[resume], func(t *testing.T) {
 			t.Parallel()
 

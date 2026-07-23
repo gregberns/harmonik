@@ -36,7 +36,7 @@ func UnlockPath(projectDir string) string {
 // ReadUnlock reads the unlock override. Returns (nil, nil) when the file is
 // absent (the common case — no override in effect).
 func ReadUnlock(projectDir string) (*UnlockState, error) {
-	data, err := os.ReadFile(UnlockPath(projectDir)) //nolint:gosec // G304: operator-controlled projectDir
+	data, err := os.ReadFile(UnlockPath(projectDir))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

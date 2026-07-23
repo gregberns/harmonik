@@ -1,3 +1,4 @@
+// Package evalvol provides small evaluation-volume algorithms.
 package evalvol
 
 import (

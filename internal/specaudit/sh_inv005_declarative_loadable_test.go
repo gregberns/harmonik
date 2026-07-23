@@ -76,7 +76,11 @@ func shiNV005FixtureLoadLines(t *testing.T, path string) []string {
 	if err != nil {
 		t.Fatalf("shiNV005FixtureLoadLines: open %s: %v", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("shiNV005FixtureLoadLines: close %s: %v", path, err)
+		}
+	}()
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
@@ -221,7 +225,6 @@ func TestSHINV005SpecBodyAudit(t *testing.T) {
 	}
 
 	for _, c := range checks {
-		c := c
 		t.Run("check-"+c.id, func(t *testing.T) {
 			t.Parallel()
 			if !shiNV005FixtureBodyContains(body, c.needle) {
@@ -306,7 +309,6 @@ func TestSHINV005ImplementationAudit(t *testing.T) {
 
 	implText := strings.Join(implLines, "\n")
 	for _, c := range checks {
-		c := c
 		t.Run("check-"+c.id, func(t *testing.T) {
 			t.Parallel()
 			if !strings.Contains(implText, c.needle) {
@@ -377,7 +379,6 @@ func TestSHINV005CorpusLint(t *testing.T) {
 	t.Logf("SH-INV-005 corpus lint: found %d scenario file(s) under scenarios/; running declarative-load check on each", len(yamlFiles))
 
 	for _, yamlPath := range yamlFiles {
-		yamlPath := yamlPath
 		// Derive a test name from the path relative to scenariosDir.
 		relPath, relErr := filepath.Rel(scenariosDir, yamlPath)
 		if relErr != nil {

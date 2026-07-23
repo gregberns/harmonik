@@ -14,6 +14,7 @@ package usage
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -276,7 +277,10 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	knownSessionIDs := map[string]bool{}
 
 	// Phase 2: orchestrator sessions — live transcript scan (not in session-data.jsonl).
-	orchSessions, _ := findOrchestratorSessions(cfg.ClaudeProjectsDir, cfg.Since, cfg.Until, knownSessionIDs)
+	orchSessions, orchErr := findOrchestratorSessions(cfg.ClaudeProjectsDir, cfg.Since, cfg.Until, knownSessionIDs)
+	if orchErr != nil {
+		return nil, fmt.Errorf("usage: find orchestrator sessions: %w", orchErr)
+	}
 
 	// Global rollups.
 	var productiveCost, orchCost float64
@@ -422,16 +426,18 @@ func findOrchestratorSessions(claudeProjectsDir, since, until string, knownSessi
 	user := os.Getenv("USER")
 	mainProjectDir := filepath.Join(claudeProjectsDir, fmt.Sprintf("-Users-%s-github-harmonik", user))
 	if _, err := os.Stat(mainProjectDir); err != nil {
-		return nil, nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
-	//nolint:gosec // G304: mainProjectDir derived from ClaudeProjectsDir (operator config) + USER env.
 	entries, err := os.ReadDir(mainProjectDir)
 	if err != nil {
 		return nil, err
 	}
 
-	var sessions []OrchestratorSession
+	sessions := make([]OrchestratorSession, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue

@@ -85,7 +85,11 @@ func ar025FixtureExtractRegex(t *testing.T, specPath string) string {
 	if err != nil {
 		t.Fatalf("ar025FixtureExtractRegex: open %s: %v", specPath, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("ar025FixtureExtractRegex: close %s: %v", specPath, err)
+		}
+	}()
 
 	const prefix = "agent_type :="
 

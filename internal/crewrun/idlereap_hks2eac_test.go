@@ -36,12 +36,6 @@ func (f *fakeCrewQueues) set(name string, status queue.QueueStatus) {
 	f.byNm[name] = &queue.Queue{Name: name, Status: status}
 }
 
-func (f *fakeCrewQueues) clear(name string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.byNm, name)
-}
-
 // fakeCrewStopper is a test double for crewStopper recording every call.
 type fakeCrewStopper struct {
 	mu      sync.Mutex

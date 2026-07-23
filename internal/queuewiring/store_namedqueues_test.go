@@ -214,7 +214,6 @@ func TestQueueStoreNamedConcurrentReadSerialWrite(t *testing.T) {
 		}()
 	}
 	for _, n := range nameList {
-		n := n
 		go func() {
 			defer wg.Done()
 			for i := 0; i < writes; i++ {

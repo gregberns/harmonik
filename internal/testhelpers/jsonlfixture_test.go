@@ -279,7 +279,6 @@ func TestJSONLFixtureDurabilityClasses_EachLineIsValidJSON(t *testing.T) {
 	t.Parallel()
 
 	for _, dcl := range testhelpers.JSONLFixtureDurabilityClasses() {
-		dcl := dcl
 		t.Run(string(dcl.Class), func(t *testing.T) {
 			t.Parallel()
 			var obj map[string]any
@@ -311,7 +310,6 @@ func TestJSONLFixtureTornTail_ValidLinesBefore(t *testing.T) {
 	t.Parallel()
 
 	for _, fix := range testhelpers.JSONLFixtureTornTail() {
-		fix := fix
 		t.Run(string(fix.Kind), func(t *testing.T) {
 			t.Parallel()
 			if fix.ValidLineCount != 1 {

@@ -37,7 +37,10 @@ func TestParseSince(t *testing.T) {
 		t.Errorf("ParseSince(24h) = %q, want Z-suffix", got)
 	}
 	// Must be roughly 24h ago.
-	parsed, _ := time.Parse("2006-01-02T15:04:05Z", got)
+	parsed, err := time.Parse("2006-01-02T15:04:05Z", got)
+	if err != nil {
+		t.Fatalf("parse ParseSince result: %v", err)
+	}
 	diff := time.Since(parsed)
 	if diff < 23*time.Hour || diff > 25*time.Hour {
 		t.Errorf("ParseSince(24h) diff=%v, want ~24h", diff)

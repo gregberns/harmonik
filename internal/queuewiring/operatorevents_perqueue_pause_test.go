@@ -42,15 +42,6 @@ import (
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-func perQueueFixtureBus(t *testing.T) eventbus.EventBus {
-	t.Helper()
-	bus := eventbus.NewBusImpl()
-	if err := bus.Seal(); err != nil {
-		t.Fatalf("perQueueFixtureBus: Seal: %v", err)
-	}
-	return bus
-}
-
 func perQueueFixtureActiveQueue(t *testing.T, name string) *queue.Queue {
 	t.Helper()
 	return &queue.Queue{
@@ -86,14 +77,14 @@ func perQueueFixtureConsumerWithBus(t *testing.T, qs *queuewiring.QueueStore) *q
 	return c
 }
 
-func perQueueFixturePauseEvent(t *testing.T, status core.OperatorPauseStatusValue, queueName string) core.Event {
+func perQueueFixturePauseEvent(t *testing.T, queueName string) core.Event {
 	t.Helper()
 	evID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("perQueueFixturePauseEvent: NewV7: %v", err)
 	}
 	payload := core.OperatorPauseStatusPayload{
-		Status:    status,
+		Status:    core.OperatorPauseStatusValuePausing,
 		ChangedAt: time.Now().UTC().Format(time.RFC3339),
 		QueueName: queueName,
 	}
@@ -154,7 +145,7 @@ func TestPerQueuePause_OnlyNamedQueueIsPaused(t *testing.T) {
 	qs.SetQueue(mainQ)
 
 	// Named pause targeting "investigate".
-	evt := perQueueFixturePauseEvent(t, core.OperatorPauseStatusValuePausing, "investigate")
+	evt := perQueueFixturePauseEvent(t, "investigate")
 	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
 	}
@@ -181,7 +172,7 @@ func TestPerQueuePause_OtherQueueUnaffected(t *testing.T) {
 	qs.SetQueue(investigateQ)
 	qs.SetQueue(mainQ)
 
-	evt := perQueueFixturePauseEvent(t, core.OperatorPauseStatusValuePausing, "investigate")
+	evt := perQueueFixturePauseEvent(t, "investigate")
 	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
 	}
@@ -235,7 +226,7 @@ func TestPerQueuePause_GlobalPauseDrainsAll(t *testing.T) {
 	qs.SetQueue(mainQ)
 
 	// Global pause: no queue name.
-	evt := perQueueFixturePauseEvent(t, core.OperatorPauseStatusValuePausing, "")
+	evt := perQueueFixturePauseEvent(t, "")
 	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus (global): %v", err)
 	}
@@ -294,7 +285,7 @@ func TestPerQueuePause_EmitsQueuePausedEventForTarget(t *testing.T) {
 	qs.SetQueue(investigateQ)
 	qs.SetQueue(mainQ)
 
-	evt := perQueueFixturePauseEvent(t, core.OperatorPauseStatusValuePausing, "investigate")
+	evt := perQueueFixturePauseEvent(t, "investigate")
 	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), evt); err != nil {
 		t.Fatalf("handleOperatorPauseStatus: %v", err)
 	}

@@ -145,13 +145,17 @@ func B87254WriteIntentEntry(t *testing.T, intentDir string, entry core.IntentLog
 	}
 
 	if _, err := tf.Write(data); err != nil {
-		_ = tf.Close()
+		if closeErr := tf.Close(); closeErr != nil {
+			t.Errorf("B87254WriteIntentEntry: close temp file after write failure: %v", closeErr)
+		}
 		t.Fatalf("B87254WriteIntentEntry: write temp file %q: %v", tempPath, err)
 	}
 
 	// Step 2: fsync(temp_fd) per BI-030.
 	if err := tf.Sync(); err != nil {
-		_ = tf.Close()
+		if closeErr := tf.Close(); closeErr != nil {
+			t.Errorf("B87254WriteIntentEntry: close temp file after fsync failure: %v", closeErr)
+		}
 		t.Fatalf("B87254WriteIntentEntry: fsync temp file %q: %v", tempPath, err)
 	}
 	if err := tf.Close(); err != nil {
@@ -172,10 +176,16 @@ func B87254WriteIntentEntry(t *testing.T, intentDir string, entry core.IntentLog
 		t.Fatalf("B87254WriteIntentEntry: open parent dir %q: %v", intentDir, err)
 	}
 	if err := pf.Sync(); err != nil {
-		_ = pf.Close()
+		if closeErr := pf.Close(); closeErr != nil {
+			t.Errorf("B87254WriteIntentEntry: close parent dir after fsync failure: %v", closeErr)
+		}
 		t.Fatalf("B87254WriteIntentEntry: fsync parent dir %q: %v", intentDir, err)
 	}
-	defer func() { _ = pf.Close() }()
+	defer func() {
+		if err := pf.Close(); err != nil {
+			t.Errorf("B87254WriteIntentEntry: close parent dir: %v", err)
+		}
+	}()
 
 	return B87254IntentWriteResult{
 		IntentDir: intentDir,
@@ -205,10 +215,16 @@ func B87254DeleteIntentEntry(t *testing.T, filePath string) {
 		t.Fatalf("B87254DeleteIntentEntry: open parent dir %q: %v", parentDir, err)
 	}
 	if err := pf.Sync(); err != nil {
-		_ = pf.Close()
+		if closeErr := pf.Close(); closeErr != nil {
+			t.Errorf("B87254DeleteIntentEntry: close parent dir after fsync failure: %v", closeErr)
+		}
 		t.Fatalf("B87254DeleteIntentEntry: fsync parent dir %q: %v", parentDir, err)
 	}
-	defer func() { _ = pf.Close() }()
+	defer func() {
+		if err := pf.Close(); err != nil {
+			t.Errorf("B87254DeleteIntentEntry: close parent dir: %v", err)
+		}
+	}()
 }
 
 // B87254ReadIntentEntries scans intentDir and returns all surviving

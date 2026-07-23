@@ -116,7 +116,7 @@ func (t *Tap) Run() error {
 	}
 
 	// outDst: bytes from child stdout go to caller stdout and (optionally) OutCapture.
-	outDst := io.Writer(stdout)
+	outDst := stdout
 	if t.OutCapture != nil {
 		outDst = io.MultiWriter(stdout, t.OutCapture)
 	}

@@ -457,21 +457,43 @@ func (s *twinState) tryWriteNonce(line string) bool {
 	s.seen[m] = true
 	path := s.handoffPath
 	s.mu.Unlock()
-	// Write the verbatim nonce line into the HANDOFF file the keeper polls. A
-	// real handoff appends a body too; only the nonce line is load-bearing for
-	// the keeper's pollForNonce (strings.Contains).
+	// Append the verbatim nonce line to the HANDOFF file the keeper polls,
+	// preserving any body already written there. The nonce line is what
+	// pollForNonce (strings.Contains) needs; the preserved body is what makes a
+	// handoff-destruction defect observable at all (hk-4tjyj).
 	_ = writeHandoffNonce(path, m) //nolint:errcheck // best-effort; keeper poll surfaces failures
 	return false                   // handoff does not change tokens/session_id.
 }
 
-// writeHandoffNonce writes the verbatim nonce line to the HANDOFF file. It
-// overwrites (the keeper truncates the file before injecting, cycle.go step 2),
-// so a single nonce line is the faithful minimum.
+// writeHandoffNonce APPENDS the verbatim nonce line to the HANDOFF file,
+// preserving any body already there — the same shape production now has.
+//
+// This used to OVERWRITE the file with the bare nonce line, on the since-falsified
+// premise that "the keeper truncates the file before injecting". The keeper no
+// longer truncates: internal/keeper defaultScrubHandoffNonces removes only the
+// `<!-- KEEPER:… -->` markers and preserves every other byte (see stripNonceMarkers).
+//
+// The overwrite made this twin structurally INCAPABLE of surfacing a
+// handoff-DESTRUCTION defect: there was never a body for anything to destroy, so
+// a keeper that deleted the crew's prose and one that preserved it produced
+// byte-identical twin output. hk-4tjyj was exactly that defect, and it reached
+// the field and ran fleet-wide because every twin-driven test was blind to it.
+// A real /session-handoff writes prose and embeds the nonce in it; appending
+// models that closely enough to make the body observable end to end, and leaves
+// the nonce contract the keeper's pollForNonce depends on byte-identical.
 func writeHandoffNonce(path, nonce string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // G301: matches .harmonik conventions
 		return err
 	}
-	return os.WriteFile(path, []byte(nonce+"\n"), 0o600)
+	// PRESERVE whatever body is already in the file and append the nonce.
+	body := ""
+	if existing, err := os.ReadFile(path); err == nil { //nolint:gosec // G304: path is the twin's own --project-derived handoff
+		body = string(existing)
+	}
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return os.WriteFile(path, []byte(body+nonce+"\n"), 0o600)
 }
 
 // runStatusline pipes the statusLine JSON to keeper-statusline.sh with the env

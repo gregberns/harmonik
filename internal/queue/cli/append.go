@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -32,7 +31,8 @@ import (
 //   - specs/queue-model.md §7 (append validation: QM-024)
 //
 // Bead ref: hk-eblue, hk-tigaf.8.
-func RunQueueAppend(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunQueueAppend(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
+	diag := newPrinter(errOut)
 	var queueID string
 	var queueName string
 	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
@@ -57,13 +57,13 @@ func RunQueueAppend(ctx context.Context, subArgs []string, out io.Writer, errOut
 	}
 
 	if len(positional) < 2 {
-		fmt.Fprintln(errOut, "harmonik queue append: usage: hk queue append [--queue-id <uuid>|--queue <name>] <group-index> <bead-id ...>")
+		diag.println("harmonik queue append: usage: hk queue append [--queue-id <uuid>|--queue <name>] <group-index> <bead-id ...>")
 		return exitTransportError
 	}
 
 	groupIdx, parseErr := strconv.Atoi(positional[0])
 	if parseErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue append: invalid group-index %q: %v\n", positional[0], parseErr)
+		diag.printf("harmonik queue append: invalid group-index %q: %v\n", positional[0], parseErr)
 		return exitTransportError
 	}
 	beadIDs := positional[1:]
@@ -88,7 +88,7 @@ func RunQueueAppend(ctx context.Context, subArgs []string, out io.Writer, errOut
 
 	payload, marshalErr := marshalJSON(msg)
 	if marshalErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue append: cannot marshal request: %v\n", marshalErr)
+		diag.printf("harmonik queue append: cannot marshal request: %v\n", marshalErr)
 		return exitTransportError
 	}
 
@@ -100,7 +100,7 @@ func RunQueueAppend(ctx context.Context, subArgs []string, out io.Writer, errOut
 	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
 	if earlyExit != -1 {
 		if earlyExit == exitDaemonDown {
-			fmt.Fprintln(errOut, "harmonik queue append: daemon not running (no socket at "+harmonikDir+"/daemon.sock)")
+			diag.println("harmonik queue append: daemon not running (no socket at " + harmonikDir + "/daemon.sock)")
 		}
 		return earlyExit
 	}

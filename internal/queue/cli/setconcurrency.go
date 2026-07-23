@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strconv"
 )
@@ -26,19 +25,20 @@ import (
 //	--format json|text output format (default text)
 //
 // Bead ref: hk-ohiaf.
-func RunQueueSetConcurrency(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunQueueSetConcurrency(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
+	diag := newPrinter(errOut)
 	projectDir, positional, outputJSON, ok := parseQueueFlags(subArgs, errOut)
 	if !ok {
 		return exitTransportError
 	}
 
 	if len(positional) < 1 {
-		fmt.Fprintln(errOut, "harmonik queue set-concurrency: usage: harmonik queue set-concurrency <n>")
+		diag.println("harmonik queue set-concurrency: usage: harmonik queue set-concurrency <n>")
 		return exitTransportError
 	}
 	n, convErr := strconv.Atoi(positional[0])
 	if convErr != nil || n < 1 {
-		fmt.Fprintf(errOut, "harmonik queue set-concurrency: n must be an integer >= 1, got %q\n", positional[0])
+		diag.printf("harmonik queue set-concurrency: n must be an integer >= 1, got %q\n", positional[0])
 		return exitTransportError
 	}
 
@@ -49,7 +49,7 @@ func RunQueueSetConcurrency(ctx context.Context, subArgs []string, out io.Writer
 
 	payload, marshalErr := marshalJSON(msg)
 	if marshalErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue set-concurrency: cannot marshal request: %v\n", marshalErr)
+		diag.printf("harmonik queue set-concurrency: cannot marshal request: %v\n", marshalErr)
 		return exitTransportError
 	}
 
@@ -61,7 +61,7 @@ func RunQueueSetConcurrency(ctx context.Context, subArgs []string, out io.Writer
 	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
 	if earlyExit != -1 {
 		if earlyExit == exitDaemonDown {
-			fmt.Fprintln(errOut, "harmonik queue set-concurrency: daemon not running (no socket at "+harmonikDir+"/daemon.sock)")
+			diag.println("harmonik queue set-concurrency: daemon not running (no socket at " + harmonikDir + "/daemon.sock)")
 		}
 		return earlyExit
 	}
@@ -72,14 +72,15 @@ func RunQueueSetConcurrency(ctx context.Context, subArgs []string, out io.Writer
 			NewN     int `json:"new_n"`
 			SpawnCap int `json:"spawn_cap"`
 		}
+		p := newPrinter(w)
 		if jsonErr := json.Unmarshal(result, &r); jsonErr != nil {
-			fmt.Fprintf(w, "set-concurrency: ok\n") //nolint:errcheck
-			return exitSuccess
+			p.printf("set-concurrency: ok\n")
+			return renderExit(p)
 		}
-		fmt.Fprintf(w, "max_concurrent: %d → %d\n", r.OldN, r.NewN) //nolint:errcheck
+		p.printf("max_concurrent: %d → %d\n", r.OldN, r.NewN)
 		if r.SpawnCap > 0 {
-			fmt.Fprintf(w, "spawn_cap: %d non-terminal sessions (safe max_concurrent = %d; restart to raise)\n", r.SpawnCap, r.SpawnCap/2) //nolint:errcheck
+			p.printf("spawn_cap: %d non-terminal sessions (safe max_concurrent = %d; restart to raise)\n", r.SpawnCap, r.SpawnCap/2)
 		}
-		return exitSuccess
+		return renderExit(p)
 	})
 }

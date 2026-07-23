@@ -3,9 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -45,7 +43,8 @@ import (
 //   - specs/queue-model.md §6 QM-028 (validate-only, no persist, no events)
 //
 // Bead ref: hk-eblue, hk-m9a7g, hk-40r9b, hk-tldws.
-func RunQueueDryRun(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunQueueDryRun(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
+	diag := newPrinter(errOut)
 	var beadIDs []string
 	var queueName string
 	workflowMode := "review-loop" // default: review-loop per hk-g0ckv / hk-rssrg / hk-tldws
@@ -83,45 +82,29 @@ func RunQueueDryRun(ctx context.Context, subArgs []string, out io.Writer, errOut
 		var buildErr error
 		queueDoc, buildErr = beadsToQueueDoc(beadIDs, queueName, workflowMode)
 		if buildErr != nil {
-			fmt.Fprintf(errOut, "harmonik queue dry-run: cannot build queue doc: %v\n", buildErr)
+			diag.printf("harmonik queue dry-run: cannot build queue doc: %v\n", buildErr)
 			return exitTransportError
 		}
 
 	case len(positional) > 0:
-		queueFile := positional[0]
-		//nolint:gosec // G304: path comes from operator CLI argument
-		data, err := os.ReadFile(queueFile)
-		if err != nil {
-			fmt.Fprintf(errOut, "harmonik queue dry-run: cannot read %q: %v\n", queueFile, err)
+		// Positional argument: treat as a queue-file path.
+		var loaded bool
+		queueDoc, loaded = loadQueueDocFromFile("dry-run", positional[0], queueName, diag)
+		if !loaded {
 			return exitTransportError
-		}
-		if jsonErr := json.Unmarshal(data, &queueDoc); jsonErr != nil {
-			fmt.Fprintf(errOut, "harmonik queue dry-run: invalid JSON in %q: %v\n", queueFile, jsonErr)
-			return exitTransportError
-		}
-		// Default omitted/empty group kind to stream; warn on wave groups (hk-c6grw).
-		if normErr := normalizeQueueDocGroups(queueDoc, errOut); normErr != nil {
-			fmt.Fprintf(errOut, "harmonik queue dry-run: cannot normalize group kinds: %v\n", normErr)
-			return exitTransportError
-		}
-		// --queue flag overrides the file's name field when provided.
-		if queueName != "" {
-			nameBytes, _ := json.Marshal(queueName) //nolint:errcheck // string; cannot fail
-			queueDoc["name"] = nameBytes
 		}
 
 	default:
-		fmt.Fprintln(errOut, "harmonik queue dry-run: missing argument; use --beads hk-a,hk-b or provide a <queue-file>")
+		diag.println("harmonik queue dry-run: missing argument; use --beads hk-a,hk-b or provide a <queue-file>")
 		return exitTransportError
 	}
 
 	// Embed the queue document in a socket request envelope.
 	// The server's HandlerAdapter.HandleQueueDryRun unmarshals the params
 	// (the entire SocketRequest JSON) into a QueueDryRunRequest.
-	envelope := buildEnvelope("queue-dry-run", queueDoc)
-	payload, marshalErr := json.Marshal(envelope)
+	payload, marshalErr := encodeEnvelope("queue-dry-run", queueDoc)
 	if marshalErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue dry-run: cannot marshal request: %v\n", marshalErr)
+		diag.printf("harmonik queue dry-run: cannot marshal request: %v\n", marshalErr)
 		return exitTransportError
 	}
 
@@ -133,7 +116,7 @@ func RunQueueDryRun(ctx context.Context, subArgs []string, out io.Writer, errOut
 	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
 	if earlyExit != -1 {
 		if earlyExit == exitDaemonDown {
-			fmt.Fprintln(errOut, "harmonik queue dry-run: daemon not running (no socket at "+harmonikDir+"/daemon.sock)")
+			diag.println("harmonik queue dry-run: daemon not running (no socket at " + harmonikDir + "/daemon.sock)")
 		}
 		return earlyExit
 	}

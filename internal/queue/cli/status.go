@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 )
@@ -33,7 +32,8 @@ import (
 //   - specs/queue-model.md §2.10 RECORD QueueStatusResponse, QM-057
 //
 // Bead ref: hk-eblue, hk-1k5as.
-func RunQueueStatus(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunQueueStatus(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
+	diag := newPrinter(errOut)
 	var queueID string
 	var queueName string
 	projectDir, _, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
@@ -72,7 +72,7 @@ func RunQueueStatus(ctx context.Context, subArgs []string, out io.Writer, errOut
 
 	payload, marshalErr := json.Marshal(msg)
 	if marshalErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue status: cannot marshal request: %v\n", marshalErr)
+		diag.printf("harmonik queue status: cannot marshal request: %v\n", marshalErr)
 		return exitTransportError
 	}
 
@@ -84,7 +84,7 @@ func RunQueueStatus(ctx context.Context, subArgs []string, out io.Writer, errOut
 	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
 	if earlyExit != -1 {
 		if earlyExit == exitDaemonDown {
-			fmt.Fprintln(errOut, "harmonik queue status: daemon not running (no socket at "+harmonikDir+"/daemon.sock)")
+			diag.println("harmonik queue status: daemon not running (no socket at " + harmonikDir + "/daemon.sock)")
 		}
 		return earlyExit
 	}

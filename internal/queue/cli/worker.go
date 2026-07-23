@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 )
 
@@ -25,18 +24,19 @@ import (
 //	--format json|text output format (default text)
 //
 // Bead ref: hk-xjbvi.
-func RunWorkerEnable(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunWorkerEnable(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
 	return runWorkerSetEnabled(ctx, subArgs, true, out, errOut)
 }
 
 // RunWorkerDisable implements `harmonik worker disable <name>` (see RunWorkerEnable).
 //
 // Bead ref: hk-xjbvi.
-func RunWorkerDisable(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunWorkerDisable(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
 	return runWorkerSetEnabled(ctx, subArgs, false, out, errOut)
 }
 
-func runWorkerSetEnabled(ctx context.Context, subArgs []string, enabled bool, out io.Writer, errOut io.Writer) int {
+func runWorkerSetEnabled(ctx context.Context, subArgs []string, enabled bool, out, errOut io.Writer) int {
+	diag := newPrinter(errOut)
 	verb := "enable"
 	if !enabled {
 		verb = "disable"
@@ -48,7 +48,7 @@ func runWorkerSetEnabled(ctx context.Context, subArgs []string, enabled bool, ou
 	}
 
 	if len(positional) < 1 {
-		fmt.Fprintf(errOut, "harmonik worker %s: usage: harmonik worker %s <name>\n", verb, verb)
+		diag.printf("harmonik worker %s: usage: harmonik worker %s <name>\n", verb, verb)
 		return exitTransportError
 	}
 	name := positional[0]
@@ -61,7 +61,7 @@ func runWorkerSetEnabled(ctx context.Context, subArgs []string, enabled bool, ou
 
 	payload, marshalErr := marshalJSON(msg)
 	if marshalErr != nil {
-		fmt.Fprintf(errOut, "harmonik worker %s: cannot marshal request: %v\n", verb, marshalErr)
+		diag.printf("harmonik worker %s: cannot marshal request: %v\n", verb, marshalErr)
 		return exitTransportError
 	}
 
@@ -73,7 +73,7 @@ func runWorkerSetEnabled(ctx context.Context, subArgs []string, enabled bool, ou
 	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
 	if earlyExit != -1 {
 		if earlyExit == exitDaemonDown {
-			fmt.Fprintln(errOut, "harmonik worker "+verb+": daemon not running (no socket at "+harmonikDir+"/daemon.sock)")
+			diag.println("harmonik worker " + verb + ": daemon not running (no socket at " + harmonikDir + "/daemon.sock)")
 		}
 		return earlyExit
 	}
@@ -83,15 +83,16 @@ func runWorkerSetEnabled(ctx context.Context, subArgs []string, enabled bool, ou
 			Name    string `json:"name"`
 			Enabled bool   `json:"enabled"`
 		}
+		p := newPrinter(w)
 		if jsonErr := json.Unmarshal(result, &r); jsonErr != nil {
-			fmt.Fprintf(w, "worker %s: ok\n", verb) //nolint:errcheck
-			return exitSuccess
+			p.printf("worker %s: ok\n", verb)
+			return renderExit(p)
 		}
 		state := "disabled"
 		if r.Enabled {
 			state = "enabled"
 		}
-		fmt.Fprintf(w, "worker %s: %s\n", r.Name, state) //nolint:errcheck
-		return exitSuccess
+		p.printf("worker %s: %s\n", r.Name, state)
+		return renderExit(p)
 	})
 }

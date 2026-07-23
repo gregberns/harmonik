@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 )
 
@@ -24,7 +23,8 @@ import (
 //	--format json|text output format (default text)
 //
 // Bead ref: hk-tigaf.8.
-func RunQueueList(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunQueueList(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
+	diag := newPrinter(errOut)
 	projectDir, _, outputJSON, ok := parseQueueFlags(subArgs, errOut)
 	if !ok {
 		return exitTransportError
@@ -36,7 +36,7 @@ func RunQueueList(ctx context.Context, subArgs []string, out io.Writer, errOut i
 
 	payload, marshalErr := marshalJSON(msg)
 	if marshalErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue list: cannot marshal request: %v\n", marshalErr)
+		diag.printf("harmonik queue list: cannot marshal request: %v\n", marshalErr)
 		return exitTransportError
 	}
 
@@ -48,7 +48,7 @@ func RunQueueList(ctx context.Context, subArgs []string, out io.Writer, errOut i
 	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
 	if earlyExit != -1 {
 		if earlyExit == exitDaemonDown {
-			fmt.Fprintln(errOut, "harmonik queue list: daemon not running (no socket at "+harmonikDir+"/daemon.sock)")
+			diag.println("harmonik queue list: daemon not running (no socket at " + harmonikDir + "/daemon.sock)")
 		}
 		return earlyExit
 	}
@@ -69,21 +69,22 @@ func renderQueueListText(result json.RawMessage, out io.Writer) int {
 			FailedItems    int    `json:"failed_items"`
 		} `json:"queues"`
 	}
+	p := newPrinter(out)
 	if err := json.Unmarshal(result, &resp); err != nil {
-		_, _ = fmt.Fprintf(out, "%s\n", result) //nolint:errcheck
-		return exitSuccess
+		p.printf("%s\n", result)
+		return renderExit(p)
 	}
 
 	if len(resp.Queues) == 0 {
-		_, _ = fmt.Fprintln(out, "(no active queues)") //nolint:errcheck
-		return exitSuccess
+		p.println("(no active queues)")
+		return renderExit(p)
 	}
 
 	for _, q := range resp.Queues {
-		_, _ = fmt.Fprintf(out, "%-20s  %-20s  status=%-18s  pending=%d  workers=%d  completed=%d  failed=%d\n",
+		p.printf("%-20s  %-20s  status=%-18s  pending=%d  workers=%d  completed=%d  failed=%d\n",
 			q.Name, q.QueueID, q.Status,
 			q.PendingItems, q.Workers, q.CompletedItems, q.FailedItems,
-		) //nolint:errcheck
+		)
 	}
-	return exitSuccess
+	return renderExit(p)
 }

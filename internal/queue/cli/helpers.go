@@ -18,7 +18,7 @@ import (
 //
 // Both `--project value` and `--project=value` forms are accepted per PL-028c.
 // --json and --format json|text are accepted per hk-5553i policy.
-func parseQueueFlags(subArgs []string, errOut io.Writer) (projectDir string, positional []string, outputJSON bool, ok bool) {
+func parseQueueFlags(subArgs []string, errOut io.Writer) (projectDir string, positional []string, outputJSON, ok bool) {
 	return parseQueueFlagsExtra(subArgs, errOut, nil)
 }
 
@@ -33,7 +33,8 @@ func parseQueueFlagsExtra(
 	subArgs []string,
 	errOut io.Writer,
 	extraFlagFn func(args []string, i int) (nextI int, consumed bool),
-) (projectDir string, positional []string, outputJSON bool, ok bool) {
+) (projectDir string, positional []string, outputJSON, ok bool) {
+	diag := newPrinter(errOut)
 	for i := 0; i < len(subArgs); {
 		arg := subArgs[i]
 		switch {
@@ -71,7 +72,7 @@ func parseQueueFlagsExtra(
 			// (bead IDs, queue names, file paths, group indices) do not start with a
 			// dash, so this never swallows real arguments.
 			if len(arg) > 1 && arg[0] == '-' {
-				fmt.Fprintf(errOut, "harmonik queue: unrecognized flag %q\n", arg)
+				diag.printf("harmonik queue: unrecognized flag %q\n", arg)
 				return "", nil, false, false
 			}
 			// Treat as positional.
@@ -84,14 +85,14 @@ func parseQueueFlagsExtra(
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(errOut, "harmonik queue: cannot determine working directory: %v\n", err)
+			diag.printf("harmonik queue: cannot determine working directory: %v\n", err)
 			return "", nil, false, false
 		}
 		projectDir = wd
 	}
 	abs, err := filepath.Abs(projectDir)
 	if err != nil {
-		fmt.Fprintf(errOut, "harmonik queue: cannot resolve project path %q: %v\n", projectDir, err)
+		diag.printf("harmonik queue: cannot resolve project path %q: %v\n", projectDir, err)
 		return "", nil, false, false
 	}
 	return abs, positional, outputJSON, true
@@ -101,8 +102,9 @@ func parseQueueFlagsExtra(
 // Returns "" and writes an error to errOut if the project directory does not
 // exist.
 func harmonikDirFromProject(projectDir string, errOut io.Writer) string {
+	diag := newPrinter(errOut)
 	if _, err := os.Stat(projectDir); err != nil {
-		fmt.Fprintf(errOut, "harmonik queue: project directory %q not accessible: %v\n", projectDir, err)
+		diag.printf("harmonik queue: project directory %q not accessible: %v\n", projectDir, err)
 		return ""
 	}
 	return filepath.Join(projectDir, ".harmonik")
@@ -114,14 +116,66 @@ func harmonikDirFromProject(projectDir string, errOut io.Writer) string {
 // SocketRequest, which is what HandlerAdapter.HandleQueueSubmit /
 // HandleQueueDryRun expect (they unmarshal the whole raw request as the
 // typed request RECORD).
-func buildEnvelope(op string, fields map[string]json.RawMessage) map[string]json.RawMessage {
+func buildEnvelope(op string, fields map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+	opBytes, err := json.Marshal(op)
+	if err != nil {
+		return nil, fmt.Errorf("encode op %q: %w", op, err)
+	}
 	out := make(map[string]json.RawMessage, len(fields)+1)
-	opBytes, _ := json.Marshal(op) //nolint:errcheck // constant string; cannot fail
 	out["op"] = opBytes
 	for k, v := range fields {
 		out[k] = v
 	}
-	return out
+	return out, nil
+}
+
+// encodeEnvelope wraps a queue document in an "op" envelope and marshals it to
+// the wire bytes the daemon socket expects.
+func encodeEnvelope(op string, doc map[string]json.RawMessage) ([]byte, error) {
+	envelope, err := buildEnvelope(op, doc)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("marshal %s envelope: %w", op, err)
+	}
+	return payload, nil
+}
+
+// loadQueueDocFromFile reads a queue document from queueFile, normalises its
+// group kinds, and applies the --queue name override when queueName is
+// non-empty. verb names the subcommand ("submit" / "dry-run") for diagnostics.
+//
+// Returns ok=false after writing the operator-facing diagnostic through diag;
+// the caller exits without adding a second message. submit and dry-run share
+// this path verbatim — the two used to carry byte-identical copies of it.
+func loadQueueDocFromFile(verb, queueFile, queueName string, diag *printer) (doc map[string]json.RawMessage, ok bool) {
+	//nolint:gosec // G304: path comes from operator CLI argument
+	data, readErr := os.ReadFile(queueFile)
+	if readErr != nil {
+		diag.printf("harmonik queue %s: cannot read %q: %v\n", verb, queueFile, readErr)
+		return nil, false
+	}
+	if jsonErr := json.Unmarshal(data, &doc); jsonErr != nil {
+		diag.printf("harmonik queue %s: invalid JSON in %q: %v\n", verb, queueFile, jsonErr)
+		return nil, false
+	}
+	// Default omitted/empty group kind to stream; warn on wave groups (hk-c6grw).
+	if normErr := normalizeQueueDocGroups(doc, diag); normErr != nil {
+		diag.printf("harmonik queue %s: cannot normalize group kinds: %v\n", verb, normErr)
+		return nil, false
+	}
+	if queueName == "" {
+		return doc, true
+	}
+	nameBytes, nameErr := json.Marshal(queueName)
+	if nameErr != nil {
+		diag.printf("harmonik queue %s: cannot encode --queue name %q: %v\n", verb, queueName, nameErr)
+		return nil, false
+	}
+	doc["name"] = nameBytes
+	return doc, true
 }
 
 // marshalJSON is a thin wrapper around json.Marshal that returns []byte.
@@ -141,7 +195,7 @@ func marshalJSON(v any) ([]byte, error) {
 // daemon.
 //
 // Bead ref: hk-c6grw.
-func normalizeQueueDocGroups(doc map[string]json.RawMessage, errOut io.Writer) error {
+func normalizeQueueDocGroups(doc map[string]json.RawMessage, diag *printer) error {
 	groupsRaw, ok := doc["groups"]
 	if !ok {
 		return nil
@@ -162,7 +216,7 @@ func normalizeQueueDocGroups(doc map[string]json.RawMessage, errOut io.Writer) e
 		}
 	}
 	if waved {
-		fmt.Fprintln(errOut, "harmonik queue submit: warning: wave group(s) detected — waves are immutable "+
+		diag.println("harmonik queue submit: warning: wave group(s) detected — waves are immutable " +
 			"and trigger single-active lockout (QM-027) on a shared daemon; use kind:stream for the daily loop")
 	}
 	normalized, err := json.Marshal(groups)
@@ -188,7 +242,7 @@ func normalizeQueueDocGroups(doc map[string]json.RawMessage, errOut io.Writer) e
 // directly to buildEnvelope("queue-submit", ...) or buildEnvelope("queue-dry-run", ...).
 //
 // Bead ref: hk-tigaf.8, hk-tldws.
-func beadsToQueueDoc(beadIDs []string, queueName string, workflowMode string) (map[string]json.RawMessage, error) {
+func beadsToQueueDoc(beadIDs []string, queueName, workflowMode string) (map[string]json.RawMessage, error) {
 	type itemDoc struct {
 		BeadID       string `json:"bead_id"`
 		Status       string `json:"status"`

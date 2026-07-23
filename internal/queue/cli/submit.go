@@ -3,9 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -43,7 +41,8 @@ import (
 //   - specs/queue-model.md §2.10 RECORD QueueSubmitRequest / QueueSubmitResponse
 //
 // Bead ref: hk-eblue, hk-m9a7g, hk-tigaf.8, hk-tldws.
-func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunQueueSubmit(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
+	diag := newPrinter(errOut)
 	var beadIDs []string
 	var queueName string
 	workflowMode := "" // empty = inherit daemon-resolved default (hk-y3o51); omitempty drops it from wire
@@ -83,36 +82,20 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut
 		var buildErr error
 		queueDoc, buildErr = beadsToQueueDoc(beadIDs, queueName, workflowMode)
 		if buildErr != nil {
-			fmt.Fprintf(errOut, "harmonik queue submit: cannot build queue doc: %v\n", buildErr)
+			diag.printf("harmonik queue submit: cannot build queue doc: %v\n", buildErr)
 			return exitTransportError
 		}
 
 	case len(positional) > 0:
 		// Positional argument: treat as a queue-file path.
-		queueFile := positional[0]
-		//nolint:gosec // G304: path comes from operator CLI argument
-		data, err := os.ReadFile(queueFile)
-		if err != nil {
-			fmt.Fprintf(errOut, "harmonik queue submit: cannot read %q: %v\n", queueFile, err)
+		var loaded bool
+		queueDoc, loaded = loadQueueDocFromFile("submit", positional[0], queueName, diag)
+		if !loaded {
 			return exitTransportError
-		}
-		if jsonErr := json.Unmarshal(data, &queueDoc); jsonErr != nil {
-			fmt.Fprintf(errOut, "harmonik queue submit: invalid JSON in %q: %v\n", queueFile, jsonErr)
-			return exitTransportError
-		}
-		// Default omitted/empty group kind to stream; warn on wave groups (hk-c6grw).
-		if normErr := normalizeQueueDocGroups(queueDoc, errOut); normErr != nil {
-			fmt.Fprintf(errOut, "harmonik queue submit: cannot normalize group kinds: %v\n", normErr)
-			return exitTransportError
-		}
-		// Inject --queue name into file-based doc when provided.
-		if queueName != "" {
-			nameBytes, _ := json.Marshal(queueName) //nolint:errcheck // string; cannot fail
-			queueDoc["name"] = nameBytes
 		}
 
 	default:
-		fmt.Fprintln(errOut, "harmonik queue submit: missing argument; use --beads hk-a,hk-b or provide a <queue-file>")
+		diag.println("harmonik queue submit: missing argument; use --beads hk-a,hk-b or provide a <queue-file>")
 		return exitTransportError
 	}
 
@@ -120,10 +103,9 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut
 	// The server's HandlerAdapter.HandleQueueSubmit unmarshals the params
 	// (the entire SocketRequest JSON) into a QueueSubmitRequest, so we merge
 	// the queue document fields with the "op" field at the top level.
-	envelope := buildEnvelope("queue-submit", queueDoc)
-	payload, marshalErr := json.Marshal(envelope)
+	payload, marshalErr := encodeEnvelope("queue-submit", queueDoc)
 	if marshalErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue submit: cannot marshal request: %v\n", marshalErr)
+		diag.printf("harmonik queue submit: cannot marshal request: %v\n", marshalErr)
 		return exitTransportError
 	}
 
@@ -135,7 +117,7 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut
 	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
 	if earlyExit != -1 {
 		if earlyExit == exitDaemonDown {
-			fmt.Fprintln(errOut, "harmonik queue submit: daemon not running (no socket at "+harmonikDir+"/daemon.sock)")
+			diag.println("harmonik queue submit: daemon not running (no socket at " + harmonikDir + "/daemon.sock)")
 		}
 		return earlyExit
 	}

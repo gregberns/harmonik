@@ -61,7 +61,9 @@ import (
 // Queue resolution priority: --queue-id > --queue flag > positional arg > "main".
 //
 // Bead ref: hk-i6hhn (original), hk-fkpb7 (--queue / --queue-id flags).
-func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunQueueCancel(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
+	diag := newPrinter(errOut)
+	report := newPrinter(out)
 	forceFlag := false
 	var queueIDFlag string
 	var queueNameFlag string
@@ -100,12 +102,12 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 	if queueIDFlag != "" {
 		q, err := cancelFindByID(ctx, projectDir, queueIDFlag)
 		if err != nil {
-			fmt.Fprintf(errOut, "harmonik queue cancel: --queue-id lookup: %v\n", err)
+			diag.printf("harmonik queue cancel: --queue-id lookup: %v\n", err)
 			return 1
 		}
 		if q == nil {
-			fmt.Fprintln(out, "harmonik queue cancel: no active queue found (queue_id not found)")
-			return 0
+			report.println("harmonik queue cancel: no active queue found (queue_id not found)")
+			return cancelExitOK(report)
 		}
 		existingQueue = q
 		queueName = queue.NormaliseQueueName(q.Name)
@@ -123,27 +125,27 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 		existingQueue, loadErr = queue.Load(ctx, projectDir, queueName)
 		if loadErr != nil {
 			if !errors.Is(loadErr, queue.ErrCorrupt) {
-				fmt.Fprintf(errOut, "harmonik queue cancel: cannot read queue file: %v\n", loadErr)
+				diag.printf("harmonik queue cancel: cannot read queue file: %v\n", loadErr)
 				return 1
 			}
 			// Corrupt/zero-value stub (e.g. schema_version:0 left by a half-completed
 			// session): archive by name even though we can't parse a queue_id (hk-9ztth).
 			archivePath, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, queueName, time.Now())
 			if archiveErr != nil {
-				fmt.Fprintf(errOut, "harmonik queue cancel: cannot archive corrupt queue file: %v\n", archiveErr)
+				diag.printf("harmonik queue cancel: cannot archive corrupt queue file: %v\n", archiveErr)
 				return 1
 			}
-			fmt.Fprintf(out, "corrupt queue stub for %q archived to %s\n", queueName, archivePath)
-			return 0
+			report.printf("corrupt queue stub for %q archived to %s\n", queueName, archivePath)
+			return cancelExitOK(report)
 		}
 		if existingQueue == nil {
-			fmt.Fprintln(out, "harmonik queue cancel: no active queue found (queue file absent)")
-			return 0
+			report.println("harmonik queue cancel: no active queue found (queue file absent)")
+			return cancelExitOK(report)
 		}
 	}
 
 	if existingQueue.Status == queue.QueueStatusCompleted && !forceFlag {
-		fmt.Fprintf(errOut, "harmonik queue cancel: queue %s is already completed; use --force to archive anyway\n", existingQueue.QueueID)
+		diag.printf("harmonik queue cancel: queue %s is already completed; use --force to archive anyway\n", existingQueue.QueueID)
 		return 1
 	}
 
@@ -156,15 +158,34 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 
 	archivePath, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, queueName, time.Now())
 	if archiveErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue cancel: cannot archive queue.json: %v\n", archiveErr)
+		diag.printf("harmonik queue cancel: cannot archive queue.json: %v\n", archiveErr)
 		return 1
 	}
 
-	fmt.Fprintf(out, "queue %s (status=%s) archived to %s\n", existingQueue.QueueID, existingQueue.Status, archivePath)
+	report.printf("queue %s (status=%s) archived to %s\n", existingQueue.QueueID, existingQueue.Status, archivePath)
 
-	// Best-effort: emit a queue_cancelled_operator event to events.jsonl.
-	emitQueueCancelEvent(projectDir, existingQueue.QueueID, string(existingQueue.Status))
+	journalCancel(diag, projectDir, existingQueue.QueueID, string(existingQueue.Status))
 
+	return cancelExitOK(report)
+}
+
+// journalCancel appends the operator cancel event to events.jsonl and warns on
+// stderr if that fails. The archive it records has already landed on disk, so a
+// journalling failure is reported but never changes the exit code.
+func journalCancel(diag *printer, projectDir, queueID, priorStatus string) {
+	if err := emitQueueCancelEvent(projectDir, queueID, priorStatus); err != nil {
+		diag.printf("harmonik queue cancel: warning: could not journal cancel event: %v\n", err)
+	}
+}
+
+// cancelExitOK maps a completed cancel to its exit code, downgrading it to 1
+// when the confirmation line never reached stdout: a caller that scripts
+// `queue cancel` reads that line, so a silently truncated report must not look
+// like a clean cancel.
+func cancelExitOK(report *printer) int {
+	if report.failed() {
+		return 1
+	}
 	return 0
 }
 
@@ -185,6 +206,8 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 //
 // Bead ref: hk-0mmy4.
 func tryDaemonQueueCancel(ctx context.Context, projectDir, queueName string, force bool, out, errOut io.Writer) (handled bool, exitCode int) {
+	diag := newPrinter(errOut)
+	report := newPrinter(out)
 	msg := struct {
 		Op    string `json:"op"`
 		Queue string `json:"queue"`
@@ -209,7 +232,7 @@ func tryDaemonQueueCancel(ctx context.Context, projectDir, queueName string, for
 	}
 
 	if !resp.Ok {
-		fmt.Fprintf(errOut, "harmonik queue cancel: %s\n", resp.Error) //nolint:errcheck
+		diag.printf("harmonik queue cancel: %s\n", resp.Error)
 		return true, 1
 	}
 
@@ -221,13 +244,13 @@ func tryDaemonQueueCancel(ctx context.Context, projectDir, queueName string, for
 		return false, 0
 	}
 	if result.QueueID == "" {
-		fmt.Fprintln(out, "harmonik queue cancel: no active queue found (queue file absent)") //nolint:errcheck
-		return true, 0
+		report.println("harmonik queue cancel: no active queue found (queue file absent)")
+		return true, cancelExitOK(report)
 	}
 
-	fmt.Fprintf(out, "queue %s (status=%s) archived (daemon-reaped)\n", result.QueueID, result.PriorStatus) //nolint:errcheck
-	emitQueueCancelEvent(projectDir, result.QueueID, result.PriorStatus)
-	return true, 0
+	report.printf("queue %s (status=%s) archived (daemon-reaped)\n", result.QueueID, result.PriorStatus)
+	journalCancel(diag, projectDir, result.QueueID, result.PriorStatus)
+	return true, cancelExitOK(report)
 }
 
 // cancelFindByID enumerates all per-queue files under projectDir and returns
@@ -264,8 +287,13 @@ type queueCancelOperatorEvent struct {
 }
 
 // emitQueueCancelEvent appends a queue_cancelled_operator event to events.jsonl.
-// Best-effort: errors are silently discarded.
-func emitQueueCancelEvent(projectDir, queueID, priorStatus string) {
+//
+// Best-effort by design: the cancel itself has already succeeded on disk by the
+// time this runs, so a failure to journal it must not fail the command. The
+// error is nonetheless RETURNED rather than discarded, so a caller (and the
+// tests) can tell a journalled cancel from an unjournalled one; RunQueueCancel
+// deliberately ignores it and still exits 0.
+func emitQueueCancelEvent(projectDir, queueID, priorStatus string) (err error) {
 	evt := queueCancelOperatorEvent{
 		EventType:   "queue_cancelled_operator",
 		EmittedAt:   time.Now().UTC().Format(time.RFC3339Nano),
@@ -275,17 +303,29 @@ func emitQueueCancelEvent(projectDir, queueID, priorStatus string) {
 	}
 	line, err := json.Marshal(evt)
 	if err != nil {
-		return
+		return fmt.Errorf("marshal queue_cancelled_operator: %w", err)
 	}
 	line = append(line, '\n')
 
 	eventsDir := projectDir + "/.harmonik/events"
-	_ = os.MkdirAll(eventsDir, 0o755) //nolint:errcheck // best-effort
-	eventsPath := eventsDir + "/events.jsonl"
-	f, err := os.OpenFile(eventsPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644) //nolint:gosec // G304: operator-controlled project dir
-	if err != nil {
-		return
+	if mkErr := os.MkdirAll(eventsDir, 0o750); mkErr != nil {
+		return fmt.Errorf("mkdir %q: %w", eventsDir, mkErr)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // best-effort
-	_, _ = f.Write(line)             //nolint:errcheck // best-effort
+	eventsPath := eventsDir + "/events.jsonl"
+	// 0o644 matches internal/eventbus's JSONL writer: events.jsonl is an
+	// append-only journal written by BOTH the daemon and this CLI path, and a
+	// tighter mode here would give the file different perms depending on which
+	// writer happened to create it.
+	f, openErr := os.OpenFile(eventsPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644) //nolint:gosec // G304: eventsPath is derived from the operator's --project dir, so it is a runtime value by construction and G304 fires however it is validated
+	if openErr != nil {
+		return fmt.Errorf("open %q: %w", eventsPath, openErr)
+	}
+	// A failed Close can mean the appended line never reached the disk, so it
+	// joins the result rather than being dropped in favour of the write error.
+	defer func() { err = errors.Join(err, f.Close()) }()
+
+	if _, writeErr := f.Write(line); writeErr != nil {
+		return fmt.Errorf("append to %q: %w", eventsPath, writeErr)
+	}
+	return nil
 }

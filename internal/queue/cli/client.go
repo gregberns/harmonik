@@ -27,10 +27,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -57,19 +57,6 @@ const (
 	validationErrorCodeMax = -32010
 )
 
-// socketRequest is the wire envelope sent to the daemon socket for all
-// queue operations. The "op" field selects the handler; the remaining
-// fields carry the operation-specific payload (silently ignored by the
-// server for irrelevant ops). This mirrors daemon.SocketRequest.
-type socketRequest struct {
-	Op            string          `json:"op"`
-	QueueID       string          `json:"queue_id,omitempty"`
-	GroupIndex    *int            `json:"group_index,omitempty"`
-	BeadIDs       []string        `json:"bead_ids,omitempty"`
-	SchemaVersion *int            `json:"schema_version,omitempty"`
-	Groups        json.RawMessage `json:"groups,omitempty"`
-}
-
 // socketResponse is the wire envelope received from the daemon socket.
 // This mirrors daemon.SocketResponse.
 type socketResponse struct {
@@ -90,10 +77,10 @@ type errorBody struct {
 // sendRequest opens daemon.sock under harmonikDir, sends the given raw JSON
 // bytes as a single socket message, reads the SocketResponse, and returns it.
 //
-// Returns (resp, nil) on a clean response (even if resp.Ok is false).
-// Returns exitDaemonDown if the socket is absent or connection is refused.
-// Returns exitTransportError for any other dial or I/O error.
-func sendRequest(ctx context.Context, harmonikDir string, payload []byte) (socketResponse, int) {
+// earlyExit is -1 on a clean response (even if resp.Ok is false), so the
+// caller processes resp. It is exitDaemonDown if the socket is absent or the
+// connection is refused, and exitTransportError for any other dial or I/O error.
+func sendRequest(ctx context.Context, harmonikDir string, payload []byte) (resp socketResponse, earlyExit int) {
 	sockPath := harmonikDir + "/daemon.sock"
 
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
@@ -117,12 +104,9 @@ func sendRequest(ctx context.Context, harmonikDir string, payload []byte) (socke
 		_ = uw.CloseWrite() //nolint:errcheck // cleanup error unactionable
 	}
 
-	// Read response.
-	var resp socketResponse
+	// Read response. A truncated frame (io.EOF / io.ErrUnexpectedEOF) and a
+	// malformed one are both protocol failures, so they share an exit code.
 	if decErr := json.NewDecoder(conn).Decode(&resp); decErr != nil {
-		if errors.Is(decErr, io.EOF) || errors.Is(decErr, io.ErrUnexpectedEOF) {
-			return socketResponse{}, exitTransportError
-		}
 		return socketResponse{}, exitTransportError
 	}
 
@@ -142,13 +126,17 @@ func sendRequest(ctx context.Context, harmonikDir string, payload []byte) (socke
 //   - resp.Ok == false, validation error code → writes error, returns exitValidationError.
 //   - resp.Ok == false, other error → writes error, returns exitTransportError.
 func handleResponse(resp socketResponse, out io.Writer, outputJSON bool, renderFn func(result json.RawMessage, out io.Writer) int) int {
+	p := newPrinter(out)
 	if resp.Ok {
 		if outputJSON {
 			data, err := json.Marshal(resp.Result)
 			if err != nil {
 				return exitTransportError
 			}
-			_, _ = fmt.Fprintf(out, "%s\n", data) //nolint:errcheck // write to stdout; unactionable
+			p.printf("%s\n", data)
+			if p.failed() {
+				return exitTransportError
+			}
 			return exitSuccess
 		}
 		return renderFn(resp.Result, out)
@@ -164,9 +152,12 @@ func handleResponse(resp socketResponse, out io.Writer, outputJSON bool, renderF
 		if err != nil {
 			return exitTransportError
 		}
-		_, _ = fmt.Fprintf(out, "%s\n", data) //nolint:errcheck // write to stdout; unactionable
+		p.printf("%s\n", data)
 	} else {
-		_, _ = fmt.Fprintf(out, "error: %s (code %d)\n", resp.Error, resp.ErrorCode) //nolint:errcheck
+		p.printf("error: %s (code %d)\n", resp.Error, resp.ErrorCode)
+	}
+	if p.failed() {
+		return exitTransportError
 	}
 
 	// Classify the error code.
@@ -179,6 +170,16 @@ func handleResponse(resp socketResponse, out io.Writer, outputJSON bool, renderF
 // ---------------------------------------------------------------------------
 // Human-readable renderers (one per queue subcommand)
 // ---------------------------------------------------------------------------
+
+// renderExit maps a finished renderer's printer to its exit code. A stdout
+// write that failed part-way through means the caller received a TRUNCATED
+// report, so it must not be reported as success.
+func renderExit(p *printer) int {
+	if p.failed() {
+		return exitTransportError
+	}
+	return exitSuccess
+}
 
 // renderQueueStatusText prints a human-readable summary of a QueueStatusResponse.
 // The result bytes are the raw JSON from the daemon (resp.Result).
@@ -196,30 +197,31 @@ func renderQueueStatusText(result json.RawMessage, out io.Writer) int {
 			} `json:"groups"`
 		} `json:"queue"`
 	}
+	p := newPrinter(out)
 	if err := json.Unmarshal(result, &envelope); err != nil {
 		// Fallback: print raw JSON on parse failure.
-		_, _ = fmt.Fprintf(out, "%s\n", result) //nolint:errcheck
-		return exitSuccess
+		p.printf("%s\n", result)
+		return renderExit(p)
 	}
 
 	if envelope.Queue == nil {
-		_, _ = fmt.Fprintln(out, "(no queue active)") //nolint:errcheck
-		return exitSuccess
+		p.println("(no queue active)")
+		return renderExit(p)
 	}
 
 	q := envelope.Queue
-	_, _ = fmt.Fprintf(out, "queue:    %s\n", q.Status)  //nolint:errcheck
-	_, _ = fmt.Fprintf(out, "queue_id: %s\n", q.QueueID) //nolint:errcheck
+	p.printf("queue:    %s\n", q.Status)
+	p.printf("queue_id: %s\n", q.QueueID)
 	if len(q.Groups) > 0 {
-		_, _ = fmt.Fprintf(out, "groups:   %d\n", len(q.Groups)) //nolint:errcheck
+		p.printf("groups:   %d\n", len(q.Groups))
 		for gi, g := range q.Groups {
-			_, _ = fmt.Fprintf(out, "  group %d  [%s]  %d item(s)\n", gi, g.Status, len(g.Items)) //nolint:errcheck
+			p.printf("  group %d  [%s]  %d item(s)\n", gi, g.Status, len(g.Items))
 			for _, item := range g.Items {
-				_, _ = fmt.Fprintf(out, "    %-20s  %s\n", item.BeadID, item.Status) //nolint:errcheck
+				p.printf("    %-20s  %s\n", item.BeadID, item.Status)
 			}
 		}
 	}
-	return exitSuccess
+	return renderExit(p)
 }
 
 // renderQueueSubmitText prints a human-readable confirmation of a QueueSubmitResponse.
@@ -229,16 +231,17 @@ func renderQueueSubmitText(result json.RawMessage, out io.Writer) int {
 		Status     string `json:"status"`
 		GroupCount int    `json:"group_count"`
 	}
+	p := newPrinter(out)
 	if err := json.Unmarshal(result, &resp); err != nil {
-		_, _ = fmt.Fprintf(out, "%s\n", result) //nolint:errcheck
-		return exitSuccess
+		p.printf("%s\n", result)
+		return renderExit(p)
 	}
-	_, _ = fmt.Fprintf(out, "submitted: queue_id=%s\n", resp.QueueID) //nolint:errcheck
-	_, _ = fmt.Fprintf(out, "status:    %s\n", resp.Status)           //nolint:errcheck
+	p.printf("submitted: queue_id=%s\n", resp.QueueID)
+	p.printf("status:    %s\n", resp.Status)
 	if resp.GroupCount > 0 {
-		_, _ = fmt.Fprintf(out, "groups:    %d\n", resp.GroupCount) //nolint:errcheck
+		p.printf("groups:    %d\n", resp.GroupCount)
 	}
-	return exitSuccess
+	return renderExit(p)
 }
 
 // renderQueueAppendText prints a human-readable confirmation of a QueueAppendResponse.
@@ -247,19 +250,20 @@ func renderQueueAppendText(result json.RawMessage, out io.Writer) int {
 		AppendedCount  int   `json:"appended_count"`
 		NewTailIndices []int `json:"new_tail_indices"`
 	}
+	p := newPrinter(out)
 	if err := json.Unmarshal(result, &resp); err != nil {
-		_, _ = fmt.Fprintf(out, "%s\n", result) //nolint:errcheck
-		return exitSuccess
+		p.printf("%s\n", result)
+		return renderExit(p)
 	}
-	_, _ = fmt.Fprintf(out, "appended: %d bead(s)\n", resp.AppendedCount) //nolint:errcheck
+	p.printf("appended: %d bead(s)\n", resp.AppendedCount)
 	if len(resp.NewTailIndices) > 0 {
 		indices := make([]string, len(resp.NewTailIndices))
 		for i, idx := range resp.NewTailIndices {
-			indices[i] = fmt.Sprintf("%d", idx)
+			indices[i] = strconv.Itoa(idx)
 		}
-		_, _ = fmt.Fprintf(out, "indices:  %s\n", strings.Join(indices, ", ")) //nolint:errcheck
+		p.printf("indices:  %s\n", strings.Join(indices, ", "))
 	}
-	return exitSuccess
+	return renderExit(p)
 }
 
 // renderQueueDryRunText prints a human-readable validation summary of a QueueDryRunResponse.
@@ -279,9 +283,10 @@ func renderQueueDryRunText(result json.RawMessage, out io.Writer) int {
 		} `json:"ledger_dep_notices"`
 		ParallelismNarrowed bool `json:"parallelism_narrowed"`
 	}
+	p := newPrinter(out)
 	if err := json.Unmarshal(result, &resp); err != nil {
-		_, _ = fmt.Fprintf(out, "%s\n", result) //nolint:errcheck
-		return exitSuccess
+		p.printf("%s\n", result)
+		return renderExit(p)
 	}
 
 	// Count total items across groups.
@@ -290,16 +295,16 @@ func renderQueueDryRunText(result json.RawMessage, out io.Writer) int {
 		totalItems += len(g.Items)
 	}
 
-	_, _ = fmt.Fprintf(out, "dry-run:    OK\n")                               //nolint:errcheck
-	_, _ = fmt.Fprintf(out, "items:      %d\n", totalItems)                   //nolint:errcheck
-	_, _ = fmt.Fprintf(out, "validation: passed — queue would be accepted\n") //nolint:errcheck
+	p.printf("dry-run:    OK\n")
+	p.printf("items:      %d\n", totalItems)
+	p.printf("validation: passed — queue would be accepted\n")
 	if resp.ParallelismNarrowed {
-		_, _ = fmt.Fprintf(out, "warning:    parallelism narrowed (%d ledger-dep notice(s))\n", len(resp.LedgerDepNotices)) //nolint:errcheck
+		p.printf("warning:    parallelism narrowed (%d ledger-dep notice(s))\n", len(resp.LedgerDepNotices))
 		for _, n := range resp.LedgerDepNotices {
-			_, _ = fmt.Fprintf(out, "  %s blocked by %s\n", n.BeadID, n.BlockerBeadID) //nolint:errcheck
+			p.printf("  %s blocked by %s\n", n.BeadID, n.BlockerBeadID)
 		}
 	}
-	return exitSuccess
+	return renderExit(p)
 }
 
 // isSocketAbsent reports whether err is a "no such file or directory" error —

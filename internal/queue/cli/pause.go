@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 )
@@ -26,7 +25,8 @@ import (
 //	--format json|text output format (default text)
 //
 // Bead ref: hk-tigaf.8.
-func RunQueuePause(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
+func RunQueuePause(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
+	diag := newPrinter(errOut)
 	var queueName string
 	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
 		switch {
@@ -46,7 +46,7 @@ func RunQueuePause(ctx context.Context, subArgs []string, out io.Writer, errOut 
 	// Queue name: prefer --queue flag, fall back to positional argument.
 	if queueName == "" {
 		if len(positional) < 1 {
-			fmt.Fprintln(errOut, "harmonik queue pause: usage: hk queue pause <name>")
+			diag.println("harmonik queue pause: usage: hk queue pause <name>")
 			return exitTransportError
 		}
 		queueName = positional[0]
@@ -59,7 +59,7 @@ func RunQueuePause(ctx context.Context, subArgs []string, out io.Writer, errOut 
 
 	payload, marshalErr := marshalJSON(msg)
 	if marshalErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue pause: cannot marshal request: %v\n", marshalErr)
+		diag.printf("harmonik queue pause: cannot marshal request: %v\n", marshalErr)
 		return exitTransportError
 	}
 
@@ -71,13 +71,14 @@ func RunQueuePause(ctx context.Context, subArgs []string, out io.Writer, errOut 
 	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
 	if earlyExit != -1 {
 		if earlyExit == exitDaemonDown {
-			fmt.Fprintln(errOut, "harmonik queue pause: daemon not running (no socket at "+harmonikDir+"/daemon.sock)")
+			diag.println("harmonik queue pause: daemon not running (no socket at " + harmonikDir + "/daemon.sock)")
 		}
 		return earlyExit
 	}
 
 	return handleResponse(resp, out, outputJSON, func(_ json.RawMessage, w io.Writer) int {
-		_, _ = fmt.Fprintf(w, "paused: %s\n", queueName) //nolint:errcheck
-		return exitSuccess
+		p := newPrinter(w)
+		p.printf("paused: %s\n", queueName)
+		return renderExit(p)
 	})
 }

@@ -8,14 +8,14 @@
 2. **AGENTS.md canonical across all agents.** Claude Code, Pi, Codex, or any future agent reads `AGENTS.md` (possibly via `CLAUDE.md` symlink or its own convention). Single source of truth; no mirror drift. Claude-specific content (hook references, Skill tool usage, `/Users/gb/.claude/projects/...` memory paths) lives in a `## Claude-specific` section inside `AGENTS.md`; other-agent-specific sections similarly named (`## Pi-specific`, etc.).
 3. **Skills live in repo.** `.claude/skills/` at repo root. Project-specific skills are versioned and reviewed; user-global skills stay in `~/.claude/skills/`. Handler-contract skill-injection (foundation §4.11) reads from the project skills dir.
 4. **Memory is user-scoped, index-driven, agent-updated.** `/Users/gb/.claude/projects/-Users-gb-github-harmonik/memory/` stays the source; agents update `MEMORY.md` index + add per-topic files when a durable preference or project fact emerges. Not every session; only on new durable content.
-5. **SESSION_HANDOFF.md is the cross-session baton.** Overwritten at every session end. Git history preserves prior handoffs. Mandatory on session exit if any non-trivial work landed.
+5. **HANDOFF.md is the cross-session baton.** Repo-root `HANDOFF.md` carries this-session state; each long-lived role or crew thread additionally keeps its own `HANDOFF-<name>.md` at the repo root. Overwritten in place at every session end. All of them are **gitignored** (`.gitignore` entries `HANDOFF-*.md` and `HANDOFF.md`; the latter added by `15382e4f1` because a tracked handoff kept getting reverted to a stale copy), so git history does **not** preserve prior handoffs — see §Cross-session continuity. Mandatory on session exit if any non-trivial work landed. (Supersedes `SESSION_HANDOFF.md`, which existed 2026-04-21 → 2026-05-14 and was deleted in `5b5193110`; do not reinstate it.)
 6. **Update cadence: end-of-session + end-of-kerf-pass.** Every session end runs the config-review checklist below. Every `kerf` pass advance (problem-space → decompose → research → design → spec-draft) runs a richer review that MAY update rules and skills.
 7. **Review authority: reviewer subagent.** A dedicated `agent-config-reviewer` prompt (stored under `.claude/skills/agent-config-reviewer/`) runs at the cadence points above and emits a diff against the current configuration. Main agent applies or defers.
 8. **CONSTITUTION.md as non-recursive trust anchor.** `CONSTITUTION.md` at the repo root enumerates the immutable foundational decisions agents must not mutate without explicit human sign-off. Edits to it require a `Constitution-Edit-Approved-By: <human-name-or-email>` commit trailer; agents MUST NOT commit edits to CONSTITUTION.md without this trailer. Listed in Protected rule files (§Protected rule files); edit surfacing in CI is automatic.
 
 ## Repo-root AGENTS.md — what it contains
 
-Repo-root AGENTS.md stays under 120 lines (CLAUDE.md is a symlink → AGENTS.md; same content). Contents: **entry ritual** (read order `AGENT_INDEX.md` → `STATUS.md` → `.harmonik/context/captain-lanes.md` → `HANDOFF.md`; the older ritual named two paths that no longer resolve — `TASKS.md` was renamed to `docs/historical/phase-0-1-tasks.md` in `334bb759e`, and `SESSION_HANDOFF.md` was deleted in `5b5193110`, superseded by `HANDOFF.md`); **kerf planning rules** (keep current content); **the 10 locked + 4 candidate decisions** (as a list pointing to `STATUS.md`); **hard don'ts**; **pointers, not prose** (git → this doc; Go → this doc; tests → `testing.md`; layout → `subsystem-organization.md`). Per-directory or per-subsystem content does NOT belong here.
+Repo-root AGENTS.md stays under 120 lines (CLAUDE.md is a symlink → AGENTS.md; same content). Contents: **entry ritual** (read order `AGENT_INDEX.md` → `STATUS.md` → `HANDOFF.md`, with `.harmonik/context/captain-lanes.md` inserted before `HANDOFF.md` for a captain only — that file's own tier header reads "LOADED BY: captain @ STARTUP Step 0b; NOT loaded by crews or implementers", so the per-role load map in AGENTS.md carries the split; the older ritual named two paths that no longer resolve — `TASKS.md` was renamed to `docs/historical/phase-0-1-tasks.md` in `334bb759e`, and `SESSION_HANDOFF.md` was deleted in `5b5193110`, superseded by `HANDOFF.md`); **kerf planning rules** (keep current content); **the 10 locked + 4 candidate decisions** (as a list pointing to `STATUS.md`); **hard don'ts**; **pointers, not prose** (git → this doc; Go → this doc; tests → `testing.md`; layout → `subsystem-organization.md`). Per-directory or per-subsystem content does NOT belong here.
 
 ## Per-directory AGENTS.md (with CLAUDE.md symlink) — when to use
 
@@ -151,7 +151,7 @@ The auto-memory at `/Users/gb/.claude/projects/-Users-gb-github-harmonik/memory/
 
 **Agents MUST:**
 
-1. Read `MEMORY.md` (the index) on session start, after `SESSION_HANDOFF.md`.
+1. Read `MEMORY.md` (the index) on session start, after `HANDOFF.md`.
 2. Add a new memory file when a durable preference or project-level fact emerges that future sessions will need. Update the `MEMORY.md` index in the same commit.
 3. NOT re-save things already in `CLAUDE.md`, `STATUS.md`, or existing memory files. Memory is the lowest-priority store; prefer the knowledge base.
 4. NOT edit existing memory files to flip a decision without explicit user sign-off.
@@ -160,17 +160,19 @@ Memory is user-scoped (not repo-scoped), so it survives repo resets but is not s
 
 ## Cross-session continuity
 
-`SESSION_HANDOFF.md` at repo root is the cross-session baton. Structure (enforced; existing file is the canonical template):
+`HANDOFF.md` at repo root is the cross-session baton — tier-1 operational state, session/hour cadence. The canonical template is `cmd/harmonik/assets/context/HANDOFF.md.tmpl`, seeded to the repo root by `harmonik init` (`provisionContextTiers` in `cmd/harmonik/init_cmd.go`) and mapped to the same destination by the asset reconciler behind `harmonik sync-assets` (`destFor` in `cmd/harmonik/sync_assets_cmd.go`). It opens with a `TIER / LOADED BY / OWNER / DO NOT PUT HERE` comment header (keep it), then:
 
-1. **Read this first** — numbered list of files.
-2. **What landed this session** — 1–3 paragraphs, concrete deltas.
-3. **Where the kerf work stands** — which kerf codename, what pass, next advancement.
-4. **Recommended next-session flow** — 2–5 numbered steps.
-5. **Open discussion threads** — carried items with IDs.
-6. **Important collaboration notes** — what was reinforced this session (not a re-dump of standing rules).
-7. **What should NOT be re-opened** — pointer to locked decisions + this-session additions.
-8. **Files worth knowing about** — paths the next session will touch.
-9. **Log entry** — link to `docs/log/<date>-<slug>.md` for this session.
+1. **STATE `<date>`** — one-line session summary.
+2. **Status** — `CLEAN` / `DIRTY` / `BLOCKED`: are commits pushed, are files mid-edit, is the daemon running.
+3. **What just shipped** — commits and beads closed this session.
+4. **Salvage / in-flight notes** — the volatile play-by-play: promoted cherry-picks, stranded run IDs, deploy actions.
+5. **Open / cleanup notes** — checklist of next actionable items.
+6. **Next** — the single highest-impact next step (usually `kerf next`).
+7. **Translations** — every internal code / bead-id used above, mapped to plain English.
+
+Long-lived role and crew threads each keep a sibling `HANDOFF-<name>.md` at the repo root — `HANDOFF-captain.md`, `HANDOFF-admiral.md`, one per crew. Same tier and same purpose as `HANDOFF.md`, but the section set is per-role in practice rather than the template's, so read the file rather than assuming the list above. These are session-continuity batons and are NOT the captain→crew *mission* handoff, which is a different artifact at `.harmonik/crew/missions/<crew>.md` governed by `specs/crew-handoff-schema.md`.
+
+**Handoffs do not leave the machine.** `HANDOFF.md` and `HANDOFF-*.md` are gitignored (decision 5 above), so a handoff is overwritten in place with no git history behind it and no copy on any other clone. Anything a future session on another machine must find belongs in the repo — `docs/`, `specs/`, or `.harmonik/context/` — not in a handoff.
 
 Handoff MUST be written before session exit if any of: a kerf pass advanced, a spec landed, a decision was taken, or ≥5 files changed. Trivial sessions (docs typo, one-line clarification) MAY skip.
 
@@ -179,12 +181,12 @@ Handoff MUST be written before session exit if any of: a kerf pass advanced, a s
 The user's suggestion — "review task after every section" — becomes a two-tier cadence:
 
 **Tier 1 — Every session end (lightweight, mandatory).**
-Before writing `SESSION_HANDOFF.md`, the main agent runs a self-check:
+Before writing `HANDOFF.md`, the main agent runs a self-check:
 1. Did any new rule emerge? → propose an edit to this doc.
 2. Did a skill fail or gap show up? → open a TASKS.md item to author/revise the skill.
 3. Did a memory preference surface? → write the memory file.
 4. Did per-directory rules drift from repo-root rules? → flag.
-5. **Did `make check-full` pass for any code changes this session?** Outcome recorded in `SESSION_HANDOFF.md`. Failure to record is a process violation. (Sessions that did not touch code MAY skip this item; note the skip.)
+5. **Did `make check-full` pass for any code changes this session?** Outcome recorded in `HANDOFF.md`. Failure to record is a process violation. (Sessions that did not touch code MAY skip this item; note the skip.)
 6. **Did `agent-reviewer` run on every non-trivial commit this session?** Outcome recorded via the `Reviewed-By:` commit trailer on each commit. A session with non-trivial commits lacking `Reviewed-By:` trailers is a process violation; open a TASKS.md item to retroactively review and note the gap in the session log.
 Output: a short `## Config review` stanza in the session log entry.
 

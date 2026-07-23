@@ -23,11 +23,11 @@ Each role loads only its slice. The boot runbook in each role's skill is authori
   - Does **NOT** boot-read: `AGENT_INDEX.md`, `STATUS.md`, product/`docs/` knowledge base, full skill bodies. `ROADMAP.md` only on cold boot / milestone.
 - **Captain — keeper-restart resume (LEAN):** re-drain comms → re-read tier-3/tier-2 + ONE boot digest → trust cached tier state as input → re-arm watchers. No heavy re-derive.
 - **Crew — minimal load** (see `.claude/skills/crew-launch/SKILL.md`): its mission file (`.harmonik/crew/missions/<crew>.md`) + `crew-launch/SKILL.md` + `agent-comms` + `beads-cli` + `harmonik-dispatch`. Does **NOT** load fleet-level state (ROADMAP, captain-lanes, project.yaml, orchestrator standing-rules, STATUS, HANDOFF, knowledge base) — scoped to ONE epic + ONE queue.
-- **Implementer-orchestrator (main `/session-resume`, non-captain):** `AGENT_INDEX → STATUS → HANDOFF` reading order + the **`orchestrator-rules` skill** (standing rules) + `harmonik-dispatch`.
+- **Implementer-orchestrator (main `/session-resume`, non-captain):** `AGENT_INDEX → STATUS → HANDOFF` reading order + the **`orchestrator-rules` skill** (standing rules) + `harmonik-dispatch`. **Deliberately three steps, not the captain's four:** `captain-lanes.md` is captain-tier — its own tier header says "LOADED BY: captain @ STARTUP Step 0b; NOT loaded by crews or implementers". Do not "fix" this to match §Start here.
 
 ## Start here
 
-Read [AGENT_INDEX.md](AGENT_INDEX.md) first — the master map of the knowledge base (every doc reachable within two hops). Then [STATUS.md](STATUS.md) for phase + locked decisions, `.harmonik/context/captain-lanes.md` for the medium-term lane/epic tracker, and [HANDOFF.md](HANDOFF.md) for this-session state.
+Read [AGENT_INDEX.md](AGENT_INDEX.md) first — the master map of the knowledge base (every doc reachable within two hops). Then [STATUS.md](STATUS.md) for phase + locked decisions, and `HANDOFF.md` for this-session state (untracked/gitignored — present on this machine, absent on a fresh clone). A **captain** additionally reads `.harmonik/context/captain-lanes.md`, the medium-term lane/epic tracker, before `HANDOFF.md`; crews and implementer-orchestrators skip it, per the load map above.
 
 **Launching a captain or crew?** Use the native umbrella verb — `harmonik start captain` or `harmonik start crew <name>` (keeper auto-armed; NO env var, NO script path — `--project` defaults to cwd). The old `~/.claude/captain-tools/captain-launch.sh` + `HK_PROJECT` env var are RETIRED in favor of `harmonik start captain`. Positional-XOR-flags rule (D2): the simple form is a bare name only (`start crew paul`); the moment any `--flag` appears the name must move to `--name` (mixing a bare name with flags is a hard error). `harmonik captain` / `harmonik crew start <name>` remain as back-compat aliases.
 
@@ -68,7 +68,7 @@ Non-trivial changes are planned with **kerf** (spec-first; create a kerf work be
 
 - Don't reopen locked-in decisions without explicit user request.
 - Don't add abstraction layers the user hasn't asked for.
-- Don't skip the AGENT_INDEX → STATUS → captain-lanes → HANDOFF reading order when picking up the project.
+- Don't skip your role's reading order when picking up the project: `AGENT_INDEX → STATUS → HANDOFF`, plus `captain-lanes` (Step 0b) if you are the captain. See the per-role load map above.
 
 <!-- bv-agent-instructions-v2 -->
 

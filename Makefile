@@ -623,6 +623,19 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	TMPDIR=/tmp go test -short -race -count=1 -p=1 -parallel=1 -timeout=20m ./...
 
 # ---------------------------------------------------------------------------
+# check-report — QUIET unified reporter over the check gauntlet (hk-l4sen).
+# Runs EVERY step of a tier but presents ~10 lines on green (one ✓ per step)
+# and, on red, only the failing step's failing lines. Changes presentation
+# only; the step list is derived at runtime from `make -n <target>` so it can
+# never silently drop a step. TIER selects the underlying tier target:
+#   fast  -> check-fast    short -> check-short (default)    full -> check
+# ---------------------------------------------------------------------------
+TIER ?= short
+.PHONY: check-report
+check-report:  ## Quiet reporter: ~10 lines on green, only failing step's lines on red (TIER=fast|short|full, default short)
+	scripts/check-report.sh $(TIER)
+
+# ---------------------------------------------------------------------------
 # Tier 2b — check-race-full (non-gating nightly)
 # Full-parallel -race run with no -short and no -parallel cap.  Used as the
 # nightly CI gate (.github/workflows/nightly-race.yml) to surface data races

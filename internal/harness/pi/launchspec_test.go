@@ -941,7 +941,6 @@ func TestBuildPiModelsJSON_ModelIDExtraction(t *testing.T) {
 		{"", ""},             // empty → empty
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.model, func(t *testing.T) {
 			t.Parallel()
 			raw, err := pi.ExportedBuildPiModelsJSON("prov", "http://host/v1", "openai", "", "", tc.model)

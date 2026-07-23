@@ -41,7 +41,7 @@ func claudeLaunchSpecFixtureWorkspace(t *testing.T) string {
 	dir := t.TempDir()
 	// Ensure the .claude/ directory exists so MaterializeClaudeSettings does not
 	// need to create it from scratch (it will, but this mirrors real worktree layout).
-	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o700); err != nil {
 		t.Fatalf("claudeLaunchSpecFixtureWorkspace: MkdirAll .claude/: %v", err)
 	}
 	return dir

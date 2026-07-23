@@ -300,7 +300,6 @@ func TestRunPiBillingGuard_FailClosed(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			// Not calling t.Parallel(): t.Setenv incompatible with t.Parallel.
 			if tc.envValue != "" {
@@ -605,7 +604,6 @@ func TestPiBillingGuardPayload_Valid(t *testing.T) {
 		{"empty Reason", func(p *core.PiBillingGuardPayload) { p.Reason = "" }},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			p := happy
 			tc.mutate(&p)

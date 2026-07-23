@@ -389,13 +389,13 @@ func fileHasOpenHandle(path string) (bool, error) {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
 			// lsof exits 1 with no matches; that is the unheld case.
-			if exitErr.ExitCode() == 1 && len(strings.TrimSpace(string(out))) == 0 {
+			if exitErr.ExitCode() == 1 && strings.TrimSpace(string(out)) == "" {
 				return false, nil
 			}
 		}
 		return false, fmt.Errorf("lsof %s: %w", path, runErr)
 	}
-	return len(strings.TrimSpace(string(out))) > 0, nil
+	return strings.TrimSpace(string(out)) != "", nil
 }
 
 // copyFileForBackup copies src to dst, creating dst (0600). It is used to stage
@@ -407,6 +407,5 @@ func copyFileForBackup(src, dst string) error {
 	if readErr != nil {
 		return readErr
 	}
-	//nolint:gosec // G306: backup file mirrors the sidecar; 0600 is restrictive.
 	return os.WriteFile(dst, data, 0o600)
 }

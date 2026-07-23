@@ -37,6 +37,7 @@ package codex
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 
@@ -94,7 +95,10 @@ func (h *Harness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSp
 	// HEAD" fast-fail. No-op when there is no .harmonik/config.yaml; fails loud
 	// only when config.yaml exists but omits the required codex.stale_wal_max_bytes
 	// key. projectRoot is the daemon CWD (== ProjectDir).
-	projectRoot, _ := os.Getwd()
+	projectRoot, err := os.Getwd()
+	if err != nil {
+		return handlercontract.SpawnSpec{}, fmt.Errorf("resolve project working directory: %w", err)
+	}
 	if err := cleanCodexStaleWAL(projectRoot, h.codexHome); err != nil {
 		return handlercontract.SpawnSpec{}, err
 	}

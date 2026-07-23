@@ -33,10 +33,10 @@ import (
 func writeConfigYAML(t *testing.T, projectRoot, body string) {
 	t.Helper()
 	dir := filepath.Join(projectRoot, ".harmonik")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 }
@@ -45,19 +45,19 @@ func writeConfigYAML(t *testing.T, projectRoot, body string) {
 // matching base state file and -shm sidecar. Returns the wal path.
 func writeWAL(t *testing.T, codexHome string, size int) string {
 	t.Helper()
-	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		t.Fatalf("mkdir codexHome: %v", err)
 	}
 	wal := filepath.Join(codexHome, "state_abc123.sqlite-wal")
-	if err := os.WriteFile(wal, make([]byte, size), 0o644); err != nil {
+	if err := os.WriteFile(wal, make([]byte, size), 0o600); err != nil {
 		t.Fatalf("write wal: %v", err)
 	}
 	base := filepath.Join(codexHome, "state_abc123.sqlite")
-	if err := os.WriteFile(base, []byte("db"), 0o644); err != nil {
+	if err := os.WriteFile(base, []byte("db"), 0o600); err != nil {
 		t.Fatalf("write base db: %v", err)
 	}
 	shm := filepath.Join(codexHome, "state_abc123.sqlite-shm")
-	if err := os.WriteFile(shm, []byte("shm"), 0o644); err != nil {
+	if err := os.WriteFile(shm, []byte("shm"), 0o600); err != nil {
 		t.Fatalf("write shm: %v", err)
 	}
 	return wal
@@ -186,14 +186,14 @@ func TestWALUnchanged(t *testing.T) {
 		t.Fatalf("expected walUnchanged to be true for an untouched wal")
 	}
 	// A live writer grows the wal => size changes => skip.
-	if err := os.WriteFile(wal, make([]byte, 8192), 0o644); err != nil {
+	if err := os.WriteFile(wal, make([]byte, 8192), 0o600); err != nil {
 		t.Fatalf("rewrite wal larger: %v", err)
 	}
 	if walUnchanged(pre, wal) {
 		t.Fatalf("expected false when size changed after pre-stat")
 	}
 	// Restore original size, then change only the mtime => skip.
-	if err := os.WriteFile(wal, make([]byte, 4096), 0o644); err != nil {
+	if err := os.WriteFile(wal, make([]byte, 4096), 0o600); err != nil {
 		t.Fatalf("restore wal size: %v", err)
 	}
 	future := pre.ModTime().Add(time.Hour)

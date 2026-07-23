@@ -336,7 +336,7 @@ func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
 	// absent this block is a no-op: today's behavior unchanged.
 	if rc.BaseURL != "" && rc.PriorSessionID == nil {
 		piAgentDir := filepath.Join(rc.WorkspacePath, ".harmonik", "pi-agent")
-		if mkdirErr := os.MkdirAll(piAgentDir, 0o755); mkdirErr != nil {
+		if mkdirErr := os.MkdirAll(piAgentDir, 0o700); mkdirErr != nil {
 			return handler.LaunchSpec{}, fmt.Errorf(
 				"BuildLaunchSpec: create pi-agent dir %q: %w", piAgentDir, mkdirErr)
 		}
@@ -346,7 +346,7 @@ func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
 				"BuildLaunchSpec: build models.json: %w", buildErr)
 		}
 		modelsPath := filepath.Join(piAgentDir, "models.json")
-		if writeErr := os.WriteFile(modelsPath, modelsJSON, 0o644); writeErr != nil {
+		if writeErr := os.WriteFile(modelsPath, modelsJSON, 0o600); writeErr != nil {
 			return handler.LaunchSpec{}, fmt.Errorf(
 				"BuildLaunchSpec: write models.json to %q: %w", modelsPath, writeErr)
 		}

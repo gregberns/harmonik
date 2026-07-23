@@ -270,7 +270,7 @@ func LoadDotWorkflowWithPolicy(dotPath string, policy *core.PolicyDocument) (*do
 		skillSetIndex[ss.Name] = ss.Skills
 	}
 
-	var resolved []core.SkillsResolvedPayload
+	resolved := make([]core.SkillsResolvedPayload, 0, len(graph.Nodes))
 	for _, n := range graph.Nodes {
 		ref := strings.TrimSpace(n.SkillsRef)
 		if ref == "" {

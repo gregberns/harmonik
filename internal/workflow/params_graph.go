@@ -72,9 +72,21 @@ func (e *ErrQuotedToolCommandToken) Error() string {
 // escapes) and rejects any token whose start index falls inside a quoted span,
 // erring toward rejecting the ambiguous quoted-token case.
 func findQuotedToolCommandToken(cmd string) string {
-	// Mark each byte index that lies INSIDE a quoted span (exclusive of the quote
-	// characters themselves). Single quotes have no shell escaping; double quotes
-	// honour backslash escapes (so \" does not close the span).
+	inside := quotedSpanMask(cmd)
+	for _, span := range templateTokenRe.FindAllStringIndex(cmd, -1) {
+		start, end := span[0], span[1]
+		if start < len(inside) && inside[start] {
+			return cmd[start+2 : end-2] // strip __ delimiters
+		}
+	}
+	return ""
+}
+
+// quotedSpanMask marks each byte index of cmd that lies INSIDE a single- or
+// double-quoted span, exclusive of the quote characters themselves. Single
+// quotes have no shell escaping; double quotes honour backslash escapes (so \"
+// does not close the span).
+func quotedSpanMask(cmd string) []bool {
 	inside := make([]bool, len(cmd))
 	inSingle, inDouble := false, false
 	for i := 0; i < len(cmd); i++ {
@@ -87,13 +99,14 @@ func findQuotedToolCommandToken(cmd string) string {
 				inside[i] = true
 			}
 		case inDouble:
-			if c == '\\' && i+1 < len(cmd) {
+			switch {
+			case c == '\\' && i+1 < len(cmd):
 				inside[i] = true
 				i++
 				inside[i] = true // the escaped char is still inside the span
-			} else if c == '"' {
+			case c == '"':
 				inDouble = false // closing quote
-			} else {
+			default:
 				inside[i] = true
 			}
 		default: // unquoted
@@ -107,14 +120,7 @@ func findQuotedToolCommandToken(cmd string) string {
 			}
 		}
 	}
-
-	for _, span := range templateTokenRe.FindAllStringIndex(cmd, -1) {
-		start, end := span[0], span[1]
-		if start < len(inside) && inside[start] {
-			return cmd[start+2 : end-2] // strip __ delimiters
-		}
-	}
-	return ""
+	return inside
 }
 
 // replaceTokens applies a single, non-recursive substitution pass over val,
@@ -191,7 +197,7 @@ func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 	// `quoted` holds tool_command pointers (the only shell sink); `attrMaps` holds
 	// UnknownAttrs maps (informational/display attributes such as label).
 	var verbatim []*string
-	var quoted []*string
+	quoted := make([]*string, 0, len(g.Nodes)) // exactly one tool_command per node
 	var attrMaps []map[string]string
 
 	// Graph-level.

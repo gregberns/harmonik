@@ -316,15 +316,18 @@ func (p *dotParser) expectIdent(what string) (token, error) {
 	return t, nil
 }
 
-func (p *dotParser) expectKind(k tokenKind, sym string) (token, error) {
+// expectKind consumes the next token and reports a ParseError unless it is of
+// kind k. The token itself is not returned: every caller matches a fixed
+// punctuation symbol whose value it already knows.
+func (p *dotParser) expectKind(k tokenKind, sym string) error {
 	t, ok := p.consume()
 	if !ok {
-		return token{}, &ParseError{Line: p.currentLine(), Message: fmt.Sprintf("expected %q, got EOF", sym)}
+		return &ParseError{Line: p.currentLine(), Message: fmt.Sprintf("expected %q, got EOF", sym)}
 	}
 	if t.kind != k {
-		return token{}, &ParseError{Line: t.line, Message: fmt.Sprintf("expected %q, got %q", sym, t.value)}
+		return &ParseError{Line: t.line, Message: fmt.Sprintf("expected %q, got %q", sym, t.value)}
 	}
-	return t, nil
+	return nil
 }
 
 func (p *dotParser) consumeOptSemi() {
@@ -358,7 +361,7 @@ func (p *dotParser) parse() (*rawDoc, error) {
 		}
 	}
 
-	if _, err := p.expectKind(tokLBrace, "{"); err != nil {
+	if err := p.expectKind(tokLBrace, "{"); err != nil {
 		return nil, err
 	}
 
@@ -472,7 +475,7 @@ func (p *dotParser) parseStmt(doc *rawDoc, id string, idLine int) error {
 
 // parseAttrList parses a [ key=value; ... ] attribute list.
 func (p *dotParser) parseAttrList() ([]rawAttrPair, error) {
-	if _, err := p.expectKind(tokLBrack, "["); err != nil {
+	if err := p.expectKind(tokLBrack, "["); err != nil {
 		return nil, err
 	}
 	var pairs []rawAttrPair
@@ -493,7 +496,7 @@ func (p *dotParser) parseAttrList() ([]rawAttrPair, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := p.expectKind(tokEq, "="); err != nil {
+		if err := p.expectKind(tokEq, "="); err != nil {
 			return nil, err
 		}
 		valTok, err := p.expectIdent("attribute value")

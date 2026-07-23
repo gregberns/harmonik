@@ -64,14 +64,23 @@ any plan recipe.
    one labelled a synthesized example "Landed"; one asserted a file had been deleted when
    it had only been renamed. Each landed in a doc presented as verified.
 2. **Re-verify the text you write to replace a wrong claim — after you write it.**
-   This is where the errors actually enter. Of four correcting commits audited this
-   session, two got the large majority of the sweep right and each still introduced
-   exactly one *new* false claim in its replacement text; one passed its own
-   self-review. Disproving the old claim is a cheap targeted check; the substitute is a
-   fresh unverified assertion, and a commit framed as a correction reads as trustworthy
-   enough that nobody re-checks it. So: open the file and read the code you are about to
-   name, *including* when you are confident, and especially when the sweep has been
-   going well. "I verified the old text was wrong" is not evidence the new text is right.
+   This is where the errors actually enter. Two correcting commits in one session each
+   swept a real defect and each still shipped a new false citation in its replacement
+   text: `c1ad2629` named `internal/keeper` as a landed home for the `errors.Join`
+   close (`grep -rn "errors.Join" internal/keeper/` is empty), and `dfb576fc` named
+   `internal/run/registry.go` for the same form (that file contains no `Close` at all).
+   Both are still one grep away. Disproving the old claim is a cheap targeted check;
+   the substitute is a fresh unverified assertion, and a commit framed as a correction
+   reads as trustworthy enough that nobody re-checks it. So: open the file and read the
+   code you are about to name, *including* when you are confident, and especially when
+   the sweep has been going well. "I verified the old text was wrong" is not evidence
+   the new text is right.
+
+   The rule works when it is applied. Three commits that followed it — `7b582cb6`,
+   `005e9b77`, `ea3d1b10` — each record what they re-checked *after* writing, and
+   re-deriving every file, symbol and commit they cite finds none false. That is the
+   whole measurement: three named commits, not a rate. Do not re-pin this to a count
+   of commits audited — name the instances, or say nothing.
 3. **Cite file + symbol, not file + line.** `internal/queue/cli/cancel.go
    (emitQueueCancelEvent)`, never `cancel.go:326`. Line numbers in this tree rot within
    days — one session audited roughly 65 `file:line` citations across three embedded

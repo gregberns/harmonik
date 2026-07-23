@@ -59,10 +59,10 @@ any plan recipe.
 
 1. **Open the file and read the code before you cite it.** A grep hit, a memory, or a
    prior doc's citation is not evidence. Four false citations shipped this way in one
-   session: one named a file that existed nowhere; one named a real file that did not
-   contain the idiom claimed; one asserted a file had been deleted when it had only been
-   renamed; one mis-attributed a landed example. Each landed in a doc presented as
-   verified.
+   session: two named real files that did not contain the idiom claimed (`internal/keeper`
+   for an `errors.Join` close; `internal/run/registry.go`, which has no `Close()` at all);
+   one labelled a synthesized example "Landed"; one asserted a file had been deleted when
+   it had only been renamed. Each landed in a doc presented as verified.
 2. **Re-verify the text you write to replace a wrong claim — after you write it.**
    This is where the errors actually enter. Of four correcting commits audited this
    session, two got the large majority of the sweep right and each still introduced
@@ -74,8 +74,9 @@ any plan recipe.
    going well. "I verified the old text was wrong" is not evidence the new text is right.
 3. **Cite file + symbol, not file + line.** `internal/queue/cli/cancel.go
    (emitQueueCancelEvent)`, never `cancel.go:326`. Line numbers in this tree rot within
-   days — six confirmed stale ones in a single session, including a recipe whose own
-   "corrections" section had itself gone stale in the opposite direction. Symbols survive.
+   days — one session's de-rot sweeps replaced 66 distinct `file:line` citations across
+   three agent-facing docs: 24 in `keeper/SKILL.md`, 40 in `harmonik-lifecycle/SKILL.md`
+   and `watch/SKILL.md`, and 2 in a crew mission file. Symbols survive.
 4. **Cite what the file actually demonstrates.** If it shows the idiom only in part, say
    which part. Do not stretch one verified example to cover a second file you did not
    read. Before asserting a file is *gone*, check for a rename (`git log --follow`,

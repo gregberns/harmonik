@@ -15,7 +15,7 @@
 
 ## Repo-root AGENTS.md — what it contains
 
-Repo-root AGENTS.md stays under 120 lines (CLAUDE.md is a symlink → AGENTS.md; same content). Contents: **entry ritual** (read order `AGENT_INDEX.md` → `STATUS.md` → `TASKS.md` → `SESSION_HANDOFF.md`); **kerf planning rules** (keep current content); **the 10 locked + 4 candidate decisions** (as a list pointing to `STATUS.md`); **hard don'ts**; **pointers, not prose** (git → this doc; Go → this doc; tests → `testing.md`; layout → `subsystem-organization.md`). Per-directory or per-subsystem content does NOT belong here.
+Repo-root AGENTS.md stays under 120 lines (CLAUDE.md is a symlink → AGENTS.md; same content). Contents: **entry ritual** (read order `AGENT_INDEX.md` → `STATUS.md` → `.harmonik/context/captain-lanes.md` → `HANDOFF.md`; the older ritual named two paths that no longer resolve — `TASKS.md` was renamed to `docs/historical/phase-0-1-tasks.md` in `334bb759e`, and `SESSION_HANDOFF.md` was deleted in `5b5193110`, superseded by `HANDOFF.md`); **kerf planning rules** (keep current content); **the 10 locked + 4 candidate decisions** (as a list pointing to `STATUS.md`); **hard don'ts**; **pointers, not prose** (git → this doc; Go → this doc; tests → `testing.md`; layout → `subsystem-organization.md`). Per-directory or per-subsystem content does NOT belong here.
 
 ## Per-directory AGENTS.md (with CLAUDE.md symlink) — when to use
 

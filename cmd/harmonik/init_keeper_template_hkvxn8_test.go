@@ -47,7 +47,7 @@ import (
 func renderedInitConfig(t *testing.T) string {
 	t.Helper()
 	projectRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(projectRoot, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectRoot, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
 	if rc := writeConfigYAML(projectRoot, "main", "hk", false, io.Discard, io.Discard); rc != 0 {
@@ -66,10 +66,10 @@ func writeRenderedInitConfig(t *testing.T, body string) string {
 	t.Helper()
 	repoRoot := t.TempDir()
 	dir := filepath.Join(repoRoot, ".harmonik")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 	return repoRoot

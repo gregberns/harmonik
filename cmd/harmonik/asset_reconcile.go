@@ -113,7 +113,7 @@ func WriteLock(dir string, l Lock) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return fmt.Errorf("mkdir for lock: %w", err)
 	}
-	if err := os.WriteFile(full, data, 0o644); err != nil {
+	if err := os.WriteFile(full, data, 0o600); err != nil {
 		return fmt.Errorf("write lock %s: %w", full, err)
 	}
 	return nil

@@ -174,8 +174,7 @@ func patchRCPrefixInConfig(cfgPath, prefix string) error {
 		content = insertRCPrefixLine(content, prefix)
 	}
 
-	//nolint:gosec // G306: config file; 0644 matches writeConfigYAML convention
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", cfgPath, err)
 	}
 	return nil

@@ -53,7 +53,7 @@ func TestIsDaemonUp_SocketPresent(t *testing.T) {
 
 	// Create a .harmonik subdir and bind a Unix listener on daemon.sock.
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	sockPath := filepath.Join(harmonikDir, "daemon.sock")
@@ -208,7 +208,7 @@ func TestViaSendRequest_ValidResponse(t *testing.T) {
 	t.Parallel()
 	dir := socketSafeTempDir(t)
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 

@@ -194,7 +194,7 @@ func WriteSentinel(projectDir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("supervisecmd: WriteSentinel: mkdir: %w", err)
 	}
-	return os.WriteFile(SentinelPath(projectDir), []byte("schema_version=1\n"), 0o644)
+	return os.WriteFile(SentinelPath(projectDir), []byte("schema_version=1\n"), 0o600)
 }
 
 // RemoveSentinel removes the supervisor.sentinel file; ignores ENOENT.
@@ -214,7 +214,7 @@ func WritePidfile(projectDir string, pid int) error {
 		return fmt.Errorf("supervisecmd: WritePidfile: mkdir: %w", err)
 	}
 	content := fmt.Sprintf("%d\n", pid)
-	return os.WriteFile(PidfilePath(projectDir), []byte(content), 0o644)
+	return os.WriteFile(PidfilePath(projectDir), []byte(content), 0o600)
 }
 
 // ReadPidfile reads the supervisor PID from supervisor.pid.

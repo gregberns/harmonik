@@ -111,11 +111,11 @@ func TestEvalCountDiffAddedLines_ExcludesPlusHeader(t *testing.T) {
 func TestEvalReadBeadIDFromTask(t *testing.T) {
 	dir := t.TempDir()
 	hDir := filepath.Join(dir, ".harmonik")
-	if err := os.Mkdir(hDir, 0o755); err != nil {
+	if err := os.Mkdir(hDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	content := "bead_id: hk-eval-fizzbuzz-avjjr\ntitle: some title\n"
-	if err := os.WriteFile(filepath.Join(hDir, "agent-task.md"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hDir, "agent-task.md"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := evalReadBeadIDFromTask(dir)
@@ -137,10 +137,10 @@ func TestEvalReadBeadIDFromTask_Missing(t *testing.T) {
 func TestEvalReadBeadIDFromTask_NoBead(t *testing.T) {
 	dir := t.TempDir()
 	hDir := filepath.Join(dir, ".harmonik")
-	if err := os.Mkdir(hDir, 0o755); err != nil {
+	if err := os.Mkdir(hDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(hDir, "agent-task.md"), []byte("title: no bead_id here\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hDir, "agent-task.md"), []byte("title: no bead_id here\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := evalReadBeadIDFromTask(dir)
@@ -156,7 +156,7 @@ func TestEvalGofmtCheck_Clean(t *testing.T) {
 	// Well-formatted Go file.
 	src := "package foo\n\nfunc Foo() {}\n"
 	f := filepath.Join(dir, "foo.go")
-	if err := os.WriteFile(f, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	clean, unformatted := evalGofmtCheck(dir, []string{"foo.go"})
@@ -173,7 +173,7 @@ func TestEvalGofmtCheck_Unformatted(t *testing.T) {
 	// Intentionally unformatted (extra space before {).
 	src := "package foo\n\nfunc Foo()  { }\n"
 	f := filepath.Join(dir, "bar.go")
-	if err := os.WriteFile(f, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	clean, unformatted := evalGofmtCheck(dir, []string{"bar.go"})
@@ -217,26 +217,26 @@ func metricsTestRepo(t *testing.T, beadID, taskID string, goSrc string) string {
 
 	// .harmonik/agent-task.md
 	hDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(hDir, 0o755); err != nil {
+	if err := os.MkdirAll(hDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	agentTask := "bead_id: " + beadID + "\ntitle: test task\n"
-	if err := os.WriteFile(filepath.Join(hDir, "agent-task.md"), []byte(agentTask), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hDir, "agent-task.md"), []byte(agentTask), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	// evaltask package
 	pkgDir := filepath.Join(dir, "evaltasks", taskID)
-	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+	if err := os.MkdirAll(pkgDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(pkgDir, taskID+".go"), []byte(goSrc), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(pkgDir, taskID+".go"), []byte(goSrc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	// go.mod so go vet can run
 	modContent := "module example.com/evaltest\n\ngo 1.21\n"
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(modContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -351,7 +351,7 @@ func TestRunEvalMetrics_WritesFile(t *testing.T) {
 
 func TestRunEvalMetrics_MissingAgentTask(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr strings.Builder

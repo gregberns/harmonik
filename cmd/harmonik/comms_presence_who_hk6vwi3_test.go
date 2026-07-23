@@ -81,7 +81,7 @@ func buildEventsFile(t *testing.T, lines []string) string {
 	t.Helper()
 	dir := t.TempDir()
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
 		t.Fatalf("buildEventsFile: mkdir: %v", err)
 	}
 	f, err := os.Create(filepath.Join(eventsDir, "events.jsonl"))

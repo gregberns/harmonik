@@ -21,11 +21,11 @@ import (
 func writeTwoProjConfig(t *testing.T, projectDir, prefix string) {
 	t.Helper()
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("writeTwoProjConfig: MkdirAll: %v", err)
 	}
 	content := "schema_version: 1\ndaemon:\n  remote_control_prefix: " + prefix + "\n"
-	if err := os.WriteFile(filepath.Join(harmonikDir, "config.yaml"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(harmonikDir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatalf("writeTwoProjConfig: WriteFile: %v", err)
 	}
 }

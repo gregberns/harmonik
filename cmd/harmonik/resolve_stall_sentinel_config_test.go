@@ -169,7 +169,7 @@ func TestStallSentinelConfigMissingError_Rendering(t *testing.T) {
 func TestStallSentinelExampleBlock_ParseRoundTrip(t *testing.T) {
 	projectDir := t.TempDir()
 	cfgDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	content := "schema_version: 1\n" + stallSentinelConfigExampleYAML()

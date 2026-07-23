@@ -613,7 +613,7 @@ func writeCaptainSentinelAndPID(ctx context.Context, ops captainTmuxOps, project
 		return fmt.Errorf("create cognition dir %q: %w", cognitionDir, err)
 	}
 	sentinelPath := filepath.Join(cognitionDir, "captain.sentinel")
-	if err := os.WriteFile(sentinelPath, []byte("schema_version=1\n"), 0o644); err != nil {
+	if err := os.WriteFile(sentinelPath, []byte("schema_version=1\n"), 0o600); err != nil {
 		return fmt.Errorf("write captain.sentinel: %w", err)
 	}
 
@@ -622,7 +622,7 @@ func writeCaptainSentinelAndPID(ctx context.Context, ops captainTmuxOps, project
 		return fmt.Errorf("captain.sentinel written but could not resolve agent pane PID for captain.pid: %w", perr)
 	}
 	pidPath := filepath.Join(cognitionDir, "captain.pid")
-	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {
+	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", pid)), 0o600); err != nil {
 		return fmt.Errorf("write captain.pid: %w", err)
 	}
 	return nil

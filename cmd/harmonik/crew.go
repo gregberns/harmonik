@@ -402,8 +402,7 @@ func seedSID(projectDir, name, sessionID string) {
 		return
 	}
 	sidPath := filepath.Join(keeperDir, name+".sid")
-	//nolint:gosec // G306: .sid is readable by the keeper process (same user)
-	if writeErr := os.WriteFile(sidPath, []byte(sessionID+"\n"), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(sidPath, []byte(sessionID+"\n"), 0o600); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: seed .sid: write %q: %v\n", sidPath, writeErr)
 	}
 }

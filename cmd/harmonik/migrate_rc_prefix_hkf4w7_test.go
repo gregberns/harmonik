@@ -32,7 +32,7 @@ func makeConfigDir(t *testing.T, rcPrefix string) string {
 	t.Helper()
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
 
@@ -44,7 +44,7 @@ func makeConfigDir(t *testing.T, rcPrefix string) string {
 	}
 
 	cfgPath := filepath.Join(harmonikDir, "config.yaml")
-	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 	return dir
@@ -77,11 +77,11 @@ func TestMigrateRCPrefix_AlreadySet(t *testing.T) {
 func TestMigrateRCPrefix_AbsentField_UserAcceptsDefault(t *testing.T) {
 	base := t.TempDir()
 	dir := filepath.Join(base, "my-project")
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	content := "schema_version: 1\ndaemon:\n  target_branch: main\n  max_concurrent: 4\n  workflow_mode: review-loop\n"
-	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "config.yaml"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
@@ -155,12 +155,12 @@ func TestMigrateRCPrefix_EmptyField_UserEntersPrefix(t *testing.T) {
 // daemon: block at all, a new one is appended with the chosen prefix.
 func TestMigrateRCPrefix_NoDaemonBlock(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	// Config with no daemon: block (like harmonik's own config.yaml).
 	content := "schema_version: 1\nsentinel:\n  mode: observe\n"
-	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "config.yaml"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
@@ -334,7 +334,7 @@ daemon:
 func writeTmpConfig(t *testing.T, content string) string {
 	t.Helper()
 	f := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(f, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte(content), 0o600); err != nil {
 		t.Fatalf("write tmp config: %v", err)
 	}
 	return f

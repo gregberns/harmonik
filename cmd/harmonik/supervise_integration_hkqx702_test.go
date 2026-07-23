@@ -124,7 +124,7 @@ func TestSupervise_StartRefuses_LockHeld(t *testing.T) {
 
 	// Create a mock Unix socket so the daemon probe passes.
 	harmonikDir := dir + "/.harmonik"
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	sockPath := harmonikDir + "/daemon.sock"
@@ -135,7 +135,7 @@ func TestSupervise_StartRefuses_LockHeld(t *testing.T) {
 	defer func() { _ = l.Close() }()
 
 	// Acquire the supervisor lock exclusively.
-	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o755); err != nil {
+	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	lockFd, err := os.OpenFile(supervisecmd.LockPath(dir), os.O_RDWR|os.O_CREATE, 0o600)
@@ -212,7 +212,7 @@ func TestSupervise_StartCommandFlagSetsConfigCommand(t *testing.T) {
 
 	// Create a mock Unix socket so the daemon probe passes.
 	harmonikDir := dir + "/.harmonik"
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
@@ -260,7 +260,7 @@ func TestSupervise_StartDoubleDashCommand(t *testing.T) {
 
 	// Create a mock Unix socket.
 	harmonikDir := dir + "/.harmonik"
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
@@ -309,7 +309,7 @@ func TestSupervise_StartHoldsLockDuringSessionCreation(t *testing.T) {
 	// (hk-0ouc).
 	cleanupFlywheelSession(t, dir)
 	harmonikDir := dir + "/.harmonik"
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
@@ -319,7 +319,7 @@ func TestSupervise_StartHoldsLockDuringSessionCreation(t *testing.T) {
 	defer func() { _ = l.Close() }()
 
 	// Pre-acquire the lock to simulate a running supervisor.
-	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o755); err != nil {
+	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	lockFd, err := os.OpenFile(supervisecmd.LockPath(dir), os.O_RDWR|os.O_CREATE, 0o600)

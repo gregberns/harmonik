@@ -79,7 +79,7 @@ func TestCaptainLaunch_ReapsPriorAgentWatchers_D7Refuse_Hk6629b(t *testing.T) {
 func startWatcherReapMockDaemon(t *testing.T, project, sessionID, crewName string) func() {
 	t.Helper()
 	harmonikDir := filepath.Join(project, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("startWatcherReapMockDaemon: mkdir: %v", err)
 	}
 	sockPath := filepath.Join(harmonikDir, "daemon.sock")

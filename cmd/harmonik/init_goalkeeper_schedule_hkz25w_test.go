@@ -22,7 +22,7 @@ import (
 func TestSeedGoalKeeperSchedule_Seeds(t *testing.T) {
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +70,7 @@ func TestSeedGoalKeeperSchedule_Seeds(t *testing.T) {
 func TestSeedGoalKeeperSchedule_IdempotentSkip(t *testing.T) {
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +99,7 @@ func TestSeedGoalKeeperSchedule_IdempotentSkip(t *testing.T) {
 func TestSeedGoalKeeperSchedule_ForceOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 

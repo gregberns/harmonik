@@ -235,7 +235,7 @@ func refreshCaptainPID(run captainRespawnRunFn, project, target string) error {
 		return fmt.Errorf("create cognition dir %q: %w", cognitionDir, err)
 	}
 	pidPath := filepath.Join(cognitionDir, "captain.pid")
-	if err := os.WriteFile(pidPath, []byte(pid+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(pidPath, []byte(pid+"\n"), 0o600); err != nil {
 		return fmt.Errorf("write captain.pid: %w", err)
 	}
 	return nil

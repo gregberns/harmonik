@@ -36,7 +36,7 @@ func TestInitModernize_ContextTiers_HK5qey(t *testing.T) {
 	_ = exec.Command("git", "-C", repo, "config", "user.name", "Test").Run()
 
 	// Pre-seed .beads/ so runBrInit is a no-op (br init is not under test).
-	if err := os.MkdirAll(filepath.Join(repo, ".beads"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".beads"), 0o750); err != nil {
 		t.Fatalf("pre-seed .beads/: %v", err)
 	}
 

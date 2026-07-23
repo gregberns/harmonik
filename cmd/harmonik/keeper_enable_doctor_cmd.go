@@ -840,8 +840,7 @@ func writeGlobalSettings(settingsPath string, settings map[string]interface{}) e
 		return fmt.Errorf("marshal: %w", err)
 	}
 	content = append(content, '\n')
-	//nolint:gosec // G306: 0644 matches conventions for user config files
-	if err := os.WriteFile(settingsPath, content, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, content, 0o600); err != nil {
 		return fmt.Errorf("write %q: %w", settingsPath, err)
 	}
 	return nil

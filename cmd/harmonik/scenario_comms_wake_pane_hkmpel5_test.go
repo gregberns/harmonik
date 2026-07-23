@@ -140,7 +140,7 @@ func TestCommsWakePaneCandidates_Scenario6_L0(t *testing.T) {
 
 		base := t.TempDir()
 		real := filepath.Join(base, "real-project")
-		if err := os.Mkdir(real, 0o755); err != nil {
+		if err := os.Mkdir(real, 0o750); err != nil {
 			t.Fatalf("D: mkdir real: %v", err)
 		}
 		link := filepath.Join(base, "link-project")
@@ -211,7 +211,7 @@ func TestResolveProjectPath_Scenario6_L0(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
 		real := filepath.Join(base, "real")
-		if err := os.Mkdir(real, 0o755); err != nil {
+		if err := os.Mkdir(real, 0o750); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
 		link := filepath.Join(base, "link")

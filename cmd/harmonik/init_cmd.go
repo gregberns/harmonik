@@ -506,8 +506,7 @@ func writeConfigYAML(projectDir, targetBranch, rcPrefix string, force bool, stdo
 		keeperConfigExampleYAML() +
 		codexConfigExampleYAML() +
 		piConfigExampleYAML()
-	//nolint:gosec // G306: config file readable by owner only; 0644 matches conventions
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		fmt.Fprintf(stderr, "harmonik init: write .harmonik/config.yaml: %v\n", err)
 		return 1
 	}
@@ -537,8 +536,7 @@ func writeBranchingYAML(projectDir, targetBranch string, force bool, stdout, std
 		return 0
 	}
 	content := fmt.Sprintf(branchingYAMLContent, targetBranch, targetBranch)
-	//nolint:gosec // G306
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		fmt.Fprintf(stderr, "harmonik init: write .harmonik/branching.yaml: %v\n", err)
 		return 1
 	}

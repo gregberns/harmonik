@@ -182,7 +182,7 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 		return 1
 	}
 
-	f, err := os.OpenFile(*outputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(*outputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		fmt.Fprintf(stderr, "harmonik eval collect: opening output: %v\n", err)
 		return 1

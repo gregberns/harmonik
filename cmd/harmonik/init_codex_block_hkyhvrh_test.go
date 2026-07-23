@@ -51,7 +51,7 @@ import (
 func yhvrhInitConfig(t *testing.T) (string, string) {
 	t.Helper()
 	projectRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(projectRoot, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectRoot, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
 	if rc := writeConfigYAML(projectRoot, "main", "hk", false, io.Discard, io.Discard); rc != 0 {

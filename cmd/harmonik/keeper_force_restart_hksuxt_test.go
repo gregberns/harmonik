@@ -17,10 +17,10 @@ import (
 func writeSidFile_hksuxt(t *testing.T, projectDir, agent, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir sid dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, agent+".sid"), []byte(sid), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, agent+".sid"), []byte(sid), 0o600); err != nil {
 		t.Fatalf("write .sid: %v", err)
 	}
 }

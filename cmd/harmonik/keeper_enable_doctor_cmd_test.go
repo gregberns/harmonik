@@ -232,7 +232,7 @@ func TestKeeperEnable_NormalizesStaleAgentCmd(t *testing.T) {
 		},
 	}
 	raw, _ := json.MarshalIndent(initial, "", "  ")
-	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -267,7 +267,7 @@ func TestKeeperEnable_BacksUpExistingFile(t *testing.T) {
 	// Write initial settings.json.
 	initial := map[string]interface{}{"foo": "bar"}
 	raw, _ := json.Marshal(initial)
-	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -322,7 +322,7 @@ func TestKeeperEnable_HandoffStubIdempotent(t *testing.T) {
 
 	handoffPath := filepath.Join(cfg.projectDir, "HANDOFF-orchestrator.md")
 	original := "# my existing handoff\n"
-	if err := os.WriteFile(handoffPath, []byte(original), 0o644); err != nil {
+	if err := os.WriteFile(handoffPath, []byte(original), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -404,7 +404,7 @@ func TestKeeperEnable_PreservesExistingSettings(t *testing.T) {
 		},
 	}
 	raw, _ := json.MarshalIndent(initial, "", "  ")
-	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -462,7 +462,7 @@ func writeFullSettings(t *testing.T, settingsPath, projectDir, scriptsDir, _ str
 	mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", projectDir, pcCmd)
 	mergeHookStanza(settings, "SessionStart", "keeper-sessionstart-hook.sh", projectDir, ssCmd)
 	raw, _ := json.MarshalIndent(settings, "", "  ")
-	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("writeFullSettings: %v", err)
 	}
 }
@@ -504,7 +504,7 @@ func TestKeeperDoctor_HookGapDetected(t *testing.T) {
 	settings := map[string]interface{}{}
 	mergeStatusLineStanza(settings, "HARMONIK_PROJECT="+cfg.projectDir+" HARMONIK_AGENT=orchestrator "+filepath.Join(scriptsDir, "keeper-statusline.sh"))
 	raw, _ := json.MarshalIndent(settings, "", "  ")
-	if err := os.WriteFile(cfg.settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -569,7 +569,7 @@ func TestKeeperDoctor_ManagedPresentReported(t *testing.T) {
 
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
 	keeperDir := filepath.Join(cfg.projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	managedPath := filepath.Join(keeperDir, "orchestrator.managed")
@@ -594,7 +594,7 @@ func TestDoctor_ManagedSidMismatchIsRed(t *testing.T) {
 
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
 	keeperDir := filepath.Join(cfg.projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -664,7 +664,7 @@ func TestKeeperDoctor_StatusLineTypeMissing(t *testing.T) {
 		},
 	}
 	raw, _ := json.MarshalIndent(settings, "", "  ")
-	if err := os.WriteFile(cfg.settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -699,7 +699,7 @@ func TestKeeperDoctor_StatusLineTypePresent(t *testing.T) {
 		},
 	}
 	raw, _ := json.MarshalIndent(settings, "", "  ")
-	if err := os.WriteFile(cfg.settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -732,7 +732,7 @@ func TestKeeperDoctor_StatusLineAgentPollution(t *testing.T) {
 		},
 	}
 	raw, _ := json.MarshalIndent(settings, "", "  ")
-	if err := os.WriteFile(cfg.settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -768,7 +768,7 @@ func TestKeeperDoctor_StatusLineAgentPollutionShellExpansionOK(t *testing.T) {
 		},
 	}
 	raw, _ := json.MarshalIndent(settings, "", "  ")
-	if err := os.WriteFile(cfg.settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(cfg.settingsPath, raw, 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -1375,7 +1375,7 @@ func TestKeeperDoctor_CompleteConfigPassesCheck(t *testing.T) {
 
 	// Write a complete config.yaml using the canonical example block.
 	cfgDir := filepath.Join(cfg.projectDir, ".harmonik")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	content := "schema_version: 1\n" + keeperConfigExampleYAML()

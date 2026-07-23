@@ -77,7 +77,7 @@ func waitTestSeedAgentMessage(t *testing.T, eventsPath, to, from, body string) (
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(payload),
 	}
-	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o750); err != nil {
 		t.Fatalf("mkdir events: %v", err)
 	}
 	f, err := os.Create(eventsPath)
@@ -172,10 +172,10 @@ func TestCommsRecvWait_TimeoutExit(t *testing.T) {
 	dir := t.TempDir()
 	eventsPath := filepath.Join(dir, ".harmonik", "events", "events.jsonl")
 	// Empty events file → no message will ever be delivered.
-	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(eventsPath, nil, 0o644); err != nil {
+	if err := os.WriteFile(eventsPath, nil, 0o600); err != nil {
 		t.Fatalf("write empty events: %v", err)
 	}
 	sockPath := waitTestStartHub(t, eventsPath, nil)

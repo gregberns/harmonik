@@ -78,12 +78,12 @@ func TestSuperviseReapVerb_KillsDeadFlywheel_LeavesDefault(t *testing.T) {
 	// Project dir with a daemon pidfile whose mtime is LATER than the flywheel's
 	// creation, so the predate gate marks the flywheel as an orphan.
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	// Sleep a touch so the pidfile mtime is strictly after session_created.
 	time.Sleep(1100 * time.Millisecond)
-	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "daemon.pid"), []byte("1\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "daemon.pid"), []byte("1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

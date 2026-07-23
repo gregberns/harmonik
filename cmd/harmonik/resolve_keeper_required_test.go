@@ -182,7 +182,7 @@ func TestRunKeeperConfigExample_RoundTrips(t *testing.T) {
 	// Write schema_version + the example block to a real config.yaml.
 	projectDir := t.TempDir()
 	cfgDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	content := "schema_version: 1\n" + example
@@ -272,7 +272,7 @@ func TestKeeperBinaryUpgradeMigration_CorpusItem6(t *testing.T) {
 		t.Fatalf("keeper config --example exited %d; stderr=%s", code, exErr.String())
 	}
 	cfgDir := filepath.Join(projectDir, ".harmonik")
-	if mkErr := os.MkdirAll(cfgDir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(cfgDir, 0o750); mkErr != nil {
 		t.Fatalf("MkdirAll: %v", mkErr)
 	}
 	content := "schema_version: 1\n" + exOut.String()

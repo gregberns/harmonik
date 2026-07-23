@@ -127,7 +127,7 @@ func runEvalMetrics(args []string, stdout, stderr io.Writer, getwd func() (strin
 	}
 
 	outPath := filepath.Join(abs, ".harmonik", "metrics.json")
-	if err := os.WriteFile(outPath, append(out, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(outPath, append(out, '\n'), 0o600); err != nil {
 		fmt.Fprintf(stderr, "harmonik eval metrics: write %s: %v\n", outPath, err)
 		return 1
 	}

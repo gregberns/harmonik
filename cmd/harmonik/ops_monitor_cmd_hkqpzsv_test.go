@@ -20,7 +20,7 @@ func stubProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	scriptsDir := filepath.Join(dir, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+	if err := os.MkdirAll(scriptsDir, 0o750); err != nil {
 		t.Fatalf("mkdir scripts: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(scriptsDir, "ops-monitor-check.sh"), []byte("#!/bin/bash\n"), 0o755); err != nil {
@@ -72,7 +72,7 @@ func TestOpsMonitorInstallNoLoad_WritesPlist(t *testing.T) {
 	// Redirect plist to a temp LaunchAgents dir so we don't touch the real one.
 	home := t.TempDir()
 	laDir := filepath.Join(home, "Library", "LaunchAgents")
-	if err := os.MkdirAll(laDir, 0o755); err != nil {
+	if err := os.MkdirAll(laDir, 0o750); err != nil {
 		t.Fatalf("mkdir LaunchAgents: %v", err)
 	}
 

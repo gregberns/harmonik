@@ -177,7 +177,7 @@ func TestHiddenDouble(t *testing.T) {
 }
 `
 	pkgDir := filepath.Join(dir, "evaltasks", "eval-hidden")
-	if err := os.WriteFile(filepath.Join(pkgDir, "hidden_test.go"), []byte(hiddenSrc), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(pkgDir, "hidden_test.go"), []byte(hiddenSrc), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	commitCmds := [][]string{

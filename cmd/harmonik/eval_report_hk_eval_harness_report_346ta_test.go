@@ -14,7 +14,7 @@ import (
 
 func evalReportWriteResults(t *testing.T, path string, lines []string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatalf("write results file: %v", err)
 	}
 }

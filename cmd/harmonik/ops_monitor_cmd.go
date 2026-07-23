@@ -263,7 +263,7 @@ func runOpsMonitorInstall(args []string) int {
 	}
 
 	// Write plist.
-	if werr := os.WriteFile(plistPath, []byte(buf.String()), 0o644); werr != nil {
+	if werr := os.WriteFile(plistPath, []byte(buf.String()), 0o600); werr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: write plist: %v\n", werr)
 		return 1
 	}

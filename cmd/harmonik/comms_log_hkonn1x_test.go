@@ -28,7 +28,7 @@ func commsLogFixture(t *testing.T, lines []string) string {
 	t.Helper()
 	dir := t.TempDir()
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
 		t.Fatalf("commsLogFixture: mkdir: %v", err)
 	}
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")

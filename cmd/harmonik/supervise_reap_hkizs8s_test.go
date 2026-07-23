@@ -72,7 +72,7 @@ func TestSupervise_StopReapsFlywheelSession(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = fakeSupervisor.Process.Kill(); _ = fakeSupervisor.Wait() })
 
-	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o755); err != nil {
+	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := supervisecmd.WritePidfile(dir, fakeSupervisor.Process.Pid); err != nil {
@@ -112,7 +112,7 @@ func TestSupervise_StartRefuses_FlywheelSessionExists(t *testing.T) {
 
 	// Create a mock Unix socket so the daemon probe passes.
 	harmonikDir := dir + "/.harmonik"
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
@@ -160,7 +160,7 @@ func TestSupervise_StartDoesNotCorruptExistingSentinel(t *testing.T) {
 
 	// Create a mock Unix socket so the daemon probe passes.
 	harmonikDir := dir + "/.harmonik"
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
@@ -181,7 +181,7 @@ func TestSupervise_StartDoesNotCorruptExistingSentinel(t *testing.T) {
 	})
 
 	// Write a pre-existing sentinel file (as the crashed shim would have left it).
-	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o755); err != nil {
+	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := supervisecmd.WriteSentinel(dir); err != nil {
@@ -215,7 +215,7 @@ func TestSupervise_StartRefuses_FlywheelSessionExists_LockAlreadyHeld(t *testing
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
 	harmonikDir := dir + "/.harmonik"
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	l, err := net.Listen("unix", harmonikDir+"/daemon.sock")
@@ -224,7 +224,7 @@ func TestSupervise_StartRefuses_FlywheelSessionExists_LockAlreadyHeld(t *testing
 	}
 	defer func() { _ = l.Close() }()
 
-	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o755); err != nil {
+	if err := os.MkdirAll(supervisecmd.CognitionDir(dir), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	lockFd, err := os.OpenFile(supervisecmd.LockPath(dir), os.O_RDWR|os.O_CREATE, 0o600)

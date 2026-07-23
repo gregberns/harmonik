@@ -169,7 +169,7 @@ func dx9BuildEventsFile(t *testing.T, lines []string) string {
 	t.Helper()
 	dir := t.TempDir()
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
 		t.Fatalf("dx9BuildEventsFile: mkdir: %v", err)
 	}
 	path := filepath.Join(eventsDir, "events.jsonl")

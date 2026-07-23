@@ -30,7 +30,7 @@ import (
 func startCrewBriefSeedMockDaemon(t *testing.T, project, sessionID, crewName string) func() {
 	t.Helper()
 	harmonikDir := filepath.Join(project, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("startCrewBriefSeedMockDaemon: mkdir: %v", err)
 	}
 	sockPath := filepath.Join(harmonikDir, "daemon.sock")

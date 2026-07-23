@@ -170,11 +170,11 @@ func TestResolveCrewStartArgs_FreshStartIgnoresStaleOnDiskMission(t *testing.T) 
 
 	// Plant a stale on-disk default mission from a hypothetical prior agent.
 	missionsDir := filepath.Join(projectDir, ".harmonik", "crew", "missions")
-	if err := os.MkdirAll(missionsDir, 0o755); err != nil {
+	if err := os.MkdirAll(missionsDir, 0o750); err != nil {
 		t.Fatalf("mkdir missions: %v", err)
 	}
 	stalePath := filepath.Join(missionsDir, name+".md")
-	if err := os.WriteFile(stalePath, []byte("STALE PRIOR MISSION — must never be reused\n"), 0o644); err != nil {
+	if err := os.WriteFile(stalePath, []byte("STALE PRIOR MISSION — must never be reused\n"), 0o600); err != nil {
 		t.Fatalf("write stale mission: %v", err)
 	}
 
@@ -219,11 +219,11 @@ func TestCrewRestartRehydrationReadsOnDiskMission(t *testing.T) {
 	onDiskDefault := filepath.Join(projectDir, ".harmonik", "crew", "missions", name+".md")
 
 	missionsDir := filepath.Dir(onDiskDefault)
-	if err := os.MkdirAll(missionsDir, 0o755); err != nil {
+	if err := os.MkdirAll(missionsDir, 0o750); err != nil {
 		t.Fatalf("mkdir missions: %v", err)
 	}
 	want := "CREW'S OWN JUST-WRITTEN MISSION — restart re-reads this\n"
-	if err := os.WriteFile(onDiskDefault, []byte(want), 0o644); err != nil {
+	if err := os.WriteFile(onDiskDefault, []byte(want), 0o600); err != nil {
 		t.Fatalf("write on-disk mission: %v", err)
 	}
 

@@ -34,7 +34,7 @@ import (
 // returns its UUIDv7 event_id string.
 func followTestSeedMessage(t *testing.T, eventsPath, to, from, body string) string {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o750); err != nil {
 		t.Fatalf("followTestSeedMessage: mkdir: %v", err)
 	}
 	mid, err := uuid.NewV7()
@@ -50,7 +50,7 @@ func followTestSeedMessage(t *testing.T, eventsPath, to, from, body string) stri
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(payload),
 	}
-	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("followTestSeedMessage: open: %v", err)
 	}

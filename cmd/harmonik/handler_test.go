@@ -31,7 +31,7 @@ func handlerFixtureTempDir(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	harmDir := filepath.Join(root, ".harmonik")
-	if err := os.MkdirAll(harmDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmDir, 0o750); err != nil {
 		t.Fatalf("handlerFixtureTempDir: mkdir %s: %v", harmDir, err)
 	}
 	return root
@@ -42,7 +42,7 @@ func handlerFixtureTempDir(t *testing.T) string {
 func handlerFixtureWriteStateFile(t *testing.T, projectDir, content string) {
 	t.Helper()
 	p := filepath.Join(projectDir, ".harmonik", "handler-state.json")
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatalf("handlerFixtureWriteStateFile: %v", err)
 	}
 }
@@ -604,7 +604,7 @@ func TestHandlerResume_EmitsEvent(t *testing.T) {
 	projectDir := handlerFixtureTempDir(t)
 	// Pre-create events/ directory.
 	eventsDir := filepath.Join(projectDir, ".harmonik", "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
 		t.Fatalf("mkdir events: %v", err)
 	}
 	handlerFixtureWriteStateFile(t, projectDir, `{
@@ -731,7 +731,7 @@ func TestHandlerResume_AtomicWrite_TempDirUnwritable(t *testing.T) {
 	}
 
 	// Restore permissions so we can read the file.
-	if err := os.Chmod(harmDir, 0o755); err != nil {
+	if err := os.Chmod(harmDir, 0o750); err != nil {
 		t.Fatalf("restore chmod .harmonik: %v", err)
 	}
 

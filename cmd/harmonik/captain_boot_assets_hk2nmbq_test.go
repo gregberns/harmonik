@@ -45,12 +45,12 @@ func TestCaptainLaunch_SkillsIdempotentOnInitedProject_hk2nmbq(t *testing.T) {
 
 	// Pre-plant a custom STARTUP.md to verify it is not overwritten.
 	skillDir := filepath.Join(proj, ".claude", "skills", "captain")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+	if err := os.MkdirAll(skillDir, 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", skillDir, err)
 	}
 	const sentinel = "# custom captain skill — must not be overwritten\n"
 	skillPath := filepath.Join(skillDir, "STARTUP.md")
-	if err := os.WriteFile(skillPath, []byte(sentinel), 0o644); err != nil {
+	if err := os.WriteFile(skillPath, []byte(sentinel), 0o600); err != nil {
 		t.Fatalf("write %s: %v", skillPath, err)
 	}
 

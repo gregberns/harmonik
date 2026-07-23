@@ -47,7 +47,7 @@ func TestShim_EmptyCommand_EntersWatchdogOnly(t *testing.T) {
 	dir := t.TempDir()
 
 	// Pre-create cognition dir so the lock file open in RunShim succeeds.
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o750); err != nil {
 		t.Fatalf("mkdir cognition: %v", err)
 	}
 

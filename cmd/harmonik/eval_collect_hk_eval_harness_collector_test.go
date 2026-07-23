@@ -296,7 +296,7 @@ func TestEvalBuildRecord_WallTime(t *testing.T) {
 func TestEvalReadPiModel(t *testing.T) {
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.Mkdir(harmonikDir, 0o755); err != nil {
+	if err := os.Mkdir(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	cfg := `harnesses:
@@ -305,7 +305,7 @@ func TestEvalReadPiModel(t *testing.T) {
     model: openrouter/qwen/qwen3-coder
     api_key_env: OPENROUTER_API_KEY
 `
-	if err := os.WriteFile(filepath.Join(harmonikDir, "config.yaml"), []byte(cfg), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(harmonikDir, "config.yaml"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got := evalReadPiModel(dir)
@@ -328,7 +328,7 @@ func TestRunEvalCollect_EndToEnd(t *testing.T) {
 	harmonikDir := filepath.Join(dir, ".harmonik")
 	eventsDir := filepath.Join(harmonikDir, "events")
 	for _, d := range []string{harmonikDir, eventsDir} {
-		if err := os.Mkdir(d, 0o755); err != nil {
+		if err := os.Mkdir(d, 0o750); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -422,7 +422,7 @@ func TestRunEvalCollect_SkipsNonEvalRuns(t *testing.T) {
 	harmonikDir := filepath.Join(dir, ".harmonik")
 	eventsDir := filepath.Join(harmonikDir, "events")
 	for _, d := range []string{harmonikDir, eventsDir} {
-		if err := os.Mkdir(d, 0o755); err != nil {
+		if err := os.Mkdir(d, 0o750); err != nil {
 			t.Fatal(err)
 		}
 	}

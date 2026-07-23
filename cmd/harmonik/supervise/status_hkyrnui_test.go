@@ -20,7 +20,7 @@ import (
 func TestBuildStatus_KeeperLoopFallback_NoPidfile(t *testing.T) {
 	dir := t.TempDir()
 	cognitionDir := filepath.Join(dir, ".harmonik", "cognition")
-	if err := os.MkdirAll(cognitionDir, 0o755); err != nil {
+	if err := os.MkdirAll(cognitionDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	// No supervisor.pid written — simulates hand-relaunched keeper loop.
@@ -42,7 +42,7 @@ func TestBuildStatus_KeeperLoopFallback_NoPidfile(t *testing.T) {
 // holds a dead PID and the keeper probe returns true, buildStatus reports running.
 func TestBuildStatus_KeeperLoopFallback_DeadPid(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestBuildStatus_KeeperLoopFallback_DeadPid(t *testing.T) {
 // is absent and the keeper probe returns false, buildStatus reports stopped.
 func TestBuildStatus_KeeperLoopFallback_NoLoop(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	// No pidfile; keeper probe returns false.
@@ -88,7 +88,7 @@ func TestBuildStatus_KeeperLoopFallback_NoLoop(t *testing.T) {
 // Running=true, PresenceSource=pidfile (keeper probe is not consulted).
 func TestBuildStatus_PidfileAlive(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 

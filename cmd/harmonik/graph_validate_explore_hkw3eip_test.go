@@ -65,7 +65,7 @@ func graphValidateFixtureCaptureOutput(t *testing.T, fn func()) (stdout, stderr 
 func graphValidateFixtureWriteFile(t *testing.T, name, content string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatalf("graphValidateFixtureWriteFile: %v", err)
 	}
 	return p

@@ -57,8 +57,9 @@ func integArtifactGit(t *testing.T, dir string, args ...string) string {
 //	               (simulating a file at the same path the integration test
 //	               binary might leave untracked in the worktree)
 //
-// Returns (mainRepo, wtPath).
-func integArtifactSetup(t *testing.T) (string, string) {
+// Returns the run-worktree path. The main repo is reachable from it via git
+// and no caller needs it directly.
+func integArtifactSetup(t *testing.T) (wtPath string) {
 	t.Helper()
 
 	mainRepo := t.TempDir()
@@ -75,7 +76,7 @@ func integArtifactSetup(t *testing.T) (string, string) {
 	baseSHA := integArtifactGit(t, mainRepo, "rev-parse", "HEAD")
 
 	// Run worktree branched from the base commit.
-	wtPath := filepath.Join(t.TempDir(), "wt")
+	wtPath = filepath.Join(t.TempDir(), "wt")
 	integArtifactGit(t, mainRepo, "worktree", "add", "-b", "runbranch", wtPath, baseSHA)
 
 	// Agent commit on the run branch (code-only, clean).
@@ -89,7 +90,7 @@ func integArtifactSetup(t *testing.T) (string, string) {
 	integArtifactGit(t, mainRepo, "add", "artifact.bin")
 	integArtifactGit(t, mainRepo, "commit", "-m", "main: add artifact.bin")
 
-	return mainRepo, wtPath
+	return wtPath
 }
 
 // TestCleanUntrackedFiles_AllowsRebase is the hk-g9zz regression: an untracked
@@ -100,7 +101,7 @@ func integArtifactSetup(t *testing.T) (string, string) {
 func TestCleanUntrackedFiles_AllowsRebase(t *testing.T) {
 	t.Parallel()
 
-	_, wtPath := integArtifactSetup(t)
+	wtPath := integArtifactSetup(t)
 
 	// Simulate an integration-test artifact: leave artifact.bin untracked in
 	// the run worktree. This is the file that main's latest commit also adds,
@@ -122,10 +123,18 @@ func TestCleanUntrackedFiles_AllowsRebase(t *testing.T) {
 	} else if !strings.Contains(string(out), "artifact.bin") {
 		t.Fatalf("precondition: expected rebase failure to mention artifact.bin; got:\n%s", out)
 	}
-	// Abort the failed rebase so the worktree is not left mid-rebase.
+	// Defensively abort in case the worktree was left mid-rebase. In this
+	// scenario git refuses to START the rebase (untracked artifact.bin would be
+	// overwritten), so there is normally nothing to abort and git exits 128 with
+	// "no rebase in progress" — expected, not a failure. Any OTHER abort failure
+	// means the worktree really is stuck mid-rebase and the assertions below
+	// would be measuring that instead of the fix.
 	abortCmd := exec.CommandContext(t.Context(), "git", "rebase", "--abort")
 	abortCmd.Dir = wtPath
-	_ = abortCmd.Run()
+	if out, abortErr := abortCmd.CombinedOutput(); abortErr != nil &&
+		!strings.Contains(string(out), "no rebase in progress") {
+		t.Errorf("git rebase --abort: %v\n%s", abortErr, out)
+	}
 
 	// Apply the fix.
 	runmerge.CleanUntrackedFiles(context.Background(), wtPath)
@@ -154,7 +163,7 @@ func TestCleanUntrackedFiles_AllowsRebase(t *testing.T) {
 func TestCleanUntrackedFiles_NoOpOnCleanWorktree(t *testing.T) {
 	t.Parallel()
 
-	_, wtPath := integArtifactSetup(t)
+	wtPath := integArtifactSetup(t)
 
 	// Worktree has a committed agent change but no untracked files.
 	beforeStatus := integArtifactGit(t, wtPath, "status", "--porcelain")
@@ -187,7 +196,7 @@ func TestCleanUntrackedFiles_NoOpOnCleanWorktree(t *testing.T) {
 func TestCleanUntrackedFiles_PreservesGitignored(t *testing.T) {
 	t.Parallel()
 
-	_, wtPath := integArtifactSetup(t)
+	wtPath := integArtifactSetup(t)
 
 	// Write a .gitignore that ignores keeper.test.
 	writeFile(t, filepath.Join(wtPath, ".gitignore"), "keeper.test\n")

@@ -77,11 +77,10 @@ func escapeFixtureGitRepo(t *testing.T) string {
 func escapeFixtureWrite(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	full := filepath.Join(dir, rel)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		t.Fatalf("escapeFixtureWrite: MkdirAll: %v", err)
 	}
-	//nolint:gosec // G306: 0644 is fine for a test fixture file
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatalf("escapeFixtureWrite: WriteFile %s: %v", rel, err)
 	}
 }
@@ -443,7 +442,10 @@ func TestEscapeDetect_LockedPathNeverFiresOnConcurrentSiblingMerge(t *testing.T)
 				return
 			}
 			mu.Lock()
-			dirty, files, _ := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+			dirty, files, checkErr := runmerge.CheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+			if checkErr != nil {
+				t.Errorf("CheckMainWorkingTreeDirty: %v", checkErr)
+			}
 			mu.Unlock()
 			if dirty {
 				for _, f := range files {

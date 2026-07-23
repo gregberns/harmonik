@@ -20,9 +20,9 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// initTestRepo_dyim initialises a minimal git repository in dir with a single
+// initTestRepoDyim initialises a minimal git repository in dir with a single
 // initial commit that includes a Refs: trailer (mimicking the implementer commit).
-func initTestRepo_dyim(t *testing.T, dir string) {
+func initTestRepoDyim(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
@@ -30,7 +30,7 @@ func initTestRepo_dyim(t *testing.T, dir string) {
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatalf("initTestRepo_dyim: git %v: %v\n%s", args, err, out)
+			t.Fatalf("initTestRepoDyim: git %v: %v\n%s", args, err, out)
 		}
 	}
 	run("init", "--initial-branch=main")
@@ -40,20 +40,20 @@ func initTestRepo_dyim(t *testing.T, dir string) {
 	p := filepath.Join(dir, "work.txt")
 	//nolint:gosec // G306: test fixture
 	if err := os.WriteFile(p, []byte("agent work\n"), 0o644); err != nil {
-		t.Fatalf("initTestRepo_dyim: WriteFile: %v", err)
+		t.Fatalf("initTestRepoDyim: WriteFile: %v", err)
 	}
 	run("add", "work.txt")
 	run("commit", "-m", "feat: agent work\n\nRefs: hk-test")
 }
 
-// headCommitMsg_dyim reads the HEAD commit message from dir.
-func headCommitMsg_dyim(t *testing.T, dir string) string {
+// headCommitMsgDyim reads the HEAD commit message from dir.
+func headCommitMsgDyim(t *testing.T, dir string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "log", "-1", "--format=%B", "HEAD")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("headCommitMsg_dyim: git log: %v", err)
+		t.Fatalf("headCommitMsgDyim: git log: %v", err)
 	}
 	return string(out)
 }
@@ -66,7 +66,7 @@ func TestAppendReviewTrailersToHEAD_AddsTrailers_dyim(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	initTestRepo_dyim(t, dir)
+	initTestRepoDyim(t, dir)
 
 	verdict := &workspace.ReviewVerdict{
 		SchemaVersion: 1,
@@ -80,7 +80,7 @@ func TestAppendReviewTrailersToHEAD_AddsTrailers_dyim(t *testing.T) {
 		t.Fatalf("AppendReviewTrailersToHEAD: %v", err)
 	}
 
-	msg := headCommitMsg_dyim(t, dir)
+	msg := headCommitMsgDyim(t, dir)
 
 	// Reviewed-By: trailer must be present.
 	if !strings.Contains(msg, "Reviewed-By: "+reviewedByTrailerValue) {
@@ -124,7 +124,7 @@ func TestAppendReviewTrailersToHEAD_Idempotent_dyim(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	initTestRepo_dyim(t, dir)
+	initTestRepoDyim(t, dir)
 
 	verdict := &workspace.ReviewVerdict{
 		SchemaVersion: 1,
@@ -141,7 +141,7 @@ func TestAppendReviewTrailersToHEAD_Idempotent_dyim(t *testing.T) {
 		t.Fatalf("second AppendReviewTrailersToHEAD: %v", err)
 	}
 
-	msg := headCommitMsg_dyim(t, dir)
+	msg := headCommitMsgDyim(t, dir)
 
 	// Count occurrences of "Reviewed-By:" — must appear exactly once.
 	count := strings.Count(msg, "Reviewed-By: "+reviewedByTrailerValue)
@@ -156,16 +156,16 @@ func TestAppendReviewTrailersToHEAD_NilVerdict_dyim(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	initTestRepo_dyim(t, dir)
+	initTestRepoDyim(t, dir)
 
-	msgBefore := headCommitMsg_dyim(t, dir)
+	msgBefore := headCommitMsgDyim(t, dir)
 
 	ctx := context.Background()
 	if err := AppendReviewTrailersToHEAD(ctx, dir, nil); err != nil {
 		t.Fatalf("AppendReviewTrailersToHEAD(nil): %v", err)
 	}
 
-	msgAfter := headCommitMsg_dyim(t, dir)
+	msgAfter := headCommitMsgDyim(t, dir)
 	if msgBefore != msgAfter {
 		t.Errorf("nil verdict mutated commit message; before:\n%s\nafter:\n%s", msgBefore, msgAfter)
 	}

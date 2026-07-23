@@ -199,7 +199,7 @@ func TestCommitResidualDelta_UntrackedClaudeNotSwept(t *testing.T) {
 	// An untracked .claude/ file that is NOT covered by .gitignore — the class
 	// that would be leaked by a blanket `git add -A`.  settings.local.json is a
 	// real example; so are .claude/todos/, .claude/ide/, etc.
-	if err := os.MkdirAll(wtPath+"/.claude", 0o755); err != nil { //nolint:gosec
+	if err := os.MkdirAll(wtPath+"/.claude", 0o750); err != nil {
 		t.Fatalf("MkdirAll .claude: %v", err)
 	}
 	writeFile(t, wtPath+"/.claude/settings.local.json", `{"localOverride":true}`+"\n")

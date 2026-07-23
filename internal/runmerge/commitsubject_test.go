@@ -79,17 +79,12 @@ func TestMergePathCommitSubjects_hkr1v2n(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			f, err := os.CreateTemp(t.TempDir(), "commit-msg-*")
-			if err != nil {
-				t.Fatalf("create temp file: %v", err)
-			}
-			if _, err := f.WriteString(tc.msg); err != nil {
-				f.Close()
+			msgPath := filepath.Join(t.TempDir(), "commit-msg")
+			if err := os.WriteFile(msgPath, []byte(tc.msg), 0o600); err != nil {
 				t.Fatalf("write commit message: %v", err)
 			}
-			f.Close()
 
-			cmd := exec.Command("bash", validateScript, f.Name())
+			cmd := exec.CommandContext(t.Context(), "bash", validateScript, msgPath)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Errorf("validate-commit-msg.sh rejected %q:\n%s", tc.name, out)

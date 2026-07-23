@@ -228,9 +228,15 @@ func TestDiscardDirtyChurn_PreservesOtherDirtyFiles(t *testing.T) {
 		t.Errorf("expected 'unstaged changes' rebase abort; got: %v\n%s", err, out)
 	}
 	// Clean up the aborted rebase state so the worktree is not left mid-rebase.
+	// git refuses to START this rebase (unstaged changes), so there is normally
+	// nothing to abort and it exits 128 with "no rebase in progress" — expected.
+	// Any other failure means the worktree really is stuck mid-rebase.
 	abortCmd := exec.CommandContext(t.Context(), "git", "rebase", "--abort")
 	abortCmd.Dir = wtPath
-	_ = abortCmd.Run()
+	if out, abortErr := abortCmd.CombinedOutput(); abortErr != nil &&
+		!strings.Contains(string(out), "no rebase in progress") {
+		t.Errorf("git rebase --abort: %v\n%s", abortErr, out)
+	}
 }
 
 // TestDiscardDirtyChurn_NoOpOnCleanWorktree verifies the helper is a no-op

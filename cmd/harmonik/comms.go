@@ -91,6 +91,7 @@ import (
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/presence"
 )
 
@@ -451,14 +452,20 @@ func commsWakePaneForAgent(ctx context.Context, projectDir, agentName string) er
 
 // commsInjectTmuxPane delivers text into a tmux pane via the bracketed-paste
 // mechanism (tmux load-buffer → paste-buffer → send-keys Enter), the same
-// approach used by keeper.InjectText. The named buffer "hk-comms-wake" is
-// overwritten on each call; it is not shared with the daemon's own paste-inject
-// buffers (which use "hk-<run_id>" names).
+// approach used by keeper.InjectText. The named buffer is overwritten on each
+// call; its name is distinct from the daemon's own per-run paste-inject
+// buffers, so a wake nudge and an in-flight run cannot clobber each other.
+//
+// The name comes from [ltmux.BufferName] rather than a literal (hk-o0j47).
+// This site shells out to tmux directly instead of going through
+// tmux.OSAdapter, so nothing here enforces the PL-021d buffer-name invariant —
+// a hand-written name is only ever accidentally valid. hk-9hvr0 wedged ALL
+// implementer dispatch through exactly that shape.
 //
 // Returns an error if any tmux invocation fails (e.g. pane does not exist,
 // tmux not running). Callers treat this error as non-fatal.
 func commsInjectTmuxPane(ctx context.Context, paneTarget, text string) error {
-	const buf = "hk-comms-wake"
+	buf := ltmux.BufferName("comms", "wake")
 
 	loadCmd := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", buf, "-")
 	loadCmd.Stdin = strings.NewReader(text)

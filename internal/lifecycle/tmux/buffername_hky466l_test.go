@@ -157,7 +157,7 @@ func TestValidBufferName_MatchesProductionValidator(t *testing.T) {
 
 	invalid := []string{
 		"hk-keeper-inject",               // retired keeper literal: wrong prefix
-		"hk-comms-wake",                  // same class, cmd/harmonik/comms.go
+		"hk-comms-wake",                  // retired comms-wake literal: same class (hk-o0j47)
 		"harmonik-ABC-task",              // uppercase session id (hk-lckbv)
 		"harmonik-20260528T150405Z-task", // the literal hk-lckbv name
 		"harmonik-sess_id-captain-boot",  // underscore

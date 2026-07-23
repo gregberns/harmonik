@@ -24,12 +24,10 @@ import "sync"
 //	closeDone() // signals w.Done()
 //
 // Bead ref: hk-gql20.22.
-func NewWatcherForTest() (*Watcher, func()) {
+func NewWatcherForTest() (w *Watcher, closeDone func()) {
 	done := make(chan struct{})
-	w := &Watcher{done: done}
 	var once sync.Once
-	cancel := func() {
+	return &Watcher{done: done}, func() {
 		once.Do(func() { close(done) })
 	}
-	return w, cancel
 }

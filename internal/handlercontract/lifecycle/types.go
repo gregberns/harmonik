@@ -16,24 +16,29 @@ import "time"
 type LifecycleState uint8
 
 const (
-	// StateSpawning: process started, handshake not yet complete.
+	// StateSpawning means the process has started and the handshake is not yet
+	// complete.
 	StateSpawning LifecycleState = iota
-	// StateInitializing: handshake done, skills provisioning in progress.
+	// StateInitializing means the handshake is done and skills provisioning is
+	// in progress.
 	StateInitializing
-	// StateReady: agent_ready fired; idle, accepting input.
+	// StateReady means agent_ready fired; the session is idle and accepting
+	// input.
 	StateReady
-	// StateExecuting: command in flight (between input-send and outcome).
+	// StateExecuting means a command is in flight (between input-send and
+	// outcome).
 	StateExecuting
-	// StateSuspended: per-session operator pause. Distinct from
+	// StateSuspended is a per-session operator pause. Distinct from
 	// handler-pause.md HandlerStatus.paused which operates at the handler-type
 	// tier, not per-session.
 	StateSuspended
-	// StateTerminating: SIGTERM sent; Wait not yet returned.
+	// StateTerminating means SIGTERM has been sent and Wait has not yet
+	// returned.
 	StateTerminating
-	// StateTerminated: Wait returned with exit==0 or an expected code.
+	// StateTerminated means Wait returned with exit==0 or an expected code.
 	StateTerminated
-	// StateFailed: Wait returned with a classified error, or a protocol
-	// violation (e.g. silent-hang per HC-026).
+	// StateFailed means Wait returned with a classified error, or a protocol
+	// violation occurred (e.g. silent-hang per HC-026).
 	StateFailed
 )
 
@@ -72,6 +77,10 @@ func (s LifecycleState) String() string {
 // plus ReasonSilentHang for the HC-026 direct Ready→Failed edge.
 type TransitionReason string
 
+// The Reason* constants are the complete set of TransitionReason values
+// accepted by [Machine.Transition]; each names the cause recorded on the
+// resulting [Transition] and mirrors the wire string emitted on
+// lifecycle_transition events (HC-065).
 const (
 	ReasonSpawnStarted       TransitionReason = "spawn_started"
 	ReasonInitComplete       TransitionReason = "init_complete"

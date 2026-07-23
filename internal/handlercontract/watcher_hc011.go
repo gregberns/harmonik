@@ -444,7 +444,7 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 					return
 				}
 				// Other I/O errors: structural framing failure.
-				termErr := fmt.Errorf("handlercontract: progress stream read error: %v: %w", scanErr, ErrStructural)
+				termErr := fmt.Errorf("handlercontract: progress stream read error: %w: %w", scanErr, ErrStructural)
 				w.setTermErr(termErr)
 				et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, PartialMessageSubReason, termErr)
 				w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
@@ -468,7 +468,7 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 		}
 		if err := json.Unmarshal(line, &typeOnly); err != nil {
 			// HC-007b: malformed JSON on a live socket → close session, emit agent_failed.
-			termErr := fmt.Errorf("handlercontract: malformed NDJSON line: %v: %w", err, ErrStructural)
+			termErr := fmt.Errorf("handlercontract: malformed NDJSON line: %w: %w", err, ErrStructural)
 			w.setTermErr(termErr)
 			et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, MalformedProgressMessageSubReason, termErr)
 			w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)

@@ -277,9 +277,10 @@ func v1lRunListCapturingStdout(t *testing.T, rig *v1lRig, jsonFlag bool) (int, s
 		outCh <- b.String()
 	}()
 
-	// filterID="" → full list; verb="list". socketFlag pins the rig socket;
-	// projectFlag pins absProject so flagOrphanedPending reads the rig's log.
-	code := runDecisionsListOrShowParsed("", jsonFlag, rig.sockPath, rig.absProject, "list")
+	// filterID="" → full list; topicFilter="" → no topic narrowing; verb="list".
+	// socketFlag pins the rig socket; projectFlag pins absProject so
+	// flagOrphanedPending reads the rig's log.
+	code := runDecisionsListOrShowParsed("", "", jsonFlag, rig.sockPath, rig.absProject, "list")
 
 	_ = w.Close()
 	os.Stdout = oldStdout

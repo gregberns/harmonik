@@ -2,8 +2,10 @@ package lifecycle
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -99,7 +101,9 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 
 	// Step 2: PL-002a — exclusive non-blocking advisory lock.
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after flock failure", "err", closeErr, "path", pidfilePath)
+		}
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, ErrPidfileLocked
 		}
@@ -108,25 +112,33 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 
 	// Step 3: truncate only after lock acquisition (PL-002b step 3).
 	if err := fd.Truncate(0); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after ftruncate failure", "err", closeErr, "path", pidfilePath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: ftruncate: %w", err)
 	}
 
 	if _, err := fd.Seek(0, 0); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after seek failure", "err", closeErr, "path", pidfilePath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: seek: %w", err)
 	}
 
 	// Step 4: write three newline-terminated lines; short-write loop per spec.
 	content := []byte(fmt.Sprintf("%d\n%d\n%s\n", pid, pgid, instanceID))
 	if err := writeAll(fd, content); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after write failure", "err", closeErr, "path", pidfilePath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: write: %w", err)
 	}
 
 	// Step 5a: fsync the fd.
 	if err := fd.Sync(); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after fsync failure", "err", closeErr, "path", pidfilePath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: fsync fd: %w", err)
 	}
 
@@ -137,13 +149,19 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 	//nolint:gosec // G304: parentDir is derived from projectDir, an operator-controlled parameter; not user input
 	pfd, err := os.Open(parentDir)
 	if err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after parent-dir open failure", "err", closeErr, "path", pidfilePath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: open parent dir for fsync: %w", err)
 	}
 	syncErr := pfd.Sync()
-	_ = pfd.Close()
+	if closeErr := pfd.Close(); closeErr != nil {
+		slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close parent-dir fd after fsync", "err", closeErr, "path", parentDir)
+	}
 	if syncErr != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquirePidfile: close pidfile fd after parent-dir fsync failure", "err", closeErr, "path", pidfilePath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: fsync parent dir: %w", syncErr)
 	}
 
@@ -259,7 +277,19 @@ func RemoveStalePidfile(projectDir string) error {
 		// Non-fatal: file is already removed; dir-open failure is best-effort.
 		return nil
 	}
-	defer func() { _ = dirFd.Close() }()
-	_ = dirFd.Sync() //nolint:errcheck // fsync failure is non-fatal for unlink durability
+	defer func() {
+		if closeErr := dirFd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: RemoveStalePidfile: close parent-dir fd after fsync", "err", closeErr, "path", parentDir)
+		}
+	}()
+	// Best-effort unlink-durability barrier: a failure here does not invalidate
+	// the removal (the dirent is already gone from the live filesystem; a stale
+	// pidfile that reappears after a crash is re-detected and re-removed on the
+	// next boot), so it is logged rather than propagated. This is an unlink path,
+	// not a write/rename path, so it is NOT the swallowed-write-barrier defect
+	// class handled in AcquirePidfile above.
+	if syncErr := dirFd.Sync(); syncErr != nil {
+		slog.WarnContext(context.Background(), "lifecycle: RemoveStalePidfile: fsync parent dir (non-fatal)", "err", syncErr, "path", parentDir)
+	}
 	return nil
 }

@@ -1,9 +1,11 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sync"
 	"syscall"
@@ -144,7 +146,9 @@ func AcquireReconciliationLock(projectDir, targetRunID string) (*ReconciliationL
 	}
 
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquireReconciliationLock: close lock fd after flock failure", "err", closeErr, "path", lockPath)
+		}
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, ErrReconciliationLockHeld
 		}
@@ -153,17 +157,23 @@ func AcquireReconciliationLock(projectDir, targetRunID string) (*ReconciliationL
 
 	// Write metadata after acquiring the lock (truncate-rewrite pattern per PL-002b discipline).
 	if err := fd.Truncate(0); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquireReconciliationLock: close lock fd after truncate failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: truncate %q: %w", lockPath, err)
 	}
 	if _, err := fd.Seek(0, 0); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquireReconciliationLock: close lock fd after seek failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: seek %q: %w", lockPath, err)
 	}
 
 	content := fmt.Sprintf("creator_pid=%d\nrun_id=%s\n", os.Getpid(), targetRunID)
 	if err := writeAll(fd, []byte(content)); err != nil {
-		_ = fd.Close()
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquireReconciliationLock: close lock fd after write failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: write %q: %w", lockPath, err)
 	}
 

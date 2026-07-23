@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -832,7 +833,9 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 
 		// Stale: remove via unlink + fsync(parent dir) — with the flock still held.
 		removeErr := reconLockUnlinkAndFsync(lockPath, lockDir, logger)
-		_ = held.Close()
+		if closeErr := held.Close(); closeErr != nil {
+			orphanLog(logger, "SweepStaleReconciliationLocks: close held lock %q after unlink: %v", name, closeErr)
+		}
 		if removeErr != nil {
 			orphanLog(logger, "SweepStaleReconciliationLocks: remove %q: %v", name, removeErr)
 			lastRemoveErr = removeErr
@@ -881,7 +884,9 @@ func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error)
 
 	flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr != nil {
-		_ = f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: reconLockProbeStale: close probe fd after flock failure", "err", closeErr, "path", lockPath)
+		}
 		if errors.Is(flockErr, syscall.EWOULDBLOCK) || errors.Is(flockErr, syscall.EAGAIN) {
 			// Lock contention is a normal signal: the lock is actively held.
 			return nil, false, nil
@@ -893,13 +898,17 @@ func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error)
 	pid, parseErr := reconLockReadCreatorPID(f)
 	if parseErr != nil {
 		// Cannot parse: cannot prove the creator is dead — skip, don't remove.
-		_ = f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: reconLockProbeStale: close probe fd after parse failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, false, fmt.Errorf("reconLockProbeStale: %w", parseErr)
 	}
 
 	if orphanSweepIsPidLive(pid) {
 		// Creator still alive — not stale.
-		_ = f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: reconLockProbeStale: close probe fd (live creator)", "err", closeErr, "path", lockPath)
+		}
 		return nil, false, nil
 	}
 
@@ -946,7 +955,11 @@ func reconLockReadMeta(lockPath string) (runID string, hasVerdictExecuted bool, 
 	if err != nil {
 		return "", false, fmt.Errorf("reconLockReadMeta: open %q: %w", lockPath, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: reconLockReadMeta: close lock fd", "err", closeErr, "path", lockPath)
+		}
+	}()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -978,7 +991,11 @@ func reconLockUnlinkAndFsync(lockPath, lockDir string, logger *log.Logger) error
 		orphanLog(logger, "reconLockUnlinkAndFsync: open parent dir for fsync: %v (proceeding)", err)
 		return nil
 	}
-	defer func() { _ = dirFd.Close() }()
+	defer func() {
+		if closeErr := dirFd.Close(); closeErr != nil {
+			orphanLog(logger, "reconLockUnlinkAndFsync: close parent dir after fsync: %v", closeErr)
+		}
+	}()
 	if syncErr := dirFd.Sync(); syncErr != nil {
 		orphanLog(logger, "reconLockUnlinkAndFsync: fsync parent dir: %v (non-fatal)", syncErr)
 	}

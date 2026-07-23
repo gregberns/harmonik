@@ -346,7 +346,7 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	// `harmonik harness clean`.
 	fixtureRoot := fixtureRootFlag
 	if fixtureRoot != "" {
-		if mkErr := os.MkdirAll(fixtureRoot, 0o750); mkErr != nil {
+		if mkErr := os.MkdirAll(fixtureRoot, 0o755); mkErr != nil { //dirmode:allow operator-supplied --fixture-root under TMPDIR, not .harmonik state
 			if err := harnessWritef(stderr, "harmonik harness: create fixture root %q: %v\n",
 				fixtureRoot, mkErr); err != nil {
 				return harnessExitInternalError
@@ -1020,7 +1020,7 @@ func harnessApplyFixtureFiles(projectRoot string, files map[string]scenario.File
 			return fmt.Errorf("fixture file path %q must be repository-relative", relPath)
 		}
 		absPath := filepath.Join(projectRoot, relPath)
-		if mkErr := os.MkdirAll(filepath.Dir(absPath), 0o750); mkErr != nil {
+		if mkErr := os.MkdirAll(filepath.Dir(absPath), 0o755); mkErr != nil { //dirmode:allow parent of a scenario-declared seeded fixture file, not .harmonik state
 			return fmt.Errorf("create parent dir for %q: %w", relPath, mkErr)
 		}
 

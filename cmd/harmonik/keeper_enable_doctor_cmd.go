@@ -964,7 +964,7 @@ func readGlobalSettings(settingsPath string) (map[string]interface{}, error) {
 // Creates the parent directory if needed. NOT atomic (suitable for user's
 // home-dir settings file; backup is taken by the caller first).
 func writeGlobalSettings(settingsPath string, settings map[string]interface{}) error {
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil { //dirmode:allow parent of the user's ~/.claude/settings.json, not .harmonik state
 		return fmt.Errorf("MkdirAll %q: %w", filepath.Dir(settingsPath), err)
 	}
 	content, err := json.MarshalIndent(settings, "", "  ")

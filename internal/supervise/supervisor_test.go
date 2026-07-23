@@ -259,7 +259,9 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 
 	// Keep the heartbeat fresh for ~400ms (many probe ticks), bumping mtime.
 	bumpStop := make(chan struct{})
+	bumpDone := make(chan struct{})
 	go func() {
+		defer close(bumpDone)
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -275,10 +277,20 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 			}
 		}
 	}()
+	// Signalling bumpStop is not enough: the goroutine calls t.Errorf on its
+	// Chtimes failure path, and a t.Errorf that lands after the test function
+	// returns panics with "Log in goroutine after test has completed", killing
+	// the whole package test binary. Every stop site must JOIN.
+	// Exactly one of the three call sites below runs (the other two t.Fatal),
+	// so closing bumpStop once is safe.
+	stopBump := func() {
+		close(bumpStop)
+		<-bumpDone
+	}
 
 	// Confirm it reaches running and stays healthy across several probe ticks.
 	if _, ok := waitForStatus(sv, supervise.StatusRunning, 1*time.Second); !ok {
-		close(bumpStop)
+		stopBump()
 		if stopErr := sv.Stop(0); stopErr != nil {
 			t.Errorf("supervisor Stop during teardown: %v", stopErr)
 		}
@@ -288,7 +300,7 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if s := sv.Snapshot(); s.Status == supervise.StatusUnhealthy {
-			close(bumpStop)
+			stopBump()
 			if stopErr := sv.Stop(0); stopErr != nil {
 				t.Errorf("supervisor Stop during teardown: %v", stopErr)
 			}
@@ -298,7 +310,7 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	close(bumpStop)
+	stopBump()
 	if err := sv.Stop(0); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}

@@ -212,12 +212,24 @@ func TestSupervisorWatchdog_ReviveCounterResets(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+
+	// The fixture goroutine below calls t.Errorf on its I/O failure paths, so it
+	// must not outlive the test: a t.Errorf after the test function returns
+	// panics with "Log in goroutine after test has completed" and takes the whole
+	// package test binary down. cancel() first (the goroutine parks on
+	// <-ctx.Done()), then join.
+	fixtureDone := make(chan struct{})
+	defer func() {
+		cancel()
+		<-fixtureDone
+	}()
 
 	// Goroutine: cycles the pidfile (absent → live → absent → live → absent → live)
 	// each cycle: let the watchdog see the absence and call revive, then bring it
 	// back by writing a live PID so pollUntilAlive resets the counter.
 	go func() {
+		defer close(fixtureDone)
+
 		for range 3 {
 			// Let watchdog detect absent pidfile and call revive().
 			time.Sleep(60 * time.Millisecond)
@@ -245,6 +257,7 @@ func TestSupervisorWatchdog_ReviveCounterResets(t *testing.T) {
 	sw := supervise.NewSupervisorWatchdog(spec, silentLogger())
 	runErr := sw.Run(ctx)
 
+	// Read ctx.Err() here, BEFORE the deferred cancel() makes it non-nil.
 	if runErr != nil && ctx.Err() == nil {
 		t.Errorf("Run returned early (cap hit?): %v — counter may not be resetting", runErr)
 	}

@@ -30,6 +30,33 @@ func socketDir(t *testing.T) string {
 	return dir
 }
 
+// serveAccepts runs the fixture accept-and-close loop for ln in a goroutine and
+// returns a join function that blocks until that loop has exited (ln.Close()
+// is what ends it, so close FIRST, then join).
+//
+// Joining is not optional. The loop calls t.Errorf, and a t.Errorf that lands
+// after its test function has returned panics with "Log in goroutine after test
+// has completed" — which kills the ENTIRE package test binary, not just the one
+// test. That only ever triggers when something is already failing, i.e. exactly
+// when the rest of the suite still needs to report.
+func serveAccepts(t *testing.T, ln net.Listener) (join func()) {
+	t.Helper()
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			if closeErr := c.Close(); closeErr != nil {
+				t.Errorf("fixture: close accepted conn: %v", closeErr)
+			}
+		}
+	}()
+	return func() { <-stopped }
+}
+
 // TestDaemonWatchdog_NoReviveWhenAlive verifies that when the daemon socket is
 // reachable, the watchdog does not attempt to spawn a revival process.
 func TestDaemonWatchdog_NoReviveWhenAlive(t *testing.T) {
@@ -41,21 +68,12 @@ func TestDaemonWatchdog_NoReviveWhenAlive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	joinAccepts := serveAccepts(t, ln)
 	defer func() {
 		if closeErr := ln.Close(); closeErr != nil {
 			t.Errorf("close listener: %v", closeErr)
 		}
-	}()
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			if closeErr := c.Close(); closeErr != nil {
-				t.Errorf("fixture: close accepted conn: %v", closeErr)
-			}
-		}
+		joinAccepts()
 	}()
 
 	spec := supervise.DaemonWatchdogSpec{
@@ -219,28 +237,27 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+
+	// The fixture goroutine below calls t.Errorf; it must not outlive the test
+	// (see serveAccepts). cancel() first — the goroutine parks on <-ctx.Done()
+	// — then join, and do both from a defer so a t.Fatalf path joins too.
+	fixtureDone := make(chan struct{})
+	defer func() {
+		cancel()
+		<-fixtureDone
+	}()
 
 	// Goroutine cycles the socket: dead → alive → dead → alive → dead → alive
 	// then stays alive so ctx-timeout (not cap) terminates Run.
 	go func() {
-		bindAndServe := func() (net.Listener, bool) {
+		defer close(fixtureDone)
+
+		bindAndServe := func() (net.Listener, func(), bool) {
 			ln, err := (&net.ListenConfig{}).Listen(ctx, "unix", sockPath)
 			if err != nil {
-				return nil, false
+				return nil, nil, false
 			}
-			go func() {
-				for {
-					c, e := ln.Accept()
-					if e != nil {
-						return
-					}
-					if closeErr := c.Close(); closeErr != nil {
-						t.Errorf("fixture: close accepted conn: %v", closeErr)
-					}
-				}
-			}()
-			return ln, true
+			return ln, serveAccepts(t, ln), true
 		}
 
 		// 3 cycles: let the socket be dead long enough for a revive, then recover.
@@ -249,7 +266,7 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 			time.Sleep(60 * time.Millisecond)
 
 			// Bring socket up so pollUntilAlive resets the counter.
-			ln, ok := bindAndServe()
+			ln, joinAccepts, ok := bindAndServe()
 			if !ok {
 				return
 			}
@@ -264,12 +281,13 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 			if closeErr := ln.Close(); closeErr != nil {
 				t.Errorf("fixture: close listener: %v", closeErr)
 			}
+			joinAccepts()
 		}
 
 		// After 3 successful recoveries, bring the socket back up and hold it
 		// until ctx expires so the watchdog exits via timeout (not cap).
 		time.Sleep(60 * time.Millisecond)
-		ln, ok := bindAndServe()
+		ln, joinAccepts, ok := bindAndServe()
 		if !ok {
 			return
 		}
@@ -277,6 +295,7 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 			if closeErr := ln.Close(); closeErr != nil {
 				t.Errorf("fixture: close listener: %v", closeErr)
 			}
+			joinAccepts()
 		}()
 		<-ctx.Done()
 	}()
@@ -284,7 +303,8 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 	dw := supervise.NewDaemonWatchdog(spec, silentLogger())
 	runErr := dw.Run(ctx)
 
-	// Run should exit via ctx cancellation, not via the cap.
+	// Run should exit via ctx cancellation, not via the cap. Read ctx.Err()
+	// here, BEFORE the deferred cancel() makes it non-nil unconditionally.
 	if runErr != nil && ctx.Err() == nil {
 		t.Errorf("Run returned early (cap hit?): %v — counter may not be resetting", runErr)
 	}
@@ -338,11 +358,22 @@ func TestDaemonWatchdog_PhantomReviveGuard(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+
+	// The fixture goroutine below calls t.Errorf; it must not outlive the test
+	// (see serveAccepts). cancel() first — the goroutine parks on <-ctx.Done()
+	// — then join, and do both from a defer because the Run assertion below is
+	// a t.Fatalf, which unwinds through deferred calls only.
+	fixtureDone := make(chan struct{})
+	defer func() {
+		cancel()
+		<-fixtureDone
+	}()
 
 	// Simulate applyBootBackoff: socket stays absent for 80ms after revive(),
 	// then binds and stays up for the test duration.
 	go func() {
+		defer close(fixtureDone)
+
 		// Let the watchdog detect the dead socket and call revive().
 		time.Sleep(60 * time.Millisecond)
 		// Simulate boot-backoff delay: socket still unbound for 80ms.
@@ -352,21 +383,12 @@ func TestDaemonWatchdog_PhantomReviveGuard(t *testing.T) {
 		if err != nil {
 			return
 		}
+		joinAccepts := serveAccepts(t, ln)
 		defer func() {
 			if closeErr := ln.Close(); closeErr != nil {
 				t.Errorf("close listener: %v", closeErr)
 			}
-		}()
-		go func() {
-			for {
-				c, e := ln.Accept()
-				if e != nil {
-					return
-				}
-				if closeErr := c.Close(); closeErr != nil {
-					t.Errorf("fixture: close accepted conn: %v", closeErr)
-				}
-			}
+			joinAccepts()
 		}()
 		<-ctx.Done()
 	}()

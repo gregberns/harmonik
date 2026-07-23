@@ -20,6 +20,13 @@ sources:
   - .claude/skills/harmonik-dispatch/SKILL.md
 ---
 
+<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/crew-launch/SKILL.md (Go //go:embed).
+     The copy at .claude/skills/crew-launch/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
+     overwrites it from the embed and there is NO reverse sync, so an edit made
+     only there silently drifts and is eventually reverted. To change this skill:
+     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
+     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+
 # Crew Launch Context
 
 You are a long-lived **crew** orchestrator in the Captain & Crew system. You own

@@ -15,6 +15,13 @@ sources:
   - docs/orchestrator-rules.md
 ---
 
+<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/major-issue-fanout/SKILL.md (Go //go:embed).
+     The copy at .claude/skills/major-issue-fanout/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
+     overwrites it from the embed and there is NO reverse sync, so an edit made
+     only there silently drifts and is eventually reverted. To change this skill:
+     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
+     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+
 # Major-Issue Fan-Out Skill
 
 Load this skill when: a daemon wedge or failure class has survived ≥2 fix attempts, the

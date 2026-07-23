@@ -16,6 +16,13 @@ sources:
   - specs/handler-contract.md §4.11 (HC-046–HC-049)
 ---
 
+<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/agent-comms/SKILL.md (Go //go:embed).
+     The copy at .claude/skills/agent-comms/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
+     overwrites it from the embed and there is NO reverse sync, so an edit made
+     only there silently drifts and is eventually reverted. To change this skill:
+     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
+     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+
 # Agent-Comms Skill
 
 You are operating inside a harmonik run. This skill defines how you send and

@@ -27,6 +27,13 @@ sources:
   - .claude/skills/captain/SKILL.md
 ---
 
+<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/keeper/SKILL.md (Go //go:embed).
+     The copy at .claude/skills/keeper/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
+     overwrites it from the embed and there is NO reverse sync, so an edit made
+     only there silently drifts and is eventually reverted. To change this skill:
+     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
+     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+
 # Keeper operating context
 
 The **keeper** is harmonik's per-session **context-fill watcher**. One keeper
@@ -51,7 +58,8 @@ You interact with the keeper in three roles:
 Each turn, the keeper's **statusLine hook** (`keeper-statusline.sh`) writes
 `.harmonik/keeper/<agent>.ctx` with the session's `pct`, absolute `tokens`, and
 `session_id`. A **watcher** loop polls that gauge every ~5s
-(`keeper_cmd.go:285`) and crosses one of two thresholds:
+(`internal/keeper/thresholds.go` `DefaultPollInterval`) and crosses one of two
+thresholds:
 
 - **WARN** — the session is getting full. The keeper injects a wrap-up-warning
   prompt into the tmux pane (if `--tmux` is set) and emits `session_keeper_warn`.
@@ -88,7 +96,8 @@ ever fires). Creating `.managed` requires explicit destructive consent (see
 The keeper evaluates **both** an absolute-token threshold and a
 percent-of-window threshold and uses **whichever is smaller** — i.e. the
 effective threshold is `min(absTokens, pctCeil * windowSize)`
-(`internal/keeper/cycle.go:39-43`). This is deliberate so the same values
+(`internal/keeper/thresholds.go` `minAbsOrPctCeil`, reached via
+`CyclerConfig.actThreshold` / `warnThreshold`). This is deliberate so the same values
 work on a 200k window (the pct-ceil wins, ~170k) and a 1M window (the abs cap
 wins, 215k) — preventing a `90%` gate from firing only at ~900k tokens
 (Refs: hk-cl74g). The suggested band below is the TA1 retune (hk-8hr1): warn=200K /
@@ -100,15 +109,16 @@ token spend.
 | **WARN** | `warn_abs_tokens = 200000` | `--warn-pct 80` (pct-ceil 0.70) | `keeper config --example` / `DefaultWarnAbsTokens` |
 | **ACT** | `act_abs_tokens = 215000` | `--act-pct 90` (pct-ceil 0.85) | `DefaultActAbsTokens` |
 | **FORCE-ACT** | `force_act_abs_tokens = 240000` (act+25k) | pct 95 (pct-ceil 0.95) | `DefaultForceActAbsOffset` |
-| **HARD-CEILING** | `hard_ceiling.abs_tokens = 280000` (SID-independent trip-wire) | — | `thresholds.go` |
-| window fallback | `FallbackWindowSize = 200000` | — | `watcher.go:applyDefaults`, `--window-size` |
+| **HARD-CEILING** | `hard_ceiling.abs_tokens = 280000` (SID-independent trip-wire) | — | `DefaultHardCeilingTokens` / `HardCeilingAbsTokens` |
+| window fallback | `FallbackWindowSize = 200000` | — | `watcher.go` `WatcherConfig.applyDefaults`, `--window-size` |
 
 - The **pct gates (`--warn-pct`/`--act-pct`) are only used as a fallback** when
   the gauge does not emit absolute token counts (`CtxFile.Tokens == 0` or
   `WindowSize == 0`) — i.e. older Claude Code versions (`cycle.go:belowActThreshold`,
   `watcher.go:belowWarnThreshold`). When absolute tokens ARE present (all current
   Claude Code versions with [1m] or 200k windows), the abs/pct-ceil `min` formula
-  above governs.
+  above governs. (Symbols, not line numbers: `cycle.go` and `watcher.go` move
+  constantly — grep the symbol name.)
 - **On [1m]-window models (1M token context) the abs thresholds are
   authoritative**: `min(200k, 0.70×1M)=200k` for warn, `min(215k, 0.85×1M)=215k`
   for act. `--warn-pct`/`--act-pct` have no effect and the keeper will emit a
@@ -116,8 +126,10 @@ token spend.
   to override thresholds. (Refs: hk-odhh.)
 - **FORCE-ACT** (240k) fires the cycle **unconditionally, bypassing the
   CrispIdle gate**, so a perpetually-busy session that never goes idle still gets
-  cleared before exhaustion (`cycle.go:50-57`, Refs: hk-0uu).
-- **HARD-CEILING** (`HardCeilingAbsTokens = 280000`, `thresholds.go:72`) is a
+  cleared before exhaustion (`cycle.go` `CyclerConfig.aboveForceThreshold` /
+  `forceActThreshold`, Refs: hk-0uu).
+- **HARD-CEILING** (`HardCeilingAbsTokens = 280000` — declared in
+  `internal/keeper/thresholds.go` as an alias of `DefaultHardCeilingTokens`) is a
   SEPARATE, SID-independent backstop above the normal band: any watched pane at
   ≥280k forces a handoff+restart **regardless of whether the session_id binding
   is correct**, so a mis-bound keeper cannot silently let a session overflow
@@ -159,8 +171,12 @@ Refs: `cmd/harmonik/resolve_keeper_config.go` (operator-facing chokepoint),
 
 ## § Command surface
 
-All keeper verbs are under `harmonik keeper`. Top-level usage:
-`keeper_cmd.go:243` (`keeperTopUsage`).
+All keeper verbs are under `harmonik keeper`. Top-level usage: the
+`keeperTopUsage` const in `cmd/harmonik/keeper_cmd.go`.
+
+> **Cite symbols, not line numbers.** Every code reference below names a file plus
+> a Go symbol (`func`/`const`/`var`) — grep for the symbol. Line numbers in this
+> repo rot within days and were the source of a real stale-citation defect here.
 
 ### `harmonik keeper config --example` — print a complete starting `keeper:` block
 
@@ -262,12 +278,12 @@ observed; `1` argument error; `2` flag misuse (flag-only); `3` ack-timeout
 
 Starts the watcher loop and blocks until SIGINT/SIGTERM.
 
-Flags (`keeper_cmd.go:59-66`):
+Flags (`keeper_cmd.go` `runKeeperSubcommand`):
 
 | flag | default | meaning |
 |---|---|---|
 | `--agent <name>` | — (**required**) | identifies the lockfile + `.managed` marker |
-| `--tmux <target>` | auto-derived | pane to inject warn/handoff into; auto-resolved from `harmonik-<hash12>-<agent>` if omitted (`keeper_cmd.go:111-116`) |
+| `--tmux <target>` | auto-derived | pane to inject warn/handoff into; auto-resolved from `harmonik-<hash12>-<agent>` if omitted (`keeper.ResolveTmuxTarget`) |
 | `--warn-pct N` | `80` | pct fallback warn gate — **inert on [1m] models**; emits a warning if passed explicitly |
 | `--act-pct N` | `90` | pct fallback act gate (`.managed`-gated) — **inert on [1m] models**; emits a warning if passed explicitly |
 | `--warn-abs-tokens N` | `200000` | absolute warn gate (authoritative on [1m] models) |
@@ -275,7 +291,7 @@ Flags (`keeper_cmd.go:59-66`):
 | `--window-size N` | `200000` | assumed window when gauge reports `WindowSize==0` |
 | `--respawn-cmd <cmd>` | — | supervised respawn: after the gauge goes stale 20s and the pane is at a shell prompt, run `sh -c <cmd>` to relaunch the agent (requires `--tmux`; 90s cooldown). Refs hk-3w2. |
 
-**Behaviour** (`keeper_cmd.go:27-35,281-291`): acquire the single-keeper lock →
+**Behaviour** (`keeper_cmd.go` `runKeeperSubcommand`): acquire the single-keeper lock →
 boot-doctor (loud, non-fatal) → check `.managed` (absent ⇒ no-op exit 0) →
 resolve tmux target → crash-recovery (resume any interrupted prior cycle) →
 poll the gauge every 5s. Emits `session_keeper_warn` on the first upward warn
@@ -284,7 +300,7 @@ dispatch), and emits `session_keeper_no_gauge` at boot and every 120s when the
 gauge file is absent/stale (so a missing `statusLine.command` is visible, not
 silent).
 
-**Exit codes** (`keeper_cmd.go:37-41,301-304`): `0` clean (no-op or signal
+**Exit codes** (`keeper_cmd.go` `runKeeperSubcommand` doc comment): `0` clean (no-op or signal
 shutdown); `1` argument or I/O error; `2` lock already held by another live
 keeper (only ONE keeper per agent).
 
@@ -294,9 +310,9 @@ IDEMPOTENT wiring of the three keeper stanzas into the GLOBAL
 `~/.claude/settings.json`: `statusLine` + `Stop` hook + `PreCompact` hook. Backs
 up settings.json first, normalizes env-var names, seeds `HANDOFF-<agent>.md`,
 validates the `--tmux` pane, and prints the exact run command
-(`keeper_enable_doctor_cmd.go:139-287`).
+(`keeper_enable_doctor_cmd.go` `runKeeperEnable`).
 
-Flags (`keeper_enable_doctor_cmd.go:889-922`): `--project DIR`,
+Flags (`keeper_enable_doctor_cmd.go` `parseKeeperEnableArgs` / `keeperEnableUsage`): `--project DIR`,
 `--scripts-dir DIR` (auto-detected relative to the binary if omitted),
 `--tmux TARGET`, `--yes-destructive`.
 
@@ -305,23 +321,24 @@ Flags (`keeper_enable_doctor_cmd.go:889-922`): `--project DIR`,
   EVERY Claude session on the box (`docs/captain-restart.md` Enablement step 1).
   Do it deliberately, ideally when no crew is mid-task.
 - `.managed` (the marker that makes the reset cycle LIVE) is **never created
-  without `--yes-destructive`** (`keeper_enable_doctor_cmd.go:256-280`).
+  without `--yes-destructive`** (`keeper_enable_doctor_cmd.go` `runKeeperEnable`).
 - Known live agents (`flywheel`, `named-queues`, `controlpoints`) are **refused
   without `--yes-destructive`** — a misconfigured `.managed` could `/clear` an
-  active session (`keeper_enable_doctor_cmd.go:29-33,151-160`).
+  active session (`keeper_enable_doctor_cmd.go` `knownLiveAgents` +
+  `runKeeperEnableEntry`).
 - The `statusLine` stanza is normalized to include `"type":"command"`; without
   it Claude Code rejects the whole settings.json and disables ALL hooks (hk-hs1,
-  `keeper_enable_doctor_cmd.go:610-617`).
+  `keeper_enable_doctor_cmd.go` `statusLineTypeIsCommand` / `getOrCreateStatusLine`).
 
-**Exit codes** (`keeper_enable_doctor_cmd.go:919-922`): `0` success; `1`
+**Exit codes** (`keeper_enable_doctor_cmd.go` `runKeeperEnableSubcommand`): `0` success; `1`
 argument, validation, or I/O error.
 
 ### `harmonik keeper doctor --agent <name> [--project DIR]` — read-only drift validator
 
 READ-ONLY; mutates nothing. Also runs automatically at keeper **boot** as a loud
-diagnostic (`keeper_enable_doctor_cmd.go:539-552`). **Run this to find out the
-ACTUAL deployed keeper state.** Checks (`keeper_enable_doctor_cmd.go:366-536`,
-`924-948`):
+diagnostic (`keeper_enable_doctor_cmd.go` `runKeeperDoctorAtBoot`). **Run this to
+find out the ACTUAL deployed keeper state.** Checks
+(`keeper_enable_doctor_cmd.go` `runKeeperDoctor` + `keeperDoctorUsage`):
 
 | check | passes when |
 |---|---|
@@ -334,23 +351,25 @@ ACTUAL deployed keeper state.** Checks (`keeper_enable_doctor_cmd.go:366-536`,
 | `managed` | `.harmonik/keeper/<agent>.managed` present (reset cycle LIVE) |
 | `api-key-risk` | `ANTHROPIC_API_KEY` NOT set (else keeper-launched claude bills the API pool, not the subscription) |
 
-**Exit codes** (`keeper_enable_doctor_cmd.go:945-948`): `0` all checks passed;
-`1` one or more failed (details on stdout).
+**Exit codes** (`keeper_enable_doctor_cmd.go` `runKeeperDoctorSubcommand`): `0` all
+checks passed; `1` one or more failed (details on stdout).
 
 ### `harmonik keeper set-dispatching --agent <name> [--project DIR]` — hold the reset
 
 Writes `.harmonik/keeper/<agent>.dispatching` so `HoldingDispatch → true`
-(`keeper_cmd.go:162-200`). The reset cycle **defers** while this marker is
-present. **Call it BEFORE submitting a batch to the daemon queue** so the keeper
-does not `/clear` you mid-dispatch (`keeperTopUsage` VERBS). Exit codes
-(`keeper_cmd.go:166-171`): `0` written; `1` argument / path-traversal / I/O
-error. Verified by `keeper_dispatching_cmd_hkrc51s_test.go:15-34`.
+(`keeper_cmd.go` `runKeeperSetDispatching`). The reset cycle **defers** while this
+marker is present. **Call it BEFORE submitting a batch to the daemon queue** so the
+keeper does not `/clear` you mid-dispatch (`keeperTopUsage` VERBS). Exit codes:
+`0` written; `1` argument / path-traversal / I/O error. Verified by
+`keeper_dispatching_cmd_hkrc51s_test.go` `TestRunKeeperSetDispatching_CreatesMarker`.
 
 ### `harmonik keeper clear-dispatching --agent <name> [--project DIR]` — release the hold
 
 Removes the `.dispatching` marker so `HoldingDispatch → false`
-(`keeper_cmd.go:202-241`). **Idempotent** — an already-absent marker is not an
-error (`keeper_dispatching_cmd_hkrc51s_test.go:86-96`). Call it once all
+(`keeper_cmd.go` `runKeeperClearDispatching`). **Idempotent** — an already-absent
+marker is not an error
+(`keeper_dispatching_cmd_hkrc51s_test.go` `TestRunKeeperClearDispatching_IdempotentWhenAbsent`).
+Call it once all
 in-flight queue work has completed. Exit codes: `0` removed (or already absent);
 `1` argument / path-traversal / I/O error.
 
@@ -392,9 +411,9 @@ flight; a hold defers it while an *operator* is in the loop.
 | **WARN** (≥200k tokens abs / `--warn-pct` fallback) | injects warn text, emits `session_keeper_warn` | **Keep working.** Optionally refresh `HANDOFF-<agent>.md`. | **Keep working.** At the next clean idle point: write `HANDOFF-captain.md` (include the KEEPER nonce), run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, and stop typing. |
 | **ACT** (≥215k / `--act-pct`, CrispIdle, no dispatch hold) | runs handoff → nonce-poll → `/clear` → `/session-resume` | **Nothing.** Hold with `keeper set-dispatching` if mid-dispatch. | **Nothing** — same cycle fires if the captain has not already triggered restart-now. |
 | **FORCE-ACT** (≥240k / `--act-pct` 95) | runs the cycle **unconditionally** (bypasses CrispIdle) | **Nothing** — the safety net for a never-idle session. | **Nothing** — same safety net; always fires regardless of restart-now status. |
-| **HARD-CEILING** (≥280k, SID-independent) | forces handoff+restart regardless of session_id binding (`thresholds.go:72`, hk-34ac) | **Nothing** — last-resort backstop against a mis-bound keeper. | **Nothing** — same backstop. |
+| **HARD-CEILING** (≥280k, SID-independent) | forces handoff+restart regardless of session_id binding (`thresholds.go` `HardCeilingAbsTokens`, hk-34ac) | **Nothing** — last-resort backstop against a mis-bound keeper. | **Nothing** — same backstop. |
 | **captain restart-now** | `RunOnDemand`: bypasses CrispIdle gate, runs cycle immediately on next tick | — | Captain writes handoff + nonce, then calls `harmonik keeper restart-now --agent captain`. |
-| **operator attached** | act-path goes **warn-only**: destructive injection suppressed so keeper never races human keystrokes; warn/gauge continue; cycle resumes once operator detaches | nothing (`cycle.go:128-137`, hk-6qf) | nothing |
+| **operator attached** | act-path goes **warn-only**: destructive injection suppressed so keeper never races human keystrokes; warn/gauge continue; cycle resumes once operator detaches | nothing (`cycle.go` `CyclerConfig.OperatorAttachedFn`, hk-6qf) | nothing |
 
 **The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate;
 it does NOT widen warn or act thresholds. All other safety gates (nonce-confirmed

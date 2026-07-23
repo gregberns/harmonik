@@ -9,6 +9,13 @@ description: >
   docs/orchestration-protocol-v2.md.
 ---
 
+<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/harmonik-dispatch/SKILL.md (Go //go:embed).
+     The copy at .claude/skills/harmonik-dispatch/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
+     overwrites it from the embed and there is NO reverse sync, so an edit made
+     only there silently drifts and is eventually reverted. To change this skill:
+     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
+     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+
 # Harmonik dispatch — the daily loop
 
 The dispatch model is **one persistent daemon per project + a shared queue**. The daemon (`harmonik --project . --no-auto-pull --max-concurrent N`, running in a detached tmux session) is the dispatcher; agents dispatch by **submitting beads to its queue**. Multiple agents/orchestrators share that single daemon — the shared queue IS the multi-agent coordination mechanism.

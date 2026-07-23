@@ -51,6 +51,46 @@ You do not need to call tools; the invoker provides the artifacts in the prompt.
 
 ---
 
+## Citing code in a normative doc
+
+Applies to whoever writes the citation and to whoever reviews it. A normative doc is
+anything an agent is expected to act on: `specs/`, `docs/foundation/`, any `SKILL.md`,
+any plan recipe.
+
+1. **Open the file and read the code before you cite it.** A grep hit, a memory, or a
+   prior doc's citation is not evidence. Four false citations shipped this way in one
+   session: one named a file that existed nowhere; one named a real file that did not
+   contain the idiom claimed; one asserted a file had been deleted when it had only been
+   renamed; one mis-attributed a landed example. Each landed in a doc presented as
+   verified.
+2. **Re-verify the text you write to replace a wrong claim — after you write it.**
+   This is where the errors actually enter. Of four correcting commits audited this
+   session, two got the large majority of the sweep right and each still introduced
+   exactly one *new* false claim in its replacement text; one passed its own
+   self-review. Disproving the old claim is a cheap targeted check; the substitute is a
+   fresh unverified assertion, and a commit framed as a correction reads as trustworthy
+   enough that nobody re-checks it. So: open the file and read the code you are about to
+   name, *including* when you are confident, and especially when the sweep has been
+   going well. "I verified the old text was wrong" is not evidence the new text is right.
+3. **Cite file + symbol, not file + line.** `internal/queue/cli/cancel.go
+   (emitQueueCancelEvent)`, never `cancel.go:326`. Line numbers in this tree rot within
+   days — six confirmed stale ones in a single session, including a recipe whose own
+   "corrections" section had itself gone stale in the opposite direction. Symbols survive.
+4. **Cite what the file actually demonstrates.** If it shows the idiom only in part, say
+   which part. Do not stretch one verified example to cover a second file you did not
+   read. Before asserting a file is *gone*, check for a rename (`git log --follow`,
+   `--find-renames`) — a moved file is not a deleted one.
+5. **Label synthesized code as synthesized.** A composite illustration is fine; calling
+   it "landed" when no file contains it is not.
+6. **A normative example must pass the pinned linter.** Before adding one, run
+   `.tools/golangci-lint` over a throwaway fixture using the repo's own settings block.
+   An example that produces a finding teaches a finding.
+
+Reviewer: a citation you cannot confirm from the diff's own context is a finding →
+flag `unverified-citation`.
+
+---
+
 ## Tier-1 reviewer responsibilities
 
 Perform all eight checks in order. Emit findings per check before the final verdict.
@@ -130,10 +170,21 @@ Each form below is followed by its real home in this tree — cite those, not th
 
 ```go
 // MATERIAL (write / commit / fsync) — join it into a named return.
-// Note os.OpenRoot/root.Create rather than os.Create: a variable path through
-// os.Create is a gosec G304 finding, and the rooted form clears it outright.
-// Landed: internal/supervise/daemon_watchdog.go (non-deferred variant, folding a
-// close failure into an in-flight write error); internal/run/registry.go.
+//
+// This func body is SYNTHESIZED, not copied: it pairs the landed close idiom
+// with os.OpenRoot/root.Create, which nothing in this tree uses yet (verified).
+// The rooted open is the rule for NEW code — a variable path through os.Create
+// is a gosec G304 finding and the rooted form clears it outright (verified
+// against the pinned linter with the repo's settings block).
+//
+// Landed homes for the close idiom itself:
+//   - internal/queue/cli/cancel.go (emitQueueCancelEvent) — deferred, verbatim.
+//   - internal/supervise/daemon_watchdog.go (openCrashLog) — same fold written
+//     out non-deferred, because it runs on one early-return path only.
+//
+// Both of those open under a justified //nolint:gosec, not under OpenRoot:
+// their paths are operator-supplied at runtime, so G304 fires however they are
+// validated. Cite them for the close, not for the open.
 func write(dir, name string, b []byte) (err error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -158,19 +209,24 @@ defer func() {
 }()
 
 // IMMATERIAL (read-only open) but observable — log and continue.
-// Landed: internal/keeper/heartbeat.go (deriveContextTokens),
-// internal/keeper/tmuxresolve.go (recentTranscriptTurn).
+// WarnContext, not Warn: `noctx` reports "log/slog.Warn must not be called. use
+// log/slog.WarnContext" (verified). A defer usually has no ctx in scope — pass
+// context.Background(), as internal/keeper/tmuxresolve.go (recentTranscriptTurn)
+// already does for its scan-truncation warning.
 defer func() {
 	if closeErr := f.Close(); closeErr != nil {
-		slog.Warn("keeper: close transcript", "err", closeErr, "path", path)
+		slog.WarnContext(ctx, "keeper: close transcript", "err", closeErr, "path", path)
 	}
 }()
 ```
 
 Commit `5a199ed3` landed the second and third forms in `internal/keeper`; it did **not**
 introduce an `errors.Join` close there, so do not cite `internal/keeper` for the first
-form. A `//nolint:errcheck` on a discarded close is a suppression, not an idiom — hold
-it to the bar below.
+form. Its two third-form homes — `heartbeat.go` (`deriveContextTokens`) and
+`tmuxresolve.go` (`recentTranscriptTurn`) — still call bare `slog.Warn` inside the
+defer. `--new-from-rev` grandfathers them; the same lines in a new diff are a `noctx`
+finding. Copy the block above, not those call sites. A `//nolint:errcheck` on a
+discarded close is a suppression, not an idiom — hold it to the bar below.
 
 #### Suppression discipline (`//nolint`)
 
@@ -304,6 +360,7 @@ tags with `x-` to distinguish them from v1 vocabulary.
 | `x-missing-wire-up` | New symbol/goroutine/subscription not wired into production composition root. |
 | `missing-scenario-test` | Bug bead has no reproducing scenario test in the diff and no valid exemption. |
 | `spec-field-name` | Diff uses a wrong field/struct/type name vs. the normative name in the spec or bead enrichment. |
+| `unverified-citation` | Normative doc cites a file/symbol that does not hold what is claimed, or cites a line number instead of a symbol (see §Citing code in a normative doc). |
 
 ---
 

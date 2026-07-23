@@ -130,8 +130,9 @@ Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `
 
   ```go
   // MATERIAL (write / commit / fsync) — join it into a named return.
-  // internal/supervise/daemon_watchdog.go, internal/run/registry.go
-  // (both fold the close into an in-flight failure rather than deferring).
+  // internal/queue/cli/cancel.go (emitQueueCancelEvent) — deferred, verbatim.
+  // internal/supervise/daemon_watchdog.go (openCrashLog) — same fold written
+  // out non-deferred, because it runs on one early-return path only.
   defer func() { err = errors.Join(err, f.Close()) }()
 
   // MATERIAL but must not mask an earlier failure — first error wins.
@@ -143,15 +144,20 @@ Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `
   }()
 
   // IMMATERIAL (read-only open) but observable — log and continue.
-  // internal/keeper/heartbeat.go, internal/keeper/tmuxresolve.go, commit 5a199ed3
+  // WarnContext, not Warn: noctx reports "log/slog.Warn must not be called.
+  // use log/slog.WarnContext". A defer usually has no ctx in scope — pass
+  // context.Background(), as internal/keeper/tmuxresolve.go
+  // (recentTranscriptTurn) already does for its scan-truncation warning.
   defer func() {
       if closeErr := f.Close(); closeErr != nil {
-          slog.Warn("keeper: close transcript", "err", closeErr, "path", path)
+          slog.WarnContext(ctx, "keeper: close transcript", "err", closeErr, "path", path)
       }
   }()
   ```
 
-  Note `internal/keeper` carries **no** `errors.Join` close — do not cite it for the first form. When you need to open the file too, prefer `os.OpenRoot(dir)` + `root.Open`/`root.Create(name)` over `os.Open`/`os.Create` with a constructed path: the rooted form clears gosec **G304** by construction (verified), where the plain form fires it and tempts a `//nolint`. Full treatment, including which suppressions are legitimate: `agent-reviewer §2 — Deferred Close()`.
+  Note `internal/keeper` carries **no** `errors.Join` close — do not cite it for the first form. Its two third-form homes, `heartbeat.go` (`deriveContextTokens`) and `tmuxresolve.go` (`recentTranscriptTurn`), still call bare `slog.Warn` inside the defer; `--new-from-rev` grandfathers them, but the same lines in a new diff are a `noctx` finding. Copy the block above, not those call sites.
+
+  When you need to open the file too, prefer `os.OpenRoot(dir)` + `root.Open`/`root.Create(name)` over `os.Open`/`os.Create` with a constructed path: the rooted form clears gosec **G304** by construction (verified against the pinned linter with this repo's settings block), where the plain form fires it and tempts a `//nolint`. That is a rule for **new** code — nothing in this tree uses `os.OpenRoot` yet, and both first-form exemplars above open under a justified `//nolint:gosec` because their paths are operator-supplied at runtime, so G304 fires however they are validated. They are cited for the close, not for the open. Full treatment, including which suppressions are legitimate: `agent-reviewer §2 — Deferred Close()`.
 
 ## Logging
 

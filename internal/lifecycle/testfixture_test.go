@@ -129,30 +129,30 @@ func plFixtureAcquirePidfile(t *testing.T, projectDir string, pid, pgid int, ins
 
 	// PL-002a: acquire exclusive non-blocking advisory lock via flock.
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		_ = f.Close()
 		return nil, fmt.Errorf("plFixtureAcquirePidfile: flock LOCK_EX|LOCK_NB: %w", err)
 	}
 
 	// PL-002b step 3: truncate only after lock acquisition.
 	if err := f.Truncate(0); err != nil {
-		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		_ = f.Close()
 		return nil, fmt.Errorf("plFixtureAcquirePidfile: ftruncate: %w", err)
 	}
 	if _, err := f.Seek(0, 0); err != nil {
-		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		_ = f.Close()
 		return nil, fmt.Errorf("plFixtureAcquirePidfile: seek: %w", err)
 	}
 
 	// PL-002b step 4: write three lines: PID / PGID / daemon_instance_id.
 	content := fmt.Sprintf("%d\n%d\n%s\n", pid, pgid, instanceID)
 	if _, err := f.WriteString(content); err != nil {
-		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		_ = f.Close()
 		return nil, fmt.Errorf("plFixtureAcquirePidfile: write: %w", err)
 	}
 
 	// PL-002b step 5: fsync the fd.
 	if err := f.Sync(); err != nil {
-		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		_ = f.Close()
 		return nil, fmt.Errorf("plFixtureAcquirePidfile: fsync fd: %w", err)
 	}
 
@@ -161,12 +161,12 @@ func plFixtureAcquirePidfile(t *testing.T, projectDir string, pid, pgid int, ins
 	//nolint:gosec // G304: parentDir derived from t.TempDir(), not user input
 	pf, err := os.Open(parentDir)
 	if err == nil {
-		_ = pf.Sync()  //nolint:errcheck // cleanup error unactionable
-		_ = pf.Close() //nolint:errcheck // cleanup error unactionable
+		_ = pf.Sync() //nolint:errcheck // cleanup error unactionable
+		_ = pf.Close()
 	}
 
 	releaseFn = func() {
-		_ = f.Close() //nolint:errcheck // closing fd releases the flock; cleanup error unactionable
+		_ = f.Close()
 	}
 	return releaseFn, nil
 }
@@ -193,7 +193,7 @@ func plFixtureBindSocket(t *testing.T, projectDir string) (net.Listener, error) 
 
 	// PL-003: chmod 0600 after bind.
 	if err := os.Chmod(sockPath, 0o600); err != nil {
-		_ = ln.Close() //nolint:errcheck // cleanup error unactionable
+		_ = ln.Close()
 		return nil, fmt.Errorf("plFixtureBindSocket: chmod 0600: %w", err)
 	}
 

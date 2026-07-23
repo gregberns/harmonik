@@ -99,7 +99,7 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 
 	// Step 2: PL-002a — exclusive non-blocking advisory lock.
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, ErrPidfileLocked
 		}
@@ -108,25 +108,25 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 
 	// Step 3: truncate only after lock acquisition (PL-002b step 3).
 	if err := fd.Truncate(0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: ftruncate: %w", err)
 	}
 
 	if _, err := fd.Seek(0, 0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: seek: %w", err)
 	}
 
 	// Step 4: write three newline-terminated lines; short-write loop per spec.
 	content := []byte(fmt.Sprintf("%d\n%d\n%s\n", pid, pgid, instanceID))
 	if err := writeAll(fd, content); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: write: %w", err)
 	}
 
 	// Step 5a: fsync the fd.
 	if err := fd.Sync(); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: fsync fd: %w", err)
 	}
 
@@ -137,13 +137,13 @@ func AcquirePidfile(projectDir string, pid, pgid int, instanceID string) (*Pidfi
 	//nolint:gosec // G304: parentDir is derived from projectDir, an operator-controlled parameter; not user input
 	pfd, err := os.Open(parentDir)
 	if err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: open parent dir for fsync: %w", err)
 	}
 	syncErr := pfd.Sync()
-	_ = pfd.Close() //nolint:errcheck // cleanup error unactionable
+	_ = pfd.Close()
 	if syncErr != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("lifecycle: AcquirePidfile: fsync parent dir: %w", syncErr)
 	}
 
@@ -259,7 +259,7 @@ func RemoveStalePidfile(projectDir string) error {
 		// Non-fatal: file is already removed; dir-open failure is best-effort.
 		return nil
 	}
-	defer func() { _ = dirFd.Close() }() //nolint:errcheck // cleanup error unactionable
-	_ = dirFd.Sync()                     //nolint:errcheck // fsync failure is non-fatal for unlink durability
+	defer func() { _ = dirFd.Close() }()
+	_ = dirFd.Sync() //nolint:errcheck // fsync failure is non-fatal for unlink durability
 	return nil
 }

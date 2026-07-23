@@ -50,7 +50,7 @@ func chbInv001FixtureSendRelayEnvAndReadAck(t *testing.T, sockPath string, env m
 	if err != nil {
 		t.Fatalf("chbInv001FixtureSendRelayEnvAndReadAck: dial %q: %v", sockPath, err)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	data, marshalErr := json.Marshal(env)
 	if marshalErr != nil {

@@ -61,7 +61,7 @@ func TestHookSessionStore_SocketRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
-		defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup; error unactionable
+		defer func() { _ = conn.Close() }()
 
 		data, marshalErr := json.Marshal(env)
 		if marshalErr != nil {

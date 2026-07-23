@@ -64,7 +64,7 @@ func assertSingleGracefulShutdown(t *testing.T, jsonlPath string) {
 	if err != nil {
 		t.Fatalf("open event log: %v", err)
 	}
-	defer f.Close() //nolint:errcheck // read-only test fixture
+	defer f.Close()
 
 	var shutdownPayloads []core.DaemonShutdownPayload
 	scanner := bufio.NewScanner(f)

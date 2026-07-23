@@ -153,7 +153,7 @@ func (srv *cliFixtureMultiAttachServer) serveN(n int) {
 //  3. Wait for the client to close the connection (detach).
 //  4. Record the detach.
 func (srv *cliFixtureMultiAttachServer) handleAttach(conn net.Conn) {
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	srv.state.Attach()
 
@@ -185,7 +185,7 @@ func cliFixtureSimulateAttach(t *testing.T, sockPath string, id int) error {
 	if err != nil {
 		return fmt.Errorf("cliFixtureSimulateAttach[%d]: Dial: %w", id, err)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	// Send attach request.
 	req := jsonrpcRequest{JSONRPC: "2.0", ID: id, Method: "attach.session"}
@@ -224,7 +224,7 @@ func TestPL028_AttachMultipleSimultaneous(t *testing.T) {
 
 	projectDir := plFixtureTempProjectDir(t)
 	srv := cliFixtureStartMultiAttachServer(t, projectDir, numAttachers)
-	t.Cleanup(func() { _ = srv.ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = srv.ln.Close() })
 
 	sockPath := plFixtureSocketPath(projectDir)
 
@@ -295,7 +295,7 @@ func TestPL028_AttachDetachDoesNotKillDaemon(t *testing.T) {
 
 			projectDir := plFixtureTempProjectDir(t)
 			srv := cliFixtureStartMultiAttachServer(t, projectDir, 1)
-			t.Cleanup(func() { _ = srv.ln.Close() }) //nolint:errcheck // cleanup error unactionable
+			t.Cleanup(func() { _ = srv.ln.Close() })
 
 			sockPath := plFixtureSocketPath(projectDir)
 

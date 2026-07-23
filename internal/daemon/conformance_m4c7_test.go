@@ -667,7 +667,7 @@ func countViaHelpers(t *testing.T) int {
 					seen[fn] = true
 				}
 			}
-			_ = f.Close() //nolint:errcheck // scan-only read; close error unactionable
+			_ = f.Close()
 		}
 	}
 	return len(seen)

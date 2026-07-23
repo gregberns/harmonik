@@ -43,11 +43,11 @@ func rc73LockFixtureAcquireEX(t *testing.T, lockPath string) (releaseFn func()) 
 		t.Fatalf("rc73LockFixtureAcquireEX: OpenFile %q: %v", lockPath, err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		_ = f.Close()
 		t.Fatalf("rc73LockFixtureAcquireEX: Flock LOCK_EX|LOCK_NB on %q: %v", lockPath, err)
 	}
 	return func() {
-		_ = f.Close() //nolint:errcheck // closing fd releases the flock; cleanup error unactionable
+		_ = f.Close()
 	}
 }
 
@@ -66,7 +66,7 @@ func rc73LockFixtureProbeWouldBlock(t *testing.T, lockPath string) bool {
 	if err != nil {
 		t.Fatalf("rc73LockFixtureProbeWouldBlock: OpenFile %q: %v", lockPath, err)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = f.Close() }()
 
 	flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr == nil {

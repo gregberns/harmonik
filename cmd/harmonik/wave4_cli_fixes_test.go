@@ -28,10 +28,10 @@ import (
 func injectAndWatchBeads(t *testing.T, ndjsonLines []string, queueID string, beads []core.BeadID) int {
 	t.Helper()
 	server, client := net.Pipe()
-	defer func() { _ = server.Close() }() //nolint:errcheck // test teardown; pipe close error is non-actionable
+	defer func() { _ = server.Close() }()
 
 	go func() {
-		defer func() { _ = client.Close() }() //nolint:errcheck // test teardown; pipe close error is non-actionable
+		defer func() { _ = client.Close() }()
 		for _, line := range ndjsonLines {
 			if _, err := fmt.Fprintln(client, line); err != nil {
 				return

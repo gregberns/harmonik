@@ -76,7 +76,7 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 	}
 
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup fd; primary error takes precedence
+		_ = fd.Close()
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, ErrLockHeld
 		}
@@ -85,15 +85,15 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 
 	// Truncate then write our PID after acquiring the lock.
 	if err := fd.Truncate(0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup fd; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("keeper: truncate lockfile: %w", err)
 	}
 	if _, err := fd.Seek(0, 0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup fd; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("keeper: seek lockfile: %w", err)
 	}
 	if _, err := fmt.Fprintf(fd, "%d\n", os.Getpid()); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup fd; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("keeper: write pid to lockfile: %w", err)
 	}
 
@@ -123,7 +123,7 @@ func LiveKeeperPresent(projectDir, agent string) bool {
 	if err != nil {
 		return false // missing lockfile (or unreadable) → no live keeper to find
 	}
-	defer func() { _ = fd.Close() }() //nolint:errcheck // probe-only fd
+	defer func() { _ = fd.Close() }()
 	// Non-blocking SHARED lock: succeeds iff no exclusive lock is held. A live
 	// keeper holds LOCK_EX, so the shared attempt fails with EAGAIN/EWOULDBLOCK.
 	if flockErr := syscall.Flock(int(fd.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); flockErr != nil {
@@ -219,13 +219,13 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 	tmpPath := tmp.Name()
 
 	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
+		_ = tmp.Close()
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: write managed session_id tmp %q: %w", tmpPath, err)
 	}
 	// fsync before rename to close the power-loss partial-write window.
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
+		_ = tmp.Close()
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: fsync managed session_id tmp %q: %w", tmpPath, err)
 	}

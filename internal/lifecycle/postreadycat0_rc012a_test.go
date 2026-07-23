@@ -78,7 +78,7 @@ func cat0PostReadyFixtureServeState(t *testing.T, ln net.Listener, state *cat0Po
 				return // listener closed; test is over
 			}
 			go func(c net.Conn) {
-				defer func() { _ = c.Close() }() //nolint:errcheck // cleanup error unactionable
+				defer func() { _ = c.Close() }()
 				cat0PostReadyFixtureServeConn(c, state)
 			}(conn)
 		}
@@ -127,7 +127,7 @@ func cat0PostReadyFixtureProbeStatus(t *testing.T, projectDir string) (status, l
 	if dialErr != nil {
 		return "", "", fmt.Errorf("cat0PostReadyFixtureProbeStatus: dial: %w", dialErr)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -202,7 +202,7 @@ func TestRC012a_DaemonStatusRemainsReadyAfterCat0Failure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RC-012a status-remains-ready: bindSocket: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = ln.Close() })
 
 	// The stub models the correct RC-012a behavior: daemon is `ready` and
 	// the Cat 0 failure is surfaced via daemon_degraded (not a status change).
@@ -271,7 +271,7 @@ func TestRC012a_PostReadyCat0DoesNotUsePreReadyDegradedState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RC-012a post-ready-no-degraded: bindSocket: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = ln.Close() })
 
 	// Scenario: daemon was ready, Cat 0 fails post-ready. Status MUST stay "ready".
 	state := &cat0PostReadyFixtureStubState{

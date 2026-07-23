@@ -84,7 +84,7 @@ func ProbePidfileLock(projectDir string) (PidfileLockStatus, int, error) {
 		// Let the caller distinguish os.IsNotExist from other errors.
 		return 0, 0, fmt.Errorf("lifecycle: ProbePidfileLock: open %q: %w", pidfilePath, err)
 	}
-	defer func() { _ = fd.Close() }() //nolint:errcheck // probe fd; close error unactionable
+	defer func() { _ = fd.Close() }()
 
 	// Step 2: attempt exclusive non-blocking flock.
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {

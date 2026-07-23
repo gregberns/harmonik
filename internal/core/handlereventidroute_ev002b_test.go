@@ -325,7 +325,7 @@ func TestEventEV002b_SpecContainsMustNotGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EV-002b: opening %s: %v", specFile, err)
 	}
-	defer f.Close() //nolint:errcheck // read-only file; close error is immaterial
+	defer f.Close()
 
 	const windowSize = 10
 

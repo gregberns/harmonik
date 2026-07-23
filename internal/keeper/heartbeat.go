@@ -213,7 +213,7 @@ func WriteCtxFile(projectDir, agent string, cf *CtxFile) error {
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
+		_ = tmp.Close()
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: write heartbeat ctx tmp %q: %w", tmpPath, err)
 	}

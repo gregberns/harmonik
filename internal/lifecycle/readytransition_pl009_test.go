@@ -66,7 +66,7 @@ func readyFixtureRunStubServer(t *testing.T, ln net.Listener, criteria readyFixt
 				return // listener closed
 			}
 			go func(c net.Conn) {
-				defer func() { _ = c.Close() }() //nolint:errcheck // cleanup error unactionable
+				defer func() { _ = c.Close() }()
 				readyFixtureHandleStatusConn(c, criteria, payload)
 			}(conn)
 		}
@@ -130,7 +130,7 @@ func readyFixtureProbeStatus(t *testing.T, projectDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("readyFixtureProbeStatus: dial: %w", err)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -199,7 +199,7 @@ func TestPL009_ReadyTransitionOnlyWhenCriteriaMet(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009 all-met: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		readyFixtureRunStubServer(t, ln, allMet, readyPayload)
 
@@ -263,7 +263,7 @@ func TestPL009_ReadyTransitionOnlyWhenCriteriaMet(t *testing.T) {
 			if err != nil {
 				t.Fatalf("PL-009 %s: bindSocket: %v", tc.name, err)
 			}
-			t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+			t.Cleanup(func() { _ = ln.Close() })
 
 			readyFixtureRunStubServer(t, ln, tc.criteria, readyPayload)
 
@@ -288,7 +288,7 @@ func TestPL009_ReadyTransitionOnlyWhenCriteriaMet(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009 investigator-inflight: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		// Payload includes investigator run IDs — still reports ready.
 		payloadWithInvestigators := &readyFixtureDaemonReadyPayload{
@@ -323,7 +323,7 @@ func TestPL009_ReadyTransitionOnlyWhenCriteriaMet(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009 payload: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		readyFixtureRunStubServer(t, ln, allMet, readyPayload)
 
@@ -331,7 +331,7 @@ func TestPL009_ReadyTransitionOnlyWhenCriteriaMet(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009 payload: dial: %v", err)
 		}
-		defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+		defer func() { _ = conn.Close() }()
 
 		req := struct {
 			JSONRPC string `json:"jsonrpc"`
@@ -417,7 +417,7 @@ func TestPL009_ReadyTransitionOnlyWhenCriteriaMet(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009 ready_at RFC3339: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		p := &readyFixtureDaemonReadyPayload{
 			ReadyAt:            formatted,

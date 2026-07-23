@@ -428,7 +428,7 @@ func (dw *DaemonWatchdog) reviveWith(ctx context.Context, argv []string) error {
 		} else {
 			cmd.Stdout = f
 			cmd.Stderr = f
-			defer f.Close() //nolint:errcheck // parent closes its copy; child retains its own fd
+			defer f.Close()
 		}
 	}
 	return cmd.Start()

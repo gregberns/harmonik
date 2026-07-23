@@ -91,7 +91,7 @@ func commsPresenceFixtureSendRequest(t *testing.T, sockPath string, payload json
 	t.Helper()
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 	return socketFixtureSendRecv(t, conn, daemon.SocketRequest{
 		Op:      "comms-presence",
 		Payload: payload,
@@ -326,7 +326,7 @@ func TestCommsPresence_NilHandler(t *testing.T) {
 
 	payload := json.RawMessage(`{"agent":"grace","status":"online","reason":"join"}`)
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 	resp := socketFixtureSendRecv(t, conn, daemon.SocketRequest{Op: "comms-presence", Payload: payload})
 
 	if resp.Ok {

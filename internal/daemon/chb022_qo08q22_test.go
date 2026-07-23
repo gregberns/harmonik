@@ -80,7 +80,7 @@ func chb022FixtureSendEnvAndReadAck(t *testing.T, sockPath string, env map[strin
 	if err != nil {
 		t.Fatalf("chb022FixtureSendEnvAndReadAck: dial %q: %v", sockPath, err)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	data, marshalErr := json.Marshal(env)
 	if marshalErr != nil {

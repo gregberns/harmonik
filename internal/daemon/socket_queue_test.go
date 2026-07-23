@@ -113,7 +113,7 @@ func TestSocketListener_QueueMethodsRegistered(t *testing.T) {
 		t.Run(op, func(t *testing.T) {
 			t.Parallel()
 			conn := socketFixtureDial(t, sockPath)
-			defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+			defer func() { _ = conn.Close() }()
 
 			resp := socketFixtureSendRecv(t, conn, daemon.SocketRequest{Op: op})
 			// The stub returns Ok=true; a non-ok response means the op is not
@@ -138,7 +138,7 @@ func TestSocketListener_EnqueueNotRegistered(t *testing.T) {
 	socketFixtureWaitReady(t, sockPath)
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	resp := socketFixtureSendRecv(t, conn, daemon.SocketRequest{Op: "enqueue"})
 	if resp.Ok {
@@ -164,7 +164,7 @@ func TestSocketListener_QueueMethodsNilHandler(t *testing.T) {
 		t.Run(op, func(t *testing.T) {
 			t.Parallel()
 			conn := socketFixtureDial(t, sockPath)
-			defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+			defer func() { _ = conn.Close() }()
 
 			resp := socketFixtureSendRecv(t, conn, daemon.SocketRequest{Op: op})
 			if resp.Ok {

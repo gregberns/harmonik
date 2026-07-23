@@ -260,7 +260,7 @@ func evalReadExistingRunIDs(path string) (map[string]struct{}, error) {
 		}
 		return nil, err
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // read-only file; close error is non-actionable
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	setLargeScanBuffer(scanner)

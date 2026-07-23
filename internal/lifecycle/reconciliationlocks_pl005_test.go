@@ -55,7 +55,7 @@ func startupSweepFixtureIsStaleReconciliationLock(t *testing.T, lockPath string)
 		// File absent or unreadable: treat as already swept.
 		return false
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = f.Close() }()
 
 	// Attempt LOCK_EX|LOCK_NB: success means no live holder.
 	flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)

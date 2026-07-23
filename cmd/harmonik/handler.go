@@ -552,8 +552,8 @@ func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.Hand
 	if err != nil {
 		return
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // best-effort
-	_, _ = f.Write(line)             //nolint:errcheck // best-effort
+	defer func() { _ = f.Close() }()
+	_, _ = f.Write(line) //nolint:errcheck // best-effort
 }
 
 // runHandlerStatus implements `harmonik handler status`.

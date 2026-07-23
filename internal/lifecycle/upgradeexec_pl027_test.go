@@ -392,10 +392,10 @@ func TestPL027_UpgradingMarkerAtomicWrite(t *testing.T) {
 		t.Fatalf("PL-027 atomic-write: open temp for fsync: %v", err)
 	}
 	if err := tmpF.Sync(); err != nil {
-		_ = tmpF.Close() //nolint:errcheck // cleanup error unactionable
+		_ = tmpF.Close()
 		t.Fatalf("PL-027 atomic-write: fsync temp: %v", err)
 	}
-	_ = tmpF.Close() //nolint:errcheck // cleanup error unactionable
+	_ = tmpF.Close()
 	recordStep("fsync-temp")
 
 	// Step 3: rename temp → final.
@@ -410,10 +410,10 @@ func TestPL027_UpgradingMarkerAtomicWrite(t *testing.T) {
 		t.Fatalf("PL-027 atomic-write: open parent dir: %v", err)
 	}
 	if err := parentF.Sync(); err != nil {
-		_ = parentF.Close() //nolint:errcheck // cleanup error unactionable
+		_ = parentF.Close()
 		t.Fatalf("PL-027 atomic-write: fsync parent dir: %v", err)
 	}
-	_ = parentF.Close() //nolint:errcheck // cleanup error unactionable
+	_ = parentF.Close()
 	recordStep("fsync-parent-dir")
 
 	// Assert the marker is present on disk.
@@ -472,7 +472,7 @@ func TestPL027_ListenerFdAdoptionNoConnRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-027 fd-adoption: bind socket: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = ln.Close() })
 
 	sockPath := plFixtureSocketPath(projectDir)
 
@@ -481,7 +481,7 @@ func TestPL027_ListenerFdAdoptionNoConnRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-027 fd-adoption: client connect pre-exec: %v", err)
 	}
-	_ = clientConn.Close() //nolint:errcheck // cleanup error unactionable
+	_ = clientConn.Close()
 
 	// Phase 3: simulate fd adoption by the "new daemon" by accepting on the
 	// same listener. In the real exec-replacement path, the new binary receives
@@ -494,7 +494,7 @@ func TestPL027_ListenerFdAdoptionNoConnRefused(t *testing.T) {
 		t.Fatalf("PL-027 fd-adoption: client connect during adoption window: %v; "+
 			"no ECONNREFUSED should be observable per PL-027(iii)", err)
 	}
-	_ = clientConn2.Close() //nolint:errcheck // cleanup error unactionable
+	_ = clientConn2.Close()
 
 	t.Logf("PL-027 fd-adoption: listener remains accepting across exec window; no ECONNREFUSED observed")
 }
@@ -680,10 +680,10 @@ func TestPL027_UpgradingMarkerRemovedOnCleanTransition(t *testing.T) {
 		t.Fatalf("PL-027 marker lifecycle: open parent dir for fsync: %v", err)
 	}
 	if err := parentF.Sync(); err != nil {
-		_ = parentF.Close() //nolint:errcheck // cleanup error unactionable
+		_ = parentF.Close()
 		t.Fatalf("PL-027 marker lifecycle: fsync parent dir: %v", err)
 	}
-	_ = parentF.Close() //nolint:errcheck // cleanup error unactionable
+	_ = parentF.Close()
 
 	// Phase 5: assert marker is gone.
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {

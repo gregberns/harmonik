@@ -311,7 +311,7 @@ func TestPL024_StalePidfileDetection(t *testing.T) {
 		t.Fatalf("PL-024: CreateTemp sync file: %v", err)
 	}
 	syncFilePath := syncFile.Name()
-	_ = syncFile.Close()                              //nolint:errcheck // cleanup error unactionable
+	_ = syncFile.Close()
 	_ = os.Remove(syncFilePath)                       //nolint:errcheck // child will create it; Remove error expected if already absent
 	t.Cleanup(func() { _ = os.Remove(syncFilePath) }) //nolint:errcheck // cleanup error unactionable
 

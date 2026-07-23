@@ -531,7 +531,7 @@ func readTranscript(path, since, until string) ([]transcriptTurn, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close() //nolint:errcheck // read-only file.
+	defer f.Close()
 
 	var turns []transcriptTurn
 	sc := bufio.NewScanner(f)

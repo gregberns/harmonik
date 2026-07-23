@@ -235,7 +235,7 @@ func startupSeqFixtureRunFullSequence(
 		return nil, startupSeqFixtureDaemonStartedPayload{}, startupSeqFixtureStep9Target{},
 			fmt.Errorf("step 3a: bind socket: %w", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = ln.Close() })
 
 	// Step 4: Cat 0 pre-check.
 	state.startupSeqFixtureMark(startupSeqStep4)

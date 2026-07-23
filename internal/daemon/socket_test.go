@@ -162,7 +162,7 @@ func socketFixtureWaitReady(t *testing.T, sockPath string) {
 	for time.Now().Before(deadline) {
 		conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
-			_ = conn.Close() //nolint:errcheck // probe conn; cleanup error unactionable
+			_ = conn.Close()
 			return
 		}
 		runtime.Gosched()
@@ -351,7 +351,7 @@ func TestRunSocketListener_EmitOutcome(t *testing.T) {
 	socketFixtureWaitReady(t, sockPath)
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := daemon.SocketRequest{
 		Op:      "emit-outcome",
@@ -391,7 +391,7 @@ func TestRunSocketListener_ClaimNext(t *testing.T) {
 	socketFixtureWaitReady(t, sockPath)
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := daemon.SocketRequest{
 		Op:   "claim-next",
@@ -424,7 +424,7 @@ func TestRunSocketListener_UnknownOp(t *testing.T) {
 	socketFixtureWaitReady(t, sockPath)
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := daemon.SocketRequest{Op: "not-a-real-op"}
 	resp := socketFixtureSendRecv(t, conn, req)
@@ -448,7 +448,7 @@ func TestRunSocketListener_HandlerError(t *testing.T) {
 	socketFixtureWaitReady(t, sockPath)
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := daemon.SocketRequest{Op: "claim-next", Role: "implementer"}
 	resp := socketFixtureSendRecv(t, conn, req)
@@ -550,7 +550,7 @@ func TestSocketListener_HookRelayHandler(t *testing.T) {
 
 	// Send the envelope and read the ACK.
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	ack := hookRelayFixtureSendAndReadAck(t, conn, envBytes)
 

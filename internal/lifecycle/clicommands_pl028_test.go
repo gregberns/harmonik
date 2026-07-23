@@ -346,7 +346,7 @@ func TestPL028_JSONRPCMethodWiring(t *testing.T) {
 			if err != nil {
 				t.Fatalf("PL-028 %s: bindSocket: %v", cmd.name, err)
 			}
-			defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
+			defer func() { _ = ln.Close() }()
 
 			done := make(chan struct{})
 			go stubNDJSONResponder(ln, true /* ready */, done)
@@ -355,7 +355,7 @@ func TestPL028_JSONRPCMethodWiring(t *testing.T) {
 			if err != nil {
 				t.Fatalf("PL-028 %s: Dial: %v", cmd.name, err)
 			}
-			defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+			defer func() { _ = conn.Close() }()
 
 			// Send one JSON-RPC request using the declared method name.
 			respBytes := cliFixtureSendJSONRPC(t, conn, cmd.jsonRPCMethod, reqID)
@@ -382,8 +382,8 @@ func TestPL028_JSONRPCMethodWiring(t *testing.T) {
 				t.Errorf("PL-028 %s: response.id = %d, want %d", cmd.name, resp.ID, reqID)
 			}
 
-			_ = conn.Close() //nolint:errcheck // cleanup error unactionable
-			_ = ln.Close()   //nolint:errcheck // cleanup error unactionable
+			_ = conn.Close()
+			_ = ln.Close()
 			<-done
 		})
 	}

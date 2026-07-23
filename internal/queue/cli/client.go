@@ -92,7 +92,7 @@ func sendRequest(ctx context.Context, harmonikDir string, payload []byte) (resp 
 		}
 		return socketResponse{}, exitTransportError
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	// Write request.
 	if _, writeErr := conn.Write(payload); writeErr != nil {

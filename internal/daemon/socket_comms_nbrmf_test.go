@@ -90,7 +90,7 @@ func commsFixtureSendRequest(t *testing.T, sockPath string, payload json.RawMess
 	t.Helper()
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 	return socketFixtureSendRecv(t, conn, daemon.SocketRequest{
 		Op:      "comms-send",
 		Payload: payload,
@@ -309,7 +309,7 @@ func TestCommsSend_NilHandler(t *testing.T) {
 
 	payload := json.RawMessage(`{"from":"alice","to":"bob","body":"hello"}`)
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 	resp := socketFixtureSendRecv(t, conn, daemon.SocketRequest{Op: "comms-send", Payload: payload})
 
 	if resp.Ok {

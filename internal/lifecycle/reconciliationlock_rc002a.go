@@ -144,7 +144,7 @@ func AcquireReconciliationLock(projectDir, targetRunID string) (*ReconciliationL
 	}
 
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, ErrReconciliationLockHeld
 		}
@@ -153,17 +153,17 @@ func AcquireReconciliationLock(projectDir, targetRunID string) (*ReconciliationL
 
 	// Write metadata after acquiring the lock (truncate-rewrite pattern per PL-002b discipline).
 	if err := fd.Truncate(0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: truncate %q: %w", lockPath, err)
 	}
 	if _, err := fd.Seek(0, 0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: seek %q: %w", lockPath, err)
 	}
 
 	content := fmt.Sprintf("creator_pid=%d\nrun_id=%s\n", os.Getpid(), targetRunID)
 	if err := writeAll(fd, []byte(content)); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		_ = fd.Close()
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: write %q: %w", lockPath, err)
 	}
 

@@ -81,7 +81,7 @@ EXAMPLES
 // subArgs is os.Args[2:].
 func runReleaseSubcommand(subArgs []string) int {
 	if len(subArgs) == 0 || subArgs[0] == "--help" || subArgs[0] == "-h" {
-		fmt.Print(releaseTopUsage) //nolint:forbidigo // help output to stdout
+		fmt.Print(releaseTopUsage)
 		return 0
 	}
 

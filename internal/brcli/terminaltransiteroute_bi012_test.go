@@ -90,7 +90,7 @@ func bi012FileContainsPattern(path string, patterns []string) (matchedLine strin
 	if err != nil {
 		return "", 0, err
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // cleanup on read path
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	lineno := 0

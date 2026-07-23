@@ -103,7 +103,7 @@ const maxPromotePushAttempts = 3
 // subArgs is os.Args[2:].
 func runPromoteSubcommand(subArgs []string) int {
 	if len(subArgs) == 0 || subArgs[0] == "--help" || subArgs[0] == "-h" {
-		fmt.Print(promoteUsage) //nolint:forbidigo // help to stdout
+		fmt.Print(promoteUsage)
 		return 0
 	}
 

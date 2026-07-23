@@ -170,7 +170,7 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	if err != nil {
 		return fmt.Errorf("commscursor: Advance %q: open lockfile %q: %w", name, lockPath, err)
 	}
-	defer lockFd.Close() //nolint:errcheck // closing an advisory lock fd; error is non-actionable
+	defer lockFd.Close()
 
 	if err := acquireCursorLock(int(lockFd.Fd()), cursorLockTimeout); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: acquire lock: %w", name, err)

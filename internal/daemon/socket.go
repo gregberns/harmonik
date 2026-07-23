@@ -244,7 +244,7 @@ func removeStaleSocket(sockPath string) error {
 	conn, err := (&net.Dialer{}).DialContext(probeCtx, "unix", sockPath)
 	if err == nil {
 		// Dial succeeded → a live daemon owns this socket.
-		_ = conn.Close() //nolint:errcheck // probe conn; close error unactionable
+		_ = conn.Close()
 		return errLiveDaemon
 	}
 	// Any dial error (ECONNREFUSED, context deadline, no-such-file, etc.)
@@ -394,7 +394,7 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	if err != nil {
 		return fmt.Errorf("daemon: Serve: listen unix %q: %w", sockPath, err)
 	}
-	defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = ln.Close() }()
 
 	// Restrict access to the daemon's own uid per specs/process-lifecycle.md PL-003.
 	if err := os.Chmod(sockPath, 0o600); err != nil {
@@ -404,7 +404,7 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	// Close the listener when ctx is cancelled so Accept unblocks.
 	go func() {
 		<-ctx.Done()
-		_ = ln.Close() //nolint:errcheck // cleanup error unactionable
+		_ = ln.Close()
 	}()
 
 	// Build the router ONCE, before the Accept loop (never per-connection).
@@ -445,7 +445,7 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 // best-effort bad_envelope ack — the relay will have exited already, so the
 // write is best-effort.
 func handleSocketConn(ctx context.Context, conn net.Conn, hr HookRelayHandler, sub SubscribeHandler, router *socketrouter.Router) {
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	raw, err := decodeRawMap(conn)
 	if err != nil {

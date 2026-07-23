@@ -182,7 +182,7 @@ func readGoModRequires() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close() //nolint:errcheck // read-only file; close error immaterial
+	defer f.Close()
 
 	var modules []string
 	inRequire := false

@@ -30,7 +30,7 @@ func TestPL003_SocketPathAndMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-003: bindSocket: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = ln.Close() })
 
 	// Assert socket at canonical path.
 	sockPath := plFixtureSocketPath(projectDir)
@@ -69,7 +69,7 @@ func TestPL003_SocketExclusivity_EADDRINUSE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-003 exclusivity: first bind: %v", err)
 	}
-	t.Cleanup(func() { _ = ln1.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = ln1.Close() })
 
 	// Second bind: we replicate what plFixtureBindSocket does BUT skip the
 	// stale-socket removal step, because the socket is actively held.
@@ -147,7 +147,7 @@ func stubNDJSONResponder(ln net.Listener, ready bool, done chan<- struct{}) {
 	if err != nil {
 		return // listener closed — test is done
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
@@ -203,7 +203,7 @@ func TestPL003a_NDJSONFraming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-003a: bindSocket: %v", err)
 	}
-	defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = ln.Close() }()
 
 	done := make(chan struct{})
 	go stubNDJSONResponder(ln, true /* ready */, done)
@@ -213,7 +213,7 @@ func TestPL003a_NDJSONFraming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-003a: Dial: %v", err)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "status"}
 	reqBytes, _ := json.Marshal(req) //nolint:errcheck,errchkjson // encoding a known-good struct; interface{} Params field is always map[string]string
@@ -252,8 +252,8 @@ func TestPL003a_NDJSONFraming(t *testing.T) {
 	}
 
 	// Wait for the responder goroutine to finish.
-	_ = conn.Close() //nolint:errcheck // cleanup error unactionable
-	_ = ln.Close()   //nolint:errcheck // cleanup error unactionable
+	_ = conn.Close()
+	_ = ln.Close()
 	<-done
 }
 
@@ -279,7 +279,7 @@ func TestPL003b_PreReadyRejection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-003b: bindSocket: %v", err)
 	}
-	defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = ln.Close() }()
 
 	done := make(chan struct{})
 	// Spawn the stub with ready=false (pre-ready window).
@@ -289,7 +289,7 @@ func TestPL003b_PreReadyRejection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-003b: Dial: %v", err)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	// Send a claim-next request (agent-originated, run_id not in model).
 	req := jsonrpcRequest{
@@ -331,8 +331,8 @@ func TestPL003b_PreReadyRejection(t *testing.T) {
 		t.Errorf("PL-003b: error message = %q; expected to contain %q", resp.Error.Message, "unknown_run_id")
 	}
 
-	_ = conn.Close() //nolint:errcheck // cleanup error unactionable
-	_ = ln.Close()   //nolint:errcheck // cleanup error unactionable
+	_ = conn.Close()
+	_ = ln.Close()
 	<-done
 }
 
@@ -358,7 +358,7 @@ func TestPL003_SocketStaleRemovalOnStartup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-003 stale-removal: bindSocket failed: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = ln.Close() })
 
 	// The socket must now be a valid Unix domain socket (stat it).
 	info, err := os.Stat(sockPath)

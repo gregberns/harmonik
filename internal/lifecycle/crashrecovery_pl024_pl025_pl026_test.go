@@ -266,7 +266,7 @@ func TestPL024_StaleReconciliationLockViaFlockAndKill0(t *testing.T) {
 		t.Fatalf("PL-024: CreateTemp sync file: %v", err)
 	}
 	syncFilePath := syncFile.Name()
-	_ = syncFile.Close()                              //nolint:errcheck // cleanup error unactionable
+	_ = syncFile.Close()
 	_ = os.Remove(syncFilePath)                       //nolint:errcheck // child will recreate
 	t.Cleanup(func() { _ = os.Remove(syncFilePath) }) //nolint:errcheck // cleanup error unactionable
 

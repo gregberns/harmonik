@@ -212,6 +212,23 @@ func (o osCaptainTmuxOps) AgentPaneAlive(ctx context.Context, sess string) (bool
 	return true, nil
 }
 
+// captainBootBufferName is the PL-021d tmux buffer name for the captain's
+// boot-seed paste.
+//
+// It goes through [ltmux.BufferName] rather than the retired
+// fmt.Sprintf("harmonik-%s-captain-boot", sessionID) so the name cannot depend
+// on the caller having a well-formed session id. Today it always does — the
+// flag parser hard-rejects a non-UUIDv4 --session-id and mints a UUIDv4
+// otherwise — so this is defense in depth, not a live bug fix. What it defends
+// against is the hk-lckbv shape: a session id carrying an uppercase letter or
+// an underscore produces a name WriteToPane rejects with ErrStructural,
+// silently dropping the boot seed so the captain never runs
+// `harmonik agent brief`. The daemon side is already guarded; this closes the
+// launcher side. Bead: hk-y466l.
+func captainBootBufferName(sessionID string) string {
+	return ltmux.BufferName(sessionID, "captain-boot")
+}
+
 // PasteSeedToAgentPane delivers the boot seed to the captain's agent pane via
 // the bracketed-paste mechanism (mirrors crewstart.go pasteCrewMission).
 //
@@ -229,7 +246,7 @@ func (o osCaptainTmuxOps) PasteSeedToAgentPane(ctx context.Context, sessionID, p
 		return
 	case <-time.After(captainSplashDismissDelay):
 	}
-	bufName := fmt.Sprintf("harmonik-%s-captain-boot", sessionID)
+	bufName := captainBootBufferName(sessionID)
 	const bootSeedMsg = "Please run `harmonik agent brief` and begin your operating loop.\n"
 	if err := o.adapter.WriteToPane(ctx, bufName, paneTarget, []byte(bootSeedMsg)); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik captain: boot-seed paste: %v\n", err)

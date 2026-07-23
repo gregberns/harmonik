@@ -217,6 +217,15 @@ type crewBriefSeedFn func(project, name, sessionID string)
 // between the paste and the submit Enter (T10/hk-ncg9m).
 const crewBriefSeedDelay = 750 * time.Millisecond
 
+// crewBootBufferName is the PL-021d tmux buffer name for a crew's boot-seed
+// paste. Mirrors captainBootBufferName: built by [ltmux.BufferName], never by
+// fmt.Sprintf, so a session id that the crew-start RPC returns in an unexpected
+// shape (uppercase, underscored) cannot produce a name WriteToPane rejects with
+// ErrStructural — which would silently drop the seed. Bead: hk-y466l.
+func crewBootBufferName(sessionID string) string {
+	return ltmux.BufferName(sessionID, "crew-boot")
+}
+
 // pasteCrewBriefSeedViaTmux is the production crewBriefSeedFn. It derives the
 // crew's tmux session name (harmonik-<project-hash>-crew-<name>) and pastes
 // "Please run `harmonik agent brief` and begin your operating loop." to the
@@ -240,7 +249,7 @@ func pasteCrewBriefSeedViaTmux(project, name, sessionID string) {
 		return
 	case <-time.After(crewBriefSeedDelay):
 	}
-	bufName := fmt.Sprintf("harmonik-%s-crew-boot", sessionID)
+	bufName := crewBootBufferName(sessionID)
 	const bootSeedMsg = "Please run `harmonik agent brief` and begin your operating loop.\n"
 	if err := adapter.WriteToPane(ctx, bufName, paneTarget, []byte(bootSeedMsg)); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: boot-seed paste: %v\n", err)

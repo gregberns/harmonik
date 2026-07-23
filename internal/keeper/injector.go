@@ -150,6 +150,30 @@ const submitRetries = 2
 // designed value (400ms) is regression-guarded by TestInjectText_SettleConstants.
 var submitRetryDelay = 400 * time.Millisecond
 
+// injectBufferName is the tmux buffer name the injector loads its payload into.
+//
+// It MUST satisfy the PL-021d buffer-name format `harmonik-<id>-<purpose>` —
+// i.e. it must equal tmux.BufferName("keeper", "inject") in
+// internal/lifecycle/tmux/buffername.go, which is the shared constructor every
+// other production site uses.
+//
+// Hardcoded here rather than built by that helper because the keeper package is
+// depguard-isolated and may NOT import lifecycle (hk-ekap1 / hk-fzzc6) — the
+// same local-duplication pattern as windowAgent in tmuxresolve.go. The two
+// halves are pinned from both sides: the tmux package's
+// TestBufferName_KeeperInjectorDuplicate asserts the helper produces this exact
+// string (checked against the REAL bufferNameRe), and this package's
+// TestInjectText_BufferNameIsValidShape asserts the injector puts it on the
+// tmux argv.
+//
+// The retired value was "hk-keeper-inject", which FAILS bufferNameRe: the
+// prefix is "hk-", not "harmonik-". Nothing broke, because this path shells out
+// through tmuxRunFn instead of tmux.OSAdapter and so is never validated — but
+// consolidating the injector onto the adapter (the obvious next refactor) would
+// have turned every keeper injection into ErrStructural, silently dropping
+// /session-handoff, /clear, and /session-resume. Bead: hk-y466l.
+const injectBufferName = "harmonik-keeper-inject"
+
 // tmuxRunFn is the seam through which the injector shells out to tmux. It runs
 // the given tmux argv (with optional stdin) and returns the combined
 // stdout+stderr plus any error — the same surface CombinedOutput() provides.
@@ -205,13 +229,11 @@ func injectTextClocked(ctx context.Context, clock substrate.ClockPort, tmuxTarge
 		return fmt.Errorf("keeper: inject: tmuxTarget is empty")
 	}
 
-	const buf = "hk-keeper-inject"
-
-	if out, err := tmuxRunFn(ctx, text, "load-buffer", "-b", buf, "-"); err != nil {
+	if out, err := tmuxRunFn(ctx, text, "load-buffer", "-b", injectBufferName, "-"); err != nil {
 		return fmt.Errorf("keeper: tmux load-buffer: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
 	}
 
-	if out, err := tmuxRunFn(ctx, "", "paste-buffer", "-b", buf, "-t", tmuxTarget, "-d"); err != nil {
+	if out, err := tmuxRunFn(ctx, "", "paste-buffer", "-b", injectBufferName, "-t", tmuxTarget, "-d"); err != nil {
 		return fmt.Errorf("keeper: tmux paste-buffer: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
 	}
 

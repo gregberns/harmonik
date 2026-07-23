@@ -3,7 +3,8 @@ name: agent-config-reviewer
 description: >
   Tier-2 session-boundary reviewer. Fires at session start/end and at every kerf
   pass advance to validate agent configuration drift: CLAUDE.md / AGENTS.md drift,
-  settings.json drift, and skill-registry drift. NOT per-commit (that is
+  settings.json drift, skill-registry drift, and enforced-config drift (`.golangci.yml`
+  vs. the idiom list in agent-reviewer §2). NOT per-commit (that is
   agent-reviewer's role). Emits a structured JSON verdict (schema v1, same shape as
   agent-reviewer) plus a diff proposal for any updates the main agent should apply
   or defer.
@@ -45,6 +46,7 @@ applies, defers, or rejects.
 | `kerf status <work> <next-pass>` about to run | Yes — full scan |
 | `kerf finalize` about to run | Yes — full scan with wider prompt (include new spec) |
 | Foundation-doc change (`quality-checks.md`, `subsystem-organization.md`, `testing.md`, `build-practices.md`) | Yes — drift from those docs into agent-configuration.md |
+| **`.golangci.yml` change** (linter added/removed, setting changed, exclusion added) | **Yes — drift from enforced config into `agent-reviewer/SKILL.md §2`** |
 | Per-commit (before commit) | No — that is agent-reviewer's job |
 
 ---
@@ -68,6 +70,8 @@ The invoker provides (all in the invocation prompt):
 7. **Changed foundation docs** (for automatic Tier-2 trigger only) — the unified diff
    of the changed `quality-checks.md`, `subsystem-organization.md`, `testing.md`, or
    `build-practices.md`.
+8. **`.golangci.yml`** — the enforced lint config, plus `agent-reviewer/SKILL.md §2`
+   (the idiom list that claims to describe it). Required for check 5.
 
 You do not call tools yourself; the invoker provides all artifacts in the prompt.
 
@@ -75,7 +79,7 @@ You do not call tools yourself; the invoker provides all artifacts in the prompt
 
 ## Review surface
 
-Perform all four checks in order. Emit findings per check before the final verdict.
+Perform all five checks in order. Emit findings per check before the final verdict.
 
 ### 1. CLAUDE.md / AGENTS.md drift
 
@@ -130,11 +134,24 @@ frontmatter `name` and `description`) against the normative skill table in
 - Is the `agent-reviewer` skill current? Specifically: does its check list match the
   check categories in `build-practices.md §Agent review on every commit`? If a
   category was added to `build-practices.md` and `agent-reviewer/SKILL.md` has not
-  been updated, flag it.
+  been updated, flag it. (Its §2 idiom list is covered separately by check 5.)
+- Do the section-count claims inside each skill match the sections it actually has —
+  "perform all N checks", numbered lists, the invocation-prompt template? A skill that
+  tells its invoker to run five checks while defining eight silently drops the last
+  three.
 - Are any skills present in `.claude/skills/` that are NOT in the normative table?
   (Undocumented skills are a drift risk; they may be legitimate additions that the
   table needs to catch up with, or orphans.)
 - Do skill frontmatter `name` fields match the directory names?
+
+⚑ The table above mirrors `agent-configuration.md §Skills`, and that section is itself
+stale as of 2026-07-22: it names `kerf-workflow`, `go-test-run`,
+`project-quality-gates`, `git-task-commit`, and `spec-finalize`, none of which exist in
+`.claude/skills/`, and omits eight that do (`agent-comms`, `harmonik-dispatch`,
+`harmonik-lifecycle`, `keeper`, `major-issue-fanout`, `orchestrator-rules`,
+`status-report`, `watch`). Do not emit `skill-missing` for the five phantom rows —
+the correct finding is `foundation-doc-stale` against `agent-configuration.md §Skills`,
+which needs reconciling with the live directory before this check is trustworthy again.
 
 Findings → flag: `skill-registry-drift`
 
@@ -150,6 +167,37 @@ changed doc(s) against `agent-configuration.md`:
   conventions`?
 
 Findings → flag: `foundation-doc-stale`
+
+### 5. Enforced-config currency (`.golangci.yml` → `agent-reviewer` §2)
+
+`agent-reviewer/SKILL.md §2` is a *description of `.golangci.yml`*, not an independent
+standard. It is the one place in the config surface where drift produces actively wrong
+instructions: agents follow it literally and then land code the linter rejects, or add
+suppressions the quality lanes forbid.
+
+Check the §2 idiom list against the enforced config in both directions:
+
+- **Every idiom §2 recommends must pass.** For each recommended form, is there a
+  `.golangci.yml` linter/setting that would flag it? The failure mode is a setting that
+  is *stricter* than §2 assumes — `errcheck check-blank: true` (so `_ = f()` is a
+  finding), `check-type-assertions: true` (so `v, _ := x.(T)` is), a narrow
+  `exclude-functions` entry that matches fewer call sites than the prose implies.
+- **Every idiom §2 forbids must actually be enforced,** or §2 is inventing a rule.
+- **Every enabled linter with non-default settings should be reachable from §2** —
+  errcheck, forbidigo, noctx, gosec, nolintlint, exhaustive, the funlen/cyclop/gocognit
+  ceilings, depguard. A setting no agent has been told about is not a gate, it is a trap.
+- **Suppression guidance must distinguish structural from fixable findings.** A §2 that
+  recommends `//nolint` for a finding a code change would clear (gosec G301 on `0o755`
+  dir perms, G306 on `0o644` file perms) contradicts the standing "add no new
+  `//nolint`" rule and is drift, not idiom.
+
+Verify by running, not by reading: build a fixture using the repo's own settings block
+and run the pinned `.tools/golangci-lint` over it. A disagreement here is at minimum
+`DRIFT_MAJOR` — `.golangci.yml` is what gates the commit, so the config wins and the
+skill prose is the thing that changes. Do not propose loosening the config to match
+stale prose; if the config itself looks wrong, say so and leave it to the operator.
+
+Findings → flag: `agent-reviewer-stale`
 
 ---
 
@@ -167,7 +215,7 @@ tags with `x-` to distinguish them from v1 vocabulary.
 | `symlink-broken` | CLAUDE.md is not a symlink to AGENTS.md, or symlink is broken. |
 | `skill-missing` | A normatively required skill is absent from `.claude/skills/`. |
 | `skill-undocumented` | A skill exists in `.claude/skills/` but is not in the normative table. |
-| `agent-reviewer-stale` | `agent-reviewer/SKILL.md` check list does not match current `build-practices.md`. |
+| `agent-reviewer-stale` | `agent-reviewer/SKILL.md` check list does not match current `build-practices.md`, **or its §2 idiom list contradicts `.golangci.yml`**. |
 | `over-length-claude-md` | `CLAUDE.md` / `AGENTS.md` exceeds 120-line limit. |
 
 ---
@@ -182,7 +230,7 @@ Emit a single JSON object followed by the proposed diff block (if any).
   "schema_version": 1,
   "verdict": "CLEAN",
   "flags": [],
-  "notes": "All four checks pass. No configuration drift detected.",
+  "notes": "All five checks pass. No configuration drift detected.",
   "proposed_diff": ""
 }
 ```
@@ -296,6 +344,11 @@ before or after it.
 
 <PASTE RELEVANT PASS ARTIFACTS HERE>
 
-Perform all four Tier-2 checks (CLAUDE.md drift, settings.json drift, skill-registry
-drift, foundation-doc currency) and emit the JSON verdict with proposed_diff.
+## .golangci.yml + agent-reviewer §2 (for check 5)
+
+<PASTE THE .golangci.yml `linters.settings` BLOCK AND agent-reviewer/SKILL.md §2 HERE>
+
+Perform all five Tier-2 checks (CLAUDE.md drift, settings.json drift, skill-registry
+drift, foundation-doc currency, enforced-config currency) and emit the JSON verdict
+with proposed_diff.
 ```

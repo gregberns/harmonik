@@ -53,7 +53,7 @@ You do not need to call tools; the invoker provides the artifacts in the prompt.
 
 ## Tier-1 reviewer responsibilities
 
-Perform all five checks in order. Emit findings per check before the final verdict.
+Perform all eight checks in order. Emit findings per check before the final verdict.
 
 ### 1. Spec alignment
 
@@ -67,23 +67,126 @@ Findings → flag: `spec-divergence`
 
 ### 2. Idiom compliance
 
-Review for Go idiom compliance per `docs/foundation/project-level/quality-checks.md`
-and `.golangci.yml` enforced rules:
+Review for Go idiom compliance against `.golangci.yml`.
+
+**`.golangci.yml` is the authority.** It is what gates the commit. Where a prose doc
+(`quality-checks.md`, this skill, a design note) and the enforced config disagree, the
+config wins and the prose is the bug — never recommend an idiom the linter then
+rejects. Every rule below was verified by running the pinned `.tools/golangci-lint`
+against the repo's own `errcheck` / `gosec` / `noctx` / `nolintlint` settings.
 
 - camelCase identifiers, no underscores (revive `var-naming`).
-- `exec.CommandContext` not `exec.Command` (noctx).
-- Context-aware net.Listen / net.Dial.
-- No `panic` outside `internal/testhelpers/` (helpers take `*testing.T` and call
-  `t.Fatalf`).
-- `//nolint:gosec // G304: <reason>` above `os.ReadFile`/`os.Open` on constructed
-  paths.
-- `//nolint:gosec // G301: ...` above `os.MkdirAll 0o755`.
-- `defer func() { _ = x.Close() }()` for cleanup discards.
-- `errors.Is(err, io.EOF)` not `err != io.EOF`.
-- gofmt/gofumpt struct-field alignment.
+- `exec.CommandContext` not `exec.Command`; `(*net.Dialer).DialContext` not
+  `net.Dial`; `(*net.ListenConfig).Listen` not `net.Listen`;
+  `http.NewRequestWithContext` + `Client.Do` not `http.Get` (noctx). `tools/` is
+  path-excluded from noctx.
+- No `panic` and no `fmt.Print*` (forbidigo). `internal/testhelpers/` is excluded
+  from the `panic` ban — helpers take `*testing.T` and call `t.Fatalf`; `tools/` is
+  excluded from both. Everything else uses `log/slog`. Note the ban pattern is
+  `^fmt\.Print.*$`: `fmt.Fprintf(w, …)` is not forbidden, only unrouted stdout writes.
+- In `internal/codexinput/` and `internal/codexdriver/`, `time.Sleep` / `time.After` /
+  `time.NewTimer` are banned in production files — every wait goes through
+  `substrate.ClockPort` (forbidigo, marker `SC6-DRIVER-CLOCKPORT`; `_test.go` exempt).
+- Comma-ok on every type assertion: `v, ok := x.(T)`. A bare `x.(T)` or `v, _ := x.(T)`
+  is a finding (errcheck `check-type-assertions: true`).
+- **Never discard an error into the blank identifier.** `_ = f()` is an errcheck
+  finding, not an idiom — `check-blank: true` is set. See §Deferred `Close()` below.
+- `errors.Is(err, io.EOF)` not `err != io.EOF` (errorlint).
 - Error wrapping at subsystem boundaries (`%w`); no wrapping within a subsystem.
-- Structured logger (`log/slog`) — no `fmt.Print*` / `log.Print*` outside main and
-  test code.
+- Enum `switch`es are exhaustive or carry a `default` (exhaustive,
+  `default-signifies-exhaustive: true`).
+- Tests: `testifylint` runs with `enable-all: true` — the precise assertion
+  (`require.ErrorIs`, `require.Len`, `require.InDelta`), correct expected/actual
+  argument order, `require` vs `assert` used consistently.
+- `gocritic` runs the `diagnostic`, `performance`, and `style` tags with only
+  `hugeParam` and `rangeValCopy` disabled — style-tag findings are gating here, not
+  advisory.
+- Complexity ceilings on new or rewritten functions: funlen 100 lines / 60 statements,
+  cyclop 15, gocognit 20. Existing functions are grandfathered by `--new-from-rev`;
+  a function the diff rewrites is not.
+- New package under `internal/`? It needs a `depguard` rule in `.golangci.yml`
+  (see the `go-subsystem-add` skill). A package with no rule is unfenced.
+- gofmt / gofumpt / gci clean. This is enforced by `make fmt-check`, **not** by
+  golangci-lint — no formatting linter is enabled in `.golangci.yml`.
+
+#### Deferred `Close()` — the forms that actually pass
+
+`.golangci.yml` sets `errcheck: { check-blank: true, exclude-functions:
+["(io.Closer).Close"] }`. That exclusion matches only a call whose receiver's **static
+type is literally `io.Closer`** — not any type that merely satisfies it. Nearly every
+close in this tree is on something else (`*os.File`, `net.Conn`, the `io.ReadCloser`
+from an `exec.Cmd` pipe), so the exclusion does not apply and **both of these are
+errcheck findings**:
+
+```go
+defer f.Close()                  // finding
+defer func() { _ = f.Close() }() // finding — check-blank
+```
+
+Use one of the three landed forms instead. Pick by whether the close error is material:
+
+```go
+// MATERIAL (write / commit / fsync) — join it into a named return.
+func write(p string, b []byte) (err error) {
+	f, err := os.Create(p)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, f.Close()) }()
+	_, err = f.Write(b)
+	return err
+}
+
+// MATERIAL but must not mask an earlier failure — first error wins.
+defer func() {
+	if closeErr := f.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+}()
+
+// IMMATERIAL (read-only open) but observable — log and continue.
+defer func() {
+	if closeErr := f.Close(); closeErr != nil {
+		slog.Warn("keeper: close transcript", "err", closeErr, "path", path)
+	}
+}()
+```
+
+Landed examples of all three: `internal/keeper/watcher.go`, `heartbeat.go`,
+`tmuxresolve.go` (commit `5a199ed3`). A `//nolint:errcheck` on a discarded close is a
+suppression, not an idiom — hold it to the bar below.
+
+#### Suppression discipline (`//nolint`)
+
+The quality lanes operate under **add no new `//nolint`**. A diff that introduces one
+is a finding unless the suppression is the only available outcome. Apply this test:
+
+1. **Is there a code change that clears the finding outright?** Then the suppression is
+   masking a fixable defect → `idiom-violation`. Verified cases:
+   - gosec **G301** on `os.MkdirAll(dir, 0o755)` → use `0o750` or `0o700`. At `0o750`
+     G301 does not fire at all, so `//nolint:gosec // G301` here is *always* masking.
+   - gosec **G306** on `os.WriteFile(p, b, 0o644)` → use `0o600`. Same: the finding
+     disappears, so the suppression is never the right answer.
+   - errcheck on a discarded `Close()` → use one of the three forms above.
+2. **Is the finding structural — does no code change remove it?** Then a suppression is
+   legitimate. The real case in this tree is gosec **G304** on `os.Open` /
+   `os.ReadFile` with a constructed path: the path is a runtime value by construction,
+   so gosec fires no matter how thoroughly the caller validates it. Name the linter and
+   state why it is safe:
+
+   ```go
+   return os.ReadFile(p) //nolint:gosec // G304: p is workspace-rooted and validated by the caller
+   ```
+
+   (`os.OpenRoot` + `root.Open(name)` does clear G304 by construction — verified, no
+   finding at all. Reaching for it is a real fix rather than a suppression, but a
+   repo-wide migration is its own bead, not something to demand inside an unrelated
+   diff.)
+3. **The explanation must say what is lost, not just that it is fine.** `nolintlint` is
+   set `require-specific: true, require-explanation: true, allow-unused: false`, so a
+   bare `//nolint`, a `//nolint:all`, an unexplained directive, or one that suppresses
+   nothing already fails lint. That is the floor, not the bar. `// best-effort` with no
+   statement of the consequence is `idiom-violation`.
 
 For non-Go beads (markdown, skill scaffolding), skip Go idiom checks and flag
 `non-go-bead-idiom-na` to record the skip explicitly.
@@ -272,8 +375,9 @@ or after it.
 <PASTE SPEC SECTION TEXT HERE — include the section heading and all normative content
 the bead cites>
 
-Perform all five Tier-1 checks (spec alignment, idiom compliance, test adequacy,
-unwanted-abstraction detection, bead/codename match) and emit the JSON verdict.
+Perform all eight Tier-1 checks (spec alignment, idiom compliance, test adequacy,
+unwanted-abstraction detection, bead/codename match, production call-site wiring,
+spec field-name conformance, scenario test for bug beads) and emit the JSON verdict.
 ```
 
 ---
@@ -286,9 +390,19 @@ Per `docs/foundation/project-level/build-practices.md`:
 
 `agent-config-reviewer` (Tier 2 cadence) explicitly checks the currency of this skill
 at every kerf pass advance and on changes to `build-practices.md`, `quality-checks.md`,
-or `subsystem-organization.md`. If a check category is added to the build-practices doc
-and this skill has not been updated, `agent-config-reviewer` flags it as a config
-violation.
+`subsystem-organization.md`, or **`.golangci.yml`**. If a check category is added to
+the build-practices doc, or a linter/setting changes in `.golangci.yml`, and this skill
+has not been updated, `agent-config-reviewer` flags it as a config violation.
+
+**Enforced config beats prose.** §2's idiom list is a description of `.golangci.yml`,
+not an independent standard. Before adding or amending an idiom here, run the pinned
+`.tools/golangci-lint` against a fixture using the repo's own linter settings and
+confirm the recommended form is clean and the rejected form is not. From 2026-05-07 to
+2026-07-22 this section recommended `defer func() { _ = x.Close() }()` while
+`errcheck`'s `check-blank: true` — set in `.golangci.yml` on 2026-05-06, the day
+*before* this skill was authored — made it a finding on almost every close in the tree.
+The prose never contradicted a later config change; it was never checked against the
+gate at all. That is the failure mode to guard against.
 
 **Schema source-of-truth:** the canonical schema definition lives in this skill's
 frontmatter (top of SKILL.md). `build-practices.md §Commit conventions` references the
@@ -300,5 +414,13 @@ frontmatter, then refresh the example in `build-practices.md §Commit convention
 match. Old-schema verdicts in `git log` remain valid for their version; only new
 commits must use the current schema.
 
-Sources: `build-practices.md §Agent review on every commit`; `build-practices.md
-§Commit conventions`; `quality-checks.md §Agent-enforceability`; `phase-1-readiness-gap-analysis.md §A4, §B4, §C2`.
+Sources: `.golangci.yml` (normative for §2); `build-practices.md §Agent review on every
+commit`; `build-practices.md §Commit conventions`; `quality-checks.md
+§Agent-enforceability`; `phase-1-readiness-gap-analysis.md §A4, §B4, §C2`.
+
+⚑ Known stale prose, kept here so a reviewer does not re-import it:
+`quality-checks.md §Error handling conventions` still says "**`defer x.Close()` is
+acceptable** without error check (errcheck exclusion)". It is not — verified: bare
+`defer f.Close()` on an `*os.File` is an errcheck finding. Its very next sentence, the
+`errors.Join` named-return form for a material close, is correct and is reproduced in
+§2. That doc needs the first sentence corrected; it is outside this skill's tree.

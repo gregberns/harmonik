@@ -248,6 +248,137 @@ Append each lane's before/after counts, files, tests, and deferred findings here
   public API naming concerns; remaining mechanical test findings are being triaged.
 - The released worker is continuing with exclusive `internal/handler/**` ownership
   while eventbus and scenario lanes remain active.
+- `internal/eventbus/**` complete: **75 → 16**. All 48 error-check findings are
+  cleared; production dead-letter failures are observable, read/OS close errors
+  propagate correctly, and safe test mechanics are fixed. Full tests and focused
+  race tests pass. Residuals are 11 complexity findings, two intentional panic
+  tests, and three test-only variable-path security heuristics.
+- `internal/scenario/**` integration-corrected result: **111 → 52**. The first
+  worker report incorrectly claimed zero and briefly referenced a helper across
+  incompatible test packages; root validation caught the compile failure. The
+  helper is now package-correct, tests and diff checks pass, and the authoritative
+  JSON residual is recorded (mostly gosec/revive plus two nilerr findings).
+- `internal/release/**` complete: **21 → 1** after correcting an initially
+  non-authoritative measurement. Temp cleanup/close/rename failures are preserved,
+  test errors are checked, and package tests pass. The sole residual is the public
+  API rename `release.ReleaseEntry`, deliberately deferred.
+- `internal/handler/**` independently confirms **0** scoped findings and passing
+  tests; the earlier directory-prefix inventory grouped handlercontract debt into
+  the apparent handler total.
+- Root `internal/digest/**` lane final safe-wave result: **66 → 21**. Package tests
+  and diff checks pass. Remaining production debt is limited to two complexity
+  findings, one function-length finding, and the public `DigestJSON` API stutter;
+  the rest is test-only error/security cleanup.
+- Q13 integrated validation: combined tests for brcli, eventbus, scenario, release,
+  and digest pass; real formatter and diff hygiene pass. The first full count was
+  correctly rejected during a concurrent partial edit in `internal/supervise`
+  (undefined helper/unused import); once that external edit completed, `go build
+  ./...` passed and the authoritative isolated count completed at **6,013**.
+  This wave therefore removes **248 net full-tree findings** from the 6,261
+  baseline despite concurrent unrelated edits elsewhere in the shared tree.
+
+### Q14 — second parallel breadth wave
+
+- Authoritative starting full-tree count: 6,013. Exclusive lanes are
+  `internal/structuredlog/**`, `internal/hooksystem/**`, and
+  `internal/sentinel/**`; every worker was given the exact uncapped JSON command
+  after Q13 exposed how a non-authoritative invocation can falsely report zero.
+- Root measured `internal/t5probe/**` separately at 45 findings, all test-only
+  unchecked errors in one probe file. It is queued as a follow-on mechanical lane
+  rather than overlapping the three active workers.
+- `internal/structuredlog/**` complete: **44 → 0**. Production logging now passes
+  the caller context to `Enabled`; checked cleanup/assertions and context-aware
+  test logging clear the remainder. Package tests and root integration pass.
+- `internal/hooksystem/**` complete: **47 → 8**. All 30 unchecked errors and six
+  nil-error test defects are cleared; hook-failure emission remains observer-safe
+  while verdict mismatch emission failures propagate. Residuals are one public
+  constructor panic, two commented test blocks, and five helper signatures.
+- `internal/sentinel/**` complete safe wave: **54 → 32**. Production append-close
+  errors, private state permissions, stale suppressions, and a duplicated governor
+  branch are fixed. Residuals are dominated by complexity/exhaustive switches and
+  test-only security/context findings. Root combined tests/format/diff pass.
+- Follow-on lanes are active for `internal/t5probe/**`, `internal/workers/**`, and
+  `internal/codextest/**` with exclusive ownership and the exact JSON contract.
+- Follow-on results: `t5probe` **45 → 0**, `workers` **37 → 20**, `codextest`
+  **28 → 22**, `watch` **17 → 6**, `cognition` **11 → 0**, and `presence`
+  **14 → 3**. Safe unchecked-error, context, permission, stale-suppression, and
+  mechanical findings are cleared; residuals are explicitly complexity, public
+  naming/panic contracts, test-only bounded-path heuristics, or live-harness work.
+- Q14 integrated validation passes across all nine edited packages, real
+  `fmt-check`, diff hygiene, and `go build ./...`. The authoritative isolated
+  full-tree count is now **5,791**, a further **222 net reduction** from 6,013.
+  Across Q13+Q14, the tree moved **6,261 → 5,791 (470 net findings removed)**
+  while keeping typecheck failure fail-closed and recording intentional residuals.
+
+### Q15 — continued non-daemon breadth
+
+- `internal/daemon/**` is explicitly excluded per operator direction. Exclusive
+  lanes: queue **208 → 206**, workflow **155 → 152**, transport **18 → 15**,
+  schedule **10 → 4**, and eval CLI **22 → 17**. The small numerical reductions
+  represent production error-identity, direct-push/fetch multi-error, safe network
+  context, mutation assertion, and parser-state fixes; large API/complexity/writer
+  contracts remain visible rather than suppressed.
+- Root `internal/harness/**`: **110 → 88**. Safe Go 1.22 loop copies, Getwd error
+  propagation, private model/WAL fixture permissions, stale suppression, and small
+  static style findings are cleared. Claude/Pi suites and focused Codex billing,
+  JSONL, and WAL tests pass. The full Codex package still has the known ambient
+  operator-config failure in `TestCodexHarness_LaunchSpec_CustomBinary` and is not
+  misreported as green.
+- `internal/handlercontract/**` remains at 119 after two delegated assessments
+  declined broad edits; it is recorded for a future explicitly mechanical sweep.
+- New active lanes: core, keeper, and a bounded workspace mechanical subset
+  (Go 1.22 loop copies plus private test-fixture permissions). Workspace's exact
+  baseline is 486, not the stale 487 prefix estimate.
+- Core completed in two passes: **338 → 109**, including 219 obsolete Go 1.22
+  loop copies plus production HWM/error-identity fixes. Root caught and repaired
+  stricter `gofumpt` whitespace left by the mechanical removals; core tests pass.
+- Keeper completed: **140 → 88** after production close/error propagation and 55
+  private test-fixture permission fixes. Codexreactor completed **13 → 4**.
+- Workspace remains **486** because the delegated bounded worker declined the
+  mechanical sweep without editing; no reduction is claimed.
+- Q15 integrated non-daemon validation passes: package tests, `fmt-check`, diff
+  hygiene, and `go build ./...`. Authoritative full-tree lint is now **5,459**,
+  down **332** from Q14's 5,791 and **802 net** from the 6,261 starting point.
+
+### Q16 — command twin breadth (daemon excluded)
+
+- Claude twin **133 → 125**, generic twin **55 → 53**, and Codex twin **30 → 26**.
+  Changes cover Go 1.22 loop copies, context-bound git commands, socket-close and
+  version-writer propagation; package tests pass. Residuals are predominantly
+  test writer/error mechanics and complexity.
+- Root session twin **9 → 3**: best-effort hooks now have five-second command
+  contexts, stale suppression and unsafe test assertion/style findings are gone.
+  The three residuals are controlled JSON marshal/path heuristics; package tests
+  and exact scoped lint validation pass.
+- Q16 integration passes and the full-tree count is **5,439**.
+
+### Q17 — small-package sweep (daemon excluded)
+
+- `internal/testhelpers` **19 → 6**, `internal/usage` **8 → 4**,
+  `internal/apptap` **7 → 3**, and root `internal/branching` **7 → 2**.
+  Production close/stat/discovery errors now propagate, context-aware commands and
+  private fixtures are in place, and safe loop/style/signature debt is cleared.
+  Package tests and exact scoped lint validation pass; residuals are complexity,
+  bounded path heuristics, or test helper/API concerns.
+- Q17 integration passes at **5,417** full-tree findings.
+
+### Q18 — tiny-package closure (daemon excluded)
+
+- `internal/crewrun` **5 → 0** and `internal/run` **5 → 0**. Queuewiring's
+  three mechanical findings are cleared (**4 → 1**, leaving complexity only).
+  Dashboard's stale suppression is removed (**2 → 1**, leaving its public API
+  naming concern); goalstate's sole bounded path heuristic remains.
+- Package tests, format, diff, build, and isolated lint count pass. Full-tree
+  findings are now **5,400**, or **861 net removed** from the 6,261 baseline.
+- Follow-on tiny lanes: `internal/specaudit` **5 → 0**,
+  `internal/scratchpad/**` **4 → 0**, and `internal/codexdigitaltwin` **2 → 1**
+  (complexity only). Their scoped tests/lint/format checks pass.
+- A new global integration/count attempt is temporarily blocked by concurrent
+  `internal/daemon/workloop.go` work referencing missing `artifactAgentType` and
+  `beadAlreadySubsumedInMain`. Per operator direction, this stream does not edit
+  daemon. The last authoritative full-tree count remains **5,400** until that
+  external partial edit compiles; scoped reductions above are not folded into a
+  speculative global number.
 
 ### Q3 — small dense packages
 
@@ -265,3 +396,24 @@ Append each lane's before/after counts, files, tests, and deferred findings here
   process. Added focused tmux-list/kill error tests. Remaining production debt
   is five complexity findings and one non-security jitter `gosec` finding;
   remaining findings are test-only cleanup. Package tests pass.
+
+### Wave committed — Q13 through Q18 drained to disk
+
+- The entire wave's working-tree state has been reviewed and committed as **18
+  commits** spanning roughly 25 packages: brcli, scenario, eventbus, sentinel,
+  hooksystem, digest, workers, watch, structuredlog, release, core, keeper,
+  harness, codexreactor, the four `cmd/harmonik-twin-*` packages, and a long tail
+  of small packages (t5probe, codextest, cognition, presence). Every commit
+  carries an independent agent-reviewer verdict trailer and passing package tests.
+- The reviews were not rubber stamps; two real defects were caught before commit.
+  In `internal/release/lastgood.go` the cleanup rewrite had dropped the
+  `defer in.Close()` and replaced it on only some paths, so the source file handle
+  leaked whenever creating the temp file failed — fixed in the same commit
+  (`3a41676d`). In `internal/sentinel` the governor de-duplication left the
+  low-threshold accessor with no callers, and the orphaned dead accessor was
+  removed rather than left for the dead-code linter (`864991a2`).
+- The Q18 "blocked on concurrent daemon work" note is **resolved**. The daemon
+  tree referencing missing `artifactAgentType` / `beadAlreadySubsumedInMain`
+  compiles again as of `efeeb047`, which moved both into
+  `internal/harness/shared`. A fresh authoritative full-tree count is therefore
+  unblocked; the last recorded number remains **5,400** until one is taken.

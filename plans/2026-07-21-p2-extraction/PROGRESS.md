@@ -1,8 +1,8 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-22 15:20 — P2 core COMPLETE (9/9) + RT13 + E4c landed. Now draining the
-concurrent quality lane's uncommitted work to disk (§8) and running RT19.0.
+**Last updated:** 2026-07-22 18:10 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + **RT19b** landed.
+The concurrent quality lane's working tree is fully drained to disk (§8).
 
 > ## ⚠️ We nearly collided at 08:00 — read this
 >
@@ -75,6 +75,7 @@ against one run. Recorded in `00-test-oracle-baseline.md`.
 | 10 | **RT13** | run-branch merge path → `internal/runmerge` (E5 stream) | **LANDED — verify PASS**, `is_pure_move: true`, freeze gate proven with 4 probes | `379fca71` |
 | 11 | **test fix** | two unsound source-text conformance assertions replaced | **LANDED** | `b423081f` |
 | 12 | **E4c** | worker-registry boot wiring → `internal/workers` | **LANDED — verify PASS**; `pure_move: false` **by design** (one declared signature change, confirmed the only delta) | `646748f3` |
+| 13 | **RT19b** | the stranded run-path helpers → `internal/substrate`, `internal/harness/shared`, new `internal/runlaunch` | **COMPLETE — 3/3 commits, reviewer APPROVE on each**, pure move throughout | `e82311b9` · `efeeb047` · `fd608c01` |
 
 ### Result
 
@@ -412,6 +413,51 @@ tracking precedent) and `testdata/codex-app-server/gen/` (852 generated files, 5
 `scenarios/core-loop-proof/testdata/.harmonik/keeper/bravo.ctx` — a keeper gauge file with a live
 session id, written into a fixture directory by a scenario run on 2026-07-18. That is runtime
 leakage and wants a `.gitignore` entry, not a commit.
+
+**Drain complete.** Every lane listed above is now on disk — the quality wave's remaining working-tree
+state landed as 18 further reviewed commits (`ac644bf8` … `e422c6eb`), interleaved with RT19b. Nothing
+of the quality lane's work is left uncommitted.
+
+### RT19b — the stranded run-path helpers (COMPLETE)
+
+Three commits, each independently reviewed APPROVE, each a pure move:
+
+| # | Commit | What moved |
+|---|---|---|
+| 1 | `e82311b9` | `clockAfter` → `substrate.After`, 5 call sites re-qualified |
+| 2 | `efeeb047` | `artifactAgentType` → `shared.ArtifactAgentType`, and `beadAlreadySubsumedInMain` → `shared.MainHistoryHasRefsTrailer` — **collapsed onto the `RefsTrailerLine` / `ContainsExactLine` primitives `harness/shared` already owned**, instead of landing a second copy of the same rule |
+| 3 | `fd608c01` | new leaf package `internal/runlaunch` (`doc.go` / `deadlines.go` / `events.go` / `teardown.go` + the relocated `deadlines_test.go`): **13 symbols**, **55 production call sites** re-qualified (reviewloop 22, dot_cascade 11, workloop 11, dot_gate 7, agentready 2, bootstate 2), plus a depguard block, `scripts/runlaunch-freeze-gate.sh`, and Makefile wiring into `check-fast` + `check-short` |
+
+**Measured, commit 3:** `internal/daemon/workloop.go` **6,705 → 6,473 (−232)**, `agentready.go`
+**207 → 131 (−76)**; top-level non-test LOC **48,947 → 48,643 (−304)**; no whole file left, so the
+file count is unchanged at 103. `internal/runlaunch` is a **daemon-free leaf** —
+`go list -deps ./internal/runlaunch | grep internal/daemon` is empty.
+
+`bootstate.go`'s two call sites are why this had to be a leaf rather than a runloop-private file:
+`EmitSpawnCapBlocked` / `EmitTmuxNewWindowTimeout` are also boot-time spawn-semaphore instrumentation,
+and `bootstate.go` never moves.
+
+**Two recipe corrections — the same two classes keep recurring:**
+
+1. **Every line number in the recipe was stale. Again — the third time in this one slice.** §1a's
+   baseline was measured on the post-RT13 tree (49,064 LOC / `workloop.go` 6,854); by the start of
+   commit 3 the tree was 48,947 / 6,705, because commits 1 and 2 of *this same slice* had already
+   shifted it. Every symbol and call site was re-located by grep. **Treat recipe line numbers as
+   commentary and grep for anchors — this is now the default, not the exception.**
+2. **Step 17's freeze-gate check (3) was wrong as written and would have failed the moment it was
+   wired.** Its own header prose said `dot_gate.go` was carved out until RT14, but the grep it
+   specified had no carve-out and fires on `dot_gate.go`'s surviving
+   `case <-time.After(runlaunch.KillReapTimeout)`. Converting that site inside an extraction is a logic
+   change `_plan.md` §5.1 forbids and RT14 owns, so the gate ships with a named, temporary
+   `--exclude='dot_gate.go'`. **The reviewer approved the carve-out but flagged that the
+   delete-instruction lived only in the script and the commit body — neither of which an RT14
+   implementer reads. Now recorded in `RT14-dispatchsegment-conversion.md` §0a, §1, §4 B4 and §4 B7.**
+
+**Follow-ups recorded, not fixed:** `EmitAgentReadyTimeout`'s doc comment still says the zero fallback
+is "30s" while the constant is 150s — wrong already in `internal/daemon`, moved verbatim under the
+pure-move rule. And the gate's symbol ratchet keeps the bare name `After`, which matches nothing today
+but is generic enough to false-positive later; kept for fidelity, recorded so the next maintainer
+knows it was a choice.
 
 ---
 

@@ -20,6 +20,33 @@ line-for-line transposition of `reviewloop.go:579-759` with the site's own bodie
 
 ---
 
+## 0a. ⚠️ RT14 MUST delete a freeze-gate carve-out that is open right now
+
+`scripts/runlaunch-freeze-gate.sh` (landed with RT19b-3, `fd608c01`) check (3) forbids any raw
+wall-clock on the ready/reap bound anywhere under `internal/daemon` — **except** that it carries an
+`--exclude='dot_gate.go'` on its `grep`. That exclusion exists for exactly one reason: `dot_gate.go`
+still holds the one surviving `time.After(runlaunch.KillReapTimeout)` (currently `:487`), inside the
+ready-timeout kill block that **RT14 Phase B converts**. RT19b could not convert it, because a logic
+change inside an extraction is forbidden by `_plan.md` §5.1.
+
+**Hazard while the exclusion stands:** the gate is blind to `dot_gate.go` on that check. A *second*
+raw wall-clock call added to `dot_gate.go` on the reap bound would land undetected, and the gate would
+still print OK. The exclusion is a hole, not a policy.
+
+**RT14's obligation:** after Phase B converts the site, **delete the `--exclude='dot_gate.go'` from
+check (3) of `scripts/runlaunch-freeze-gate.sh`** and re-run the gate — it becomes absolute. Do this
+in the same commit as the conversion. The instruction is also written at the exact line in the script
+header, but this document is the copy an RT14 implementer actually reads.
+
+**Post-RT19b naming for §1/§4 below:** the symbols the conversion binds to have moved out of
+`internal/daemon`. `clockAfter` is now `substrate.After(clk, d)`, `agentReadyKillReapTimeout` is now
+`runlaunch.KillReapTimeout`, and `effectiveAgentReadyTimeout` / `ErrAgentReadyTimeout` /
+`emitAgentReadyTimeout` / `forceTeardownSession` are now `runlaunch.EffectiveAgentReadyTimeout` /
+`runlaunch.ErrAgentReadyTimeout` / `runlaunch.EmitAgentReadyTimeout` / `runlaunch.ForceTeardownSession`.
+Re-derive by grep; do not trust the old in-package names in the tables below.
+
+---
+
 ## 0. Corrections to E5 §4 steps 14–18 — read this before anything else
 
 E5-dot-runloop.md's RT14 section is **wrong in three places**. Each was re-verified against the
@@ -52,6 +79,7 @@ so RT14 does not have to fix any timer inside it.
 | `internal/daemon/export_test.go` | 1421–1442 | **Delete** `AgentEventSourceExported` and `ExportedWaitAgentReady` | The shims for the two deleted symbols |
 | `internal/daemon/agentready_hkgql2018_test.go` | whole file (264) | **Delete** | Four unit tests of `waitAgentReady` only. Coverage transfer argued in §7.3 — do not delete until that argument is checked |
 | `internal/daemon/twinparity_timing_property_test.go` | 135–178, 189 | Re-point stage 1 of `observeAnomalies` off `daemon.ExportedWaitAgentReady` | The only other caller. §4 phase C gives the exact replacement |
+| `scripts/runlaunch-freeze-gate.sh` | check (3) | **Delete the `--exclude='dot_gate.go'`** and its carve-out paragraph | §0a — the exclusion is a blind spot that only RT14 can close |
 | `scripts/readywait-freeze-gate.sh` | new (~70) | Ratchet: no re-declaration of the retired symbols, no new raw wall-clock in the six run-path files that are clean today | `_plan.md` §3.2 — an extracted concern is a closed door, hard CI failure |
 | `Makefile` | `check-fast` (:503-509) and `check-short` (:531-537) | Add `scripts/readywait-freeze-gate.sh` after `runmerge-freeze-gate.sh` | Same wiring as the six existing gates |
 
@@ -355,8 +383,12 @@ hk-01vs0 (`:458` hardcodes `core.AgentTypeClaudeCode`), so `SkipReadyHandshake: 
   assign `gateHBDone`, do **not** `defer close` here), `:450-455` (`SetAgentReadyCallback` — note it uses
   plain `tap.Emit`, **not** `EmitWithRunID`; do not "fix" that).
 - `deliver`: body = `:499-502` (`pasteInjectCognitionGate` + `pasteInjectQuitOnGateFile`).
-- `killReady`: body = `:480-492` with **one** substitution — `time.After(agentReadyKillReapTimeout)` →
-  `clockAfter(deps.clock, agentReadyKillReapTimeout)` (this is E5 step 16's one in-scope site). Keep
+- `killReady`: body = `:480-492` with **one** substitution — `time.After(runlaunch.KillReapTimeout)` →
+  `substrate.After(deps.clock, runlaunch.KillReapTimeout)` (this is E5 step 16's one in-scope site, and
+  the site the `runlaunch-freeze-gate.sh` carve-out in §0a exists for — **delete that carve-out in this
+  same commit**, see B8). Beware `dot_gate.go`'s local `var substrate handler.Substrate`, which shadows
+  the `substrate` package for the rest of that function; RT19b-1 hit this in `workloop.go` and renamed
+  the local to `runSubstrate`. Keep
   `_ = sess.Wait(kctx)` unbounded — the gate does **not** have workloop's hk-4hso5 bounded wait, and adding
   it would be a logic change.
 - `emitReadyTimeout`: body = `:493` verbatim (uses `ectx`, i.e. the gate's `ctx` semantics).
@@ -380,7 +412,13 @@ Defers before the terminal check, same rule as A7.
 **B6.** Delete `"errors"` from the import block; add `"github.com/gregberns/harmonik/internal/runexec"`.
 Keep `"time"` (`pasteInjectQuitOnGateFile` still uses it).
 
-**B7.** Gate: `go build ./internal/... ./cmd/...` && `go vet ./internal/...` &&
+**B7. Close the RT19b carve-out (§0a).** In `scripts/runlaunch-freeze-gate.sh` check (3), delete
+`--exclude='dot_gate.go'` from the `grep` and delete the "NAMED, TEMPORARY carve-out … RT14 closes it"
+paragraph above it. The check then covers every non-test file under `internal/daemon`. Run
+`scripts/runlaunch-freeze-gate.sh` — it must still print OK, which is the proof B4's substitution took.
+If it prints a `dot_gate.go` hit, the conversion is incomplete.
+
+**B8.** Gate: `go build ./internal/... ./cmd/...` && `go vet ./internal/...` &&
 `go vet -tags=scenario ./internal/daemon/` && `go test ./internal/daemon/ -run 'DotGate|Cognition|Gate' -count=1`.
 
 ---

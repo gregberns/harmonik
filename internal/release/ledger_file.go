@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 const (
@@ -76,7 +78,7 @@ func SaveLedgerFile(path string, entries []ReleaseEntry) error {
 	data = append(data, '\n')
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: matches .harmonik dir conventions
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("release: create ledger dir %s: %w", dir, err)
 	}
 

@@ -1009,7 +1009,7 @@ func harnessApplyWorkflowDOT(
 	// Seed to <projectRoot>/.harmonik/workflow.dot (BootstrapFixture already
 	// created the .harmonik/ directory via MkdirAll for the event-log dir).
 	targetPath := filepath.Join(projectRoot, ".harmonik", "workflow.dot")
-	if mkErr := os.MkdirAll(filepath.Dir(targetPath), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Dir(targetPath), core.HarmonikDirMode); mkErr != nil {
 		return "", fmt.Errorf("create .harmonik dir for workflow.dot: %w", mkErr)
 	}
 	//nolint:gosec // G306: workflow dot, not a user-controlled secret

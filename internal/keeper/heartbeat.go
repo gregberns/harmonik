@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // heartbeat.go — keeper-side gauge liveness (hk-81wk).
@@ -197,8 +199,7 @@ func WriteCtxFile(projectDir, agent string, cf *CtxFile) error {
 	}
 	path := ctxFilePath(projectDir, agent)
 	keeperDir := filepath.Dir(path)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("keeper: create keeper dir for heartbeat: %w", err)
 	}
 	raw, err := json.Marshal(cf)

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 )
@@ -341,7 +342,7 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	// .managed gating.
 	if cfg.yesDestructive {
 		managedPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".managed")
-		if err := os.MkdirAll(filepath.Dir(managedPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(managedPath), core.HarmonikDirMode); err != nil {
 			fmt.Fprintf(stderr, "harmonik keeper enable: create keeper dir: %v\n", err)
 			return 1
 		}
@@ -1151,7 +1152,7 @@ func extractEmbeddedKeeperScripts(projectDir string) (string, error) {
 	if home, homeErr := os.UserHomeDir(); homeErr == nil {
 		destDir = filepath.Join(home, ".harmonik", "scripts")
 	}
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
+	if err := os.MkdirAll(destDir, core.HarmonikDirMode); err != nil {
 		return "", fmt.Errorf("create %s: %w", destDir, err)
 	}
 	for _, name := range keeperScriptNames {

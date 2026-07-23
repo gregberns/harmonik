@@ -69,6 +69,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/agentlaunch"
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
@@ -602,7 +603,7 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 // is skipped with the error returned for a WARN.
 func writeCaptainSentinelAndPID(ctx context.Context, ops captainTmuxOps, project, tmuxSession string) error {
 	cognitionDir := filepath.Join(project, ".harmonik", "cognition")
-	if err := os.MkdirAll(cognitionDir, 0o755); err != nil {
+	if err := os.MkdirAll(cognitionDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("create cognition dir %q: %w", cognitionDir, err)
 	}
 	sentinelPath := filepath.Join(cognitionDir, "captain.sentinel")

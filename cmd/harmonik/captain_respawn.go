@@ -45,6 +45,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
@@ -231,7 +232,7 @@ func refreshCaptainPID(run captainRespawnRunFn, project, target string) error {
 		return fmt.Errorf("read agent pane PID for captain.pid: empty pane_pid")
 	}
 	cognitionDir := filepath.Join(project, ".harmonik", "cognition")
-	if err := os.MkdirAll(cognitionDir, 0o755); err != nil {
+	if err := os.MkdirAll(cognitionDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("create cognition dir %q: %w", cognitionDir, err)
 	}
 	pidPath := filepath.Join(cognitionDir, "captain.pid")

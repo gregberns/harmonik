@@ -78,8 +78,7 @@ func WritePersistedTip(projectDir string, runID core.RunID, tipSHA string) error
 		return fmt.Errorf("lifecycle: WritePersistedTip(%s): tipSHA must not be empty", runID)
 	}
 	dir := runTipsDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("lifecycle: WritePersistedTip(%s): mkdir run-tips: %w", runID, err)
 	}
 	tipPath := runTipPath(projectDir, runID)

@@ -27,6 +27,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // beadsOwnedSubdir mirrors the constant in lifecycle/daemonpaths.go. Kept
@@ -62,7 +64,7 @@ func writeBeadsOwnedSentinel(projectDir, beadID string) error {
 	if dir == "" {
 		return nil // test caller with no projectDir — skip
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("brcli.writeBeadsOwnedSentinel: MkdirAll %q: %w", dir, err)
 	}
 	sentinelPath := beadsOwnedSentinelPath(dir, beadID)

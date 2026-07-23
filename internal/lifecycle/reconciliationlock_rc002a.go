@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 	"syscall"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // reconciliationlock_rc002a.go — per-run reconciliation lock primitive.
@@ -129,8 +131,7 @@ func (l *ReconciliationLock) Release() error {
 // Spec ref: specs/reconciliation/spec.md §4.1 RC-002a.
 func AcquireReconciliationLock(projectDir, targetRunID string) (*ReconciliationLock, error) {
 	lockDir := ReconciliationLocksDir(projectDir)
-	//nolint:gosec // G301: 0755 matches .harmonik/ subdir conventions throughout lifecycle package
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, core.HarmonikDirMode); err != nil {
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: MkdirAll %q: %w", lockDir, err)
 	}
 

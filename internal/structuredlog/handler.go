@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // rotateMaxBytes is the file-size threshold triggering rotation (100 MiB).
@@ -125,7 +127,7 @@ func (h *Handler) activePath() string {
 // shared).
 func (h *Handler) openFile() error {
 	dir := h.logDir()
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("structuredlog: create log dir %s: %w", dir, err)
 	}
 

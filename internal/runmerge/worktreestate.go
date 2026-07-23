@@ -111,7 +111,7 @@ func locallyEditedPaths(ctx context.Context, projectDir, mainTip string, paths [
 // Bead: hk-7qmpp.
 func writeRecoveryPatch(ctx context.Context, projectDir string, runID core.RunID, mainTip string, paths []string) string {
 	dir := filepath.Join(projectDir, ".harmonik", "recovery")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return ""
 	}
 	args := append([]string{"diff", mainTip, "--"}, paths...)

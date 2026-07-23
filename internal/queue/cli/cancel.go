@@ -48,6 +48,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -308,7 +309,7 @@ func emitQueueCancelEvent(projectDir, queueID, priorStatus string) (err error) {
 	line = append(line, '\n')
 
 	eventsDir := projectDir + "/.harmonik/events"
-	if mkErr := os.MkdirAll(eventsDir, 0o750); mkErr != nil {
+	if mkErr := os.MkdirAll(eventsDir, core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("mkdir %q: %w", eventsDir, mkErr)
 	}
 	eventsPath := eventsDir + "/events.jsonl"

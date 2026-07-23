@@ -88,7 +88,7 @@ type OpsMonitorReceipt struct {
 // (zero EventID).  The .harmonik/watch/ directory is created if absent.
 func NewLedger(harmonikDir string) (*Ledger, error) {
 	watchDir := filepath.Join(harmonikDir, "watch")
-	if err := os.MkdirAll(watchDir, 0o750); err != nil {
+	if err := os.MkdirAll(watchDir, core.HarmonikDirMode); err != nil {
 		return nil, err
 	}
 

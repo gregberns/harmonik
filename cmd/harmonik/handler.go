@@ -540,8 +540,13 @@ func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.Hand
 	}
 	line = append(line, '\n')
 
-	// Ensure the events directory exists (best-effort; daemon may not have run).
-	_ = os.MkdirAll(filepath.Dir(eventsPath), 0o755)
+	// Ensure the events directory exists (the daemon may not have run yet). A
+	// failure here guarantees the OpenFile below fails too, so bail out on the
+	// same terms: this whole emit path is observational and the state file has
+	// already been updated.
+	if mkErr := os.MkdirAll(filepath.Dir(eventsPath), core.HarmonikDirMode); mkErr != nil {
+		return
+	}
 
 	f, err := os.OpenFile(eventsPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644) //nolint:gosec // G304: operator-controlled project dir
 	if err != nil {

@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ── Token types ───────────────────────────────────────────────────────────────
@@ -338,8 +340,7 @@ func Collect(p CollectParams) error {
 // Append appends rec as a JSONL line to <projectDir>/.harmonik/session-data.jsonl.
 func Append(projectDir string, rec Record) error {
 	path := SessionDataPath(projectDir)
-	//nolint:gosec // G301: 0755 matches .harmonik dir conventions; path is projectDir-derived.
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("sessiondata: MkdirAll: %w", err)
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // G306: world-readable session metrics, not a secret.

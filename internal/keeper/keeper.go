@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ErrLockHeld is returned by AcquireLock when another live keeper process holds
@@ -62,8 +64,7 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 	}
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, core.HarmonikDirMode); err != nil {
 		return nil, fmt.Errorf("keeper: create keeper dir: %w", err)
 	}
 
@@ -200,8 +201,7 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 		return err
 	}
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("keeper: create keeper dir: %w", err)
 	}
 	path := filepath.Join(keeperDir, agent+".managed")

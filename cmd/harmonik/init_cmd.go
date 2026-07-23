@@ -62,6 +62,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
@@ -349,8 +350,7 @@ func mkdirAll(projectDir string, stderr io.Writer) int {
 		filepath.Join(projectDir, ".harmonik", "intent"),
 	}
 	for _, d := range dirs {
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, core.HarmonikDirMode); err != nil {
 			fmt.Fprintf(stderr, "harmonik init: mkdir %s: %v\n", d, err)
 			return 1
 		}
@@ -719,8 +719,7 @@ func provisionScaffolds(projectDir string, force bool, stdout, stderr io.Writer)
 // Idempotent: each output is skipped when it already exists and force is false.
 func provisionContextTiers(projectDir string, force bool, stdout, stderr io.Writer) int {
 	contextDir := filepath.Join(projectDir, ".harmonik", "context")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(contextDir, 0o755); err != nil {
+	if err := os.MkdirAll(contextDir, core.HarmonikDirMode); err != nil {
 		fmt.Fprintf(stderr, "harmonik init: mkdir .harmonik/context: %v\n", err)
 		return 1
 	}

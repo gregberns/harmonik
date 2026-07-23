@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 const (
@@ -97,8 +99,7 @@ func Write(projectDir string, r Record) error {
 	}
 
 	dir := crewDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("%w: mkdir crew: %w", ErrWriteFailed, err)
 	}
 

@@ -1200,13 +1200,11 @@ EXAMPLES
 
 	// hk-woebv: create required subdirectories before daemon.Start so that
 	// eventbus.OpenJSONLWriter never fails with "no such file or directory".
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), core.HarmonikDirMode); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: cannot create .harmonik/events/: %v\n", err)
 		return 1
 	}
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), core.HarmonikDirMode); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: cannot create .harmonik/beads-intents/: %v\n", err)
 		return 1
 	}

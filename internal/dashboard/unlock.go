@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // UnlockState is the on-disk shape of dashboard-unlock.json.
@@ -61,8 +63,7 @@ func WriteUnlock(projectDir string, until time.Time, by string) error {
 	data = append(data, '\n')
 
 	dir := filepath.Join(projectDir, ".harmonik", "context")
-	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return err
 	}
 

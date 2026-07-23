@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -120,8 +121,7 @@ func SetDispatching(projectDir, agent string) error {
 		return err
 	}
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("keeper: create keeper dir: %w", err)
 	}
 	path := dispatchingMarkerPath(projectDir, agent)
@@ -189,8 +189,7 @@ func setHoldAt(projectDir, agent string, clock substrate.ClockPort) (sessionID s
 		return "", fmt.Errorf("keeper: cannot hold %q — no trustworthy live session id (.sid absent or not a UUIDv4); is the agent running with the SessionStart hook wired?", agent)
 	}
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(keeperDir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(keeperDir, core.HarmonikDirMode); mkErr != nil {
 		return "", fmt.Errorf("keeper: create keeper dir: %w", mkErr)
 	}
 	path := holdMarkerPath(projectDir, agent, sid)

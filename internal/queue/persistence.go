@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // persistCounter makes concurrent in-process Persist calls for the same queue
@@ -125,10 +127,9 @@ func Persist(_ context.Context, projectDir string, q *Queue) error {
 	}
 
 	qDir := queuesDir(projectDir)
-	// Ensure .harmonik/queues/ exists. MkdirAll is idempotent; 0o755 matches
-	// existing .harmonik dir conventions per the workspace-model.
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(qDir, 0o755); err != nil {
+	// Ensure .harmonik/queues/ exists. MkdirAll is idempotent; the mode comes
+	// from core.HarmonikDirMode so it cannot diverge from the CLI-side creators.
+	if err := os.MkdirAll(qDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("%w: mkdir queues: %w", ErrPersistFailed, err)
 	}
 
@@ -405,8 +406,7 @@ func MigrateFromLegacy(_ context.Context, projectDir string) error {
 	}
 
 	qDir := queuesDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(qDir, 0o755); err != nil {
+	if err := os.MkdirAll(qDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("queue: MigrateFromLegacy: mkdir queues: %w", err)
 	}
 

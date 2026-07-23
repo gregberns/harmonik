@@ -56,6 +56,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -397,7 +398,7 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 // Non-fatal: errors are logged to stderr but do not propagate. Refs: hk-yfcc.
 func seedSID(projectDir, name, sessionID string) {
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if mkErr := os.MkdirAll(keeperDir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(keeperDir, core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: seed .sid: mkdir %q: %v\n", keeperDir, mkErr)
 		return
 	}

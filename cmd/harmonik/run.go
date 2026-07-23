@@ -566,8 +566,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		},
 	}
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot create .harmonik/: %v\n", mkErr)
 		return 1
 	}
@@ -631,13 +630,11 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 
 	// --- Create .harmonik subdirectories and resolve tmux session ---
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot create .harmonik/events/: %v\n", mkErr)
 		return 1
 	}
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot create .harmonik/beads-intents/: %v\n", mkErr)
 		return 1
 	}

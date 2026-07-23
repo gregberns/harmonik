@@ -28,6 +28,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
@@ -244,8 +245,7 @@ func runOpsMonitorInstall(args []string) int {
 	}
 
 	// Ensure log directory exists.
-	//nolint:gosec // G301: log dir created with explicit 0755 permissions under project tree
-	if merr := os.MkdirAll(data.LogDir, 0o755); merr != nil {
+	if merr := os.MkdirAll(data.LogDir, core.HarmonikDirMode); merr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: cannot create log dir %s: %v\n", data.LogDir, merr)
 		return 1
 	}

@@ -66,8 +66,7 @@ func WriteVerdictAttemptAtomic(projectDir string, record *core.VerdictExecutionA
 	target := ReconciliationAttemptPath(projectDir, record.TargetRunID)
 	dir := filepath.Dir(target)
 
-	//nolint:gosec // G301: 0755 matches .harmonik/ subdir conventions throughout lifecycle package
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("lifecycle: WriteVerdictAttemptAtomic: MkdirAll %q: %w", dir, err)
 	}
 

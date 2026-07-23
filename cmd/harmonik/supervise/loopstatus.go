@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // CognitionLoopStatus is the cognition loop's current operational state.
@@ -116,8 +118,7 @@ func ReadLoopStatus(projectDir string) (*LoopStatusRecord, error) {
 // on every LoopStatus transition.
 func WriteLoopStatusAtomic(projectDir string, rec LoopStatusRecord) error {
 	dir := CognitionDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: mkdir: %w", err)
 	}
 

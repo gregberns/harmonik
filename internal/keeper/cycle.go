@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -542,7 +543,7 @@ func writeJournalFile(path string, j *CycleJournal) error {
 		return fmt.Errorf("keeper: marshal journal: %w", err)
 	}
 	// Ensure the parent directory exists (keeper dir may not exist yet in tests).
-	if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil { //nolint:gosec // G301: 0755 matches .harmonik conventions
+	if mkErr := os.MkdirAll(filepath.Dir(path), core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("keeper: create journal dir: %w", mkErr)
 	}
 	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {

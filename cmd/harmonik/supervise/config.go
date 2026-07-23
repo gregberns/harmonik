@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 const configSchemaVersion = 1
@@ -126,8 +128,7 @@ type AssetSyncConfig struct {
 func WriteConfigAtomic(projectDir string, cfg Config) error {
 	configPath := ConfigPath(projectDir)
 	dir := filepath.Dir(configPath)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("supervisecmd: WriteConfigAtomic: mkdir %s: %w", dir, err)
 	}
 
@@ -190,8 +191,7 @@ func ReadConfig(projectDir string) (Config, error) {
 // Content: schema_version=1\n
 func WriteSentinel(projectDir string) error {
 	dir := CognitionDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("supervisecmd: WriteSentinel: mkdir: %w", err)
 	}
 	return os.WriteFile(SentinelPath(projectDir), []byte("schema_version=1\n"), 0o600)
@@ -209,8 +209,7 @@ func RemoveSentinel(projectDir string) error {
 // WritePidfile writes the supervisor PID to supervisor.pid.
 func WritePidfile(projectDir string, pid int) error {
 	dir := CognitionDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("supervisecmd: WritePidfile: mkdir: %w", err)
 	}
 	content := fmt.Sprintf("%d\n", pid)

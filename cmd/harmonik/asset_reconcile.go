@@ -30,6 +30,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // LockFormatVersion is the schema version of the assets.lock structure. Bump it
@@ -110,7 +112,7 @@ func WriteLock(dir string, l Lock) error {
 	data = append(data, '\n')
 
 	full := filepath.Join(dir, lockRelPath)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("mkdir for lock: %w", err)
 	}
 	if err := os.WriteFile(full, data, 0o600); err != nil {

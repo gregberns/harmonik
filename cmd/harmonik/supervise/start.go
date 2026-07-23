@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
@@ -107,8 +108,7 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Ensure cognition dir exists before opening the lock file.
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(CognitionDir(projectDir), 0o755); err != nil {
+	if err := os.MkdirAll(CognitionDir(projectDir), core.HarmonikDirMode); err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise start: mkdir cognition: %v\n", err)
 		return 1
 	}

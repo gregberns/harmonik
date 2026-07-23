@@ -18,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // LastGoodStatePath returns the per-project state file path for the last-good
@@ -55,7 +57,7 @@ func ReadLastGoodBinary(statePath string) (string, error) {
 // WriteLastGoodBinary writes binPath to statePath atomically (write + rename).
 func WriteLastGoodBinary(statePath, binPath string) error {
 	dir := filepath.Dir(statePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: matches .harmonik dir conventions
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("release: mkdir last-good dir %s: %w", dir, err)
 	}
 	tmp := statePath + ".tmp"

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/release"
 )
 
@@ -437,9 +438,9 @@ func (dw *DaemonWatchdog) reviveWith(ctx context.Context, argv []string) error {
 // Rotation: path.{keep-1} is discarded, path.{i} → path.{i+1} for each i
 // from keep-2 down to 1, then path → path.1, then a fresh path is created.
 // The new file begins with a one-line header identifying the boot command.
-// The parent directory is created if absent (permissions 0o750).
+// The parent directory is created if absent (core.HarmonikDirMode).
 func openCrashLog(path string, keep int, argv []string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), core.HarmonikDirMode); err != nil {
 		return nil, fmt.Errorf("crash log dir: %w", err)
 	}
 	if err := os.Remove(path + "." + strconv.Itoa(keep-1)); err != nil && !errors.Is(err, os.ErrNotExist) {

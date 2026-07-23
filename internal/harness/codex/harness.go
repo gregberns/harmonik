@@ -99,7 +99,11 @@ func (h *Harness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSp
 	if err != nil {
 		return handlercontract.SpawnSpec{}, fmt.Errorf("resolve project working directory: %w", err)
 	}
-	if err := cleanCodexStaleWAL(projectRoot, h.codexHome); err != nil {
+	// LaunchSpec has no context of its own — its signature is fixed by
+	// handlercontract.Harness — so the guard gets a fresh background context.
+	// Threading one through is what lets the guard's log records and its lsof
+	// probe be context-aware instead of detached.
+	if err := cleanCodexStaleWAL(context.Background(), projectRoot, h.codexHome); err != nil {
 		return handlercontract.SpawnSpec{}, err
 	}
 

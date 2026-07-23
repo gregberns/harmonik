@@ -36,6 +36,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -100,7 +101,14 @@ func EmitImplementerNoWorkSuspected(ctx context.Context, bus handlercontract.Eve
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
+		slog.WarnContext(ctx, "implementer_no_work_suspected_marshal_failed",
+			"run_id", runID.String(), "bead_id", string(beadID), "error", err.Error())
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerNoWorkSuspected, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerNoWorkSuspected, b); emitErr != nil {
+		// Best-effort signal, but a dropped one means the "codex exited without
+		// doing work" suspicion never reaches the operator at all.
+		slog.WarnContext(ctx, "implementer_no_work_suspected_emit_failed",
+			"run_id", runID.String(), "bead_id", string(beadID), "error", emitErr.Error())
+	}
 }

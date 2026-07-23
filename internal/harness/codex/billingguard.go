@@ -31,6 +31,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,13 +266,24 @@ func emitCodexBillingGuard(
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
+		slog.WarnContext(ctx, "codex_billing_guard_event_marshal_failed",
+			"bead_id", beadID, "outcome", string(outcome), "error", err.Error())
 		return
 	}
+	// A dropped emit loses the audit record for a fail-closed billing decision:
+	// an operator asking "did the guard deny this launch?" would find nothing at
+	// all. The emit stays best-effort — the guard's verdict is the caller's
+	// return value, not this event — but the loss is no longer silent.
+	var emitErr error
 	if codexRunIDIsNil(runID) {
-		_ = bus.Emit(ctx, core.EventTypeCodexBillingGuard, b)
-		return
+		emitErr = bus.Emit(ctx, core.EventTypeCodexBillingGuard, b)
+	} else {
+		emitErr = bus.EmitWithRunID(ctx, runID, core.EventTypeCodexBillingGuard, b)
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeCodexBillingGuard, b)
+	if emitErr != nil {
+		slog.WarnContext(ctx, "codex_billing_guard_event_emit_failed",
+			"bead_id", beadID, "outcome", string(outcome), "error", emitErr.Error())
+	}
 }
 
 // runCodexBillingGuard runs the full positive guard for one codex launch:

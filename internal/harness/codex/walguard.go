@@ -81,6 +81,7 @@ package codex
 // Bead ref: hk-2pb79.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -157,7 +158,7 @@ func (e *ErrMissingStaleWALMaxBytes) Error() string {
 // The ONLY errors returned are the missing-required-key error and a YAML parse
 // error. All other paths (config read/IO, stat/lsof/backup/remove) are
 // best-effort and logged via slog; a cleanup hiccup never blocks a codex launch.
-func cleanCodexStaleWAL(projectRoot, codexHome string) error {
+func cleanCodexStaleWAL(ctx context.Context, projectRoot, codexHome string) error {
 	if projectRoot == "" {
 		return nil
 	}
@@ -172,7 +173,7 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 		// config.yaml is present but unreadable (permission/IO). Only a
 		// missing-key or YAML-parse failure is allowed to block a codex launch;
 		// a read/IO error is best-effort — log and no-op rather than fail loud.
-		slog.Warn("codex_wal_guard_config_read_error", "path", configPath, "error", readErr.Error())
+		slog.WarnContext(ctx, "codex_wal_guard_config_read_error", "path", configPath, "error", readErr.Error())
 		return nil
 	}
 
@@ -190,14 +191,14 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 	matches, globErr := filepath.Glob(pattern)
 	if globErr != nil {
 		// Bad glob pattern is the only error filepath.Glob returns; best-effort.
-		slog.Warn("codex_wal_guard_glob_error", "pattern", pattern, "error", globErr.Error())
+		slog.WarnContext(ctx, "codex_wal_guard_glob_error", "pattern", pattern, "error", globErr.Error())
 		return nil
 	}
 
 	for _, wal := range matches {
 		info, statErr := os.Stat(wal)
 		if statErr != nil {
-			slog.Warn("codex_wal_guard_stat_error", "wal", wal, "error", statErr.Error())
+			slog.WarnContext(ctx, "codex_wal_guard_stat_error", "wal", wal, "error", statErr.Error())
 			continue
 		}
 		// NO size gate (hk-xisvb): staleness is a function of being left behind by
@@ -209,44 +210,44 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 
 		// SAFETY: never yank a WAL a live process holds open. If we cannot
 		// confirm it is unheld (lsof missing / errored), skip removal.
-		held, handleErr := fileHasOpenHandle(wal)
+		held, handleErr := fileHasOpenHandle(ctx, wal)
 		if handleErr != nil {
-			slog.Warn("codex_wal_guard_lsof_unavailable", "wal", wal, "error", handleErr.Error())
+			slog.WarnContext(ctx, "codex_wal_guard_lsof_unavailable", "wal", wal, "error", handleErr.Error())
 			continue
 		}
 		if held {
-			slog.Info("codex_wal_guard_skip_held", "wal", wal)
+			slog.InfoContext(ctx, "codex_wal_guard_skip_held", "wal", wal)
 			continue
 		}
 		// Also check the base db file is not held (a live codex would hold both).
-		if baseHeld, baseErr := fileHasOpenHandle(base); baseErr != nil {
-			slog.Warn("codex_wal_guard_lsof_unavailable", "file", base, "error", baseErr.Error())
+		if baseHeld, baseErr := fileHasOpenHandle(ctx, base); baseErr != nil {
+			slog.WarnContext(ctx, "codex_wal_guard_lsof_unavailable", "file", base, "error", baseErr.Error())
 			continue
 		} else if baseHeld {
-			slog.Info("codex_wal_guard_skip_held", "file", base)
+			slog.InfoContext(ctx, "codex_wal_guard_skip_held", "file", base)
 			continue
 		}
 
 		// Stale + unheld: back up the sidecars, then remove them.
 		backupDir := filepath.Join(home, fmt.Sprintf(".wal-backup-%d", time.Now().UnixNano()))
 		if mkErr := os.MkdirAll(backupDir, 0o700); mkErr != nil {
-			slog.Warn("codex_wal_guard_backup_mkdir_failed", "dir", backupDir, "error", mkErr.Error())
+			slog.WarnContext(ctx, "codex_wal_guard_backup_mkdir_failed", "dir", backupDir, "error", mkErr.Error())
 			continue
 		}
 		if cpErr := copyFileForBackup(wal, filepath.Join(backupDir, filepath.Base(wal))); cpErr != nil {
-			slog.Warn("codex_wal_guard_backup_failed", "wal", wal, "error", cpErr.Error())
+			slog.WarnContext(ctx, "codex_wal_guard_backup_failed", "wal", wal, "error", cpErr.Error())
 			// backupDir was just created and holds nothing (the wal copy that
 			// would populate it failed) — drop the empty dir rather than
 			// leaving a useless stub behind on every failed backup attempt.
 			if rmErr := os.Remove(backupDir); rmErr != nil {
-				slog.Warn("codex_wal_guard_empty_backup_dir_cleanup_failed", "dir", backupDir, "error", rmErr.Error())
+				slog.WarnContext(ctx, "codex_wal_guard_empty_backup_dir_cleanup_failed", "dir", backupDir, "error", rmErr.Error())
 			}
 			continue
 		}
 		// Best-effort -shm backup; absence is fine (not all WALs have a -shm).
 		if _, shmStatErr := os.Stat(shm); shmStatErr == nil {
 			if cpErr := copyFileForBackup(shm, filepath.Join(backupDir, filepath.Base(shm))); cpErr != nil {
-				slog.Warn("codex_wal_guard_backup_failed", "shm", shm, "error", cpErr.Error())
+				slog.WarnContext(ctx, "codex_wal_guard_backup_failed", "shm", shm, "error", cpErr.Error())
 				// Continue to removal anyway: the -wal backup (the corrupting
 				// file) succeeded; -shm is reconstructable by SQLite.
 			}
@@ -261,43 +262,43 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 		// "unheld" (lsof) and "unchanged-stale" (re-stat) within a syscall pair;
 		// only then remove. flock would not help — codex takes no such lock, so a
 		// lock only serializes guard runs against each other, not guard-vs-codex.
-		reWalHeld, reWalErr := fileHasOpenHandle(wal)
+		reWalHeld, reWalErr := fileHasOpenHandle(ctx, wal)
 		if reWalErr != nil || reWalHeld {
-			slog.Warn("codex_wal_guard_skip_held_after_backup", "wal", wal, "held", reWalHeld, "uncertain", reWalErr != nil)
+			slog.WarnContext(ctx, "codex_wal_guard_skip_held_after_backup", "wal", wal, "held", reWalHeld, "uncertain", reWalErr != nil)
 			continue
 		}
-		reBaseHeld, reBaseErr := fileHasOpenHandle(base)
+		reBaseHeld, reBaseErr := fileHasOpenHandle(ctx, base)
 		if reBaseErr != nil || reBaseHeld {
-			slog.Warn("codex_wal_guard_skip_held_after_backup", "file", base, "held", reBaseHeld, "uncertain", reBaseErr != nil)
+			slog.WarnContext(ctx, "codex_wal_guard_skip_held_after_backup", "file", base, "held", reBaseHeld, "uncertain", reBaseErr != nil)
 			continue
 		}
 		if !walUnchanged(info, wal) {
 			// A live writer touched the WAL after our pre-backup stat (gone,
 			// changed size, or mtime changed). Leave it.
-			slog.Warn("codex_wal_guard_skip_changed_after_backup", "wal", wal)
+			slog.WarnContext(ctx, "codex_wal_guard_skip_changed_after_backup", "wal", wal)
 			continue
 		}
 
 		if rmErr := os.Remove(wal); rmErr != nil {
-			slog.Warn("codex_wal_guard_remove_failed", "wal", wal, "error", rmErr.Error())
+			slog.WarnContext(ctx, "codex_wal_guard_remove_failed", "wal", wal, "error", rmErr.Error())
 			continue
 		}
 		// Remove the -shm too; absence is not an error.
 		if rmErr := os.Remove(shm); rmErr != nil && !os.IsNotExist(rmErr) {
-			slog.Warn("codex_wal_guard_remove_failed", "shm", shm, "error", rmErr.Error())
+			slog.WarnContext(ctx, "codex_wal_guard_remove_failed", "shm", shm, "error", rmErr.Error())
 		}
 		// Secondary signal: the byte threshold no longer gates cleanup; it only
 		// classifies this log line. A cleaned WAL larger than the threshold is
 		// flagged as notably-large; everything else is a normal stale cleanup.
 		if info.Size() > maxBytes {
-			slog.Warn("codex_wal_guard_removed_large_stale",
+			slog.WarnContext(ctx, "codex_wal_guard_removed_large_stale",
 				"wal", wal,
 				"size_bytes", info.Size(),
 				"max_bytes", maxBytes,
 				"backup_dir", backupDir,
 			)
 		} else {
-			slog.Info("codex_wal_guard_removed_stale",
+			slog.InfoContext(ctx, "codex_wal_guard_removed_stale",
 				"wal", wal,
 				"size_bytes", info.Size(),
 				"max_bytes", maxBytes,
@@ -306,7 +307,7 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 		}
 	}
 
-	reapCodexWALBackupDirs(home)
+	reapCodexWALBackupDirs(ctx, home)
 
 	return nil
 }
@@ -318,11 +319,11 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 // accumulate on disk forever. Best-effort: a glob/stat/remove failure is
 // logged and otherwise ignored — reaping stale backups never blocks a codex
 // launch.
-func reapCodexWALBackupDirs(codexHome string) {
+func reapCodexWALBackupDirs(ctx context.Context, codexHome string) {
 	pattern := filepath.Join(codexHome, ".wal-backup-*")
 	dirs, globErr := filepath.Glob(pattern)
 	if globErr != nil {
-		slog.Warn("codex_wal_guard_backup_reap_glob_error", "pattern", pattern, "error", globErr.Error())
+		slog.WarnContext(ctx, "codex_wal_guard_backup_reap_glob_error", "pattern", pattern, "error", globErr.Error())
 		return
 	}
 	if len(dirs) <= walBackupKeepLast {
@@ -336,9 +337,9 @@ func reapCodexWALBackupDirs(codexHome string) {
 	excess := len(dirs) - walBackupKeepLast
 	for _, dir := range dirs[:excess] {
 		if rmErr := os.RemoveAll(dir); rmErr != nil {
-			slog.Warn("codex_wal_guard_backup_reap_failed", "dir", dir, "error", rmErr.Error())
+			slog.WarnContext(ctx, "codex_wal_guard_backup_reap_failed", "dir", dir, "error", rmErr.Error())
 		} else {
-			slog.Info("codex_wal_guard_backup_reaped", "dir", dir)
+			slog.InfoContext(ctx, "codex_wal_guard_backup_reaped", "dir", dir)
 		}
 	}
 }
@@ -370,7 +371,7 @@ func walUnchanged(pre os.FileInfo, wal string) bool {
 //
 // A non-existent path is reported as not-held (false, nil): there is nothing to
 // hold open, and the caller has already stat'd the WAL it cares about.
-func fileHasOpenHandle(path string) (bool, error) {
+func fileHasOpenHandle(ctx context.Context, path string) (bool, error) {
 	if _, statErr := os.Stat(path); statErr != nil {
 		if os.IsNotExist(statErr) {
 			return false, nil
@@ -383,8 +384,7 @@ func fileHasOpenHandle(path string) (bool, error) {
 	}
 	// `lsof -- <path>` lists processes holding path open. Exit 0 + output =>
 	// held. Exit 1 + empty output => not held (lsof's normal "nothing found").
-	//nolint:gosec // G204: lsofPath resolved via LookPath; path is a CODEX_HOME sidecar, not user input.
-	out, runErr := exec.Command(lsofPath, "--", path).Output()
+	out, runErr := exec.CommandContext(ctx, lsofPath, "--", path).Output()
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {

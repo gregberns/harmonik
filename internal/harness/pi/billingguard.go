@@ -38,6 +38,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,13 +146,24 @@ func emitPiBillingGuard(
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
+		slog.WarnContext(ctx, "pi_billing_guard_event_marshal_failed",
+			"bead_id", beadID, "outcome", string(outcome), "error", err.Error())
 		return
 	}
+	// A dropped emit loses the audit record for a fail-closed billing decision:
+	// an operator asking "did the guard deny this launch?" would find nothing at
+	// all. The emit stays best-effort — the guard's verdict is the caller's
+	// return value, not this event — but the loss is no longer silent.
+	var emitErr error
 	if piRunIDIsNil(runID) {
-		_ = bus.Emit(ctx, core.EventTypePiBillingGuard, b)
-		return
+		emitErr = bus.Emit(ctx, core.EventTypePiBillingGuard, b)
+	} else {
+		emitErr = bus.EmitWithRunID(ctx, runID, core.EventTypePiBillingGuard, b)
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypePiBillingGuard, b)
+	if emitErr != nil {
+		slog.WarnContext(ctx, "pi_billing_guard_event_emit_failed",
+			"bead_id", beadID, "outcome", string(outcome), "error", emitErr.Error())
+	}
 }
 
 // runPiBillingGuard runs the full fail-closed guard for one Pi launch.

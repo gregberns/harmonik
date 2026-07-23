@@ -341,34 +341,30 @@ func (c *codexThreadIDInterceptor) TokenUsage() (inputTokens, outputTokens int) 
 // thread.started does not clobber the original thread id. turn.completed and
 // turn.failed set the corresponding flags.
 //
-// Returns true iff the event mutated arts (i.e. it carried newly-captured
-// thread/turn state). Callers may use the return value to detect the
-// thread-id-capture boundary.
-func captureCodexThreadID(arts *codexRunArtifacts, ev codexEvent) bool {
+// It used to return "did this event mutate arts", documented as a
+// thread-id-capture boundary signal for callers. No caller ever used it —
+// codexThreadIDInterceptor.checkBuffer derives the boundary from
+// arts.capturedThreadID directly — so the signal is gone rather than left as a
+// claim nothing honours.
+func captureCodexThreadID(arts *codexRunArtifacts, ev codexEvent) {
 	switch ev.Kind {
 	case EventKindThreadStarted:
 		// First thread.started wins; ignore later ones (and empty ids).
 		if arts.capturedThreadID == "" && ev.ThreadID != "" {
 			arts.capturedThreadID = ev.ThreadID
-			return true
 		}
-		return false
 	case EventKindTurnCompleted:
 		if !arts.turnCompleted {
 			arts.turnCompleted = true
 			arts.inputTokens = ev.Usage.InputTokens
 			arts.outputTokens = ev.Usage.OutputTokens
-			return true
 		}
-		return false
 	case EventKindTurnFailed:
 		if !arts.turnFailed {
 			arts.turnFailed = true
 			arts.turnFailureMessage = ev.ErrorMessage
-			return true
 		}
-		return false
 	default:
-		return false
+		// turn.started and unrecognised kinds carry no run artifacts.
 	}
 }

@@ -494,12 +494,12 @@ func buildPiEnv(baseEnv []string, apiKeyFile, apiKeyEnv string) []string {
 	// verify presence, so both agree on the exact value Pi receives.
 	// File-first precedence: apiKeyFile (when set) > ambient env (PI-050).
 	apiKeyValue := resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv)
-	env = append(env, apiKeyEnv+"="+apiKeyValue)
 
 	// Shell rc-prompt suppression (oh-my-zsh anti-hang — same as codex harness,
 	// hk-5s6re). Pi spawns through the exec substrate; the launch shell can still
 	// source ~/.zshrc and hang at an interactive update prompt.
 	env = append(env,
+		apiKeyEnv+"="+apiKeyValue,
 		"DISABLE_AUTO_UPDATE=true",
 		"DISABLE_UPDATE_PROMPT=true",
 	)

@@ -189,7 +189,6 @@ func TestPL006_ReconciliationLockPayloadCounters(t *testing.T) {
 
 	projectDir := plFixtureTempProjectDir(t)
 
-
 	// Seed three stale lock files (two without verdict trailer, one with).
 	lock1 := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-counter-a", deadPID, false)
 	lock2 := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-counter-b", deadPID, false)

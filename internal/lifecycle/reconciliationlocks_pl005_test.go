@@ -14,14 +14,11 @@ import (
 // true the file content carries "Harmonik-Verdict-Executed: true" per
 // RC-002b. The creatorPID is written as metadata so that kill(pid, 0) can be
 // used to check liveness; pass a non-existent PID to simulate a stale lock.
-//
-//nolint:unparam // creatorPID is intentionally parameterized; all current call sites use 99999 to simulate dead PID, but callers may pass any value for future coverage of live-PID scenarios.
 func startupSweepFixtureSeedReconciliationLock(t *testing.T, projectDir, name string, creatorPID int, verdictExecuted bool) string {
 	t.Helper()
 
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatalf("startupSweepFixtureSeedReconciliationLock: MkdirAll: %v", err)
 	}
 
@@ -37,10 +34,19 @@ func startupSweepFixtureSeedReconciliationLock(t *testing.T, projectDir, name st
 	return lockPath
 }
 
+// deadPID is the PID recorded in every seeded stale reconciliation lock. It is
+// far above the usual pid_max on both macOS and Linux, so it is reliably not
+// live; each test still skips if the host happens to have it in use.
+const deadPID = 99999
+
 // startupSweepFixtureIsStaleReconciliationLock checks whether a reconciliation
-// lock file is stale: its flock is NOT held (acquirable) AND the recorded
-// creator PID is not live. This mirrors the PL-006 sweep discipline exactly.
-func startupSweepFixtureIsStaleReconciliationLock(t *testing.T, lockPath string, creatorPID int) bool {
+// lock file seeded with deadPID is stale: its flock is NOT held (acquirable)
+// AND the recorded creator PID is not live. This mirrors the PL-006 sweep
+// discipline exactly.
+//
+// The creator PID is always deadPID: every seeding call site uses it, and a
+// live-PID variant would need a live process to probe, not a different literal.
+func startupSweepFixtureIsStaleReconciliationLock(t *testing.T, lockPath string) bool {
 	t.Helper()
 
 	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
@@ -61,7 +67,7 @@ func startupSweepFixtureIsStaleReconciliationLock(t *testing.T, lockPath string,
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck // release error unactionable
 
 	// Double-check: creator PID must not be live.
-	return !plFixtureIsPidLive(creatorPID)
+	return !plFixtureIsPidLive(deadPID)
 }
 
 // TestPL006_ReconciliationLockSweepWithoutVerdictTrailer verifies that a stale
@@ -84,7 +90,6 @@ func TestPL006_ReconciliationLockSweepWithoutVerdictTrailer(t *testing.T) {
 	// Use PID 1 as a guaranteed-live surrogate to seed the lock, then 99999 as
 	// a non-existent PID. We want to test STALE (acquirable + dead creator).
 	// Non-existent PID: choose a value that is certainly not a real process.
-	const deadPID = 99999
 	lockPath := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-stale-no-verdict", deadPID, false)
 
 	// Verify the lock exists on disk before sweep.
@@ -93,7 +98,7 @@ func TestPL006_ReconciliationLockSweepWithoutVerdictTrailer(t *testing.T) {
 	}
 
 	// The lock should be stale: flock acquirable + creator PID dead.
-	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath, deadPID)
+	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath)
 	if !isStale {
 		// On CI, PID 99999 might be live. Skip rather than fail spuriously.
 		t.Skipf("PL-006 recon lock: PID %d is live on this host; skipping stale-lock test", deadPID)
@@ -135,7 +140,6 @@ func TestPL006_ReconciliationLockSweepWithVerdictTrailer(t *testing.T) {
 
 	projectDir := plFixtureTempProjectDir(t)
 
-	const deadPID = 99999
 	lockPath := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-stale-with-verdict", deadPID, true)
 
 	// Verify verdict trailer is in the file.
@@ -150,7 +154,7 @@ func TestPL006_ReconciliationLockSweepWithVerdictTrailer(t *testing.T) {
 	}
 
 	// Check staleness.
-	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath, deadPID)
+	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath)
 	if !isStale {
 		t.Skipf("PL-006 recon lock (verdict): PID %d is live on this host; skipping stale-lock test", deadPID)
 	}
@@ -185,7 +189,6 @@ func TestPL006_ReconciliationLockPayloadCounters(t *testing.T) {
 
 	projectDir := plFixtureTempProjectDir(t)
 
-	const deadPID = 99999
 
 	// Seed three stale lock files (two without verdict trailer, one with).
 	lock1 := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-counter-a", deadPID, false)
@@ -197,7 +200,7 @@ func TestPL006_ReconciliationLockPayloadCounters(t *testing.T) {
 	// Check each; skip if any creator PID is live.
 	for _, lp := range lockPaths {
 		lockName := filepath.Base(lp)
-		isStale := startupSweepFixtureIsStaleReconciliationLock(t, lp, deadPID)
+		isStale := startupSweepFixtureIsStaleReconciliationLock(t, lp)
 		if !isStale {
 			t.Skipf("PL-006 recon lock counters: PID %d appears live (file %s); skipping", deadPID, lockName)
 		}

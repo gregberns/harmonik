@@ -49,8 +49,7 @@ func startupQueueFixtureProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	hDir := filepath.Join(dir, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(hDir, 0o755); err != nil {
+	if err := os.MkdirAll(hDir, 0o750); err != nil {
 		t.Fatalf("startupQueueFixtureProjectDir: MkdirAll .harmonik: %v", err)
 	}
 	return dir
@@ -117,7 +116,7 @@ func startupQueueFixtureDispatchedQueue(beadID core.BeadID) queue.Queue {
 func startupQueueFixtureWriteCorruptFile(t *testing.T, projectDir string) {
 	t.Helper()
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o750); err != nil {
 		t.Fatalf("startupQueueFixtureWriteCorruptFile: MkdirAll queues: %v", err)
 	}
 	path := filepath.Join(queuesDir, "main.json")
@@ -131,7 +130,7 @@ func startupQueueFixtureWriteCorruptFile(t *testing.T, projectDir string) {
 func startupQueueFixtureWriteUnsupportedSchema(t *testing.T, projectDir string) {
 	t.Helper()
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o750); err != nil {
 		t.Fatalf("startupQueueFixtureWriteUnsupportedSchema: MkdirAll queues: %v", err)
 	}
 	path := filepath.Join(queuesDir, "main.json")
@@ -178,19 +177,17 @@ func newStartupQueueFixtureLedger(
 }
 
 // withInFlight sets the slice returned by ListInFlightBeads.
-func (l *startupQueueFixtureBeadLedger) withInFlight(records []core.BeadRecord) *startupQueueFixtureBeadLedger {
+func (l *startupQueueFixtureBeadLedger) withInFlight(records []core.BeadRecord) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.inFlight = records
-	return l
 }
 
 // withInFlightErr sets the error returned by ListInFlightBeads.
-func (l *startupQueueFixtureBeadLedger) withInFlightErr(err error) *startupQueueFixtureBeadLedger {
+func (l *startupQueueFixtureBeadLedger) withInFlightErr(err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.inFlightErr = err
-	return l
 }
 
 func (l *startupQueueFixtureBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
@@ -1083,6 +1080,93 @@ func TestLoadQueueAtStartup_QM002b_ClassC_BeadClosedQueueInProgress(t *testing.T
 	}
 	if !found {
 		t.Error("Class C: reconciliation_mismatch_observed event not found in emitted events")
+	}
+}
+
+// TestLoadQueueAtStartup_QM002b_ClassC_ShowBeadErrorSkipsItem verifies the
+// "ShowBead failure: log warning and skip this item" contract: a ledger query
+// that errors must leave the queue item untouched and emit no mismatch event.
+//
+// This branch (and the two sibling ShowBead-error branches) had no coverage:
+// the fake ledger's per-bead error map was populated by no test, so every
+// ShowBead call in the suite succeeded.
+func TestLoadQueueAtStartup_QM002b_ClassC_ShowBeadErrorSkipsItem(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	const testBeadID = core.BeadID("hk-nvfvj-classC-showbead-err")
+
+	q := startupQueueFixtureCompletedQueue(testBeadID)
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("setup: Persist: %v", err)
+	}
+
+	// Ledger: every ShowBead for this bead fails.
+	ledger := newStartupQueueFixtureLedger(
+		nil,
+		map[core.BeadID]error{testBeadID: errors.New("br show: ledger unavailable")},
+	)
+
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	_, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	if err != nil {
+		t.Fatalf("ShowBead failure must not fail startup: %v", err)
+	}
+
+	for _, ev := range emitter.Events() {
+		if ev.EventType == core.EventTypeReconciliationMismatchObserved {
+			t.Errorf("mismatch event emitted despite ShowBead failure: %s", string(ev.Payload))
+		}
+	}
+}
+
+// TestLoadQueueAtStartup_QM002b_ClassB_ListInFlightErrorSkipsScan verifies the
+// "ListInFlightBeads failure must not block startup" contract: the Class B
+// orphan scan is skipped entirely and no mismatch event is emitted.
+//
+// This branch had no coverage either — the fake ledger's ListInFlightBeads
+// error seam existed but nothing ever set it, so the error return was dead.
+func TestLoadQueueAtStartup_QM002b_ClassB_ListInFlightErrorSkipsScan(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	const knownBeadID = core.BeadID("hk-nvfvj-classB-listerr-known")
+
+	q := startupQueueFixturePendingQueue(knownBeadID)
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("setup: Persist: %v", err)
+	}
+
+	ledger := newStartupQueueFixtureLedger(
+		map[core.BeadID]core.CoarseStatus{knownBeadID: core.CoarseStatusOpen},
+		nil,
+	)
+	ledger.withInFlightErr(errors.New("br list: ledger unavailable"))
+
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	if err != nil {
+		t.Fatalf("ListInFlightBeads failure must not fail startup: %v", err)
+	}
+	gotQueue := firstOrNil(gotQueues)
+	if gotQueue == nil {
+		t.Fatal("expected the pending queue to survive a Class B scan failure")
+	}
+	if gotQueue.Groups[0].Items[0].Status != queue.ItemStatusPending {
+		t.Errorf("pending item mutated by a skipped Class B scan: got %q", gotQueue.Groups[0].Items[0].Status)
+	}
+	for _, ev := range emitter.Events() {
+		if ev.EventType == core.EventTypeReconciliationMismatchObserved {
+			t.Errorf("mismatch event emitted despite ListInFlightBeads failure: %s", string(ev.Payload))
+		}
 	}
 }
 

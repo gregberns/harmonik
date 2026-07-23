@@ -41,7 +41,7 @@ func h3CommitWithTrailer(t *testing.T, dir string, beadID core.BeadID) {
 	// Write real content so the commit has a diff that a later `git revert` can
 	// undo (an empty commit cannot be reverted — "nothing to commit").
 	fname := filepath.Join(dir, "work-"+string(beadID)+".txt")
-	if err := os.WriteFile(fname, []byte("work for "+string(beadID)+"\n"), 0o644); err != nil { //nolint:gosec // G306: test fixture in t.TempDir(), perms not security-relevant
+	if err := os.WriteFile(fname, []byte("work for "+string(beadID)+"\n"), 0o600); err != nil {
 		t.Fatalf("write work file: %v", err)
 	}
 	add := exec.CommandContext(t.Context(), "git", "add", ".")

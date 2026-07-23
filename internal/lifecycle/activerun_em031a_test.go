@@ -556,7 +556,7 @@ func TestEM031a_GitBranchTipReader_BranchWithTrailers(t *testing.T) {
 
 	// Create a root commit on main.
 	tmpFile := filepath.Join(repoDir, "README")
-	if err := os.WriteFile(tmpFile, []byte("harmonik test repo\n"), 0o644); err != nil {
+	if err := os.WriteFile(tmpFile, []byte("harmonik test repo\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile README: %v", err)
 	}
 	runGit("add", "README")
@@ -568,7 +568,7 @@ func TestEM031a_GitBranchTipReader_BranchWithTrailers(t *testing.T) {
 
 	// Commit a checkpoint with Harmonik-Run-ID + Harmonik-Bead-ID trailers.
 	checkpointFile := filepath.Join(repoDir, "checkpoint.txt")
-	if err := os.WriteFile(checkpointFile, []byte("state\n"), 0o644); err != nil {
+	if err := os.WriteFile(checkpointFile, []byte("state\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile checkpoint: %v", err)
 	}
 	runGit("add", "checkpoint.txt")

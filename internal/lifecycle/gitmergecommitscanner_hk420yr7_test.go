@@ -63,8 +63,7 @@ func gitMCSFixtureInitRepo(t *testing.T, repoDir string) {
 	runGitRepo(t, repoDir, "config", "user.name", "Harmonik Test")
 
 	root := repoDir + "/README"
-	//nolint:gosec // G306: 0644 matches test convention; path is t.TempDir()
-	if err := os.WriteFile(root, []byte("harmonik gitmergecommitscanner test repo\n"), 0o644); err != nil {
+	if err := os.WriteFile(root, []byte("harmonik gitmergecommitscanner test repo\n"), 0o600); err != nil {
 		t.Fatalf("gitMCSFixtureInitRepo: WriteFile README: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", "README")
@@ -79,8 +78,7 @@ func gitMCSFixtureLandBeadCommit(t *testing.T, repoDir string, beadID core.BeadI
 
 	stateFile := repoDir + "/state.txt"
 	content := fmt.Sprintf("merged bead=%s\n", beadID)
-	//nolint:gosec // G306: 0644 is correct for a state file in a test repo; path is t.TempDir()
-	if err := os.WriteFile(stateFile, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(stateFile, []byte(content), 0o600); err != nil {
 		t.Fatalf("gitMCSFixtureLandBeadCommit: WriteFile state.txt: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", "state.txt")

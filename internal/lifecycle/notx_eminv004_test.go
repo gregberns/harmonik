@@ -181,9 +181,7 @@ func TestEMINV004_NoSubsystemImplementsWorkflowTransactionality(t *testing.T) {
 	}
 
 	for _, filePath := range sourceFiles {
-		filePath := filePath // capture for parallel subtest
 		for _, pattern := range noTxSubsystemFixtureForbiddenPatterns {
-			pattern := pattern // capture for parallel subtest
 			t.Run(filepath.Base(filePath)+"/"+pattern, func(t *testing.T) {
 				t.Parallel()
 

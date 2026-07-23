@@ -409,8 +409,7 @@ func TestPL009_ReadyTransitionOnlyWhenCriteriaMet(t *testing.T) {
 
 		projectDir := plFixtureTempProjectDir(t)
 		harmonikDir := filepath.Join(projectDir, ".harmonik")
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 			t.Fatalf("PL-009 ready_at RFC3339: MkdirAll: %v", err)
 		}
 

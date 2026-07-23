@@ -195,7 +195,7 @@ func TestSweepStaleReconciliationLocks_MalformedCreatorPIDIsSkipped(t *testing.T
 
 	projectDir := t.TempDir()
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	if err := os.MkdirAll(lockDir, 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(lockDir, "run-garbled.lock")
@@ -225,7 +225,7 @@ func TestSweepStaleReconciliationLocks_HoldsFlockUntilUnlink(t *testing.T) {
 	deadPID := reconLockUpliftFindDeadPID(t)
 	projectDir := t.TempDir()
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	if err := os.MkdirAll(lockDir, 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(lockDir, "run-stale.lock")
@@ -259,7 +259,7 @@ func TestEnumerateStaleIntents_FiltersNonIntentEntries(t *testing.T) {
 
 	projectDir := t.TempDir()
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
-	if err := os.MkdirAll(filepath.Join(intentsDir, "subdir"), 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
+	if err := os.MkdirAll(filepath.Join(intentsDir, "subdir"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	old := time.Now().Add(-2 * time.Hour)

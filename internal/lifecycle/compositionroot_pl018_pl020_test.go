@@ -433,7 +433,9 @@ func TestPL018a_PanicBarrierExitCode19BinaryHarness(t *testing.T) {
 
 		// The child writes its barrier result to stdout so the parent can assert it.
 		if result.exitCode == 19 {
-			os.Stdout.WriteString("exit_code=19\n") //nolint:errcheck // child process stub
+			if _, werr := os.Stdout.WriteString("exit_code=19\n"); werr != nil {
+				os.Exit(1) // parent asserts on the missing line
+			}
 		}
 		os.Exit(0) // Barrier intercept path: child exits cleanly after recording result.
 	}
@@ -512,7 +514,6 @@ func TestPL020_CompositionRootIsOnlySubsystemCrossingImporter(t *testing.T) {
 	}
 
 	for _, pair := range forbidden {
-		pair := pair // capture
 		t.Run("no-direct-import/"+lastSegment(pair.importer)+"/→/"+lastSegment(pair.imported), func(t *testing.T) {
 			t.Parallel()
 

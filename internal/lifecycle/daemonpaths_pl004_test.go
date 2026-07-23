@@ -217,7 +217,6 @@ func TestPL004_AllPathsRootedUnderHarmonik(t *testing.T) {
 	}
 
 	for _, tc := range paths {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if !strings.HasPrefix(tc.path, harmonikDir) {

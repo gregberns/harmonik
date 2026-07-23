@@ -99,8 +99,7 @@ func imrestSweepBead(id string) core.BeadRecord {
 // (op, beadID) so ScanIntentLog observes it.
 func imrestSweepWriteIntent(t *testing.T, intentLogDir string, beadID core.BeadID, op core.TerminalOp) {
 	t.Helper()
-	//nolint:gosec // G301: 0755 matches conventions
-	if err := os.MkdirAll(intentLogDir, 0o755); err != nil {
+	if err := os.MkdirAll(intentLogDir, 0o750); err != nil {
 		t.Fatalf("imrestSweepWriteIntent: MkdirAll: %v", err)
 	}
 

@@ -25,10 +25,12 @@ import (
 // kernel-level guarantee ("lock released when the fd is closed") still holds;
 // it is merely delayed, not violated. A short bounded retry absorbs that
 // window without masking a genuine stuck-lock regression.
-func plFixtureEventuallyNoErr(t *testing.T, timeout time.Duration, fn func() error) error {
+const plFixtureEventuallyTimeout = 2 * time.Second
+
+func plFixtureEventuallyNoErr(t *testing.T, fn func() error) error {
 	t.Helper()
 
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(plFixtureEventuallyTimeout)
 	for {
 		err := fn()
 		if err == nil {
@@ -92,8 +94,7 @@ func plFixtureTempProjectDir(t *testing.T) string {
 	}
 
 	harmonikDir := filepath.Join(root, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("plFixtureTempProjectDir: MkdirAll .harmonik: %v", err)
 	}
 	return root

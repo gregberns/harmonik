@@ -50,7 +50,7 @@ func (e *fakeShowBeadNotFoundError) Error() string {
 func gcIntentsFixtureWriteResetIntent(t *testing.T, intentsDir, key string, beadID core.BeadID) string {
 	t.Helper()
 
-	if err := os.MkdirAll(intentsDir, 0o755); err != nil { //nolint:gosec // G301: 0755 matches .harmonik dir conventions
+	if err := os.MkdirAll(intentsDir, 0o750); err != nil { // G301: 0755 matches .harmonik dir conventions
 		t.Fatalf("gcIntentsFixture: MkdirAll: %v", err)
 	}
 
@@ -194,7 +194,7 @@ func TestGCRetiredIntents_SkipsNewFiles(t *testing.T) {
 	daemonStart := time.Now()
 
 	// Write the intent file AFTER daemonStart.
-	if err := os.MkdirAll(intentsDir, 0o755); err != nil { //nolint:gosec // G301
+	if err := os.MkdirAll(intentsDir, 0o750); err != nil { // G301
 		t.Fatalf("GCRetiredIntents new: MkdirAll: %v", err)
 	}
 	entry := map[string]any{
@@ -244,7 +244,7 @@ func TestGCRetiredIntents_RetainsMalformed(t *testing.T) {
 	projectDir := t.TempDir()
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 
-	if err := os.MkdirAll(intentsDir, 0o755); err != nil { //nolint:gosec // G301
+	if err := os.MkdirAll(intentsDir, 0o750); err != nil { // G301
 		t.Fatalf("GCRetiredIntents malformed: MkdirAll: %v", err)
 	}
 	badPath := filepath.Join(intentsDir, "bad-intent.json")
@@ -393,10 +393,10 @@ func TestGCRetiredIntents_Mixed(t *testing.T) {
 // gcIntentsFixtureWriteIntent writes a valid IntentLogEntry of the given op
 // to intentsDir/<key>.json with mtime set to past (before daemonStartTime).
 // Returns the path of the created file.
-func gcIntentsFixtureWriteIntent(t *testing.T, intentsDir, key string, beadID core.BeadID, op string, intendedPostState string) string {
+func gcIntentsFixtureWriteIntent(t *testing.T, intentsDir, key string, beadID core.BeadID, op, intendedPostState string) string {
 	t.Helper()
 
-	if err := os.MkdirAll(intentsDir, 0o755); err != nil { //nolint:gosec
+	if err := os.MkdirAll(intentsDir, 0o750); err != nil {
 		t.Fatalf("gcIntentsFixtureWriteIntent: MkdirAll: %v", err)
 	}
 
@@ -576,7 +576,6 @@ func TestGcIntentOpLanded(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(fmt.Sprintf("op=%s/status=%s", tc.op, tc.currentStatus), func(t *testing.T) {
 			t.Parallel()
 			got := gcIntentOpLanded(core.TerminalOp(tc.op), tc.currentStatus, tc.intendedPostState)
@@ -668,7 +667,7 @@ func TestGCRetiredIntents_SkipsTmpFiles(t *testing.T) {
 	projectDir := t.TempDir()
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 
-	if err := os.MkdirAll(intentsDir, 0o755); err != nil { //nolint:gosec // G301
+	if err := os.MkdirAll(intentsDir, 0o750); err != nil { // G301
 		t.Fatalf("GCRetiredIntents tmp: MkdirAll: %v", err)
 	}
 	tmpPath := filepath.Join(intentsDir, "some_key.json.tmp-abcdef12")

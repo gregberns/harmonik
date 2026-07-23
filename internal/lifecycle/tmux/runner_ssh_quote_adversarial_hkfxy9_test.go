@@ -133,7 +133,6 @@ func TestSSHRunner_AdversarialArgvRoundTrip(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			name := tc.argv[0]
 			args := tc.argv[1:]

@@ -129,7 +129,6 @@ func TestPL025_CrashDuringStartupReconciliationRerunsFromStep0(t *testing.T) {
 	}
 
 	for _, cp := range crashPoints {
-		cp := cp // capture
 		t.Run(cp.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -577,9 +576,10 @@ func TestPL025a_PairingToleranceForUnpairedDaemonStarted(t *testing.T) {
 		var sweepEventsForLive, sweepEventsForCrashed int
 		for _, evt := range events {
 			if evt.eventType == "daemon_orphan_sweep_completed" {
-				if evt.instanceID == liveID {
+				switch evt.instanceID {
+				case liveID:
 					sweepEventsForLive++
-				} else if evt.instanceID == crashedID {
+				case crashedID:
 					sweepEventsForCrashed++
 				}
 			}

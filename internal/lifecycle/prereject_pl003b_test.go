@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -81,13 +82,7 @@ func TestPL003b_CheckRequest_AgentMethods_PreReadyRejected(t *testing.T) {
 			continue
 		}
 		var rejection *ErrPreReadyRejection
-		if !func() bool {
-			e, ok := err.(*ErrPreReadyRejection)
-			if ok {
-				rejection = e
-			}
-			return ok
-		}() {
+		if !errors.As(err, &rejection) {
 			t.Errorf("PL-003b: CheckRequest(%q): error type = %T, want *ErrPreReadyRejection", method, err)
 			continue
 		}

@@ -51,7 +51,7 @@ func TestComputeProjectHash_Length(t *testing.T) {
 
 	// Verify all characters are lowercase hex.
 	for i, c := range hash {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			t.Errorf("ComputeProjectHash: non-lowercase-hex char %q at position %d in %q", c, i, hash)
 		}
 	}
@@ -281,7 +281,7 @@ func TestReadProcessEnviron_OwnProcess(t *testing.T) {
 	// Sanity: we should be able to find at least one "KEY=VALUE" shaped entry.
 	found := false
 	for _, e := range env {
-		if len(e) > 0 {
+		if e != "" {
 			found = true
 			break
 		}

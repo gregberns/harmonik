@@ -21,8 +21,7 @@ func rc73LockFixtureLockPath(t *testing.T, projectDir, targetRunID string) strin
 	t.Helper()
 
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatalf("rc73LockFixtureLockPath: MkdirAll: %v", err)
 	}
 	return filepath.Join(lockDir, targetRunID+".lock")
@@ -225,7 +224,6 @@ func TestRC002b_StaleLockWithVerdictExecutedIsRemoved(t *testing.T) {
 	t.Parallel()
 
 	projectDir := plFixtureTempProjectDir(t)
-	const deadPID = 99999
 
 	// Seed a stale lock file with verdict-executed = true.
 	lockPath := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-rc002b-verdict-executed", deadPID, true)
@@ -247,7 +245,7 @@ func TestRC002b_StaleLockWithVerdictExecutedIsRemoved(t *testing.T) {
 	}
 
 	// Check staleness: flock acquirable AND creator PID dead.
-	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath, deadPID)
+	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath)
 	if !isStale {
 		t.Skipf("RC-002b: PID %d is live on this host; skipping stale-lock test", deadPID)
 	}
@@ -277,7 +275,6 @@ func TestRC002b_StaleLockWithoutVerdictExecutedRoutesCat3b(t *testing.T) {
 	t.Parallel()
 
 	projectDir := plFixtureTempProjectDir(t)
-	const deadPID = 99999
 
 	// Seed a stale lock file WITHOUT verdict-executed.
 	lockPath := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-rc002b-no-verdict", deadPID, false)
@@ -294,7 +291,7 @@ func TestRC002b_StaleLockWithoutVerdictExecutedRoutesCat3b(t *testing.T) {
 	}
 
 	// Check staleness.
-	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath, deadPID)
+	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath)
 	if !isStale {
 		t.Skipf("RC-002b: PID %d is live on this host; skipping stale-lock test", deadPID)
 	}
@@ -340,7 +337,6 @@ func TestRC002b_VerdictNonAtomicityDocumented(t *testing.T) {
 	t.Parallel()
 
 	projectDir := plFixtureTempProjectDir(t)
-	const deadPID = 99999
 
 	// A lock file with verdict-executed trailer — represents the "lock outlived
 	// its purpose" state: verdict was committed (git trailer), lock not yet

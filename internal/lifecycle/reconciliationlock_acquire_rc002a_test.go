@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestAcquireReconciliationLock_SuccessAndRelease verifies that
@@ -48,7 +47,7 @@ func TestAcquireReconciliationLock_SuccessAndRelease(t *testing.T) {
 	// inherited fd copy until that child's exec(2) closes it — see
 	// plFixtureEventuallyNoErr.
 	var lock2 *ReconciliationLock
-	err = plFixtureEventuallyNoErr(t, 2*time.Second, func() error {
+	err = plFixtureEventuallyNoErr(t, func() error {
 		var acquireErr error
 		lock2, acquireErr = AcquireReconciliationLock(projectDir, targetRunID)
 		return acquireErr
@@ -56,7 +55,9 @@ func TestAcquireReconciliationLock_SuccessAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcquireReconciliationLock after Release: unexpected error: %v", err)
 	}
-	_ = lock2.Release()
+	if relErr := lock2.Release(); relErr != nil {
+		t.Errorf("lock2.Release: %v", relErr)
+	}
 }
 
 // TestAcquireReconciliationLock_ErrLockHeld verifies that a second acquire
@@ -78,7 +79,11 @@ func TestAcquireReconciliationLock_ErrLockHeld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first AcquireReconciliationLock: unexpected error: %v", err)
 	}
-	defer func() { _ = lock1.Release() }()
+	defer func() {
+		if relErr := lock1.Release(); relErr != nil {
+			t.Errorf("lock1.Release: %v", relErr)
+		}
+	}()
 
 	// Second acquire must return ErrReconciliationLockHeld.
 	_, err = AcquireReconciliationLock(projectDir, targetRunID)
@@ -102,13 +107,19 @@ func TestAcquireReconciliationLock_DifferentRunIDsAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcquireReconciliationLock A: %v", err)
 	}
-	defer func() { _ = lockA.Release() }()
+	defer func() {
+		if relErr := lockA.Release(); relErr != nil {
+			t.Errorf("lockA.Release: %v", relErr)
+		}
+	}()
 
 	lockB, err := AcquireReconciliationLock(projectDir, "run-indep-B")
 	if err != nil {
 		t.Fatalf("AcquireReconciliationLock B while A is held: %v", err)
 	}
-	_ = lockB.Release()
+	if relErr := lockB.Release(); relErr != nil {
+		t.Errorf("lockB.Release: %v", relErr)
+	}
 }
 
 // TestAcquireReconciliationLock_MetadataWritten verifies that after a
@@ -128,7 +139,11 @@ func TestAcquireReconciliationLock_MetadataWritten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcquireReconciliationLock: %v", err)
 	}
-	defer func() { _ = lock.Release() }()
+	defer func() {
+		if relErr := lock.Release(); relErr != nil {
+			t.Errorf("lock.Release: %v", relErr)
+		}
+	}()
 
 	data, err := os.ReadFile(lock.LockPath())
 	if err != nil {
@@ -163,7 +178,11 @@ func TestWriteVerdictExecuted_AppendsTrailerAndSyncs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcquireReconciliationLock: %v", err)
 	}
-	defer func() { _ = lock.Release() }()
+	defer func() {
+		if relErr := lock.Release(); relErr != nil {
+			t.Errorf("lock.Release: %v", relErr)
+		}
+	}()
 
 	if err := lock.WriteVerdictExecuted(); err != nil {
 		t.Fatalf("WriteVerdictExecuted: unexpected error: %v", err)

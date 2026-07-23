@@ -58,8 +58,7 @@ func replayFixtureWriteSiblingFile(t *testing.T, repoDir, runID, transitionID st
 	t.Helper()
 
 	dir := filepath.Join(repoDir, ".harmonik", "transitions", runID)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("replayFixtureWriteSiblingFile: MkdirAll: %v", err)
 	}
 
@@ -68,8 +67,7 @@ func replayFixtureWriteSiblingFile(t *testing.T, repoDir, runID, transitionID st
 		`{"schema_version":1,"run_id":%q,"transition_id":%q}`,
 		runID, transitionID,
 	)
-	//nolint:gosec // G306: 0644 is the correct mode for a JSON record file; path is t.TempDir()
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatalf("replayFixtureWriteSiblingFile: WriteFile: %v", err)
 	}
 	return p
@@ -89,8 +87,7 @@ func replayFixtureCommitCheckpoint(t *testing.T, repoDir, runID, transitionID, n
 
 	// Stage all new files (sibling file + state file).
 	stateFile := filepath.Join(repoDir, "state.txt")
-	//nolint:gosec // G306: 0644 is correct for a test state file; path is t.TempDir()
-	if err := os.WriteFile(stateFile, []byte(fmt.Sprintf("run=%s node=%s tx=%s\n", runID, nodeID, transitionID)), 0o644); err != nil {
+	if err := os.WriteFile(stateFile, []byte(fmt.Sprintf("run=%s node=%s tx=%s\n", runID, nodeID, transitionID)), 0o600); err != nil {
 		t.Fatalf("replayFixtureCommitCheckpoint: WriteFile state.txt: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", ".")
@@ -317,16 +314,14 @@ func TestEM032_TransitionHistoryIsGitNotJSONL(t *testing.T) {
 	// Write a JSONL event log file (simulating what the daemon would emit at runtime).
 	// This file is NOT part of the committed tree — it represents the ephemeral tail.
 	jsonlPath := filepath.Join(repoDir, ".harmonik", "events.jsonl")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(repoDir, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repoDir, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 	eventLine := fmt.Sprintf(
 		`{"event_id":"0196e3d1-3af8-7000-8000-000000000001","run_id":%q,"schema_version":1}`+"\n",
 		runID,
 	)
-	//nolint:gosec // G306: 0644 is correct for an event log file; path is t.TempDir()
-	if err := os.WriteFile(jsonlPath, []byte(eventLine), 0o644); err != nil {
+	if err := os.WriteFile(jsonlPath, []byte(eventLine), 0o600); err != nil {
 		t.Fatalf("WriteFile events.jsonl: %v", err)
 	}
 

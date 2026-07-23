@@ -69,12 +69,12 @@ func reconLockUpliftFindDeadPID(t *testing.T) int {
 // returns after observing EOF from its stdout pipe. At that point the child has
 // exited but cmd.Wait has not been called, so POSIX kernels keep it as a zombie
 // until the registered cleanup reaps it.
-func reconLockUpliftStartExitedChild(t *testing.T) (*exec.Cmd, int) {
+func reconLockUpliftStartExitedChild(t *testing.T) (cmd *exec.Cmd, pid int) {
 	t.Helper()
 
 	testBin := os.Args[0]
 	//nolint:gosec // G204: testBin is the current test binary.
-	cmd := exec.CommandContext(t.Context(), testBin, "-test.run=^TestReconLockZombieChildStub$")
+	cmd = exec.CommandContext(t.Context(), testBin, "-test.run=^TestReconLockZombieChildStub$")
 	cmd.Env = append(os.Environ(), "GO_RECON_LOCK_ZOMBIE_CHILD=1")
 
 	stdout, err := cmd.StdoutPipe()

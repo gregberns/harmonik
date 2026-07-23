@@ -74,8 +74,7 @@ func TestPL007_ActiveFlockHeldLockNotRemoved(t *testing.T) {
 
 	// Create the reconciliation locks directory and a lock file.
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatalf("PL-007 active flock: MkdirAll: %v", err)
 	}
 
@@ -162,8 +161,7 @@ func TestPL007_ActiveFlockSweepCounterNotIncremented(t *testing.T) {
 	projectDir := plFixtureTempProjectDir(t)
 
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatalf("PL-007 counter: MkdirAll: %v", err)
 	}
 

@@ -41,12 +41,10 @@ func monotonicityFixtureRepoAndProject(t *testing.T) (repoDir, projectDir string
 	base := t.TempDir()
 	repoDir = filepath.Join(base, "repo")
 	projectDir = filepath.Join(base, "project")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+	if err := os.MkdirAll(repoDir, 0o750); err != nil {
 		t.Fatalf("monotonicityFixtureRepoAndProject: mkdir repo: %v", err)
 	}
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+	if err := os.MkdirAll(projectDir, 0o750); err != nil {
 		t.Fatalf("monotonicityFixtureRepoAndProject: mkdir project: %v", err)
 	}
 	durableFixtureInitRepo(t, repoDir)

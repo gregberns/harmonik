@@ -23,7 +23,7 @@ func durableFixtureInitRepo(t *testing.T, repoDir string) {
 
 	// Root commit so branches can be created from a known base.
 	root := filepath.Join(repoDir, "README")
-	if err := os.WriteFile(root, []byte("harmonik durable-state test repo\n"), 0o644); err != nil {
+	if err := os.WriteFile(root, []byte("harmonik durable-state test repo\n"), 0o600); err != nil {
 		t.Fatalf("durableFixtureInitRepo: WriteFile README: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", "README")
@@ -49,8 +49,7 @@ func durableFixtureCommitCheckpoint(t *testing.T, repoDir, runID, nodeID string)
 
 	// Write/update a simple state file so each checkpoint has a distinct tree.
 	stateFile := filepath.Join(repoDir, "state.txt")
-	//nolint:gosec // G306: 0644 is the correct mode for a state file in a test repo; path is t.TempDir()
-	if err := os.WriteFile(stateFile, []byte(fmt.Sprintf("run=%s node=%s\n", runID, nodeID)), 0o644); err != nil {
+	if err := os.WriteFile(stateFile, []byte(fmt.Sprintf("run=%s node=%s\n", runID, nodeID)), 0o600); err != nil {
 		t.Fatalf("durableFixtureCommitCheckpoint: WriteFile state.txt: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", "state.txt")

@@ -5,7 +5,6 @@ import (
 	"os"
 	"syscall"
 	"testing"
-	"time"
 )
 
 // TestPL_INV001_PidfileLockExclusivity exercises the PL-INV-001 sensor:
@@ -88,7 +87,7 @@ func TestPL_INV001_PidfileLockExclusivity(t *testing.T) {
 		// just-released flock alive via an inherited fd copy until that
 		// child's exec(2) closes it — see plFixtureEventuallyNoErr.
 		var release2 func()
-		err = plFixtureEventuallyNoErr(t, 2*time.Second, func() error {
+		err = plFixtureEventuallyNoErr(t, func() error {
 			r, acquireErr := plFixtureAcquirePidfile(t, projectDir, pid, pgid, instanceID2)
 			release2 = r
 			return acquireErr

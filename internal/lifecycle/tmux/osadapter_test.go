@@ -43,14 +43,11 @@ func osAdapterFixtureBinDir(t *testing.T) string {
 	return t.TempDir()
 }
 
-// osAdapterFixtureWithFakeTmux returns a context and a PATH that prepends
-// binDir, so exec.CommandContext calls in OSAdapter find the fake tmux.
-func osAdapterFixtureWithFakeTmux(t *testing.T, binDir string) string {
+// osAdapterFixtureWithFakeTmux prepends binDir to PATH for the duration of the
+// test, so exec.CommandContext calls in OSAdapter find the fake tmux.
+func osAdapterFixtureWithFakeTmux(t *testing.T, binDir string) {
 	t.Helper()
-	origPath := os.Getenv("PATH")
-	newPath := binDir + string(os.PathListSeparator) + origPath
-	t.Setenv("PATH", newPath)
-	return newPath
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

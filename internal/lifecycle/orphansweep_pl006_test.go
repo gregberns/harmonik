@@ -108,7 +108,9 @@ func TestPL006_SweepOrphanTmuxSessions_MatchingPrefix(t *testing.T) {
 		"harmonik-000000000000-run-ccc", // different project hash
 		"unrelated-session",
 	}
-	allNames := append(matchingNames, nonMatchingNames...)
+	allNames := make([]string, 0, len(matchingNames)+len(nonMatchingNames))
+	allNames = append(allNames, matchingNames...)
+	allNames = append(allNames, nonMatchingNames...)
 
 	lister := &pl006FixtureFakeTmuxLister{sessions: allNames}
 	killer := &pl006FixtureFakeTmuxKiller{}
@@ -376,8 +378,7 @@ func TestPL006_EnumerateStaleIntents_NewFilesNotCounted(t *testing.T) {
 
 	// Seed one intent file after the start time.
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(intentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(intentsDir, 0o750); err != nil {
 		t.Fatalf("PL-006 intents new: MkdirAll: %v", err)
 	}
 	newPath := filepath.Join(intentsDir, "new-intent.json")
@@ -561,8 +562,7 @@ func TestPL006_SweepStaleReconciliationLocks_NonLockFilesIgnored(t *testing.T) {
 
 	projectDir := plFixtureTempProjectDir(t)
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatalf("PL-006 recon-locks non-lock: MkdirAll: %v", err)
 	}
 

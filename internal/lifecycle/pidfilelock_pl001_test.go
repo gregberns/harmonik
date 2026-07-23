@@ -113,7 +113,7 @@ func TestPL002a_FdLifetimeAdvisoryLock(t *testing.T) {
 	// inherited fd copy until that child's exec(2) closes it — see
 	// plFixtureEventuallyNoErr.
 	var release2 func()
-	err = plFixtureEventuallyNoErr(t, 2*time.Second, func() error {
+	err = plFixtureEventuallyNoErr(t, func() error {
 		r, acquireErr := plFixtureAcquirePidfile(t, projectDir, pid, pgid, instanceID2)
 		release2 = r
 		return acquireErr

@@ -1805,8 +1805,6 @@ func (w *Watcher) emitWarn(ctx context.Context, cf *CtxFile) {
 	}
 	slog.WarnContext(ctx, "keeper: context window warn threshold crossed",
 		"agent", w.cfg.AgentName, "pct", cf.Pct, "warn_pct", w.cfg.WarnPct)
-	fmt.Printf("keeper: warn — agent %q context window at %.1f%% (threshold %.1f%%)\n",
-		w.cfg.AgentName, cf.Pct, w.cfg.WarnPct)
 }
 
 // maybeRespawn fires the respawn command if all gates pass:
@@ -1860,7 +1858,6 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 
 	slog.InfoContext(ctx, "keeper: respawning agent via --respawn-cmd",
 		"agent", w.cfg.AgentName, "cmd", w.cfg.RespawnCmd)
-	fmt.Printf("keeper: respawn — agent %q exited; re-launching via respawn-cmd\n", w.cfg.AgentName)
 
 	//nolint:gosec // G204: RespawnCmd is operator-supplied via --respawn-cmd flag, not user input.
 	cmd := exec.CommandContext(ctx, "sh", "-c", w.cfg.RespawnCmd)
@@ -1967,8 +1964,6 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 	staleSeconds := int64(w.cfg.Clock.Since(staleSince).Seconds())
 	slog.WarnContext(ctx, "keeper: live-pane recovery — gauge stale over a live pane; firing gated ForceRestart last-resort",
 		"agent", w.cfg.AgentName, "stale_seconds", staleSeconds, "bound_sid", boundSID)
-	fmt.Printf("keeper: live-pane recovery — agent %q hung mid-turn (gauge stale %ds, pane alive); force-restarting\n",
-		w.cfg.AgentName, staleSeconds)
 
 	runErr := w.cfg.LiveRecoverFn(ctx, w.cfg.AgentName)
 

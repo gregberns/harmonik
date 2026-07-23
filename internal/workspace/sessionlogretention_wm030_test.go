@@ -75,7 +75,7 @@ func TestWM030_PostMergeSessionLogRetention(t *testing.T) {
 	}
 
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 		t.Fatalf("WM-030: sidecar write: %v", err)
 	}

@@ -92,7 +92,7 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 		leaseLockPath := LeaseLockPath(worktreePath)
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
-			leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+			leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 		_, err := ClassifyCrashEvidence(worktreePath)
 		if err == nil {

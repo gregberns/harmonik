@@ -36,7 +36,7 @@ func TestWM027_SidecarPrecedesWorkspaceLeased(t *testing.T) {
 	}
 
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 
 	// Step 1: Write sidecar atomically (simulates workspace manager action before workspace_leased).
 	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
@@ -106,7 +106,7 @@ func TestWM027_SubsequentSessionsDoNotReemitWorkspaceLeased(t *testing.T) {
 			t.Fatalf("MkdirAll sessionDir[%d]: %v", i, err)
 		}
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-		content := sessionLogFixtureMakeMetaJSON(t, runID, s.sessionID, "node-01", "agentic", "wf-01", "")
+		content := sessionLogFixtureMakeMetaJSON(t, runID, s.sessionID, "node-01", "")
 		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-027: session[%d] sidecar write: %v", i, err)
 		}

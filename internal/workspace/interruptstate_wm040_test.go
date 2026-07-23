@@ -215,7 +215,6 @@ func TestWM040_SetInterruptStateToNone_AllInterruptValues(t *testing.T) {
 	}
 
 	for _, iv := range nonNoneValues {
-		iv := iv
 		t.Run(string(iv), func(t *testing.T) {
 			t.Parallel()
 

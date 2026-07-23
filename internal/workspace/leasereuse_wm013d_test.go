@@ -40,7 +40,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 			t.Fatalf("git worktree add A: %v\n%s", err, out)
 		}
 		leaseLockPathA := leaseFixtureLeaseLockPath(worktreePathA)
-		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now()))
 
 		// Release run A's lease.
 		leaseFixtureReleaseLock(t, leaseLockPathA)
@@ -73,7 +73,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 			t.Fatalf("git worktree add B: %v\n%s", err, out)
 		}
 		leaseLockPathB := leaseFixtureLeaseLockPath(worktreePathB)
-		leaseFixtureWriteLockAtomic(t, leaseLockPathB, leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPathB, leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now()))
 
 		// Run B's lease is at its own canonical path, not run A's.
 		if _, err := os.Stat(leaseLockPathB); err != nil {
@@ -107,7 +107,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 			t.Fatalf("git worktree add A: %v\n%s", err, out)
 		}
 		leaseLockPathA := leaseFixtureLeaseLockPath(worktreePathA)
-		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now()))
 		leaseFixtureReleaseLock(t, leaseLockPathA) // release run A
 
 		// A new run B tries to REUSE run A's path by writing its own run_id to
@@ -124,7 +124,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		// Simulate the violation: write run B's lock data at run A's path.
 		// In production, the workspace manager MUST NOT do this. We write it here
 		// to verify that the path/run_id disagreement is detectable.
-		badLockContent := leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now(), 3600)
+		badLockContent := leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now())
 		if err := os.WriteFile(leaseLockPathA, badLockContent, 0o600); err != nil {
 			t.Fatalf("WM-013d: WriteFile (simulated violation): %v", err)
 		}

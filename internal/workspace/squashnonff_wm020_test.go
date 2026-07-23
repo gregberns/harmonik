@@ -3,7 +3,6 @@ package workspace
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -130,11 +129,4 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 // Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
 func mergeBackFixtureIntegBranchName(suffix string) string {
 	return "harmonik/integration/" + suffix
-}
-
-// mergeBackFixtureMakeWorktreePath returns the worktree path for a given repo and suffix,
-// matching the path used by mergeBackFixtureMakeIntegWorktree.
-// Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
-func mergeBackFixtureMakeWorktreePath(repo, suffix string) string {
-	return filepath.Join(repo, ".harmonik", "worktrees", suffix)
 }

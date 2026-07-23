@@ -177,7 +177,7 @@ func TestEM015e_ComputeDiffHash_HashFormat(t *testing.T) {
 	}
 
 	for i, c := range hash {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if !isLowerHexDigit(c) {
 			t.Errorf("ComputeDiffHash: hash[%d] = %q; want lowercase hex character", i, c)
 			break
 		}

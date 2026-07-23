@@ -82,7 +82,6 @@ func TestParseReviewVerdict_B1a_AllVerdicts(t *testing.T) {
 		ReviewVerdictBlock,
 	}
 	for _, wantVerdict := range cases {
-		wantVerdict := wantVerdict
 		t.Run(wantVerdict, func(t *testing.T) {
 			t.Parallel()
 			v, err := parseReviewVerdict(parseVerdictFixtureJSON(wantVerdict), "test-target")

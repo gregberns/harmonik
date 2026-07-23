@@ -28,9 +28,9 @@ import (
 // in [1, 10] are accepted per WM-024.
 func TestValidateConflictResolutionAttemptCap_ValidRange(t *testing.T) {
 	t.Parallel()
-	for cap := ConflictResolutionAttemptCapMin; cap <= ConflictResolutionAttemptCapMax; cap++ {
-		if err := ValidateConflictResolutionAttemptCap(cap); err != nil {
-			t.Errorf("WM-024: ValidateConflictResolutionAttemptCap(%d) = %v; want nil", cap, err)
+	for attemptCap := ConflictResolutionAttemptCapMin; attemptCap <= ConflictResolutionAttemptCapMax; attemptCap++ {
+		if err := ValidateConflictResolutionAttemptCap(attemptCap); err != nil {
+			t.Errorf("WM-024: ValidateConflictResolutionAttemptCap(%d) = %v; want nil", attemptCap, err)
 		}
 	}
 }
@@ -40,14 +40,14 @@ func TestValidateConflictResolutionAttemptCap_ValidRange(t *testing.T) {
 func TestValidateConflictResolutionAttemptCap_OutOfRange(t *testing.T) {
 	t.Parallel()
 	cases := []int{0, -1, 11, 100}
-	for _, cap := range cases {
-		err := ValidateConflictResolutionAttemptCap(cap)
+	for _, attemptCap := range cases {
+		err := ValidateConflictResolutionAttemptCap(attemptCap)
 		if err == nil {
-			t.Errorf("WM-024: ValidateConflictResolutionAttemptCap(%d) = nil; want error", cap)
+			t.Errorf("WM-024: ValidateConflictResolutionAttemptCap(%d) = nil; want error", attemptCap)
 			continue
 		}
 		if !errors.Is(err, ErrConflictResolutionCapOutOfRange) {
-			t.Errorf("WM-024: ValidateConflictResolutionAttemptCap(%d) error does not wrap ErrConflictResolutionCapOutOfRange: %v", cap, err)
+			t.Errorf("WM-024: ValidateConflictResolutionAttemptCap(%d) error does not wrap ErrConflictResolutionCapOutOfRange: %v", attemptCap, err)
 		}
 	}
 }

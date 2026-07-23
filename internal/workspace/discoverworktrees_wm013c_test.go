@@ -32,7 +32,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 		}
 		leaseLockPath := LeaseLockPath(worktreePath)
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
-			leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+			leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 		_ = branch // TaskBranchName is exercised by CreateWorktree
 
@@ -281,7 +281,7 @@ func TestWM013c_DiscoverWorktreesBranchConvention(t *testing.T) {
 	worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 	leaseLockPath := LeaseLockPath(worktreePath)
 	leaseFixtureWriteLockAtomic(t, leaseLockPath,
-		leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 	// Confirm the branch exists at the expected task-branch name.
 	out, err := exec.CommandContext(t.Context(), "git", "-C", repo,

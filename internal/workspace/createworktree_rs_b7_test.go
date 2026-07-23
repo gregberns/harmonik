@@ -184,11 +184,10 @@ func TestRSB7_RemoteMkdirCreatesParentOnWorker(t *testing.T) {
 
 	var mkdirCalls []tmux.RecordingCall
 	rr := &tmux.RecordingRunner{
-		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
-			// For mkdir: succeed via /bin/mkdir so the parent is created.
-			// For git: run the real binary (sha is valid so worktree is created).
-			return exec.CommandContext(ctx, name, args...)
-		},
+		// Every command runs for real: mkdir via /bin/mkdir so the parent is
+		// created, git via the real binary (the sha is valid, so the worktree
+		// is created).
+		CmdFunc: exec.CommandContext,
 	}
 
 	cfg := NoWorktreeRootOverride().WithRunner(rr)

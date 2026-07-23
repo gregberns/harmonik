@@ -77,7 +77,7 @@ except BaseException:
 // worktreePath as argv[1]. env holds extra environment entries (e.g. HK_TEST_SLEEP).
 func runTrustUpsert(t *testing.T, home, program, worktreePath string, env ...string) error {
 	t.Helper()
-	cmd := exec.Command("python3", "-", worktreePath)
+	cmd := exec.CommandContext(t.Context(), "python3", "-", worktreePath)
 	cmd.Stdin = bytes.NewReader([]byte(program))
 	cmd.Env = append(os.Environ(), "HOME="+home)
 	cmd.Env = append(cmd.Env, env...)

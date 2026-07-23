@@ -170,7 +170,6 @@ func TestWM027a_ReadReviewVerdictEmptyFlagsAccepted(t *testing.T) {
 	t.Parallel()
 
 	for _, flagsJSON := range []string{"[]", "null"} {
-		flagsJSON := flagsJSON
 		t.Run("flags="+flagsJSON, func(t *testing.T) {
 			t.Parallel()
 
@@ -267,7 +266,6 @@ func TestWM027a_ReadReviewVerdictUnknownVerdict(t *testing.T) {
 	t.Parallel()
 
 	for _, bad := range []string{"UNKNOWN", "approve", "request_changes", "", "REJECT"} {
-		bad := bad
 		t.Run("verdict="+bad, func(t *testing.T) {
 			t.Parallel()
 

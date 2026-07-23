@@ -136,7 +136,7 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 // mergeBackFixtureSetupTaskBranch creates a tempRepo, adds a task worktree for the
 // given runID, and writes one commit per subject string. Returns (repo, initialSHA).
 // Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
-func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []string) (string, string) {
+func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []string) (repo, initialSHA string) {
 	t.Helper()
 
 	repo, sha := tempRepo(t)

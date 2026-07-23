@@ -189,7 +189,6 @@ func TestWM003_RunIDFilesystemSafetyRegex(t *testing.T) {
 	}
 
 	for _, tc := range valid {
-		tc := tc
 		t.Run("valid/"+tc.desc, func(t *testing.T) {
 			t.Parallel()
 			if !runIDValid(tc.input) {
@@ -199,7 +198,6 @@ func TestWM003_RunIDFilesystemSafetyRegex(t *testing.T) {
 	}
 
 	for _, tc := range filtered {
-		tc := tc
 		t.Run("invalid/"+tc.desc, func(t *testing.T) {
 			t.Parallel()
 			if runIDValid(tc.input) {

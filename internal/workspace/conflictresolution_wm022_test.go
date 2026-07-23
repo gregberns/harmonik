@@ -83,7 +83,7 @@ func conflictResFixtureSidecarWalk(t *testing.T, workspacePath string) []conflic
 		}
 		t.Fatalf("conflictResFixtureSidecarWalk ReadDir %q: %v", sessionsDir, err)
 	}
-	var metas []conflictResFixtureSessionMeta
+	metas := make([]conflictResFixtureSessionMeta, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -271,9 +271,9 @@ func TestWM022a_AllMechanicalBranchEscalatesDirectly(t *testing.T) {
 		//
 		// TODO(hk-8mwo.36): replace with actual workspace-manager dispatch call once
 		// conflict-resolution re-dispatch machinery is implemented.
-		cap := conflictResFixtureAttemptCapForRef("" /* null ref */)
-		if cap != 0 {
-			t.Errorf("WM-022a: attempt cap for null ref = %d; want 0 (skip re-dispatch)", cap)
+		attemptCap := conflictResFixtureAttemptCapForRef("" /* null ref */)
+		if attemptCap != 0 {
+			t.Errorf("WM-022a: attempt cap for null ref = %d; want 0 (skip re-dispatch)", attemptCap)
 		}
 
 		_ = runID // used to identify this test scenario
@@ -300,9 +300,9 @@ func TestWM022a_AllMechanicalBranchEscalatesDirectly(t *testing.T) {
 			t.Errorf("WM-022a: found agentic ref from mechanical-only sidecars; want null")
 		}
 
-		cap := conflictResFixtureAttemptCapForRef("" /* null ref */)
-		if cap != 0 {
-			t.Errorf("WM-022a: attempt cap for null ref = %d; want 0", cap)
+		attemptCap := conflictResFixtureAttemptCapForRef("" /* null ref */)
+		if attemptCap != 0 {
+			t.Errorf("WM-022a: attempt cap for null ref = %d; want 0", attemptCap)
 		}
 	})
 }
@@ -344,9 +344,9 @@ func TestWM024_ThreeAttemptDefaultCap(t *testing.T) {
 
 		// Any non-null implementer ref must yield cap = 3 by default.
 		agentType := "agentic-claude"
-		cap := conflictResFixtureAttemptCapForRef(agentType)
-		if cap != 3 {
-			t.Errorf("WM-024: default attempt cap = %d, want 3", cap)
+		attemptCap := conflictResFixtureAttemptCapForRef(agentType)
+		if attemptCap != 3 {
+			t.Errorf("WM-024: default attempt cap = %d, want 3", attemptCap)
 		}
 	})
 
@@ -371,13 +371,13 @@ func TestWM024_ThreeAttemptDefaultCap(t *testing.T) {
 
 		// Simulate: 3 attempts exhausted — resolve attempts all failed.
 		attemptsRecorded := 3
-		cap := conflictResFixtureAttemptCapForRef(string(*ws.ImplementerHandlerRef))
-		if cap != 3 {
-			t.Fatalf("WM-024: cap = %d, want 3", cap)
+		attemptCap := conflictResFixtureAttemptCapForRef(string(*ws.ImplementerHandlerRef))
+		if attemptCap != 3 {
+			t.Fatalf("WM-024: cap = %d, want 3", attemptCap)
 		}
 
 		// After cap-reach, escalation verdict must be produced.
-		escalated := conflictResFixtureIsCapReached(attemptsRecorded, cap)
+		escalated := conflictResFixtureIsCapReached(attemptsRecorded, attemptCap)
 		if !escalated {
 			t.Errorf("WM-024: 3 attempts recorded, cap = 3: escalated = false; want true")
 		}
@@ -395,10 +395,10 @@ func TestWM024_ThreeAttemptDefaultCap(t *testing.T) {
 		t.Parallel()
 
 		for attempts := 1; attempts <= 2; attempts++ {
-			cap := conflictResFixtureDefaultAttemptCap
-			escalated := conflictResFixtureIsCapReached(attempts, cap)
+			attemptCap := conflictResFixtureDefaultAttemptCap
+			escalated := conflictResFixtureIsCapReached(attempts, attemptCap)
 			if escalated {
-				t.Errorf("WM-024: %d attempts < cap %d: escalated = true; want false", attempts, cap)
+				t.Errorf("WM-024: %d attempts < cap %d: escalated = true; want false", attempts, attemptCap)
 			}
 		}
 	})
@@ -409,8 +409,8 @@ func TestWM024_ThreeAttemptDefaultCap(t *testing.T) {
 //
 // TODO(hk-8mwo.36): replace with workspace-manager attempt-tracking once
 // conflict-resolution re-dispatch machinery is implemented.
-func conflictResFixtureIsCapReached(attemptsRecorded, cap int) bool {
-	return attemptsRecorded >= cap
+func conflictResFixtureIsCapReached(attemptsRecorded, attemptCap int) bool {
+	return attemptsRecorded >= attemptCap
 }
 
 // TestWM024_OperatorConfigurableCapBounds verifies that the operator-configurable
@@ -424,19 +424,19 @@ func TestWM024_OperatorConfigurableCapBounds(t *testing.T) {
 	t.Parallel()
 
 	// Valid range [1, 10]: all must be accepted.
-	for cap := 1; cap <= 10; cap++ {
-		err := conflictResFixtureValidateAttemptCap(cap)
+	for attemptCap := 1; attemptCap <= 10; attemptCap++ {
+		err := conflictResFixtureValidateAttemptCap(attemptCap)
 		if err != nil {
-			t.Errorf("WM-024: cap = %d in [1,10]: ValidateAttemptCap returned error: %v", cap, err)
+			t.Errorf("WM-024: cap = %d in [1,10]: ValidateAttemptCap returned error: %v", attemptCap, err)
 		}
 	}
 
 	// Out-of-range: 0 and 11+ must be rejected.
 	outOfRange := []int{0, -1, 11, 100}
-	for _, cap := range outOfRange {
-		err := conflictResFixtureValidateAttemptCap(cap)
+	for _, attemptCap := range outOfRange {
+		err := conflictResFixtureValidateAttemptCap(attemptCap)
 		if err == nil {
-			t.Errorf("WM-024: cap = %d outside [1,10]: ValidateAttemptCap returned nil; want error", cap)
+			t.Errorf("WM-024: cap = %d outside [1,10]: ValidateAttemptCap returned nil; want error", attemptCap)
 		}
 	}
 }
@@ -448,8 +448,8 @@ func TestWM024_OperatorConfigurableCapBounds(t *testing.T) {
 //
 // TODO(hk-8mwo.36): replace with the real daemon-startup config validator once
 // the conflict-resolution re-dispatch machinery is implemented.
-func conflictResFixtureValidateAttemptCap(cap int) error {
-	if cap < 1 || cap > 10 {
+func conflictResFixtureValidateAttemptCap(attemptCap int) error {
+	if attemptCap < 1 || attemptCap > 10 {
 		return errConflictResCapOutOfRange
 	}
 	return nil

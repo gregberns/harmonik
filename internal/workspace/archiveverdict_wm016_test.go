@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -44,6 +45,9 @@ func archiveVerdictFixtureWriteSource(t *testing.T, workspacePath string) {
 // the canonical path ${workspace_path}/.harmonik/review.iter-<N>.json.
 func TestWM016_ArchivePathShape(t *testing.T) {
 	t.Parallel()
+	// Built rather than written as a "/ws" literal so the separator is not
+	// embedded in a filepath.Join argument.
+	wsRoot := filepath.Join(string(filepath.Separator), "ws")
 	cases := []struct {
 		iterN int
 		want  string
@@ -53,8 +57,8 @@ func TestWM016_ArchivePathShape(t *testing.T) {
 		{3, ".harmonik/review.iter-3.json"},
 	}
 	for _, tc := range cases {
-		got := ReviewVerdictArchivePath("/ws", tc.iterN)
-		want := filepath.Join("/ws", tc.want)
+		got := ReviewVerdictArchivePath(wsRoot, tc.iterN)
+		want := filepath.Join(wsRoot, tc.want)
 		if got != want {
 			t.Errorf("ReviewVerdictArchivePath(%d): got %q, want %q", tc.iterN, got, want)
 		}
@@ -106,7 +110,7 @@ func TestWM016_ArchivePreservesContent(t *testing.T) {
 
 	dst := ReviewVerdictArchivePath(workspacePath, 2)
 	got := mustReadFile(t, dst)
-	if string(got) != string(payload) {
+	if !bytes.Equal(got, payload) {
 		t.Errorf("archived content mismatch: got %q, want %q", got, payload)
 	}
 }

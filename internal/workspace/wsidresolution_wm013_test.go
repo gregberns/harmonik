@@ -75,7 +75,7 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
-		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 		// Reconstruct the lease-lock path from run_id alone.
 		reconstructedLeasePath := filepath.Join(repo, ".harmonik", "worktrees", runID, ".harmonik", "lease.lock")

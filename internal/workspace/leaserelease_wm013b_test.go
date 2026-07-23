@@ -82,7 +82,7 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			// helper for the initial write. WriteLeaseLockAtomic correctness is
 			// separately covered in TestWM013a_LeaseLockCanonicalPathAndContent.
 			leaseLockPath := LeaseLockPath(worktreePath)
-			leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+			leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 			// Verify lease-lock exists before terminal transition.
 			if _, err := os.Stat(leaseLockPath); err != nil {
@@ -198,7 +198,7 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 		// leaseFixtureSanitizeRunID). We use the fixture helper for the lock write
 		// only; the marker and release use production functions.
 		leaseLockPath := LeaseLockPath(worktreePath)
-		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 		// Simulate crash: write marker, but DON'T remove the lock yet.
 		if err := WriteLeaseReleasedMarker(worktreePath, runID, workspaceID, "post_escalation"); err != nil {

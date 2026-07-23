@@ -144,7 +144,6 @@ func TestHC068_ReadAutoStatusMarkerNonFailStatusTreatedAbsent(t *testing.T) {
 		"UNKNOWN",
 	}
 	for _, status := range nonFailStatuses {
-		status := status
 		t.Run("status="+status, func(t *testing.T) {
 			t.Parallel()
 
@@ -188,7 +187,6 @@ func TestHC068_ReadAutoStatusMarkerAcceptsFAILWithEachClass(t *testing.T) {
 		core.FailureClassCompilationLoop, // overridden to structural
 	}
 	for _, fc := range classes {
-		fc := fc
 		t.Run("class="+string(fc), func(t *testing.T) {
 			t.Parallel()
 
@@ -241,7 +239,6 @@ func TestHC068_ReadAutoStatusMarkerOutOfSetClassHintDropped(t *testing.T) {
 
 	badClasses := []string{"unknown", "STRUCTURAL", "FAIL", ""}
 	for _, bad := range badClasses {
-		bad := bad
 		t.Run("class="+bad, func(t *testing.T) {
 			t.Parallel()
 
@@ -416,7 +413,6 @@ func TestHC068_ReadAutoStatusMarkerHappyPathAllClasses(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run("class="+tc.inputClass, func(t *testing.T) {
 			t.Parallel()
 

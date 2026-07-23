@@ -16,7 +16,6 @@ func TestWM018a_MergeNodeKind_Valid(t *testing.T) {
 
 	valid := []MergeNodeKind{MergeNodeKindNonAgentic, MergeNodeKindAgentic}
 	for _, k := range valid {
-		k := k
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
 			if !k.Valid() {
@@ -27,7 +26,6 @@ func TestWM018a_MergeNodeKind_Valid(t *testing.T) {
 
 	invalid := []MergeNodeKind{"", "unknown", "both", "none"}
 	for _, k := range invalid {
-		k := k
 		t.Run("invalid/"+string(k), func(t *testing.T) {
 			t.Parallel()
 			if k.Valid() {
@@ -226,7 +224,6 @@ func TestWM018a_IsConflictMarker(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		c := c
 		t.Run(c.xy+"/"+c.comment, func(t *testing.T) {
 			t.Parallel()
 			got := isConflictMarker(c.xy)

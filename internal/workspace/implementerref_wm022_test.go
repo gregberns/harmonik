@@ -276,7 +276,6 @@ func TestWM022_AgentTypeIsAgentic(t *testing.T) {
 		"merge-node",
 	}
 	for _, at := range nonAgenticCases {
-		at := at
 		t.Run("non-agentic/"+string(at), func(t *testing.T) {
 			t.Parallel()
 			if agentTypeIsAgentic(at) {
@@ -292,7 +291,6 @@ func TestWM022_AgentTypeIsAgentic(t *testing.T) {
 		"pi-twin",
 	}
 	for _, at := range agenticCases {
-		at := at
 		t.Run("agentic/"+string(at), func(t *testing.T) {
 			t.Parallel()
 			if !agentTypeIsAgentic(at) {

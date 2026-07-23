@@ -36,7 +36,7 @@ func TestWM028_BeadIDPropagatesIntoSessionMetadata(t *testing.T) {
 		}
 
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", beadID)
+		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", beadID)
 
 		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-028: atomic write: %v", err)
@@ -83,7 +83,7 @@ func TestWM028_BeadIDPropagatesIntoSessionMetadata(t *testing.T) {
 
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
 		// Empty beadID → sessionLogFixtureMakeMetaJSON omits the field.
-		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 
 		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-028: atomic write: %v", err)
@@ -121,7 +121,7 @@ func TestWM028_BeadIDPropagatesIntoSessionMetadata(t *testing.T) {
 		}
 
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, namespacedNodeID, "agentic", "wf-01", beadID)
+		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, namespacedNodeID, beadID)
 
 		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-028: atomic write: %v", err)

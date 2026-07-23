@@ -122,7 +122,6 @@ func TestWM032_FailedRunStateIsDiscarded(t *testing.T) {
 	}
 
 	for _, iv := range interruptValues {
-		iv := iv // capture for parallel sub-test
 		t.Run(string(iv), func(t *testing.T) {
 			t.Parallel()
 
@@ -176,7 +175,7 @@ func TestWM033_OrphanSweepContentFirstStaleness(t *testing.T) {
 
 		// PID 0 is never a live process.
 		deadPID := 0
-		content := leaseFixtureMakeLockJSON("some-run-id", deadPID, time.Now(), 3600)
+		content := leaseFixtureMakeLockJSON("some-run-id", deadPID, time.Now())
 		stale := failedRunFixtureIsLeaseLockStale(content)
 		if !stale {
 			t.Errorf("WM-033: dead PID %d: stale = false; want true", deadPID)
@@ -188,7 +187,7 @@ func TestWM033_OrphanSweepContentFirstStaleness(t *testing.T) {
 
 		// Own PID is definitely live.
 		livePID := os.Getpid()
-		content := leaseFixtureMakeLockJSON("some-run-id", livePID, time.Now(), 3600)
+		content := leaseFixtureMakeLockJSON("some-run-id", livePID, time.Now())
 		stale := failedRunFixtureIsLeaseLockStale(content)
 		if stale {
 			t.Errorf("WM-033: live PID %d: stale = true; want false", livePID)
@@ -290,7 +289,7 @@ func TestWM033_GitWorktreePruneAfterSweep(t *testing.T) {
 // contains reports whether s contains substr.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr ||
-		len(s) > 0 && containsAt(s, substr))
+		s != "" && containsAt(s, substr))
 }
 
 func containsAt(s, substr string) bool {
@@ -501,7 +500,6 @@ func TestWM036_VerdictDispositionClassification(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.verdict, func(t *testing.T) {
 			t.Parallel()
 
@@ -593,7 +591,6 @@ func TestWM036_AcceptCloseAndEscalateProduceNoRerun(t *testing.T) {
 	t.Parallel()
 
 	for _, verdict := range []string{"accept-close-with-note", "escalate-to-human"} {
-		verdict := verdict
 		t.Run(verdict, func(t *testing.T) {
 			t.Parallel()
 
@@ -625,7 +622,6 @@ func TestWM036_NoOpAcceptClearsInterruptState(t *testing.T) {
 	}
 
 	for _, iv := range interruptedValues {
-		iv := iv
 		t.Run(string(iv), func(t *testing.T) {
 			t.Parallel()
 
@@ -692,7 +688,6 @@ func TestWM037_InterruptStateOrthogonalToInFlightLifecycle(t *testing.T) {
 
 	for _, ls := range inFlightStates {
 		for _, is := range interruptValues {
-			ls, is := ls, is
 			name := string(ls) + "/" + string(is)
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
@@ -812,7 +807,11 @@ func failedRunFixtureAppendJSONLMarker(t *testing.T, path string, marker []byte)
 	if err != nil {
 		t.Fatalf("failedRunFixtureAppendJSONLMarker OpenFile %q: %v", path, err)
 	}
-	line := append(marker, '\n')
+	// Own buffer: append(marker, '\n') would write into marker's spare capacity
+	// and mutate the caller's slice.
+	line := make([]byte, 0, len(marker)+1)
+	line = append(line, marker...)
+	line = append(line, '\n')
 	if _, err := f.Write(line); err != nil {
 		_ = f.Close()
 		t.Fatalf("failedRunFixtureAppendJSONLMarker Write: %v", err)

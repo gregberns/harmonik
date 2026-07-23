@@ -10,9 +10,17 @@ import (
 	"time"
 )
 
+// sessionLogFixtureAgentType is the agent_type every sidecar fixture carries.
+const sessionLogFixtureAgentType = "agentic"
+
+// sessionLogFixtureWorkflowID is the workflow_id every sidecar fixture carries.
+const sessionLogFixtureWorkflowID = "wf-01"
+
 // sessionLogFixtureMakeMetaJSON builds a minimal harmonik.meta.json payload
 // with all required WM-026 fields. beadID may be empty to omit bead_id.
-func sessionLogFixtureMakeMetaJSON(t *testing.T, runID, sessionID, nodeID, agentType, workflowID, beadID string) []byte {
+// agent_type and workflow_id are fixed at sessionLogFixtureAgentType /
+// sessionLogFixtureWorkflowID — no test varies either.
+func sessionLogFixtureMakeMetaJSON(t *testing.T, runID, sessionID, nodeID, beadID string) []byte {
 	t.Helper()
 	type meta struct {
 		RunID         string  `json:"run_id"`
@@ -28,8 +36,8 @@ func sessionLogFixtureMakeMetaJSON(t *testing.T, runID, sessionID, nodeID, agent
 		RunID:         runID,
 		SessionID:     sessionID,
 		NodeID:        nodeID,
-		AgentType:     agentType,
-		WorkflowID:    workflowID,
+		AgentType:     sessionLogFixtureAgentType,
+		WorkflowID:    sessionLogFixtureWorkflowID,
 		LaunchedAt:    time.Now().UTC().Format(time.RFC3339),
 		SchemaVersion: "1",
 	}
@@ -140,7 +148,7 @@ func TestWM026_SidecarAtomicWrite(t *testing.T) {
 	}
 
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 
 	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 		t.Fatalf("WM-026: atomic write failed: %v", err)

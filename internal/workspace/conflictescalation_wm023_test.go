@@ -84,7 +84,6 @@ func TestWM023_StateGuard_RequiresConflictResolving(t *testing.T) {
 	}
 
 	for _, s := range nonConflictStates {
-		s := s
 		t.Run(string(s), func(t *testing.T) {
 			t.Parallel()
 
@@ -346,7 +345,7 @@ func TestWM023_AllEscalateDecisionsRouteToEscalation(t *testing.T) {
 	noRetire := func(_ core.HandlerRef) bool { return false }
 	retireAll := func(_ core.HandlerRef) bool { return true }
 	activeRef := core.HandlerRef("agentic-claude")
-	cap := DefaultConflictResolutionAttemptCap
+	attemptCap := DefaultConflictResolutionAttemptCap
 
 	cases := []struct {
 		name     string
@@ -372,19 +371,18 @@ func TestWM023_AllEscalateDecisionsRouteToEscalation(t *testing.T) {
 		{
 			name:     "EscalateCapExhausted (WM-024 / WM-023)",
 			ref:      &activeRef,
-			attempts: cap,
+			attempts: attemptCap,
 			retire:   noRetire,
 			wantDec:  ConflictResolveEscalateCapExhausted,
 		},
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			// Decision must be an escalate variant (not Dispatch).
-			dec := ShouldDispatchConflictResolver(tc.ref, tc.attempts, cap, tc.retire)
+			dec := ShouldDispatchConflictResolver(tc.ref, tc.attempts, attemptCap, tc.retire)
 			if dec != tc.wantDec {
 				t.Fatalf("WM-023: ShouldDispatchConflictResolver = %q; want %q", dec, tc.wantDec)
 			}

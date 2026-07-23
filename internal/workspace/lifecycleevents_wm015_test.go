@@ -159,7 +159,7 @@ type workspaceEventsFixtureConflictEscalationPayload struct {
 // workspaceEventsFixtureMakeWorkspace returns a *Workspace in the initial
 // (pre-create) state ready for threading through Transition calls.
 // The WorkspaceID, RunID, BranchName, and Path fields are deterministic.
-func workspaceEventsFixtureMakeWorkspace(runID string, repoPath string) *Workspace {
+func workspaceEventsFixtureMakeWorkspace(runID, repoPath string) *Workspace {
 	return &Workspace{
 		WorkspaceID:    "ws-" + runID,
 		RunID:          core.RunID{},
@@ -225,6 +225,11 @@ func workspaceEventsFixtureTransitionAndRecord(
 		rec.record("workspace_merge_status", next, e)
 	case core.WorkspaceStateDiscarded:
 		rec.record("workspace_discarded", next, extra)
+	case core.WorkspaceStateReady, core.WorkspaceStateConflictResolving:
+		// No lifecycle event is emitted on entry to these two states per §7.1.
+		// Named explicitly rather than left to the default so that a newly added
+		// workspace state fails the exhaustiveness check here instead of
+		// silently recording nothing.
 	}
 }
 
@@ -336,7 +341,7 @@ func TestWM015_LeasedEmittedAfterWM016Gates(t *testing.T) {
 		t.Fatalf("WM-015: MkdirAll sessionDir: %v", err)
 	}
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	sidecarContent := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+	sidecarContent := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, sidecarContent); err != nil {
 		t.Fatalf("WM-015: sidecar write: %v", err)
 	}
@@ -348,7 +353,7 @@ func TestWM015_LeasedEmittedAfterWM016Gates(t *testing.T) {
 
 	// Step (d): write lease-lock atomically (WM-013a discipline).
 	leaseFixtureWriteLockAtomic(t, leaseLockPath,
-		leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 	// Assert lease-lock is on disk BEFORE workspace_leased fires.
 	if _, err := os.Stat(leaseLockPath); err != nil {

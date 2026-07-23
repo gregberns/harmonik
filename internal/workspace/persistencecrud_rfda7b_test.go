@@ -176,7 +176,6 @@ func TestRFDA7b_PersistenceCRUD_MultipleTerminalPaths(t *testing.T) {
 	}
 
 	for i, reason := range terminalReasons {
-		i, reason := i, reason
 		t.Run(reason, func(t *testing.T) {
 			t.Parallel()
 
@@ -194,7 +193,7 @@ func TestRFDA7b_PersistenceCRUD_MultipleTerminalPaths(t *testing.T) {
 			// Write a lease-lock (simulating the leased state).
 			leaseLockPath := LeaseLockPath(dir)
 			leaseFixtureWriteLockAtomic(t, leaseLockPath,
-				leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+				leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 			// Write marker before unlink.
 			if err := WriteLeaseReleasedMarker(dir, runID, workspaceID, reason); err != nil {
@@ -259,7 +258,6 @@ func TestRFDA7b_PersistenceCRUD_InterruptStateIntegration(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -332,7 +330,6 @@ func TestRFDA7b_PersistenceCRUD_WorkspaceIDFromRunIDStability(t *testing.T) {
 	}
 
 	for _, runID := range runIDs {
-		runID := runID
 		t.Run(runID, func(t *testing.T) {
 			t.Parallel()
 

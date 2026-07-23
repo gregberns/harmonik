@@ -49,7 +49,7 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 				t.Fatalf("git worktree add %q: %v\n%s", runID, err, out)
 			}
 			lp := leaseFixtureLeaseLockPath(worktreePath)
-			leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+			leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 		}
 
 		// --- Step (a): enumerate subdirectories of <repo>/.harmonik/worktrees/ ---
@@ -175,7 +175,7 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		wantPID := os.Getpid()
 		wantCreatedAt := time.Now().UTC()
 		lp := leaseFixtureLeaseLockPath(worktreePath)
-		leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, wantPID, wantCreatedAt, 3600))
+		leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, wantPID, wantCreatedAt))
 
 		// Simulate discovery: parse the lock file.
 		data := mustReadFile(t, lp)

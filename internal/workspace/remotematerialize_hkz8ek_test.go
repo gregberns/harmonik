@@ -29,8 +29,8 @@ import (
 // exec.Command("true") so commands always succeed without side effects.
 func newNoOpRecorder() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-			return exec.Command("true")
+		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "true")
 		},
 	}
 }
@@ -44,7 +44,7 @@ const (
 // `sh -lc "... printf %s <b64> | base64 -d > <path>"` command. Returns the
 // decoded content and the destination path. Fails the test if the call does not
 // match the expected remote-write shape.
-func decodeRemoteWriteContent(t *testing.T, call tmux.RecordingCall) (content string, dest string) {
+func decodeRemoteWriteContent(t *testing.T, call tmux.RecordingCall) (content, dest string) {
 	t.Helper()
 	if call.Name != "sh" {
 		t.Fatalf("remote write: call.Name = %q, want sh", call.Name)
@@ -247,7 +247,7 @@ func TestEnsureWorktreeTrustVia_PipesProgramOnStdin(t *testing.T) {
 			if name == "python3" {
 				return exec.CommandContext(c, "sh", "-c", "cat > "+capFile)
 			}
-			return exec.Command("true")
+			return exec.CommandContext(c, "true")
 		},
 	}
 

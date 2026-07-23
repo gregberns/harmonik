@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -147,7 +148,7 @@ func TestCHB028_ReAttachIdempotency(t *testing.T) {
 
 	after := mustReadFile(t, AgentTaskPath(workspacePath))
 
-	if string(after) != string(original) {
+	if !bytes.Equal(after, original) {
 		t.Errorf("CHB-028 re-attach: file was overwritten; original:\n%s\nafter:\n%s",
 			string(original), string(after))
 	}

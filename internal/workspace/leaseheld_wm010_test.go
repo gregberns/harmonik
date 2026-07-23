@@ -48,7 +48,7 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 		}
 		leaseLockPath := filepath.Join(leaseLockDir, "lease.lock")
 		pid := os.Getpid()
-		lockContent := leaseFixtureMakeLockJSON(runID, pid, time.Now(), 3600)
+		lockContent := leaseFixtureMakeLockJSON(runID, pid, time.Now())
 		leaseFixtureWriteLockAtomic(t, leaseLockPath, lockContent)
 
 		// Verify the lease-lock exists at the canonical path.
@@ -133,7 +133,7 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 				t.Fatalf("MkdirAll leaseLockDir: %v", err)
 			}
 			leaseLockPath := filepath.Join(leaseLockDir, "lease.lock")
-			lockContent := leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600)
+			lockContent := leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now())
 			leaseFixtureWriteLockAtomic(t, leaseLockPath, lockContent)
 		}
 

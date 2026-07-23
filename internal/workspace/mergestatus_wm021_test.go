@@ -228,7 +228,7 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 			t.Errorf("WM-021: merge_commit_hash length = %d, want 40 (full SHA)", len(integTip))
 		}
 		for _, c := range integTip {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			if !isLowerHexDigit(c) {
 				t.Errorf("WM-021: merge_commit_hash %q contains non-hex char %q", integTip, c)
 				break
 			}

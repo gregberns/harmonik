@@ -21,18 +21,10 @@ var runIDRegex = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 // construction. Post-MVH ID-scheme extensions must preserve this invariant or
 // declare an escape rule before adoption (WM-002).
 func runIDValid(s string) bool {
-	if len(s) == 0 {
+	if s == "" {
 		return false
 	}
 	return runIDRegex.MatchString(s)
-}
-
-// canonicalWorktreePath returns the canonical worktree path for a given repo root
-// and run_id per workspace-model.md §4.2 WM-002:
-//
-//	<repo>/.harmonik/worktrees/<run_id>/
-func canonicalWorktreePath(repo, runID string) string {
-	return filepath.Join(repo, ".harmonik", "worktrees", runID) + string(filepath.Separator)
 }
 
 // tempRepo initialises a git repository in t.TempDir() with a single initial commit
@@ -48,7 +40,7 @@ func tempRepo(t *testing.T) (repoPath, initialSHA string) {
 
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -70,12 +62,12 @@ func tempRepo(t *testing.T) (repoPath, initialSHA string) {
 	run("commit", "-m", "Initial commit")
 
 	// Capture the initial commit SHA for use as a deterministic parent_commit.
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	out, err := exec.CommandContext(t.Context(), "git", "-C", dir, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("rev-parse HEAD: %v", err)
 	}
 	sha := string(out)
-	if len(sha) > 0 && sha[len(sha)-1] == '\n' {
+	if sha != "" && sha[len(sha)-1] == '\n' {
 		sha = sha[:len(sha)-1]
 	}
 
@@ -100,7 +92,7 @@ func tempRepo(t *testing.T) (repoPath, initialSHA string) {
 // (hk-8mwo.67 owns the lease-lock format; the Cat 3 detector will own the reconciliation
 // routing logic).
 func classifyCrashEvidence(repo, runID string) (string, error) {
-	// Strip any trailing separator that canonicalWorktreePath appends.
+	// The canonical worktree path per WM-002.
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
 	// Confirm the worktree directory exists on disk.
@@ -163,4 +155,14 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatalf("mustReadFile %q: %v", path, err)
 	}
 	return data
+}
+
+// isLowerHexDigit reports whether r is one of 0-9 or a-f.
+//
+// Shared by the git-SHA and diff-hash assertions, which both check that a hash
+// string is lowercase hex. Naming the predicate keeps the intent readable at
+// the call site; the inline form it replaces read as a negated disjunction that
+// staticcheck kept asking to invert into something harder to follow.
+func isLowerHexDigit(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
 }

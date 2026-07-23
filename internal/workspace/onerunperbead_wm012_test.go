@@ -52,7 +52,7 @@ func TestWM012_OneRunPerBeadAtATime(t *testing.T) {
 			t.Fatalf("git worktree add A: %v\n%s", err, out)
 		}
 		leaseLockPathA := leaseFixtureLeaseLockPath(worktreePathA)
-		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now()))
 
 		// While run A's lease is live, a second run B for the same bead MUST NOT start.
 		// The check: the lease-lock file for run A exists → block.
@@ -86,7 +86,7 @@ func TestWM012_OneRunPerBeadAtATime(t *testing.T) {
 			t.Fatalf("git worktree add A: %v\n%s", err, out)
 		}
 		leaseLockPathA := leaseFixtureLeaseLockPath(worktreePathA)
-		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now()))
 
 		// Run A reaches terminal — lease released.
 		leaseFixtureReleaseLock(t, leaseLockPathA)
@@ -111,7 +111,7 @@ func TestWM012_OneRunPerBeadAtATime(t *testing.T) {
 			t.Fatalf("git worktree add B: %v\n%s", err, out)
 		}
 		leaseLockPathB := leaseFixtureLeaseLockPath(worktreePathB)
-		leaseFixtureWriteLockAtomic(t, leaseLockPathB, leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPathB, leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now()))
 
 		// Run B's lease is live, run A's is absent.
 		if _, err := os.Stat(leaseLockPathB); err != nil {

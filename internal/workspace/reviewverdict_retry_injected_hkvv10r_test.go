@@ -281,7 +281,6 @@ func TestParseReviewVerdict_TruncatedAtNBoundariesNeverApprove(t *testing.T) {
 	}
 
 	for n := 1; n < len(full); n++ {
-		n := n
 		t.Run(fmt.Sprintf("offset_%d_of_%d", n, len(full)), func(t *testing.T) {
 			t.Parallel()
 			truncated := full[:n]

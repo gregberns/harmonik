@@ -106,16 +106,26 @@ func ProbePidfileLock(projectDir string) (PidfileLockStatus, int, error) {
 
 	// Step 4: probe kill(pid, 0).
 	killErr := syscall.Kill(pid, 0)
-	if killErr != nil {
-		if errors.Is(killErr, syscall.ESRCH) {
-			// PID is dead: stale pidfile left by a crashed daemon.
-			return PidfileLockStatusStale, pid, nil
-		}
+	switch {
+	case killErr == nil:
+		// Process exists and is signallable — continue to step 4a.
+	case errors.Is(killErr, syscall.EPERM):
+		// EPERM means the process EXISTS but belongs to another uid, so we may
+		// not signal it. That is the opposite of "gone", and it must continue to
+		// step 4a like a successful probe. Reading permission-denied as "process
+		// is gone" — which this branch used to do, despite step 4a's comment
+		// claiming otherwise — would let a second daemon declare a live owner's
+		// pidfile stale and take it over, producing two daemons on one project.
+	case errors.Is(killErr, syscall.ESRCH):
+		// PID is dead: stale pidfile left by a crashed daemon.
+		return PidfileLockStatusStale, pid, nil
+	default:
 		// Other kill error (e.g., EINVAL for pid <= 0): treat as stale.
 		return PidfileLockStatusStale, pid, nil
 	}
 
-	// Step 4a: kill(pid, 0) succeeded (or EPERM — process exists).
+	// Step 4a: kill(pid, 0) succeeded, or reported EPERM — either way the
+	// process exists.
 	// The flock was acquirable but the PID is alive. Attempt optional
 	// platform-specific corroboration to distinguish two sub-cases:
 	//
@@ -137,7 +147,7 @@ func ProbePidfileLock(projectDir string) (PidfileLockStatus, int, error) {
 	// recycled-PID (non-harmonik cmdline ⇒ Stale) from a live harmonik daemon
 	// that lost its flock (harmonik cmdline ⇒ Ambiguous)."
 	cmdline, ok := probePidCmdline(pid)
-	if ok && len(cmdline) > 0 {
+	if ok && cmdline != "" {
 		if strings.Contains(cmdline, "harmonik") {
 			// A harmonik process holds this PID but not the flock: ambiguous.
 			return PidfileLockStatusAmbiguous, pid, ErrPidfileAmbiguous

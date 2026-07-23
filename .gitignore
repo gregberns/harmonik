@@ -132,3 +132,23 @@ HANDOFF.md
 # tracked elsewhere before this rule; whether THOSE belong in git is a separate
 # operator call, and a blanket *.ctx ignore would half-fix it.)
 scenarios/**/testdata/.harmonik/
+
+# Per-type schema/TS dump produced by an EXTERNAL tool, not by this repo:
+#   codex app-server generate-json-schema --out testdata/codex-app-server/gen
+#   codex app-server generate-ts          --out testdata/codex-app-server/gen
+# 852 files / 5.7 MB, read by zero Go code, and a redundant expansion of the
+# canonical single-blob schema we DO track (testdata/codex-app-server/protocol-schema.json,
+# captured from codex-cli 0.142.5 — see testdata/codex-app-server/T0-findings.md).
+# Tracking it would pin us to one external codex version, which this project
+# deliberately does not do.
+testdata/codex-app-server/gen/
+
+# Agent-written durable notes (operator feedback, project findings). This is
+# session-produced state, not source: agents write here mid-session, so tracking
+# it would make routine sessions dirty the tree. Same category as the two rules
+# above — those are per-worktree daemon-materialized files, and the crew-JSON one
+# was added after a tracked copy dirtied the merge index during a fleet-wide
+# rebase. Ignoring does NOT delete anything: the files stay on disk, they are
+# simply not carried by git. If these notes should survive a machine loss, back
+# them up outside the working tree rather than tracking them here.
+.memory/

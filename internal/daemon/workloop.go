@@ -3214,13 +3214,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		beadRecord,
 		core.AgentType(""), // queue default (hk-4x3rg not landed)
 		core.AgentType(""), // node default (per-node override in driveDotWorkflow)
-		deps.defaultHarness,
+		env.DefaultHarness,
 	)
 	resolvedModel, resolvedEffort := ResolveModelPreference(
 		ctx,
 		beadRecord.Labels,
 		resolvedAgentType,
-		deps.projectCfg,
+		env.ProjectCfg,
 		deps.bus,
 		string(beadID),
 	)
@@ -3234,7 +3234,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// StartFromRefError use below, and return before any launch-spec is built.
 	resolvedProfile, profErr := resolvePiProfile(
 		ctx, beadRecord.Labels, resolvedAgentType,
-		deps.projectCfg.Harnesses.Pi, deps.bus, string(beadID),
+		env.ProjectCfg.Harnesses.Pi, deps.bus, string(beadID),
 	)
 	if profErr != nil {
 		reopenTID, _ := deps.tidGen.Next()
@@ -3261,7 +3261,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if resolvedAgentType == core.AgentTypePi {
 		resolvedProvider := resolvedProfile.Provider
 		if resolvedProfile == (PiProfileConfig{}) {
-			resolvedProvider = deps.projectCfg.Harnesses.Pi.Provider
+			resolvedProvider = env.ProjectCfg.Harnesses.Pi.Provider
 		}
 		if rh, ok := deps.runRegistry.Get(runID); ok && rh != nil {
 			rh.SetResolvedProvider(resolvedProvider)
@@ -3856,9 +3856,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			deps.launchSpecBuilder = routedLaunchSpecBuilder(
 				deps.harnessRegistry,
 				beadRecord,
-				core.AgentType(""),  // queue default: per-queue harness field not yet landed (hk-4x3rg)
-				core.AgentType(""),  // node default: overridden per-node in driveDotWorkflow (T5/T12)
-				deps.defaultHarness, // global default: Config.DefaultHarness (empty → built-in claude-code)
+				core.AgentType(""), // queue default: per-queue harness field not yet landed (hk-4x3rg)
+				core.AgentType(""), // node default: overridden per-node in driveDotWorkflow (T5/T12)
+				env.DefaultHarness, // global default: Config.DefaultHarness (empty → built-in claude-code)
 				deps.bus,
 			)
 		} else {

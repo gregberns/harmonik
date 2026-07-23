@@ -155,8 +155,11 @@ Handoff files live at:
 ```
 
 (the same missions tree crews use — `<assessor_name>` is the frontmatter
-`assessor_name`). The `.harmonik/` tree is gitignored: handoff files do NOT appear
-in `git status` and are NOT committed.
+`assessor_name`). Like crew missions, assessor handoffs **are tracked in git**:
+`/.harmonik/*` is ignored broadly but `!/.harmonik/crew` and
+`!/.harmonik/crew/missions` re-include this path, so these files appear in
+`git status` and are committed on purpose (hk-ev9e). See
+`specs/crew-handoff-schema.md` §2.2 for the full ignore/track breakdown.
 
 **The admiral is responsible for creating this file before calling
 `harmonik crew start assessor --mission <path>`.** C2 does not create or validate

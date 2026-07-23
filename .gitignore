@@ -84,10 +84,17 @@
 *.env.txt
 edited.env.txt
 
-# Per-thread session handoffs (operator/agent working artifacts). The canonical
-# HANDOFF.md stays tracked; per-thread HANDOFF-<name>.md are scratch and MUST be
-# ignored — otherwise the daemon's worktree-escape detector false-positives on
-# them as main-repo contamination and fails dispatched beads (hk-veoht follow-up).
+# Session handoffs (operator/agent working artifacts) — ALL of them are untracked,
+# the repo-root HANDOFF.md included. Two independent reasons, both load-bearing:
+#   1. HANDOFF.md is a per-session artifact, not source. While it was tracked, a
+#      checkout/revert would overwrite the live session's baton with a stale one
+#      (15382e4f1, "session artifact was tracked, causing reverts to stale handoffs").
+#   2. Per-thread HANDOFF-<name>.md are scratch; tracked or merely dirty, the daemon's
+#      worktree-escape detector reads them as main-repo contamination and fails
+#      dispatched beads (hk-veoht follow-up).
+# Consequence, by design: a handoff has NO git history and NO copy on a fresh clone.
+# Do NOT "restore" tracking — capture anything durable in a doc, spec, or bead instead.
+HANDOFF.md
 HANDOFF-*.md
 
 # Claude Code session scheduler lock
@@ -113,8 +120,6 @@ docs/qa-scratch/
 # Python bytecode
 __pycache__/
 *.pyc
-
-HANDOFF.md
 
 # Daemon-materialized per-worktree; must NOT be tracked (CHB-005/hk-jvzc2, hk-5isix fleet-wide rebase-abort)
 .claude/settings.json

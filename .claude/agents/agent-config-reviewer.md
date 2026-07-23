@@ -76,8 +76,16 @@ Perform all four checks in order.
 Compare the current `CLAUDE.md` / `AGENTS.md` content against the normative
 `agent-configuration.md`:
 
-- Is the entry ritual present and correct (read order: `AGENT_INDEX.md` → `STATUS.md`
-  → `.harmonik/context/captain-lanes.md` → `HANDOFF.md`)? `TASKS.md` and
+- Is the entry ritual present and correct? The read order is **role-scoped**; two
+  different orders for two roles is CORRECT, not drift:
+  - **captain** — `AGENT_INDEX.md` → `STATUS.md` → `.harmonik/context/captain-lanes.md`
+    → `HANDOFF.md` (four steps).
+  - **crew / implementer-orchestrator** — `AGENT_INDEX.md` → `STATUS.md` → `HANDOFF.md`
+    (three steps; no `captain-lanes.md` — its own tier header says "LOADED BY: captain
+    @ STARTUP Step 0b; NOT loaded by crews or implementers").
+
+  Flag only if a role's order is absent, internally contradictory, or stated
+  unconditionally as everyone's. Do NOT flatten the lists to match. `TASKS.md` and
   `SESSION_HANDOFF.md` are dead paths from the older ritual; do not reinstate them.
 - Are the hard don'ts present?
 - Are pointers current — do the named docs still exist at the cited paths?

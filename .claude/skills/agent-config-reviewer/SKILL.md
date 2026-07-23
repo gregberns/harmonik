@@ -86,9 +86,20 @@ Perform all five checks in order. Emit findings per check before the final verdi
 Compare the current `CLAUDE.md` / `AGENTS.md` content against the normative
 `agent-configuration.md` (§Repo-root AGENTS.md — what it contains):
 
-- Is the entry ritual present and correct (read order: `AGENT_INDEX.md` → `STATUS.md`
-  → `.harmonik/context/captain-lanes.md` → `HANDOFF.md`)? Two paths from the older
-  ritual no longer resolve and MUST NOT be reinstated: `TASKS.md` was renamed to
+- Is the entry ritual present and correct? The read order is **role-scoped**; an
+  `AGENTS.md` that states two different orders for two roles is CORRECT, not drift:
+  - **captain** — `AGENT_INDEX.md` → `STATUS.md` → `.harmonik/context/captain-lanes.md`
+    → `HANDOFF.md` (four steps).
+  - **crew / implementer-orchestrator** — `AGENT_INDEX.md` → `STATUS.md` → `HANDOFF.md`
+    (three steps; no `captain-lanes.md`). The distinction is deliberate and is asserted
+    by the artifact itself: `.harmonik/context/captain-lanes.md` and its shipped template
+    `cmd/harmonik/assets/context/captain-lanes.md.tmpl` both carry the tier header
+    "LOADED BY: captain @ STARTUP Step 0b; NOT loaded by crews or implementers".
+
+  Flag only if a role's order is absent, internally contradictory, or if one role's
+  order is stated unconditionally as everyone's. Do NOT "fix" three-vs-four by
+  flattening the lists to match. Two paths from the older ritual no longer resolve and
+  MUST NOT be reinstated: `TASKS.md` was renamed to
   `docs/historical/phase-0-1-tasks.md` (`334bb759e`, `R100`), and `SESSION_HANDOFF.md`
   was deleted (`5b5193110`) after being superseded by `HANDOFF.md` (`b82b2affb`).
 - Are the hard don'ts present?

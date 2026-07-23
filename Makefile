@@ -328,6 +328,22 @@ runmerge-freeze-gate:  ## P2 E5 RT13: forbid new merge-path files or moved symbo
 runlaunch-freeze-gate:  ## P2 E5 RT19b: forbid re-declaring the moved launch-effect symbols in internal/daemon
 	scripts/runlaunch-freeze-gate.sh
 
+# readywait-freeze-gate: the P2 E5 RT14 extraction ratchet — the open-coded
+# agent_ready WAIT left internal/daemon. Every launch/ready/brief segment now
+# runs on the runexec Dispatch machine via dispatchSegment, whose ClockPort-timed
+# TimerAgentReady is the one ready bound (FakeClock-drivable, which
+# waitAgentReady's raw time.After never was). depguard cannot express "do not
+# re-hand-roll a wall-clock wait", so this grep ratchet closes that door: no
+# re-declaration of the retired symbols, no raw wall-clock in the run-path files
+# that are clean today or inside beadRunOne, and all four launch sites still bind
+# through the seam. The Working-phase watchdogs (pasteinject.go,
+# pasteInjectQuitOnGateFile, waitsocketgrace.go, postreadyhang.go) are
+# deliberately OUT of scope — they sit outside the RT8 segment boundary and slice
+# RT19c owns them. Wired into check-fast and check-short.
+.PHONY: readywait-freeze-gate
+readywait-freeze-gate:  ## P2 E5 RT14: forbid re-hand-rolling the agent_ready wait in internal/daemon
+	scripts/readywait-freeze-gate.sh
+
 # workersbootwire-freeze-gate: the P2 E4c extraction ratchet — the remote-worker
 # registry BOOT WIRING (BuildRegistry / BuildRegistryWithRunner /
 # BootHealthRunner, formerly buildWorkerRegistry & friends in workloop.go) left
@@ -520,6 +536,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/harnesspi-freeze-gate.sh
 	scripts/runmerge-freeze-gate.sh
 	scripts/runlaunch-freeze-gate.sh
+	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
@@ -550,6 +567,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/harnesspi-freeze-gate.sh
 	scripts/runmerge-freeze-gate.sh
 	scripts/runlaunch-freeze-gate.sh
+	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):

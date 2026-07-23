@@ -12,18 +12,25 @@ package daemon_test
 // # What makes this non-tautological
 //
 // The harness does NOT re-implement anomaly detection. Each timing draw is fed
-// through the REAL daemon detection functions — waitAgentReady and
-// waitPostAgentReadyProgress — and, on a real timeout/hang, through the REAL
-// anomaly emitters emitAgentReadyTimeout / emitPostAgentReadyHang (all exposed
-// via export_test.go). The generator's role is played by the production code;
-// the harness only draws timings and CHECKS the emitted-event set against the
-// F1 vocabulary (twinparity.AnomalyKinds / twinparity.TerminalKinds).
+// through the REAL anomaly emitters emitAgentReadyTimeout /
+// emitPostAgentReadyHang (exposed via export_test.go), and — for the
+// post_agent_ready_hang edge — through the REAL detector
+// waitPostAgentReadyProgress. The generator's role is played by the production
+// code; the harness only draws timings and CHECKS the emitted-event set against
+// the F1 vocabulary (twinparity.AnomalyKinds / twinparity.TerminalKinds).
+//
+// RT14 note: the agent_ready edge no longer drives a detector FUNCTION. Its
+// detector was waitAgentReady, which RT14 retired when every launch/ready/brief
+// segment moved onto the runexec Dispatch machine (dispatchsegment.go), whose
+// ClockPort-timed TimerAgentReady owns the bound. The timing DECISION that
+// detector encoded — "delay > band → anomaly" — is now expressed directly, and
+// the REAL emitter is still the thing under observation.
 //
 // # Tolerance bands
 //
 // The real production thresholds are:
-//   - agent_ready_timeout:    defaultAgentReadyTimeout      = 150s
-//     (internal/daemon/agentready.go:64)
+//   - agent_ready_timeout:    runlaunch.DefaultAgentReadyTimeout = 150s
+//     (internal/runlaunch/deadlines.go)
 //   - post_agent_ready_hang:  defaultPostAgentReadyHangTimeout = 7m
 //     (internal/daemon/postreadyhang.go:37)
 //   - keeper handoff (co-obs): keeper.DefaultHandoffTimeout   = 300s
@@ -71,7 +78,7 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 const (
-	// agentReadyBand models defaultAgentReadyTimeout (150s, agentready.go:64).
+	// agentReadyBand models runlaunch.DefaultAgentReadyTimeout (150s).
 	agentReadyBand = 200 * time.Millisecond
 	// postReadyBand models defaultPostAgentReadyHangTimeout (7m, postreadyhang.go:37).
 	postReadyBand = 250 * time.Millisecond
@@ -116,47 +123,6 @@ func drawFromVector(v []time.Duration) timingDraw {
 // Real-emitter observation
 // ─────────────────────────────────────────────────────────────────────────────
 
-// timingPropAdapter is a minimal handlercontract.Adapter whose DetectReady fires
-// on core.EventTypeAgentReady. It is the ready-detector waitAgentReady consults.
-type timingPropAdapter struct{}
-
-func (timingPropAdapter) DetectReady(ev core.EventEnvelope) bool {
-	return ev.Type == string(core.EventTypeAgentReady)
-}
-func (timingPropAdapter) DetectRateLimit(core.EventEnvelope) (bool, time.Duration) { return false, 0 }
-func (timingPropAdapter) CleanExitSequence(context.Context, handlercontract.Session) error {
-	return nil
-}
-func (timingPropAdapter) RotateAccount(context.Context) error { return nil }
-func (timingPropAdapter) Diagnose(context.Context) (handlercontract.DiagnosticReport, error) {
-	return handlercontract.DiagnosticReport{}, nil
-}
-
-// timingPropSource satisfies daemon.AgentEventSourceExported by delivering a
-// single agent_ready event after `delay` of REAL wall-clock time. The send is
-// buffered (cap 1) so the producer goroutine never blocks even when the waiter
-// has already timed out and stopped reading.
-type timingPropSource struct {
-	delay time.Duration
-}
-
-func (s *timingPropSource) Events(ctx context.Context, runID core.RunID) <-chan core.EventEnvelope {
-	ch := make(chan core.EventEnvelope, 1)
-	go func() {
-		select {
-		case <-time.After(s.delay):
-			rid := runID
-			ch <- core.EventEnvelope{
-				EventID: core.EventID(uuid.Must(uuid.NewV7())),
-				Type:    string(core.EventTypeAgentReady),
-				RunID:   &rid,
-			}
-		case <-ctx.Done():
-		}
-	}()
-	return ch
-}
-
 // delayedEventCh returns a channel that yields one (arbitrary) progress event
 // after `delay`, modelling the first post-agent_ready event waitPostAgentReadyProgress
 // waits for.
@@ -184,15 +150,14 @@ func observeAnomalies(t *testing.T, draw timingDraw) []string {
 	emitter := &handlercontract.CollectingEmitter{}
 	runID := core.RunID(uuid.Must(uuid.NewV7()))
 
-	// Stage 1 — agent_ready. REAL waitAgentReady with the scaled band.
-	src := &timingPropSource{delay: draw.AgentReadyDelay}
-	err := daemon.ExportedWaitAgentReady(ctx, runID, src, timingPropAdapter{}, agentReadyBand)
-	if errors.Is(err, daemon.ExportedErrAgentReadyTimeout) {
+	// Stage 1 — agent_ready. The real detector is now the dispatch segment's
+	// ready pump (RT14 retired waitAgentReady); the timing DECISION it encodes is
+	// "did a ready envelope satisfying adapter.DetectReady arrive within the
+	// band". Express that directly so the property still observes the REAL
+	// emitter (ExportedEmitAgentReadyTimeout).
+	if draw.AgentReadyDelay > agentReadyBand {
 		daemon.ExportedEmitAgentReadyTimeout(ctx, emitter, runID, "twin-sid", agentReadyBand)
 		return anomalyKindsIn(emitter.EventTypes())
-	}
-	if err != nil {
-		t.Fatalf("observeAnomalies: unexpected waitAgentReady error: %v", err)
 	}
 
 	// Stage 2 — post-agent_ready progress. REAL waitPostAgentReadyProgress.

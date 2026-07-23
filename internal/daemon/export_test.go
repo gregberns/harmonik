@@ -1412,29 +1412,6 @@ var ExportedEmitAgentReadyTimeout = runlaunch.EmitAgentReadyTimeout
 // WS3-Claude-C harness drives the REAL post-agent_ready-hang anomaly emitter.
 var ExportedEmitPostAgentReadyHang = emitPostAgentReadyHang
 
-// AgentEventSourceExported is the exported alias for agentEventSource so that
-// test stubs in package daemon_test can satisfy the interface.
-//
-// Because agentEventSource is unexported, daemon_test stubs cannot reference it
-// directly. This exported alias carries the same method set, enabling type-safe
-// injection via ExportedWaitAgentReady.
-//
-// Bead ref: hk-gql20.18.
-type AgentEventSourceExported = agentEventSource
-
-// ExportedWaitAgentReady exposes waitAgentReady for tests in package daemon_test.
-//
-// Bead ref: hk-gql20.18.
-func ExportedWaitAgentReady(
-	ctx context.Context,
-	runID core.RunID,
-	source AgentEventSourceExported,
-	adapter handlercontract.Adapter,
-	timeout time.Duration,
-) error {
-	return waitAgentReady(ctx, runID, source, adapter, timeout)
-}
-
 // (duplicate buildClaudeLaunchSpec stubs removed — canonical declarations above at lines ~295-356)
 
 // ─────────────────────────────────────────────────────────────────────────────

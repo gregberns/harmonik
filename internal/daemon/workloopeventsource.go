@@ -1,26 +1,27 @@
 package daemon
 
-// workloopeventsource.go — per-run agentEventSource implementation for the
-// workloop's waitAgentReady wiring (hk-gql20.14).
+// workloopeventsource.go — the per-run event tap every dispatch segment's
+// ready pump consumes (hk-gql20.14).
 //
 // The daemon's event bus is sealed at Start time (EV-009) before the work loop
 // runs, so post-seal Subscribe is not available. This file provides a thin
 // "tapping emitter" wrapper that intercepts Emit calls from the watcher
-// goroutine and forwards a synthetic envelope to a per-run channel that
-// waitAgentReady reads.
+// goroutine and forwards a synthetic envelope to a per-run channel that the
+// segment's ready pump reads.
 //
-// The two types here are:
+// One type lives here:
 //
-//   - perRunEventTap:    a handlercontract.EventEmitter adapter that wraps the
+//   - perRunEventTap: a handlercontract.EventEmitter adapter that wraps the
 //     real bus emitter, forwarding every Emit call to a buffered channel AND
 //     to the underlying bus.  One tap is created per beadRunOne call.
 //
-//   - chanAgentEventSource: satisfies agentEventSource (from agentready.go)
-//     using the channel produced by perRunEventTap.  Events returns a read-only
-//     view of that channel; once the context is cancelled, no further events
-//     are delivered.
+// RT14 removed the second type, chanAgentEventSource. It existed only to
+// satisfy waitAgentReady's agentEventSource interface, and both of its
+// constructors were the two open-coded ready waits RT14 converted onto
+// dispatchSegment (dispatchsegment.go), whose ready pump consumes the tap
+// channel directly.
 //
-// Bead: hk-gql20.14.
+// Bead: hk-gql20.14. Retirement: P2 E5 RT14.
 
 import (
 	"context"
@@ -46,9 +47,9 @@ import (
 // returns an independent buffered channel, and every Emit/EmitWithRunID writes
 // a COPY of the synthetic envelope to EVERY registered subscriber. This is the
 // fix for the concurrent-dispatch wedge: previously a single channel was shared
-// by two competing consumers — chanAgentEventSource (feeding waitAgentReady) and
+// by two competing consumers — the segment's ready pump and
 // pasteInjectQuitOnCommit (the launch/heartbeat watchdog). A Go channel receive
-// is EXCLUSIVE, so under 2+ concurrent runs the waitAgentReady drain goroutine
+// is EXCLUSIVE, so under 2+ concurrent runs the ready-side drain goroutine
 // stayed hot and consumed every heartbeat; pasteInjectQuitOnCommit never observed
 // firstHeartbeatSeen, its launch-verification branch reset launchDeadline forever,
 // and the implementer appeared stalled at launch (launch_stall_detected →
@@ -59,7 +60,7 @@ import (
 // Each subscriber channel is buffered at perRunEventTapBufSize so that the
 // watcher goroutine (the producer) does not block if a consumer has not yet
 // drained a previous event. Per-channel buffer overflow means that subscriber's
-// event is silently discarded (worst-case for waitAgentReady: it times out
+// event is silently discarded (worst-case for the ready pump: the segment times out
 // instead of detecting ready — safe; worst-case for the watchdog: it falls back
 // to its wall-clock backstops — also safe). Crucially, a slow/full consumer can
 // NO LONGER starve the other consumer of events, because each owns its own
@@ -87,7 +88,7 @@ const perRunEventTapBufSize = 64
 
 // newPerRunEventTap constructs a perRunEventTap that wraps underlying and
 // registers an initial subscriber. Returns the tap and that subscriber's
-// channel (consumed by chanAgentEventSource feeding waitAgentReady).
+// channel (consumed by the dispatch segment's ready pump).
 //
 // Additional independent subscribers (e.g. for pasteInjectQuitOnCommit) are
 // obtained via Subscribe — each receives its own copy of every event (hk-37giq).
@@ -102,7 +103,7 @@ func newPerRunEventTap(underlying handlercontract.EventEmitter, runID core.RunID
 // Subscribe registers and returns a new independent subscriber channel. Every
 // subsequent Emit/EmitWithRunID delivers a copy of the synthetic envelope to
 // this channel (non-blocking, drop-if-full), independently of any other
-// subscriber. This lets two consumers (waitAgentReady and the
+// subscriber. This lets two consumers (the segment's ready pump and the
 // pasteInjectQuitOnCommit watchdog) each receive every event rather than
 // competing for receives on a single shared channel (hk-37giq).
 //
@@ -136,7 +137,7 @@ func (t *perRunEventTap) fanOut(env core.EventEnvelope) {
 // envelope to every subscriber channel.
 //
 // The synthetic envelope carries the event type and a fresh UUIDv7 event_id;
-// it does NOT include the payload (waitAgentReady / adapter.DetectReady only
+// it does NOT include the payload (the ready pump's adapter.DetectReady only
 // inspects the Type field, per HC-041).
 //
 // If a subscriber channel is full (producer faster than that consumer), the
@@ -180,51 +181,4 @@ func (t *perRunEventTap) EmitWithRunID(ctx context.Context, runID core.RunID, ev
 	t.fanOut(env)
 
 	return err
-}
-
-// chanAgentEventSource satisfies agentEventSource by reading from a channel
-// produced by perRunEventTap.
-//
-// Events returns a receive-only channel that delivers core.EventEnvelope values.
-// It spawns a forwarding goroutine that exits when ctx is cancelled.
-type chanAgentEventSource struct {
-	ch <-chan core.EventEnvelope
-}
-
-// newChanAgentEventSource constructs a chanAgentEventSource backed by ch.
-func newChanAgentEventSource(ch <-chan core.EventEnvelope) *chanAgentEventSource {
-	return &chanAgentEventSource{ch: ch}
-}
-
-// Events implements agentEventSource.
-//
-// It returns a new channel that receives events from the underlying ch until
-// ctx is cancelled. The returned channel is closed when either ctx is
-// cancelled or the underlying channel is closed, so the waitAgentReady
-// observer goroutine can detect both conditions cleanly.
-//
-// runID is accepted for interface compatibility (agentEventSource) but is not
-// used to filter events — since each perRunEventTap is per-run, all events in
-// ch are already scoped to this run.
-func (s *chanAgentEventSource) Events(ctx context.Context, _ core.RunID) <-chan core.EventEnvelope {
-	out := make(chan core.EventEnvelope, perRunEventTapBufSize)
-	go func() {
-		defer close(out)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev, ok := <-s.ch:
-				if !ok {
-					return
-				}
-				select {
-				case out <- ev:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	}()
-	return out
 }

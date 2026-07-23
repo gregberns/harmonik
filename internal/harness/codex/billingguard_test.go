@@ -105,6 +105,7 @@ func TestMaterializeForcedLoginMethod_FreshHome(t *testing.T) {
 		t.Fatalf("materialize: unexpected error: %v", err)
 	}
 
+	//nolint:gosec // G304: config path is under this test's t.TempDir fixture.
 	data, err := os.ReadFile(filepath.Join(home, "config.toml"))
 	if err != nil {
 		t.Fatalf("read config.toml: %v", err)
@@ -124,6 +125,7 @@ func TestMaterializeForcedLoginMethod_Idempotent(t *testing.T) {
 	if err := codex.ExportedMaterializeForcedLoginMethod(home); err != nil {
 		t.Fatalf("materialize #1: %v", err)
 	}
+	//nolint:gosec // G304: config path is under this test's t.TempDir fixture.
 	first, err := os.ReadFile(filepath.Join(home, "config.toml"))
 	if err != nil {
 		t.Fatalf("read #1: %v", err)
@@ -131,6 +133,7 @@ func TestMaterializeForcedLoginMethod_Idempotent(t *testing.T) {
 	if err := codex.ExportedMaterializeForcedLoginMethod(home); err != nil {
 		t.Fatalf("materialize #2: %v", err)
 	}
+	//nolint:gosec // G304: config path is under this test's t.TempDir fixture.
 	second, err := os.ReadFile(filepath.Join(home, "config.toml"))
 	if err != nil {
 		t.Fatalf("read #2: %v", err)
@@ -158,6 +161,7 @@ func TestMaterializeForcedLoginMethod_PreservesExisting(t *testing.T) {
 	if err := codex.ExportedMaterializeForcedLoginMethod(home); err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
+	//nolint:gosec // G304: cfg is constructed under this test's t.TempDir fixture.
 	data, err := os.ReadFile(cfg)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -192,6 +196,7 @@ func TestMaterializeForcedLoginMethod_RewritesWrongValue(t *testing.T) {
 	if err := codex.ExportedMaterializeForcedLoginMethod(home); err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
+	//nolint:gosec // G304: cfg is constructed under this test's t.TempDir fixture.
 	data, err := os.ReadFile(cfg)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -445,6 +450,7 @@ func TestBuildCodexLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
 	}
 
 	// The forced config must have been materialized into the home as a side effect.
+	//nolint:gosec // G304: config path is under this test's t.TempDir fixture.
 	data, rerr := os.ReadFile(filepath.Join(home, "config.toml"))
 	if rerr != nil {
 		t.Fatalf("read materialized config.toml: %v", rerr)

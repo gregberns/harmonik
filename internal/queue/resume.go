@@ -92,7 +92,17 @@ func RearmFailedItems(g *Group) []core.BeadID {
 	if g == nil {
 		return nil
 	}
-	var rearmed []core.BeadID
+	failedCount := 0
+	for i := range g.Items {
+		if g.Items[i].Status == ItemStatusFailed {
+			failedCount++
+		}
+	}
+	if failedCount == 0 {
+		return nil
+	}
+
+	rearmed := make([]core.BeadID, 0, failedCount)
 	for i := range g.Items {
 		if g.Items[i].Status != ItemStatusFailed {
 			continue

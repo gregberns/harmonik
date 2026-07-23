@@ -60,6 +60,7 @@ func twinParityFixtureHCSpec(t *testing.T) string {
 	t.Helper()
 	root := twinParityFixtureModuleRoot(t)
 	specPath := filepath.Join(root, "specs", "handler-contract.md")
+	//nolint:gosec // G304: specPath is assembled from the test's verified module root.
 	content, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("reading handler-contract.md: %v", err)

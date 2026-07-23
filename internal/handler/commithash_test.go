@@ -62,6 +62,7 @@ func main() {}
 	outBinary := filepath.Join(dir, "fixture")
 	ldflag := "-X main.commitHash=" + commitHashFixtureKnownHash
 
+	//nolint:gosec // G204: test fixture runs the literal Go tool with fixed build flags; variable values are t.TempDir paths and a package-local constant.
 	cmd := exec.CommandContext(
 		context.Background(),
 		"go", "build",
@@ -236,6 +237,7 @@ func commitHashFixtureBuildTwin(t *testing.T) (binaryPath, stampedHash string) {
 	pkgPath := filepath.Join(repoRoot, "cmd", "harmonik-twin-generic")
 	ldflag := "-X main.commitHash=" + headSHA
 
+	//nolint:gosec // G204: test fixture runs the literal Go tool; dynamic arguments are git-derived repo metadata and a t.TempDir output path.
 	cmd := exec.CommandContext(
 		t.Context(),
 		"go", "build",

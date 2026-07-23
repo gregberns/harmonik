@@ -3,6 +3,7 @@ package digest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,15 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal fixture JSON: %v", err)
+	}
+	return data
+}
+
 // TestBuildMissingHarmonikDir verifies that Build returns ErrNoHarmonikDir
 // when the project directory does not contain a .harmonik/ subdirectory.
 func TestBuildMissingHarmonikDir(t *testing.T) {
@@ -23,7 +33,7 @@ func TestBuildMissingHarmonikDir(t *testing.T) {
 		ProjectDir: tmp,
 		Limits:     DefaultLimits(),
 	})
-	if err != ErrNoHarmonikDir {
+	if !errors.Is(err, ErrNoHarmonikDir) {
 		t.Fatalf("expected ErrNoHarmonikDir; got %v", err)
 	}
 }
@@ -260,6 +270,7 @@ func TestBuildResolvedNotesExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 	notesPath := filepath.Join(notesDir, "notes.jsonl")
+	// #nosec G304 -- notesPath is a test-controlled path under t.TempDir.
 	f, err := os.Create(notesPath)
 	if err != nil {
 		t.Fatal(err)
@@ -317,7 +328,8 @@ func TestBuildSchemaVersion(t *testing.T) {
 	if !ok {
 		t.Fatal("schema_version missing from JSON output")
 	}
-	if sv.(float64) != 1 {
+	schemaVersion, ok := sv.(float64)
+	if !ok || schemaVersion != 1 {
 		t.Errorf("schema_version: got %v, want 1", sv)
 	}
 }
@@ -599,6 +611,7 @@ func writeDecisionEvents(t *testing.T, dir string, events []testDecisionEvent) {
 	if err := os.MkdirAll(eventsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// #nosec G304 -- fixture path is rooted in the test-controlled eventsDir.
 	f, err := os.Create(filepath.Join(eventsDir, "events.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -652,6 +665,7 @@ func writeNotesJSONL(t *testing.T, dir string, n int) {
 	if err := os.MkdirAll(notesDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// #nosec G304 -- fixture path is rooted in the test-controlled notesDir.
 	f, err := os.Create(filepath.Join(notesDir, "notes.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -687,7 +701,7 @@ func makeFakeBr(t *testing.T, dir, issuesJSON string) string {
 		"done\n" +
 		"echo '{\"issues\":[]}'\nexit 0\n"
 	path := filepath.Join(dir, "fake-br")
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil { //nolint:gosec // G306: executable fixture requires owner execute.
 		t.Fatalf("write fake-br: %v", err)
 	}
 	return path
@@ -879,7 +893,7 @@ func TestBuildPendingDecisions_FromAcksDirOnly(t *testing.T) {
 		"reason":         "sentinel: sustained low movement detected",
 		"emitted_at":     "2026-01-01T00:00:00Z",
 	}
-	data, _ := json.Marshal(ackRecord)
+	data := mustMarshalJSON(t, ackRecord)
 	if err := os.WriteFile(filepath.Join(acksDir, tok), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -942,7 +956,7 @@ func TestBuildPendingDecisions_AcksDirDedup(t *testing.T) {
 		"subject_id":     "sentinel",
 		"reason":         "sentinel: sustained low movement detected",
 	}
-	data, _ := json.Marshal(ackRecord)
+	data := mustMarshalJSON(t, ackRecord)
 	if err := os.WriteFile(filepath.Join(acksDir, tok), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -981,7 +995,7 @@ func TestBuildPendingDecisions_AcksDirAcknowledgedSkipped(t *testing.T) {
 		"subject_id":     "sentinel",
 		"reason":         "sentinel: sustained low movement detected",
 	}
-	data, _ := json.Marshal(ackRecord)
+	data := mustMarshalJSON(t, ackRecord)
 	if err := os.WriteFile(filepath.Join(acksDir, tok), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1019,7 +1033,7 @@ echo "error: unexpected argument" >&2
 exit 2
 `
 	path := filepath.Join(dir, "fake-br-order")
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil { //nolint:gosec // G306: executable fixture requires owner execute.
 		t.Fatal(err)
 	}
 
@@ -1052,7 +1066,7 @@ func TestBuildPausedQueues(t *testing.T) {
 			"groups":         []interface{}{},
 			"status":         status,
 		}
-		data, _ := json.Marshal(q)
+		data := mustMarshalJSON(t, q)
 		if err := os.WriteFile(filepath.Join(queuesDir, name+".json"), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -1106,7 +1120,7 @@ func TestBuildCrewList(t *testing.T) {
 		"handle":         "harmonik-abc-crew-hawat:agent",
 		"started_at":     "2026-01-01T00:00:00Z",
 	}
-	data, _ := json.Marshal(rec)
+	data := mustMarshalJSON(t, rec)
 	if err := os.WriteFile(filepath.Join(crewDir, "hawat.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}

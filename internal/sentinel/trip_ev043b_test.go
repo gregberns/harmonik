@@ -48,7 +48,7 @@ var zeroID = core.EventID{}
 func scanEventTypes(t *testing.T, projectDir string) []string {
 	t.Helper()
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
-	var types []string
+	types := make([]string, 0, 16)
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
 		types = append(types, ev.Type)
 	}
@@ -59,7 +59,7 @@ func scanEventTypes(t *testing.T, projectDir string) []string {
 func scanDecisionRequired(t *testing.T, projectDir string) []map[string]interface{} {
 	t.Helper()
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
-	var out []map[string]interface{}
+	out := make([]map[string]interface{}, 0, 16)
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
 		if ev.Type != "decision_required" {
 			continue
@@ -77,7 +77,7 @@ func scanDecisionRequired(t *testing.T, projectDir string) []map[string]interfac
 func scanDecisionAcknowledged(t *testing.T, projectDir string) []map[string]interface{} {
 	t.Helper()
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
-	var out []map[string]interface{}
+	out := make([]map[string]interface{}, 0, 16)
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
 		if ev.Type != "decision_acknowledged" {
 			continue

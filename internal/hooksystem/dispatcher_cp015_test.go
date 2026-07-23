@@ -65,7 +65,6 @@ func TestCP015_EvalErrorDeterministicOnCompileFailure(t *testing.T) {
 		"hook-compile-err",
 		"on_agent_started",
 		"undefined_variable_xyz > 0",
-		core.SideEffectKindEmitEvent,
 		false,
 		0,
 	)
@@ -119,7 +118,6 @@ func TestCP015_EvalErrorTransientOnContextCancellation(t *testing.T) {
 		"hook-ctx-cancel",
 		"on_agent_started",
 		"true",
-		core.SideEffectKindEmitEvent,
 		false,
 		0,
 	)

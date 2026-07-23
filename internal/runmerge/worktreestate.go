@@ -211,6 +211,7 @@ func DiscardDirtyChurn(ctx context.Context, wtPath string) {
 	// path so a failure on one (e.g. a path that is staged-only) does not block
 	// the others; mirrors hk-i1n7j's best-effort/non-fatal style.
 	for _, path := range churnPaths {
+		//nolint:gosec // G204: fixed git binary; path is parsed from git status, accepted only by IsHarmonikChurn, and follows `--`.
 		checkoutCmd := exec.CommandContext(ctx, "git", "checkout", "--", path)
 		checkoutCmd.Dir = wtPath
 		if out, err := checkoutCmd.CombinedOutput(); err != nil {
@@ -338,6 +339,7 @@ func CommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		"chore: residual iteration delta [%s]\n\nTrivial: true",
 		runID.String(),
 	)
+	//nolint:gosec // G204: fixed git binary; commit message is daemon-generated from a typed RunID and a constant template.
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = wtPath
 	if out, err := commitCmd.CombinedOutput(); err != nil {

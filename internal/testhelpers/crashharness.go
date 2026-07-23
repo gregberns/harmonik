@@ -220,11 +220,9 @@ func B87254DeleteIntentEntry(t *testing.T, filePath string) {
 		}
 		t.Fatalf("B87254DeleteIntentEntry: fsync parent dir %q: %v", parentDir, err)
 	}
-	defer func() {
-		if err := pf.Close(); err != nil {
-			t.Errorf("B87254DeleteIntentEntry: close parent dir: %v", err)
-		}
-	}()
+	if err := pf.Close(); err != nil {
+		t.Errorf("B87254DeleteIntentEntry: close parent dir: %v", err)
+	}
 }
 
 // B87254ReadIntentEntries scans intentDir and returns all surviving
@@ -240,13 +238,12 @@ func B87254DeleteIntentEntry(t *testing.T, filePath string) {
 func B87254ReadIntentEntries(t *testing.T, intentDir string) []B87254IntentWriteResult {
 	t.Helper()
 
-	//nolint:gosec // G304: intentDir is a test temp dir, not user input
 	des, err := os.ReadDir(intentDir)
 	if err != nil {
 		t.Fatalf("B87254ReadIntentEntries: ReadDir %q: %v", intentDir, err)
 	}
 
-	var results []B87254IntentWriteResult
+	results := make([]B87254IntentWriteResult, 0, len(des))
 	for _, de := range des {
 		if de.IsDir() {
 			continue
@@ -297,7 +294,6 @@ func B87254ReadIntentEntries(t *testing.T, intentDir string) []B87254IntentWrite
 func B87254IntentDirFor(t *testing.T, harmonikDir string) string {
 	t.Helper()
 	dir := filepath.Join(harmonikDir, b87254IntentDirName)
-	//nolint:gosec // G301: 0700 matches .harmonik dir conventions
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("B87254IntentDirFor: MkdirAll %q: %v", dir, err)
 	}

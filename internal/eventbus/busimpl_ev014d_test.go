@@ -69,6 +69,7 @@ func ev014dWriteRawEvent(t *testing.T, logPath string, ev core.Event) {
 		t.Fatalf("marshal event: %v", err)
 	}
 	line = append(line, '\n')
+	//nolint:gosec // G304: logPath is a t.TempDir fixture path supplied by this test suite.
 	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		t.Fatalf("open log: %v", err)
@@ -531,6 +532,7 @@ func ev014dWriteDeadLetterEvent(t *testing.T, logPath string, ev core.Event) {
 		}
 		return string(b)
 	}())
+	//nolint:gosec // G304: dlPath is derived from the t.TempDir-backed fixture log path.
 	f, err := os.OpenFile(dlPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		t.Fatalf("open dead-letter log: %v", err)

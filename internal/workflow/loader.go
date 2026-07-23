@@ -73,6 +73,7 @@ func (e *ErrPolicyRefRejected) Unwrap() error { return handlercontract.ErrDeterm
 // warning is printed to stderr naming the typed replacements (gate_ref,
 // skills_ref, or freedom_profile_ref per CP-055) before returning the load error.
 func LoadDotWorkflow(dotPath string) (*dot.Graph, error) {
+	//nolint:gosec // G304: this public loader intentionally reads the workflow artifact selected by its caller; it has no project-root authority to enforce.
 	src, err := os.ReadFile(dotPath)
 	if err != nil {
 		return nil, &ErrWorkflowLoad{
@@ -133,6 +134,7 @@ func LoadDotWorkflow(dotPath string) (*dot.Graph, error) {
 //
 // Bead ref: hk-55zv2 (T5 — WG-045/WG-046).
 func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.Graph, error) {
+	//nolint:gosec // G304: this public loader intentionally reads the workflow artifact selected by its caller; it has no project-root authority to enforce.
 	src, err := os.ReadFile(dotPath)
 	if err != nil {
 		return nil, &ErrWorkflowLoad{

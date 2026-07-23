@@ -4,7 +4,7 @@ package codesync
 // (remote-substrate B8, hk-rs-b8-codesync-3fk0; box-A direct-fetch rework hk-7bwx).
 //
 // Gate-runnable: all git subprocesses are intercepted by RecordingRunner with
-// a no-op CmdFunc (exec.Command("true")) so no network or real git is needed.
+// a no-op CmdFunc (exec.CommandContext(ctx, "true")) so no network or real git is needed.
 //
 // Test matrix:
 //   TestRSB8_CodeSyncArgvOrder/remote-run: verifies fetch-base → worktree-add
@@ -25,11 +25,11 @@ import (
 )
 
 // newNoOpRecorder returns a RecordingRunner whose CmdFunc delegates every call
-// to exec.Command("true") so commands always succeed without side effects.
+// to exec.CommandContext(ctx, "true") so commands always succeed without side effects.
 func newNoOpRecorder() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-			return exec.Command("true")
+		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "true")
 		},
 	}
 }
@@ -77,7 +77,10 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 		// git command is recorded by the same sshRR. The no-op CmdFunc makes the
 		// `git worktree add` return success without a real git repo.
 		wtCfg := workspace.NoWorktreeRootOverride().WithRunner(sshRR)
-		_ = workspace.CreateWorktree(ctx, tmpWorkerRepo, runID, baseSHA, wtCfg)
+		if err := workspace.CreateWorktree(ctx, tmpWorkerRepo, runID, baseSHA, wtCfg); err == nil ||
+			!strings.Contains(err.Error(), "empty HEAD") {
+			t.Fatalf("RSB8: CreateWorktree error = %v, want mocked-command empty HEAD verification failure", err)
+		}
 		_ = tmpWorkerWtPath // worktree path no longer used (no worker→origin push, hk-7bwx)
 
 		// Step (c): fetch run-branch on box A DIRECTLY from the worker repo over SSH.
@@ -248,14 +251,14 @@ func TestRSB8_FetchRunBranchRetries(t *testing.T) {
 
 	callN := 0
 	rr := &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 			callN++
 			if callN <= failCount {
 				// Return a command that exits non-zero with the ref-not-found message.
-				return exec.Command("/bin/sh", "-c",
+				return exec.CommandContext(ctx, "/bin/sh", "-c",
 					"printf \"error: couldn't find remote ref run/xxx\\n\" >&2; exit 128")
 			}
-			return exec.Command("true")
+			return exec.CommandContext(ctx, "true")
 		},
 	}
 
@@ -283,10 +286,10 @@ func TestRSB8_FetchRunBranchNoRetryOnHardError(t *testing.T) {
 
 	callN := 0
 	rr := &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 			callN++
 			// Connection-refused — a hard error, must not retry.
-			return exec.Command("/bin/sh", "-c",
+			return exec.CommandContext(ctx, "/bin/sh", "-c",
 				"printf \"ssh: connect to host 100.87.151.114 port 22: Connection refused\\n\" >&2; exit 128")
 		},
 	}
@@ -326,20 +329,20 @@ func TestEnsureBaseOnWorker_PushFallback(t *testing.T) {
 	// sshRR simulates: fetch exits 0 (success) but cat-file exits 128 (SHA absent).
 	fetchCalled, catFileCalled := 0, 0
 	sshRR := &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, name string, args ...string) *exec.Cmd {
+		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 			for _, a := range args {
 				if a == "fetch" {
 					fetchCalled++
-					return exec.Command("true") // exit 0 — silent no-op
+					return exec.CommandContext(ctx, "true") // exit 0 — silent no-op
 				}
 				if a == "cat-file" {
 					catFileCalled++
 					// exit 128 — SHA not present in ODB
-					return exec.Command("/bin/sh", "-c",
+					return exec.CommandContext(ctx, "/bin/sh", "-c",
 						"printf 'fatal: git cat-file: not in the object database\n' >&2; exit 128")
 				}
 			}
-			return exec.Command("true")
+			return exec.CommandContext(ctx, "true")
 		},
 	}
 
@@ -383,8 +386,8 @@ func TestEnsureBaseOnWorker_NoFallbackOnConnectionError(t *testing.T) {
 	ctx := context.Background()
 
 	sshRR := &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-			return exec.Command("/bin/sh", "-c",
+		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "/bin/sh", "-c",
 				"printf 'ssh: connect to host 100.87.151.114 port 22: Connection refused\n' >&2; exit 128")
 		},
 	}

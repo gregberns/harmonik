@@ -101,7 +101,7 @@ func TestBuildClaudeLaunchSpec_Single(t *testing.T) {
 	}
 
 	// Single-mode uses --session-id (CHB-008: not implementer-resume).
-	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args, false)
+	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args)
 
 	// Artifacts non-empty.
 	if arts.ClaudeSessionID == "" {
@@ -139,7 +139,7 @@ func TestBuildClaudeLaunchSpec_ImplementerInitial(t *testing.T) {
 	}
 
 	// implementer-initial: --session-id (not --resume).
-	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args, false)
+	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args)
 
 	if arts.ClaudeSessionID == "" {
 		t.Error("claudeSessionID must be non-empty")
@@ -197,7 +197,7 @@ func TestBuildClaudeLaunchSpec_Reviewer(t *testing.T) {
 	}
 
 	// Reviewer uses --session-id (fresh session; CHB-009 — never --resume).
-	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args, false)
+	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args)
 
 	if arts.ClaudeSessionID == "" {
 		t.Error("reviewer claudeSessionID must be non-empty")
@@ -289,7 +289,7 @@ func TestBuildClaudeLaunchSpec_TwinBlind(t *testing.T) {
 		t.Errorf("Binary = %q; want %q", spec.Binary, "harmonik-twin-claude")
 	}
 	// Args, Env, WorkDir shape must be identical to the claude case.
-	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args, false)
+	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -297,15 +297,10 @@ func TestBuildClaudeLaunchSpec_TwinBlind(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // claudeLaunchSpecAssertSessionIDFlag verifies that args contains
-// "--session-id" followed by a non-empty UUID string.
-// When wantResume is true, it additionally verifies "--resume" is absent.
-func claudeLaunchSpecAssertSessionIDFlag(t *testing.T, args []string, wantResume bool) {
+// "--session-id" followed by a non-empty UUID string, and verifies that
+// "--resume" is absent.
+func claudeLaunchSpecAssertSessionIDFlag(t *testing.T, args []string) {
 	t.Helper()
-	if wantResume {
-		// Should not reach this branch — use claudeLaunchSpecAssertResumeFlag.
-		t.Error("claudeLaunchSpecAssertSessionIDFlag called with wantResume=true; use claudeLaunchSpecAssertResumeFlag")
-		return
-	}
 	for i, a := range args {
 		if a == "--session-id" {
 			if i+1 >= len(args) || args[i+1] == "" {

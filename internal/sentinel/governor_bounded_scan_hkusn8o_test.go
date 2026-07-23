@@ -67,6 +67,7 @@ func writeEventWithV7ID(t *testing.T, path string, ts time.Time, seq int) {
 	if err != nil {
 		t.Fatalf("marshal event: %v", err)
 	}
+	//nolint:gosec // G304: path is constructed under t.TempDir by this test fixture.
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open events file: %v", err)

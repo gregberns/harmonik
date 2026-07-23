@@ -767,7 +767,9 @@ func TestBuildPiLaunchSpec_APIKeyFile_DaemonEnvClean(t *testing.T) {
 // ExportedBuildPiLaunchSpec — exercises the full production path.
 func TestPiHarness_BaseURL_ProductionPath_Present(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const apiKeyEnv = "TEST_PI_BASE_URL_PROD_KEY"
+	//nolint:gosec // G101: synthetic non-secret API-key sentinel for this test only.
 	const apiKeyVal = "sk-or-testkey-sentinel"
 	t.Setenv(apiKeyEnv, apiKeyVal)
 
@@ -797,6 +799,7 @@ func TestPiHarness_BaseURL_ProductionPath_Present(t *testing.T) {
 
 	// models.json must exist under the pi-agent dir.
 	modelsPath := piAgentDir + "/models.json"
+	//nolint:gosec // G304: modelsPath is derived from this test's t.TempDir fixture.
 	modelsBytes, readErr := os.ReadFile(modelsPath)
 	if readErr != nil {
 		t.Fatalf("models.json not found at %q: %v", modelsPath, readErr)
@@ -840,6 +843,7 @@ func TestPiHarness_BaseURL_ProductionPath_Present(t *testing.T) {
 // Today's cloud-provider behavior must be byte-for-byte unchanged.
 func TestPiHarness_BaseURL_ProductionPath_Absent(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const apiKeyEnv = "TEST_PI_BASE_URL_ABSENT_KEY"
 	t.Setenv(apiKeyEnv, "sk-or-absent-test")
 
@@ -879,6 +883,7 @@ func TestPiHarness_BaseURL_ProductionPath_Absent(t *testing.T) {
 // correctly when explicitly set.
 func TestPiHarness_BaseURL_APIOverride(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const apiKeyEnv = "TEST_PI_BASE_URL_API_OVERRIDE_KEY"
 	t.Setenv(apiKeyEnv, "sk-override-test")
 
@@ -905,6 +910,7 @@ func TestPiHarness_BaseURL_APIOverride(t *testing.T) {
 		t.Fatal("PI_CODING_AGENT_DIR not injected into child env")
 	}
 
+	//nolint:gosec // G304: piAgentDir is created beneath this test's t.TempDir fixture.
 	modelsBytes, readErr := os.ReadFile(piAgentDir + "/models.json")
 	if readErr != nil {
 		t.Fatalf("models.json not found: %v", readErr)
@@ -970,6 +976,7 @@ func TestBuildPiModelsJSON_ModelIDExtraction(t *testing.T) {
 // PI_CODING_AGENT_DIR is injected — even if baseURL is set.
 func TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const apiKeyEnv = "TEST_PI_BASE_URL_RESUME_KEY"
 	t.Setenv(apiKeyEnv, "sk-resume-test")
 
@@ -1009,6 +1016,7 @@ func TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn(t *testing.T) {
 // Uses the full production call chain: NewPiHarness → LaunchSpec.
 func TestPiHarness_LaunchSpec_RcModelOverridesHarnessModel(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const apiKeyEnv = "TEST_PI_RC_MODEL_OVERRIDE_KEY"
 	t.Setenv(apiKeyEnv, "sk-rc-model-override-sentinel")
 
@@ -1051,6 +1059,7 @@ func TestPiHarness_LaunchSpec_RcModelOverridesHarnessModel(t *testing.T) {
 // rc.Model is empty, LaunchSpec uses h.model (the harness-level default). hk-oqlgw.
 func TestPiHarness_LaunchSpec_EmptyRcModelFallsBackToHarnessModel(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const apiKeyEnv = "TEST_PI_RC_MODEL_FALLBACK_KEY"
 	t.Setenv(apiKeyEnv, "sk-rc-model-fallback-sentinel")
 
@@ -1094,11 +1103,14 @@ func TestPiHarness_LaunchSpec_RCTupleOverridesGlobal(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
 
 	// Harness-level (global) credentials — must NOT appear in the child env.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const harnessAPIKeyEnv = "OPENROUTER_API_KEY"
 	t.Setenv(harnessAPIKeyEnv, "harness-global-key-must-not-appear")
 
 	// rc-level (override) credentials — must appear.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const rcAPIKeyEnv = "PI_ORNITH_KEY"
+	//nolint:gosec // G101: synthetic non-secret API-key sentinel for this test only.
 	const rcAPIKeyVal = "sk-ornith-rc-override-sentinel"
 	t.Setenv(rcAPIKeyEnv, rcAPIKeyVal)
 
@@ -1143,6 +1155,7 @@ func TestPiHarness_LaunchSpec_RCTupleOverridesGlobal(t *testing.T) {
 	if piAgentDir == "" {
 		t.Fatal("PI_CODING_AGENT_DIR not injected; rc.BaseURL must trigger models.json generation")
 	}
+	//nolint:gosec // G304: piAgentDir is created beneath this test's t.TempDir fixture.
 	modelsBytes, readErr := os.ReadFile(piAgentDir + "/models.json")
 	if readErr != nil {
 		t.Fatalf("models.json not found: %v", readErr)
@@ -1183,6 +1196,7 @@ func TestPiHarness_LaunchSpec_RCTupleOverridesGlobal(t *testing.T) {
 // rc tuple fields are empty, LaunchSpec falls back to h.* values. Shared with C6.
 func TestPiHarness_LaunchSpec_EmptyRCFallsBackToGlobal(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const apiKeyEnv = "TEST_PI_C4_FALLBACK_KEY"
 	t.Setenv(apiKeyEnv, "sk-fallback-sentinel")
 
@@ -1344,6 +1358,7 @@ func TestPiHarness_LaunchSpec_CoupledTriple_TravelTogether(t *testing.T) {
 	if piAgentDir == "" {
 		t.Fatal("PI_CODING_AGENT_DIR not injected; rc.BaseURL must produce models.json")
 	}
+	//nolint:gosec // G304: piAgentDir is created beneath this test's t.TempDir fixture.
 	modelsBytes, readErr := os.ReadFile(piAgentDir + "/models.json")
 	if readErr != nil {
 		t.Fatalf("models.json not found: %v", readErr)
@@ -1389,6 +1404,7 @@ func TestPiHarness_LaunchSpec_CoupledTriple_TravelTogether(t *testing.T) {
 // written when it should not be), this test fails on the Args/Env/WorkDir diff.
 func TestPiHarness_DefaultPath_ByteIdentical(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
+	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const apiKeyEnv = "TEST_PI_C6_GOLDEN_KEY"
 	t.Setenv(apiKeyEnv, "sk-golden-sentinel")
 

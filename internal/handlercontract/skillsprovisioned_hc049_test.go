@@ -238,6 +238,7 @@ func TestSkillsProvisioned_SpecCorpusOrderingClause(t *testing.T) {
 	root := skillsProvisionedFixtureModuleRoot(t)
 	specPath := filepath.Join(root, "specs", "handler-contract.md")
 
+	//nolint:gosec // G304: specPath is assembled from the test's verified module root.
 	content, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("reading handler-contract.md: %v (spec file missing?)", err)

@@ -310,6 +310,7 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 	}
 
 	// Count actual revive() calls (each appended a line).
+	//nolint:gosec // G304: counterFile is created beneath this test's private temp directory.
 	data, readErr := os.ReadFile(counterFile)
 	if readErr != nil {
 		t.Fatalf("read revive counter %s: %v", counterFile, readErr)
@@ -401,6 +402,7 @@ func TestDaemonWatchdog_PhantomReviveGuard(t *testing.T) {
 		t.Fatalf("dw.Run: want context.DeadlineExceeded, got %v", runErr)
 	}
 
+	//nolint:gosec // G304: counterFile is created beneath this test's private temp directory.
 	data, readErr := os.ReadFile(counterFile)
 	if readErr != nil {
 		t.Fatalf("read revive counter %s: %v", counterFile, readErr)
@@ -451,6 +453,7 @@ func TestDaemonWatchdog_CrashLogCapture(t *testing.T) {
 	// Give the detached sh process time to flush its output.
 	time.Sleep(200 * time.Millisecond)
 
+	//nolint:gosec // G304: crashLog is created beneath this test's private temp directory.
 	data, err := os.ReadFile(crashLog)
 	if err != nil {
 		t.Fatalf("crash log not created at %s: %v", crashLog, err)

@@ -678,7 +678,10 @@ func (w *Watcher) emitBudgetAccrualForChunk(ctx context.Context, chunkLine []byt
 		ChunkIndex   int            `json:"chunk_index"`
 		BytesEmitted int            `json:"bytes_emitted"`
 	}
-	_ = json.Unmarshal(chunkLine, &msg) // best-effort; partial results used below
+	if err := json.Unmarshal(chunkLine, &msg); err != nil {
+		w.appendDeadLetter(dl, core.EventTypeBudgetAccrual, chunkLine, fmt.Sprintf("budget_accrual decode: %v", err))
+		return
+	}
 
 	chunkIdx := msg.ChunkIndex
 	p := core.BudgetAccrualPayload{

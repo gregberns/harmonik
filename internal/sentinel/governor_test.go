@@ -42,6 +42,7 @@ func writeEvent(t *testing.T, path string, evType core.EventType, ts time.Time, 
 	if err != nil {
 		t.Fatalf("marshal event: %v", err)
 	}
+	//nolint:gosec // G304: path is built beneath the test fixture's t.TempDir project.
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open events file: %v", err)
@@ -848,6 +849,7 @@ func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func(
 	run("commit", "-m", "init")
 
 	originDir := t.TempDir()
+	//nolint:gosec // G204: originDir is this test's t.TempDir fixture and all git arguments are literals.
 	if out, err := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir).CombinedOutput(); err != nil {
 		t.Fatalf("makeGitProjectFixture: git init --bare: %v\n%s", err, out)
 	}

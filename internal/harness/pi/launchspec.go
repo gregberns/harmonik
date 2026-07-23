@@ -50,6 +50,22 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
+const (
+	piConfigMissingAPIKeyMessage = "Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
+		"missing: harnesses.pi.api_key_env. " +
+		"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
+		"then add it to .harmonik/config.yaml. " +
+		"(R1 de-hardcode mandate: the product imposes ZERO baked Pi defaults.)"
+	piConfigMissingProviderMessage = "Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
+		"missing: harnesses.pi.provider. " +
+		"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
+		"then add it to .harmonik/config.yaml."
+	piConfigMissingModelMessage = "Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
+		"missing: harnesses.pi.model. " +
+		"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
+		"then add it to .harmonik/config.yaml."
+)
+
 // piProviderCredentialKeys is the maintained table of known provider API key
 // environment variable names. All entries are empty-overridden in the Pi child
 // environment EXCEPT the operator-selected api_key_env.
@@ -238,12 +254,7 @@ func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
 			"BuildLaunchSpec: beadID must be non-empty")
 	}
 	if rc.APIKeyEnv == "" {
-		return handler.LaunchSpec{}, fmt.Errorf(
-			"Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
-				"missing: harnesses.pi.api_key_env. " +
-				"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
-				"then add it to .harmonik/config.yaml. " +
-				"(R1 de-hardcode mandate: the product imposes ZERO baked Pi defaults.)")
+		return handler.LaunchSpec{}, fmt.Errorf("%s", piConfigMissingAPIKeyMessage)
 	}
 	if rc.PriorSessionID != nil && *rc.PriorSessionID == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
@@ -251,18 +262,10 @@ func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
 	}
 	if rc.PriorSessionID == nil {
 		if rc.Provider == "" {
-			return handler.LaunchSpec{}, fmt.Errorf(
-				"Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
-					"missing: harnesses.pi.provider. " +
-					"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
-					"then add it to .harmonik/config.yaml.")
+			return handler.LaunchSpec{}, fmt.Errorf("%s", piConfigMissingProviderMessage)
 		}
 		if rc.Model == "" {
-			return handler.LaunchSpec{}, fmt.Errorf(
-				"Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
-					"missing: harnesses.pi.model. " +
-					"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
-					"then add it to .harmonik/config.yaml.")
+			return handler.LaunchSpec{}, fmt.Errorf("%s", piConfigMissingModelMessage)
 		}
 	}
 

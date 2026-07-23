@@ -26,8 +26,8 @@ import (
 // without side effects (exec.Command("true")).
 func newNoOpRecorderZ8ek() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-			return exec.Command("true")
+		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "true")
 		},
 	}
 }
@@ -193,6 +193,7 @@ func TestBuildClaudeLaunchSpec_Local_UsesLocalFS(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(wt, ".harmonik", "agent-task.md")); err != nil {
 		t.Errorf("local agent-task.md not written: %v", err)
 	}
+	//nolint:gosec // G304: cfgPath is rooted in this test's t.TempDir fixture.
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Errorf("local trust config not written: %v", err)

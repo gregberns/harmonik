@@ -226,23 +226,23 @@ func TestObserve_SustainedClear_OneEvent_WithEpisodeLength(t *testing.T) {
 	if len(evs) != 2 {
 		t.Fatalf("want breach + clear, got %d: %+v", len(evs), evs)
 	}
-	clear := evs[1]
-	if clear.Kind != "clear" || clear.Signal != "cpu" {
-		t.Errorf("second event = %q/%q, want clear/cpu", clear.Kind, clear.Signal)
+	clearEvent := evs[1]
+	if clearEvent.Kind != "clear" || clearEvent.Signal != "cpu" {
+		t.Errorf("second event = %q/%q, want clear/cpu", clearEvent.Kind, clearEvent.Signal)
 	}
-	if clear.Threshold != DefaultCPUExit {
-		t.Errorf("clear threshold = %v, want %v", clear.Threshold, DefaultCPUExit)
+	if clearEvent.Threshold != DefaultCPUExit {
+		t.Errorf("clear threshold = %v, want %v", clearEvent.Threshold, DefaultCPUExit)
 	}
 	// Episode = StartedAt (t=0, the breach onset reported in StartedAt) → clear-fire
 	// (t=115) = 115s. BreachedForSeconds is kept self-consistent with StartedAt.
-	if clear.BreachedForSeconds != 115 {
-		t.Errorf("BreachedForSeconds = %d, want 115", clear.BreachedForSeconds)
+	if clearEvent.BreachedForSeconds != 115 {
+		t.Errorf("BreachedForSeconds = %d, want 115", clearEvent.BreachedForSeconds)
 	}
-	if clear.StartedAt != at(0).Format(time.RFC3339) {
-		t.Errorf("clear StartedAt = %q, want episode start %q", clear.StartedAt, at(0).Format(time.RFC3339))
+	if clearEvent.StartedAt != at(0).Format(time.RFC3339) {
+		t.Errorf("clear StartedAt = %q, want episode start %q", clearEvent.StartedAt, at(0).Format(time.RFC3339))
 	}
-	if clear.FiredAt != at(100+cdwell).Format(time.RFC3339) {
-		t.Errorf("clear FiredAt = %q, want %q", clear.FiredAt, at(100+cdwell).Format(time.RFC3339))
+	if clearEvent.FiredAt != at(100+cdwell).Format(time.RFC3339) {
+		t.Errorf("clear FiredAt = %q, want %q", clearEvent.FiredAt, at(100+cdwell).Format(time.RFC3339))
 	}
 }
 

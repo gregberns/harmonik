@@ -471,7 +471,7 @@ func EnumerateQueueNames(projectDir string) ([]string, error) {
 		return nil, fmt.Errorf("queue: EnumerateQueueNames: readdir %q: %w", qDir, err)
 	}
 
-	var names []string
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue

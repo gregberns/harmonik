@@ -77,14 +77,14 @@ func queueCliFixtureStartEchoServer(
 	}
 
 	go func() {
-		defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
+		defer func() { _ = ln.Close() }()
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return // listener closed
 			}
 			go func(c net.Conn) {
-				defer func() { _ = c.Close() }() //nolint:errcheck // cleanup error unactionable
+				defer func() { _ = c.Close() }()
 				var raw json.RawMessage
 				if decErr := json.NewDecoder(c).Decode(&raw); decErr != nil {
 					return
@@ -97,7 +97,7 @@ func queueCliFixtureStartEchoServer(
 
 	go func() {
 		<-ctx.Done()
-		_ = ln.Close() //nolint:errcheck // cleanup error unactionable
+		_ = ln.Close()
 	}()
 
 	t.Cleanup(func() {
@@ -115,7 +115,7 @@ func queueCliFixtureWaitReady(t *testing.T, sockPath string) {
 	for time.Now().Before(deadline) {
 		conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
-			_ = conn.Close() //nolint:errcheck // probe conn; cleanup error unactionable
+			_ = conn.Close()
 			return
 		}
 		runtime.Gosched()
@@ -387,12 +387,21 @@ func TestRunQueueAppend_DaemonDown(t *testing.T) {
 	}
 }
 
-// TestRunQueueAppend_FlagEqualsForm verifies --queue-id=<uuid> is accepted.
+// TestRunQueueAppend_FlagEqualsForm verifies --queue-id=<uuid> is accepted AND
+// that the parsed UUID actually reaches the daemon in the request's queue_id
+// field. Asserting the exit code alone would pass even if the equals form were
+// parsed into the void, since the fixture server answers success regardless
+// (hk-9z2yl).
 func TestRunQueueAppend_FlagEqualsForm(t *testing.T) {
 	t.Parallel()
 
+	const wantQueueID = "44444444-0000-7000-8000-000000000000"
+
 	projectDir := queueCliFixtureTempDir(t)
-	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+	var capturedQueueID string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "queue_id", &capturedQueueID)
 		return queueCliFixtureSuccessResponse(t, map[string]any{"appended_count": 1, "new_tail_indices": []int{0}})
 	})
 
@@ -401,12 +410,15 @@ func TestRunQueueAppend_FlagEqualsForm(t *testing.T) {
 
 	got := cli.RunQueueAppend(context.Background(), []string{
 		"--project=" + projectDir,
-		"--queue-id=44444444-0000-7000-8000-000000000000",
+		"--queue-id=" + wantQueueID,
 		"0", "hk-aaa02",
 	}, &out, &errOut)
 
 	if got != 0 {
 		t.Errorf("RunQueueAppend --flag=value form: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedQueueID != wantQueueID {
+		t.Errorf("RunQueueAppend --flag=value form: request queue_id = %q, want %q", capturedQueueID, wantQueueID)
 	}
 }
 

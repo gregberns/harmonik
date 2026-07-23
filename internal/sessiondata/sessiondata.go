@@ -131,6 +131,8 @@ type Record struct {
 }
 
 // SessionDataPath returns the path to session-data.jsonl for the given project directory.
+//
+//nolint:revive // explicit package-qualified name distinguishes this path from other session-data locations.
 func SessionDataPath(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "session-data.jsonl")
 }
@@ -240,7 +242,10 @@ func Collect(p CollectParams) error {
 				nodes = append(nodes, NodeRecord{NodeID: w.NodeID, WallTimeS: wallTimeS})
 				continue
 			}
-			turns, _ := readTranscript(resolved)
+			turns, transcriptErr := readTranscript(resolved)
+			if transcriptErr != nil {
+				continue
+			}
 			var nodeTok TokenUsage
 			for _, t := range turns {
 				// Filter by window when the turn carries a timestamp.
@@ -273,7 +278,10 @@ func Collect(p CollectParams) error {
 			if resolved == "" {
 				continue
 			}
-			turns, _ := readTranscript(resolved)
+			turns, transcriptErr := readTranscript(resolved)
+			if transcriptErr != nil {
+				continue
+			}
 			var nodeTok TokenUsage
 			for _, t := range turns {
 				total.Add(t.Usage)
@@ -292,7 +300,10 @@ func Collect(p CollectParams) error {
 			if resolved == "" {
 				continue
 			}
-			turns, _ := readTranscript(resolved)
+			turns, transcriptErr := readTranscript(resolved)
+			if transcriptErr != nil {
+				continue
+			}
 			var nodeTok TokenUsage
 			for _, t := range turns {
 				total.Add(t.Usage)
@@ -347,7 +358,7 @@ func Append(projectDir string, rec Record) error {
 	if err != nil {
 		return fmt.Errorf("sessiondata: OpenFile: %w", err)
 	}
-	defer f.Close() //nolint:errcheck // best-effort; error returned by Write below takes priority.
+	defer f.Close()
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("sessiondata: json.Marshal: %w", err)
@@ -368,7 +379,7 @@ func ReadAll(projectDir, since, until string) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close() //nolint:errcheck // read-only file; close error is not actionable.
+	defer f.Close()
 
 	var records []Record
 	sc := bufio.NewScanner(f)
@@ -423,7 +434,7 @@ func buildRunEventData(eventsFile, runID string) (*runEventData, error) {
 	if err != nil {
 		return &runEventData{}, nil // absent = treat as no events
 	}
-	defer f.Close() //nolint:errcheck // read-only file.
+	defer f.Close()
 
 	d := &runEventData{}
 	sc := bufio.NewScanner(f)
@@ -437,27 +448,29 @@ func buildRunEventData(eventsFile, runID string) (*runEventData, error) {
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		if sdJsonStr(ev["run_id"]) != runID {
+		if sdJSONStr(ev["run_id"]) != runID {
 			continue
 		}
-		evType := sdJsonStr(ev["type"])
+		evType := sdJSONStr(ev["type"])
 		var payload map[string]json.RawMessage
 		if ev["payload"] != nil {
-			_ = json.Unmarshal(ev["payload"], &payload)
+			if payloadErr := json.Unmarshal(ev["payload"], &payload); payloadErr != nil {
+				continue
+			}
 		}
 		switch evType {
 		case "run_started":
 			if d.BeadID == "" {
-				d.BeadID = sdJsonStr(payload["bead_id"])
+				d.BeadID = sdJSONStr(payload["bead_id"])
 			}
 			if d.QueueID == "" {
-				d.QueueID = sdJsonStr(payload["queue_id"])
+				d.QueueID = sdJSONStr(payload["queue_id"])
 			}
 			if d.StartedAt == "" {
-				d.StartedAt = sdJsonStr(payload["started_at"])
+				d.StartedAt = sdJSONStr(payload["started_at"])
 			}
 		case "session_log_location":
-			lp := sdJsonStr(payload["log_path"])
+			lp := sdJSONStr(payload["log_path"])
 			if lp == "" {
 				continue
 			}
@@ -470,12 +483,12 @@ func buildRunEventData(eventsFile, runID string) (*runEventData, error) {
 			}
 			if !dup {
 				d.LogPaths = append(d.LogPaths, lp)
-				nodeID := sdJsonStr(payload["node_id"])
+				nodeID := sdJSONStr(payload["node_id"])
 				d.NodeIDs = append(d.NodeIDs, nodeID)
 			}
 		case "node_dispatch_requested":
-			nodeID := sdJsonStr(payload["node_id"])
-			requestedAtStr := sdJsonStr(payload["requested_at"])
+			nodeID := sdJSONStr(payload["node_id"])
+			requestedAtStr := sdJSONStr(payload["requested_at"])
 			if nodeID == "" || requestedAtStr == "" {
 				continue
 			}
@@ -514,7 +527,7 @@ func readTranscript(path string) ([]transcriptTurn, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close() //nolint:errcheck // read-only file.
+	defer f.Close()
 
 	var turns []transcriptTurn
 	sc := bufio.NewScanner(f)
@@ -528,7 +541,7 @@ func readTranscript(path string) ([]transcriptTurn, error) {
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
-		if sdJsonStr(entry["type"]) != "assistant" {
+		if sdJSONStr(entry["type"]) != "assistant" {
 			continue
 		}
 		var msg map[string]json.RawMessage
@@ -546,17 +559,17 @@ func readTranscript(path string) ([]transcriptTurn, error) {
 			continue
 		}
 		u := TokenUsage{
-			Input:         sdJsonInt64(rawUsage["input_tokens"]),
-			Output:        sdJsonInt64(rawUsage["output_tokens"]),
-			CacheCreation: sdJsonInt64(rawUsage["cache_creation_input_tokens"]),
-			CacheRead:     sdJsonInt64(rawUsage["cache_read_input_tokens"]),
+			Input:         sdJSONInt64(rawUsage["input_tokens"]),
+			Output:        sdJSONInt64(rawUsage["output_tokens"]),
+			CacheCreation: sdJSONInt64(rawUsage["cache_creation_input_tokens"]),
+			CacheRead:     sdJSONInt64(rawUsage["cache_read_input_tokens"]),
 		}
 		turn := transcriptTurn{
-			Model: sdJsonStr(msg["model"]),
+			Model: sdJSONStr(msg["model"]),
 			Usage: u,
 		}
 		// Parse the top-level "timestamp" field (RFC3339 with optional sub-seconds).
-		if tsStr := sdJsonStr(entry["timestamp"]); tsStr != "" {
+		if tsStr := sdJSONStr(entry["timestamp"]); tsStr != "" {
 			if t, parseErr := time.Parse(time.RFC3339Nano, tsStr); parseErr == nil {
 				turn.Timestamp = t
 			} else if t, parseErr = time.Parse(time.RFC3339, tsStr); parseErr == nil {
@@ -583,7 +596,7 @@ func normTS(ts string) string {
 	return ts
 }
 
-func sdJsonStr(raw json.RawMessage) string {
+func sdJSONStr(raw json.RawMessage) string {
 	if raw == nil {
 		return ""
 	}
@@ -594,7 +607,7 @@ func sdJsonStr(raw json.RawMessage) string {
 	return s
 }
 
-func sdJsonInt64(raw json.RawMessage) int64 {
+func sdJSONInt64(raw json.RawMessage) int64 {
 	if raw == nil {
 		return 0
 	}
@@ -633,7 +646,10 @@ func ResolveTranscriptPath(logPath, claudeProjectsDir string) string {
 		}
 	}
 
-	entries, _ := os.ReadDir(claudeProjectsDir)
+	entries, readErr := os.ReadDir(claudeProjectsDir)
+	if readErr != nil {
+		return ""
+	}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue

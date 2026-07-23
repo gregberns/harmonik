@@ -707,7 +707,7 @@ func HandleQueueDryRun(
 	}
 
 	// Build LedgerDepNotices from LedgerDepPairs.
-	var notices []LedgerDepNotice
+	notices := make([]LedgerDepNotice, 0, len(deferredPairs))
 	for _, p := range deferredPairs {
 		notices = append(notices, LedgerDepNotice{
 			BeadID:        p.BeadID,

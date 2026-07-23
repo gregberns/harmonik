@@ -73,10 +73,12 @@ func TestMergeToMain_NoLocalWorktreeRebase(t *testing.T) {
 
 	// Bare remote so the push (step 5 of EM-052) succeeds.
 	originDir := t.TempDir()
+	// #nosec G204 -- originDir is a test-owned temporary fixture directory.
 	initBareCmd := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir)
 	if out, err := initBareCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init --bare: %v\n%s", err, out)
 	}
+	// #nosec G204 -- originDir is a test-owned temporary fixture directory.
 	addRemoteCmd := exec.CommandContext(t.Context(), "git", "remote", "add", "origin", originDir)
 	addRemoteCmd.Dir = projectDir
 	if out, err := addRemoteCmd.CombinedOutput(); err != nil {
@@ -121,6 +123,7 @@ func TestMergeToMain_NoLocalWorktreeRebase(t *testing.T) {
 
 	// Create a temp worktree (NOT at canonWtPath) to commit agent work.
 	tmpWt := t.TempDir()
+	// #nosec G204 -- runBranch, tmpWt, and headSHA are test-derived fixture values.
 	addWtCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", runBranch, tmpWt, headSHA)
 	addWtCmd.Dir = projectDir
 	if out, err := addWtCmd.CombinedOutput(); err != nil {
@@ -137,6 +140,7 @@ func TestMergeToMain_NoLocalWorktreeRebase(t *testing.T) {
 		{"add", "work.txt"},
 		{"commit", "-m", "feat: agent work (hk-sfy7f)", "--trailer", "Harmonik-Run-ID: " + runID.String()},
 	} {
+		// #nosec G204 -- args are fixed fixture commands plus a generated test run ID.
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = tmpWt
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -145,6 +149,7 @@ func TestMergeToMain_NoLocalWorktreeRebase(t *testing.T) {
 	}
 
 	// Remove the temp worktree — branch ref survives, no local wtPath remains.
+	// #nosec G204 -- tmpWt is a test-owned temporary fixture directory.
 	rmWtCmd := exec.CommandContext(t.Context(), "git", "worktree", "remove", "--force", tmpWt)
 	rmWtCmd.Dir = projectDir
 	if out, err := rmWtCmd.CombinedOutput(); err != nil {
@@ -156,6 +161,7 @@ func TestMergeToMain_NoLocalWorktreeRebase(t *testing.T) {
 		t.Fatalf("canonWtPath %s should not exist after removing temp worktree", canonWtPath)
 	}
 	// Confirm: run-branch exists in the repo (simulates preMergeSync result).
+	// #nosec G204 -- runBranch is a generated test fixture ref name.
 	verifyCmd := exec.CommandContext(t.Context(), "git", "rev-parse", "refs/heads/"+runBranch)
 	verifyCmd.Dir = projectDir
 	if out, err := verifyCmd.CombinedOutput(); err != nil {
@@ -197,6 +203,7 @@ func TestMergeToMain_NoLocalWorktreeRebase(t *testing.T) {
 	// ── Assertion (C): final tree contains BOTH the competing commit AND the
 	// agent work — the rebase incorporated both. ─────────────────────────────
 	for _, f := range []string{"DIVERGE", "work.txt"} {
+		// #nosec G204 -- f is one of the literal fixture filenames above.
 		showCmd := exec.CommandContext(t.Context(), "git", "show", "main:"+f)
 		showCmd.Dir = projectDir
 		if out, err := showCmd.CombinedOutput(); err != nil {

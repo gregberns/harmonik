@@ -41,6 +41,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -282,7 +283,9 @@ func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
 	case <-waitDone:
 		// terminated — good (Wait returns a non-nil "signal: killed" error).
 	case <-time.After(10 * time.Second):
-		_ = cmd.Process.Kill()
+		if killErr := cmd.Process.Kill(); killErr != nil {
+			t.Errorf("kill tunnel process after context-cancel timeout: %v", killErr)
+		}
 		t.Fatal("tunnel process not terminated within 10s of ctx cancel")
 	}
 
@@ -298,8 +301,15 @@ func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
 	go func() {
 		// Mirror beadRunOne's defer exactly: Process.Kill then cmd.Wait.
 		if cmd2.Process != nil {
-			_ = cmd2.Process.Kill()
-			_ = cmd2.Wait()
+			if killErr := cmd2.Process.Kill(); killErr != nil {
+				t.Errorf("kill tunnel process during teardown: %v", killErr)
+			}
+			if waitErr := cmd2.Wait(); waitErr != nil {
+				var exitErr *exec.ExitError
+				if !errors.As(waitErr, &exitErr) {
+					t.Errorf("wait for tunnel process during teardown: %v", waitErr)
+				}
+			}
 		}
 		close(teardownDone)
 	}()
@@ -307,7 +317,9 @@ func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
 	case <-teardownDone:
 		// killed + awaited — good.
 	case <-time.After(10 * time.Second):
-		_ = cmd2.Process.Kill()
+		if killErr := cmd2.Process.Kill(); killErr != nil {
+			t.Errorf("kill tunnel process after teardown timeout: %v", killErr)
+		}
 		t.Fatal("teardown did not kill+await the tunnel process within 10s")
 	}
 }
@@ -531,7 +543,7 @@ func TestWaitWorkerSocketLive_CtxCancel(t *testing.T) {
 	if err == nil {
 		t.Fatal("WaitWorkerSocketLive: expected ctx error, got nil")
 	}
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("error = %v, want context.Canceled", err)
 	}
 	if elapsed > 5*time.Second {

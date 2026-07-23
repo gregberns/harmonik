@@ -90,6 +90,7 @@ func materializeForcedLoginMethod(codexHome string) error {
 	}
 	cfgPath := filepath.Join(codexHome, codexConfigFileName)
 
+	//nolint:gosec // G304: cfgPath is a fixed config.toml filename beneath the caller's CODEX_HOME root.
 	existing, err := os.ReadFile(cfgPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("materializeForcedLoginMethod: read %q: %w", cfgPath, err)
@@ -152,6 +153,7 @@ func topLevelKeyOf(line string) string {
 // edit between materialize and assert is caught.
 func configDeclaresChatGPTLogin(codexHome string) (bool, error) {
 	cfgPath := filepath.Join(codexHome, codexConfigFileName)
+	//nolint:gosec // G304: cfgPath is a fixed config.toml filename beneath the caller's CODEX_HOME root.
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return false, fmt.Errorf("configDeclaresChatGPTLogin: read %q: %w", cfgPath, err)
@@ -184,6 +186,7 @@ type codexAuthFile struct {
 // API key. Returns an error on a read/parse fault so the assert can fail closed.
 func authIndicatesAPIKeyLogin(codexHome string) (bool, error) {
 	authPath := filepath.Join(codexHome, codexAuthFileName)
+	//nolint:gosec // G304: authPath is a fixed auth.json filename beneath the caller's CODEX_HOME root.
 	data, err := os.ReadFile(authPath)
 	if os.IsNotExist(err) {
 		return false, nil

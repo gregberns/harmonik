@@ -205,7 +205,7 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 		Title:               taskTitle,
 		Phase:               string(rc.Phase),
 		Iteration:           rc.IterationCount,
-		RunID:               core.RunID(rc.RunID).String(),
+		RunID:               rc.RunID.String(),
 		WorkspacePath:       rc.WorkspacePath,
 		Body:                taskBody,
 		PriorVerdictFile:    rc.PriorVerdictFile,
@@ -244,7 +244,7 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 	// TODO(hk-gql20.x): replace with typed WorkflowID / NodeID from a workflow
 	// registry once multi-node workflows are introduced.
 	nodeID := "bead/" + rc.BeadID
-	workflowID := core.WorkflowID(core.RunID(rc.RunID))
+	workflowID := core.WorkflowID(rc.RunID)
 
 	// Build optional ClaudeEnvConfig fields.
 	workflowModeStr := string(rc.WorkflowMode)
@@ -255,12 +255,12 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 	}
 
 	cfg := handler.ClaudeEnvConfig{
-		RunID:            core.RunID(rc.RunID).String(),
+		RunID:            rc.RunID.String(),
 		DaemonSocket:     rc.DaemonSocket,
 		WorkspacePath:    rc.WorkspacePath,
 		HandlerSessionID: handlerSessionID,
 		ClaudeSessionID:  mintRes.ClaudeSessionID,
-		WorkflowID:       core.WorkflowID(workflowID).String(),
+		WorkflowID:       workflowID.String(),
 		NodeID:           nodeID,
 		WorkflowMode:     workflowModeStr,
 		Phase:            phaseStr,
@@ -268,7 +268,7 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 		BeadID:           rc.BeadID,
 		// HarmonikAgent distinguishes this implementer on the keeper bus so the
 		// statusLine helper writes impl-<runID>.ctx rather than captain.ctx (hk-4hk).
-		HarmonikAgent: "impl-" + core.RunID(rc.RunID).String(),
+		HarmonikAgent: "impl-" + rc.RunID.String(),
 		BaseEnv:       rc.BaseEnv,
 	}
 	env := handler.ClaudeEnvVars(cfg)
@@ -332,7 +332,7 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 	}
 
 	// Step 8 — Render pre-exec messages (CHB-018).
-	runIDStr := core.RunID(rc.RunID).String()
+	runIDStr := rc.RunID.String()
 	rawMsgs, err := handler.PreExecMessages(
 		runIDStr,
 		handlerSessionID,

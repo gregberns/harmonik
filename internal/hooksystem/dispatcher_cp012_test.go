@@ -42,7 +42,6 @@ func cp012FixtureMakeHookCP(
 	name string,
 	triggerEvent string,
 	expression string,
-	sideEffectKind core.SideEffectKind,
 	haltOnFailure bool,
 	subsystemPriority int,
 ) core.ControlPoint {
@@ -56,7 +55,7 @@ func cp012FixtureMakeHookCP(
 		Payload: core.KindPayload{
 			Hook: &core.HookPayload{
 				TriggerEvent:      triggerEvent,
-				SideEffectKind:    sideEffectKind,
+				SideEffectKind:    core.SideEffectKindEmitEvent,
 				HaltOnFailure:     haltOnFailure,
 				SubsystemPriority: subsystemPriority,
 			},
@@ -235,7 +234,6 @@ func TestCP012_HookFiresOnEventMatch(t *testing.T) {
 		"test-hook",
 		"on_agent_started",
 		"true", // expression always fires
-		core.SideEffectKindEmitEvent,
 		false,
 		0,
 	)
@@ -274,7 +272,6 @@ func TestCP012_HookDoesNotFireOnNonMatchingEvent(t *testing.T) {
 		"test-hook",
 		"on_agent_started",
 		"true",
-		core.SideEffectKindEmitEvent,
 		false,
 		0,
 	)
@@ -308,7 +305,6 @@ func TestCP012_HookEvaluatorFalseDoesNotFire(t *testing.T) {
 		"test-hook",
 		"on_agent_started",
 		"false", // expression never fires
-		core.SideEffectKindEmitEvent,
 		false,
 		0,
 	)
@@ -346,7 +342,6 @@ func TestCP013_TriggerNameOnPrefix(t *testing.T) {
 		"run-started-hook",
 		"on_run_started",
 		"true",
-		core.SideEffectKindEmitEvent,
 		false,
 		0,
 	)
@@ -447,9 +442,9 @@ func TestCP014_HookOrderingBySubsystemPriority(t *testing.T) {
 	t.Parallel()
 
 	// Three hooks with different priorities. We expect p10 before p20 before p30.
-	cpP10 := cp012FixtureMakeHookCP("hook-p10", "on_agent_started", "true", core.SideEffectKindEmitEvent, false, 10)
-	cpP30 := cp012FixtureMakeHookCP("hook-p30", "on_agent_started", "true", core.SideEffectKindEmitEvent, false, 30)
-	cpP20 := cp012FixtureMakeHookCP("hook-p20", "on_agent_started", "true", core.SideEffectKindEmitEvent, false, 20)
+	cpP10 := cp012FixtureMakeHookCP("hook-p10", "on_agent_started", "true", false, 10)
+	cpP30 := cp012FixtureMakeHookCP("hook-p30", "on_agent_started", "true", false, 30)
+	cpP20 := cp012FixtureMakeHookCP("hook-p20", "on_agent_started", "true", false, 20)
 
 	reg := cp012FixtureNewRegistry(cpP10, cpP30, cpP20)
 
@@ -516,9 +511,9 @@ func TestCP014_HookOrderingByDeclarationOrderWithinSamePriority(t *testing.T) {
 	t.Parallel()
 
 	// Register in order: C, A, B.  Expected fire order: hook-c, hook-a, hook-b.
-	cpC := cp012FixtureMakeHookCP("hook-c", "on_agent_started", "true", core.SideEffectKindEmitEvent, false, 0)
-	cpA := cp012FixtureMakeHookCP("hook-a", "on_agent_started", "true", core.SideEffectKindEmitEvent, false, 0)
-	cpB := cp012FixtureMakeHookCP("hook-b", "on_agent_started", "true", core.SideEffectKindEmitEvent, false, 0)
+	cpC := cp012FixtureMakeHookCP("hook-c", "on_agent_started", "true", false, 0)
+	cpA := cp012FixtureMakeHookCP("hook-a", "on_agent_started", "true", false, 0)
+	cpB := cp012FixtureMakeHookCP("hook-b", "on_agent_started", "true", false, 0)
 
 	reg := cp012FixtureNewRegistry(cpC, cpA, cpB)
 
@@ -588,8 +583,7 @@ func TestCP015_HookFailureDoesNotHaltByDefault(t *testing.T) {
 		"hook-fail",
 		"on_agent_started",
 		"undefined_var_that_causes_failure > 0",
-		core.SideEffectKindEmitEvent,
-		false, // halt_on_failure = false
+		false,
 		10,
 	)
 	// hook-ok: fires after hook-fail despite its failure.
@@ -597,7 +591,6 @@ func TestCP015_HookFailureDoesNotHaltByDefault(t *testing.T) {
 		"hook-ok",
 		"on_agent_started",
 		"true",
-		core.SideEffectKindEmitEvent,
 		false,
 		20,
 	)
@@ -644,8 +637,7 @@ func TestCP015_HaltOnFailureStopsChain(t *testing.T) {
 		"hook-halt-fail",
 		"on_agent_started",
 		"undefined_var_that_causes_failure > 0",
-		core.SideEffectKindEmitEvent,
-		true, // halt_on_failure = true
+		true,
 		10,
 	)
 	// hook-after: would fire if chain not halted.
@@ -653,7 +645,6 @@ func TestCP015_HaltOnFailureStopsChain(t *testing.T) {
 		"hook-after",
 		"on_agent_started",
 		"true",
-		core.SideEffectKindEmitEvent,
 		false,
 		20,
 	)
@@ -733,7 +724,6 @@ func TestCP012_HooksAreObserverClass(t *testing.T) {
 		"observer-hook",
 		"on_agent_started",
 		"true",
-		core.SideEffectKindEmitEvent,
 		false,
 		0,
 	)

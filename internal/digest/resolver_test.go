@@ -37,6 +37,7 @@ func writeResolverEvent(t *testing.T, eventsPath, evType string, payload interfa
 	if err != nil {
 		t.Fatalf("writeResolverEvent: marshal event: %v", err)
 	}
+	// #nosec G304 -- eventsPath is a test-controlled path under t.TempDir.
 	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("writeResolverEvent: open: %v", err)

@@ -11,6 +11,7 @@ package sessiondata
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,19 +21,31 @@ import (
 // writeEventLines writes raw JSON lines to path, one per line.
 func writeEventLines(t *testing.T, path string, lines []string) {
 	t.Helper()
+	//nolint:gosec // G304: path is a controlled test fixture under t.TempDir.
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create events file: %v", err)
 	}
-	defer f.Close()
 	for _, l := range lines {
-		f.WriteString(l)
-		f.WriteString("\n")
+		if _, writeErr := f.WriteString(l + "\n"); writeErr != nil {
+			t.Fatalf("write event line: %v", writeErr)
+		}
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		t.Fatalf("close events file: %v", closeErr)
 	}
 }
 
+func marshalFixtureJSON(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf(`{"fixture_marshal_error":%q}`, err.Error())
+	}
+	return string(data)
+}
+
 // eventLine builds a minimal event JSONL line for the given type, run_id, and payload.
-func eventLine(evType, runID string, wallTS string, payload map[string]any) string {
+func eventLine(evType, runID, wallTS string, payload map[string]any) string {
 	env := map[string]any{
 		"event_id":       "00000000-0000-0000-0000-000000000001",
 		"schema_version": 1,
@@ -41,8 +54,7 @@ func eventLine(evType, runID string, wallTS string, payload map[string]any) stri
 		"run_id":         runID,
 		"payload":        payload,
 	}
-	b, _ := json.Marshal(env)
-	return string(b)
+	return marshalFixtureJSON(env)
 }
 
 // transcriptLine builds a Claude transcript assistant-turn JSONL line.
@@ -58,8 +70,7 @@ func transcriptLine(ts string, inputTok, outputTok int64) string {
 			},
 		},
 	}
-	b, _ := json.Marshal(entry)
-	return string(b)
+	return marshalFixtureJSON(entry)
 }
 
 // TestBuildRunEventData_CollectsNodeDispatch verifies that buildRunEventData
@@ -182,7 +193,7 @@ func TestCollect_PerNodeWallTimeS(t *testing.T) {
 	harmonikDir := filepath.Join(dir, ".harmonik")
 	eventsDir := filepath.Join(harmonikDir, "events")
 	for _, d := range []string{harmonikDir, eventsDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o750); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -298,7 +309,7 @@ func TestCollect_TimestampFiltersTranscriptTurns(t *testing.T) {
 	harmonikDir := filepath.Join(dir, ".harmonik")
 	eventsDir := filepath.Join(harmonikDir, "events")
 	for _, d := range []string{harmonikDir, eventsDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o750); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -397,7 +408,7 @@ func TestCollect_NoDispatchEvents_FallsThrough(t *testing.T) {
 	harmonikDir := filepath.Join(dir, ".harmonik")
 	eventsDir := filepath.Join(harmonikDir, "events")
 	for _, d := range []string{harmonikDir, eventsDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o750); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -417,8 +428,7 @@ func TestCollect_NoDispatchEvents_FallsThrough(t *testing.T) {
 					},
 				},
 			}
-			b, _ := json.Marshal(entry)
-			return string(b)
+			return marshalFixtureJSON(entry)
 		}(),
 	})
 

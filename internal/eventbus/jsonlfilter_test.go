@@ -246,6 +246,7 @@ func TestFilterEmptyFile(t *testing.T) {
 
 	path := filterFixtureTempPath(t, "empty.jsonl")
 	// Create the file but write nothing.
+	//nolint:gosec // G304: path is a t.TempDir fixture path constructed by filterFixtureTempPath.
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create: %v", err)

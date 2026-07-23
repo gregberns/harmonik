@@ -168,11 +168,9 @@ func TestHeartbeatStaleness(t *testing.T) {
 	hbPath := filepath.Join(dir, "heartbeat.json")
 
 	// Write a heartbeat file with a very old mtime (2 minutes ago) → stale.
-	f, err := os.Create(hbPath)
-	if err != nil {
+	if err := os.WriteFile(hbPath, nil, 0o600); err != nil {
 		t.Fatalf("create heartbeat: %v", err)
 	}
-	f.Close()
 	old := time.Now().Add(-2 * time.Minute)
 	if err := os.Chtimes(hbPath, old, old); err != nil {
 		t.Fatalf("chtimes: %v", err)
@@ -206,7 +204,9 @@ func TestHeartbeatStaleness(t *testing.T) {
 	// transition to unhealthy well within 2s.
 	snap, ok := waitForStatus(sv, supervise.StatusUnhealthy, 2*time.Second)
 	if !ok {
-		_ = sv.Stop(0)
+		if stopErr := sv.Stop(0); stopErr != nil {
+			t.Errorf("supervisor Stop during teardown: %v", stopErr)
+		}
 		<-done
 		t.Fatalf("expected status unhealthy from stale heartbeat, last seen %s", snap.Status)
 	}
@@ -230,10 +230,8 @@ func TestHeartbeatStaleness(t *testing.T) {
 func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 	dir := t.TempDir()
 	hbPath := filepath.Join(dir, "heartbeat.json")
-	if f, err := os.Create(hbPath); err != nil {
+	if err := os.WriteFile(hbPath, nil, 0o600); err != nil {
 		t.Fatalf("create heartbeat: %v", err)
-	} else {
-		f.Close()
 	}
 
 	spec := supervise.Spec{
@@ -262,15 +260,18 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 	// Keep the heartbeat fresh for ~400ms (many probe ticks), bumping mtime.
 	bumpStop := make(chan struct{})
 	go func() {
-		t := time.NewTicker(20 * time.Millisecond)
-		defer t.Stop()
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-bumpStop:
 				return
-			case <-t.C:
+			case <-ticker.C:
 				now := time.Now()
-				_ = os.Chtimes(hbPath, now, now)
+				if chErr := os.Chtimes(hbPath, now, now); chErr != nil {
+					t.Errorf("fixture: bump heartbeat mtime: %v", chErr)
+					return
+				}
 			}
 		}
 	}()
@@ -278,7 +279,9 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 	// Confirm it reaches running and stays healthy across several probe ticks.
 	if _, ok := waitForStatus(sv, supervise.StatusRunning, 1*time.Second); !ok {
 		close(bumpStop)
-		_ = sv.Stop(0)
+		if stopErr := sv.Stop(0); stopErr != nil {
+			t.Errorf("supervisor Stop during teardown: %v", stopErr)
+		}
 		<-done
 		t.Fatal("expected status running with a fresh heartbeat")
 	}
@@ -286,7 +289,9 @@ func TestHeartbeatFreshRemainsRunning(t *testing.T) {
 	for time.Now().Before(deadline) {
 		if s := sv.Snapshot(); s.Status == supervise.StatusUnhealthy {
 			close(bumpStop)
-			_ = sv.Stop(0)
+			if stopErr := sv.Stop(0); stopErr != nil {
+				t.Errorf("supervisor Stop during teardown: %v", stopErr)
+			}
 			<-done
 			t.Fatalf("fresh heartbeat must not be marked unhealthy; got %s", s.Status)
 		}

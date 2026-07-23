@@ -9,26 +9,26 @@ orchestrator. Beads are machine-local, so this tracked doc is the durable record
 > fan-out) wherever the task decomposes. These three are largely independent of
 > each other and of the RT extraction stream — run them concurrently, not serially.
 
-## 1. Agent-run validation command (replaces fragile git pre-commit hooks) — `hk-p58vo`
+## 1. Agent-run validation command (replaces git hooks) — `hk-p58vo`
 
-**Operator's direction, verbatim intent:** git pre-commit hooks "suck" — installing
-them today surfaced real wiring bugs (see item 2) and a per-commit cost far over
-tolerance. Instead, build the model that worked well in another project:
+**The deliverable (operator, clarified 2026-07-23):** a concrete **agent command** —
+a slash-command file under **`.claude/commands/`** — that runs **after every
+`git commit`** (or thereabouts) and executes a **`make` target** to verify the code
+the agent *just committed* actually passes our checks. If it comes back red, the agent
+fixes and re-commits. This is **agent-driven**, not a blocking shell hook.
 
-- ONE CLI command (under `.claude/commands/`) that the **agent** runs to validate
-  everything (build / vet / lint / tests / review).
-- A hook **injects a message to the agent** telling it to run that process.
-  Operator is unsure whether the injection should fire **before or after** the
-  commit — that is an open design question for the build.
-- The point: **agent-driven** validation, not a blocking shell hook.
-
-**Operator refinement — keep the FIRST version dead simple.** Do NOT build the full
-hook-message-injection design yet. For now: a single check command (a `make check`
-wrapper) plus a **standing reminder** that always tells the agent to run it before
-committing. The richer "hook injects a message before/after commit" design is a later
-evolution. On git hooks: the operator's verdict is **out** — lefthook was uninstalled
-this session ("fuck lefthook, that shit is awful"); it auto-reinstalled itself on every
-commit, which is why it's gone entirely rather than trimmed.
+- **Which make target — orchestrator's pick:** `make check` (the full tier-2 gate:
+  build / vet / lint + `-race` tests + coverage + govulncheck), because the stated
+  intent is "all our checks." If a full check after *every* commit proves too slow,
+  the implementing agent may split it: `make check-fast` per commit, `make check` at
+  push / milestone boundaries.
+- **Open design detail — the "after every commit" trigger.** e.g. a Claude Code
+  `PostToolUse` hook in `settings.json` matching `git commit` that injects a message
+  telling the agent to run the slash command. Wire it so it fires reliably without a
+  git hook.
+- **git hooks are OUT.** lefthook was fully uninstalled this session ("fuck lefthook,
+  that shit is awful"); it auto-reinstalled itself on every commit, which is why it's
+  gone entirely rather than trimmed. Do NOT reinstall it.
 
 Design → build → review, all by agents, in P2.
 

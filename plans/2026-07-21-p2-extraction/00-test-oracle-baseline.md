@@ -123,6 +123,7 @@ TestStopHookE2E_TwinRelayFastPath                           # load-sensitive
 TestStopHookE2E_TwinRelayWaitGrace                          # load-sensitive
 TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace    # load-sensitive
 TestT6_10BeadSequentialDrain                                # load-sensitive
+TestPasteInjectCommitBudget_IdleActivePane_HKukx            # load-sensitive; ADDED 2026-07-22 (RT14 run)
 
 # confirm this one by re-running IN THE FULL SUITE (isolation is what breaks it)
 TestMergeToMain_RealConflictWithBeadsLedger_Escalates       # ISOLATION-sensitive; pre-dates P2
@@ -137,6 +138,14 @@ TestCodexHarness_LaunchSpec_CustomBinary                    # flaky
 
 If a unit's after-set contains one of these and the before-set did not, **re-run that test in isolation**
 before calling it a regression. Isolated failure = real; isolated pass = load artifact.
+
+**Added 2026-07-22 during RT14's differential run:**
+`TestPasteInjectCommitBudget_IdleActivePane_HKukx` failed in the full suite and **passed in
+isolation** (1.5s), so it is a load artifact by this file's own rule, not a regression. It post-dates
+the original baseline measurement (its file `pasteinject_hk9vp51_test.go` last landed at `5c1e0deb3`),
+which is why it was absent from the table above. RT14 never touched that file — it covers the
+Working-phase no-commit ceiling, which `dispatchsegment.go` places outside the RT8 segment boundary
+and which slice RT19c owns.
 
 ## Suite cost
 

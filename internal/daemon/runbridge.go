@@ -131,7 +131,7 @@ func (b *runBridge) emit(c context.Context, typ core.EventType, detail string) {
 	if detail == "rejected" {
 		reason = b.rejectReason
 	}
-	runmerge.EmitOutcomeEmitted(c, b.deps.bus, b.runID, b.beadID, detail, reason)
+	runmerge.EmitOutcomeEmitted(c, b.rp.Emitter, b.runID, b.beadID, detail, reason)
 }
 
 // feed stamps + feeds one shell-classified event and drains the synchronous
@@ -276,7 +276,7 @@ func (b *runBridge) mergeHook(a spineArgs) func(context.Context) {
 		if mergeInto == "" {
 			mergeInto = b.deps.targetBranch
 		}
-		mergeRes := runmerge.RunBranchToTarget(c, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
+		mergeRes := runmerge.RunBranchToTarget(c, a.mport.Submit(), a.activeRepo, b.runID, b.rp.Emitter, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
 		switch {
 		case mergeRes.NoChange:
 			b.sh.pending = append(b.sh.pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange})
@@ -319,7 +319,7 @@ func (b *runBridge) drainMergeHook(a spineArgs) func(context.Context, string) []
 		if mergeInto == "" {
 			mergeInto = b.deps.targetBranch
 		}
-		mergeRes := runmerge.RunBranchToTarget(mctx, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
+		mergeRes := runmerge.RunBranchToTarget(mctx, a.mport.Submit(), a.activeRepo, b.runID, b.rp.Emitter, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
 		switch {
 		case mergeRes.NoChange:
 			return []runexec.Event{{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange}}

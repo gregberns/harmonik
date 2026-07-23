@@ -183,6 +183,26 @@ see §3, where RT18's original decomposition is rejected precisely for trying to
 with **zero signature changes**, then six small signature drops in a strict **leaf-first** walk, then the
 `launchSpecBuilder` deletion. The read conversions belong to RT16/RT17 and are not RT18's.
 
+> **RT16 has landed, and it left you two things to do — read this before RT18.0.**
+>
+> 1. **`scripts/runloop-emitter-gate.sh` will go RED on your signature drops, on purpose.** Its check 3
+>    pins each of the six run-path files to the number of times it reaches the emitter through the port,
+>    using the spelling RT16 measured: `emitterPort()`, `rp.Emitter`, `runPorts().Emitter`. When RT18.3 /
+>    RT18.5 / RT18.7 / RT18.8 / RT18.10 re-sign these functions to take a `ports RunPorts` bundle, the
+>    spelling becomes `ports.Emitter` and the check fails. **That is the gate working, not a defect** —
+>    it exists so a site cannot quietly leave the seam. Add `ports.Emitter` to `PORT_RE` in the same
+>    commit as the first re-signature, and do NOT lower the per-file counts to make it pass.
+> 2. **The five `emit :=` bindings RT16 added are your 8-line change.** `beadRunOne` binds
+>    `emit := rp.Emitter`; `runReviewLoop`, `driveDotWorkflow`, `dispatchDotAgenticNode` and
+>    `executeCognitionGate` bind `emit := deps.emitterPort()`. After the signature drop those four become
+>    `emit := ports.Emitter`. There is no per-call-site work left — that is the whole point of RT16.
+>    `dispatchDotGateNode`, `runbridge.go` (×3) and `sub_workflow_runner.go` (×2) read the port inline
+>    and need one token each.
+>
+> Also note RT18.1's `deps.clock` counts are pre-RT16 and, like every other line number in this
+> catalogue, are now stale. RT16's binding comments deliberately avoid the literal `deps.` spelling, so
+> they do not inflate the counts — but re-grep before sizing.
+
 | # | Chunk | Slice | Files | ~LOC | Green criterion | Safe to stop | Conflict window |
 |---|---|---|---|---|---|---|---|
 | **RT18.0** | Delete the **proven-dead** clock default in `dispatchDotAgenticNode` (`dot_cascade.go:1259-1261`). Dead-by-fixture, not dead-by-construction: both prod callers (`dot_cascade.go:900`, `sub_workflow_runner.go:323`) sit downstream of `driveDotWorkflow`'s own default at `:220`, and `swMakeRunner` (`sub_workflow_runner_hkoe6_test.go:118`) builds a nil-clock `workLoopDeps` but every fixture there uses a single non-agentic node. **Say so in the commit body** | RT18 | `dot_cascade.go` | 4 | G2 + G3 | **yes** | `dot_cascade.go`, 4 lines, <20 min |

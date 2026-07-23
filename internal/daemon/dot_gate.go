@@ -133,7 +133,7 @@ func dispatchDotGateNode(
 
 	// Step 3: call handler.DispatchGateNode. It invokes evalFn, maps the result
 	// to an Outcome, and emits gate_decision_recorded on success.
-	result, err := handler.DispatchGateNode(ctx, run, core.NodeID(node.ID), gateRef, evalFn, deps.bus)
+	result, err := handler.DispatchGateNode(ctx, run, core.NodeID(node.ID), gateRef, evalFn, deps.emitterPort())
 	if err != nil {
 		return core.Outcome{}, fmt.Errorf("dot: gate node %q: DispatchGateNode: %w", node.ID, err)
 	}
@@ -269,6 +269,11 @@ func executeCognitionGate(
 	if deps.clock == nil {
 		deps.clock = substrate.SystemClock{}
 	}
+	// RSM-010: the run's EmitterPort, bound once for this call. Deliberately the
+	// NARROW emitterPort accessor (runports.go) and not the runPorts() bundle,
+	// which also reads the clock port — the default set just above must not be
+	// bypassed by an earlier bundle read.
+	emit := deps.emitterPort()
 	// Remove any stale verdict from a prior attempt. Routed through runner so a
 	// REMOTE run (runner != nil) clears the verdict on the WORKER's filesystem,
 	// not box A's (hk-9fe2).
@@ -365,7 +370,7 @@ func executeCognitionGate(
 			deps.harnessRegistry,
 			beadRecord,
 			gateInheritedHarness,
-			deps.bus,
+			emit,
 		)
 	}
 	if specBuilder == nil {
@@ -415,7 +420,7 @@ func executeCognitionGate(
 		deps.hookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
-	tap, tapCh := newPerRunEventTap(deps.bus, runID)
+	tap, tapCh := newPerRunEventTap(emit, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
 	// hk-goczd: emit the CHB-018 pre-exec messages before Launch, holding back
@@ -424,7 +429,7 @@ func executeCognitionGate(
 	// single-mode path (workloop.go:2098/2137). Without this the cognition-gate
 	// node never emits launch_initiated and the stale watcher (stalewatch.go:296)
 	// flags a phantom launch stall on every gate dispatch.
-	gateLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
+	gateLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, emit, runID, artifacts.PreExecMsgs)
 
 	// RT14: predeclared so the dispatch segment's launch / onLaunched hooks can
 	// assign them from inside their closures. Safe because RunDispatch drives
@@ -483,7 +488,7 @@ func executeCognitionGate(
 			// hk-goczd: window is live — emit the held-back launch_initiated to clear the
 			// false stall. Mirrors workloop.go's single-mode path.
 			if gateLaunchInitiatedMsg != nil {
-				runlaunch.EmitPreExecMessage(lctx, deps.bus, runID, gateLaunchInitiatedMsg)
+				runlaunch.EmitPreExecMessage(lctx, emit, runID, gateLaunchInitiatedMsg)
 			}
 
 			// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
@@ -506,7 +511,7 @@ func executeCognitionGate(
 		},
 		deliver: func(dctx context.Context) {
 			// Deliver gate-evaluator kick-off message and watch for verdict file.
-			briefDelivered := pasteInjectCognitionGate(dctx, deps.clock, pasteTarget, artifacts.ClaudeSessionID, wtPath, deps.bus, runID)
+			briefDelivered := pasteInjectCognitionGate(dctx, deps.clock, pasteTarget, artifacts.ClaudeSessionID, wtPath, emit, runID)
 			if qs, ok := pasteTarget.(quitSender); ok {
 				go pasteInjectQuitOnGateFile(ctx, deps.clock, runner, qs, sess, wtPath, briefDelivered)
 			}
@@ -529,7 +534,7 @@ func executeCognitionGate(
 			}
 		},
 		emitReadyTimeout: func(ectx context.Context) {
-			runlaunch.EmitAgentReadyTimeout(ectx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
+			runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
 		},
 		killAbort: func(context.Context) {
 			// Ctx-cancel abort edge: Kill is idempotent (the runlaunch.ForceTeardownSession

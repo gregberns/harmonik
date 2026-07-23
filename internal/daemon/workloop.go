@@ -3076,6 +3076,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	handles := deps.sharedHandles()
 	// mport.Submit() is the merge exclusion-domain submit surface (RSM-015).
 	mport := rp.Merge
+	// RSM-010: the run's EmitterPort, off the bundle rp already holds.
+	// EmitterPort is a type ALIAS for handlercontract.EventEmitter
+	// (runports.go), so this is the same value and the same static type the
+	// 24 emissions below already used — only the spelling changes.
+	emit := rp.Emitter
 	beadID := beadRecord.BeadID
 
 	// hk-hs7ex: release the local slot on exit when the outer loop incremented
@@ -3150,7 +3155,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		if emitCtx.Err() != nil {
 			emitCtx = context.Background()
 		}
-		emitRunCompleted(emitCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, success, summary, queueID, queueGroupIndex, runTipSHA)
+		emitRunCompleted(emitCtx, emit, runID, string(beadID), owningEpicID, owningEpicAssignee, success, summary, queueID, queueGroupIndex, runTipSHA)
 		if draining {
 			return // RSM-021: the drain batch collects no sessiondata.
 		}
@@ -3191,7 +3196,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// hk-hiqrl: itemWorkflowMode is a tier-0 per-item override set by the
 	// CLI --review-loop flag via queue.Item.WorkflowMode. When set and valid
 	// it takes precedence over the full EM-012a walk.
-	workflowMode := resolveWorkflowMode(ctx, beadRecord, env.WorkflowModeDefault, deps.bus)
+	workflowMode := resolveWorkflowMode(ctx, beadRecord, env.WorkflowModeDefault, emit)
 	if itemWorkflowMode != "" {
 		if candidate := core.WorkflowMode(itemWorkflowMode); candidate.Valid() {
 			workflowMode = candidate
@@ -3242,7 +3247,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		beadRecord.Labels,
 		resolvedAgentType,
 		env.ProjectCfg,
-		deps.bus,
+		emit,
 		string(beadID),
 	)
 	sdModel = resolvedModel
@@ -3255,7 +3260,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// StartFromRefError use below, and return before any launch-spec is built.
 	resolvedProfile, profErr := resolvePiProfile(
 		ctx, beadRecord.Labels, resolvedAgentType,
-		env.ProjectCfg.Harnesses.Pi, deps.bus, string(beadID),
+		env.ProjectCfg.Harnesses.Pi, emit, string(beadID),
 	)
 	if profErr != nil {
 		reopenTID, _ := deps.tidGen.Next()
@@ -3287,7 +3292,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		if rh, ok := handles.RunRegistry.Get(runID); ok && rh != nil {
 			rh.SetResolvedProvider(resolvedProvider)
 		}
-		emitProviderSelected(ctx, deps.bus, runID, resolvedProvider)
+		emitProviderSelected(ctx, emit, runID, resolvedProvider)
 	}
 
 	// Determine activeRepo: the repository where the per-bead worktree lives,
@@ -3548,7 +3553,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				"daemon: workloop: reverse-tunnel socket-path bead %s run %s: %v (reopening, not launching)\n",
 				beadID, runID.String(), lenErr)
 			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
-				rbc.worker.Name, rbc.worker.Host, daemonHookSock, lenErr.Error(), deps.bus.Emit)
+				rbc.worker.Name, rbc.worker.Host, daemonHookSock, lenErr.Error(), emit.Emit)
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 				fmt.Sprintf("reverse-tunnel not ready: %v", lenErr))
@@ -3599,7 +3604,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				"daemon: workloop: reverse-tunnel readiness gate bead %s run %s: %v (reopening, not launching)\n",
 				beadID, runID.String(), waitErr)
 			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
-				rbc.worker.Name, rbc.worker.Host, rbc.workerHookSock, waitErr.Error(), deps.bus.Emit)
+				rbc.worker.Name, rbc.worker.Host, rbc.workerHookSock, waitErr.Error(), emit.Emit)
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 				fmt.Sprintf("reverse-tunnel not ready: %v", waitErr))
@@ -3614,7 +3619,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		if rbc == nil {
 			return
 		}
-		workers.EmitWorkerOfflineEvent(ctx, rbc.worker.Name, rbc.worker.Host, phase, detail, deps.bus.Emit)
+		workers.EmitWorkerOfflineEvent(ctx, rbc.worker.Name, rbc.worker.Host, phase, detail, emit.Emit)
 		if handles.Workers != nil {
 			handles.Workers.SetEnabled(false)
 		}
@@ -3817,7 +3822,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		runStartedWorkerName = rbc.worker.Name
 		runStartedWorkerOS = rbc.worker.OS
 	}
-	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS, string(workflowMode))
+	emitRunStarted(ctx, emit, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS, string(workflowMode))
 
 	// hk-f38n: the pre-dispatch subsumption check (hk-ly0hg Fix-2 / hk-wcv) was
 	// REMOVED here. That check called shared.MainHistoryHasRefsTrailer — a bare
@@ -3880,7 +3885,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				core.AgentType(""), // queue default: per-queue harness field not yet landed (hk-4x3rg)
 				core.AgentType(""), // node default: overridden per-node in driveDotWorkflow (T5/T12)
 				env.DefaultHarness, // global default: Config.DefaultHarness (empty → built-in claude-code)
-				deps.bus,
+				emit,
 			)
 		} else {
 			// No registry (legacy test fixtures): fall back to direct claude builder.
@@ -4548,11 +4553,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// it must signal that a tmux window actually spawned, not merely that the
 	// daemon is about to try (which would mislead operators when SpawnWindow is
 	// wedged on a leaked spawn slot).
-	implLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
+	implLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, emit, runID, artifacts.PreExecMsgs)
 
 	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
 	// watcher events without a post-seal bus subscription (EV-009).
-	tap, tapCh := newPerRunEventTap(deps.bus, runID)
+	tap, tapCh := newPerRunEventTap(emit, runID)
 	// Precondition: deps.adapterRegistry must be non-nil (enforced by
 	// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
@@ -4671,14 +4676,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			// saturated) instead of an opaque launch-error reopen.
 			if errors.Is(lErr, ErrSpawnCapTimeout) {
 				inUse, capSize := substrateSpawnStats(deps.substrate)
-				runlaunch.EmitSpawnCapBlocked(lctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt), inUse, capSize)
+				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clock.Since(implementerLaunchedAt), inUse, capSize)
 			}
 			// hk-r1rup: a tmux-new-window-timeout launch failure is the hung-tmux
 			// signature (the no-spawn wedge). Emit tmux_new_window_timeout so operators
 			// see WHY the launch failed (tmux new-window did not return) instead of an
 			// opaque launch-error reopen.
 			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
-				runlaunch.EmitTmuxNewWindowTimeout(lctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt))
+				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, deps.clock.Since(implementerLaunchedAt))
 			}
 		},
 		onLaunched: func(lctx context.Context) {
@@ -4688,7 +4693,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			// wedged on a leaked slot (in that case Launch returns an error above and
 			// launch_initiated is never emitted).
 			if implLaunchInitiatedMsg != nil {
-				runlaunch.EmitPreExecMessage(lctx, deps.bus, runID, implLaunchInitiatedMsg)
+				runlaunch.EmitPreExecMessage(lctx, emit, runID, implLaunchInitiatedMsg)
 			}
 
 			// Store the session's lifecycle Machine in the RunHandle so the stale watcher
@@ -4702,7 +4707,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			// attribute escalation messages sent under "<beadID>-impl". Retire on run-end
 			// via the defer registered after the segment returns, so the leave event
 			// fires on every exit path (normal, abort, error).
-			emitImplPresence(lctx, deps.bus, beadID, core.AgentPresenceStatusOnline, core.AgentPresenceReasonJoin)
+			emitImplPresence(lctx, emit, beadID, core.AgentPresenceStatusOnline, core.AgentPresenceReasonJoin)
 
 			// Wire the agent-ready callback so that incoming agent_ready relay
 			// messages from the hook-relay subprocess (CHB-013 / HC-039) are forwarded
@@ -4793,7 +4798,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
 				briefDelivered := pasteInjectOnLaunch(dctx, deps.clock, runPasteTarget, artifacts.ClaudeSessionID,
 					rc.Phase, rc.IterationCount, wtPath,
-					deps.bus, runID)
+					emit, runID)
 
 				// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
 				// worktree, send `/quit Enter` to Claude Code's REPL to trigger the Stop
@@ -4838,7 +4843,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				if qs, ok := runPasteTarget.(quitSender); ok {
 					noChangeTimeoutCh = make(chan struct{})
 					watchdogCh := tap.Subscribe()
-					go pasteInjectQuitOnCommit(ctx, deps.clock, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, deps.bus, runID)
+					go pasteInjectQuitOnCommit(ctx, deps.clock, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, emit, runID)
 				}
 			}
 		},
@@ -4882,7 +4887,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			// emission succeeds even when the never-spawned reaper has cancelled
 			// the per-run ctx before this point (the reopen hook applies the same
 			// Background fallback per RSM-022).
-			runlaunch.EmitAgentReadyTimeout(context.Background(), deps.bus, runID, cbClaudeSessionID, deps.agentReadyTimeout) //nolint:contextcheck // hk-4hso5: Background is deliberate so the emission survives a reaper-cancelled run ctx (pre-RT14 idiom)
+			runlaunch.EmitAgentReadyTimeout(context.Background(), emit, runID, cbClaudeSessionID, deps.agentReadyTimeout) //nolint:contextcheck // hk-4hso5: Background is deliberate so the emission survives a reaper-cancelled run ctx (pre-RT14 idiom)
 		},
 		killAbort: func(context.Context) {
 			// hk-o85ye: SITE-SPECIFIC — unlike reviewloop.go / dot_cascade.go, whose
@@ -4969,7 +4974,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// emitted by the segment's onLaunched hook; this defer fires the leave on
 	// every exit path (normal, abort, error).
 	defer func() {
-		emitImplPresence(context.Background(), deps.bus, beadID, core.AgentPresenceStatusOffline, core.AgentPresenceReasonLeave)
+		emitImplPresence(context.Background(), emit, beadID, core.AgentPresenceStatusOffline, core.AgentPresenceReasonLeave)
 	}()
 
 	if hbDone != nil {
@@ -5029,7 +5034,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// the Machine through Terminating to a terminal state. Transitions that are
 	// invalid for the current state (e.g. machine already in StateFailed from
 	// agent_failed) are silently ignored.
-	transitionToTerminated(context.Background(), sess.Machine(), runID, deps.bus,
+	transitionToTerminated(context.Background(), sess.Machine(), runID, emit,
 		ei.exitCode, ei.waitErr)
 
 	// hk-e6mtt: destroy the tmux window after the session completes so dead panes
@@ -5061,7 +5066,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	{
 		curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA
-		runlaunch.EmitImplementerPhaseComplete(ctx, deps.bus, runID, ei.exitCode, ei.stderrTail,
+		runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, ei.exitCode, ei.stderrTail,
 			commitLanded, implementerPhaseDur)
 	}
 
@@ -5115,7 +5120,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 						fmt.Fprintf(os.Stderr,
 							"daemon: workloop: bead %s: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
 							beadID, implementerPhaseDur, floor)
-						codex.EmitImplementerNoWorkSuspected(ctx, deps.bus, runID, beadID, implementerPhaseDur, floor)
+						codex.EmitImplementerNoWorkSuspected(ctx, emit, runID, beadID, implementerPhaseDur, floor)
 					}
 				}
 			}
@@ -5209,7 +5214,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		// spine then carries the classified reason, RSM-031/033 row 2 — the
 		// guards run for every dispatch-terminal class, so escape maps onto the
 		// mode-failure edge rather than the close-class-only Guarding phase).
-		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, activeRepo, dirtyFiles)
+		emitImplementerEscapedWorktree(ctx, emit, runID, beadID, activeRepo, dirtyFiles)
 		failReason := fmt.Sprintf("implementer_escaped_worktree: %d file(s) dirty in main: %s",
 			len(dirtyFiles), strings.Join(dirtyFiles, ", "))
 		failRun(failReason, failReason)

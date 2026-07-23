@@ -357,6 +357,18 @@ readywait-freeze-gate:  ## P2 E5 RT14: forbid re-hand-rolling the agent_ready wa
 workersbootwire-freeze-gate:  ## P2 E4c: forbid new worker-registry boot-wiring files or moved symbols in internal/daemon
 	scripts/workersbootwire-freeze-gate.sh
 
+# runloop-emitter-gate: the P2 E5 RT16 ratchet — the DOT run path reaches its
+# event bus through EmitterPort (internal/daemon/runports.go), not through the
+# workLoopDeps bus field. RT16 converted 108 direct field reads on the six mover
+# files to 8 port reads so RT18's re-signature is an 8-line change, not a
+# 108-line one. depguard cannot express "reach this dependency through its
+# port", so this grep gate rations the field per file, asserts EmitterPort is
+# still an alias, and pins each mover to the seam. Wired into check-fast and
+# check-short.
+.PHONY: runloop-emitter-gate
+runloop-emitter-gate:  ## P2 E5 RT16: forbid bypassing EmitterPort with a raw bus-field read in internal/daemon
+	scripts/runloop-emitter-gate.sh
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -539,6 +551,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/runlaunch-freeze-gate.sh
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
+	scripts/runloop-emitter-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -570,6 +583,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/runlaunch-freeze-gate.sh
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
+	scripts/runloop-emitter-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

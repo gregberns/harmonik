@@ -287,7 +287,7 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 	// ── Step 6: Dispatch the expanded sub-workflow (SW-005/SW-006) ────────────
 	// DispatchSubWorkflow emits sub_workflow_entered, walks the expanded graph
 	// via nodeRunner, emits sub_workflow_exited, and returns the terminal Outcome.
-	outcome, dispatchErr := workflow.DispatchSubWorkflow(ctx, r.run, expansion, subGraph, r.cycles, nodeRunner, r.deps.bus)
+	outcome, dispatchErr := workflow.DispatchSubWorkflow(ctx, r.run, expansion, subGraph, r.cycles, nodeRunner, r.deps.emitterPort())
 	if dispatchErr != nil {
 		return core.Outcome{}, fmt.Errorf("sub-workflow node %q: dispatch: %w", spec.ParentNodeID, dispatchErr)
 	}
@@ -314,7 +314,7 @@ func dispatchSubWorkflowExpandedNode(
 	switch n.Type {
 	case core.NodeTypeNonAgentic:
 		if n.ToolCommand != "" && n.HandlerRef == "shell" {
-			return dispatchDotToolNode(ctx, r.deps.bus, r.runID, r.runner, r.wtPath, n, r.deps.handlerEnv)
+			return dispatchDotToolNode(ctx, r.deps.emitterPort(), r.runID, r.runner, r.wtPath, n, r.deps.handlerEnv)
 		}
 		// Non-shell non-agentic: synthesize SUCCESS.
 		return core.Outcome{Status: core.OutcomeStatusSuccess}, nil

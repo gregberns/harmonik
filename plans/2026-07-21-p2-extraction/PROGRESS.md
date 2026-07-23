@@ -1,7 +1,8 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-23 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + **RT19c** landed.
+**Last updated:** 2026-07-23 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c landed.
+**RT16 is VERIFIED AND UNCOMMITTED**, awaiting the independent review gate — see the RT16 section below.
 The concurrent quality lane's working tree is fully drained to disk (§8).
 
 > ## ⚠️ We nearly collided at 08:00 — read this
@@ -45,7 +46,7 @@ plans, then began landing them one commit at a time.
 | **3. Execute (P2 core)** | 9 slices, sequential | **DONE — 9/9, every verify `is_pure_move: true`** |
 | **4. Punch list** | verifier findings applied | **DONE** — `ffc5415a` |
 | **5. Differential verification** | clean before/after pair, identical scope | **DONE — no regression** (see below) |
-| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, **RT19c** landed; RT16/17/18/19/lift planned | **IN PROGRESS** |
+| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, RT19c landed; **RT16 verified, in the working tree, NOT yet committed** (awaiting review); RT17/18/19/lift planned | **IN PROGRESS** |
 | **7. E4d re-plan** | overturned "impossible"; 3 prep slices ready, E4d-3 parked | **DONE** |
 
 ### Verification verdict (Phase 5)
@@ -599,6 +600,160 @@ across a signature boundary — **RT18 owns it**). None of the six copy-mutation
 independent `agent-reviewer` sub-agent pass was possible on any of the seven commits. Each carries
 `Reviewed-By: self` and a verdict that says so explicitly rather than claiming independence. **These
 seven commits are the ones in the E5 stream that still want an independent pair of eyes.**
+
+### RT16 — the run path reaches its bus through EmitterPort (VERIFIED, NOT YET COMMITTED)
+
+> **Status, stated precisely so this document does not assert something git cannot confirm:** the slice
+> is complete and every gate below has been run and passed, but it is **in the working tree, not in
+> `git log`**. It is held for the independent review gate. Do not read the numbers below as describing
+> a commit — check `git log` before believing any "landed" claim in this file, including this one.
+
+One commit's worth of work. **This slice moves nothing out of `internal/daemon` and changes no behaviour at all** —
+reading its `+25` LOC as the outcome misreads it. The added lines are five port bindings and their
+godoc. What it buys is that RT18's re-signature of the five run-path functions becomes an 8-line
+change instead of a 108-line one.
+
+| Metric | Before | After |
+|---|---:|---:|
+| mover-side raw `deps.bus` field reads | 108 | **0** |
+| `deps.bus` reads left in `internal/daemon` production code | 120 | **21** (10 outer-loop + 11 non-mover, all budgeted) |
+| `deps.` lines in `reviewloop.go` / `dot_cascade.go` / `dot_gate.go` (RT17's exit gate) | 140 / 90 / 46 | **94 / 74 / 43** |
+| top-level non-test files | 102 | 102 |
+| top-level non-test LOC | 48,818 | 48,843 |
+
+`EmitterPort` is a type **alias** (`internal/daemon/runports.go`), so the field and the port hold the
+same static type and the same interface value. The conversion cannot change a method set, an
+interface conversion, a nil check or an emission string — which is what makes this the cheapest
+coupling removal left in the RT stream.
+
+**Where the 8 surviving port reads live:** `emit := rp.Emitter` in `beadRunOne` (off the bundle `rp`
+already held, so zero new `deps.` reads); `emit := deps.emitterPort()` in `runReviewLoop`,
+`driveDotWorkflow`, `dispatchDotAgenticNode` and `executeCognitionGate`; inline
+`deps.emitterPort()` in `dispatchDotGateNode`; inline `b.rp.Emitter` ×3 in `runbridge.go`; inline
+`r.deps.emitterPort()` ×2 in `sub_workflow_runner.go`.
+
+**The narrow accessor is deliberate.** Four of the five binding sites sit directly under the
+`if deps.clock == nil` default. `deps.runPorts()` reads the clock port as well, so hoisting the
+bundle above that default would silently produce a nil `Clock`. `emitterPort()` reads one field and
+cannot interact with it. Do not "simplify" the four to `deps.runPorts().Emitter`.
+
+**The ten `workloop.go` survivors are a carve-out, not an oversight.** `runWorkLoop` (the outer
+queue-claim loop) ×7, plus `activateFirstPendingGroup`, `evaluateGroupAdvanceWithOutcome` and
+`maybeEmitEpicCompleted`. Those functions stay in `internal/daemon` forever
+(`E5-dot-runloop.md` §1c), so converting them is churn on the tree's hottest file for zero extraction
+value.
+
+**Proof the diff is mechanical, done by machine rather than by eye.** All 245 changed lines were
+normalised by substituting each new spelling back to the old one; every line collapsed into an
+identical `-`/`+` pair except the 25 genuinely new ones (5 bindings + 20 doc-comment lines). 110
+pairs = 108 call sites + the 2 prose comments in `dot_cascade.go` that named the field.
+
+**`scripts/runloop-emitter-gate.sh`, wired into `check-fast` + `check-short`, and proven RED in
+twelve directions before wiring.** A gate that passes clean is not a gate that works, so each class
+it claims to catch was deliberately introduced and confirmed to fail: a new field read on a mover; a
+new field read in a brand-new top-level daemon file; a new field read in a daemon **sub-package**
+(the `find -maxdepth 1` blind spot recorded in §5 item 3 — this gate scans recursively, so it does
+not inherit it); a field read inside a grouped `var ( … )` block (the `^(func|var|const)` symbol-regex
+blind spot — this gate matches the field access itself and never anchors on a declaration keyword, so
+the grouped form is not special to it); **two field reads on a single line**; `workloop.go` growing
+10→11; `workloop.go` **shrinking** 10→9; `EmitterPort` demoted from an alias to a defined type;
+`emitterPort()` renamed away; `RunPorts.Emitter` deleted; a mover abandoning the seam; and a
+budgeted file renamed out from under the table.
+
+> **Correction — independent review caught a real defect here, and the write-up above originally
+> stated the reason wrongly.** The first cut of this gate counted with `grep -c`, which counts
+> matching LINES. That is the identical trap this slice's own lessons item 5 records, inherited into
+> the gate by the same agent that documented it. Measured: rewriting one already-counted
+> `runWorkLoop` line to carry two reads takes `workloop.go` from 10 occurrences to 11 while `grep -c`
+> still reports 10, and **the gate exited 0**. The five movers were never exposed — a budget of ZERO
+> trips on any matching line — so the hole was confined to `workloop.go`'s exact-10 assertion and the
+> four ceiling files. But that exact-10 assertion is the entire point of the ratchet. Counting now
+> goes through a `count_matches` helper using `grep -oE`, and the two-reads-on-one-line case is the
+> twelfth proven direction above.
+>
+> The earlier text justified the grouped-`var ( … )` case by claiming the gate "counts occurrences".
+> It did not, and that was the wrong reason regardless: the grouped form is caught because the gate
+> matches the field access rather than a declaration keyword. **An RT17/RT18 reader deciding whether
+> to trust the exact-10 budget would have consulted exactly that sentence.**
+
+Three of those deserve calling out:
+
+- **The shrink direction is a hard failure, not a pass.** §7 risk 1 predicts an implementer reaching
+  for a global `sed` and sweeping the outer loop in with the run path. A ceiling-only gate accepts
+  that silently. `workloop.go`'s budget is asserted EXACTLY, in both directions.
+- **Every non-test Go file under `internal/daemon` is budgeted, defaulting to zero.** A file absent
+  from the table cannot smuggle in a field read, so a brand-new daemon file or sub-package is caught
+  by construction rather than by remembering to extend a list.
+- **Check 3 pins the CALL SITES, not just the seam** — the hole RT14's gate had to close. "The seam
+  still exists" passes even if every site quietly left it, so each mover is pinned to the number of
+  port reads RT16 left it with.
+
+**Known limitation, recorded as a choice rather than left to be rediscovered.** The gate matches the
+RECEIVER NAME (`deps.bus`), so a read through a differently-named receiver —
+`func (d *workLoopDeps) f() { _ = d.bus }` — is invisible to it. Not a live hole: all nine current
+`workLoopDeps` methods name their receiver `deps` and all five movers take `deps` as a value
+parameter. Matching `\.bus` alone would fire on `bootstate.go`'s unrelated `bs.bus` field and make
+the gate red on arrival. Stated in the script header too.
+
+**Recipe corrections — the same recurring classes, sixth consecutive slice:**
+
+1. **Every line number in the recipe was stale.** Not one of the ~120 cited line numbers was right;
+   RT14, RT15 and RT19c had all shifted the tree since §0 was measured. Every site was re-located by
+   `grep -n` and every insertion anchor asserted by exact string match before writing. The recipe's
+   *counts* were all correct (34 / 51 / 23 / 7 / 3 / 2, and the 7+24+1+1+1 split of `workloop.go`),
+   which is the reliable part of these recipes; its coordinates are not.
+2. **The recipe's own §7 risk 3 was stale.** It said the only `emit` binding in the six files is
+   `var emit workers.EmitFunc` in `buildWorkerRegistryWithRunner`, "which E4c moves out". E4c has
+   landed and that is gone — but `runbridge.go` has a **method** named `emit` on `*runBridge`, which
+   the risk note never mentions. It is not a shadow (RT16 declares no local there, by the recipe's
+   own rule), but the stated basis for "verified, no shadowing" was wrong.
+3. **The prescribed binding comment would have tripped the gate it ships with.** The recipe's comment
+   text is `// RSM-010: the run's EmitterPort (identity over deps.bus …)`. The gate matches plain
+   text, so five copies of that comment put five field-name occurrences straight back into the files
+   whose budget the slice takes to zero. The inserted comments deliberately never spell the field
+   name — the same discipline `readywait-freeze-gate.sh` already documents for its wall-clock regex.
+   For the same reason the two `dot_cascade.go` prose lines (hk-sj6a / hk-e7n76) were reworded to
+   "the run emitter", preserving the tap-versus-bus distinction verbatim otherwise.
+4. **The recipe's §4 step 9 normalisation command does not run on this box.** It uses `sed` with
+   `\b` word boundaries; BSD `sed` has no `\b`, so it silently substitutes nothing and reports every
+   line as unpaired. Re-done in Python.
+5. **A `deps.` count is not what it looks like.** `grep -c` counts LINES, not occurrences, and many
+   run-path lines carry both `deps.bus` and `deps.clock`. The §5 "Measurement" block reads as an
+   occurrence count and is not one. Reported here as the line count the command actually produces.
+
+**No `.golangci.yml` change, and none was warranted** — the slice creates no package, so there is no
+depguard block to add and no allow-list to widen. Lint was run as `--new-from-rev=HEAD` scoped to
+`./internal/daemon/...`: **0 issues**. Scoping matters — an unscoped `--new-from-rev` in this tree
+reports 33 findings belonging to other lanes' uncommitted files.
+
+The `_plan.md` §5.4 runtime proof is **DEFERRED because the daemon is down**, per
+`E5-dot-runloop.md` §7.11. The mechanical substitutes actually run are `internal/replay` (the
+run-keyed event-stream divergence checkers — the sharpest oracle for a slice that touches nothing but
+emission plumbing) and `internal/runexectest -count=10`, both green.
+
+**Differential result: 12 failures, none attributable.** Ten are on the
+`00-test-oracle-baseline.md` allowlist. `specaudit` is unchanged at its 7 known top-level failures
+and `TestWMINV003PartBCorpusCheck` — the sensor that allowlists `internal/daemon/workloop.go` by
+literal path — is not among them, as required for a slice that adds no exec and moves no file. `ubs`
+over the six changed files reports **25 critical / 19 warning / 333 info both before and after** —
+byte-identical, so no finding is new.
+
+**Three test-oracle findings for whoever next refreshes `00-test-oracle-baseline.md`** (that file is
+another lane's; recorded here rather than edited in):
+
+1. **`TestDaemonStart_SocketBindsBeforeRestartBackoffSleep` is missing from the allowlist and belongs
+   on it as load-sensitive.** `restartbackoff_socketbind_hkuzvt9_test.go` gives the daemon socket a
+   fixed **1.5s** to appear; under full-suite load it does not. Passes 3/3 in isolation.
+2. **`TestL2_SSHLocalhost_TmuxPaneID_hk8u2al` is missing, and its mechanism is not load.** Its own
+   assertion **logged OK in the failing run** — the FAIL is Go's own
+   `testing.go: TempDir RemoveAll cleanup: unlinkat …: directory not empty`, a race between
+   `t.TempDir()` teardown and the tmux server the test starts under `HOME=<tempdir>`, which keeps
+   writing after the body returns. It therefore cannot be confirmed by either standard procedure —
+   re-running it just re-rolls the race. Measured 28/28 pass with RT16 applied and 8/8 at HEAD.
+3. **`TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace` is misclassified.** It is listed as
+   load-sensitive, whose confirmation is "isolated pass ⇒ artifact" — but it fails **in isolation**,
+   3 of 6 under `-count=6` on the *unmodified* files at HEAD. It is **known-red at HEAD**, and under
+   the load-sensitive procedure an implementer would read its isolated failure as a real regression.
 
 ---
 

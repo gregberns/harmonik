@@ -220,6 +220,11 @@ func driveDotWorkflow(
 	if deps.clock == nil {
 		deps.clock = substrate.SystemClock{}
 	}
+	// RSM-010: the run's EmitterPort, bound once for this call. Deliberately the
+	// NARROW emitterPort accessor (runports.go) and not the runPorts() bundle,
+	// which also reads the clock port — the default set just above must not be
+	// bypassed by an earlier bundle read.
+	emit := deps.emitterPort()
 	// hk-538l: for a REMOTE run rewrite the hook socket to the worker-side reverse-
 	// tunnel TCP endpoint so the worker's claude can reach the relay; box A's local
 	// unix daemon.sock is unreachable from the worker. Empty workerHookSock (LOCAL
@@ -430,7 +435,7 @@ func driveDotWorkflow(
 
 		// Emit node_dispatch_requested (O-class observability) before handling the
 		// node, per event-model.md §8.1.11.
-		emitNodeDispatchRequested(ctx, deps.bus, deps.clock, runID, core.NodeID(currentNodeID))
+		emitNodeDispatchRequested(ctx, emit, deps.clock, runID, core.NodeID(currentNodeID))
 
 		var outcome core.Outcome
 
@@ -462,7 +467,7 @@ func driveDotWorkflow(
 				if parentSHA != "" {
 					gateEnv = append(append(make([]string, 0, len(deps.handlerEnv)+1), deps.handlerEnv...), "HK_GATE_BASE_SHA="+parentSHA)
 				}
-				toolOutcome, toolErr := dispatchDotToolNode(ctx, deps.bus, runID, runner, wtPath, node, gateEnv)
+				toolOutcome, toolErr := dispatchDotToolNode(ctx, emit, runID, runner, wtPath, node, gateEnv)
 				if toolErr != nil {
 					return dotWorkflowResult{
 						success:        false,
@@ -736,7 +741,7 @@ func driveDotWorkflow(
 						// advance without any prior reviewer verdict (e.g. a commit_gate
 						// loop with no reviewer node).
 						if priorVerdict == workspace.ReviewVerdictRequestChanges {
-							emitReviewFixupStalled(ctx, deps.bus, runID, core.WorkflowModeDot,
+							emitReviewFixupStalled(ctx, emit, runID, core.WorkflowModeDot,
 								iterationCount, priorVerdictFlags, currentHash, lastDiffHash)
 							return dotWorkflowResult{
 								success:        false,
@@ -744,7 +749,7 @@ func driveDotWorkflow(
 								summary:        fmt.Sprintf("dot: review fix-up stalled at iteration %d: HEAD did not advance after REQUEST_CHANGES", iterationCount),
 							}
 						}
-						emitDotNoProgressDetected(ctx, deps.bus, runID, iterationCount, currentHash, lastDiffHash)
+						emitDotNoProgressDetected(ctx, emit, runID, iterationCount, currentHash, lastDiffHash)
 						return dotWorkflowResult{
 							success:        false,
 							needsAttention: true,
@@ -888,7 +893,7 @@ func driveDotWorkflow(
 					// Emit implementer_resumed (§8.1a.1) BEFORE dispatch, mirroring the
 					// review-loop path, so the resume carries prior_verdict_summary for
 					// observability. WorkflowMode is DOT.
-					emitDotImplementerResumed(ctx, deps.bus, runID, claudeSessionID, iterationCount, priorSummary)
+					emitDotImplementerResumed(ctx, emit, runID, claudeSessionID, iterationCount, priorSummary)
 				}
 			}
 			// hk-x882o: mark the consolidate (verdict-join) node as a terminal
@@ -1089,7 +1094,7 @@ func driveDotWorkflow(
 
 		// Run the cascade to decide the next node (or detect terminal/failure).
 		decision := workflow.DecideNextNode(graph, currentNodeID, outcome, run, cycles)
-		emitNodeDispatchDecided(ctx, deps.bus, decision.Payload)
+		emitNodeDispatchDecided(ctx, emit, decision.Payload)
 
 		switch {
 		case decision.IsTerminal:
@@ -1260,6 +1265,11 @@ func dispatchDotAgenticNode(
 	if deps.clock == nil {
 		deps.clock = substrate.SystemClock{}
 	}
+	// RSM-010: the run's EmitterPort, bound once for this call. Deliberately the
+	// NARROW emitterPort accessor (runports.go) and not the runPorts() bundle,
+	// which also reads the clock port — the default set just above must not be
+	// bypassed by an earlier bundle read.
+	emit := deps.emitterPort()
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
 	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
 	if isReviewer {
@@ -1448,7 +1458,7 @@ func dispatchDotAgenticNode(
 			deps.harnessRegistry,
 			beadRecord,
 			effectiveNodeHarness,
-			deps.bus,
+			emit,
 		)
 	}
 	if specBuilder == nil {
@@ -1648,7 +1658,7 @@ func dispatchDotAgenticNode(
 		deps.hookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
-	tap, tapCh := newPerRunEventTap(deps.bus, runID)
+	tap, tapCh := newPerRunEventTap(emit, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
 	// hk-47u9z: arm the SessionIDCaptured spawn proof now that the per-run tap
@@ -1666,7 +1676,7 @@ func dispatchDotAgenticNode(
 	// review-loop path (reviewloop.go:336). Holding launch_initiated until after a
 	// successful Launch also keeps it truthful: when SpawnWindow is wedged on a
 	// leaked slot, Launch returns an error below and launch_initiated never fires.
-	nodeLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.PreExecMsgs)
+	nodeLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, emit, runID, artifacts.PreExecMsgs)
 
 	// hk-c73fs: emit reviewer_launched (§8.1a.2) for reviewer nodes before
 	// launch, matching the builtin review-loop path (reviewloop.go:922-923).
@@ -1677,7 +1687,7 @@ func dispatchDotAgenticNode(
 	var reviewerSessionID core.SessionID
 	if isReviewer {
 		reviewerSessionID = handlercontract.NewSessionID()
-		emitDotReviewerLaunched(ctx, deps.bus, runID, reviewerSessionID, *claudeSessionID, iterationCount)
+		emitDotReviewerLaunched(ctx, emit, runID, reviewerSessionID, *claudeSessionID, iterationCount)
 	}
 
 	// RT8 (RSM-005/RSM-024): the DOT node launch/ready/brief segment is driven
@@ -1728,7 +1738,7 @@ func dispatchDotAgenticNode(
 	// pre-RT8 fall-through ("paste-inject is a no-op for codex").
 	dotDeliver := func(dctx context.Context) {
 		briefDelivered := pasteInjectOnLaunch(dctx, deps.clock, pasteTarget, artifacts.ClaudeSessionID,
-			phase, iterationCount, wtPath, deps.bus, runID)
+			phase, iterationCount, wtPath, emit, runID)
 		if qs, ok := pasteTarget.(quitSender); ok {
 			if isReviewer {
 				// hk-7rgqs: pass the pasteInjecter + claude session id so the watchdog
@@ -1766,7 +1776,7 @@ func dispatchDotAgenticNode(
 				// launch-suppression branch forever. The fan-out tap delivers each
 				// consumer its own copy of every event.
 				watchdogCh := tap.Subscribe()
-				go pasteInjectQuitOnCommit(ctx, deps.clock, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, deps.bus, runID)
+				go pasteInjectQuitOnCommit(ctx, deps.clock, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, emit, runID)
 			}
 		}
 	}
@@ -1816,10 +1826,10 @@ func dispatchDotAgenticNode(
 			// single-mode path already has.
 			if errors.Is(lErr, ErrSpawnCapTimeout) {
 				inUse, capSize := substrateSpawnStats(deps.substrate)
-				runlaunch.EmitSpawnCapBlocked(lctx, deps.bus, runID, deps.clock.Since(nodeLaunchedAt), inUse, capSize)
+				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clock.Since(nodeLaunchedAt), inUse, capSize)
 			}
 			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
-				runlaunch.EmitTmuxNewWindowTimeout(lctx, deps.bus, runID, deps.clock.Since(nodeLaunchedAt))
+				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, deps.clock.Since(nodeLaunchedAt))
 			}
 		},
 		onLaunched: func(lctx context.Context) {
@@ -1828,7 +1838,7 @@ func dispatchDotAgenticNode(
 			// false-positive launch_stall_detected the DOT path otherwise triggered on
 			// every run. Mirrors workloop.go:2137-2139.
 			if nodeLaunchInitiatedMsg != nil {
-				runlaunch.EmitPreExecMessage(lctx, deps.bus, runID, nodeLaunchInitiatedMsg)
+				runlaunch.EmitPreExecMessage(lctx, emit, runID, nodeLaunchInitiatedMsg)
 			}
 			// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
 			// receives agent_heartbeat events (with run_id) after launch_initiated.
@@ -1836,7 +1846,7 @@ func dispatchDotAgenticNode(
 			// full run duration, causing false-positive run_stale on every DOT dispatch.
 			// Mirrors the single-mode path (workloop.go Step 5).
 			//
-			// hk-sj6a: reviewers emit to deps.bus directly (NOT through tap). Routing
+			// hk-sj6a: reviewers emit to the run emitter directly (NOT through tap). Routing
 			// daemon heartbeats through tap fans them to reviewerHBCh (tap.Subscribe()),
 			// which pasteInjectQuitOnReviewFile interprets as evidence the reviewer is
 			// still reasoning — keeping recentHB=true indefinitely after the claude
@@ -1844,10 +1854,10 @@ func dispatchDotAgenticNode(
 			//
 			// hk-e7n76: implementers emit through tap (parity with workloop.go:3721) so
 			// watchdogCh (tap.Subscribe() in pasteInjectQuitOnCommit) receives heartbeats
-			// and can extend totalDeadline. Emitting to deps.bus only bypasses tap entirely,
+			// and can extend totalDeadline. Emitting to the run emitter only bypasses tap entirely,
 			// starving the implementer budget watchdog of progress signals. Tap is
 			// per-node (reviewer XOR implementer) so this scoping is safe.
-			hbTarget := deps.bus
+			hbTarget := emit
 			if !isReviewer {
 				hbTarget = tap
 			}
@@ -1887,7 +1897,7 @@ func dispatchDotAgenticNode(
 			}
 		},
 		emitReadyTimeout: func(ectx context.Context) {
-			runlaunch.EmitAgentReadyTimeout(ectx, deps.bus, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
+			runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
 		},
 		killAbort: func(context.Context) {
 			if sess != nil {
@@ -1947,7 +1957,7 @@ func dispatchDotAgenticNode(
 	if !isReviewer {
 		curHead, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		commitLanded := curHead != "" && curHead != preHeadSHA
-		runlaunch.EmitImplementerPhaseComplete(ctx, deps.bus, runID, nodeEI.exitCode,
+		runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, nodeEI.exitCode,
 			nodeEI.stderrTail, commitLanded, nodePhaseDur)
 	}
 
@@ -1998,7 +2008,7 @@ func dispatchDotAgenticNode(
 				fmt.Fprintf(os.Stderr,
 					"daemon: dot: reviewer node %q budget exceeded (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
 					node.ID, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)
-				emitReviewerBudgetExceeded(ctx, deps.bus, runID, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines, sentinel.Reason)
+				emitReviewerBudgetExceeded(ctx, emit, runID, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines, sentinel.Reason)
 			}
 			// hk-bqf1q: return the typed sentinel so driveDotWorkflow can detect
 			// a reviewer stall and retry when committed work exists, rather than
@@ -2009,7 +2019,7 @@ func dispatchDotAgenticNode(
 		// WorkflowMode is DOT; session_id reuses the reviewerSessionID minted before
 		// launch (hk-c73fs: reviewer_launched uses the same ID so the two events
 		// are correlated); claude_session_id is the reviewer node's Claude session.
-		emitDotReviewerVerdict(ctx, deps.bus, runID, reviewerSessionID, artifacts.ClaudeSessionID, iterationCount, verdict)
+		emitDotReviewerVerdict(ctx, emit, runID, reviewerSessionID, artifacts.ClaudeSessionID, iterationCount, verdict)
 		label := verdict.Verdict
 		flags := verdict.Flags
 		if flags == nil {
@@ -2046,7 +2056,7 @@ func dispatchDotAgenticNode(
 					fmt.Fprintf(os.Stderr,
 						"daemon: dot: bead %s node %q: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
 						beadID, node.ID, nodePhaseDur, floor)
-					codex.EmitImplementerNoWorkSuspected(ctx, deps.bus, runID, beadID, nodePhaseDur, floor)
+					codex.EmitImplementerNoWorkSuspected(ctx, emit, runID, beadID, nodePhaseDur, floor)
 				}
 			}
 		}

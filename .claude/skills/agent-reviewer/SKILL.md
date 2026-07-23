@@ -147,8 +147,8 @@ against the repo's own `errcheck` / `gosec` / `noctx` / `nolintlint` settings.
 - Comma-ok on every type assertion: `v, ok := x.(T)`. A bare `x.(T)` or `v, _ := x.(T)`
   is a finding (errcheck `check-type-assertions: true`).
 - **Never discard an error into the blank identifier.** `_ = f()` is an errcheck
-  finding, not an idiom — `check-blank: true` is set. The exception is the four
-  excluded close receivers; see §Deferred `Close()` below.
+  finding, not an idiom — `check-blank: true` is set. This now includes `Close()` on
+  production code — there are no close exclusions; see §Deferred `Close()` below.
 - `errors.Is(err, io.EOF)` not `err != io.EOF` (errorlint).
 - Error wrapping at subsystem boundaries (`%w`); no wrapping within a subsystem.
 - Enum `switch`es are exhaustive or carry a `default` (exhaustive,
@@ -167,52 +167,35 @@ against the repo's own `errcheck` / `gosec` / `noctx` / `nolintlint` settings.
 - gofmt / gofumpt / gci clean. This is enforced by `make fmt-check`, **not** by
   golangci-lint — no formatting linter is enabled in `.golangci.yml`.
 
-#### Deferred `Close()` — the reviewer owns this, not the linter
+#### Deferred `Close()` — errcheck gates it, the reviewer owns materiality
 
-`.golangci.yml` sets `errcheck: { check-blank: true, exclude-functions:
-["(io.Closer).Close", "(*os.File).Close", "(net.Conn).Close",
-"(net.Listener).Close"] }`. errcheck names a method by the type that DECLARES it,
-so `(io.Closer).Close` alone matched only interfaces whose `Close` is promoted from
-`io.Closer` (`io.ReadCloser`, `io.WriteCloser`, the `exec.Cmd` pipes) — every close
-on a concrete `*os.File`, a `net.Conn` or a `net.Listener` still fired, in BOTH
-forms. The tree answered that with suppressions — 197 of its 545 `//nolint:errcheck`
-directives sat on a `.Close()` line just before the exclusion was widened
-(`b544687d5^`, if you want to re-measure) — which is what hid the
-suppressions that mattered, so the four common close receivers are now excluded
-outright:
+`.golangci.yml` sets `errcheck: { check-blank: true }` with **no** close exclusions.
+The four `(io.Closer|*os.File|net.Conn|net.Listener).Close` `exclude-functions`
+entries that used to live here were dropped in P2 (hk-8dtiv) once the whole
+production tree was migrated to the forms below. Every unchecked `Close()` on
+production code is now an errcheck finding, in BOTH forms:
 
 ```go
-defer f.Close()                  // no longer a finding on *os.File / net.Conn / net.Listener
-defer func() { _ = f.Close() }() // likewise
+defer f.Close()                  // errcheck finding — production
+defer func() { _ = f.Close() }() // likewise — `_ =` does not satisfy check-blank
 ```
 
-**This is a trade, and the reviewer is the thing traded to.** errcheck cannot tell a
-read close from a write close — the exclusion key is a method signature and
-`(*os.File).Close` is one method either way. But **do not repeat the claim that no
-narrower configuration existed; it is false.** The split that removes the noise is
-not read-vs-write, it is test-vs-production, and golangci-lint scopes by path with
-the same `text:`-plus-`path:` machinery the `SC6-DRIVER-CLOCKPORT` rules already use.
-Measured on a clean `git archive HEAD` export with the pinned linter, errcheck cut
-back to `(io.Closer).Close` alone: **409** Close findings — **303** in `_test.go`,
-**106** in production. A single exclusions rule —
+Test noise stays at zero via one `_test.go`-scoped `exclusions.rules` entry (the
+same `text:`-plus-`path:` machinery the `SC6-DRIVER-CLOCKPORT` rules use), matching
+the finding text `Close` is not checked` on `_test.go` paths — so `*_test.go` closes
+are silent while 100% of production closes are checked.
 
-```yaml
-- linters: [errcheck]
-  text: 'Close` is not checked'
-  path: _test\.go$
-```
-
-— takes the test findings to 0 and leaves all 106 production ones standing. That
-option was declined on **cost** (106 production findings would each still need
-hand-handling), not on capability. Argue the trade on cost.
-
-A close whose failure means the bytes may not have landed is still a defect. No
-linter in this config catches it — though read-vs-write *is* expressible by a custom
-`go/analysis` pass tracking the open flags forward to the close, which golangci-lint
-can host as a module plugin; nobody has written one. **Flag a dropped close on any
-write/commit/fsync path as `idiom-violation`, even though lint is green.** Closes on
-other receivers (a project type, `CloseWrite` on a `*net.UnixConn`) still produce
-findings.
+**errcheck gates presence of a check, not its correctness.** The linter fires when a
+close error is dropped, but it cannot tell a read close from a write close — the
+finding text carries only the receiver name and `(*os.File).Close` is one method
+whether opened for read or write. So a close that is handled the *wrong way* —
+swallowed on a write/commit/fsync path, or closed in a `defer` that runs after the
+rename in a temp+rename sequence — can still be lint-green, and is still a defect.
+**Flag a mishandled write-path close as `idiom-violation` even when lint passes.**
+Read-vs-write *is* expressible by a custom `go/analysis` pass tracking the open flags
+forward to the close, which golangci-lint can host as a module plugin; nobody has
+written one — a cost, not an impossibility. Closes on other receivers still produce
+findings too.
 
 **Absence does not show up in a diff, so go looking for it.** The failure mode here
 is a close that is simply *not there* — a diff reader slides past it. For every file

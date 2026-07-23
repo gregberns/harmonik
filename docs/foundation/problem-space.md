@@ -330,6 +330,11 @@ These foundation areas cross-depend; decompose must produce an explicit cross-re
 
 These docs will need updates after foundation lands. Tracked in TASKS.md backlog, NOT part of foundation itself.
 
+> **Editor's note (2026-07-22):** `TASKS.md` no longer exists. That backlog was archived to
+> [`docs/historical/phase-0-1-tasks.md`](../historical/phase-0-1-tasks.md), and deferred work is now
+> filed as beads (`br create`, `--parent <epic_id>` inside an epic). The 2026-04-19 wording above —
+> here and in "Recon-surfaced context" — is preserved as the historical record; do not chase the path.
+
 - All nine subsystem docs under `docs/subsystems/` — each replaces locally-defined concepts with foundation citations.
 - `docs/subsystems/orchestrator-core.md` — correct the Attractor mischaracterization (see Recon-surfaced context).
 - `docs/concepts/kilroy.md` — correct the 3-vs-6 failure-class and 4-vs-6 fidelity-mode undercounts.

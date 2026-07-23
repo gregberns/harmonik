@@ -151,7 +151,7 @@ func checkLeakedLeases(fixtureRoot string, executedRunIDs []core.RunID) ([]LeakD
 	var leaks []LeakDescriptor
 	err := filepath.WalkDir(fixtureRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil // skip unreadable entries without failing the walk
+			return walkErr
 		}
 		if d.IsDir() || filepath.Base(path) != "lease.lock" {
 			return nil
@@ -192,7 +192,6 @@ func checkLeakedFDs(ctx context.Context, fixtureRoot string) []LeakDescriptor {
 		return nil
 	}
 
-	//nolint:gosec // G204: fixtureRoot is a harness-internal temp dir, not user input
 	out, err := exec.CommandContext(ctx, "lsof", "+D", fixtureRoot).Output()
 	if err != nil {
 		if lsofNotFound(err) {

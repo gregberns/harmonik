@@ -64,7 +64,7 @@ func scenarioFileFixtureFull(t *testing.T) ScenarioFile {
 		AgentOverrides: map[string]AgentOverride{
 			"worker": agentOverrideFixtureBasic(t),
 		},
-		FixtureSetup:      fixtureSetupFixtureEmpty(t),
+		FixtureSetup:      fixtureSetupFixtureEmpty(),
 		ExpectedEvents:    []EventExpectation{eventExpectationFixturePresent(t)},
 		ExpectedWorkspace: []WorkspacePredicate{workspacePredicateFixtureFileExists(t)},
 		ExpectedOutcome:   &outcome,

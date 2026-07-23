@@ -20,6 +20,7 @@ package scenario
 // Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -189,6 +190,7 @@ func TestConformanceCorpus_MatrixVerdictSchema(t *testing.T) {
 	root := conformanceCorpusFixtureRepoRoot(t)
 	goldenPath := filepath.Join(root, "scenarios", "core-loop-proof", "testdata", "matrix-verdict-golden.json")
 
+	//nolint:gosec // G304: goldenPath is assembled from the repository-root test fixture and fixed segments.
 	data, err := os.ReadFile(goldenPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%q): %v", goldenPath, err)
@@ -299,7 +301,8 @@ func TestConformanceGate_BlocksOnRedCell(t *testing.T) {
 
 	// The golden fixture has summary.red=1 (pi:local cell is red).
 	verdictFile := filepath.Join(root, "scenarios", "core-loop-proof", "testdata", "matrix-verdict-golden.json")
-	cmd := exec.Command("bash", gateScript,
+	//nolint:gosec // G204: gateScript and verdictFile are fixed paths under the repository test fixture.
+	cmd := exec.CommandContext(context.Background(), "bash", gateScript,
 		"--verdict", verdictFile,
 		"--skip-block-query",
 	)
@@ -331,7 +334,8 @@ func TestConformanceGate_BlocksOnPendingCell(t *testing.T) {
 	}
 
 	verdictFile := filepath.Join(root, "scenarios", "core-loop-proof", "testdata", "matrix-verdict-pending.json")
-	cmd := exec.Command("bash", gateScript,
+	//nolint:gosec // G204: gateScript and verdictFile are fixed paths under the repository test fixture.
+	cmd := exec.CommandContext(context.Background(), "bash", gateScript,
 		"--verdict", verdictFile,
 		"--skip-block-query",
 	)
@@ -362,7 +366,8 @@ func TestConformanceGate_PassesOnFullGreen(t *testing.T) {
 	}
 
 	verdictFile := filepath.Join(root, "scenarios", "core-loop-proof", "testdata", "matrix-verdict-allgreen.json")
-	cmd := exec.Command("bash", gateScript,
+	//nolint:gosec // G204: gateScript and verdictFile are fixed paths under the repository test fixture.
+	cmd := exec.CommandContext(context.Background(), "bash", gateScript,
 		"--verdict", verdictFile,
 		"--skip-block-query",
 	)
@@ -392,7 +397,8 @@ func TestConformanceGate_BlocksOnMissingVerdictFile(t *testing.T) {
 		t.Fatalf("conformance-gate.sh not found: %v", err)
 	}
 
-	cmd := exec.Command("bash", gateScript,
+	//nolint:gosec // G204: gateScript is fixed under the repository fixture and verdict path is this test's t.TempDir fixture.
+	cmd := exec.CommandContext(context.Background(), "bash", gateScript,
 		"--verdict", filepath.Join(t.TempDir(), "nonexistent.json"),
 		"--skip-block-query",
 	)
@@ -475,7 +481,7 @@ func TestConformanceCorpus_PiTier3ModelLeakGate(t *testing.T) {
 func conformanceCorpusFixtureGap1Verdict(t *testing.T, lib, streamPath, spec string) string {
 	t.Helper()
 
-	cmd := exec.Command("jq", "-n",
+	cmd := exec.CommandContext(context.Background(), "jq", "-n",
 		"--slurpfile", "events", streamPath,
 		"--argjson", "spec", spec,
 		"--argjson", "ref_events", "null",

@@ -281,7 +281,6 @@ func TestQueueCrashRecovery_QM002_CorruptFileWarnAndProceed(t *testing.T) {
 	// but defensively handled per QM-002 for file-system corruption scenarios).
 	queueCrashRecoveryEnsureQueuesDir(t, projectDir)
 	qPath := queueCrashRecoveryQueuePath(projectDir)
-	//nolint:gosec // G306: 0600 is appropriate for .harmonik test fixture
 	if err := os.WriteFile(qPath, []byte(`{"schema_version":1,"corrupted":`), 0o600); err != nil {
 		t.Fatalf("setup: write corrupt queue file: %v", err)
 	}
@@ -321,7 +320,6 @@ func TestQueueCrashRecovery_QM002_ForwardIncompatibleSchemaVersion(t *testing.T)
 	qPath := queueCrashRecoveryQueuePath(projectDir)
 	const futureSchema = `{"schema_version":99,"queue_id":"0190b3c4-8f12-7c4e-9a82-000000000099",` +
 		`"submitted_at":"2026-05-14T22:00:00Z","status":"active","groups":[]}`
-	//nolint:gosec // G306: 0600 is appropriate for .harmonik test fixture
 	if err := os.WriteFile(qPath, []byte(futureSchema), 0o600); err != nil {
 		t.Fatalf("setup: write future-schema queue file: %v", err)
 	}

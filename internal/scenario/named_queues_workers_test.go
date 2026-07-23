@@ -108,6 +108,8 @@ func namedQueuesWorkersInvestigateQueue() queue.Queue {
 // Returns 0 when running >= maxConcurrent (capacity full).
 //
 // Spec ref: specs/queue-model.md §9.3 QM-062.
+//
+//nolint:unparam // The helper models the configurable production capacity gate.
 func namedQueuesWorkersAdmitItems(g *queue.Group, maxConcurrent, currentlyRunning int) int {
 	available := maxConcurrent - currentlyRunning
 	if available <= 0 {

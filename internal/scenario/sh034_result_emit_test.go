@@ -120,6 +120,7 @@ func TestSH034_WriteScenarioResult_WritesValidJSON(t *testing.T) {
 	}
 
 	p := ScenarioResultPath(fixtureRoot, r.ScenarioName)
+	//nolint:gosec // G304: p is generated below this test's t.TempDir fixture root.
 	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("ReadFile %q: %v", p, err)
@@ -194,6 +195,7 @@ func TestSH034_WriteScenarioResult_MultipleScenarios(t *testing.T) {
 
 	for _, name := range names {
 		p := ScenarioResultPath(fixtureRoot, name)
+		//nolint:gosec // G304: p is generated below this test's t.TempDir fixture root.
 		data, err := os.ReadFile(p)
 		if err != nil {
 			t.Fatalf("ReadFile %q: %v", p, err)
@@ -228,6 +230,7 @@ func TestSH034_WriteSuiteResult_WritesValidJSON(t *testing.T) {
 	}
 
 	p := SuiteResultPath(fixtureRoot)
+	//nolint:gosec // G304: p is generated below this test's t.TempDir fixture root.
 	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("ReadFile %q: %v", p, err)
@@ -277,6 +280,7 @@ func TestSH034_WriteSuiteResult_VacuousPassOnEmptyResults(t *testing.T) {
 	}
 
 	p := SuiteResultPath(fixtureRoot)
+	//nolint:gosec // G304: p is generated below this test's t.TempDir fixture root.
 	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("ReadFile %q: %v", p, err)

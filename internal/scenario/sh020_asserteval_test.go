@@ -11,6 +11,7 @@ package scenario_test
 //   - SH-024: harness-internal-error on log corruption; bus_overflow escalation
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -29,12 +30,12 @@ import (
 func writeEventLog(t *testing.T, dir string, lines []string) string {
 	t.Helper()
 	logDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		t.Fatalf("mkdir event log dir: %v", err)
 	}
 	path := filepath.Join(logDir, "events.jsonl")
 	content := strings.Join(lines, "\n")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write event log: %v", err)
 	}
 	return path
@@ -63,8 +64,8 @@ func initGitRepo(t *testing.T, dir string) {
 		{"config", "user.email", "test@test.local"},
 		{"config", "user.name", "Test"},
 	} {
-		//nolint:noctx // test helper: no context available for git init/config helpers
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		//nolint:gosec // G204: dir and args are controlled by this local git-fixture helper.
+		cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v — %s", args, err, out)
 		}
@@ -74,15 +75,15 @@ func initGitRepo(t *testing.T, dir string) {
 func gitCommit(t *testing.T, dir, message string) {
 	t.Helper()
 	dummy := filepath.Join(dir, ".keep")
-	if err := os.WriteFile(dummy, []byte(""), 0o644); err != nil {
+	if err := os.WriteFile(dummy, []byte(""), 0o600); err != nil {
 		t.Fatalf("write commit marker: %v", err)
 	}
 	for _, args := range [][]string{
 		{"add", ".keep"},
 		{"commit", "-m", message},
 	} {
-		//nolint:noctx // test helper: no context available for git add/commit helpers
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		//nolint:gosec // G204: dir and args are controlled by this local git-fixture helper.
+		cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v — %s", args, err, out)
 		}
@@ -129,11 +130,11 @@ func TestSH020_ReadEventLog_TornTail(t *testing.T) {
 		`{"type":"run_complet` // torn tail — partial JSON, no \n
 
 	logDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		t.Fatalf("mkdir torn-tail event log dir: %v", err)
 	}
 	path := filepath.Join(logDir, "events.jsonl")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write torn-tail event log: %v", err)
 	}
 
@@ -169,11 +170,11 @@ func TestSH024_ReadEventLog_MidFileCorruption(t *testing.T) {
 		"\n"
 
 	logDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, 0o750); err != nil {
 		t.Fatalf("mkdir corrupt event log dir: %v", err)
 	}
 	path := filepath.Join(logDir, "events.jsonl")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write corrupt event log: %v", err)
 	}
 
@@ -617,7 +618,7 @@ func makeScenarioFileWithWorkspace(preds []scenario.WorkspacePredicate) scenario
 func TestSH022_FileExists_Pass(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(wsDir, "hello.txt"), []byte("hi"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsDir, "hello.txt"), []byte("hi"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
@@ -653,7 +654,7 @@ func TestSH022_FileContentsEqual_Pass(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
 	content := "hello world\n"
-	if err := os.WriteFile(filepath.Join(wsDir, "out.txt"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsDir, "out.txt"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write workspace file: %v", err)
 	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
@@ -672,7 +673,7 @@ func TestSH022_FileContentsEqual_Pass(t *testing.T) {
 func TestSH022_FileContentsEqual_Fail(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(wsDir, "out.txt"), []byte("actual"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsDir, "out.txt"), []byte("actual"), 0o600); err != nil {
 		t.Fatalf("write workspace file: %v", err)
 	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
@@ -692,7 +693,7 @@ func TestSH022_FileContentsEqual_Fail(t *testing.T) {
 func TestSH022_FileContentsMatch_Pass(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(wsDir, "log.txt"), []byte("Run ID: abc-123\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsDir, "log.txt"), []byte("Run ID: abc-123\n"), 0o600); err != nil {
 		t.Fatalf("write workspace log: %v", err)
 	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
@@ -712,7 +713,7 @@ func TestSH022_FileContentsMatch_Pass(t *testing.T) {
 func TestSH022_FileContentsMatch_Fail(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(wsDir, "log.txt"), []byte("no match here\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsDir, "log.txt"), []byte("no match here\n"), 0o600); err != nil {
 		t.Fatalf("write workspace log: %v", err)
 	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
@@ -735,8 +736,8 @@ func TestSH022_GitRefAt_Pass(t *testing.T) {
 	initGitRepo(t, wsDir)
 	gitCommit(t, wsDir, "first commit")
 
-	//nolint:noctx // test helper: no context available for rev-parse in test setup
-	out, err := exec.Command("git", "-C", wsDir, "rev-parse", "HEAD").Output()
+	//nolint:gosec // G204: wsDir is this test's t.TempDir-backed git fixture.
+	out, err := exec.CommandContext(context.Background(), "git", "-C", wsDir, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("git rev-parse HEAD: %v", err)
 	}
@@ -825,7 +826,7 @@ func TestSH022_SymlinkTraversalRejected(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
 	outsideFile := filepath.Join(t.TempDir(), "secret.txt")
-	if err := os.WriteFile(outsideFile, []byte("secret"), 0o644); err != nil {
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o600); err != nil {
 		t.Fatalf("write outside fixture: %v", err)
 	}
 
@@ -945,7 +946,7 @@ func TestSH023_NoShortCircuit(t *testing.T) {
 func TestSH023_AssertionOrder(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(wsDir, "marker.txt"), []byte("present"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(wsDir, "marker.txt"), []byte("present"), 0o600); err != nil {
 		t.Fatalf("write workspace marker: %v", err)
 	}
 	lines := []string{

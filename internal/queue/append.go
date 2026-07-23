@@ -18,6 +18,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -230,15 +231,16 @@ func IsValidationError(err error) bool {
 	if err == nil {
 		return false
 	}
-	_, ok := err.(*ValidationError)
-	return ok
+	var validationErr *ValidationError
+	return errors.As(err, &validationErr)
 }
 
 // ValidationReason returns the [QueueValidationReason] from err when it is a
 // [ValidationError], and the zero value otherwise.
 func ValidationReason(err error) QueueValidationReason {
-	if ve, ok := err.(*ValidationError); ok {
-		return ve.Reason
+	var validationErr *ValidationError
+	if errors.As(err, &validationErr) {
+		return validationErr.Reason
 	}
 	return ""
 }

@@ -246,7 +246,7 @@ func TestStore_ReloadIfChanged(t *testing.T) {
 func TestStore_LoadCorrupt(t *testing.T) {
 	dir := t.TempDir()
 	hk := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(hk, 0o755); err != nil {
+	if err := os.MkdirAll(hk, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(hk, scheduleFileName), []byte("{not json"), 0o600); err != nil {

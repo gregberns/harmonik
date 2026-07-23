@@ -162,7 +162,7 @@ func AllocatePort() (int, error) {
 	// since the kernel's free-ephemeral pool is large relative to in-flight runs.
 	const maxAttempts = 50
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
+		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			return 0, fmt.Errorf("tunnel.AllocatePort: %w", err)
 		}
@@ -249,11 +249,10 @@ func ReleasePort(port int) {
 func BuildArgs(port int, daemonSock, host string, opts []string) []string {
 	forward := net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) + ":" + daemonSock
 	args := make([]string, 0, 13+len(opts)+1)
-	args = append(args, "-N", "-R", forward, "-o", "ExitOnForwardFailure=yes")
+	args = append(args, "-N", "-R", forward, "-o", "ExitOnForwardFailure=yes", "-o", "ControlMaster=no")
 	// hk-cnp17: force a dedicated, non-multiplexed, kept-warm connection. These
 	// precede opts so the worker's opts cannot override them (ssh: first value wins).
 	args = append(args,
-		"-o", "ControlMaster=no",
 		"-o", "ControlPath=none",
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=4",

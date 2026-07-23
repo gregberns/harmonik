@@ -316,7 +316,7 @@ func (s *Store) Remove(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
 }
 
 // SetEnabled flips a job's Enabled flag under the cross-process flock, persists,
@@ -333,7 +333,7 @@ func (s *Store) SetEnabled(id string, enabled bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
 }
 
 // MarkFired overwrites a job's LastFire (RFC3339 UTC string) and LastPID under
@@ -362,7 +362,7 @@ func (s *Store) MarkFired(id, lastFireUTC string, pid int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
 }
 
 // RequestRunNow sets the ForceNext flag on a job (the `schedule run-now`
@@ -382,7 +382,7 @@ func (s *Store) RequestRunNow(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
 }
 
 // sleepSuspendedFileName is the sidecar file under .harmonik/ that records
@@ -519,7 +519,15 @@ func (s *Store) ClearForceNext(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
+}
+
+func mutationBool(v any) (bool, error) {
+	changed, ok := v.(bool)
+	if !ok {
+		return false, fmt.Errorf("schedule: internal mutation result has type %T, want bool", v)
+	}
+	return changed, nil
 }
 
 // filePath returns the absolute path of the durable store file.

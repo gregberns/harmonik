@@ -519,21 +519,6 @@ var validNodeEffortLevels = map[string]bool{
 	"low": true, "medium": true, "high": true, "xhigh": true, "max": true,
 }
 
-// reservedGraphAttrs is the set of reserved graph-level attribute names per WG-031.
-// Unknown names at the graph level are permissive (warning + retained) per WG-031/032.
-var reservedGraphAttrs = map[string]bool{
-	"schema_version":    true,
-	"version":           true,
-	"start_node":        true,
-	"start_node_id":     true, // alternate spelling accepted for compat
-	"terminal_node_ids": true,
-	"context_keys":      true,
-	"workflow_id":       true,
-	"workflow_class":    true,
-	"goal":              true, // WG-044: graph-level intent string
-	"no_progress_guard": true, // hk-nvd3: configurable no-progress guard
-}
-
 // ── graph builder (rawDoc → *Graph) ──────────────────────────────────────────
 
 // buildGraph converts a rawDoc into a typed *Graph, applying WG-031 policy.

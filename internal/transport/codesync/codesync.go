@@ -152,7 +152,7 @@ func EnsureBaseOnWorker(ctx context.Context, r tmux.CommandRunner, workerRepoPat
 	// Push directly from box A to the worker, bypassing origin (hk-2hfyt).
 	fmt.Fprintf(os.Stderr, "codesync: EnsureBaseOnWorker: SHA %s absent on worker after fetch origin; pushing directly from box A\n", baseSHA)
 	if pushErr := pushBaseToWorker(ctx, localRunner, boxAProjectDir, workerHost, workerRepoPath, baseSHA, sshOpts); pushErr != nil {
-		return fmt.Errorf("codesync: EnsureBaseOnWorker: fetch origin absent (%v); direct push also failed: %w",
+		return fmt.Errorf("codesync: EnsureBaseOnWorker: fetch origin absent (%w); direct push also failed: %w",
 			fetchErr, pushErr)
 	}
 	return nil
@@ -243,7 +243,7 @@ func FetchRunBranchBoxA(ctx context.Context, r tmux.CommandRunner, projectDir, r
 			// Exponential backoff: 2 s, 4 s, 8 s. The agent has committed and
 			// exited; the branch exists on the worker but git-upload-pack may not
 			// yet advertise the newly-created ref (hk-zsn7 push/visibility gap).
-			delay := time.Duration(2<<uint(attempt-1)) * time.Second
+			delay := time.Duration(1<<(attempt-1)) * 2 * time.Second
 			select {
 			case <-ctx.Done():
 				return fmt.Errorf("codesync: FetchRunBranchBoxA (project=%s url=%s refspec=%s): context cancelled on retry %d: %w",

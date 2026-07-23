@@ -1,3 +1,4 @@
+// Package dot parses and validates DOT workflow graphs.
 package dot
 
 // ast.go — typed AST for workflow_mode=dot graphs.

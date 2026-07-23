@@ -486,16 +486,12 @@ func commsIsSocketAbsent(err error) bool {
 	}
 	// EINVAL on a unix-domain connect means the path does not exist as a
 	// socket on macOS (connect(2) returns EINVAL when the socket file is absent).
-	if errors.Is(err, syscall.EINVAL) {
-		return true
-	}
-	return strings.Contains(err.Error(), "no such file or directory")
+	return errors.Is(err, syscall.EINVAL)
 }
 
 // commsIsConnRefused reports whether err indicates ECONNREFUSED.
 func commsIsConnRefused(err error) bool {
-	return errors.Is(err, syscall.ECONNREFUSED) ||
-		strings.Contains(err.Error(), "connection refused")
+	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
 func commsUsage() {

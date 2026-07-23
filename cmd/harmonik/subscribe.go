@@ -440,7 +440,7 @@ func touchSubscribeHeartbeatFile(path string) {
 	if path == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //dirmode:allow parent of an operator-supplied --heartbeat-file path, not .harmonik state
 		return
 	}
 	now := time.Now()

@@ -14,8 +14,11 @@ package lifecycle_test
 //     against a fresh project dir and asserts the mode they produce.
 //  2. TestNoLiteralDirModeInHarmonikPathFiles scans the source of every
 //     non-excluded package that builds a ".harmonik" path and fails on any
-//     os.MkdirAll with a hand-written mode literal. The allowlist below is the
-//     explicit, documented inventory of what is still divergent and why.
+//     os.MkdirAll with a hand-written mode literal. Exemption is PER SITE — a
+//     //dirmode:allow <reason> comment on the call's own line — so a file is
+//     never wholly excused by one legitimate literal. excludedDirs and
+//     dirModeAllowlist below are the inventory of what is still divergent, each
+//     entry saying whether it is blocked or merely deferred, and to which bead.
 //
 // This file lives in internal/lifecycle because that package documents the
 // per-project .harmonik/ file surface (daemonpaths.go, PL-004). It is an
@@ -24,6 +27,7 @@ package lifecycle_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -280,52 +284,126 @@ func TestMkdirAllDoesNotChmodExisting(t *testing.T) {
 	}
 }
 
-// dirModeAllowlist enumerates the os.MkdirAll call sites that legitimately use
-// a mode literal instead of core.HarmonikDirMode, keyed by repo-relative path.
-// Every entry needs a reason. Two kinds appear here:
+// siteAllowMarker is the PER-SITE exemption: an os.MkdirAll line that
+// legitimately creates something other than a .harmonik state directory carries
+//
+//	//dirmode:allow <reason>
+//
+// on the same line. Site-granular is the point. The first cut of this guard was
+// FILE-granular, and that silently voided it: cmd/harmonik/sync_assets_cmd.go
+// was filed as "not a .harmonik state dir" while its writeFileEnsureDir was in
+// fact creating .harmonik/context/ at 0o755 — the exact ordering bug
+// core.HarmonikDirMode exists to remove, live inside a single `harmonik
+// sync-assets --apply` run (internal/dashboard and the assets.lock write both
+// create that tree at the constant). File granularity also left init_cmd.go,
+// keeper_enable_doctor_cmd.go and harness.go WHOLLY exempt even though each has
+// converted sites, so a regression in any of them was invisible.
+const siteAllowMarker = "//dirmode:allow"
+
+// dirModeAllowlist is the FILE-granular legacy escape hatch, kept only for trees
+// outside cmd/harmonik/ that the site-marker conversion has not reached. Each
+// entry exempts the WHOLE file, so it is strictly weaker than a site marker —
+// prefer the marker; TestSiteMarkersPreferredOverFileAllowlist forbids new
+// file-granular entries under cmd/harmonik/. Two kinds appear here:
 //
 //   - "tighter on purpose": the directory holds credentials or capability
 //     tokens and is created 0o700. Never widen one of these to the constant.
 //   - "not a .harmonik state dir": the file mentions ".harmonik" somewhere but
-//     the call creates something else (a .claude tree, a scenario fixture root,
-//     an operator-supplied path).
+//     the call creates something else (a scenario fixture root, an
+//     operator-supplied path).
 //
-// Packages excluded wholesale (see excludedDirs) are NOT listed here.
+// Files listed here have NO converted sites, so whole-file exemption costs no
+// coverage today. Packages excluded wholesale (see excludedDirs) are NOT listed.
 var dirModeAllowlist = map[string]string{
-	"internal/run/registry.go":                 "tighter on purpose: .harmonik/runs/ is 0o700 (run handles)",
-	"internal/sentinel/trip_ev043b.go":         "tighter on purpose: .harmonik/decision_acks/ is 0o700 (ack tokens)",
-	"internal/harness/codex/walguard.go":       "tighter on purpose: CODEX_HOME backup is 0o700 (agent credentials)",
-	"internal/harness/pi/launchspec.go":        "tighter on purpose: pi agent dir is 0o700 (agent credentials)",
-	"internal/scenario/fixtureroot.go":         "not a .harmonik state dir: per-suite fixture root under TMPDIR",
-	"internal/scenario/synthprojectroot.go":    "not a .harmonik state dir: synthesized scenario project root",
-	"internal/scenario/resultemit.go":          "not a .harmonik state dir: scenario-result JSON output dir",
-	"cmd/harmonik/init_cmd.go":                 "not a .harmonik state dir: .claude/skills/ scaffold",
-	"cmd/harmonik/keeper_enable_doctor_cmd.go": "not a .harmonik state dir: .claude/settings.json parent",
-	"cmd/harmonik/harness.go":                  "not a .harmonik state dir: scenario fixture root + seeded fixture files",
-	"cmd/harmonik/subscribe.go":                "not a .harmonik state dir: operator-supplied --heartbeat-file path",
-	"cmd/harmonik/sync_assets_cmd.go":          "not a .harmonik state dir: generic asset writer (.claude and .harmonik)",
-	"cmd/harmonik-twin-session/main.go":        "not a .harmonik state dir: operator-supplied HANDOFF path",
+	"internal/run/registry.go":              "tighter on purpose: .harmonik/runs/ is 0o700 (run handles)",
+	"internal/sentinel/trip_ev043b.go":      "tighter on purpose: .harmonik/decision_acks/ is 0o700 (ack tokens)",
+	"internal/harness/codex/walguard.go":    "tighter on purpose: CODEX_HOME backup is 0o700 (agent credentials)",
+	"internal/harness/pi/launchspec.go":     "tighter on purpose: pi agent dir is 0o700 (agent credentials)",
+	"internal/scenario/fixtureroot.go":      "not a .harmonik state dir: per-suite fixture root under TMPDIR",
+	"internal/scenario/synthprojectroot.go": "not a .harmonik state dir: synthesized scenario project root",
+	"internal/scenario/resultemit.go":       "not a .harmonik state dir: scenario-result JSON output dir",
+	"cmd/harmonik-twin-session/main.go":     "not a .harmonik state dir: operator-supplied HANDOFF path (single site)",
 
-	// Still divergent — tracked follow-up, NOT deliberate. Both packages are
-	// fenced away from internal/core by the depguard component matrix
-	// (.golangci.yml rules "schedule" and "sessioncapture" allow stdlib + self
-	// only), so adopting the constant needs an enforced-config change that is
-	// out of scope for the commit that introduced it.
-	"internal/schedule/store.go":                "STILL DIVERGENT: creates .harmonik/ at 0o755; depguard fences schedule off from core",
-	"internal/sessioncapture/sessioncapture.go": "STILL DIVERGENT: creates .harmonik/sessions/ at 0o755; depguard fences sessioncapture off from core",
+	// Still divergent — BLOCKED, not deliberate, and not a scheduling deferral.
+	// The depguard component matrix (.golangci.yml rules "schedule" = stdlib +
+	// self, "sessioncapture" = stdlib + substrate + self) fences both packages
+	// off from internal/core, so adopting the constant needs an enforced-config
+	// change. That is an operator decision, tracked as hk-8dtiv.
+	"internal/schedule/store.go":                "STILL DIVERGENT (blocked, hk-8dtiv): creates .harmonik/ at 0o755; depguard fences schedule off from core",
+	"internal/sessioncapture/sessioncapture.go": "STILL DIVERGENT (blocked, hk-8dtiv): creates .harmonik/sessions/ at 0o755; depguard fences sessioncapture off from core",
 }
 
 // excludedDirs are source trees this scan does not walk.
+//
+// Both production entries are STILL DIVERGENT for SCHEDULING reasons — the code
+// is reachable, the fix is not blocked, it is simply owned by another in-flight
+// change. Tracked as hk-b5ljs; closing it means deleting these entries.
 var excludedDirs = []string{
-	// Slice rewrite in flight; its .harmonik creators are a tracked follow-up.
+	// STILL DIVERGENT (hk-b5ljs): 11 sites at 0o755, slice rewrite in flight.
+	// The load-bearing one is daemon.go, which creates the .harmonik/ ROOT — so
+	// until this lands the root's mode still depends on whether the daemon or
+	// the CLI got there first.
 	"internal/daemon/",
-	// Held by another agent at the time this guard landed; also a tracked follow-up.
+	// STILL DIVERGENT (hk-b5ljs): ~10 sites at 0o755, held by another agent.
 	"internal/workspace/",
 	// Test infrastructure, not production state.
 	"internal/testhelpers/",
 }
 
-var mkdirAllModeRE = regexp.MustCompile(`os\.MkdirAll\([^,]*,\s*([A-Za-z0-9_.]+)\s*\)`)
+// mkdirAllCall locates the start of an os.MkdirAll call.
+var mkdirAllCall = regexp.MustCompile(`os\.MkdirAll\(`)
+
+// mkdirAllModeArg returns the MODE argument of the os.MkdirAll call that starts
+// at the "os.MkdirAll(" match ending at openIdx (the index just past the "(").
+// It walks to the matching close paren tracking nesting and string/rune
+// literals, then takes the text after the last TOP-LEVEL comma — so a nested
+// filepath.Join(a, b) in the path argument does not confuse it. Returns
+// ("", false) when the call does not close on the text given.
+func mkdirAllModeArg(text string, openIdx int) (string, bool) {
+	depth := 1
+	lastComma := -1
+	for i := openIdx; i < len(text); i++ {
+		switch c := text[i]; c {
+		case '"', '\'', '`':
+			// Skip the literal wholesale; its contents are not syntax.
+			j := i + 1
+			for j < len(text) {
+				if text[j] == '\\' && c != '`' {
+					j += 2
+					continue
+				}
+				if text[j] == c {
+					break
+				}
+				j++
+			}
+			if j >= len(text) {
+				return "", false
+			}
+			i = j
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+			if depth == 0 {
+				if lastComma < 0 {
+					return "", false
+				}
+				return strings.TrimSpace(text[lastComma+1 : i]), true
+			}
+		case ',':
+			if depth == 1 {
+				lastComma = i
+			}
+		case '\n':
+			// Every os.MkdirAll call in this repo is single-line, and the
+			// site marker is a same-line comment. A wrapped call would make
+			// the marker ambiguous, so refuse rather than guess.
+			return "", false
+		}
+	}
+	return "", false
+}
 
 // TestNoLiteralDirModeInHarmonikPathFiles fails when a production file that
 // builds a ".harmonik" path creates a directory with a hand-written mode
@@ -333,6 +411,8 @@ var mkdirAllModeRE = regexp.MustCompile(`os\.MkdirAll\([^,]*,\s*([A-Za-z0-9_.]+)
 // of the CLI/library boundary from silently re-diverging: a new creator added
 // with a literal 0o755 lands as a test failure, not as an ordering-dependent
 // permission bug.
+//
+// Exemption is PER SITE: put //dirmode:allow <reason> on the os.MkdirAll line.
 func TestNoLiteralDirModeInHarmonikPathFiles(t *testing.T) {
 	repoRoot := repoRootFromTestFile(t)
 
@@ -372,10 +452,28 @@ func TestNoLiteralDirModeInHarmonikPathFiles(t *testing.T) {
 			if !strings.Contains(text, ".harmonik") {
 				return nil
 			}
-			for _, m := range mkdirAllModeRE.FindAllStringSubmatch(text, -1) {
-				if m[1] != "core.HarmonikDirMode" {
-					findings = append(findings, rel+": os.MkdirAll mode "+m[1])
+			for _, loc := range mkdirAllCall.FindAllStringIndex(text, -1) {
+				mode, ok := mkdirAllModeArg(text, loc[1])
+				if !ok {
+					findings = append(findings, rel+": os.MkdirAll call this guard could not parse (wrap it onto one line)")
+					continue
 				}
+				if mode == "core.HarmonikDirMode" {
+					continue
+				}
+				// Per-site exemption: the marker must be on the same line.
+				lineEnd := strings.IndexByte(text[loc[0]:], '\n')
+				if lineEnd < 0 {
+					lineEnd = len(text) - loc[0]
+				}
+				line := text[loc[0] : loc[0]+lineEnd]
+				marker := strings.Index(line, siteAllowMarker)
+				if marker >= 0 && strings.TrimSpace(line[marker+len(siteAllowMarker):]) != "" {
+					continue
+				}
+				lineNo := 1 + strings.Count(text[:loc[0]], "\n")
+				findings = append(findings,
+					fmt.Sprintf("%s:%d: os.MkdirAll mode %s", rel, lineNo, mode))
 			}
 			return nil
 		})
@@ -386,8 +484,21 @@ func TestNoLiteralDirModeInHarmonikPathFiles(t *testing.T) {
 
 	if len(findings) > 0 {
 		t.Errorf("state-dir creation with a literal mode instead of core.HarmonikDirMode:\n  %s\n\n"+
-			"Use core.HarmonikDirMode, or add the file to dirModeAllowlist with a reason.",
-			strings.Join(findings, "\n  "))
+			"Use core.HarmonikDirMode, or mark the specific line %s <reason>.",
+			strings.Join(findings, "\n  "), siteAllowMarker)
+	}
+}
+
+// TestSiteMarkersPreferredOverFileAllowlist keeps the file-granular hatch from
+// creeping back into cmd/harmonik/, where whole-file exemption is what let the
+// sync-assets divergence hide behind a mislabelled entry. Every exemption in
+// that tree must be a per-site marker.
+func TestSiteMarkersPreferredOverFileAllowlist(t *testing.T) {
+	for rel := range dirModeAllowlist {
+		if strings.HasPrefix(rel, "cmd/harmonik/") {
+			t.Errorf("%s: cmd/harmonik/ files must use a per-site %s marker, not a whole-file allowlist entry",
+				rel, siteAllowMarker)
+		}
 	}
 }
 

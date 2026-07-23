@@ -620,7 +620,7 @@ func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr 
 func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) int {
 	skillsRoot := filepath.Join(projectDir, ".claude", "skills")
 	//nolint:gosec // G301: 0755 for .claude/skills/
-	if err := os.MkdirAll(skillsRoot, 0o755); err != nil {
+	if err := os.MkdirAll(skillsRoot, 0o755); err != nil { //dirmode:allow .claude/skills/ is Claude Code's config tree, not .harmonik state
 		fmt.Fprintf(stderr, "harmonik init: mkdir .claude/skills: %v\n", err)
 		return 1
 	}
@@ -638,7 +638,7 @@ func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) in
 		skillName := skillEntry.Name()
 		skillDir := filepath.Join(skillsRoot, skillName)
 		//nolint:gosec // G301
-		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		if err := os.MkdirAll(skillDir, 0o755); err != nil { //dirmode:allow .claude/skills/<name>/ is Claude Code's config tree, not .harmonik state
 			fmt.Fprintf(stderr, "harmonik init: mkdir .claude/skills/%s: %v\n", skillName, err)
 			return 1
 		}

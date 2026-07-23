@@ -69,6 +69,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -77,6 +78,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -437,7 +439,7 @@ func lockFromOutcomes(prior Lock, outcomes []applyOutcome) Lock {
 func applyManaged(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	switch action {
 	case ActionFastForward, ActionCreate:
-		if err := writeFileEnsureDir(full, embedData); err != nil {
+		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
 			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
 			return 1
 		}
@@ -446,7 +448,7 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 		out.note = "overwritten from embed"
 	case ActionConflict:
 		newPath := full + ".harmonik-new"
-		if err := writeFileEnsureDir(newPath, embedData); err != nil {
+		if err := writeFileEnsureDir(newPath, dest, embedData); err != nil {
 			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err)
 			return 1
 		}
@@ -471,7 +473,7 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 	rendered := renderAgentsTemplate(string(embedData), projectDir)
 
 	if action == ActionCreate {
-		if err := writeFileEnsureDir(full, []byte(rendered)); err != nil {
+		if err := writeFileEnsureDir(full, dest, []byte(rendered)); err != nil {
 			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
 			return 1
 		}
@@ -486,7 +488,7 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 	if rerr != nil {
 		// Disk missing where the planner thought it present: fall back to create.
 		if os.IsNotExist(rerr) {
-			if err := writeFileEnsureDir(full, []byte(rendered)); err != nil {
+			if err := writeFileEnsureDir(full, dest, []byte(rendered)); err != nil {
 				fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
 				return 1
 			}
@@ -504,7 +506,7 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 		// Markers missing/corrupt on disk OR in the template → don't clobber the
 		// project's file; write the fresh template alongside for manual reconcile.
 		newPath := full + ".harmonik-new"
-		if err := writeFileEnsureDir(newPath, []byte(rendered)); err != nil {
+		if err := writeFileEnsureDir(newPath, dest, []byte(rendered)); err != nil {
 			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err)
 			return 1
 		}
@@ -518,7 +520,7 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 		out.note = "managed region already current"
 		return 0
 	}
-	if err := writeFileEnsureDir(full, []byte(merged)); err != nil {
+	if err := writeFileEnsureDir(full, dest, []byte(merged)); err != nil {
 		fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
 		return 1
 	}
@@ -533,7 +535,7 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 func applyContentOwned(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	switch action {
 	case ActionCreate:
-		if err := writeFileEnsureDir(full, embedData); err != nil {
+		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
 			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
 			return 1
 		}
@@ -544,7 +546,7 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 		current, rerr := os.ReadFile(full) //nolint:gosec // G304: under resolved project dir
 		if rerr != nil {
 			if os.IsNotExist(rerr) {
-				if err := writeFileEnsureDir(full, embedData); err != nil {
+				if err := writeFileEnsureDir(full, dest, embedData); err != nil {
 					fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
 					return 1
 				}
@@ -568,7 +570,7 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 			out.note = "header already current"
 			return 0
 		}
-		if err := writeFileEnsureDir(full, []byte(merged)); err != nil {
+		if err := writeFileEnsureDir(full, dest, []byte(merged)); err != nil {
 			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
 			return 1
 		}
@@ -593,7 +595,7 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 // and FastForward on a create-once stub are treated as leave-untouched).
 func applyScaffold(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	if action == ActionCreate {
-		if err := writeFileEnsureDir(full, embedData); err != nil {
+		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
 			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
 			return 1
 		}
@@ -718,9 +720,54 @@ func tierHeaderSpan(s string) (region, bool) {
 	return region{start: open, end: end}, true
 }
 
+// claudeAssetDirMode is the directory mode for the NON-.harmonik half of the
+// sync-assets destination set: .claude/skills/<name>/ and any parent a scaffold
+// needs under the repo root. 0o755, matching what `harmonik init` already
+// writes for .claude/skills/ (provisionSkills, init_cmd.go) and what the agent
+// harness and the operator's editor create siblings under. See
+// writeFileEnsureDir for why this is deliberately NOT core.HarmonikDirMode.
+const claudeAssetDirMode fs.FileMode = 0o755
+
+// destUnderHarmonik reports whether a project-relative destination lands inside
+// the .harmonik/ state tree. Segment-wise, so a ".harmonik-new" sidecar name or
+// a file merely called "x.harmonik" never counts.
+func destUnderHarmonik(dest string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(dest), "/") {
+		if seg == ".harmonik" {
+			return true
+		}
+	}
+	return false
+}
+
 // writeFileEnsureDir writes data to path, creating the parent directory tree.
-func writeFileEnsureDir(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // G301: 0755 matches .harmonik/.claude conventions
+// dest is the project-relative destination destFor returned (path is that dest
+// joined onto the project dir, possibly with a ".harmonik-new" suffix), and it
+// selects the directory mode.
+//
+// sync-assets is a GENERIC writer spanning two trees with two different owners,
+// and each parent must be created at the mode ITS owner uses. os.MkdirAll does
+// not chmod a directory that already exists, so a mismatch makes the final mode
+// depend on which creator ran first:
+//
+//   - .harmonik/... → core.HarmonikDirMode. internal/dashboard creates
+//     .harmonik/context/ at that mode, and WriteLock (asset_reconcile.go)
+//     creates .harmonik/ itself at that mode in THIS command's own run — an
+//     --apply that wrote a context tier used to leave .harmonik/context/ at
+//     0o755 while the lock write left .harmonik/ at 0o750, from one process.
+//   - everything else (.claude/skills/..., repo-root scaffolds) →
+//     claudeAssetDirMode. Deliberately not the constant: .claude/ is Claude
+//     Code's config tree, not harmonik state, and `harmonik init` creates
+//     .claude/skills/ at 0o755. Tightening it here alone would reproduce on the
+//     .claude side exactly the first-creator-wins split that HarmonikDirMode
+//     exists to remove on the .harmonik side.
+func writeFileEnsureDir(path, dest string, data []byte) error {
+	dir := filepath.Dir(path)
+	if destUnderHarmonik(dest) {
+		if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
+			return err
+		}
+	} else if err := os.MkdirAll(dir, claudeAssetDirMode); err != nil { //dirmode:allow .claude/ + repo-root asset tree, not .harmonik state — matches init's provisionSkills
 		return err
 	}
 	//nolint:gosec // G306: 0644 matches init's file-mode conventions

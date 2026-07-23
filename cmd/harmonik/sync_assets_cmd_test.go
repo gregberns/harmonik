@@ -24,11 +24,67 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
+
+// TestWriteFileEnsureDirModePerTree pins the mode writeFileEnsureDir creates
+// each of its two destination trees with.
+//
+// sync-assets is a generic writer: .harmonik/context/* and .claude/skills/*
+// come out of the SAME function. os.MkdirAll does not chmod an existing
+// directory, so if this writer disagrees with the tree's other creators the
+// resulting mode depends on which ran first. It used to: writeFileEnsureDir
+// created .harmonik/context/ at 0o755 while internal/dashboard created it at
+// core.HarmonikDirMode and WriteLock created .harmonik/ itself at
+// core.HarmonikDirMode — the latter from THIS command's own run.
+//
+// .claude/ is deliberately NOT the constant: it is Claude Code's config tree,
+// and `harmonik init` (provisionSkills) creates .claude/skills/ at 0o755.
+// Matching each tree's own owner is the invariant; a single mode for both is
+// what would re-open the bug on whichever side lost.
+func TestWriteFileEnsureDirModePerTree(t *testing.T) {
+	// The umask is process-global, so this test must not be parallel. 0o022
+	// masks nothing out of either asserted mode.
+	prev := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(prev) })
+
+	projectDir := t.TempDir()
+	cases := []struct {
+		dest string
+		want os.FileMode
+		dirs []string // dirs to assert, project-relative slash paths
+	}{
+		{
+			dest: filepath.Join(".harmonik", "context", "project.yaml"),
+			want: core.HarmonikDirMode,
+			dirs: []string{".harmonik", ".harmonik/context"},
+		},
+		{
+			dest: filepath.Join(".claude", "skills", "keeper", "SKILL.md"),
+			want: claudeAssetDirMode,
+			dirs: []string{".claude", ".claude/skills/keeper"},
+		},
+	}
+	for _, tc := range cases {
+		if err := writeFileEnsureDir(filepath.Join(projectDir, tc.dest), tc.dest, []byte("x")); err != nil {
+			t.Fatalf("writeFileEnsureDir(%s): %v", tc.dest, err)
+		}
+		for _, d := range tc.dirs {
+			info, err := os.Stat(filepath.Join(projectDir, filepath.FromSlash(d)))
+			if err != nil {
+				t.Fatalf("stat %s: %v", d, err)
+			}
+			if got := info.Mode().Perm(); got != tc.want {
+				t.Errorf("%s: mode = %v, want %v", d, got, tc.want)
+			}
+		}
+	}
+}
 
 // gitOutSync runs a git subcommand in dir and returns its combined output,
 // fataling on error. (Named to avoid colliding with the package's existing

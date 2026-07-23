@@ -1,7 +1,7 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-22 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + **RT15** landed.
+**Last updated:** 2026-07-23 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + **RT19c** landed.
 The concurrent quality lane's working tree is fully drained to disk (§8).
 
 > ## ⚠️ We nearly collided at 08:00 — read this
@@ -45,7 +45,7 @@ plans, then began landing them one commit at a time.
 | **3. Execute (P2 core)** | 9 slices, sequential | **DONE — 9/9, every verify `is_pure_move: true`** |
 | **4. Punch list** | verifier findings applied | **DONE** — `ffc5415a` |
 | **5. Differential verification** | clean before/after pair, identical scope | **DONE — no regression** (see below) |
-| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, **RT15** landed; RT16/17/18/19/19c/lift planned | **IN PROGRESS** |
+| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, **RT19c** landed; RT16/17/18/19/lift planned | **IN PROGRESS** |
 | **7. E4d re-plan** | overturned "impossible"; 3 prep slices ready, E4d-3 parked | **DONE** |
 
 ### Verification verdict (Phase 5)

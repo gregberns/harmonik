@@ -224,9 +224,21 @@ func atomicWriteHandlerStateDaemon(statePath string, snapshots []HandlerPauseSta
 	}
 
 	// Step 6: fsync the parent directory to flush the new directory entry.
-	if dirF, openErr := os.Open(dir); openErr == nil {
-		_ = dirF.Sync()
-		_ = dirF.Close()
+	// This is a durability barrier: without it, the rename's new dirent may not
+	// survive a crash.  Propagate its failure rather than swallowing it — the
+	// fsync error wins over the close error, mirroring the material-error-first
+	// handling of the tmp Sync/Close steps above.
+	dirF, openErr := os.Open(dir) //nolint:gosec // G304: operator-controlled project dir (== filepath.Dir(statePath); see os.ReadFile below)
+	if openErr != nil {
+		return fmt.Errorf("atomicWriteHandlerStateDaemon: open dir %s: %w", dir, openErr)
+	}
+	syncErr := dirF.Sync()
+	closeErr := dirF.Close()
+	if syncErr != nil {
+		return fmt.Errorf("atomicWriteHandlerStateDaemon: fsync dir %s: %w", dir, syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("atomicWriteHandlerStateDaemon: close dir %s: %w", dir, closeErr)
 	}
 
 	return nil

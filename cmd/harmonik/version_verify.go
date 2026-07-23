@@ -2,22 +2,41 @@
 //
 // # WHY THIS EXISTS
 //
-// "Does this binary contain fix X?" used to be answered by folklore:
-// `strings <binary> | grep <token>` (false-positives, because the Go linker
-// packs unrelated strings adjacent in the string blob) or
-// `go tool nm <binary> | grep <symbol>` (a per-fix trick that silently stops
-// working when a symbol is renamed or inlined). Both infer provenance from
-// artefacts of compilation. Neither answers the actual question.
+// "Does this binary contain fix X?" used to be answered one fix at a time, by
+// probing for an artefact of that particular change: `strings <binary> | grep
+// <literal>` or `go tool nm <binary> | grep <symbol>`. Both test an INCIDENTAL
+// by-product of a fix rather than the fix:
 //
-// The Go toolchain already stamps the answer into every binary it builds:
+//   - the literal or symbol can be renamed, inlined or dropped while the fix is
+//     present, which reads as "missing";
+//   - it can survive a later revert or refactor while the fix is gone, which
+//     reads as "present";
+//   - and a fix that introduces no new literal or symbol at all — a changed
+//     comparison, a reordered call — leaves the technique with nothing to probe.
+//
+// So the probe has to be reinvented for every fix, and for some fixes it cannot
+// be invented at all. It is not always wrong: for hk-9hvr0 it happened to be
+// right, because that fix deleted a string constant — measured 2026-07-22,
+// `strings -a … | grep -c harmonik-input` returned 1 on the pre-fix binary
+// (revision eb2b4f1a) and 0 on the post-fix one. Being right about one fix is
+// precisely what does not generalise.
+//
+// The Go toolchain already records the answer to the question actually being
+// asked — WHICH SOURCE REVISION IS THIS BINARY — in every binary it builds:
 // the `vcs.revision` / `vcs.modified` / `vcs.time` build settings, readable
-// with `go version -m` or, here, `debug/buildinfo`. That is the single
-// authoritative source, and it generalises: containment of ANY commit is
-// "is that commit an ancestor of the binary's revision", with no per-fix
-// symbol trick.
+// with `go version -m` or, here, `debug/buildinfo`. One probe, identical for
+// every fix; containment then reduces to commit ancestry.
 //
-// Cite: bead hk-9hvr0 (false close caused by `strings | grep harmonik-input`);
-// docs/daemon-redeploy.md §"Which fix is in this binary?".
+// Ancestry has its own limits and they are stated where operators see them
+// (docs/daemon-redeploy.md §"Which fix is in this binary?"): it answers "was
+// this commit ever merged into the binary's history", so a commit that was
+// later REVERTED still reads as contained, and a fix that reached the binary as
+// a CHERRY-PICK reads as missing under its original SHA. Both were reproduced —
+// the cherry-pick one in this repository. When either applies, confirm by content
+// (`git grep <symbol> <revision>`); the deploy gate is unaffected because there
+// the target commit IS the revision the binary was built from.
+//
+// Refs: bead hk-9hvr0; docs/daemon-redeploy.md §"Which fix is in this binary?".
 package main
 
 import (
@@ -58,12 +77,24 @@ const (
 	// verifyStatusUnknownRevision — the binary names a revision that the
 	// local repository does not have (shallow clone, or a rev rebased away).
 	verifyStatusUnknownRevision = "unknown-revision"
+	// verifyStatusUsageError — the command could not be carried out at all:
+	// bad flags, unreadable binary, unusable repo, or a --contains commit this
+	// repository does not have. Reported only in --json mode, where every
+	// outcome must be a JSON object on stdout; human mode prints prose to
+	// stderr.
+	verifyStatusUsageError = "usage-error"
 )
 
-// Exit codes. 0 is the ONLY code that means "this binary definitively carries
-// the fix"; every other code is a distinguishable refusal, never a bare false.
+// Exit codes. With --contains, 0 is the ONLY code that means "this binary
+// definitively carries the commit"; every other code is a distinguishable
+// refusal, never a bare false.
 const (
-	verifyExitContains      = 0 // contains, built from a clean tree
+	// verifyExitOK is the success code, shared by three outcomes: status
+	// `contains` (the ship-safe one), status `revision` (informational, no
+	// --contains was asked) and --help. A caller that needs the ship-safe
+	// meaning must check the status token as well as the exit code — which is
+	// exactly what the swap gate in docs/daemon-redeploy.md does.
+	verifyExitOK            = 0
 	verifyExitMissing       = 1 // revision does not contain the commit
 	verifyExitUsage         = 2 // bad flags, unreadable file, unusable repo
 	verifyExitDirty         = 3 // contains, but built from a dirty tree
@@ -200,7 +231,7 @@ func classifyStamp(ctx context.Context, stamp binaryStamp, repoDir, target strin
 	if target == "" {
 		res.Status = verifyStatusRevision
 		res.Detail = stampCleanlinessDetail(stamp)
-		res.ExitCode = verifyExitContains
+		res.ExitCode = verifyExitOK
 		return res, nil
 	}
 	return classifyContainment(ctx, stamp, repoDir, target, res)
@@ -212,12 +243,21 @@ func classifyContainment(ctx context.Context, stamp binaryStamp, repoDir, target
 	if !gitIsRepo(ctx, repoDir) {
 		return res, fmt.Errorf("%s is not a git repository; pass --repo DIR", repoDir)
 	}
+	// An absent --contains target and an absent binary revision are treated
+	// asymmetrically ON PURPOSE. --contains is OPERATOR INPUT: a typo or a
+	// commit this repo has never seen is a usage error the operator can fix by
+	// re-running the command (exit 2). The binary's revision is DATA READ FROM
+	// THE ARTEFACT: if this repo cannot resolve it, the operator's command was
+	// well formed and the tool simply cannot decide, which is
+	// `unknown-revision` (exit 4). Collapsing the two would either invite a
+	// typo'd SHA to be reported as an unanswerable provenance question, or
+	// blame the operator for a shallow clone.
 	targetOK, err := gitObjectExists(ctx, repoDir, commitSpec(target))
 	if err != nil {
 		return res, err
 	}
 	if !targetOK {
-		return res, fmt.Errorf("commit %s does not exist in %s", target, repoDir)
+		return res, fmt.Errorf("commit %s does not exist in %s (a --contains target is operator input: check the SHA, or pass --repo DIR)", target, repoDir)
 	}
 	revOK, err := gitObjectExists(ctx, repoDir, commitSpec(stamp.Revision))
 	if err != nil {
@@ -253,7 +293,7 @@ func containmentVerdict(stamp binaryStamp, target string, isAncestor bool, res v
 	default:
 		res.Status = verifyStatusContains
 		res.Detail = fmt.Sprintf("%s is an ancestor of %s, built from a clean tree", target, stamp.Revision)
-		res.ExitCode = verifyExitContains
+		res.ExitCode = verifyExitOK
 	}
 	return res
 }
@@ -277,24 +317,36 @@ FLAGS
   --binary PATH     Binary to inspect (default: the running harmonik executable)
   --contains COMMIT Test whether COMMIT is an ancestor of the binary's revision
   --repo DIR        Repository whose commit graph decides ancestry (default: cwd)
-  --json            Emit the full result as a JSON object
+  --json            Emit every outcome — including usage errors — as a single
+                    JSON object on stdout
 
 STATUS TOKENS / EXIT CODES
   contains         0  target commit is an ancestor; tree was clean  -> SAFE TO SWAP
   revision         0  no --contains asked; revision reported
   missing          1  target commit is NOT an ancestor; binary predates the fix
-  (usage error)    2  bad flags, unreadable binary, unusable repo
+  usage-error      2  bad flags, unreadable binary, unusable repo, or a
+                      --contains commit this repository does not have
   contains-dirty   3  ancestor, but vcs.modified=true — necessary, not sufficient
   no-build-info    4  file carries no Go build info (not a Go binary / stripped)
   no-vcs-stamp     4  build info present but no vcs.revision (-buildvcs=false)
   unknown-revision 4  binary's revision is not in this repo (shallow / rebased away)
 
-WHY NOT strings | grep
-  ` + "`strings <binary> | grep <token>`" + ` false-positives: the Go linker packs
-  unrelated strings adjacent in the string blob, so a substring can appear in a
-  binary that does not contain the fix. ` + "`go tool nm | grep <symbol>`" + ` works but
-  must be reinvented per fix and breaks silently on rename or inlining. The
-  vcs.revision stamp read here is the authoritative source.
+  Exit 0 alone is NOT the ship-safe answer: --help and status ` + "`revision`" + ` also
+  exit 0. Gate on the status token as well — see docs/daemon-redeploy.md.
+
+WHY NOT strings | grep OR go tool nm | grep
+  Both probe an INCIDENTAL artefact of one fix — a string literal or a symbol.
+  It can be renamed, inlined or dropped while the fix is present, it can survive
+  a revert while the fix is gone, and a fix that adds no new literal or symbol
+  leaves nothing to probe at all. So the trick must be reinvented per fix, and
+  for some fixes it cannot be invented. The vcs.revision stamp read here answers
+  the question actually being asked — which source revision is this binary —
+  identically for every fix.
+
+  Containment is commit ancestry, so it answers "was this commit ever merged
+  into the binary's history": a later-REVERTED commit still reads as contained,
+  and a fix that arrived by CHERRY-PICK reads as missing under its original SHA.
+  Confirm by content when either applies.
 
 EXAMPLES
   harmonik version --binary /Users/me/go/bin/harmonik
@@ -375,6 +427,18 @@ type versionInspectOutcome struct {
 	code     int
 }
 
+// versionArgsRouteToInspect reports whether argv (os.Args, program name at
+// index 0) selects the binary-provenance check rather than the version line.
+//
+// Only the POSITIONAL `version` subcommand routes here. `--version` and
+// `-version` never do, whatever follows them: specs/release-pipeline.md §2.3
+// makes their output format normative ("harmonik v0.y.z (commit: <sha>)") and
+// declares any other format a spec violation, so `harmonik --version --json`
+// must keep printing the version line.
+func versionArgsRouteToInspect(argv []string) bool {
+	return len(argv) > 2 && argv[1] == "version"
+}
+
 // runVersionInspect implements `harmonik version <flags>`.
 //
 // It is the single authoritative answer to "which commit is this binary built
@@ -395,29 +459,60 @@ func runVersionInspect(args []string, stdout, stderr io.Writer) int {
 // answer. It writes nothing.
 func computeVersionInspect(ctx context.Context, args []string) versionInspectOutcome {
 	f, err := parseVersionVerifyFlags(args)
+	// Flag parsing can fail before it reaches --json, so the JSON decision is
+	// made independently of the parser: a caller that asked for JSON gets JSON
+	// on EVERY outcome, including the failures below.
+	f.asJSON = f.asJSON || argsRequestJSON(args)
 	if err != nil {
-		return versionInspectFailure(fmt.Sprintf("harmonik version: %v\n\n%s", err, versionVerifyUsage))
+		return versionInspectFailure(f, fmt.Sprintf("harmonik version: %v\n\n%s", err, versionVerifyUsage), err.Error())
 	}
 	if f.help {
-		return versionInspectOutcome{text: versionVerifyUsage, code: verifyExitContains}
+		return versionInspectOutcome{text: versionVerifyUsage, code: verifyExitOK}
 	}
 	if err := f.applyDefaults(); err != nil {
-		return versionInspectFailure(fmt.Sprintf("harmonik version: %v\n", err))
+		return versionInspectFailure(f, fmt.Sprintf("harmonik version: %v\n", err), err.Error())
 	}
 	res, err := inspectBinary(ctx, f)
 	if err != nil {
-		return versionInspectFailure(fmt.Sprintf("harmonik version: %v\n", err))
+		return versionInspectFailure(f, fmt.Sprintf("harmonik version: %v\n", err), err.Error())
 	}
 	text, err := renderVerifyResult(res, f.asJSON)
 	if err != nil {
-		return versionInspectFailure(fmt.Sprintf("harmonik version: %v\n", err))
+		return versionInspectFailure(f, fmt.Sprintf("harmonik version: %v\n", err), err.Error())
 	}
 	return versionInspectOutcome{text: text, code: res.ExitCode}
 }
 
-// versionInspectFailure builds the stderr/exit-2 outcome for an operator error.
-func versionInspectFailure(text string) versionInspectOutcome {
-	return versionInspectOutcome{text: text, toStderr: true, code: verifyExitUsage}
+// argsRequestJSON reports whether --json appears anywhere in args, regardless of
+// whether the argument list as a whole parses.
+func argsRequestJSON(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" {
+			return true
+		}
+	}
+	return false
+}
+
+// versionInspectFailure builds the exit-2 outcome for an operator error.
+//
+// Human mode writes prose to stderr. --json mode writes one JSON object with
+// status `usage-error` to STDOUT, so a machine consumer parses stdout for every
+// outcome rather than only for the ones that reached a verdict.
+func versionInspectFailure(f versionVerifyFlags, humanText, detail string) versionInspectOutcome {
+	if f.asJSON {
+		res := verifyResult{
+			Binary:   f.binary,
+			Contains: f.contains,
+			Status:   verifyStatusUsageError,
+			Detail:   detail,
+			ExitCode: verifyExitUsage,
+		}
+		if encoded, err := json.MarshalIndent(res, "", "  "); err == nil {
+			return versionInspectOutcome{text: string(encoded) + "\n", code: verifyExitUsage}
+		}
+	}
+	return versionInspectOutcome{text: humanText, toStderr: true, code: verifyExitUsage}
 }
 
 // inspectBinary reads and classifies one binary. A returned error is an

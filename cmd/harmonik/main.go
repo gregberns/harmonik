@@ -166,13 +166,17 @@ func run() int {
 	//
 	// Spec ref: specs/release-pipeline.md §2.3; bead hk-ww7ee.
 	//
-	// With trailing arguments it becomes the authoritative binary-provenance
-	// check (`--binary`/`--contains`) — see cmd/harmonik/version_verify.go for
-	// why `strings | grep` and `go tool nm | grep` are not answers.
+	// The POSITIONAL form with trailing arguments — `harmonik version --binary
+	// PATH …` — is the authoritative binary-provenance check; see
+	// cmd/harmonik/version_verify.go for why `strings | grep` and
+	// `go tool nm | grep` are not answers. The FLAG forms (`--version` /
+	// `-version`) deliberately do NOT route there: §2.3 makes their output
+	// format normative and says any other format is a spec violation, so
+	// `harmonik --version --json` must still print the version line.
 	//
 	// Bead ref: hk-9hvr0.
 	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
-		if len(os.Args) > 2 {
+		if versionArgsRouteToInspect(os.Args) {
 			return runVersionInspect(os.Args[2:], os.Stdout, os.Stderr)
 		}
 		fmt.Printf("harmonik %s (commit: %s)\n", version, resolvedCommitHash())

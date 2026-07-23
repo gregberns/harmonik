@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -138,8 +140,8 @@ func TestClassifyStamp_Contains(t *testing.T) {
 	if res.Status != verifyStatusContains {
 		t.Errorf("status = %q; want %q", res.Status, verifyStatusContains)
 	}
-	if res.ExitCode != verifyExitContains {
-		t.Errorf("exit = %d; want %d", res.ExitCode, verifyExitContains)
+	if res.ExitCode != verifyExitOK {
+		t.Errorf("exit = %d; want %d", res.ExitCode, verifyExitOK)
 	}
 }
 
@@ -255,16 +257,57 @@ func TestRunVersionInspect_UnknownFlag(t *testing.T) {
 	}
 }
 
-// TestRunVersionInspect_HelpMentionsStringsPitfall verifies the help text
-// carries the warning that motivated this command: `strings | grep` gives
-// false positives, which is what caused the hk-9hvr0 false close.
+// TestRunVersionInspect_HelpMentionsStringsPitfall pins the CORRECTED rationale
+// in the user-facing help.
+//
+// The original wording claimed `strings | grep` "false-positives ... the Go
+// linker packs unrelated strings adjacent in the string blob". That was
+// measured on this machine and is false for the case it cited: on 2026-07-22
+// `strings -a … | grep -c harmonik-input` returned 1 on the pre-fix binary
+// (which really declared `const inputBufferName = "harmonik-input"`) and 0 on
+// the post-fix one — an ordinary TRUE positive. The defensible argument, pinned
+// here, is that `strings`/`nm` probe an incidental artefact of one fix and so do
+// not generalise, whereas vcs.revision answers "which revision is this binary"
+// uniformly. This test fails if the retracted claim comes back.
 func TestRunVersionInspect_HelpMentionsStringsPitfall(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := runVersionInspect([]string{"--help"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit = %d; want 0", code)
+	if code := runVersionInspect([]string{"--help"}, &stdout, &stderr); code != verifyExitOK {
+		t.Fatalf("exit = %d; want %d", code, verifyExitOK)
 	}
-	if !strings.Contains(stdout.String(), "strings") {
-		t.Error("help text must warn that `strings | grep` is unreliable")
+	help := stdout.String()
+	for _, want := range []string{"strings", "go tool nm", "INCIDENTAL artefact", "vcs.revision"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("help text is missing %q; it must explain why per-fix probes do not generalise", want)
+		}
+	}
+	for _, retracted := range []string{"string blob", "packs unrelated strings", "false close"} {
+		if strings.Contains(help, retracted) {
+			t.Errorf("help text repeats the retracted claim %q (measured false; see this test's comment)", retracted)
+		}
+	}
+}
+
+// TestVersionArgsRouteToInspect pins how specs/release-pipeline.md §2.3 was
+// honoured: §2.3 makes the `--version` output format normative, so only the
+// POSITIONAL `version` subcommand may route to the provenance check. Routing
+// `harmonik --version --json` there would emit JSON where the spec requires
+// "harmonik v0.y.z (commit: <sha>)".
+func TestVersionArgsRouteToInspect(t *testing.T) {
+	for _, tc := range []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"harmonik", "version"}, false},
+		{[]string{"harmonik", "version", "--binary", "/bin/x"}, true},
+		{[]string{"harmonik", "version", "--help"}, true},
+		{[]string{"harmonik", "--version"}, false},
+		{[]string{"harmonik", "--version", "--json"}, false},
+		{[]string{"harmonik", "-version", "--binary", "/bin/x"}, false},
+		{[]string{"harmonik"}, false},
+	} {
+		if got := versionArgsRouteToInspect(tc.argv); got != tc.want {
+			t.Errorf("versionArgsRouteToInspect(%q) = %t; want %t", tc.argv, got, tc.want)
+		}
 	}
 }
 
@@ -330,5 +373,286 @@ func TestGitObjectExists_AbsentIsNotAnError(t *testing.T) {
 	}
 	if ok {
 		t.Error("absent object reported as present")
+	}
+}
+
+// TestGitIsRepo distinguishes a working tree from a bare directory. A wrong
+// answer here turns every containment question into an exit-2 usage error.
+func TestGitIsRepo(t *testing.T) {
+	repo := newVerifyRepoFixture(t)
+	if !gitIsRepo(t.Context(), repo.dir) {
+		t.Error("a git working tree was reported as not a repository")
+	}
+	if gitIsRepo(t.Context(), t.TempDir()) {
+		t.Error("an empty directory was reported as a git repository")
+	}
+}
+
+// TestContainmentVerdict_MissingFromDirtyBuild covers the !isAncestor &&
+// Modified branch: the binary predates the commit AND was built dirty, so the
+// detail must say the unrecorded local edits cannot be ruled in or out. Without
+// that sentence an operator reads a flat "missing" and may conclude the fix is
+// definitely absent when the build was never fully described by its revision.
+func TestContainmentVerdict_MissingFromDirtyBuild(t *testing.T) {
+	stamp := binaryStamp{Revision: "abc123", Modified: true}
+	res := containmentVerdict(stamp, "def456", false, verifyResult{})
+	if res.Status != verifyStatusMissing {
+		t.Errorf("status = %q; want %q", res.Status, verifyStatusMissing)
+	}
+	if res.ExitCode != verifyExitMissing {
+		t.Errorf("exit = %d; want %d", res.ExitCode, verifyExitMissing)
+	}
+	if !strings.Contains(res.Detail, "dirty") {
+		t.Errorf("detail = %q; want it to say the tree was dirty at build time", res.Detail)
+	}
+}
+
+// TestVerifyContract_LiteralExitCodesAndStatusTokens pins the PUBLISHED
+// contract as literals.
+//
+// Every other test in this file compares a result against the same constant
+// production uses, so renumbering verifyExitDirty to 5 or renaming
+// verifyStatusContains to "ok" would leave the suite green while silently
+// invalidating the tables in docs/daemon-redeploy.md, CLI-REFERENCE.md and
+// `version --help`, plus every --json consumer and the step-2b swap gate.
+func TestVerifyContract_LiteralExitCodesAndStatusTokens(t *testing.T) {
+	for _, tc := range []struct{ name, got, want string }{
+		{"verifyStatusRevision", verifyStatusRevision, "revision"},
+		{"verifyStatusContains", verifyStatusContains, "contains"},
+		{"verifyStatusMissing", verifyStatusMissing, "missing"},
+		{"verifyStatusContainsDirty", verifyStatusContainsDirty, "contains-dirty"},
+		{"verifyStatusNoBuildInfo", verifyStatusNoBuildInfo, "no-build-info"},
+		{"verifyStatusNoVCSStamp", verifyStatusNoVCSStamp, "no-vcs-stamp"},
+		{"verifyStatusUnknownRevision", verifyStatusUnknownRevision, "unknown-revision"},
+		{"verifyStatusUsageError", verifyStatusUsageError, "usage-error"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %q; want %q (published status token)", tc.name, tc.got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"verifyExitOK", verifyExitOK, 0},
+		{"verifyExitMissing", verifyExitMissing, 1},
+		{"verifyExitUsage", verifyExitUsage, 2},
+		{"verifyExitDirty", verifyExitDirty, 3},
+		{"verifyExitIndeterminate", verifyExitIndeterminate, 4},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %d; want %d (published exit code)", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
+// verifyPublishedRows is the status/exit table as the docs and the help text
+// publish it. It is the input to the parity test below, which is what keeps
+// three unsynchronised copies of the table honest.
+var verifyPublishedRows = []struct {
+	status string
+	exit   int
+}{
+	{verifyStatusContains, verifyExitOK},
+	{verifyStatusRevision, verifyExitOK},
+	{verifyStatusMissing, verifyExitMissing},
+	{verifyStatusUsageError, verifyExitUsage},
+	{verifyStatusContainsDirty, verifyExitDirty},
+	{verifyStatusNoBuildInfo, verifyExitIndeterminate},
+	{verifyStatusNoVCSStamp, verifyExitIndeterminate},
+	{verifyStatusUnknownRevision, verifyExitIndeterminate},
+}
+
+// hasStatusExitRow reports whether text has a line pairing status with exit as
+// adjacent fields. It tolerates both the help text's column layout and a
+// markdown table row, so one check covers all three published surfaces.
+func hasStatusExitRow(text, status string, exit int) bool {
+	for _, line := range strings.Split(text, "\n") {
+		fields := strings.Fields(strings.ReplaceAll(line, "|", " "))
+		for i := 0; i+1 < len(fields); i++ {
+			if strings.Trim(fields[i], "`") == status && fields[i+1] == strconv.Itoa(exit) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestVersionStatusTableParity keeps the three copies of the status/exit table
+// in sync: `version --help`, docs/daemon-redeploy.md and CLI-REFERENCE.md. A
+// row added or renumbered in the code without updating a doc fails here rather
+// than at 2am on a deploy.
+func TestVersionStatusTableParity(t *testing.T) {
+	surfaces := map[string]string{"version --help": versionVerifyUsage}
+	for _, rel := range []string{
+		filepath.Join("..", "..", "docs", "daemon-redeploy.md"),
+		filepath.Join("..", "..", "CLI-REFERENCE.md"),
+	} {
+		body, err := os.ReadFile(rel) //nolint:gosec // G304: fixed repo-relative doc paths
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		surfaces[rel] = string(body)
+	}
+	for name, text := range surfaces {
+		for _, row := range verifyPublishedRows {
+			if !hasStatusExitRow(text, row.status, row.exit) {
+				t.Errorf("%s does not publish %q -> exit %d", name, row.status, row.exit)
+			}
+		}
+	}
+}
+
+// TestRenderVerifyResult_GateMarkerLine pins the exact human-output line the
+// step-2b swap gate in docs/daemon-redeploy.md greps for
+// (`grep -qx 'status:   contains'`). The gate needs a positive marker because
+// any harmonik built before this command shipped ignores the flags, prints only
+// its version line and exits 0. Changing this spacing breaks the gate open.
+func TestRenderVerifyResult_GateMarkerLine(t *testing.T) {
+	out, err := renderVerifyResult(verifyResult{
+		Binary:   "/bin/harmonik",
+		Revision: "abc123",
+		Contains: "def456",
+		Status:   verifyStatusContains,
+		Detail:   "detail here",
+	}, false)
+	if err != nil {
+		t.Fatalf("renderVerifyResult: %v", err)
+	}
+	const marker = "status:   contains"
+	found := false
+	for _, line := range strings.Split(out, "\n") {
+		if line == marker {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("output %q has no line exactly equal to %q; the deploy gate greps for it", out, marker)
+	}
+}
+
+// TestDaemonRedeployGateGrepsForMarker closes the other half of the loop that
+// TestRenderVerifyResult_GateMarkerLine opens. That test pins what the code
+// EMITS; this one pins what the runbook GREPS FOR. Without it, editing
+// `status:   contains` in docs/daemon-redeploy.md silently breaks the gate open
+// while the whole suite stays green — and a gate that reports success without
+// checking anything is the exact defect the swap gate was written to close.
+func TestDaemonRedeployGateGrepsForMarker(t *testing.T) {
+	rel := filepath.Join("..", "..", "docs", "daemon-redeploy.md")
+	body, err := os.ReadFile(rel) //nolint:gosec // G304: fixed repo-relative doc path
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	const gateGrep = `grep -qx 'status:   contains'`
+	if !strings.Contains(string(body), gateGrep) {
+		t.Errorf("%s no longer contains %q; the swap gate's positive marker must match "+
+			"the line renderVerifyResult emits, byte for byte", rel, gateGrep)
+	}
+}
+
+// TestRunVersionInspect_UsageErrorIsJSONOnStdout verifies that --json is
+// honoured on the exit-2 paths too. A machine consumer that asked for JSON must
+// not get prose on the second-most-likely outcome.
+func TestRunVersionInspect_UsageErrorIsJSONOnStdout(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope")
+	for name, args := range map[string][]string{
+		"unreadable binary": {"--binary", missing, "--json"},
+		"unknown flag":      {"--bogus", "--json"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := runVersionInspect(args, &stdout, &stderr)
+		if code != verifyExitUsage {
+			t.Errorf("%s: exit = %d; want %d", name, code, verifyExitUsage)
+		}
+		var got verifyResult
+		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+			t.Errorf("%s: stdout %q is not JSON: %v", name, stdout.String(), err)
+			continue
+		}
+		if got.Status != verifyStatusUsageError {
+			t.Errorf("%s: status = %q; want %q", name, got.Status, verifyStatusUsageError)
+		}
+		if got.ExitCode != verifyExitUsage {
+			t.Errorf("%s: json exit_code = %d; want %d", name, got.ExitCode, verifyExitUsage)
+		}
+		if got.Detail == "" {
+			t.Errorf("%s: json detail is empty", name)
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("%s: stderr = %q; want everything on stdout in --json mode", name, stderr.String())
+		}
+	}
+}
+
+// TestReadBinaryStamp_RealStampedBinary is the only test that exercises
+// readBinaryStamp's core read path against a REAL Go binary, and so the only
+// one that can catch a typo in the "vcs.revision" / "vcs.modified" / "vcs.time"
+// setting keys. With a typo the command answers no-vcs-stamp (exit 4) forever
+// while every other test in this file still passes — the whole feature would be
+// dead. It builds a throwaway module inside a throwaway git repo and skips
+// cleanly if the toolchain cannot build there.
+func TestReadBinaryStamp_RealStampedBinary(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("no go toolchain on PATH: %v", err)
+	}
+	src := t.TempDir()
+	gitFixtureRun(t, src, "init")
+	if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte("module example.invalid/stamped\n\ngo 1.25\n"), 0o600); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	gitFixtureRun(t, src, "add", "go.mod", "main.go")
+	gitFixtureRun(t, src, "commit", "-m", "stamped fixture")
+	head := gitFixtureRun(t, src, "rev-parse", "HEAD")
+
+	out := filepath.Join(t.TempDir(), "stamped")
+	build := func() error {
+		// The program name is a literal and argv is assembled on cmd.Args, so
+		// the call site holds no variable and no spread slice (gosec G204) —
+		// matching gitFixtureRun above.
+		cmd := exec.CommandContext(t.Context(), "go")
+		cmd.Args = append(cmd.Args, "build", "-buildvcs=true", "-o", out, ".")
+		cmd.Dir = src
+		cmd.Env = append(os.Environ(), "GOFLAGS=", "GOPROXY=off")
+		if combined, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%w\n%s", err, combined)
+		}
+		return nil
+	}
+	if err := build(); err != nil {
+		t.Skipf("cannot build a stamped fixture binary here: %v", err)
+	}
+
+	stamp, err := readBinaryStamp(out)
+	if err != nil {
+		t.Fatalf("readBinaryStamp(stamped binary): %v", err)
+	}
+	if stamp.Revision != head {
+		t.Errorf("Revision = %q; want %q — the vcs.revision setting key is not being read", stamp.Revision, head)
+	}
+	if stamp.Modified {
+		t.Error("Modified = true for a binary built from a clean repo")
+	}
+	if stamp.Time == "" {
+		t.Error("Time is empty — the vcs.time setting key is not being read")
+	}
+
+	// Dirty the tracked source and rebuild: vcs.modified must flip, which is
+	// what makes contains-dirty (exit 3) reachable at all.
+	if err := os.WriteFile(filepath.Join(src, "main.go"), []byte("package main\n\nfunc main() { _ = 1 }\n"), 0o600); err != nil {
+		t.Fatalf("dirty main.go: %v", err)
+	}
+	if err := build(); err != nil {
+		t.Skipf("cannot rebuild the dirty fixture: %v", err)
+	}
+	dirty, err := readBinaryStamp(out)
+	if err != nil {
+		t.Fatalf("readBinaryStamp(dirty build): %v", err)
+	}
+	if !dirty.Modified {
+		t.Error("Modified = false after building from a dirty tree — the vcs.modified setting key is not being read")
 	}
 }

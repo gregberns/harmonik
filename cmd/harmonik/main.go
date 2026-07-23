@@ -944,8 +944,8 @@ EXAMPLES
 	//
 	// Spec ref: docs/foundation/phase-1-readiness-gap-analysis.md §A5;
 	// specs/scenario-harness.md §4.3.SH-018; bootstrap-subset.md §1.
-	var policyEngine core.PolicyEngine = core.NoOpPolicyEngine{} //nolint:ineffassign // composition-root binding; dispatcher wiring is pending (hk-b3f.*)
-	_ = policyEngine                                             // consumed by dispatcher once cluster-A EM beads land
+	var policyEngine core.PolicyEngine = core.NoOpPolicyEngine{}
+	_ = policyEngine // consumed by dispatcher once cluster-A EM beads land
 
 	// TODO(hk-b3f): pass policyEngine to the EM dispatcher once the
 	// dispatcher wiring beads (hk-b3f cluster-A) land. The binding site is

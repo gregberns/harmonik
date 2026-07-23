@@ -21,8 +21,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/signal"
@@ -514,20 +516,19 @@ func viaSendRequest(ctx context.Context, harmonikDir string, payload []byte) (vi
 // isViaSocketAbsent reports whether err indicates a missing socket file.
 func isViaSocketAbsent(err error) bool {
 	var opErr *net.OpError
-	if netErr, ok := err.(*net.OpError); ok {
-		opErr = netErr
-	} else {
+	if !errors.As(err, &opErr) {
 		return false
 	}
-	if sysErr, ok := opErr.Err.(*os.PathError); ok {
-		return sysErr.Err.Error() == "no such file or directory"
+	var pathErr *os.PathError
+	if errors.As(opErr.Err, &pathErr) {
+		return errors.Is(pathErr.Err, fs.ErrNotExist)
 	}
-	return strings.Contains(err.Error(), "no such file or directory")
+	return errors.Is(opErr.Err, fs.ErrNotExist)
 }
 
 // isViaConnRefused reports whether err indicates ECONNREFUSED.
 func isViaConnRefused(err error) bool {
-	return strings.Contains(err.Error(), "connection refused")
+	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
 // isConnectionClosed reports whether err is a benign "connection closed" error

@@ -15,6 +15,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -690,14 +691,17 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		if _, statErr := os.Stat(managedPath); statErr != nil {
 			check("managed", false, ".managed marker absent — keeper is in passive mode (no handoff cycle). Add with: harmonik keeper enable --yes-destructive, or: touch "+managedPath)
 		} else {
-			managedSID, _ := keeper.ReadManagedSessionID(cfg.projectDir, cfg.agentName)
-			if managedSID != "" {
+			managedSID, readErr := keeper.ReadManagedSessionID(cfg.projectDir, cfg.agentName)
+			switch {
+			case readErr != nil:
+				check("managed", false, fmt.Sprintf(".managed present but unreadable: %v — keeper cannot confirm which session it is bound to", readErr))
+			case managedSID != "":
 				if cf, _, ctxErr := keeper.ReadCtxFile(cfg.projectDir, cfg.agentName); ctxErr == nil && cf.SessionID != "" && cf.SessionID != managedSID {
 					check("managed", false, fmt.Sprintf("managed SID %q != live gauge/.sid SID %q — keeper bound to DEAD session (blind); restart watcher", managedSID, cf.SessionID))
 				} else {
 					check("managed", true, ".managed present (handoff cycle is LIVE)")
 				}
-			} else {
+			default:
 				check("managed", true, ".managed present (handoff cycle is LIVE)")
 			}
 		}
@@ -1196,16 +1200,24 @@ func copyFile(src, dst string) error {
 }
 
 // tmuxPaneExists reports whether a tmux pane with the given target exists.
-// Returns (false, nil) when tmux is not installed.
+// Returns an error when tmux is not installed or when the probe itself could
+// not be run; a non-zero tmux exit means "no such pane" and is reported as
+// (false, nil), which is the only absence signal tmux gives us.
 func tmuxPaneExists(target string) (bool, error) {
 	tmuxPath, err := exec.LookPath("tmux")
 	if err != nil {
-		return false, fmt.Errorf("tmux not found on PATH")
+		return false, fmt.Errorf("tmux not found on PATH: %w", err)
 	}
 	//nolint:gosec // G204: target is operator-supplied tmux pane address
 	cmd := exec.Command(tmuxPath, "display-message", "-t", target, "-p", "#W")
 	if runErr := cmd.Run(); runErr != nil {
-		return false, nil
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			// tmux exits non-zero when the target pane does not exist.
+			return false, nil
+		}
+		// Could not execute tmux at all — that is not evidence of absence.
+		return false, fmt.Errorf("probe tmux pane %q: %w", target, runErr)
 	}
 	return true, nil
 }

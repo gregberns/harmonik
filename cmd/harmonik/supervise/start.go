@@ -2,8 +2,10 @@ package supervisecmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -342,22 +344,15 @@ func durationMS(d time.Duration) int {
 }
 
 func isSocketAbsent(err error) bool {
-	return os.IsNotExist(err)
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 func isConnectionRefused(err error) bool {
-	opErr, ok := err.(*net.OpError)
-	if !ok {
-		return false
-	}
-	if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
-		return sysErr.Err == syscall.ECONNREFUSED
-	}
-	return opErr.Err == syscall.ECONNREFUSED
+	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
 func isWouldBlock(err error) bool {
-	return err == syscall.EAGAIN || err == syscall.EWOULDBLOCK
+	return errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK)
 }
 
 const startUsage = `harmonik supervise start — launch the supervisor (cognition/flywheel) process

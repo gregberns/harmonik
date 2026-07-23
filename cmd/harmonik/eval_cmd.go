@@ -18,6 +18,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -136,7 +137,7 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 	outputFile := fs.String("output", "", "Output file")
 	filterRunID := fs.String("run-id", "", "Filter to a specific run_id")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, evalCollectHelp)
 			return 0
 		}
@@ -186,18 +187,41 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 		fmt.Fprintf(stderr, "harmonik eval collect: opening output: %v\n", err)
 		return 1
 	}
-	defer f.Close()
+	written, skipped, writeErr := evalWriteRecords(f, states, existing, absProject, piModel, stderr)
+	// The output file is append-mode: a Close failure means the last records may
+	// never have reached disk, so it is reported as a collect failure rather than
+	// silently folded into a success message.
+	if closeErr := f.Close(); closeErr != nil && writeErr == nil {
+		writeErr = fmt.Errorf("close %s: %w", *outputFile, closeErr)
+	}
+	if writeErr != nil {
+		fmt.Fprintf(stderr, "harmonik eval collect: %v\n", writeErr)
+		return 1
+	}
 
-	// Emit in a deterministic run_id order so re-collecting the same events
-	// produces byte-identical output (map iteration order is randomised).
+	fmt.Fprintf(stdout, "harmonik eval collect: wrote %d record(s) to %s (%d already present, skipped)\n", //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
+		written, *outputFile, skipped)
+	return 0
+}
+
+// evalWriteRecords appends one JSONL record per collectable run in deterministic
+// run_id order (map iteration order is randomised, and re-collecting the same
+// events must produce byte-identical output). Records that cannot be built or
+// marshalled are reported on stderr and skipped; a write failure aborts and is
+// returned so the caller can close the file and fail the command.
+func evalWriteRecords(
+	w io.Writer,
+	states map[string]*evalRunState,
+	existing map[string]struct{},
+	absProject, piModel string,
+	stderr io.Writer,
+) (written, skipped int, err error) {
 	runIDs := make([]string, 0, len(states))
 	for runID := range states {
 		runIDs = append(runIDs, runID)
 	}
 	sort.Strings(runIDs)
 
-	written := 0
-	skipped := 0
 	for _, runID := range runIDs {
 		st := states[runID]
 		if !st.gradeDispatched {
@@ -207,26 +231,22 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 			skipped++
 			continue // already collected on a prior run
 		}
-		rec, err := evalBuildRecord(runID, st, absProject, piModel)
-		if err != nil {
-			fmt.Fprintf(stderr, "harmonik eval collect: building record for run %s: %v\n", runID, err)
+		rec, buildErr := evalBuildRecord(runID, st, absProject, piModel)
+		if buildErr != nil {
+			fmt.Fprintf(stderr, "harmonik eval collect: building record for run %s: %v\n", runID, buildErr)
 			continue
 		}
-		line, err := json.Marshal(rec)
-		if err != nil {
-			fmt.Fprintf(stderr, "harmonik eval collect: marshalling record: %v\n", err)
+		line, marshalErr := json.Marshal(rec)
+		if marshalErr != nil {
+			fmt.Fprintf(stderr, "harmonik eval collect: marshalling record: %v\n", marshalErr)
 			continue
 		}
-		if _, err := f.Write(append(line, '\n')); err != nil {
-			fmt.Fprintf(stderr, "harmonik eval collect: writing record: %v\n", err)
-			return 1
+		if _, writeErr := w.Write(append(line, '\n')); writeErr != nil {
+			return written, skipped, fmt.Errorf("writing record for run %s: %w", runID, writeErr)
 		}
 		written++
 	}
-
-	fmt.Fprintf(stdout, "harmonik eval collect: wrote %d record(s) to %s (%d already present, skipped)\n", //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
-		written, *outputFile, skipped)
-	return 0
+	return written, skipped, nil
 }
 
 // evalReadExistingRunIDs returns the set of run_ids already present in the

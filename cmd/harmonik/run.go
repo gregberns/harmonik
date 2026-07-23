@@ -764,7 +764,9 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	startErr := daemon.Start(runCtx, cfg)
 	close(daemonDone) // disarm watchdog
 	if notifyFile != nil {
-		_ = notifyFile.Close()
+		if closeErr := notifyFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik run: closing notify stream: %v\n", closeErr)
+		}
 	}
 	if startErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: %v\n", startErr)

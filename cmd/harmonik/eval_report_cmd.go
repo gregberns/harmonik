@@ -13,6 +13,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -75,7 +76,7 @@ func runEvalReport(args []string, stdout, stderr io.Writer, getwd func() (string
 	inputFile := fs.String("input", "", "Path to eval-results.jsonl")
 	format := fs.String("format", "table", "Output format: table or json")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, evalReportHelp)
 			return 0
 		}

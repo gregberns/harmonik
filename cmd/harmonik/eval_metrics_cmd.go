@@ -30,6 +30,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -90,7 +91,7 @@ func runEvalMetrics(args []string, stdout, stderr io.Writer, getwd func() (strin
 	fs.SetOutput(stderr)
 	workdirFlag := fs.String("workdir", "", "Eval worktree root (default: cwd)")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, evalMetricsHelp)
 			return 0
 		}

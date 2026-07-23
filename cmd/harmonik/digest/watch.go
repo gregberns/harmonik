@@ -6,6 +6,7 @@ package digestcmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -73,7 +74,7 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) {
 	fmt.Fprintln(w, strings.Repeat("─", 68))
 
 	if buildErr != nil {
-		if buildErr == digest.ErrNoHarmonikDir {
+		if errors.Is(buildErr, digest.ErrNoHarmonikDir) {
 			fmt.Fprintln(w, "ERROR: .harmonik/ directory not found — is this a harmonik project?")
 		} else {
 			fmt.Fprintf(w, "ERROR: %v\n", buildErr)

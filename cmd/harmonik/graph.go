@@ -20,6 +20,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -175,11 +176,12 @@ func validateDot(src string) []diagnostic {
 	graph, parseErr := dot.Parse(src, "")
 	if parseErr != nil {
 		var multi dot.ParseErrors
-		switch e := parseErr.(type) {
-		case dot.ParseErrors:
-			multi = e
-		case *dot.ParseError:
-			multi = dot.ParseErrors{e}
+		var single *dot.ParseError
+		switch {
+		case errors.As(parseErr, &multi):
+			// multi already bound by errors.As.
+		case errors.As(parseErr, &single):
+			multi = dot.ParseErrors{single}
 		default:
 			return []diagnostic{{Code: "em038_not_parseable", Detail: parseErr.Error()}}
 		}

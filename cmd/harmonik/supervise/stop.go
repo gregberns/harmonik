@@ -74,7 +74,7 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 
 	// PL-011: SIGTERM → bounded wait → SIGKILL.
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		if err == os.ErrProcessDone {
+		if errors.Is(err, os.ErrProcessDone) {
 			fmt.Fprintln(stdout, "harmonik supervise stop: supervisor already exited")
 			_ = cleanup(projectDir)
 			return 0

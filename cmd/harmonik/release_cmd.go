@@ -335,8 +335,14 @@ func promoteGitHubRelease(projectDir, semver string) error {
 		return nil
 	}
 	if _, err := exec.LookPath("gh"); err != nil {
-		fmt.Fprintln(os.Stderr, "harmonik release certify: skipped GitHub release promotion (gh CLI not found)")
-		return nil
+		// "gh is not installed" is a legitimate skip. Anything else — an
+		// unreadable PATH entry, a gh that exists but is not executable — is a
+		// real failure and must not be reported as a successful skip.
+		if errors.Is(err, exec.ErrNotFound) {
+			fmt.Fprintln(os.Stderr, "harmonik release certify: skipped GitHub release promotion (gh CLI not found)")
+			return nil
+		}
+		return fmt.Errorf("locate gh CLI: %w", err)
 	}
 	// context.Background(): `harmonik release certify` is a synchronous CLI entry
 	// point with no cancellable context in scope. Killing `gh release edit`

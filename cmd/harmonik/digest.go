@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -129,13 +130,16 @@ EXAMPLES
 	if watchFlag {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
-		_ = digestcmd.RunWatch(ctx, digestcmd.WatchInput{Build: in}, os.Stdout)
+		if watchErr := digestcmd.RunWatch(ctx, digestcmd.WatchInput{Build: in}, os.Stdout); watchErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik digest --watch: %v\n", watchErr)
+			return 1
+		}
 		return 0
 	}
 
 	d, err := digest.Build(context.Background(), in)
 	if err != nil {
-		if err == digest.ErrNoHarmonikDir {
+		if errors.Is(err, digest.ErrNoHarmonikDir) {
 			fmt.Fprintf(os.Stderr, "harmonik digest: .harmonik/ not found in %q\n", projectDir)
 			return 7
 		}

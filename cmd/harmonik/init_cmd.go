@@ -54,6 +54,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -803,7 +804,8 @@ func maybeStartSupervise(projectDir string, stdout, stderr io.Writer) int {
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			if exitErr.ExitCode() == 17 {
 				fmt.Fprintf(stderr, "harmonik init: daemon not running yet — supervisor start deferred (start daemon first, then run: harmonik supervise start --watch-restart)\n")
 				return 1

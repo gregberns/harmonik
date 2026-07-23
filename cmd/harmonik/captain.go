@@ -193,8 +193,20 @@ func (o osCaptainTmuxOps) AgentPaneAlive(ctx context.Context, sess string) (bool
 		return false, nil
 	}
 	// signal-0: existence probe, no signal delivered.
+	//
+	// ESRCH is the only answer that actually means "gone". EPERM means the
+	// process exists but is owned by another uid — still alive, and reaping it
+	// would be wrong. Anything else is a probe failure, which the doc contract
+	// above says must reach the caller rather than masquerade as "dead".
 	if perr := syscall.Kill(pid, 0); perr != nil {
-		return false, nil
+		switch {
+		case errors.Is(perr, syscall.ESRCH):
+			return false, nil
+		case errors.Is(perr, syscall.EPERM):
+			return true, nil
+		default:
+			return false, fmt.Errorf("probe agent pane pid %d in session %q: %w", pid, sess, perr)
+		}
 	}
 	return true, nil
 }
@@ -607,7 +619,7 @@ func writeCaptainSentinelAndPID(ctx context.Context, ops captainTmuxOps, project
 
 	pid, perr := ops.AgentPanePID(ctx, tmuxSession)
 	if perr != nil || pid <= 0 {
-		return fmt.Errorf("captain.sentinel written but could not resolve agent pane PID for captain.pid (%v)", perr)
+		return fmt.Errorf("captain.sentinel written but could not resolve agent pane PID for captain.pid: %w", perr)
 	}
 	pidPath := filepath.Join(cognitionDir, "captain.pid")
 	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {

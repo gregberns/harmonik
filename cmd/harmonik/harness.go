@@ -162,7 +162,7 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	fset.BoolVar(&verboseFlag, "verbose", false, "emit progress log to stderr")
 
 	if err := fset.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return harnessExitInternalError
@@ -748,11 +748,9 @@ func harnessDiscoverScenarios(
 		if verbose {
 			fmt.Fprintf(stderr, "harness: discovering scenarios under %s\n", scenariosDir)
 		}
-		var walkErr error
 		var wrongExt []error
-		_ = filepath.WalkDir(scenariosDir, func(path string, d fs.DirEntry, err error) error {
+		walkErr := filepath.WalkDir(scenariosDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				walkErr = err
 				return err
 			}
 			if d.IsDir() {

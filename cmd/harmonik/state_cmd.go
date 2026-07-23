@@ -71,7 +71,10 @@ func runStateSubcommand(args []string) int {
 		return 0
 	}
 
-	printStateHuman(snap)
+	if err := printStateHuman(snap); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik state: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -119,7 +122,9 @@ func resolveProjectDirForState() (string, error) {
 }
 
 // printStateHuman renders a compact human-readable summary of the snapshot.
-func printStateHuman(snap daemon.StateSnapshot) {
+// The tabwriter buffers every row until Flush, so a Flush failure means the
+// operator saw nothing at all — it is returned rather than dropped.
+func printStateHuman(snap daemon.StateSnapshot) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
 	daemonStatus := "down"
@@ -174,7 +179,10 @@ func printStateHuman(snap daemon.StateSnapshot) {
 		}
 	}
 
-	_ = w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("write state summary: %w", err)
+	}
+	return nil
 }
 
 // findProjectRoot walks up from dir looking for a .harmonik directory.

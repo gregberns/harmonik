@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,8 +109,8 @@ func TestResolveStallSentinelConfig_MissingError(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty config: expected an error, got nil")
 	}
-	merr, ok := err.(*StallSentinelConfigMissingError)
-	if !ok {
+	var merr *StallSentinelConfigMissingError
+	if !errors.As(err, &merr) {
 		t.Fatalf("empty config: expected *StallSentinelConfigMissingError; got %T: %v", err, err)
 	}
 	if merr.ProjectDir != "/tmp/myproj" {

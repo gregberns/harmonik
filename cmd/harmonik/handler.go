@@ -475,9 +475,19 @@ func atomicWriteHandlerState(statePath string, state *handlerStateDisk, errOut i
 
 	// fsync the parent directory to flush the directory entry.
 	dirF, err := os.Open(dir)
-	if err == nil {
-		_ = dirF.Sync()
-		_ = dirF.Close()
+	if err != nil {
+		fmt.Fprintf(errOut, "harmonik handler resume: open %s for directory fsync: %v\n", dir, err)
+		return 1
+	}
+	syncErr := dirF.Sync()
+	closeErr := dirF.Close()
+	if syncErr != nil {
+		fmt.Fprintf(errOut, "harmonik handler resume: fsync directory %s: %v\n", dir, syncErr)
+		return 1
+	}
+	if closeErr != nil {
+		fmt.Fprintf(errOut, "harmonik handler resume: close directory %s: %v\n", dir, closeErr)
+		return 1
 	}
 
 	return 0
@@ -510,7 +520,7 @@ func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.Hand
 		// Skip the emit rather than writing a malformed event that replay tooling
 		// would reject. The state file update already succeeded; this is observable
 		// from handler-state.json. A warning is written to stderr (best-effort).
-		_, _ = fmt.Fprintf(os.Stderr, //nolint:errcheck // best-effort
+		_, _ = fmt.Fprintf(os.Stderr,
 			"harmonik handler resume: warning: skipping handler_resumed event emit — payload invalid (paused_epoch=%d agent_type=%q); state file updated successfully\n",
 			pausedEpoch, agentType)
 		return

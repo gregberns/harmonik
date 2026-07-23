@@ -291,7 +291,8 @@ func smokeSubmitBead(projectDir, beadID, queueName string, stderr io.Writer) int
 	cmd.Stdout = io.Discard
 	cmd.Stderr = stderr
 	if runErr := cmd.Run(); runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
 			if exitErr.ExitCode() == 17 {
 				fmt.Fprintf(stderr, "harmonik smoke: daemon not running (exit 17 from queue submit)\n")
 				return 17

@@ -71,6 +71,7 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
+			//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 			cmd.Dir = repo
 			if out, err := cmd.CombinedOutput(); err != nil {
@@ -188,6 +189,7 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {

@@ -39,6 +39,7 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -86,6 +87,7 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
+			//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 			cmd.Dir = repo
 			if out, err := cmd.CombinedOutput(); err != nil {

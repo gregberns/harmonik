@@ -228,10 +228,12 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 		}
 
 		// Restrict the repo directory to prevent writing .gitignore.
+		//nolint:gosec // G302: 0555 is required to exercise the write-forbidden repository path.
 		if err := os.Chmod(repo, 0o555); err != nil {
 			t.Fatalf("WM-013e: Chmod repo 0o555: %v", err)
 		}
 		t.Cleanup(func() {
+			//nolint:gosec // G302: restore the private fixture directory mode after the permission test.
 			if err := os.Chmod(repo, 0o700); err != nil {
 				t.Errorf("restore repo permissions: %v", err)
 			}

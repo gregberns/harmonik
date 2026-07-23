@@ -198,7 +198,7 @@ type cancelAfterFirstCatRunner struct {
 	calls  int
 }
 
-func (r *cancelAfterFirstCatRunner) Command(_ context.Context, _ string, _ ...string) *exec.Cmd {
+func (r *cancelAfterFirstCatRunner) Command(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 	r.mu.Lock()
 	r.calls++
 	if !r.fired {
@@ -206,9 +206,10 @@ func (r *cancelAfterFirstCatRunner) Command(_ context.Context, _ string, _ ...st
 		r.cancel()
 	}
 	r.mu.Unlock()
-	// Background ctx so the cat succeeds despite the now-cancelled loop ctx.
+	// A cancellation-detached context lets cat succeed despite the now-cancelled
+	// loop context, forcing the test into the inter-attempt cancellation branch.
 	//nolint:gosec // G204: src is a test-controlled temp path
-	return exec.CommandContext(context.Background(), "cat", r.src)
+	return exec.CommandContext(context.WithoutCancel(ctx), "cat", r.src)
 }
 
 // TestReadReviewVerdictVia_Retry_CtxCancel verifies ctx cancellation is honored

@@ -55,6 +55,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		}
 
 		// Assert exactly ONE new commit on integration branch.
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "rev-list", "--count",
 			"HEAD", "^"+sha).Output()
 		if err != nil {
@@ -92,6 +93,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		}
 
 		// Assert via git log trailer extraction (git 2.34+ per WM-ENV-002).
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%(trailers:key=Harmonik-Run-ID,valueonly)").Output()
 		if err != nil {
@@ -130,6 +132,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		}
 
 		// Assert Harmonik-Run-ID trailer present.
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%(trailers:key=Harmonik-Run-ID,valueonly)").Output()
 		if err != nil {
@@ -141,6 +144,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		}
 
 		// Assert Harmonik-Bead-ID trailer present when bead-tied.
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		out2, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%(trailers:key=Harmonik-Bead-ID,valueonly)").Output()
 		if err != nil {
@@ -176,6 +180,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		}
 
 		// Assert Harmonik-Bead-ID trailer is absent.
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%(trailers:key=Harmonik-Bead-ID,valueonly)").Output()
 		if err != nil {
@@ -219,6 +224,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 			t.Fatalf("WM-019: commit with identity split: %v\n%s", err, out)
 		}
 
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%an <%ae> | %cn <%ce>").Output()
 		if err != nil {
@@ -283,6 +289,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		}
 
 		// Assert: git status --porcelain shows UU README (both-modified conflict).
+		// #nosec G204 -- git status arguments are constructed by this test fixture.
 		statusOut, err := exec.CommandContext(t.Context(), "git", "-C", pathA, "status", "--porcelain").Output()
 		if err != nil {
 			t.Fatalf("WM-019 conflict-detection: git status --porcelain: %v", err)

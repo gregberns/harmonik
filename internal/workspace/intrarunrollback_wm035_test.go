@@ -168,6 +168,7 @@ func TestWM035_WorktreeDirExistsAfterRollback(t *testing.T) {
 				t.Fatalf("MkdirAll: %v", err)
 			}
 
+			//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 			addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 			addCmd.Dir = repo
 			if out, err := addCmd.CombinedOutput(); err != nil {
@@ -215,6 +216,7 @@ func TestWM035_WorktreeDirExistsAfterRollback(t *testing.T) {
 			}
 
 			// Task branch MUST still exist after rollback.
+			//nolint:gosec // G204: git command and repository path are controlled by this test fixture.
 			checkBranch := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", branch)
 			if out, err := checkBranch.CombinedOutput(); err != nil {
 				t.Errorf("WM-035[%s]: task branch %q absent after rollback; want persisted: %v\n%s",
@@ -244,6 +246,7 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, initialSHA)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -313,6 +316,7 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 	}
 
 	// HEAD in the worktree MUST now equal the rollback target (initialSHA).
+	//nolint:gosec // G204: git command and worktree path are controlled by this test fixture.
 	headOut, err := exec.CommandContext(t.Context(), "git", "-C", worktreePath, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("WM-035[reset-to-checkpoint]: git rev-parse HEAD: %v", err)

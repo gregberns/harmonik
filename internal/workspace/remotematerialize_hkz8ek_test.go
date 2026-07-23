@@ -245,6 +245,7 @@ func TestEnsureWorktreeTrustVia_PipesProgramOnStdin(t *testing.T) {
 	rr := &tmux.RecordingRunner{
 		CmdFunc: func(c context.Context, name string, _ ...string) *exec.Cmd {
 			if name == "python3" {
+				// #nosec G204 -- shell fixture writes only to this test-controlled capture file.
 				return exec.CommandContext(c, "sh", "-c", "cat > "+capFile)
 			}
 			return exec.CommandContext(c, "true")

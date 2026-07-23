@@ -32,6 +32,7 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		//nolint:gosec // G204: branch, worktreePath, and sha are controlled by this t.TempDir test fixture.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -69,6 +70,7 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		//nolint:gosec // G204: branch, worktreePath, and sha are controlled by this t.TempDir test fixture.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {

@@ -34,6 +34,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o700); err != nil {
 			t.Fatalf("MkdirAll A: %v", err)
 		}
+		//nolint:gosec // G204: branch, worktree path, and commit are controlled by this t.TempDir test fixture.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -67,6 +68,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o700); err != nil {
 			t.Fatalf("MkdirAll B: %v", err)
 		}
+		//nolint:gosec // G204: branch, worktree path, and commit are controlled by this t.TempDir test fixture.
 		cmd2 := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchB, worktreePathB, sha)
 		cmd2.Dir = repo
 		if out, err := cmd2.CombinedOutput(); err != nil {
@@ -101,6 +103,7 @@ func TestWM013d_ReleasedWorkspacePathReuseRejected(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o700); err != nil {
 			t.Fatalf("MkdirAll A: %v", err)
 		}
+		//nolint:gosec // G204: branch, worktree path, and commit are controlled by this t.TempDir test fixture.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {

@@ -97,6 +97,7 @@ func EnsureGitignoreHygiene(ctx context.Context, repoRoot string) error {
 
 	// Append missing entries with a harmonik-managed section header.
 	toAppend := buildGitignoreBlock(existing, missing)
+	//nolint:gosec // G302: .gitignore is repository metadata and must remain group/world-readable
 	f, err := os.OpenFile(gitignorePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		if os.IsPermission(err) {

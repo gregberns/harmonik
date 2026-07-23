@@ -92,6 +92,7 @@ func TestHK3VBC_RemoteTransientRaceCleansViaRunner(t *testing.T) {
 
 	// No stale duplicate branch should linger: `git branch --list <branch>`
 	// must report exactly one entry (the retry's branch), not a collision.
+	// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 	out, listErr := exec.CommandContext(t.Context(), "git", "-C", repo, "branch", "--list", branch).CombinedOutput()
 	if listErr != nil {
 		t.Fatalf("hk-3vbc: git branch --list %q: %v\n%s", branch, listErr, out)

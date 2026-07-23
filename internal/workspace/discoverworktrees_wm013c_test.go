@@ -284,6 +284,7 @@ func TestWM013c_DiscoverWorktreesBranchConvention(t *testing.T) {
 		leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 	// Confirm the branch exists at the expected task-branch name.
+	// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 	out, err := exec.CommandContext(t.Context(), "git", "-C", repo,
 		"rev-parse", "--verify", TaskBranchName(runID)).Output()
 	if err != nil || len(out) == 0 {

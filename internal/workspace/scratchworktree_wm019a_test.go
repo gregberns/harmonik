@@ -67,6 +67,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	}
 
 	// Assert scratch worktree appears in git worktree list before removal.
+	//nolint:gosec // G204: repo is the t.TempDir-backed fixture repository.
 	listBefore, err := exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		t.Fatalf("WM-019a: git worktree list (before): %v", err)
@@ -107,6 +108,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 
 	// (v) Update the integration branch ref to point to the scratch branch tip
 	// (equivalent ref-update: fast-forward integration to scratch commit).
+	//nolint:gosec // G204: repo and scratchBranch are created by this test fixture.
 	scratchTipOut, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", scratchBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-019a: rev-parse scratch branch: %v", err)
@@ -124,6 +126,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	}
 
 	// Assert git worktree list --porcelain no longer lists the scratch path.
+	//nolint:gosec // G204: repo is the t.TempDir-backed fixture repository.
 	listAfter, err := exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		t.Fatalf("WM-019a: git worktree list (after): %v", err)
@@ -137,6 +140,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	gitRun(repo, "branch", "-D", scratchBranch)
 
 	// Assert scratch branch is gone.
+	//nolint:gosec // G204: repo and scratchBranch are created by this test fixture.
 	out2, verifyErr := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", scratchBranch).Output()
 	if verifyErr == nil || strings.TrimSpace(string(out2)) != "" {
 		t.Errorf("WM-019a: transient branch %q still exists after deletion (rev-parse err=%v, out=%q)",
@@ -144,6 +148,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	}
 
 	// Assert integration branch now has exactly ONE new commit relative to sha.
+	//nolint:gosec // G204: repo, integBranch, and sha are created by this test fixture.
 	countOut, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-list", "--count",
 		integBranch, "^"+sha).Output()
 	if err != nil {

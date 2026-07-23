@@ -64,6 +64,7 @@ func sessionLogFixtureWriteSidecarAtomic(sidecarPath string, content []byte) err
 	tmpPath := fmt.Sprintf("%s.tmp-%d", sidecarPath, pid)
 
 	// (i) Write to temp file.
+	//nolint:gosec // G304: tmpPath is derived from this test helper's temporary sidecar fixture
 	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("open tmp: %w", err)
@@ -86,6 +87,7 @@ func sessionLogFixtureWriteSidecarAtomic(sidecarPath string, content []byte) err
 
 	// (iv) fsync the parent directory.
 	parentDir := filepath.Dir(sidecarPath)
+	//nolint:gosec // G304: parentDir is derived from this test helper's temporary sidecar fixture
 	d, err := os.Open(parentDir)
 	if err != nil {
 		return fmt.Errorf("open parent dir: %w", err)

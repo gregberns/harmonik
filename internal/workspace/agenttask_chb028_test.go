@@ -201,10 +201,12 @@ func TestCHB028_AtomicTempCleanupOnFailure(t *testing.T) {
 	}
 
 	// Make .harmonik read-only so the write will fail.
+	//nolint:gosec // G302: 0555 deliberately makes this t.TempDir fixture directory read-only for the failure-path test.
 	if err := os.Chmod(harmonikDir, 0o555); err != nil {
 		t.Fatalf("Chmod .harmonik read-only: %v", err)
 	}
 	t.Cleanup(func() {
+		//nolint:gosec // G302: restore the private fixture directory mode so t.TempDir can clean it up.
 		if err := os.Chmod(harmonikDir, 0o700); err != nil {
 			t.Errorf("restore .harmonik permissions: %v", err)
 		}

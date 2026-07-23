@@ -50,6 +50,7 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 	}
 
 	// S08 read-only access pattern: open sidecar with O_RDONLY and parse.
+	//nolint:gosec // G304: sidecarPath is derived from this test's temporary session fixture
 	f, err := os.OpenFile(sidecarPath, os.O_RDONLY, 0)
 	if err != nil {
 		t.Fatalf("WM-029: O_RDONLY open sidecar failed: %v", err)
@@ -73,6 +74,7 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 	}
 
 	// S08 read-only access: read session.log without writing.
+	//nolint:gosec // G304: sessionLog is derived from this test's temporary session fixture
 	logF, err := os.OpenFile(sessionLog, os.O_RDONLY, 0)
 	if err != nil {
 		t.Fatalf("WM-029: O_RDONLY open session.log failed: %v", err)

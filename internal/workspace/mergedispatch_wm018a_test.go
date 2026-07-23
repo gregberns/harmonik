@@ -62,6 +62,7 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 		}
 
 		// Assert author = daemon, committer = daemon (both same for non-agentic).
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		identity, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%an <%ae> | %cn <%ce>").Output()
 		if err != nil {
@@ -118,6 +119,7 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 		}
 
 		// Assert author = agent, committer = daemon.
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		identity, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%an <%ae> | %cn <%ce>").Output()
 		if err != nil {
@@ -184,6 +186,7 @@ func mergeBackFixtureMakeIntegWorktree(t *testing.T, repo, sha, suffix string) s
 		t.Fatalf("mergeBackFixtureMakeIntegWorktree MkdirAll: %v", err)
 	}
 
+	// #nosec G204 -- git worktree fixture arguments are constructed by this test.
 	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, path, sha)
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {

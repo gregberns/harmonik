@@ -43,6 +43,7 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -76,6 +77,7 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -145,6 +147,7 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -209,6 +212,7 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -253,6 +257,7 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {

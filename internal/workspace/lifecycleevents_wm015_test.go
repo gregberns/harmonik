@@ -315,6 +315,7 @@ func TestWM015_LeasedEmittedAfterWM016Gates(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("WM-015: MkdirAll worktree parent: %v", err)
 	}
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -785,8 +786,8 @@ func TestWM015_FullLifecycleMergedPath(t *testing.T) {
 	want := []string{
 		"workspace_created",
 		"workspace_leased",
-		"workspace_merge_status", // status=pending
-		"workspace_merge_status", // status=merged
+		"workspace_merge_status",
+		"workspace_merge_status",
 	}
 	if len(rec.events) != len(want) {
 		t.Fatalf("WM-015: full-lifecycle event count = %d, want %d; events: %+v",
@@ -841,6 +842,7 @@ func TestWM015_CreatedStateHasNoLeaseLock(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("WM-015: MkdirAll: %v", err)
 	}
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {

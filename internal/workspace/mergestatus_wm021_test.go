@@ -74,6 +74,7 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		}
 
 		// Derive the merge commit hash from git log.
+		//nolint:gosec // G204: integPath is the t.TempDir-backed integration worktree fixture.
 		mergeHashOut, err := exec.CommandContext(t.Context(), "git", "-C", integPath,
 			"rev-parse", "HEAD").Output()
 		if err != nil {
@@ -82,6 +83,7 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		mergeHash := strings.TrimSpace(string(mergeHashOut))
 
 		// Derive merged_at from commit timestamp.
+		//nolint:gosec // G204: integPath is the t.TempDir-backed integration worktree fixture.
 		tsOut, err := exec.CommandContext(t.Context(), "git", "-C", integPath,
 			"log", "-1", "--format=%cI").Output()
 		if err != nil {
@@ -205,6 +207,7 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		}
 
 		// The merge_commit_hash in the payload MUST equal the integration branch tip.
+		//nolint:gosec // G204: repo and integBranch are created by this test fixture.
 		mergeHashOut, err := exec.CommandContext(t.Context(), "git", "-C", repo,
 			"rev-parse", integBranch).Output()
 		if err != nil {
@@ -212,6 +215,7 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		}
 		integTip := strings.TrimSpace(string(mergeHashOut))
 
+		//nolint:gosec // G204: integPath is the t.TempDir-backed integration worktree fixture.
 		headOut, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "rev-parse", "HEAD").Output()
 		if err != nil {
 			t.Fatalf("WM-021: rev-parse HEAD: %v", err)

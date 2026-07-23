@@ -89,6 +89,7 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		}
 
 		// Append the missing entries.
+		// #nosec G304 -- gitignorePath is a test-controlled path under t.TempDir.
 		f, err := os.OpenFile(gitignorePath, os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			t.Fatalf("WM-013e: OpenFile .gitignore for append: %v", err)
@@ -177,11 +178,13 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		}
 
 		// Restrict the parent directory to read+execute: no write permission.
+		// #nosec G302 -- test fixture intentionally removes write permission.
 		if err := os.Chmod(repo, 0o555); err != nil {
 			t.Fatalf("WM-013e: Chmod repo 0o555: %v", err)
 		}
 		// Restore write permission on test cleanup so t.TempDir() cleanup can proceed.
 		t.Cleanup(func() {
+			// #nosec G302 -- restores private test-fixture directory permissions.
 			if err := os.Chmod(repo, 0o700); err != nil {
 				t.Errorf("WM-013e: restore repo write permission: %v", err)
 			}

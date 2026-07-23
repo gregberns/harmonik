@@ -62,6 +62,7 @@ func tempRepo(t *testing.T) (repoPath, initialSHA string) {
 	run("commit", "-m", "Initial commit")
 
 	// Capture the initial commit SHA for use as a deterministic parent_commit.
+	//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 	out, err := exec.CommandContext(t.Context(), "git", "-C", dir, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("rev-parse HEAD: %v", err)
@@ -150,6 +151,7 @@ func classifyCrashEvidence(repo, runID string) (string, error) {
 func mustReadFile(t *testing.T, path string) []byte {
 	t.Helper()
 
+	//nolint:gosec // G304: path is supplied by this package's temporary test fixtures
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("mustReadFile %q: %v", path, err)

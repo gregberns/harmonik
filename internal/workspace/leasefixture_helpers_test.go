@@ -84,12 +84,16 @@ func leaseFixtureWriteLockAtomic(t *testing.T, target string, content []byte) {
 	// Parent-directory fsync to durably record the rename.
 	// On macOS this is best-effort (APFS may suppress fsync on directory fds),
 	// but the call MUST be made for spec compliance per WM-013a.
+	//nolint:gosec // G304: dir is derived from the controlled test fixture lock path.
 	dirFD, err := os.Open(dir)
 	if err != nil {
 		t.Fatalf("leaseFixtureWriteLockAtomic: Open dir %q for fsync: %v", dir, err)
 	}
-	// Ignore fsync error on directories on macOS — it is best-effort per APFS docs.
-	_ = dirFD.Sync()
+	// Directory fsync is best-effort on macOS/APFS, but failures remain useful
+	// test diagnostics.
+	if syncErr := dirFD.Sync(); syncErr != nil {
+		t.Errorf("leaseFixtureWriteLockAtomic: Sync dir: %v", syncErr)
+	}
 	if err := dirFD.Close(); err != nil {
 		t.Fatalf("leaseFixtureWriteLockAtomic: Close dir fd: %v", err)
 	}

@@ -28,7 +28,7 @@ func gitVersionFixtureFakeBinary(t *testing.T, dir, versionLine string, exitCode
 	}
 
 	binPath := filepath.Join(dir, "git")
-	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil { //nolint:gosec // G306: executable bit required for fake git binary
+	if err := os.WriteFile(binPath, []byte(script), 0o700); err != nil { //nolint:gosec // G306: executable bit required for fake git binary
 		t.Fatalf("gitVersionFixtureFakeBinary: WriteFile %q: %v", binPath, err)
 	}
 }

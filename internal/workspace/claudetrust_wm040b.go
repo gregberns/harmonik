@@ -412,7 +412,7 @@ func trustUpsertOnce(worktreePath, cfgPath string, lockTimeout time.Duration) er
 	if err != nil {
 		return fmt.Errorf("workspace: EnsureWorktreeTrust: open lockfile %s: %w", lockPath, err)
 	}
-	defer lockFd.Close() //nolint:errcheck // closing a lock fd; error is non-actionable and lock is advisory
+	defer lockFd.Close()
 
 	if err := acquireExclusiveBounded(int(lockFd.Fd()), lockTimeout); err != nil {
 		return err
@@ -558,7 +558,7 @@ func ensureClaudeThemeAt(cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("workspace: EnsureClaudeTheme: open lockfile %s: %w", lockPath, err)
 	}
-	defer lockFd.Close() //nolint:errcheck // closing a lock fd; error is non-actionable and lock is advisory
+	defer lockFd.Close()
 
 	if err := acquireExclusiveBounded(int(lockFd.Fd()), defaultTrustLockTimeout); err != nil {
 		return err
@@ -729,7 +729,7 @@ func pruneWorktreeTrustAt(worktreePath, cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("workspace: PruneWorktreeTrust: open lockfile %s: %w", lockPath, err)
 	}
-	defer lockFd.Close() //nolint:errcheck // closing a lock fd; error is non-actionable and lock is advisory
+	defer lockFd.Close()
 
 	if err := acquireExclusiveBounded(int(lockFd.Fd()), defaultTrustLockTimeout); err != nil {
 		return err

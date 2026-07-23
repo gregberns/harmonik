@@ -105,11 +105,12 @@ func TestHkbfvby_AlreadyTrusted_LockFree(t *testing.T) {
 
 	// Hold LOCK_EX on the sidecar for the duration of the call.
 	lockPath := cfgPath + ".lock"
+	//nolint:gosec // G304: lockPath is derived from this test's t.TempDir fixture
 	lockFd, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("hk-bfvby: open lockfile: %v", err)
 	}
-	defer lockFd.Close() //nolint:errcheck // advisory lock fd
+	defer lockFd.Close()
 	if err := syscall.Flock(int(lockFd.Fd()), syscall.LOCK_EX); err != nil {
 		t.Fatalf("hk-bfvby: hold LOCK_EX: %v", err)
 	}
@@ -138,20 +139,22 @@ func TestHkbfvby_BoundedAcquire_TimesOut(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, ".claude.json.lock")
 
+	//nolint:gosec // G304: lockPath is derived from this test's t.TempDir fixture
 	holder, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("hk-bfvby: open holder: %v", err)
 	}
-	defer holder.Close() //nolint:errcheck // advisory lock fd
+	defer holder.Close()
 	if err := syscall.Flock(int(holder.Fd()), syscall.LOCK_EX); err != nil {
 		t.Fatalf("hk-bfvby: holder LOCK_EX: %v", err)
 	}
 
+	//nolint:gosec // G304: lockPath is derived from this test's t.TempDir fixture
 	waiter, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("hk-bfvby: open waiter: %v", err)
 	}
-	defer waiter.Close() //nolint:errcheck // advisory lock fd
+	defer waiter.Close()
 
 	start := time.Now()
 	gotErr := acquireExclusiveBounded(int(waiter.Fd()), 200*time.Millisecond)
@@ -179,11 +182,12 @@ func TestHkbfvby_BoundedAcquire_SucceedsWhenFree(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, ".claude.json.lock")
 
+	//nolint:gosec // G304: lockPath is derived from this test's t.TempDir fixture
 	fd, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("hk-bfvby: open lock: %v", err)
 	}
-	defer fd.Close() //nolint:errcheck // advisory lock fd
+	defer fd.Close()
 
 	if err := acquireExclusiveBounded(int(fd.Fd()), 2*time.Second); err != nil {
 		t.Fatalf("hk-bfvby: bounded acquire on a free lock errored: %v", err)

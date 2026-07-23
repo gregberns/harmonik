@@ -33,6 +33,7 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-020-nonff")
 
 	// Record task branch tip before merge (task branch has 2 checkpoint commits above sha).
+	//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 	taskTipBefore, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", taskBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-020: rev-parse task branch before merge: %v", err)
@@ -46,6 +47,7 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 
 	// Record integration branch tip before merge (starts at sha = integration-branch origin).
 	integBranch := mergeBackFixtureIntegBranchName("integ-020-nonff")
+	//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 	integTipBefore, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", integBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-020: rev-parse integration before merge: %v", err)
@@ -72,6 +74,7 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 
 	// Assert: task branch tip is UNCHANGED after squash.
+	//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 	taskTipAfter, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", taskBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-020: rev-parse task branch after merge: %v", err)
@@ -82,6 +85,7 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 
 	// Assert: integration tip ADVANCED to a new commit (not sha).
+	//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 	integTipAfter, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", integBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-020: rev-parse integration after merge: %v", err)
@@ -100,6 +104,7 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	// Assert: task branch tip is NOT an ancestor of integration tip.
 	// git merge-base --is-ancestor <commit> <branch> exits 0 if it IS an ancestor.
 	// We expect it to exit non-zero (task tip is not an ancestor of new integ tip).
+	//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 	ancestorCmd := exec.CommandContext(t.Context(), "git", "-C", repo, "merge-base", "--is-ancestor",
 		taskTip, integBranch)
 	if err := ancestorCmd.Run(); err == nil {
@@ -108,6 +113,7 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 
 	// Assert: integration tip has exactly one parent = sha (the pre-merge integ tip).
+	//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 	parentOut, err := exec.CommandContext(t.Context(), "git", "-C", repo, "log", "-1",
 		"--format=%P", integBranch).Output()
 	if err != nil {

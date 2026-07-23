@@ -55,6 +55,7 @@ func TestWM031_FailedRunWorktreePersists(t *testing.T) {
 	}
 
 	// Add the task branch worktree.
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -93,6 +94,7 @@ func TestWM031_FailedRunWorktreePersists(t *testing.T) {
 	}
 
 	// Branch MUST still exist.
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	checkBranch := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", branch)
 	if out, err := checkBranch.CombinedOutput(); err != nil {
 		t.Errorf("WM-031: task branch %q absent after lease release; want persisted: %v\n%s",
@@ -257,6 +259,7 @@ func TestWM033_GitWorktreePruneAfterSweep(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -322,6 +325,7 @@ func TestWM033_OperatorWorktreeLockRespected(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -329,6 +333,7 @@ func TestWM033_OperatorWorktreeLockRespected(t *testing.T) {
 	}
 
 	// Operator issues git worktree lock on the worktree.
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	lockCmd := exec.CommandContext(t.Context(), "git", "worktree", "lock", worktreePath)
 	lockCmd.Dir = repo
 	if out, err := lockCmd.CombinedOutput(); err != nil {
@@ -337,6 +342,7 @@ func TestWM033_OperatorWorktreeLockRespected(t *testing.T) {
 	t.Cleanup(func() {
 		// t.Context() is already cancelled by the time cleanups run, so derive a
 		// non-cancellable context for the unlock.
+		//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 		unlockCmd := exec.CommandContext(context.WithoutCancel(t.Context()), "git", "worktree", "unlock", worktreePath)
 		unlockCmd.Dir = repo
 		if out, err := unlockCmd.CombinedOutput(); err != nil {
@@ -389,6 +395,7 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o700); err != nil {
 		t.Fatalf("MkdirAll A: %v", err)
 	}
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addA := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
 	addA.Dir = repo
 	if out, err := addA.CombinedOutput(); err != nil {
@@ -427,6 +434,7 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o700); err != nil {
 		t.Fatalf("MkdirAll B: %v", err)
 	}
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addB := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchB, worktreePathB, sha)
 	addB.Dir = repo
 	if out, err := addB.CombinedOutput(); err != nil {
@@ -437,6 +445,7 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 	if _, err := os.Stat(worktreePathA); err != nil {
 		t.Errorf("WM-034+WM-031: run A worktree absent after reopen-bead; want persisted: %v", err)
 	}
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	checkA := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", branchA)
 	if out, err := checkA.CombinedOutput(); err != nil {
 		t.Errorf("WM-034+WM-031: run A branch %q absent; want persisted: %v\n%s", branchA, err, out)
@@ -952,6 +961,7 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -975,6 +985,7 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 	gitRun(worktreePath, "commit", "-m", "checkpoint: node-1\n\nHarmonik-Run-ID: "+runID)
 
 	// Capture tip SHA before any history edit.
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	tipOut, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", branch).Output()
 	if err != nil {
 		t.Fatalf("rev-parse branch: %v", err)
@@ -985,6 +996,7 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 	// entries (filter-branch, replace, reset --hard) on in-flight task branches.
 	// Since the auditor is not yet implemented (tracked in OQ-WM-017), we verify
 	// the OBLIGATION at the prose level and assert the tip is unchanged (fast-forward).
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	tipOut2, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", branch).Output()
 	if err != nil {
 		t.Fatalf("rev-parse branch (post): %v", err)

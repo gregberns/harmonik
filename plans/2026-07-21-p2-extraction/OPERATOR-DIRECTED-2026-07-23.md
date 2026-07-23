@@ -4,6 +4,11 @@ Three items the operator routed INTO the P2 plan on 2026-07-23. Each is to be
 **developed and reviewed by dedicated agents** — not hand-fixed inline by the
 orchestrator. Beads are machine-local, so this tracked doc is the durable record.
 
+> **How to work these (operator directive, 2026-07-23):** parallelize as much as
+> possible and structure the work with **ultrawork** (multi-agent workflows /
+> fan-out) wherever the task decomposes. These three are largely independent of
+> each other and of the RT extraction stream — run them concurrently, not serially.
+
 ## 1. Agent-run validation command (replaces fragile git pre-commit hooks) — `hk-p58vo`
 
 **Operator's direction, verbatim intent:** git pre-commit hooks "suck" — installing
@@ -16,6 +21,14 @@ tolerance. Instead, build the model that worked well in another project:
   Operator is unsure whether the injection should fire **before or after** the
   commit — that is an open design question for the build.
 - The point: **agent-driven** validation, not a blocking shell hook.
+
+**Operator refinement — keep the FIRST version dead simple.** Do NOT build the full
+hook-message-injection design yet. For now: a single check command (a `make check`
+wrapper) plus a **standing reminder** that always tells the agent to run it before
+committing. The richer "hook injects a message before/after commit" design is a later
+evolution. On git hooks: the operator's verdict is **out** — lefthook was uninstalled
+this session ("fuck lefthook, that shit is awful"); it auto-reinstalled itself on every
+commit, which is why it's gone entirely rather than trimmed.
 
 Design → build → review, all by agents, in P2.
 

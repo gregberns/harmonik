@@ -16,7 +16,9 @@ USAGE
   harmonik <subcommand> [flags]
 
 SUBCOMMANDS
-  version          Print semver + commit hash and exit (also: --version)
+  version          Print semver + commit hash and exit (also: --version); with
+                   --binary PATH [--contains COMMIT] it is the authoritative
+                   build-provenance check for a binary (never strings | grep)
   init             Bootstrap a new project: create .harmonik/, init beads DB, write configs, render AGENTS.md
   start            Launch a captain, crew, commodore, admiral, or assessor with the keeper auto-armed (start captain | start crew <name> | start commodore | start admiral | start assessor)
   sync-assets      Reconcile a project's instruction files with the binary's embedded assets (dry-run by default)

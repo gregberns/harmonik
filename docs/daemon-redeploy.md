@@ -64,7 +64,11 @@ harmonik supervise pause --project "$PWD"
 # 2. Keep a guaranteed old-binary rollback point, then build the stamped binary
 cp -p /Users/gb/go/bin/harmonik /Users/gb/go/bin/harmonik.pre-$(date +%Y%m%d)
 make install-harmonik                                       # go install -ldflags "-X main.commitHash=$(git rev-parse HEAD)"
-/Users/gb/go/bin/harmonik --version                        # confirm commit == deploy SHA
+
+# 2b. SWAP GATE (authoritative — see "Which fix is in this binary?" below).
+#     Exit 0 is the ONLY code that means "ships the fix". Any other code: STOP.
+harmonik version --binary /Users/gb/go/bin/harmonik --contains "$(git rev-parse HEAD)"
+echo "gate exit: $?  (0 = proceed; anything else = do NOT continue)"
 
 # 3. Restart the SUPERVISOR so its os.Executable() re-resolves to the new file
 harmonik supervise restart --project "$PWD" --watch-restart
@@ -81,9 +85,41 @@ kill -TERM <OLD_DAEMON_PID>
 #    - watchdog progress:     harmonik supervise logs --project "$PWD" --lines 20
 ```
 
+## Which fix is in this binary? (the ONE authoritative check)
+
+Go stamps `vcs.revision` / `vcs.modified` into every binary it builds. That stamp —
+not symbols, not strings — is the answer to "does this binary contain fix X":
+
+```bash
+harmonik version --binary /Users/gb/go/bin/harmonik                    # revision + dirty flag
+harmonik version --binary /Users/gb/go/bin/harmonik --contains <SHA>   # ancestry gate
+harmonik version --binary … --contains <SHA> --json                    # machine-readable
+```
+
+| status | exit | means |
+|---|---|---|
+| `contains` | 0 | SHA is an ancestor **and** the tree was clean — **the only ship-safe result** |
+| `revision` | 0 | no `--contains` asked; revision reported |
+| `missing` | 1 | SHA is not an ancestor — the binary predates the fix |
+| (usage) | 2 | bad flags / unreadable binary / not a git repo |
+| `contains-dirty` | 3 | ancestor, but `vcs.modified=true` — necessary, **not sufficient** |
+| `no-build-info` | 4 | not a Go binary, or build info stripped |
+| `no-vcs-stamp` | 4 | built with `-buildvcs=false` / outside a worktree |
+| `unknown-revision` | 4 | the revision is not in this repo (shallow clone / rebased away) |
+
+**Do NOT use `strings <binary> | grep <token>`.** It gives false positives on fixed *and*
+unfixed binaries — the Go linker packs unrelated strings adjacent in the string blob, so a
+substring can appear in a binary that lacks the fix entirely. That is exactly how `hk-9hvr0`
+was falsely closed (`strings | grep harmonik-input` matched `"harmonik-"` next to `"input"`).
+`go tool nm | grep <symbol>` is correct but must be reinvented per fix and breaks silently on
+rename or inlining. `--contains` needs no per-fix trick.
+
 ## Verify (authoritative)
 
 ```bash
+# 0. The deployed binary carries the deploy SHA (same gate as step 2b):
+harmonik version --binary /Users/gb/go/bin/harmonik --contains <deploy-SHA>
+
 # a. New daemon_started carries the deploy SHA:
 grep '"daemon_started"' .harmonik/events/events.jsonl | tail -1   # binary_commit_hash == deploy SHA
 

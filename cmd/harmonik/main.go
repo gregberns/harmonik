@@ -165,7 +165,16 @@ func run() int {
 	// the positional "version" argument.
 	//
 	// Spec ref: specs/release-pipeline.md §2.3; bead hk-ww7ee.
+	//
+	// With trailing arguments it becomes the authoritative binary-provenance
+	// check (`--binary`/`--contains`) — see cmd/harmonik/version_verify.go for
+	// why `strings | grep` and `go tool nm | grep` are not answers.
+	//
+	// Bead ref: hk-9hvr0.
 	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
+		if len(os.Args) > 2 {
+			return runVersionInspect(os.Args[2:], os.Stdout, os.Stderr)
+		}
 		fmt.Printf("harmonik %s (commit: %s)\n", version, resolvedCommitHash())
 		return 0
 	}

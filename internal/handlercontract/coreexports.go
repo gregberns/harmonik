@@ -23,6 +23,19 @@ type Outcome = core.Outcome
 // EV-002b import-boundary reason as EventEnvelope above.
 type EventID = core.EventID
 
+// EventType is a type alias for core.EventType, re-exported for the same
+// EV-002b import-boundary reason as EventEnvelope above, and as a consistency
+// companion to the EventID / Outcome aliases.
+//
+// It lets a handler-side FILE name the eventType argument of a
+// SpawnWatcherConfig.OnDeadLetterFailure hook without adding an internal/core
+// import to that file — internal/handler's handler.go does exactly this. It is
+// a per-file convenience, not a package-level boundary: several other files in
+// internal/handler do import internal/core directly.
+//
+// Bead ref: hk-0eqik.
+type EventType = core.EventType
+
 // AgentTypeClaudeCode is a re-export of core.AgentTypeClaudeCode — the
 // reserved MVH agent-type identifier for the "claude-code" handler.
 //

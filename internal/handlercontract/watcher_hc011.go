@@ -84,7 +84,14 @@ type WatcherDeadLetterSink interface {
 	//
 	// Implementations MUST be non-blocking or use a bounded-retry policy.
 	// A nil return indicates durable receipt; a non-nil error means the event
-	// was not durably stored (the watcher logs the failure but cannot recover).
+	// was not durably stored.
+	//
+	// The watcher cannot recover from a non-nil return — the event is lost —
+	// but it does NOT drop the failure silently: every failed Append is counted
+	// on the Watcher handle ([Watcher.DeadLetterFailures],
+	// [Watcher.LastDeadLetterFailure]) and, when the spawning caller supplied
+	// [SpawnWatcherConfig.OnDeadLetterFailure], reported to that hook. A sink
+	// that is failing is therefore distinguishable from one that is working.
 	Append(eventType core.EventType, payload []byte, reason string) error
 }
 
@@ -155,6 +162,36 @@ type SpawnWatcherConfig struct {
 	// undeliverable events per HC-027.
 	// Required (non-nil).
 	DeadLetter WatcherDeadLetterSink
+
+	// OnDeadLetterFailure is invoked when DeadLetter.Append itself returns an
+	// error — i.e. an event that already failed to reach the bus also failed to
+	// reach the dead-letter store and is now lost. eventType and reason are the
+	// arguments that were passed to Append; err is Append's return.
+	//
+	// This is the push half of the dead-letter failure signal; the pull half
+	// ([Watcher.DeadLetterFailures] / [Watcher.LastDeadLetterFailure]) is always
+	// on and needs no configuration. The hook exists so the daemon-side caller
+	// can log the failure without handlercontract — a contract package —
+	// acquiring a logger dependency.
+	//
+	// The hook runs on the watcher goroutine, on the read-loop's critical path:
+	// implementations MUST be non-blocking and MUST NOT panic.
+	//
+	// The failure this hook reports is NOT rare by nature. When the bus is down
+	// every progress line spills to the dead-letter sink, so a sink that is also
+	// down invokes this hook once per line read. An implementation that writes
+	// one unbuffered line per call therefore produces unbounded output on the
+	// read loop, and every such write parks the goroutine that advances
+	// [Watcher.LastReadEventAt] — the timestamp HC-011a wedge detection reads.
+	// Implementations that log MUST rate-limit, sample, or aggregate. Sampling
+	// costs no information: the exact count and the most recent error stay
+	// available from [Watcher.DeadLetterFailures] /
+	// [Watcher.LastDeadLetterFailure], which this hook does not gate.
+	//
+	// Optional: when nil, failures are still counted on the Watcher handle.
+	//
+	// Bead ref: hk-0eqik.
+	OnDeadLetterFailure func(eventType core.EventType, reason string, err error)
 
 	// PublishBufSize is the capacity of the internal publish channel.
 	// When zero, WatcherPublishBufSize (8) is used per HC-011a.
@@ -261,6 +298,19 @@ type Watcher struct {
 	// atomically read by the supervisor for wedge detection per HC-011a.
 	// Zero until the goroutine performs its first successful Read.
 	lastReadEventAt atomic.Int64
+
+	// deadLetterFailures counts WatcherDeadLetterSink.Append calls that returned
+	// a non-nil error — events lost because both the bus and the dead-letter
+	// store rejected them. Written by the watcher goroutine, read by anyone.
+	deadLetterFailures atomic.Uint64
+
+	// lastDeadLetterErr holds the most recent non-nil Append error, or nil if
+	// the sink has never failed.
+	lastDeadLetterErr atomic.Pointer[error]
+
+	// onDeadLetterFailure mirrors SpawnWatcherConfig.OnDeadLetterFailure; nil
+	// when the caller supplied no hook. Read-only after SpawnWatcher returns.
+	onDeadLetterFailure func(eventType core.EventType, reason string, err error)
 }
 
 // SessionID returns the stable identifier for the session this watcher serves.
@@ -310,6 +360,42 @@ func (w *Watcher) LastReadEventAt() time.Time {
 	return time.Unix(0, ns)
 }
 
+// DeadLetterFailures returns the number of times this watcher's
+// WatcherDeadLetterSink.Append returned a non-nil error — that is, the number
+// of events lost because neither the bus nor the dead-letter store accepted
+// them.
+//
+// A non-zero count means the dead-letter sink is not working. It is the
+// always-on half of the failure signal: unlike
+// [SpawnWatcherConfig.OnDeadLetterFailure] it requires no configuration, so a
+// failing sink is never indistinguishable from a healthy one.
+//
+// This serves HC-027 ("the watcher MUST NOT drop events silently") for the
+// dead-letter path itself, but it is not a quotation of it: §4.6 HC-027 of
+// specs/handler-contract.md specifies the routing, not a counter and not a
+// hook. The spec amendment for this shape is tracked separately (hk-nkrb9).
+//
+// Safe to call from any goroutine.
+//
+// Bead ref: hk-0eqik.
+func (w *Watcher) DeadLetterFailures() uint64 {
+	return w.deadLetterFailures.Load()
+}
+
+// LastDeadLetterFailure returns the most recent error returned by this
+// watcher's WatcherDeadLetterSink.Append, or nil if the sink has never failed.
+//
+// Safe to call from any goroutine.
+//
+// Bead ref: hk-0eqik.
+func (w *Watcher) LastDeadLetterFailure() error {
+	p := w.lastDeadLetterErr.Load()
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
 // SpawnWatcher creates and starts the per-session watcher goroutine described
 // by HC-011.  It returns the Watcher handle immediately after the goroutine is
 // launched; callers MUST NOT read from cfg.ProgressStream after this call.
@@ -338,8 +424,9 @@ func SpawnWatcher(ctx context.Context, cfg SpawnWatcherConfig) *Watcher {
 	}
 
 	w := &Watcher{
-		sessionID: cfg.SessionID,
-		done:      make(chan struct{}),
+		sessionID:           cfg.SessionID,
+		done:                make(chan struct{}),
+		onDeadLetterFailure: cfg.OnDeadLetterFailure,
 	}
 	if cfg.Machine != nil {
 		w.runID = cfg.Machine.RunID()
@@ -531,9 +618,28 @@ func (w *Watcher) publishOrDeadLetter(
 	dl WatcherDeadLetterSink,
 ) {
 	if err := pub.Emit(ctx, eventType, payload); err != nil {
-		// Route to dead-letter; best-effort (errors from Append are not actionable
-		// from inside the watcher goroutine).
-		_ = dl.Append(eventType, payload, fmt.Sprintf("emit failed: %v", err))
+		w.appendDeadLetter(dl, eventType, payload, fmt.Sprintf("emit failed: %v", err))
+	}
+}
+
+// appendDeadLetter routes (eventType, payload, reason) to the dead-letter sink
+// and records the outcome. It is the ONLY place the watcher calls
+// WatcherDeadLetterSink.Append.
+//
+// An Append failure is unrecoverable — the event is lost — but it is never
+// dropped silently (hk-0eqik). Each failure bumps the DeadLetterFailures
+// counter, replaces LastDeadLetterFailure, and is handed to the caller-supplied
+// OnDeadLetterFailure hook when one was configured. The hook runs inline on the
+// watcher goroutine, which is why the contract requires it to be non-blocking.
+func (w *Watcher) appendDeadLetter(dl WatcherDeadLetterSink, eventType core.EventType, payload []byte, reason string) {
+	err := dl.Append(eventType, payload, reason)
+	if err == nil {
+		return
+	}
+	w.deadLetterFailures.Add(1)
+	w.lastDeadLetterErr.Store(&err)
+	if w.onDeadLetterFailure != nil {
+		w.onDeadLetterFailure(eventType, reason, err)
 	}
 }
 
@@ -586,7 +692,7 @@ func (w *Watcher) emitBudgetAccrualForChunk(ctx context.Context, chunkLine []byt
 	payload, err := json.Marshal(p)
 	if err != nil {
 		// Static struct; marshal failure is a defect. Route to dead-letter.
-		_ = dl.Append(core.EventTypeBudgetAccrual, nil, fmt.Sprintf("budget_accrual marshal: %v", err))
+		w.appendDeadLetter(dl, core.EventTypeBudgetAccrual, nil, fmt.Sprintf("budget_accrual marshal: %v", err))
 		return
 	}
 
@@ -622,13 +728,13 @@ func (w *Watcher) driveLifecycleFSM(
 	case ProgressMsgTypeAgentHeartbeat:
 		m.RecordActivity()
 	case ProgressMsgTypeAgentReady:
-		emitMachineTransition(ctx, m, hclifecycle.StateReady, hclifecycle.ReasonInitComplete, "", "", pub, dl)
+		w.emitMachineTransition(ctx, m, hclifecycle.StateReady, hclifecycle.ReasonInitComplete, "", "", pub, dl)
 	case ProgressMsgTypeAgentStarted:
-		emitMachineTransition(ctx, m, hclifecycle.StateExecuting, hclifecycle.ReasonCommandStarted, "", "", pub, dl)
+		w.emitMachineTransition(ctx, m, hclifecycle.StateExecuting, hclifecycle.ReasonCommandStarted, "", "", pub, dl)
 	case ProgressMsgTypeAgentCompleted:
-		emitMachineTransition(ctx, m, hclifecycle.StateReady, hclifecycle.ReasonCommandComplete, "", "", pub, dl)
+		w.emitMachineTransition(ctx, m, hclifecycle.StateReady, hclifecycle.ReasonCommandComplete, "", "", pub, dl)
 	case ProgressMsgTypeAgentFailed:
-		emitMachineTransition(ctx, m, hclifecycle.StateFailed, hclifecycle.ReasonError, "agent_failed", "agent process failed", pub, dl)
+		w.emitMachineTransition(ctx, m, hclifecycle.StateFailed, hclifecycle.ReasonError, "agent_failed", "agent process failed", pub, dl)
 	default:
 		// Rate-limit, output-chunk, and other non-lifecycle types: no FSM effect.
 	}
@@ -637,7 +743,11 @@ func (w *Watcher) driveLifecycleFSM(
 // emitMachineTransition performs a lifecycle Machine transition and emits a
 // lifecycle_transition event to the bus. Invalid transitions are silently
 // ignored (the machine may already be in a terminal state; see HC-067).
-func emitMachineTransition(
+//
+// It is a method on *Watcher (rather than a free function) so that its
+// dead-letter routing goes through w.appendDeadLetter and therefore records
+// sink failures like every other dead-letter path (hk-0eqik).
+func (w *Watcher) emitMachineTransition(
 	ctx context.Context,
 	m *hclifecycle.Machine,
 	to hclifecycle.LifecycleState,
@@ -664,7 +774,7 @@ func emitMachineTransition(
 	}
 	payload, err := json.Marshal(p)
 	if err != nil {
-		_ = dl.Append(core.EventTypeLifecycleTransition, nil, fmt.Sprintf("lifecycle_transition marshal: %v", err))
+		w.appendDeadLetter(dl, core.EventTypeLifecycleTransition, nil, fmt.Sprintf("lifecycle_transition marshal: %v", err))
 		return
 	}
 	// Use EmitWithRunID so the envelope carries run_id for JSONL correlation
@@ -672,11 +782,11 @@ func emitMachineTransition(
 	// Fall back to plain Emit when the run_id is not a valid UUID (e.g. stubs).
 	if parsedUUID, parseErr := uuid.Parse(m.RunID()); parseErr == nil {
 		if emitErr := pub.EmitWithRunID(ctx, core.RunID(parsedUUID), core.EventTypeLifecycleTransition, payload); emitErr != nil {
-			_ = dl.Append(core.EventTypeLifecycleTransition, payload, fmt.Sprintf("lifecycle_transition emit: %v", emitErr))
+			w.appendDeadLetter(dl, core.EventTypeLifecycleTransition, payload, fmt.Sprintf("lifecycle_transition emit: %v", emitErr))
 		}
 	} else {
 		if emitErr := pub.Emit(ctx, core.EventTypeLifecycleTransition, payload); emitErr != nil {
-			_ = dl.Append(core.EventTypeLifecycleTransition, payload, fmt.Sprintf("lifecycle_transition emit: %v", emitErr))
+			w.appendDeadLetter(dl, core.EventTypeLifecycleTransition, payload, fmt.Sprintf("lifecycle_transition emit: %v", emitErr))
 		}
 	}
 }
@@ -699,7 +809,25 @@ func emitMachineTransition(
 // auto-recover it. runID may be empty (no Machine supplied); the "unknown"
 // placeholder runID from the session layer is passed through as-is.
 func buildWatcherFailedPayload(sessionID core.SessionID, runID, sub string, cause error) (eventType core.EventType, encoded []byte) {
-	payload, _ := json.Marshal(map[string]string{ //nolint:errcheck // static map, never fails
+	// The error is discarded deliberately, and this is the one place in this
+	// file where that is defensible. encoding/json cannot fail on a
+	// map[string]string: no unsupported kinds, no cycles, no custom
+	// MarshalJSON. Every alternative is worse than the suppression:
+	//   - a fallback that hand-builds JSON would interpolate sub, runID,
+	//     sessionID and Class(cause) — all string PARAMETERS, not constants —
+	//     into a body with no escaping;
+	//   - a fallback carrying only constants would drop session_id, run_id and
+	//     error_category, the fields this function's doc comment calls
+	//     load-bearing and the last of which core.AgentFailedPayload.Valid
+	//     rejects the payload for missing.
+	// So the branch would be unreachable code that emits a payload the consumer
+	// would reject. Suppress the impossible error instead.
+	//
+	// Note this line is NOT on the dead-letter path hk-0eqik cleared: it builds
+	// the watcher's self-defect agent_failed body. That bead's "no //nolint"
+	// constraint covered the six dead-letter findings, all of which are fixed
+	// by real error handling in Watcher.appendDeadLetter.
+	payload, _ := json.Marshal(map[string]string{ //nolint:errcheck,errchkjson // map[string]string marshal cannot fail; see comment above
 		"type":           ProgressMsgTypeAgentFailed,
 		"session_id":     string(sessionID),
 		"run_id":         runID,

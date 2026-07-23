@@ -31,6 +31,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync/atomic"
 
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
@@ -207,6 +208,12 @@ type handler struct {
 	publisher  handlercontract.EventEmitter
 	deadLetter handlercontract.WatcherDeadLetterSink
 	registry   *handlercontract.AdapterRegistry
+
+	// deadLetterFailureLog is where the OnDeadLetterFailure hook installed on
+	// every watcher this handler spawns writes its sampled report. os.Stderr in
+	// production; an in-package test substitutes a buffer so the wiring itself
+	// is pinned. Never nil after NewHandler.
+	deadLetterFailureLog io.Writer
 }
 
 // NewHandler constructs a Handler whose Launch calls will forward events to
@@ -228,9 +235,65 @@ func NewHandler(publisher handlercontract.EventEmitter, deadLetter handlercontra
 		panic("handler: NewHandler: registry is nil — daemon defect")
 	}
 	return &handler{
-		publisher:  publisher,
-		deadLetter: deadLetter,
-		registry:   registry,
+		publisher:            publisher,
+		deadLetter:           deadLetter,
+		registry:             registry,
+		deadLetterFailureLog: os.Stderr,
+	}
+}
+
+// newDeadLetterFailureLogger builds the
+// handlercontract.SpawnWatcherConfig.OnDeadLetterFailure hook this package
+// installs on every watcher it spawns. Each call returns a fresh closure with
+// its own counter, so sampling is per-watcher rather than process-global.
+//
+// A failed handlercontract.WatcherDeadLetterSink.Append means an event escaped
+// both the bus and the dead-letter store and is gone. handlercontract is a
+// contract package and deliberately carries no logger, so the daemon-side
+// caller — this package — owns the reporting.
+//
+// # Why this samples instead of logging every failure
+//
+// The hook runs inline on the watcher goroutine's read loop, and the failure it
+// reports is not rare by nature: when the bus is down,
+// handlercontract.Watcher.publishOrDeadLetter spills EVERY progress line to the
+// dead-letter sink, so a sink that is also down fails once per line read. One
+// unbuffered write per failure would turn a broken sink into an unbounded write
+// storm on the read loop, and each write parks the goroutine that advances
+// handlercontract.Watcher.LastReadEventAt — the timestamp HC-011a wedge
+// detection watches. The signal the bead asked for would then be able to wedge
+// the session it exists to make observable.
+//
+// So the logger writes on failure 1, 2, 4, 8, … — O(log n) lines for n failures
+// — and carries the running count in every line. Sampling loses nothing: the
+// EXACT count and the most recent error are always readable from the watcher
+// handle (handlercontract.Watcher.DeadLetterFailures /
+// handlercontract.Watcher.LastDeadLetterFailure), which this hook does not gate
+// and which no sampling touches.
+//
+// The returned closure must not panic: a panic here would surface on the
+// watcher goroutine, inside the read loop's recover barrier.
+//
+// Bead ref: hk-0eqik.
+func newDeadLetterFailureLogger(out io.Writer) func(handlercontract.EventType, string, error) {
+	var failures atomic.Uint64
+	var muted atomic.Bool
+	return func(eventType handlercontract.EventType, reason string, err error) {
+		n := failures.Add(1)
+		// Sample: emit only when n is a power of two (1, 2, 4, 8, …).
+		if n&(n-1) != 0 || muted.Load() {
+			return
+		}
+		if _, werr := fmt.Fprintf(out,
+			"handler: watcher dead-letter sink failed (failure #%d for this watcher; log sampled at powers of two — exact count is Watcher.DeadLetterFailures()): event=%s reason=%q err=%v\n",
+			n, eventType, reason, err); werr != nil {
+			// The log sink itself is gone — a closed pipe, a full device. There
+			// is no second place to report that, and every later sampled write
+			// would hit the same fault, so stop writing rather than keep paying
+			// for it on the watcher's read loop. The always-on counter on the
+			// watcher handle is unaffected.
+			muted.Store(true)
+		}
 	}
 }
 
@@ -336,12 +399,13 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	}
 
 	watcher := handlercontract.SpawnWatcher(ctx, handlercontract.SpawnWatcherConfig{
-		SessionID:      sessionID,
-		ProgressStream: progressStream,
-		Publisher:      h.publisher,
-		DeadLetter:     h.deadLetter,
-		Machine:        sess.Machine(),
-		WireTap:        wireWriter,
+		SessionID:           sessionID,
+		ProgressStream:      progressStream,
+		Publisher:           h.publisher,
+		DeadLetter:          h.deadLetter,
+		OnDeadLetterFailure: newDeadLetterFailureLogger(h.deadLetterFailureLog),
+		Machine:             sess.Machine(),
+		WireTap:             wireWriter,
 	})
 
 	if wireTap != nil {
@@ -494,12 +558,13 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 	}
 
 	watcher := handlercontract.SpawnWatcher(ctx, handlercontract.SpawnWatcherConfig{
-		SessionID:      sessionID,
-		ProgressStream: progressStream,
-		Publisher:      h.publisher,
-		DeadLetter:     h.deadLetter,
-		Machine:        adapted.Machine(),
-		WireTap:        wireWriter,
+		SessionID:           sessionID,
+		ProgressStream:      progressStream,
+		Publisher:           h.publisher,
+		DeadLetter:          h.deadLetter,
+		OnDeadLetterFailure: newDeadLetterFailureLogger(h.deadLetterFailureLog),
+		Machine:             adapted.Machine(),
+		WireTap:             wireWriter,
 	})
 
 	if wireTap != nil {

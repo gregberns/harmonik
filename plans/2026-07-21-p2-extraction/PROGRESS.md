@@ -1,7 +1,7 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-22 18:10 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + **RT19b** landed.
+**Last updated:** 2026-07-22 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + **RT14** landed.
 The concurrent quality lane's working tree is fully drained to disk (§8).
 
 > ## ⚠️ We nearly collided at 08:00 — read this
@@ -45,7 +45,7 @@ plans, then began landing them one commit at a time.
 | **3. Execute (P2 core)** | 9 slices, sequential | **DONE — 9/9, every verify `is_pure_move: true`** |
 | **4. Punch list** | verifier findings applied | **DONE** — `ffc5415a` |
 | **5. Differential verification** | clean before/after pair, identical scope | **DONE — no regression** (see below) |
-| **6. E5 RT stream + E4c** | RT13, E4c landed; RT14/16/19b + RT15/17/18/19/lift planned | **IN PROGRESS** |
+| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, **RT14** landed; RT16 + RT15/17/18/19/19c/lift planned | **IN PROGRESS** |
 | **7. E4d re-plan** | overturned "impossible"; 3 prep slices ready, E4d-3 parked | **DONE** |
 
 ### Verification verdict (Phase 5)
@@ -76,6 +76,7 @@ against one run. Recorded in `00-test-oracle-baseline.md`.
 | 11 | **test fix** | two unsound source-text conformance assertions replaced | **LANDED** | `b423081f` |
 | 12 | **E4c** | worker-registry boot wiring → `internal/workers` | **LANDED — verify PASS**; `pure_move: false` **by design** (one declared signature change, confirmed the only delta) | `646748f3` |
 | 13 | **RT19b** | the stranded run-path helpers → `internal/substrate`, `internal/harness/shared`, new `internal/runlaunch` | **COMPLETE — 3/3 commits, reviewer APPROVE on each**, pure move throughout | `e82311b9` · `efeeb047` · `fd608c01` |
+| 14 | **RT14** | *nothing* — the open-coded agent_ready WAIT is RETIRED, not relocated. Both call sites bind onto the pre-existing `dispatchSegment` seam | **COMPLETE — 3/3 commits, reviewer BLOCK→APPROVE on A, APPROVE on B and C.** Metric is **seam uniformity, not LOC** (see below) | `229e6e91` · `cb89e35e` · `7d448afb` |
 
 ### Result
 
@@ -458,6 +459,71 @@ is "30s" while the constant is 150s — wrong already in `internal/daemon`, move
 pure-move rule. And the gate's symbol ratchet keeps the bare name `After`, which matches nothing today
 but is generic enough to false-positive later; kept for fidelity, recorded so the next maintainer
 knows it was a choice.
+
+### RT14 — retire the open-coded ready wait (COMPLETE)
+
+Three commits, each independently reviewed. **This slice moves nothing out of `internal/daemon`** and
+its LOC delta is −52 non-test lines. Reading that as the outcome misreads the slice.
+
+| Metric | Before | After |
+|---|---:|---:|
+| agent-launch sites hand-rolling their own ready wait | 2 | **0** |
+| raw wall-clock sites on the dispatch path | 1 | **0** |
+| `dispatchSegment` production consumers | 3 files / 3 segments | **4 files / 5 segments** |
+| top-level non-test files | 103 | 102 |
+| top-level non-test LOC | 48,643 | 48,591 |
+
+| # | Commit | What changed |
+|---|---|---|
+| A | `229e6e91` | single-mode `beadRunOne` → `&dispatchSegment{…}`, `reviewloop.go` as template |
+| B | `cb89e35e` | cognition gate → `&dispatchSegment{…}`, `dot_cascade.go` as template; **closes the `--exclude='dot_gate.go'` carve-out RT19b-3 had to leave open** in `runlaunch-freeze-gate.sh`, making that check absolute |
+| C | `7d448afb` | delete `agentready.go` (whole file) + `agentready_hkgql2018_test.go` + 2 export shims + `chanAgentEventSource`; add `scripts/readywait-freeze-gate.sh` |
+
+**The reviewer earned its keep on phase A — one real, silent, untested regression caught.** The
+recipe's `killAbort` template is `if sess != nil { sess.Kill(Background) }`, copied from the two
+existing consumers. `driveDispatchOnce` maps `ctx.Done()` onto `EvAborted`, whose uniform edge returns
+`ActKillAgent`, so `killAbort` fires **exactly when `ctx.Err() != nil`** — performing the same kill
+that `runlaunch.ForceTeardownSession` performs. But at THIS site that teardown is guarded by hk-o85ye
+(`!useIndepSession || ctx.Err() == nil`): on daemon shutdown a local independent-session run must
+SURVIVE, because the session outlives SIGKILL and the next boot's adoption pass monitors it, which is
+why the shutdown branch returns without `ReopenBead`. Unguarded, a shutdown landing in the
+launch/ready/brief window would SIGKILL the session and strand the bead `in_progress` with nothing to
+adopt. `killAbort` now carries the same guard. `reviewloop.go` / `dot_cascade.go` need none — their
+teardown is unconditional and neither has a `useIndepSession` concept.
+
+**Three recipe corrections, all of the same two recurring classes:**
+
+1. **Line numbers stale again — fourth consecutive slice.** Assumed nothing; every symbol re-anchored
+   by `grep -n`.
+2. **§0's "do NOT delete `agentready.go`" correction was ITSELF stale.** It was written pre-RT19b-3
+   and warned that four of the file's six symbols were live in production. RT19b-3 had already moved
+   all four to `internal/runlaunch`, so at HEAD the file declared exactly `agentEventSource` +
+   `waitAgentReady` and the whole-file delete was correct. **Both the original E5 step 17 AND its
+   correction were wrong, in opposite directions** — which is precisely why §3c's
+   comment-and-string-filtered grep has to be re-run rather than read. Re-run it: all four
+   `runlaunch` symbols are still live (1/1/6/6 production references), and every surviving textual
+   `waitAgentReady` is inside a string literal.
+3. **§4 B5 listed `dot_gate.go`'s two cleanup defers in the REVERSE of that site's own order.** Its
+   pre-RT14 order is `close(gateHBDone)` then `ForceTeardownSession`, so under LIFO the session is
+   torn down BEFORE the heartbeat stops. Following the recipe would have silently inverted it.
+
+**Two deliberate deviations in `readywait-freeze-gate.sh` vs recipe §4 C7:** `agentready.go` is
+dropped from the pinned-file list (it no longer exists; pinning it would make the gate exit 1 on its
+own landing commit), and a fifth check was ADDED pinning all four production launch sites to the
+seam — the recipe stops at "the seam still exists," which passes even if every site quietly left it.
+Proven in four failure directions before wiring.
+
+**Descoped, filed not forgotten:** the Working-phase watchdogs still carry **30 raw wall-clock sites**
+(`pasteinject.go` 22, `dot_gate.go`'s `pasteInjectQuitOnGateFile` 6, `waitsocketgrace.go` 1,
+`postreadyhang.go` 1). `dispatchsegment.go` places them outside the RT8 segment boundary; E5 step 16's
+"eight sites" conflated them with the segment. Now
+[`RT19c-workingphase-watchdogs.md`](RT19c-workingphase-watchdogs.md).
+
+**Coverage cost, stated not buried:** `twinparity_timing_property_test.go`'s stage-1 boundary race
+disappears with `waitAgentReady`. It was an artifact of that function's wall-clock select over two
+channels; the machine resolves the same edge deterministically on one goroutine. Stage 1 still drives
+the REAL emitter. The alternative — a segment-level fixture — was named and NOT built; what was
+rejected outright is keeping dead production code alive to serve one test.
 
 ---
 

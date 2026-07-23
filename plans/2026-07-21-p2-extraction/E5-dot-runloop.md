@@ -120,7 +120,7 @@ the measured number, not the plan's.
 | `internal/daemon/reviewerharness_hkiv748.go` | 135 | `internal/runloop/dotrun` | 0 real `deps.` refs (3 hits are comments) |
 | `internal/daemon/codexnowork_hk368i4.go` | 105 | `internal/runloop` | 0 `deps.` refs |
 | `internal/daemon/postreadyhang.go` | 102 | `internal/runloop` | 0 `deps.` refs; 1 raw `time.NewTimer` |
-| `internal/daemon/agentready.go` | 207 | **DELETED** by RT14, not moved | after RT14 converts `workloop.go:4897` and `dot_gate.go:474` to `dispatchSegment`, its only remaining reference is the `export_test.go:1569` shim |
+| `internal/daemon/agentready.go` | 207 → 131 → 0 | **RESOLVED — converted, not moved. DELETED by RT14 (`7d448afb`).** | RT19b-3 first moved the four surviving policy symbols to `internal/runlaunch`; RT14 then converted both `waitAgentReady` call sites onto `dispatchSegment` and deleted the empty remainder. The "only remaining reference is the export_test shim" claim was FALSE when written — see §4 step 17. |
 
 **Package-name warning (from the challenge, verified):** `internal/workflow/dot` is already
 `package dot`, and **both** `dot_cascade.go` and `dot_gate.go` import it. A new `internal/runloop/dot`
@@ -436,31 +436,56 @@ exactly, with the same indentation (8 spaces for the key):
 
 **13.** Run the full §6 verification gate. RT13 ends here; commit and release as one bead.
 
-### RT14 — close the last wall-clock sites and delete `agentready.go` (executable after RT13)
+### RT14 — retire the open-coded ready wait (LANDED 2026-07-22)
 
-**14.** Convert `workloop.go:4897` (single-mode `waitAgentReady`) to a `&dispatchSegment{...}`, using
-`reviewloop.go:574` as the template — bind `launch` / `onLaunched` / `deliver` / `killReady` /
-`emitReadyTimeout` as closures over the existing imperative code. **Change no emission string.**
+**LANDED** in three commits: `229e6e91` (phase A, single-mode), `cb89e35e` (phase B, cognition gate),
+`7d448afb` (phase C, retirement + freeze gate). The recipe is
+[`RT14-dispatchsegment-conversion.md`](RT14-dispatchsegment-conversion.md); it governs, and it
+corrects steps 14–18 as originally written below. Three of those corrections are recorded here so the
+next reader does not re-derive them.
 
-**15.** Convert `dot_gate.go:474` (cognition gate) the same way, using `dot_cascade.go:1760` as the
-template.
+**14 (as landed).** `workloop.go`'s single-mode `waitAgentReady` became a `&dispatchSegment{…}`,
+`reviewloop.go`'s implementer as the template. **One behaviour delta the template did NOT encode:**
+`killAbort` fires on the ctx-cancel edge and performs the same `sess.Kill` that
+`runlaunch.ForceTeardownSession` performs — but at THIS site that teardown is guarded by hk-o85ye
+(`!useIndepSession || ctx.Err() == nil`) so an independent-session run survives daemon shutdown for
+the next boot's adoption pass. An unguarded `killAbort` would strand the bead. The hook carries the
+same guard. `reviewloop.go` / `dot_cascade.go` need none — their teardown is unconditional.
 
-**16.** Delete the **eight** raw-time sites — `dot_gate.go` `:484` (`time.After(agentReadyKillReapTimeout)`),
-`:751` (`briefDeliveredTimeout`), `:758`/`:767` (`time.Now` deadline pair), `:773` (`noChangeKillDelay`),
-`:786` (`postQuitKillGrace`), plus its `time.NewTimer`; **and** `waitsocketgrace.go`'s `time.After`
-and `postreadyhang.go`'s `time.NewTimer` — in favour of `RunPorts.Clock` deadlines / the machine's
-`TimerAgentReady`. (The recon counted six and missed the last three; verify with
-`grep -cE 'time\.(After|Now|NewTimer|Tick|Sleep)\(' internal/daemon/{dot_gate,waitsocketgrace,postreadyhang}.go`
-→ must be `0 0 0` when done.)
+**15 (as landed).** `dot_gate.go`'s cognition gate, `dot_cascade.go` as the template. Its
+site-specific differences (no `errors.Is` emissions in `onLaunchFailed`, plain `tap.Emit` not
+`EmitWithRunID`, an UNBOUNDED reap `Wait`, `SkipReadyHandshake: false` per the hk-01vs0 claude pin)
+were all re-derived from this site rather than copied. It also needed the local `substrate` shadow
+renamed to `runSubstrate`, and the `deps.clock == nil` backstop the other three consumers already carry.
 
-**17.** `rm internal/daemon/agentready.go` after confirming
-`grep -rn 'waitAgentReady(' internal/daemon/ | grep -v _test.go` returns nothing. Keep
-`ErrAgentReadyTimeout` (relocated) only if a test still asserts on it; check with
-`grep -rn 'ErrAgentReadyTimeout' internal/`.
+**16 — WRONG AS WRITTEN. The eight-site count conflated two concerns.** Only **one** of the eight was
+in RT14's blast radius: `dot_gate.go`'s `time.After(runlaunch.KillReapTimeout)`, which sits INSIDE
+the dispatch segment and converted for free. The other seven are **Working-phase watchdogs** —
+`dot_gate.go`'s `pasteInjectQuitOnGateFile`, `waitsocketgrace.go`, `postreadyhang.go` — which
+`dispatchsegment.go`'s header places explicitly OUTSIDE the RT8 segment boundary until the M5
+reactorization. Converting one copy of a watchdog without its two siblings in `pasteinject.go` (22
+further sites) would diverge three implementations of one pattern and close nothing. **The remaining
+30 sites are re-filed as [RT19c](RT19c-workingphase-watchdogs.md).** The step-16 grep asserting
+`0 0 0` on those three files would fail today and is expected to.
 
-**18.** Verification for RT14 specifically, in addition to §6:
-`go test ./internal/runexectest/... -count=10` (the RT11 N=10 relaunch oracle) and
-`go test ./internal/daemon/ -run 'DotGate|AgentReady|Cognition' -count=1`.
+**17 — RIGHT ANSWER, WRONG REASON, and it was unsafe when written.** `rm agentready.go` is what
+landed, but NOT because "its only remaining reference is the export_test.go shim." At the time this
+step was written the file declared six symbols, four of them live in production, and the `daemon.go`
+references that made it LOOK dead were comments — a `grep -c`-driven deletion would have broken the
+build. What made the delete safe is that **RT19b-3 (`fd608c01`) had already moved the four survivors**
+(`DefaultAgentReadyTimeout`, `DefaultRemoteAgentReadyTimeout`, `EffectiveAgentReadyTimeout`,
+`ErrAgentReadyTimeout`) to `internal/runlaunch`, leaving only `agentEventSource` + `waitAgentReady`.
+Re-derive with the comment-and-string-filtered grep in the recipe's §3c before trusting any claim
+here. `ErrAgentReadyTimeout` is emphatically NOT deletable — it is live at six production sites.
+
+**18 (as landed).** Plus `scripts/readywait-freeze-gate.sh`, wired into `check-fast`/`check-short`:
+no re-declaration of the retired symbols, no raw wall-clock in the run-path files that are clean
+today or inside `beadRunOne`, and all four production launch sites still construct a
+`dispatchSegment`.
+
+**Metric — publish this, not a LOC delta.** RT14 is a seam-uniformity slice: agent-launch sites
+hand-rolling their own ready wait **2 → 0**; raw wall-clock sites on the dispatch path **1 → 0**;
+`dispatchSegment` consumers 3 → 4 files / 5 segments. Non-test LOC moved only −52.
 
 ### RT15–RT19 — the prep STREAM (NOT executable until E1a/b/c and E4 land)
 
@@ -792,7 +817,8 @@ commit and creates no runtime state.
 
 4. **Abandoning the whole E5 unit** (decision that the prep stream is not worth it): keep RT13 and
    RT14. Both are net-positive on their own — RT13 removes ~1,750 LOC and 2 files from the god package
-   behind a real deny edge; RT14 deletes `agentready.go` and closes the last eight wall-clock sites,
+   behind a real deny edge; RT14 deletes `agentready.go` and closes the last wall-clock site ON THE
+   DISPATCH PATH (one, not eight — the other seven are Working-phase watchdogs, now RT19c),
    which is what makes the run path FakeClock-drivable and is worth having whether or not the machine
    ever moves. **Do not** abandon partway through RT15–RT18: a half-threaded `RunEnv` leaves the tree
    with two parallel dependency-passing idioms, which is strictly worse than the single ugly one it

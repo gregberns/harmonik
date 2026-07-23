@@ -94,6 +94,25 @@ above 10 GiB free.
 checkout, `go test` compiles their dirty files too. Run the differential suite against a **clean
 detached worktree at your own HEAD**, never the shared working tree.
 
+## Corpus change — RT14 (2026-07-22)
+
+**Four tests LEFT the corpus** when RT14 phase C (`7d448afb`) deleted
+`internal/daemon/agentready_hkgql2018_test.go`: the four unit tests of `waitAgentReady`, which RT14
+retired along with the function. A differential run after RT14 will therefore see a **shrinking**
+test set, which this oracle permits — record it here so it is not later read as a mystery loss.
+
+Coverage transfer (each verified to exist, per the RT14 recipe §4 C3):
+
+| Deleted case | Replacement |
+|---|---|
+| `DetectReady` true → nil | `runexec.TestDispatch_HappyPath` + `TestDispatchSegment_ResumeProbe_RunIDStampedReadyDelivers` |
+| no events → `ErrAgentReadyTimeout` | `runexec.TestDispatch_ReadyTimeoutSR9Edge` + `TestDispatchSegment_DotResume_ReadyTimeoutEdge` |
+| ctx cancel → `ctx.Err()` | `runexec.TestDispatch_AbortFromAnyNonTerminal` (the shell maps cancel onto `EvAborted`) |
+| boundary race (ready wins at the timeout instant) | **none, by construction** — the race was an artifact of `waitAgentReady`'s wall-clock select over two channels; the machine resolves the same edge deterministically on one goroutine |
+
+`twinparity_timing_property_test.go` stays in the corpus with the same test names; its stage-1
+detector call was replaced by the timing predicate directly (same reason as the last row above).
+
 ## Known-flaky allowlist (as of 2026-07-22)
 
 ```

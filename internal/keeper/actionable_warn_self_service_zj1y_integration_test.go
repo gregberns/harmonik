@@ -199,7 +199,7 @@ func TestZJ1Y_ActionableWarn_LowConfigWarn_NamesVerbatimRestartNowCommand(t *tes
 		WarnAbsTokens:      zj1yLowWarnTokens,
 	}
 	wantCmd := "harmonik keeper restart-now --agent " + agent
-	selected := cfg.selectWarnText(ctxWith(primarySID, 70_000), true /*crispIdle*/, false /*operatorAttached*/)
+	selected := cfg.selectWarnText(&CtxFile{SessionID: primarySID, Tokens: 70_000, WindowSize: 200_000, Pct: 85}, true /*crispIdle*/, false /*operatorAttached*/)
 	if !strings.Contains(selected, restartNowStem) {
 		t.Fatalf("zj1y: selected warn text must carry the restart-now stem; got: %s", selected)
 	}

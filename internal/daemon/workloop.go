@@ -3104,10 +3104,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// Keyed on preSelectedWorker so it is inert for the fallback path (which is
 	// mutually exclusive — it runs only when rbc==nil, i.e. preSelectedWorker==nil —
 	// and acquires+releases its own slot after these early returns).
-	relWorkerSlot := preSelectedWorker != nil && deps.workerRegistry != nil
+	relWorkerSlot := preSelectedWorker != nil && handles.Workers != nil
 	defer func() {
 		if relWorkerSlot {
-			deps.workerRegistry.ReleaseSlot()
+			handles.Workers.ReleaseSlot()
 		}
 	}()
 
@@ -3124,7 +3124,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	owningEpicID, owningEpicAssignee := resolveOwningEpicFromRecord(ctx, deps.brAdapter, beadRecord)
 	// Propagate to RunHandle so StaleWatcher can read the attribution without
 	// its own br calls.
-	if handle, ok := deps.runRegistry.Get(runID); ok {
+	if handle, ok := handles.RunRegistry.Get(runID); ok {
 		handle.OwningEpicID = owningEpicID
 		handle.OwningEpicAssignee = owningEpicAssignee
 	}
@@ -3284,7 +3284,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		if resolvedProfile == (PiProfileConfig{}) {
 			resolvedProvider = env.ProjectCfg.Harnesses.Pi.Provider
 		}
-		if rh, ok := deps.runRegistry.Get(runID); ok && rh != nil {
+		if rh, ok := handles.RunRegistry.Get(runID); ok && rh != nil {
 			rh.SetResolvedProvider(resolvedProvider)
 		}
 		emitProviderSelected(ctx, deps.bus, runID, resolvedProvider)
@@ -3451,12 +3451,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// dispatch time, or a race where a worker slot freed up after the outer loop's
 	// HasFreeSlot peek). This path is rare after the hk-hs7ex hoist but kept for
 	// correctness.
-	if rbc == nil && !itemLocalOnly && deps.workerRegistry != nil {
+	if rbc == nil && !itemLocalOnly && handles.Workers != nil {
 		var w *workers.Worker
 		if itemWorkerTarget != "" {
-			w = deps.workerRegistry.SelectWorkerByName(itemWorkerTarget)
+			w = handles.Workers.SelectWorkerByName(itemWorkerTarget)
 		} else {
-			w = deps.workerRegistry.SelectWorker()
+			w = handles.Workers.SelectWorker()
 		}
 		if w != nil {
 			rbc = &remoteBeadCtx{
@@ -3471,7 +3471,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				// worker opts.
 				sshRunner: tmuxpkg.SSHRunner{Host: w.Host, Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"}},
 			}
-			defer deps.workerRegistry.ReleaseSlot()
+			defer handles.Workers.ReleaseSlot()
 			// hk-hs7ex: the outer loop incremented localInFlight thinking this was
 			// a local run. A worker slot became available between the gate and here
 			// so this run is actually remote. Correct the count immediately and
@@ -3482,7 +3482,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			}
 			// hk-4tjt6: mirror the Remote flag update so LenForQueueLocal
 			// stops counting this run against the per-queue local cap.
-			if h, ok := deps.runRegistry.Get(runID); ok {
+			if h, ok := handles.RunRegistry.Get(runID); ok {
 				h.Remote.Store(true)
 			}
 		}
@@ -3615,8 +3615,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			return
 		}
 		workers.EmitWorkerOfflineEvent(ctx, rbc.worker.Name, rbc.worker.Host, phase, detail, deps.bus.Emit)
-		if deps.workerRegistry != nil {
-			deps.workerRegistry.SetEnabled(false)
+		if handles.Workers != nil {
+			handles.Workers.SetEnabled(false)
 		}
 	}
 
@@ -4254,7 +4254,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// PI-073: record the resolved agent type on the RunHandle so that
 	// bandwidthTunerBackstop can filter Pi rate-limit events from the global
 	// tuner. The type is only known after specBuilder resolves the harness.
-	if rh, ok := deps.runRegistry.Get(runID); ok && rh != nil {
+	if rh, ok := handles.RunRegistry.Get(runID); ok && rh != nil {
 		rh.SetAgentType(shared.ArtifactAgentType(artifacts))
 	}
 	// hk-j6wm7: record whether this run is a Pi run so the deferred wtCleanup can
@@ -4689,7 +4689,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			// Store the session's lifecycle Machine in the RunHandle so the stale watcher
 			// can read the current state and drive Ready→Failed(silent_hang) before
 			// emitting run_stale (SPEC_ACCEPTANCE_GAP fix per hk-xrygh iter-2).
-			if handle, ok := deps.runRegistry.Get(runID); ok {
+			if handle, ok := handles.RunRegistry.Get(runID); ok {
 				handle.SetMachine(sess.Machine())
 			}
 
@@ -5007,7 +5007,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// check in the no-commit path (line ~3441) which leaves the item 'dispatched'
 	// for QM-002a recovery.
 	if ctx.Err() != nil {
-		if handle, ok := deps.runRegistry.Get(runID); ok && handle.aborted.Load() {
+		if handle, ok := handles.RunRegistry.Get(runID); ok && handle.aborted.Load() {
 			// RT7 / RSM-031 row 1b: the never-spawned-reaper abort is the Aborted
 			// dispatch-terminal class; its reason rides the mode-failure event
 			// (reopen + run_failed via the spine, Background ctx per RSM-022).

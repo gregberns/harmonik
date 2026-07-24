@@ -188,32 +188,6 @@ func ExportedResolveHarnessAgentTypeQuiet(
 	return resolveHarnessAgentTypeQuiet(bead, queueDefault, nodeDefault, globalDefault)
 }
 
-// ExportedReviewerDefaultHarness exposes reviewerDefaultHarness for tests in
-// package daemon_test. See reviewerharness_hkiv748.go (hk-pkxju).
-func ExportedReviewerDefaultHarness(
-	reg *handlercontract.HarnessRegistry,
-	implementer core.AgentType,
-	beadID string,
-) core.AgentType {
-	return reviewerDefaultHarness(reg, implementer, beadID)
-}
-
-// ExportedDotReviewerInheritedHarnessOverride exposes
-// dotReviewerInheritedHarnessOverride for tests in package daemon_test.
-// See reviewerharness_hkiv748.go (hk-pkxju).
-func ExportedDotReviewerInheritedHarnessOverride(
-	reg *handlercontract.HarnessRegistry,
-	isReviewer bool,
-	reviewerHarnessOverride core.AgentType,
-	nodeHarness core.AgentType,
-	bead core.BeadRecord,
-	globalDefault core.AgentType,
-	beadID string,
-) core.AgentType {
-	return dotReviewerInheritedHarnessOverride(
-		reg, isReviewer, reviewerHarnessOverride, nodeHarness, bead, globalDefault, beadID)
-}
-
 // ExportedResolveGateAgentType exposes resolveGateAgentType for tests in package
 // daemon_test. See sandboxgate.go for semantics (hk-r4p0l).
 func ExportedResolveGateAgentType(implHarness handlercontract.Harness, fromArtifacts core.AgentType) core.AgentType {
@@ -272,17 +246,6 @@ func ExportedBuildLaunchSpecReviewer(base handlercontract.LaunchSpec, iterationC
 	return buildLaunchSpecReviewer(base, iterationCount)
 }
 
-// ReviewLoopResultExported is the exported shape of reviewLoopResult for tests
-// in package daemon_test. Fields mirror reviewLoopResult verbatim.
-//
-// Bead ref: hk-7om2q.20.
-type ReviewLoopResultExported struct {
-	Success          bool
-	CompletionReason string
-	Summary          string
-	NeedsAttention   bool
-}
-
 // runBeadOneTest mirrors the runWorkLoop goroutine caller for white-box tests:
 // it builds the per-run bundles (including the RT18.11 launch-builder resolution
 // that used to live inside beadRunOne) and invokes beadRunOne, so a test that
@@ -303,30 +266,6 @@ func runBundlesFromDeps(deps workLoopDeps, runID core.RunID) (RunEnv, RunPorts, 
 	env := deps.runEnv(runID, core.BeadRecord{}, "", nil, nil, 0, "", "", nil, false, "")
 	rp, handles := deps.buildRunBundles(env)
 	return env, rp, handles
-}
-
-// ExportedRunReviewLoop exposes runReviewLoop for tests in package daemon_test.
-// The result is converted to ReviewLoopResultExported to avoid exporting the
-// internal reviewLoopResult type.
-//
-// Bead ref: hk-7om2q.20.
-func ExportedRunReviewLoop(
-	ctx context.Context,
-	deps workLoopDeps,
-	runID core.RunID,
-	beadID core.BeadID,
-	wtPath string,
-	parentSHA string,
-) ReviewLoopResultExported {
-	// nil runner ⇒ LOCAL run: byte-identical to the pre-remote-substrate path.
-	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := runReviewLoop(ctx, env, rp, handles, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", nil, "", "", "", "")
-	return ReviewLoopResultExported{
-		Success:          r.success,
-		CompletionReason: string(r.completionReason),
-		Summary:          r.summary,
-		NeedsAttention:   r.needsAttention,
-	}
 }
 
 // ExportedRunAutoStatusInspection exposes runAutoStatusInspection for unit
@@ -462,37 +401,6 @@ func ExportedCaptureRunnerBuilder(ch chan<- tmuxPkg.CommandRunner) func(context.
 		}
 		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
 	}
-}
-
-// ExportedRunReviewLoopWithRunner exposes runReviewLoop with an explicit
-// CommandRunner so tests can assert the remote (runner != nil) path threads the
-// runner into the implementer/reviewer shared.LaunchCtx (hk-3sus).
-func ExportedRunReviewLoopWithRunner(
-	ctx context.Context,
-	deps workLoopDeps,
-	runID core.RunID,
-	beadID core.BeadID,
-	wtPath string,
-	parentSHA string,
-	runner tmuxPkg.CommandRunner,
-) ReviewLoopResultExported {
-	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := runReviewLoop(ctx, env, rp, handles, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", runner, "", "", "", "")
-	return ReviewLoopResultExported{
-		Success:          r.success,
-		CompletionReason: string(r.completionReason),
-		Summary:          r.summary,
-		NeedsAttention:   r.needsAttention,
-	}
-}
-
-// ExportedSetSubstrateRunnerObserver installs (or clears, with nil) the package
-// test seam that captures the CommandRunner passed into newPerRunSubstrate at the
-// review-loop and DOT agentic launch sites. Tests use this to assert the
-// SUBSTRATE-spawn runner (distinct from the SPEC runner) is the real non-nil
-// worker runner for a REMOTE run (hk-fxy9 / hk-538l).
-func ExportedSetSubstrateRunnerObserver(f func(tmuxPkg.CommandRunner)) {
-	substrateRunnerObserver = f
 }
 
 // ExportedExecuteCognitionGate drives executeCognitionGate — the PRODUCTION
@@ -1401,20 +1309,6 @@ func ExportedInputBufferName(sub handler.Substrate) string {
 		return p.inputBufferName()
 	}
 	return ""
-}
-
-// ExportedSynthesiseClaudeSessionID exposes rlSynthesiseClaudeSessionID for
-// tests in package daemon_test.  Tests use this to verify the produced ID
-// satisfies the tmux buffer-name regex (hk-lckbv).
-func ExportedSynthesiseClaudeSessionID() string {
-	return rlSynthesiseClaudeSessionID(substrate.SystemClock{})
-}
-
-// ExportedResolveIter1ClaudeSessionID exposes rlResolveIter1ClaudeSessionID for
-// tests in package daemon_test (hk-za5mz). Verifies the iteration-1 session-id
-// resolution order: interceptor id → real minted id → synthesis.
-func ExportedResolveIter1ClaudeSessionID(interceptorID, realMintedID string) string {
-	return rlResolveIter1ClaudeSessionID(substrate.SystemClock{}, interceptorID, realMintedID)
 }
 
 // ExportedNewPerRunSubstrate wraps newPerRunSubstrate for tests in package

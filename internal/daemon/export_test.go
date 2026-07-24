@@ -34,7 +34,6 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
-	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // ExportedWorkLoopDefaultHarness returns the defaultHarness field from deps so
@@ -42,13 +41,6 @@ import (
 // path (hk-ytzj2).
 func ExportedWorkLoopDefaultHarness(deps workLoopDeps) core.AgentType {
 	return deps.defaultHarness
-}
-
-// ExportedNodeModelForHarness exposes nodeModelForHarness so tests can assert the
-// harness-family scoping of a DOT per-node model= pin (hk-lfrub,
-// codename:pi-model-leak).
-func ExportedNodeModelForHarness(resolvedModel, nodeModelAttr string, effHarness core.AgentType) string {
-	return nodeModelForHarness(resolvedModel, nodeModelAttr, effHarness)
 }
 
 // ExportedLoadStandardGraph parses the embedded standard-bead.dot so tests in
@@ -279,75 +271,6 @@ func ExportedRunAutoStatusInspection(ctx context.Context, wtPath string) (core.O
 	return runAutoStatusInspection(ctx, nil, wtPath)
 }
 
-// DotWorkflowResultExported is the exported shape of dotWorkflowResult for tests
-// in package daemon_test. Fields mirror dotWorkflowResult verbatim.
-//
-// Bead ref: hk-3qjwl.
-type DotWorkflowResultExported struct {
-	Success        bool
-	TerminalNodeID string
-	NeedsAttention bool
-	Summary        string
-	// AdvisoryRC mirrors dotWorkflowResult.advisoryRC (hk-whru3).
-	AdvisoryRC bool
-	// ApproveVerdict mirrors dotWorkflowResult.approveVerdict (hk-tnui).
-	ApproveVerdict *workspace.ReviewVerdict
-}
-
-// ExportedDriveDotWorkflow exposes driveDotWorkflow for tests in package
-// daemon_test. The result is converted to DotWorkflowResultExported to avoid
-// exporting the internal dotWorkflowResult type.
-//
-// Bead ref: hk-3qjwl (DOT agentic-node dispatch must gate paste-inject on
-// agent_ready, exactly as the single-mode and review-loop paths do).
-func ExportedDriveDotWorkflow(
-	ctx context.Context,
-	deps workLoopDeps,
-	runID core.RunID,
-	beadID core.BeadID,
-	wtPath string,
-	parentSHA string,
-	graph *dot.Graph,
-) DotWorkflowResultExported {
-	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, "", "", wtPath, parentSHA, graph, "", "", "", "", nil, "", "", "", "")
-	return DotWorkflowResultExported{
-		Success:        r.success,
-		TerminalNodeID: r.terminalNodeID,
-		NeedsAttention: r.needsAttention,
-		Summary:        r.summary,
-		AdvisoryRC:     r.advisoryRC,
-		ApproveVerdict: r.approveVerdict,
-	}
-}
-
-// ExportedDriveDotWorkflowFull is like ExportedDriveDotWorkflow but exposes the
-// beadTitle, beadDescription, and extraContext parameters so tests can assert on
-// context injection (e.g. node role= surfacing, hk-m5lmo).
-func ExportedDriveDotWorkflowFull(
-	ctx context.Context,
-	deps workLoopDeps,
-	runID core.RunID,
-	beadID core.BeadID,
-	beadTitle string,
-	beadDescription string,
-	wtPath string,
-	parentSHA string,
-	graph *dot.Graph,
-	extraContext string,
-) DotWorkflowResultExported {
-	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", extraContext, "", nil, "", "", "", "")
-	return DotWorkflowResultExported{
-		Success:        r.success,
-		TerminalNodeID: r.terminalNodeID,
-		NeedsAttention: r.needsAttention,
-		Summary:        r.summary,
-		AdvisoryRC:     r.advisoryRC,
-		ApproveVerdict: r.approveVerdict,
-	}
-}
-
 // ExportedMinimalLaunchSpecBuilder returns a launchSpecBuilder stub that
 // produces a handler.LaunchSpec with a no-op binary (/bin/true) and
 // zero-value shared.LaunchArtifacts. Used in tests that inject a spy substrate
@@ -403,72 +326,6 @@ func ExportedCaptureRunnerBuilder(ch chan<- tmuxPkg.CommandRunner) func(context.
 	}
 }
 
-// ExportedExecuteCognitionGate drives executeCognitionGate — the PRODUCTION
-// cognition-gate dispatch body in dot_gate.go — directly, so a test can assert
-// which harness the gate actually resolves without standing up the whole DOT
-// cascade (which needs a real git worktree and a real tmux pane).
-//
-// The call is expected to FAIL somewhere after the launch-spec build (Launch,
-// agent_ready wait, or verdict read) under a unit fixture; the returned error is
-// informational only. Callers assert on the events the build emitted and on
-// whether deps.launchSpecBuilder was consulted.
-//
-// Bead ref: hk-01vs0.
-func ExportedExecuteCognitionGate(
-	ctx context.Context,
-	deps workLoopDeps,
-	runID core.RunID,
-	cp core.ControlPoint,
-	wtPath string,
-	node *dot.Node,
-	beadID core.BeadID,
-	beadRecord core.BeadRecord,
-) error {
-	dp := cp.Evaluator.DelegationPath
-	if dp == nil {
-		return fmt.Errorf("ExportedExecuteCognitionGate: ControlPoint %q has no DelegationPath", cp.Name)
-	}
-	run := &core.Run{
-		RunID:        runID,
-		WorkflowMode: core.WorkflowModeDot,
-		Context:      map[string]any{},
-	}
-	env, rp, handles := runBundlesFromDeps(deps, runID)
-	_, err := executeCognitionGate(
-		ctx, env, rp, handles, runID, run, cp, *dp, wtPath, "",
-		node, 1, "", "",
-		beadID, beadRecord, "hk-01vs0 gate fixture bead", "gate fixture body",
-		"", "main", core.GateRef(node.GateRef),
-		nil, "", "", "",
-	)
-	return err
-}
-
-// ExportedDriveDotWorkflowWithRunner exposes driveDotWorkflow with an explicit
-// CommandRunner so tests can assert the remote (runner != nil) path threads the
-// runner into the DOT agentic-node shared.LaunchCtx (hk-3sus).
-func ExportedDriveDotWorkflowWithRunner(
-	ctx context.Context,
-	deps workLoopDeps,
-	runID core.RunID,
-	beadID core.BeadID,
-	beadTitle string,
-	beadDescription string,
-	wtPath string,
-	parentSHA string,
-	graph *dot.Graph,
-	runner tmuxPkg.CommandRunner,
-) DotWorkflowResultExported {
-	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", "", "", runner, "", "", "", "")
-	return DotWorkflowResultExported{
-		Success:        r.success,
-		TerminalNodeID: r.terminalNodeID,
-		NeedsAttention: r.needsAttention,
-		Summary:        r.summary,
-	}
-}
-
 // ModelEffortPair holds the model and effort values captured from a shared.LaunchCtx.
 // Used by ExportedCaptureModelEffortBuilder tests (hk-q8nqr).
 type ModelEffortPair struct {
@@ -488,32 +345,6 @@ func ExportedCaptureModelEffortBuilder(ch chan<- ModelEffortPair) func(context.C
 		default:
 		}
 		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
-	}
-}
-
-// ExportedDriveDotWorkflowWithModelEffort exposes driveDotWorkflow with
-// explicit resolvedModel and resolvedEffort parameters so tests can assert on
-// per-node model/effort override vs. run-level default (hk-q8nqr).
-func ExportedDriveDotWorkflowWithModelEffort(
-	ctx context.Context,
-	deps workLoopDeps,
-	runID core.RunID,
-	beadID core.BeadID,
-	beadTitle string,
-	beadDescription string,
-	wtPath string,
-	parentSHA string,
-	graph *dot.Graph,
-	resolvedModel string,
-	resolvedEffort string,
-) DotWorkflowResultExported {
-	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, resolvedModel, resolvedEffort, "", "", nil, "", "", "", "")
-	return DotWorkflowResultExported{
-		Success:        r.success,
-		TerminalNodeID: r.terminalNodeID,
-		NeedsAttention: r.needsAttention,
-		Summary:        r.summary,
 	}
 }
 
@@ -2178,24 +2009,6 @@ func NewLiveStateBuilderForTest(projectDir string, projectHash core.ProjectHash,
 // Bead ref: hk-jay1.
 func (lb *LiveStateBuilder) BuildCognitionForTest(agent, liveSID, declaredSID string, now time.Time) *SessionCognition {
 	return lb.buildCognition(agent, liveSID, declaredSID, now)
-}
-
-// ExportedReadGateVerdictVia exposes readGateVerdictVia for tests in package
-// daemon_test. It allows the contract test to verify that the gate-verdict.json
-// read routes through runner on remote runs (hk-hd2w6).
-//
-// Bead ref: hk-hd2w6.
-func ExportedReadGateVerdictVia(ctx context.Context, runner tmuxPkg.CommandRunner, verdictPath string) (core.GateAction, error) {
-	return readGateVerdictVia(ctx, runner, verdictPath)
-}
-
-// ExportedGateVerdictExistsVia exposes gateVerdictExistsVia for tests in
-// package daemon_test. Allows the contract test to assert that the os.Stat
-// check on gate-verdict.json routes through runner on remote runs (hk-hd2w6).
-//
-// Bead ref: hk-hd2w6.
-func ExportedGateVerdictExistsVia(ctx context.Context, runner tmuxPkg.CommandRunner, path string) bool {
-	return gateVerdictExistsVia(ctx, runner, path)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

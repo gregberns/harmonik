@@ -795,15 +795,25 @@ type ReviewLoopResultExported struct {
 	NeedsAttention   bool
 }
 
+// runBeadOneTest mirrors the runWorkLoop goroutine caller for white-box tests:
+// it builds the per-run bundles (including the RT18.11 launch-builder resolution
+// that used to live inside beadRunOne) and invokes beadRunOne, so a test that
+// constructs a workLoopDeps + RunEnv drives a single bead run exactly as
+// production does.
+func runBeadOneTest(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool {
+	rp, handles := deps.buildRunBundles(env)
+	return beadRunOne(ctx, env, rp, handles, extraContext, preSelected, localSlotHeld)
+}
+
 // runBundlesFromDeps assembles the env/ports/handles bundles a test shim passes
-// into a run-path function after the RT18 signature drop, mirroring how
-// beadRunOne builds them — including the per-run rp.LaunchBuilder population, so
-// a fixture-injected launchSpecBuilder still reaches the review/DOT sub-drivers.
+// into a run-path function after the RT18 signature drop, mirroring how the
+// production runWorkLoop caller builds them — it routes through buildRunBundles,
+// so the launch builder is resolved (routed / claude fallback) and threaded onto
+// rp.LaunchBuilder exactly as production does, and a fixture-injected
+// launchSpecBuilder still reaches the review/DOT sub-drivers.
 func runBundlesFromDeps(deps workLoopDeps, runID core.RunID) (RunEnv, RunPorts, SharedHandles) {
 	env := deps.runEnv(runID, core.BeadRecord{}, "", nil, nil, 0, "", "", nil, false, "")
-	rp := deps.runPorts()
-	rp.LaunchBuilder = deps.launchBuilder()
-	handles := deps.sharedHandles()
+	rp, handles := deps.buildRunBundles(env)
 	return env, rp, handles
 }
 

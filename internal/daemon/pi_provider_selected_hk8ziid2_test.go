@@ -170,7 +170,7 @@ func TestBeadRunOne_ProviderSelected_ProfileMatch(t *testing.T) {
 		Labels:      []string{"profile:ornith-dgx"},
 	}
 
-	beadRunOne(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
+	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
 		"", nil, false)
 
 	rh, ok := runRegistry.Get(runID)
@@ -241,7 +241,7 @@ func TestBeadRunOne_ProviderSelected_NoProfile_UsesGlobalDefault(t *testing.T) {
 		Status:      core.CoarseStatusOpen,
 	}
 
-	beadRunOne(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
+	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
 		"", nil, false)
 
 	rh, ok := runRegistry.Get(runID)
@@ -301,7 +301,7 @@ func TestBeadRunOne_ProviderSelected_NonPiRun_LeavesUnresolved(t *testing.T) {
 		Status:      core.CoarseStatusOpen,
 	}
 
-	beadRunOne(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
+	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
 		"", nil, false)
 
 	rh, ok := runRegistry.Get(runID)

@@ -1,11 +1,16 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-23 (alpha session) — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c + **RT16** landed.
+**Last updated:** 2026-07-23 (alpha session) — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c + RT16 + **RT17** landed.
 QUALITY LANE this session (all reviewed, landed): hk-8dtiv Close-errcheck FLIP + prose reconcile (`f1f96c99`);
 `make check-report` quiet reporter (`1dd76236`); 137 dead `//nolint` removed (`96cd0b99`); **cmd/harmonik
 coverage drain 45.8%→58.4% across chunks A–I** (`0f9ca8c8`,`9b43ad31`,`73cad9b8`,`e7588d47`,`18c80cf6`).
-**RT17 executable plan is being produced by an ultrawork Workflow (run `wf_5d3b4b8c-52c`) — see HANDOFF-alpha.md.**
+**RT17 LANDED** (`d71e79749`, reviewed APPROVE) — read-seam bind: the four run-path `launchSpecBuilder`
+readers + the single-mode binding now reach the builder through a pure-alias `deps.launchBuilder()` accessor;
+`scripts/launchbuilder-freeze-gate.sh` wired into check-fast+check-short. The two copy-mutation ASSIGNMENTS
+are PRESERVED (deletion needs per-run locals threaded via a signature change — that is **RT18.11**); the
+`deps.`-count exit metric (94/74/43) is count-neutral for an accessor swap and stays flat by design.
+Plan: `RT17-launchspec-conversion.md`.
 Defects filed this session (machine-local): hk-u4ly0, hk-z646k (real coverage-gate regression, confirmed),
 hk-peoac, hk-y49eu + hk-d4y2p (same exit-1-not-17 socket-absent bug class in subscribe & smoke).
 
@@ -50,7 +55,7 @@ plans, then began landing them one commit at a time.
 | **3. Execute (P2 core)** | 9 slices, sequential | **DONE — 9/9, every verify `is_pure_move: true`** |
 | **4. Punch list** | verifier findings applied | **DONE** — `ffc5415a` |
 | **5. Differential verification** | clean before/after pair, identical scope | **DONE — no regression** (see below) |
-| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, RT19c, **RT16** landed; **RT17 plan being written via ultrawork (`wf_5d3b4b8c-52c`)**; RT18/19/lift after | **IN PROGRESS — RT17 is next** |
+| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, RT19c, RT16, **RT17** landed; RT18/19/lift after | **IN PROGRESS — RT18 is next** |
 | **7. E4d re-plan** | overturned "impossible"; 3 prep slices ready, E4d-3 parked | **DONE** |
 
 ### Verification verdict (Phase 5)
@@ -84,6 +89,7 @@ against one run. Recorded in `00-test-oracle-baseline.md`.
 | 14 | **RT14** | *nothing* — the open-coded agent_ready WAIT is RETIRED, not relocated. Both call sites bind onto the pre-existing `dispatchSegment` seam | **COMPLETE — 3/3 commits, reviewer BLOCK→APPROVE on A, APPROVE on B and C.** Metric is **seam uniformity, not LOC** (see below) | `229e6e91` · `cb89e35e` · `7d448afb` |
 | 15 | **RT16** | *nothing* — the run path stops bypassing the pre-existing `EmitterPort` seam. 108 raw field reads → 8 port reads | **COMPLETE — reviewer REQUEST_CHANGES → fixed → landed.** Both defects were in the freeze gate, neither in the conversion | `4cd9179d6` |
 | 16 | **buffer-name** | *nothing* — `internal/daemon`'s `bufferName` routed through `tmux.BufferName`, duplicated sanitizer deleted | **LANDED — reviewer APPROVE**; failing-first proven on ten hostile session ids | `5a3ac7877` |
+| 17 | **RT17** | *nothing* — the four run-path `launchSpecBuilder` reads + the single-mode binding stop reading the raw field, reaching it through the pure-alias `deps.launchBuilder()` accessor. The two copy-mutation ASSIGNMENTS are preserved (RT18.11 deletes them). Zero behaviour change proven mechanically (sed-normalizes to identity) | **COMPLETE — reviewer APPROVE.** `launchbuilder-freeze-gate.sh` proven red in 4 directions; 18 seam tests green ×10; runtime differential DEFERRED (daemon down). Two E5-doc corrections below | `d71e79749` |
 
 ### Result
 
@@ -598,9 +604,23 @@ case) stays silent as before, any other failure now reports to stderr in the sha
 **What RT15 deliberately did NOT do.** No `shared SharedHandles` parameter (all five fields have
 readers outside `beadRunOne`, so passing the bundle while `deps` is still passed is pure duplication
 across a signature boundary — **RT18 owns it**). None of the six copy-mutation sites (`workloop.go`
-3179/3977/3987 pre-slice, `dot_cascade.go` 219/1259, `reviewloop.go` 229) — **RT17 owns the two
-`launchSpecBuilder` ones, RT18 the four `clock` ones**. `deps.tidGen` stays on `deps` (RSM-011;
-**RT18's call**). `RunEnv.BrPath` is populated but has zero readers in `beadRunOne` — **RT18 surface**.
+3179/3977/3987 pre-slice, `dot_cascade.go` 219/1259, `reviewloop.go` 229) — **RT17 owned the two
+`launchSpecBuilder` ones (LANDED `d71e79749` as a read-seam bind: readers now go through
+`deps.launchBuilder()`, the two assignments preserved for RT18.11); RT18 owns the `clock` ones**.
+`deps.tidGen` stays on `deps` (RSM-011; **RT18's call**). `RunEnv.BrPath` is populated but has zero
+readers in `beadRunOne` — **RT18 surface**.
+
+> **CORRECTION for RT18's planner (RT17, `d71e79749`, note-only — do NOT rewrite RT18's chunk bodies from here):**
+> (1) The `clock` copy-mutation census is **FIVE, not four** — the docs' four miss `dot_gate.go:270`
+> (`if deps.clock == nil { deps.clock = substrate.SystemClock{} }`, added by RT14-B `cb89e35e2`, never
+> inventoried). RT18's clock slice must cover all five (workloop 3106, dot_cascade 221/1266, reviewloop
+> 231, **dot_gate 270**).
+> (2) RT18.11 (delete the two `deps.launchSpecBuilder = ` assignments at `workloop.go` 3933/3943) now has
+> its precondition satisfied — every reader is on `deps.launchBuilder()`. Deleting the assignments still
+> requires threading the per-run locals (`emit`, `beadRecord`, `env.DefaultHarness`) through
+> `beadRunOne → dispatchDotAgenticNode/executeCognitionGate/runReviewLoop` via a signature change; when
+> it lands, teeth B and D of `launchbuilder-freeze-gate.sh` go red **by design** — RT18 lowers those
+> budgets deliberately, exactly as the emitter gate documents for its own PORT_SITES.
 
 **Three newly-observed load-sensitive flakes**, all passing strictly in isolation and all added to
 `00-test-oracle-baseline.md`: `TestWorkLoop_ShutdownDrainsCommittedRun_hkdnrg`,

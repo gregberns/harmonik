@@ -43,7 +43,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -377,15 +376,12 @@ func smokeWatchSignals(
 	defer cancelDial()
 	conn, err := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	if err != nil {
-		var sysErr *os.PathError
-		if errors.As(err, &sysErr) && errors.Is(sysErr.Err, syscall.ENOENT) {
-			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: daemon not running (socket %s missing)\n", sockPath); writeErr != nil {
-				return result, 1
-			}
-			return result, 17
-		}
-		if errors.Is(err, syscall.ECONNREFUSED) {
-			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: daemon not running (ECONNREFUSED on %s)\n", sockPath); writeErr != nil {
+		// Use the shared daemon-down predicates: net.Dial to a missing unix
+		// socket returns *net.OpError wrapping *os.SyscallError (errno ENOENT on
+		// Linux, EINVAL on macOS), which an *os.PathError type-assert never
+		// matches — that was the hk-d4y2p bug that leaked exit 1.
+		if commsIsSocketAbsent(err) || commsIsConnRefused(err) {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: daemon not running (socket %s missing or refused)\n", sockPath); writeErr != nil {
 				return result, 1
 			}
 			return result, 17

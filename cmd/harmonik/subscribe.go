@@ -207,13 +207,12 @@ func runSubscribeSubcommand(subArgs []string) int {
 	conn, err := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	if err != nil {
 		// Distinguish "socket missing" / ECONNREFUSED from other errors.
-		var sysErr *os.PathError
-		if errors.As(err, &sysErr) && errors.Is(sysErr.Err, syscall.ENOENT) {
-			fmt.Fprintf(os.Stderr, "harmonik subscribe: daemon not running (socket %s missing)\n", sockPath)
-			return 17
-		}
-		if errors.Is(err, syscall.ECONNREFUSED) {
-			fmt.Fprintf(os.Stderr, "harmonik subscribe: daemon not running (ECONNREFUSED on %s)\n", sockPath)
+		// Use the shared daemon-down predicates: net.Dial to a missing unix
+		// socket returns *net.OpError wrapping *os.SyscallError (errno ENOENT on
+		// Linux, EINVAL on macOS), which an *os.PathError type-assert never
+		// matches — that was the hk-y49eu bug that leaked exit 1.
+		if commsIsSocketAbsent(err) || commsIsConnRefused(err) {
+			fmt.Fprintf(os.Stderr, "harmonik subscribe: daemon not running (socket %s missing or refused)\n", sockPath)
 			return 17
 		}
 		fmt.Fprintf(os.Stderr, "harmonik subscribe: dial %s: %v\n", sockPath, err)

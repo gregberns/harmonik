@@ -119,16 +119,14 @@ func smokeWriteBranchYAML(t *testing.T, harmonikDir, content string) {
 
 // --- smokeWatchSignals: subscribe request + daemon-down + state machine -----
 
-// TestSmokeWatchSignals_DaemonDownReturns17 CHARACTERIZES a bug (hk-d4y2p): a
-// MISSING daemon socket currently returns exit 1, NOT the documented exit 17
-// ("daemon not running"). Root cause: the ENOENT branch checks
+// TestSmokeWatchSignals_DaemonDownReturns17 pins the contract (hk-d4y2p): a
+// MISSING daemon socket returns exit 17 ("daemon not running"), NOT the generic
+// exit 1. Root cause of the former bug: the socket-missing branch checked
 // errors.As(err, &sysErr) for *os.PathError, but DialContext("unix", missing)
-// returns *net.OpError wrapping *os.SyscallError, so the branch never matches
-// and it falls through to the generic exit-1 path. ECONNREFUSED is handled
-// correctly (errors.Is on the whole error); socket-missing is not.
-//
-// This test pins the CURRENT (buggy) behavior so the discrepancy stays visible;
-// flip the expectation to 17 when hk-d4y2p is fixed (use errors.Is ENOENT).
+// returns *net.OpError wrapping *os.SyscallError, so the branch never matched
+// and it fell through to the generic exit-1 path. The fix routes both
+// socket-missing and ECONNREFUSED through the shared commsIsSocketAbsent /
+// commsIsConnRefused predicates (errors.Is over the whole chain).
 func TestSmokeWatchSignals_DaemonDownReturns17(t *testing.T) {
 	dir := newProjectFixture(t) // .harmonik/ exists but no daemon is listening
 	sock := filepath.Join(dir, ".harmonik", "daemon.sock")
@@ -136,11 +134,11 @@ func TestSmokeWatchSignals_DaemonDownReturns17(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, code := smokeWatchSignals(ctx, sock, dir, "main", "hk-x", &bytes.Buffer{}, &errb)
-	if code != 1 { // BUG hk-d4y2p: should be 17; pinned to actual behavior
-		t.Fatalf("exit = %d, want 1 (buggy actual; contract says 17, see hk-d4y2p); stderr=%s", code, errb.String())
+	if code != 17 {
+		t.Fatalf("exit = %d, want 17 (daemon not running, hk-d4y2p); stderr=%s", code, errb.String())
 	}
-	if !strings.Contains(errb.String(), "dial daemon socket") {
-		t.Fatalf("expected the generic dial-error path; stderr=%s", errb.String())
+	if !strings.Contains(errb.String(), "daemon not running") {
+		t.Fatalf("expected the daemon-not-running path; stderr=%s", errb.String())
 	}
 }
 

@@ -43,27 +43,24 @@ func TestSubscribe_ArgValidation_ExitCodes(t *testing.T) {
 	}
 }
 
-// TestSubscribe_SocketAbsent_NonFollow CHARACTERIZES a discovered bug (hk-y49eu):
-// the non-follow path is documented to exit 17 when the daemon socket is missing,
-// but it actually exits 1. The dial-error branch guards its ENOENT check behind
-// errors.As(err, &sysErr) for *os.PathError, whereas net.Dialer.DialContext
-// returns a *net.OpError (errors.Is(err, ENOENT) is true, but the *os.PathError
-// type-assert fails), so the missing-socket case falls through to the generic
-// exit-1 arm. The follow path (commsIsSocketAbsent) and confirm-verdict
-// (isVerdictSocketAbsent) both handle this correctly.
-//
-// This test asserts the CURRENT (buggy) behavior so the suite stays green; when
-// subscribe.go is fixed per hk-y49eu, flip both wants to 17.
+// TestSubscribe_SocketAbsent_NonFollow pins the contract (hk-y49eu): the
+// non-follow path exits 17 when the daemon socket is missing. The former bug
+// guarded its ENOENT check behind errors.As(err, &sysErr) for *os.PathError,
+// whereas net.Dialer.DialContext returns a *net.OpError (errors.Is(err, ENOENT)
+// is true, but the *os.PathError type-assert failed), so the missing-socket
+// case fell through to the generic exit-1 arm. The fix routes the dial error
+// through the shared commsIsSocketAbsent / commsIsConnRefused predicates, the
+// same idiom the follow path and confirm-verdict already use.
 func TestSubscribe_SocketAbsent_NonFollow(t *testing.T) {
 	vgSilenceStd(t)
 
 	dir := newProjectFixture(t) // .harmonik exists, but no daemon bound
-	const wantBuggy = 1         // hk-y49eu: should be 17
-	if got := runSubscribeSubcommand([]string{"--project", dir}); got != wantBuggy {
-		t.Errorf("--project with no daemon: exit %d, want %d (hk-y49eu; intended 17)", got, wantBuggy)
+	const want = 17             // hk-y49eu: daemon not running
+	if got := runSubscribeSubcommand([]string{"--project", dir}); got != want {
+		t.Errorf("--project with no daemon: exit %d, want %d (hk-y49eu; daemon not running)", got, want)
 	}
-	if got := runSubscribeSubcommand([]string{"--socket", dir + "/.harmonik/nope.sock"}); got != wantBuggy {
-		t.Errorf("--socket to missing path: exit %d, want %d (hk-y49eu; intended 17)", got, wantBuggy)
+	if got := runSubscribeSubcommand([]string{"--socket", dir + "/.harmonik/nope.sock"}); got != want {
+		t.Errorf("--socket to missing path: exit %d, want %d (hk-y49eu; daemon not running)", got, want)
 	}
 }
 

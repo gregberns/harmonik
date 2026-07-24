@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -39,8 +40,12 @@ func cleanupFlywheelSession(t *testing.T, dir string) {
 	t.Cleanup(func() {
 		// Exact-name kill only ("=" anchor defeats tmux prefix/fuzzy matching).
 		// Best-effort: an absent session (test never created one) is a no-op.
+		// context.WithoutCancel: t.Context() is CANCELED just before cleanup funcs
+		// run (Go 1.24+), so exec.CommandContext(t.Context(), …) would never start
+		// tmux and the session would leak (hk-0ouc regression). WithoutCancel keeps
+		// the kill runnable during teardown — matches supervise_reap_verb_test.go.
 		// #nosec G204 -- exact session name is derived from this test fixture directory.
-		if err := exec.CommandContext(t.Context(), "tmux", "kill-session", "-t", "="+sessionName).Run(); err != nil {
+		if err := exec.CommandContext(context.WithoutCancel(t.Context()), "tmux", "kill-session", "-t", "="+sessionName).Run(); err != nil {
 			t.Logf("cleanup tmux session %q: %v", sessionName, err)
 		}
 	})
@@ -67,7 +72,7 @@ func TestSupervise_StopReapsFlywheelSession(t *testing.T) {
 	t.Cleanup(func() {
 		// Best-effort: kill session if test didn't clean it up.
 		// #nosec G204 -- exact session name is derived from this test fixture directory.
-		if err := exec.CommandContext(t.Context(), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
+		if err := exec.CommandContext(context.WithoutCancel(t.Context()), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
 			t.Logf("cleanup tmux session %q: %v", sessionName, err)
 		}
 	})
@@ -153,7 +158,7 @@ func TestSupervise_StartRefuses_FlywheelSessionExists(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		// #nosec G204 -- exact session name is derived from this test fixture directory.
-		if err := exec.CommandContext(t.Context(), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
+		if err := exec.CommandContext(context.WithoutCancel(t.Context()), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
 			t.Logf("cleanup tmux session: %v", err)
 		}
 	})
@@ -210,7 +215,7 @@ func TestSupervise_StartDoesNotCorruptExistingSentinel(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		// #nosec G204 -- exact session name is derived from this test fixture directory.
-		if err := exec.CommandContext(t.Context(), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
+		if err := exec.CommandContext(context.WithoutCancel(t.Context()), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
 			t.Logf("cleanup tmux session: %v", err)
 		}
 	})

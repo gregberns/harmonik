@@ -342,13 +342,25 @@ type RunEnv struct {
 
 // SharedHandles is the cross-goroutine state shared by reference (ports-design
 // §3): the run registry, the local-in-flight counter, the agent-spawn semaphore,
-// the worker registry, and the review-loop-failure budget port.
+// the worker registry, the review-loop-failure budget port, and the harness/
+// substrate/hook registries the run path launches agents through. Every field is
+// a straight by-reference copy of a deps field — a registry pointer, a substrate
+// handle, the hook-session store — so reaching one through the bundle is
+// byte-identical to the pre-bundle deps access (RT18-W widening; adding a field
+// to an existing bundle is not a new seam per _plan.md §1, only a new PORT
+// INTERFACE would be).
 type SharedHandles struct {
 	RunRegistry   *RunRegistry
 	LocalInFlight *atomic.Int32
 	AgentSpawnSem chan struct{}
 	Workers       *workers.Registry
 	Budget        BudgetPort
+
+	HarnessRegistry   *handlercontract.HarnessRegistry
+	AdapterRegistry   *handlercontract.AdapterRegistry
+	HookStore         hookStoreIface
+	Substrate         handler.Substrate
+	ReviewerSubstrate handler.Substrate
 }
 
 // runPorts assembles the deps-level RunPorts bundle. Ledger/Emitter/Merge/Gate
@@ -434,5 +446,11 @@ func (deps *workLoopDeps) sharedHandles() SharedHandles {
 		AgentSpawnSem: deps.agentSpawnSem,
 		Workers:       deps.workerRegistry,
 		Budget:        deps.budgetPort(),
+
+		HarnessRegistry:   deps.harnessRegistry,
+		AdapterRegistry:   deps.adapterRegistry,
+		HookStore:         deps.hookStore,
+		Substrate:         deps.substrate,
+		ReviewerSubstrate: deps.reviewerSubstrate,
 	}
 }

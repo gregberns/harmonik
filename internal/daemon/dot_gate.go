@@ -264,6 +264,11 @@ func executeCognitionGate(
 	// which would assemble every port for one read (RT18: the clock default it
 	// once guarded now folds inside runPorts() via clockOrSystem).
 	emit := deps.emitterPort()
+	// RSM-011: the cross-goroutine handles (harness/adapter registries, the two
+	// substrates, the hook-session store) bound once for this call through the
+	// SharedHandles bundle. Byte-identical to reaching each field off deps; the
+	// RT18 signature drop replaces deps with this bundle as a parameter.
+	handles := deps.sharedHandles()
 	// Remove any stale verdict from a prior attempt. Routed through runner so a
 	// REMOTE run (runner != nil) clears the verdict on the WORKER's filesystem,
 	// not box A's (hk-9fe2).
@@ -347,7 +352,7 @@ func executeCognitionGate(
 	// all-claude run is byte-identical to pre-hk-01vs0 behaviour.
 	specBuilder := deps.launchBuilder()
 	gateInheritedHarness := dotReviewerInheritedHarnessOverride(
-		deps.harnessRegistry,
+		handles.HarnessRegistry,
 		true,               // a cognition gate is reviewer-class by construction
 		core.AgentType(""), // reviewer_harness=: never applies to a gate node
 		core.AgentType(""), // node.Harness: not a gate-path mechanism (see above)
@@ -355,9 +360,9 @@ func executeCognitionGate(
 		deps.defaultHarness,
 		string(beadID),
 	)
-	if gateInheritedHarness.Valid() && deps.harnessRegistry != nil {
+	if gateInheritedHarness.Valid() && handles.HarnessRegistry != nil {
 		specBuilder = pinnedHarnessLaunchSpecBuilder(
-			deps.harnessRegistry,
+			handles.HarnessRegistry,
 			beadRecord,
 			gateInheritedHarness,
 			emit,
@@ -384,14 +389,14 @@ func executeCognitionGate(
 	// substrate. runner (SSHRunner/remote) is preserved so a remote gate still
 	// spawns on the worker (hk-9fe2).
 	gateHarnessIsClaude := true
-	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
+	if handles.HarnessRegistry != nil {
+		if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
 			gateHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
 		}
 	}
-	gateBaseSubstrate := deps.substrate
-	if gateHarnessIsClaude && deps.reviewerSubstrate != nil {
-		gateBaseSubstrate = deps.reviewerSubstrate
+	gateBaseSubstrate := handles.Substrate
+	if gateHarnessIsClaude && handles.ReviewerSubstrate != nil {
+		gateBaseSubstrate = handles.ReviewerSubstrate
 	}
 	prs := newPerRunSubstrate(gateBaseSubstrate, deps.handlerBinary, runner)
 	runSubstrate := gateBaseSubstrate
@@ -406,12 +411,12 @@ func executeCognitionGate(
 	}
 	spec.Substrate = runSubstrate
 
-	if deps.hookStore != nil {
-		deps.hookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
+	if handles.HookStore != nil {
+		handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
 	tap, tapCh := newPerRunEventTap(emit, runID)
-	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
+	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 	// hk-goczd: emit the CHB-018 pre-exec messages before Launch, holding back
 	// launch_initiated for after the window is live — same false-positive
@@ -433,7 +438,7 @@ func executeCognitionGate(
 	// hk-01vs0: the cognition gate is claude-pinned, so the agent type is
 	// hardcoded and there is no completionMode to resolve — the gate never runs a
 	// ProcessExit harness, hence cfg.SkipReadyHandshake stays false.
-	adapter, adapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+	adapter, adapterErr := handles.AdapterRegistry.ForAgent(core.AgentTypeClaudeCode)
 	if adapterErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: dot: gate: ForAgent(claude-code) node %q: %v (skipping ready-wait)\n",
 			node.ID, adapterErr)
@@ -470,8 +475,8 @@ func executeCognitionGate(
 			return nil, nil
 		},
 		onLaunchFailed: func(context.Context, error) {
-			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
+			if handles.HookStore != nil {
+				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
 		},
 		onLaunched: func(lctx context.Context) {
@@ -492,9 +497,9 @@ func executeCognitionGate(
 				handler.HeartbeatInterval, gateHBDone,
 				newDaemonHeartbeatEmitter(tap, runID))
 
-			if deps.hookStore != nil {
+			if handles.HookStore != nil {
 				capturedTap := tap
-				deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+				handles.HookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 					_ = capturedTap.Emit(context.Background(), core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
 				})
 			}
@@ -519,8 +524,8 @@ func executeCognitionGate(
 			// The gate's reap Wait is deliberately UNBOUNDED — it does not carry
 			// workloop.go's hk-4hso5 bounded context; adding one would be a logic change.
 			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)
-			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
+			if handles.HookStore != nil {
+				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
 		},
 		emitReadyTimeout: func(ectx context.Context) {
@@ -567,15 +572,15 @@ func executeCognitionGate(
 	// Working / Exited / Aborted: fall through — the pre-RT14 posture for
 	// agent_ready-observed, watcher-exit-first, and ctx-cancel.
 
-	_, _ = waitWithSocketGrace(ctx, deps.clockOrSystem(), deps.hookStore, watcher, sess,
+	_, _ = waitWithSocketGrace(ctx, deps.clockOrSystem(), handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {
 		_ = sess.Kill(context.Background())
 	}
 
-	if deps.hookStore != nil {
-		deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
+	if handles.HookStore != nil {
+		handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
 	if ctx.Err() != nil {

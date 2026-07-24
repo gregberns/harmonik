@@ -3205,8 +3205,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 	// Propagate to RunHandle so StaleWatcher can read the attribution without
 	// its own br calls.
 	if handle, ok := handles.RunRegistry.Get(runID); ok {
-		handle.OwningEpicID = owningEpicID
-		handle.OwningEpicAssignee = owningEpicAssignee
+		handle.SetOwningEpic(owningEpicID, owningEpicAssignee)
 	}
 
 	// sdStartedAt, sdModel, sdHarness are captured by the run-terminal effector
@@ -3563,7 +3562,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 			// hk-4tjt6: mirror the Remote flag update so LenForQueueLocal
 			// stops counting this run against the per-queue local cap.
 			if h, ok := handles.RunRegistry.Get(runID); ok {
-				h.Remote.Store(true)
+				h.SetRemote(true)
 			}
 		}
 	}
@@ -5075,7 +5074,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 	// check in the no-commit path (line ~3441) which leaves the item 'dispatched'
 	// for QM-002a recovery.
 	if ctx.Err() != nil {
-		if handle, ok := handles.RunRegistry.Get(runID); ok && handle.aborted.Load() {
+		if handle, ok := handles.RunRegistry.Get(runID); ok && handle.Aborted() {
 			// RT7 / RSM-031 row 1b: the never-spawned-reaper abort is the Aborted
 			// dispatch-terminal class; its reason rides the mode-failure event
 			// (reopen + run_failed via the spine, Background ctx per RSM-022).

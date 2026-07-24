@@ -29,6 +29,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
@@ -289,6 +290,71 @@ func (deps *workLoopDeps) budgetPort() BudgetPort {
 	return daemonBudget{deps: deps}
 }
 
+// RunHandlePort is the consumer-defined surface the run path uses to update the
+// live RunHandle for its OWN run_id (LIFT crit 4). The run path reaches a handle
+// only through RunRegistryPort.Get and performs exactly these six run-scoped
+// operations; narrowing to this interface means the run path names neither the daemon
+// *RunHandle type nor its unexported `aborted` field, so it can compile in a
+// future package runloop without importing daemon. *RunHandle is the production
+// adapter (structural satisfaction) — see the var _ assertion below.
+type RunHandlePort interface {
+	// SetOwningEpic stamps the resolved parent-epic attribution onto the handle
+	// (plain field writes, byte-identical to the pre-port assignment).
+	SetOwningEpic(id, assignee string)
+	// SetResolvedProvider records the resolved Pi provider identity (per-provider
+	// slot accounting).
+	SetResolvedProvider(provider string)
+	// SetRemote marks the run as routed to a remote worker so LenForQueueLocal
+	// stops counting it against the per-queue local cap (hk-4tjt6).
+	SetRemote(remote bool)
+	// SetAgentType records the resolved agent type once the launch-spec builder
+	// resolves the harness (PI-073).
+	SetAgentType(at core.AgentType)
+	// SetMachine attaches the per-session lifecycle FSM after a successful
+	// handler.Launch (HC-064..HC-067).
+	SetMachine(m *hclifecycle.Machine)
+	// Aborted reports whether the never-spawned reaper marked this run aborted
+	// before cancelling its context (hk-0z5x). Maps to aborted.Load() — the
+	// accessor that lifts the daemon-private `aborted` field across the port.
+	Aborted() bool
+}
+
+// RunRegistryPort is the consumer-defined run-registry surface of the run path
+// (LIFT crit 4). The run path looks up ONLY its own run's handle, and only to
+// mutate it via RunHandlePort — so a single Get is the whole registry surface the
+// run path needs. Returning RunHandlePort (not the concrete *RunHandle) is what
+// actually breaks the run path's dependency on the daemon handle type: a bare Get
+// returning *RunHandle would drag daemon internals (incl. the unexported
+// `aborted` field) across the boundary and silently defeat the LIFT (concern #2).
+// daemonRunRegistry is the production adapter over the shared *RunRegistry.
+type RunRegistryPort interface {
+	Get(runID core.RunID) (RunHandlePort, bool)
+}
+
+// daemonRunRegistry is the production RunRegistryPort adapter over the shared
+// *RunRegistry. A wrapper is required (rather than *RunRegistry satisfying the
+// port directly) because Get's return type is narrowed from *RunHandle to
+// RunHandlePort, and Go interface satisfaction is invariant in return types. It
+// collapses a miss (and a defensive nil handle) to (nil, false) so the returned
+// interface is never a typed-nil pointer — the run path's `ok && rh != nil`
+// guards stay correct.
+type daemonRunRegistry struct {
+	reg *RunRegistry
+}
+
+func (a daemonRunRegistry) Get(runID core.RunID) (RunHandlePort, bool) {
+	h, ok := a.reg.Get(runID)
+	if !ok || h == nil {
+		return nil, false
+	}
+	return h, true
+}
+
+var (
+	_ RunHandlePort   = (*RunHandle)(nil)
+	_ RunRegistryPort = daemonRunRegistry{}
+)
+
 // RunPorts is the behavioral-dependency bundle of the run shell (ports-design
 // §1). Narrow, structural. beadRunOne and the reviewloop/dot helpers reach their
 // daemon dependencies through this bundle rather than the raw workLoopDeps.
@@ -368,7 +434,7 @@ type RunEnv struct {
 // to an existing bundle is not a new seam per _plan.md §1, only a new PORT
 // INTERFACE would be).
 type SharedHandles struct {
-	RunRegistry   *RunRegistry
+	RunRegistry   RunRegistryPort
 	LocalInFlight *atomic.Int32
 	AgentSpawnSem chan struct{}
 	Workers       *workers.Registry
@@ -492,7 +558,7 @@ func (deps *workLoopDeps) runEnv(
 // monotonicity (EM-018a) is preserved.
 func (deps *workLoopDeps) sharedHandles() SharedHandles {
 	return SharedHandles{
-		RunRegistry:   deps.runRegistry,
+		RunRegistry:   daemonRunRegistry{reg: deps.runRegistry},
 		LocalInFlight: deps.localInFlight,
 		AgentSpawnSem: deps.agentSpawnSem,
 		Workers:       deps.workerRegistry,

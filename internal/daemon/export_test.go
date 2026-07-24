@@ -29,13 +29,6 @@ func ExportedWorkLoopDefaultHarness(deps workLoopDeps) core.AgentType {
 	return deps.defaultHarness
 }
 
-// ExportedNewRunRegistry creates a fresh RunRegistry for tests.
-//
-// Bead ref: hk-guez.
-func ExportedNewRunRegistry() *RunRegistry {
-	return NewRunRegistry()
-}
-
 // WorkflowModeDefaultOf returns the workflowModeDefault field from deps.
 // This is the test-seam accessor for the claim path (T-WM-009) to observe
 // the cached daemon-level default without exporting workLoopDeps itself.
@@ -225,12 +218,6 @@ func ExportedBeadNeverSpawnedTimeout(labels []string, defaultTimeout time.Durati
 	return beadNeverSpawnedTimeout(labels, defaultTimeout)
 }
 
-// ExportedRunHandleIsAborted returns true if the RunHandle's aborted flag is set.
-// Used by the never-spawned reaper tests (hk-0z5x).
-func ExportedRunHandleIsAborted(h *RunHandle) bool {
-	return h.aborted.Load()
-}
-
 // ExportedStalewatchObserve invokes the StaleWatcher's observe callback directly
 // with the given event. The watcher's configured Now() function is used as the
 // timestamp, so tests must set an appropriate clock before calling this.
@@ -277,13 +264,6 @@ func ExportedNewDaemonHeartbeatEmitter(bus handlercontract.EventEmitter, runID c
 // ─────────────────────────────────────────────────────────────────────────────
 
 // (duplicate buildClaudeLaunchSpec stubs removed — canonical declarations above at lines ~295-356)
-
-// ExportedRunRegistryRegister registers a handle under runID for tests (NQ-X1).
-//
-// Bead ref: hk-tigaf.11.
-func ExportedRunRegistryRegister(r *RunRegistry, runID core.RunID, handle *RunHandle) {
-	r.Register(runID, handle)
-}
 
 // ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package
 // daemon_test.  Returns the briefDelivered channel (hk-930o3).
@@ -408,46 +388,6 @@ var ExportedLivePaneCommandSubstrings = &livePaneCommandSubstrings
 // ExportedNewBRQueueLedger, along with the bridge and its only caller (P2 E3a).
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-run event-tap fan-out test seams (hk-37giq)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedPerRunEventTap is the exported alias for the per-run fan-out event
-// tap so the competing-consumer race regression test can construct one and
-// register multiple independent subscribers (hk-37giq).
-type ExportedPerRunEventTap = perRunEventTap
-
-// noopExportedEmitter is a no-op handlercontract.EventEmitter used as the tap's
-// underlying bus in the fan-out regression test: it discards all emits so the
-// test exercises ONLY the per-subscriber fan-out behaviour.
-type noopExportedEmitter struct{}
-
-func (noopExportedEmitter) Emit(context.Context, core.EventType, []byte) error { return nil }
-func (noopExportedEmitter) EmitWithRunID(context.Context, core.RunID, core.EventType, []byte) error {
-	return nil
-}
-
-// ExportedNewPerRunEventTap constructs a perRunEventTap backed by a no-op
-// underlying emitter and returns the tap plus its initial subscriber channel
-// (the same channel newChanAgentEventSource/waitAgentReady consumes in
-// production). Additional independent subscribers are obtained via
-// tap.ExportedSubscribe (hk-37giq).
-func ExportedNewPerRunEventTap(runID core.RunID) (tap *ExportedPerRunEventTap, events <-chan core.EventEnvelope) {
-	return newPerRunEventTap(noopExportedEmitter{}, runID)
-}
-
-// ExportedSubscribe registers and returns a new independent subscriber channel
-// on the tap (hk-37giq).
-func (t *ExportedPerRunEventTap) ExportedSubscribe() <-chan core.EventEnvelope {
-	return t.Subscribe()
-}
-
-// ExportedEmit fans an event of eventType out to every subscriber via the tap's
-// production Emit path (hk-37giq).
-func (t *ExportedPerRunEventTap) ExportedEmit(ctx context.Context, eventType core.EventType) error {
-	return t.Emit(ctx, eventType, nil)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // srt argv-wrap test seams (hk-rlxgx)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -492,14 +432,4 @@ func (lb *LiveStateBuilder) BuildCognitionForTest(agent, liveSID, declaredSID st
 // (hk-r9edj) can be exercised directly without driving the full workloop.
 func ExportedStrandedBeadHasOnDiskRun(projectDir string, beadID core.BeadID) bool {
 	return strandedBeadHasOnDiskRun(projectDir, beadID)
-}
-
-// ExportedNewCapturedSpawnProof exposes newCapturedSpawnProof (hk-47u9z) so the
-// regression test drives the PRODUCTION spawn-proof closure rather than a
-// restatement of it. A test that rebuilds the closure itself passes with the
-// production wiring reverted — verified, and it is how the first draft of the
-// hk-47u9z test was a false green.
-func ExportedNewCapturedSpawnProof(ctx context.Context, emitter handlercontract.EventEmitter, runID core.RunID) func() {
-	tap, _ := newPerRunEventTap(emitter, runID)
-	return newCapturedSpawnProof(ctx, tap, runID)
 }

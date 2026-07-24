@@ -22,7 +22,9 @@ import (
 	"fmt"
 	"os"
 	"sync/atomic"
+	"time"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -325,6 +327,21 @@ type RunEnv struct {
 	DefaultHarness      core.AgentType
 	ProjectCfg          ProjectConfig
 
+	// Immutable daemon-level launch/handler config, straight copies of the
+	// same-named workLoopDeps fields (RT18-W). Populated in runEnv(); the run
+	// path reads them here after the RT18 signature drop replaces deps with env.
+	HandlerBinary             string
+	HandlerArgs               []string
+	HandlerEnv                []string
+	DaemonBinaryPath          string
+	IntentLogDir              string
+	AgentReadyTimeout         time.Duration
+	RemoteAgentReadyTimeout   time.Duration
+	PostAgentReadyHangTimeout time.Duration
+	CodexNoWorkDurationFloor  time.Duration
+	SandboxCfg                SandboxConfig
+	BrTimeoutCfg              brcli.TimeoutConfig
+
 	RunID      core.RunID
 	BeadRecord core.BeadRecord
 
@@ -412,6 +429,18 @@ func (deps *workLoopDeps) runEnv(
 		WorkflowModeDefault: deps.workflowModeDefault,
 		DefaultHarness:      deps.defaultHarness,
 		ProjectCfg:          deps.projectCfg,
+
+		HandlerBinary:             deps.handlerBinary,
+		HandlerArgs:               deps.handlerArgs,
+		HandlerEnv:                deps.handlerEnv,
+		DaemonBinaryPath:          deps.daemonBinaryPath,
+		IntentLogDir:              deps.intentLogDir,
+		AgentReadyTimeout:         deps.agentReadyTimeout,
+		RemoteAgentReadyTimeout:   deps.remoteAgentReadyTimeout,
+		PostAgentReadyHangTimeout: deps.postAgentReadyHangTimeout,
+		CodexNoWorkDurationFloor:  deps.codexNoWorkDurationFloor,
+		SandboxCfg:                deps.sandboxCfg,
+		BrTimeoutCfg:              deps.brTimeoutCfg,
 
 		RunID:      runID,
 		BeadRecord: beadRecord,

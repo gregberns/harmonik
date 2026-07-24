@@ -3340,7 +3340,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 	if profErr != nil {
 		reopenTID, _ := handles.TIDGen.Next()
 		fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, profErr)
-		_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg,
+		_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 			runID, reopenTID, beadID, profErr.Error())
 		return
 	}
@@ -3397,7 +3397,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 			crErr := &CrossRepoUnsafeError{TargetRepo: earlyBrCfg.TargetRepo, ProjectDir: env.ProjectDir}
 			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, crErr)
 			reopenTID, _ := handles.TIDGen.Next()
-			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID,
+			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 				crErr.Error())
 			return
 		}
@@ -3430,7 +3430,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 	if headErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: resolveParentCommit for bead %s: %v (reopening)\n", beadID, headErr)
 		reopenTID, _ := handles.TIDGen.Next()
-		_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID,
+		_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 			fmt.Sprintf("resolve start_from failed: %v", headErr))
 		return
 	}
@@ -3460,7 +3460,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 					protErr := &LandsOnProtectedError{LandsOn: baseBranch}
 					fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, protErr)
 					reopenTID, _ := handles.TIDGen.Next()
-					_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID,
+					_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 						protErr.Error())
 					return
 				}
@@ -3630,7 +3630,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
 				rbc.worker.Name, rbc.worker.Host, daemonHookSock, lenErr.Error(), emit.Emit)
 			reopenTID, _ := handles.TIDGen.Next()
-			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID,
+			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 				fmt.Sprintf("reverse-tunnel not ready: %v", lenErr))
 			return
 		}
@@ -3681,7 +3681,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
 				rbc.worker.Name, rbc.worker.Host, rbc.workerHookSock, waitErr.Error(), emit.Emit)
 			reopenTID, _ := handles.TIDGen.Next()
-			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID,
+			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 				fmt.Sprintf("reverse-tunnel not ready: %v", waitErr))
 			return
 		}

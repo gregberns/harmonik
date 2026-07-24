@@ -800,7 +800,7 @@ type ReviewLoopResultExported struct {
 // that used to live inside beadRunOne) and invokes beadRunOne, so a test that
 // constructs a workLoopDeps + RunEnv drives a single bead run exactly as
 // production does.
-func runBeadOneTest(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool {
+func runBeadOneTest(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool { //nolint:unparam // mirrors beadRunOne's parameter list for parity; current callers all pass "" for extraContext
 	rp, handles := deps.buildRunBundles(env)
 	return beadRunOne(ctx, env, rp, handles, extraContext, preSelected, localSlotHeld)
 }

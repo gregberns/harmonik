@@ -43,7 +43,7 @@ Status derives from the **reconciled** verdict in each `E*.md`, not the optimist
 | `E3b` | `dispatchsegment` + `perqueuespendmeter` | prep slice (RunRegistry closure port) | after E3a |
 | `E2b` | `crewstart.go` handler | prep slice `E2-P` **+ operator waiver of the no-new-seam rule** | BLOCKED |
 | `E5-RT14` | **retire the open-coded agent_ready wait** — both remaining sites bind onto the pre-existing `dispatchSegment` seam | **nothing.** Explicitly NOT gated on E1/E4: the converted regions call no `reversetunnel.go` symbol and no harness symbol that has not already moved | **LANDED** (`229e6e91` · `cb89e35e` · `7d448afb`) |
-| `E5` RT15→RT19 + lift | the run machine | E1a+E1b+E1c+E4 all landed | not staffable yet |
+| `E5` RT15→RT19 + lift | the run machine | E1a+E1b+E1c+E4 all landed | **PREREQUISITE MET — RT15+RT16 LANDED; RT17 is NEXT (plan being written 2026-07-23). NOT "not staffable" any more.** |
 | `E5-RT19c` | clock-port the Working-phase watchdogs (32 raw wall-clock sites — the 30 measured plus two `time.Since` the inventory grep missed) | nothing hard; was **cheaper after RT15** (the ports bundle makes threading a clock nearly free) | **LANDED** (`f839121ff`) |
 
 ---
@@ -86,7 +86,8 @@ rejection). Do not start E2b on an assumed answer. See [E2-crew.md](E2-crew.md).
     E2b (BLOCKED on E2-P + operator waiver)
 
   last:
-    E5  RT14 LANDED (needed nothing); RT15→RT19 then the lift [needs E1a+E1b+E1c+E4]
+    E5  RT14/RT15/RT16 LANDED; RT17 NEXT (plan being written 2026-07-23); RT18/RT19 then the lift
+        [prerequisite E1a+E1b+E1c+E4 is MET — this is no longer gated]
     E5  RT19c (Working-phase watchdogs) LANDED (needed nothing)
     E6  PARKED
 ```

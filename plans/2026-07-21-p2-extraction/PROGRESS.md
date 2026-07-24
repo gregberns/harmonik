@@ -1,8 +1,13 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-23 — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c + **RT16** landed.
-The concurrent quality lane's working tree is fully drained to disk (§8).
+**Last updated:** 2026-07-23 (alpha session) — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c + **RT16** landed.
+QUALITY LANE this session (all reviewed, landed): hk-8dtiv Close-errcheck FLIP + prose reconcile (`f1f96c99`);
+`make check-report` quiet reporter (`1dd76236`); 137 dead `//nolint` removed (`96cd0b99`); **cmd/harmonik
+coverage drain 45.8%→58.4% across chunks A–I** (`0f9ca8c8`,`9b43ad31`,`73cad9b8`,`e7588d47`,`18c80cf6`).
+**RT17 executable plan is being produced by an ultrawork Workflow (run `wf_5d3b4b8c-52c`) — see HANDOFF-alpha.md.**
+Defects filed this session (machine-local): hk-u4ly0, hk-z646k (real coverage-gate regression, confirmed),
+hk-peoac, hk-y49eu + hk-d4y2p (same exit-1-not-17 socket-absent bug class in subscribe & smoke).
 
 > ## ⚠️ We nearly collided at 08:00 — read this
 >
@@ -45,7 +50,7 @@ plans, then began landing them one commit at a time.
 | **3. Execute (P2 core)** | 9 slices, sequential | **DONE — 9/9, every verify `is_pure_move: true`** |
 | **4. Punch list** | verifier findings applied | **DONE** — `ffc5415a` |
 | **5. Differential verification** | clean before/after pair, identical scope | **DONE — no regression** (see below) |
-| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, RT19c, **RT16** landed; RT17/18/19/lift planned | **IN PROGRESS** |
+| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, RT19c, **RT16** landed; **RT17 plan being written via ultrawork (`wf_5d3b4b8c-52c`)**; RT18/19/lift after | **IN PROGRESS — RT17 is next** |
 | **7. E4d re-plan** | overturned "impossible"; 3 prep slices ready, E4d-3 parked | **DONE** |
 
 ### Verification verdict (Phase 5)
@@ -146,8 +151,12 @@ possible — every slice touches the first one.
 
 These are all outside P2's scope as planned, and I am not touching them:
 
-- **`cmd/harmonik`** — the audit's §4 gap 1, and I agree it is the largest hole. 26,830 non-test LOC,
-  952 findings, no coverage gate. No P2 unit owns it. Entirely yours.
+- ~~**`cmd/harmonik`** — the audit's §4 gap 1, the largest hole~~ **[DONE 2026-07-23 alpha]** — a
+  coverage gate already existed (`scripts/cmd-coverage-gate.sh`, `42010150d`); this session drove
+  cmd/harmonik **45.8%→58.4%** via the 9-chunk plan in `cmd-coverage-drain-plan.md` (chunks A–I landed).
+  Remaining to reach the proposed 70% floor: the process-spawn verbs (crew/captain/supervise start,
+  smoke run) that need a live daemon/tmux, plus adding the absolute-floor arm to the gate. NOTE the real
+  coverage-gate regression `hk-z646k` (digest/supervise below baseline) — chunk I repaired the digest half.
 - **`internal/codexwire`, `internal/keeper`, `internal/lifecycle`, `internal/workspace`,
   `internal/eventbus`** — audit gaps 2–6. Referenced by P2 documents, owned by no P2 unit.
 - **The small dense packages** — `agentmanifest`, `cmd/harmonik/supervise`, `queue/cli`,

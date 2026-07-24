@@ -94,6 +94,19 @@ func (deps *workLoopDeps) launchBuilder() func(context.Context, shared.LaunchCtx
 	return deps.launchSpecBuilder
 }
 
+// clockOrSystem returns the run shell's ClockPort, folding a nil field to the
+// production SystemClock at the READ site. Struct-literal test deps that predate
+// the clock field leave it nil; newWorkLoopDeps wires SystemClock in prod. Unlike
+// the deleted `if deps.clock == nil { deps.clock = substrate.SystemClock{} }`
+// copy-mutation, this NEVER writes the field — it is a pure read. The
+// default-folding analog of emitterPort() (RT18).
+func (deps *workLoopDeps) clockOrSystem() substrate.ClockPort {
+	if deps.clock != nil {
+		return deps.clock
+	}
+	return substrate.SystemClock{}
+}
+
 // MergePort is the merge exclusion-domain surface of the run path (RSM-015). It
 // exposes the strictly-FIFO single-owner submit entry point that serialises the
 // commit-phase merge, the post-merge escaped-worktree check, and the remote
@@ -348,7 +361,7 @@ func (deps *workLoopDeps) runPorts() RunPorts {
 		Emitter: deps.emitterPort(),
 		Merge:   deps.mergePort(),
 		Gate:    deps.gatePort(),
-		Clock:   deps.clock,
+		Clock:   deps.clockOrSystem(),
 	}
 }
 

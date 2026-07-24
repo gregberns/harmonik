@@ -3099,12 +3099,6 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 //
 //nolint:funlen,gocognit,cyclop // pre-existing: beadRunOne is the run-path giant the RT ports stream (RT15-RT20) exists to decompose; the signature change re-anchors the grandfathered findings and splitting the body here would defeat the behaviour-preserving property of the slice
 func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
-	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
-	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
-	// deps is by-value, so this default propagates to every downstream site.
-	if deps.clock == nil {
-		deps.clock = substrate.SystemClock{}
-	}
 	// RSM-010: the run-lifecycle port bundle for this run. Reaching a dependency
 	// through rp.<Port> is byte-identical to the pre-port deps field access.
 	rp := deps.runPorts()
@@ -3188,7 +3182,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// sdStartedAt, sdModel, sdHarness are captured by the run-terminal effector
 	// for the sessiondata.Collect goroutine. They are assigned after their
 	// respective resolutions below (ResolveModelPreference, implHarnessWL).
-	sdStartedAt := deps.clock.Now()
+	sdStartedAt := deps.clockOrSystem().Now()
 	var sdModel, sdHarness string
 
 	// emitRunTerminalEff is the ActEmitRunTerminal effector binding (RT9,
@@ -3213,7 +3207,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 		// Fire sessiondata.Collect off the hot path (hk-eval-prog-sessiondata-hook-vmxrk).
 		// Best-effort: errors are silently discarded — a missed record is preferable
 		// to a panicking goroutine that could affect the daemon.
-		sdEndedAt := deps.clock.Now()
+		sdEndedAt := deps.clockOrSystem().Now()
 		sdQID := ""
 		if queueID != nil {
 			sdQID = *queueID
@@ -4404,7 +4398,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 					GroupIndex:    queueGroupIdx,
 					ItemIndex:     queueItemIndex,
 					SessionName:   sessName,
-					StartedAt:     deps.clock.Now(),
+					StartedAt:     deps.clockOrSystem().Now(),
 				}); writeErr != nil {
 					// Registry write failed: fall back to shared-session path (no survive-restart).
 					fmt.Fprintf(os.Stderr, "daemon: workloop: run registry write failed for %s: %v (using shared session)\n", runID.String(), writeErr)
@@ -4645,7 +4639,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// the terminal spine rides the machine.
 	bridge.start(ctx, workflowMode)
 
-	implementerLaunchedAt := deps.clock.Now()
+	implementerLaunchedAt := deps.clockOrSystem().Now()
 	// D2 (fail-closed): inspect the final spawn environment at the launch
 	// boundary, after every spec mutation, and refuse live Anthropic credentials
 	// on remote workers (the 2026-05-30 credential-leak incident).
@@ -4693,7 +4687,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	var noChangeTimeoutCh chan struct{}
 
 	implSeg := &dispatchSegment{
-		clock: deps.clock,
+		clock: deps.clockOrSystem(),
 		runID: runID,
 		cfg: runexec.DispatchConfig{
 			SkipReadyHandshake: completionMode == handlercontract.CompletionProcessExit,
@@ -4731,14 +4725,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 			// saturated) instead of an opaque launch-error reopen.
 			if errors.Is(lErr, ErrSpawnCapTimeout) {
 				inUse, capSize := substrateSpawnStats(deps.substrate)
-				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clock.Since(implementerLaunchedAt), inUse, capSize)
+				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clockOrSystem().Since(implementerLaunchedAt), inUse, capSize)
 			}
 			// hk-r1rup: a tmux-new-window-timeout launch failure is the hung-tmux
 			// signature (the no-spawn wedge). Emit tmux_new_window_timeout so operators
 			// see WHY the launch failed (tmux new-window did not return) instead of an
 			// opaque launch-error reopen.
 			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
-				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, deps.clock.Since(implementerLaunchedAt))
+				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, deps.clockOrSystem().Since(implementerLaunchedAt))
 			}
 		},
 		onLaunched: func(lctx context.Context) {
@@ -4851,7 +4845,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				//
 				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 				// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
-				briefDelivered := pasteInjectOnLaunch(dctx, deps.clock, runPasteTarget, artifacts.ClaudeSessionID,
+				briefDelivered := pasteInjectOnLaunch(dctx, deps.clockOrSystem(), runPasteTarget, artifacts.ClaudeSessionID,
 					rc.Phase, rc.IterationCount, wtPath,
 					emit, runID)
 
@@ -4898,7 +4892,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				if qs, ok := runPasteTarget.(quitSender); ok {
 					noChangeTimeoutCh = make(chan struct{})
 					watchdogCh := tap.Subscribe()
-					go pasteInjectQuitOnCommit(ctx, deps.clock, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, emit, runID)
+					go pasteInjectQuitOnCommit(ctx, deps.clockOrSystem(), qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, emit, runID)
 				}
 			}
 		},
@@ -4918,7 +4912,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				// Bead ref: hk-do7te.
 				select {
 				case <-watcher.Done():
-				case <-substrate.After(deps.clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+				case <-substrate.After(deps.clockOrSystem(), runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 					fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
 						beadID, runID.String())
 				}
@@ -5059,7 +5053,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
 	// apply the stop-hook grace window for a pending outcome_emitted payload.
-	socketOutcome, ei := waitWithSocketGrace(ctx, deps.clock, deps.hookStore, watcher, sess,
+	socketOutcome, ei := waitWithSocketGrace(ctx, deps.clockOrSystem(), deps.hookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	// hk-0z5x: per-run abort check — fired when the never-spawned reaper in
@@ -5117,7 +5111,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// no-work detector below, so the event's duration_seconds and the detector's
 	// verdict are computed from the same measurement — a reader correlating the
 	// two can never see them disagree.
-	implementerPhaseDur := deps.clock.Since(implementerLaunchedAt)
+	implementerPhaseDur := deps.clockOrSystem().Since(implementerLaunchedAt)
 	{
 		curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA

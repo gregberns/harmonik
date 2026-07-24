@@ -81,7 +81,7 @@ func newRunBridge(deps workLoopDeps, rp RunPorts, runID core.RunID, beadID core.
 		beadID: beadID,
 		m:      runexec.NewRun(runBridgeConfig(mode)),
 	}
-	b.sh = newRunShell(deps.clock, runEffectors{
+	b.sh = newRunShell(deps.clockOrSystem(), runEffectors{
 		reopenBead: b.reopenBead,
 		emitRunTerminal: func(c context.Context, success bool, summary string) {
 			emitRunTerminal(c, success, summary, b.draining)
@@ -139,7 +139,7 @@ func (b *runBridge) emit(c context.Context, typ core.EventType, detail string) {
 // call (the spine is fully synchronous port I/O).
 func (b *runBridge) feed(ctx context.Context, ev runexec.Event) {
 	if ev.At.IsZero() {
-		ev.At = b.deps.clock.Now()
+		ev.At = b.deps.clockOrSystem().Now()
 	}
 	b.sh.feed(ctx, b.m, ev)
 	for b.m.InFlight() && b.sh.drainPending(ctx, b.m) {

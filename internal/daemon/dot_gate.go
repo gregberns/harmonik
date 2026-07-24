@@ -259,20 +259,10 @@ func executeCognitionGate(
 	workerSessionName string,
 	workerSessionCwd string,
 ) (*core.GateDecisionPayload, error) {
-	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
-	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
-	// deps is by-value, so this default propagates to every downstream site.
-	// RT14: this site needs it because the dispatch segment is ClockPort-timed,
-	// where the open-coded ready wait it replaces used a raw time.After. The
-	// three other segment consumers (reviewloop.go, dot_cascade.go ×2) already
-	// carry the identical backstop; this is the last one.
-	if deps.clock == nil {
-		deps.clock = substrate.SystemClock{}
-	}
 	// RSM-010: the run's EmitterPort, bound once for this call. Deliberately the
-	// NARROW emitterPort accessor (runports.go) and not the runPorts() bundle,
-	// which also reads the clock port — the default set just above must not be
-	// bypassed by an earlier bundle read.
+	// NARROW emitterPort accessor (runports.go) rather than the runPorts() bundle,
+	// which would assemble every port for one read (RT18: the clock default it
+	// once guarded now folds inside runPorts() via clockOrSystem).
 	emit := deps.emitterPort()
 	// Remove any stale verdict from a prior attempt. Routed through runner so a
 	// REMOTE run (runner != nil) clears the verdict on the WORKER's filesystem,
@@ -451,7 +441,7 @@ func executeCognitionGate(
 	}
 
 	gateSeg := &dispatchSegment{
-		clock: deps.clock,
+		clock: deps.clockOrSystem(),
 		runID: runID,
 		cfg: runexec.DispatchConfig{
 			SkipReadyHandshake: false,
@@ -511,9 +501,9 @@ func executeCognitionGate(
 		},
 		deliver: func(dctx context.Context) {
 			// Deliver gate-evaluator kick-off message and watch for verdict file.
-			briefDelivered := pasteInjectCognitionGate(dctx, deps.clock, pasteTarget, artifacts.ClaudeSessionID, wtPath, emit, runID)
+			briefDelivered := pasteInjectCognitionGate(dctx, deps.clockOrSystem(), pasteTarget, artifacts.ClaudeSessionID, wtPath, emit, runID)
 			if qs, ok := pasteTarget.(quitSender); ok {
-				go pasteInjectQuitOnGateFile(ctx, deps.clock, runner, qs, sess, wtPath, briefDelivered)
+				go pasteInjectQuitOnGateFile(ctx, deps.clockOrSystem(), runner, qs, sess, wtPath, briefDelivered)
 			}
 		},
 		killReady: func(kctx context.Context) {
@@ -523,7 +513,7 @@ func executeCognitionGate(
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
-				case <-substrate.After(deps.clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+				case <-substrate.After(deps.clockOrSystem(), runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 				}
 			}
 			// The gate's reap Wait is deliberately UNBOUNDED — it does not carry
@@ -577,7 +567,7 @@ func executeCognitionGate(
 	// Working / Exited / Aborted: fall through — the pre-RT14 posture for
 	// agent_ready-observed, watcher-exit-first, and ctx-cancel.
 
-	_, _ = waitWithSocketGrace(ctx, deps.clock, deps.hookStore, watcher, sess,
+	_, _ = waitWithSocketGrace(ctx, deps.clockOrSystem(), deps.hookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {

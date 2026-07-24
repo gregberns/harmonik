@@ -214,16 +214,10 @@ func driveDotWorkflow(
 	workerSessionName string,
 	workerSessionCwd string,
 ) dotWorkflowResult {
-	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
-	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
-	// deps is by-value, so this default propagates to every downstream site.
-	if deps.clock == nil {
-		deps.clock = substrate.SystemClock{}
-	}
 	// RSM-010: the run's EmitterPort, bound once for this call. Deliberately the
-	// NARROW emitterPort accessor (runports.go) and not the runPorts() bundle,
-	// which also reads the clock port — the default set just above must not be
-	// bypassed by an earlier bundle read.
+	// NARROW emitterPort accessor (runports.go) rather than the runPorts() bundle,
+	// which would assemble every port for one read (RT18: the clock default it
+	// once guarded now folds inside runPorts() via clockOrSystem).
 	emit := deps.emitterPort()
 	// hk-538l: for a REMOTE run rewrite the hook socket to the worker-side reverse-
 	// tunnel TCP endpoint so the worker's claude can reach the relay; box A's local
@@ -252,7 +246,7 @@ func driveDotWorkflow(
 		WorkflowMode:    core.WorkflowModeDot,
 		State:           core.StateID(uuid.New()),
 		Context:         map[string]any{},
-		StartTime:       deps.clock.Now(),
+		StartTime:       deps.clockOrSystem().Now(),
 	}
 	if beadID != "" {
 		b := beadID
@@ -435,7 +429,7 @@ func driveDotWorkflow(
 
 		// Emit node_dispatch_requested (O-class observability) before handling the
 		// node, per event-model.md §8.1.11.
-		emitNodeDispatchRequested(ctx, emit, deps.clock, runID, core.NodeID(currentNodeID))
+		emitNodeDispatchRequested(ctx, emit, deps.clockOrSystem(), runID, core.NodeID(currentNodeID))
 
 		var outcome core.Outcome
 
@@ -1260,15 +1254,10 @@ func dispatchDotAgenticNode(
 	// non-terminal slots are occupied.
 	isTerminalSpawn bool,
 ) (core.Outcome, error) {
-	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
-	// deps (also reachable via sub_workflow_runner.go); prod wires SystemClock.
-	if deps.clock == nil {
-		deps.clock = substrate.SystemClock{}
-	}
 	// RSM-010: the run's EmitterPort, bound once for this call. Deliberately the
-	// NARROW emitterPort accessor (runports.go) and not the runPorts() bundle,
-	// which also reads the clock port — the default set just above must not be
-	// bypassed by an earlier bundle read.
+	// NARROW emitterPort accessor (runports.go) rather than the runPorts() bundle,
+	// which would assemble every port for one read (RT18: the clock default it
+	// once guarded now folds inside runPorts() via clockOrSystem).
 	emit := deps.emitterPort()
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
 	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
@@ -1704,7 +1693,7 @@ func dispatchDotAgenticNode(
 	// review-loop resume — a tmux `--resume` reattach (which does not reliably
 	// re-fire a SessionStart hook, hk-isq02) is unwedged by the transitional
 	// run_id-stamped readiness probe rather than timing out at the full window.
-	nodeLaunchedAt := deps.clock.Now()
+	nodeLaunchedAt := deps.clockOrSystem().Now()
 	// sess is predeclared above (PI-014) so agentEndCb can capture it.
 	var watcher *handlercontract.Watcher
 	var launchErr error
@@ -1741,7 +1730,7 @@ func dispatchDotAgenticNode(
 	// invoked directly after the segment settles into Working, preserving the
 	// pre-RT8 fall-through ("paste-inject is a no-op for codex").
 	dotDeliver := func(dctx context.Context) {
-		briefDelivered := pasteInjectOnLaunch(dctx, deps.clock, pasteTarget, artifacts.ClaudeSessionID,
+		briefDelivered := pasteInjectOnLaunch(dctx, deps.clockOrSystem(), pasteTarget, artifacts.ClaudeSessionID,
 			phase, iterationCount, wtPath, emit, runID)
 		if qs, ok := pasteTarget.(quitSender); ok {
 			if isReviewer {
@@ -1765,7 +1754,7 @@ func dispatchDotAgenticNode(
 				// so it can track agent_heartbeat events for the active-reasoning
 				// extension — independent of the tapCh used by the segment's ready pump.
 				reviewerHBCh := tap.Subscribe()
-				go pasteInjectQuitOnReviewFile(ctx, deps.clock, qs, sess, revInj, artifacts.ClaudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
+				go pasteInjectQuitOnReviewFile(ctx, deps.clockOrSystem(), qs, sess, revInj, artifacts.ClaudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
 			} else if dotCompletionMode != handlercontract.CompletionProcessExit {
 				// hk-o90sl (T13/C5): gate on Completion() policy (specs/harness-contract.md §2 N5).
 				// ProcessExit harnesses (codex) self-terminate when the turn completes; sess.Wait +
@@ -1780,13 +1769,13 @@ func dispatchDotAgenticNode(
 				// launch-suppression branch forever. The fan-out tap delivers each
 				// consumer its own copy of every event.
 				watchdogCh := tap.Subscribe()
-				go pasteInjectQuitOnCommit(ctx, deps.clock, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, emit, runID)
+				go pasteInjectQuitOnCommit(ctx, deps.clockOrSystem(), qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, emit, runID)
 			}
 		}
 	}
 
 	nodeSeg := &dispatchSegment{
-		clock: deps.clock,
+		clock: deps.clockOrSystem(),
 		runID: runID,
 		cfg: runexec.DispatchConfig{
 			SkipReadyHandshake: dotCompletionMode == handlercontract.CompletionProcessExit,
@@ -1830,10 +1819,10 @@ func dispatchDotAgenticNode(
 			// single-mode path already has.
 			if errors.Is(lErr, ErrSpawnCapTimeout) {
 				inUse, capSize := substrateSpawnStats(deps.substrate)
-				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clock.Since(nodeLaunchedAt), inUse, capSize)
+				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clockOrSystem().Since(nodeLaunchedAt), inUse, capSize)
 			}
 			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
-				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, deps.clock.Since(nodeLaunchedAt))
+				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, deps.clockOrSystem().Since(nodeLaunchedAt))
 			}
 		},
 		onLaunched: func(lctx context.Context) {
@@ -1892,7 +1881,7 @@ func dispatchDotAgenticNode(
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
-				case <-substrate.After(deps.clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+				case <-substrate.After(deps.clockOrSystem(), runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 				}
 			}
 			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)
@@ -1943,7 +1932,7 @@ func dispatchDotAgenticNode(
 	// Working / Exited / Aborted: fall through to waitWithSocketGrace — the
 	// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
-	_, nodeEI := waitWithSocketGrace(ctx, deps.clock, deps.hookStore, watcher, sess,
+	_, nodeEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), deps.hookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {
@@ -1957,7 +1946,7 @@ func dispatchDotAgenticNode(
 	// hk-368i4: nodePhaseDur is captured ONCE and reused by the no-work detector
 	// further down, so the event's duration_seconds and the detector's verdict
 	// come from the same measurement (mirrors workloop.go).
-	nodePhaseDur := deps.clock.Since(nodeLaunchedAt)
+	nodePhaseDur := deps.clockOrSystem().Since(nodeLaunchedAt)
 	if !isReviewer {
 		curHead, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		commitLanded := curHead != "" && curHead != preHeadSHA

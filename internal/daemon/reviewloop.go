@@ -224,16 +224,10 @@ func runReviewLoop(
 	workerSessionName string,
 	workerSessionCwd string,
 ) reviewLoopResult {
-	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
-	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
-	// deps is by-value, so this default propagates to every downstream site.
-	if deps.clock == nil {
-		deps.clock = substrate.SystemClock{}
-	}
 	// RSM-010: the run's EmitterPort, bound once for this call. Deliberately the
-	// NARROW emitterPort accessor (runports.go) and not the runPorts() bundle,
-	// which also reads the clock port — the default set just above must not be
-	// bypassed by an earlier bundle read.
+	// NARROW emitterPort accessor (runports.go) rather than the runPorts() bundle,
+	// which would assemble every port for one read (RT18: the clock default it
+	// once guarded now folds inside runPorts() via clockOrSystem).
 	emit := deps.emitterPort()
 	// daemonSocket is the UNIX-domain socket path for the hook-relay per design §7.
 	// Derived from projectDir so reviewloop.go does not need a separate field on deps.
@@ -554,7 +548,7 @@ func runReviewLoop(
 		var implWatcher *handlercontract.Watcher
 		var implLaunchErr error
 		var implHBDone chan struct{}
-		implLaunchedAt := deps.clock.Now()
+		implLaunchedAt := deps.clockOrSystem().Now()
 
 		// hk-a2okh: hang-detector state, armed by the deliver hook when
 		// agent_ready is observed on the exec path.
@@ -583,7 +577,7 @@ func runReviewLoop(
 		}
 
 		implSeg := &dispatchSegment{
-			clock: deps.clock,
+			clock: deps.clockOrSystem(),
 			runID: runID,
 			cfg: runexec.DispatchConfig{
 				SkipReadyHandshake: implCompletionMode == handlercontract.CompletionProcessExit,
@@ -622,13 +616,13 @@ func runReviewLoop(
 				// wedged on the spawn semaphore.
 				if errors.Is(launchErr, ErrSpawnCapTimeout) {
 					inUse, capSize := substrateSpawnStats(implSubstrate)
-					runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clock.Since(implLaunchedAt), inUse, capSize)
+					runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clockOrSystem().Since(implLaunchedAt), inUse, capSize)
 				}
 				// hk-r1rup: surface a hung `tmux new-window` (the no-spawn wedge) as a
 				// dedicated tmux_new_window_timeout event when the implementer launch is
 				// wedged on the new-window call.
 				if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
-					runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, deps.clock.Since(implLaunchedAt))
+					runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, deps.clockOrSystem().Since(implLaunchedAt))
 				}
 			},
 			onLaunched: func(lctx context.Context) {
@@ -685,7 +679,7 @@ func runReviewLoop(
 					postReadyCh := implTap.Subscribe()
 					go func() {
 						defer cancelFn()
-						if err := waitPostAgentReadyProgress(hangCtx, deps.clock, postReadyCh, deps.postAgentReadyHangTimeout); errors.Is(err, ErrPostAgentReadyHang) {
+						if err := waitPostAgentReadyProgress(hangCtx, deps.clockOrSystem(), postReadyCh, deps.postAgentReadyHangTimeout); errors.Is(err, ErrPostAgentReadyHang) {
 							close(implHangCh)
 							_ = implSess.Kill(hangCtx)
 						}
@@ -706,7 +700,7 @@ func runReviewLoop(
 				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 				// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3, hk-kunm4.
 				if implCompletionMode != handlercontract.CompletionProcessExit {
-					implBriefDelivered := pasteInjectOnLaunch(dctx, deps.clock, implPasteTarget, implArtifacts.ClaudeSessionID,
+					implBriefDelivered := pasteInjectOnLaunch(dctx, deps.clockOrSystem(), implPasteTarget, implArtifacts.ClaudeSessionID,
 						implPhase, state.iterationCount, wtPath, emit, runID)
 
 					// Quit-on-commit: after the implementer's task commit lands in the worktree,
@@ -725,7 +719,7 @@ func runReviewLoop(
 							implInitialSHA = parentSHA // fallback to known-good parent SHA
 						}
 						implHBCh := implTap.Subscribe()
-						go pasteInjectQuitOnCommit(ctx, deps.clock, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, emit, runID)
+						go pasteInjectQuitOnCommit(ctx, deps.clockOrSystem(), qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, emit, runID)
 					}
 				}
 			},
@@ -738,7 +732,7 @@ func runReviewLoop(
 				if implWatcher != nil {
 					select {
 					case <-implWatcher.Done():
-					case <-substrate.After(deps.clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+					case <-substrate.After(deps.clockOrSystem(), runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 						fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 							beadID, state.iterationCount, runID.String())
 					}
@@ -793,7 +787,7 @@ func runReviewLoop(
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
-		_, implEI := waitWithSocketGrace(ctx, deps.clock, deps.hookStore, implWatcher, implSess,
+		_, implEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), deps.hookStore, implWatcher, implSess,
 			runID.String(), implArtifacts.ClaudeSessionID)
 		// implEI carries exit code + stderr tail; surfaced into the no-commit
 		// failure summary below (hk-loga9, extends hk-ajhqw's single-mode fix).
@@ -812,7 +806,7 @@ func runReviewLoop(
 			curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 			commitLanded := curHead != "" && curHead != parentSHA
 			runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, implEI.exitCode,
-				implEI.stderrTail, commitLanded, deps.clock.Since(implLaunchedAt))
+				implEI.stderrTail, commitLanded, deps.clockOrSystem().Since(implLaunchedAt))
 		}
 
 		// Close this phase's hook session — late hooks from a completed implementer
@@ -984,7 +978,7 @@ func runReviewLoop(
 				// Interceptor never fired (tmux substrate, or handler exited
 				// without emitting handler_capabilities with claude_session_id).
 			}
-			state.claudeSessionID = rlResolveIter1ClaudeSessionID(deps.clock, interceptorID, implArtifacts.ClaudeSessionID)
+			state.claudeSessionID = rlResolveIter1ClaudeSessionID(deps.clockOrSystem(), interceptorID, implArtifacts.ClaudeSessionID)
 
 			// hk-za5mz: when the interceptor never persisted the id (interceptorID
 			// empty) but we fell back to the real minted id, the CHB-023 git
@@ -1365,7 +1359,7 @@ func runReviewLoop(
 		}
 
 		revSeg := &dispatchSegment{
-			clock: deps.clock,
+			clock: deps.clockOrSystem(),
 			runID: runID,
 			cfg: runexec.DispatchConfig{
 				MaxInputAttempts: 1,
@@ -1438,7 +1432,7 @@ func runReviewLoop(
 				// and sends /quit once the verdict is written — without this the
 				// reviewer claude hangs indefinitely at a prompt.
 				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
-				revBriefDelivered := pasteInjectOnLaunch(dctx, deps.clock, revPasteTarget, revArtifacts.ClaudeSessionID,
+				revBriefDelivered := pasteInjectOnLaunch(dctx, deps.clockOrSystem(), revPasteTarget, revArtifacts.ClaudeSessionID,
 					handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, revWtPath,
 					emit, runID)
 				if qs, ok := revPasteTarget.(quitSender); ok {
@@ -1453,7 +1447,7 @@ func runReviewLoop(
 					// actively reasoning (recent agent_heartbeat), not only when the OS
 					// pane-liveness probe finds an active process.
 					revHBCh := revTap.Subscribe()
-					go pasteInjectQuitOnReviewFile(ctx, deps.clock, qs, revSess, revInj, revArtifacts.ClaudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
+					go pasteInjectQuitOnReviewFile(ctx, deps.clockOrSystem(), qs, revSess, revInj, revArtifacts.ClaudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
 				}
 			},
 			killReady: func(kctx context.Context) {
@@ -1471,7 +1465,7 @@ func runReviewLoop(
 				if revWatcher != nil {
 					select {
 					case <-revWatcher.Done():
-					case <-substrate.After(deps.clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+					case <-substrate.After(deps.clockOrSystem(), runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 						fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 							beadID, state.iterationCount, runID.String())
 					}
@@ -1514,7 +1508,7 @@ func runReviewLoop(
 		// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
-		_, revEI := waitWithSocketGrace(ctx, deps.clock, deps.hookStore, revWatcher, revSess,
+		_, revEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), deps.hookStore, revWatcher, revSess,
 			runID.String(), revArtifacts.ClaudeSessionID)
 		_ = revEI
 

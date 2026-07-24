@@ -64,6 +64,16 @@ Sources disagree; trust them in this order for "what's true right now":
 Cross-reference: map each phase to its landing evidence (commit SHA / closed beads / a COORD
 `DONE`). A phase claimed complete with no evidence is a reconciliation flag worth surfacing.
 
+**Adversarially re-verify every status claim against a live command — do not trust the log.** For
+each "blocked / done / open" the docs or beads assert, run the check that would prove it wrong:
+`git merge-base --is-ancestor <sha> HEAD` for a "landed" claim; `df -g` / a real test run for a
+"blocked on disk / environment" claim; `br show` + a grep/test for a bead marked open (it may
+already be fixed in HEAD). Agents here have repeatedly recorded "blocked" and had later agents take
+it at face value long after the blocker cleared — the whole point of this pass is to catch that.
+Sweep for **stale-open beads** (fixed-in-HEAD but never closed) and surface them. Label each status
+in the report as verified-by-a-command vs asserted-by-a-doc; a claim you could not verify is itself
+a finding.
+
 ## Step 4 — Emit the report (plain terminal markdown)
 
 Match this shape. Generalize labels to whatever the active program uses (phases may be M1–M5,

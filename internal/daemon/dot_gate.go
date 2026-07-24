@@ -330,7 +330,7 @@ func executeCognitionGate(
 	//   - codex never emits agent_ready, but the waitAgentReady below blocks on it,
 	//     so the gate dies at "cognition gate %q: agent_ready_timeout".
 	//
-	// Before this fix the gate took deps.launchSpecBuilder UNCONDITIONALLY. That
+	// Before this fix the gate took the pre-built launch-spec builder UNCONDITIONALLY. That
 	// builder is routedLaunchSpecBuilder(reg, beadRecord, …) (workloop.go), whose
 	// tier-1 leg returns a per-bead `harness:codex` LABEL immediately
 	// (harnessresolve.go) — so a single labelled bead, not just a global codex
@@ -353,9 +353,9 @@ func executeCognitionGate(
 	// Non-empty return ⇒ pin via pinnedHarnessLaunchSpecBuilder, NOT
 	// routedLaunchSpecBuilder: the latter re-runs resolveHarness and would let the
 	// tier-1 `harness:codex` bead label override the correction (the hk-2jxqg
-	// footgun). Empty return ⇒ deps.launchSpecBuilder stands untouched, so an
+	// footgun). Empty return ⇒ the pre-built launch-spec builder stands untouched, so an
 	// all-claude run is byte-identical to pre-hk-01vs0 behaviour.
-	specBuilder := deps.launchSpecBuilder
+	specBuilder := deps.launchBuilder()
 	gateInheritedHarness := dotReviewerInheritedHarnessOverride(
 		deps.harnessRegistry,
 		true,               // a cognition gate is reviewer-class by construction

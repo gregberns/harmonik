@@ -255,7 +255,7 @@ func runReviewLoop(
 		}
 
 		// Build the implementer LaunchSpec via the routed spec builder (T12, hk-xhawy).
-		// deps.launchSpecBuilder is pre-built by beadRunOne (workloop.go) using the
+		// The pre-built launch-spec builder is created by beadRunOne (workloop.go) using the
 		// harness registry + bead labels; it routes to the correct harness (claude or
 		// codex) and populates artifacts.resolvedAgentType. Falls back to
 		// buildClaudeLaunchSpec when nil (legacy test fixtures).
@@ -314,7 +314,7 @@ func runReviewLoop(
 			ExtraContext: extraContext, // hk-boiwe
 			BaseBranch:   baseBranch,   // hk-mtm0w: pre-exit rebase target
 		}
-		implSpecBuilder := deps.launchSpecBuilder
+		implSpecBuilder := deps.launchBuilder()
 		if implSpecBuilder == nil {
 			implSpecBuilder = claude.BuildLaunchSpec
 		}
@@ -1244,7 +1244,7 @@ func runReviewLoop(
 		// The reviewer uses the SAME resolved harness as the implementer for this run
 		// (implArtifacts.resolvedAgentType). Build a reviewer-specific specBuilder with
 		// nodeDefault (tier-3) pinned to the implementer's resolved agent type so the
-		// reviewer is always wired to the same harness even when deps.launchSpecBuilder
+		// reviewer is always wired to the same harness even when the pre-built launch-spec builder
 		// was constructed without an explicit nodeDefault.
 		//
 		// For an all-claude run (resolvedAgentType = claude-code) this is byte-identical
@@ -1260,7 +1260,7 @@ func runReviewLoop(
 		// node under HARMONIK_SUBSTRATE=codexdriver died on reviewer agent_ready_timeout.
 		// reviewerDefaultHarness swaps such an inherited harness for claude and returns
 		// a claude/SessionIDMinted implementer unchanged (all-claude byte-identical).
-		revSpecBuilder := deps.launchSpecBuilder
+		revSpecBuilder := deps.launchBuilder()
 		revNodeDefault := reviewerDefaultHarness(
 			deps.harnessRegistry, implArtifacts.ResolvedAgentType, string(beadID))
 		if deps.harnessRegistry != nil && revNodeDefault.Valid() {

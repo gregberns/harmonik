@@ -85,6 +85,15 @@ func (deps *workLoopDeps) emitterPort() EmitterPort {
 	return deps.bus
 }
 
+// launchBuilder returns the run shell's pre-built launch-spec builder FUNC
+// (identity over the launchSpecBuilder field). Readers capture it as a
+// reassignable func value — they conditionally pin/route it per node and apply
+// the claude.BuildLaunchSpec nil fallback — so this returns the RAW field, not a
+// default-folded value. The narrow analog of emitterPort() (RT17).
+func (deps *workLoopDeps) launchBuilder() func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+	return deps.launchSpecBuilder
+}
+
 // MergePort is the merge exclusion-domain surface of the run path (RSM-015). It
 // exposes the strictly-FIFO single-owner submit entry point that serialises the
 // commit-phase merge, the post-merge escaped-worktree check, and the remote

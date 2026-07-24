@@ -369,6 +369,19 @@ workersbootwire-freeze-gate:  ## P2 E4c: forbid new worker-registry boot-wiring 
 runloop-emitter-gate:  ## P2 E5 RT16: forbid bypassing EmitterPort with a raw bus-field read in internal/daemon
 	scripts/runloop-emitter-gate.sh
 
+# launchbuilder-freeze-gate: the P2 E5 RT17 ratchet — the DOT run path reaches its
+# pre-built launch-spec builder through deps.launchBuilder() (a pure alias over
+# the launchSpecBuilder field in internal/daemon/runports.go), not through the
+# field directly. RT17 converted the four run-path field reads plus the
+# single-mode binding to accessor calls so RT18.11's deletion of the two
+# copy-mutation assignments is a localized change. depguard cannot express "reach
+# this dependency through its accessor", so this grep gate rations the field per
+# file, freezes the two assignments at exactly 2, pins the seam, and pins each
+# mover's call sites. Wired into check-fast and check-short.
+.PHONY: launchbuilder-freeze-gate
+launchbuilder-freeze-gate:  ## P2 E5 RT17: forbid bypassing deps.launchBuilder() with a raw launchSpecBuilder read in internal/daemon
+	scripts/launchbuilder-freeze-gate.sh
+
 # vet-tagged: typecheck the files that `go vet ./...` cannot see (hk-i1m20).
 # Static analyzers and the default build compile ONLY the untagged build, so a
 # call site behind a `//go:build <tag>` line emits zero signal when it breaks —
@@ -577,6 +590,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	scripts/runloop-emitter-gate.sh
+	scripts/launchbuilder-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -610,6 +624,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	scripts/runloop-emitter-gate.sh
+	scripts/launchbuilder-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

@@ -1424,7 +1424,7 @@ func dispatchDotAgenticNode(
 		BaseBranch:        baseBranch,
 	}
 
-	// Resolve the per-node spec builder. The pre-built deps.launchSpecBuilder
+	// Resolve the per-node spec builder. The pre-built launch-spec builder
 	// captures tier-1 (bead labels) + tier-4 (global default). When the DOT node
 	// carries a harness= attribute (T5, hk-u67of), rebuild with the node's harness
 	// as nodeDefault (tier-3) so the four-tier precedence is fully honored (T12).
@@ -1434,8 +1434,8 @@ func dispatchDotAgenticNode(
 	// harness= attr. This implements the OPTIONAL OVERRIDE precedence:
 	//   1. reviewerHarnessOverride (implementer's reviewer_harness= attr) — if valid
 	//   2. node.Harness (reviewer node's own harness= attr) — if valid
-	//   3. deps.launchSpecBuilder (DEFAULT: same resolved harness as the implementer)
-	specBuilder := deps.launchSpecBuilder
+	//   3. the pre-built launch-spec builder (DEFAULT: same resolved harness as the implementer)
+	specBuilder := deps.launchBuilder()
 	var effectiveNodeHarness core.AgentType
 	if isReviewer && reviewerHarnessOverride.Valid() {
 		// Override: implementer declared a specific reviewer harness.

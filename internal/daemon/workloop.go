@@ -3946,8 +3946,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// RSM-010 (RT7): thread the resolved builder onto RunPorts as LaunchPort. The
 	// single-mode build call site reaches it via rp.Launch — byte-identical to
 	// calling deps.launchSpecBuilder directly (ports-design §6). The review-loop /
-	// DOT sub-drivers still read deps.launchSpecBuilder (RT8 migrates them).
-	rp.Launch = launchPort(deps.launchSpecBuilder)
+	// DOT sub-drivers reach the same builder through deps.launchBuilder() (RT17).
+	rp.Launch = launchPort(deps.launchBuilder())
 
 	// Mode-dispatch: route to the mode-specific driver.
 	//

@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_hk9kgf_test.go — unit tests for the widened keeper: block
 // (hk-9kgf): the new context_thresholds fields, and the hard_ceiling, timings,
@@ -24,8 +24,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 func keeper9kgfFixtureDir(t *testing.T, yamlContent string) string {
@@ -89,7 +87,7 @@ keeper:
     on_demand_warn_text: "restart now"
     actionable_warn_text: "do this thing"
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -191,11 +189,11 @@ keeper:
   timings:
     handoff_timeout: 120
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatalf("bare-number duration: want error, got nil")
 	}
-	var mfe *daemon.ExportedErrMalformedConfigYAML
+	var mfe *ErrMalformedConfigYAML
 	if !errors.As(err, &mfe) {
 		t.Fatalf("want *ErrMalformedConfigYAML, got %T: %v", err, err)
 	}
@@ -214,8 +212,8 @@ keeper:
   cadence:
     warn_cooldown: 900
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
-	var mfe *daemon.ExportedErrMalformedConfigYAML
+	_, err := LoadProjectConfig(root)
+	var mfe *ErrMalformedConfigYAML
 	if !errors.As(err, &mfe) {
 		t.Fatalf("want *ErrMalformedConfigYAML, got %T: %v", err, err)
 	}
@@ -234,8 +232,8 @@ keeper:
   hard_ceiling:
     mode: explode
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
-	var mfe *daemon.ExportedErrMalformedConfigYAML
+	_, err := LoadProjectConfig(root)
+	var mfe *ErrMalformedConfigYAML
 	if !errors.As(err, &mfe) {
 		t.Fatalf("want *ErrMalformedConfigYAML, got %T: %v", err, err)
 	}
@@ -254,8 +252,8 @@ keeper:
   context_thresholds:
     act_pct_ceil: 1.5
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
-	var mfe *daemon.ExportedErrMalformedConfigYAML
+	_, err := LoadProjectConfig(root)
+	var mfe *ErrMalformedConfigYAML
 	if !errors.As(err, &mfe) {
 		t.Fatalf("want *ErrMalformedConfigYAML, got %T: %v", err, err)
 	}
@@ -279,7 +277,7 @@ keeper:
   self_service:
     enabled: true
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -324,7 +322,7 @@ keeper:
 
 func TestKeeper9kgf_BlockAbsent_ZeroValue_True(t *testing.T) {
 	t.Parallel()
-	if !daemon.ExportedKeeperBlockAbsent(daemon.ExportedRawKeeperConfig{}) {
+	if !keeperBlockAbsent(rawKeeperConfig{}) {
 		t.Errorf("keeperBlockAbsent(zero): want true, got false")
 	}
 }
@@ -334,52 +332,52 @@ func TestKeeper9kgf_BlockAbsent_AnyNewFieldSet_False(t *testing.T) {
 
 	cases := []struct {
 		name string
-		raw  daemon.ExportedRawKeeperConfig
+		raw  rawKeeperConfig
 	}{
 		// context_thresholds new fields
-		{"ForceActAbsOffset", daemon.ExportedRawKeeperConfig{ContextThresholds: daemon.ExportedRawKeeperContextThresholds{ForceActAbsOffset: 40000}}},
-		{"IdleFloorAbsTokens", daemon.ExportedRawKeeperConfig{ContextThresholds: daemon.ExportedRawKeeperContextThresholds{IdleFloorAbsTokens: 200000}}},
+		{"ForceActAbsOffset", rawKeeperConfig{ContextThresholds: rawKeeperContextThresholds{ForceActAbsOffset: 40000}}},
+		{"IdleFloorAbsTokens", rawKeeperConfig{ContextThresholds: rawKeeperContextThresholds{IdleFloorAbsTokens: 200000}}},
 		// hard_ceiling
-		{"HardCeiling.Mode", daemon.ExportedRawKeeperConfig{HardCeiling: daemon.ExportedRawKeeperHardCeiling{Mode: "off"}}},
-		{"HardCeiling.AbsTokens", daemon.ExportedRawKeeperConfig{HardCeiling: daemon.ExportedRawKeeperHardCeiling{AbsTokens: 1}}},
-		{"HardCeiling.Cooldown", daemon.ExportedRawKeeperConfig{HardCeiling: daemon.ExportedRawKeeperHardCeiling{Cooldown: "5m"}}},
+		{"HardCeiling.Mode", rawKeeperConfig{HardCeiling: rawKeeperHardCeiling{Mode: "off"}}},
+		{"HardCeiling.AbsTokens", rawKeeperConfig{HardCeiling: rawKeeperHardCeiling{AbsTokens: 1}}},
+		{"HardCeiling.Cooldown", rawKeeperConfig{HardCeiling: rawKeeperHardCeiling{Cooldown: "5m"}}},
 		// timings
-		{"Timings.PollInterval", daemon.ExportedRawKeeperConfig{Timings: daemon.ExportedRawKeeperTimings{PollInterval: "1m"}}},
-		{"Timings.IdleQuiesce", daemon.ExportedRawKeeperConfig{Timings: daemon.ExportedRawKeeperTimings{IdleQuiesce: "1m"}}},
-		{"Timings.Staleness", daemon.ExportedRawKeeperConfig{Timings: daemon.ExportedRawKeeperTimings{Staleness: "1m"}}},
-		{"Timings.HandoffTimeout", daemon.ExportedRawKeeperConfig{Timings: daemon.ExportedRawKeeperTimings{HandoffTimeout: "1m"}}},
-		{"Timings.ClearSettle", daemon.ExportedRawKeeperConfig{Timings: daemon.ExportedRawKeeperTimings{ClearSettle: "1m"}}},
-		{"Timings.BootGrace", daemon.ExportedRawKeeperConfig{Timings: daemon.ExportedRawKeeperTimings{BootGrace: "1m"}}},
-		{"Timings.MaxBootGraceTotal", daemon.ExportedRawKeeperConfig{Timings: daemon.ExportedRawKeeperTimings{MaxBootGraceTotal: "1m"}}},
+		{"Timings.PollInterval", rawKeeperConfig{Timings: rawKeeperTimings{PollInterval: "1m"}}},
+		{"Timings.IdleQuiesce", rawKeeperConfig{Timings: rawKeeperTimings{IdleQuiesce: "1m"}}},
+		{"Timings.Staleness", rawKeeperConfig{Timings: rawKeeperTimings{Staleness: "1m"}}},
+		{"Timings.HandoffTimeout", rawKeeperConfig{Timings: rawKeeperTimings{HandoffTimeout: "1m"}}},
+		{"Timings.ClearSettle", rawKeeperConfig{Timings: rawKeeperTimings{ClearSettle: "1m"}}},
+		{"Timings.BootGrace", rawKeeperConfig{Timings: rawKeeperTimings{BootGrace: "1m"}}},
+		{"Timings.MaxBootGraceTotal", rawKeeperConfig{Timings: rawKeeperTimings{MaxBootGraceTotal: "1m"}}},
 		// cadence
-		{"Cadence.WarnCooldown", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{WarnCooldown: "1m"}}},
-		{"Cadence.NoGaugeBackoff", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{NoGaugeBackoff: "1m"}}},
-		{"Cadence.RespawnGrace", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{RespawnGrace: "1m"}}},
-		{"Cadence.RespawnCooldown", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{RespawnCooldown: "1m"}}},
-		{"Cadence.LiveRecoverGrace", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{LiveRecoverGrace: "1m"}}},
-		{"Cadence.LiveRecoverCooldown", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{LiveRecoverCooldown: "1m"}}},
-		{"Cadence.ForceRetryInterval", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{ForceRetryInterval: "1m"}}},
-		{"Cadence.IdleRestartCooldown", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{IdleRestartCooldown: "1m"}}},
-		{"Cadence.HardCeilingCooldown", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{HardCeilingCooldown: "1m"}}},
-		{"Cadence.BlindKeeperThreshold", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{BlindKeeperThreshold: "1m"}}},
-		{"Cadence.ReapDecisionsCadence", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{ReapDecisionsCadence: "1m"}}},
+		{"Cadence.WarnCooldown", rawKeeperConfig{Cadence: rawKeeperCadence{WarnCooldown: "1m"}}},
+		{"Cadence.NoGaugeBackoff", rawKeeperConfig{Cadence: rawKeeperCadence{NoGaugeBackoff: "1m"}}},
+		{"Cadence.RespawnGrace", rawKeeperConfig{Cadence: rawKeeperCadence{RespawnGrace: "1m"}}},
+		{"Cadence.RespawnCooldown", rawKeeperConfig{Cadence: rawKeeperCadence{RespawnCooldown: "1m"}}},
+		{"Cadence.LiveRecoverGrace", rawKeeperConfig{Cadence: rawKeeperCadence{LiveRecoverGrace: "1m"}}},
+		{"Cadence.LiveRecoverCooldown", rawKeeperConfig{Cadence: rawKeeperCadence{LiveRecoverCooldown: "1m"}}},
+		{"Cadence.ForceRetryInterval", rawKeeperConfig{Cadence: rawKeeperCadence{ForceRetryInterval: "1m"}}},
+		{"Cadence.IdleRestartCooldown", rawKeeperConfig{Cadence: rawKeeperCadence{IdleRestartCooldown: "1m"}}},
+		{"Cadence.HardCeilingCooldown", rawKeeperConfig{Cadence: rawKeeperCadence{HardCeilingCooldown: "1m"}}},
+		{"Cadence.BlindKeeperThreshold", rawKeeperConfig{Cadence: rawKeeperCadence{BlindKeeperThreshold: "1m"}}},
+		{"Cadence.ReapDecisionsCadence", rawKeeperConfig{Cadence: rawKeeperCadence{ReapDecisionsCadence: "1m"}}},
 		// budgets
-		{"Budgets.HeartbeatMaxMisses", daemon.ExportedRawKeeperConfig{Budgets: daemon.ExportedRawKeeperBudgets{HeartbeatMaxMisses: 1}}},
-		{"Budgets.MaxHandoffTimeouts", daemon.ExportedRawKeeperConfig{Budgets: daemon.ExportedRawKeeperBudgets{MaxHandoffTimeouts: 1}}},
+		{"Budgets.HeartbeatMaxMisses", rawKeeperConfig{Budgets: rawKeeperBudgets{HeartbeatMaxMisses: 1}}},
+		{"Budgets.MaxHandoffTimeouts", rawKeeperConfig{Budgets: rawKeeperBudgets{MaxHandoffTimeouts: 1}}},
 		// self_service
-		{"SelfService.Enabled", daemon.ExportedRawKeeperConfig{SelfService: daemon.ExportedRawKeeperSelfService{Enabled: true}}},
-		{"SelfService.GraceSeconds", daemon.ExportedRawKeeperConfig{SelfService: daemon.ExportedRawKeeperSelfService{GraceSeconds: 1}}},
-		{"SelfService.InstructOnlyWhenIdle", daemon.ExportedRawKeeperConfig{SelfService: daemon.ExportedRawKeeperSelfService{InstructOnlyWhenIdle: true}}},
-		{"SelfService.CrewsEnabled", daemon.ExportedRawKeeperConfig{SelfService: daemon.ExportedRawKeeperSelfService{CrewsEnabled: boolPtr(true)}}},
+		{"SelfService.Enabled", rawKeeperConfig{SelfService: rawKeeperSelfService{Enabled: true}}},
+		{"SelfService.GraceSeconds", rawKeeperConfig{SelfService: rawKeeperSelfService{GraceSeconds: 1}}},
+		{"SelfService.InstructOnlyWhenIdle", rawKeeperConfig{SelfService: rawKeeperSelfService{InstructOnlyWhenIdle: true}}},
+		{"SelfService.CrewsEnabled", rawKeeperConfig{SelfService: rawKeeperSelfService{CrewsEnabled: boolPtr(true)}}},
 		// warn_messages new field
-		{"WarnMessages.ActionableWarnText", daemon.ExportedRawKeeperConfig{WarnMessages: daemon.ExportedRawKeeperWarnMessages{ActionableWarnText: "x"}}},
+		{"WarnMessages.ActionableWarnText", rawKeeperConfig{WarnMessages: rawKeeperWarnMessages{ActionableWarnText: "x"}}},
 	}
 
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if daemon.ExportedKeeperBlockAbsent(tc.raw) {
+			if keeperBlockAbsent(tc.raw) {
 				t.Errorf("keeperBlockAbsent(%s set): want false, got true — field missing from keeperBlockAbsent (hk-exg3 invariant)", tc.name)
 			}
 		})
@@ -400,7 +398,7 @@ keeper:
     boot_grace: 0s
 `
 	dir := keeper9kgfFixtureDir(t, yaml)
-	cfg, err := daemon.LoadProjectConfig(dir)
+	cfg, err := LoadProjectConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}

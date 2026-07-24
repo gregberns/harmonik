@@ -25,6 +25,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/workers"
@@ -134,7 +135,7 @@ type WorkLoopDepsParams struct {
 	// The zero value is safe: LookupAgent returns ("","") for all agent types.
 	//
 	// Bead ref: hk-bfvk7.
-	ProjectCfg ProjectConfig
+	ProjectCfg projectconfig.ProjectConfig
 
 	// HarnessRegistry, when non-nil, is forwarded into workLoopDeps.harnessRegistry
 	// as the per-agent-type Harness route table. When nil, harnessRegistry is left
@@ -542,7 +543,7 @@ func ExportedWorkLoopDepsPtr(p WorkLoopDepsParams) *workLoopDeps {
 // Used by integration tests to inject a non-zero ProjectConfig into the work loop.
 //
 // Bead ref: hk-bfvk7.
-func WorkLoopDepsWithProjectCfg(p WorkLoopDepsParams, cfg ProjectConfig) WorkLoopDepsParams {
+func WorkLoopDepsWithProjectCfg(p WorkLoopDepsParams, cfg projectconfig.ProjectConfig) WorkLoopDepsParams {
 	p.ProjectCfg = cfg
 	return p
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
@@ -79,7 +80,7 @@ func ExportedResolveModelPreference(
 	ctx context.Context,
 	beadLabels []string,
 	agentType core.AgentType,
-	projectCfg ProjectConfig,
+	projectCfg projectconfig.ProjectConfig,
 	bus handlercontract.EventEmitter,
 	beadID string,
 ) (model, effort string) {
@@ -101,9 +102,9 @@ func ExportedResolvePiProfile(
 	ctx context.Context,
 	beadLabels []string,
 	agentType core.AgentType,
-	piCfg PiHarnessConfig,
+	piCfg projectconfig.PiHarnessConfig,
 	bus handlercontract.EventEmitter,
 	beadID string,
-) (PiProfileConfig, error) {
+) (projectconfig.PiProfileConfig, error) {
 	return resolvePiProfile(ctx, beadLabels, agentType, piCfg, bus, beadID)
 }

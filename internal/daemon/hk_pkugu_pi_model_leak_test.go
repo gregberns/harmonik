@@ -31,6 +31,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hkpkuguBead builds a minimal BeadRecord with the given labels.
@@ -108,7 +109,7 @@ func TestPiModelLeak_PiRunDoesNotInheritClaudeDefault(t *testing.T) {
 	}
 
 	piModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, piAgentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, piAgentType, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if piModel != "" {
 		t.Errorf("pi-resolved run leaked model %q; want empty (no pi tier-3 default → config fallback)", piModel)
@@ -132,7 +133,7 @@ func TestPiModelLeak_PiRunDoesNotInheritClaudeDefault(t *testing.T) {
 		bead, core.AgentType(""), core.AgentType(""), core.AgentTypeClaudeCode,
 	)
 	claudeModel, claudeEffort := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, claudeAgentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, claudeAgentType, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if claudeModel != "sonnet" {
 		t.Errorf("claude-resolved run model = %q; want %q (claude tier-3 default unchanged)", claudeModel, "sonnet")

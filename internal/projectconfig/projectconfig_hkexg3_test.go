@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_hkexg3_test.go — unit tests for the keeperBlockAbsent helper
 // (hk-exg3), the explicit field-by-field zero check that replaces the
@@ -21,8 +21,6 @@ package daemon_test
 import (
 	"errors"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 // keeperAbsentFixtureDir reuses projCfgFixtureDir to write a config.yaml.
@@ -38,7 +36,7 @@ func keeperAbsentFixtureDir(t *testing.T, yamlContent string) string {
 func TestKeeperBlockAbsent_ZeroValue_True(t *testing.T) {
 	t.Parallel()
 
-	if !daemon.ExportedKeeperBlockAbsent(daemon.ExportedRawKeeperConfig{}) {
+	if !keeperBlockAbsent(rawKeeperConfig{}) {
 		t.Errorf("keeperBlockAbsent(zero): want true, got false")
 	}
 }
@@ -52,58 +50,58 @@ func TestKeeperBlockAbsent_AnyFieldSet_False(t *testing.T) {
 
 	cases := []struct {
 		name string
-		raw  daemon.ExportedRawKeeperConfig
+		raw  rawKeeperConfig
 	}{
 		{
 			name: "WarnAbsTokens",
-			raw: daemon.ExportedRawKeeperConfig{
-				ContextThresholds: daemon.ExportedRawKeeperContextThresholds{WarnAbsTokens: 270000},
+			raw: rawKeeperConfig{
+				ContextThresholds: rawKeeperContextThresholds{WarnAbsTokens: 270000},
 			},
 		},
 		{
 			name: "ActAbsTokens",
-			raw: daemon.ExportedRawKeeperConfig{
-				ContextThresholds: daemon.ExportedRawKeeperContextThresholds{ActAbsTokens: 300000},
+			raw: rawKeeperConfig{
+				ContextThresholds: rawKeeperContextThresholds{ActAbsTokens: 300000},
 			},
 		},
 		{
 			name: "ForceActAbsTokens",
-			raw: daemon.ExportedRawKeeperConfig{
-				ContextThresholds: daemon.ExportedRawKeeperContextThresholds{ForceActAbsTokens: 340000},
+			raw: rawKeeperConfig{
+				ContextThresholds: rawKeeperContextThresholds{ForceActAbsTokens: 340000},
 			},
 		},
 		{
 			name: "ActPctCeil",
-			raw: daemon.ExportedRawKeeperConfig{
-				ContextThresholds: daemon.ExportedRawKeeperContextThresholds{ActPctCeil: 0.85},
+			raw: rawKeeperConfig{
+				ContextThresholds: rawKeeperContextThresholds{ActPctCeil: 0.85},
 			},
 		},
 		{
 			name: "WarnPctCeil",
-			raw: daemon.ExportedRawKeeperConfig{
-				ContextThresholds: daemon.ExportedRawKeeperContextThresholds{WarnPctCeil: 0.70},
+			raw: rawKeeperConfig{
+				ContextThresholds: rawKeeperContextThresholds{WarnPctCeil: 0.70},
 			},
 		},
 		{
 			name: "DefaultWarnText",
-			raw: daemon.ExportedRawKeeperConfig{
-				WarnMessages: daemon.ExportedRawKeeperWarnMessages{DefaultWarnText: "wrap up"},
+			raw: rawKeeperConfig{
+				WarnMessages: rawKeeperWarnMessages{DefaultWarnText: "wrap up"},
 			},
 		},
 		{
 			name: "OnDemandWarnText",
-			raw: daemon.ExportedRawKeeperConfig{
-				WarnMessages: daemon.ExportedRawKeeperWarnMessages{OnDemandWarnText: "restart now"},
+			raw: rawKeeperConfig{
+				WarnMessages: rawKeeperWarnMessages{OnDemandWarnText: "restart now"},
 			},
 		},
 		// hk-74iyd: conversation-aware ACT suppression cadence fields.
 		{
 			name: "OperatorTurnLookback",
-			raw:  daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{OperatorTurnLookback: "5m"}},
+			raw:  rawKeeperConfig{Cadence: rawKeeperCadence{OperatorTurnLookback: "5m"}},
 		},
 		{
 			name: "PostAnswerGrace",
-			raw:  daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{PostAnswerGrace: "30s"}},
+			raw:  rawKeeperConfig{Cadence: rawKeeperCadence{PostAnswerGrace: "30s"}},
 		},
 	}
 
@@ -111,7 +109,7 @@ func TestKeeperBlockAbsent_AnyFieldSet_False(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if daemon.ExportedKeeperBlockAbsent(tc.raw) {
+			if keeperBlockAbsent(tc.raw) {
 				t.Errorf("keeperBlockAbsent(%s set): want false, got true", tc.name)
 			}
 		})
@@ -135,12 +133,12 @@ keeper:
   context_thresholds:
     warn_abs_tokens: 270000
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
 
-	var unsupported *daemon.ExportedErrUnsupportedConfigVersion
+	var unsupported *ErrUnsupportedConfigVersion
 	if errors.As(err, &unsupported) {
 		t.Fatalf("keeper-only block under schema_version: 1 incorrectly tripped ErrUnsupportedConfigVersion: %v", err)
 	}

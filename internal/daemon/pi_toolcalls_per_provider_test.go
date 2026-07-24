@@ -36,6 +36,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 const (
@@ -74,7 +75,7 @@ func hkppsToolcallsKeyFile(t *testing.T) string {
 // per-bead profile tuple (model + provider + apiKeyEnv + apiKeyFile + baseURL
 // + api), mirroring the claim-time rc fields workloop.go:4077-4083 threads
 // from resolvedProfile.
-func hkppsToolcallsRunCtx(t *testing.T, ws, beadID string, profile daemon.PiProfileConfig) daemon.ExportedClaudeRunCtx {
+func hkppsToolcallsRunCtx(t *testing.T, ws, beadID string, profile projectconfig.PiProfileConfig) daemon.ExportedClaudeRunCtx {
 	t.Helper()
 	runUID, err := uuid.NewV7()
 	if err != nil {
@@ -102,10 +103,10 @@ func hkppsToolcallsRunCtx(t *testing.T, ws, beadID string, profile daemon.PiProf
 // harness-global model, so each bead's resolved profile tuple must arrive
 // entirely via the per-run override (rc.Provider/etc), proving the two beads
 // are routed independently through the SAME harness registry.
-func hkppsToolcallsPiCfg(t *testing.T) daemon.PiHarnessConfig {
+func hkppsToolcallsPiCfg(t *testing.T) projectconfig.PiHarnessConfig {
 	t.Helper()
-	return daemon.PiHarnessConfig{
-		Profiles: map[string]daemon.PiProfileConfig{
+	return projectconfig.PiHarnessConfig{
+		Profiles: map[string]projectconfig.PiProfileConfig{
 			hkppsToolcallsOpenRouterProfile: {
 				Provider:  "openrouter",
 				Model:     "openrouter/qwen/qwen3-coder",

@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_hkv7q5u_test.go — unit tests for the harnesses.pi config block
 // (hk-v7q5u, PI-050): the top-level harnesses: YAML block under schema_version: 1
@@ -17,8 +17,6 @@ package daemon_test
 import (
 	"errors"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 func TestHarnessesPiConfig_Absent_ZeroValue(t *testing.T) {
@@ -29,7 +27,7 @@ schema_version: 1
 daemon:
   max_concurrent: 4
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -54,7 +52,7 @@ harnesses:
     model: openrouter/qwen/qwen3-coder
     api_key_env: OPENROUTER_API_KEY
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -88,7 +86,7 @@ harnesses:
       model: anthropic/claude-haiku-4-5-20251001
       api_key_env: ANTHROPIC_API_KEY
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -118,7 +116,7 @@ harnesses:
     model: openai/gpt-4o
     api_key_env: OPENAI_API_KEY
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -138,11 +136,11 @@ harnesses:
     model: openrouter/qwen/qwen3-coder
     api_key_env: OPENROUTER_API_KEY
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatal("expected ErrUnsupportedConfigVersion, got nil")
 	}
-	var ve *daemon.ErrUnsupportedConfigVersion
+	var ve *ErrUnsupportedConfigVersion
 	if !errors.As(err, &ve) {
 		t.Errorf("expected *ErrUnsupportedConfigVersion; got %T: %v", err, err)
 	}
@@ -161,7 +159,7 @@ harnesses:
     model: openrouter/qwen/qwen3-coder
     api_key_env: OPENROUTER_API_KEY
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}

@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_hkigpg_test.go — tests for the daemon.remote_control_prefix
 // config field (hk-igpg): the per-project Claude Code Remote-Control session
@@ -15,8 +15,6 @@ package daemon_test
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 func TestRemoteControlPrefix_Absent_Empty(t *testing.T) {
@@ -28,7 +26,7 @@ daemon:
   workflow_mode: review-loop
   max_concurrent: 4
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -46,7 +44,7 @@ daemon:
   target_branch: main
   remote_control_prefix: hk
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -66,7 +64,7 @@ schema_version: 1
 daemon:
   remote_control_prefix: mproj
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}

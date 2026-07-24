@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // TestIsInAllowedRepos_xfuc verifies the safelist membership check.
@@ -172,7 +173,7 @@ daemon:
     - /Users/gb/github/kerf
     - /Users/gb/github/other
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(dir)
+	cfg, err := projectconfig.LoadProjectConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -197,7 +198,7 @@ schema_version: 1
 daemon:
   max_concurrent: 2
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(dir)
+	cfg, err := projectconfig.LoadProjectConfig(dir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}

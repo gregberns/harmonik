@@ -68,6 +68,7 @@ import (
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/orchestrator"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	runpkg "github.com/gregberns/harmonik/internal/run"
@@ -543,7 +544,7 @@ type workLoopDeps struct {
 	//
 	// Spec ref: specs/execution-model.md §4.3 EM-012b.
 	// Bead ref: hk-bfvk7.
-	projectCfg ProjectConfig
+	projectCfg projectconfig.ProjectConfig
 
 	// defaultHarness is the tier-4 (global) default for the harness-selection
 	// precedence walk (resolveHarness in harnessresolve.go). Sourced from
@@ -925,7 +926,7 @@ type workLoopDeps struct {
 	// for every harness listed in Harnesses. Zero value = no sandboxing.
 	//
 	// Bead ref: hk-6596l.
-	sandboxCfg SandboxConfig
+	sandboxCfg projectconfig.SandboxConfig
 }
 
 // loopMaintenanceState holds the periodic-maintenance value fields owned solely
@@ -3347,7 +3348,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 	// arrive atomically from the profile and are never split; model: overrides
 	// ONLY the model field. When a profile is present and no exactly-one
 	// model: label resolved it, coalesce resolvedModel to profile.Model.
-	if resolvedProfile != (PiProfileConfig{}) && !hasSingleModelLabel(beadRecord.Labels) {
+	if resolvedProfile != (projectconfig.PiProfileConfig{}) && !hasSingleModelLabel(beadRecord.Labels) {
 		resolvedModel = resolvedProfile.Model
 	}
 
@@ -3360,7 +3361,7 @@ func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHand
 	// "resolved to the empty-string default").
 	if resolvedAgentType == core.AgentTypePi {
 		resolvedProvider := resolvedProfile.Provider
-		if resolvedProfile == (PiProfileConfig{}) {
+		if resolvedProfile == (projectconfig.PiProfileConfig{}) {
 			resolvedProvider = env.ProjectCfg.Harnesses.Pi.Provider
 		}
 		if rh, ok := handles.RunRegistry.Get(runID); ok && rh != nil {

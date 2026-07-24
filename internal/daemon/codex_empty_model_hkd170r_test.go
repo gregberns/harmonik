@@ -53,6 +53,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hkd170rRecordingEmitter records every emitted (eventType, payload) pair. It is
@@ -171,7 +172,7 @@ func TestHkd170rGated_CodexEmptyModelAccountDefault(t *testing.T) {
 
 	// Production model resolution: codex has no tier-3 default → empty.
 	sealedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, agentType, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if sealedModel != "" {
 		t.Fatalf("codex model resolution = %q; want empty (no tier-3 default → unpinned → account default)", sealedModel)
@@ -233,7 +234,7 @@ func TestHkd170rGated_CodexWithModelSucceeds(t *testing.T) {
 	}
 
 	sealedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, agentType, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if sealedModel != "o4-mini" {
 		t.Fatalf("model resolution with model:o4-mini label = %q; want o4-mini", sealedModel)
@@ -309,7 +310,7 @@ func TestHkd170rGated_CodexEmptyModel_ModelSelectedTieThrough(t *testing.T) {
 
 	// Production model resolution through the SAME recording emitter (empty).
 	sealedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, rec, string(bead.BeadID),
+		ctx, bead.Labels, agentType, projectconfig.ProjectConfig{}, rec, string(bead.BeadID),
 	)
 	if sealedModel != "" {
 		t.Fatalf("codex model resolution = %q; want empty", sealedModel)

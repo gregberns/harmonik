@@ -48,9 +48,9 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crewrun"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // captainRespawnRunFn is the seam tests inject to capture the assembled tmux
@@ -203,7 +203,7 @@ func runCaptainRespawn(subArgs []string, run captainRespawnRunFn, stdout, stderr
 	rcPrefix := *rcPrefixFlag
 	if rcPrefix == rcPrefixUnset {
 		rcPrefix = ""
-		if pc, perr := daemon.LoadProjectConfig(project); perr == nil {
+		if pc, perr := projectconfig.LoadProjectConfig(project); perr == nil {
 			rcPrefix = pc.Daemon.RemoteControlPrefix
 		} else {
 			if _, writeErr := fmt.Fprintf(stderr, "harmonik captain respawn: could not load .harmonik/config.yaml for rc-prefix (%v) — respawning with a bare --remote-control label\n", perr); writeErr != nil {

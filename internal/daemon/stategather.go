@@ -26,6 +26,7 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/policy"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
@@ -48,7 +49,7 @@ type LiveStateBuilder struct {
 	// Used by buildCognition to populate TooBigSignal and ContextStaticSignal
 	// thresholds (SS-012). Fields with zero value are treated as "not configured"
 	// and their dependent signal fields are emitted as null (dark-when-unset).
-	kconfig KeeperConfig
+	kconfig projectconfig.KeeperConfig
 }
 
 // NewLiveStateBuilder constructs a LiveStateBuilder. drain may be nil; when
@@ -63,7 +64,7 @@ func NewLiveStateBuilder(
 	conc *ConcurrencyController,
 	globalCap int,
 	projectDir string,
-	kconfig KeeperConfig,
+	kconfig projectconfig.KeeperConfig,
 ) *LiveStateBuilder {
 	return &LiveStateBuilder{
 		runs:        runs,

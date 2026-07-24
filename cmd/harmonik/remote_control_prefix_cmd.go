@@ -25,7 +25,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // runRemoteControlPrefixSubcommand implements `harmonik remote-control-prefix [--project DIR]`.
@@ -84,7 +84,7 @@ SPEC
 		projectDir = wd
 	}
 
-	cfg, err := daemon.LoadProjectConfig(projectDir)
+	cfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik remote-control-prefix: load .harmonik/config.yaml: %v\n", err)
 		return 1

@@ -74,8 +74,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // KeeperConfigError is the loud failure returned by ResolveKeeperConfig on any bad
@@ -285,7 +285,7 @@ type requiredKeeperValue struct {
 //     then NOT required (an off ceiling never trips, so the trigger is moot).
 //   - boot_grace presence is honored even for "0s" (explicit "disable boot grace");
 //     daemon.KeeperConfig.Present.BootGrace is true for any non-empty string.
-func checkMissingKeeperValues(flags KeeperFlags, cfg daemon.KeeperConfig) []string {
+func checkMissingKeeperValues(flags KeeperFlags, cfg projectconfig.KeeperConfig) []string { //nolint:cyclop // checkMissingKeeperValues is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 	p := cfg.Present
 
 	// hard_ceiling.mode resolves to "off" only via an EXPLICIT config value (no flag
@@ -347,7 +347,7 @@ func checkMissingKeeperValues(flags KeeperFlags, cfg daemon.KeeperConfig) []stri
 // (see file header): an unset required value aggregates into a *KeeperConfigMissingError
 // (refuse to start), and a bad PRESENT value returns a *KeeperConfigError — NEVER a
 // silent default. projectDir names the file to fix in the missing-value message.
-func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir string) (ResolvedKeeperConfig, error) {
+func ResolveKeeperConfig(flags KeeperFlags, cfg projectconfig.KeeperConfig, projectDir string) (ResolvedKeeperConfig, error) { //nolint:gocognit,cyclop,funlen // ResolveKeeperConfig is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 	// ── Missing-value gate (checked FIRST, precedence over cross-field errors). ──
 	// Every required value must be set by the operator (config or flag); harmonik
 	// imposes NO built-in default at runtime. Aggregate ALL missing keys.

@@ -21,6 +21,7 @@ import (
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,7 +333,7 @@ func TestCrewStart_HarnessResolutionEndToEnd(t *testing.T) {
 		sub := &fakeSubstrate{}
 		dir := t.TempDir()
 		h := NewCrewHandler("claude", dir, "", sub, nil,
-			WithCrewsConfig(map[string]CrewConfig{"config-claude": {Harness: "claude"}}))
+			WithCrewsConfig(map[string]projectconfig.CrewConfig{"config-claude": {Harness: "claude"}}))
 
 		mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "config-claude", Queue: "q-config"})
 
@@ -349,7 +350,7 @@ func TestCrewStart_HarnessResolutionEndToEnd(t *testing.T) {
 		sub := &fakeSubstrate{}
 		dir := t.TempDir()
 		h := NewCrewHandler("claude", dir, "", sub, nil,
-			WithCrewsConfig(map[string]CrewConfig{"precedence": {Harness: "pi"}}))
+			WithCrewsConfig(map[string]projectconfig.CrewConfig{"precedence": {Harness: "pi"}}))
 
 		missionPath := filepath.Join(dir, "mission.md")
 		const mission = "---\nschema_version: 1\nharness: codex\n---\n\n# Mission\n"

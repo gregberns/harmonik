@@ -34,6 +34,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // resolveGateAgentType returns the harness identity the sandbox gate must match
@@ -53,7 +54,7 @@ func resolveGateAgentType(implHarness handlercontract.Harness, fromArtifacts cor
 //	AND agentType is listed in cfg.Harnesses. Returns nil (strict no-op)
 //	otherwise: any non-"srt" backend, a harness not in the list, or a REMOTE
 //	run (see the DaemonSockPath guard below).
-func sandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxProfileInput) *SrtSpawnConfig {
+func sandboxSpawnForRun(cfg projectconfig.SandboxConfig, agentType core.AgentType, in SandboxProfileInput) *SrtSpawnConfig {
 	if cfg.Backend != "srt" {
 		return nil
 	}

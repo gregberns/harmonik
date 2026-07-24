@@ -32,8 +32,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/digest"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // renderedInitConfig returns the exact config.yaml body `harmonik init` writes, by
@@ -121,7 +121,7 @@ func TestInitKeeperTemplate_ResolvesCleanly(t *testing.T) {
 	body := renderedInitConfig(t)
 	repoRoot := writeRenderedInitConfig(t, body)
 
-	cfg, err := daemon.LoadProjectConfig(repoRoot)
+	cfg, err := projectconfig.LoadProjectConfig(repoRoot)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig on the generated config must succeed, got: %v", err)
 	}

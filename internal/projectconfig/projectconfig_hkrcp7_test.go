@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_hkrcp7_test.go — unit tests for the PL-004b daemon: block
 // parser added to LoadProjectConfig (hk-rcp7).
@@ -36,7 +36,6 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 // daemonBlkFixtureDir reuses projCfgFixtureDir to create a temp dir with
@@ -59,7 +58,7 @@ agents:
   claude-code:
     model: sonnet
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -75,7 +74,7 @@ func TestDaemonBlock_EmptyBlock_ZeroValue(t *testing.T) {
 schema_version: 1
 daemon: {}
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -96,7 +95,7 @@ schema_version: 1
 daemon:
   workflow_mode: review-loop
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -113,7 +112,7 @@ schema_version: 1
 daemon:
   workflow_mode: dot
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -137,11 +136,11 @@ schema_version: 1
 daemon:
   workflow_mode: single
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatal("LoadProjectConfig with workflow_mode:single: expected *ErrWorkflowModeFloorViolation; got nil error")
 	}
-	var fve *daemon.ExportedErrWorkflowModeFloorViolation
+	var fve *ErrWorkflowModeFloorViolation
 	if !errors.As(err, &fve) {
 		t.Errorf("LoadProjectConfig with workflow_mode:single: error type = %T (%v); want *ErrWorkflowModeFloorViolation", err, err)
 	}
@@ -159,11 +158,11 @@ schema_version: 1
 daemon:
   workflow_mode: turbo-review
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatal("LoadProjectConfig with invalid workflow_mode: expected error; got nil")
 	}
-	var mfe *daemon.ExportedErrMalformedConfigYAML
+	var mfe *ErrMalformedConfigYAML
 	if !errors.As(err, &mfe) {
 		t.Errorf("LoadProjectConfig invalid workflow_mode: error type = %T (%v); want *ErrMalformedConfigYAML", err, err)
 	}
@@ -181,7 +180,7 @@ schema_version: 1
 daemon:
   max_concurrent: 4
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -198,7 +197,7 @@ schema_version: 1
 daemon:
   max_concurrent: 0
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -215,7 +214,7 @@ schema_version: 1
 daemon:
   max_concurrent: -1
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -236,7 +235,7 @@ schema_version: 1
 daemon:
   target_branch: integration
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -266,7 +265,7 @@ daemon:
   max_concurrent: 2
   target_branch: main
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -305,7 +304,7 @@ daemon:
   workflow_mode: dot
   max_concurrent: 8
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig (daemon-only): unexpected error: %v", err)
 	}
@@ -332,7 +331,7 @@ func TestDaemonBlock_EmptyFile_SentinelPreserved(t *testing.T) {
 		t.Fatalf("WriteFile empty: %v", err)
 	}
 
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig (empty file): unexpected error: %v", err)
 	}

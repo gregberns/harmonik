@@ -41,6 +41,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hkppsNoLaunchReopenCall records one ReopenBead invocation.
@@ -120,10 +121,10 @@ func TestPi_UnknownProfile_WorkloopRefusesLaunch(t *testing.T) {
 	// harnesses.pi.profiles does NOT contain "does-not-exist" — only a
 	// differently-named profile, so the unknown reference is a real
 	// existence-check failure, not an accidentally-empty map.
-	projectCfg := ProjectConfig{
-		Harnesses: HarnessesConfig{
-			Pi: PiHarnessConfig{
-				Profiles: map[string]PiProfileConfig{
+	projectCfg := projectconfig.ProjectConfig{
+		Harnesses: projectconfig.HarnessesConfig{
+			Pi: projectconfig.PiHarnessConfig{
+				Profiles: map[string]projectconfig.PiProfileConfig{
 					"ornith-dgx": {
 						Provider:  "ornith-provider",
 						Model:     "ornith-provider/some-id",

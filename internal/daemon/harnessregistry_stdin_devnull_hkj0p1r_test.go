@@ -25,6 +25,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // TestRoutedLaunchSpec_Codex_StdinDevNullThreaded verifies that a codex-routed
@@ -52,7 +53,7 @@ func TestRoutedLaunchSpec_Codex_StdinDevNullThreaded(t *testing.T) {
 	}
 
 	sealedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, core.AgentTypeCodex, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, core.AgentTypeCodex, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if sealedModel != "o4-mini" {
 		t.Fatalf("model resolution with model:o4-mini label = %q; want o4-mini", sealedModel)
@@ -95,7 +96,7 @@ func TestRoutedLaunchSpec_Pi_StdinDevNullThreaded(t *testing.T) {
 	// provider/model/apiKeyEnv. The API key env must be present for the PI-040
 	// billing guard (fail-closed) to let the launch spec build.
 	t.Setenv("OPENROUTER_API_KEY", "sk-test-hk-j0p1r")
-	piCfg := daemon.PiHarnessConfig{
+	piCfg := projectconfig.PiHarnessConfig{
 		Provider:  "openrouter",
 		Model:     "openrouter/qwen/qwen3-coder",
 		APIKeyEnv: "OPENROUTER_API_KEY",

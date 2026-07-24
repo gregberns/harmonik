@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_ru06_test.go — regression tests for the RU-06 empty-file
 // sentinel fix. The prior hand-maintained per-block field list only checked a
@@ -21,8 +21,6 @@ package daemon_test
 import (
 	"errors"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 // A block carrying only a "minor" field with NO schema_version must NOT be
@@ -35,11 +33,11 @@ func TestRU06_PartialWatchBlockNoSchema_NotSilentlyDropped(t *testing.T) {
 watch:
   absent_thresh_s: 120
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatalf("LoadProjectConfig: a watch block without schema_version was silently accepted as empty; want *ErrUnsupportedConfigVersion")
 	}
-	var verr *daemon.ExportedErrUnsupportedConfigVersion
+	var verr *ErrUnsupportedConfigVersion
 	if !errors.As(err, &verr) {
 		t.Fatalf("error type = %T (%v); want *ErrUnsupportedConfigVersion", err, err)
 	}
@@ -55,7 +53,7 @@ schema_version: 1
 watch:
   absent_thresh_s: 120
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -75,7 +73,7 @@ func TestRU06_EmptyFile_ReadsAsAbsent(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			root := projCfgFixtureDir(t, content)
-			cfg, err := daemon.ExportedLoadProjectConfig(root)
+			cfg, err := LoadProjectConfig(root)
 			if err != nil {
 				t.Fatalf("LoadProjectConfig(%s): unexpected error: %v", name, err)
 			}

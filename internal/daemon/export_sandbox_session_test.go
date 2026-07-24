@@ -11,6 +11,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // ExportedResolveGateAgentType exposes resolveGateAgentType for tests in package
@@ -22,7 +23,7 @@ func ExportedResolveGateAgentType(implHarness handlercontract.Harness, fromArtif
 // ExportedSandboxSpawnForRun exposes sandboxSpawnForRun for tests in package
 // daemon_test, returning whether a SrtSpawnConfig would be attached (non-nil)
 // for the given config + resolved agent type. See sandboxgate.go (hk-r4p0l).
-func ExportedSandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxProfileInput) *SrtSpawnConfig {
+func ExportedSandboxSpawnForRun(cfg projectconfig.SandboxConfig, agentType core.AgentType, in SandboxProfileInput) *SrtSpawnConfig {
 	return sandboxSpawnForRun(cfg, agentType, in)
 }
 

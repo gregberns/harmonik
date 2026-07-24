@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_hksbitr_test.go — tests for the watchdog: config block (hk-sbitr):
 // the ctx-watchdog schedule gate read from .harmonik/config.yaml.
@@ -12,8 +12,6 @@ package daemon_test
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 // TestWatchdogConfig_Absent_DefaultsTrue verifies that an absent watchdog: block
@@ -26,7 +24,7 @@ schema_version: 1
 daemon:
   workflow_mode: review-loop
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -44,7 +42,7 @@ schema_version: 1
 watchdog:
   enabled: false
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -63,7 +61,7 @@ schema_version: 1
 watchdog:
   enabled: true
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}

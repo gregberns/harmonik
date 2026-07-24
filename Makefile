@@ -315,6 +315,15 @@ harnesspi-freeze-gate:  ## P2 E1c: forbid new pi-harness files or moved symbols 
 runmerge-freeze-gate:  ## P2 E5 RT13: forbid new merge-path files or moved symbols in internal/daemon
 	scripts/runmerge-freeze-gate.sh
 
+# projectconfig-freeze-gate: the P2 LIFT crit 5 extraction ratchet — the
+# .harmonik/config.yaml loader + config value types left internal/daemon for
+# internal/projectconfig (a pure leaf). depguard fences the import edge; this
+# gate forbids re-creating a config-loader file OR re-declaring/re-aliasing a
+# moved symbol back inside internal/daemon (the operator's no-alias ruling).
+.PHONY: projectconfig-freeze-gate
+projectconfig-freeze-gate:  ## P2 LIFT crit 5: forbid new config-loader files, moved symbols, or aliases in internal/daemon
+	scripts/projectconfig-freeze-gate.sh
+
 # runlaunch-freeze-gate: the P2 E5 RT19b extraction ratchet — the run path's
 # launch-time effects (the CHB-018 pre-exec relay, the HC-056 readiness
 # deadlines and their sentinel, the spawn-cap / tmux-window / agent-ready
@@ -574,6 +583,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/harnessclaude-freeze-gate.sh
 	scripts/harnesspi-freeze-gate.sh
 	scripts/runmerge-freeze-gate.sh
+	scripts/projectconfig-freeze-gate.sh
 	scripts/runlaunch-freeze-gate.sh
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
@@ -607,6 +617,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/harnessclaude-freeze-gate.sh
 	scripts/harnesspi-freeze-gate.sh
 	scripts/runmerge-freeze-gate.sh
+	scripts/projectconfig-freeze-gate.sh
 	scripts/runlaunch-freeze-gate.sh
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh

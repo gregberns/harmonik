@@ -39,6 +39,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // e2eConfigYAML is a .harmonik/config.yaml whose keeper: block carries NON-default
@@ -113,7 +114,7 @@ func TestConfigE2E_ZeroFlagInheritanceAndFlagOverride(t *testing.T) {
 	projectDir := writeE2EProject(t)
 
 	// REAL config load (reads the on-disk .harmonik/config.yaml).
-	projCfg, err := daemon.LoadProjectConfig(projectDir)
+	projCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestConfigE2E_HardCeilingPayloadCarriesConfiguredThreshold(t *testing.T) {
 	projectDir := writeE2EProject(t)
 	agent := "e2e-hardceiling-agent"
 
-	projCfg, err := daemon.LoadProjectConfig(projectDir)
+	projCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}

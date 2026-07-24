@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_keeper_delivery_e1mdc_test.go — T2 (hk-keeper-delivery-config-surface-e1mdc):
 // the new keeper.warn_messages keys (leader_defer_text, crew_defer_text) parse
@@ -10,8 +10,6 @@ package daemon_test
 import (
 	"errors"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 func TestKeeperBlock_DeliveryKeys_Parse_e1mdc(t *testing.T) {
@@ -27,7 +25,7 @@ keeper:
     leader_defer_text: "`+leaderText+`"
     crew_defer_text: "`+crewText+`"
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -51,7 +49,7 @@ keeper:
   warn_messages:
     leader_defer_text: "leader only"
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -72,11 +70,11 @@ keeper:
     leader_defer_text: "ok"
     leader_defer_txet: "typo"
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatal("LoadProjectConfig: want *ErrUnknownConfigKey for a typo'd warn_messages key; got nil")
 	}
-	var uerr *daemon.ExportedErrUnknownConfigKey
+	var uerr *ErrUnknownConfigKey
 	if !errors.As(err, &uerr) {
 		t.Fatalf("error type = %T (%v); want *ErrUnknownConfigKey", err, err)
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workspace"
@@ -262,7 +263,7 @@ type Config struct {
 	//
 	// Spec ref: specs/execution-model.md §4.3 EM-012b — tier-2 slot.
 	// Bead ref: hk-bfvk7.
-	ProjectCfg ProjectConfig
+	ProjectCfg projectconfig.ProjectConfig
 
 	// BinaryCommitHash is the git commit hash of the running daemon binary,
 	// injected at build time via -ldflags "-X main.commitHash=<sha>" and
@@ -858,7 +859,7 @@ func resolveBootConfig(cfg *Config) (core.WorkflowMode, string, error) {
 	// EM-012b tier-2: load + cache .harmonik/config.yaml. A parse/schema error is
 	// fatal; a missing file is a zero-value ProjectConfig (hk-bfvk7).
 	if cfg.ProjectDir != "" {
-		projectCfg, loadErr := LoadProjectConfig(cfg.ProjectDir)
+		projectCfg, loadErr := projectconfig.LoadProjectConfig(cfg.ProjectDir)
 		if loadErr != nil {
 			return "", "", fmt.Errorf("daemon.Start: load .harmonik/config.yaml: %w", loadErr)
 		}

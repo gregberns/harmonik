@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_hksv3vg_test.go — unit tests for ~ expansion in api_key_file
 // at the daemon config parse layer (hk-sv3vg).
@@ -14,8 +14,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 func TestHarnessesPiAPIKeyFile_TildeExpanded(t *testing.T) {
@@ -30,7 +28,7 @@ harnesses:
     api_key_env: OPENROUTER_API_KEY
     api_key_file: ~/.config/harmonik/openrouter.key
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -60,7 +58,7 @@ harnesses:
     api_key_env: OPENROUTER_API_KEY
     api_key_file: /etc/secrets/openrouter.key
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -82,7 +80,7 @@ harnesses:
     model: openrouter/qwen/qwen3-coder
     api_key_env: OPENROUTER_API_KEY
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}

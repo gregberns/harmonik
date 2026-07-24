@@ -1,12 +1,10 @@
-package daemon_test
+package projectconfig
 
 import (
 	"errors"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 func TestSuperviseConfig_ParsesTimings(t *testing.T) {
@@ -29,7 +27,7 @@ supervise:
     revive_backoff: 11s
     revive_window: 20m
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -63,11 +61,11 @@ schema_version: 1
 daemon:
   workflow_mode: review-loop
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
-	if cfg.Supervise != (daemon.ExportedSuperviseConfig{}) {
+	if cfg.Supervise != (SuperviseConfig{}) {
 		t.Errorf("absent supervise block: got %+v, want zero value", cfg.Supervise)
 	}
 }
@@ -81,11 +79,11 @@ supervise:
   daemon_watchdog:
     check_interval: nope
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatal("LoadProjectConfig: expected malformed duration error, got nil")
 	}
-	var malformed *daemon.ExportedErrMalformedConfigYAML
+	var malformed *ErrMalformedConfigYAML
 	if !errors.As(err, &malformed) {
 		t.Fatalf("LoadProjectConfig: error type = %T (%v), want *ErrMalformedConfigYAML", err, err)
 	}
@@ -105,7 +103,7 @@ daemon:
     cap: 2m
     window: 45m
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -132,11 +130,11 @@ daemon:
   restart_backoff:
     window: not-a-duration
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatal("LoadProjectConfig: expected malformed duration error, got nil")
 	}
-	var malformed *daemon.ExportedErrMalformedConfigYAML
+	var malformed *ErrMalformedConfigYAML
 	if !errors.As(err, &malformed) {
 		t.Fatalf("LoadProjectConfig: error type = %T (%v), want *ErrMalformedConfigYAML", err, err)
 	}

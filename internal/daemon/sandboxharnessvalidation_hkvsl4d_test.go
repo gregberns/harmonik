@@ -28,7 +28,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hkvsl4dWriteConfig writes a .harmonik/config.yaml carrying the given
@@ -59,7 +59,7 @@ func TestSandboxHarnesses_UnknownNameIsRejected_hkvsl4d(t *testing.T) {
 
 			projectDir := hkvsl4dWriteConfig(t, "    - "+name+"\n")
 
-			_, err := daemon.LoadProjectConfig(projectDir)
+			_, err := projectconfig.LoadProjectConfig(projectDir)
 			if err == nil {
 				t.Fatalf("hk-vsl4d: sandbox.harnesses[%q] LOADED WITHOUT ERROR. That is the "+
 					"fail-open defect: HasHarness compares this against a run's agent type by "+
@@ -87,7 +87,7 @@ func TestSandboxHarnesses_ClaudeSuggestsClaudeCode_hkvsl4d(t *testing.T) {
 	// the full-set listing asserted below.
 	projectDir := hkvsl4dWriteConfig(t, "    - claude-c\n")
 
-	_, err := daemon.LoadProjectConfig(projectDir)
+	_, err := projectconfig.LoadProjectConfig(projectDir)
 	if err == nil {
 		t.Fatal("hk-vsl4d: expected an error for \"claude-c\"")
 	}
@@ -105,7 +105,7 @@ func TestSandboxHarnesses_AmbiguousPrefixListsFullSet_hkvsl4d(t *testing.T) {
 
 	projectDir := hkvsl4dWriteConfig(t, "    - claude\n")
 
-	_, err := daemon.LoadProjectConfig(projectDir)
+	_, err := projectconfig.LoadProjectConfig(projectDir)
 	if err == nil {
 		t.Fatal("hk-vsl4d: expected an error for \"claude\"")
 	}
@@ -132,7 +132,7 @@ func TestSandboxHarnesses_EveryReservedTypeIsAccepted_hkvsl4d(t *testing.T) {
 
 			projectDir := hkvsl4dWriteConfig(t, "    - "+string(agentType)+"\n")
 
-			cfg, err := daemon.LoadProjectConfig(projectDir)
+			cfg, err := projectconfig.LoadProjectConfig(projectDir)
 			if err != nil {
 				t.Fatalf("hk-vsl4d: reserved agent type %q was REJECTED. This validation must "+
 					"never refuse a name production uses — that turns a security fix into an "+
@@ -155,7 +155,7 @@ func TestSandboxHarnesses_RealProjectConfigStillLoads_hkvsl4d(t *testing.T) {
 
 	projectDir := hkvsl4dWriteConfig(t, "    - pi\n")
 
-	cfg, err := daemon.LoadProjectConfig(projectDir)
+	cfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		t.Fatalf("hk-vsl4d: the production config shape (harnesses: [pi]) failed to load: %v", err)
 	}

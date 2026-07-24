@@ -211,6 +211,27 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "gitprobe is a leaf: importing daemon would re-couple every harness that uses it (P2 E1a)" }
 
+        # projectconfig: the .harmonik/config.yaml loader + config value types
+        # extracted out of internal/daemon (P2 LIFT crit 5). It is a pure leaf —
+        # parseProjectConfig is the pure boundary, LoadProjectConfig the one edge
+        # (os.ReadFile + UserHomeDir) — so RunEnv.ProjectCfg / RunEnv.SandboxCfg
+        # can become daemon-free types and the run machine can later move to
+        # internal/runloop without dragging config across the boundary. The allow
+        # list is the MEASURED import set: stdlib, yaml.v3 (the on-disk decoder),
+        # internal/core (AgentType / WorkflowMode), and self (white-box tests).
+        # It MUST NOT import daemon: doing so would re-couple every daemon file
+        # that names a config type back through the leaf and defeat the extraction.
+        # Rationale: plans/2026-07-21-p2-extraction LIFT crit 5.
+        projectconfig:
+          files: ["**/internal/projectconfig/**"]
+          allow:
+            - "$gostd"
+            - "gopkg.in/yaml.v3"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/projectconfig"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "projectconfig is a leaf: importing daemon would re-couple the config value types to the monolith (P2 LIFT crit 5)" }
+
         # harness-shared: the cross-harness leaf (P2 unit E1a-0). Holds the pieces
         # that more than one harness implementation needs and none of them owns:
         # the resume seed prompt (seedprompt.go), the Refs:<bead> trailer

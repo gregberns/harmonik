@@ -29,6 +29,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 const (
@@ -76,8 +77,8 @@ func TestPiDgxReasoning_LoopbackLaunchSpecAndModelsJSON(t *testing.T) {
 	ctx := context.Background()
 	bus := eventbus.NewBusImpl()
 
-	piCfg := daemon.PiHarnessConfig{
-		Profiles: map[string]daemon.PiProfileConfig{
+	piCfg := projectconfig.PiHarnessConfig{
+		Profiles: map[string]projectconfig.PiProfileConfig{
 			hkppsDgxProfile: {
 				Provider:   hkppsDgxProvider,
 				Model:      hkppsDgxReasonModel,

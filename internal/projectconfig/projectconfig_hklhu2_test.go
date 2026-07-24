@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_hklhu2_test.go — unit tests for the keeper: block parser added
 // to LoadProjectConfig (hk-lhu2).
@@ -19,8 +19,6 @@ package daemon_test
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 // keeperBlkFixtureDir reuses projCfgFixtureDir to create a temp dir with a
@@ -43,11 +41,11 @@ agents:
   claude-code:
     model: sonnet
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
-	if cfg.Keeper != (daemon.ExportedKeeperConfig{}) {
+	if cfg.Keeper != (KeeperConfig{}) {
 		t.Errorf("absent keeper block: want zero KeeperConfig; got %+v", cfg.Keeper)
 	}
 }
@@ -59,11 +57,11 @@ func TestKeeperBlock_EmptyBlock_ZeroValue(t *testing.T) {
 schema_version: 1
 keeper: {}
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
-	if cfg.Keeper != (daemon.ExportedKeeperConfig{}) {
+	if cfg.Keeper != (KeeperConfig{}) {
 		t.Errorf("empty keeper block: want zero KeeperConfig; got %+v", cfg.Keeper)
 	}
 }
@@ -85,7 +83,7 @@ keeper:
     act_pct_ceil: 0.82
     warn_pct_ceil: 0.65
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -120,7 +118,7 @@ keeper:
     act_pct_ceil: 0
     warn_pct_ceil: 0
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -153,7 +151,7 @@ keeper:
     act_abs_tokens: -100
     force_act_abs_tokens: -999
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -186,7 +184,7 @@ keeper:
     default_warn_text: "custom default warn"
     on_demand_warn_text: "custom on-demand warn"
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -211,7 +209,7 @@ keeper:
     default_warn_text: ""
     on_demand_warn_text: ""
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -244,7 +242,7 @@ keeper:
     warn_abs_tokens: 260000
     act_abs_tokens: 295000
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -275,7 +273,7 @@ keeper:
   context_thresholds:
     force_act_abs_tokens: 340000
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -305,7 +303,7 @@ keeper:
     warn_abs_tokens: 250001
     act_abs_tokens: 299999
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}

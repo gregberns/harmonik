@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // defaultRestartBackoffBase is the initial startup delay applied on the second
@@ -52,7 +53,7 @@ type resolvedRestartBackoffConfig struct {
 	Window time.Duration
 }
 
-func resolveRestartBackoffConfig(raw DaemonRestartBackoffConfig) resolvedRestartBackoffConfig {
+func resolveRestartBackoffConfig(raw projectconfig.DaemonRestartBackoffConfig) resolvedRestartBackoffConfig {
 	cfg := resolvedRestartBackoffConfig{
 		Base:   defaultRestartBackoffBase,
 		Cap:    defaultRestartBackoffCap,
@@ -103,7 +104,7 @@ type restartRecord struct {
 // The cognition/ directory under projectDir is created on demand.
 //
 // Bead ref: hk-7t9g1, hk-uzvt9.
-func applyBootBackoff(ctx context.Context, projectDir string, rawCfg DaemonRestartBackoffConfig) time.Duration {
+func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconfig.DaemonRestartBackoffConfig) time.Duration { //nolint:unparam // ctx kept for signature parity with the boot-backoff call site; not threaded through today
 	if projectDir == "" {
 		return 0
 	}

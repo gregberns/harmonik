@@ -1,4 +1,4 @@
-package daemon_test
+package projectconfig
 
 // projectconfig_hk9f3f_test.go — unit tests for the operator decision (hk-9f3f)
 // that unknown keys under the keeper: block (and every keeper sub-block) are a
@@ -25,8 +25,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 func keeper9f3fFixtureDir(t *testing.T, yamlContent string) string {
@@ -47,11 +45,11 @@ keeper:
   context_thresholds:
     warn_abs_token: 250000
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatalf("LoadProjectConfig: want *ErrUnknownConfigKey for a typo'd keeper sub-block key; got nil")
 	}
-	var uerr *daemon.ExportedErrUnknownConfigKey
+	var uerr *ErrUnknownConfigKey
 	if !errors.As(err, &uerr) {
 		t.Fatalf("error type = %T (%v); want *ErrUnknownConfigKey", err, err)
 	}
@@ -75,11 +73,11 @@ schema_version: 1
 keeper:
   bogus_block: {}
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := LoadProjectConfig(root)
 	if err == nil {
 		t.Fatalf("LoadProjectConfig: want *ErrUnknownConfigKey for a bogus top-level keeper key; got nil")
 	}
-	var uerr *daemon.ExportedErrUnknownConfigKey
+	var uerr *ErrUnknownConfigKey
 	if !errors.As(err, &uerr) {
 		t.Fatalf("error type = %T (%v); want *ErrUnknownConfigKey", err, err)
 	}
@@ -98,8 +96,8 @@ keeper:
   hard_ceiling:
     moed: restart
 `)
-	_, err := daemon.ExportedLoadProjectConfig(root)
-	var uerr *daemon.ExportedErrUnknownConfigKey
+	_, err := LoadProjectConfig(root)
+	var uerr *ErrUnknownConfigKey
 	if !errors.As(err, &uerr) {
 		t.Fatalf("error type = %T (%v); want *ErrUnknownConfigKey", err, err)
 	}
@@ -164,7 +162,7 @@ keeper:
     on_demand_warn_text: "restart now"
     actionable_warn_text: "do this thing"
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: full valid keeper config must parse with no error; got %v", err)
 	}
@@ -187,7 +185,7 @@ keeper:
   context_thresholds:
     warn_abs_tokens: 250000
 `)
-	if _, err := daemon.ExportedLoadProjectConfig(root); err != nil {
+	if _, err := LoadProjectConfig(root); err != nil {
 		t.Fatalf("schema_version must not be flagged as an unknown keeper key; got %v", err)
 	}
 }
@@ -210,7 +208,7 @@ keeper:
   context_thresholds:
     warn_abs_tokens: 250000
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("unknown daemon key must be tolerated (PL-004b); got error %v", err)
 	}
@@ -232,7 +230,7 @@ daemon:
   max_concurrent: 2
   bogus_daemon_key: 99
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("unknown daemon key (no keeper block) must be tolerated; got %v", err)
 	}

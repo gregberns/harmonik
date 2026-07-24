@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
@@ -47,7 +48,7 @@ const watchVerifyServicesJobID = "watch-verify-services"
 // the same §7 exception (not fail-loud).
 //
 // Errors are logged to stderr and do not abort daemon startup.
-func ensureWatchLivenessSchedule(store *schedule.Store, watchCfg WatchConfig, _ string) {
+func ensureWatchLivenessSchedule(store *schedule.Store, watchCfg projectconfig.WatchConfig, _ string) {
 	target := watchCfg.StatusTarget
 	if target == "" {
 		target = "captain"

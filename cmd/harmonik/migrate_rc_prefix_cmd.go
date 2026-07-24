@@ -30,7 +30,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // runMigrateRCPrefixSubcommand dispatches `harmonik migrate-rc-prefix [flags]`.
@@ -84,7 +84,7 @@ func runMigrateRCPrefix(args []string, stdin io.Reader, stdout, stderr io.Writer
 	}
 
 	// Load current config to check whether the prefix is already set.
-	cfg, err := daemon.LoadProjectConfig(projectDir)
+	cfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik migrate-rc-prefix: load config: %v\n", err); writeErr != nil {
 			return 1

@@ -33,6 +33,7 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/substrate"
@@ -392,7 +393,7 @@ type RunEnv struct {
 
 	WorkflowModeDefault core.WorkflowMode
 	DefaultHarness      core.AgentType
-	ProjectCfg          ProjectConfig
+	ProjectCfg          projectconfig.ProjectConfig
 
 	// Immutable daemon-level launch/handler config, straight copies of the
 	// same-named workLoopDeps fields (RT18-W). Populated in runEnv(); the run
@@ -406,7 +407,7 @@ type RunEnv struct {
 	RemoteAgentReadyTimeout   time.Duration
 	PostAgentReadyHangTimeout time.Duration
 	CodexNoWorkDurationFloor  time.Duration
-	SandboxCfg                SandboxConfig
+	SandboxCfg                projectconfig.SandboxConfig
 	BrTimeoutCfg              brcli.TimeoutConfig
 
 	RunID      core.RunID

@@ -38,6 +38,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/shared"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // ModelPreferenceError is the typed error returned by shared.ValidateModel and
@@ -125,7 +126,7 @@ func ResolveModelPreference(
 	ctx context.Context,
 	beadLabels []string,
 	agentType core.AgentType,
-	projectCfg ProjectConfig,
+	projectCfg projectconfig.ProjectConfig,
 	bus handlercontract.EventEmitter,
 	beadID string,
 ) (model, effort string) {
@@ -139,7 +140,7 @@ func resolveModelField(
 	ctx context.Context,
 	beadLabels []string,
 	agentType core.AgentType,
-	projectCfg ProjectConfig,
+	projectCfg projectconfig.ProjectConfig,
 	bus handlercontract.EventEmitter,
 	beadID string,
 ) string {
@@ -194,7 +195,7 @@ func resolveEffortField(
 	ctx context.Context,
 	beadLabels []string,
 	agentType core.AgentType,
-	projectCfg ProjectConfig,
+	projectCfg projectconfig.ProjectConfig,
 	bus handlercontract.EventEmitter,
 	beadID string,
 ) string {

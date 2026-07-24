@@ -52,6 +52,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
@@ -147,10 +148,10 @@ func TestHK3hozm_RefuseBeforeLaunchReleasesWorkerSlot(t *testing.T) {
 	// a real existence-check failure (not an accidentally-empty map), so
 	// resolvePiProfile returns an error and beadRunOne takes the FIRST of the
 	// four refuse-before-launch early returns.
-	projectCfg := ProjectConfig{
-		Harnesses: HarnessesConfig{
-			Pi: PiHarnessConfig{
-				Profiles: map[string]PiProfileConfig{
+	projectCfg := projectconfig.ProjectConfig{
+		Harnesses: projectconfig.HarnessesConfig{
+			Pi: projectconfig.PiHarnessConfig{
+				Profiles: map[string]projectconfig.PiProfileConfig{
 					"real-profile": {
 						Provider:  "hk3hozm-provider",
 						Model:     "hk3hozm-provider/some-id",

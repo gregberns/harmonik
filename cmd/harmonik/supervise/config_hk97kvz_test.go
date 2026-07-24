@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 func TestApplySuperviseProjectConfig_WritesConfigSnapshot(t *testing.T) {
@@ -12,7 +12,7 @@ func TestApplySuperviseProjectConfig_WritesConfigSnapshot(t *testing.T) {
 		RestartBaseMS: 1000,
 		RestartCapMS:  60000,
 	}
-	applySuperviseProjectConfig(&cfg, daemon.SuperviseConfig{
+	applySuperviseProjectConfig(&cfg, projectconfig.SuperviseConfig{
 		HeartbeatTTL:        2 * time.Minute,
 		StartTimeout:        45 * time.Second,
 		CrashLoopWindow:     3 * time.Minute,
@@ -20,7 +20,7 @@ func TestApplySuperviseProjectConfig_WritesConfigSnapshot(t *testing.T) {
 		StopTimeout:         12 * time.Second,
 		RestartBackoffBase:  1500 * time.Millisecond,
 		RestartBackoffCap:   90 * time.Second,
-		DaemonWatchdog: daemon.SuperviseDaemonWatchdogConfig{
+		DaemonWatchdog: projectconfig.SuperviseDaemonWatchdogConfig{
 			CheckInterval: 2 * time.Minute,
 			DialTimeout:   5 * time.Second,
 			ReviveBackoff: 11 * time.Second,

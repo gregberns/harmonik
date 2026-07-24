@@ -31,6 +31,7 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/harness/shared"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -48,7 +49,7 @@ import (
 // Returns a non-nil error only if Register fails (a duplicate or sealed-registry
 // defect), which is impossible for these three distinct registrations but surfaced
 // so callers fail-closed if this grows.
-func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry, error) {
+func newHarnessRegistry(piCfg projectconfig.PiHarnessConfig) (*handlercontract.HarnessRegistry, error) {
 	reg := handlercontract.NewHarnessRegistry()
 	if err := reg.Register(core.AgentTypeClaudeCode, claude.NewHarness()); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register claude harness: %w", err)

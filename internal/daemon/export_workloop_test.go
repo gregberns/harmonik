@@ -21,6 +21,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
@@ -351,7 +352,7 @@ var ExportedLivePaneCommandSubstrings = &livePaneCommandSubstrings
 // exercise buildCognition without a full daemon. No runs/queues/drain needed.
 //
 // Bead ref: hk-jay1.
-func NewLiveStateBuilderForTest(projectDir string, projectHash core.ProjectHash, kconfig KeeperConfig) *LiveStateBuilder {
+func NewLiveStateBuilderForTest(projectDir string, projectHash core.ProjectHash, kconfig projectconfig.KeeperConfig) *LiveStateBuilder {
 	return &LiveStateBuilder{
 		projectDir:  projectDir,
 		projectHash: projectHash,

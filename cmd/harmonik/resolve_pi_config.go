@@ -35,7 +35,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // piModelShapeRe is the HC-055a shape validation regex for Pi model fields.
@@ -105,7 +105,7 @@ func (e *PiConfigError) Error() string {
 // The product imposes ZERO baked Pi defaults. Missing required field → refuse to
 // start. Model shape is validated; model VALUE is never validated — Pi's full
 // provider/model range is selectable (PI-052 / HC-055a value-opacity invariant).
-func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHarnessConfig, error) {
+func ResolvePiConfig(cfg projectconfig.PiHarnessConfig, projectDir string) (projectconfig.PiHarnessConfig, error) { //nolint:gocognit,cyclop // ResolvePiConfig is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 	// ── Missing-value gate (checked first, aggregates ALL missing keys). ──
 	// Required: provider, model, api_key_env. No defaults — R1 mandate.
 	// Profiles' required keys are aggregated here too (same gate, one error).
@@ -145,7 +145,7 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 		}
 	}
 	if len(missing) > 0 {
-		return daemon.PiHarnessConfig{}, &PiConfigMissingError{
+		return projectconfig.PiHarnessConfig{}, &PiConfigMissingError{
 			ProjectDir: projectDir,
 			Missing:    missing,
 		}
@@ -157,7 +157,7 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 	if cfg.APIKeyFile != "" {
 		expanded, err := resolvePiAPIKeyFile("harnesses.pi.api_key_file", cfg.APIKeyFile)
 		if err != nil {
-			return daemon.PiHarnessConfig{}, err
+			return projectconfig.PiHarnessConfig{}, err
 		}
 		cfg.APIKeyFile = expanded
 	}
@@ -167,7 +167,7 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 	// chars. Absent is always valid. API needs no validation.
 	if cfg.BaseURL != "" {
 		if err := validatePiBaseURL("harnesses.pi.base_url", cfg.BaseURL); err != nil {
-			return daemon.PiHarnessConfig{}, err
+			return projectconfig.PiHarnessConfig{}, err
 		}
 	}
 
@@ -177,13 +177,13 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 	piModelField := "harnesses.pi.model"
 	piModelVal := cfg.Model
 	if err := validatePiModelShape(piModelField, piModelVal); err != nil {
-		return daemon.PiHarnessConfig{}, err
+		return projectconfig.PiHarnessConfig{}, err
 	}
 	if cfg.HasFallback {
 		fbModelField := "harnesses.pi.fallback.model"
 		fbModelVal := cfg.Fallback.Model
 		if err := validatePiModelShape(fbModelField, fbModelVal); err != nil {
-			return daemon.PiHarnessConfig{}, err
+			return projectconfig.PiHarnessConfig{}, err
 		}
 	}
 
@@ -193,20 +193,20 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 	for name, prof := range cfg.Profiles {
 		pfx := "harnesses.pi.profiles." + name
 		if err := validatePiModelShape(pfx+".provider", prof.Provider); err != nil {
-			return daemon.PiHarnessConfig{}, err
+			return projectconfig.PiHarnessConfig{}, err
 		}
 		if err := validatePiModelShape(pfx+".model", prof.Model); err != nil {
-			return daemon.PiHarnessConfig{}, err
+			return projectconfig.PiHarnessConfig{}, err
 		}
 		if prof.BaseURL != "" {
 			if err := validatePiBaseURL(pfx+".base_url", prof.BaseURL); err != nil {
-				return daemon.PiHarnessConfig{}, err
+				return projectconfig.PiHarnessConfig{}, err
 			}
 		}
 		if prof.APIKeyFile != "" {
 			expanded, err := resolvePiAPIKeyFile(pfx+".api_key_file", prof.APIKeyFile)
 			if err != nil {
-				return daemon.PiHarnessConfig{}, err
+				return projectconfig.PiHarnessConfig{}, err
 			}
 			prof.APIKeyFile = expanded
 		}

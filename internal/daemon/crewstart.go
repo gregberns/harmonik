@@ -26,6 +26,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
@@ -79,7 +80,7 @@ type crewHandlerImpl struct {
 
 	// keeper probe fields (hk-qgfme): async post-spawn liveness check.
 	// All fields are optional; nil = feature disabled (probe skipped).
-	keeperCfg    KeeperConfig                        // FlockAcquireGrace drives the probe; zero = disabled
+	keeperCfg    projectconfig.KeeperConfig          // FlockAcquireGrace drives the probe; zero = disabled
 	eventBus     crewKeeperEventBus                  // for emitting session_keeper_watcher_dead; may be nil
 	commsBus     crewKeeperCommsBus                  // for keeper-alert comms to operator; may be nil
 	liveKeeperFn func(projectDir, agent string) bool // injectable for testing; nil = keeper.LiveKeeperPresent
@@ -87,7 +88,7 @@ type crewHandlerImpl struct {
 	// crews holds the per-crew-name config read from .harmonik/config.yaml's
 	// crews: block (hk-l63b9). Nil/absent = no per-crew config; the harness
 	// resolver's third tier falls through to the default "claude".
-	crews map[string]CrewConfig
+	crews map[string]projectconfig.CrewConfig
 }
 
 // CrewHandlerOpt is a functional option for NewCrewHandler.
@@ -103,7 +104,7 @@ type CrewHandlerOpt func(*crewHandlerImpl)
 // Either bus argument may be nil (disables that emission path). If
 // keeperCfg.FlockAcquireGrace == 0 the probe is entirely disabled and no
 // goroutine is launched.
-func WithKeeperProbe(keeperCfg KeeperConfig, eventBus crewKeeperEventBus, commsBus crewKeeperCommsBus) CrewHandlerOpt {
+func WithKeeperProbe(keeperCfg projectconfig.KeeperConfig, eventBus crewKeeperEventBus, commsBus crewKeeperCommsBus) CrewHandlerOpt {
 	return func(h *crewHandlerImpl) {
 		h.keeperCfg = keeperCfg
 		h.eventBus = eventBus
@@ -115,7 +116,7 @@ func WithKeeperProbe(keeperCfg KeeperConfig, eventBus crewKeeperEventBus, commsB
 // .harmonik/config.yaml's crews: block (hk-l63b9) — the third tier of the
 // crew-scoped harness resolver (flag > mission front-matter > per-crew config >
 // default "claude"). Omitting this option leaves the tier empty.
-func WithCrewsConfig(crews map[string]CrewConfig) CrewHandlerOpt {
+func WithCrewsConfig(crews map[string]projectconfig.CrewConfig) CrewHandlerOpt {
 	return func(h *crewHandlerImpl) {
 		h.crews = crews
 	}

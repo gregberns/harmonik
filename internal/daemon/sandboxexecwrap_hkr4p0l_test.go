@@ -41,6 +41,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hkr4p0lexecProfileInput returns a minimal SandboxProfileInput satisfying the
@@ -64,7 +65,7 @@ func TestExecPath_Pi_IsSrtWrapped(t *testing.T) {
 	t.Parallel()
 
 	// Reproduce the workloop's gate decision for a pi run.
-	cfg := daemon.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
+	cfg := projectconfig.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
 	in := hkr4p0lexecProfileInput(t, "hkr4p0lexec-pi-run")
 	spawn := daemon.ExportedSandboxSpawnForRun(cfg, core.AgentTypePi, in)
 	if spawn == nil {
@@ -114,7 +115,7 @@ func TestExecPath_Pi_IsSrtWrapped(t *testing.T) {
 func TestExecPath_Claude_NotWrapped(t *testing.T) {
 	t.Parallel()
 
-	cfg := daemon.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
+	cfg := projectconfig.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
 	in := hkr4p0lexecProfileInput(t, "hkr4p0lexec-claude-run")
 	spawn := daemon.ExportedSandboxSpawnForRun(cfg, core.AgentTypeClaudeCode, in)
 	if spawn != nil {
@@ -150,7 +151,7 @@ func TestExecPath_BackendNone_NotWrapped(t *testing.T) {
 	origArgs := []string{"--mode=json"}
 
 	for _, backend := range []string{"none", ""} {
-		cfg := daemon.SandboxConfig{Backend: backend, Harnesses: []string{"pi"}}
+		cfg := projectconfig.SandboxConfig{Backend: backend, Harnesses: []string{"pi"}}
 		in := hkr4p0lexecProfileInput(t, "hkr4p0lexec-none-run")
 		spawn := daemon.ExportedSandboxSpawnForRun(cfg, core.AgentTypePi, in)
 		if spawn != nil {
@@ -202,7 +203,7 @@ func TestExecPath_Pi_WasNotWrapped_BeforeFix(t *testing.T) {
 // allowlist it in the profile JSON.
 func TestExecPath_Pi_SrtWrapCreatesClaudeTmpDir(t *testing.T) {
 	// Not t.Parallel: asserts on a fixed, shared filesystem path (/tmp/claude).
-	cfg := daemon.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
+	cfg := projectconfig.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
 	in := hkr4p0lexecProfileInput(t, "hkcdpxu-claude-tmpdir-run")
 	spawn := daemon.ExportedSandboxSpawnForRun(cfg, core.AgentTypePi, in)
 	if spawn == nil {

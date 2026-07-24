@@ -19,6 +19,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/shared"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // ExportedNewHarnessRegistry exposes newHarnessRegistry for tests in package
@@ -29,12 +30,12 @@ import (
 //
 // Bead ref: hk-hj9ld.
 func ExportedNewHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
-	return newHarnessRegistry(PiHarnessConfig{})
+	return newHarnessRegistry(projectconfig.PiHarnessConfig{})
 }
 
 // ExportedNewHarnessRegistryWithPi exposes newHarnessRegistry with a configured
 // PiHarnessConfig for tests that verify the config→harness seam (hk-f8u5j).
-func ExportedNewHarnessRegistryWithPi(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry, error) {
+func ExportedNewHarnessRegistryWithPi(piCfg projectconfig.PiHarnessConfig) (*handlercontract.HarnessRegistry, error) {
 	return newHarnessRegistry(piCfg)
 }
 

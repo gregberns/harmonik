@@ -51,7 +51,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // requiredStallSentinelValue describes one required stall-sentinel config value:
@@ -106,7 +106,7 @@ func (e *StallSentinelConfigMissingError) Error() string {
 // ALL zero values as missing. This is intentional: 0s thresholds are nonsensical
 // for stall detection (they'd fire on every tick), and the example block shows
 // non-zero starting values the operator must own.
-func allStallSentinelValues(cfg daemon.StallSentinelConfig) []requiredStallSentinelValue {
+func allStallSentinelValues(cfg projectconfig.StallSentinelConfig) []requiredStallSentinelValue {
 	return []requiredStallSentinelValue{
 		// ── escalation tiers (X/Y/Z) ──
 		{
@@ -151,7 +151,7 @@ func allStallSentinelValues(cfg daemon.StallSentinelConfig) []requiredStallSenti
 
 // checkMissingStallSentinelValues returns every requiredStallSentinelValue where
 // satisfied=false. Empty result = all required values supplied.
-func checkMissingStallSentinelValues(cfg daemon.StallSentinelConfig) []requiredStallSentinelValue {
+func checkMissingStallSentinelValues(cfg projectconfig.StallSentinelConfig) []requiredStallSentinelValue {
 	var missing []requiredStallSentinelValue
 	for _, v := range allStallSentinelValues(cfg) {
 		if !v.satisfied {
@@ -189,7 +189,7 @@ type ResolvedStallSentinelConfig struct {
 // operator knows which .harmonik/config.yaml to edit).
 //
 // Bead ref: hk-hm09z.
-func ResolveStallSentinelConfig(cfg daemon.StallSentinelConfig, projectDir string) (ResolvedStallSentinelConfig, error) {
+func ResolveStallSentinelConfig(cfg projectconfig.StallSentinelConfig, projectDir string) (ResolvedStallSentinelConfig, error) {
 	if missing := checkMissingStallSentinelValues(cfg); len(missing) > 0 {
 		return ResolvedStallSentinelConfig{}, &StallSentinelConfigMissingError{
 			ProjectDir: projectDir,

@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // ExitCodeDaemonDown is the exit code when the daemon socket is absent or
@@ -90,7 +90,7 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		projectDir = wd
 	}
 
-	projectCfg, err := daemon.LoadProjectConfig(projectDir)
+	projectCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise start: load .harmonik/config.yaml: %v\n", err); writeErr != nil {
 			return 1
@@ -371,7 +371,7 @@ func resolveAPIKey(projectDir string, require bool) (string, error) {
 	return "", nil
 }
 
-func applySuperviseProjectConfig(cfg *Config, sc daemon.SuperviseConfig) {
+func applySuperviseProjectConfig(cfg *Config, sc projectconfig.SuperviseConfig) {
 	if sc.HeartbeatTTL > 0 {
 		cfg.HeartbeatTTLMS = durationMS(sc.HeartbeatTTL)
 	}

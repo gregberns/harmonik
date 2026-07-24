@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // knownLiveAgents are production agents where an accidental /clear cycle could
@@ -618,7 +618,7 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 	// Uses empty KeeperFlags so the check reflects the config alone, matching
 	// the typical crew keeper invocation (no per-key CLI flags). Refs: hk-zou19.
 	{
-		projCfg, cfgErr := daemon.LoadProjectConfig(cfg.projectDir)
+		projCfg, cfgErr := projectconfig.LoadProjectConfig(cfg.projectDir)
 		if cfgErr != nil {
 			check("config", false, fmt.Sprintf("config.yaml load error: %v — run 'harmonik keeper config --example'", cfgErr))
 		} else {

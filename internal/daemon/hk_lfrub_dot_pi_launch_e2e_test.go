@@ -32,6 +32,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // TestHkLfrubDotPiLaunchPath_PinScopedOut_RoutesToOrnith is the ISOLATED e2e
@@ -65,7 +66,7 @@ func TestHkLfrubDotPiLaunchPath_PinScopedOut_RoutesToOrnith(t *testing.T) {
 	}
 
 	// ── Seam 2: the real routed launch path, fed the scoped model ──────────────
-	piCfg := daemon.PiHarnessConfig{
+	piCfg := projectconfig.PiHarnessConfig{
 		Provider:   "ornith",
 		Model:      wantModel,
 		APIKeyEnv:  "HK_LFRUB_PI_KEY",

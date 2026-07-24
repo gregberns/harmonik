@@ -49,6 +49,7 @@ import (
 	"github.com/gregberns/harmonik/internal/hookrelay"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	queuecli "github.com/gregberns/harmonik/internal/queue/cli"
 	"github.com/gregberns/harmonik/internal/release"
 	"github.com/gregberns/harmonik/internal/supervise"
@@ -1133,7 +1134,7 @@ EXAMPLES
 	// the workflow_mode value and returns *ErrWorkflowModeFloorViolation when
 	// single is found (PL-004a review floor — daemon-level config must never
 	// lower the mode below review-loop).
-	projCfg, projCfgErr := daemon.LoadProjectConfig(projectDir)
+	projCfg, projCfgErr := projectconfig.LoadProjectConfig(projectDir)
 	if projCfgErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", projCfgErr)
 		return 1

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // watch_config_parity_we7_test.go — WE7 parity test: every key in allWatchValues
@@ -24,7 +24,7 @@ func TestWatchConfigParityWE7(t *testing.T) {
 		t.Fatalf("watchConfigExampleYAML() must contain 'watch:' block:\n%s", example)
 	}
 
-	for _, v := range allWatchValues(daemon.WatchConfig{}) {
+	for _, v := range allWatchValues(projectconfig.WatchConfig{}) {
 		if !strings.Contains(example, v.keyPath) {
 			t.Errorf("watch --example missing key path %q", v.keyPath)
 		}
@@ -37,7 +37,7 @@ func TestWatchConfigParityWE7(t *testing.T) {
 
 // TestResolveWatchTargets_DefaultCaptain verifies that unset targets resolve to "captain".
 func TestResolveWatchTargets_DefaultCaptain(t *testing.T) {
-	status, opsmon := ResolveWatchTargets(daemon.WatchConfig{})
+	status, opsmon := ResolveWatchTargets(projectconfig.WatchConfig{})
 	if status != "captain" {
 		t.Errorf("status_target unset: want 'captain', got %q", status)
 	}
@@ -48,7 +48,7 @@ func TestResolveWatchTargets_DefaultCaptain(t *testing.T) {
 
 // TestResolveWatchTargets_ConfigOverrides verifies that config values override the default.
 func TestResolveWatchTargets_ConfigOverrides(t *testing.T) {
-	cfg := daemon.WatchConfig{
+	cfg := projectconfig.WatchConfig{
 		StatusTarget:     "watch",
 		OpsmonitorTarget: "watch",
 	}
@@ -67,7 +67,7 @@ func TestResolveWatchTargets_ConfigOverrides(t *testing.T) {
 // WE6 schedule interval keys (liveness_interval, digest_interval) ARE fail-loud when absent.
 func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
 	// With empty config: WE7 target keys must NOT appear in missing; WE9+WE6 keys must.
-	missing := checkMissingWatchValues(daemon.WatchConfig{})
+	missing := checkMissingWatchValues(projectconfig.WatchConfig{})
 	missingPaths := map[string]bool{}
 	for _, m := range missing {
 		missingPaths[m.keyPath] = true
@@ -95,7 +95,7 @@ func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
 	}
 
 	// Fully populated config (all WE7 + WE9 + WE6 keys set) must have no missing entries.
-	cfg := daemon.WatchConfig{
+	cfg := projectconfig.WatchConfig{
 		StatusTarget:            "watch",
 		OpsmonitorTarget:        "watch",
 		AbsentThreshSec:         600,
@@ -114,7 +114,7 @@ func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
 // missing interval key fails loud naming the key + description + 'see --example'.
 func TestCheckMissingWatchValues_WE6IntervalKeysFail(t *testing.T) {
 	// Only interval keys absent — all WE7+WE9 keys set.
-	cfg := daemon.WatchConfig{
+	cfg := projectconfig.WatchConfig{
 		StatusTarget:     "watch",
 		OpsmonitorTarget: "watch",
 		AbsentThreshSec:  600,

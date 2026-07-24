@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // resolve_watch_config.go — watch routing target resolver + single-source carrier.
@@ -70,7 +70,7 @@ func (e *WatchConfigMissingError) Error() string {
 // TARGET KEYS (WE7): satisfied=true always (default "captain", NOT fail-loud).
 // BEHAVIORAL KEYS (WE9+): satisfied based on config presence (fail-loud when absent).
 // SCHEDULE INTERVAL KEYS (WE6): satisfied based on config presence (fail-loud when absent).
-func allWatchValues(cfg daemon.WatchConfig) []requiredWatchValue {
+func allWatchValues(cfg projectconfig.WatchConfig) []requiredWatchValue {
 	return []requiredWatchValue{
 		{
 			keyPath:     "watch.status_target",
@@ -114,7 +114,7 @@ func allWatchValues(cfg daemon.WatchConfig) []requiredWatchValue {
 // For WE7 (target keys only), this is always empty — target keys default to
 // "captain" and are never fail-loud. Future behavioral keys (WE9+) will populate
 // this slice when absent from config.
-func checkMissingWatchValues(cfg daemon.WatchConfig) []requiredWatchValue {
+func checkMissingWatchValues(cfg projectconfig.WatchConfig) []requiredWatchValue {
 	var missing []requiredWatchValue
 	for _, v := range allWatchValues(cfg) {
 		if !v.satisfied {
@@ -131,7 +131,7 @@ func checkMissingWatchValues(cfg daemon.WatchConfig) []requiredWatchValue {
 // The "captain" default is LOAD-BEARING: it preserves existing captain-directed
 // routing when the watch: block is absent, making WE7 inert until a runtime
 // config flip.
-func ResolveWatchTargets(cfg daemon.WatchConfig) (statusTarget, opsmonitorTarget string) {
+func ResolveWatchTargets(cfg projectconfig.WatchConfig) (statusTarget, opsmonitorTarget string) {
 	statusTarget = cfg.StatusTarget
 	if statusTarget == "" {
 		statusTarget = "captain"

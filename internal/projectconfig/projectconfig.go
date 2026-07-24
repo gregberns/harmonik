@@ -1,4 +1,9 @@
-package daemon
+// Package projectconfig is the daemon-free leaf that loads and models
+// .harmonik/config.yaml. parseProjectConfig is the pure boundary (path + bytes
+// in, value out); LoadProjectConfig is the one edge (os.ReadFile + UserHomeDir).
+// It imports only stdlib, gopkg.in/yaml.v3, and internal/core, so the run
+// machine can hold config as an immutable value without linking the daemon.
+package projectconfig
 
 // projectconfig.go — per-project model/effort config loader for
 // .harmonik/config.yaml (hk-bfvk7), extended with the daemon operational

@@ -30,6 +30,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hkppsNoLeakArgFlagValue returns the token following the first occurrence of
@@ -104,7 +105,7 @@ func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
 	}
 
 	const wantModel = "ornith"
-	piCfg := daemon.PiHarnessConfig{
+	piCfg := projectconfig.PiHarnessConfig{
 		Provider:   "ornith",
 		Model:      wantModel,
 		APIKeyEnv:  "HK_M6UU2_NO_LEAK_PI_KEY",
@@ -125,7 +126,7 @@ func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
 		t.Fatalf("resolved agentType = %q; want pi", agentType)
 	}
 	sealedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, agentType, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if sealedModel != "" {
 		t.Fatalf("pi run sealed model = %q; want empty (no pi tier-3 default → config fallback)", sealedModel)
@@ -137,7 +138,7 @@ func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
 	if profErr != nil {
 		t.Fatalf("resolvePiProfile: unexpected error: %v", profErr)
 	}
-	if resolvedProfile != (daemon.PiProfileConfig{}) {
+	if resolvedProfile != (projectconfig.PiProfileConfig{}) {
 		t.Fatalf("resolvePiProfile: got non-zero profile %+v for a no-label bead; want zero tuple", resolvedProfile)
 	}
 
@@ -165,7 +166,7 @@ func TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel(t *testing.T) {
 
 	// ── Adversarial counterfactual: prove the assertions above are not vacuous ─
 	leakedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, core.AgentTypeClaudeCode, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, core.AgentTypeClaudeCode, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if leakedModel != "sonnet" {
 		t.Fatalf("counterfactual: claude tier-3 default = %q; want sonnet", leakedModel)
@@ -214,7 +215,7 @@ func TestPiNoTier3Leak_DotPathVariant_ProviderTupleUnclobbered(t *testing.T) {
 	// The harness registry is built ONCE per run from the resolved profile
 	// tuple (as workloop.go does at claim time before entering the DOT
 	// cascade); every node re-launch shares this SAME registry.
-	piCfg := daemon.PiHarnessConfig{
+	piCfg := projectconfig.PiHarnessConfig{
 		Provider:   wantProvider,
 		Model:      wantModel,
 		APIKeyEnv:  "HK_M6UU2_NO_LEAK_DOT_PI_KEY",

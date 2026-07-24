@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // resolve_keeper_required_test.go — operator-required-config change: harmonik imposes
@@ -21,7 +21,7 @@ import (
 // `keeper config --example` fix.
 func TestResolveKeeperConfig_ZeroConfig_AggregatesAllMissing(t *testing.T) {
 	projectDir := t.TempDir()
-	_, err := ResolveKeeperConfig(KeeperFlags{}, daemon.KeeperConfig{}, projectDir)
+	_, err := ResolveKeeperConfig(KeeperFlags{}, projectconfig.KeeperConfig{}, projectDir)
 	if err == nil {
 		t.Fatal("zero config: expected *KeeperConfigMissingError, got nil (must refuse to start, not silently default)")
 	}
@@ -191,7 +191,7 @@ func TestRunKeeperConfigExample_RoundTrips(t *testing.T) {
 	}
 
 	// Parse it the way `harmonik keeper` does.
-	projCfg, err := daemon.LoadProjectConfig(projectDir)
+	projCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig on the --example output FAILED: %v\nconfig:\n%s", err, content)
 	}
@@ -279,7 +279,7 @@ func TestKeeperBinaryUpgradeMigration_CorpusItem6(t *testing.T) {
 	if wErr := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(content), 0o600); wErr != nil {
 		t.Fatalf("WriteFile: %v", wErr)
 	}
-	projCfg, parseErr := daemon.LoadProjectConfig(projectDir)
+	projCfg, parseErr := projectconfig.LoadProjectConfig(projectDir)
 	if parseErr != nil {
 		t.Fatalf("LoadProjectConfig after example-merge: %v", parseErr)
 	}

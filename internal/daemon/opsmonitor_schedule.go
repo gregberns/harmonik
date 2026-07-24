@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
@@ -35,7 +36,7 @@ const (
 
 // opsMonitorJob returns the canonical ops-monitor scheduled job definition.
 // cfg fields are optional: empty strings resolve to the compiled defaults.
-func opsMonitorJob(cfg OpsmonitorConfig) schedule.ScheduledJob {
+func opsMonitorJob(cfg projectconfig.OpsmonitorConfig) schedule.ScheduledJob {
 	interval := cfg.Interval
 	if interval == "" {
 		interval = opsMonitorDefaultInterval
@@ -66,7 +67,7 @@ func opsMonitorJob(cfg OpsmonitorConfig) schedule.ScheduledJob {
 // resolve to the compiled defaults ("5m", "scripts/ops-monitor-check.sh").
 // Errors are logged to stderr and do not abort daemon startup — a missing
 // ops-monitor schedule is an ops concern, not a fatal.
-func ensureOpsMonitorSchedule(store *schedule.Store, cfg OpsmonitorConfig) {
+func ensureOpsMonitorSchedule(store *schedule.Store, cfg projectconfig.OpsmonitorConfig) {
 	if _, ok := store.Get(opsMonitorJobID); ok {
 		return
 	}

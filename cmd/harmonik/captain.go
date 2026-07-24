@@ -71,10 +71,10 @@ import (
 	"github.com/gregberns/harmonik/internal/agentlaunch"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crewrun"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // captainSplashDismissDelay is the wait between the splash-dismiss Enter and the
@@ -346,7 +346,7 @@ func ensureBootAssets(projectDir string, stdout, stderr io.Writer) error {
 	}
 	// renderAgentsMD substitutes $TARGET_BRANCH; read from config when available.
 	targetBranch := "main"
-	if pc, err := daemon.LoadProjectConfig(projectDir); err == nil && pc.Daemon.TargetBranch != "" {
+	if pc, err := projectconfig.LoadProjectConfig(projectDir); err == nil && pc.Daemon.TargetBranch != "" {
 		targetBranch = pc.Daemon.TargetBranch
 	}
 	if code := renderAgentsMD(projectDir, targetBranch, false, stdout, stderr); code != 0 {
@@ -441,7 +441,7 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	rcPrefix := *rcPrefixFlag
 	if rcPrefix == rcPrefixUnset {
 		rcPrefix = ""
-		if pc, perr := daemon.LoadProjectConfig(project); perr == nil {
+		if pc, perr := projectconfig.LoadProjectConfig(project); perr == nil {
 			rcPrefix = pc.Daemon.RemoteControlPrefix
 		} else {
 			fmt.Fprintf(os.Stderr, "harmonik captain: could not load .harmonik/config.yaml for rc-prefix (%v) — launching with a bare --remote-control label\n", perr)

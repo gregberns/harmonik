@@ -1259,6 +1259,11 @@ func dispatchDotAgenticNode(
 	// which would assemble every port for one read (RT18: the clock default it
 	// once guarded now folds inside runPorts() via clockOrSystem).
 	emit := deps.emitterPort()
+	// RSM-011: the cross-goroutine handles (harness/adapter registries, the two
+	// substrates, the hook-session store) bound once for this call through the
+	// SharedHandles bundle. Byte-identical to reaching each field off deps; the
+	// RT18 signature drop replaces deps with this bundle as a parameter.
+	handles := deps.sharedHandles()
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
 	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
 	if isReviewer {
@@ -1349,7 +1354,7 @@ func dispatchDotAgenticNode(
 	// and consumed by BOTH the model scoping immediately below and the specBuilder
 	// selection further down, so the two stay in agreement as this comment promises.
 	reviewerInheritedHarness := dotReviewerInheritedHarnessOverride(
-		deps.harnessRegistry,
+		handles.HarnessRegistry,
 		isReviewer,
 		reviewerHarnessOverride,
 		core.AgentType(node.Harness),
@@ -1438,13 +1443,13 @@ func dispatchDotAgenticNode(
 	if !effectiveNodeHarness.Valid() && reviewerInheritedHarness.Valid() {
 		effectiveNodeHarness = reviewerInheritedHarness
 	}
-	if effectiveNodeHarness.Valid() && deps.harnessRegistry != nil {
+	if effectiveNodeHarness.Valid() && handles.HarnessRegistry != nil {
 		// hk-2jxqg: use pinnedHarnessLaunchSpecBuilder so the node-level pin wins
 		// unconditionally. routedLaunchSpecBuilder calls resolveHarness which lets a
 		// tier-1 bead label (e.g. harness:codex) override the pin, silently routing
 		// the reviewer to the wrong harness and producing no verdict.
 		specBuilder = pinnedHarnessLaunchSpecBuilder(
-			deps.harnessRegistry,
+			handles.HarnessRegistry,
 			beadRecord,
 			effectiveNodeHarness,
 			emit,
@@ -1467,19 +1472,19 @@ func dispatchDotAgenticNode(
 	// WORKER, and the implementer/reviewer spawns on the worker (mirrors the
 	// single-mode path, workloop.go ~2733). nil preserves local behaviour (NFR7).
 	// hk-qxvc2: a claude (SessionIDMinted) reviewer must run on the tmux/claude
-	// substrate, not the codexdriver app-server substrate (deps.substrate under
+	// substrate, not the codexdriver app-server substrate (handles.Substrate under
 	// HARMONIK_SUBSTRATE=codexdriver is protocol-locked to codex JSON-RPC; a claude
 	// reviewer handed to it never emits agent_ready). A SessionIDCaptured (codex)
 	// reviewer is out of scope — spec.Substrate is nil'd below regardless.
 	reviewerHarnessIsClaude := false
-	if isReviewer && deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
+	if isReviewer && handles.HarnessRegistry != nil {
+		if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
 			reviewerHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
 		}
 	}
-	baseSubstrate := deps.substrate
-	if reviewerHarnessIsClaude && deps.reviewerSubstrate != nil {
-		baseSubstrate = deps.reviewerSubstrate
+	baseSubstrate := handles.Substrate
+	if reviewerHarnessIsClaude && handles.ReviewerSubstrate != nil {
+		baseSubstrate = handles.ReviewerSubstrate
 	}
 	prs := newPerRunSubstrate(baseSubstrate, deps.handlerBinary, runner)
 	// runSubstrate, not `substrate`: the bare name would shadow the imported
@@ -1526,8 +1531,8 @@ func dispatchDotAgenticNode(
 	// force spec.Substrate=nil so the handler uses exec (not tmux SpawnWindow) to
 	// wire a real stdout pipe; apply srt argv-wrap; capture pi-stdout.log; set
 	// StdoutWrapper for session-id capture + PI-014 agent_end teardown.
-	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
+	if handles.HarnessRegistry != nil {
+		if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
 			if h.SessionIDPolicy() == handlercontract.SessionIDCaptured {
 				pasteTarget = nil
 				spec.Substrate = nil
@@ -1647,12 +1652,12 @@ func dispatchDotAgenticNode(
 
 	preHeadSHA, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 
-	if deps.hookStore != nil {
-		deps.hookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
+	if handles.HookStore != nil {
+		handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
 	tap, tapCh := newPerRunEventTap(emit, runID)
-	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
+	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 	// hk-47u9z: arm the SessionIDCaptured spawn proof now that the per-run tap
 	// exists.
@@ -1704,13 +1709,13 @@ func dispatchDotAgenticNode(
 	// unconditionally caused HC-056 timeout in all workflow modes.
 	// Spec: specs/harness-contract.md §2 N5.
 	dotCompletionMode := handlercontract.CompletionEventStreamThenQuit
-	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
+	if handles.HarnessRegistry != nil {
+		if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
 			dotCompletionMode = h.Completion()
 		}
 	}
 
-	adapter, adapterErr := deps.adapterRegistry.ForAgent(shared.ArtifactAgentType(artifacts))
+	adapter, adapterErr := handles.AdapterRegistry.ForAgent(shared.ArtifactAgentType(artifacts))
 	if adapterErr != nil {
 		// No adapter for the resolved agent type — non-fatal; skip ready-wait.
 		fmt.Fprintf(os.Stderr, "daemon: dot: ForAgent(%s) node %q: %v (skipping ready-wait)\n",
@@ -1805,8 +1810,8 @@ func dispatchDotAgenticNode(
 			return nil, nil
 		},
 		onLaunchFailed: func(lctx context.Context, lErr error) {
-			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
+			if handles.HookStore != nil {
+				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
 			// hk-oihnf: surface structural launch-timeout failures as their dedicated
 			// diagnostic events before returning — mirrors the single-mode path
@@ -1818,7 +1823,7 @@ func dispatchDotAgenticNode(
 			// handling reopens the bead — these branches only add the observability the
 			// single-mode path already has.
 			if errors.Is(lErr, ErrSpawnCapTimeout) {
-				inUse, capSize := substrateSpawnStats(deps.substrate)
+				inUse, capSize := substrateSpawnStats(handles.Substrate)
 				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clockOrSystem().Since(nodeLaunchedAt), inUse, capSize)
 			}
 			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
@@ -1859,10 +1864,10 @@ func dispatchDotAgenticNode(
 				handler.HeartbeatInterval, nodeHBDone,
 				newDaemonHeartbeatEmitter(hbTarget, runID))
 
-			if deps.hookStore != nil {
+			if handles.HookStore != nil {
 				capturedTap := tap
 				capturedRunID := runID                                                                   // hk-wths: copy runID so EmitWithRunID stamps the bus envelope
-				deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+				handles.HookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 					// hk-wths: use EmitWithRunID so the bus envelope carries run_id. Without
 					// this, the stale watcher's observe() skips the event (evt.RunID == nil),
 					// agentReadySeen stays false, and the never-spawned reaper fires after
@@ -1885,8 +1890,8 @@ func dispatchDotAgenticNode(
 				}
 			}
 			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)
-			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
+			if handles.HookStore != nil {
+				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
 		},
 		emitReadyTimeout: func(ectx context.Context) {
@@ -1932,7 +1937,7 @@ func dispatchDotAgenticNode(
 	// Working / Exited / Aborted: fall through to waitWithSocketGrace — the
 	// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
-	_, nodeEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), deps.hookStore, watcher, sess,
+	_, nodeEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {
@@ -1954,8 +1959,8 @@ func dispatchDotAgenticNode(
 			nodeEI.stderrTail, commitLanded, nodePhaseDur)
 	}
 
-	if deps.hookStore != nil {
-		deps.hookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
+	if handles.HookStore != nil {
+		handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
 	if ctx.Err() != nil {
@@ -2031,8 +2036,8 @@ func dispatchDotAgenticNode(
 	// the daemon stages+commits any changes codex produced via codex.EnsureRefsTrailer
 	// (internal/harness/codex/commit.go, hk-gd9r). Mirrors workloop.go:4007-4019. Must run before
 	// resolveDotWorktreeHEAD so the no-commit guard below sees any commit we create.
-	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil &&
+	if handles.HarnessRegistry != nil {
+		if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil &&
 			h.Completion() == handlercontract.CompletionProcessExit {
 			codexOutcome, ensureErr := codex.EnsureRefsTrailer(ctx, runner, wtPath, preHeadSHA, beadID)
 			if ensureErr != nil {

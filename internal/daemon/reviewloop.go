@@ -229,6 +229,11 @@ func runReviewLoop(
 	// which would assemble every port for one read (RT18: the clock default it
 	// once guarded now folds inside runPorts() via clockOrSystem).
 	emit := deps.emitterPort()
+	// RSM-011: the cross-goroutine handles (harness/adapter registries, the two
+	// substrates, the hook-session store) bound once for this call through the
+	// SharedHandles bundle. Byte-identical to reaching each field off deps; the
+	// RT18 signature drop replaces deps with this bundle as a parameter.
+	handles := deps.sharedHandles()
 	// daemonSocket is the UNIX-domain socket path for the hook-relay per design §7.
 	// Derived from projectDir so reviewloop.go does not need a separate field on deps.
 	// For a REMOTE run (workerHookSock != ""), rewrite to the worker-side
@@ -318,13 +323,13 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, emit, runID, state.iterationCount, result.completionReason)
 			return result
 		}
-		// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
+		// Attach the optional tmux substrate (nil at MVH; set from handles.Substrate).
 		// REQUIRED: without this, h.Launch takes the exec.CommandContext path and
 		// SpawnWindow is never called; pasteInjectOnLaunch then fails with
 		// "no window spawned yet". This is the root cause of the pane-race bug
 		// (hk-2hb2y).
 		//
-		// hk-012af: wrap deps.substrate in a perRunSubstrate so this review-loop
+		// hk-012af: wrap handles.Substrate in a perRunSubstrate so this review-loop
 		// iteration gets an isolated pane handle. Under MaxConcurrent>1, two
 		// concurrent review-loop goroutines would otherwise race on shared
 		// paste-inject state, sending paste-inject to the wrong pane.
@@ -340,9 +345,9 @@ func runReviewLoop(
 		// against box A's tmux/-default session — which does not exist on the worker —
 		// wedging at launch_initiated → agent_ready_timeout → no_commit. Mirrors the
 		// single-mode wiring at workloop.go (runRunner → newPerRunSubstrate).
-		implPRS := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runner)
-		var implSubstrate handler.Substrate = deps.substrate
-		var implPasteTarget handler.Substrate = deps.substrate
+		implPRS := newPerRunSubstrate(handles.Substrate, deps.handlerBinary, runner)
+		var implSubstrate handler.Substrate = handles.Substrate
+		var implPasteTarget handler.Substrate = handles.Substrate
 		if implPRS != nil {
 			// hk-fxy9: for a REMOTE run tell the per-run substrate which tmux session to
 			// ENSURE + spawn into ON THE WORKER (workerSessionName) and the cwd to create
@@ -367,8 +372,8 @@ func runReviewLoop(
 		// so they are safe to skip without a tmux pane.
 		implIsSessionIDCaptured := false
 		var implHarness handlercontract.Harness
-		if deps.harnessRegistry != nil {
-			if implH, implHErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(implArtifacts)); implHErr == nil {
+		if handles.HarnessRegistry != nil {
+			if implH, implHErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(implArtifacts)); implHErr == nil {
 				implIsSessionIDCaptured = implH.SessionIDPolicy() == handlercontract.SessionIDCaptured
 				implHarness = implH
 			}
@@ -387,8 +392,8 @@ func runReviewLoop(
 		// Register this phase's hook session so stop-hook outcomes are routed
 		// correctly (CHB-025). Closed after waitWithSocketGrace returns so late
 		// hooks from a completed implementer don't bleed into the reviewer.
-		if deps.hookStore != nil {
-			deps.hookStore.RegisterHookSession(runID.String(), implArtifacts.ClaudeSessionID)
+		if handles.HookStore != nil {
+			handles.HookStore.RegisterHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 		}
 
 		// For the initial implementer launch (iteration 1): wire a
@@ -532,12 +537,12 @@ func runReviewLoop(
 		// post-seal bus subscription (EV-009). A new handler is constructed using the tap so
 		// events flow through the channel — same pattern as the reviewer phase
 		// (lines ~592-598) and single-mode beadRunOne (workloop.go lines 1173-1176).
-		// Precondition: deps.adapterRegistry must be non-nil (enforced by
+		// Precondition: handles.AdapterRegistry must be non-nil (enforced by
 		// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
 		//
 		// Bead ref: hk-kunm4.
 		implTap, implTapCh := newPerRunEventTap(emit, runID)
-		implRunH := handler.NewHandler(implTap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
+		implRunH := handler.NewHandler(implTap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 		// RT8 (RSM-005/RSM-024): the implementer launch/ready/brief segment is
 		// driven by the runexec Dispatch machine via shell.RunDispatch
@@ -561,13 +566,13 @@ func runReviewLoop(
 		// deliver hook can gate paste-inject on it (same class as hk-f6g7).
 		// Spec: specs/harness-contract.md §2 N5.
 		implCompletionMode := handlercontract.CompletionEventStreamThenQuit
-		if deps.harnessRegistry != nil {
-			if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(implArtifacts)); hErr == nil {
+		if handles.HarnessRegistry != nil {
+			if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(implArtifacts)); hErr == nil {
 				implCompletionMode = h.Completion()
 			}
 		}
 
-		implAdapter, implAdapterErr := deps.adapterRegistry.ForAgent(shared.ArtifactAgentType(implArtifacts))
+		implAdapter, implAdapterErr := handles.AdapterRegistry.ForAgent(shared.ArtifactAgentType(implArtifacts))
 		if implAdapterErr != nil {
 			// No adapter for the resolved agent type — non-fatal; skip ready-wait
 			// (the segment feeds a synthetic ready so the brief is still delivered).
@@ -608,8 +613,8 @@ func runReviewLoop(
 				return nil, nil
 			},
 			onLaunchFailed: func(lctx context.Context, launchErr error) {
-				if deps.hookStore != nil {
-					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
+				if handles.HookStore != nil {
+					handles.HookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 				}
 				// hk-4l7zs: surface spawn-cap saturation (slot-leak signature) as a
 				// dedicated spawn_cap_blocked event when the implementer launch is
@@ -651,10 +656,10 @@ func runReviewLoop(
 				//
 				// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013;
 				// specs/handler-contract.md §4.9 HC-056. Bead ref: hk-lj1p9.4, hk-kunm4.
-				if deps.hookStore != nil {
+				if handles.HookStore != nil {
 					capturedImplTap := implTap
 					capturedImplRunID := runID                                                                   // hk-wths: copy for EmitWithRunID closure
-					deps.hookStore.SetAgentReadyCallback(runID.String(), implArtifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+					handles.HookStore.SetAgentReadyCallback(runID.String(), implArtifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 						// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
 						// the stale watcher's never-spawned reaper sees agentReadySeen = true.
 						_ = capturedImplTap.EmitWithRunID(context.Background(), capturedImplRunID, core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
@@ -742,8 +747,8 @@ func runReviewLoop(
 					_ = implSess.Wait(implWaitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
 					implWaitCancel()
 				}
-				if deps.hookStore != nil {
-					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
+				if handles.HookStore != nil {
+					handles.HookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 				}
 			},
 			emitReadyTimeout: func(ectx context.Context) {
@@ -787,7 +792,7 @@ func runReviewLoop(
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
-		_, implEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), deps.hookStore, implWatcher, implSess,
+		_, implEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), handles.HookStore, implWatcher, implSess,
 			runID.String(), implArtifacts.ClaudeSessionID)
 		// implEI carries exit code + stderr tail; surfaced into the no-commit
 		// failure summary below (hk-loga9, extends hk-ajhqw's single-mode fix).
@@ -811,8 +816,8 @@ func runReviewLoop(
 
 		// Close this phase's hook session — late hooks from a completed implementer
 		// must not bleed into the next phase (reviewer or implementer-resume).
-		if deps.hookStore != nil {
-			deps.hookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
+		if handles.HookStore != nil {
+			handles.HookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 		}
 
 		// hk-a2okh: stop the hang-detector goroutine promptly (idempotent).
@@ -1256,10 +1261,10 @@ func runReviewLoop(
 		// a claude/SessionIDMinted implementer unchanged (all-claude byte-identical).
 		revSpecBuilder := deps.launchBuilder()
 		revNodeDefault := reviewerDefaultHarness(
-			deps.harnessRegistry, implArtifacts.ResolvedAgentType, string(beadID))
-		if deps.harnessRegistry != nil && revNodeDefault.Valid() {
+			handles.HarnessRegistry, implArtifacts.ResolvedAgentType, string(beadID))
+		if handles.HarnessRegistry != nil && revNodeDefault.Valid() {
 			revSpecBuilder = routedLaunchSpecBuilder(
-				deps.harnessRegistry,
+				handles.HarnessRegistry,
 				core.BeadRecord{},  // tier-1 absent: bead labels already resolved into resolvedAgentType
 				core.AgentType(""), // queue default: hk-4x3rg
 				revNodeDefault,     // tier-3: implementer's resolved harness (DEFAULT), hk-pkxju-corrected
@@ -1276,12 +1281,12 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, emit, runID, state.iterationCount, result.completionReason)
 			return result
 		}
-		// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
+		// Attach the optional tmux substrate (nil at MVH; set from handles.Substrate).
 		// Same requirement as implSpec.Substrate above (hk-2hb2y): without this
 		// the reviewer launch takes the exec.CommandContext path, SpawnWindow is
 		// never called, and pasteInjectOnLaunch fails with "no window spawned yet".
 		//
-		// hk-012af: wrap deps.substrate in a fresh perRunSubstrate for the reviewer
+		// hk-012af: wrap handles.Substrate in a fresh perRunSubstrate for the reviewer
 		// phase. This gives the reviewer its own isolated pane handle, preventing
 		// cross-run pane misdirection under MaxConcurrent>1.
 		//
@@ -1290,14 +1295,14 @@ func runReviewLoop(
 		// substrate rather than the codexdriver app-server driver. Runner stays nil
 		// (review-loop reviewer runs box-A-local against the pushed SHA — hk-fxy9).
 		revReviewerHarnessIsClaude := false
-		if deps.harnessRegistry != nil {
-			if h, hErr := deps.harnessRegistry.ForAgent(shared.ArtifactAgentType(revArtifacts)); hErr == nil {
+		if handles.HarnessRegistry != nil {
+			if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(revArtifacts)); hErr == nil {
 				revReviewerHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
 			}
 		}
-		revBaseSubstrate := deps.substrate
-		if revReviewerHarnessIsClaude && deps.reviewerSubstrate != nil {
-			revBaseSubstrate = deps.reviewerSubstrate
+		revBaseSubstrate := handles.Substrate
+		if revReviewerHarnessIsClaude && handles.ReviewerSubstrate != nil {
+			revBaseSubstrate = handles.ReviewerSubstrate
 		}
 		revPRS := newPerRunSubstrate(revBaseSubstrate, deps.handlerBinary, nil)
 		revSubstrate := revBaseSubstrate
@@ -1315,8 +1320,8 @@ func runReviewLoop(
 
 		// Register reviewer's hook session (CHB-025); closed after wait completes
 		// so late hooks from a closed reviewer don't bleed into the next iteration.
-		if deps.hookStore != nil {
-			deps.hookStore.RegisterHookSession(runID.String(), revArtifacts.ClaudeSessionID)
+		if handles.HookStore != nil {
+			handles.HookStore.RegisterHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 		}
 
 		// hk-fra5l: emit reviewer pre-exec messages (handler_capabilities →
@@ -1331,10 +1336,10 @@ func runReviewLoop(
 		// can observe watcher events from the reviewer launch without a post-seal
 		// bus subscription (EV-009).
 		// A new handler is constructed using the tap so events flow through the channel.
-		// Precondition: deps.adapterRegistry must be non-nil (enforced by
+		// Precondition: handles.AdapterRegistry must be non-nil (enforced by
 		// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
 		revTap, revTapCh := newPerRunEventTap(emit, runID)
-		revH := handler.NewHandler(revTap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
+		revH := handler.NewHandler(revTap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 		revSessionID := handlercontract.NewSessionID()
 		emitReviewerLaunched(ctx, emit, runID, revSessionID, state.claudeSessionID, state.iterationCount)
@@ -1350,7 +1355,7 @@ func runReviewLoop(
 		var revWatcher *handlercontract.Watcher
 		var revLaunchErr error
 
-		revAdapter, revAdapterErr := deps.adapterRegistry.ForAgent(shared.ArtifactAgentType(revArtifacts))
+		revAdapter, revAdapterErr := handles.AdapterRegistry.ForAgent(shared.ArtifactAgentType(revArtifacts))
 		if revAdapterErr != nil {
 			// No adapter for the resolved agent type — non-fatal; skip ready-wait.
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(%s) bead %s iter %d: %v (skipping ready-wait)\n",
@@ -1383,8 +1388,8 @@ func runReviewLoop(
 				return nil, nil
 			},
 			onLaunchFailed: func(lctx context.Context, launchErr error) {
-				if deps.hookStore != nil {
-					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
+				if handles.HookStore != nil {
+					handles.HookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 				}
 				// hk-4l7zs: spawn-cap saturation on the reviewer launch.
 				if errors.Is(launchErr, ErrSpawnCapTimeout) {
@@ -1410,10 +1415,10 @@ func runReviewLoop(
 				//
 				// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013;
 				// specs/handler-contract.md §4.9 HC-056. Bead ref: hk-lj1p9.4.
-				if deps.hookStore != nil {
+				if handles.HookStore != nil {
 					capturedRevTap := revTap
 					capturedRevRunID := runID                                                                   // hk-wths: copy for EmitWithRunID closure
-					deps.hookStore.SetAgentReadyCallback(runID.String(), revArtifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+					handles.HookStore.SetAgentReadyCallback(runID.String(), revArtifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 						// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
 						// the stale watcher's never-spawned reaper sees agentReadySeen = true.
 						_ = capturedRevTap.EmitWithRunID(context.Background(), capturedRevRunID, core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
@@ -1475,8 +1480,8 @@ func runReviewLoop(
 					_ = revSess.Wait(revWaitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
 					revWaitCancel()
 				}
-				if deps.hookStore != nil {
-					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
+				if handles.HookStore != nil {
+					handles.HookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 				}
 			},
 			killAbort: func(context.Context) {
@@ -1508,7 +1513,7 @@ func runReviewLoop(
 		// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
-		_, revEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), deps.hookStore, revWatcher, revSess,
+		_, revEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), handles.HookStore, revWatcher, revSess,
 			runID.String(), revArtifacts.ClaudeSessionID)
 		_ = revEI
 
@@ -1520,8 +1525,8 @@ func runReviewLoop(
 
 		// Close reviewer's hook session — late hooks must not bleed into the
 		// next iteration's implementer-resume (CHB-025 isolation).
-		if deps.hookStore != nil {
-			deps.hookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
+		if handles.HookStore != nil {
+			handles.HookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 		}
 
 		if ctx.Err() != nil {

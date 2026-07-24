@@ -3942,6 +3942,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// calling deps.launchSpecBuilder directly (ports-design §6). The review-loop /
 	// DOT sub-drivers reach the same builder through deps.launchBuilder() (RT17).
 	rp.Launch = launchPort(deps.launchBuilder())
+	// RT18.11 precondition P: carry the SAME raw resolved builder on rp as a
+	// reassignable func, so the sub-drivers can reach it via ports.LaunchBuilder
+	// once the RT18 signature drop removes deps. Byte-identical to
+	// deps.launchBuilder() — this only widens the propagation channel; the
+	// raw-field smuggle is deleted in the terminal RT18.11 commit.
+	rp.LaunchBuilder = deps.launchBuilder()
 
 	// Mode-dispatch: route to the mode-specific driver.
 	//

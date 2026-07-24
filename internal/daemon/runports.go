@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -300,9 +301,10 @@ func (deps *workLoopDeps) budgetPort() BudgetPort {
 // §1). Narrow, structural. beadRunOne and the reviewloop/dot helpers reach their
 // daemon dependencies through this bundle rather than the raw workLoopDeps.
 //
-// Worktree and Launch are assembled per-run inside beadRunOne (they need the
-// resolved remote-branch context and the pre-built routed spec builder); the
-// deps-level runPorts constructor leaves them nil, and RT7 threads them.
+// Worktree, Launch and LaunchBuilder are assembled per-run inside beadRunOne
+// (they need the resolved remote-branch context and the pre-built routed spec
+// builder); the deps-level runPorts constructor leaves them nil, and RT7 threads
+// them.
 type RunPorts struct {
 	Ledger   LedgerPort
 	Emitter  EmitterPort
@@ -311,6 +313,13 @@ type RunPorts struct {
 	Launch   LaunchPort
 	Gate     GatePort
 	Clock    substrate.ClockPort
+
+	// LaunchBuilder is the raw resolved spec builder (a reassignable func, NOT a
+	// port interface) — the channel that replaces the by-value raw-field smuggle:
+	// beadRunOne resolves it once and threads it here so the review-loop / DOT
+	// sub-drivers reach it via ports.LaunchBuilder after the RT18 deps drop,
+	// instead of through deps.launchBuilder() (RT18.11).
+	LaunchBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
 }
 
 // RunEnv carries the immutable per-run values (no behavior) — the daemon-level
@@ -378,6 +387,18 @@ type SharedHandles struct {
 	HookStore         hookStoreIface
 	Substrate         handler.Substrate
 	ReviewerSubstrate handler.Substrate
+
+	// TIDGen is the single shared TransitionID generator, shared by reference so
+	// beadRunOne's monotonicity guarantee (EM-018a) holds — the bundle and the
+	// outer-loop KEEP sites (runWorkLoop, adoptLiveRunSession) dereference the
+	// SAME *core.TransitionIDGenerator (RT18.9).
+	TIDGen *core.TransitionIDGenerator
+
+	// EmittedEpics / EmittedEpicsMu are the epic_completed dedupe set and its
+	// guard, shared by reference so maybeEmitEpicCompleted sees every prior run's
+	// emissions across goroutines (RT18.9, precondition for the runBridge drop).
+	EmittedEpics   map[core.BeadID]struct{}
+	EmittedEpicsMu *sync.Mutex
 }
 
 // runPorts assembles the deps-level RunPorts bundle. Ledger/Emitter/Merge/Gate
@@ -465,9 +486,10 @@ func (deps *workLoopDeps) runEnv(
 // and reaching a handle through the bundle is byte-identical to the pre-bundle
 // deps field access.
 //
-// Note the deliberate omission: deps.tidGen has no field here. Widening the
-// declared bundle is not this slice's call to make (RSM-011); the run path
-// keeps reading tidGen off deps.
+// TIDGen and EmittedEpics/EmittedEpicsMu are shared by reference like every
+// other handle here (RT18.9): the bundle and the outer-loop KEEP sites that
+// still read deps.tidGen dereference the SAME *core.TransitionIDGenerator, so
+// monotonicity (EM-018a) is preserved.
 func (deps *workLoopDeps) sharedHandles() SharedHandles {
 	return SharedHandles{
 		RunRegistry:   deps.runRegistry,
@@ -481,5 +503,9 @@ func (deps *workLoopDeps) sharedHandles() SharedHandles {
 		HookStore:         deps.hookStore,
 		Substrate:         deps.substrate,
 		ReviewerSubstrate: deps.reviewerSubstrate,
+
+		TIDGen:         deps.tidGen,
+		EmittedEpics:   deps.emittedEpics,
+		EmittedEpicsMu: deps.emittedEpicsMu,
 	}
 }

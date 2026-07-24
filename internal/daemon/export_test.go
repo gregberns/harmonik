@@ -1081,43 +1081,6 @@ var ExportedNewQueueOperatorEventConsumer = queuewiring.NewQueueOperatorEventCon
 // every caller moved with them.
 
 // ─────────────────────────────────────────────────────────────────────────────
-// runWait ctx-cancel test seams (hk-88nno)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// noopTmuxAdapter is a minimal tmux.Adapter stub that satisfies the interface
-// for the runWait test seam. Only WindowPanePID is reachable from runWait, and
-// only in the pid==0 slow-path; ExportedRunWaitWithDeadFn always sets pid>0.
-type noopTmuxAdapter struct{}
-
-func (n *noopTmuxAdapter) ProbeTmux(_ context.Context) error                { return nil }
-func (n *noopTmuxAdapter) ListSessions(_ context.Context) ([]string, error) { return nil, nil }
-func (n *noopTmuxAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
-	return nil, nil
-}
-
-func (n *noopTmuxAdapter) NewWindowIn(_ context.Context, _ tmuxPkg.NewWindowIn) tmuxPkg.Outcome {
-	return tmuxPkg.Outcome{}
-}
-func (n *noopTmuxAdapter) KillWindow(_ context.Context, _ tmuxPkg.WindowHandle) error { return nil }
-func (n *noopTmuxAdapter) WindowPanePID(_ context.Context, _ tmuxPkg.WindowHandle) (int, error) {
-	return 0, nil
-}
-
-func (n *noopTmuxAdapter) WindowPaneID(_ context.Context, _ tmuxPkg.WindowHandle) (string, error) {
-	return "", nil
-}
-func (n *noopTmuxAdapter) KillSession(_ context.Context, _ string) error              { return nil }
-func (n *noopTmuxAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error     { return nil }
-func (n *noopTmuxAdapter) PasteBuffer(_ context.Context, _, _ string) error           { return nil }
-func (n *noopTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error       { return nil }
-func (n *noopTmuxAdapter) SendKeysEnter(_ context.Context, _ string) error            { return nil }
-func (n *noopTmuxAdapter) SendKeysQuit(_ context.Context, _ string) error             { return nil }
-func (n *noopTmuxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error { return nil }
-
-// Compile-time assertion: noopTmuxAdapter implements tmux.Adapter.
-var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
-
-// ─────────────────────────────────────────────────────────────────────────────
 // codex launch-spec test seams (hk-rgxwd C2/T7) — RETAINED after P2 E1a-1
 // ─────────────────────────────────────────────────────────────────────────────
 //

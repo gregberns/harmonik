@@ -1,7 +1,9 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-23 (alpha session) — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c + RT16 + RT17 + **RT18** landed (the LIFT is next).
+**Last updated:** 2026-07-24 (alpha session) — P2 core COMPLETE (9/9) + RT13 + E4c + RT19b + RT14 + RT15 + RT19c + RT16 + RT17 + RT18 + **RT19 COMPLETE (RT19.0–RT19.20, `export_test.go` DELETED)** landed. **The LIFT (RT20+) is now unblocked pending operator gate decisions.**
+RT19 finish (2026-07-24): the full `export_test.go` split landed as RT19.1 (`47ccaa24a`) + batch RT19.2–.11 (`65a9b512a`…`1eeca24ab`) + batch RT19.12–.20 (`eda0e253d`…`0d697de44`). All chunks pure same-package `*_test.go` relocations, zero production bytes, each agent-reviewer APPROVE + only-test-files gate. `internal/daemon/export_test.go` is deleted (its deletion-to-zero IS the completeness check); 121 decls conserved across 23 topic files. The 230-commit/90d `export_test.go` conflict surface no longer exists.
+Session housekeeping (2026-07-24, adversarial-audit driven): closed **hk-0eqik** (fixed-but-open — fix `134bcf64c` was already in HEAD); fixed + closed **hk-y49eu + hk-d4y2p** (exit-1→exit-17 socket-absent bug, `57a6d4a2f`, reviewed APPROVE); corrected **hk-gsonw** disk figure (2.5→~7 GiB, still under the 10 GiB watermark).
 QUALITY LANE this session (all reviewed, landed): hk-8dtiv Close-errcheck FLIP + prose reconcile (`f1f96c99`);
 `make check-report` quiet reporter (`1dd76236`); 137 dead `//nolint` removed (`96cd0b99`); **cmd/harmonik
 coverage drain 45.8%→58.4% across chunks A–I** (`0f9ca8c8`,`9b43ad31`,`73cad9b8`,`e7588d47`,`18c80cf6`).

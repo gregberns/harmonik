@@ -11,7 +11,6 @@ package daemon
 
 import (
 	"context"
-	"io"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -54,40 +53,6 @@ func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // Bead ref: hk-l5saf.
 func ExportedStoreLocalInFlight(deps workLoopDeps, n int32) {
 	deps.localInFlight.Store(n)
-}
-
-// ExportedResolveGateAgentType exposes resolveGateAgentType for tests in package
-// daemon_test. See sandboxgate.go for semantics (hk-r4p0l).
-func ExportedResolveGateAgentType(implHarness handlercontract.Harness, fromArtifacts core.AgentType) core.AgentType {
-	return resolveGateAgentType(implHarness, fromArtifacts)
-}
-
-// ExportedSandboxSpawnForRun exposes sandboxSpawnForRun for tests in package
-// daemon_test, returning whether a SrtSpawnConfig would be attached (non-nil)
-// for the given config + resolved agent type. See sandboxgate.go (hk-r4p0l).
-func ExportedSandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxProfileInput) *SrtSpawnConfig {
-	return sandboxSpawnForRun(cfg, agentType, in)
-}
-
-// ExportedSandboxWrapExecArgv exposes sandboxWrapExecArgv for tests in package
-// daemon_test — the EXEC-path srt argv-wrap applied to a SessionIDCaptured
-// (pi) run's LaunchSpec (spec.Substrate==nil). Returns (binary, args) unchanged
-// when spawn is nil (strict no-op). See sandboxgate.go (hk-r4p0l part 2).
-func ExportedSandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []string) (wrappedBinary string, wrappedArgs []string, err error) {
-	return sandboxWrapExecArgv(spawn, binary, args)
-}
-
-// ExportedVerifySandboxEngaged exposes verifySandboxEngaged for tests in
-// package daemon_test — the production-path srt sandbox-engagement proof
-// (hk-5wdon, follow-up to hk-tch4t). See sandboxgate.go for semantics.
-func ExportedVerifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, canaryPath string, logf func(format string, args ...any)) error {
-	return verifySandboxEngaged(ctx, spawn, canaryPath, logf)
-}
-
-// ExportedSrtEngagementCanaryPath exposes srtEngagementCanaryPath for tests in
-// package daemon_test. See sandboxgate.go (hk-5wdon).
-func ExportedSrtEngagementCanaryPath(projectDir, runID string) string {
-	return srtEngagementCanaryPath(projectDir, runID)
 }
 
 // ExportedBuildLaunchSpecImplementerInitial exposes buildLaunchSpecImplementerInitial
@@ -156,14 +121,6 @@ var ExportedProductionWorktreeFactory = productionWorktreeFactory
 // single-mode no-commit guard regression test (hk-4ie1z).
 func ExportedNoCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, parentSHA string, beadID core.BeadID) bool {
 	return noCommitGuardShouldReopen(ctx, projectDir, curHeadSHA, parentSHA, beadID)
-}
-
-// ExportedPersistClaudeSessionID exposes persistClaudeSessionID for tests.
-//
-// Bead ref: hk-w5vra.6.
-func ExportedPersistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID, sessionID string) (commitSHA string, skipped bool, err error) {
-	res, err := persistClaudeSessionID(ctx, wtPath, runID, sessionID)
-	return res.CommitSHA, res.Skipped, err
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,13 +200,6 @@ func ExportedBandwidthTunerTick(t *BandwidthTuner) {
 // ─────────────────────────────────────────────────────────────────────────────
 // buildClaudeLaunchSpec test seams (hk-gql20.13)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedNewSessionIDInterceptor exposes newSessionIDInterceptor for tests.
-//
-// Bead ref: hk-w5vra.6.
-func ExportedNewSessionIDInterceptor(r io.Reader, cb func(string)) io.Reader {
-	return newSessionIDInterceptor(r, cb)
-}
 
 // ExportedNewDaemonHeartbeatEmitter exposes newDaemonHeartbeatEmitter for
 // tests in package daemon_test.
@@ -386,16 +336,6 @@ var ExportedLivePaneCommandSubstrings = &livePaneCommandSubstrings
 // The brQueueLedger test seam (hk-dv8qv — ledger-dep direction regression) moved
 // to internal/queuewiring/export_test.go as ExportedQueueLedger /
 // ExportedNewBRQueueLedger, along with the bridge and its only caller (P2 E3a).
-
-// ─────────────────────────────────────────────────────────────────────────────
-// srt argv-wrap test seams (hk-rlxgx)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedSrtSpawnConfig is a type alias for SrtSpawnConfig so tests in
-// package daemon_test can reference the type without importing internal symbols.
-//
-// Bead: hk-rlxgx.
-type ExportedSrtSpawnConfig = SrtSpawnConfig
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cognition signal test seams (hk-jay1 P2-c: SS-012)

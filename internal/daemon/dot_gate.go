@@ -75,7 +75,9 @@ var gateFilePollInterval = 2 * time.Second
 // errors.
 func dispatchDotGateNode(
 	ctx context.Context,
-	deps workLoopDeps,
+	env RunEnv,
+	ports RunPorts,
+	handles SharedHandles,
 	runID core.RunID,
 	run *core.Run,
 	wtPath string,
@@ -104,7 +106,7 @@ func dispatchDotGateNode(
 	gateRef := core.GateRef(node.GateRef)
 
 	// Step 1: resolve gate_ref → ControlPoint via the GatePort (RSM-010).
-	cp, ok, registryLoaded := deps.runPorts().Gate.LookupGate(gateRef)
+	cp, ok, registryLoaded := ports.Gate.LookupGate(gateRef)
 	// No registry → structural failure; no ControlPoint can be resolved.
 	if !registryLoaded {
 		return policy.GateEvalFailureOutcome("no ControlPoint registry loaded in daemon"), nil
@@ -123,7 +125,7 @@ func dispatchDotGateNode(
 		evalFn = buildMechanismGateEval(cp)
 	case core.ModeTagCognition:
 		var cogErr error
-		evalFn, cogErr = buildCognitionGateEval(deps, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadRecord, beadTitle, beadDescription, extraContext, baseBranch, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
+		evalFn, cogErr = buildCognitionGateEval(env, ports, handles, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadRecord, beadTitle, beadDescription, extraContext, baseBranch, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
 		if cogErr != nil {
 			return core.Outcome{}, fmt.Errorf("dot: gate node %q: build cognition eval: %w", node.ID, cogErr)
 		}
@@ -133,7 +135,7 @@ func dispatchDotGateNode(
 
 	// Step 3: call handler.DispatchGateNode. It invokes evalFn, maps the result
 	// to an Outcome, and emits gate_decision_recorded on success.
-	result, err := handler.DispatchGateNode(ctx, run, core.NodeID(node.ID), gateRef, evalFn, deps.emitterPort())
+	result, err := handler.DispatchGateNode(ctx, run, core.NodeID(node.ID), gateRef, evalFn, ports.Emitter)
 	if err != nil {
 		return core.Outcome{}, fmt.Errorf("dot: gate node %q: DispatchGateNode: %w", node.ID, err)
 	}
@@ -202,7 +204,9 @@ func buildMechanismGateEval(cp core.ControlPoint) handler.GateEvalFunc {
 //
 // DecisionActor is the DelegationPath.Role per GateDecisionPayload §3.
 func buildCognitionGateEval(
-	deps workLoopDeps,
+	env RunEnv,
+	ports RunPorts,
+	handles SharedHandles,
 	runID core.RunID,
 	cp core.ControlPoint,
 	wtPath string,
@@ -228,7 +232,7 @@ func buildCognitionGateEval(
 	}
 
 	return func(ctx context.Context, run *core.Run, nodeID core.NodeID, gateRef core.GateRef) (*core.GateDecisionPayload, error) {
-		return executeCognitionGate(ctx, deps, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadRecord, beadTitle, beadDescription, extraContext, baseBranch, gateRef, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
+		return executeCognitionGate(ctx, env, ports, handles, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadRecord, beadTitle, beadDescription, extraContext, baseBranch, gateRef, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
 	}, nil
 }
 
@@ -236,7 +240,9 @@ func buildCognitionGateEval(
 // launch subprocess, wait, read verdict. Called from the GateEvalFunc closure.
 func executeCognitionGate(
 	ctx context.Context,
-	deps workLoopDeps,
+	env RunEnv,
+	ports RunPorts,
+	handles SharedHandles,
 	runID core.RunID,
 	run *core.Run,
 	cp core.ControlPoint,
@@ -263,12 +269,7 @@ func executeCognitionGate(
 	// NARROW emitterPort accessor (runports.go) rather than the runPorts() bundle,
 	// which would assemble every port for one read (RT18: the clock default it
 	// once guarded now folds inside runPorts() via clockOrSystem).
-	emit := deps.emitterPort()
-	// RSM-011: the cross-goroutine handles (harness/adapter registries, the two
-	// substrates, the hook-session store) bound once for this call through the
-	// SharedHandles bundle. Byte-identical to reaching each field off deps; the
-	// RT18 signature drop replaces deps with this bundle as a parameter.
-	handles := deps.sharedHandles()
+	emit := ports.Emitter
 	// Remove any stale verdict from a prior attempt. Routed through runner so a
 	// REMOTE run (runner != nil) clears the verdict on the WORKER's filesystem,
 	// not box A's (hk-9fe2).
@@ -301,15 +302,15 @@ func executeCognitionGate(
 		Phase:             handlercontract.ReviewLoopPhaseReviewer,
 		IterationCount:    iterationCount,
 		PriorClaudeSessID: nil,
-		HandlerBinary:     deps.handlerBinary,
-		DaemonBinaryPath:  deps.daemonBinaryPath,
-		BaseEnv:           deps.handlerEnv,
+		HandlerBinary:     env.HandlerBinary,
+		DaemonBinaryPath:  env.DaemonBinaryPath,
+		BaseEnv:           env.HandlerEnv,
 		BeadTitle:         beadTitle,
 		BeadDescription:   beadDescription,
 		NodePrompt:        "",
 		Model:             resolvedModel,
 		Effort:            resolvedEffort,
-		WorktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
+		WorktreeRootPath:  workspace.WorktreeRootPath(env.ProjectDir, workspace.NoWorktreeRootOverride()),
 		ExtraContext:      extraContext,
 		BaseBranch:        baseBranch,
 	}
@@ -350,14 +351,14 @@ func executeCognitionGate(
 	// tier-1 `harness:codex` bead label override the correction (the hk-2jxqg
 	// footgun). Empty return ⇒ the pre-built launch-spec builder stands untouched, so an
 	// all-claude run is byte-identical to pre-hk-01vs0 behaviour.
-	specBuilder := deps.launchBuilder()
+	specBuilder := ports.LaunchBuilder
 	gateInheritedHarness := dotReviewerInheritedHarnessOverride(
 		handles.HarnessRegistry,
 		true,               // a cognition gate is reviewer-class by construction
 		core.AgentType(""), // reviewer_harness=: never applies to a gate node
 		core.AgentType(""), // node.Harness: not a gate-path mechanism (see above)
 		beadRecord,
-		deps.defaultHarness,
+		env.DefaultHarness,
 		string(beadID),
 	)
 	if gateInheritedHarness.Valid() && handles.HarnessRegistry != nil {
@@ -375,8 +376,8 @@ func executeCognitionGate(
 	if specErr != nil {
 		return nil, fmt.Errorf("cognition gate %q: build launch spec: %w", gateRef, specErr)
 	}
-	if len(deps.handlerArgs) > 0 {
-		spec.Args = append(deps.handlerArgs, spec.Args...)
+	if len(env.HandlerArgs) > 0 {
+		spec.Args = append(env.HandlerArgs, spec.Args...)
 	}
 
 	// remote-substrate (hk-9fe2): thread the run's runner (SSHRunner for remote,
@@ -398,7 +399,7 @@ func executeCognitionGate(
 	if gateHarnessIsClaude && handles.ReviewerSubstrate != nil {
 		gateBaseSubstrate = handles.ReviewerSubstrate
 	}
-	prs := newPerRunSubstrate(gateBaseSubstrate, deps.handlerBinary, runner)
+	prs := newPerRunSubstrate(gateBaseSubstrate, env.HandlerBinary, runner)
 	runSubstrate := gateBaseSubstrate
 	pasteTarget := gateBaseSubstrate
 	if prs != nil {
@@ -446,14 +447,14 @@ func executeCognitionGate(
 	}
 
 	gateSeg := &dispatchSegment{
-		clock: deps.clockOrSystem(),
+		clock: ports.Clock,
 		runID: runID,
 		cfg: runexec.DispatchConfig{
 			SkipReadyHandshake: false,
 			IsResume:           false,
 			MaxInputAttempts:   1,
 			// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
-			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
+			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, runner != nil),
 			InputAck:      dispatchSegmentInputAckWindow,
 			ReadyKillReap: runlaunch.KillReapTimeout,
 		},
@@ -506,9 +507,9 @@ func executeCognitionGate(
 		},
 		deliver: func(dctx context.Context) {
 			// Deliver gate-evaluator kick-off message and watch for verdict file.
-			briefDelivered := pasteInjectCognitionGate(dctx, deps.clockOrSystem(), pasteTarget, artifacts.ClaudeSessionID, wtPath, emit, runID)
+			briefDelivered := pasteInjectCognitionGate(dctx, ports.Clock, pasteTarget, artifacts.ClaudeSessionID, wtPath, emit, runID)
 			if qs, ok := pasteTarget.(quitSender); ok {
-				go pasteInjectQuitOnGateFile(ctx, deps.clockOrSystem(), runner, qs, sess, wtPath, briefDelivered)
+				go pasteInjectQuitOnGateFile(ctx, ports.Clock, runner, qs, sess, wtPath, briefDelivered)
 			}
 		},
 		killReady: func(kctx context.Context) {
@@ -518,7 +519,7 @@ func executeCognitionGate(
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
-				case <-substrate.After(deps.clockOrSystem(), runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+				case <-substrate.After(ports.Clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 				}
 			}
 			// The gate's reap Wait is deliberately UNBOUNDED — it does not carry
@@ -529,7 +530,7 @@ func executeCognitionGate(
 			}
 		},
 		emitReadyTimeout: func(ectx context.Context) {
-			runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
+			runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, artifacts.ClaudeSessionID, env.AgentReadyTimeout)
 		},
 		killAbort: func(context.Context) {
 			// Ctx-cancel abort edge: Kill is idempotent (the runlaunch.ForceTeardownSession
@@ -572,7 +573,7 @@ func executeCognitionGate(
 	// Working / Exited / Aborted: fall through — the pre-RT14 posture for
 	// agent_ready-observed, watcher-exit-first, and ctx-cancel.
 
-	_, _ = waitWithSocketGrace(ctx, deps.clockOrSystem(), handles.HookStore, watcher, sess,
+	_, _ = waitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {

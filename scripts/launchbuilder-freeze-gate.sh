@@ -190,9 +190,9 @@ fi
 CALL_RE='deps\.launchBuilder\(\)'
 declare -a CALL_SITES=(
     "internal/daemon/reviewloop.go   0"  # RT18-S re-signed runReviewLoop: both readers now ports.LaunchBuilder
-    "internal/daemon/dot_cascade.go  1"  # dispatchDotAgenticNode reader
-    "internal/daemon/dot_gate.go     1"  # executeCognitionGate reader
-    "internal/daemon/workloop.go     1"  # beadRunOne single-mode binding
+    "internal/daemon/dot_cascade.go  0"  # RT18-S re-signed driveDotWorkflow/dispatchDotAgenticNode: reader now ports.LaunchBuilder
+    "internal/daemon/dot_gate.go     0"  # RT18-S re-signed executeCognitionGate: reader now ports.LaunchBuilder
+    "internal/daemon/workloop.go     1"  # beadRunOne single-mode binding (rp.Launch + rp.LaunchBuilder; floor)
 )
 for row in "${CALL_SITES[@]}"; do
     set -- $row

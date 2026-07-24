@@ -189,7 +189,9 @@ type dotWorkflowResult struct {
 // runReviewLoop.
 func driveDotWorkflow(
 	ctx context.Context,
-	deps workLoopDeps,
+	env RunEnv,
+	ports RunPorts,
+	handles SharedHandles,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadRecord core.BeadRecord,
@@ -218,7 +220,7 @@ func driveDotWorkflow(
 	// NARROW emitterPort accessor (runports.go) rather than the runPorts() bundle,
 	// which would assemble every port for one read (RT18: the clock default it
 	// once guarded now folds inside runPorts() via clockOrSystem).
-	emit := deps.emitterPort()
+	emit := ports.Emitter
 	// hk-538l: for a REMOTE run rewrite the hook socket to the worker-side reverse-
 	// tunnel TCP endpoint so the worker's claude can reach the relay; box A's local
 	// unix daemon.sock is unreachable from the worker. Empty workerHookSock (LOCAL
@@ -226,7 +228,7 @@ func driveDotWorkflow(
 	// tunnel.ResolveAgentDaemonSocket; previously the box-A unix path flowed into every
 	// node's rc.daemonSocket → HARMONIK_DAEMON_SOCKET → connect failure → no hook →
 	// agent_ready_timeout.
-	boxADaemonSocket := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+	boxADaemonSocket := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
 	daemonSocket := tunnelpkg.ResolveAgentDaemonSocket(workerHookSock, boxADaemonSocket)
 
 	// Index nodes by ID for O(1) type lookup during the walk.
@@ -246,7 +248,7 @@ func driveDotWorkflow(
 		WorkflowMode:    core.WorkflowModeDot,
 		State:           core.StateID(uuid.New()),
 		Context:         map[string]any{},
-		StartTime:       deps.clockOrSystem().Now(),
+		StartTime:       ports.Clock.Now(),
 	}
 	if beadID != "" {
 		b := beadID
@@ -429,7 +431,7 @@ func driveDotWorkflow(
 
 		// Emit node_dispatch_requested (O-class observability) before handling the
 		// node, per event-model.md §8.1.11.
-		emitNodeDispatchRequested(ctx, emit, deps.clockOrSystem(), runID, core.NodeID(currentNodeID))
+		emitNodeDispatchRequested(ctx, emit, ports.Clock, runID, core.NodeID(currentNodeID))
 
 		var outcome core.Outcome
 
@@ -457,9 +459,9 @@ func driveDotWorkflow(
 				// worktree was branched from, so the affected-set is bounded to what
 				// this bead actually changed. LOCAL runs benefit too (correctness), but
 				// the problem is acute for remote workers whose ref is stale.
-				gateEnv := deps.handlerEnv
+				gateEnv := env.HandlerEnv
 				if parentSHA != "" {
-					gateEnv = append(append(make([]string, 0, len(deps.handlerEnv)+1), deps.handlerEnv...), "HK_GATE_BASE_SHA="+parentSHA)
+					gateEnv = append(append(make([]string, 0, len(env.HandlerEnv)+1), env.HandlerEnv...), "HK_GATE_BASE_SHA="+parentSHA)
 				}
 				toolOutcome, toolErr := dispatchDotToolNode(ctx, emit, runID, runner, wtPath, node, gateEnv)
 				if toolErr != nil {
@@ -897,7 +899,7 @@ func driveDotWorkflow(
 			// dispatch. The result is also used post-dispatch (line 883), so
 			// computing it here avoids a second call.
 			_, isConsolidate := isConsolidateJoinNode(graph, nodesByID, currentNodeID)
-			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, deps, runID, beadID, beadRecord,
+			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, env, ports, handles, runID, beadID, beadRecord,
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
 				isReviewer, iterationCount, &claudeSessionID,
 				resolvedModel, resolvedEffort, extraContext, baseBranch,
@@ -1017,7 +1019,7 @@ func driveDotWorkflow(
 			// (mechanism: PolicyExpression eval; cognition: subprocess dispatch),
 			// call handler.DispatchGateNode. Wired by hk-karlz.
 			gateOutcome, gateErr := dispatchDotGateNode(
-				ctx, deps, runID, run, wtPath, daemonSocket, node,
+				ctx, env, ports, handles, runID, run, wtPath, daemonSocket, node,
 				iterationCount, resolvedModel, resolvedEffort,
 				beadID, beadRecord, // hk-01vs0: tier-1 harness label reaches the gate's harness resolution
 				beadTitle, beadDescription, extraContext, baseBranch, runner,
@@ -1037,7 +1039,7 @@ func driveDotWorkflow(
 			// place, and run the nested cascade within the parent run (SW-001..SW-010).
 			// Per SW-007, we build a dotSubWorkflowRunner and call Run.
 			swRunner := newDotSubWorkflowRunner(
-				deps, runID, beadID, beadRecord, beadTitle, beadDescription,
+				env, ports, handles, runID, beadID, beadRecord, beadTitle, beadDescription,
 				wtPath, parentSHA, daemonSocket,
 				&iterationCount, &claudeSessionID, resolvedModel, resolvedEffort,
 				extraContext, baseBranch, run, cycles, graph,
@@ -1224,7 +1226,9 @@ func readDotReviewVerdictRetry(ctx context.Context, runner tmux.CommandRunner, w
 // bare SUCCESS outcome (the outbound edge is unconditional).
 func dispatchDotAgenticNode(
 	ctx context.Context,
-	deps workLoopDeps,
+	env RunEnv,
+	ports RunPorts,
+	handles SharedHandles,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadRecord core.BeadRecord,
@@ -1258,12 +1262,7 @@ func dispatchDotAgenticNode(
 	// NARROW emitterPort accessor (runports.go) rather than the runPorts() bundle,
 	// which would assemble every port for one read (RT18: the clock default it
 	// once guarded now folds inside runPorts() via clockOrSystem).
-	emit := deps.emitterPort()
-	// RSM-011: the cross-goroutine handles (harness/adapter registries, the two
-	// substrates, the hook-session store) bound once for this call through the
-	// SharedHandles bundle. Byte-identical to reaching each field off deps; the
-	// RT18 signature drop replaces deps with this bundle as a parameter.
-	handles := deps.sharedHandles()
+	emit := ports.Emitter
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
 	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
 	if isReviewer {
@@ -1359,7 +1358,7 @@ func dispatchDotAgenticNode(
 		reviewerHarnessOverride,
 		core.AgentType(node.Harness),
 		beadRecord,
-		deps.defaultHarness,
+		env.DefaultHarness,
 		string(beadID),
 	)
 	nodeModelHarness := core.AgentType(node.Harness)
@@ -1374,7 +1373,7 @@ func dispatchDotAgenticNode(
 				beadRecord,
 				core.AgentType(""), // queue default (hk-4x3rg not landed)
 				core.AgentType(""), // node default (already folded into node.Harness above)
-				deps.defaultHarness,
+				env.DefaultHarness,
 			)
 		}
 	}
@@ -1405,15 +1404,15 @@ func dispatchDotAgenticNode(
 		Phase:             phase,
 		IterationCount:    iterationCount,
 		PriorClaudeSessID: priorSess,
-		HandlerBinary:     deps.handlerBinary,
-		DaemonBinaryPath:  deps.daemonBinaryPath,
-		BaseEnv:           deps.handlerEnv,
+		HandlerBinary:     env.HandlerBinary,
+		DaemonBinaryPath:  env.DaemonBinaryPath,
+		BaseEnv:           env.HandlerEnv,
 		BeadTitle:         beadTitle,
 		BeadDescription:   beadDescription,
 		NodePrompt:        node.Prompt,
 		Model:             nodeModel,
 		Effort:            nodeEffort,
-		WorktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
+		WorktreeRootPath:  workspace.WorktreeRootPath(env.ProjectDir, workspace.NoWorktreeRootOverride()),
 		ExtraContext:      nodeExtraContext,
 		BaseBranch:        baseBranch,
 	}
@@ -1429,7 +1428,7 @@ func dispatchDotAgenticNode(
 	//   1. reviewerHarnessOverride (implementer's reviewer_harness= attr) — if valid
 	//   2. node.Harness (reviewer node's own harness= attr) — if valid
 	//   3. the pre-built launch-spec builder (DEFAULT: same resolved harness as the implementer)
-	specBuilder := deps.launchBuilder()
+	specBuilder := ports.LaunchBuilder
 	var effectiveNodeHarness core.AgentType
 	if isReviewer && reviewerHarnessOverride.Valid() {
 		// Override: implementer declared a specific reviewer harness.
@@ -1462,8 +1461,8 @@ func dispatchDotAgenticNode(
 	if specErr != nil {
 		return core.Outcome{}, fmt.Errorf("build launch spec for node %q: %w", node.ID, specErr)
 	}
-	if len(deps.handlerArgs) > 0 {
-		spec.Args = append(deps.handlerArgs, spec.Args...)
+	if len(env.HandlerArgs) > 0 {
+		spec.Args = append(env.HandlerArgs, spec.Args...)
 	}
 
 	// Attach the optional substrate (nil at MVH / in the deterministic E2E test).
@@ -1486,7 +1485,7 @@ func dispatchDotAgenticNode(
 	if reviewerHarnessIsClaude && handles.ReviewerSubstrate != nil {
 		baseSubstrate = handles.ReviewerSubstrate
 	}
-	prs := newPerRunSubstrate(baseSubstrate, deps.handlerBinary, runner)
+	prs := newPerRunSubstrate(baseSubstrate, env.HandlerBinary, runner)
 	// runSubstrate, not `substrate`: the bare name would shadow the imported
 	// internal/substrate package for the rest of this function, where the
 	// agent-ready reap guard below calls substrate.After (P2 E5 RT19b).
@@ -1536,26 +1535,26 @@ func dispatchDotAgenticNode(
 			if h.SessionIDPolicy() == handlercontract.SessionIDCaptured {
 				pasteTarget = nil
 				spec.Substrate = nil
-				sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(h, shared.ArtifactAgentType(artifacts)), SandboxProfileInput{
+				sandboxSpawn := sandboxSpawnForRun(env.SandboxCfg, resolveGateAgentType(h, shared.ArtifactAgentType(artifacts)), SandboxProfileInput{
 					WorktreePath:   wtPath,
-					GitDir:         filepath.Join(deps.projectDir, ".git"),
+					GitDir:         filepath.Join(env.ProjectDir, ".git"),
 					RunID:          runID.String(),
 					DaemonSockPath: daemonSocket,
-					AllowedDomains: deps.sandboxCfg.Network.AllowedDomains,
+					AllowedDomains: env.SandboxCfg.Network.AllowedDomains,
 					// hk-ybuts/hk-u69my: the DOT cascade is the LIVE canary's launch path — it MUST
 					// mirror single-mode's egress wiring (workloop.go), else a config-permitted local
 					// binding never reaches the sandboxed Pi and the model connect is Seatbelt-denied.
-					AllowLocalBinding:      deps.sandboxCfg.Network.AllowLocalBinding,
-					WeakerNetworkIsolation: deps.sandboxCfg.Network.WeakerNetworkIsolation,
-					SharedReadCacheDirs:    deps.sandboxCfg.Cache.WarmRead,
-					PrivateWriteCacheDirs:  deps.sandboxCfg.Cache.PrivateWrite,
+					AllowLocalBinding:      env.SandboxCfg.Network.AllowLocalBinding,
+					WeakerNetworkIsolation: env.SandboxCfg.Network.WeakerNetworkIsolation,
+					SharedReadCacheDirs:    env.SandboxCfg.Cache.WarmRead,
+					PrivateWriteCacheDirs:  env.SandboxCfg.Cache.PrivateWrite,
 				})
 				// hk-5wdon: prove the srt sandbox actually engages under this
 				// profile before trusting it to isolate the run. Mirrors the
 				// single-mode exec-path check in workloop.go — srt's own exit
 				// code alone is not sufficient evidence (hk-tch4t).
 				if sandboxSpawn != nil {
-					canaryPath := srtEngagementCanaryPath(deps.projectDir, runID.String())
+					canaryPath := srtEngagementCanaryPath(env.ProjectDir, runID.String())
 					if engageErr := verifySandboxEngaged(ctx, sandboxSpawn, canaryPath, func(format string, args ...any) {
 						fmt.Fprintf(os.Stderr, "daemon: dot: bead %s run %s: "+format+"\n",
 							append([]any{beadID, runID.String()}, args...)...)
@@ -1698,7 +1697,7 @@ func dispatchDotAgenticNode(
 	// review-loop resume — a tmux `--resume` reattach (which does not reliably
 	// re-fire a SessionStart hook, hk-isq02) is unwedged by the transitional
 	// run_id-stamped readiness probe rather than timing out at the full window.
-	nodeLaunchedAt := deps.clockOrSystem().Now()
+	nodeLaunchedAt := ports.Clock.Now()
 	// sess is predeclared above (PI-014) so agentEndCb can capture it.
 	var watcher *handlercontract.Watcher
 	var launchErr error
@@ -1735,7 +1734,7 @@ func dispatchDotAgenticNode(
 	// invoked directly after the segment settles into Working, preserving the
 	// pre-RT8 fall-through ("paste-inject is a no-op for codex").
 	dotDeliver := func(dctx context.Context) {
-		briefDelivered := pasteInjectOnLaunch(dctx, deps.clockOrSystem(), pasteTarget, artifacts.ClaudeSessionID,
+		briefDelivered := pasteInjectOnLaunch(dctx, ports.Clock, pasteTarget, artifacts.ClaudeSessionID,
 			phase, iterationCount, wtPath, emit, runID)
 		if qs, ok := pasteTarget.(quitSender); ok {
 			if isReviewer {
@@ -1759,7 +1758,7 @@ func dispatchDotAgenticNode(
 				// so it can track agent_heartbeat events for the active-reasoning
 				// extension — independent of the tapCh used by the segment's ready pump.
 				reviewerHBCh := tap.Subscribe()
-				go pasteInjectQuitOnReviewFile(ctx, deps.clockOrSystem(), qs, sess, revInj, artifacts.ClaudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
+				go pasteInjectQuitOnReviewFile(ctx, ports.Clock, qs, sess, revInj, artifacts.ClaudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
 			} else if dotCompletionMode != handlercontract.CompletionProcessExit {
 				// hk-o90sl (T13/C5): gate on Completion() policy (specs/harness-contract.md §2 N5).
 				// ProcessExit harnesses (codex) self-terminate when the turn completes; sess.Wait +
@@ -1774,20 +1773,20 @@ func dispatchDotAgenticNode(
 				// launch-suppression branch forever. The fan-out tap delivers each
 				// consumer its own copy of every event.
 				watchdogCh := tap.Subscribe()
-				go pasteInjectQuitOnCommit(ctx, deps.clockOrSystem(), qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, emit, runID)
+				go pasteInjectQuitOnCommit(ctx, ports.Clock, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, emit, runID)
 			}
 		}
 	}
 
 	nodeSeg := &dispatchSegment{
-		clock: deps.clockOrSystem(),
+		clock: ports.Clock,
 		runID: runID,
 		cfg: runexec.DispatchConfig{
 			SkipReadyHandshake: dotCompletionMode == handlercontract.CompletionProcessExit,
 			IsResume:           phase == handlercontract.ReviewLoopPhaseImplementerResume,
 			MaxInputAttempts:   1,
 			// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
-			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
+			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, runner != nil),
 			InputAck:      dispatchSegmentInputAckWindow,
 			ReadyKillReap: runlaunch.KillReapTimeout,
 		},
@@ -1824,10 +1823,10 @@ func dispatchDotAgenticNode(
 			// single-mode path already has.
 			if errors.Is(lErr, ErrSpawnCapTimeout) {
 				inUse, capSize := substrateSpawnStats(handles.Substrate)
-				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, deps.clockOrSystem().Since(nodeLaunchedAt), inUse, capSize)
+				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, ports.Clock.Since(nodeLaunchedAt), inUse, capSize)
 			}
 			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
-				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, deps.clockOrSystem().Since(nodeLaunchedAt))
+				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, ports.Clock.Since(nodeLaunchedAt))
 			}
 		},
 		onLaunched: func(lctx context.Context) {
@@ -1866,7 +1865,7 @@ func dispatchDotAgenticNode(
 
 			if handles.HookStore != nil {
 				capturedTap := tap
-				capturedRunID := runID                                                                   // hk-wths: copy runID so EmitWithRunID stamps the bus envelope
+				capturedRunID := runID                                                                      // hk-wths: copy runID so EmitWithRunID stamps the bus envelope
 				handles.HookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 					// hk-wths: use EmitWithRunID so the bus envelope carries run_id. Without
 					// this, the stale watcher's observe() skips the event (evt.RunID == nil),
@@ -1886,7 +1885,7 @@ func dispatchDotAgenticNode(
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
-				case <-substrate.After(deps.clockOrSystem(), runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+				case <-substrate.After(ports.Clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 				}
 			}
 			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)
@@ -1895,7 +1894,7 @@ func dispatchDotAgenticNode(
 			}
 		},
 		emitReadyTimeout: func(ectx context.Context) {
-			runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, artifacts.ClaudeSessionID, deps.agentReadyTimeout)
+			runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, artifacts.ClaudeSessionID, env.AgentReadyTimeout)
 		},
 		killAbort: func(context.Context) {
 			if sess != nil {
@@ -1937,7 +1936,7 @@ func dispatchDotAgenticNode(
 	// Working / Exited / Aborted: fall through to waitWithSocketGrace — the
 	// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
-	_, nodeEI := waitWithSocketGrace(ctx, deps.clockOrSystem(), handles.HookStore, watcher, sess,
+	_, nodeEI := waitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {
@@ -1951,7 +1950,7 @@ func dispatchDotAgenticNode(
 	// hk-368i4: nodePhaseDur is captured ONCE and reused by the no-work detector
 	// further down, so the event's duration_seconds and the detector's verdict
 	// come from the same measurement (mirrors workloop.go).
-	nodePhaseDur := deps.clockOrSystem().Since(nodeLaunchedAt)
+	nodePhaseDur := ports.Clock.Since(nodeLaunchedAt)
 	if !isReviewer {
 		curHead, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		commitLanded := curHead != "" && curHead != preHeadSHA
@@ -2049,8 +2048,8 @@ func dispatchDotAgenticNode(
 				// hk-368i4: same detector as the workloop path — a no-change
 				// outcome from a node that finished in seconds is a no-work run.
 				// Diagnostic only; the no-commit guard below still decides.
-				if codex.NoWorkSuspected(codexOutcome, nodePhaseDur, deps.codexNoWorkDurationFloor) {
-					floor := codex.NoWorkFloor(deps.codexNoWorkDurationFloor)
+				if codex.NoWorkSuspected(codexOutcome, nodePhaseDur, env.CodexNoWorkDurationFloor) {
+					floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
 					fmt.Fprintf(os.Stderr,
 						"daemon: dot: bead %s node %q: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
 						beadID, node.ID, nodePhaseDur, floor)
@@ -2082,7 +2081,7 @@ func dispatchDotAgenticNode(
 		// Mirror the builtin noChange-subsumed check (workloop.go:1831-1848,
 		// hk-trjef): if the bead's work already landed in main, close-subsumed
 		// rather than hard-fail. Bead: hk-9v5yo.
-		if shared.MainHistoryHasRefsTrailer(ctx, deps.projectDir, beadID) {
+		if shared.MainHistoryHasRefsTrailer(ctx, env.ProjectDir, beadID) {
 			return core.Outcome{}, errDotNoChangeSubsumed
 		}
 		if iterationCount < 2 {

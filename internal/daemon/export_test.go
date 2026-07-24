@@ -18,7 +18,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
-	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/substrate"
@@ -385,13 +384,6 @@ func ExportedNewDaemonHeartbeatEmitter(bus handlercontract.EventEmitter, runID c
 
 // (duplicate buildClaudeLaunchSpec stubs removed — canonical declarations above at lines ~295-356)
 
-// ExportedQueueStoreSetQueue installs q into the QueueStore for tests (NQ-X1).
-//
-// Bead ref: hk-tigaf.11.
-func ExportedQueueStoreSetQueue(s *queuewiring.QueueStore, q *queue.Queue) {
-	s.SetQueue(q)
-}
-
 // ExportedRunRegistryRegister registers a handle under runID for tests (NQ-X1).
 //
 // Bead ref: hk-tigaf.11.
@@ -489,16 +481,6 @@ func HandlerEnvOf(deps workLoopDeps) []string {
 // QueueStore test seams (hk-j808w)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ExportedNewQueueStore returns a queuewiring.QueueStore for tests in package
-// daemon_test. The store itself moved to internal/queuewiring (P2 E3a); this
-// shim is kept because 41 daemon_test files call it and none names the type, so
-// keeping it is the difference between a bounded diff and a 60-file one.
-//
-// Bead ref: hk-j808w.
-func ExportedNewQueueStore() *queuewiring.QueueStore {
-	return queuewiring.NewQueueStore()
-}
-
 // ExportedEvaluateGroupAdvanceWithOutcome exposes evaluateGroupAdvanceWithOutcome
 // for tests in package daemon_test. Drives EM-015f group-advance evaluation
 // directly without running a full work loop cycle.
@@ -556,20 +538,6 @@ var ExportedLivePaneCommandSubstrings = &livePaneCommandSubstrings
 // ─────────────────────────────────────────────────────────────────────────────
 // QueueOperatorEventConsumer test seams (hk-7urls)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedQueueOperatorEventConsumerConfig is a type alias for
-// queuewiring.QueueOperatorEventConsumerConfig for tests in package daemon_test.
-// Kept after the P2 E3a move because operatornfr_pause_inflight_hk95a2r_test.go
-// (which stays in daemon) names it.
-//
-// Bead ref: hk-7urls.
-type ExportedQueueOperatorEventConsumerConfig = queuewiring.QueueOperatorEventConsumerConfig
-
-// ExportedNewQueueOperatorEventConsumer exposes
-// queuewiring.NewQueueOperatorEventConsumer for tests in package daemon_test.
-//
-// Bead ref: hk-7urls.
-var ExportedNewQueueOperatorEventConsumer = queuewiring.NewQueueOperatorEventConsumer
 
 // The two handler-invoking shims (ExportedQueueOpConsumerHandlePauseStatus /
 // ExportedQueueOpConsumerHandleResuming) moved to

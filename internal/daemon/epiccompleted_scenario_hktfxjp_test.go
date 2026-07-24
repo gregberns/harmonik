@@ -259,7 +259,7 @@ func TestScenario_EpicCompleted_EmitsOnLastChildClose_hktfxjp(t *testing.T) {
 	runID := hktfxjpNewRunID(t)
 
 	// Drive the close through the real daemon close branch.
-	emitBeadClosedAndMaybeEpic(ctx, deps, runID, child)
+	emitBeadClosedAndMaybeEpic(ctx, deps.runPorts(), deps.sharedHandles(), runID, child)
 
 	if got := bus.countEpicCompleted(); got != 1 {
 		t.Fatalf("AC-1: expected exactly 1 epic_completed, got %d", got)
@@ -315,7 +315,7 @@ func TestScenario_EpicCompleted_NoEmitWhenNotComplete_hktfxjp(t *testing.T) {
 		})
 		bus := hktfxjpNewCapturingBus()
 		deps := hktfxjpDeps(t, ledger, bus, nil)
-		emitBeadClosedAndMaybeEpic(ctx, deps, hktfxjpNewRunID(t), closed)
+		emitBeadClosedAndMaybeEpic(ctx, deps.runPorts(), deps.sharedHandles(), hktfxjpNewRunID(t), closed)
 		if got := bus.countEpicCompleted(); got != 0 {
 			t.Fatalf("AC-3: expected 0 epic_completed with an open sibling, got %d", got)
 		}
@@ -331,7 +331,7 @@ func TestScenario_EpicCompleted_NoEmitWhenNotComplete_hktfxjp(t *testing.T) {
 		})
 		bus := hktfxjpNewCapturingBus()
 		deps := hktfxjpDeps(t, ledger, bus, nil)
-		emitBeadClosedAndMaybeEpic(ctx, deps, hktfxjpNewRunID(t), standalone)
+		emitBeadClosedAndMaybeEpic(ctx, deps.runPorts(), deps.sharedHandles(), hktfxjpNewRunID(t), standalone)
 		if got := bus.countEpicCompleted(); got != 0 {
 			t.Fatalf("AC-4: expected 0 epic_completed for a parentless bead, got %d", got)
 		}
@@ -381,8 +381,8 @@ func TestScenario_EpicCompleted_AtMostOnceUnderSiblingRace_hktfxjp(t *testing.T)
 		bus := hktfxjpNewCapturingBus()
 		deps := hktfxjpDeps(t, ledger, bus, nil)
 		// Daemon-path close of childA, then out-of-band close of childB.
-		emitBeadClosedAndMaybeEpic(ctx, deps, hktfxjpNewRunID(t), childA)
-		maybeEmitEpicCompleted(ctx, deps, hktfxjpNewRunID(t), childB)
+		emitBeadClosedAndMaybeEpic(ctx, deps.runPorts(), deps.sharedHandles(), hktfxjpNewRunID(t), childA)
+		maybeEmitEpicCompleted(ctx, deps.runPorts(), deps.sharedHandles(), hktfxjpNewRunID(t), childB)
 		if got := bus.countEpicCompleted(); got != 1 {
 			t.Fatalf("AC-2 sequential: expected exactly 1 emit across two sibling closes, got %d", got)
 		}
@@ -392,12 +392,12 @@ func TestScenario_EpicCompleted_AtMostOnceUnderSiblingRace_hktfxjp(t *testing.T)
 		ledger := newLedger()
 		bus := hktfxjpNewCapturingBus()
 		deps := hktfxjpDeps(t, ledger, bus, nil)
-		emitBeadClosedAndMaybeEpic(ctx, deps, hktfxjpNewRunID(t), childA)
+		emitBeadClosedAndMaybeEpic(ctx, deps.runPorts(), deps.sharedHandles(), hktfxjpNewRunID(t), childA)
 		if got := bus.countEpicCompleted(); got != 1 {
 			t.Fatalf("AC-2 idempotent: setup expected 1 emit, got %d", got)
 		}
 		// Re-close the same (already-closed) last child → guard must suppress.
-		emitBeadClosedAndMaybeEpic(ctx, deps, hktfxjpNewRunID(t), childA)
+		emitBeadClosedAndMaybeEpic(ctx, deps.runPorts(), deps.sharedHandles(), hktfxjpNewRunID(t), childA)
 		if got := bus.countEpicCompleted(); got != 1 {
 			t.Fatalf("AC-2 idempotent: re-close emitted extra epic_completed; total = %d, want 1", got)
 		}
@@ -418,12 +418,12 @@ func TestScenario_EpicCompleted_AtMostOnceUnderSiblingRace_hktfxjp(t *testing.T)
 			go func() {
 				defer wg.Done()
 				<-start
-				emitBeadClosedAndMaybeEpic(ctx, deps, hktfxjpNewRunID(t), childA)
+				emitBeadClosedAndMaybeEpic(ctx, deps.runPorts(), deps.sharedHandles(), hktfxjpNewRunID(t), childA)
 			}()
 			go func() {
 				defer wg.Done()
 				<-start
-				maybeEmitEpicCompleted(ctx, deps, hktfxjpNewRunID(t), childB)
+				maybeEmitEpicCompleted(ctx, deps.runPorts(), deps.sharedHandles(), hktfxjpNewRunID(t), childB)
 			}()
 			close(start)
 			wg.Wait()
@@ -508,7 +508,7 @@ func TestScenario_EpicCompleted_BootSeedSurvivesRestart_hktfxjp(t *testing.T) {
 	bus := hktfxjpNewCapturingBus()
 	deps := hktfxjpDeps(t, ledger, bus, seed)
 
-	emitBeadClosedAndMaybeEpic(ctx, deps, hktfxjpNewRunID(t), child)
+	emitBeadClosedAndMaybeEpic(ctx, deps.runPorts(), deps.sharedHandles(), hktfxjpNewRunID(t), child)
 	if got := bus.countEpicCompleted(); got != 0 {
 		t.Fatalf("AC-5: re-close after boot-seed emitted %d epic_completed, want 0 (boot scan must suppress)", got)
 	}

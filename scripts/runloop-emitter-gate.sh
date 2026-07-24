@@ -68,23 +68,28 @@ count_matches() {
 #     sub-package hold any number of field reads. A file absent from the table
 #     is budgeted at ZERO, so a brand-new daemon file cannot smuggle one in.
 #
-#     MOVERS (budget 0 / workloop.go 10) are asserted EXACTLY, in both
-#     directions. A shrink is not silently accepted because the ten survivors in
+#     MOVERS (budget 0 / workloop.go 9) are asserted EXACTLY, in both
+#     directions. A shrink is not silently accepted because the survivors in
 #     workloop.go are a deliberate, documented carve-out — runWorkLoop, the outer
-#     queue-claim loop, x7, plus activateFirstPendingGroup,
-#     evaluateGroupAdvanceWithOutcome and maybeEmitEpicCompleted. Those four
-#     functions stay in internal/daemon forever (E5-dot-runloop.md §1c), so
-#     converting them is churn on the tree's hottest file for zero extraction
-#     value. RT16 §7 risk 1 predicts an implementer reaching for a global sed;
-#     an exact assertion is what turns that into a RED gate instead of a silent
-#     scope creep.
+#     queue-claim loop, x7, plus activateFirstPendingGroup and
+#     evaluateGroupAdvanceWithOutcome. Those functions stay in internal/daemon
+#     forever (E5-dot-runloop.md §1c), so converting them is churn on the tree's
+#     hottest file for zero extraction value. RT16 §7 risk 1 predicts an
+#     implementer reaching for a global sed; an exact assertion is what turns
+#     that into a RED gate instead of a silent scope creep.
+#
+#     RT18.9 lowered this 10→9: maybeEmitEpicCompleted's single deps.bus read
+#     was folded onto ports.Emitter so emitBeadClosedAndMaybeEpic (its caller,
+#     invoked from the runBridge close hook) could take the RunPorts/SharedHandles
+#     bundles instead of deps — the precondition for dropping deps from
+#     newRunBridge. That is strictly MORE port usage, not scope creep.
 #
 #     NON-MOVERS are budgeted at their measured count as a CEILING only. They are
 #     not RT16's targets (boot/disk/eager-fill instrumentation, and the port
 #     definition itself), so a legitimate shrink there is pure improvement and
 #     must not fail the build.
 declare -a EXACT_FILES=(
-    "internal/daemon/workloop.go            10"
+    "internal/daemon/workloop.go             9"
     "internal/daemon/reviewloop.go           0"
     "internal/daemon/dot_cascade.go          0"
     "internal/daemon/dot_gate.go             0"

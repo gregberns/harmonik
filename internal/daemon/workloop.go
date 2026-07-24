@@ -3264,7 +3264,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 	// is the machine's terminal state (bridge.success(), RSM-022).
 	// Guard paths that return before (or without) feeding the machine yield the
 	// zero value (false); every terminal-spine path returns bridge.success().
-	bridge := newRunBridge(deps, rp, runID, beadID, workflowMode, emitRunTerminalEff)
+	bridge := newRunBridge(env, rp, handles, runID, beadID, workflowMode, emitRunTerminalEff)
 	failRun := func(reason, summary string) { bridge.fail(ctx, reason, summary) }
 
 	// Resolve (model, effort) per EM-012b four-tier precedence walk.
@@ -6300,8 +6300,10 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 
 // ─────────────────────────────────────────────────────────────────────────────
 // bead-closed / epic-completion emission (the merge path itself moved to
-// internal/runmerge in P2 unit E5 RT13; these three helpers stay because they
-// read workLoopDeps.emittedEpics / .emittedEpicsMu / .runPorts()).
+// internal/runmerge in P2 unit E5 RT13; these helpers stay in the daemon shell
+// but now reach the emittedEpics dedupe set / mutex and the ledger+emitter
+// through the SharedHandles + RunPorts bundles rather than raw workLoopDeps,
+// so the runBridge close hook can drop deps entirely (RT18.9)).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // beadClosedPayload is the JSON payload for the bead_closed event.
@@ -6336,9 +6338,9 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 // emitBeadClosedAndMaybeEpic emits bead_closed then checks whether the closed
 // bead's parent epic just completed (hk-w6y70 C1). It is the single insertion
 // point replacing the seven raw emitBeadClosed call sites.
-func emitBeadClosedAndMaybeEpic(ctx context.Context, deps workLoopDeps, runID core.RunID, beadID core.BeadID) {
-	emitBeadClosed(ctx, deps.runPorts().Emitter, runID, beadID)
-	maybeEmitEpicCompleted(ctx, deps, runID, beadID)
+func emitBeadClosedAndMaybeEpic(ctx context.Context, ports RunPorts, handles SharedHandles, runID core.RunID, beadID core.BeadID) {
+	emitBeadClosed(ctx, ports.Emitter, runID, beadID)
+	maybeEmitEpicCompleted(ctx, ports, handles, runID, beadID)
 }
 
 // maybeEmitEpicCompleted checks whether closedBeadID's parent epic now has all
@@ -6347,8 +6349,8 @@ func emitBeadClosedAndMaybeEpic(ctx context.Context, deps workLoopDeps, runID co
 // or already-emitted guard hit.
 //
 // Bead: hk-w6y70.
-func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.RunID, closedBeadID core.BeadID) {
-	ledger := deps.runPorts().Ledger
+func maybeEmitEpicCompleted(ctx context.Context, ports RunPorts, handles SharedHandles, runID core.RunID, closedBeadID core.BeadID) {
+	ledger := ports.Ledger
 	// Step 1: ShowBead(closedBead) to find the parent via a parent-child edge.
 	// The closed bead's outgoing parent-child edge has FromBeadID == closedBead,
 	// ToBeadID == parent (per brcli/show.go: dependencies[] → outgoing edges).
@@ -6390,13 +6392,13 @@ func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.R
 	// children recorded yet; we emit to avoid silent gaps, consistent with AC-1).
 
 	// Step 3: claim under emittedEpicsMu BEFORE emit (at-most-once guard AC-1).
-	deps.emittedEpicsMu.Lock()
-	if _, already := deps.emittedEpics[parentID]; already {
-		deps.emittedEpicsMu.Unlock()
+	handles.EmittedEpicsMu.Lock()
+	if _, already := handles.EmittedEpics[parentID]; already {
+		handles.EmittedEpicsMu.Unlock()
 		return
 	}
-	deps.emittedEpics[parentID] = struct{}{}
-	deps.emittedEpicsMu.Unlock()
+	handles.EmittedEpics[parentID] = struct{}{}
+	handles.EmittedEpicsMu.Unlock()
 
 	// Step 4: emit epic_completed.
 	pl := epicCompletedPayload{
@@ -6408,7 +6410,7 @@ func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.R
 	if err != nil {
 		return
 	}
-	_ = deps.bus.EmitWithRunID(ctx, runID, core.EventTypeEpicCompleted, b)
+	_ = ports.Emitter.EmitWithRunID(ctx, runID, core.EventTypeEpicCompleted, b)
 }
 
 // transitionToTerminated advances the per-session lifecycle Machine from its

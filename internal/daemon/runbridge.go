@@ -29,10 +29,11 @@ type runBridge struct {
 	m  *runexec.Run
 	sh *runShell
 
-	deps   workLoopDeps
-	rp     RunPorts
-	runID  core.RunID
-	beadID core.BeadID
+	env     RunEnv
+	rp      RunPorts
+	handles SharedHandles
+	runID   core.RunID
+	beadID  core.BeadID
 
 	// rejectReason carries the classified failure reason for the
 	// outcome_emitted=rejected prefix emission (RSM-034): the machine's ActEmit
@@ -73,15 +74,16 @@ func runBridgeConfig(mode core.WorkflowMode) runexec.RunConfig {
 // context is in scope. emitRunTerminal is beadRunOne's terminal-emission
 // effector (queue stamping + sessiondata policy; draining selects the RSM-021
 // no-sessiondata batch policy).
-func newRunBridge(deps workLoopDeps, rp RunPorts, runID core.RunID, beadID core.BeadID, mode core.WorkflowMode, emitRunTerminal func(ctx context.Context, success bool, summary string, draining bool)) *runBridge {
+func newRunBridge(env RunEnv, rp RunPorts, handles SharedHandles, runID core.RunID, beadID core.BeadID, mode core.WorkflowMode, emitRunTerminal func(ctx context.Context, success bool, summary string, draining bool)) *runBridge {
 	b := &runBridge{
-		deps:   deps,
-		rp:     rp,
-		runID:  runID,
-		beadID: beadID,
-		m:      runexec.NewRun(runBridgeConfig(mode)),
+		env:     env,
+		rp:      rp,
+		handles: handles,
+		runID:   runID,
+		beadID:  beadID,
+		m:       runexec.NewRun(runBridgeConfig(mode)),
 	}
-	b.sh = newRunShell(deps.clockOrSystem(), runEffectors{
+	b.sh = newRunShell(rp.Clock, runEffectors{
 		reopenBead: b.reopenBead,
 		emitRunTerminal: func(c context.Context, success bool, summary string) {
 			emitRunTerminal(c, success, summary, b.draining)
@@ -109,7 +111,7 @@ func (b *runBridge) reopenBead(c context.Context, reason string) {
 	if rctx.Err() != nil {
 		rctx = context.WithoutCancel(c)
 	}
-	tid, tidErr := b.deps.tidGen.Next()
+	tid, tidErr := b.handles.TIDGen.Next()
 	if tidErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: tidGen.Next (run reopen) bead %s: %v\n", b.beadID, tidErr)
 	}
@@ -139,7 +141,7 @@ func (b *runBridge) emit(c context.Context, typ core.EventType, detail string) {
 // call (the spine is fully synchronous port I/O).
 func (b *runBridge) feed(ctx context.Context, ev runexec.Event) {
 	if ev.At.IsZero() {
-		ev.At = b.deps.clockOrSystem().Now()
+		ev.At = b.rp.Clock.Now()
 	}
 	b.sh.feed(ctx, b.m, ev)
 	for b.m.InFlight() && b.sh.drainPending(ctx, b.m) {
@@ -184,12 +186,12 @@ type spineArgs struct {
 	// mergeTarget is the per-bead integration branch the run-branch must LAND
 	// on (hk-lgykq): the resolved baseBranch (lands_on) carrying the three-tier
 	// precedence (bead ## Branching > branching.yaml > default), equal to
-	// deps.targetBranch when no per-bead override is present. Empty only when
+	// env.TargetBranch when no per-bead override is present. Empty only when
 	// resolveBranching errored; the merge call sites fall back to
-	// deps.targetBranch in that case so the merge is never directed at an empty
+	// env.TargetBranch in that case so the merge is never directed at an empty
 	// ref (mergeRunBranchToMain fail-closes on empty target). Threaded into the
 	// mergeRunBranchToMain calls in mergeHook / drainMergeHook, superseding the
-	// daemon-wide deps.targetBranch the run was formerly merged into.
+	// daemon-wide env.TargetBranch the run was formerly merged into.
 	mergeTarget string
 
 	// skipGate short-circuits the gate to a pass: the DOT cascade runs its gate
@@ -271,12 +273,12 @@ func (b *runBridge) mergeHook(a spineArgs) func(context.Context) {
 		}
 		// hk-lgykq: land on the per-bead integration branch (mergeTarget =
 		// resolved baseBranch), not the daemon-wide default; fall back to
-		// deps.targetBranch when resolveBranching left mergeTarget empty.
+		// env.TargetBranch when resolveBranching left mergeTarget empty.
 		mergeInto := a.mergeTarget
 		if mergeInto == "" {
-			mergeInto = b.deps.targetBranch
+			mergeInto = b.env.TargetBranch
 		}
-		mergeRes := runmerge.RunBranchToTarget(c, a.mport.Submit(), a.activeRepo, b.runID, b.rp.Emitter, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
+		mergeRes := runmerge.RunBranchToTarget(c, a.mport.Submit(), a.activeRepo, b.runID, b.rp.Emitter, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.env.BrPath)
 		switch {
 		case mergeRes.NoChange:
 			b.sh.pending = append(b.sh.pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange})
@@ -317,9 +319,9 @@ func (b *runBridge) drainMergeHook(a spineArgs) func(context.Context, string) []
 		// daemon-wide target when mergeTarget is empty.
 		mergeInto := a.mergeTarget
 		if mergeInto == "" {
-			mergeInto = b.deps.targetBranch
+			mergeInto = b.env.TargetBranch
 		}
-		mergeRes := runmerge.RunBranchToTarget(mctx, a.mport.Submit(), a.activeRepo, b.runID, b.rp.Emitter, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
+		mergeRes := runmerge.RunBranchToTarget(mctx, a.mport.Submit(), a.activeRepo, b.runID, b.rp.Emitter, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.env.BrPath)
 		switch {
 		case mergeRes.NoChange:
 			return []runexec.Event{{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange}}
@@ -361,7 +363,7 @@ func (b *runBridge) closeHook(a spineArgs) func(context.Context, string, bool) [
 				Detail: fmt.Sprintf("close-error%s: %v", label, closeErr),
 			}}
 		}
-		emitBeadClosedAndMaybeEpic(cctx, b.deps, b.runID, b.beadID)
+		emitBeadClosedAndMaybeEpic(cctx, b.rp, b.handles, b.runID, b.beadID)
 		return []runexec.Event{{Kind: runexec.EvCloseResult, Close: runexec.CloseClosed}}
 	}
 }

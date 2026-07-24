@@ -3982,7 +3982,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext
 				rlWorkerSession = ts.workerSpawnSessionName(rbc.worker.Name)
 			}
 		}
-		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch, rlRunner, rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd)
+		rlResult := runReviewLoop(ctx, env, rp, handles, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch, rlRunner, rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd)
 
 		// ── RT9: the review-loop terminal rides the Run tail (RSM-020) ────────
 		//

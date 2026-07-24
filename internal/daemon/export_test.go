@@ -795,6 +795,18 @@ type ReviewLoopResultExported struct {
 	NeedsAttention   bool
 }
 
+// runBundlesFromDeps assembles the env/ports/handles bundles a test shim passes
+// into a run-path function after the RT18 signature drop, mirroring how
+// beadRunOne builds them — including the per-run rp.LaunchBuilder population, so
+// a fixture-injected launchSpecBuilder still reaches the review/DOT sub-drivers.
+func runBundlesFromDeps(deps workLoopDeps, runID core.RunID) (RunEnv, RunPorts, SharedHandles) {
+	env := deps.runEnv(runID, core.BeadRecord{}, "", nil, nil, 0, "", "", nil, false, "")
+	rp := deps.runPorts()
+	rp.LaunchBuilder = deps.launchBuilder()
+	handles := deps.sharedHandles()
+	return env, rp, handles
+}
+
 // ExportedRunReviewLoop exposes runReviewLoop for tests in package daemon_test.
 // The result is converted to ReviewLoopResultExported to avoid exporting the
 // internal reviewLoopResult type.
@@ -809,7 +821,8 @@ func ExportedRunReviewLoop(
 	parentSHA string,
 ) ReviewLoopResultExported {
 	// nil runner ⇒ LOCAL run: byte-identical to the pre-remote-substrate path.
-	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", nil, "", "", "", "")
+	env, rp, handles := runBundlesFromDeps(deps, runID)
+	r := runReviewLoop(ctx, env, rp, handles, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", nil, "", "", "", "")
 	return ReviewLoopResultExported{
 		Success:          r.success,
 		CompletionReason: string(r.completionReason),
@@ -963,7 +976,8 @@ func ExportedRunReviewLoopWithRunner(
 	parentSHA string,
 	runner tmuxPkg.CommandRunner,
 ) ReviewLoopResultExported {
-	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", runner, "", "", "", "")
+	env, rp, handles := runBundlesFromDeps(deps, runID)
+	r := runReviewLoop(ctx, env, rp, handles, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", runner, "", "", "", "")
 	return ReviewLoopResultExported{
 		Success:          r.success,
 		CompletionReason: string(r.completionReason),

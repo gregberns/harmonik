@@ -189,7 +189,7 @@ fi
 #     as the emitter gate documents for its own PORT_SITES.
 CALL_RE='deps\.launchBuilder\(\)'
 declare -a CALL_SITES=(
-    "internal/daemon/reviewloop.go   2"  # runReviewLoop: implementer + reviewer readers
+    "internal/daemon/reviewloop.go   0"  # RT18-S re-signed runReviewLoop: both readers now ports.LaunchBuilder
     "internal/daemon/dot_cascade.go  1"  # dispatchDotAgenticNode reader
     "internal/daemon/dot_gate.go     1"  # executeCognitionGate reader
     "internal/daemon/workloop.go     1"  # beadRunOne single-mode binding

@@ -166,11 +166,12 @@ fi
 #     (PROGRESS.md §RT14, deviation 2). Each mover must still reach the emitter
 #     through the port at least as many times as RT16 left it doing.
 #
-#     PORT_RE is the MEASURED set of spellings, not an anticipated one. RT18 will
-#     re-sign these functions to take a ports bundle; when its spelling stops
-#     matching, this check goes red and RT18 must update it deliberately. That is
-#     the intended behaviour, not a defect.
-PORT_RE='emitterPort\(\)|\brp\.Emitter\b|runPorts\(\)\.Emitter'
+#     PORT_RE is the MEASURED set of spellings, not an anticipated one. RT18
+#     re-signs these functions to take a ports bundle; each re-signed reader
+#     spells the emitter `ports.Emitter`, so RT18-S added `\bports\.Emitter\b`
+#     here as the first re-sign landed (runReviewLoop). The per-file PORT_SITES
+#     counts are a 1-for-1 spelling swap and stay satisfied — do not lower them.
+PORT_RE='emitterPort\(\)|\brp\.Emitter\b|runPorts\(\)\.Emitter|\bports\.Emitter\b'
 declare -a PORT_SITES=(
     "internal/daemon/workloop.go            2"  # beadRunOne binds; emitBeadClosedAndMaybeEpic reads the bundle
     "internal/daemon/reviewloop.go          1"  # runReviewLoop binds

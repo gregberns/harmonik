@@ -37,7 +37,6 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )

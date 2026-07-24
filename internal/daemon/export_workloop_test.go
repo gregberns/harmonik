@@ -1,6 +1,11 @@
 package daemon
 
-// export_test.go — test-seam exports for internal/daemon.
+// export_workloop_test.go — the residue of the RT19 split of the former
+// export_test.go: the work-loop core accessors and the remaining
+// single-owner seams (launch-spec builders, composition-root wiring,
+// stale-watch, bandwidth-tuner, heartbeat, paste-inject, queue accessors,
+// pane-liveness, cognition builder, stranded-bead guard) that no topic file
+// claimed. See the sibling export_*_test.go files for the topic-grouped seams.
 //
 // This file is compiled only when running tests (it lives in package daemon,
 // not daemon_test). It exports otherwise-unexported symbols so that

@@ -30,6 +30,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/shared"
+	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/runmerge"
@@ -399,6 +400,14 @@ type SharedHandles struct {
 	// emissions across goroutines (RT18.9, precondition for the runBridge drop).
 	EmittedEpics   map[core.BeadID]struct{}
 	EmittedEpicsMu *sync.Mutex
+
+	// beadRunOne-only shared handles (RT18.10): the beads adapter, the default
+	// CommandRunner factory, the worktree factory func and its creation mutex —
+	// each a by-reference copy of the same-named deps field.
+	BrAdapter        beadLedger
+	Runner           tmuxpkg.CommandRunner
+	WorktreeFactory  func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
+	WorktreeCreateMu *sync.Mutex
 }
 
 // runPorts assembles the deps-level RunPorts bundle. Ledger/Emitter/Merge/Gate
@@ -507,5 +516,10 @@ func (deps *workLoopDeps) sharedHandles() SharedHandles {
 		TIDGen:         deps.tidGen,
 		EmittedEpics:   deps.emittedEpics,
 		EmittedEpicsMu: deps.emittedEpicsMu,
+
+		BrAdapter:        deps.brAdapter,
+		Runner:           deps.runner,
+		WorktreeFactory:  deps.worktreeFactory,
+		WorktreeCreateMu: deps.worktreeCreateMu,
 	}
 }

@@ -1,7 +1,7 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-23 (alpha session) — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c + RT16 + **RT17** landed.
+**Last updated:** 2026-07-23 (alpha session) — P2 core COMPLETE (9/9) + RT13 + E4c + RT19.0 + RT19b + RT14 + RT15 + RT19c + RT16 + RT17 + **RT18** landed (the LIFT is next).
 QUALITY LANE this session (all reviewed, landed): hk-8dtiv Close-errcheck FLIP + prose reconcile (`f1f96c99`);
 `make check-report` quiet reporter (`1dd76236`); 137 dead `//nolint` removed (`96cd0b99`); **cmd/harmonik
 coverage drain 45.8%→58.4% across chunks A–I** (`0f9ca8c8`,`9b43ad31`,`73cad9b8`,`e7588d47`,`18c80cf6`).
@@ -55,7 +55,7 @@ plans, then began landing them one commit at a time.
 | **3. Execute (P2 core)** | 9 slices, sequential | **DONE — 9/9, every verify `is_pure_move: true`** |
 | **4. Punch list** | verifier findings applied | **DONE** — `ffc5415a` |
 | **5. Differential verification** | clean before/after pair, identical scope | **DONE — no regression** (see below) |
-| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, RT19c, RT16, **RT17** landed; RT18/19/lift after | **IN PROGRESS — RT18 is next** |
+| **6. E5 RT stream + E4c** | RT13, E4c, RT19b, RT14, RT15, RT19c, RT16, RT17, **RT18** landed; the LIFT is the last step | **IN PROGRESS — the LIFT (run machine → internal/runloop) is next** |
 | **7. E4d re-plan** | overturned "impossible"; 3 prep slices ready, E4d-3 parked | **DONE** |
 
 ### Verification verdict (Phase 5)

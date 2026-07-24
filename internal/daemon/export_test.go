@@ -17,9 +17,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
-	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queuewiring"
-	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -259,11 +257,6 @@ func ExportedRunAutoStatusInspection(ctx context.Context, wtPath string) (core.O
 //
 // Bead ref: hk-kqdpf.1.
 var ExportedProductionWorktreeFactory = productionWorktreeFactory
-
-// ExportedIsRetryableMergeReason exposes isRetryableMergeReason for unit tests.
-//
-// Bead ref: hk-f9xzs.
-var ExportedIsRetryableMergeReason = runmerge.IsRetryableReason
 
 // ExportedNoCommitGuardShouldReopen exposes noCommitGuardShouldReopen for the
 // single-mode no-commit guard regression test (hk-4ie1z).
@@ -634,19 +627,6 @@ func (lb *LiveStateBuilder) BuildCognitionForTest(agent, liveSID, declaredSID st
 // (hk-r9edj) can be exercised directly without driving the full workloop.
 func ExportedStrandedBeadHasOnDiskRun(projectDir string, beadID core.BeadID) bool {
 	return strandedBeadHasOnDiskRun(projectDir, beadID)
-}
-
-// ExportedLoadQueueProvenance runs bootState.loadQueueProvenance for projectDir
-// and returns the aggregated QueueDispatched / QueueOwned provenance sets. It is
-// the test seam for hk-nddg1: loadQueueProvenance must enumerate ALL named
-// queues (queue.EnumerateQueueNames), not just main, so a bead dispatched via a
-// crew queue (e.g. queues/paul.json) lands in QueueDispatched and the orphan
-// sweep's (a-queue) exclusion protects it from a double-dispatch reset.
-func ExportedLoadQueueProvenance(ctx context.Context, projectDir string) (lifecycle.QueueDispatchedSet, lifecycle.QueueOwnedSet) {
-	bs := &bootState{cfg: Config{ProjectDir: projectDir}}
-	st := &reconcileState{}
-	bs.loadQueueProvenance(ctx, st)
-	return st.queueDispatched, st.queueOwned
 }
 
 // ExportedNewCapturedSpawnProof exposes newCapturedSpawnProof (hk-47u9z) so the

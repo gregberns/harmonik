@@ -32,6 +32,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/hook"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 // hookRelayEnvelope / hookRelayAckMsg are the daemon-local names for the pure
@@ -44,24 +45,12 @@ type (
 
 // hookStoreIface is the interface over hook-session state used by the work loop
 // and waitWithSocketGrace. The concrete *hookSessionStore implements it (its
-// embedded *hook.SessionStore promotes every method); tests may supply a
-// lightweight stub via workLoopDeps to avoid the 3-second stopHookGrace window.
-//
-// Bead ref: hk-kqdpf.1.
-type hookStoreIface interface {
-	RegisterHookSession(runID, claudeSessionID string)
-	CloseHookSession(runID, claudeSessionID string)
-	LatestOutcome(runID, claudeSessionID string) *json.RawMessage
-	WaitForOutcome(ctx context.Context, runID, claudeSessionID string) (json.RawMessage, error)
-
-	// SetAgentReadyCallback registers a callback that is called (once) when the
-	// daemon socket receives an agent_ready relay message for (runID,
-	// claudeSessionID). The callback is invoked from the socket-acceptor goroutine
-	// and MUST be non-blocking. Used by the work loop to forward relay-synthesized
-	// agent_ready into the per-run event tap so waitAgentReady can observe it
-	// (CHB-013 / HC-039).
-	SetAgentReadyCallback(runID, claudeSessionID string, cb func())
-}
+// embedded *hook.SessionStore promotes every method). The interface itself moved
+// to internal/runloop (LIFT L0) because SharedHandles — which carries it — now
+// lives there; this alias keeps the daemon's uses (the workLoopDeps.hookStore
+// field, newWorkLoopDeps, waitWithSocketGrace, the test stubs) spelled with the
+// local name. See internal/runloop/ports.go (bead ref hk-kqdpf.1).
+type hookStoreIface = runloop.HookStore
 
 // hookSessionStore is the daemon-side composition of the pure hook.SessionStore
 // plus the bus emitter used by the rate-limit routing path (hk-lqtzq).

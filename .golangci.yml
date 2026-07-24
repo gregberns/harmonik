@@ -232,6 +232,50 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "projectconfig is a leaf: importing daemon would re-couple the config value types to the monolith (P2 LIFT crit 5)" }
 
+        # runloop: the run machine's boundary contract — the narrow structural
+        # PORT interfaces (LedgerPort … RunRegistryPort) and the value/handle
+        # BUNDLES (RunEnv, RunPorts, SharedHandles) the run path consumes. This is
+        # the P2 LIFT foundation (chunk L0): the run-path FILES still live in
+        # internal/daemon and move here over chunks L1–L9; L0 lifts only the shared
+        # port surface so those moves are pure git mv's onto a package that already
+        # compiles daemon-free. The daemon → runloop edge is the ONLY legal one:
+        # the concrete adapters (daemonLedger, daemonRunRegistry, …) stay in daemon
+        # and satisfy these interfaces, so a runloop → daemon edge would invert the
+        # extraction and re-couple the ports to the monolith — the deny below IS the
+        # unit's success criterion in CI. The allow list is the MEASURED direct
+        # import set of internal/runloop/ports.go (via `go list`), nothing
+        # speculative: stdlib; internal/core; internal/projectconfig (RunEnv.
+        # ProjectCfg / SandboxCfg); internal/substrate (RunPorts.Clock ClockPort);
+        # internal/brcli (BeadLedger method sigs + RunEnv.BrTimeoutCfg);
+        # internal/handler + internal/handlercontract (the prefix covers
+        # handlercontract/lifecycle, whose hclifecycle.Machine RunHandlePort.
+        # SetMachine names) for the launch/emitter/substrate surfaces;
+        # internal/harness/shared (LaunchPort's LaunchCtx / LaunchArtifacts);
+        # internal/lifecycle/tmux (SharedHandles.Runner CommandRunner);
+        # internal/runmerge (MergePort.Submit); internal/workers
+        # (SharedHandles.Workers); and self (white-box tests). depguard allow
+        # entries are PREFIX matches. NOTE: internal/runlaunch is DELIBERATELY
+        # absent — ports.go does not import it at L0; later chunks that move
+        # run-path files widen this list as the compiler demands.
+        # Rationale: plans/2026-07-21-p2-extraction/DAEMON-PARALLEL-ROADMAP.md (LIFT L0).
+        runloop:
+          files: ["**/internal/runloop/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/brcli"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/projectconfig"
+            - "github.com/gregberns/harmonik/internal/runloop"
+            - "github.com/gregberns/harmonik/internal/runmerge"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/workers"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runloop is a leaf: the run machine's ports must not import daemon back — the concrete adapters live in daemon and satisfy these interfaces (daemon → runloop is the only legal edge; P2 LIFT L0)" }
+
         # harness-shared: the cross-harness leaf (P2 unit E1a-0). Holds the pieces
         # that more than one harness implementation needs and none of them owns:
         # the resume seed prompt (seedprompt.go), the Refs:<bead> trailer

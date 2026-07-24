@@ -60,6 +60,7 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/substrate"
 	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
@@ -185,9 +186,9 @@ type reviewLoopState struct {
 // unless cancellation occurs before any work begins.
 func runReviewLoop(
 	ctx context.Context,
-	env RunEnv,
-	ports RunPorts,
-	handles SharedHandles,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadTitle string,

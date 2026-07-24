@@ -90,6 +90,7 @@ import (
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workflow"
@@ -189,9 +190,9 @@ type dotWorkflowResult struct {
 // runReviewLoop.
 func driveDotWorkflow(
 	ctx context.Context,
-	env RunEnv,
-	ports RunPorts,
-	handles SharedHandles,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadRecord core.BeadRecord,
@@ -1226,9 +1227,9 @@ func readDotReviewVerdictRetry(ctx context.Context, runner tmux.CommandRunner, w
 // bare SUCCESS outcome (the outbound edge is unconditional).
 func dispatchDotAgenticNode(
 	ctx context.Context,
-	env RunEnv,
-	ports RunPorts,
-	handles SharedHandles,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadRecord core.BeadRecord,

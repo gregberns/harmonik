@@ -74,6 +74,7 @@ import (
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
@@ -980,41 +981,15 @@ func (deps *workLoopDeps) closeBeadWithHistoryTrim(
 	return deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, tid, beadID, needsAttention)
 }
 
-// beadLedger is the subset of brcli.Adapter used by the work loop.  It is
-// extracted as an interface so that workloop_test.go can substitute a stub.
-//
-// # Bead body access — architectural note (hk-33tcf / T6 finding F-T6-004)
-//
-// The work loop intentionally does NOT read the bead body (description field)
-// from Beads-SQLite before or after claiming.  The bead body is the agent's
-// work brief, not the daemon's.  The daemon's responsibility is lifecycle
-// management (Ready → claim → dispatch → close/reopen); interpretation of the
-// brief is the handler subprocess's responsibility.
-//
-// Consequence — handler contract: the handler subprocess is responsible for
-// calling `br show <beadID> --format json` to obtain the work spec.  For MVH,
-// the bead ID is supplied to the handler via the implementer-protocol brief
-// in the SCOPE line (i.e., as content of the prompt passed by the operator to
-// claude).  Programmatic injection of the bead ID (e.g. a HARMONIK_BEAD_ID
-// env var) is a post-MVH hardening task; no bead exists for that yet.
-//
-// # ShowBead — pre-claim status guard (hk-p4xbw)
-//
-// ShowBead is called between Ready and ClaimBead to confirm the bead is still
-// "open" before dispatching.  This is the harmonik-side guard against double-
-// dispatch when two concurrent work loops both observe the same bead in the
-// Ready list.  The guard has a TOCTOU window (another loop could claim between
-// Show and Claim), but this is acceptable at MaxConcurrent>1 because the claim
-// semaphore (hk-e61c3.3) serialises claims on this daemon to N at a time.
-// Cross-daemon double-dispatch (post-MVH multi-daemon) is addressed by the
-// deferred upstream br patch (option 2, out of scope for this bead).
-type beadLedger interface {
-	Ready(ctx context.Context) ([]core.BeadRecord, error)
-	ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error)
-	ClaimBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID) error
-	CloseBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, needsAttention bool) error
-	ReopenBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, reason string) error
-}
+// beadLedger is the work loop's Beads-ledger interface (the subset of
+// brcli.Adapter it uses, extracted so tests can substitute a stub). The
+// interface itself moved to internal/runloop (LIFT L0) because SharedHandles —
+// which carries it — now lives there; this alias keeps the daemon's uses (the
+// workLoopDeps.brAdapter field, resolveOwningEpicFromRecord, ~25 test stubs)
+// spelled with the local name. The architectural note (bead-body access, the
+// pre-claim ShowBead guard hk-p4xbw / hk-33tcf) lives with the definition in
+// internal/runloop/ports.go.
+type beadLedger = runloop.BeadLedger
 
 // strandedInProgressResetter is the subset of brcli.Adapter used to auto-reset
 // an in_progress bead that has no active run (hk-l2xd1). Separated from
@@ -3088,7 +3063,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // (nil) resolves from the harness registry + the bead's tier-1 labels, so a
 // codex/pi-labelled bead routes to its harness rather than silently falling to
 // the claude builder.
-func (deps *workLoopDeps) buildRunBundles(env RunEnv) (RunPorts, SharedHandles) {
+func (deps *workLoopDeps) buildRunBundles(env runloop.RunEnv) (runloop.RunPorts, runloop.SharedHandles) {
 	rp := deps.runPorts()
 	handles := deps.sharedHandles()
 	builder := deps.launchSpecBuilder
@@ -3136,7 +3111,7 @@ func (deps *workLoopDeps) buildRunBundles(env RunEnv) (RunPorts, SharedHandles) 
 // Bead ref: hk-e61c3.2, hk-45ude.
 //
 //nolint:funlen,gocognit,cyclop // pre-existing: beadRunOne is the run-path giant the RT ports stream (RT15-RT20) exists to decompose; the signature change re-anchors the grandfathered findings and splitting the body here would defeat the behaviour-preserving property of the slice
-func beadRunOne(ctx context.Context, env RunEnv, rp RunPorts, handles SharedHandles, extraContext string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
+func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, handles runloop.SharedHandles, extraContext string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
 	// RSM-010: alias the eleven per-run values off env under the names the body
 	// already uses. Aliasing rather than rewriting ~140 reads is what keeps the
 	// signature change behaviour-obvious — in particular itemWorkflowRef stays a
@@ -6341,7 +6316,7 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 // emitBeadClosedAndMaybeEpic emits bead_closed then checks whether the closed
 // bead's parent epic just completed (hk-w6y70 C1). It is the single insertion
 // point replacing the seven raw emitBeadClosed call sites.
-func emitBeadClosedAndMaybeEpic(ctx context.Context, ports RunPorts, handles SharedHandles, runID core.RunID, beadID core.BeadID) {
+func emitBeadClosedAndMaybeEpic(ctx context.Context, ports runloop.RunPorts, handles runloop.SharedHandles, runID core.RunID, beadID core.BeadID) {
 	emitBeadClosed(ctx, ports.Emitter, runID, beadID)
 	maybeEmitEpicCompleted(ctx, ports, handles, runID, beadID)
 }
@@ -6352,7 +6327,7 @@ func emitBeadClosedAndMaybeEpic(ctx context.Context, ports RunPorts, handles Sha
 // or already-emitted guard hit.
 //
 // Bead: hk-w6y70.
-func maybeEmitEpicCompleted(ctx context.Context, ports RunPorts, handles SharedHandles, runID core.RunID, closedBeadID core.BeadID) {
+func maybeEmitEpicCompleted(ctx context.Context, ports runloop.RunPorts, handles runloop.SharedHandles, runID core.RunID, closedBeadID core.BeadID) {
 	ledger := ports.Ledger
 	// Step 1: ShowBead(closedBead) to find the parent via a parent-child edge.
 	// The closed bead's outgoing parent-child edge has FromBeadID == closedBead,

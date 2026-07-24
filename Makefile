@@ -337,6 +337,18 @@ projectconfig-freeze-gate:  ## P2 LIFT crit 5: forbid new config-loader files, m
 runlaunch-freeze-gate:  ## P2 E5 RT19b: forbid re-declaring the moved launch-effect symbols in internal/daemon
 	scripts/runlaunch-freeze-gate.sh
 
+# runloop-freeze-gate: the P2 LIFT extraction ratchet (chunk L0 onward) — the run
+# machine's boundary contract (the PORT interfaces LedgerPort … RunRegistryPort
+# and the BUNDLES RunPorts / RunEnv / SharedHandles) left internal/daemon for
+# internal/runloop. depguard fences the import edge; this ratchet forbids
+# re-declaring a moved TYPE back in internal/daemon. The daemon KEEPS the concrete
+# adapters + constructors (daemon → runloop, the legal direction); the `= runloop.`
+# forwarding arm allows the daemon-local aliases. Ratcheted: later chunks append
+# their moved run-path filenames/symbols. Wired into check-fast and check-short.
+.PHONY: runloop-freeze-gate
+runloop-freeze-gate:  ## P2 LIFT L0: forbid re-declaring the moved run-path port/bundle types in internal/daemon
+	scripts/runloop-freeze-gate.sh
+
 # readywait-freeze-gate: the P2 E5 RT14 extraction ratchet — the open-coded
 # agent_ready WAIT left internal/daemon. Every launch/ready/brief segment now
 # runs on the runexec Dispatch machine via dispatchSegment, whose ClockPort-timed
@@ -585,6 +597,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/runmerge-freeze-gate.sh
 	scripts/projectconfig-freeze-gate.sh
 	scripts/runlaunch-freeze-gate.sh
+	scripts/runloop-freeze-gate.sh
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	scripts/runloop-emitter-gate.sh
@@ -619,6 +632,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/runmerge-freeze-gate.sh
 	scripts/projectconfig-freeze-gate.sh
 	scripts/runlaunch-freeze-gate.sh
+	scripts/runloop-freeze-gate.sh
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	scripts/runloop-emitter-gate.sh

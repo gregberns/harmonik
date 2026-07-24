@@ -5,8 +5,10 @@ set -euo pipefail
 # (plans/2026-07-21-p2-extraction/RT16-emitterport-conversion.md §4 step 8;
 #  _plan.md §3.2).
 #
-# The DOT run path reaches its event bus through EmitterPort — the type alias in
-# internal/daemon/runports.go — not through the workLoopDeps bus field. RT16
+# The DOT run path reaches its event bus through EmitterPort — the type alias
+# that (as of P2 LIFT L0) lives in internal/runloop/ports.go, structurally reached
+# in internal/daemon via the (*workLoopDeps).emitterPort() constructor — not
+# through the workLoopDeps bus field. RT16
 # converted 108 direct field reads on the six MOVER files to 8 port reads, so
 # RT18's re-signature of beadRunOne / runReviewLoop / driveDotWorkflow /
 # dispatchDotAgenticNode / executeCognitionGate is an 8-line change instead of a
@@ -151,16 +153,21 @@ done
 #     conversion cannot change a method set, an interface conversion or a nil
 #     check. Turning it into `type EmitterPort handlercontract.EventEmitter`
 #     would compile at some call sites and silently change others.
-if ! grep -qE '^type EmitterPort = handlercontract\.EventEmitter$' internal/daemon/runports.go; then
+# P2 LIFT L0 moved the EmitterPort alias and the RunPorts.Emitter field to
+# internal/runloop/ports.go (the run-path port SURFACE). The daemon KEEPS the
+# emitterPort() constructor (daemon → runloop direction), now returning
+# runloop.EmitterPort. The alias-ness argument is unchanged — it just lives one
+# package over — so these three assertions follow the symbols to their new homes.
+if ! grep -qE '^type EmitterPort = handlercontract\.EventEmitter$' internal/runloop/ports.go; then
     echo "runloop-emitter-gate: EmitterPort is no longer 'type EmitterPort = handlercontract.EventEmitter'" >&2
-    echo "  in internal/daemon/runports.go. RT16's zero-risk argument rests on it being an ALIAS." >&2
+    echo "  in internal/runloop/ports.go. RT16's zero-risk argument rests on it being an ALIAS." >&2
     HITS=$((HITS + 1))
 fi
-if ! grep -q 'func (deps \*workLoopDeps) emitterPort() EmitterPort' internal/daemon/runports.go; then
+if ! grep -q 'func (deps \*workLoopDeps) emitterPort() runloop.EmitterPort' internal/daemon/runports.go; then
     echo "runloop-emitter-gate: (*workLoopDeps).emitterPort is gone — re-derive this gate" >&2
     HITS=$((HITS + 1))
 fi
-if ! grep -qE '^\s*Emitter\s+EmitterPort$' internal/daemon/runports.go; then
+if ! grep -qE '^\s*Emitter\s+EmitterPort$' internal/runloop/ports.go; then
     echo "runloop-emitter-gate: RunPorts.Emitter is gone — re-derive this gate" >&2
     HITS=$((HITS + 1))
 fi

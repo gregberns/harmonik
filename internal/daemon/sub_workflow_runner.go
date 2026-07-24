@@ -31,6 +31,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
@@ -41,9 +42,9 @@ import (
 // used as the "parent vertex" in the sub-workflow reference graph acyclicity
 // check (SW-003).
 func newDotSubWorkflowRunner(
-	env RunEnv,
-	ports RunPorts,
-	handles SharedHandles,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadRecord core.BeadRecord,
@@ -112,9 +113,9 @@ func parentGraphName(g *dot.Graph) string {
 // driveDotWorkflow call so the Run method can dispatch expanded sub-workflow
 // nodes using the same infrastructure as the parent cascade.
 type dotSubWorkflowRunner struct {
-	env             RunEnv
-	ports           RunPorts
-	handles         SharedHandles
+	env             runloop.RunEnv
+	ports           runloop.RunPorts
+	handles         runloop.SharedHandles
 	runID           core.RunID
 	beadID          core.BeadID
 	beadRecord      core.BeadRecord

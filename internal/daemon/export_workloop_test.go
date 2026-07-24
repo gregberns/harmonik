@@ -23,6 +23,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 )
@@ -84,7 +85,7 @@ func ExportedBuildLaunchSpecReviewer(base handlercontract.LaunchSpec, iterationC
 // that used to live inside beadRunOne) and invokes beadRunOne, so a test that
 // constructs a workLoopDeps + RunEnv drives a single bead run exactly as
 // production does.
-func runBeadOneTest(ctx context.Context, deps workLoopDeps, env RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool { //nolint:unparam // mirrors beadRunOne's parameter list for parity; current callers all pass "" for extraContext
+func runBeadOneTest(ctx context.Context, deps workLoopDeps, env runloop.RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool { //nolint:unparam // mirrors beadRunOne's parameter list for parity; current callers all pass "" for extraContext
 	rp, handles := deps.buildRunBundles(env)
 	return beadRunOne(ctx, env, rp, handles, extraContext, preSelected, localSlotHeld)
 }
@@ -95,7 +96,7 @@ func runBeadOneTest(ctx context.Context, deps workLoopDeps, env RunEnv, extraCon
 // so the launch builder is resolved (routed / claude fallback) and threaded onto
 // rp.LaunchBuilder exactly as production does, and a fixture-injected
 // launchSpecBuilder still reaches the review/DOT sub-drivers.
-func runBundlesFromDeps(deps workLoopDeps, runID core.RunID) (RunEnv, RunPorts, SharedHandles) {
+func runBundlesFromDeps(deps workLoopDeps, runID core.RunID) (runloop.RunEnv, runloop.RunPorts, runloop.SharedHandles) {
 	env := deps.runEnv(runID, core.BeadRecord{}, "", nil, nil, 0, "", "", nil, false, "")
 	rp, handles := deps.buildRunBundles(env)
 	return env, rp, handles

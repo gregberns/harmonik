@@ -20,6 +20,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
@@ -29,9 +30,9 @@ type runBridge struct {
 	m  *runexec.Run
 	sh *runShell
 
-	env     RunEnv
-	rp      RunPorts
-	handles SharedHandles
+	env     runloop.RunEnv
+	rp      runloop.RunPorts
+	handles runloop.SharedHandles
 	runID   core.RunID
 	beadID  core.BeadID
 
@@ -74,7 +75,7 @@ func runBridgeConfig(mode core.WorkflowMode) runexec.RunConfig {
 // context is in scope. emitRunTerminal is beadRunOne's terminal-emission
 // effector (queue stamping + sessiondata policy; draining selects the RSM-021
 // no-sessiondata batch policy).
-func newRunBridge(env RunEnv, rp RunPorts, handles SharedHandles, runID core.RunID, beadID core.BeadID, mode core.WorkflowMode, emitRunTerminal func(ctx context.Context, success bool, summary string, draining bool)) *runBridge {
+func newRunBridge(env runloop.RunEnv, rp runloop.RunPorts, handles runloop.SharedHandles, runID core.RunID, beadID core.BeadID, mode core.WorkflowMode, emitRunTerminal func(ctx context.Context, success bool, summary string, draining bool)) *runBridge {
 	b := &runBridge{
 		env:     env,
 		rp:      rp,
@@ -178,7 +179,7 @@ type spineArgs struct {
 	wtPath          string
 	headSHA         string // parent SHA the run branched from
 	preMergeSync    func() string
-	mport           MergePort
+	mport           runloop.MergePort
 	activeRepo      string
 	protectBranches []string
 	transitionTID   core.TransitionID

@@ -39,6 +39,7 @@ import (
 	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
@@ -75,9 +76,9 @@ var gateFilePollInterval = 2 * time.Second
 // errors.
 func dispatchDotGateNode(
 	ctx context.Context,
-	env RunEnv,
-	ports RunPorts,
-	handles SharedHandles,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	run *core.Run,
 	wtPath string,
@@ -204,9 +205,9 @@ func buildMechanismGateEval(cp core.ControlPoint) handler.GateEvalFunc {
 //
 // DecisionActor is the DelegationPath.Role per GateDecisionPayload §3.
 func buildCognitionGateEval(
-	env RunEnv,
-	ports RunPorts,
-	handles SharedHandles,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	cp core.ControlPoint,
 	wtPath string,
@@ -240,9 +241,9 @@ func buildCognitionGateEval(
 // launch subprocess, wait, read verdict. Called from the GateEvalFunc closure.
 func executeCognitionGate(
 	ctx context.Context,
-	env RunEnv,
-	ports RunPorts,
-	handles SharedHandles,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	run *core.Run,
 	cp core.ControlPoint,

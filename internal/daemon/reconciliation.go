@@ -68,11 +68,11 @@ func emitOperatorMailboxEscalation(ctx context.Context, emitter interface {
 	}
 	b, marshalErr := json.Marshal(p)
 	if marshalErr != nil {
-		fmt.Fprintf(logW, "reconciliation: marshal decision_needed for operator-mailbox (%s): %v\n", source, marshalErr)
+		fmt.Fprintf(logW, "reconciliation: marshal decision_needed for operator-mailbox (%s): %v\n", source, marshalErr) //nolint:errcheck // best-effort stderr status log
 		return
 	}
 	if emitErr := emitter.Emit(ctx, core.EventTypeDecisionNeeded, b); emitErr != nil {
-		fmt.Fprintf(logW, "reconciliation: emit decision_needed (operator-mailbox) for %s: %v\n", source, emitErr)
+		fmt.Fprintf(logW, "reconciliation: emit decision_needed (operator-mailbox) for %s: %v\n", source, emitErr) //nolint:errcheck // best-effort stderr status log
 	}
 }
 
@@ -122,6 +122,8 @@ type CatBL1StartupSweepConfig struct {
 // continues over remaining candidates.
 //
 // Spec ref: specs/reconciliation/spec.md §8.BL1 — Cat-BL1 child-bead orphan.
+//
+//nolint:gocognit,cyclop // over the threshold; splitting the spec-mapped §8.BL1 detector loop mid-release is riskier than the marginal complexity
 func RunCatBL1StartupSweep(ctx context.Context, cfg CatBL1StartupSweepConfig) error {
 	if cfg.ProjectDir == "" || cfg.BrPath == "" {
 		return fmt.Errorf("reconciliation Cat-BL1: ProjectDir and BrPath must be non-empty")
@@ -146,10 +148,7 @@ func RunCatBL1StartupSweep(ctx context.Context, cfg CatBL1StartupSweepConfig) er
 	defer cancel()
 
 	// Collect open + in_progress beads — both are active and could be orphans.
-	candidates, collectErr := collectParentLabeledBeads(scanCtx, adapter, logW)
-	if collectErr != nil {
-		return fmt.Errorf("reconciliation Cat-BL1: collect candidates: %w", collectErr)
-	}
+	candidates := collectParentLabeledBeads(scanCtx, adapter, logW)
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -164,8 +163,7 @@ func RunCatBL1StartupSweep(ctx context.Context, cfg CatBL1StartupSweepConfig) er
 
 		hasCommit, gitErr := hasParentMergeCommit(scanCtx, cfg.ProjectDir, targetBranch, parentID)
 		if gitErr != nil {
-			fmt.Fprintf(logW, "reconciliation Cat-BL1: bead %s git scan for parent %s: %v (skipping)\n",
-				rec.BeadID, parentID, gitErr)
+			fmt.Fprintf(logW, "reconciliation Cat-BL1: bead %s git scan for parent %s: %v (skipping)\n", rec.BeadID, parentID, gitErr) //nolint:errcheck // best-effort stderr status log
 			continue
 		}
 		if hasCommit {
@@ -179,22 +177,19 @@ func RunCatBL1StartupSweep(ctx context.Context, cfg CatBL1StartupSweepConfig) er
 		}
 		if payloadBytes, marshalErr := json.Marshal(orphanPayload); marshalErr == nil {
 			if emitErr := cfg.Emitter.Emit(scanCtx, core.EventTypeOrphanedChildBead, payloadBytes); emitErr != nil {
-				fmt.Fprintf(logW, "reconciliation Cat-BL1: emit orphaned_child_bead for %s: %v\n",
-					rec.BeadID, emitErr)
+				fmt.Fprintf(logW, "reconciliation Cat-BL1: emit orphaned_child_bead for %s: %v\n", rec.BeadID, emitErr) //nolint:errcheck // best-effort stderr status log
 			}
 		}
 
 		if rec.Status == core.CoarseStatusInProgress {
 			// Exception: in_progress orphan → escalate to operator, do not auto-close.
-			fmt.Fprintf(logW, "reconciliation Cat-BL1: bead %s in_progress with orphaned parent %s — escalating\n",
-				rec.BeadID, parentID)
+			fmt.Fprintf(logW, "reconciliation Cat-BL1: bead %s in_progress with orphaned parent %s — escalating\n", rec.BeadID, parentID) //nolint:errcheck // best-effort stderr status log
 			escalatePayload := core.OperatorEscalationRequiredPayload{
 				Reason: core.OperatorEscalationReasonOtherVerdictDriven,
 			}
 			if escalateBytes, marshalErr := json.Marshal(escalatePayload); marshalErr == nil {
 				if emitErr := cfg.Emitter.Emit(scanCtx, core.EventTypeOperatorEscalationRequired, escalateBytes); emitErr != nil {
-					fmt.Fprintf(logW, "reconciliation Cat-BL1: emit operator_escalation_required for %s: %v\n",
-						rec.BeadID, emitErr)
+					fmt.Fprintf(logW, "reconciliation Cat-BL1: emit operator_escalation_required for %s: %v\n", rec.BeadID, emitErr) //nolint:errcheck // best-effort stderr status log
 				}
 			}
 			emitOperatorMailboxEscalation(scanCtx, cfg.Emitter, logW, "reconciliation-cat-bl1",
@@ -207,12 +202,10 @@ func RunCatBL1StartupSweep(ctx context.Context, cfg CatBL1StartupSweepConfig) er
 		// Open orphan: auto-close via SweepCloseBead.
 		closeErr := adapter.SweepCloseBead(scanCtx, timeoutCfg, rec.BeadID)
 		if closeErr != nil {
-			fmt.Fprintf(logW, "reconciliation Cat-BL1: close orphan bead %s (parent %s): %v\n",
-				rec.BeadID, parentID, closeErr)
+			fmt.Fprintf(logW, "reconciliation Cat-BL1: close orphan bead %s (parent %s): %v\n", rec.BeadID, parentID, closeErr) //nolint:errcheck // best-effort stderr status log
 			continue
 		}
-		fmt.Fprintf(logW, "reconciliation Cat-BL1: closed orphan bead %s (parent %s run discarded)\n",
-			rec.BeadID, parentID)
+		fmt.Fprintf(logW, "reconciliation Cat-BL1: closed orphan bead %s (parent %s run discarded)\n", rec.BeadID, parentID) //nolint:errcheck // best-effort stderr status log
 	}
 
 	return nil
@@ -221,13 +214,13 @@ func RunCatBL1StartupSweep(ctx context.Context, cfg CatBL1StartupSweepConfig) er
 // collectParentLabeledBeads lists all open and in_progress beads and returns
 // those that carry at least one parent:hk-* label. Non-fatal list errors for
 // one status are logged; the other status is still queried.
-func collectParentLabeledBeads(ctx context.Context, adapter *brcli.Adapter, logW io.Writer) ([]core.BeadRecord, error) {
+func collectParentLabeledBeads(ctx context.Context, adapter *brcli.Adapter, logW io.Writer) []core.BeadRecord {
 	var candidates []core.BeadRecord
 
 	for _, status := range []string{"open", "in_progress"} {
 		beads, listErr := adapter.ListBeadsByStatus(ctx, status)
 		if listErr != nil {
-			fmt.Fprintf(logW, "reconciliation Cat-BL1: list %s beads: %v (skipping status)\n", status, listErr)
+			fmt.Fprintf(logW, "reconciliation Cat-BL1: list %s beads: %v (skipping status)\n", status, listErr) //nolint:errcheck // best-effort stderr status log
 			continue
 		}
 		for _, rec := range beads {
@@ -236,7 +229,7 @@ func collectParentLabeledBeads(ctx context.Context, adapter *brcli.Adapter, logW
 			}
 		}
 	}
-	return candidates, nil
+	return candidates
 }
 
 // hasParentLabel reports whether any label in labels has the parent:hk-* prefix.
@@ -352,7 +345,7 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 		// File was non-empty but no parseable lines — truncate anyway to avoid
 		// re-processing on next startup.
 		if err := os.Truncate(logPath, 0); err != nil {
-			fmt.Fprintf(logW, "reconciliation Cat-BL3: truncate %s: %v\n", logPath, err)
+			fmt.Fprintf(logW, "reconciliation Cat-BL3: truncate %s: %v\n", logPath, err) //nolint:errcheck // best-effort stderr status log
 		}
 		return nil
 	}
@@ -372,8 +365,7 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 		return fmt.Errorf("reconciliation Cat-BL3: emit bead_ledger_conflict_audit: %w", emitErr)
 	}
 
-	fmt.Fprintf(logW, "reconciliation Cat-BL3: emitted bead_ledger_conflict_audit (%d conflicts, %d beads)\n",
-		len(conflicts), len(beadIDs))
+	fmt.Fprintf(logW, "reconciliation Cat-BL3: emitted bead_ledger_conflict_audit (%d conflicts, %d beads)\n", len(conflicts), len(beadIDs)) //nolint:errcheck // best-effort stderr status log
 
 	// Emit operator_escalation_required — audit notification; no data loss.
 	escalatePayload := core.OperatorEscalationRequiredPayload{
@@ -381,7 +373,7 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 	}
 	if escalateBytes, marshalErr := json.Marshal(escalatePayload); marshalErr == nil {
 		if emitErr := cfg.Emitter.Emit(ctx, core.EventTypeOperatorEscalationRequired, escalateBytes); emitErr != nil {
-			fmt.Fprintf(logW, "reconciliation Cat-BL3: emit operator_escalation_required: %v\n", emitErr)
+			fmt.Fprintf(logW, "reconciliation Cat-BL3: emit operator_escalation_required: %v\n", emitErr) //nolint:errcheck // best-effort stderr status log
 		}
 	}
 	emitOperatorMailboxEscalation(ctx, cfg.Emitter, logW, "reconciliation-cat-bl3",
@@ -392,7 +384,7 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 	// Truncate the log — conflicts are now durable in the event log.
 	if err := os.Truncate(logPath, 0); err != nil {
 		// Non-fatal: log the failure; the event has been emitted.
-		fmt.Fprintf(logW, "reconciliation Cat-BL3: truncate %s: %v (event already emitted)\n", logPath, err)
+		fmt.Fprintf(logW, "reconciliation Cat-BL3: truncate %s: %v (event already emitted)\n", logPath, err) //nolint:errcheck // best-effort stderr status log
 	}
 
 	return nil
@@ -404,10 +396,8 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 //	<iso8601-timestamp> CONFLICT bead=<id> field=<field> a=<a_val> b=<b_val> resolution=<res>
 //
 // Malformed lines are silently skipped. beadIDs is deduplicated.
-func parseConflictLog(r io.Reader) ([]core.BeadLedgerConflict, []string) {
-	var conflicts []core.BeadLedgerConflict
+func parseConflictLog(r io.Reader) (conflicts []core.BeadLedgerConflict, beadIDs []string) {
 	seen := make(map[string]struct{})
-	var beadIDs []string
 
 	scanner := bufio.NewScanner(r)
 	// Conflict lines embed full field values (a=..., b=...), which can exceed
@@ -539,7 +529,7 @@ func (h *CatBL2Handler) Subscribe(bus eventbus.EventBus) error {
 func (h *CatBL2Handler) handleBeadSyncFailed(ctx context.Context, evt core.Event) error {
 	var pl core.BeadSyncFailedPayload
 	if err := json.Unmarshal(evt.Payload, &pl); err != nil {
-		fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: unmarshal bead_sync_failed: %v (skipping)\n", err)
+		fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: unmarshal bead_sync_failed: %v (skipping)\n", err) //nolint:errcheck // best-effort stderr status log
 		return nil
 	}
 
@@ -558,10 +548,10 @@ func (h *CatBL2Handler) handleBeadSyncFailed(ctx context.Context, evt core.Event
 		}
 		if b, marshalErr := json.Marshal(recovered); marshalErr == nil {
 			if emitErr := h.cfg.Emitter.Emit(ctx, core.EventTypeBeadLedgerRecovered, b); emitErr != nil {
-				fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit bead_ledger_recovered: %v\n", emitErr)
+				fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit bead_ledger_recovered: %v\n", emitErr) //nolint:errcheck // best-effort stderr status log
 			}
 		}
-		fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: ledger recovered for run %s\n", pl.RunID)
+		fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: ledger recovered for run %s\n", pl.RunID) //nolint:errcheck // best-effort stderr status log
 		return nil
 	}
 
@@ -577,7 +567,7 @@ func (h *CatBL2Handler) handleBeadSyncFailed(ctx context.Context, evt core.Event
 	}
 	if b, marshalErr := json.Marshal(corrupt); marshalErr == nil {
 		if emitErr := h.cfg.Emitter.Emit(ctx, core.EventTypeBeadLedgerCorrupt, b); emitErr != nil {
-			fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit bead_ledger_corrupt: %v\n", emitErr)
+			fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit bead_ledger_corrupt: %v\n", emitErr) //nolint:errcheck // best-effort stderr status log
 		}
 	}
 
@@ -586,15 +576,13 @@ func (h *CatBL2Handler) handleBeadSyncFailed(ctx context.Context, evt core.Event
 	}
 	if b, marshalErr := json.Marshal(escalate); marshalErr == nil {
 		if emitErr := h.cfg.Emitter.Emit(ctx, core.EventTypeOperatorEscalationRequired, b); emitErr != nil {
-			fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit operator_escalation_required: %v\n", emitErr)
+			fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit operator_escalation_required: %v\n", emitErr) //nolint:errcheck // best-effort stderr status log
 		}
 	}
 	emitOperatorMailboxEscalation(ctx, h.cfg.Emitter, h.logWriter, "reconciliation-cat-bl2",
 		fmt.Sprintf("Bead-ledger import failed after retry for run %s: %s", pl.RunID, errMsg),
 		pl.RunID)
 
-	fmt.Fprintf(h.logWriter,
-		"reconciliation Cat-BL2: ledger corrupt for run %s — escalated to operator (Cat 6b): %s\n",
-		pl.RunID, retryErr)
+	fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: ledger corrupt for run %s — escalated to operator (Cat 6b): %s\n", pl.RunID, retryErr) //nolint:errcheck // best-effort stderr status log
 	return nil
 }

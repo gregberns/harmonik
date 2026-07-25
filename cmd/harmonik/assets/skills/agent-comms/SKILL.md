@@ -92,22 +92,22 @@ If both are absent, the command exits with code 1.
 
 ```
 harmonik comms send (--to NAME | --broadcast) [--from NAME] [--topic T]
-                    [--reply-to ID] [--wake] [--project DIR] [--] <body>
+                    [--reply-to ID] [--wake | --no-wake] [--project DIR] [--] <body>
 ```
 
 - `--to NAME` XOR `--broadcast` (sets `to:"*"`). Exactly one required.
 - `--from NAME` — sender identity (default: `$HARMONIK_AGENT`).
 - `--topic T` — optional free-text filter key.
 - `--reply-to ID` — optional `event_id` of the message being replied to.
-- `--wake` — after delivering the message, **nudge the recipient's tmux pane**
-  so an idle Claude session wakes and processes it. Requires a directed
+- Directed sends **nudge the recipient's tmux pane by default** so an idle
+  session wakes and processes the durable message. `--wake` remains as an
+  explicit compatible spelling; `--no-wake` opts out. Waking requires a directed
   `--to NAME` (rejected with `--broadcast` — you cannot wake a broadcast). The
   pane target is resolved from the crew registry (`.harmonik/crew/<name>.json`),
-  falling back to the `harmonik-<projectHash>-crew-<name>` session convention (fleet-portability T2). The nudge is delivered
+  falling back through the crew and bare-agent tmux session conventions. The nudge is delivered
   via bracketed-paste (the same mechanism the keeper uses). Best-effort: a wake
   failure (no tmux, pane gone) is reported to stderr but does NOT affect the exit
-  code or the message delivery. Reach for this when the recipient may be idle and
-  not actively reading its inbox — see § Waking an idle peer below.
+  code or the message delivery. See § Waking an idle peer below.
 - `<body>` — trailing args joined by space, or `-` to read stdin.
 - Prints the minted `event_id` on success.
 - Exit 17 = daemon not running.
@@ -122,8 +122,8 @@ harmonik comms send --broadcast --from myagent -- Status: ready
 # With topic
 harmonik comms send --to alice --from bob --topic status -- ready
 
-# Wake an idle recipient after sending (directed --to only)
-harmonik comms send --to crew-alpha --wake -- New task for you
+# Deliver without waking (directed sends wake by default)
+harmonik comms send --to crew-alpha --no-wake -- Non-urgent status
 
 # Stdin body
 echo '{"result": "ok"}' | harmonik comms send --to orchestrator --from myagent -
@@ -302,15 +302,16 @@ harmonik comms who --json
 An idle recipient does **not** reliably process a message the instant
 `comms send` delivers it: a one-shot or idle Claude session needs either an
 **armed `comms recv --follow` stream** kept running for its lifetime, or a pane
-nudge, to actually pick the message up. Two ways to wake one:
+nudge, to actually pick the message up. Directed sends therefore wake by default:
 
-1. **`comms send --to NAME --wake`** — the daemon nudges the recipient's tmux
-   pane right after delivery (see the `--wake` flag above). Best-effort,
-   directed-only. This is the simplest path when you control the send.
-2. **Keep `comms recv --follow` armed via the Monitor tool** on the recipient — a
-   session that holds an open `--follow` stream wakes on the next delivered message
-   without any nudge. Crews are expected to keep this running for their whole life
-   (see the crew-launch skill, § Idle-crew-wake protocol).
+1. **`comms send --to NAME`** — the CLI nudges the recipient's tmux pane right
+   after delivery. Best-effort and directed-only. Use `--no-wake` only when
+   durable delivery without an immediate action is intentional.
+2. **Keep `comms recv --follow` armed via the Monitor tool** on the recipient as
+   a durable live inbox. The default pane nudge remains the action-level wake
+   guarantee; an armed stream alone has not reliably resumed an idle session.
+   Crews are expected to keep the stream running for their whole life (see the
+   crew-launch skill, § Idle-crew-wake protocol).
 
    > **The `--follow` stream MUST be armed via the Monitor tool, not a background
    > bash (hk-b51bg).** A delivered line only becomes an ACTION the recipient reads
@@ -321,8 +322,8 @@ nudge, to actually pick the message up. Two ways to wake one:
    > one-shot `comms recv --agent <me> --json` sweep on an idle timer (own POLL
    > cursor, B1) catches a silently-dead `--follow`; re-arm the Monitor on any hit.
 
-If the recipient has gone fully idle with no armed `--follow`, a bare `send`
-alone may sit unread until something nudges the pane — prefer `--wake`.
+If the recipient has gone fully idle with no armed `--follow`, the default
+directed-send nudge is the action-level backstop.
 
 ---
 

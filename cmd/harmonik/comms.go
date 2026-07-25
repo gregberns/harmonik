@@ -20,7 +20,8 @@ package main
 //	                           whose recv-follow is armed (agent-input.md §4.10 AIS-019).
 //	--topic T                  Optional free-text filter key (e.g. `keeper` for keeper nudges).
 //	--reply-to ID              Optional event_id of the message being replied to.
-//	--wake                     After sending, nudge the recipient's tmux pane to wake an idle crew.
+//	--wake                     Explicitly request the default directed-send pane wake.
+//	--no-wake                  Deliver a directed message without nudging the recipient's pane.
 //	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
 //	--project DIR              Project directory (default: cwd).
 //	--                         End of flags; remaining args are the message body.
@@ -134,6 +135,7 @@ func runCommsSendSubcommand(subArgs []string) int {
 	topicFlag := ""
 	replyToFlag := ""
 	wakeFlag := false
+	noWakeFlag := false
 	socketFlag := ""
 	projectFlag := ""
 	var bodyParts []string
@@ -174,7 +176,11 @@ func runCommsSendSubcommand(subArgs []string) int {
 		case strings.HasPrefix(arg, "--reply-to="):
 			replyToFlag = strings.TrimPrefix(arg, "--reply-to=")
 		case arg == "--wake":
+			// Retained as an explicit spelling for compatibility. Directed sends
+			// wake by default; broadcasts are rejected below.
 			wakeFlag = true
+		case arg == "--no-wake":
+			noWakeFlag = true
 		case arg == "--socket" && i+1 < len(subArgs):
 			i++
 			socketFlag = subArgs[i]
@@ -203,6 +209,10 @@ func runCommsSendSubcommand(subArgs []string) int {
 		return 1
 	}
 	// --wake requires a directed recipient (not broadcast).
+	if wakeFlag && noWakeFlag {
+		fmt.Fprintf(os.Stderr, "harmonik comms send: --wake and --no-wake are mutually exclusive\n")
+		return 1
+	}
 	if wakeFlag && broadcastFlag {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: --wake requires --to (cannot wake a broadcast)\n")
 		return 1
@@ -359,15 +369,20 @@ func runCommsSendSubcommand(subArgs []string) int {
 
 	fmt.Println(result.EventID)
 
-	// --wake: nudge the recipient's tmux pane after the message is delivered.
-	// Best-effort: a wake failure does not affect the exit code.
-	if wakeFlag && to != "*" {
+	// Directed sends wake the recipient by default so durable delivery is also
+	// actionable when the agent is idle at its prompt. Best-effort: a wake
+	// failure does not affect the exit code. --no-wake is the explicit opt-out.
+	if commsShouldWake(to != "*", noWakeFlag) {
 		if wakeErr := commsWakePaneForAgent(context.Background(), absProject, to); wakeErr != nil {
-			fmt.Fprintf(os.Stderr, "harmonik comms send: --wake: %v\n", wakeErr)
+			fmt.Fprintf(os.Stderr, "harmonik comms send: wake: %v\n", wakeErr)
 		}
 	}
 
 	return 0
+}
+
+func commsShouldWake(directed, noWake bool) bool {
+	return directed && !noWake
 }
 
 // resolveProjectPath canonicalises projectDir for project-hash computation,
@@ -550,7 +565,7 @@ func commsSendUsage() {
 	fmt.Print(`harmonik comms send — send an agent_message via the daemon
 
 USAGE
-  harmonik comms send (--to NAME | --broadcast) [--from NAME] [--topic T] [--reply-to ID] [--wake] [flags] [--] <body>
+  harmonik comms send (--to NAME | --broadcast) [--from NAME] [--topic T] [--reply-to ID] [--wake | --no-wake] [flags] [--] <body>
 
 FLAGS
   --to NAME       Directed recipient agent name. Mutually exclusive with --broadcast.
@@ -558,9 +573,12 @@ FLAGS
   --from NAME     Sender identity (default: $HARMONIK_AGENT env var). Required.
   --topic T       Optional free-text filter key.
   --reply-to ID   Optional event_id of the message being replied to (threading hint).
-  --wake          After sending, nudge the recipient's tmux pane to wake an idle crew
-                  member. Requires --to (not --broadcast). The pane target is resolved
-                  from the crew registry handle, falling back to "harmonik-<hash>-crew-<name>".
+  --wake          Explicitly request the default directed-send pane wake. Requires
+                  --to (not --broadcast).
+  --no-wake       Deliver a directed message without nudging the recipient's pane.
+                  By default, every directed send wakes the recipient. The pane is resolved
+                  from the crew registry handle, then the crew and bare-agent
+                  tmux session naming conventions.
                   Best-effort: wake failures are reported to stderr but do not affect
                   the exit code.
   --socket PATH   Override socket path (default: <project>/.harmonik/daemon.sock).

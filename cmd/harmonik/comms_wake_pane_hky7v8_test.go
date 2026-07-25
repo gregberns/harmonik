@@ -10,6 +10,30 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
+func TestCommsShouldWake(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		directed bool
+		noWake   bool
+		want     bool
+	}{
+		{name: "directed send wakes by default", directed: true, want: true},
+		{name: "directed send can opt out", directed: true, noWake: true, want: false},
+		{name: "broadcast never wakes", directed: false, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := commsShouldWake(tt.directed, tt.noWake); got != tt.want {
+				t.Fatalf("commsShouldWake(directed=%v, noWake=%v) = %v, want %v", tt.directed, tt.noWake, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestCommsWakePaneCandidates_CaptainAndCrew verifies the recipient → tmux pane
 // derivation handles the crew-vs-captain naming asymmetry (hk-y7v8 / CE5, M10):
 //

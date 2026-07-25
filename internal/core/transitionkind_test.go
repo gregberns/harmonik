@@ -14,6 +14,7 @@ func TestTransitionKindValid(t *testing.T) {
 		TransitionKindArchitecturalRollback,
 		TransitionKindPolicyRollback,
 		TransitionKindContextRestore,
+		TransitionKindContextCheckpoint,
 	}
 	for _, k := range valid {
 		if !k.Valid() {
@@ -29,6 +30,7 @@ func TestTransitionKindValid(t *testing.T) {
 		"architectural_rollback",
 		"policy_rollback",
 		"context_restore",
+		"context_checkpoint",
 		"rollback",
 		"patchback",
 	}
@@ -76,6 +78,11 @@ func TestTransitionKindUnmarshalText(t *testing.T) {
 			name:  "valid context-restore",
 			input: `{"kind":"context-restore"}`,
 			want:  TransitionKindContextRestore,
+		},
+		{
+			name:  "valid context-checkpoint",
+			input: `{"kind":"context-checkpoint"}`,
+			want:  TransitionKindContextCheckpoint,
 		},
 		{
 			name:    "invalid empty string",

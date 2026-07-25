@@ -6,7 +6,7 @@ package core
 // A transition is durable iff BOTH of the following hold:
 //
 //	transition_kind ∈ {forward, local-patchback, architectural-rollback,
-//	                    policy-rollback, context-restore}
+//	                    policy-rollback, context-restore, context-checkpoint}
 //	outcome.status  ∈ {SUCCESS, PARTIAL_SUCCESS}
 //
 // Transitions with status RETRY are not durable (intra-run loops per EM-015);
@@ -41,7 +41,7 @@ func IsDurable(kind TransitionKind, status OutcomeStatus) bool {
 	return isDurableKind(kind) && isDurableStatus(status)
 }
 
-// isDurableKind reports whether kind is one of the five durable TransitionKind
+// isDurableKind reports whether kind is one of the six durable TransitionKind
 // values per execution-model.md §4.5.EM-023a.
 func isDurableKind(kind TransitionKind) bool {
 	switch kind {
@@ -49,7 +49,8 @@ func isDurableKind(kind TransitionKind) bool {
 		TransitionKindLocalPatchback,
 		TransitionKindArchitecturalRollback,
 		TransitionKindPolicyRollback,
-		TransitionKindContextRestore:
+		TransitionKindContextRestore,
+		TransitionKindContextCheckpoint:
 		return true
 	default:
 		return false

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -498,6 +499,18 @@ func TestValueValidation(t *testing.T) {
 	if (CheckpointMetadata{}).Valid() {
 		t.Error("zero checkpoint metadata is valid")
 	}
+	mismatchedRun := testCheckpointMetadata()
+	mismatchedRun.State.RunID = core.RunID(uuid.MustParse(
+		"019befd8-9d58-7000-8000-000000000099",
+	))
+	if mismatchedRun.Valid() {
+		t.Error("checkpoint metadata accepts a valid state owned by another run")
+	}
+	missingProvenance := testCheckpointMetadata()
+	missingProvenance.State.NodeID = ""
+	if missingProvenance.Valid() {
+		t.Error("checkpoint metadata accepts state without node provenance")
+	}
 
 	request := testMintedRequest("identity", SendVersionSelection(1))
 	if !request.Valid() {
@@ -568,13 +581,23 @@ func testRemoteLocation() Location {
 }
 
 func testCheckpointMetadata() CheckpointMetadata {
+	runID := core.RunID(uuid.MustParse(
+		"019befd8-9d58-7000-8000-000000000001",
+	))
 	return CheckpointMetadata{
-		RunID: core.RunID(uuid.MustParse(
-			"019befd8-9d58-7000-8000-000000000001",
-		)),
-		StateID: core.StateID(uuid.MustParse(
-			"019befd8-9d58-7000-8000-000000000002",
-		)),
+		RunID: runID,
+		State: core.State{
+			StateID: core.StateID(uuid.MustParse(
+				"019befd8-9d58-7000-8000-000000000002",
+			)),
+			RunID:     runID,
+			NodeID:    core.NodeID("implementer"),
+			EnteredAt: time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
+			TransitionHistory: core.CommitRange{
+				FirstCommitSHA: "1111111111111111111111111111111111111111",
+				LastCommitSHA:  "2222222222222222222222222222222222222222",
+			},
+		},
 		TransitionID: core.TransitionID(uuid.MustParse(
 			"019befd8-9d58-7000-8000-000000000003",
 		)),

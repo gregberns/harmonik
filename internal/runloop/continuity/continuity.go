@@ -114,25 +114,29 @@ func (l Location) Valid() bool {
 	}
 }
 
-// CheckpointMetadata carries the run-scoped identifiers required to construct
-// the EM-023a context-checkpoint transition and its commit trailers.
+// CheckpointMetadata carries the run-scoped identifiers and authoritative
+// current state required to construct the EM-023a context-checkpoint transition
+// and its commit trailers.
 //
-// Context checkpoints use StateID as both from_state_id and to_state_id. An
-// empty BeadID means the run is not bead-tied and the optional bead trailer is
-// omitted.
+// Context checkpoints use State as both FromState and ToState. Carrying the
+// complete State is intentional: an adapter must not invent node, entry-time,
+// or transition-history provenance from a bare state identifier. An empty
+// BeadID means the run is not bead-tied and the optional bead trailer is omitted.
 type CheckpointMetadata struct {
 	RunID         core.RunID
-	StateID       core.StateID
+	State         core.State
 	TransitionID  core.TransitionID
 	SchemaVersion int
 	BeadID        core.BeadID
 }
 
-// Valid reports whether every required checkpoint identifier is UUIDv7 and the
-// schema version is positive.
+// Valid reports whether every required checkpoint identifier is UUIDv7, State
+// is an authoritative state for RunID, and the schema version is positive.
 func (m CheckpointMetadata) Valid() bool {
 	return uuidVersion(m.RunID) == 7 &&
-		uuidVersion(m.StateID) == 7 &&
+		m.State.Valid() &&
+		m.State.RunID == m.RunID &&
+		uuidVersion(m.State.StateID) == 7 &&
 		m.TransitionID.IsUUIDv7() &&
 		m.SchemaVersion > 0
 }

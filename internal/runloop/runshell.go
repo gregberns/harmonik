@@ -81,14 +81,12 @@ type RunEffectors struct {
 // awaiting feed (drained before each select so a port result advances the
 // machine without re-entrant Step).
 type RunShell struct {
-	clock substrate.ClockPort
-	// Eff and Pending are temporary exports solely for daemon.runBridge, which
-	// moves in LIFT L6. Narrow them again when that consumer joins this package.
-	Eff    RunEffectors
+	clock  substrate.ClockPort
+	eff    RunEffectors
 	events <-chan runexec.Event // the per-run tap: async agent/watchdog signals
 
 	timers  map[runexec.TimerKind]time.Time
-	Pending []runexec.Event
+	pending []runexec.Event
 }
 
 // newRunShell constructs a shell over the given clock, effector bundle, and
@@ -99,7 +97,7 @@ func NewRunShell(clock substrate.ClockPort, eff RunEffectors, events <-chan rune
 	eff.normalize()
 	return &RunShell{
 		clock:  clock,
-		Eff:    eff,
+		eff:    eff,
 		events: events,
 		timers: make(map[runexec.TimerKind]time.Time),
 	}
@@ -176,13 +174,13 @@ func (sh *RunShell) execute(ctx context.Context, a runexec.Action) {
 func (sh *RunShell) executeAgentAction(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActLaunchAgent:
-		sh.Eff.LaunchAgent(ctx, a.Session, a.SpecRef)
+		sh.eff.LaunchAgent(ctx, a.Session, a.SpecRef)
 	case runexec.ActDeliverInput:
-		sh.Eff.DeliverInput(ctx, a.Session, a.InputID, a.InputKind)
+		sh.eff.DeliverInput(ctx, a.Session, a.InputID, a.InputKind)
 	case runexec.ActKillAgent:
-		sh.Eff.KillAgent(ctx, a.Session)
+		sh.eff.KillAgent(ctx, a.Session)
 	case runexec.ActDriveLifecycleTerminated:
-		sh.Eff.LifecycleTerm(ctx, a.ExitCode, a.WaitErr)
+		sh.eff.LifecycleTerm(ctx, a.ExitCode, a.WaitErr)
 	default: // routed elsewhere by execute
 	}
 }
@@ -192,21 +190,21 @@ func (sh *RunShell) executeAgentAction(ctx context.Context, a runexec.Action) {
 func (sh *RunShell) executeRunAction(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActCreateWorktree:
-		sh.Pending = append(sh.Pending, sh.Eff.CreateWorktree(ctx)...)
+		sh.pending = append(sh.pending, sh.eff.CreateWorktree(ctx)...)
 	case runexec.ActRunGate:
-		sh.Pending = append(sh.Pending, sh.Eff.RunGate(ctx)...)
+		sh.pending = append(sh.pending, sh.eff.RunGate(ctx)...)
 	case runexec.ActCheckEscape:
-		sh.Pending = append(sh.Pending, sh.Eff.CheckEscape(ctx)...)
+		sh.pending = append(sh.pending, sh.eff.CheckEscape(ctx)...)
 	case runexec.ActPrepareMerge:
-		sh.Eff.PrepareMerge(ctx)
+		sh.eff.PrepareMerge(ctx)
 	case runexec.ActSubmitMerge:
-		sh.Pending = append(sh.Pending, sh.Eff.SubmitMerge(ctx, a.Label)...)
+		sh.pending = append(sh.pending, sh.eff.SubmitMerge(ctx, a.Label)...)
 	case runexec.ActReAmendTrailer:
-		sh.Eff.ReAmendTrailer(ctx)
+		sh.eff.ReAmendTrailer(ctx)
 	case runexec.ActCloseBead:
-		sh.Pending = append(sh.Pending, sh.Eff.CloseBead(ctx, a.Summary, a.NeedsAttention)...)
+		sh.pending = append(sh.pending, sh.eff.CloseBead(ctx, a.Summary, a.NeedsAttention)...)
 	case runexec.ActReopenBead:
-		sh.Eff.ReopenBead(ctx, a.Reason)
+		sh.eff.ReopenBead(ctx, a.Reason)
 	default: // routed elsewhere by execute
 	}
 }
@@ -217,9 +215,9 @@ func (sh *RunShell) executeRunAction(ctx context.Context, a runexec.Action) {
 func (sh *RunShell) executeEmitOrTimer(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActEmit:
-		sh.Eff.Emit(ctx, a.Type, a.Detail)
+		sh.eff.Emit(ctx, a.Type, a.Detail)
 	case runexec.ActEmitRunTerminal:
-		sh.Eff.EmitRunTerminal(ctx, a.Success, a.Summary)
+		sh.eff.EmitRunTerminal(ctx, a.Success, a.Summary)
 	case runexec.ActArmTimer:
 		sh.timers[a.Timer] = sh.clock.Now().Add(a.D)
 	case runexec.ActCancelTimer:
@@ -229,10 +227,8 @@ func (sh *RunShell) executeEmitOrTimer(ctx context.Context, a runexec.Action) {
 }
 
 // Feed steps the machine on one event and executes the resulting actions in
-// order (which may enqueue synchronous follow-ups into sh.Pending).
-// It is exported temporarily solely for daemon.runBridge; narrow it when that
-// consumer moves into this package in LIFT L6.
-func (sh *RunShell) Feed(ctx context.Context, m runReactor, ev runexec.Event) {
+// order (which may enqueue synchronous follow-ups into sh.pending).
+func (sh *RunShell) feed(ctx context.Context, m runReactor, ev runexec.Event) {
 	for _, a := range m.Step(ev) {
 		sh.execute(ctx, a)
 	}
@@ -245,7 +241,7 @@ func (sh *RunShell) Feed(ctx context.Context, m runReactor, ev runexec.Event) {
 // timeout edge — never a silent wait, RSM-INV-002).
 func (sh *RunShell) drive(ctx context.Context, m runReactor) {
 	for m.InFlight() {
-		if sh.DrainPending(ctx, m) {
+		if sh.drainPending(ctx, m) {
 			continue
 		}
 		if !m.InFlight() {
@@ -257,16 +253,14 @@ func (sh *RunShell) drive(ctx context.Context, m runReactor) {
 
 // DrainPending feeds all queued synchronous follow-up events; returns true when
 // it fed at least one (so drive re-checks InFlight before blocking).
-// It is exported temporarily solely for daemon.runBridge; narrow it when that
-// consumer moves into this package in LIFT L6.
-func (sh *RunShell) DrainPending(ctx context.Context, m runReactor) bool {
-	if len(sh.Pending) == 0 {
+func (sh *RunShell) drainPending(ctx context.Context, m runReactor) bool {
+	if len(sh.pending) == 0 {
 		return false
 	}
-	queued := sh.Pending
-	sh.Pending = nil
+	queued := sh.pending
+	sh.pending = nil
 	for _, ev := range queued {
-		sh.Feed(ctx, m, ev)
+		sh.feed(ctx, m, ev)
 	}
 	return true
 }
@@ -298,7 +292,7 @@ func (sh *RunShell) driveOnce(ctx context.Context, m runReactor) {
 		if ev.At.IsZero() {
 			ev.At = sh.clock.Now()
 		}
-		sh.Feed(ctx, m, ev)
+		sh.feed(ctx, m, ev)
 	case <-deadlineC:
 		sh.fireElapsedTimers(ctx, m)
 	}
@@ -336,7 +330,7 @@ func (sh *RunShell) fireElapsedTimers(ctx context.Context, m runReactor) {
 			continue
 		}
 		delete(sh.timers, kind)
-		sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvTimerFired, Timer: kind, At: now})
+		sh.feed(ctx, m, runexec.Event{Kind: runexec.EvTimerFired, Timer: kind, At: now})
 	}
 }
 
@@ -358,7 +352,7 @@ func (sh *RunShell) fireOnCancel(ctx context.Context, m runReactor) {
 		return
 	}
 	delete(sh.timers, bestKind)
-	sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvTimerFired, Timer: bestKind, At: sh.clock.Now()})
+	sh.feed(ctx, m, runexec.Event{Kind: runexec.EvTimerFired, Timer: bestKind, At: sh.clock.Now()})
 }
 
 // RunDispatch drives one Dispatch instance through its launch/ready/brief
@@ -380,9 +374,9 @@ func (sh *RunShell) fireOnCancel(ctx context.Context, m runReactor) {
 // here would fabricate that emission on every shutdown (an unsanctioned
 // stream divergence, RSM-029).
 func (sh *RunShell) RunDispatch(ctx context.Context, m *runexec.Dispatch, sess runexec.SessionRef, specRef string) runexec.DispatchState {
-	sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvStartDispatch, Session: sess, Detail: specRef, At: sh.clock.Now()})
+	sh.feed(ctx, m, runexec.Event{Kind: runexec.EvStartDispatch, Session: sess, Detail: specRef, At: sh.clock.Now()})
 	for dispatchSegmentActive(m) {
-		if sh.DrainPending(ctx, m) {
+		if sh.drainPending(ctx, m) {
 			continue
 		}
 		if !dispatchSegmentActive(m) {
@@ -418,16 +412,16 @@ func (sh *RunShell) driveDispatchOnce(ctx context.Context, m *runexec.Dispatch) 
 
 	select {
 	case <-ctx.Done():
-		sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "context cancelled", At: sh.clock.Now()})
+		sh.feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "context cancelled", At: sh.clock.Now()})
 	case ev, ok := <-sh.events:
 		if !ok {
-			sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "event tap closed", At: sh.clock.Now()})
+			sh.feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "event tap closed", At: sh.clock.Now()})
 			return
 		}
 		if ev.At.IsZero() {
 			ev.At = sh.clock.Now()
 		}
-		sh.Feed(ctx, m, ev)
+		sh.feed(ctx, m, ev)
 	case <-deadlineC:
 		sh.fireElapsedTimers(ctx, m)
 	}
@@ -437,7 +431,7 @@ func (sh *RunShell) driveDispatchOnce(ctx context.Context, m *runexec.Dispatch) 
 // machine to its Done terminal, returning the terminal state (whose Success the
 // shell reads for group advancement / worktree retention, RSM-022).
 func (sh *RunShell) DriveRun(ctx context.Context, m *runexec.Run, mode string) runexec.RunState {
-	sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvStartRun, Mode: mode, At: sh.clock.Now()})
+	sh.feed(ctx, m, runexec.Event{Kind: runexec.EvStartRun, Mode: mode, At: sh.clock.Now()})
 	sh.drive(ctx, m)
 	return m.State()
 }

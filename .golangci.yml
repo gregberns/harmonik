@@ -264,8 +264,10 @@ linters:
           allow:
             - "$gostd"
             - "github.com/google/uuid"
+            - "github.com/stretchr/testify"
             - "github.com/gregberns/harmonik/internal/brcli"
             - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
             - "github.com/gregberns/harmonik/internal/handler"
             - "github.com/gregberns/harmonik/internal/handlercontract"
             - "github.com/gregberns/harmonik/internal/harness/shared"

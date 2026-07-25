@@ -3266,11 +3266,11 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// pairing below rides its actions instead of open-coded blocks. Constructed
 	// here, before the worktree critical section, so provisioning-phase failures
 	// ride the reopen spine via EvProvisionFailed (RSM-032). The run's success
-	// is the machine's terminal state (bridge.success(), RSM-022).
+	// is the machine's terminal state (bridge.Success(), RSM-022).
 	// Guard paths that return before (or without) feeding the machine yield the
-	// zero value (false); every terminal-spine path returns bridge.success().
-	bridge := newRunBridge(env, rp, handles, runID, beadID, workflowMode, emitRunTerminalEff)
-	failRun := func(reason, summary string) { bridge.fail(ctx, reason, summary) }
+	// zero value (false); every terminal-spine path returns bridge.Success().
+	bridge := runloop.NewRunBridge(env, rp, handles, runID, beadID, workflowMode, emitRunTerminalEff)
+	failRun := func(reason, summary string) { bridge.Fail(ctx, reason, summary) }
 
 	// Resolve (model, effort) per EM-012b four-tier precedence walk.
 	// Resolved once at claim time; sealed into the run for its lifetime.
@@ -3814,7 +3814,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// error — e.g. the ~4.5s exit0-no-commit against a locally-hosted
 	// OpenAI-compatible endpoint (ornith) — is observable post-mortem. runIsPi is
 	// set true once the harness resolves to Pi (below); the run outcome is the
-	// Run machine's terminal state (bridge.success(), RSM-022). This mirrors the hk-o85ye survive-cleanup
+	// Run machine's terminal state (bridge.Success(), RSM-022). This mirrors the hk-o85ye survive-cleanup
 	// gate: skip the deferred wtCleanup on an abnormal outcome so the artifacts
 	// survive, instead of deleting the only evidence of why the run failed.
 	// Successful Pi runs and ALL non-Pi runs clean up exactly as before, so there
@@ -3842,7 +3842,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			// hk-j6wm7: on a Pi FAILURE, retain the worktree (skip cleanup) and log
 			// where the retained artifacts live so an operator/captain can inspect
 			// the pi-agent dir + captured pi-stdout.log / pi-stderr.log.
-			if runIsPi && !bridge.success() {
+			if runIsPi && !bridge.Success() {
 				fmt.Fprintf(os.Stderr,
 					"daemon: workloop: hk-j6wm7: Pi run %s (bead %s) FAILED — retaining worktree for post-mortem inspection at %s (pi output under %s/.harmonik/pi-agent/)\n",
 					runID.String(), beadID, wtPath, wtPath)
@@ -3966,28 +3966,31 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		//
 		// The gate → code-sync → merge-retry → close/reopen sequence below is the
 		// machine's Gating→Merging→Finalizing spine; the pre-RT9 open-coded block
-		// survives as spineArgs policy (trailer amend + per-retry re-amend
+		// survives as SpineArgs policy (trailer amend + per-retry re-amend
 		// hk-dyim/RF :3899, isRetryableMergeReason classification hk-f9xzs) and
 		// event data (the label-parameterized reason/summary strings, RSM-033).
 		transitionTID, _ := handles.TIDGen.Next()
-		bridge.start(ctx, workflowMode)
-		bridge.wireSpine(spineArgs{
-			runRunner:       rlRunner,
-			wtPath:          wtPath,
-			headSHA:         headSHA,
-			preMergeSync:    preMergeSync,
-			mport:           mport,
-			activeRepo:      activeRepo,
-			protectBranches: effectiveMergeProtectBranches,
-			transitionTID:   transitionTID,
-			mergeTarget:     mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
-			retryable:       runmerge.IsRetryableReason,
+		bridge.Start(ctx, workflowMode)
+		bridge.WireSpine(runloop.SpineArgs{
+			RunRunner:       rlRunner,
+			WTPath:          wtPath,
+			HeadSHA:         headSHA,
+			PreMergeSync:    preMergeSync,
+			MPort:           mport,
+			ActiveRepo:      activeRepo,
+			ProtectBranches: effectiveMergeProtectBranches,
+			TransitionTID:   transitionTID,
+			EmitBeadClosed: func(c context.Context) {
+				emitBeadClosedAndMaybeEpic(c, rp, handles, runID, beadID)
+			},
+			MergeTarget: mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
+			Retryable:   runmerge.IsRetryableReason,
 			// hk-dyim: amend the HEAD commit to embed Reviewed-By/Review-Verdict
 			// trailers before each FF-merge attempt. Non-fatal. LOCAL runs only
 			// (rbc == nil): for REMOTE runs the trailers land post-rebase on box-A
 			// in a follow-up (FLAGGED). Re-amends before each retry: the prior
 			// inner rebase may have rewritten HEAD (idempotent, RF :3899).
-			amendTrailers: func(c context.Context, retry int) {
+			AmendTrailers: func(c context.Context, retry int) {
 				if rlResult.approveVerdict == nil || rbc != nil {
 					return
 				}
@@ -4002,11 +4005,11 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			},
 		})
 		if rlResult.success {
-			bridge.feed(ctx, runexec.Event{
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSuccess,
 				PathLabel: "review-loop", Detail: rlResult.summary,
 			})
-			return bridge.success()
+			return bridge.Success()
 		}
 		// Review-loop failed. For queue-dispatched runs with needsAttention=true,
 		// increment the per-item ReviewLoopFailures counter and check whether the
@@ -4025,19 +4028,19 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				queue.MaxReviewLoopFailures, rlResult.summary)
 			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s review-loop budget exhausted — closing with needs-attention (hk-c1ah6)\n",
 				beadID, runID.String())
-			bridge.rejectReason = exhaustedSummary
-			bridge.feed(ctx, runexec.Event{
+			bridge.SetRejectReason(exhaustedSummary)
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeBudget,
 				NeedsAttention: true, Detail: exhaustedSummary,
 			})
-			return bridge.success()
+			return bridge.Success()
 		}
 		// Budget not exhausted (or no queue): reopen the bead for retry.
-		bridge.feed(ctx, runexec.Event{
+		bridge.Feed(ctx, runexec.Event{
 			Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure,
 			Reason: rlResult.summary, Detail: rlResult.summary,
 		})
-		return bridge.success()
+		return bridge.Success()
 
 	case core.WorkflowModeDot:
 		// DOT workflow mode: load + validate the .dot artifact, then hand the
@@ -4074,7 +4077,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				// run_failed with the same workflow_load reason, RSM-009/032).
 				reason := fmt.Sprintf("workflow_load: %v", loadErr)
 				failRun(reason, reason)
-				return bridge.success()
+				return bridge.Success()
 			}
 		}
 
@@ -4131,23 +4134,26 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// trailer stamp is the amendTrailers policy (single attempt — DOT has no
 		// merge-retry loop).
 		transitionTID, _ := handles.TIDGen.Next()
-		bridge.start(ctx, workflowMode)
-		bridge.wireSpine(spineArgs{
-			runRunner:       dotRunner,
-			wtPath:          wtPath,
-			headSHA:         headSHA,
-			preMergeSync:    preMergeSync,
-			mport:           mport,
-			activeRepo:      activeRepo,
-			protectBranches: effectiveMergeProtectBranches,
-			transitionTID:   transitionTID,
-			mergeTarget:     mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
-			skipGate:        true,
+		bridge.Start(ctx, workflowMode)
+		bridge.WireSpine(runloop.SpineArgs{
+			RunRunner:       dotRunner,
+			WTPath:          wtPath,
+			HeadSHA:         headSHA,
+			PreMergeSync:    preMergeSync,
+			MPort:           mport,
+			ActiveRepo:      activeRepo,
+			ProtectBranches: effectiveMergeProtectBranches,
+			TransitionTID:   transitionTID,
+			EmitBeadClosed: func(c context.Context) {
+				emitBeadClosedAndMaybeEpic(c, rp, handles, runID, beadID)
+			},
+			MergeTarget: mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
+			SkipGate:    true,
 			// hk-tnui: stamp Reviewed-By / Review-Verdict trailers on the HEAD
 			// commit before the FF merge, mirroring the review-loop path. LOCAL
 			// runs only (rbc == nil): remote runs keep the trailer injection
 			// deferred (same FLAGGED note as the review-loop path).
-			amendTrailers: func(c context.Context, retry int) {
+			AmendTrailers: func(c context.Context, retry int) {
 				if retry > 0 || dotResult.approveVerdict == nil || rbc != nil {
 					return
 				}
@@ -4161,7 +4167,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			// (terminalNodeID == "close") and the hk-8ps7q approved-and-done path
 			// (approveVerdict != nil). Falls through to CloseBead so the infinite
 			// re-dispatch loop terminates instead of re-queuing.
-			carveOut: func(reason string) bool {
+			CarveOut: func(reason string) bool {
 				alreadyApprovedOnMain := dotResult.advisoryRC ||
 					dotResult.terminalNodeID == "close" ||
 					dotResult.approveVerdict != nil
@@ -4170,7 +4176,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		})
 		switch {
 		case dotResult.success:
-			bridge.feed(ctx, runexec.Event{
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSuccess,
 				PathLabel: "dot", Detail: dotResult.summary,
 			})
@@ -4178,7 +4184,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			// noChange-subsumed: implementer exited without advancing HEAD because
 			// the work already landed in main via a prior run. Approved close, no
 			// merge — no new commits (hk-9v5yo); RSM-035 event-carried strings.
-			bridge.feed(ctx, runexec.Event{
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSubsumed,
 				EmitOutcome: true, PathLabel: "dot noChange-subsumed",
 				Detail: "noChange-subsumed: bead found in main",
@@ -4205,12 +4211,12 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			if tipSHA, tipErr := gitprobe.ResolveWorktreeHEADVia(tipResolveCtx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
 				runTipSHA = &tipSHA
 			}
-			bridge.feed(ctx, runexec.Event{
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure,
 				Reason: dotResult.summary, Detail: dotResult.summary,
 			})
 		}
-		return bridge.success()
+		return bridge.Success()
 
 	default:
 		// WorkflowModeSingle or any normalised-to-single value: fall through
@@ -4621,7 +4627,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// RT7: provisioning is complete — start the Run machine so every
 	// dispatch-phase failure below rides EvModeOutcome{failure} (RSM-031) and
 	// the terminal spine rides the machine.
-	bridge.start(ctx, workflowMode)
+	bridge.Start(ctx, workflowMode)
 
 	implementerLaunchedAt := rp.Clock.Now()
 	// D2 (fail-closed): inspect the final spawn environment at the launch
@@ -4971,7 +4977,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		capturedSess := sess
 		capturedCaptureDir := piCaptureDir
 		defer func() {
-			if bridge.success() {
+			if bridge.Success() {
 				return
 			}
 			if capturedSess == nil {
@@ -5192,16 +5198,19 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 	// RT7: wire the single-mode terminal-spine hooks (gate → code-sync → merge →
 	// close/reopen) now that the merge-window context is in scope (runbridge.go).
-	bridge.wireSpine(spineArgs{
-		runRunner:       runRunner,
-		wtPath:          wtPath,
-		headSHA:         headSHA,
-		preMergeSync:    preMergeSync,
-		mport:           mport,
-		activeRepo:      activeRepo,
-		protectBranches: effectiveMergeProtectBranches,
-		transitionTID:   transitionTID,
-		mergeTarget:     mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
+	bridge.WireSpine(runloop.SpineArgs{
+		RunRunner:       runRunner,
+		WTPath:          wtPath,
+		HeadSHA:         headSHA,
+		PreMergeSync:    preMergeSync,
+		MPort:           mport,
+		ActiveRepo:      activeRepo,
+		ProtectBranches: effectiveMergeProtectBranches,
+		TransitionTID:   transitionTID,
+		EmitBeadClosed: func(c context.Context) {
+			emitBeadClosedAndMaybeEpic(c, rp, handles, runID, beadID)
+		},
+		MergeTarget: mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
 	})
 
 	// ── Implementer-escaped-worktree guard (hk-6zylj) ─────────────────
@@ -5304,13 +5313,13 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
 		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT. Latches
 		// path label "agent_completed" + its close summary (RSM-033).
-		bridge.feed(ctx, runexec.Event{Kind: runexec.EvAgentCompleted, Detail: "agent_completed: stop-hook outcome"})
+		bridge.Feed(ctx, runexec.Event{Kind: runexec.EvAgentCompleted, Detail: "agent_completed: stop-hook outcome"})
 
 	case socketOutcome == nil && ei.ExitCode == exitCodeClean && !watcherFailed:
 		// No stop-hook arrived AND handler exited 0 without watcher error: the
 		// pre-bridge close-on-exit-0 heuristic for MVH twin-blind runs. Latches
 		// path label "auto-close" (RSM-033).
-		bridge.feed(ctx, runexec.Event{Kind: runexec.EvCleanExit, Detail: "auto-close: exit=0"})
+		bridge.Feed(ctx, runexec.Event{Kind: runexec.EvCleanExit, Detail: "auto-close: exit=0"})
 
 	default:
 		// noChange-timeout path (hk-trjef): pasteInjectQuitOnCommit killed the
@@ -5321,7 +5330,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			if shared.MainHistoryHasRefsTrailer(ctx, activeRepo, beadID) {
 				// RSM-035: subsumed-but-stalled closes with an approved outcome;
 				// the emit-approved flag + close summary ride the event.
-				bridge.feed(ctx, runexec.Event{
+				bridge.Feed(ctx, runexec.Event{
 					Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSubsumed,
 					EmitOutcome: true, Detail: "noChange-subsumed: bead found in main",
 				})
@@ -5356,8 +5365,8 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				if curHeadSHA, headErr := gitprobe.ResolveWorktreeHEAD(context.Background(), wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
 					drainSHA = curHeadSHA
 				}
-				bridge.drain(ctx, drainSHA)
-				return bridge.success()
+				bridge.Drain(ctx, drainSHA)
+				return bridge.Success()
 			}
 
 			// CHB-020 branch 2 (FAILURE_SIGNAL), branch 3 with non-zero exit, or
@@ -5389,7 +5398,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			failRun(failReason, "auto-reopen: "+failReason)
 		}
 	}
-	return bridge.success()
+	return bridge.Success()
 }
 
 // isWatcherErrCanceled reports whether err is the ErrCanceled sentinel that

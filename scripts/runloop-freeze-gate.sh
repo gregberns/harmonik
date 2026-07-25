@@ -47,7 +47,7 @@ for sym in RunPorts RunEnv SharedHandles \
            WaitPostAgentReadyProgress EmitPostAgentReadyHang \
            ExitInfo StopHookGrace WaitWithSocketGrace \
            RunEffectors RunShell DispatchSegment DispatchSegmentInputAckWindow \
-           ScenarioGateResult; do
+           RunBridge SpineArgs; do
     MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E \
         "^[[:space:]]*(type[[:space:]]+|var[[:space:]]+|const[[:space:]]+)?${sym}\b[[:space:]]*(=|struct|interface|func|\()" \
         internal/daemon 2>/dev/null \
@@ -61,7 +61,8 @@ done
 
 # Moved functions must not be recreated under their former daemon-local names
 # (or under L5's temporary exported bridge name).
-for sym in newPerRunEventTap runScenarioGateIfNeededVia RunScenarioGateIfNeededVia; do
+for sym in newPerRunEventTap runScenarioGateIfNeededVia RunScenarioGateIfNeededVia \
+           newRunBridge NewRunBridge runBridgeConfig; do
     MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E \
         "^[[:space:]]*func[[:space:]]+${sym}\\b" \
         internal/daemon 2>/dev/null || true)"
@@ -78,7 +79,7 @@ done
 for f in internal/runloop/ports.go internal/runloop/workloopeventsource.go \
          internal/runloop/postreadyhang.go internal/runloop/waitsocketgrace.go \
          internal/runloop/runshell.go internal/runloop/dispatchsegment.go \
-         internal/runloop/scenariogate.go; do
+         internal/runloop/scenariogate.go internal/runloop/runbridge.go; do
     if [ ! -f "$f" ]; then
         echo "runloop-freeze-gate: destination $f is gone — re-derive this gate" >&2
         HITS=$((HITS + 1))
@@ -109,6 +110,11 @@ done
 
 if [ -f internal/daemon/scenariogate.go ]; then
     echo "runloop-freeze-gate: forbidden source file internal/daemon/scenariogate.go was recreated" >&2
+    HITS=$((HITS + 1))
+fi
+
+if [ -f internal/daemon/runbridge.go ]; then
+    echo "runloop-freeze-gate: forbidden source file internal/daemon/runbridge.go was recreated" >&2
     HITS=$((HITS + 1))
 fi
 

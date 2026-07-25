@@ -155,7 +155,7 @@ func (r *dispatchSegmentRun) launchAgent(actx context.Context, _ runexec.Session
 		if r.g.OnLaunchFailed != nil {
 			r.g.OnLaunchFailed(actx, launchErr)
 		}
-		r.sh.Pending = append(r.sh.Pending, runexec.Event{
+		r.sh.pending = append(r.sh.pending, runexec.Event{
 			Kind: runexec.EvLaunchFailed, Reason: r.g.classifyLaunchFailure(launchErr),
 		})
 		return
@@ -169,12 +169,12 @@ func (r *dispatchSegmentRun) launchAgent(actx context.Context, _ runexec.Session
 		// SessionStart on a fresh --session-id launch).
 		go r.resumeReadyProbe() //nolint:contextcheck // ClockPort wake + Background emit by design (see probe doc)
 	}
-	r.sh.Pending = append(r.sh.Pending, runexec.Event{Kind: runexec.EvLaunched})
+	r.sh.pending = append(r.sh.pending, runexec.Event{Kind: runexec.EvLaunched})
 	if r.g.Adapter == nil && !r.g.Config.SkipReadyHandshake {
 		// No adapter for the resolved agent type: pre-RT8 the sites skipped
 		// the ready-wait but still delivered the brief — feed a synthetic
 		// ready so the deliver hook runs without a wait.
-		r.sh.Pending = append(r.sh.Pending, runexec.Event{Kind: runexec.EvAgentReady})
+		r.sh.pending = append(r.sh.pending, runexec.Event{Kind: runexec.EvAgentReady})
 	}
 }
 
@@ -218,7 +218,7 @@ func (r *dispatchSegmentRun) deliverInput(actx context.Context, _ runexec.Sessio
 	if r.g.Deliver != nil {
 		r.g.Deliver(actx)
 	}
-	r.sh.Pending = append(r.sh.Pending, runexec.Event{Kind: runexec.EvInputAck})
+	r.sh.pending = append(r.sh.pending, runexec.Event{Kind: runexec.EvInputAck})
 }
 
 // killAgent is the ActKillAgent effector arm, split by phase: the RSM-005
@@ -232,7 +232,7 @@ func (r *dispatchSegmentRun) killAgent(actx context.Context, _ runexec.SessionRe
 		if r.g.KillReady != nil {
 			r.g.KillReady(actx)
 		}
-		r.sh.Pending = append(r.sh.Pending, runexec.Event{Kind: runexec.EvAgentExited})
+		r.sh.pending = append(r.sh.pending, runexec.Event{Kind: runexec.EvAgentExited})
 		return
 	}
 	if r.g.KillAbort != nil {

@@ -34,16 +34,16 @@ import (
 // for the scenario tier (docs/foundation/project-level/testing.md §CI gates).
 const scenarioGateTimeout = 10 * time.Minute
 
-// ScenarioGateResult carries the outcome of runScenarioGateIfNeeded.
-type ScenarioGateResult struct {
+// scenarioGateResult carries the outcome of runScenarioGateIfNeededVia.
+type scenarioGateResult struct {
 	// blocked is true when scenario tests were found and at least one failed.
-	Blocked bool
+	blocked bool
 	// reason is the human-readable failure description used for bead reopen
 	// and run_completed emission.  Empty when blocked is false.
-	Reason string
+	reason string
 }
 
-// runScenarioGateIfNeeded inspects the commits added to wtPath since headSHA.
+// runScenarioGateIfNeededVia inspects the commits added to wtPath since headSHA.
 // If any changed file is scenario-touching it runs
 //
 //	go test -tags=scenario <pkgs...>
@@ -90,15 +90,7 @@ type ScenarioGateResult struct {
 // large merge-path refactor in this fail-open fix.
 //
 // Bead: hk-i2ie5, hk-ur428.
-// Retained through the behavior-neutral L5 move. At L6, remove this now-dead
-// wrapper and its nolint unless a caller is proven before the L6 change lands.
-//
-//nolint:unused // preserved unchanged until the L6 caller move narrows the boundary
-func runScenarioGateIfNeeded(ctx context.Context, wtPath, headSHA string) ScenarioGateResult {
-	return RunScenarioGateIfNeededVia(ctx, nil, wtPath, headSHA)
-}
-
-// RunScenarioGateIfNeededVia is the runner-routed form of runScenarioGateIfNeeded.
+// runScenarioGateIfNeededVia is the runner-routed scenario gate.
 //
 // For a REMOTE run (runner is an SSHRunner) the worktree, its .go files, and the
 // Go toolchain all live on the WORKER, so every step of the gate — the
@@ -107,37 +99,21 @@ func runScenarioGateIfNeeded(ctx context.Context, wtPath, headSHA string) Scenar
 // them through runner sends each command over SSH to the worker.
 //
 // For a LOCAL run (runner is nil or tmux.LocalRunner) the calls delegate to the
-// existing bare-exec helpers byte-identically (NFR7): runScenarioGateIfNeeded
-// above is exactly RunScenarioGateIfNeededVia(ctx, nil, ...).
-// RunScenarioGateIfNeededVia is temporarily exported for daemon.runBridge.
-// LIFT L6 must rename it to runScenarioGateIfNeededVia, rename
-// ScenarioGateResult to scenarioGateResult, and rename the Blocked and Reason
-// fields to blocked and reason after runbridge.go moves into this package.
-func RunScenarioGateIfNeededVia(ctx context.Context, runner tmux.CommandRunner, wtPath, headSHA string) ScenarioGateResult {
+// existing bare-exec helpers byte-identically (NFR7).
+func runScenarioGateIfNeededVia(ctx context.Context, runner tmux.CommandRunner, wtPath, headSHA string) scenarioGateResult {
 	changedFiles, err := changedFilesSinceVia(ctx, runner, wtPath, headSHA)
 	if err != nil || len(changedFiles) == 0 {
-		return ScenarioGateResult{}
+		return scenarioGateResult{}
 	}
 
 	pkgs := affectedScenarioPkgsVia(ctx, runner, wtPath, changedFiles)
 	if len(pkgs) == 0 {
-		return ScenarioGateResult{}
+		return scenarioGateResult{}
 	}
 
-	return scenarioGateWithRetry(pkgs, func() ScenarioGateResult {
+	return scenarioGateWithRetry(pkgs, func() scenarioGateResult {
 		return runScenarioGateOnceVia(ctx, runner, wtPath, pkgs)
 	})
-}
-
-// runScenarioGateOnce runs the scenario suite exactly once for the given
-// package(s) and classifies the result.  Extracted from runScenarioGateIfNeeded
-// so the retry-on-flaky path (hk-5em) can re-invoke a single run.
-// Retained through the behavior-neutral L5 move. At L6, remove this now-dead
-// wrapper and its nolint unless a caller is proven before the L6 change lands.
-//
-//nolint:unused // preserved unchanged until the L6 caller move narrows the boundary
-func runScenarioGateOnce(ctx context.Context, wtPath string, pkgs []string) ScenarioGateResult {
-	return runScenarioGateOnceVia(ctx, nil, wtPath, pkgs)
 }
 
 // runScenarioGateOnceVia runs the scenario suite once via runner.
@@ -147,7 +123,7 @@ func runScenarioGateOnce(ctx context.Context, wtPath string, pkgs []string) Scen
 // the worker as `git -C` is — we use `go -C <wtPath> test ...` over the runner
 // so the worker's Go toolchain compiles and runs the worker-resident worktree
 // (cmd.Dir cannot set a remote cwd, so the cwd is carried via `go -C`).
-func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPath string, pkgs []string) ScenarioGateResult {
+func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPath string, pkgs []string) scenarioGateResult {
 	gateCtx, cancel := context.WithTimeout(ctx, scenarioGateTimeout)
 	defer cancel()
 
@@ -181,20 +157,20 @@ func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 // the production caller supplies runScenarioGateOnce.  Mirrors the shell gate
 // scripts/scenario-gate.sh (hk-8b35c) so script and daemon agree (standard-bead
 // D3).
-func scenarioGateWithRetry(pkgs []string, runOnce func() ScenarioGateResult) ScenarioGateResult {
+func scenarioGateWithRetry(pkgs []string, runOnce func() scenarioGateResult) scenarioGateResult {
 	first := runOnce()
-	if !first.Blocked {
+	if !first.blocked {
 		return first
 	}
 	fmt.Fprintf(os.Stderr,
 		"daemon: scenario-gate: first-run FAIL for `go test -tags=scenario %s` — retrying once to check for flakiness (hk-5em)\n",
 		strings.Join(pkgs, " "))
 	retry := runOnce()
-	if !retry.Blocked {
+	if !retry.blocked {
 		fmt.Fprintf(os.Stderr,
 			"daemon: scenario-gate: WARNING: FLAKY — `go test -tags=scenario %s` failed run 1 but not run 2 — ALLOWING merge (pre-existing flaky red, not a regression; hk-5em)\n",
 			strings.Join(pkgs, " "))
-		return ScenarioGateResult{} // non-block: flaky, not a real RED
+		return scenarioGateResult{} // non-block: flaky, not a real RED
 	}
 	// Genuine FAIL on both runs → deterministic regression → BLOCK.
 	return retry
@@ -223,9 +199,9 @@ func scenarioGateWithRetry(pkgs []string, runOnce func() ScenarioGateResult) Sce
 //
 // It is pure (no exec / no IO) so it can be unit-tested without running a real
 // scenario suite.
-func classifyScenarioGateError(gateErr, testErr error, out []byte, pkgs []string) ScenarioGateResult {
+func classifyScenarioGateError(gateErr, testErr error, out []byte, pkgs []string) scenarioGateResult {
 	if testErr == nil {
-		return ScenarioGateResult{} // tests passed
+		return scenarioGateResult{} // tests passed
 	}
 
 	trimmed := strings.TrimSpace(string(out))
@@ -235,11 +211,11 @@ func classifyScenarioGateError(gateErr, testErr error, out []byte, pkgs []string
 	}
 	pkgList := strings.Join(pkgs, " ")
 
-	warn := func(class string) ScenarioGateResult {
+	warn := func(class string) scenarioGateResult {
 		fmt.Fprintf(os.Stderr,
 			"daemon: scenario-gate: WARNING: could not produce a verdict (%s) for `go test -tags=scenario %s`: %v — ALLOWING merge (fail-open, hk-ur428)\n%s\n",
 			class, pkgList, testErr, trimmed)
-		return ScenarioGateResult{} // non-block
+		return scenarioGateResult{} // non-block
 	}
 
 	// Timeout / cancellation — gate ran out of budget, not a real RED.
@@ -265,9 +241,9 @@ func classifyScenarioGateError(gateErr, testErr error, out []byte, pkgs []string
 
 	// Genuine test failure: tests ran and at least one reported FAIL.
 	if isGenuineTestFailure(testErr, trimmed) {
-		return ScenarioGateResult{
-			Blocked: true,
-			Reason: fmt.Sprintf(
+		return scenarioGateResult{
+			blocked: true,
+			reason: fmt.Sprintf(
 				"scenario_gate_failed: go test -tags=scenario %s: %v\n%s",
 				pkgList, testErr, trimmed,
 			),

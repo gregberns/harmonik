@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -145,7 +146,7 @@ func TestRT19cPostAgentReadyHang_FiresOnFakeClock(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- waitPostAgentReadyProgress(context.Background(), clk, eventCh, timeout)
+		errCh <- runloop.WaitPostAgentReadyProgress(context.Background(), clk, eventCh, timeout)
 	}()
 
 	wallStart := time.Now()
@@ -157,7 +158,7 @@ func TestRT19cPostAgentReadyHang_FiresOnFakeClock(t *testing.T) {
 
 	select {
 	case err := <-errCh:
-		if !errors.Is(err, ErrPostAgentReadyHang) {
+		if !errors.Is(err, runloop.ErrPostAgentReadyHang) {
 			t.Fatalf("waitPostAgentReadyProgress = %v; want ErrPostAgentReadyHang", err)
 		}
 	case <-time.After(rt19cWallBudget):
@@ -188,9 +189,9 @@ func TestRT19cPostAgentReadyHang_NonPositiveDefaultStillErrors(t *testing.T) {
 	// Deliberately NOT t.Parallel: this rewrites the same shared package var that
 	// TestPostReadyHang_zeroTimeoutUsesDefault rewrites, and a sequential test
 	// never overlaps this binary's parallel ones.
-	orig := defaultPostAgentReadyHangTimeout
-	defaultPostAgentReadyHangTimeout = 0
-	t.Cleanup(func() { defaultPostAgentReadyHangTimeout = orig })
+	orig := runloop.DefaultPostAgentReadyHangTimeout
+	runloop.DefaultPostAgentReadyHangTimeout = 0
+	t.Cleanup(func() { runloop.DefaultPostAgentReadyHangTimeout = orig })
 
 	ctx, cancel := context.WithTimeout(context.Background(), rt19cWallBudget)
 	defer cancel()
@@ -203,12 +204,12 @@ func TestRT19cPostAgentReadyHang_NonPositiveDefaultStillErrors(t *testing.T) {
 				errCh <- fmt.Errorf("waitPostAgentReadyProgress panicked: %v", r)
 			}
 		}()
-		errCh <- waitPostAgentReadyProgress(ctx, substrate.SystemClock{}, eventCh, 0)
+		errCh <- runloop.WaitPostAgentReadyProgress(ctx, substrate.SystemClock{}, eventCh, 0)
 	}()
 
 	select {
 	case err := <-errCh:
-		if !errors.Is(err, ErrPostAgentReadyHang) {
+		if !errors.Is(err, runloop.ErrPostAgentReadyHang) {
 			t.Fatalf("waitPostAgentReadyProgress with a zero default = %v; want ErrPostAgentReadyHang", err)
 		}
 	case <-time.After(rt19cWallBudget):

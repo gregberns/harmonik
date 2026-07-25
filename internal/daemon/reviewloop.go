@@ -682,7 +682,7 @@ func runReviewLoop(
 					postReadyCh := implTap.Subscribe()
 					go func() {
 						defer cancelFn()
-						if err := waitPostAgentReadyProgress(hangCtx, ports.Clock, postReadyCh, env.PostAgentReadyHangTimeout); errors.Is(err, ErrPostAgentReadyHang) {
+						if err := runloop.WaitPostAgentReadyProgress(hangCtx, ports.Clock, postReadyCh, env.PostAgentReadyHangTimeout); errors.Is(err, runloop.ErrPostAgentReadyHang) {
 							close(implHangCh)
 							_ = implSess.Kill(hangCtx)
 						}
@@ -825,7 +825,7 @@ func runReviewLoop(
 		if implHangDetectedCh != nil {
 			select {
 			case <-implHangDetectedCh:
-				emitPostAgentReadyHang(ctx, emit, runID, implArtifacts.ClaudeSessionID,
+				runloop.EmitPostAgentReadyHang(ctx, emit, runID, implArtifacts.ClaudeSessionID,
 					env.PostAgentReadyHangTimeout, state.iterationCount, string(implPhase))
 				result := rlErrorResult(fmt.Sprintf("post_agent_ready_hang: implementer made no observable progress within %v at iteration %d",
 					env.PostAgentReadyHangTimeout, state.iterationCount))

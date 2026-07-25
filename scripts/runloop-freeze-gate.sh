@@ -42,7 +42,9 @@ HITS=0
 #     call a sibling leaf (`x = runmerge.Foo()`).
 for sym in RunPorts RunEnv SharedHandles \
            LedgerPort EmitterPort WorktreePort MergePort LaunchPort \
-           GatePort BudgetPort RunRegistryPort RunHandlePort PerRunEventTap; do
+           GatePort BudgetPort RunRegistryPort RunHandlePort PerRunEventTap \
+           ErrPostAgentReadyHang DefaultPostAgentReadyHangTimeout \
+           WaitPostAgentReadyProgress EmitPostAgentReadyHang; do
     MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E \
         "^[[:space:]]*(type[[:space:]]+|var[[:space:]]+|const[[:space:]]+)?${sym}\b[[:space:]]*(=|struct|interface|func|\()" \
         internal/daemon 2>/dev/null \
@@ -67,7 +69,8 @@ fi
 # (2) The destination must still exist. A gate whose target has been renamed away
 #     silently stops testing what it claims to test. (Later chunks append their
 #     moved run-path files here.)
-for f in internal/runloop/ports.go internal/runloop/workloopeventsource.go; do
+for f in internal/runloop/ports.go internal/runloop/workloopeventsource.go \
+         internal/runloop/postreadyhang.go; do
     if [ ! -f "$f" ]; then
         echo "runloop-freeze-gate: destination $f is gone — re-derive this gate" >&2
         HITS=$((HITS + 1))
@@ -76,6 +79,11 @@ done
 
 if [ -f internal/daemon/workloopeventsource.go ]; then
     echo "runloop-freeze-gate: forbidden source file internal/daemon/workloopeventsource.go was recreated" >&2
+    HITS=$((HITS + 1))
+fi
+
+if [ -f internal/daemon/postreadyhang.go ]; then
+    echo "runloop-freeze-gate: forbidden source file internal/daemon/postreadyhang.go was recreated" >&2
     HITS=$((HITS + 1))
 fi
 

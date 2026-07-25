@@ -21,6 +21,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -41,16 +42,16 @@ func ExportedSetAgentReadyKillReapTimeout(d time.Duration) func() {
 var (
 	ExportedErrAgentReadyTimeout = runlaunch.ErrAgentReadyTimeout
 	// ExportedErrPostAgentReadyHang exposes ErrPostAgentReadyHang for tests (hk-a2okh).
-	ExportedErrPostAgentReadyHang = ErrPostAgentReadyHang
+	ExportedErrPostAgentReadyHang = runloop.ErrPostAgentReadyHang
 	// ExportedDefaultPostAgentReadyHangTimeout exposes defaultPostAgentReadyHangTimeout
 	// for tests (hk-a2okh).
-	ExportedDefaultPostAgentReadyHangTimeout = &defaultPostAgentReadyHangTimeout
+	ExportedDefaultPostAgentReadyHangTimeout = &runloop.DefaultPostAgentReadyHangTimeout
 )
 
 // ExportedWaitPostAgentReadyProgress exposes waitPostAgentReadyProgress for
 // unit tests (hk-a2okh) on the real system clock — the pre-RT19c shape.
 func ExportedWaitPostAgentReadyProgress(ctx context.Context, eventCh <-chan core.EventEnvelope, timeout time.Duration) error {
-	return waitPostAgentReadyProgress(ctx, substrate.SystemClock{}, eventCh, timeout)
+	return runloop.WaitPostAgentReadyProgress(ctx, substrate.SystemClock{}, eventCh, timeout)
 }
 
 // ExportedDefaultAgentReadyTimeout exposes runlaunch.DefaultAgentReadyTimeout
@@ -66,7 +67,7 @@ var (
 	ExportedEmitAgentReadyTimeout = runlaunch.EmitAgentReadyTimeout
 	// ExportedEmitPostAgentReadyHang exposes emitPostAgentReadyHang (hk-a2okh) so the
 	// WS3-Claude-C harness drives the REAL post-agent_ready-hang anomaly emitter.
-	ExportedEmitPostAgentReadyHang = emitPostAgentReadyHang
+	ExportedEmitPostAgentReadyHang = runloop.EmitPostAgentReadyHang
 )
 
 // ExitInfoExported is the exported shape of exitInfo for tests in package

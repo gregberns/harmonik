@@ -1,4 +1,4 @@
-package daemon
+package runloop
 
 // postreadyhang.go — post-agent_ready hang detector (hk-a2okh).
 //
@@ -28,17 +28,17 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// defaultPostAgentReadyHangTimeout is the default timeout used by
-// waitPostAgentReadyProgress when the caller passes zero.
+// DefaultPostAgentReadyHangTimeout is the default timeout used by
+// WaitPostAgentReadyProgress when the caller passes zero.
 //
 // 7 minutes: generous enough that a legitimately slow-starting agent (large
 // context load, extended planning) is not falsely detected, yet short enough
 // to reclaim most of the 30-min commitPollTimeout budget when a session is
 // truly hung.
-var defaultPostAgentReadyHangTimeout = 7 * time.Minute
+var DefaultPostAgentReadyHangTimeout = 7 * time.Minute
 
-// minPostAgentReadyHangTimeout is the floor waitPostAgentReadyProgress clamps to
-// when both the caller's timeout AND defaultPostAgentReadyHangTimeout are
+// minPostAgentReadyHangTimeout is the floor WaitPostAgentReadyProgress clamps to
+// when both the caller's timeout AND DefaultPostAgentReadyHangTimeout are
 // non-positive. It exists only to keep a zero out of NewTicker, which panics on
 // one; the fire-immediately semantics it produces match the stdlib timer this
 // bound used before P2 E5 RT19c.
@@ -49,7 +49,7 @@ const minPostAgentReadyHangTimeout = time.Nanosecond
 // configured timeout (hk-a2okh).
 var ErrPostAgentReadyHang = errors.New("daemon: post-agent_ready hang: implementer made no observable progress after becoming ready")
 
-// waitPostAgentReadyProgress blocks until one of:
+// WaitPostAgentReadyProgress blocks until one of:
 //   - any event arrives on eventCh  → returns nil (progress observed)
 //   - timeout elapses               → returns ErrPostAgentReadyHang
 //   - ctx is cancelled              → returns ctx.Err()
@@ -64,9 +64,9 @@ var ErrPostAgentReadyHang = errors.New("daemon: post-agent_ready hang: implement
 // clk is the determinism port for the hang bound (P2 E5 RT19c) so a FakeClock
 // can drive the timeout branch without real elapsed time; nil is backstopped to
 // substrate.SystemClock{} for struct-literal test callers.
-func waitPostAgentReadyProgress(ctx context.Context, clk substrate.ClockPort, eventCh <-chan core.EventEnvelope, timeout time.Duration) error {
+func WaitPostAgentReadyProgress(ctx context.Context, clk substrate.ClockPort, eventCh <-chan core.EventEnvelope, timeout time.Duration) error {
 	if timeout <= 0 {
-		timeout = defaultPostAgentReadyHangTimeout
+		timeout = DefaultPostAgentReadyHangTimeout
 	}
 	// Re-check AFTER the substitution. defaultPostAgentReadyHangTimeout is a
 	// mutable package var that export_test.go hands to tests, so the substituted
@@ -106,9 +106,9 @@ func waitPostAgentReadyProgress(ctx context.Context, clk substrate.ClockPort, ev
 	}
 }
 
-// emitPostAgentReadyHang emits a post_agent_ready_hang event onto the bus
+// EmitPostAgentReadyHang emits a post_agent_ready_hang event onto the bus
 // (hk-a2okh). Non-fatal: marshal or emit errors are silently dropped.
-func emitPostAgentReadyHang(
+func EmitPostAgentReadyHang(
 	ctx context.Context,
 	bus handlercontract.EventEmitter,
 	runID core.RunID,
@@ -118,7 +118,7 @@ func emitPostAgentReadyHang(
 	phase string,
 ) {
 	if timeout <= 0 {
-		timeout = defaultPostAgentReadyHangTimeout
+		timeout = DefaultPostAgentReadyHangTimeout
 	}
 	pl := core.PostAgentReadyHangPayload{
 		RunID:           runID,

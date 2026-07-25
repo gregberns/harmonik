@@ -1,4 +1,4 @@
-package daemon_test
+package runloop_test
 
 // postreadyhang_hka2okh_test.go — unit tests for waitPostAgentReadyProgress
 // and the exported hang-detection seams (hk-a2okh).
@@ -7,11 +7,13 @@ package daemon_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,7 +27,7 @@ func TestPostReadyHang_nilOnFirstEvent(t *testing.T) {
 	ch := make(chan core.EventEnvelope, 1)
 	ch <- core.EventEnvelope{Type: "agent_heartbeat"}
 	ctx := context.Background()
-	err := daemon.ExportedWaitPostAgentReadyProgress(ctx, ch, 100*time.Millisecond)
+	err := runloop.WaitPostAgentReadyProgress(ctx, substrate.SystemClock{}, ch, 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("want nil, got %v", err)
 	}
@@ -37,8 +39,8 @@ func TestPostReadyHang_errOnTimeout(t *testing.T) {
 	t.Parallel()
 	ch := make(chan core.EventEnvelope) // never receives
 	ctx := context.Background()
-	err := daemon.ExportedWaitPostAgentReadyProgress(ctx, ch, 50*time.Millisecond)
-	if err != daemon.ExportedErrPostAgentReadyHang {
+	err := runloop.WaitPostAgentReadyProgress(ctx, substrate.SystemClock{}, ch, 50*time.Millisecond)
+	if !errors.Is(err, runloop.ErrPostAgentReadyHang) {
 		t.Fatalf("want ErrPostAgentReadyHang, got %v", err)
 	}
 }
@@ -50,8 +52,8 @@ func TestPostReadyHang_errOnContextCancel(t *testing.T) {
 	ch := make(chan core.EventEnvelope) // never receives
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
-	err := daemon.ExportedWaitPostAgentReadyProgress(ctx, ch, 5*time.Second)
-	if err == nil || err == daemon.ExportedErrPostAgentReadyHang {
+	err := runloop.WaitPostAgentReadyProgress(ctx, substrate.SystemClock{}, ch, 5*time.Second)
+	if err == nil || errors.Is(err, runloop.ErrPostAgentReadyHang) {
 		t.Fatalf("want ctx.Err(), got %v", err)
 	}
 }
@@ -63,8 +65,8 @@ func TestPostReadyHang_errOnClosedChannel(t *testing.T) {
 	ch := make(chan core.EventEnvelope)
 	close(ch)
 	ctx := context.Background()
-	err := daemon.ExportedWaitPostAgentReadyProgress(ctx, ch, 5*time.Second)
-	if err != daemon.ExportedErrPostAgentReadyHang {
+	err := runloop.WaitPostAgentReadyProgress(ctx, substrate.SystemClock{}, ch, 5*time.Second)
+	if !errors.Is(err, runloop.ErrPostAgentReadyHang) {
 		t.Fatalf("want ErrPostAgentReadyHang on closed channel, got %v", err)
 	}
 }
@@ -74,16 +76,16 @@ func TestPostReadyHang_errOnClosedChannel(t *testing.T) {
 func TestPostReadyHang_zeroTimeoutUsesDefault(t *testing.T) {
 	t.Parallel()
 	// Temporarily shorten the default so the test does not take 7 minutes.
-	orig := *daemon.ExportedDefaultPostAgentReadyHangTimeout
-	*daemon.ExportedDefaultPostAgentReadyHangTimeout = 50 * time.Millisecond
-	defer func() { *daemon.ExportedDefaultPostAgentReadyHangTimeout = orig }()
+	orig := runloop.DefaultPostAgentReadyHangTimeout
+	runloop.DefaultPostAgentReadyHangTimeout = 50 * time.Millisecond
+	defer func() { runloop.DefaultPostAgentReadyHangTimeout = orig }()
 
 	ch := make(chan core.EventEnvelope) // never receives
 	ctx := context.Background()
 	start := time.Now()
-	err := daemon.ExportedWaitPostAgentReadyProgress(ctx, ch, 0 /* zero → default */)
+	err := runloop.WaitPostAgentReadyProgress(ctx, substrate.SystemClock{}, ch, 0 /* zero → default */)
 	elapsed := time.Since(start)
-	if err != daemon.ExportedErrPostAgentReadyHang {
+	if !errors.Is(err, runloop.ErrPostAgentReadyHang) {
 		t.Fatalf("want ErrPostAgentReadyHang, got %v", err)
 	}
 	if elapsed < 40*time.Millisecond {

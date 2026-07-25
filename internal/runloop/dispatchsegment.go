@@ -1,4 +1,4 @@
-package daemon
+package runloop
 
 // dispatchsegment.go — the RT8 launch/ready/brief segment adaptor: it binds one
 // sub-driver agent launch (review-loop implementer/reviewer, DOT agentic node)
@@ -44,7 +44,6 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/runexec"
-	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -66,67 +65,73 @@ const resumeReadyProbeDelay = 2 * time.Second
 // paste-inject deliver hook returns, so this timer never fires today; the M2
 // agent-input driver supplies the real per-submission bound at this seam
 // ([agent-input.md] AIS-INV-001).
-const dispatchSegmentInputAckWindow = 30 * time.Second
+const DispatchSegmentInputAckWindow = 30 * time.Second
 
 // dispatchSegment binds one agent launch onto the Dispatch machine. All hook
 // closures are site-owned; a nil hook is a no-op. Single-goroutine-owned by
 // the run's own goroutine, like the shell it drives.
-type dispatchSegment struct {
-	clock substrate.ClockPort
-	runID core.RunID
-	cfg   runexec.DispatchConfig
+type DispatchSegment struct {
+	Clock substrate.ClockPort
+	RunID core.RunID
+	// Config is exported temporarily solely for daemon/dot_cascade.go to read
+	// SkipReadyHandshake after Run returns. That consumer remains in daemon
+	// through LIFT L6; narrow Config when dot_cascade moves in LIFT L12.
+	Config runexec.DispatchConfig
 
 	// adapter detects agent_ready envelopes on the tap. nil (no adapter for the
 	// resolved agent type) preserves the pre-RT8 "skip ready-wait" posture: a
 	// synthetic EvAgentReady is fed immediately after launch so the brief is
 	// still delivered without a wait.
-	adapter handlercontract.Adapter
+	Adapter handlercontract.Adapter
 
 	// probeResume arms the transitional resume readiness probe (M3-D7) once
 	// launched with no watcher (the tmux substrate path).
-	probeResume bool
+	ProbeResume bool
 
 	// tap is the per-run tapping emitter; the probe emits its run_id-stamped
 	// agent_ready through it so the synthetic ready is bus-visible exactly like
 	// the relay-synthesized one. tapCh is the tap subscription the ready pump
 	// consumes (the channel waitAgentReady formerly blocked on).
-	tap   *runloop.PerRunEventTap
-	tapCh <-chan core.EventEnvelope
+	Tap   *PerRunEventTap
+	TapCh <-chan core.EventEnvelope
 
 	// launch performs the site's handler.Launch. It returns the watcher's Done
 	// channel (nil on the tmux substrate path) — the shell converts its close
 	// into EvAgentExited, replacing the pre-RT8 watcher-done → ready-ctx-cancel
 	// fall-through.
-	launch func(ctx context.Context) (watcherDone <-chan struct{}, err error)
+	Launch func(ctx context.Context) (watcherDone <-chan struct{}, err error)
 
-	onLaunchFailed   func(ctx context.Context, err error)
-	onLaunched       func(ctx context.Context)
-	deliver          func(ctx context.Context)
-	killReady        func(ctx context.Context)
-	killAbort        func(ctx context.Context)
-	emitReadyTimeout func(ctx context.Context)
+	OnLaunchFailed   func(ctx context.Context, err error)
+	OnLaunched       func(ctx context.Context)
+	Deliver          func(ctx context.Context)
+	KillReady        func(ctx context.Context)
+	KillAbort        func(ctx context.Context)
+	EmitReadyTimeout func(ctx context.Context)
+
+	SpawnCapTimeout      error
+	TmuxNewWindowTimeout error
 }
 
 // run drives the segment to Working-or-terminal and returns the machine state.
-func (g *dispatchSegment) run(ctx context.Context) runexec.DispatchState {
+func (g *DispatchSegment) Run(ctx context.Context) runexec.DispatchState {
 	segCtx, segCancel := context.WithCancel(context.Background())
 	defer segCancel()
 
 	r := &dispatchSegmentRun{
 		g:      g,
-		m:      runexec.NewDispatch(g.cfg),
+		m:      runexec.NewDispatch(g.Config),
 		events: make(chan runexec.Event),
 		done:   segCtx.Done(),
 	}
 	go r.readyPump()
 
-	r.sh = newRunShell(g.clock, runEffectors{
-		launchAgent:  r.launchAgent,
-		deliverInput: r.deliverInput,
-		killAgent:    r.killAgent,
-		emit:         r.emit,
+	r.sh = NewRunShell(g.Clock, RunEffectors{
+		LaunchAgent:  r.launchAgent,
+		DeliverInput: r.deliverInput,
+		KillAgent:    r.killAgent,
+		Emit:         r.emit,
 	}, r.events)
-	return r.sh.RunDispatch(ctx, r.m, runexec.SessionRef(g.runID.String()), "")
+	return r.sh.RunDispatch(ctx, r.m, runexec.SessionRef(g.RunID.String()), "")
 }
 
 // dispatchSegmentRun is the per-run() wiring of one segment: the machine, the
@@ -134,9 +139,9 @@ func (g *dispatchSegment) run(ctx context.Context) runexec.DispatchState {
 // releases the helper goroutines when run() returns. Extracted from run() so
 // each effector arm is a small named method.
 type dispatchSegmentRun struct {
-	g      *dispatchSegment
+	g      *DispatchSegment
 	m      *runexec.Dispatch
-	sh     *runShell
+	sh     *RunShell
 	events chan runexec.Event
 	done   <-chan struct{}
 }
@@ -145,31 +150,31 @@ type dispatchSegmentRun struct {
 // watcher-exit event source, the transitional resume probe, and the EvLaunched
 // (plus adapter-missing synthetic ready) follow-ups.
 func (r *dispatchSegmentRun) launchAgent(actx context.Context, _ runexec.SessionRef, _ string) {
-	watcherDone, launchErr := r.g.launch(actx)
+	watcherDone, launchErr := r.g.Launch(actx)
 	if launchErr != nil {
-		if r.g.onLaunchFailed != nil {
-			r.g.onLaunchFailed(actx, launchErr)
+		if r.g.OnLaunchFailed != nil {
+			r.g.OnLaunchFailed(actx, launchErr)
 		}
-		r.sh.pending = append(r.sh.pending, runexec.Event{
-			Kind: runexec.EvLaunchFailed, Reason: classifyLaunchFailure(launchErr),
+		r.sh.Pending = append(r.sh.Pending, runexec.Event{
+			Kind: runexec.EvLaunchFailed, Reason: r.g.classifyLaunchFailure(launchErr),
 		})
 		return
 	}
 	if watcherDone != nil {
 		go r.watchWatcherExit(watcherDone)
 	}
-	if r.g.probeResume && watcherDone == nil {
+	if r.g.ProbeResume && watcherDone == nil {
 		// M3-D7 transitional resume readiness probe (tmux path only; the
 		// exec path's watcher provides crash detection and the relay fires
 		// SessionStart on a fresh --session-id launch).
 		go r.resumeReadyProbe() //nolint:contextcheck // ClockPort wake + Background emit by design (see probe doc)
 	}
-	r.sh.pending = append(r.sh.pending, runexec.Event{Kind: runexec.EvLaunched})
-	if r.g.adapter == nil && !r.g.cfg.SkipReadyHandshake {
+	r.sh.Pending = append(r.sh.Pending, runexec.Event{Kind: runexec.EvLaunched})
+	if r.g.Adapter == nil && !r.g.Config.SkipReadyHandshake {
 		// No adapter for the resolved agent type: pre-RT8 the sites skipped
 		// the ready-wait but still delivered the brief — feed a synthetic
 		// ready so the deliver hook runs without a wait.
-		r.sh.pending = append(r.sh.pending, runexec.Event{Kind: runexec.EvAgentReady})
+		r.sh.Pending = append(r.sh.Pending, runexec.Event{Kind: runexec.EvAgentReady})
 	}
 }
 
@@ -196,10 +201,10 @@ func (r *dispatchSegmentRun) watchWatcherExit(watcherDone <-chan struct{}) {
 // by the time the delay elapses.
 func (r *dispatchSegmentRun) resumeReadyProbe() {
 	select {
-	case <-substrate.After(r.g.clock, resumeReadyProbeDelay):
-		if emitErr := r.g.tap.EmitWithRunID(context.Background(), r.g.runID, core.EventTypeAgentReady, nil); emitErr != nil {
+	case <-substrate.After(r.g.Clock, resumeReadyProbeDelay):
+		if emitErr := r.g.Tap.EmitWithRunID(context.Background(), r.g.RunID, core.EventTypeAgentReady, nil); emitErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: dispatchsegment: resume readiness probe emit run %s: %v (best-effort)\n",
-				r.g.runID.String(), emitErr)
+				r.g.RunID.String(), emitErr)
 		}
 	case <-r.done:
 	}
@@ -210,10 +215,10 @@ func (r *dispatchSegmentRun) resumeReadyProbe() {
 // has no positive delivery confirmation; the M2 agent-input driver replaces
 // this with the real Ack at the same seam.
 func (r *dispatchSegmentRun) deliverInput(actx context.Context, _ runexec.SessionRef, _ runexec.InputID, _ runexec.InputKind) {
-	if r.g.deliver != nil {
-		r.g.deliver(actx)
+	if r.g.Deliver != nil {
+		r.g.Deliver(actx)
 	}
-	r.sh.pending = append(r.sh.pending, runexec.Event{Kind: runexec.EvInputAck})
+	r.sh.Pending = append(r.sh.Pending, runexec.Event{Kind: runexec.EvInputAck})
 }
 
 // killAgent is the ActKillAgent effector arm, split by phase: the RSM-005
@@ -224,14 +229,14 @@ func (r *dispatchSegmentRun) deliverInput(actx context.Context, _ runexec.Sessio
 // (the EvAborted edge) takes the plain kill.
 func (r *dispatchSegmentRun) killAgent(actx context.Context, _ runexec.SessionRef) {
 	if r.m.State().Phase == runexec.DispatchReadyTimeout {
-		if r.g.killReady != nil {
-			r.g.killReady(actx)
+		if r.g.KillReady != nil {
+			r.g.KillReady(actx)
 		}
-		r.sh.pending = append(r.sh.pending, runexec.Event{Kind: runexec.EvAgentExited})
+		r.sh.Pending = append(r.sh.Pending, runexec.Event{Kind: runexec.EvAgentExited})
 		return
 	}
-	if r.g.killAbort != nil {
-		r.g.killAbort(actx)
+	if r.g.KillAbort != nil {
+		r.g.KillAbort(actx)
 	}
 }
 
@@ -246,12 +251,12 @@ func (r *dispatchSegmentRun) killAgent(actx context.Context, _ runexec.SessionRe
 func (r *dispatchSegmentRun) emit(actx context.Context, typ core.EventType, _ string) {
 	switch typ {
 	case core.EventTypeLaunchInitiated:
-		if r.g.onLaunched != nil {
-			r.g.onLaunched(actx)
+		if r.g.OnLaunched != nil {
+			r.g.OnLaunched(actx)
 		}
 	case core.EventTypeAgentReadyTimeout:
-		if r.g.emitReadyTimeout != nil {
-			r.g.emitReadyTimeout(actx)
+		if r.g.EmitReadyTimeout != nil {
+			r.g.EmitReadyTimeout(actx)
 		}
 	default:
 	}
@@ -265,11 +270,11 @@ func (r *dispatchSegmentRun) readyPump() {
 		select {
 		case <-r.done:
 			return
-		case env, ok := <-r.g.tapCh:
+		case env, ok := <-r.g.TapCh:
 			if !ok {
 				return
 			}
-			if r.g.adapter != nil && r.g.adapter.DetectReady(env) {
+			if r.g.Adapter != nil && r.g.Adapter.DetectReady(env) {
 				select {
 				case r.events <- runexec.Event{Kind: runexec.EvAgentReady}:
 				case <-r.done:
@@ -284,11 +289,11 @@ func (r *dispatchSegmentRun) readyPump() {
 // vocabulary (runexec-design §1): the two structural wedge classes keep their
 // event-type names; anything else carries its message (the machine emits no
 // event for it — see the emit hook above).
-func classifyLaunchFailure(err error) string {
+func (g *DispatchSegment) classifyLaunchFailure(err error) string {
 	switch {
-	case errors.Is(err, ErrSpawnCapTimeout):
+	case g.SpawnCapTimeout != nil && errors.Is(err, g.SpawnCapTimeout):
 		return string(core.EventTypeSpawnCapBlocked)
-	case errors.Is(err, ErrTmuxNewWindowTimeout):
+	case g.TmuxNewWindowTimeout != nil && errors.Is(err, g.TmuxNewWindowTimeout):
 		return string(core.EventTypeTmuxNewWindowTimeout)
 	default:
 		return err.Error()

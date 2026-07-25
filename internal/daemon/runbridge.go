@@ -28,7 +28,7 @@ import (
 // Single-goroutine-owned (the run's own goroutine), like the shell it wraps.
 type runBridge struct {
 	m  *runexec.Run
-	sh *runShell
+	sh *runloop.RunShell
 
 	env     runloop.RunEnv
 	rp      runloop.RunPorts
@@ -84,17 +84,17 @@ func newRunBridge(env runloop.RunEnv, rp runloop.RunPorts, handles runloop.Share
 		beadID:  beadID,
 		m:       runexec.NewRun(runBridgeConfig(mode)),
 	}
-	b.sh = newRunShell(rp.Clock, runEffectors{
-		reopenBead: b.reopenBead,
-		emitRunTerminal: func(c context.Context, success bool, summary string) {
+	b.sh = runloop.NewRunShell(rp.Clock, runloop.RunEffectors{
+		ReopenBead: b.reopenBead,
+		EmitRunTerminal: func(c context.Context, success bool, summary string) {
 			emitRunTerminal(c, success, summary, b.draining)
 		},
-		createWorktree: func(context.Context) []runexec.Event {
+		CreateWorktree: func(context.Context) []runexec.Event {
 			// The worktree is provisioned imperatively in beadRunOne (shared
 			// across all modes); by the time the machine starts it exists.
 			return []runexec.Event{{Kind: runexec.EvProvisioned}}
 		},
-		emit: b.emit,
+		Emit: b.emit,
 	}, nil)
 	return b
 }
@@ -144,8 +144,8 @@ func (b *runBridge) feed(ctx context.Context, ev runexec.Event) {
 	if ev.At.IsZero() {
 		ev.At = b.rp.Clock.Now()
 	}
-	b.sh.feed(ctx, b.m, ev)
-	for b.m.InFlight() && b.sh.drainPending(ctx, b.m) {
+	b.sh.Feed(ctx, b.m, ev)
+	for b.m.InFlight() && b.sh.DrainPending(ctx, b.m) {
 	}
 }
 
@@ -218,13 +218,13 @@ type spineArgs struct {
 // for EVERY class (the pre-RT7 order); by the time the machine traverses
 // Guarding they are known-green, so checkEscape is a recorded pass.
 func (b *runBridge) wireSpine(a spineArgs) {
-	b.sh.eff.checkEscape = func(context.Context) []runexec.Event {
+	b.sh.Eff.CheckEscape = func(context.Context) []runexec.Event {
 		return []runexec.Event{{Kind: runexec.EvGuardsPassed}}
 	}
-	b.sh.eff.runGate = b.gateHook(a)
-	b.sh.eff.prepareMerge = b.mergeHook(a)
-	b.sh.eff.submitMerge = b.drainMergeHook(a)
-	b.sh.eff.closeBead = b.closeHook(a)
+	b.sh.Eff.RunGate = b.gateHook(a)
+	b.sh.Eff.PrepareMerge = b.mergeHook(a)
+	b.sh.Eff.SubmitMerge = b.drainMergeHook(a)
+	b.sh.Eff.CloseBead = b.closeHook(a)
 }
 
 // gateHook runs the scenario gate (hk-i2ie5). REMOTE: routed via runRunner so
@@ -256,7 +256,7 @@ func (b *runBridge) mergeHook(a spineArgs) func(context.Context) {
 		if attempt == 1 {
 			if syncReason := a.preMergeSync(); syncReason != "" {
 				b.rejectReason = syncReason
-				b.sh.pending = append(b.sh.pending, runexec.Event{
+				b.sh.Pending = append(b.sh.Pending, runexec.Event{
 					Kind: runexec.EvMergeResult, Merge: runexec.MergeFatal,
 					MergeStage: runexec.MergeStageCodeSync, MergeReason: syncReason,
 				})
@@ -282,9 +282,9 @@ func (b *runBridge) mergeHook(a spineArgs) func(context.Context) {
 		mergeRes := runmerge.RunBranchToTarget(c, a.mport.Submit(), a.activeRepo, b.runID, b.rp.Emitter, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.env.BrPath)
 		switch {
 		case mergeRes.NoChange:
-			b.sh.pending = append(b.sh.pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange})
+			b.sh.Pending = append(b.sh.Pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange})
 		case mergeRes.Success:
-			b.sh.pending = append(b.sh.pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeSuccess})
+			b.sh.Pending = append(b.sh.Pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeSuccess})
 		default:
 			// EM-053: non-FF or push failure → merge-failure classification.
 			b.rejectReason = mergeRes.Reason
@@ -299,7 +299,7 @@ func (b *runBridge) mergeHook(a spineArgs) func(context.Context) {
 			case a.retryable != nil && a.retryable(mergeRes.Reason):
 				ev.Merge = runexec.MergeRetryable
 			}
-			b.sh.pending = append(b.sh.pending, ev)
+			b.sh.Pending = append(b.sh.Pending, ev)
 		}
 	}
 }

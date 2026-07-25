@@ -1,4 +1,4 @@
-package daemon
+package runloop
 
 import (
 	"context"
@@ -29,33 +29,33 @@ type recordingEffectors struct {
 	reopenReasonSeen string
 }
 
-func (r *recordingEffectors) bundle() runEffectors {
-	return runEffectors{
-		launchAgent: func(_ context.Context, _ runexec.SessionRef, _ string) {
+func (r *recordingEffectors) bundle() RunEffectors {
+	return RunEffectors{
+		LaunchAgent: func(_ context.Context, _ runexec.SessionRef, _ string) {
 			r.mu.Lock()
 			r.launched = true
 			r.mu.Unlock()
 		},
-		killAgent: func(_ context.Context, _ runexec.SessionRef) {
+		KillAgent: func(_ context.Context, _ runexec.SessionRef) {
 			r.mu.Lock()
 			r.killed = true
 			r.mu.Unlock()
 		},
-		emit: func(_ context.Context, typ core.EventType, _ string) {
+		Emit: func(_ context.Context, typ core.EventType, _ string) {
 			r.mu.Lock()
 			r.emitted = append(r.emitted, typ)
 			r.mu.Unlock()
 		},
-		createWorktree: func(_ context.Context) []runexec.Event {
+		CreateWorktree: func(_ context.Context) []runexec.Event {
 			return []runexec.Event{{Kind: runexec.EvProvisioned}}
 		},
-		reopenBead: func(_ context.Context, reason string) {
+		ReopenBead: func(_ context.Context, reason string) {
 			r.mu.Lock()
 			r.reopened = true
 			r.reopenReasonSeen = reason
 			r.mu.Unlock()
 		},
-		emitRunTerminal: func(_ context.Context, success bool, _ string) {
+		EmitRunTerminal: func(_ context.Context, success bool, _ string) {
 			r.mu.Lock()
 			r.terminalCalled = true
 			s := success
@@ -85,7 +85,7 @@ func TestRunShell_ReadyTimeout_KillsAndFails(t *testing.T) {
 	clock := substrate.NewFakeClock(time.Unix(0, 0))
 	rec := &recordingEffectors{}
 	events := make(chan runexec.Event) // never delivers: agent never signals
-	sh := newRunShell(clock, rec.bundle(), events)
+	sh := NewRunShell(clock, rec.bundle(), events)
 
 	cfg := runexec.DispatchConfig{
 		ReadyTimeout:  30 * time.Second,
@@ -153,13 +153,13 @@ func TestRunShell_Run_MapsFailureToReopen(t *testing.T) {
 	events <- runexec.Event{Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure}
 
 	eff := rec.bundle()
-	sh := newRunShell(clock, eff, events)
+	sh := NewRunShell(clock, eff, events)
 
 	m := runexec.NewRun(runexec.RunConfig{
 		Mode:         "review_loop",
 		ReopenReason: "review_loop_failed",
 	})
-	final := sh.driveRun(context.Background(), m, "review_loop")
+	final := sh.DriveRun(context.Background(), m, "review_loop")
 
 	if final.Phase != runexec.RunDone {
 		t.Fatalf("phase = %q, want done", final.Phase)

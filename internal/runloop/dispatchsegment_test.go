@@ -1,4 +1,4 @@
-package daemon
+package runloop
 
 // dispatchsegment_test.go — RT8 FakeClock conformance tests for the
 // launch/ready/brief dispatch segment (dispatchsegment.go), the census
@@ -14,6 +14,8 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -23,9 +25,28 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/runexec"
-	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
+
+func TestDispatchSegment_ClassifyLaunchFailurePreservesSentinelWrapping(t *testing.T) {
+	spawnErr := errors.New("spawn cap")
+	tmuxErr := errors.New("tmux new-window")
+	seg := &DispatchSegment{
+		SpawnCapTimeout:      spawnErr,
+		TmuxNewWindowTimeout: tmuxErr,
+	}
+
+	if got := seg.classifyLaunchFailure(fmt.Errorf("wrapped: %w", spawnErr)); got != string(core.EventTypeSpawnCapBlocked) {
+		t.Errorf("wrapped spawn sentinel classified as %q", got)
+	}
+	if got := seg.classifyLaunchFailure(fmt.Errorf("wrapped: %w", tmuxErr)); got != string(core.EventTypeTmuxNewWindowTimeout) {
+		t.Errorf("wrapped tmux sentinel classified as %q", got)
+	}
+	const generic = "ordinary launch failure"
+	if got := seg.classifyLaunchFailure(errors.New(generic)); got != generic {
+		t.Errorf("generic launch failure classified as %q", got)
+	}
+}
 
 // segRecordingEmitter is a minimal handlercontract.EventEmitter that records
 // every emission, standing in for the sealed bus under the perRunEventTap.
@@ -96,30 +117,30 @@ func runStalledResumeSegment(t *testing.T, cfg runexec.DispatchConfig, emitReady
 	clock := substrate.NewFakeClock(start)
 	runID := segTestRunID(t)
 	rec = &segRecordingEmitter{}
-	tap, tapCh := runloop.NewPerRunEventTap(rec, runID)
+	tap, tapCh := NewPerRunEventTap(rec, runID)
 
 	var killedVal, timeoutEmittedVal bool
 	killed, timeoutEmitted = &killedVal, &timeoutEmittedVal
-	seg := &dispatchSegment{
-		clock: clock,
-		runID: runID,
-		cfg:   cfg,
+	seg := &DispatchSegment{
+		Clock:  clock,
+		RunID:  runID,
+		Config: cfg,
 		// Stalled relaunch (the census fault): DetectReady never fires — not
 		// even for the probe's synthetic agent_ready — modeling an agent whose
 		// readiness signal never materializes after resume.
-		adapter:     segStubAdapter{ready: func(core.EventEnvelope) bool { return false }},
-		probeResume: true,
-		tap:         tap,
-		tapCh:       tapCh,
-		launch:      func(context.Context) (<-chan struct{}, error) { return nil, nil },
-		killReady:   func(context.Context) { killedVal = true },
+		Adapter:     segStubAdapter{ready: func(core.EventEnvelope) bool { return false }},
+		ProbeResume: true,
+		Tap:         tap,
+		TapCh:       tapCh,
+		Launch:      func(context.Context) (<-chan struct{}, error) { return nil, nil },
+		KillReady:   func(context.Context) { killedVal = true },
 	}
 	if emitReadyTimeout {
-		seg.emitReadyTimeout = func(context.Context) { timeoutEmittedVal = true }
+		seg.EmitReadyTimeout = func(context.Context) { timeoutEmittedVal = true }
 	}
 
 	result := make(chan runexec.DispatchState, 1)
-	go func() { result <- seg.run(context.Background()) }()
+	go func() { result <- seg.Run(context.Background()) }()
 	final = pumpUntilDone(t, clock, result)
 	return final, clock.Now().Sub(start), rec, killed, timeoutEmitted
 }
@@ -133,7 +154,7 @@ func TestDispatchSegment_ResumeStalled_TimeoutThenReopenWithinBound(t *testing.T
 		IsResume:         true,
 		MaxInputAttempts: 1,
 		ReadyTimeout:     30 * time.Second,
-		InputAck:         dispatchSegmentInputAckWindow,
+		InputAck:         DispatchSegmentInputAckWindow,
 		ReadyKillReap:    10 * time.Second,
 	}
 	final, elapsed, rec, killed, timeoutEmitted := runStalledResumeSegment(t, cfg, true)
@@ -170,9 +191,9 @@ func TestDispatchSegment_ResumeStalled_TimeoutThenReopenWithinBound(t *testing.T
 	rrec := &recordingEffectors{}
 	events := make(chan runexec.Event, 1)
 	events <- runexec.Event{Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure, Reason: "agent_ready_timeout"}
-	sh := newRunShell(clock, rrec.bundle(), events)
+	sh := NewRunShell(clock, rrec.bundle(), events)
 	m := runexec.NewRun(runexec.RunConfig{Mode: "review_loop", ReopenReason: "review_loop_failed"})
-	runFinal := sh.driveRun(context.Background(), m, "review_loop")
+	runFinal := sh.DriveRun(context.Background(), m, "review_loop")
 	if runFinal.Phase != runexec.RunDone || runFinal.DoneOutcome != "reopened" {
 		t.Fatalf("run terminal = %q/%q, want done/reopened", runFinal.Phase, runFinal.DoneOutcome)
 	}
@@ -193,7 +214,7 @@ func TestDispatchSegment_DotResume_ReadyTimeoutEdge(t *testing.T) {
 		IsResume:         true, // phase == ReviewLoopPhaseImplementerResume (dot_cascade.go)
 		MaxInputAttempts: 1,
 		ReadyTimeout:     45 * time.Second,
-		InputAck:         dispatchSegmentInputAckWindow,
+		InputAck:         DispatchSegmentInputAckWindow,
 		ReadyKillReap:    10 * time.Second,
 	}
 	final, elapsed, _, killed, timeoutEmitted := runStalledResumeSegment(t, cfg, true)
@@ -219,32 +240,32 @@ func TestDispatchSegment_ResumeProbe_RunIDStampedReadyDelivers(t *testing.T) {
 	clock := substrate.NewFakeClock(start)
 	runID := segTestRunID(t)
 	rec := &segRecordingEmitter{}
-	tap, tapCh := runloop.NewPerRunEventTap(rec, runID)
+	tap, tapCh := NewPerRunEventTap(rec, runID)
 
 	delivered := false
-	seg := &dispatchSegment{
-		clock: clock,
-		runID: runID,
-		cfg: runexec.DispatchConfig{
+	seg := &DispatchSegment{
+		Clock: clock,
+		RunID: runID,
+		Config: runexec.DispatchConfig{
 			IsResume:         true,
 			MaxInputAttempts: 1,
 			ReadyTimeout:     30 * time.Second,
-			InputAck:         dispatchSegmentInputAckWindow,
+			InputAck:         DispatchSegmentInputAckWindow,
 			ReadyKillReap:    10 * time.Second,
 		},
-		adapter: segStubAdapter{ready: func(env core.EventEnvelope) bool {
+		Adapter: segStubAdapter{ready: func(env core.EventEnvelope) bool {
 			return env.Type == string(core.EventTypeAgentReady)
 		}},
-		probeResume: true,
-		tap:         tap,
-		tapCh:       tapCh,
-		launch:      func(context.Context) (<-chan struct{}, error) { return nil, nil },
-		deliver:     func(context.Context) { delivered = true },
-		killReady:   func(context.Context) { t.Error("killReady fired on the happy resume path") },
+		ProbeResume: true,
+		Tap:         tap,
+		TapCh:       tapCh,
+		Launch:      func(context.Context) (<-chan struct{}, error) { return nil, nil },
+		Deliver:     func(context.Context) { delivered = true },
+		KillReady:   func(context.Context) { t.Error("killReady fired on the happy resume path") },
 	}
 
 	result := make(chan runexec.DispatchState, 1)
-	go func() { result <- seg.run(context.Background()) }()
+	go func() { result <- seg.Run(context.Background()) }()
 	final := pumpUntilDone(t, clock, result)
 
 	if final.Phase != runexec.DispatchWorking {

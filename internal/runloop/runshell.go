@@ -19,7 +19,7 @@
 // BudgetPort per-run wiring, are threaded in the RT7→RT9 sequence. The shell is
 // exercised end-to-end by a FakeClock ready-timeout→reopen test.
 
-package daemon
+package runloop
 
 import (
 	"context"
@@ -52,26 +52,26 @@ type runReactor interface {
 // spec (LaunchPort), and the LockForMutation budget block (BudgetPort) are in
 // scope. A nil hook is a no-op (best-effort policy), so a partially-wired shell
 // stays drivable in tests.
-type runEffectors struct {
+type RunEffectors struct {
 	// Asynchronous agent-session ops (fire-and-forget; results arrive on the tap).
-	launchAgent   func(ctx context.Context, sess runexec.SessionRef, specRef string)
-	deliverInput  func(ctx context.Context, sess runexec.SessionRef, id runexec.InputID, kind runexec.InputKind)
-	killAgent     func(ctx context.Context, sess runexec.SessionRef)
-	lifecycleTerm func(ctx context.Context, exitCode int, waitErr string)
+	LaunchAgent   func(ctx context.Context, sess runexec.SessionRef, specRef string)
+	DeliverInput  func(ctx context.Context, sess runexec.SessionRef, id runexec.InputID, kind runexec.InputKind)
+	KillAgent     func(ctx context.Context, sess runexec.SessionRef)
+	LifecycleTerm func(ctx context.Context, exitCode int, waitErr string)
 
 	// Synchronous run ops (return follow-up events the shell enqueues).
-	createWorktree func(ctx context.Context) []runexec.Event
-	runGate        func(ctx context.Context) []runexec.Event
-	checkEscape    func(ctx context.Context) []runexec.Event
-	prepareMerge   func(ctx context.Context)
-	submitMerge    func(ctx context.Context, label string) []runexec.Event
-	reAmendTrailer func(ctx context.Context)
-	closeBead      func(ctx context.Context, summary string, needsAttention bool) []runexec.Event
-	reopenBead     func(ctx context.Context, reason string)
+	CreateWorktree func(ctx context.Context) []runexec.Event
+	RunGate        func(ctx context.Context) []runexec.Event
+	CheckEscape    func(ctx context.Context) []runexec.Event
+	PrepareMerge   func(ctx context.Context)
+	SubmitMerge    func(ctx context.Context, label string) []runexec.Event
+	ReAmendTrailer func(ctx context.Context)
+	CloseBead      func(ctx context.Context, summary string, needsAttention bool) []runexec.Event
+	ReopenBead     func(ctx context.Context, reason string)
 
 	// Emission ops.
-	emit            func(ctx context.Context, typ core.EventType, detail string)
-	emitRunTerminal func(ctx context.Context, success bool, summary string)
+	Emit            func(ctx context.Context, typ core.EventType, detail string)
+	EmitRunTerminal func(ctx context.Context, success bool, summary string)
 }
 
 // runShell is the per-run imperative shell. It is single-goroutine-owned (the
@@ -80,24 +80,26 @@ type runEffectors struct {
 // (keeper shell.go:145 mechanics); pending holds synchronous follow-up events
 // awaiting feed (drained before each select so a port result advances the
 // machine without re-entrant Step).
-type runShell struct {
-	clock  substrate.ClockPort
-	eff    runEffectors
+type RunShell struct {
+	clock substrate.ClockPort
+	// Eff and Pending are temporary exports solely for daemon.runBridge, which
+	// moves in LIFT L6. Narrow them again when that consumer joins this package.
+	Eff    RunEffectors
 	events <-chan runexec.Event // the per-run tap: async agent/watchdog signals
 
 	timers  map[runexec.TimerKind]time.Time
-	pending []runexec.Event
+	Pending []runexec.Event
 }
 
 // newRunShell constructs a shell over the given clock, effector bundle, and
 // per-run event tap. Any unset hook is defaulted to a no-op (best-effort policy)
 // so the effector switch can call every arm unconditionally — a partially-wired
 // shell (tests, transitional composition) stays drivable.
-func newRunShell(clock substrate.ClockPort, eff runEffectors, events <-chan runexec.Event) *runShell {
+func NewRunShell(clock substrate.ClockPort, eff RunEffectors, events <-chan runexec.Event) *RunShell {
 	eff.normalize()
-	return &runShell{
+	return &RunShell{
 		clock:  clock,
-		eff:    eff,
+		Eff:    eff,
 		events: events,
 		timers: make(map[runexec.TimerKind]time.Time),
 	}
@@ -105,49 +107,49 @@ func newRunShell(clock substrate.ClockPort, eff runEffectors, events <-chan rune
 
 // normalize fills any nil hook with a no-op, so the effector switch needs no
 // per-arm nil guard (best-effort failure policy: a missing binding is a no-op).
-func (e *runEffectors) normalize() {
+func (e *RunEffectors) normalize() {
 	noEvents := func(context.Context) []runexec.Event { return nil }
-	if e.launchAgent == nil {
-		e.launchAgent = func(context.Context, runexec.SessionRef, string) {}
+	if e.LaunchAgent == nil {
+		e.LaunchAgent = func(context.Context, runexec.SessionRef, string) {}
 	}
-	if e.deliverInput == nil {
-		e.deliverInput = func(context.Context, runexec.SessionRef, runexec.InputID, runexec.InputKind) {}
+	if e.DeliverInput == nil {
+		e.DeliverInput = func(context.Context, runexec.SessionRef, runexec.InputID, runexec.InputKind) {}
 	}
-	if e.killAgent == nil {
-		e.killAgent = func(context.Context, runexec.SessionRef) {}
+	if e.KillAgent == nil {
+		e.KillAgent = func(context.Context, runexec.SessionRef) {}
 	}
-	if e.lifecycleTerm == nil {
-		e.lifecycleTerm = func(context.Context, int, string) {}
+	if e.LifecycleTerm == nil {
+		e.LifecycleTerm = func(context.Context, int, string) {}
 	}
-	if e.createWorktree == nil {
-		e.createWorktree = noEvents
+	if e.CreateWorktree == nil {
+		e.CreateWorktree = noEvents
 	}
-	if e.runGate == nil {
-		e.runGate = noEvents
+	if e.RunGate == nil {
+		e.RunGate = noEvents
 	}
-	if e.checkEscape == nil {
-		e.checkEscape = noEvents
+	if e.CheckEscape == nil {
+		e.CheckEscape = noEvents
 	}
-	if e.prepareMerge == nil {
-		e.prepareMerge = func(context.Context) {}
+	if e.PrepareMerge == nil {
+		e.PrepareMerge = func(context.Context) {}
 	}
-	if e.submitMerge == nil {
-		e.submitMerge = func(context.Context, string) []runexec.Event { return nil }
+	if e.SubmitMerge == nil {
+		e.SubmitMerge = func(context.Context, string) []runexec.Event { return nil }
 	}
-	if e.reAmendTrailer == nil {
-		e.reAmendTrailer = func(context.Context) {}
+	if e.ReAmendTrailer == nil {
+		e.ReAmendTrailer = func(context.Context) {}
 	}
-	if e.closeBead == nil {
-		e.closeBead = func(context.Context, string, bool) []runexec.Event { return nil }
+	if e.CloseBead == nil {
+		e.CloseBead = func(context.Context, string, bool) []runexec.Event { return nil }
 	}
-	if e.reopenBead == nil {
-		e.reopenBead = func(context.Context, string) {}
+	if e.ReopenBead == nil {
+		e.ReopenBead = func(context.Context, string) {}
 	}
-	if e.emit == nil {
-		e.emit = func(context.Context, core.EventType, string) {}
+	if e.Emit == nil {
+		e.Emit = func(context.Context, core.EventType, string) {}
 	}
-	if e.emitRunTerminal == nil {
-		e.emitRunTerminal = func(context.Context, bool, string) {}
+	if e.EmitRunTerminal == nil {
+		e.EmitRunTerminal = func(context.Context, bool, string) {}
 	}
 }
 
@@ -156,7 +158,7 @@ func (e *runEffectors) normalize() {
 // effect is best-effort — a nil hook is a no-op, and the only "fatal" run
 // operations (worktree create, launch) FEED FAILURE EVENTS rather than erroring
 // the drive loop (design §5), so execute never returns an error to substrate.Run.
-func (sh *runShell) execute(ctx context.Context, a runexec.Action) {
+func (sh *RunShell) execute(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActLaunchAgent, runexec.ActDeliverInput, runexec.ActKillAgent,
 		runexec.ActDriveLifecycleTerminated:
@@ -171,40 +173,40 @@ func (sh *runShell) execute(ctx context.Context, a runexec.Action) {
 
 // executeAgentAction maps the Dispatch (agent-session) actions onto their hooks
 // (all fire-and-forget; results arrive on the tap).
-func (sh *runShell) executeAgentAction(ctx context.Context, a runexec.Action) {
+func (sh *RunShell) executeAgentAction(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActLaunchAgent:
-		sh.eff.launchAgent(ctx, a.Session, a.SpecRef)
+		sh.Eff.LaunchAgent(ctx, a.Session, a.SpecRef)
 	case runexec.ActDeliverInput:
-		sh.eff.deliverInput(ctx, a.Session, a.InputID, a.InputKind)
+		sh.Eff.DeliverInput(ctx, a.Session, a.InputID, a.InputKind)
 	case runexec.ActKillAgent:
-		sh.eff.killAgent(ctx, a.Session)
+		sh.Eff.KillAgent(ctx, a.Session)
 	case runexec.ActDriveLifecycleTerminated:
-		sh.eff.lifecycleTerm(ctx, a.ExitCode, a.WaitErr)
+		sh.Eff.LifecycleTerm(ctx, a.ExitCode, a.WaitErr)
 	default: // routed elsewhere by execute
 	}
 }
 
 // executeRunAction maps the Run actions; the synchronous port ops (worktree
 // create, gate, escape, merge submit, bead close) enqueue their follow-up events.
-func (sh *runShell) executeRunAction(ctx context.Context, a runexec.Action) {
+func (sh *RunShell) executeRunAction(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActCreateWorktree:
-		sh.pending = append(sh.pending, sh.eff.createWorktree(ctx)...)
+		sh.Pending = append(sh.Pending, sh.Eff.CreateWorktree(ctx)...)
 	case runexec.ActRunGate:
-		sh.pending = append(sh.pending, sh.eff.runGate(ctx)...)
+		sh.Pending = append(sh.Pending, sh.Eff.RunGate(ctx)...)
 	case runexec.ActCheckEscape:
-		sh.pending = append(sh.pending, sh.eff.checkEscape(ctx)...)
+		sh.Pending = append(sh.Pending, sh.Eff.CheckEscape(ctx)...)
 	case runexec.ActPrepareMerge:
-		sh.eff.prepareMerge(ctx)
+		sh.Eff.PrepareMerge(ctx)
 	case runexec.ActSubmitMerge:
-		sh.pending = append(sh.pending, sh.eff.submitMerge(ctx, a.Label)...)
+		sh.Pending = append(sh.Pending, sh.Eff.SubmitMerge(ctx, a.Label)...)
 	case runexec.ActReAmendTrailer:
-		sh.eff.reAmendTrailer(ctx)
+		sh.Eff.ReAmendTrailer(ctx)
 	case runexec.ActCloseBead:
-		sh.pending = append(sh.pending, sh.eff.closeBead(ctx, a.Summary, a.NeedsAttention)...)
+		sh.Pending = append(sh.Pending, sh.Eff.CloseBead(ctx, a.Summary, a.NeedsAttention)...)
 	case runexec.ActReopenBead:
-		sh.eff.reopenBead(ctx, a.Reason)
+		sh.Eff.ReopenBead(ctx, a.Reason)
 	default: // routed elsewhere by execute
 	}
 }
@@ -212,12 +214,12 @@ func (sh *runShell) executeRunAction(ctx context.Context, a runexec.Action) {
 // executeEmitOrTimer maps the emission and shared timer actions. Timer arms are
 // anchored at execution time (after any preceding actions in the batch), like
 // keeper shell.go:145.
-func (sh *runShell) executeEmitOrTimer(ctx context.Context, a runexec.Action) {
+func (sh *RunShell) executeEmitOrTimer(ctx context.Context, a runexec.Action) {
 	switch a.Kind {
 	case runexec.ActEmit:
-		sh.eff.emit(ctx, a.Type, a.Detail)
+		sh.Eff.Emit(ctx, a.Type, a.Detail)
 	case runexec.ActEmitRunTerminal:
-		sh.eff.emitRunTerminal(ctx, a.Success, a.Summary)
+		sh.Eff.EmitRunTerminal(ctx, a.Success, a.Summary)
 	case runexec.ActArmTimer:
 		sh.timers[a.Timer] = sh.clock.Now().Add(a.D)
 	case runexec.ActCancelTimer:
@@ -226,9 +228,11 @@ func (sh *runShell) executeEmitOrTimer(ctx context.Context, a runexec.Action) {
 	}
 }
 
-// feed steps the machine on one event and executes the resulting actions in
-// order (which may enqueue synchronous follow-ups into sh.pending).
-func (sh *runShell) feed(ctx context.Context, m runReactor, ev runexec.Event) {
+// Feed steps the machine on one event and executes the resulting actions in
+// order (which may enqueue synchronous follow-ups into sh.Pending).
+// It is exported temporarily solely for daemon.runBridge; narrow it when that
+// consumer moves into this package in LIFT L6.
+func (sh *RunShell) Feed(ctx context.Context, m runReactor, ev runexec.Event) {
 	for _, a := range m.Step(ev) {
 		sh.execute(ctx, a)
 	}
@@ -239,9 +243,9 @@ func (sh *runShell) feed(ctx context.Context, m runReactor, ev runexec.Event) {
 // per-run event tap, a nearest-deadline wake (so a timer fires punctually even
 // under a delayed scheduler), or ctx cancellation (mapped onto the live phase
 // timeout edge — never a silent wait, RSM-INV-002).
-func (sh *runShell) drive(ctx context.Context, m runReactor) {
+func (sh *RunShell) drive(ctx context.Context, m runReactor) {
 	for m.InFlight() {
-		if sh.drainPending(ctx, m) {
+		if sh.DrainPending(ctx, m) {
 			continue
 		}
 		if !m.InFlight() {
@@ -251,22 +255,24 @@ func (sh *runShell) drive(ctx context.Context, m runReactor) {
 	}
 }
 
-// drainPending feeds all queued synchronous follow-up events; returns true when
+// DrainPending feeds all queued synchronous follow-up events; returns true when
 // it fed at least one (so drive re-checks InFlight before blocking).
-func (sh *runShell) drainPending(ctx context.Context, m runReactor) bool {
-	if len(sh.pending) == 0 {
+// It is exported temporarily solely for daemon.runBridge; narrow it when that
+// consumer moves into this package in LIFT L6.
+func (sh *RunShell) DrainPending(ctx context.Context, m runReactor) bool {
+	if len(sh.Pending) == 0 {
 		return false
 	}
-	queued := sh.pending
-	sh.pending = nil
+	queued := sh.Pending
+	sh.Pending = nil
 	for _, ev := range queued {
-		sh.feed(ctx, m, ev)
+		sh.Feed(ctx, m, ev)
 	}
 	return true
 }
 
 // driveOnce blocks for one external signal and feeds it.
-func (sh *runShell) driveOnce(ctx context.Context, m runReactor) {
+func (sh *RunShell) driveOnce(ctx context.Context, m runReactor) {
 	var deadlineC <-chan time.Time
 	var deadlineTicker substrate.Ticker
 	if remaining, ok := sh.nearestDeadline(); ok {
@@ -292,7 +298,7 @@ func (sh *runShell) driveOnce(ctx context.Context, m runReactor) {
 		if ev.At.IsZero() {
 			ev.At = sh.clock.Now()
 		}
-		sh.feed(ctx, m, ev)
+		sh.Feed(ctx, m, ev)
 	case <-deadlineC:
 		sh.fireElapsedTimers(ctx, m)
 	}
@@ -301,7 +307,7 @@ func (sh *runShell) driveOnce(ctx context.Context, m runReactor) {
 // nearestDeadline returns the remaining duration to the earliest armed reactor
 // deadline (keeper shell.go:262 mechanics), clamped to 1ns (NewTicker needs
 // d>0). ok is false when no timer is armed.
-func (sh *runShell) nearestDeadline() (time.Duration, bool) {
+func (sh *RunShell) nearestDeadline() (time.Duration, bool) {
 	var best time.Time
 	var ok bool
 	for _, dl := range sh.timers {
@@ -323,14 +329,14 @@ func (sh *runShell) nearestDeadline() (time.Duration, bool) {
 // elapsed (the reactor's timer edge; RSM-INV-002 guarantees each is an outgoing
 // action, never silence). The timer is disarmed before feeding so its edge is
 // not re-fired.
-func (sh *runShell) fireElapsedTimers(ctx context.Context, m runReactor) {
+func (sh *RunShell) fireElapsedTimers(ctx context.Context, m runReactor) {
 	now := sh.clock.Now()
 	for kind, dl := range sh.timers {
 		if now.Before(dl) {
 			continue
 		}
 		delete(sh.timers, kind)
-		sh.feed(ctx, m, runexec.Event{Kind: runexec.EvTimerFired, Timer: kind, At: now})
+		sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvTimerFired, Timer: kind, At: now})
 	}
 }
 
@@ -339,7 +345,7 @@ func (sh *runShell) fireElapsedTimers(ctx context.Context, m runReactor) {
 // rides the same fail-closed edge as its natural timeout (kill + reopen), never
 // stranding a machine mid-flight. With no timer armed there is no phase edge to
 // take; the caller's outer InFlight loop exits when the tap closes.
-func (sh *runShell) fireOnCancel(ctx context.Context, m runReactor) {
+func (sh *RunShell) fireOnCancel(ctx context.Context, m runReactor) {
 	var bestKind runexec.TimerKind
 	var best time.Time
 	var ok bool
@@ -352,7 +358,7 @@ func (sh *runShell) fireOnCancel(ctx context.Context, m runReactor) {
 		return
 	}
 	delete(sh.timers, bestKind)
-	sh.feed(ctx, m, runexec.Event{Kind: runexec.EvTimerFired, Timer: bestKind, At: sh.clock.Now()})
+	sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvTimerFired, Timer: bestKind, At: sh.clock.Now()})
 }
 
 // RunDispatch drives one Dispatch instance through its launch/ready/brief
@@ -373,10 +379,10 @@ func (sh *runShell) fireOnCancel(ctx context.Context, m runReactor) {
 // through WITHOUT emitting agent_ready_timeout, and firing the ready timer
 // here would fabricate that emission on every shutdown (an unsanctioned
 // stream divergence, RSM-029).
-func (sh *runShell) RunDispatch(ctx context.Context, m *runexec.Dispatch, sess runexec.SessionRef, specRef string) runexec.DispatchState {
-	sh.feed(ctx, m, runexec.Event{Kind: runexec.EvStartDispatch, Session: sess, Detail: specRef, At: sh.clock.Now()})
+func (sh *RunShell) RunDispatch(ctx context.Context, m *runexec.Dispatch, sess runexec.SessionRef, specRef string) runexec.DispatchState {
+	sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvStartDispatch, Session: sess, Detail: specRef, At: sh.clock.Now()})
 	for dispatchSegmentActive(m) {
-		if sh.drainPending(ctx, m) {
+		if sh.DrainPending(ctx, m) {
 			continue
 		}
 		if !dispatchSegmentActive(m) {
@@ -397,7 +403,7 @@ func dispatchSegmentActive(m *runexec.Dispatch) bool {
 // driveDispatchOnce blocks for one external signal and feeds it — driveOnce's
 // dispatch-segment variant: ctx cancellation (and a closed tap) map onto the
 // machine's EvAborted edge instead of fireOnCancel (see RunDispatch).
-func (sh *runShell) driveDispatchOnce(ctx context.Context, m *runexec.Dispatch) {
+func (sh *RunShell) driveDispatchOnce(ctx context.Context, m *runexec.Dispatch) {
 	var deadlineC <-chan time.Time
 	var deadlineTicker substrate.Ticker
 	if remaining, ok := sh.nearestDeadline(); ok {
@@ -412,16 +418,16 @@ func (sh *runShell) driveDispatchOnce(ctx context.Context, m *runexec.Dispatch) 
 
 	select {
 	case <-ctx.Done():
-		sh.feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "context cancelled", At: sh.clock.Now()})
+		sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "context cancelled", At: sh.clock.Now()})
 	case ev, ok := <-sh.events:
 		if !ok {
-			sh.feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "event tap closed", At: sh.clock.Now()})
+			sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "event tap closed", At: sh.clock.Now()})
 			return
 		}
 		if ev.At.IsZero() {
 			ev.At = sh.clock.Now()
 		}
-		sh.feed(ctx, m, ev)
+		sh.Feed(ctx, m, ev)
 	case <-deadlineC:
 		sh.fireElapsedTimers(ctx, m)
 	}
@@ -430,8 +436,8 @@ func (sh *runShell) driveDispatchOnce(ctx context.Context, m *runexec.Dispatch) 
 // driveRun feeds EvStartRun (guards already passed shell-side) and pumps the Run
 // machine to its Done terminal, returning the terminal state (whose Success the
 // shell reads for group advancement / worktree retention, RSM-022).
-func (sh *runShell) driveRun(ctx context.Context, m *runexec.Run, mode string) runexec.RunState {
-	sh.feed(ctx, m, runexec.Event{Kind: runexec.EvStartRun, Mode: mode, At: sh.clock.Now()})
+func (sh *RunShell) DriveRun(ctx context.Context, m *runexec.Run, mode string) runexec.RunState {
+	sh.Feed(ctx, m, runexec.Event{Kind: runexec.EvStartRun, Mode: mode, At: sh.clock.Now()})
 	sh.drive(ctx, m)
 	return m.State()
 }

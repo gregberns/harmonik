@@ -4670,10 +4670,10 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// The segment's deliver hook is what assigns it (hk-trjef).
 	var noChangeTimeoutCh chan struct{}
 
-	implSeg := &dispatchSegment{
-		clock: rp.Clock,
-		runID: runID,
-		cfg: runexec.DispatchConfig{
+	implSeg := &runloop.DispatchSegment{
+		Clock: rp.Clock,
+		RunID: runID,
+		Config: runexec.DispatchConfig{
 			SkipReadyHandshake: completionMode == handlercontract.CompletionProcessExit,
 			// Single-mode beadRunOne is always a fresh launch (pre-RT14 parity):
 			// it has no iteration counter and never issues `claude --resume`.
@@ -4681,17 +4681,17 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			MaxInputAttempts: 1,
 			// hk-96d7w: remote dispatch (rbc != nil) gets the longer remote window.
 			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, rbc != nil),
-			InputAck:      dispatchSegmentInputAckWindow,
+			InputAck:      runloop.DispatchSegmentInputAckWindow,
 			ReadyKillReap: runlaunch.KillReapTimeout,
 		},
 		// nil adapter (no adapter for the resolved agent type) → the segment feeds
 		// a synthetic ready so the brief is still delivered without a wait.
-		adapter: adapter,
+		Adapter: adapter,
 		// pre-RT14 parity: the single-mode path had no resume accommodation.
-		probeResume: false,
-		tap:         tap,
-		tapCh:       tapCh,
-		launch: func(lctx context.Context) (<-chan struct{}, error) {
+		ProbeResume: false,
+		Tap:         tap,
+		TapCh:       tapCh,
+		Launch: func(lctx context.Context) (<-chan struct{}, error) {
 			sess, watcher, launchErr = runH.Launch(lctx, spec)
 			if launchErr != nil {
 				return nil, launchErr
@@ -4701,7 +4701,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			}
 			return nil, nil
 		},
-		onLaunchFailed: func(lctx context.Context, lErr error) {
+		OnLaunchFailed: func(lctx context.Context, lErr error) {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
 				beadID, runID.String(), lErr)
 			// hk-4l7zs: a spawn-cap-timeout launch failure is the slot-leak signature.
@@ -4719,7 +4719,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, rp.Clock.Since(implementerLaunchedAt))
 			}
 		},
-		onLaunched: func(lctx context.Context) {
+		OnLaunched: func(lctx context.Context) {
 			// hk-4l7zs: now that the tmux window has actually spawned (Launch returned a
 			// live session), emit the held-back launch_initiated. Emitting it here — not
 			// before SpawnWindow — keeps the event truthful when the spawn semaphore is
@@ -4805,7 +4805,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				handler.HeartbeatInterval, hbDone,
 				newDaemonHeartbeatEmitter(tap, runID))
 		},
-		deliver: func(dctx context.Context) {
+		Deliver: func(dctx context.Context) {
 			// Steps 6a/6b: paste-inject — only for interactive TUI harnesses (not ProcessExit).
 			// hk-zlo8: CodexHarness (CompletionProcessExit) has no tmux pane; calling
 			// pasteInjectOnLaunch causes "WriteLastPane: cant find pane" → no_commit in ~4s.
@@ -4880,7 +4880,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				}
 			}
 		},
-		killReady: func(kctx context.Context) {
+		KillReady: func(kctx context.Context) {
 			// HC-056: agent_ready_timeout — kill, reap. The reopen follows at the
 			// segment return below (the machine emits agent_ready_timeout after this
 			// hook returns, preserving the pre-RT14 kill-then-emit ordering).
@@ -4913,7 +4913,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				waitCancel()
 			}
 		},
-		emitReadyTimeout: func(context.Context) {
+		EmitReadyTimeout: func(context.Context) {
 			// hk-5cox8 observability: emit agent_ready_timeout to events.jsonl so
 			// post-hoc analysis can distinguish "never ready" runs from runs that
 			// received agent_ready. hk-4hso5: use context.Background() so the
@@ -4922,7 +4922,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			// Background fallback per RSM-022).
 			runlaunch.EmitAgentReadyTimeout(context.Background(), emit, runID, cbClaudeSessionID, env.AgentReadyTimeout) //nolint:contextcheck // hk-4hso5: Background is deliberate so the emission survives a reaper-cancelled run ctx (pre-RT14 idiom)
 		},
-		killAbort: func(context.Context) {
+		KillAbort: func(context.Context) {
 			// hk-o85ye: SITE-SPECIFIC — unlike reviewloop.go / dot_cascade.go, whose
 			// ForceTeardownSession backstop is unconditional, this site's backstop is
 			// guarded (`!useIndepSession || ctx.Err() == nil`) because on daemon
@@ -4940,8 +4940,10 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
 			}
 		},
+		SpawnCapTimeout:      ErrSpawnCapTimeout,
+		TmuxNewWindowTimeout: ErrTmuxNewWindowTimeout,
 	}
-	implDispatch := implSeg.run(ctx)
+	implDispatch := implSeg.Run(ctx)
 
 	if launchErr != nil {
 		reason := fmt.Sprintf("launch error: %v", launchErr)

@@ -447,26 +447,26 @@ func executeCognitionGate(
 		adapter = nil
 	}
 
-	gateSeg := &dispatchSegment{
-		clock: ports.Clock,
-		runID: runID,
-		cfg: runexec.DispatchConfig{
+	gateSeg := &runloop.DispatchSegment{
+		Clock: ports.Clock,
+		RunID: runID,
+		Config: runexec.DispatchConfig{
 			SkipReadyHandshake: false,
 			IsResume:           false,
 			MaxInputAttempts:   1,
 			// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
 			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, runner != nil),
-			InputAck:      dispatchSegmentInputAckWindow,
+			InputAck:      runloop.DispatchSegmentInputAckWindow,
 			ReadyKillReap: runlaunch.KillReapTimeout,
 		},
 		// nil adapter (no claude-code adapter registered) → the segment feeds a
 		// synthetic ready so the gate brief is still delivered without a wait.
-		adapter: adapter,
+		Adapter: adapter,
 		// pre-RT14 parity: the gate always launches fresh, never `claude --resume`.
-		probeResume: false,
-		tap:         tap,
-		tapCh:       tapCh,
-		launch: func(lctx context.Context) (<-chan struct{}, error) {
+		ProbeResume: false,
+		Tap:         tap,
+		TapCh:       tapCh,
+		Launch: func(lctx context.Context) (<-chan struct{}, error) {
 			sess, watcher, launchErr = runH.Launch(lctx, spec)
 			if launchErr != nil {
 				return nil, launchErr
@@ -476,12 +476,12 @@ func executeCognitionGate(
 			}
 			return nil, nil
 		},
-		onLaunchFailed: func(context.Context, error) {
+		OnLaunchFailed: func(context.Context, error) {
 			if handles.HookStore != nil {
 				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
 		},
-		onLaunched: func(lctx context.Context) {
+		OnLaunched: func(lctx context.Context) {
 			// hk-goczd: window is live — emit the held-back launch_initiated to clear the
 			// false stall. Mirrors workloop.go's single-mode path.
 			if gateLaunchInitiatedMsg != nil {
@@ -506,14 +506,14 @@ func executeCognitionGate(
 				})
 			}
 		},
-		deliver: func(dctx context.Context) {
+		Deliver: func(dctx context.Context) {
 			// Deliver gate-evaluator kick-off message and watch for verdict file.
 			briefDelivered := pasteInjectCognitionGate(dctx, ports.Clock, pasteTarget, artifacts.ClaudeSessionID, wtPath, emit, runID)
 			if qs, ok := pasteTarget.(quitSender); ok {
 				go pasteInjectQuitOnGateFile(ctx, ports.Clock, runner, qs, sess, wtPath, briefDelivered)
 			}
 		},
-		killReady: func(kctx context.Context) {
+		KillReady: func(kctx context.Context) {
 			fmt.Fprintf(os.Stderr, "daemon: dot: gate: waitAgentReady node %q run %s: %v\n",
 				node.ID, runID.String(), runlaunch.ErrAgentReadyTimeout)
 			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
@@ -530,10 +530,10 @@ func executeCognitionGate(
 				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
 		},
-		emitReadyTimeout: func(ectx context.Context) {
+		EmitReadyTimeout: func(ectx context.Context) {
 			runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, artifacts.ClaudeSessionID, env.AgentReadyTimeout)
 		},
-		killAbort: func(context.Context) {
+		KillAbort: func(context.Context) {
 			// Ctx-cancel abort edge: Kill is idempotent (the runlaunch.ForceTeardownSession
 			// backstop registered below rides behind it either way — unlike workloop.go's
 			// single-mode path, this site's teardown is unconditional).
@@ -541,8 +541,10 @@ func executeCognitionGate(
 				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
 			}
 		},
+		SpawnCapTimeout:      ErrSpawnCapTimeout,
+		TmuxNewWindowTimeout: ErrTmuxNewWindowTimeout,
 	}
-	gateDispatch := gateSeg.run(ctx)
+	gateDispatch := gateSeg.Run(ctx)
 
 	if launchErr != nil {
 		return nil, fmt.Errorf("cognition gate %q: launch: %w", gateRef, launchErr)

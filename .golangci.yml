@@ -272,6 +272,7 @@ linters:
             - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
             - "github.com/gregberns/harmonik/internal/projectconfig"
             - "github.com/gregberns/harmonik/internal/runloop"
+            - "github.com/gregberns/harmonik/internal/runexec"
             - "github.com/gregberns/harmonik/internal/runmerge"
             - "github.com/gregberns/harmonik/internal/substrate"
             - "github.com/gregberns/harmonik/internal/workers"

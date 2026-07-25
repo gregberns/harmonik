@@ -579,28 +579,28 @@ func runReviewLoop(
 			implAdapter = nil
 		}
 
-		implSeg := &dispatchSegment{
-			clock: ports.Clock,
-			runID: runID,
-			cfg: runexec.DispatchConfig{
+		implSeg := &runloop.DispatchSegment{
+			Clock: ports.Clock,
+			RunID: runID,
+			Config: runexec.DispatchConfig{
 				SkipReadyHandshake: implCompletionMode == handlercontract.CompletionProcessExit,
 				IsResume:           state.iterationCount >= 2,
 				MaxInputAttempts:   1,
 				// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
 				ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, runner != nil),
-				InputAck:      dispatchSegmentInputAckWindow,
+				InputAck:      runloop.DispatchSegmentInputAckWindow,
 				ReadyKillReap: runlaunch.KillReapTimeout,
 			},
-			adapter: implAdapter,
+			Adapter: implAdapter,
 			// hk-isq02 → M3-D7: iteration ≥ 2 launches `claude --resume <uuid>`,
 			// which does not reliably re-fire a SessionStart hook, so under the
 			// tmux substrate (implWatcher == nil) the relay never synthesizes
 			// agent_ready for the resume; the transitional probe supplies the
 			// run_id-stamped ready under the machine's TimerAgentReady bound.
-			probeResume: state.iterationCount >= 2,
-			tap:         implTap,
-			tapCh:       implTapCh,
-			launch: func(lctx context.Context) (<-chan struct{}, error) {
+			ProbeResume: state.iterationCount >= 2,
+			Tap:         implTap,
+			TapCh:       implTapCh,
+			Launch: func(lctx context.Context) (<-chan struct{}, error) {
 				implSess, implWatcher, implLaunchErr = implRunH.Launch(lctx, implSpec)
 				if implLaunchErr != nil {
 					return nil, implLaunchErr
@@ -610,7 +610,7 @@ func runReviewLoop(
 				}
 				return nil, nil
 			},
-			onLaunchFailed: func(lctx context.Context, launchErr error) {
+			OnLaunchFailed: func(lctx context.Context, launchErr error) {
 				if handles.HookStore != nil {
 					handles.HookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 				}
@@ -628,7 +628,7 @@ func runReviewLoop(
 					runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, ports.Clock.Since(implLaunchedAt))
 				}
 			},
-			onLaunched: func(lctx context.Context) {
+			OnLaunched: func(lctx context.Context) {
 				// hk-4l7zs: emit the held-back launch_initiated now that the implementer
 				// window has actually spawned (Launch returned a live session). On the
 				// wedged-spawn path Launch returns an error and launch_initiated is
@@ -664,7 +664,7 @@ func runReviewLoop(
 					})
 				}
 			},
-			deliver: func(dctx context.Context) {
+			Deliver: func(dctx context.Context) {
 				// hk-a2okh: post-agent_ready hang detector — exec path only. If
 				// agent_ready was observed and we have a watcher (exec path),
 				// subscribe to implTap AFTER agent_ready to watch for the next event.
@@ -726,7 +726,7 @@ func runReviewLoop(
 					}
 				}
 			},
-			killReady: func(kctx context.Context) {
+			KillReady: func(kctx context.Context) {
 				// HC-056: implementer agent_ready_timeout — kill, reap. The error
 				// result + cycle-complete emission follow at the segment return below.
 				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady implementer bead %s iter %d run %s: %v (error)\n",
@@ -749,18 +749,20 @@ func runReviewLoop(
 					handles.HookStore.CloseHookSession(runID.String(), implArtifacts.ClaudeSessionID)
 				}
 			},
-			emitReadyTimeout: func(ectx context.Context) {
+			EmitReadyTimeout: func(ectx context.Context) {
 				runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, implArtifacts.ClaudeSessionID, env.AgentReadyTimeout)
 			},
-			killAbort: func(context.Context) {
+			KillAbort: func(context.Context) {
 				// Ctx-cancel abort edge: Kill is idempotent (the per-iteration
 				// runlaunch.ForceTeardownSession backstop rides behind it either way).
 				if implSess != nil {
 					_ = implSess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
 				}
 			},
+			SpawnCapTimeout:      ErrSpawnCapTimeout,
+			TmuxNewWindowTimeout: ErrTmuxNewWindowTimeout,
 		}
-		implDispatch := implSeg.run(ctx)
+		implDispatch := implSeg.Run(ctx)
 
 		if implLaunchErr != nil {
 			result := rlErrorResult(fmt.Sprintf("implementer launch error at iteration %d: %v", state.iterationCount, implLaunchErr))
@@ -1361,21 +1363,21 @@ func runReviewLoop(
 			revAdapter = nil
 		}
 
-		revSeg := &dispatchSegment{
-			clock: ports.Clock,
-			runID: runID,
-			cfg: runexec.DispatchConfig{
+		revSeg := &runloop.DispatchSegment{
+			Clock: ports.Clock,
+			RunID: runID,
+			Config: runexec.DispatchConfig{
 				MaxInputAttempts: 1,
 				// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
 				// This is the remote reviewer-node agent_ready wait that hk-5z1f0 diagnosed.
 				ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, runner != nil),
-				InputAck:      dispatchSegmentInputAckWindow,
+				InputAck:      runloop.DispatchSegmentInputAckWindow,
 				ReadyKillReap: runlaunch.KillReapTimeout,
 			},
-			adapter: revAdapter,
-			tap:     revTap,
-			tapCh:   revTapCh,
-			launch: func(lctx context.Context) (<-chan struct{}, error) {
+			Adapter: revAdapter,
+			Tap:     revTap,
+			TapCh:   revTapCh,
+			Launch: func(lctx context.Context) (<-chan struct{}, error) {
 				revSess, revWatcher, revLaunchErr = revH.Launch(lctx, revSpec)
 				if revLaunchErr != nil {
 					return nil, revLaunchErr
@@ -1385,7 +1387,7 @@ func runReviewLoop(
 				}
 				return nil, nil
 			},
-			onLaunchFailed: func(lctx context.Context, launchErr error) {
+			OnLaunchFailed: func(lctx context.Context, launchErr error) {
 				if handles.HookStore != nil {
 					handles.HookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 				}
@@ -1401,7 +1403,7 @@ func runReviewLoop(
 					runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, defaultNewWindowTimeout)
 				}
 			},
-			onLaunched: func(lctx context.Context) {
+			OnLaunched: func(lctx context.Context) {
 				// hk-4l7zs: emit the held-back reviewer launch_initiated now the window
 				// is live.
 				if revLaunchInitiatedMsg != nil {
@@ -1423,7 +1425,7 @@ func runReviewLoop(
 					})
 				}
 			},
-			deliver: func(dctx context.Context) {
+			Deliver: func(dctx context.Context) {
 				// Paste-inject the reviewer kick-off message AFTER agent_ready (hk-zchbu).
 				// Running before agent_ready races Claude's welcome splash, which
 				// consumes the trailing \n and leaves the buffered text unsubmitted.
@@ -1453,7 +1455,7 @@ func runReviewLoop(
 					go pasteInjectQuitOnReviewFile(ctx, ports.Clock, qs, revSess, revInj, revArtifacts.ClaudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
 				}
 			},
-			killReady: func(kctx context.Context) {
+			KillReady: func(kctx context.Context) {
 				// HC-056: reviewer agent_ready_timeout — kill, reap; the error result
 				// + cycle-complete emission follow at the segment return below.
 				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady reviewer bead %s iter %d run %s: %v (error)\n",
@@ -1482,13 +1484,15 @@ func runReviewLoop(
 					handles.HookStore.CloseHookSession(runID.String(), revArtifacts.ClaudeSessionID)
 				}
 			},
-			killAbort: func(context.Context) {
+			KillAbort: func(context.Context) {
 				if revSess != nil {
 					_ = revSess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
 				}
 			},
+			SpawnCapTimeout:      ErrSpawnCapTimeout,
+			TmuxNewWindowTimeout: ErrTmuxNewWindowTimeout,
 		}
-		revDispatch := revSeg.run(ctx)
+		revDispatch := revSeg.Run(ctx)
 
 		if revLaunchErr != nil {
 			result := rlErrorResult(fmt.Sprintf("reviewer launch error at iteration %d: %v", state.iterationCount, revLaunchErr))

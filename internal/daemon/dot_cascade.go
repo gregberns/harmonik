@@ -1779,27 +1779,27 @@ func dispatchDotAgenticNode(
 		}
 	}
 
-	nodeSeg := &dispatchSegment{
-		clock: ports.Clock,
-		runID: runID,
-		cfg: runexec.DispatchConfig{
+	nodeSeg := &runloop.DispatchSegment{
+		Clock: ports.Clock,
+		RunID: runID,
+		Config: runexec.DispatchConfig{
 			SkipReadyHandshake: dotCompletionMode == handlercontract.CompletionProcessExit,
 			IsResume:           phase == handlercontract.ReviewLoopPhaseImplementerResume,
 			MaxInputAttempts:   1,
 			// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
 			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, runner != nil),
-			InputAck:      dispatchSegmentInputAckWindow,
+			InputAck:      runloop.DispatchSegmentInputAckWindow,
 			ReadyKillReap: runlaunch.KillReapTimeout,
 		},
-		adapter: adapter,
+		Adapter: adapter,
 		// M3-D7: the DOT back-edge resume previously had NO resume-ready
 		// accommodation (the review-loop caulk never covered it); the segment's
 		// transitional probe supplies the run_id-stamped ready for a tmux
 		// `--resume` reattach under the machine's TimerAgentReady bound.
-		probeResume: phase == handlercontract.ReviewLoopPhaseImplementerResume,
-		tap:         tap,
-		tapCh:       tapCh,
-		launch: func(lctx context.Context) (<-chan struct{}, error) {
+		ProbeResume: phase == handlercontract.ReviewLoopPhaseImplementerResume,
+		Tap:         tap,
+		TapCh:       tapCh,
+		Launch: func(lctx context.Context) (<-chan struct{}, error) {
 			sess, watcher, launchErr = runH.Launch(lctx, spec)
 			if launchErr != nil {
 				return nil, launchErr
@@ -1809,7 +1809,7 @@ func dispatchDotAgenticNode(
 			}
 			return nil, nil
 		},
-		onLaunchFailed: func(lctx context.Context, lErr error) {
+		OnLaunchFailed: func(lctx context.Context, lErr error) {
 			if handles.HookStore != nil {
 				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
@@ -1830,7 +1830,7 @@ func dispatchDotAgenticNode(
 				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, ports.Clock.Since(nodeLaunchedAt))
 			}
 		},
-		onLaunched: func(lctx context.Context) {
+		OnLaunched: func(lctx context.Context) {
 			// hk-goczd: the tmux window has actually spawned (Launch returned a live
 			// session) — emit the held-back launch_initiated now. This clears the
 			// false-positive launch_stall_detected the DOT path otherwise triggered on
@@ -1878,8 +1878,8 @@ func dispatchDotAgenticNode(
 				})
 			}
 		},
-		deliver: dotDeliver,
-		killReady: func(kctx context.Context) {
+		Deliver: dotDeliver,
+		KillReady: func(kctx context.Context) {
 			fmt.Fprintf(os.Stderr, "daemon: dot: waitAgentReady node %q run %s: %v (failing node)\n",
 				node.ID, runID.String(), runlaunch.ErrAgentReadyTimeout)
 			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
@@ -1894,16 +1894,18 @@ func dispatchDotAgenticNode(
 				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
 		},
-		emitReadyTimeout: func(ectx context.Context) {
+		EmitReadyTimeout: func(ectx context.Context) {
 			runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, artifacts.ClaudeSessionID, env.AgentReadyTimeout)
 		},
-		killAbort: func(context.Context) {
+		KillAbort: func(context.Context) {
 			if sess != nil {
 				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
 			}
 		},
+		SpawnCapTimeout:      ErrSpawnCapTimeout,
+		TmuxNewWindowTimeout: ErrTmuxNewWindowTimeout,
 	}
-	nodeDispatch := nodeSeg.run(ctx)
+	nodeDispatch := nodeSeg.Run(ctx)
 
 	if launchErr != nil {
 		return core.Outcome{}, fmt.Errorf("launch node %q: %w", node.ID, launchErr)
@@ -1931,7 +1933,7 @@ func dispatchDotAgenticNode(
 	// deliver edge — invoke it here, preserving the pre-RT8 fall-through
 	// ("paste-inject is a no-op for codex" + the reviewer's quit-on-review-file
 	// watchdog for a ProcessExit reviewer node).
-	if nodeDispatch.Phase == runexec.DispatchWorking && nodeSeg.cfg.SkipReadyHandshake {
+	if nodeDispatch.Phase == runexec.DispatchWorking && nodeSeg.Config.SkipReadyHandshake {
 		dotDeliver(ctx)
 	}
 	// Working / Exited / Aborted: fall through to waitWithSocketGrace — the

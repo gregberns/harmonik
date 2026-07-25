@@ -484,7 +484,7 @@ func TestCognitionGateHarnessDispatchWiring_hk01vs0(t *testing.T) {
 		{
 			// Without beadRecord reaching the gate, the tier-1 harness:<type> LABEL
 			// is invisible to the correction and the label trigger returns.
-			file: "dot_cascade.go",
+			file: "dot_cascade_core.go",
 			want: []string{"beadID, beadRecord, // hk-01vs0"},
 		},
 		{

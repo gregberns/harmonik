@@ -27,6 +27,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -144,7 +145,7 @@ func readOperatorComms(projectDir, sinceID string) (bodies []string, lastEventID
 	}
 
 	//nolint:gosec // G204: arguments are controlled; harmonikBin is from PATH
-	cmd := exec.Command(harmonikBin, cmdArgs...)
+	cmd := exec.CommandContext(context.Background(), harmonikBin, cmdArgs...)
 	cmd.Dir = projectDir
 	out, cmdErr := cmd.Output()
 	if cmdErr != nil {

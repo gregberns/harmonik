@@ -17,6 +17,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -483,7 +484,7 @@ func evalBuildRecord(runID string, st *evalRunState, projectDir, piModel string)
 
 // evalFetchBeadLabels invokes `br show --json <beadID>` and returns the labels slice.
 func evalFetchBeadLabels(beadID, projectDir string) ([]string, error) {
-	cmd := exec.Command("br", "show", "--json", beadID)
+	cmd := exec.CommandContext(context.Background(), "br", "show", "--json", beadID)
 	cmd.Dir = projectDir
 	out, err := cmd.Output()
 	if err != nil {

@@ -417,7 +417,7 @@ func executeCognitionGate(
 		handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
-	tap, tapCh := newPerRunEventTap(emit, runID)
+	tap, tapCh := runloop.NewPerRunEventTap(emit, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 	// hk-goczd: emit the CHB-018 pre-exec messages before Launch, holding back

@@ -4590,7 +4590,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
 	// watcher events without a post-seal bus subscription (EV-009).
-	tap, tapCh := newPerRunEventTap(emit, runID)
+	tap, tapCh := runloop.NewPerRunEventTap(emit, runID)
 	// Precondition: handles.AdapterRegistry must be non-nil (enforced by
 	// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 // ExportedNewRunRegistry creates a fresh RunRegistry for tests.
@@ -33,10 +34,12 @@ func ExportedRunRegistryRegister(r *RunRegistry, runID core.RunID, handle *RunHa
 	r.Register(runID, handle)
 }
 
-// ExportedPerRunEventTap is the exported alias for the per-run fan-out event
+// ExportedPerRunEventTap wraps the per-run fan-out event
 // tap so the competing-consumer race regression test can construct one and
 // register multiple independent subscribers (hk-37giq).
-type ExportedPerRunEventTap = perRunEventTap
+type ExportedPerRunEventTap struct {
+	*runloop.PerRunEventTap
+}
 
 // noopExportedEmitter is a no-op handlercontract.EventEmitter used as the tap's
 // underlying bus in the fan-out regression test: it discards all emits so the
@@ -55,7 +58,8 @@ func (noopExportedEmitter) EmitWithRunID(context.Context, core.RunID, core.Event
 // production). Additional independent subscribers are obtained via
 // tap.ExportedSubscribe (hk-37giq).
 func ExportedNewPerRunEventTap(runID core.RunID) (tap *ExportedPerRunEventTap, events <-chan core.EventEnvelope) {
-	return newPerRunEventTap(noopExportedEmitter{}, runID)
+	inner, events := runloop.NewPerRunEventTap(noopExportedEmitter{}, runID)
+	return &ExportedPerRunEventTap{PerRunEventTap: inner}, events
 }
 
 // ExportedSubscribe registers and returns a new independent subscriber channel
@@ -76,6 +80,6 @@ func (t *ExportedPerRunEventTap) ExportedEmit(ctx context.Context, eventType cor
 // production wiring reverted — verified, and it is how the first draft of the
 // hk-47u9z test was a false green.
 func ExportedNewCapturedSpawnProof(ctx context.Context, emitter handlercontract.EventEmitter, runID core.RunID) func() {
-	tap, _ := newPerRunEventTap(emitter, runID)
+	tap, _ := runloop.NewPerRunEventTap(emitter, runID)
 	return newCapturedSpawnProof(ctx, tap, runID)
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -95,7 +96,7 @@ func runStalledResumeSegment(t *testing.T, cfg runexec.DispatchConfig, emitReady
 	clock := substrate.NewFakeClock(start)
 	runID := segTestRunID(t)
 	rec = &segRecordingEmitter{}
-	tap, tapCh := newPerRunEventTap(rec, runID)
+	tap, tapCh := runloop.NewPerRunEventTap(rec, runID)
 
 	var killedVal, timeoutEmittedVal bool
 	killed, timeoutEmitted = &killedVal, &timeoutEmittedVal
@@ -218,7 +219,7 @@ func TestDispatchSegment_ResumeProbe_RunIDStampedReadyDelivers(t *testing.T) {
 	clock := substrate.NewFakeClock(start)
 	runID := segTestRunID(t)
 	rec := &segRecordingEmitter{}
-	tap, tapCh := newPerRunEventTap(rec, runID)
+	tap, tapCh := runloop.NewPerRunEventTap(rec, runID)
 
 	delivered := false
 	seg := &dispatchSegment{

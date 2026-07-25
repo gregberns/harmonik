@@ -539,7 +539,7 @@ func runReviewLoop(
 		// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
 		//
 		// Bead ref: hk-kunm4.
-		implTap, implTapCh := newPerRunEventTap(emit, runID)
+		implTap, implTapCh := runloop.NewPerRunEventTap(emit, runID)
 		implRunH := handler.NewHandler(implTap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 		// RT8 (RSM-005/RSM-024): the implementer launch/ready/brief segment is
@@ -1336,7 +1336,7 @@ func runReviewLoop(
 		// A new handler is constructed using the tap so events flow through the channel.
 		// Precondition: handles.AdapterRegistry must be non-nil (enforced by
 		// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
-		revTap, revTapCh := newPerRunEventTap(emit, runID)
+		revTap, revTapCh := runloop.NewPerRunEventTap(emit, runID)
 		revH := handler.NewHandler(revTap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 		revSessionID := handlercontract.NewSessionID()

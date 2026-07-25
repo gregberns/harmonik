@@ -1,4 +1,4 @@
-package daemon_test
+package runloop_test
 
 // workloopeventsource_hk37giq_test.go — regression guard for the concurrent-
 // dispatch wedge (hk-37giq): the per-run event tap MUST fan every event out to
@@ -34,7 +34,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 func hk37giqRunID(t *testing.T) core.RunID {
@@ -44,6 +44,16 @@ func hk37giqRunID(t *testing.T) core.RunID {
 		t.Fatalf("uuid.NewV7: %v", err)
 	}
 	return core.RunID(id)
+}
+
+type noopEmitter struct{}
+
+func (noopEmitter) Emit(context.Context, core.EventType, []byte) error {
+	return nil
+}
+
+func (noopEmitter) EmitWithRunID(context.Context, core.RunID, core.EventType, []byte) error {
+	return nil
 }
 
 // TestPerRunEventTap_FanOut_PassiveSubscriberNotStarvedByAggressiveDrain is the
@@ -56,8 +66,8 @@ func TestPerRunEventTap_FanOut_PassiveSubscriberNotStarvedByAggressiveDrain(t *t
 	t.Parallel()
 
 	runID := hk37giqRunID(t)
-	tap, subA := daemon.ExportedNewPerRunEventTap(runID)
-	subB := tap.ExportedSubscribe()
+	tap, subA := runloop.NewPerRunEventTap(noopEmitter{}, runID)
+	subB := tap.Subscribe()
 
 	// Emit fewer events than the per-subscriber buffer (perRunEventTapBufSize=64)
 	// so the fan-out NEVER drops on B even though B is not drained until after all
@@ -101,7 +111,7 @@ func TestPerRunEventTap_FanOut_PassiveSubscriberNotStarvedByAggressiveDrain(t *t
 
 	// Emit emitCount heartbeats through the production Emit (fan-out) path.
 	for i := 0; i < emitCount; i++ {
-		if err := tap.ExportedEmit(ctx, core.EventTypeAgentHeartbeat); err != nil {
+		if err := tap.Emit(ctx, core.EventTypeAgentHeartbeat, nil); err != nil {
 			t.Fatalf("emit %d: %v", i, err)
 		}
 	}
@@ -158,11 +168,11 @@ func TestPerRunEventTap_InitialSubscriberStillReceives(t *testing.T) {
 	t.Parallel()
 
 	runID := hk37giqRunID(t)
-	tap, initial := daemon.ExportedNewPerRunEventTap(runID)
+	tap, initial := runloop.NewPerRunEventTap(noopEmitter{}, runID)
 
 	const n = 10
 	for i := 0; i < n; i++ {
-		if err := tap.ExportedEmit(context.Background(), core.EventTypeAgentHeartbeat); err != nil {
+		if err := tap.Emit(context.Background(), core.EventTypeAgentHeartbeat, nil); err != nil {
 			t.Fatalf("emit %d: %v", i, err)
 		}
 	}
@@ -188,10 +198,10 @@ func TestPerRunEventTap_FanOut_RunIDStamped(t *testing.T) {
 	t.Parallel()
 
 	runID := hk37giqRunID(t)
-	tap, subA := daemon.ExportedNewPerRunEventTap(runID)
-	subB := tap.ExportedSubscribe()
+	tap, subA := runloop.NewPerRunEventTap(noopEmitter{}, runID)
+	subB := tap.Subscribe()
 
-	if err := tap.ExportedEmit(context.Background(), core.EventTypeAgentHeartbeat); err != nil {
+	if err := tap.Emit(context.Background(), core.EventTypeAgentHeartbeat, nil); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 

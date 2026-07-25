@@ -253,7 +253,8 @@ linters:
         # internal/harness/shared (LaunchPort's LaunchCtx / LaunchArtifacts);
         # internal/lifecycle/tmux (SharedHandles.Runner CommandRunner);
         # internal/runmerge (MergePort.Submit); internal/workers
-        # (SharedHandles.Workers); and self (white-box tests). depguard allow
+        # (SharedHandles.Workers); google/uuid (PerRunEventTap synthetic event
+        # IDs); and self (white-box tests). depguard allow
         # entries are PREFIX matches. NOTE: internal/runlaunch is DELIBERATELY
         # absent — ports.go does not import it at L0; later chunks that move
         # run-path files widen this list as the compiler demands.
@@ -262,6 +263,7 @@ linters:
           files: ["**/internal/runloop/**"]
           allow:
             - "$gostd"
+            - "github.com/google/uuid"
             - "github.com/gregberns/harmonik/internal/brcli"
             - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/handler"

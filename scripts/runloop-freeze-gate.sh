@@ -42,7 +42,7 @@ HITS=0
 #     call a sibling leaf (`x = runmerge.Foo()`).
 for sym in RunPorts RunEnv SharedHandles \
            LedgerPort EmitterPort WorktreePort MergePort LaunchPort \
-           GatePort BudgetPort RunRegistryPort RunHandlePort; do
+           GatePort BudgetPort RunRegistryPort RunHandlePort PerRunEventTap; do
     MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E \
         "^[[:space:]]*(type[[:space:]]+|var[[:space:]]+|const[[:space:]]+)?${sym}\b[[:space:]]*(=|struct|interface|func|\()" \
         internal/daemon 2>/dev/null \
@@ -54,15 +54,30 @@ for sym in RunPorts RunEnv SharedHandles \
     fi
 done
 
+# The L1 constructor must not be recreated under its former daemon-local name.
+MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E \
+    '^[[:space:]]*func[[:space:]]+newPerRunEventTap\b' \
+    internal/daemon 2>/dev/null || true)"
+if [ -n "$MATCHES" ]; then
+    echo "runloop-freeze-gate: FORBIDDEN re-declaration of newPerRunEventTap in internal/daemon:" >&2
+    printf '%s\n' "$MATCHES" >&2
+    HITS=$((HITS + 1))
+fi
+
 # (2) The destination must still exist. A gate whose target has been renamed away
 #     silently stops testing what it claims to test. (Later chunks append their
 #     moved run-path files here.)
-for f in internal/runloop/ports.go; do
+for f in internal/runloop/ports.go internal/runloop/workloopeventsource.go; do
     if [ ! -f "$f" ]; then
         echo "runloop-freeze-gate: destination $f is gone — re-derive this gate" >&2
         HITS=$((HITS + 1))
     fi
 done
+
+if [ -f internal/daemon/workloopeventsource.go ]; then
+    echo "runloop-freeze-gate: forbidden source file internal/daemon/workloopeventsource.go was recreated" >&2
+    HITS=$((HITS + 1))
+fi
 
 if [ "$HITS" -ne 0 ]; then
     echo "runloop-freeze-gate: FAIL — the run machine's ports were extracted in P2 LIFT L0; build on internal/runloop, do not reopen internal/daemon" >&2

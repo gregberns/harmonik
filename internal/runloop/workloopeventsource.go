@@ -1,4 +1,4 @@
-package daemon
+package runloop
 
 // workloopeventsource.go — the per-run event tap every dispatch segment's
 // ready pump consumes (hk-gql20.14).
@@ -33,7 +33,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// perRunEventTap is a handlercontract.EventEmitter wrapper that forwards every
+// PerRunEventTap is a handlercontract.EventEmitter wrapper that forwards every
 // Emit call to one or more buffered subscriber channels as a synthetic
 // core.EventEnvelope, in addition to delegating to the underlying bus emitter.
 //
@@ -65,7 +65,7 @@ import (
 // to its wall-clock backstops — also safe). Crucially, a slow/full consumer can
 // NO LONGER starve the other consumer of events, because each owns its own
 // buffer.
-type perRunEventTap struct {
+type PerRunEventTap struct {
 	// underlying is the real bus emitter; all Emit calls are forwarded here.
 	underlying handlercontract.EventEmitter
 
@@ -86,18 +86,19 @@ type perRunEventTap struct {
 // the watcher goroutine; consumers drain lazily.
 const perRunEventTapBufSize = 64
 
-// newPerRunEventTap constructs a perRunEventTap that wraps underlying and
+// NewPerRunEventTap constructs a PerRunEventTap that wraps underlying and
 // registers an initial subscriber. Returns the tap and that subscriber's
 // channel (consumed by the dispatch segment's ready pump).
 //
 // Additional independent subscribers (e.g. for pasteInjectQuitOnCommit) are
 // obtained via Subscribe — each receives its own copy of every event (hk-37giq).
-func newPerRunEventTap(underlying handlercontract.EventEmitter, runID core.RunID) (*perRunEventTap, <-chan core.EventEnvelope) {
-	t := &perRunEventTap{
+func NewPerRunEventTap(underlying handlercontract.EventEmitter, runID core.RunID) (tap *PerRunEventTap, events <-chan core.EventEnvelope) {
+	tap = &PerRunEventTap{
 		underlying: underlying,
 		runID:      runID,
 	}
-	return t, t.Subscribe()
+	events = tap.Subscribe()
+	return tap, events
 }
 
 // Subscribe registers and returns a new independent subscriber channel. Every
@@ -109,7 +110,7 @@ func newPerRunEventTap(underlying handlercontract.EventEmitter, runID core.RunID
 //
 // Subscribe is intended to be called at run-setup time, before the producing
 // watcher goroutine becomes hot. It is safe to call concurrently with Emit.
-func (t *perRunEventTap) Subscribe() <-chan core.EventEnvelope {
+func (t *PerRunEventTap) Subscribe() <-chan core.EventEnvelope {
 	ch := make(chan core.EventEnvelope, perRunEventTapBufSize)
 	t.mu.Lock()
 	t.subs = append(t.subs, ch)
@@ -120,7 +121,7 @@ func (t *perRunEventTap) Subscribe() <-chan core.EventEnvelope {
 // fanOut delivers env to every registered subscriber channel. Each send is
 // non-blocking: if a subscriber's buffer is full the event is dropped for that
 // subscriber only, never blocking the producer or starving other subscribers.
-func (t *perRunEventTap) fanOut(env core.EventEnvelope) {
+func (t *PerRunEventTap) fanOut(env core.EventEnvelope) {
 	t.mu.Lock()
 	subs := t.subs
 	t.mu.Unlock()
@@ -143,7 +144,7 @@ func (t *perRunEventTap) fanOut(env core.EventEnvelope) {
 // If a subscriber channel is full (producer faster than that consumer), the
 // event is discarded for that subscriber rather than blocking. This is
 // intentional: the watcher goroutine MUST NOT be blocked by a slow consumer.
-func (t *perRunEventTap) Emit(ctx context.Context, eventType core.EventType, payload []byte) error {
+func (t *PerRunEventTap) Emit(ctx context.Context, eventType core.EventType, payload []byte) error {
 	// Delegate to underlying first — bus delivery takes priority.
 	err := t.underlying.Emit(ctx, eventType, payload)
 
@@ -167,7 +168,7 @@ func (t *perRunEventTap) Emit(ctx context.Context, eventType core.EventType, pay
 // The watcher uses plain Emit (not EmitWithRunID), but this method is required
 // to satisfy handlercontract.EventEmitter. It is also called by the daemon
 // heartbeat emitter (newDaemonHeartbeatEmitter) which uses EmitWithRunID.
-func (t *perRunEventTap) EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error {
+func (t *PerRunEventTap) EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error {
 	err := t.underlying.EmitWithRunID(ctx, runID, eventType, payload)
 
 	var env core.EventEnvelope

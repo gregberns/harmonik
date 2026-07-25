@@ -44,6 +44,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -89,7 +90,7 @@ type dispatchSegment struct {
 	// agent_ready through it so the synthetic ready is bus-visible exactly like
 	// the relay-synthesized one. tapCh is the tap subscription the ready pump
 	// consumes (the channel waitAgentReady formerly blocked on).
-	tap   *perRunEventTap
+	tap   *runloop.PerRunEventTap
 	tapCh <-chan core.EventEnvelope
 
 	// launch performs the site's handler.Launch. It returns the watcher's Done

@@ -1656,7 +1656,7 @@ func dispatchDotAgenticNode(
 		handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
-	tap, tapCh := newPerRunEventTap(emit, runID)
+	tap, tapCh := runloop.NewPerRunEventTap(emit, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 	// hk-47u9z: arm the SessionIDCaptured spawn proof now that the per-run tap
@@ -2845,7 +2845,7 @@ func emitDotImplementerResumed(
 // point is to record that the agent DID spawn, which stays true even once the
 // run is cancelled), but it should still carry the caller's values instead of an
 // empty root.
-func newCapturedSpawnProof(ctx context.Context, tap *perRunEventTap, runID core.RunID) func() {
+func newCapturedSpawnProof(ctx context.Context, tap *runloop.PerRunEventTap, runID core.RunID) func() {
 	emitCtx := context.WithoutCancel(ctx)
 	var once sync.Once
 	return func() {

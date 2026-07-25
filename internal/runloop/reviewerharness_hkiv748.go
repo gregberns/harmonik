@@ -1,4 +1,4 @@
-package daemon
+package runloop
 
 // reviewerharness_hkiv748.go — reviewer harness resolution (codex-harness C5/T14, hk-iv748).
 //
@@ -69,7 +69,12 @@ import (
 // harness_selected at tier 3 with the fallback value.
 //
 // Bead: hk-pkxju.
-func reviewerDefaultHarness(
+// ReviewerDefaultHarness applies the inherited-reviewer fallback.
+//
+// Temporary export: reviewloop.go still calls this from internal/daemon. LIFT L8
+// moves that caller into this package, after which this narrows back to
+// reviewerDefaultHarness.
+func ReviewerDefaultHarness(
 	reg *handlercontract.HarnessRegistry,
 	implementer core.AgentType,
 	beadID string,
@@ -106,8 +111,21 @@ func reviewerDefaultHarness(
 // harness: that is the seam the "teach codex to review" fast-follow will use.
 //
 // Bead: hk-pkxju.
-func dotReviewerInheritedHarnessOverride(
+// DotReviewerInheritedHarnessOverride applies the inherited-reviewer fallback
+// to a DOT reviewer.
+//
+// Temporary export: dot_gate.go and dot_cascade.go still call this from
+// internal/daemon. LIFT L9 moves the gate caller and LIFT L12 moves the cascade
+// caller; after LIFT L12 this narrows back to
+// dotReviewerInheritedHarnessOverride.
+func DotReviewerInheritedHarnessOverride(
 	reg *handlercontract.HarnessRegistry,
+	resolveQuiet func(
+		core.BeadRecord,
+		core.AgentType,
+		core.AgentType,
+		core.AgentType,
+	) core.AgentType,
 	isReviewer bool,
 	reviewerHarnessOverride core.AgentType,
 	nodeHarness core.AgentType,
@@ -115,19 +133,19 @@ func dotReviewerInheritedHarnessOverride(
 	globalDefault core.AgentType,
 	beadID string,
 ) core.AgentType {
-	if !isReviewer || reg == nil {
+	if !isReviewer || reg == nil || resolveQuiet == nil {
 		return core.AgentType("")
 	}
 	if reviewerHarnessOverride.Valid() || nodeHarness.Valid() {
 		return core.AgentType("") // explicit operator pin — leave it alone
 	}
-	inherited := resolveHarnessAgentTypeQuiet(
+	inherited := resolveQuiet(
 		bead,
 		core.AgentType(""), // queue default (hk-4x3rg not landed)
 		core.AgentType(""), // node default: absent, that is this branch's premise
 		globalDefault,
 	)
-	fallback := reviewerDefaultHarness(reg, inherited, beadID)
+	fallback := ReviewerDefaultHarness(reg, inherited, beadID)
 	if fallback == inherited {
 		return core.AgentType("") // nothing to correct; keep deps.launchSpecBuilder
 	}

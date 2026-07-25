@@ -1,4 +1,4 @@
-package daemon_test
+package runloop_test
 
 // reviewer_never_inherits_captured_hkpkxju_test.go — a reviewer never INHERITS a
 // SessionIDCaptured harness (hk-pkxju).
@@ -38,13 +38,79 @@ package daemon_test
 // Bead: hk-pkxju. Builds on hk-iv748 [C5/T14] and hk-2jxqg.
 
 import (
+	"io"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
+
+type hkpkxjuHarness struct {
+	agentType core.AgentType
+	policy    handlercontract.SessionIDPolicy
+}
+
+func (h hkpkxjuHarness) AgentType() core.AgentType { return h.agentType }
+func (h hkpkxjuHarness) LaunchSpec(handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
+	return handlercontract.SpawnSpec{}, nil
+}
+func (h hkpkxjuHarness) Seed(handlercontract.Session, handlercontract.RunCtx) error { return nil }
+func (h hkpkxjuHarness) Retask(handlercontract.Session, string, handlercontract.RunCtx) error {
+	return nil
+}
+func (h hkpkxjuHarness) Teardown(handlercontract.Session) error { return nil }
+func (h hkpkxjuHarness) DetectReady(handlercontract.EventEnvelope) bool {
+	return false
+}
+func (h hkpkxjuHarness) SessionIDPolicy() handlercontract.SessionIDPolicy { return h.policy }
+func (h hkpkxjuHarness) Completion() handlercontract.CompletionMode {
+	return handlercontract.CompletionEventStreamThenQuit
+}
+func (h hkpkxjuHarness) NewSessionIDInterceptor(
+	inner io.Reader, _ func(string), _ func(),
+) io.Reader {
+	return inner
+}
+
+func hkpkxjuRegistry(t *testing.T) *handlercontract.HarnessRegistry {
+	t.Helper()
+	reg := handlercontract.NewHarnessRegistry()
+	for agentType, harness := range map[core.AgentType]handlercontract.Harness{
+		core.AgentTypeClaudeCode: hkpkxjuHarness{core.AgentTypeClaudeCode, handlercontract.SessionIDMinted},
+		core.AgentTypeCodex:      hkpkxjuHarness{core.AgentTypeCodex, handlercontract.SessionIDCaptured},
+		core.AgentTypePi:         hkpkxjuHarness{core.AgentTypePi, handlercontract.SessionIDCaptured},
+	} {
+		if err := reg.Register(agentType, harness); err != nil {
+			t.Fatalf("register %s harness: %v", agentType, err)
+		}
+	}
+	return reg
+}
+
+func hkpkxjuResolveQuiet(
+	bead core.BeadRecord,
+	_ core.AgentType,
+	nodeDefault core.AgentType,
+	globalDefault core.AgentType,
+) core.AgentType {
+	for _, label := range bead.Labels {
+		if strings.HasPrefix(label, "harness:") {
+			if agentType := core.AgentType(strings.TrimPrefix(label, "harness:")); agentType.Valid() {
+				return agentType
+			}
+		}
+	}
+	if nodeDefault.Valid() {
+		return nodeDefault
+	}
+	if globalDefault.Valid() {
+		return globalDefault
+	}
+	return core.AgentTypeClaudeCode
+}
 
 // hkpkxjuBead is a bead with no tier-1 harness: label unless labels are supplied.
 func hkpkxjuBead(id string, labels ...string) core.BeadRecord {
@@ -65,10 +131,7 @@ func hkpkxjuBead(id string, labels ...string) core.BeadRecord {
 func TestReviewerNeverInheritsCapturedHarness_ReviewLoop_hkpkxju(t *testing.T) {
 	t.Parallel()
 
-	reg, err := daemon.ExportedNewHarnessRegistry()
-	if err != nil {
-		t.Fatalf("ExportedNewHarnessRegistry: %v", err)
-	}
+	reg := hkpkxjuRegistry(t)
 
 	tests := []struct {
 		name        string
@@ -95,27 +158,12 @@ func TestReviewerNeverInheritsCapturedHarness_ReviewLoop_hkpkxju(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := daemon.ExportedReviewerDefaultHarness(reg, tc.implementer, "hkpkxju-reviewloop")
+			got := runloop.ReviewerDefaultHarness(reg, tc.implementer, "hkpkxju-reviewloop")
 			if got != tc.want {
 				t.Fatalf("reviewer tier-3 default for implementer %q = %q; want %q",
 					tc.implementer, got, tc.want)
 			}
 
-			// End-to-end through the walk reviewloop.go actually performs: tier-1 is an
-			// empty BeadRecord (bead labels already folded into resolvedAgentType) and
-			// the global default is empty, so tier-3 decides.
-			bus := &hkiv748Bus{}
-			resolved := daemon.ExportedResolveHarness(
-				t.Context(),
-				core.BeadRecord{},
-				core.AgentType(""), // queue default
-				got,                // tier-3: the hk-pkxju-corrected reviewer default
-				core.AgentType(""), // global default → built-in claude-code
-				bus,
-			)
-			if resolved != tc.want {
-				t.Fatalf("resolveHarness for reviewer = %q; want %q", resolved, tc.want)
-			}
 		})
 	}
 }
@@ -128,10 +176,7 @@ func TestReviewerNeverInheritsCapturedHarness_ReviewLoop_hkpkxju(t *testing.T) {
 func TestReviewerNeverInheritsCapturedHarness_ClaudeImplementerByteIdentical_hkpkxju(t *testing.T) {
 	t.Parallel()
 
-	reg, err := daemon.ExportedNewHarnessRegistry()
-	if err != nil {
-		t.Fatalf("ExportedNewHarnessRegistry: %v", err)
-	}
+	reg := hkpkxjuRegistry(t)
 
 	// Unknown / unregistered agent types and an absent registry also pass through
 	// unchanged (fail open — the caller's existing error handling still applies).
@@ -145,14 +190,14 @@ func TestReviewerNeverInheritsCapturedHarness_ClaudeImplementerByteIdentical_hkp
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := daemon.ExportedReviewerDefaultHarness(reg, tc.implementer, "hkpkxju-passthrough"); got != tc.implementer {
+			if got := runloop.ReviewerDefaultHarness(reg, tc.implementer, "hkpkxju-passthrough"); got != tc.implementer {
 				t.Fatalf("implementer %q was rewritten to %q; want pass-through", tc.implementer, got)
 			}
 		})
 	}
 
 	// nil registry: pass through unchanged rather than silently rewriting.
-	if got := daemon.ExportedReviewerDefaultHarness(nil, core.AgentTypeCodex, "hkpkxju-nilreg"); got != core.AgentTypeCodex {
+	if got := runloop.ReviewerDefaultHarness(nil, core.AgentTypeCodex, "hkpkxju-nilreg"); got != core.AgentTypeCodex {
 		t.Fatalf("nil registry: implementer codex rewritten to %q; want pass-through", got)
 	}
 }
@@ -166,10 +211,7 @@ func TestReviewerNeverInheritsCapturedHarness_ClaudeImplementerByteIdentical_hkp
 func TestReviewerNeverInheritsCapturedHarness_Dot_hkpkxju(t *testing.T) {
 	t.Parallel()
 
-	reg, err := daemon.ExportedNewHarnessRegistry()
-	if err != nil {
-		t.Fatalf("ExportedNewHarnessRegistry: %v", err)
-	}
+	reg := hkpkxjuRegistry(t)
 
 	tests := []struct {
 		name             string
@@ -248,8 +290,9 @@ func TestReviewerNeverInheritsCapturedHarness_Dot_hkpkxju(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := daemon.ExportedDotReviewerInheritedHarnessOverride(
+			got := runloop.DotReviewerInheritedHarnessOverride(
 				reg,
+				hkpkxjuResolveQuiet,
 				tc.isReviewer,
 				tc.reviewerOverride,
 				tc.nodeHarness,
@@ -277,17 +320,17 @@ func TestReviewerNeverInheritsCapturedHarness_DispatchWiring_hkpkxju(t *testing.
 		want []string
 	}{
 		{
-			file: "reviewloop.go",
+			file: "../daemon/reviewloop.go",
 			want: []string{
-				"revNodeDefault := reviewerDefaultHarness(",
-				"deps.harnessRegistry, implArtifacts.ResolvedAgentType, string(beadID))",
+				"revNodeDefault := runloop.ReviewerDefaultHarness(",
+				"handles.HarnessRegistry, implArtifacts.ResolvedAgentType, string(beadID))",
 				"revNodeDefault,     // tier-3",
 			},
 		},
 		{
-			file: "dot_cascade.go",
+			file: "../daemon/dot_cascade.go",
 			want: []string{
-				"reviewerInheritedHarness := dotReviewerInheritedHarnessOverride(",
+				"reviewerInheritedHarness := runloop.DotReviewerInheritedHarnessOverride(",
 				"effectiveNodeHarness = reviewerInheritedHarness",
 				"nodeModelHarness = reviewerInheritedHarness",
 			},

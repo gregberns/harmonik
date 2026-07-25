@@ -1260,7 +1260,7 @@ func runReviewLoop(
 		// reviewerDefaultHarness swaps such an inherited harness for claude and returns
 		// a claude/SessionIDMinted implementer unchanged (all-claude byte-identical).
 		revSpecBuilder := ports.LaunchBuilder
-		revNodeDefault := reviewerDefaultHarness(
+		revNodeDefault := runloop.ReviewerDefaultHarness(
 			handles.HarnessRegistry, implArtifacts.ResolvedAgentType, string(beadID))
 		if handles.HarnessRegistry != nil && revNodeDefault.Valid() {
 			revSpecBuilder = routedLaunchSpecBuilder(

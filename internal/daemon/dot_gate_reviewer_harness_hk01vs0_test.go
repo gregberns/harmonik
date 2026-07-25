@@ -476,7 +476,7 @@ func TestCognitionGateHarnessDispatchWiring_hk01vs0(t *testing.T) {
 		{
 			file: "dot_gate.go",
 			want: []string{
-				"gateInheritedHarness := dotReviewerInheritedHarnessOverride(",
+				"gateInheritedHarness := runloop.DotReviewerInheritedHarnessOverride(",
 				"specBuilder = pinnedHarnessLaunchSpecBuilder(",
 				"gateInheritedHarness,",
 			},

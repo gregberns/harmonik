@@ -1353,8 +1353,9 @@ func dispatchDotAgenticNode(
 	// reviewer never inherits a SessionIDCaptured harness. Computed ONCE here (it logs)
 	// and consumed by BOTH the model scoping immediately below and the specBuilder
 	// selection further down, so the two stay in agreement as this comment promises.
-	reviewerInheritedHarness := dotReviewerInheritedHarnessOverride(
+	reviewerInheritedHarness := runloop.DotReviewerInheritedHarnessOverride(
 		handles.HarnessRegistry,
+		resolveHarnessAgentTypeQuiet,
 		isReviewer,
 		reviewerHarnessOverride,
 		core.AgentType(node.Harness),

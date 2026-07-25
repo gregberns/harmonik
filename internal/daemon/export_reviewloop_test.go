@@ -13,36 +13,9 @@ import (
 	"context"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/handlercontract"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
-
-// ExportedReviewerDefaultHarness exposes reviewerDefaultHarness for tests in
-// package daemon_test. See reviewerharness_hkiv748.go (hk-pkxju).
-func ExportedReviewerDefaultHarness(
-	reg *handlercontract.HarnessRegistry,
-	implementer core.AgentType,
-	beadID string,
-) core.AgentType {
-	return reviewerDefaultHarness(reg, implementer, beadID)
-}
-
-// ExportedDotReviewerInheritedHarnessOverride exposes
-// dotReviewerInheritedHarnessOverride for tests in package daemon_test.
-// See reviewerharness_hkiv748.go (hk-pkxju).
-func ExportedDotReviewerInheritedHarnessOverride(
-	reg *handlercontract.HarnessRegistry,
-	isReviewer bool,
-	reviewerHarnessOverride core.AgentType,
-	nodeHarness core.AgentType,
-	bead core.BeadRecord,
-	globalDefault core.AgentType,
-	beadID string,
-) core.AgentType {
-	return dotReviewerInheritedHarnessOverride(
-		reg, isReviewer, reviewerHarnessOverride, nodeHarness, bead, globalDefault, beadID)
-}
 
 // ReviewLoopResultExported is the exported shape of reviewLoopResult for tests
 // in package daemon_test. Fields mirror reviewLoopResult verbatim.

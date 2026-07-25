@@ -62,7 +62,9 @@ done
 # Moved functions must not be recreated under their former daemon-local names
 # (or under L5's temporary exported bridge name).
 for sym in newPerRunEventTap runScenarioGateIfNeededVia RunScenarioGateIfNeededVia \
-           newRunBridge NewRunBridge runBridgeConfig; do
+           newRunBridge NewRunBridge runBridgeConfig \
+           reviewerDefaultHarness ReviewerDefaultHarness \
+           dotReviewerInheritedHarnessOverride DotReviewerInheritedHarnessOverride; do
     MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E \
         "^[[:space:]]*func[[:space:]]+${sym}\\b" \
         internal/daemon 2>/dev/null || true)"
@@ -79,7 +81,8 @@ done
 for f in internal/runloop/ports.go internal/runloop/workloopeventsource.go \
          internal/runloop/postreadyhang.go internal/runloop/waitsocketgrace.go \
          internal/runloop/runshell.go internal/runloop/dispatchsegment.go \
-         internal/runloop/scenariogate.go internal/runloop/runbridge.go; do
+         internal/runloop/scenariogate.go internal/runloop/runbridge.go \
+         internal/runloop/reviewerharness_hkiv748.go; do
     if [ ! -f "$f" ]; then
         echo "runloop-freeze-gate: destination $f is gone — re-derive this gate" >&2
         HITS=$((HITS + 1))
@@ -115,6 +118,11 @@ fi
 
 if [ -f internal/daemon/runbridge.go ]; then
     echo "runloop-freeze-gate: forbidden source file internal/daemon/runbridge.go was recreated" >&2
+    HITS=$((HITS + 1))
+fi
+
+if [ -f internal/daemon/reviewerharness_hkiv748.go ]; then
+    echo "runloop-freeze-gate: forbidden source file internal/daemon/reviewerharness_hkiv748.go was recreated" >&2
     HITS=$((HITS + 1))
 fi
 

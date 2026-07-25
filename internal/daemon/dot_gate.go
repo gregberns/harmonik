@@ -353,8 +353,9 @@ func executeCognitionGate(
 	// footgun). Empty return ⇒ the pre-built launch-spec builder stands untouched, so an
 	// all-claude run is byte-identical to pre-hk-01vs0 behaviour.
 	specBuilder := ports.LaunchBuilder
-	gateInheritedHarness := dotReviewerInheritedHarnessOverride(
+	gateInheritedHarness := runloop.DotReviewerInheritedHarnessOverride(
 		handles.HarnessRegistry,
+		resolveHarnessAgentTypeQuiet,
 		true,               // a cognition gate is reviewer-class by construction
 		core.AgentType(""), // reviewer_harness=: never applies to a gate node
 		core.AgentType(""), // node.Harness: not a gate-path mechanism (see above)

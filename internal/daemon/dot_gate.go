@@ -574,7 +574,7 @@ func executeCognitionGate(
 	// Working / Exited / Aborted: fall through — the pre-RT14 posture for
 	// agent_ready-observed, watcher-exit-first, and ctx-cancel.
 
-	_, _ = waitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
+	_, _ = runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {

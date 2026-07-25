@@ -1,4 +1,4 @@
-package daemon
+package runloop
 
 // waitsocketgrace.go — waitWithSocketGrace helper for the workloop completion path.
 //
@@ -38,7 +38,7 @@ import (
 // write.  3 s covers hook execution + relay process startup + socket
 // round-trip with margin; longer windows risk operator-perceived hangs on
 // crash cases where no hook will arrive.
-const stopHookGrace = 3 * time.Second
+const StopHookGrace = 3 * time.Second
 
 // killWatcherReapGrace bounds the post-Kill wait for the watcher goroutine to
 // drain on the ctx-cancel (operator-stop / SIGINT / SIGTERM) path.
@@ -61,10 +61,10 @@ const stopHookGrace = 3 * time.Second
 const killWatcherReapGrace = 3 * time.Second
 
 // exitInfo carries the process exit metadata captured after sess.Wait() returns.
-type exitInfo struct {
-	exitCode   int
-	waitErr    error
-	stderrTail []byte // last ~4 KiB of subprocess stderr; nil for substrate sessions
+type ExitInfo struct {
+	ExitCode   int
+	WaitErr    error
+	StderrTail []byte // last ~4 KiB of subprocess stderr; nil for substrate sessions
 }
 
 // waitWithSocketGrace races ctx cancellation against watcher completion, reaps
@@ -87,14 +87,14 @@ type exitInfo struct {
 //
 // Spec: specs/claude-hook-bridge.md §4.7 CHB-020, §4.10 CHB-025.
 // Bead: hk-gql20.22.
-func waitWithSocketGrace(
+func WaitWithSocketGrace(
 	ctx context.Context,
 	clk substrate.ClockPort,
-	store hookStoreIface,
+	store HookStore,
 	watcher *handlercontract.Watcher,
 	sess handler.Session,
 	runID, claudeSessID string,
-) (*handler.ExportedOutcomeEmittedPayload, exitInfo) {
+) (*handler.ExportedOutcomeEmittedPayload, ExitInfo) {
 	if clk == nil {
 		clk = substrate.SystemClock{}
 	}
@@ -150,7 +150,7 @@ func waitWithSocketGrace(
 	// failReason in workloop.go's reopen path.
 	waitErr := sess.Wait(ctx)
 	outcome := sess.Outcome()
-	ei := exitInfo{exitCode: outcome.ExitCode, waitErr: waitErr, stderrTail: outcome.StderrTail}
+	ei := ExitInfo{ExitCode: outcome.ExitCode, WaitErr: waitErr, StderrTail: outcome.StderrTail}
 
 	// Step 3: fast path — check for an outcome already present in the store.
 	if outcome := parseLatestOutcome(store.LatestOutcome(runID, claudeSessID)); outcome != nil {
@@ -158,7 +158,7 @@ func waitWithSocketGrace(
 	}
 
 	// Step 4: slow path — wait up to stopHookGrace for a Stop hook relay.
-	graceCtx, cancel := context.WithTimeout(context.Background(), stopHookGrace)
+	graceCtx, cancel := context.WithTimeout(context.Background(), StopHookGrace)
 	defer cancel()
 	rawOutcome, _ := store.WaitForOutcome(graceCtx, runID, claudeSessID)
 	if rawOutcome != nil {

@@ -5037,7 +5037,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
 	// apply the stop-hook grace window for a pending outcome_emitted payload.
-	socketOutcome, ei := waitWithSocketGrace(ctx, rp.Clock, handles.HookStore, watcher, sess,
+	socketOutcome, ei := runloop.WaitWithSocketGrace(ctx, rp.Clock, handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	// hk-0z5x: per-run abort check — fired when the never-spawned reaper in
@@ -5068,7 +5068,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// invalid for the current state (e.g. machine already in StateFailed from
 	// agent_failed) are silently ignored.
 	transitionToTerminated(context.Background(), sess.Machine(), runID, emit,
-		ei.exitCode, ei.waitErr)
+		ei.ExitCode, ei.WaitErr)
 
 	// hk-e6mtt: destroy the tmux window after the session completes so dead panes
 	// do not persist after run-fail/cancel. On the natural-exit path (claude /quit),
@@ -5099,7 +5099,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	{
 		curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA
-		runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, ei.exitCode, ei.stderrTail,
+		runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, ei.ExitCode, ei.StderrTail,
 			commitLanded, implementerPhaseDur)
 	}
 
@@ -5162,7 +5162,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 	// Step 8: map Wait-return to a terminal event (CHB-020 branches 1/2/3).
 	term := handler.MapWaitReturnToTerminalEvent(
-		artifacts.HandlerSessionID, ei.exitCode, ei.waitErr, socketOutcome,
+		artifacts.HandlerSessionID, ei.ExitCode, ei.WaitErr, socketOutcome,
 	)
 
 	// Step 9: emit terminal event and close or reopen the bead.
@@ -5287,7 +5287,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// (workloop.go ~2804), regardless of where main points. This mirrors the
 		// review-loop no-commit guard (reviewloop.go ~567), which never had the
 		// escape.
-		failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.exitCode)
+		failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.ExitCode)
 		failRun(failReason, failReason)
 		return
 	}
@@ -5304,7 +5304,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// path label "agent_completed" + its close summary (RSM-033).
 		bridge.feed(ctx, runexec.Event{Kind: runexec.EvAgentCompleted, Detail: "agent_completed: stop-hook outcome"})
 
-	case socketOutcome == nil && ei.exitCode == exitCodeClean && !watcherFailed:
+	case socketOutcome == nil && ei.ExitCode == exitCodeClean && !watcherFailed:
 		// No stop-hook arrived AND handler exited 0 without watcher error: the
 		// pre-bridge close-on-exit-0 heuristic for MVH twin-blind runs. Latches
 		// path label "auto-close" (RSM-033).
@@ -5363,18 +5363,18 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			var failReason string
 			if watcherFailed {
 				failReason = fmt.Sprintf("watcher error: %v exit=%d run_id=%s",
-					watcherErr, ei.exitCode, runID.String())
+					watcherErr, ei.ExitCode, runID.String())
 			} else if term.SubReason != "" {
 				failReason = fmt.Sprintf("agent_failed class=%s sub_reason=%s exit=%d run_id=%s",
-					term.Class, term.SubReason, ei.exitCode, runID.String())
+					term.Class, term.SubReason, ei.ExitCode, runID.String())
 			} else {
-				failReason = fmt.Sprintf("exit=%d run_id=%s", ei.exitCode, runID.String())
+				failReason = fmt.Sprintf("exit=%d run_id=%s", ei.ExitCode, runID.String())
 			}
 			// Surface stderr tail when available — helps diagnose exit=-1 crashes
 			// where the agent produced no NDJSON output (hk-ajhqw).
-			if len(ei.stderrTail) > 0 {
+			if len(ei.StderrTail) > 0 {
 				const maxTailInReason = 200
-				tail := ei.stderrTail
+				tail := ei.StderrTail
 				truncated := ""
 				if len(tail) > maxTailInReason {
 					tail = tail[len(tail)-maxTailInReason:]

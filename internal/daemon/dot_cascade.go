@@ -1937,7 +1937,7 @@ func dispatchDotAgenticNode(
 	// Working / Exited / Aborted: fall through to waitWithSocketGrace — the
 	// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
-	_, nodeEI := waitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
+	_, nodeEI := runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {
@@ -1955,8 +1955,8 @@ func dispatchDotAgenticNode(
 	if !isReviewer {
 		curHead, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		commitLanded := curHead != "" && curHead != preHeadSHA
-		runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, nodeEI.exitCode,
-			nodeEI.stderrTail, commitLanded, nodePhaseDur)
+		runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, nodeEI.ExitCode,
+			nodeEI.StderrTail, commitLanded, nodePhaseDur)
 	}
 
 	if handles.HookStore != nil {

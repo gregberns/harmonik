@@ -84,7 +84,7 @@ type ExitInfoExported struct {
 // that the fast-path returns well within the grace window.
 //
 // Bead: hk-3jmke.
-const ExportedStopHookGrace = stopHookGrace
+const ExportedStopHookGrace = runloop.StopHookGrace
 
 // ExportedWaitWithSocketGrace exposes waitWithSocketGrace for tests in package
 // daemon_test.
@@ -97,6 +97,6 @@ func ExportedWaitWithSocketGrace(
 	sess handler.Session,
 	runID, claudeSessID string,
 ) (*handler.ExportedOutcomeEmittedPayload, ExitInfoExported) {
-	outcome, ei := waitWithSocketGrace(ctx, substrate.SystemClock{}, store, watcher, sess, runID, claudeSessID)
-	return outcome, ExitInfoExported{ExitCode: ei.exitCode, WaitErr: ei.waitErr, StderrTail: ei.stderrTail}
+	outcome, ei := runloop.WaitWithSocketGrace(ctx, substrate.SystemClock{}, store, watcher, sess, runID, claudeSessID)
+	return outcome, ExitInfoExported{ExitCode: ei.ExitCode, WaitErr: ei.WaitErr, StderrTail: ei.StderrTail}
 }

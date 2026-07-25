@@ -44,7 +44,8 @@ for sym in RunPorts RunEnv SharedHandles \
            LedgerPort EmitterPort WorktreePort MergePort LaunchPort \
            GatePort BudgetPort RunRegistryPort RunHandlePort PerRunEventTap \
            ErrPostAgentReadyHang DefaultPostAgentReadyHangTimeout \
-           WaitPostAgentReadyProgress EmitPostAgentReadyHang; do
+           WaitPostAgentReadyProgress EmitPostAgentReadyHang \
+           ExitInfo StopHookGrace WaitWithSocketGrace; do
     MATCHES="$(grep -rn --include='*.go' --exclude='*_test.go' -E \
         "^[[:space:]]*(type[[:space:]]+|var[[:space:]]+|const[[:space:]]+)?${sym}\b[[:space:]]*(=|struct|interface|func|\()" \
         internal/daemon 2>/dev/null \
@@ -70,7 +71,7 @@ fi
 #     silently stops testing what it claims to test. (Later chunks append their
 #     moved run-path files here.)
 for f in internal/runloop/ports.go internal/runloop/workloopeventsource.go \
-         internal/runloop/postreadyhang.go; do
+         internal/runloop/postreadyhang.go internal/runloop/waitsocketgrace.go; do
     if [ ! -f "$f" ]; then
         echo "runloop-freeze-gate: destination $f is gone — re-derive this gate" >&2
         HITS=$((HITS + 1))
@@ -84,6 +85,11 @@ fi
 
 if [ -f internal/daemon/postreadyhang.go ]; then
     echo "runloop-freeze-gate: forbidden source file internal/daemon/postreadyhang.go was recreated" >&2
+    HITS=$((HITS + 1))
+fi
+
+if [ -f internal/daemon/waitsocketgrace.go ]; then
+    echo "runloop-freeze-gate: forbidden source file internal/daemon/waitsocketgrace.go was recreated" >&2
     HITS=$((HITS + 1))
 fi
 

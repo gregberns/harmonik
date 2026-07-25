@@ -790,7 +790,7 @@ func runReviewLoop(
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
-		_, implEI := waitWithSocketGrace(ctx, ports.Clock, handles.HookStore, implWatcher, implSess,
+		_, implEI := runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, implWatcher, implSess,
 			runID.String(), implArtifacts.ClaudeSessionID)
 		// implEI carries exit code + stderr tail; surfaced into the no-commit
 		// failure summary below (hk-loga9, extends hk-ajhqw's single-mode fix).
@@ -808,8 +808,8 @@ func runReviewLoop(
 		{
 			curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 			commitLanded := curHead != "" && curHead != parentSHA
-			runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, implEI.exitCode,
-				implEI.stderrTail, commitLanded, ports.Clock.Since(implLaunchedAt))
+			runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, implEI.ExitCode,
+				implEI.StderrTail, commitLanded, ports.Clock.Since(implLaunchedAt))
 		}
 
 		// Close this phase's hook session — late hooks from a completed implementer
@@ -892,21 +892,21 @@ func runReviewLoop(
 			}
 			if headSHA == noCommitBaseline {
 				summary := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration %d exit=%d",
-					noCommitBaseline, state.iterationCount, implEI.exitCode)
+					noCommitBaseline, state.iterationCount, implEI.ExitCode)
 				// Surface stderr tail when available — helps diagnose silent
 				// implementer crashes where the agent produced no NDJSON output.
 				// Mirrors workloop.go:1428-1441 (hk-ajhqw single-mode fix).
 				// Bead: hk-loga9.
-				if len(implEI.stderrTail) > 0 {
+				if len(implEI.StderrTail) > 0 {
 					const maxTailInReason = 200
-					tail := implEI.stderrTail
+					tail := implEI.StderrTail
 					truncated := ""
 					if len(tail) > maxTailInReason {
 						tail = tail[len(tail)-maxTailInReason:]
 						truncated = " (truncated)"
 					}
 					fmt.Fprintf(os.Stderr, "daemon: review-loop: implementer exited without commit; bead %s run %s exit=%d stderr tail%s:\n%s\n",
-						beadID, runID.String(), implEI.exitCode, truncated, tail)
+						beadID, runID.String(), implEI.ExitCode, truncated, tail)
 					summary += fmt.Sprintf(" stderr_tail%s=%q", truncated, tail)
 				}
 				result := reviewLoopResult{
@@ -1511,7 +1511,7 @@ func runReviewLoop(
 		// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
-		_, revEI := waitWithSocketGrace(ctx, ports.Clock, handles.HookStore, revWatcher, revSess,
+		_, revEI := runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, revWatcher, revSess,
 			runID.String(), revArtifacts.ClaudeSessionID)
 		_ = revEI
 

@@ -234,9 +234,9 @@ func (b *runBridge) gateHook(a spineArgs) func(context.Context) []runexec.Event 
 		if a.skipGate {
 			return []runexec.Event{{Kind: runexec.EvGatePassed}}
 		}
-		if sgr := runScenarioGateIfNeededVia(c, a.runRunner, a.wtPath, a.headSHA); sgr.blocked {
-			b.rejectReason = sgr.reason
-			return []runexec.Event{{Kind: runexec.EvGateFailed, Reason: sgr.reason}}
+		if sgr := runloop.RunScenarioGateIfNeededVia(c, a.runRunner, a.wtPath, a.headSHA); sgr.Blocked {
+			b.rejectReason = sgr.Reason
+			return []runexec.Event{{Kind: runexec.EvGateFailed, Reason: sgr.Reason}}
 		}
 		return []runexec.Event{{Kind: runexec.EvGatePassed}}
 	}

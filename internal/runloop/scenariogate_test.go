@@ -1,4 +1,4 @@
-package daemon
+package runloop
 
 import (
 	"context"
@@ -75,8 +75,8 @@ func skipScenarioGateSubprocessTests(t *testing.T) {
 func TestClassifyScenarioGateError_Pass(t *testing.T) {
 	// testErr == nil → tests passed → non-block.
 	res := classifyScenarioGateError(nil, nil, []byte("ok\tpkg\t0.5s\n"), []string{"./internal/daemon/..."})
-	require.False(t, res.blocked)
-	require.Empty(t, res.reason)
+	require.False(t, res.Blocked)
+	require.Empty(t, res.Reason)
 }
 
 func TestClassifyScenarioGateError_Killed(t *testing.T) {
@@ -84,37 +84,37 @@ func TestClassifyScenarioGateError_Killed(t *testing.T) {
 	// SIGKILL (the OOM shape) → gate could not produce a verdict → non-block.
 	killErr := killedExitError(t)
 	res := classifyScenarioGateError(nil, killErr, []byte("signal: killed"), []string{"./internal/daemon/..."})
-	require.False(t, res.blocked, "SIGKILL must NOT block (fail-open)")
+	require.False(t, res.Blocked, "SIGKILL must NOT block (fail-open)")
 
 	// Also covered via the output marker even if the error shape were opaque.
 	res2 := classifyScenarioGateError(nil, exitErrorWithCode(t, 2), []byte("--- some output\nsignal: killed"), nil)
-	require.False(t, res2.blocked, "`signal: killed` output marker must NOT block")
+	require.False(t, res2.Blocked, "`signal: killed` output marker must NOT block")
 }
 
 func TestClassifyScenarioGateError_Timeout(t *testing.T) {
 	skipScenarioGateSubprocessTests(t)
 	// Gate context deadline exceeded → non-block.
 	res := classifyScenarioGateError(context.DeadlineExceeded, exitErrorWithCode(t, 1), []byte("panic: test timed out"), []string{"./internal/daemon/..."})
-	require.False(t, res.blocked, "timeout must NOT block (fail-open)")
+	require.False(t, res.Blocked, "timeout must NOT block (fail-open)")
 
 	// Also when the timeout surfaces on testErr (errors.Is chain).
 	res2 := classifyScenarioGateError(nil, context.DeadlineExceeded, []byte(""), nil)
-	require.False(t, res2.blocked)
+	require.False(t, res2.Blocked)
 }
 
 func TestClassifyScenarioGateError_CompileFail(t *testing.T) {
 	skipScenarioGateSubprocessTests(t)
 	// Exit code 2 from `go test` = build failure → non-block.
 	res := classifyScenarioGateError(nil, exitErrorWithCode(t, 2), []byte("# pkg\n./x.go:1:1: undefined: Foo\nFAIL\tpkg [build failed]\n"), []string{"./internal/daemon/..."})
-	require.False(t, res.blocked, "compile/build failure must NOT block (fail-open)")
+	require.False(t, res.Blocked, "compile/build failure must NOT block (fail-open)")
 
 	// `[setup failed]` marker even on exit code 1.
 	res2 := classifyScenarioGateError(nil, exitErrorWithCode(t, 1), []byte("FAIL\tpkg [setup failed]\n"), nil)
-	require.False(t, res2.blocked, "[setup failed] must NOT block")
+	require.False(t, res2.Blocked, "[setup failed] must NOT block")
 
 	// build-constraints-exclude marker.
 	res3 := classifyScenarioGateError(nil, exitErrorWithCode(t, 1), []byte("build constraints exclude all Go files in ...\n"), nil)
-	require.False(t, res3.blocked)
+	require.False(t, res3.Blocked)
 }
 
 func TestClassifyScenarioGateError_GenuineTestFail(t *testing.T) {
@@ -122,15 +122,15 @@ func TestClassifyScenarioGateError_GenuineTestFail(t *testing.T) {
 	// Exit code 1 with a real --- FAIL marker = tests ran and failed → BLOCK.
 	out := []byte("--- FAIL: TestSomething (0.01s)\n    foo_test.go:10: boom\nFAIL\ngithub.com/x/y\t0.02s\nFAIL\n")
 	res := classifyScenarioGateError(nil, exitErrorWithCode(t, 1), out, []string{"./internal/daemon/..."})
-	require.True(t, res.blocked, "a genuine test FAILURE must BLOCK")
-	require.Contains(t, res.reason, "scenario_gate_failed")
-	require.Contains(t, res.reason, "--- FAIL")
+	require.True(t, res.Blocked, "a genuine test FAILURE must BLOCK")
+	require.Contains(t, res.Reason, "scenario_gate_failed")
+	require.Contains(t, res.Reason, "--- FAIL")
 }
 
 func TestClassifyScenarioGateError_Unclassified(t *testing.T) {
 	// A non-ExitError error we cannot positively classify as RED → fail-open.
 	res := classifyScenarioGateError(nil, errors.New("exec: \"go\": executable file not found in $PATH"), []byte(""), nil)
-	require.False(t, res.blocked, "unclassified gate-infra error must NOT block (fail-open)")
+	require.False(t, res.Blocked, "unclassified gate-infra error must NOT block (fail-open)")
 }
 
 func TestIsSignalKill(t *testing.T) {
@@ -159,25 +159,25 @@ func TestIsGenuineTestFailure(t *testing.T) {
 	require.False(t, isGenuineTestFailure(errors.New("plain"), "--- FAIL"))
 }
 
-// genuineFailResult builds the scenarioGateResult that classifyScenarioGateError
+// genuineFailResult builds the ScenarioGateResult that classifyScenarioGateError
 // returns for a genuine exit-1 `--- FAIL` (the shape AllReachMerge /
 // CaptainCrewE2E produce when they flake under load).
-func genuineFailResult(t *testing.T) scenarioGateResult {
+func genuineFailResult(t *testing.T) ScenarioGateResult {
 	t.Helper()
 	out := []byte("--- FAIL: TestAllReachMerge (0.01s)\n    x_test.go:10: boom\nFAIL\ngithub.com/x/y\t0.02s\nFAIL\n")
 	res := classifyScenarioGateError(nil, exitErrorWithCode(t, 1), out, []string{"./internal/daemon/..."})
-	require.True(t, res.blocked, "precondition: a genuine FAIL must classify as blocked")
+	require.True(t, res.Blocked, "precondition: a genuine FAIL must classify as blocked")
 	return res
 }
 
 func TestScenarioGateWithRetry_PassFirstRun(t *testing.T) {
 	// A clean first run never retries and never blocks.
 	calls := 0
-	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
+	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() ScenarioGateResult {
 		calls++
-		return scenarioGateResult{} // pass
+		return ScenarioGateResult{} // pass
 	})
-	require.False(t, res.blocked)
+	require.False(t, res.Blocked)
 	require.Equal(t, 1, calls, "a passing first run must NOT retry")
 }
 
@@ -187,15 +187,15 @@ func TestScenarioGateWithRetry_FlakyThenPass(t *testing.T) {
 	// (hk-5em). This is the AllReachMerge / CaptainCrewE2E-under-load case the
 	// old gate false-blocked.
 	calls := 0
-	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
+	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() ScenarioGateResult {
 		calls++
 		if calls == 1 {
 			return genuineFailResult(t)
 		}
-		return scenarioGateResult{} // retry passes
+		return ScenarioGateResult{} // retry passes
 	})
-	require.False(t, res.blocked, "flaky red (fail run 1, pass run 2) must NOT block (fail-open)")
-	require.Empty(t, res.reason)
+	require.False(t, res.Blocked, "flaky red (fail run 1, pass run 2) must NOT block (fail-open)")
+	require.Empty(t, res.Reason)
 	require.Equal(t, 2, calls, "a first-run FAIL must trigger exactly one retry")
 }
 
@@ -205,13 +205,13 @@ func TestScenarioGateWithRetry_GenuineFailBothRuns(t *testing.T) {
 	// code-break must still be caught; retry does not weaken coverage.
 	calls := 0
 	want := genuineFailResult(t)
-	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
+	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() ScenarioGateResult {
 		calls++
 		return genuineFailResult(t)
 	})
-	require.True(t, res.blocked, "a deterministic regression (FAIL on both runs) must BLOCK")
-	require.Contains(t, res.reason, "scenario_gate_failed")
-	require.Equal(t, want.reason, res.reason, "the retry's reason is returned")
+	require.True(t, res.Blocked, "a deterministic regression (FAIL on both runs) must BLOCK")
+	require.Contains(t, res.Reason, "scenario_gate_failed")
+	require.Equal(t, want.Reason, res.Reason, "the retry's reason is returned")
 	require.Equal(t, 2, calls, "block requires the second (confirming) run")
 }
 
@@ -221,7 +221,7 @@ func TestScenarioGateWithRetry_FlakyThenNonBlockInfra(t *testing.T) {
 	// SIGKILL) on retry → still fail-open. The retry being non-block for ANY
 	// reason means we did not confirm a deterministic regression.
 	calls := 0
-	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
+	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() ScenarioGateResult {
 		calls++
 		if calls == 1 {
 			return genuineFailResult(t)
@@ -229,7 +229,7 @@ func TestScenarioGateWithRetry_FlakyThenNonBlockInfra(t *testing.T) {
 		// Retry surfaces as a timeout (non-block per classifyScenarioGateError).
 		return classifyScenarioGateError(context.DeadlineExceeded, exitErrorWithCode(t, 1), []byte("panic: test timed out"), []string{"./internal/daemon/..."})
 	})
-	require.False(t, res.blocked, "an unconfirmed first-run FAIL (retry non-block) must NOT block")
+	require.False(t, res.Blocked, "an unconfirmed first-run FAIL (retry non-block) must NOT block")
 	require.Equal(t, 2, calls)
 }
 

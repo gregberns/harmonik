@@ -25,6 +25,7 @@ package hook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 )
 
@@ -76,6 +77,11 @@ type sessionKey struct {
 
 // session tracks the dedup state for a single open handler session window.
 type session struct {
+	// handlerSessionID binds this registry generation to the concrete handler
+	// launch that owns it. An empty value is reserved for the legacy two-key
+	// compatibility API; new SessionRegistration callers are always bound.
+	handlerSessionID string
+
 	// latestOutcome is the payload from the most recently received
 	// outcome_emitted message. Replaced on every arrival (last-received-wins
 	// per CHB-025). nil until the first outcome_emitted is received.
@@ -98,6 +104,55 @@ type session struct {
 	// notifyAgentReady always sets readyFired, and SetAgentReadyCallback replays
 	// the callback immediately when readyFired was already set (H13).
 	readyFired bool
+
+	// readyDelivered records that the one genuine SessionStart-ready signal has
+	// been admitted to the callback. Relay retries may deliver agent_ready more
+	// than once, but a session registration exposes it exactly once.
+	readyDelivered bool
+
+	// nonterminalSealed prevents new ready-callback admission. Terminal hook
+	// outcome delivery deliberately remains open until Close: phase teardown
+	// seals nonterminal callbacks before it consumes the final Stop-hook state.
+	nonterminalSealed bool
+
+	// callbacksInFlight counts ready callbacks admitted under SessionStore.mu
+	// but not yet returned. callbacksDrained is created on the zero-to-one
+	// transition and closed on the one-to-zero transition. SealNonterminal
+	// first seals admission under the same mutex, then waits on this channel,
+	// making unregister a quiescence barrier without calling user code while
+	// holding the store mutex.
+	callbacksInFlight int
+	callbacksDrained  chan struct{}
+
+	// closed makes SessionRegistration.Close idempotent even when multiple
+	// handles for the same idempotently-registered session close concurrently.
+	closed bool
+}
+
+// ErrSessionRegistrationSealed is returned when a caller attempts to install a
+// nonterminal callback after the registration's admission barrier has sealed.
+var ErrSessionRegistrationSealed = errors.New("hook: session registration is sealed")
+
+// ErrSessionIdentityInvalid reports an incomplete identity passed to the
+// generation-bound registration API.
+var ErrSessionIdentityInvalid = errors.New("hook: session identity is incomplete")
+
+// ErrSessionRegistrationConflict reports an attempt to bind an already-open
+// (run_id, claude_session_id) window to a different handler launch.
+var ErrSessionRegistrationConflict = errors.New("hook: session registration conflicts with open generation")
+
+// SessionRegistration is the ownership handle for one hook-relay session
+// generation. It provides quiescent nonterminal callback sealing and
+// concurrency-safe, idempotent close while the legacy SessionStore methods
+// remain available as compatibility wrappers.
+//
+// A registration is generation-specific: if the same identifiers are
+// registered again after Close, an old handle cannot mutate or close the new
+// session.
+type SessionRegistration struct {
+	store *SessionStore
+	key   sessionKey
+	sess  *session
 }
 
 // SessionStore is the registry of active hook-relay sessions.
@@ -126,6 +181,44 @@ func NewSessionStore() *SessionStore {
 	}
 }
 
+// RegisterSession opens a generation-bound session window and returns its
+// ownership handle. handlerSessionID is the concrete per-launch identity carried
+// by RelayEnvelope.HandlerSessionID; binding it prevents a delayed envelope from
+// an earlier launch that reused (runID, claudeSessionID) from entering the new
+// generation.
+//
+// Registering the same complete identity again returns another handle to the
+// same generation. Registering a different handlerSessionID while the two-key
+// window is open returns ErrSessionRegistrationConflict.
+func (s *SessionStore) RegisterSession(runID, claudeSessionID, handlerSessionID string) (*SessionRegistration, error) {
+	if runID == "" || claudeSessionID == "" || handlerSessionID == "" {
+		return nil, ErrSessionIdentityInvalid
+	}
+	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
+	s.mu.Lock()
+	sess := s.sessions[key]
+	if sess == nil {
+		sess = &session{handlerSessionID: handlerSessionID}
+		s.sessions[key] = sess
+	} else if sess.handlerSessionID == "" {
+		// Migration bridge: a bound owner may adopt only a pristine legacy
+		// window. Once that unbound window has admitted a callback or relay
+		// state, its generation cannot be proven and adoption must fail closed.
+		if sess.latestOutcome != nil || sess.agentReadyCallback != nil ||
+			sess.readyFired || sess.readyDelivered || sess.nonterminalSealed ||
+			sess.callbacksInFlight != 0 {
+			s.mu.Unlock()
+			return nil, ErrSessionRegistrationConflict
+		}
+		sess.handlerSessionID = handlerSessionID
+	} else if sess.handlerSessionID != handlerSessionID {
+		s.mu.Unlock()
+		return nil, ErrSessionRegistrationConflict
+	}
+	s.mu.Unlock()
+	return &SessionRegistration{store: s, key: key, sess: sess}, nil
+}
+
 // RegisterHookSession opens the session window for (runID, claudeSessionID).
 //
 // Called from the work loop goroutine BEFORE dispatching the handler subprocess.
@@ -134,10 +227,26 @@ func NewSessionStore() *SessionStore {
 func (s *SessionStore) RegisterHookSession(runID, claudeSessionID string) {
 	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, exists := s.sessions[key]; !exists {
+	if s.sessions[key] == nil {
+		// handlerSessionID intentionally remains empty: this wrapper preserves
+		// the legacy two-key routing contract until its callers adopt
+		// RegisterSession with the concrete launch identity.
 		s.sessions[key] = &session{}
 	}
+	s.mu.Unlock()
+}
+
+// currentRegistration returns a generation-specific handle for the currently
+// registered key, or nil when the session is unknown.
+func (s *SessionStore) currentRegistration(runID, claudeSessionID string) *SessionRegistration {
+	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
+	s.mu.Lock()
+	sess := s.sessions[key]
+	s.mu.Unlock()
+	if sess == nil {
+		return nil
+	}
+	return &SessionRegistration{store: s, key: key, sess: sess}
 }
 
 // SetAgentReadyCallback sets a callback on the session identified by (runID,
@@ -150,19 +259,11 @@ func (s *SessionStore) RegisterHookSession(runID, claudeSessionID string) {
 //
 // If the session is not registered the call is a no-op.
 func (s *SessionStore) SetAgentReadyCallback(runID, claudeSessionID string, cb func()) {
-	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
-	s.mu.Lock()
-	var replay bool
-	if sess, ok := s.sessions[key]; ok && sess != nil {
-		sess.agentReadyCallback = cb
-		// H13: if agent_ready already fired before the callback was installed,
-		// replay it now so the latched signal is not lost. Invoke outside the
-		// mutex (below) to match notifyAgentReady's lock discipline.
-		replay = sess.readyFired && cb != nil
-	}
-	s.mu.Unlock()
-	if replay {
-		cb()
+	if registration := s.currentRegistration(runID, claudeSessionID); registration != nil {
+		// Compatibility surface: legacy callers have no error return. New
+		// phase-owned code uses SessionRegistration directly and observes a
+		// post-seal admission rejection.
+		_ = registration.SetAgentReadyCallback(cb)
 	}
 }
 
@@ -176,14 +277,127 @@ func (s *SessionStore) SetAgentReadyCallback(runID, claudeSessionID string, cb f
 // gone, so on wake it observes a missing key and returns (nil, nil) rather than
 // blocking until ctx cancellation.
 func (s *SessionStore) CloseHookSession(runID, claudeSessionID string) {
-	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
+	if registration := s.currentRegistration(runID, claudeSessionID); registration != nil {
+		// The legacy surface has neither a context nor an error return. Preserve
+		// it as a synchronous compatibility wrapper; phase-owned callers use
+		// SessionRegistration.Close with their teardown bound.
+		_ = registration.Close(context.Background())
+	}
+}
+
+// SetAgentReadyCallback installs the callback for the registration's one
+// genuine SessionStart-ready signal. If ready arrived before installation, the
+// latched signal is delivered synchronously. Relay retries and replacement
+// callbacks cannot cause a second delivery.
+//
+// The method returns ErrSessionRegistrationSealed once SealNonterminal or Close
+// has begun. A callback admitted before sealing may still be running; the seal
+// barrier waits for it.
+func (r *SessionRegistration) SetAgentReadyCallback(cb func()) error {
+	s := r.store
+	s.mu.Lock()
+	if s.sessions[r.key] != r.sess || r.sess.closed || r.sess.nonterminalSealed {
+		s.mu.Unlock()
+		return ErrSessionRegistrationSealed
+	}
+	r.sess.agentReadyCallback = cb
+	admitted := s.admitReadyCallbackLocked(r.sess)
+	s.mu.Unlock()
+	s.runReadyCallback(r.sess, admitted)
+	return nil
+}
+
+// SealNonterminal prevents new ready-callback admission and waits for every
+// callback admitted before the seal to return. Terminal outcome delivery and
+// reads remain available until Close.
+//
+// A context error leaves the registration sealed but still open, so a later
+// call can resume waiting without losing terminal hook state.
+func (r *SessionRegistration) SealNonterminal(ctx context.Context) error {
+	s := r.store
+	s.mu.Lock()
+	if r.sess.closed || s.sessions[r.key] != r.sess {
+		s.mu.Unlock()
+		return nil
+	}
+	r.sess.nonterminalSealed = true
+	r.sess.agentReadyCallback = nil
+	drained := r.sess.callbacksDrained
+	s.mu.Unlock()
+
+	if drained == nil {
+		return nil
+	}
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Close seals nonterminal callback admission, waits for admitted callbacks,
+// then removes this session generation and wakes outcome waiters. It is safe
+// for repeated or concurrent calls.
+//
+// If ctx expires while an admitted callback is still running, Close returns
+// ctx.Err and leaves the sealed registration open so terminal outcome state
+// remains consumable and a later Close can finish.
+func (r *SessionRegistration) Close(ctx context.Context) error {
+	if err := r.SealNonterminal(ctx); err != nil {
+		return err
+	}
+
+	s := r.store
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.sessions, key)
-	for _, ch := range s.notifyChans[key] {
+	if r.sess.closed || s.sessions[r.key] != r.sess {
+		return nil
+	}
+	r.sess.closed = true
+	delete(s.sessions, r.key)
+	for _, ch := range s.notifyChans[r.key] {
 		close(ch)
 	}
-	delete(s.notifyChans, key)
+	delete(s.notifyChans, r.key)
+	return nil
+}
+
+// admitReadyCallbackLocked admits the exactly-once ready callback when the
+// genuine signal and callback are both present. SessionStore.mu must be held.
+func (s *SessionStore) admitReadyCallbackLocked(sess *session) func() {
+	if sess.nonterminalSealed || sess.closed || sess.readyDelivered ||
+		!sess.readyFired || sess.agentReadyCallback == nil {
+		return nil
+	}
+	sess.readyDelivered = true
+	if sess.callbacksInFlight == 0 {
+		sess.callbacksDrained = make(chan struct{})
+	}
+	sess.callbacksInFlight++
+	return sess.agentReadyCallback
+}
+
+// runReadyCallback invokes admitted user code outside SessionStore.mu and
+// always accounts for its completion, including when the callback panics.
+func (s *SessionStore) runReadyCallback(sess *session, cb func()) {
+	if cb == nil {
+		return
+	}
+	defer s.finishReadyCallback(sess)
+	cb()
+}
+
+// finishReadyCallback records one callback completion. SessionStore.mu is
+// acquired here because callbacks run outside it.
+func (s *SessionStore) finishReadyCallback(sess *session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess.callbacksInFlight--
+	if sess.callbacksInFlight == 0 {
+		close(sess.callbacksDrained)
+		sess.callbacksDrained = nil
+	}
 }
 
 // LatestOutcome returns the most recently received outcome_emitted payload for
@@ -280,12 +494,12 @@ func (s *SessionStore) WaitForOutcome(ctx context.Context, runID, claudeSessionI
 // callers. Subsequent calls update latestOutcome but do not re-signal (waiters
 // have already been released; they read the latest value under the mutex after
 // wake-up).
-func (s *SessionStore) updateOutcome(runID, claudeSessionID string, payload json.RawMessage) (ok bool, ackStatus string) {
+func (s *SessionStore) updateOutcome(runID, claudeSessionID, handlerSessionID string, payload json.RawMessage) (ok bool, ackStatus string) {
 	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, exists := s.sessions[key]
-	if !exists || sess == nil {
+	if !exists || sess == nil || !handlerGenerationMatches(sess, handlerSessionID) {
 		return false, "unknown_session"
 	}
 	// Last-received-wins: replace (not append) the current outcome.
@@ -304,23 +518,42 @@ func (s *SessionStore) updateOutcome(runID, claudeSessionID string, payload json
 	return true, "ok"
 }
 
+// handlerGenerationMatches reports whether an envelope belongs to sess. Empty
+// session binding is the intentional legacy compatibility mode; bound owner
+// registrations require an exact per-launch handler identity.
+func handlerGenerationMatches(sess *session, handlerSessionID string) bool {
+	return sess.handlerSessionID == "" || sess.handlerSessionID == handlerSessionID
+}
+
 // notifyAgentReady invokes the agentReadyCallback for (runID, claudeSessionID)
 // if one has been registered. The callback is invoked outside the mutex to
 // avoid lock inversion; it is read under the mutex then called after unlock.
-func (s *SessionStore) notifyAgentReady(runID, claudeSessionID string) {
+//
+// known reports that the two-key session window exists; matched reports that
+// HandlerSessionID belongs to its bound generation. A missing legacy window
+// remains the historical no-op, while a mismatch on an existing bound window
+// is rejected by Dispatch as unknown_session.
+func (s *SessionStore) notifyAgentReady(runID, claudeSessionID, handlerSessionID string) (known, matched bool) {
 	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
 	s.mu.Lock()
-	var cb func()
-	if sess, ok := s.sessions[key]; ok && sess != nil {
-		// H13: always latch that ready fired, so a callback installed LATER
-		// (SetAgentReadyCallback) can replay the signal instead of losing it.
-		sess.readyFired = true
-		cb = sess.agentReadyCallback
+	var (
+		sess *session
+		cb   func()
+	)
+	if current, ok := s.sessions[key]; ok && current != nil {
+		known = true
+		sess = current
+		if handlerGenerationMatches(sess, handlerSessionID) {
+			matched = true
+			// H13: always latch that ready fired, so a callback installed LATER
+			// (SetAgentReadyCallback) can replay the signal instead of losing it.
+			sess.readyFired = true
+			cb = s.admitReadyCallbackLocked(sess)
+		}
 	}
 	s.mu.Unlock()
-	if cb != nil {
-		cb()
-	}
+	s.runReadyCallback(sess, cb)
+	return known, matched
 }
 
 // Dispatch handles an incoming RelayEnvelope and returns the RelayAck to be
@@ -352,7 +585,7 @@ func (s *SessionStore) Dispatch(env RelayEnvelope) RelayAck {
 
 	switch env.Type {
 	case "outcome_emitted":
-		ok, status := s.updateOutcome(env.RunID, env.ClaudeSessionID, env.Payload)
+		ok, status := s.updateOutcome(env.RunID, env.ClaudeSessionID, env.HandlerSessionID, env.Payload)
 		if !ok {
 			return RelayAck{
 				Status: status,
@@ -365,7 +598,13 @@ func (s *SessionStore) Dispatch(env RelayEnvelope) RelayAck {
 		// CHB-013 (hk-p63bz): relay-synthesized agent_ready on first SessionStart
 		// receipt. Forward to the per-run event tap via the registered callback
 		// so waitAgentReady can observe it (HC-039 / HC-041).
-		s.notifyAgentReady(env.RunID, env.ClaudeSessionID)
+		if known, matched := s.notifyAgentReady(env.RunID, env.ClaudeSessionID, env.HandlerSessionID); known && !matched {
+			return RelayAck{
+				Status: "unknown_session",
+				Reason: "handler session generation does not match open window for run_id=" + env.RunID +
+					" claude_session_id=" + env.ClaudeSessionID,
+			}
+		}
 		return RelayAck{Status: "ok"}
 
 	default:

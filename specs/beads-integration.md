@@ -8,10 +8,10 @@ requirement-prefix: BI
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.8.0
+version: 0.8.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-06-21
+last-updated: 2026-07-24
 depends-on:
   - architecture
   - execution-model
@@ -64,7 +64,7 @@ It exists as a standalone spec because the integration shape is cross-cutting an
 - **coarse status** — Beads's `Status` enum (Beads-owned and extensible; live at v0.1.45 = 8 values; harmonik writes only the 5-value subset `{open, in_progress, closed, deferred, tombstone}` per BI-007). (see §4.3, §6.1)
 - **terminal-transition write** — a `br` status-change invocation by harmonik at a workflow boundary. Subdivided into two categories by recovery posture:
   - **activity-marker write** — a write whose value asserts "harmonik is currently working this bead" but is NOT load-bearing for correctness. A stale activity-marker (daemon crashed; no terminal event landed; no adapter intent for close/reopen) is auto-resettable by the orphan-sweep duty of PL-006 (extended per BI-010d). Currently: `claim` (`open` → `in_progress`) and `reset` (`in_progress` → `open`).
-  - **truth-claim write** — a write whose value asserts a durable fact about whether work is done and MUST route through reconciliation on disagreement. Currently: `close` (`in_progress` → `closed`) and `reopen` (`closed` → `open`).
+  - **truth-claim write** — a write whose value asserts a durable fact about whether work is done and MUST route through reconciliation on disagreement. Currently: `close` (`in_progress` → `closed`), `attention-close` (`in_progress` → `closed` plus required `needs-attention` label), and `reopen` (`closed` → `open`).
   Both categories route through the §4.8 adapter and carry §4.10 idempotency keys. (see §4.4)
 - **`br`-CLI adapter** — the thin harmonik module that translates typed queries and writes into `br` subprocess invocations and parses `br` output. (see §4.8, §4.10)
 - **idempotency key** — the deterministic string `<run_id>:<transition_id>:<op>` identifying one terminal-transition write. (see §4.10)
@@ -195,9 +195,10 @@ Harmonik MUST write to Beads only at the following terminal transitions:
 
 - **Claim:** `open` → `in_progress`. Emitted when the daemon dispatches a run against a ready bead.
 - **Close:** `in_progress` → `closed`. Emitted when a run's workflow reaches a success terminal state AND the merge to the target branch has completed per [workspace-model.md §4.2].
+- **Attention-close:** `in_progress` → `closed` plus the `needs-attention` label. Emitted only after an entered review-loop cycle durably records a normalized non-success completion reason and emits its following `run_failed` terminal per [execution-model.md §4.3 EM-015e] and [operator-nfr.md §4.3 ON-009a].
 - **Reopen:** `closed` → `open`. Emitted when a failure classification or an investigator `reopen-bead` verdict per [reconciliation/spec.md §4.5] determines the work is not actually done.
 
-The binding from harmonik run-level events to these three Beads transitions is normatively declared in BI-010a; reconciliation-driven writes (Cat 3a / 3c auto-resolvers) are normatively declared in BI-010b.
+The binding from harmonik run-level events to these four Beads transitions is normatively declared in BI-010a; the compound attention-close protocol is BI-010f; reconciliation-driven writes (Cat 3a / 3c auto-resolvers) are normatively declared in BI-010b.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -210,6 +211,7 @@ The following table binds harmonik run-level events to Beads coarse-status trans
 |---|---|---|---|
 | `run_started` for bead-bound run; daemon dispatch per [execution-model.md §4.3 EM-013] | `open` → `in_progress` | claim | daemon (dispatch loop) |
 | `run_completed` (terminal success) AND task branch merged per [workspace-model.md §4.5 WM-007] | `in_progress` → `closed` | close | daemon (terminal-event handler) |
+| Successfully persisted `review_loop_cycle_complete{completion_reason ∈ {cap_hit, blocked, fixup_stalled, error}}` followed by `run_failed` for the same run | `in_progress` → `closed` AND ensure label `needs-attention` | attention-close | daemon (terminal-event handler, per BI-010f) |
 | `run_failed` with `failure_class = transient` AND no in-run retry available | `in_progress` → `open` | reopen | daemon (terminal-event handler) |
 | `run_failed` with `failure_class ∈ {structural, deterministic, compilation_loop}` | (no Beads write) | — | daemon emits `run_failed`; investigator may later issue `reopen-bead` verdict |
 | `run_failed` with `failure_class = canceled` | (no Beads write at MVH; OQ-BI-004 tracks operator-cancel routing) | — | daemon emits `run_failed`; OQ-BI-004 tracks whether to reopen |
@@ -219,7 +221,11 @@ The following table binds harmonik run-level events to Beads coarse-status trans
 | Operator cancel / `ErrCanceled` (per [handler-contract.md §4.5]) | (no Beads write at MVH) | — | OQ-BI-004 tracks whether to reopen |
 | Daemon startup orphan-sweep observes stale `in_progress` with no in-flight run reattachment AND no adapter intent file for close/reopen on this bead (per BI-010d / PL-006 extended per hk-iuaed.2) | `in_progress` → `open` | reset | daemon (startup orphan-sweep) |
 
-> NOTE: `reset` is an op-name in the BI-010 op set (was `{claim, close, reopen}`; becomes `{claim, close, reopen, reset}`). Reset writes route through the §4.8 adapter and carry §4.10 idempotency keys identically to other terminal-transition writes; the idempotency-key formula is `<project_hash>:<bead_id>:reset:<daemon_start_ns>`.
+> NOTE: The BI-010 operation set is `{claim, close, attention-close, reopen, reset}`. Reset writes route through the §4.8 adapter and carry §4.10 idempotency protection identically to other terminal-transition writes, but retain the startup-specific key formula `<project_hash>:<bead_id>:reset:<daemon_start_ns>`.
+
+The review-loop attention row takes precedence over the generic `run_failed` failure-class rows. Its discriminator is the durable same-run cycle-complete event immediately preceding the run terminal, not an inferred failure class. A raw or archived `reviewer_verdict` is not itself authority for a Beads write.
+
+For backward replay only, a persisted historical review-loop `review_loop_cycle_complete{completion_reason=no_progress}` followed by `run_failed` MUST be interpreted as the attention-close row. Current built-in review-loop producers MUST NOT emit `no_progress`; post-`REQUEST_CHANGES` zero-HEAD-advance uses `fixup_stalled`. DOT/generic `no_progress_detected` paths do not synthesize a review-loop cycle-complete event and are outside this compatibility rule.
 
 **`deferred` and `tombstone` are operator-facing states harmonik does NOT write at MVH.**
 
@@ -441,6 +447,39 @@ If Beads reports a bead as `closed` but no merge commit with `Harmonik-Bead-ID: 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
+#### BI-010f — Review-loop attention-close is one recoverable compound transaction
+
+For a BI-010a attention outcome, the adapter MUST execute one logical `attention-close`
+transaction whose postcondition is the conjunction:
+
+```
+bead.status == closed
+AND
+"needs-attention" ∈ bead.labels
+```
+
+The adapter MUST create and fsync one BI-030 intent before the first Beads mutation and MUST
+retain that intent until a structured `br show --format json` read confirms both postconditions.
+The intent MUST carry `op=attention-close`, `intended_post_state=closed`, and
+`required_labels=["needs-attention"]`. The adapter MAY satisfy both postconditions in one pinned
+CLI invocation or in multiple invocations; if multiple are required, their order is
+implementation-internal and the intent remains live across the whole sequence.
+
+Recovery MUST be convergent from every partial state: neither postcondition present, label only,
+closed only, or both present. It MUST apply only the missing mutation, reuse the same
+idempotency key, and remove the intent only after both are confirmed. An already-closed,
+already-labeled bead is a successful no-op. A status or label value incompatible with the
+declared postcondition routes through BI-031 divergence handling rather than being overwritten
+blindly.
+
+The transaction is authorized only by the ordered event pair in BI-010a. `cap_hit`, `blocked`,
+`fixup_stalled`, and `error` all use the same operation shape and differ only in the normalized
+cycle-completion evidence retained for audit. `approved` MUST use the ordinary success-close
+path and MUST NOT invoke this operation.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=recoverable-non-idempotent
+
 #### BI-023 — JSONL is observational only
 
 The JSONL event log MUST NOT be used to override Beads or git. JSONL reads for divergence-evidence detection during reconciliation are permitted per [reconciliation/spec.md §4.3], but JSONL MUST NOT drive a write back to Beads except through the §4.4 write surface triggered by an investigator verdict or a Cat 3 auto-resolver.
@@ -644,11 +683,11 @@ Tags: mechanism
 
 > INFORMATIVE — Intent-log directory ownership. `.harmonik/beads-intents/` is BI-owned. Operator-nfr clean-install / cleanup protocols MUST preserve this directory and any intent files for crash recovery; cite [operator-nfr.md §4.10] coordination.
 
-> INFORMATIVE — Intent-log scope is unchanged under extqueue. The intent-log discipline of BI-029 / BI-030 covers ONLY terminal-transition writes to Beads (`op ∈ {claim, close, reopen}`). Queue submissions, appends, removes, pauses, and resumes are daemon-internal state mutations that are NOT Beads writes; they are persisted under the separate `.harmonik/queue.json` discipline of [queue-model.md §3 QM-001..QM-003]. The two on-disk contracts coexist in `.harmonik/` and are independent. BI-INV-001 ("no intra-run writes") continues to apply to Beads writes only; it does NOT constrain queue mutations.
+> INFORMATIVE — Intent-log scope is unchanged under extqueue. The intent-log discipline of BI-029 / BI-030 covers ONLY terminal-transition writes to Beads (`op ∈ {claim, close, attention-close, reopen}` plus the startup-only `reset` special case). Queue submissions, appends, removes, pauses, and resumes are daemon-internal state mutations that are NOT Beads writes; they are persisted under the separate `.harmonik/queue.json` discipline of [queue-model.md §3 QM-001..QM-003]. The two on-disk contracts coexist in `.harmonik/` and are independent. BI-INV-001 ("no intra-run writes") continues to apply to Beads writes only; it does NOT constrain queue mutations.
 
 #### BI-029 — Terminal-transition writes carry a deterministic idempotency key
 
-The `br`-CLI adapter (§4.8) MUST derive an idempotency key for every terminal-transition write (§4.4.BI-010) using the formula `<run_id>:<transition_id>:<op>` where `op ∈ {claim, close, reopen}`. The key MUST be deterministic: identical (run_id, transition_id, op) inputs produce identical keys across invocations.
+The `br`-CLI adapter (§4.8) MUST derive an idempotency key for every run-bound terminal-transition write (§4.4.BI-010) using the formula `<run_id>:<transition_id>:<op>` where `op ∈ {claim, close, attention-close, reopen}`. The key MUST be deterministic: identical (run_id, transition_id, op) inputs produce identical keys across invocations. The startup-only `reset` operation retains the BI-010d formula because no live run transition exists to supply `run_id` and `transition_id`.
 
 Tags: mechanism
 
@@ -681,19 +720,19 @@ Reconciliation's Cat 3a auto-resolver per [reconciliation/spec.md §8.4a] does N
 Recovery sequence:
 
 1. Read the intent file's recorded transition fields: `op`, `bead_id`, `idempotency_key`, `intended_post_state`.
-2. Query Beads via `br show <bead_id>` (using the timeout discipline of BI-025c and the JSON mode of BI-025b) to read the bead's current `coarse_status`.
-3. If the current status equals the `intended_post_state` for this transition (i.e., the prior write landed before crash OR a concurrent writer landed it), the recovery MUST attempt to disambiguate:
+2. Query Beads via `br show <bead_id>` (using the timeout discipline of BI-025c and the JSON mode of BI-025b) to read the bead's current `coarse_status` and labels. For `attention-close`, recovery evaluates the compound postcondition of BI-010f; for every other op, it evaluates status only.
+3. If the current state satisfies the complete intended postcondition for this transition (i.e., the prior write landed before crash OR a concurrent writer landed it), the recovery MUST attempt to disambiguate:
    (3i) If `br audit-log <bead_id> --filter-idempotency-key <idempotency_key>` (or equivalent surface — see OQ-BI-009) returns a matching audit entry, the prior write was harmonik-side. Delete the intent file (with parent-directory fsync per BI-030) and write the structured-log recovery record per [operator-nfr.md §4.9 ON-035] at level=info with `subsystem=beads-adapter`, `msg="terminal-transition recovered"`, and `fields={idempotency_key, op, bead_id, recovery_path: "status_match"}`. Adapter recovery is observability surface, not a state-mutation event. Recovery is a confirmed no-op.
    (3ii) If no matching audit entry exists OR the `br audit-log` surface is unavailable on the pinned Beads version, the recovery cannot prove harmonik-side authorship of the post-state. The adapter MUST classify this as a Cat 3a torn-write per [reconciliation/spec.md §4.3 RC-014] / [reconciliation/spec.md §8.4a] and emit `divergence_inconclusive` per [event-model.md §8.6.10] with `reason=authority_unavailable` (the adapter's single-source observation cannot corroborate against another store; reconciliation Cat 6a/Cat 3 detectors per [reconciliation/spec.md §4.3] are the multi-store corroboration layer); the intent file MUST be retained for reconciliation's auto-resolver to consume per RC-002a/RC-025.
-4. If the current status is the pre-state (status_match negative; pre-state confirmed), re-issue the `br` write with the same `idempotency_key` (passed as `--idempotency-key` if the pinned Beads CLI supports it; otherwise as a positional metadata argument per the adapter's pinned-version contract). The reissue MAY return:
+4. If the current state is a valid pre-state or partial state, re-issue the missing `br` mutation or mutations with the same `idempotency_key` (passed as `--idempotency-key` if the pinned Beads CLI supports it; otherwise as a positional metadata argument per the adapter's pinned-version contract). For `attention-close`, valid partial states are exactly those named by BI-010f and the intent MUST remain until a re-read confirms both postconditions. The reissue MAY return:
    (4a) `BrOK` — terminal transition completed successfully. Delete the intent file (with parent-directory fsync per BI-030) and write the structured-log recovery record per ON-035 as in step 3i.
    (4b) `BrConflict` — a concurrent writer landed the transition between step 2 and step 4. Re-execute step 3 (re-read current status); proceed via 3i/3ii based on the new state.
    (4c) `BrDbLocked` — Beads SQLite is busy. Retry up to 3 times with exponential backoff (initial 100ms, max 1s); on persistent failure, classify as `BrUnavailable` and route per (4d).
-   (4c-transient) `BrUnavailable` from wall-clock timeout (subprocess killed by the BI-025c budget timer, NOT binary-missing/exec-error) — transient SQLite contention caused the `br` subprocess to exceed its write-timeout budget. Retry up to 10 times with exponential backoff (initial 50ms, max 2s per sleep); on persistent failure after 10 retries, escalate to the full `BrUnavailable` path per (4d). This sub-case is distinct from (4d): it is a transient contention burst, not a structural unavailability. The intent-log discipline (BI-029/BI-030) ensures idempotency across retries. The 10-retry budget was widened from 3 per dogfood run hk-75rij (hk-ekz5v) — 3 retries were insufficient for the tail of SQLite contention bursts under concurrent kerf/agent activity. Applies exclusively to terminal-transition writes (CloseBead, ClaimBead, ReopenBead, ResetBead); non-terminal-transition read paths still use the DBLockedRetryMax=3 budget.
+   (4c-transient) `BrUnavailable` from wall-clock timeout (subprocess killed by the BI-025c budget timer, NOT binary-missing/exec-error) — transient SQLite contention caused the `br` subprocess to exceed its write-timeout budget. Retry up to 10 times with exponential backoff (initial 50ms, max 2s per sleep); on persistent failure after 10 retries, escalate to the full `BrUnavailable` path per (4d). This sub-case is distinct from (4d): it is a transient contention burst, not a structural unavailability. The intent-log discipline (BI-029/BI-030) ensures idempotency across retries. The 10-retry budget was widened from 3 per dogfood run hk-75rij (hk-ekz5v) — 3 retries were insufficient for the tail of SQLite contention bursts under concurrent kerf/agent activity. Applies exclusively to terminal-transition writes (CloseBead, AttentionCloseBead, ClaimBead, ReopenBead, ResetBead); non-terminal-transition read paths still use the DBLockedRetryMax=3 budget.
    (4d) `BrUnavailable` — adapter cannot reach Beads (binary missing, exec error, or transient budget per (4c-transient) exhausted). Retain the intent file; classify the daemon as `degraded` per [operator-nfr.md §4.9 ON-037]; reconciliation Cat 0 retry per [process-lifecycle.md §4.3 PL-010] re-attempts the recovery.
    (4e) `BrSchemaMismatch` — the pinned Beads version's schema does not match. Classify as `divergence_inconclusive` per [event-model.md §8.6.10] with `reason=authority_unavailable` and route per BI-031b. Recovery cannot proceed under schema drift.
    (4f) `BrOther` (unrecognized) — emit `divergence_inconclusive` per [event-model.md §8.6.10] with `reason=authority_unavailable`; retain intent file; route as Cat 6b operator-escalation per [reconciliation/spec.md §8.11].
-5. If the current status is neither pre-state nor post-state (Beads diverged), the divergence is a Cat 3a torn-write per [reconciliation/spec.md §4.3 RC-014] / [reconciliation/spec.md §8.4a]; the adapter MUST emit `divergence_inconclusive` per [event-model.md §8.6.10] with `reason=authority_unavailable` and route to reconciliation rather than reissuing.
+5. If the current state is neither a valid pre-state, valid BI-010f partial state, nor complete post-state (Beads diverged), the divergence is a Cat 3a torn-write per [reconciliation/spec.md §4.3 RC-014] / [reconciliation/spec.md §8.4a]; the adapter MUST emit `divergence_inconclusive` per [event-model.md §8.6.10] with `reason=authority_unavailable` and route to reconciliation rather than reissuing.
 
 The recovery is Beads-idempotency-independent: the post-state status check at step 3, with audit-log disambiguation when available, catches the prior-write-landed case without requiring Beads to expose an idempotency-key audit-log query as a hard prerequisite. Races in which Beads completes the write between step 2 and step 4 are observed via the `BrConflict` retry path (4b).
 
@@ -718,7 +757,7 @@ Tags: mechanism
 
 #### BI-INV-001 — No intra-run writes to Beads
 
-No harmonik code path MAY write to Beads at any run transition other than (i) the four terminal transitions named in §4.4 BI-010 / BI-010a / BI-010d (claim, close, reopen, reset), or (ii) the reconciliation-driven writes in BI-010b. Intermediate node outcomes, per-transition state changes, failure classes, and hook fire events MUST never produce a `br` status write. Queue mutations per [queue-model.md §3 QM-001..QM-003] are NOT Beads writes and are NOT constrained by this invariant.
+No harmonik code path MAY write to Beads at any run transition other than (i) the five terminal operations named in §4.4 BI-010 / BI-010a / BI-010d / BI-010f (claim, close, attention-close, reopen, reset), or (ii) the reconciliation-driven writes in BI-010b. Intermediate node outcomes, per-transition state changes, failure classes, and hook fire events MUST never produce a `br` status write. Queue mutations per [queue-model.md §3 QM-001..QM-003] are NOT Beads writes and are NOT constrained by this invariant.
 
 > NOTE: `reset` is an activity-marker write (not a truth claim) and is auto-issued by the startup orphan-sweep per BI-010d; it is NOT a reconciliation-driven write (BI-010b) and is NOT an intra-run write. The intra-run prohibition continues to apply: `reset` fires only during startup, before any run is in flight on the resetting daemon.
 
@@ -827,9 +866,10 @@ RECORD IntentLogEntry:
     idempotency_key     : String                 -- "<run_id>:<transition_id>:<op>" per §4.10 BI-029
     run_id              : UUID                   -- the harmonik run driving the write
     transition_id       : UUID                   -- the transition at which the write is emitted
-    op                  : TerminalOp             -- one of {claim, close, reopen, reset}
+    op                  : TerminalOp             -- one of {claim, close, attention-close, reopen, reset}
     bead_id             : String                 -- target bead
-    intended_post_state : CoarseStatus           -- derived from (op, current_pre_state); claim->in_progress, close->closed, reopen->open
+    intended_post_state : CoarseStatus           -- derived from (op, current_pre_state); claim->in_progress, close/attention-close->closed, reopen/reset->open
+    required_labels     : List<String> | None     -- additive; absent/empty except attention-close, where exactly ["needs-attention"]
     requested_at        : Timestamp              -- monotonic; RFC 3339 wall clock
     schema_version      : Integer                -- N-1 readable per [operator-nfr.md §4.5]
 ```
@@ -838,6 +878,7 @@ RECORD IntentLogEntry:
 ENUM TerminalOp:
     claim    -- activity-marker write (open→in_progress); auto-resettable per BI-010d
     close    -- truth-claim write (in_progress→closed)
+    attention-close -- compound truth-claim write (in_progress→closed plus needs-attention); BI-010f
     reopen   -- truth-claim write (closed→open)
     reset    -- activity-marker write (in_progress→open); startup orphan-sweep only per BI-010d
 ```
@@ -936,14 +977,14 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 
 - **BI-001 — BI-004 (selection + access model).** Build-time dependency-manifest tests verify the pinned Beads version matches the adapter's compatibility declaration; integration tests verify no code path links Beads as a library.
 - **BI-005 — BI-009 (Beads-managed data).** Contract tests against a live `br` binary at the pinned version verify that `title`, `description`, `type`, edges, and status behave as declared; atomic-claim tests spawn two concurrent claim attempts and verify only one succeeds.
-- **BI-010 — BI-012 (write surface).** End-to-end scenario tests dispatch a run, observe exactly one claim write, reach terminal success + merge, observe exactly one close write, and verify no intermediate `br` status-change invocations appear in the subprocess trace.
+- **BI-010 — BI-012 (write surface).** End-to-end scenario tests dispatch a run, observe exactly one claim write, reach terminal success + merge, observe exactly one close write, and verify no intermediate `br` status-change invocations appear in the subprocess trace. BI-010f table tests cover `cap_hit`, `blocked`, `fixup_stalled`, and `error`; each must execute only after cycle-complete then `run_failed` and converge to `(closed, needs-attention)`. Crash injection covers neither mutation landed, label-only, closed-only, and both-landed states under one stable idempotency key. Approved must use ordinary close without the label. Historical persisted review-loop `no_progress` is accepted on recovery, while current built-in producers are rejected if they emit it.
 - **BI-013 — BI-016 (read surface).** Unit tests cover the adapter's translation of typed queries into `br` invocations and parsing of `br` output; reconciliation-query tests replay a crash scenario and verify read-only access. BI-013a tests verify that a `needs-attention`-labeled bead is rejected at submit time per §4.5a BI-013b (NOT filtered at `br ready` read time).
 - **BI-013b — BI-013c (submit-time validation read surface).** Contract tests against a live `br` binary verify that `br show` returns the fields consumed by [queue-model.md §6 QM-020..QM-022] validation; pre-claim-guard tests inject a status flip between dispatcher selection and claim and verify `bead_claim_skipped` emission with no claim write.
 - **BI-017 — BI-020 (bead-ID propagation).** Cross-spec tests inspect a bead-bound run's git checkpoint trail, event stream, and session logs to verify `bead_id` appears on every expected surface; a non-bead-bound-run test verifies the field is absent everywhere.
 - **BI-021 — BI-023 (store-authority rules).** Scenario tests inject a git-vs-Beads divergence (Beads `closed`, no merge commit) and verify the divergence surfaces as a Cat 3 classification; JSONL-driven override attempts are rejected.
 - **BI-024 — BI-026 (version-pin + adapter).** Release-engineering tests verify the adapter module is the sole importer of `br` subprocess helpers; a mock-Beads test simulates a breaking surface change and verifies that only the adapter module changes.
 - **BI-027 — BI-028 (Beads-CLI skill).** Agent-launch integration tests verify that a launched agent's skill list contains the Beads-CLI skill by default and that the skill's documented commands succeed.
-- **BI-029 — BI-032 (adapter idempotency).** Crash-injection tests kill the adapter between intent-log fsync and `br` call completion, then restart and verify idempotent completion via the audit-log check; a torn-write scenario verifies the Cat 3a detector's evidence path reads the intent log.
+- **BI-029 — BI-032 (adapter idempotency).** Crash-injection tests kill the adapter between intent-log fsync and `br` call completion, then restart and verify idempotent completion via the audit-log check; a torn-write scenario verifies the Cat 3a detector's evidence path reads the intent log. Compound attention-close recovery MUST retain the intent until both intended status and required-label postconditions are confirmed and MUST apply only the missing mutation from either partial state.
 
 Migration to `[testing.md §<layer>]` cross-references occurs within one revision cycle once testing.md lands; this obligation is tracked in OQ-BI-001.
 
@@ -1061,6 +1102,7 @@ Default-if-unresolved: corruption manifests as parse errors on multiple `br` com
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-24 | 0.8.1 | agent (kerf `reviewloop-decoupling`) | **Idempotent review-loop attention-close mapping.** BI-010/BI-010a add the ordered cycle-complete-then-run-failed mapping for normalized `{cap_hit, blocked, fixup_stalled, error}` outcomes. BI-010f defines one recoverable `attention-close` transaction whose postcondition is `status=closed` plus label `needs-attention`; one intent remains live until both are confirmed and recovers label-only or closed-only crash cuts. BI-029/BI-031 and `IntentLogEntry`/`TerminalOp` are extended accordingly. Historical persisted review-loop `no_progress` remains recovery-readable but current built-in producers must use `fixup_stalled`. No existing BI IDs were renumbered or retired; BI-010f is additive. |
 | 2026-07-22 | 0.8.0 | agent (process-group-provenance / hk-c6dt2) | **`br` orphan sweep matches the provenance marker, never the binary path; the adapter gains the matching write obligation.** BI-014a's enumeration clause is replaced: identification is by the [process-lifecycle.md §4.2a PL-006e] marker under PL-006f discipline, with binary path, pinned path, process name, and parent-PID-1 demoted to post-match narrowing filters. The prior text mandated binary-path matching, which contradicted PL-007's prohibition — two MUSTs in force and in opposition, with the implementation obeying neither and matching on the process basename alone, putting other projects' and the operator's own `br` processes in scope. The fail-closed trade is written into the requirement rather than left to the general rule, because `br` is the operator's day-to-day CLI and the two error directions are not symmetric. NEW BI-014b: the adapter MUST set the marker explicitly on every `br` subprocess it spawns — explicitly, because the daemon does not carry the marker in its own environment, so inheritance yields an unmarked child and a sweep that silently matches nothing. BI-014a and BI-014b MUST land together. OQ-BI-010 RESOLVED: PL needs no `br`-specific enumeration extension; the gap was always the write side, which BI-014b now owns. |
 | 2026-06-21 | 0.7.0 | agent (kerf work `bead-ledger-worktree-merge` / bead hk-rhtpa) | **BL-MRG merge contract + BI-010e child-bead-spawn + BI-011 permitted-write table.** Three changes applied from `05-spec-drafts/beads-integration-bl-mrg.md` plus T0 label rename (`codename:hk-<parent-id>` → `parent:hk-<parent-id>` — `codename:` is reserved for kerf work codenames; bead lineage labels use the `parent:` prefix). **(1) BI-010e (NEW):** child-bead-spawn creates — implementer agents MAY call `br create` intra-run with four constraints: `parent:hk-<parent-id>` lineage label required, idempotency check via `br list --label=parent:hk-<parent-id>` before create, terminal transitions remain daemon-only, union merge-driver (BL-MRG-002) preserves creates unconditionally. **(2) BI-011 (amended):** retitled "Permitted and prohibited intra-run writes"; added permitted-write table with three categories (`claim` existing, `child-bead-spawn` new per BI-010e, `parent-bead-label` new); added explicit failure contract for prohibited terminal writes from inside worktrees referencing BL-MRG-004. **(3) §4.8b BL-MRG (NEW section, 6 clauses):** BL-MRG-001 (`.gitattributes` + `.git/config` driver registration; daemon auto-configures at startup), BL-MRG-002 (union-by-ID algorithm with `updated_at` LWW for conflicting rows + explicit set-union for `labels`/`dependencies` arrays), BL-MRG-003 (semantic conflict logging to `.beads/merge-conflicts.log`; exit 0 always), BL-MRG-004 (`br sync --import-only` mandatory post-merge before any subsequent `br` operation; failure routes to Cat-BL2), BL-MRG-005 (`mergeRebaseAutoResolveBeadsLedger` in `workloop.go` MUST be removed — it suppresses the driver with `git checkout --theirs`), BL-MRG-006 (Phase 2 shared-DB migration path, informative). BI IDs frozen at v0.7.0 (additive: BI-010e; BL-MRG-001..006). |
 | 2026-06-11 | 0.6.3 | agent (kerf work `standard-bead-dot` / epic hk-o7j) | **BI-009a workflow-mode resolution-chain tail flipped `single` → `dot` (embedded `standard-bead.dot`) with a `review-loop` review-floor, syncing to the EM-012a tier-4 default flip.** Amended **BI-009a**: the label-absence fall-through tail changed from "→ daemon-level per [process-lifecycle.md §4.1 PL-004a] → built-in fallback `single`" to "→ daemon-level → built-in fallback `dot`, resolving the embedded `standard-bead.dot` canonical exemplar per [execution-model.md §4.3 EM-012a]." Added the review-floor note (EM-012a-FLOOR): on embedded-artifact load failure the daemon MUST fall back to `review-loop`, NEVER `single`; `single` is reachable ONLY via an explicit tier-1 per-bead `workflow:single` label (audited via `review_bypassed`), and a bead resolved at the per-project / daemon-level / built-in-fallback tiers MUST NEVER dispatch under `single`. This corrects BI-009a's contradiction with the now-NORMATIVE EM-012a default flip (execution-model v0.9.0). The allowed-mode enum `{single, review-loop, dot}` and the four-tier resolution chain remain owned by [execution-model.md §4.3] and cited by reference; only the tail of the precedence narrative changed. No requirement IDs renumbered or retired; BI IDs frozen at v0.6.3 (text-only amendment of BI-009a). Refs: hk-o7j, hk-30vlb. |

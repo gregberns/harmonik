@@ -8,10 +8,10 @@ requirement-prefix: PI
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.0
+version: 0.1.1
 spec-template-version: 1.1
 owner: pilot-author
-last-updated: 2026-06-30
+last-updated: 2026-07-24
 depends-on:
   - architecture
   - handler-contract
@@ -61,14 +61,23 @@ depends-on:
   (`reviewloop.go:430`, gated on `implIsSessionIDCaptured`) — it MUST NOT add a *new* shared-loop
   branch, and MUST NOT be described as "outside the shared loop" (it rides the SessionIDCaptured hook
   codex established). Depends on PI-012a.
-- **PI-015** The harness MUST NOT pass a `--sandbox` flag (Pi is unsandboxed). The seed prompt MUST
-  instruct Pi to read `.harmonik/agent-task.md`, implement, and commit with a `Refs: <bead-id>`
-  trailer.
+- **PI-015** The harness MUST NOT pass a `--sandbox` flag (Pi is unsandboxed). An implementer seed
+  MUST instruct Pi to read `.harmonik/agent-task.md`, implement, and commit with a
+  `Refs: <bead-id>` trailer. A reviewer seed MUST instead instruct Pi to read
+  `.harmonik/review-target.md` in the reviewer projection and write `.harmonik/review.json`
+  conforming to agent-reviewer schema v1; a reviewer MUST NOT create a work-product commit.
 
 ## §2 Launch spec & environment
 
 - **PI-020** Initial argv MUST be `pi --mode json --provider <prov> --model <prov/id> "<seed>"`;
-  resume argv MUST be `pi --mode json --session <id> "<feedback>"`. WorkDir MUST be the run worktree.
+  resume argv MUST be `pi --mode json --session <id> "<feedback>"`. For implementer initial/resume,
+  WorkDir MUST be the authoritative run workspace. For a reviewer, WorkDir MUST be the manifest-validated
+  box-A projection `<repo>/.harmonik/worktrees/<run_id>-reviewer-<iteration>/` at the exact implementation
+  SHA per [workspace-model.md §4.7 WM-027a]; same-run-workspace reviewer execution is forbidden.
+  The reviewer captures a fresh native Pi session id under `SessionIDCaptured`; it MUST NOT reuse or
+  overwrite the implementer's captured continuity id. Projection-local verdict and session evidence
+  MUST be validated and atomically transferred to the run-workspace archives before projection cleanup;
+  transfer failure is a phase error and retains the projection.
   `StdinDevNull` MUST be `true`. The key MUST NOT be passed as `pi --api-key <value>` (ps/argv leak) —
   env injection only.
 - **PI-021 (allowlist strip)** `buildPiEnv` MUST empty-override (`KEY=`) **every** provider credential
@@ -248,7 +257,9 @@ Tags: mechanism
 - **PI-100** Unit tests MUST cover: argv (initial/resume); env strip+inject; HC-041 DetectReady;
   session-id capture; the `agent_end` watcher firing Teardown under a simulated non-exit hang;
   `ensurePiRefsTrailer` incl. the runner-routed remote path; `pibillingguard` fail-closed on missing
-  key; `ResolvePiConfig` aggregating all missing keys.
+  key; `ResolvePiConfig` aggregating all missing keys; implementer WorkDir equals the run workspace;
+  reviewer WorkDir equals the manifest-validated exact-SHA projection; reviewer capture is fresh;
+  reviewer verdict/session evidence transfers before cleanup; transfer failure retains the projection.
 - **PI-101** A prose conformance scenario (old-bench house style) MUST exist for: "Pi claims a
   mechanical bead, implements, commits with a `Refs:` trailer, the DOT gate passes, the daemon
   merges and closes the bead — with the configured provider and a fail-closed guard."
@@ -262,3 +273,9 @@ Tags: mechanism
 2. When the configured key is absent from the operator environment, the guard refuses launch and emits `run_failed` + reopens the bead; no silent re-route to the claude harness occurs (PI-040/PI-043).
 
 3. `buildPiEnv` strips every `*_API_KEY` env var except the selected provider's key before the Pi subprocess starts; no other provider is billed even if its key was present in the operator environment (PI-021/PI-041).
+
+## §13 Revision history
+
+| Date | Version | Author | Summary |
+|---|---|---|---|
+| 2026-07-24 | 0.1.1 | agent (codename:reviewloop-decoupling) | **Reviewer phase placement reconciliation.** PI-015 gives reviewer-specific artifact instructions without a work-product commit. PI-020 makes WorkDir phase-specific: implementers use the run workspace; reviewers use a fresh Captured-session identity in the manifest-validated exact-SHA box-A projection. Reviewer verdict and session evidence must transfer to the run-workspace archives before cleanup; failures retain the projection and fail the phase. No PI requirement IDs were added or renumbered. |

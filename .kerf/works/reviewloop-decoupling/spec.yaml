@@ -5,7 +5,7 @@ project:
     id: gregberns-harmonik
 jig: spec
 jig_version: 1
-status: ready
+status: finalized
 status_values:
     - problem-space
     - decompose
@@ -16,7 +16,7 @@ status_values:
     - tasks
     - ready
 created: 2026-07-25T04:17:24Z
-updated: 2026-07-25T05:32:06Z
+updated: 2026-07-25T05:34:14Z
 sessions:
     - id: null
       started: 2026-07-25T04:17:24Z
@@ -25,6 +25,7 @@ depends_on: []
 bead_filter:
 pinned_beads: []
 implementation:
-    branch: null
+    branch: reviewloop-decoupling
     pr: null
-    commits: []
+    commits:
+        - 60b1daeaf6ec0fcb8c1dda13038922fbd258aaff

@@ -207,6 +207,21 @@ func TestRunKeeperConfigExample_RoundTrips(t *testing.T) {
 	}
 }
 
+func TestRunKeeperConfigExample_AdvertisesWarnMessageOverrides(t *testing.T) {
+	example := keeperConfigExampleYAML()
+	for _, key := range []string{
+		"warn_messages:",
+		"default_warn_text:",
+		"actionable_warn_text:",
+		"leader_defer_text:",
+		"crew_defer_text:",
+	} {
+		if !strings.Contains(example, key) {
+			t.Errorf("keeper config --example must advertise %q", key)
+		}
+	}
+}
+
 // TestKeeperBinaryUpgradeMigration_CorpusItem6 is acceptance corpus #6 / G5 —
 // binary-upgrade required-keys landmine. Proves two invariants end-to-end:
 //

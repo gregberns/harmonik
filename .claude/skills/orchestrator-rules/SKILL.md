@@ -184,6 +184,17 @@ This is the quality program's whole point: the primary daemon is production, not
 
 **REVIEWERS MISS COMPOSITION-ROOT WIRING.** Reviewer briefs SHOULD include a "find the production call site" check.
 
+**ANTI-FAKE MUTATION TESTS MUST USE A REAL ISOLATION BOUNDARY.** To prove a
+regression test fails when only the production fix is removed, use a detached
+worktree (`git worktree add --detach <path> <base>`), a real clone, or read-only
+`git show`/`git diff`. **Never `cp -R` a Git worktree and run Git mutations in
+the copy.** A linked worktree's `.git` is a pointer file; copying it preserves
+the pointer to the original worktree's index and HEAD, so `checkout`, `revert`,
+`stash`, or `reset` in the supposed copy mutates the live worktree. To audit an
+existing scratch area, find pointer files with
+`find <scratch> -maxdepth 2 -name .git -type f` and cross-check each path
+against `git worktree list`.
+
 **TRUST `br ready` BUT VERIFY.** Cross-check `br stats`; `br ready --limit 0` before declaring a lane empty (default pagination hides ready beads).
 
 **SUBSUMED BEADS ARE COMMON.** Dispatch an audit-then-sweep before assuming an open-count is real.

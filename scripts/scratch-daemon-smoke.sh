@@ -358,6 +358,21 @@ if [ "$FULL" = "1" ]; then
     # fully independent clone with its own socket/tmux/binary, but no network round-trip.
     if $SD init "$CLONE" "$REPO_ROOT" >"$ROOT/init.out" 2>&1 \
         && $SD build "$CLONE" >"$ROOT/build.out" 2>&1; then
+        scratch_origin="$(git -C "$CLONE" remote get-url origin 2>/dev/null)"
+        clone_real="$(cd "$CLONE" && pwd -P)"
+        expected_origin="$clone_real/.harmonik/scratch-origin.git"
+        assert_eq "$expected_origin" "$scratch_origin" "scratch origin is a throwaway bare repository"
+        if git --git-dir="$scratch_origin" rev-parse --verify --quiet refs/heads/scratch/main >/dev/null; then
+            ok "scratch bare origin has the isolated landing branch"
+        else
+            bad "scratch bare origin is missing refs/heads/scratch/main"
+        fi
+        if grep -qE '^[[:space:]]+start_from:[[:space:]]+scratch/main$' "$CLONE/.harmonik/branching.yaml" \
+            && grep -qE '^[[:space:]]+lands_on:[[:space:]]+scratch/main$' "$CLONE/.harmonik/branching.yaml"; then
+            ok "scratch branching config starts from and lands on scratch/main"
+        else
+            bad "scratch branching config is not isolated to scratch/main"
+        fi
         # Operator config step: `harmonik init` ships the G-liveness governor key
         # commented under the `sentinel:` block, but daemon.Start REQUIRES it set
         # (fail-loud, no compiled default — the no-hardcoded-thresholds rule). Set it

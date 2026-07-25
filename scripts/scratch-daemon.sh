@@ -121,6 +121,43 @@ scratch_bin()     { echo "$1/.harmonik/bin/harmonik"; }
 scratch_sock()    { echo "$1/.harmonik/daemon.sock"; }
 scratch_pidfile() { echo "$1/.harmonik/daemon.pid"; }
 scratch_log()     { echo "$1/.harmonik/scratch-daemon.log"; }
+scratch_origin()  { echo "$1/.harmonik/scratch-origin.git"; }
+
+# isolate_push_target makes merge-gate pushes structurally local to the scratch
+# project. A normal clone inherits its source as origin; without this rewrite a
+# successful "isolated" run can push its landing commit into the source repo.
+#
+# Keep an origin rather than removing it: the merge gate requires a successful
+# push. The throwaway bare repository satisfies that contract without granting
+# the scratch daemon a path back to the fleet checkout.
+isolate_push_target() {
+    local scratch="$1" origin branch branching
+    origin="$(scratch_origin "$scratch")"
+    branch="scratch/main"
+    branching="$scratch/.harmonik/branching.yaml"
+
+    mkdir -p "$(dirname "$origin")"
+    if [ ! -d "$origin/objects" ]; then
+        git init --bare "$origin" >/dev/null
+    fi
+    git -C "$scratch" remote set-url origin "$origin"
+
+    if ! git -C "$scratch" rev-parse --verify --quiet "$branch" >/dev/null 2>&1; then
+        git -C "$scratch" branch "$branch" HEAD
+    fi
+    if ! git --git-dir="$origin" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1; then
+        git -C "$scratch" push origin "$branch:refs/heads/$branch" >/dev/null
+    fi
+
+    [ -f "$branching" ] || die "scratch branching config missing after init: $branching"
+    awk -v branch="$branch" '
+        /^[[:space:]]+start_from:/ { print "  start_from: " branch; next }
+        /^[[:space:]]+lands_on:/   { print "  lands_on: " branch; next }
+        { print }
+    ' "$branching" > "$branching.tmp" && mv "$branching.tmp" "$branching"
+
+    echo "[scratch-daemon] isolation: origin=$origin lands_on=$branch"
+}
 
 # session_name: derive the deterministic per-project tmux session name using the
 # scratch binary itself (harmonik project-hash), so we never reimplement SHA-256
@@ -271,6 +308,7 @@ cmd_init() {
     else
         echo "[scratch-daemon] .harmonik/config.yaml present — no init needed"
     fi
+    isolate_push_target "$scratch"
     provision_matrix_config "$scratch"
     echo "[scratch-daemon] init complete. Next: $0 build $scratch && $0 up $scratch"
 }

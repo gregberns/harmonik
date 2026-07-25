@@ -58,7 +58,7 @@ init  →  build  →  up  →  batch  →  feedback  →  down
 
 | Subcommand | Arg surface (exactly as the script accepts) | What it does |
 |---|---|---|
-| `init`     | `init <scratch-path> [<source-repo>]` | Clone harmonik into `<scratch-path>` (default source = this repo's `origin`), build, and `harmonik init --project <scratch> --force --no-supervise` if no `.harmonik/config.yaml` yet. |
+| `init`     | `init <scratch-path> [<source-repo>]` | Clone harmonik into `<scratch-path>` (default source = this repo's `origin`), initialize if needed, then replace the inherited `origin` with a throwaway bare repo under `.harmonik/` and set `start_from`/`lands_on` to `scratch/main`. |
 | `build`    | `build <scratch-path>` | Build the scratch binary FROM the clone → `<scratch>/.harmonik/bin/harmonik`. |
 | `up`       | `up <scratch-path>` | Start the bare `harmonik --project <scratch>` binary in its own tmux session; wait (≤45s) for the socket. NO supervisor. |
 | `status`   | `status <scratch-path>` | Print project path, tmux session liveness, socket presence, daemon PID state, last 10 log lines. |
@@ -280,6 +280,12 @@ layers of protection (all in `scripts/scratch-daemon.sh`):
 4. **`assert_not_supervised`.** `up` / `down` / `batch` refuse a project that has a
    live `hk-<hash>-supervise` session — that is a supervised fleet deployment, never
    a throwaway scratch clone.
+
+4. **Push-target isolation.** `init` replaces the clone's inherited `origin`
+   with `<scratch>/.harmonik/scratch-origin.git`, a throwaway bare repository,
+   and rewrites branching defaults to `scratch/main`. Successful merge-gate
+   pushes therefore remain inside the scratch project; removing `origin` is not
+   sufficient because it turns otherwise successful runs into `push_failed`.
 
 The ONE deliberate exception is `feedback`, which writes to the fleet beads ledger
 on purpose (see above). It runs `br` with the fleet repo root (located via the same

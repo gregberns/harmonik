@@ -139,10 +139,11 @@ type State struct {
 // Supervisor manages the lifecycle of a single child process, applying restart
 // policy, exponential backoff, and crash-loop detection per PL-019(f).
 type Supervisor struct {
-	spec   Spec
-	state  atomic.Pointer[State]
-	log    *slog.Logger
-	stopCh chan struct{} // closed by Stop() to signal the run loop
+	spec     Spec
+	state    atomic.Pointer[State]
+	log      *slog.Logger
+	stopCh   chan struct{} // closed by Stop() to signal the run loop
+	stopOnce sync.Once
 	// stopTimeoutNanos holds the SIGTERM→SIGKILL deadline (in ns) requested by
 	// the most recent Stop() call. Read by terminateChild via atomics so the
 	// run-loop goroutine honours the caller's timeout, not a hardcoded one.
@@ -180,12 +181,7 @@ func (s *Supervisor) Stop(timeout time.Duration) error {
 		timeout = s.spec.StopTimeout
 	}
 	s.stopTimeoutNanos.Store(int64(timeout))
-	select {
-	case <-s.stopCh:
-		// already stopped
-	default:
-		close(s.stopCh)
-	}
+	s.stopOnce.Do(func() { close(s.stopCh) })
 	return nil
 }
 

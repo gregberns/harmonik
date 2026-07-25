@@ -40,8 +40,8 @@ package main
 //
 //	--name NAME                Agent identity (default: $HARMONIK_AGENT env var).
 //	--reason join|refresh      Presence reason override for `join` only (default: join). Use
-//	                           "refresh" for periodic heartbeat calls so the beat is not
-//	                           persisted to events.jsonl (hk-ru45u).
+//	                           "refresh" for periodic heartbeat calls that keep the
+//	                           daemon-free `comms who` TTL projection current.
 //	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
 //	--project DIR              Project directory (default: cwd).
 //
@@ -554,7 +554,7 @@ EXAMPLES
   harmonik comms log --since 30m
   harmonik comms log --since 30m --to myagent --json
   harmonik comms join --name myagent
-  harmonik comms join --name myagent --reason=refresh  # heartbeat: not persisted
+  harmonik comms join --name myagent --reason=refresh  # persisted TTL heartbeat
   harmonik comms leave --name myagent
   harmonik comms who
   harmonik comms who --json

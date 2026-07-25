@@ -2,7 +2,7 @@ package main
 
 // comms_presence_hkru45u_test.go — tests for the hk-ru45u presence improvements:
 //
-//   (A) comms join --reason=refresh uses reason:"refresh" (not persisted, reduces log noise).
+//   (A) comms join --reason=refresh uses reason:"refresh" for the persisted TTL heartbeat.
 //   (B) comms join --reason=<invalid> returns exit 1 with no event emitted.
 //   (C) runCommsRecvFollowIO emits a leave beat on context cancellation (leave-on-teardown).
 //

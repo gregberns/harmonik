@@ -8,14 +8,21 @@ set -euo pipefail
 #
 # The open-coded agent_ready WAIT left internal/daemon in slice RT14. Every
 # launch/ready/brief segment now runs on the runexec Dispatch machine via
-# dispatchSegment (dispatchsegment.go) — a ClockPort-timed, FakeClock-drivable
-# bound. depguard cannot express "do not re-hand-roll a wall-clock wait", so this
-# grep ratchet closes that door.
+# runloop.DispatchSegment (internal/runloop/dispatchsegment.go) — a
+# ClockPort-timed, FakeClock-drivable bound. depguard cannot express "do not
+# re-hand-roll a wall-clock wait", so this grep ratchet closes that door.
 #
 # RT19c widened check (2) from the six dispatch-path files to the whole run path:
 # the Working-phase watchdogs (pasteinject.go, dot_gate.go's
 # pasteInjectQuitOnGateFile, waitsocketgrace.go, postreadyhang.go) now take a
 # substrate.ClockPort too, so raw wall-clock is forbidden in them as well.
+#
+# P2 LIFT L1-L6 subsequently moved the event source, post-ready hang detector,
+# socket-grace wait, run shell, dispatch segment, and run bridge into
+# internal/runloop. The DOT cascade was split and its ready-dispatch owner is now
+# dot_cascade_core.go. Checks (1), (2), (4), and (5) pin that current ownership;
+# moving or splitting it again must fail closed until this inventory is
+# deliberately re-derived.
 #
 # The forbidden set is WALLCLOCK_RE below, and it is deliberately WIDER than the
 # regex RT19c's own inventory used: that one had no Since/Until and so missed the
@@ -52,12 +59,14 @@ HITS=0
 # ("a stdlib ticker panics on a non-positive interval", not the code).
 WALLCLOCK_RE='time\.(After|AfterFunc|Now|NewTimer|NewTicker|Tick|Sleep|Since|Until)\('
 
-# (1) No re-declaration of the retired ready-wait symbols anywhere in the daemon
-#     (recursive — a sub-package is the obvious evasion).
+# (1) No re-declaration of the retired ready-wait symbols anywhere in either
+#     side of the daemon → runloop boundary (recursive — a sub-package is the
+#     obvious evasion).
 for sym in waitAgentReady agentEventSource chanAgentEventSource newChanAgentEventSource; do
-    MATCHES="$(grep -rn --include='*.go' -E "^[[:space:]]*(func|var|const|type)?[[:space:]]*${sym}\b[[:space:]]*(=|struct|interface|func|\()" internal/daemon 2>/dev/null || true)"
+    MATCHES="$(grep -rn --include='*.go' -E "^[[:space:]]*(func|var|const|type)?[[:space:]]*${sym}\b[[:space:]]*(=|struct|interface|func|\()" \
+        internal/daemon internal/runloop 2>/dev/null || true)"
     if [ -n "$MATCHES" ]; then
-        echo "readywait-freeze-gate: FORBIDDEN re-declaration of ${sym} in internal/daemon:" >&2
+        echo "readywait-freeze-gate: FORBIDDEN re-declaration of ${sym} in the daemon/runloop path:" >&2
         printf '%s\n' "$MATCHES" >&2
         HITS=$((HITS + 1))
     fi
@@ -65,7 +74,7 @@ done
 
 # (2) The run-path files that are wall-clock CLEAN today stay clean. The
 #     dispatch path AND the Working-phase watchdogs must remain FakeClock-drivable
-#     end to end.
+#     end to end. Paths are the post-LIFT owners, not compatibility aliases.
 #
 #     agentready.go is NOT in this list because RT14 deleted the file outright.
 #     RT19b-3 had already moved its four surviving policy scalars to
@@ -77,11 +86,11 @@ done
 #     review-file watchdogs plus the three splash/backoff/submit stragglers),
 #     dot_gate.go (pasteInjectQuitOnGateFile), waitsocketgrace.go (the stop-hook
 #     grace) and postreadyhang.go (the post-agent_ready progress bound).
-for f in internal/daemon/dispatchsegment.go internal/daemon/runshell.go \
-         internal/daemon/runbridge.go internal/daemon/reviewloop.go \
-         internal/daemon/dot_cascade.go internal/daemon/workloopeventsource.go \
+for f in internal/runloop/dispatchsegment.go internal/runloop/runshell.go \
+         internal/runloop/runbridge.go internal/daemon/reviewloop.go \
+         internal/daemon/dot_cascade_core.go internal/runloop/workloopeventsource.go \
          internal/daemon/pasteinject.go internal/daemon/dot_gate.go \
-         internal/daemon/waitsocketgrace.go internal/daemon/postreadyhang.go; do
+         internal/runloop/waitsocketgrace.go internal/runloop/postreadyhang.go; do
     if [ ! -f "$f" ]; then
         echo "readywait-freeze-gate: pinned file $f is gone — re-derive this gate's file list" >&2
         HITS=$((HITS + 1))
@@ -97,8 +106,12 @@ done
 
 # (3) beadRunOne stays wall-clock clean. Anchored on its two boundary symbols so
 #     the range survives the line drift that RT15 will cause.
-START="$(grep -n '^func beadRunOne' internal/daemon/workloop.go | head -1 | cut -d: -f1)"
-END="$(awk -v s="$START" 'NR>s && /^func /{print NR; exit}' internal/daemon/workloop.go)"
+START="$(grep -n '^func beadRunOne' internal/daemon/workloop.go 2>/dev/null \
+         | head -1 | cut -d: -f1 || true)"
+END=""
+if [ -n "$START" ]; then
+    END="$(awk -v s="$START" 'NR>s && /^func /{print NR; exit}' internal/daemon/workloop.go)"
+fi
 if [ -n "$START" ] && [ -n "$END" ]; then
     MATCHES="$(awk -v s="$START" -v e="$END" 'NR>=s && NR<=e' internal/daemon/workloop.go \
                | grep -nE "$WALLCLOCK_RE" || true)"
@@ -114,24 +127,39 @@ fi
 
 # (4) The seam must still exist. A gate whose target was renamed away silently
 #     stops testing what it claims to test.
-if ! grep -q '^type dispatchSegment struct' internal/daemon/dispatchsegment.go; then
-    echo "readywait-freeze-gate: dispatchSegment is gone — re-derive this gate" >&2
+if ! grep -q '^type DispatchSegment struct' internal/runloop/dispatchsegment.go; then
+    echo "readywait-freeze-gate: runloop.DispatchSegment is gone — re-derive this gate" >&2
     HITS=$((HITS + 1))
 fi
 
 # (5) Every agent-launch site binds through the seam. RT14 took the number of
-#     sites that hand-roll their own ready wait to ZERO; each of the four
-#     consumers must still construct a dispatchSegment.
-for f in internal/daemon/workloop.go internal/daemon/dot_gate.go \
-         internal/daemon/reviewloop.go internal/daemon/dot_cascade.go; do
-    if ! grep -q '&dispatchSegment{' "$f"; then
-        echo "readywait-freeze-gate: $f no longer builds a dispatchSegment — a launch site left the seam" >&2
+#     sites that hand-roll their own ready wait to ZERO. Pin exact construction
+#     counts, not mere presence: reviewloop has distinct implementer + reviewer
+#     launches, so a contains-only check would miss either one escaping.
+check_segment_count() {
+    local f=$1
+    local want=$2
+    local got
+
+    if [ ! -f "$f" ]; then
+        echo "readywait-freeze-gate: launch consumer $f is gone — re-derive this gate" >&2
+        HITS=$((HITS + 1))
+        return
+    fi
+    got="$(grep -c '&runloop\.DispatchSegment{' "$f" || true)"
+    if [ "$got" -ne "$want" ]; then
+        echo "readywait-freeze-gate: $f builds runloop.DispatchSegment $got time(s), expected $want — a launch site left or bypassed the seam" >&2
         HITS=$((HITS + 1))
     fi
-done
+}
+
+check_segment_count internal/daemon/workloop.go 1
+check_segment_count internal/daemon/dot_gate.go 1
+check_segment_count internal/daemon/reviewloop.go 2
+check_segment_count internal/daemon/dot_cascade_core.go 1
 
 if [ "$HITS" -ne 0 ]; then
-    echo "readywait-freeze-gate: FAIL — the open-coded agent_ready wait was retired in P2 E5 RT14; bind onto dispatchSegment, do not re-hand-roll it" >&2
+    echo "readywait-freeze-gate: FAIL — the open-coded agent_ready wait was retired in P2 E5 RT14; bind onto runloop.DispatchSegment, do not re-hand-roll it" >&2
     exit 1
 fi
 echo "readywait-freeze-gate: OK — the ready wait stays on the Dispatch machine"

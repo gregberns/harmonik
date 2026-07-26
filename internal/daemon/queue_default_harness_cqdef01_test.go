@@ -135,7 +135,7 @@ func TestSelectQueueDefaultHarness(t *testing.T) {
 // default must survive selection, capture into the goroutine parameter, RunEnv
 // construction, and beadRunOne's quiet harness resolution.
 func TestQueueDefaultHarnessProductionPath(t *testing.T) {
-	qs, _ := cqDef01Queue(core.AgentTypePi, nil)
+	qs, bead := cqDef01Queue(core.AgentTypePi, nil)
 	projectDir := n5md3RepoWithCommit(t)
 	configDir := filepath.Join(projectDir, ".harmonik")
 	if err := os.MkdirAll(configDir, 0o750); err != nil {
@@ -221,6 +221,30 @@ agents:
 	case <-time.After(10 * time.Second):
 		t.Fatal("runWorkLoop did not stop after cancellation")
 	}
+
+	// Exercise the production (nil override) buildRunBundles routing boundary
+	// separately from the injected beadRunOne observation above. Calling the
+	// returned builder is hermetic: it materializes a launch specification but
+	// never starts the external process.
+	builderDeps := deps
+	builderDeps.launchSpecBuilder = nil
+	builderEnv := builderDeps.runEnv(
+		core.RunID{}, bead, "main", nil, nil, 0, "", "", nil, false, "", core.AgentTypePi,
+	)
+	builderPorts, _ := builderDeps.buildRunBundles(builderEnv)
+	if builderPorts.LaunchBuilder == nil {
+		t.Fatal("production buildRunBundles returned a nil launch builder")
+	}
+	_, artifacts, buildErr := builderPorts.LaunchBuilder(t.Context(), shared.LaunchCtx{
+		BeadID:        string(bead.BeadID),
+		WorkspacePath: t.TempDir(),
+	})
+	if buildErr != nil {
+		t.Fatalf("production buildRunBundles launch builder: %v", buildErr)
+	}
+	if got := artifacts.ResolvedAgentType; got != core.AgentTypePi {
+		t.Fatalf("production buildRunBundles resolved harness = %q; want pi", got)
+	}
 }
 
 // TestQueueDefaultHarnessDoesNotOverrideGlobalReviewerDefault proves the queue
@@ -230,6 +254,61 @@ func TestQueueDefaultHarnessDoesNotOverrideGlobalReviewerDefault(t *testing.T) {
 	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(t.TempDir(), "claude.json"))
 	reg := cqDef01PiRegistry(t)
 	bead := core.BeadRecord{BeadID: core.BeadID("cq-def-01-reviewer")}
+
+	// An implementer node with no harness pin reaches dot_cascade_core.go's
+	// nodeModelHarness quiet-resolution branch. A Pi effective harness must
+	// ignore the Claude-scoped node model and retain the run-level Pi model.
+	implementerModelC := make(chan string, 1)
+	errStopAtImplementerBuilder := errors.New("cq-def-01: stop at DOT implementer builder")
+	implementerBuilder := func(_ context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+		implementerModelC <- rc.Model
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, errStopAtImplementerBuilder
+	}
+	implementerDir := t.TempDir()
+	implementerDeps := ExportedWorkLoopDeps(WorkLoopDepsParams{
+		BrAdapter:           n5md3Ledger{},
+		Bus:                 &n5md3Collector{},
+		ProjectDir:          implementerDir,
+		HandlerBinary:       filepath.Join(implementerDir, "no-such-agent-cq-def-01"),
+		IntentLogDir:        filepath.Join(implementerDir, ".harmonik", "beads-intents"),
+		WorkflowModeDefault: core.WorkflowModeDot,
+		AdapterRegistry2:    n5md3SealedAdapterRegistry(t),
+		HarnessRegistry:     reg,
+		LaunchSpecBuilder:   implementerBuilder,
+		DefaultHarness:      core.AgentTypeClaudeCode,
+	})
+	implementerEnv := implementerDeps.runEnv(
+		core.RunID{}, bead, "", nil, nil, -1, "", "", nil, false, "", core.AgentTypePi,
+	)
+	implementerPorts, implementerHandles := implementerDeps.buildRunBundles(implementerEnv)
+	implementerNode := &dot.Node{
+		ID:         "cq_def_01_implementer",
+		Type:       core.NodeTypeAgentic,
+		AgentType:  "implementer",
+		HandlerRef: "implementer",
+		Model:      "cq-def-node-claude-model",
+	}
+	implementerSessionID := ""
+	_, implementerDispatchErr := dispatchDotAgenticNode(
+		t.Context(), implementerEnv, implementerPorts, implementerHandles,
+		core.RunID{}, bead.BeadID, bead, "implementer fixture", "implementer fixture body",
+		implementerDir, "", "", implementerNode, false, 1, &implementerSessionID,
+		"cq-def-queue-pi-model", "", "", "main", core.AgentType(""),
+		nil, "", "", "", false,
+	)
+	select {
+	case got := <-implementerModelC:
+		if got != "cq-def-queue-pi-model" {
+			t.Fatalf("DOT implementer node model = %q; want run-level Pi model %q (Claude node model is %q)",
+				got, "cq-def-queue-pi-model", implementerNode.Model)
+		}
+	default:
+		t.Fatal("DOT implementer dispatch did not reach the launch builder")
+	}
+	if !errors.Is(implementerDispatchErr, errStopAtImplementerBuilder) {
+		t.Fatalf("DOT implementer dispatch error = %v; want launch-builder sentinel", implementerDispatchErr)
+	}
+
 	wtPath := n5md3RepoWithCommit(t)
 	parentSHA, err := resolveHEAD(t.Context(), wtPath)
 	if err != nil {

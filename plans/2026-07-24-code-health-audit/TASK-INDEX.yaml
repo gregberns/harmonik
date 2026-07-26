@@ -127,7 +127,7 @@ tasks:
     disposition: open
     routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: []
-    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-F2D, PI-R2]
     lease_family: dispatch_spine
     claim:
       owner: sol-cq-def-01
@@ -547,7 +547,7 @@ tasks:
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0]
-    conflicts_with: []
+    conflicts_with: [CQ-DEF-01]
     lease_family: dot_spine
     required_proof: [targeted, scenario, race, delta_lint, ubs, check_fast]
 

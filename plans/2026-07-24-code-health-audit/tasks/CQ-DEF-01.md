@@ -45,13 +45,19 @@ persisted queue tier-2 value in a distinct immutable field (for example,
 - `internal/runloop/ports.go`
 - `internal/runloop/reviewerharness_hkiv748.go` and focused tests
 - `internal/daemon/harnessresolve.go`
+- `internal/daemon/dot_gate.go`, limited to passing the distinct immutable
+  queue-default argument and updating its adjacent comment
+- `internal/daemon/dot_cascade_core.go`, limited to passing the distinct
+  immutable queue-default argument to
+  `DotReviewerInheritedHarnessOverride` and the adjacent
+  `resolveHarnessAgentTypeQuiet` node-model call, plus updating their adjacent
+  comments
 - exact default-harness production-path tests under `internal/daemon/`,
   `internal/orchestrator/`, or `internal/runloop/`
 
-`internal/daemon/reviewloop.go`, `dot_cascade_core.go`, and `dot_gate.go` are
-read/test targets, not writable by default. If the value must cross one of those
-production call sites, stop for a coordinator lease amendment before editing.
-No queue persistence or Pi launch-spec edits.
+`internal/daemon/reviewloop.go` remains a read/test target. The DOT amendment
+above does not authorize DOT policy or lifecycle changes. No queue persistence
+or Pi launch-spec edits.
 
 ## Required work
 

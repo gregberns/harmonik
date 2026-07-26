@@ -1243,8 +1243,9 @@ type queueSelection struct {
 	anyEligible      bool // true if any queue had an active group with eligible items
 	anyPausedOrEmpty bool // true if at least one queue existed but contributed nothing
 	// Per-queue routing fields (hk-f10xl [L5 Move 2]).
-	queueLocalOnly    bool   // mirrors Queue.LocalOnly — skip SelectWorker when true
-	queueWorkerTarget string // mirrors Queue.WorkerTarget — pin to named worker when non-empty
+	queueLocalOnly      bool           // mirrors Queue.LocalOnly — skip SelectWorker when true
+	queueWorkerTarget   string         // mirrors Queue.WorkerTarget — pin to named worker when non-empty
+	queueDefaultHarness core.AgentType // mirrors Queue.DefaultHarness — tier-2 harness default
 }
 
 // effectiveQueueWorkers resolves the per-queue worker ceiling for q, defaulting
@@ -1299,18 +1300,19 @@ func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalC
 		return queueSelection{anyPausedOrEmpty: sel.SawNonContributing}, false
 	}
 	return queueSelection{
-		queueName:         sel.QueueName,
-		queueID:           sel.QueueID,
-		groupIndex:        sel.GroupIndex,
-		itemIdx:           sel.Item.ItemIdx,
-		itemBeadID:        sel.Item.BeadID,
-		itemContext:       sel.Item.Context,
-		itemWFMode:        sel.Item.WorkflowMode,
-		itemWFRef:         sel.Item.WorkflowRef,
-		itemTemplateMap:   sel.Item.TemplateParams,
-		anyEligible:       true,
-		queueLocalOnly:    sel.LocalOnly,
-		queueWorkerTarget: sel.WorkerTarget,
+		queueName:           sel.QueueName,
+		queueID:             sel.QueueID,
+		groupIndex:          sel.GroupIndex,
+		itemIdx:             sel.Item.ItemIdx,
+		itemBeadID:          sel.Item.BeadID,
+		itemContext:         sel.Item.Context,
+		itemWFMode:          sel.Item.WorkflowMode,
+		itemWFRef:           sel.Item.WorkflowRef,
+		itemTemplateMap:     sel.Item.TemplateParams,
+		anyEligible:         true,
+		queueLocalOnly:      sel.LocalOnly,
+		queueWorkerTarget:   sel.WorkerTarget,
+		queueDefaultHarness: sel.DefaultHarness,
 	}, true
 }
 
@@ -1329,15 +1331,16 @@ func snapshotFleet(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap
 			continue
 		}
 		queues = append(queues, orchestrator.QueueSnapshot{
-			Name:          name,
-			QueueID:       q.QueueID,
-			Active:        q.Status == queue.QueueStatusActive,
-			Blocked:       blockedQueues[name],
-			LocalInFlight: reg.LenForQueueLocal(name),
-			WorkerCap:     effectiveQueueWorkers(q, globalCap),
-			LocalOnly:     q.LocalOnly,
-			WorkerTarget:  q.WorkerTarget,
-			ActiveGroup:   projectActiveGroup(q),
+			Name:           name,
+			QueueID:        q.QueueID,
+			Active:         q.Status == queue.QueueStatusActive,
+			Blocked:        blockedQueues[name],
+			LocalInFlight:  reg.LenForQueueLocal(name),
+			WorkerCap:      effectiveQueueWorkers(q, globalCap),
+			LocalOnly:      q.LocalOnly,
+			WorkerTarget:   q.WorkerTarget,
+			DefaultHarness: q.DefaultHarness,
+			ActiveGroup:    projectActiveGroup(q),
 		})
 	}
 	return orchestrator.FleetSnapshot{Queues: queues, RRCursor: rrCursor}
@@ -1970,17 +1973,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Bead ref: hk-45ude.
 
 		var (
-			beadRecord                 core.BeadRecord
-			queueItemIndex             int    // item index within the group (-1 = no queue)
-			capturedQueueName          string // NQ-B1: name of the dispatching queue ("" = br-ready)
-			queueIDField               *string
-			queueGroupIdxFd            *int
-			capturedExtraContext       string            // hk-boiwe: per-item context from queue.Item.Context
-			capturedItemWFMode         string            // hk-hiqrl: per-item workflow mode from queue.Item.WorkflowMode
-			capturedItemWFRef          string            // hk-qo9pq: per-item workflow ref from queue.Item.WorkflowRef
-			capturedItemTemplateParams map[string]string // hk-55zv2 / WG-045: template params from queue.Item.TemplateParams
-			capturedQueueLocalOnly     bool              // hk-f10xl [L5 Move 2]: per-queue local-only routing gate
-			capturedQueueWorkerTarget  string            // hk-f10xl [L5 Move 2]: per-queue worker-target pin
+			beadRecord                  core.BeadRecord
+			queueItemIndex              int    // item index within the group (-1 = no queue)
+			capturedQueueName           string // NQ-B1: name of the dispatching queue ("" = br-ready)
+			queueIDField                *string
+			queueGroupIdxFd             *int
+			capturedExtraContext        string            // hk-boiwe: per-item context from queue.Item.Context
+			capturedItemWFMode          string            // hk-hiqrl: per-item workflow mode from queue.Item.WorkflowMode
+			capturedItemWFRef           string            // hk-qo9pq: per-item workflow ref from queue.Item.WorkflowRef
+			capturedItemTemplateParams  map[string]string // hk-55zv2 / WG-045: template params from queue.Item.TemplateParams
+			capturedQueueLocalOnly      bool              // hk-f10xl [L5 Move 2]: per-queue local-only routing gate
+			capturedQueueWorkerTarget   string            // hk-f10xl [L5 Move 2]: per-queue worker-target pin
+			capturedQueueDefaultHarness core.AgentType    // per-queue tier-2 harness default
 		)
 		queueItemIndex = -1 // sentinel: not queue-dispatched
 
@@ -2169,6 +2173,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					// hk-f10xl [L5 Move 2]: capture per-queue routing fields.
 					capturedQueueLocalOnly = sel.queueLocalOnly
 					capturedQueueWorkerTarget = sel.queueWorkerTarget
+					capturedQueueDefaultHarness = sel.queueDefaultHarness
 				}
 			}
 
@@ -2950,6 +2955,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// hk-f10xl [L5 Move 2]: per-queue routing gate captured for the goroutine.
 		capturedLocalOnly := capturedQueueLocalOnly
 		capturedWorkerTarget := capturedQueueWorkerTarget
+		capturedDefaultHarness := capturedQueueDefaultHarness
 
 		// Register the run and spawn a goroutine to handle it end-to-end.
 		// The goroutine owns Unregister on exit; the outer loop may proceed to
@@ -3016,7 +3022,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// the review-loop-failure budget (beadRunOne) updates the right queue.
 		// Without this both default to the main-only shim and a non-"main" queue
 		// never marks its item terminal → the group stalls forever (hk-tigaf.4).
-		go func(runID core.RunID, beadRecord core.BeadRecord, qname string, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string, localOnly bool, workerTarget string, preSelected *workers.Worker, localSlotHeld bool) {
+		go func(runID core.RunID, beadRecord core.BeadRecord, qname string, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string, localOnly bool, workerTarget string, queueDefaultHarness core.AgentType, preSelected *workers.Worker, localSlotHeld bool) {
 			defer wg.Done()
 			defer runCancel() // always release the per-run context, even on panic
 			defer deps.runRegistry.Unregister(runID)
@@ -3026,7 +3032,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// explicitly-captured parameters, not the loop variables, so the
 			// capture guard the parameter list exists for still holds.
 			env := deps.runEnv(runID, beadRecord, qname, qid, qgidx, itemIdx,
-				itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget)
+				itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget, queueDefaultHarness)
 			rp, handles := deps.buildRunBundles(env)
 			runOK := beadRunOne(runCtx, env, rp, handles, extraCtx, preSelected, localSlotHeld)
 			// EM-015f: after run terminal, evaluate queue group advance.
@@ -3047,7 +3053,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			if runOK && ctx.Err() == nil {
 				stagedBeadGeneratorEval(ctx, deps, beadRecord.BeadID, beadRecord.Labels)
 			}
-		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, preSelectedWorker, isLocalDispatch)
+		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, capturedDefaultHarness, preSelectedWorker, isLocalDispatch)
 	}
 }
 
@@ -3072,7 +3078,7 @@ func (deps *workLoopDeps) buildRunBundles(env runloop.RunEnv) (runloop.RunPorts,
 			builder = routedLaunchSpecBuilder(
 				handles.HarnessRegistry,
 				env.BeadRecord,
-				core.AgentType(""), // queue default: per-queue harness field not yet landed (hk-4x3rg)
+				env.QueueDefaultHarness,
 				core.AgentType(""), // node default: overridden per-node in driveDotWorkflow (T5/T12)
 				env.DefaultHarness, // global default: Config.DefaultHarness (empty → built-in claude-code)
 				rp.Emitter,
@@ -3283,12 +3289,12 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// asked the pi provider for a claude model and failed. Resolve the harness
 	// agent-type up front (quiet: no events; routedLaunchSpecBuilder still emits
 	// harness_selected at launch) so the model default matches the real harness.
-	// queue/node defaults are "" here, matching what routedLaunchSpecBuilder is
-	// passed below, so the quiet resolution equals the launch-time resolution.
+	// Queue and global defaults are passed as their distinct tiers, matching
+	// buildRunBundles, so quiet resolution equals launch-time resolution.
 	// hk-pkugu (codename:pi-model-leak). See modelpreference.go for tier-3 defaults.
 	resolvedAgentType := resolveHarnessAgentTypeQuiet(
 		beadRecord,
-		core.AgentType(""), // queue default (hk-4x3rg not landed)
+		env.QueueDefaultHarness,
 		core.AgentType(""), // node default (per-node override in driveDotWorkflow)
 		env.DefaultHarness,
 	)

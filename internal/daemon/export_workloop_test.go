@@ -97,7 +97,7 @@ func runBeadOneTest(ctx context.Context, deps workLoopDeps, env runloop.RunEnv, 
 // rp.LaunchBuilder exactly as production does, and a fixture-injected
 // launchSpecBuilder still reaches the review/DOT sub-drivers.
 func runBundlesFromDeps(deps workLoopDeps, runID core.RunID) (runloop.RunEnv, runloop.RunPorts, runloop.SharedHandles) {
-	env := deps.runEnv(runID, core.BeadRecord{}, "", nil, nil, 0, "", "", nil, false, "")
+	env := deps.runEnv(runID, core.BeadRecord{}, "", nil, nil, 0, "", "", nil, false, "", core.AgentType(""))
 	rp, handles := deps.buildRunBundles(env)
 	return env, rp, handles
 }

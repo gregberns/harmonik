@@ -102,7 +102,7 @@ func ReviewerDefaultHarness(
 //   - the node being dispatched is the reviewer, AND
 //   - the reviewer is on the DEFAULT/INHERITED leg — neither the implementer node's
 //     reviewer_harness= override nor the reviewer node's own harness= attr is valid, AND
-//   - the harness the reviewer would therefore inherit (the same tier-1/tier-4 walk
+//   - the harness the reviewer would therefore inherit (the same tier-1/tier-2/tier-4 walk
 //     deps.launchSpecBuilder performs, run quietly) is SessionIDCaptured.
 //
 // In every other case it returns the empty AgentType and the caller's existing
@@ -130,6 +130,7 @@ func DotReviewerInheritedHarnessOverride(
 	reviewerHarnessOverride core.AgentType,
 	nodeHarness core.AgentType,
 	bead core.BeadRecord,
+	queueDefault core.AgentType,
 	globalDefault core.AgentType,
 	beadID string,
 ) core.AgentType {
@@ -141,7 +142,7 @@ func DotReviewerInheritedHarnessOverride(
 	}
 	inherited := resolveQuiet(
 		bead,
-		core.AgentType(""), // queue default (hk-4x3rg not landed)
+		queueDefault,
 		core.AgentType(""), // node default: absent, that is this branch's premise
 		globalDefault,
 	)

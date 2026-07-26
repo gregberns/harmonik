@@ -1,91 +1,146 @@
-# Core queue, job/run, and Pi execution plan
+# Core queue, Run, and local Pi recovery plan
 
-**Priority:** first. The goal is a reliable local execution substrate: accept a supported queue item,
-persist it, claim it once, make one Run, launch Pi, observe its lifecycle, and reach one recoverable
-terminal state. The authoritative task inventory is [`TASK-INDEX.yaml`](TASK-INDEX.yaml).
+**Priority:** first.
+**Machine authority:** [`TASK-INDEX.yaml`](TASK-INDEX.yaml).
+**Worker handoffs:** [`tasks/`](tasks/README.md).
 
-## Scope
+The completion bar is a reliable local path:
 
 ```text
-CLI/socket admission → durable queue record → eligibility/claim → Run creation
-→ local Pi LaunchSpec/process → ready/identity/input/exit → terminalization/release → recovery
+supported admission
+  → durable queue record
+  → one durable reservation carrying Run ID
+  → one Bead claim and one Run
+  → local Pi launch/lifecycle/finalization
+  → one terminal/release result
+  → fixed-point restart recovery
 ```
 
-The primary daemon is down, so its runtime proof is deferred. Hermetic local scenarios and controlled real
-subprocesses are the immediate evidence. Remote SSH, crew, and scheduling are explicitly out of this wave.
+The primary daemon remains down. Acceptance uses hermetic scenarios, real local
+git/Beads fixtures, twin processes, and controlled local Pi subprocesses.
+Functional SSH, crew launch, scheduling, and primary-daemon deployment are
+deferred.
+
+## Why the original index was unsafe
+
+The 2026-07-25 deep review found:
+
+- the prose DAG still referenced superseded `PI-01`…`PI-06` and `PI-Q1`;
+- `E2E-02` depended on superseded `PI-05`;
+- CQ and JR both claimed overlapping ownership of the same dispatch transaction;
+- queue dispatch persisted `dispatched` without a Run ID, treated durable-write
+  failures as nonfatal, patched the Run ID in a second nonfatal persist, and
+  then claimed the Bead;
+- existing pure queue/Run kernels and scenario harnesses were incorrectly
+  planned as greenfield work;
+- one “ready” Pi secret task contradicted normative specs;
+- local Pi proof was blocked by speculative rate-limit and functional-remote
+  work;
+- the Pi callback/process/finalizer item combined distinct parser-lock,
+  signal-before-session, unbounded-kill, and per-workflow integration defects.
+
+Schema v2 removes stale `unlocks`, uses only `hard_requires`, adds exact model and
+lease families, splits those ownership boundaries, and keeps workers from
+editing the coordinator-owned index.
+
+## Critical DAG
+
+```text
+FIRST WAVE (four total agents)
+  coordinator/overseer: Sol xhigh
+  ├─ CQ-DEF-01: Sol high, exclusive dispatch spine
+  ├─ CQ-00A: Pi/Nemotron inventory
+  └─ CQ-00B: Pi/Nemotron inventory
+
+QUEUE
+  CQ-00A + CQ-00B → CQ-00
+  CQ-00B → CQ-MIG-01 ─────────────┐
+  CQ-00 → CQ-02 contract → CQ-02I ├→ CQ-01 admission → CQ-03 reservation
+                                   └───────────────────────────────────────┐
+  CQ-03 → CQ-04 recovery ─┬→ CQ-07 restart scenario                     │
+  CQ-03 → CQ-05 closure → CQ-06 ports ────────────────────────────────────┘
+
+RUN
+  JR-00 → JR-02 closure ─────────────────────┐
+  JR-00 + CQ-03 → JR-01 claim/Run → JR-03 terminal/release
+                                              └→ JR-04 recovery → JR-05 scenario
+
+PI SECURITY
+  PI-00 → PI-SPEC-01 → PI-A1 ────────────────┐
+                         └→ PI-A2A → PI-A2B → PI-R1
+
+PI PROCESS / FINALIZATION
+  PI-00 → {PI-L1A, PI-L1B, PI-L1C, PI-F0}
+             └──────────────────────→ {PI-F1, PI-F2S, PI-F2D}
+
+PI ADMISSION / LOCAL-ONLY
+  CQ-DEF-01 + CQ-00 → PI-Q2A → PI-Q2B → PI-Q2D
+  CQ-DEF-01 + PI-SPEC-01 → PI-R2 local placement fence
+
+  {PI-A2B, PI-R1, PI-F1, PI-F2S, PI-F2D, PI-Q2D, PI-R2}
+      → PI-E1 local lifecycle matrix
+
+END TO END
+  CQ-07 + JR-05 → E2E-BASE
+  E2E-BASE + PI-E1 → E2E-PI
+  E2E-BASE + JR-04 → E2E-FAULT
+  E2E-BASE → E2E-STRESS
+  all four → E2E-GATE
+```
+
+Rate-limit fixture/classifier work (`PI-O0`, `PI-O1`) is P1 and deferred. It
+does not gate the local happy path. Functional remote Pi remains `REMOTE-00`;
+`PI-R2` proves refusal and absence of secret transport only.
 
 ## Architecture rules
 
-1. Characterize real supported boundaries and crash cuts before refactoring. Stale plans and method names
-   are not evidence.
-2. Put I/O behind small consumer-shaped ports: persistence, claim/ledger, process start/wait, event
-   observation, clock, and workspace/context provisioning. Do not introduce a generic dependency bag.
-3. Use a functional core: eligibility, recovery, outcome mapping, and launch validation take immutable
-   values and return typed decisions/reasons. Adapters perform the resulting I/O once.
-4. Use state-transition tables and property tests: terminal stays terminal, recovery is idempotent, and no
-   event sequence creates two owners.
-5. Correlate Pi events with immutable run/process identity; never synthesize readiness or acknowledgements.
-6. Make cleanup idempotent with explicit wait, cancellation, terminal-persistence, and claim-release owners.
+1. Characterize supported production boundaries before changing them.
+2. The queue transaction has one durable owner. Reservation persists
+   `dispatched + RunID` together before Bead claim; persistence failure causes
+   zero claim and zero launch.
+3. Logic is pure where decisions are possible; adapters perform durable writes
+   and events once.
+4. Existing kernels (`internal/queue/state.go`, `internal/orchestrator/select.go`,
+   `internal/runexec`, and the handler outcome mapper) are reviewed/extended,
+   not replaced.
+5. Existing queue and restart scenarios are extended; no second harness is
+   invented.
+6. Pi security policy is spec-first. No worker implements around a normative
+   contradiction.
+7. Spawn proof, captured identity, genuine readiness, terminal signal,
+   finalization, wait, and reap are distinct facts.
+8. Primary-daemon deployment still requires new isolated real-runtime end-to-end
+   proof per the standing orchestrator rule.
 
-## DAG
+## Four-agent coordination without comms
 
-```text
-CQ-00 ─┬─ CQ-01 ─┬─ CQ-03 ─┬─ CQ-04 ─┐
-       │         │         └─ CQ-05 ─ CQ-06 ─ CQ-07 ─┐
-       └─ CQ-02 ─┘                                    │
-                                                          ├─ JR-05 ─ PI-06 ─ E2E-01
-CQ-00 ─ JR-00 ─┬─ JR-01 ─┬─ JR-03 ─ JR-04 ──────────────┘             ├─ E2E-02 ─ E2E-04
-               └─ JR-02 ─┘                                            └─ E2E-03 ─┘
+The coordinator is the fourth agent and sole index/worktree/integration owner.
+Three workers receive immutable cards and exclusive worktrees. Their durable
+return is a commit or `tasks/evidence/<task>.yaml`, so progress is recoverable
+from Git even if chat/comms fail. See [`tasks/README.md`](tasks/README.md).
 
-PI-00 ─┬─ PI-01 ──────────────────────────────────────────────────────┘
-       ├─ PI-02 ─┬─ PI-04 ─┐
-       └─ PI-03 ─┘         ├─ PI-05 ───────────────────────────────────┘
-                            └──────────────────────────── PI-06
-```
+Do not attempt the old “two Codex + two Pi + overseer” shape: that is five roles.
+With four total slots, use one overseer, one frontier builder, and two bounded
+workers. Once Pi cards are exhausted, replace a Pi slot with Terra rather than
+manufacturing low-value work.
 
-Before the general evidence wave, `CQ-DEF-01` is a ready P0: a persisted queue `DefaultHarness=pi` currently
-falls out of the selection/snapshot path before production dispatch, allowing an unlabeled item to resolve
-Claude. Its lease is narrow and it must add a tier-2 production-path characterization test. Start the other
-three non-overlapping evidence tasks in parallel: `CQ-00`, `JR-00`, and `PI-00`. Then allow at most one
-builder in each queue, run, and Pi ownership area, keeping a reviewer/planner slot free.
+## Model settings
 
-Pi has a separate ready safety wave: `PI-A1` secret/key-file representation, `PI-A2` current Pi disk-auth
-guard, `PI-L1` terminal-signal ownership, `PI-F0` harness-aware ProcessExit finalization, and `PI-Q1`
-queue-default propagation. Its DAG is `{PI-A1,PI-A2,PI-L1,PI-F0,PI-Q1} →
-{PI-R1,PI-F1,PI-F2,PI-Q2} → {PI-R2,PI-O1} → PI-E1`.
+- GPT-5.6 Sol `xhigh`: security/spec policy, concurrency, durable recovery,
+  shared-spine ambiguity, and cross-group reviews.
+- GPT-5.6 Sol `high`: a Sol-reviewed shared-wiring or bounded security
+  implementation such as `CQ-DEF-01`.
+- GPT-5.6 Terra `high`: bounded multi-file implementation and scenarios after
+  the contract is explicit.
+- Local Nemotron via Pi Ralph, high thinking: inventories, fixtures, exhaustive
+  pure tables, and narrow mechanical fixes only. One corrected retry; then
+  escalate to Terra. Sol reviews every Pi result.
 
-## Continuous bead-worker protocol
+## Done means
 
-1. Coordinator verifies a ready task's dependencies, base, file lease, and acceptance criteria; only then
-   creates/claims the bead.
-2. Worker receives one isolated worktree, one exclusive lease, one atomic outcome, and targeted checks.
-   A discovered cross-boundary defect becomes a new task rather than an opportunistic patch.
-3. After independent review and integration checks, record commit/test evidence in the YAML index and
-   unblock dependents. The next worker uses the documented contract and scenario fixtures, not oral context.
-
-## Review gates
-
-Every planned section and every completed implementation task gets a review from a different agent before it
-is accepted. The reviewer checks missing cases, task boundaries, dependency direction, acceptance tests, and
-whether the lease is actually exclusive. Before a group begins consuming another group—or is declared
-complete—a separate cross-group reviewer checks contract compatibility, duplicate ownership, durable-state
-and recovery consistency, error propagation, scenario coverage, and DAG ordering. Findings change the index;
-they are not merely advisory comments.
-
-## Two Pi Ralph workers and frontier routing
-
-Operate two Pi workers continuously only on `model:pi-ralph` cards: low-complexity deterministic tasks with
-an explicit contract, exclusive small lease, bounded checks, and a defined escalation point. Good Pi work is
-fixture/test expansion, evidence inventory, a narrow pure function, an isolated adapter, or a proven
-mechanical defect. Pi must not decide security policy, create a cross-subsystem contract, refactor shared
-spines, or integrate broad changes.
-
-Operate two Codex workers (and later Claude when available) on `model:frontier` cards: high-ambiguity
-ownership, concurrency/recovery, security, shared-spine integration, cross-group review, and Pi escalation.
-One frontier overseer continuously reviews Pi checkpoints, turns ambiguous findings into bounded cards,
-handles failing tests that escape the card, and keeps the Pi queue replenished. Use labels
-`complexity:low|medium|high` plus `model:pi-ralph|frontier`; route by ambiguity and blast radius rather than
-subsystem name. Medium tasks require a frontier-written/reviewed task card before Pi starts.
-
-`E2E-04` is the first-wave completion bar: bounded local admission, claim, Run, Pi, recovery, race, and
-fault proof. It does not claim SSH or primary-daemon proof.
+- `E2E-GATE` is green from a clean tree;
+- queue, Run, and Pi groups each have an approved cross-group review;
+- required local targeted/race/fault/real-process proofs are green;
+- no task is complete with pending required evidence;
+- primary-daemon and functional-SSH proofs remain explicitly deferred until
+  their own prerequisites and pre-deploy gate are satisfied.

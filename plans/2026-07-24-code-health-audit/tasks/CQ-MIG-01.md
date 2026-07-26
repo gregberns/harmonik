@@ -20,6 +20,10 @@ or report success before the relevant directory entry is durable.
   scoped, unexported migration fault-injection helper/seam if required
 - the migration section of `internal/queue/persistence_test.go` and/or one
   focused migration test file
+- `internal/lifecycle/startup_pl005_qm002.go`: only propagation of a
+  `MigrateFromLegacy` error so startup cannot load and silently choose the
+  destination after a migration conflict/failure
+- the directly corresponding focused startup test only
 
 Explicitly excluded without a coordinator amendment: `Persist`, `Load`,
 `Unlink`, `CompleteAndUnlink`, `CancelQueueOnShutdown`, the general transaction
@@ -50,6 +54,9 @@ API, and any package-global mutable fault hook.
    directory open/sync/close. The removal fault test must retry after legacy
    removal succeeded but `.harmonik` sync failed and prove the absent-legacy
    retry performs the outstanding parent-directory sync before success.
+   The seam must expose create, write, file-sync, file-close, rename,
+   directory-open, directory-sync, and directory-close independently; a
+   combined `writeTarget` or `syncDir` cut is not sufficient.
 4. Prove operation order. For a new destination, destination rename and
    `fsync(queues/)` precede legacy removal. On both paths, legacy removal
    precedes `fsync(.harmonik)`. No success occurs before the applicable
@@ -57,6 +64,11 @@ API, and any package-global mutable fault hook.
 5. Prove retry convergence after every partial result without losing the valid
    intended queue. Call these syscall-cut tests, not proof of real power-loss
    behavior.
+6. Prove startup composition fails closed: any migration conflict or migration
+   durability error prevents `LoadQueueAtStartup` from loading the canonical
+   destination as if migration succeeded. Do not change unrelated startup
+   reconciliation classifications. Name the focused propagation test
+   `TestLoadQueueAtStartup_MigrationErrorFailsClosed`.
 
 ## Acceptance
 
@@ -65,9 +77,13 @@ API, and any package-global mutable fault hook.
 - Every error after destination rename leaves at least one parseable intended
   queue copy, returns a truthful error, and converges on retry.
 - Conflicting valid queues are never silently resolved.
+- Startup never treats a migration conflict/error as nonfatal and then chooses
+  the destination.
 - The current existing-destination branch no longer removes legacy and returns
   success without syncing `.harmonik`.
 - Race tests do not depend on package-global mutable fault state.
+- Intended-copy oracles decode and compare all persisted fields; a QueueID-only
+  equivalence mutation must fail.
 - No excluded persistence symbol or transaction behavior changes.
 
 ## Verification
@@ -78,18 +94,21 @@ Replace `<claim-base>` with the exact claim SHA:
 go test ./internal/queue -run '^TestMigrateFromLegacy_' -count=1
 go test ./internal/queue -run '^TestMigrateFromLegacy_' -count=20
 go test -race ./internal/queue -run '^TestMigrateFromLegacy_' -count=10
-go vet ./internal/queue
-./.tools/golangci-lint run --new-from-rev=<claim-base> ./internal/queue/...
+go test ./internal/lifecycle -run '^TestLoadQueueAtStartup_MigrationErrorFailsClosed$' -count=1
+go vet ./internal/queue ./internal/lifecycle
+./.tools/golangci-lint run --new-from-rev=<claim-base> ./internal/queue/... ./internal/lifecycle/...
 ubs $(git diff --name-only <claim-base>..HEAD -- '*.go')
 git diff --check <claim-base>..HEAD
 git diff --name-only <claim-base>..HEAD
 git diff --function-context <claim-base>..HEAD -- internal/queue/persistence.go
+git diff --function-context <claim-base>..HEAD -- internal/lifecycle/startup_pl005_qm002.go
 make check-fast
 ```
 
-The final two diff inspections must show only the leased test files and
-`MigrateFromLegacy` plus its narrowly scoped unexported helper. Independent
-review must inspect order assertions and retry behavior, not just final files.
+The diff inspections must show only the leased migration and focused lifecycle
+test files, `MigrateFromLegacy` plus its narrowly scoped unexported helper, and
+the narrow `LoadQueueAtStartup` migration-error propagation. Independent review
+must inspect order assertions and retry behavior, not just final files.
 
 ## Escalate when
 

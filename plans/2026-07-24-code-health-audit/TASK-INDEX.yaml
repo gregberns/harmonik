@@ -244,7 +244,7 @@ tasks:
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-00B]
-    conflicts_with: [CQ-02I]
+    conflicts_with: [CQ-02I, CQ-04]
     lease_family: queue_persistence
     claim:
       owner: terra-cq-mig-01
@@ -330,7 +330,7 @@ tasks:
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-02I, CQ-03]
-    conflicts_with: [JR-04]
+    conflicts_with: [CQ-MIG-01, JR-04]
     lease_family: queue_startup_recovery
     required_proof: [targeted, property, fault, delta_lint, ubs, check_fast]
 

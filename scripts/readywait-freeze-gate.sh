@@ -47,10 +47,10 @@ HITS=0
 #
 # time.Now().Sub(x) — Since spelled the long way — needs no separate alternative:
 # Now already covers it. Deliberately NOT policed: time.Duration(n)*time.Second
-# (a unit conversion, no clock read, and dot_cascade.go legitimately has four),
+# (a unit conversion, no clock read, and dot_cascade_core.go legitimately has four),
 # and context.WithTimeout/WithDeadline (wall-bound, but ctx deadlines are not yet
-# on the ClockPort and dot_cascade.go already carries one — pinning it would make
-# the gate red on arrival rather than ratchet anything).
+# on the ClockPort and dot_cascade_core.go already carries one — pinning it would
+# make the gate red on arrival rather than ratchet anything).
 #
 # The match is plain text — COMMENTS COUNT. Stripping them would need a Go parser
 # (or a sed hack that silently creates false negatives), and a gate that misses a
@@ -133,22 +133,49 @@ if ! grep -q '^type DispatchSegment struct' internal/runloop/dispatchsegment.go;
 fi
 
 # (5) Every agent-launch site binds through the seam. RT14 took the number of
-#     sites that hand-roll their own ready wait to ZERO. Pin exact construction
-#     counts, not mere presence: reviewloop has distinct implementer + reviewer
-#     launches, so a contains-only check would miss either one escaping.
+#     sites that hand-roll their own ready wait to ZERO. Pin exact construction,
+#     Launch callback, and matching segment Run counts, not mere text presence:
+#     reviewloop has distinct implementer + reviewer launches, so a contains-only
+#     check would miss either one escaping. The anchored patterns exclude comment
+#     text; the three equal counts reject dummy or stale constructions.
 check_segment_count() {
     local f=$1
     local want=$2
-    local got
+    local constructions
+    local construction_vars
+    local launches
+    local runs
+    local run_vars
 
     if [ ! -f "$f" ]; then
         echo "readywait-freeze-gate: launch consumer $f is gone — re-derive this gate" >&2
         HITS=$((HITS + 1))
         return
     fi
-    got="$(grep -c '&runloop\.DispatchSegment{' "$f" || true)"
-    if [ "$got" -ne "$want" ]; then
-        echo "readywait-freeze-gate: $f builds runloop.DispatchSegment $got time(s), expected $want — a launch site left or bypassed the seam" >&2
+    construction_vars="$(sed -nE \
+        's/^[[:space:]]*([[:alnum:]_]+Seg)[[:space:]]*:=[[:space:]]*\&runloop\.DispatchSegment\{.*/\1/p' \
+        "$f" | sort)"
+    run_vars="$(sed -nE \
+        's/^[[:space:]]*[[:alnum:]_]+Dispatch[[:space:]]*:=[[:space:]]*([[:alnum:]_]+Seg)\.Run\(ctx\).*/\1/p' \
+        "$f" | sort)"
+    constructions="$(printf '%s\n' "$construction_vars" | awk 'NF { n++ } END { print n + 0 }')"
+    launches="$(grep -cE '^[[:space:]]*Launch:[[:space:]]*func\(lctx[[:space:]]+context\.Context\)' "$f" || true)"
+    runs="$(printf '%s\n' "$run_vars" | awk 'NF { n++ } END { print n + 0 }')"
+
+    if [ "$constructions" -ne "$want" ]; then
+        echo "readywait-freeze-gate: $f builds runloop.DispatchSegment $constructions time(s), expected $want — a launch site left or bypassed the seam" >&2
+        HITS=$((HITS + 1))
+    fi
+    if [ "$launches" -ne "$want" ]; then
+        echo "readywait-freeze-gate: $f binds DispatchSegment Launch(lctx) $launches time(s), expected $want — a construction is stale or bypasses launch ownership" >&2
+        HITS=$((HITS + 1))
+    fi
+    if [ "$runs" -ne "$want" ]; then
+        echo "readywait-freeze-gate: $f runs its DispatchSegment $runs time(s), expected $want — a construction is stale or not driven" >&2
+        HITS=$((HITS + 1))
+    fi
+    if [ "$construction_vars" != "$run_vars" ]; then
+        echo "readywait-freeze-gate: $f constructs and runs different DispatchSegment variables — every segment must have one matching Run(ctx)" >&2
         HITS=$((HITS + 1))
     fi
 }

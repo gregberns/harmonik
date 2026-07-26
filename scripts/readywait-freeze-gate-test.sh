@@ -42,26 +42,32 @@ expect_gate_failure() {
 # The unmodified current ownership inventory must be accepted.
 run_gate >/dev/null
 
-# Mutation 1: recreate the historical wait shape under its retired symbol in a
-# currently wall-clock-clean launch consumer. Either protection is sufficient,
-# but assert the symbol ratchet specifically fired.
+# Mutation 1: add an open-coded wait under a NEW symbol in a currently
+# wall-clock-clean launch consumer. This deliberately avoids the retired-symbol
+# ratchet so only WALLCLOCK_RE plus the pinned-file scan can catch it.
 cat >>"$FIXTURE/internal/daemon/reviewloop.go" <<'EOF'
 
-func waitAgentReady() {
+func openCodedReadyWait() {
 	<-time.After(time.Second)
 }
 EOF
 expect_gate_failure "open-coded agent_ready wait mutation" \
-    "FORBIDDEN re-declaration of waitAgentReady"
+    "FORBIDDEN raw wall-clock in internal/daemon/reviewloop.go"
 cp "$REPO_ROOT/internal/daemon/reviewloop.go" "$FIXTURE/internal/daemon/reviewloop.go"
 
-# Mutation 2: make the single-mode launch consumer bypass the exported seam.
-# Exact per-consumer counts ensure a second construction elsewhere cannot mask
-# the escape.
-sed -i.bak 's/&runloop\.DispatchSegment{/\&runloop.DispatchSegmentEscaped{/' \
-    "$FIXTURE/internal/daemon/workloop.go"
-rm -f "$FIXTURE/internal/daemon/workloop.go.bak"
+# Mutation 2: remove only the first of reviewloop's two seam constructions. This
+# proves exact counts catch one launch escaping even while its sibling remains.
+awk '
+    !changed && /&runloop\.DispatchSegment{/ {
+        sub(/&runloop\.DispatchSegment{/, "\\&runloop.DispatchSegmentEscaped{")
+        changed = 1
+    }
+    { print }
+' "$FIXTURE/internal/daemon/reviewloop.go" >"$FIXTURE/internal/daemon/reviewloop.go.mutated"
+mv "$FIXTURE/internal/daemon/reviewloop.go.mutated" "$FIXTURE/internal/daemon/reviewloop.go"
+printf '\n// &runloop.DispatchSegment{ comment-only decoy must not count\n' \
+    >>"$FIXTURE/internal/daemon/reviewloop.go"
 expect_gate_failure "dispatch seam escape mutation" \
-    "internal/daemon/workloop.go builds runloop.DispatchSegment 0 time(s), expected 1"
+    "internal/daemon/reviewloop.go builds runloop.DispatchSegment 1 time(s), expected 2"
 
 echo "readywait-freeze-gate-test: PASS"

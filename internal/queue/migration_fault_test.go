@@ -3,41 +3,55 @@ package queue
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-func TestMigrateFromLegacy_DestinationOutcomes(t *testing.T) {
-	t.Parallel()
+var errMigrationInjected = errors.New("injected migration syscall fault")
 
-	legacy := []byte(`{"schema_version":1,"queue_id":"legacy"}`)
+func TestMigrateFromLegacy_DestinationOutcomes(t *testing.T) {
+	intended := migrationIntendedQueue()
+	legacy := migrationMarshalQueue(t, intended)
+
+	queueIDOnlyConflict := intended
+	queueIDOnlyConflict.Groups = append([]Group(nil), intended.Groups...)
+	queueIDOnlyConflict.Groups[0].Items = append([]Item(nil), intended.Groups[0].Items...)
+	queueIDOnlyConflict.Groups[0].Items[0].Context = "same QueueID, conflicting persisted field"
+
+	differentQueue := intended
+	differentQueue.QueueID = "01999999-9999-7000-8000-000000000099"
+
+	equivalent := new(bytes.Buffer)
+	if err := json.Indent(equivalent, legacy, "", "  "); err != nil {
+		t.Fatalf("indent equivalent destination: %v", err)
+	}
+
 	for _, tc := range []struct {
 		name          string
 		destination   []byte
 		wantErr       bool
 		legacyRemains bool
 	}{
-		{name: "corrupt", destination: []byte(`not json`), wantErr: true, legacyRemains: true},
 		{name: "empty", destination: nil, wantErr: true, legacyRemains: true},
-		{name: "conflicting", destination: []byte(`{"schema_version":1,"queue_id":"other"}`), wantErr: true, legacyRemains: true},
-		{name: "valid equivalent", destination: []byte("{\n  \"queue_id\": \"legacy\",\n  \"schema_version\": 1\n}\n"), legacyRemains: false},
+		{name: "corrupt JSON", destination: []byte(`not json`), wantErr: true, legacyRemains: true},
+		{name: "wrong schema", destination: []byte(`{"schema_version":99,"queue_id":"legacy"}`), wantErr: true, legacyRemains: true},
+		{name: "different QueueID", destination: migrationMarshalQueue(t, differentQueue), wantErr: true, legacyRemains: true},
+		{name: "same QueueID but conflicting field", destination: migrationMarshalQueue(t, queueIDOnlyConflict), wantErr: true, legacyRemains: true},
+		{name: "deeply equivalent", destination: equivalent.Bytes(), legacyRemains: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
 			projectDir := migrationFixture(t, legacy, tc.destination, true)
 			legacyPath, targetPath := migrationPaths(projectDir)
-			//nolint:gosec // G304: targetPath is a test-only path under t.TempDir.
-			targetBefore, readErr := os.ReadFile(targetPath)
-			if readErr != nil {
-				t.Fatalf("read destination before migration: %v", readErr)
-			}
+			targetBefore := migrationReadFile(t, targetPath)
 
 			err := MigrateFromLegacy(context.Background(), projectDir)
 			if tc.wantErr && err == nil {
@@ -46,20 +60,14 @@ func TestMigrateFromLegacy_DestinationOutcomes(t *testing.T) {
 			if !tc.wantErr && err != nil {
 				t.Fatalf("MigrateFromLegacy error = %v", err)
 			}
-
 			if exists := migrationFileExists(t, legacyPath); exists != tc.legacyRemains {
 				t.Errorf("legacy exists = %t, want %t", exists, tc.legacyRemains)
 			}
-			if got := migrationParseableCopies(t, legacyPath, targetPath); got == 0 {
-				t.Fatalf("parseable migration copies = 0, want at least one")
-			}
-			//nolint:gosec // G304: targetPath is a test-only path under t.TempDir.
-			targetAfter, readErr := os.ReadFile(targetPath)
-			if readErr != nil {
-				t.Fatalf("read destination after migration: %v", readErr)
-			}
-			if !bytes.Equal(targetAfter, targetBefore) {
+			if got := migrationReadFile(t, targetPath); !bytes.Equal(got, targetBefore) {
 				t.Errorf("destination changed during %s outcome", tc.name)
+			}
+			if got := migrationIntendedCopyCount(t, intended, legacyPath, targetPath); got == 0 {
+				t.Fatal("no deeply equivalent intended queue copy remains")
 			}
 			if !tc.wantErr {
 				if err := MigrateFromLegacy(context.Background(), projectDir); err != nil {
@@ -70,85 +78,273 @@ func TestMigrateFromLegacy_DestinationOutcomes(t *testing.T) {
 	}
 }
 
-func TestMigrateFromLegacy_FaultsPreserveParseableCopyAndOrder(t *testing.T) {
-	legacy := []byte(`{"schema_version":1,"queue_id":"legacy"}`)
+func TestMigrateFromLegacy_StatErrorFailsClosed(t *testing.T) {
+	intended := migrationIntendedQueue()
+	legacy := migrationMarshalQueue(t, intended)
+	projectDir := migrationFixture(t, legacy, nil, false)
+	legacyPath, targetPath := migrationPaths(projectDir)
+	calls := make([]string, 0, 2)
 
-	for _, tc := range []struct {
-		name      string
-		faultAt   string
-		wantCalls []string
+	err := migrateFromLegacy(projectDir, migrationTestOps(&calls, "stat destination"))
+	if !errors.Is(err, errMigrationInjected) {
+		t.Fatalf("migrateFromLegacy error = %v, want injected stat error", err)
+	}
+	migrationAssertCalls(t, calls, "read legacy", "stat destination")
+	if !migrationFileExists(t, legacyPath) || migrationFileExists(t, targetPath) {
+		t.Fatal("non-ENOENT Stat error changed migration files")
+	}
+	if got := migrationIntendedCopyCount(t, intended, legacyPath, targetPath); got != 1 {
+		t.Fatalf("intended queue copies = %d, want 1", got)
+	}
+}
+
+func TestMigrateFromLegacy_NewDestinationSyscallCutsAndRetries(t *testing.T) {
+	fullNew := []string{
+		"read legacy", "stat destination", "mkdir queues", "create temp",
+		"write temp", "sync temp", "close temp", "rename destination",
+		"open queues dir", "sync queues dir", "close queues dir",
+		"remove legacy", "open parent dir", "sync parent dir", "close parent dir",
+	}
+	cases := []struct {
+		faultAt string
+		calls   []string
 	}{
-		{name: "read legacy", faultAt: "read legacy", wantCalls: []string{"read legacy"}},
-		{name: "mkdir queues", faultAt: "mkdir queues", wantCalls: []string{"read legacy", "mkdir queues"}},
-		{name: "read destination", faultAt: "read destination", wantCalls: []string{"read legacy", "mkdir queues", "read destination"}},
-		{name: "write destination", faultAt: "write destination", wantCalls: []string{"read legacy", "mkdir queues", "read destination", "write destination"}},
-		{name: "sync queues", faultAt: "sync queues", wantCalls: []string{"read legacy", "mkdir queues", "read destination", "write destination", "sync queues"}},
-		{name: "remove legacy", faultAt: "remove legacy", wantCalls: []string{"read legacy", "mkdir queues", "read destination", "write destination", "sync queues", "remove legacy"}},
-		{name: "sync parent", faultAt: "sync parent", wantCalls: []string{"read legacy", "mkdir queues", "read destination", "write destination", "sync queues", "remove legacy", "sync parent"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+		{faultAt: "read legacy", calls: fullNew[:1]},
+		{faultAt: "stat destination", calls: fullNew[:2]},
+		{faultAt: "mkdir queues", calls: fullNew[:3]},
+		{faultAt: "create temp", calls: fullNew[:4]},
+		{faultAt: "write temp", calls: append(append([]string{}, fullNew[:5]...), "close temp", "remove temp")},
+		{faultAt: "sync temp", calls: append(append([]string{}, fullNew[:6]...), "close temp", "remove temp")},
+		{faultAt: "close temp", calls: append(append([]string{}, fullNew[:7]...), "remove temp")},
+		{faultAt: "rename destination", calls: append(append([]string{}, fullNew[:8]...), "remove temp")},
+		{faultAt: "open queues dir", calls: fullNew[:9]},
+		{faultAt: "sync queues dir", calls: append(append([]string{}, fullNew[:10]...), "close queues dir")},
+		{faultAt: "close queues dir", calls: fullNew[:11]},
+		{faultAt: "remove legacy", calls: fullNew[:12]},
+		{faultAt: "open parent dir", calls: fullNew[:13]},
+		{faultAt: "sync parent dir", calls: append(append([]string{}, fullNew[:14]...), "close parent dir")},
+		{faultAt: "close parent dir", calls: fullNew},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.faultAt, func(t *testing.T) {
+			intended := migrationIntendedQueue()
+			legacy := migrationMarshalQueue(t, intended)
 			projectDir := migrationFixture(t, legacy, nil, false)
 			legacyPath, targetPath := migrationPaths(projectDir)
-			calls := make([]string, 0, len(tc.wantCalls))
-			ops := migrationTestOps(t, &calls, tc.faultAt)
+			calls := make([]string, 0, len(tc.calls))
 
-			if err := migrateFromLegacy(projectDir, ops); err == nil {
-				t.Fatalf("migrateFromLegacy fault at %q returned nil", tc.faultAt)
+			err := migrateFromLegacy(projectDir, migrationTestOps(&calls, tc.faultAt))
+			if !errors.Is(err, errMigrationInjected) {
+				t.Fatalf("migrateFromLegacy error = %v, want injected %s error", err, tc.faultAt)
 			}
-			if got := strings.Join(calls, ","); got != strings.Join(tc.wantCalls, ",") {
-				t.Errorf("operation order = %q, want %q", got, strings.Join(tc.wantCalls, ","))
+			migrationAssertCalls(t, calls, tc.calls...)
+			if got := migrationIntendedCopyCount(t, intended, legacyPath, targetPath); got == 0 {
+				t.Fatal("fault left no deeply equivalent intended queue copy")
 			}
-			if got := migrationParseableCopies(t, legacyPath, targetPath); got == 0 {
-				t.Fatal("fault left no parseable migration copy")
+
+			legacyBeforeRetry := migrationFileExists(t, legacyPath)
+			targetBeforeRetry := migrationFileExists(t, targetPath)
+			retryCalls := make([]string, 0, len(fullNew))
+			if err := migrateFromLegacy(projectDir, migrationTestOps(&retryCalls, "")); err != nil {
+				t.Fatalf("retry after %s fault: %v", tc.faultAt, err)
+			}
+			migrationAssertRetryPath(t, retryCalls, legacyBeforeRetry, targetBeforeRetry)
+			if migrationFileExists(t, legacyPath) {
+				t.Fatal("legacy remains after successful retry")
+			}
+			if got := migrationIntendedCopyCount(t, intended, legacyPath, targetPath); got != 1 {
+				t.Fatalf("intended queue copies after retry = %d, want 1", got)
 			}
 		})
 	}
 }
 
-func TestMigrateFromLegacy_RetrySyncsParentAfterAbsentLegacyConvergence(t *testing.T) {
-	legacy := []byte(`{"schema_version":1,"queue_id":"legacy"}`)
-	projectDir := migrationFixture(t, legacy, nil, false)
+func TestMigrateFromLegacy_ExistingDestinationSyscallCutsAndRetries(t *testing.T) {
+	fullExisting := []string{
+		"read legacy", "stat destination", "read destination",
+		"open queues dir", "sync queues dir", "close queues dir",
+		"remove legacy", "open parent dir", "sync parent dir", "close parent dir",
+	}
+	cases := []struct {
+		faultAt string
+		calls   []string
+	}{
+		{faultAt: "read legacy", calls: fullExisting[:1]},
+		{faultAt: "stat destination", calls: fullExisting[:2]},
+		{faultAt: "read destination", calls: fullExisting[:3]},
+		{faultAt: "open queues dir", calls: fullExisting[:4]},
+		{faultAt: "sync queues dir", calls: append(append([]string{}, fullExisting[:5]...), "close queues dir")},
+		{faultAt: "close queues dir", calls: fullExisting[:6]},
+		{faultAt: "remove legacy", calls: fullExisting[:7]},
+		{faultAt: "open parent dir", calls: fullExisting[:8]},
+		{faultAt: "sync parent dir", calls: append(append([]string{}, fullExisting[:9]...), "close parent dir")},
+		{faultAt: "close parent dir", calls: fullExisting},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.faultAt, func(t *testing.T) {
+			intended := migrationIntendedQueue()
+			data := migrationMarshalQueue(t, intended)
+			projectDir := migrationFixture(t, data, data, true)
+			legacyPath, targetPath := migrationPaths(projectDir)
+			calls := make([]string, 0, len(tc.calls))
+
+			err := migrateFromLegacy(projectDir, migrationTestOps(&calls, tc.faultAt))
+			if !errors.Is(err, errMigrationInjected) {
+				t.Fatalf("migrateFromLegacy error = %v, want injected %s error", err, tc.faultAt)
+			}
+			migrationAssertCalls(t, calls, tc.calls...)
+			if got := migrationIntendedCopyCount(t, intended, legacyPath, targetPath); got == 0 {
+				t.Fatal("fault left no deeply equivalent intended queue copy")
+			}
+
+			legacyBeforeRetry := migrationFileExists(t, legacyPath)
+			targetBeforeRetry := migrationFileExists(t, targetPath)
+			retryCalls := make([]string, 0, len(fullExisting))
+			if err := migrateFromLegacy(projectDir, migrationTestOps(&retryCalls, "")); err != nil {
+				t.Fatalf("retry after %s fault: %v", tc.faultAt, err)
+			}
+			migrationAssertRetryPath(t, retryCalls, legacyBeforeRetry, targetBeforeRetry)
+			if migrationFileExists(t, legacyPath) {
+				t.Fatal("legacy remains after successful retry")
+			}
+			if got := migrationIntendedCopyCount(t, intended, legacyPath, targetPath); got != 1 {
+				t.Fatalf("intended queue copies after retry = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestMigrateFromLegacy_RenameThenQueuesSyncFailureRetriesBeforeRemove(t *testing.T) {
+	intended := migrationIntendedQueue()
+	data := migrationMarshalQueue(t, intended)
+	projectDir := migrationFixture(t, data, nil, false)
 	legacyPath, targetPath := migrationPaths(projectDir)
+	firstCalls := make([]string, 0, 11)
 
-	firstCalls := make([]string, 0, 7)
-	if err := migrateFromLegacy(projectDir, migrationTestOps(t, &firstCalls, "sync parent")); err == nil {
-		t.Fatal("first migration error = nil, want parent-sync fault")
+	err := migrateFromLegacy(projectDir, migrationTestOps(&firstCalls, "sync queues dir"))
+	if !errors.Is(err, errMigrationInjected) {
+		t.Fatalf("first migrate error = %v, want queues-sync fault", err)
 	}
+	migrationAssertCalls(t, firstCalls,
+		"read legacy", "stat destination", "mkdir queues", "create temp",
+		"write temp", "sync temp", "close temp", "rename destination",
+		"open queues dir", "sync queues dir", "close queues dir",
+	)
+	if !migrationFileExists(t, legacyPath) || !migrationFileExists(t, targetPath) {
+		t.Fatal("rename-success/queues-sync-fail must leave both intended copies")
+	}
+
+	retryCalls := make([]string, 0, 10)
+	if err := migrateFromLegacy(projectDir, migrationTestOps(&retryCalls, "")); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	migrationAssertCalls(t, retryCalls,
+		"read legacy", "stat destination", "read destination",
+		"open queues dir", "sync queues dir", "close queues dir",
+		"remove legacy", "open parent dir", "sync parent dir", "close parent dir",
+	)
 	if migrationFileExists(t, legacyPath) {
-		t.Fatal("legacy file remains after the successful delete")
+		t.Fatal("retry did not remove legacy after completing queues-directory sync")
 	}
-	if got := migrationParseableCopies(t, legacyPath, targetPath); got != 1 {
-		t.Fatalf("parseable migration copies after parent-sync fault = %d, want 1", got)
-	}
+}
 
-	retryCalls := make([]string, 0, 3)
-	if err := migrateFromLegacy(projectDir, migrationTestOps(t, &retryCalls, "")); err != nil {
-		t.Fatalf("retry after parent-sync fault: %v", err)
+func TestMigrateFromLegacy_AbsentLegacySyncFaultsAndRetries(t *testing.T) {
+	for _, tc := range []struct {
+		faultAt string
+		calls   []string
+	}{
+		{faultAt: "open parent dir", calls: []string{"read legacy", "open parent dir"}},
+		{faultAt: "sync parent dir", calls: []string{"read legacy", "open parent dir", "sync parent dir", "close parent dir"}},
+		{faultAt: "close parent dir", calls: []string{"read legacy", "open parent dir", "sync parent dir", "close parent dir"}},
+	} {
+		t.Run(tc.faultAt, func(t *testing.T) {
+			projectDir := migrationFixture(t, nil, nil, false)
+			legacyPath, _ := migrationPaths(projectDir)
+			if err := os.Remove(legacyPath); err != nil {
+				t.Fatalf("remove legacy fixture: %v", err)
+			}
+			calls := make([]string, 0, len(tc.calls))
+
+			err := migrateFromLegacy(projectDir, migrationTestOps(&calls, tc.faultAt))
+			if !errors.Is(err, errMigrationInjected) {
+				t.Fatalf("migrateFromLegacy error = %v, want injected %s error", err, tc.faultAt)
+			}
+			migrationAssertCalls(t, calls, tc.calls...)
+
+			retryCalls := make([]string, 0, 4)
+			if err := migrateFromLegacy(projectDir, migrationTestOps(&retryCalls, "")); err != nil {
+				t.Fatalf("retry after %s fault: %v", tc.faultAt, err)
+			}
+			migrationAssertCalls(t, retryCalls, "read legacy", "open parent dir", "sync parent dir", "close parent dir")
+		})
 	}
-	if got, want := strings.Join(retryCalls, ","), "read legacy,read destination,sync parent"; got != want {
-		t.Errorf("retry operation order = %q, want %q", got, want)
+}
+
+func migrationIntendedQueue() Queue {
+	submitted := time.Date(2026, 7, 26, 18, 0, 0, 123, time.UTC)
+	started := submitted.Add(time.Minute)
+	appended := submitted.Add(2 * time.Minute)
+	runID := "01977777-7777-7000-8000-000000000077"
+	return Queue{
+		SchemaVersion:  1,
+		QueueID:        "01966666-6666-7000-8000-000000000066",
+		Name:           QueueNameMain,
+		Workers:        3,
+		SpendCapUSD:    12.5,
+		DefaultHarness: core.AgentTypeCodex,
+		LocalOnly:      true,
+		WorkerTarget:   "worker-a",
+		SubmittedAt:    submitted,
+		Status:         QueueStatusActive,
+		Groups: []Group{{
+			GroupIndex: 0,
+			Kind:       GroupKindStream,
+			Status:     GroupStatusActive,
+			CreatedAt:  submitted,
+			StartedAt:  &started,
+			Items: []Item{{
+				BeadID:             core.BeadID("hk-migration-intended"),
+				Status:             ItemStatusDispatched,
+				RunID:              &runID,
+				AppendedAt:         &appended,
+				Context:            "preserve every persisted field",
+				WorkflowMode:       "dot",
+				WorkflowRef:        "workflow.dot",
+				TemplateParams:     map[string]string{"MODE": "strict"},
+				Attempts:           2,
+				LastFailureReason:  "retry",
+				ReviewLoopFailures: 1,
+			}},
+		}},
 	}
-	if got := migrationParseableCopies(t, legacyPath, targetPath); got != 1 {
-		t.Fatalf("parseable migration copies after retry = %d, want 1", got)
+}
+
+func migrationMarshalQueue(t *testing.T, q Queue) []byte {
+	t.Helper()
+	data, err := json.Marshal(q)
+	if err != nil {
+		t.Fatalf("marshal queue: %v", err)
 	}
+	return data
 }
 
 func migrationFixture(t *testing.T, legacy, destination []byte, destinationExists bool) string {
 	t.Helper()
 	projectDir := t.TempDir()
-	harmonikDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, core.HarmonikDirMode); err != nil {
+	harmonikPath := harmonikDir(projectDir)
+	if err := os.MkdirAll(harmonikPath, core.HarmonikDirMode); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(harmonikDir, "queue.json"), legacy, 0o600); err != nil {
+	if err := os.WriteFile(legacyQueuePath(projectDir), legacy, 0o600); err != nil {
 		t.Fatalf("write legacy: %v", err)
 	}
 	if destinationExists {
-		queuesDir := filepath.Join(harmonikDir, "queues")
-		if err := os.MkdirAll(queuesDir, core.HarmonikDirMode); err != nil {
+		if err := os.MkdirAll(queuesDir(projectDir), core.HarmonikDirMode); err != nil {
 			t.Fatalf("mkdir queues: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(queuesDir, "main.json"), destination, 0o600); err != nil {
+		if err := os.WriteFile(queuePath(projectDir, QueueNameMain), destination, 0o600); err != nil {
 			t.Fatalf("write destination: %v", err)
 		}
 	}
@@ -156,7 +352,17 @@ func migrationFixture(t *testing.T, legacy, destination []byte, destinationExist
 }
 
 func migrationPaths(projectDir string) (legacyPath, targetPath string) {
-	return filepath.Join(projectDir, ".harmonik", "queue.json"), filepath.Join(projectDir, ".harmonik", "queues", "main.json")
+	return legacyQueuePath(projectDir), queuePath(projectDir, QueueNameMain)
+}
+
+func migrationReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	//nolint:gosec // G304: test-only path under t.TempDir.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %q: %v", path, err)
+	}
+	return data
 }
 
 func migrationFileExists(t *testing.T, path string) bool {
@@ -172,11 +378,11 @@ func migrationFileExists(t *testing.T, path string) bool {
 	return false
 }
 
-func migrationParseableCopies(t *testing.T, paths ...string) int {
+func migrationIntendedCopyCount(t *testing.T, intended Queue, paths ...string) int {
 	t.Helper()
-	parseable := 0
+	count := 0
 	for _, path := range paths {
-		//nolint:gosec // G304: paths are test-only migration paths under t.TempDir.
+		//nolint:gosec // G304: test-only migration paths under t.TempDir.
 		data, err := os.ReadFile(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -184,19 +390,47 @@ func migrationParseableCopies(t *testing.T, paths ...string) int {
 		if err != nil {
 			t.Fatalf("read %q: %v", path, err)
 		}
-		if _, err := UnmarshalQueue(data); err == nil {
-			parseable++
+		got, err := UnmarshalQueue(data)
+		if err == nil && reflect.DeepEqual(got, intended) {
+			count++
 		}
 	}
-	return parseable
+	return count
 }
 
-func migrationTestOps(t *testing.T, calls *[]string, faultAt string) migrateFromLegacyOps {
+func migrationAssertCalls(t *testing.T, got []string, want ...string) {
 	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("operation order:\n got: %s\nwant: %s", strings.Join(got, " → "), strings.Join(want, " → "))
+	}
+}
+
+func migrationAssertRetryPath(t *testing.T, calls []string, legacyExists, targetExists bool) {
+	t.Helper()
+	switch {
+	case !legacyExists:
+		migrationAssertCalls(t, calls, "read legacy", "open parent dir", "sync parent dir", "close parent dir")
+	case targetExists:
+		migrationAssertCalls(t, calls,
+			"read legacy", "stat destination", "read destination",
+			"open queues dir", "sync queues dir", "close queues dir",
+			"remove legacy", "open parent dir", "sync parent dir", "close parent dir",
+		)
+	default:
+		migrationAssertCalls(t, calls,
+			"read legacy", "stat destination", "mkdir queues", "create temp",
+			"write temp", "sync temp", "close temp", "rename destination",
+			"open queues dir", "sync queues dir", "close queues dir",
+			"remove legacy", "open parent dir", "sync parent dir", "close parent dir",
+		)
+	}
+}
+
+func migrationTestOps(calls *[]string, faultAt string) migrateFromLegacyOps {
 	fault := func(operation string) error {
 		*calls = append(*calls, operation)
 		if operation == faultAt {
-			return fmt.Errorf("injected %s fault", operation)
+			return fmt.Errorf("%w: %s", errMigrationInjected, operation)
 		}
 		return nil
 	}
@@ -209,8 +443,14 @@ func migrationTestOps(t *testing.T, calls *[]string, faultAt string) migrateFrom
 			if err := fault(operation); err != nil {
 				return nil, err
 			}
-			//nolint:gosec // G304: path is a test-only migration path under t.TempDir.
+			//nolint:gosec // G304: test-only path under t.TempDir.
 			return os.ReadFile(path)
+		},
+		stat: func(path string) (os.FileInfo, error) {
+			if err := fault("stat destination"); err != nil {
+				return nil, err
+			}
+			return os.Stat(path)
 		},
 		mkdirAll: func(path string, mode os.FileMode) error {
 			if err := fault("mkdir queues"); err != nil {
@@ -218,27 +458,77 @@ func migrationTestOps(t *testing.T, calls *[]string, faultAt string) migrateFrom
 			}
 			return os.MkdirAll(path, mode)
 		},
-		writeTarget: func(path string, data []byte) error {
-			if err := fault("write destination"); err != nil {
+		createTemp: func(path string, flag int, mode os.FileMode) (*os.File, error) {
+			if err := fault("create temp"); err != nil {
+				return nil, err
+			}
+			//nolint:gosec // G304: test-only path under t.TempDir.
+			return os.OpenFile(path, flag, mode)
+		},
+		writeFile: func(file *os.File, data []byte) (int, error) {
+			if err := fault("write temp"); err != nil {
+				return 0, err
+			}
+			return file.Write(data)
+		},
+		syncFile: func(file *os.File) error {
+			if err := fault("sync temp"); err != nil {
 				return err
 			}
-			return os.WriteFile(path, data, 0o600)
+			return file.Sync()
 		},
-		remove: func(path string) error {
-			if err := fault("remove legacy"); err != nil {
+		closeFile: func(file *os.File) error {
+			if err := fault("close temp"); err != nil {
+				return errors.Join(err, file.Close())
+			}
+			return file.Close()
+		},
+		rename: func(oldPath, newPath string) error {
+			if err := fault("rename destination"); err != nil {
 				return err
 			}
-			return os.Remove(path)
+			return os.Rename(oldPath, newPath)
 		},
-		syncDir: func(path string) error {
-			operation := "sync queues"
+		openDir: func(path string) (*os.File, error) {
+			operation := "open queues dir"
 			if filepath.Base(path) == ".harmonik" {
-				operation = "sync parent"
+				operation = "open parent dir"
+			}
+			if err := fault(operation); err != nil {
+				return nil, err
+			}
+			//nolint:gosec // G304: test-only path under t.TempDir.
+			return os.Open(path)
+		},
+		syncDir: func(dir *os.File) error {
+			operation := "sync queues dir"
+			if filepath.Base(dir.Name()) == ".harmonik" {
+				operation = "sync parent dir"
 			}
 			if err := fault(operation); err != nil {
 				return err
 			}
-			return fsyncDir(path)
+			return dir.Sync()
+		},
+		closeDir: func(dir *os.File) error {
+			operation := "close queues dir"
+			if filepath.Base(dir.Name()) == ".harmonik" {
+				operation = "close parent dir"
+			}
+			if err := fault(operation); err != nil {
+				return errors.Join(err, dir.Close())
+			}
+			return dir.Close()
+		},
+		remove: func(path string) error {
+			operation := "remove legacy"
+			if strings.Contains(filepath.Base(path), ".tmp-migrate-") {
+				operation = "remove temp"
+			}
+			if err := fault(operation); err != nil {
+				return err
+			}
+			return os.Remove(path)
 		},
 	}
 }

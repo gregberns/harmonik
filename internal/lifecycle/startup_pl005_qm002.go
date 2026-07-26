@@ -158,11 +158,10 @@ func LoadQueueAtStartup(
 	// NQ-A2: migrate legacy .harmonik/queue.json → .harmonik/queues/main.json
 	// before enumeration so the per-queue scan picks it up.
 	if err := queue.MigrateFromLegacy(ctx, projectDir); err != nil {
-		// Non-fatal: log and proceed. A failed migration leaves the legacy file
-		// in place; the next startup attempt retries the migration.
-		logger.WarnContext(ctx, "queue: MigrateFromLegacy failed; legacy file may persist",
+		logger.ErrorContext(ctx, "queue: MigrateFromLegacy failed; startup refuses to choose a queue",
 			"error", err,
 		)
+		return nil, fmt.Errorf("lifecycle: queue migration failed: %w", err)
 	}
 
 	names, err := queue.EnumerateQueueNames(projectDir)

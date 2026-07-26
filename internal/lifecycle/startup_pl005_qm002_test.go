@@ -364,6 +364,42 @@ func TestLoadQueueAtStartup_CleanLoad(t *testing.T) {
 	}
 }
 
+// TestLoadQueueAtStartup_MigrationErrorFailsClosed proves a valid canonical
+// queue is not selected when legacy migration reports a conflict.
+func TestLoadQueueAtStartup_MigrationErrorFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+	canonical := startupQueueFixtureMinimalQueue()
+	if err := queue.Persist(ctx, projectDir, &canonical); err != nil {
+		t.Fatalf("setup canonical queue: %v", err)
+	}
+	legacy := canonical
+	legacy.QueueID = "019605a0-3333-7000-8000-000000000003"
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy queue: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, ".harmonik", "queue.json"), data, 0o600); err != nil {
+		t.Fatalf("write conflicting legacy queue: %v", err)
+	}
+
+	ledger := newStartupQueueFixtureLedger(nil, nil)
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	if err == nil {
+		t.Fatal("LoadQueueAtStartup error = nil, want migration conflict")
+	}
+	if len(gotQueues) != 0 {
+		t.Fatalf("LoadQueueAtStartup returned %d queues after migration conflict, want none", len(gotQueues))
+	}
+	if calls := ledger.ShowBeadCalls(); len(calls) != 0 {
+		t.Fatalf("ledger ShowBead calls after migration conflict = %v, want none", calls)
+	}
+}
+
 // TestLoadQueueAtStartup_CorruptFile covers scenario (c): queue.json present but
 // unparseable.
 //

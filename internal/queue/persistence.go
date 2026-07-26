@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -381,72 +382,115 @@ func Unlink(_ context.Context, projectDir, name string) error {
 // if found, migrates it to .harmonik/queues/main.json (the QueueNameMain slot).
 //
 // Migration steps:
-//  1. Read .harmonik/queue.json. If absent, return nil (no-op).
+//  1. Read and parse .harmonik/queue.json. If absent, re-sync an existing
+//     canonical destination so a prior delete converges durably.
 //  2. Ensure .harmonik/queues/ exists.
-//  3. If .harmonik/queues/main.json already exists, skip the write (a prior
-//     migration completed but the legacy file was not removed; just remove it).
-//  4. Atomically write the content to .harmonik/queues/main.json via the
-//     QM-001 rename dance.
-//  5. Remove .harmonik/queue.json.
-//  6. Fsync .harmonik/ and .harmonik/queues/ for durability.
+//  3. Read and parse .harmonik/queues/main.json when it exists. A corrupt or
+//     conflicting destination fails closed, preserving the legacy source.
+//  4. When absent, atomically write the legacy content to main.json via the
+//     QM-001 rename dance, then fsync queues/.
+//  5. Remove .harmonik/queue.json only after a matching parseable canonical
+//     copy is durable.
+//  6. Fsync .harmonik/ so the deletion is durable.
 //
-// MigrateFromLegacy is idempotent: if called again after a successful migration
-// the legacy file is absent and the function returns nil immediately.
+// MigrateFromLegacy is idempotent: after a successful migration the legacy
+// file is absent, and a retry only re-syncs .harmonik/ when main.json exists.
 //
 // Bead ref: hk-tigaf.3.
 func MigrateFromLegacy(_ context.Context, projectDir string) error {
+	return migrateFromLegacy(projectDir, migrateFromLegacyOps{
+		readFile: os.ReadFile,
+		mkdirAll: os.MkdirAll,
+		writeTarget: func(targetPath string, data []byte) error {
+			tmpPath := fmt.Sprintf("%s.tmp-migrate-%s", targetPath, uniqueTmpSuffix())
+			//nolint:gosec // G304: tmpPath derived from projectDir + Getpid
+			f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o600)
+			if err != nil {
+				return fmt.Errorf("create tmp %q: %w", tmpPath, err)
+			}
+			if writeErr := writeTempAndClose(f, data); writeErr != nil {
+				rmErr := os.Remove(tmpPath)
+				return fmt.Errorf("write tmp: %w", errors.Join(writeErr, rmErr))
+			}
+			if renameErr := os.Rename(tmpPath, targetPath); renameErr != nil {
+				rmErr := os.Remove(tmpPath)
+				return fmt.Errorf("rename tmp → main.json: %w", errors.Join(renameErr, rmErr))
+			}
+			return nil
+		},
+		remove:  os.Remove,
+		syncDir: fsyncDir,
+	})
+}
+
+// migrateFromLegacyOps is deliberately local to legacy migration. It permits
+// deterministic migration fault tests without widening the persistence API or
+// installing package-global syscall hooks.
+type migrateFromLegacyOps struct {
+	readFile    func(string) ([]byte, error)
+	mkdirAll    func(string, os.FileMode) error
+	writeTarget func(string, []byte) error
+	remove      func(string) error
+	syncDir     func(string) error
+}
+
+//nolint:gocognit,cyclop // Explicit fail-closed migration cuts keep the durability order locally auditable.
+func migrateFromLegacy(projectDir string, ops migrateFromLegacyOps) error {
 	legacyPath := legacyQueuePath(projectDir)
-	//nolint:gosec // G304: legacyPath is daemon-internal .harmonik/queue.json
-	data, err := os.ReadFile(legacyPath)
+	data, err := ops.readFile(legacyPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil // no legacy file — nothing to do
+			_, targetErr := ops.readFile(queuePath(projectDir, QueueNameMain))
+			if errors.Is(targetErr, os.ErrNotExist) {
+				return nil
+			}
+			if targetErr != nil {
+				return fmt.Errorf("queue: MigrateFromLegacy: read existing main queue after absent legacy: %w", targetErr)
+			}
+			if syncErr := ops.syncDir(harmonikDir(projectDir)); syncErr != nil {
+				return fmt.Errorf("queue: MigrateFromLegacy: fsync .harmonik dir after absent legacy: %w", syncErr)
+			}
+			return nil
 		}
 		return fmt.Errorf("queue: MigrateFromLegacy: read legacy file: %w", err)
 	}
+	legacy, err := UnmarshalQueue(data)
+	if err != nil {
+		return fmt.Errorf("queue: MigrateFromLegacy: legacy queue is corrupt: %w", err)
+	}
 
 	qDir := queuesDir(projectDir)
-	if err := os.MkdirAll(qDir, core.HarmonikDirMode); err != nil {
+	if err := ops.mkdirAll(qDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("queue: MigrateFromLegacy: mkdir queues: %w", err)
 	}
 
 	targetPath := queuePath(projectDir, QueueNameMain)
-
-	// If main.json already exists, a prior migration wrote it; just remove the
-	// legacy file.
-	if _, statErr := os.Stat(targetPath); statErr == nil {
-		if removeErr := os.Remove(legacyPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			return fmt.Errorf("queue: MigrateFromLegacy: remove legacy after existing main: %w", removeErr)
+	target, targetErr := ops.readFile(targetPath)
+	switch {
+	case targetErr == nil:
+		canonical, parseErr := UnmarshalQueue(target)
+		if parseErr != nil {
+			return fmt.Errorf("queue: MigrateFromLegacy: existing main queue is corrupt: %w", parseErr)
 		}
-		return nil
-	}
-
-	// Atomic write of legacy content to main.json via rename dance.
-	tmpPath := fmt.Sprintf("%s.tmp-migrate-%s", targetPath, uniqueTmpSuffix())
-	//nolint:gosec // G304: tmpPath derived from projectDir + Getpid
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("queue: MigrateFromLegacy: create tmp %q: %w", tmpPath, err)
-	}
-	if writeErr := writeTempAndClose(f, data); writeErr != nil {
-		rmErr := os.Remove(tmpPath)
-		return fmt.Errorf("queue: MigrateFromLegacy: write tmp: %w", errors.Join(writeErr, rmErr))
-	}
-	if renameErr := os.Rename(tmpPath, targetPath); renameErr != nil {
-		rmErr := os.Remove(tmpPath)
-		return fmt.Errorf("queue: MigrateFromLegacy: rename tmp → main.json: %w", errors.Join(renameErr, rmErr))
-	}
-
-	// Fsync queues/ so the new file is durable.
-	if err := fsyncDir(qDir); err != nil {
-		return fmt.Errorf("queue: MigrateFromLegacy: fsync queues dir: %w", err)
+		if !reflect.DeepEqual(legacy, canonical) {
+			return fmt.Errorf("queue: MigrateFromLegacy: legacy and existing main queue conflict")
+		}
+	case errors.Is(targetErr, os.ErrNotExist):
+		if err := ops.writeTarget(targetPath, data); err != nil {
+			return fmt.Errorf("queue: MigrateFromLegacy: write main queue: %w", err)
+		}
+		if err := ops.syncDir(qDir); err != nil {
+			return fmt.Errorf("queue: MigrateFromLegacy: fsync queues dir: %w", err)
+		}
+	default:
+		return fmt.Errorf("queue: MigrateFromLegacy: read existing main queue: %w", targetErr)
 	}
 
 	// Remove legacy file and fsync .harmonik/ so the deletion is durable.
-	if err := os.Remove(legacyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := ops.remove(legacyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("queue: MigrateFromLegacy: remove legacy file: %w", err)
 	}
-	if err := fsyncDir(harmonikDir(projectDir)); err != nil {
+	if err := ops.syncDir(harmonikDir(projectDir)); err != nil {
 		return fmt.Errorf("queue: MigrateFromLegacy: fsync .harmonik dir: %w", err)
 	}
 

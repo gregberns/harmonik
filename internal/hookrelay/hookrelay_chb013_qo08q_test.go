@@ -50,7 +50,7 @@ func TestHookRelay_CHB013_SessionStart_AgentReady(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionStart", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "SessionStart", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("SessionStart", stdin, &stderr, &e)
 	if code != 0 {
@@ -94,7 +94,7 @@ func TestHookRelay_CHB013_SessionEnd_NoOp(t *testing.T) {
 
 	// DaemonSocket intentionally absent — no socket write should occur.
 	e := hookRelayFixtureEnv(t.TempDir())
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionEnd", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "SessionEnd", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("SessionEnd", stdin, &stderr, &e)
 	if code != 0 {
@@ -114,7 +114,6 @@ func TestHookRelay_CHB013_Stop_WorkComplete_AllImplementerPhases(t *testing.T) {
 	t.Parallel()
 
 	for _, phase := range []string{"single", "implementer-initial", "implementer-resume", ""} {
-		phase := phase
 		t.Run("phase="+phase, func(t *testing.T) {
 			t.Parallel()
 
@@ -123,7 +122,7 @@ func TestHookRelay_CHB013_Stop_WorkComplete_AllImplementerPhases(t *testing.T) {
 			sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 			e.DaemonSocket = sockPath
 
-			stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", map[string]interface{}{
+			stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", map[string]interface{}{
 				"message": "work done summary",
 			})
 			var stderr bytes.Buffer
@@ -184,7 +183,7 @@ func TestHookRelay_CHB013_Stop_ReviewerVerdictKind(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 0 {
@@ -222,7 +221,7 @@ func TestHookRelay_CHB013_StopFailure_RateLimit(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "StopFailure", map[string]interface{}{
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "StopFailure", map[string]interface{}{
 		"error_type": "rate_limit",
 	})
 	var stderr bytes.Buffer
@@ -279,7 +278,6 @@ func TestHookRelay_CHB013_StopFailure_AllStructuralTypes(t *testing.T) {
 	}
 
 	for _, errorType := range structuralTypes {
-		errorType := errorType
 		t.Run(errorType, func(t *testing.T) {
 			t.Parallel()
 
@@ -287,7 +285,7 @@ func TestHookRelay_CHB013_StopFailure_AllStructuralTypes(t *testing.T) {
 			sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 			e.DaemonSocket = sockPath
 
-			stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "StopFailure", map[string]interface{}{
+			stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "StopFailure", map[string]interface{}{
 				"error_type": errorType,
 			})
 			var stderr bytes.Buffer
@@ -348,7 +346,7 @@ func TestHookRelay_CHB013_StopFailure_ServerError(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "StopFailure", map[string]interface{}{
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "StopFailure", map[string]interface{}{
 		"error_type": "server_error",
 	})
 	var stderr bytes.Buffer
@@ -403,7 +401,6 @@ func TestHookRelay_CHB013_Notification_WaitingInput(t *testing.T) {
 	t.Parallel()
 
 	for _, notifType := range []string{"idle_prompt", "permission_prompt"} {
-		notifType := notifType
 		t.Run(notifType, func(t *testing.T) {
 			t.Parallel()
 
@@ -411,7 +408,7 @@ func TestHookRelay_CHB013_Notification_WaitingInput(t *testing.T) {
 			sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 			e.DaemonSocket = sockPath
 
-			stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Notification", map[string]interface{}{
+			stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Notification", map[string]interface{}{
 				"notification_type": notifType,
 			})
 			var stderr bytes.Buffer
@@ -456,7 +453,6 @@ func TestHookRelay_CHB013_Notification_Reasoning(t *testing.T) {
 	t.Parallel()
 
 	for _, notifType := range []string{"progress", "tool_use", "thinking", "", "unknown_future_type"} {
-		notifType := notifType
 		t.Run("type="+notifType, func(t *testing.T) {
 			t.Parallel()
 
@@ -464,7 +460,7 @@ func TestHookRelay_CHB013_Notification_Reasoning(t *testing.T) {
 			sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 			e.DaemonSocket = sockPath
 
-			stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Notification", map[string]interface{}{
+			stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Notification", map[string]interface{}{
 				"notification_type": notifType,
 			})
 			var stderr bytes.Buffer

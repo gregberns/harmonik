@@ -21,8 +21,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/signal"
@@ -47,7 +49,9 @@ func isDaemonUp(projectDir string) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	if closeErr := conn.Close(); closeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: close daemon probe connection: %v\n", closeErr)
+	}
 	return true
 }
 
@@ -97,13 +101,17 @@ func runBeadSubcommandViaDaemon(
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot connect to daemon socket for subscribe: %v\n", err)
 		return 1
 	}
-	defer func() { _ = subConn.Close() }()
+	defer func() {
+		if closeErr := subConn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik run: close subscribe connection: %v\n", closeErr)
+		}
+	}()
 
 	// Subscribe to the minimal set of events needed to detect group completion.
 	// run_started / run_completed / run_failed are needed for the append-fallback
 	// path, which attributes the exit code to the caller's OWN beads rather than
 	// the whole of group 0; they are ignored on the fresh-submit path.
-	subReqBytes, _ := json.Marshal(map[string]any{ //nolint:errcheck // constant map; cannot fail
+	subReqBytes, marshalErr := json.Marshal(map[string]any{
 		"op": "subscribe",
 		"types": []string{
 			"queue_group_completed", "queue_paused", "heartbeat",
@@ -111,6 +119,10 @@ func runBeadSubcommandViaDaemon(
 		},
 		"heartbeat_seconds": 60,
 	})
+	if marshalErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: cannot build subscribe request: %v\n", marshalErr)
+		return 1
+	}
 	if _, writeErr := subConn.Write(subReqBytes); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot send subscribe request: %v\n", writeErr)
 		return 1
@@ -140,7 +152,9 @@ func runBeadSubcommandViaDaemon(
 	// scanner loop below exits cleanly.
 	go func() {
 		<-signalCtx.Done()
-		_ = subConn.Close()
+		if closeErr := subConn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik run: close subscribe connection on signal: %v\n", closeErr)
+		}
 	}()
 
 	return viaWatchGroupCompletion(subConn, watchQueueID, watchGroupIndex, watchBeads, notifyWriter)
@@ -238,7 +252,11 @@ func viaAppendToActiveQueue(
 	items []queue.Item,
 ) (queueID string, groupIndex int, appended bool, exitCode int) {
 	// Query the active queue to get its queue_id.
-	statusPayload, _ := json.Marshal(map[string]string{"op": "queue-status"}) //nolint:errcheck
+	statusPayload, marshalErr := json.Marshal(map[string]string{"op": "queue-status"})
+	if marshalErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: cannot build queue-status request: %v\n", marshalErr)
+		return "", 0, false, 1
+	}
 	statusResp, earlyExit := viaSendRequest(ctx, harmonikDir, statusPayload)
 	if earlyExit != 0 {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot query daemon queue status for append fallback\n")
@@ -368,8 +386,10 @@ func viaWatchGroupCompletion(
 				payload.QueueID, payload.GroupIndex, payload.FinalStatus,
 				payload.SuccessCount, payload.FailCount)
 			if notifyWriter != nil {
-				_, _ = fmt.Fprintf(notifyWriter, "group_completed queue_id=%s group=%d status=%s\n",
-					payload.QueueID, payload.GroupIndex, payload.FinalStatus)
+				if _, writeErr := fmt.Fprintf(notifyWriter, "group_completed queue_id=%s group=%d status=%s\n",
+					payload.QueueID, payload.GroupIndex, payload.FinalStatus); writeErr != nil {
+					return 1
+				}
 			}
 			if len(watchBeads) > 0 {
 				// Append-fallback path: exit reflects OUR beads, not the group.
@@ -514,20 +534,19 @@ func viaSendRequest(ctx context.Context, harmonikDir string, payload []byte) (vi
 // isViaSocketAbsent reports whether err indicates a missing socket file.
 func isViaSocketAbsent(err error) bool {
 	var opErr *net.OpError
-	if netErr, ok := err.(*net.OpError); ok {
-		opErr = netErr
-	} else {
+	if !errors.As(err, &opErr) {
 		return false
 	}
-	if sysErr, ok := opErr.Err.(*os.PathError); ok {
-		return sysErr.Err.Error() == "no such file or directory"
+	var pathErr *os.PathError
+	if errors.As(opErr.Err, &pathErr) {
+		return errors.Is(pathErr.Err, fs.ErrNotExist)
 	}
-	return strings.Contains(err.Error(), "no such file or directory")
+	return errors.Is(opErr.Err, fs.ErrNotExist)
 }
 
 // isViaConnRefused reports whether err indicates ECONNREFUSED.
 func isViaConnRefused(err error) bool {
-	return strings.Contains(err.Error(), "connection refused")
+	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
 // isConnectionClosed reports whether err is a benign "connection closed" error

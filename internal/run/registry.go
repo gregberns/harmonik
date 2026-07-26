@@ -51,7 +51,7 @@ func recordPath(projectDir, runID string) string {
 // The directory is created if absent.
 func Write(projectDir string, r Record) error {
 	dir := runsDir(projectDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("run: mkdir %q: %w", dir, err)
 	}
 	data, err := json.MarshalIndent(r, "", "  ")
@@ -59,12 +59,16 @@ func Write(projectDir string, r Record) error {
 		return fmt.Errorf("run: marshal %q: %w", r.RunID, err)
 	}
 	tmp := recordPath(projectDir, r.RunID) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		_ = os.Remove(tmp)
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		if cleanupErr := os.Remove(tmp); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			return fmt.Errorf("run: write-tmp %q: %w", tmp, errors.Join(err, cleanupErr))
+		}
 		return fmt.Errorf("run: write-tmp %q: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, recordPath(projectDir, r.RunID)); err != nil {
-		_ = os.Remove(tmp)
+		if cleanupErr := os.Remove(tmp); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			return fmt.Errorf("run: rename %q: %w", r.RunID, errors.Join(err, cleanupErr))
+		}
 		return fmt.Errorf("run: rename %q: %w", r.RunID, err)
 	}
 	return nil
@@ -111,7 +115,7 @@ func List(projectDir string) ([]Record, error) {
 		}
 		return nil, fmt.Errorf("run: list %q: %w", dir, err)
 	}
-	var records []Record
+	records := make([]Record, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue

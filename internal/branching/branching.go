@@ -25,6 +25,7 @@
 package branching
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -47,8 +48,11 @@ const currentVersion = 1
 type LandingStrategy string
 
 const (
-	LandingStrategySquash      LandingStrategy = "squash"
-	LandingStrategyCherryPick  LandingStrategy = "cherry-pick"
+	// LandingStrategySquash lands a branch as one squashed commit.
+	LandingStrategySquash LandingStrategy = "squash"
+	// LandingStrategyCherryPick lands the selected commits individually.
+	LandingStrategyCherryPick LandingStrategy = "cherry-pick"
+	// LandingStrategyUnspecified defers to the configured default.
 	LandingStrategyUnspecified LandingStrategy = "" // file absent or field omitted
 )
 
@@ -170,7 +174,7 @@ func parse(path string, data []byte) (Defaults, error) {
 
 	for k, v := range raw.Defaults {
 		if !knownKeys[k] {
-			slog.Warn("branching: unknown key under defaults — ignored",
+			slog.WarnContext(context.Background(), "branching: unknown key under defaults — ignored",
 				"key", k,
 				"file", path,
 			)

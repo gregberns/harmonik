@@ -45,7 +45,11 @@ func TestCorpusRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open corpus: %v", err)
 	}
-	defer f.Close()
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close corpus: %v", err)
+		}
+	})
 
 	// Track client requests by id so we can resolve response results.
 	requestsByID := map[string]string{} // id (raw JSON) → method
@@ -56,7 +60,7 @@ func TestCorpusRoundTrip(t *testing.T) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		lineNum++
-		if len(strings.TrimSpace(string(line))) == 0 {
+		if strings.TrimSpace(string(line)) == "" {
 			continue
 		}
 
@@ -93,7 +97,7 @@ func TestCorpusRoundTrip(t *testing.T) {
 		}
 
 		// Gate 2: ZERO unmodeled fields.
-		if extras := collectExtras(t, lineNum, &frame); len(extras) > 0 {
+		if extras := collectExtras(t, &frame); len(extras) > 0 {
 			t.Errorf("line %d: unmodeled fields found (Extra must be empty):\n%s\n  line: %s",
 				lineNum, formatExtras(extras), line)
 		}
@@ -104,7 +108,7 @@ func TestCorpusRoundTrip(t *testing.T) {
 			t.Errorf("line %d: Marshal error: %v\n  line: %s", lineNum, err, line)
 			continue
 		}
-		if err := assertSemanticEqual(t, lineNum, line, got); err != nil {
+		if err := assertSemanticEqual(t, line, got); err != nil {
 			t.Errorf("line %d: round-trip mismatch: %v\n  original:     %s\n  re-serialized: %s",
 				lineNum, err, line, got)
 		}
@@ -158,7 +162,7 @@ func TestStringAndVariantIDRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Marshal returned error for %s: %v", tc.name, err)
 			}
-			if err := assertSemanticEqual(t, 0, []byte(tc.line), out); err != nil {
+			if err := assertSemanticEqual(t, []byte(tc.line), out); err != nil {
 				t.Fatalf("%s did not round-trip: %v\n  in:  %s\n  out: %s", tc.name, err, tc.line, out)
 			}
 		})
@@ -206,7 +210,7 @@ func TestServerRequestClassification(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Marshal returned error: %v", err)
 			}
-			if err := assertSemanticEqual(t, 0, []byte(tc.line), out); err != nil {
+			if err := assertSemanticEqual(t, []byte(tc.line), out); err != nil {
 				t.Fatalf("did not round-trip: %v\n  in:  %s\n  out: %s", err, tc.line, out)
 			}
 		})
@@ -269,7 +273,7 @@ func TestThreadResumeRoundTrip_HK160YB(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Marshal error: %v", err)
 			}
-			if err := assertSemanticEqual(t, 0, []byte(tc.line), out); err != nil {
+			if err := assertSemanticEqual(t, []byte(tc.line), out); err != nil {
 				t.Fatalf("did not round-trip: %v\n  in:  %s\n  out: %s", err, tc.line, out)
 			}
 		})
@@ -280,7 +284,7 @@ func TestThreadResumeRoundTrip_HK160YB(t *testing.T) {
 
 // assertSemanticEqual compares original and remarshal as parsed JSON maps.
 // Returns a descriptive error on mismatch, nil on equal.
-func assertSemanticEqual(t *testing.T, lineNum int, original, remarshal []byte) error {
+func assertSemanticEqual(t *testing.T, original, remarshal []byte) error {
 	t.Helper()
 	var orig, got any
 	if err := json.Unmarshal(original, &orig); err != nil {
@@ -303,12 +307,13 @@ type extraReport struct {
 
 // collectExtras walks a Frame and its typed payload to collect any non-empty
 // Extra maps, returning a report of all unmodeled fields found.
-func collectExtras(t *testing.T, lineNum int, f *codexwire.Frame) []extraReport {
+func collectExtras(t *testing.T, f *codexwire.Frame) []extraReport {
 	t.Helper()
 	var out []extraReport
 
 	switch f.Kind {
 	case codexwire.FrameKindClientRequest, codexwire.FrameKindClientNotification,
+		codexwire.FrameKindServerRequest,
 		codexwire.FrameKindServerNotification:
 		if f.Params != nil {
 			out = append(out, walkExtras("params", f.Params)...)
@@ -317,6 +322,8 @@ func collectExtras(t *testing.T, lineNum int, f *codexwire.Frame) []extraReport 
 		if f.Result != nil {
 			out = append(out, walkExtras("result", f.Result)...)
 		}
+	case codexwire.FrameKindRaw:
+		// Raw frames do not have a typed payload to inspect.
 	}
 
 	return out
@@ -351,7 +358,14 @@ func walkExtras(prefix string, v any) []extraReport {
 				iter := fv.MapRange()
 				for iter.Next() {
 					path := prefix + ".Extra." + iter.Key().String()
-					raw, _ := iter.Value().Interface().(json.RawMessage)
+					raw, ok := iter.Value().Interface().(json.RawMessage)
+					if !ok {
+						out = append(out, extraReport{
+							path:  path + ".<unexpected-value-type>",
+							value: json.RawMessage("null"),
+						})
+						continue
+					}
 					out = append(out, extraReport{path: path, value: raw})
 				}
 			}

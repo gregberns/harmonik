@@ -173,7 +173,6 @@ func TestParseScenarioFile_InvalidExtension(t *testing.T) {
 
 	dir := scenarioYAMLFixtureDir(t)
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			path := scenarioYAMLFixtureWrite(t, dir, tc.filename, scenarioYAMLFixtureMinimal(t))
@@ -310,7 +309,6 @@ func TestParseScenarioFile_InvalidSchema_TimeoutOutOfRange(t *testing.T) {
 
 	dir := scenarioYAMLFixtureDir(t)
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			content := "name: timeout-test\ndescription: timeout boundary test\n" +
@@ -424,7 +422,6 @@ data: !!binary |
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			path := scenarioYAMLFixtureWrite(t, dir, tc.filename, tc.content)
@@ -490,7 +487,6 @@ func TestParseScenarioFile_InvalidNamePattern(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			content := "name: " + tc.nameVal + "\n" +
@@ -576,7 +572,6 @@ func TestCountYAMLNodes(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var doc yaml.Node

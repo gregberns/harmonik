@@ -15,7 +15,7 @@ func TestBuildBootDoc_DocRefWithFrontmatterDescription(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -23,7 +23,7 @@ func TestBuildBootDoc_DocRefWithFrontmatterDescription(t *testing.T) {
 
 	// A path-bearing doc ref with YAML frontmatter carrying a description.
 	docsDir := filepath.Join(tmpDir, "docs")
-	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+	if err := os.MkdirAll(docsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	docContent := "---\n" +
@@ -31,17 +31,17 @@ func TestBuildBootDoc_DocRefWithFrontmatterDescription(t *testing.T) {
 		"description: The canonical rules doc.\n" +
 		"---\n" +
 		"# Some Rules\n"
-	if err := os.WriteFile(filepath.Join(docsDir, "rules.md"), []byte(docContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(docsDir, "rules.md"), []byte(docContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	// A path-bearing doc ref with NO frontmatter.
-	if err := os.WriteFile(filepath.Join(docsDir, "plain.md"), []byte("# Plain\nNo frontmatter here.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(docsDir, "plain.md"), []byte("# Plain\nNo frontmatter here.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	crewDir := filepath.Join(agentsDir, "crew")
-	if err := os.MkdirAll(crewDir, 0o755); err != nil {
+	if err := os.MkdirAll(crewDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	manifest := `type: crew
@@ -64,13 +64,13 @@ lifecycle:
 markers:
   never_emits: []
 `
-	if err := os.WriteFile(filepath.Join(crewDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(crewDir, "manifest.yaml"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(crewDir, "soul.md"), []byte("I am crew — I work beads.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(crewDir, "soul.md"), []byte("I am crew — I work beads.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(crewDir, "operating.md"), []byte("## Loop\n1. Claim bead.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(crewDir, "operating.md"), []byte("## Loop\n1. Claim bead.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +99,9 @@ markers:
 	}
 
 	var buf strings.Builder
-	RenderMarkdown(doc, &buf)
+	if err := RenderMarkdown(doc, &buf); err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
 	out := buf.String()
 	if !strings.Contains(out, "### Docs") {
 		t.Errorf("rendered markdown missing Docs section:\n%s", out)

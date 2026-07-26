@@ -78,8 +78,7 @@ func WritePersistedTip(projectDir string, runID core.RunID, tipSHA string) error
 		return fmt.Errorf("lifecycle: WritePersistedTip(%s): tipSHA must not be empty", runID)
 	}
 	dir := runTipsDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("lifecycle: WritePersistedTip(%s): mkdir run-tips: %w", runID, err)
 	}
 	tipPath := runTipPath(projectDir, runID)
@@ -101,7 +100,6 @@ func WritePersistedTip(projectDir string, runID core.RunID, tipSHA string) error
 // is a fast-forward descendant of the persisted prior tip SHA (the prior tip
 // is in the ancestor chain of the new tip)."
 func IsFastForwardDescendant(ctx context.Context, repoDir, ancestor, descendant string) (bool, error) {
-	//nolint:gosec // G204: ancestor/descendant are commit SHAs produced by git rev-parse or fixture helpers; repoDir is daemon-resolved project dir
 	cmd := exec.CommandContext(ctx, "git",
 		"-C", repoDir,
 		"merge-base", "--is-ancestor", ancestor, descendant,

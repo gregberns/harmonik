@@ -41,7 +41,6 @@ type breakageFixtureGoListPackage struct {
 // any exec or parse error.
 func breakageFixtureListHarmonikPackages(t *testing.T) []breakageFixtureGoListPackage {
 	t.Helper()
-	//nolint:gosec // G204: "go" is resolved from PATH; args are static strings, not user input.
 	cmd := exec.CommandContext(t.Context(), "go", "list", "-json", "./...")
 	out, err := cmd.Output()
 	if err != nil {

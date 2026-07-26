@@ -38,7 +38,6 @@ func TestSideEffectValid_CrossProduct(t *testing.T) {
 
 	for _, k := range kinds {
 		for _, c := range classes {
-			k, c := k, c
 			t.Run(string(k)+"/"+string(c), func(t *testing.T) {
 				t.Parallel()
 

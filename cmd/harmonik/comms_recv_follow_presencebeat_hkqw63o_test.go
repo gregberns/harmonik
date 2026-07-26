@@ -79,9 +79,12 @@ func presenceBeatFixtureStartListener(t *testing.T, sockPath string) (*[]core.Ev
 	deadline := time.Now().Add(3 * time.Second)
 	var lastDialErr error
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("unix", sockPath, 50*time.Millisecond)
+		dialer := net.Dialer{Timeout: 50 * time.Millisecond}
+		conn, err := dialer.DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				t.Fatalf("close readiness connection: %v", closeErr)
+			}
 			lastDialErr = nil
 			break
 		}
@@ -103,8 +106,14 @@ func TestCommsRecvFollow_IdlePresenceBeat(t *testing.T) {
 	// Short path under /tmp to stay within the 104-byte macOS sun_path limit
 	// (struct sockaddr_un), matching the pattern used elsewhere in this package.
 	sockPath := "/tmp/hkqw63o-beat.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove socket: %v", err)
+		}
+	})
 
 	captured, mu := presenceBeatFixtureStartListener(t, sockPath)
 
@@ -113,8 +122,15 @@ func TestCommsRecvFollow_IdlePresenceBeat(t *testing.T) {
 	commsFollowPresenceBeatInterval = 50 * time.Millisecond
 	t.Cleanup(func() { commsFollowPresenceBeatInterval = origInterval })
 
-	outFile, _ := os.CreateTemp(dir, "idle-beat-*.txt")
-	t.Cleanup(func() { _ = outFile.Close() })
+	outFile, err := os.CreateTemp(dir, "idle-beat-*.txt")
+	if err != nil {
+		t.Fatalf("create output file: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := outFile.Close(); err != nil {
+			t.Errorf("close output file: %v", err)
+		}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

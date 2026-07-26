@@ -34,7 +34,7 @@ func diffhashFixtureRepo(t *testing.T) (repoPath, initialSHA string) {
 	run("config", "user.name", "Harmonik Test")
 
 	initFile := filepath.Join(dir, "README")
-	if err := os.WriteFile(initFile, []byte("harmonik test repo\n"), 0o644); err != nil {
+	if err := os.WriteFile(initFile, []byte("harmonik test repo\n"), 0o600); err != nil {
 		t.Fatalf("diffhashFixtureRepo: WriteFile README: %v", err)
 	}
 	run("add", "README")
@@ -53,8 +53,7 @@ func diffhashFixtureCommit(t *testing.T, repoPath, filename, content string) str
 	t.Helper()
 
 	filePath := filepath.Join(repoPath, filename)
-	//nolint:gosec // G306: test file; content is test-controlled
-	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filePath, []byte(content), 0o600); err != nil {
 		t.Fatalf("diffhashFixtureCommit: WriteFile %q: %v", filePath, err)
 	}
 
@@ -178,7 +177,7 @@ func TestEM015e_ComputeDiffHash_HashFormat(t *testing.T) {
 	}
 
 	for i, c := range hash {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if !isLowerHexDigit(c) {
 			t.Errorf("ComputeDiffHash: hash[%d] = %q; want lowercase hex character", i, c)
 			break
 		}

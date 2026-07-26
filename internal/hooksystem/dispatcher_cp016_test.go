@@ -38,9 +38,9 @@ import (
 // explicit IdempotencyClass on the HookPayload.
 func cp016FixtureMakeHookCPWithIdempotency(
 	name string,
-	triggerEvent string,
 	idempotencyClass core.IdempotencyClass,
 ) core.ControlPoint {
+	const triggerEvent = "on_agent_started"
 	expr := core.PolicyExpression("true")
 	return core.ControlPoint{
 		Name:          name,
@@ -106,7 +106,7 @@ func cp016FixtureCollectFiredDescriptors(
 				}
 				var pl core.HookFiredPayload
 				if err := json.Unmarshal(ev.Payload, &pl); err != nil {
-					return nil
+					return err
 				}
 				mu.Lock()
 				*descriptors = append(*descriptors, pl.SideEffectDescriptor)
@@ -132,7 +132,6 @@ func TestCP016_IdempotentClassPropagatesInHookFired(t *testing.T) {
 
 	cp := cp016FixtureMakeHookCPWithIdempotency(
 		"idempotent-hook",
-		"on_agent_started",
 		core.IdempotencyClassIdempotent,
 	)
 	reg := cp012FixtureNewRegistry(cp)
@@ -184,7 +183,6 @@ func TestCP016_NonIdempotentClassPropagatesInHookFired(t *testing.T) {
 
 	cp := cp016FixtureMakeHookCPWithIdempotency(
 		"non-idempotent-hook",
-		"on_agent_started",
 		core.IdempotencyClassNonIdempotent,
 	)
 	reg := cp012FixtureNewRegistry(cp)
@@ -286,10 +284,10 @@ func TestCP016_HookFiredSideEffectDescriptorIsValid(t *testing.T) {
 
 	// Two hooks with different idempotency classes to cover both paths.
 	cpIdem := cp016FixtureMakeHookCPWithIdempotency(
-		"idem-hook", "on_agent_started", core.IdempotencyClassIdempotent,
+		"idem-hook", core.IdempotencyClassIdempotent,
 	)
 	cpNonIdem := cp016FixtureMakeHookCPWithIdempotency(
-		"non-idem-hook", "on_agent_started", core.IdempotencyClassNonIdempotent,
+		"non-idem-hook", core.IdempotencyClassNonIdempotent,
 	)
 	cpNonIdem.DeclarationIndex = 1
 

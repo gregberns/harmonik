@@ -138,7 +138,7 @@ func imrestFixtureAppendArgsAdapter(t *testing.T, argsFile string) *brcli.Adapte
 	path := filepath.Join(dir, "br")
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexit 0\n", argsFile)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("imrestFixtureAppendArgsAdapter: write mock: %v", err)
 	}
 	adapter, err := brcli.New(path)
@@ -247,7 +247,9 @@ func TestBI010d_ResetBead_IntendedPostState_Open(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS)
+	if err := adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS); err == nil {
+		t.Fatal("ResetBead: expected failure from fixture adapter")
+	}
 
 	entry := imrestFixtureReadIntentEntry(t, intentLogDir)
 	if entry.IntendedPostState != core.CoarseStatusOpen {
@@ -270,7 +272,9 @@ func TestBI010d_ResetBead_OpIsReset(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS)
+	if err := adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS); err == nil {
+		t.Fatal("ResetBead: expected failure from fixture adapter")
+	}
 
 	entry := imrestFixtureReadIntentEntry(t, intentLogDir)
 	if entry.Op != core.TerminalOpReset {
@@ -296,7 +300,9 @@ func TestBI010d_ResetBead_IdempotencyKeyShape(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS)
+	if err := adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS); err == nil {
+		t.Fatal("ResetBead: expected failure from fixture adapter")
+	}
 
 	entry := imrestFixtureReadIntentEntry(t, intentLogDir)
 	wantKey := core.ResetBeadIdempotencyKey(projectHash, beadID, daemonStartNS)
@@ -323,7 +329,9 @@ func TestBI010d_ResetBead_ZeroRunIDAndTransitionID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS)
+	if err := adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS); err == nil {
+		t.Fatal("ResetBead: expected failure from fixture adapter")
+	}
 
 	entry := imrestFixtureReadIntentEntry(t, intentLogDir)
 	if uuid.UUID(entry.RunID) != uuid.Nil {
@@ -393,7 +401,9 @@ func TestBI010d_ResetBead_SchemaVersion1(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS)
+	if err := adapter.ResetBead(ctx, intentLogDir, brcli.TimeoutConfig{}, beadID, projectHash, daemonStartNS); err == nil {
+		t.Fatal("ResetBead: expected failure from fixture adapter")
+	}
 
 	entry := imrestFixtureReadIntentEntry(t, intentLogDir)
 	if entry.SchemaVersion != brcli.IntentLogEntrySchemaVersion {

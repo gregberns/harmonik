@@ -12,6 +12,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -58,5 +59,7 @@ func EmitWorkerOfflineEvent(ctx context.Context, workerName, host, phase, detail
 	if err != nil {
 		return
 	}
-	_ = emit(ctx, core.EventTypeWorkerOffline, b)
+	if err := emit(ctx, core.EventTypeWorkerOffline, b); err != nil {
+		slog.ErrorContext(ctx, "worker event emit failed", "event_type", core.EventTypeWorkerOffline, "error", err)
+	}
 }

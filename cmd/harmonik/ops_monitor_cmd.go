@@ -28,6 +28,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
@@ -130,7 +131,7 @@ BEAD
   hk-qpzsv
 `
 
-func resolveOpsMonitorProjectDir(args []string) (projectDir string, remaining []string, err error) {
+func resolveOpsMonitorProjectDir(args []string) (projectDir string, err error) {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--project" && i+1 < len(args):
@@ -139,25 +140,25 @@ func resolveOpsMonitorProjectDir(args []string) (projectDir string, remaining []
 		case len(args[i]) > 10 && args[i][:10] == "--project=":
 			projectDir = args[i][10:]
 		default:
-			remaining = append(remaining, args[i])
+			continue
 		}
 	}
 	if projectDir == "" {
 		wd, werr := os.Getwd()
 		if werr != nil {
-			return "", nil, fmt.Errorf("cannot determine working directory: %w", werr)
+			return "", fmt.Errorf("cannot determine working directory: %w", werr)
 		}
 		projectDir = wd
 	}
 	abs, aerr := filepath.Abs(projectDir)
 	if aerr != nil {
-		return "", nil, fmt.Errorf("cannot resolve path %q: %w", projectDir, aerr)
+		return "", fmt.Errorf("cannot resolve path %q: %w", projectDir, aerr)
 	}
-	real, rerr := filepath.EvalSymlinks(abs)
+	resolved, rerr := filepath.EvalSymlinks(abs)
 	if rerr != nil {
-		return "", nil, fmt.Errorf("cannot resolve real path of %q: %w", abs, rerr)
+		return "", fmt.Errorf("cannot resolve real path of %q: %w", abs, rerr)
 	}
-	return real, remaining, nil
+	return resolved, nil
 }
 
 func opsMonitorPlistPath(projectDir string) (string, error) {
@@ -174,7 +175,7 @@ func opsMonitorPlistLabelFor(projectDir string) string {
 	return opsMonitorPlistLabelPrefix + "." + hash.String()
 }
 
-func buildOpsMonitorPlistData(projectDir string) (opsMonitorPlistData, error) {
+func buildOpsMonitorPlistData(projectDir string) opsMonitorPlistData {
 	label := opsMonitorPlistLabelFor(projectDir)
 	scriptPath := filepath.Join(projectDir, "scripts", "ops-monitor-check.sh")
 	logDir := filepath.Join(projectDir, ".harmonik", "ops-monitor")
@@ -200,24 +201,25 @@ func buildOpsMonitorPlistData(projectDir string) (opsMonitorPlistData, error) {
 		ProjectDir: projectDir,
 		BinPath:    binDir,
 		LogDir:     logDir,
-	}, nil
+	}
 }
 
 func runOpsMonitorInstall(args []string) int {
 	noLoad := false
 	var remaining []string
 	for _, a := range args {
-		if a == "--no-load" {
+		switch a {
+		case "--no-load":
 			noLoad = true
-		} else if a == "--help" || a == "-h" {
+		case "--help", "-h":
 			fmt.Print(opsMonitorTopUsage)
 			return 0
-		} else {
+		default:
 			remaining = append(remaining, a)
 		}
 	}
 
-	projectDir, _, err := resolveOpsMonitorProjectDir(remaining)
+	projectDir, err := resolveOpsMonitorProjectDir(remaining)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: %v\n", err)
 		return 1
@@ -231,11 +233,7 @@ func runOpsMonitorInstall(args []string) int {
 		return 1
 	}
 
-	data, derr := buildOpsMonitorPlistData(projectDir)
-	if derr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: %v\n", derr)
-		return 1
-	}
+	data := buildOpsMonitorPlistData(projectDir)
 
 	plistPath, perr := opsMonitorPlistPath(projectDir)
 	if perr != nil {
@@ -244,8 +242,7 @@ func runOpsMonitorInstall(args []string) int {
 	}
 
 	// Ensure log directory exists.
-	//nolint:gosec // G301: log dir created with explicit 0755 permissions under project tree
-	if merr := os.MkdirAll(data.LogDir, 0o755); merr != nil {
+	if merr := os.MkdirAll(data.LogDir, core.HarmonikDirMode); merr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: cannot create log dir %s: %v\n", data.LogDir, merr)
 		return 1
 	}
@@ -259,11 +256,13 @@ func runOpsMonitorInstall(args []string) int {
 
 	// If a plist already exists, unload it first so the reload picks up changes.
 	if _, existErr := os.Stat(plistPath); existErr == nil {
-		_ = exec.CommandContext(context.Background(), "launchctl", "unload", "-w", plistPath).Run()
+		if unloadErr := exec.CommandContext(context.Background(), "launchctl", "unload", "-w", plistPath).Run(); unloadErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: warning: unload existing plist: %v\n", unloadErr)
+		}
 	}
 
 	// Write plist.
-	if werr := os.WriteFile(plistPath, []byte(buf.String()), 0o644); werr != nil {
+	if werr := os.WriteFile(plistPath, []byte(buf.String()), 0o600); werr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: write plist: %v\n", werr)
 		return 1
 	}
@@ -275,6 +274,7 @@ func runOpsMonitorInstall(args []string) int {
 	}
 
 	// Load the plist.
+	//nolint:gosec // G204: launchctl is fixed and plistPath is derived from the resolved project hash
 	out, lerr := exec.CommandContext(context.Background(), "launchctl", "load", "-w", plistPath).CombinedOutput()
 	if lerr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor install: launchctl load: %v\n%s\n", lerr, out)
@@ -291,7 +291,7 @@ func runOpsMonitorInstall(args []string) int {
 }
 
 func runOpsMonitorUninstall(args []string) int {
-	projectDir, _, err := resolveOpsMonitorProjectDir(args)
+	projectDir, err := resolveOpsMonitorProjectDir(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor uninstall: %v\n", err)
 		return 1
@@ -309,6 +309,7 @@ func runOpsMonitorUninstall(args []string) int {
 	}
 
 	// Unload.
+	//nolint:gosec // G204: launchctl is fixed and plistPath is derived from the resolved project hash
 	out, lerr := exec.CommandContext(context.Background(), "launchctl", "unload", "-w", plistPath).CombinedOutput()
 	if lerr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor uninstall: launchctl unload: %v\n%s\n", lerr, out)
@@ -326,7 +327,7 @@ func runOpsMonitorUninstall(args []string) int {
 }
 
 func runOpsMonitorStatus(args []string) int {
-	projectDir, _, err := resolveOpsMonitorProjectDir(args)
+	projectDir, err := resolveOpsMonitorProjectDir(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik ops-monitor status: %v\n", err)
 		return 1
@@ -355,9 +356,9 @@ func runOpsMonitorStatus(args []string) int {
 	// Check launchctl list for the label.
 	loaded := false
 	if plistExists {
-		out, _ := exec.CommandContext(context.Background(), "launchctl", "list", label).CombinedOutput()
+		out, listErr := exec.CommandContext(context.Background(), "launchctl", "list", label).CombinedOutput()
 		outStr := strings.TrimSpace(string(out))
-		if !strings.Contains(outStr, "Could not find service") && outStr != "" {
+		if listErr == nil && !strings.Contains(outStr, "Could not find service") && outStr != "" {
 			loaded = true
 			fmt.Printf("launchd: loaded\n")
 			fmt.Printf("  %s\n", strings.ReplaceAll(outStr, "\n", "\n  "))

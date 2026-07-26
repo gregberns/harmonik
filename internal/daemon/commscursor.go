@@ -60,8 +60,10 @@ package daemon
 // Spec ref: agent-comms spec §5 Q1 / T7 (07-tasks.md).
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +72,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // cursorLockTimeout bounds how long Advance waits to acquire the per-agent
@@ -151,7 +155,7 @@ func (s *CursorStore) Advance(name, eventID string) error {
 		return fmt.Errorf("commscursor: Advance %q: malformed event_id %q: %w", name, eventID, err)
 	}
 
-	if err := os.MkdirAll(s.dir, 0o755); err != nil { //nolint:gosec // G301: 0755 matches .harmonik conventions
+	if err := os.MkdirAll(s.dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: mkdir %q: %w", name, s.dir, err)
 	}
 
@@ -162,7 +166,7 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	// contend. Lockfiles live in a dedicated subdirectory so they never appear
 	// alongside cursor files. Held only for one RMW cycle, then released on close.
 	lockDir := s.lockDir()
-	if err := os.MkdirAll(lockDir, 0o755); err != nil { //nolint:gosec // G301: 0755 matches .harmonik conventions
+	if err := os.MkdirAll(lockDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: mkdir %q: %w", name, lockDir, err)
 	}
 	lockPath := s.lockPath(name)
@@ -170,7 +174,11 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	if err != nil {
 		return fmt.Errorf("commscursor: Advance %q: open lockfile %q: %w", name, lockPath, err)
 	}
-	defer lockFd.Close() //nolint:errcheck // closing an advisory lock fd; error is non-actionable
+	defer func() {
+		if closeErr := lockFd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "commscursor: Advance: close lockfile", "err", closeErr, "path", lockPath)
+		}
+	}()
 
 	if err := acquireCursorLock(int(lockFd.Fd()), cursorLockTimeout); err != nil {
 		return fmt.Errorf("commscursor: Advance %q: acquire lock: %w", name, err)
@@ -206,8 +214,10 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	tmpPath := tmp.Name()
 	ok := false
 	defer func() {
-		_ = tmp.Close()
 		if !ok {
+			if closeErr := tmp.Close(); closeErr != nil {
+				slog.WarnContext(context.Background(), "commscursor: Advance: close temp during cleanup", "err", closeErr, "path", tmpPath)
+			}
 			_ = os.Remove(tmpPath) //nolint:errcheck // cleanup; unactionable
 		}
 	}()
@@ -239,11 +249,11 @@ func cursorStrictlyGreater(candidate, current string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("malformed event_id %q: %w", candidate, err)
 	}
-	pu, err := uuid.Parse(current)
-	if err != nil {
+	pu, valid := parseCursorUUID(current)
+	if !valid {
 		// Corrupt persisted cursor: treat as "no usable floor" so a well-formed
 		// advance can recover rather than the cursor wedging forever.
-		return true, nil //nolint:nilerr // intentional: corrupt floor → allow forward write
+		return true, nil
 	}
 	cb := [16]byte(cu)
 	pb := [16]byte(pu)
@@ -253,6 +263,14 @@ func cursorStrictlyGreater(candidate, current string) (bool, error) {
 		}
 	}
 	return false, nil // equal — not strictly greater
+}
+
+// parseCursorUUID converts a persisted cursor into its comparison form. The
+// validity bit is deliberate: a corrupt persisted floor is recoverable state,
+// not an error returned to the caller (see cursorStrictlyGreater).
+func parseCursorUUID(value string) (uuid.UUID, bool) {
+	parsed, err := uuid.Parse(value)
+	return parsed, err == nil
 }
 
 // lockDir is the directory holding per-agent sidecar lockfiles. It is a SIBLING

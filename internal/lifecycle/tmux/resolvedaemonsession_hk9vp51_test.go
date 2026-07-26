@@ -42,7 +42,6 @@ func TestResolveDaemonSpawnSession_NormalSessionUsedVerbatim(t *testing.T) {
 		"  harmonik  ",                  // leading/trailing whitespace is trimmed
 	}
 	for _, live := range cases {
-		live := live
 		t.Run(live, func(t *testing.T) {
 			t.Parallel()
 			got, needEnsure := ResolveDaemonSpawnSession(projectDir, live)
@@ -73,7 +72,6 @@ func TestResolveDaemonSpawnSession_SupervisorSessionExcluded(t *testing.T) {
 	// the deterministic daemon session and require the caller to EnsureSession it.
 	supervisorName := SupervisorSessionName(projectDir)
 	for _, live := range []string{supervisorName, "  " + supervisorName + "  "} {
-		live := live
 		t.Run(live, func(t *testing.T) {
 			t.Parallel()
 			got, needEnsure := ResolveDaemonSpawnSession(projectDir, live)
@@ -108,7 +106,6 @@ func TestResolveDaemonSpawnSession_FlywheelSessionExcluded(t *testing.T) {
 
 	flywheelName := FlywheelSessionName(projectDir)
 	for _, live := range []string{flywheelName, "  " + flywheelName + "  "} {
-		live := live
 		t.Run(live, func(t *testing.T) {
 			t.Parallel()
 			got, needEnsure := ResolveDaemonSpawnSession(projectDir, live)

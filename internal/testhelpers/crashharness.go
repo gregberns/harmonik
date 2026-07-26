@@ -145,13 +145,17 @@ func B87254WriteIntentEntry(t *testing.T, intentDir string, entry core.IntentLog
 	}
 
 	if _, err := tf.Write(data); err != nil {
-		_ = tf.Close()
+		if closeErr := tf.Close(); closeErr != nil {
+			t.Errorf("B87254WriteIntentEntry: close temp file after write failure: %v", closeErr)
+		}
 		t.Fatalf("B87254WriteIntentEntry: write temp file %q: %v", tempPath, err)
 	}
 
 	// Step 2: fsync(temp_fd) per BI-030.
 	if err := tf.Sync(); err != nil {
-		_ = tf.Close()
+		if closeErr := tf.Close(); closeErr != nil {
+			t.Errorf("B87254WriteIntentEntry: close temp file after fsync failure: %v", closeErr)
+		}
 		t.Fatalf("B87254WriteIntentEntry: fsync temp file %q: %v", tempPath, err)
 	}
 	if err := tf.Close(); err != nil {
@@ -172,10 +176,16 @@ func B87254WriteIntentEntry(t *testing.T, intentDir string, entry core.IntentLog
 		t.Fatalf("B87254WriteIntentEntry: open parent dir %q: %v", intentDir, err)
 	}
 	if err := pf.Sync(); err != nil {
-		_ = pf.Close()
+		if closeErr := pf.Close(); closeErr != nil {
+			t.Errorf("B87254WriteIntentEntry: close parent dir after fsync failure: %v", closeErr)
+		}
 		t.Fatalf("B87254WriteIntentEntry: fsync parent dir %q: %v", intentDir, err)
 	}
-	defer func() { _ = pf.Close() }()
+	defer func() {
+		if err := pf.Close(); err != nil {
+			t.Errorf("B87254WriteIntentEntry: close parent dir: %v", err)
+		}
+	}()
 
 	return B87254IntentWriteResult{
 		IntentDir: intentDir,
@@ -205,10 +215,14 @@ func B87254DeleteIntentEntry(t *testing.T, filePath string) {
 		t.Fatalf("B87254DeleteIntentEntry: open parent dir %q: %v", parentDir, err)
 	}
 	if err := pf.Sync(); err != nil {
-		_ = pf.Close()
+		if closeErr := pf.Close(); closeErr != nil {
+			t.Errorf("B87254DeleteIntentEntry: close parent dir after fsync failure: %v", closeErr)
+		}
 		t.Fatalf("B87254DeleteIntentEntry: fsync parent dir %q: %v", parentDir, err)
 	}
-	defer func() { _ = pf.Close() }()
+	if err := pf.Close(); err != nil {
+		t.Errorf("B87254DeleteIntentEntry: close parent dir: %v", err)
+	}
 }
 
 // B87254ReadIntentEntries scans intentDir and returns all surviving
@@ -224,13 +238,12 @@ func B87254DeleteIntentEntry(t *testing.T, filePath string) {
 func B87254ReadIntentEntries(t *testing.T, intentDir string) []B87254IntentWriteResult {
 	t.Helper()
 
-	//nolint:gosec // G304: intentDir is a test temp dir, not user input
 	des, err := os.ReadDir(intentDir)
 	if err != nil {
 		t.Fatalf("B87254ReadIntentEntries: ReadDir %q: %v", intentDir, err)
 	}
 
-	var results []B87254IntentWriteResult
+	results := make([]B87254IntentWriteResult, 0, len(des))
 	for _, de := range des {
 		if de.IsDir() {
 			continue
@@ -281,7 +294,6 @@ func B87254ReadIntentEntries(t *testing.T, intentDir string) []B87254IntentWrite
 func B87254IntentDirFor(t *testing.T, harmonikDir string) string {
 	t.Helper()
 	dir := filepath.Join(harmonikDir, b87254IntentDirName)
-	//nolint:gosec // G301: 0700 matches .harmonik dir conventions
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("B87254IntentDirFor: MkdirAll %q: %v", dir, err)
 	}

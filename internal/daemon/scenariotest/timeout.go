@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -87,7 +88,11 @@ func tailLines(path string, n int) string {
 	if err != nil {
 		return ""
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "scenariotest: tailLines: close file", "err", closeErr, "path", path)
+		}
+	}()
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
@@ -142,7 +147,11 @@ func appendDaemonLogMatches(sb *strings.Builder, daemonLog string) {
 		fmt.Fprintf(sb, "(cannot open %s: %v)\n", daemonLog, err)
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "scenariotest: appendDaemonLogMatches: close file", "err", closeErr, "path", daemonLog)
+		}
+	}()
 
 	scanner := bufio.NewScanner(f)
 	found := false

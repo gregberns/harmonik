@@ -111,10 +111,7 @@ func (e SubWorkflowExpansion) Valid() bool {
 			return false
 		}
 	}
-	if !e.Pin.Valid() {
-		return false
-	}
-	return true
+	return e.Pin.Valid()
 }
 
 // b3f43nodeIDInExpandedNodes reports whether id appears as the NodeID of any

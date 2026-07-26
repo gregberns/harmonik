@@ -19,6 +19,13 @@ description: >
      DO NOT PUT HERE: operational state (→ .harmonik/context/ + HANDOFF.md); per-domain detail (→ the named domain skill) -->
 ---
 
+<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/orchestrator-rules/SKILL.md (Go //go:embed).
+     The copy at .claude/skills/orchestrator-rules/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
+     overwrites it from the embed and there is NO reverse sync, so an edit made
+     only there silently drifts and is eventually reverted. To change this skill:
+     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
+     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
+
 # Orchestrator — the standing behavioral contract
 
 <!-- BEGIN harmonik:managed orchestrator-rules -->
@@ -176,6 +183,17 @@ This is the quality program's whole point: the primary daemon is production, not
 **REVIEW GATE IS NOT OPTIONAL.** Before merging substantive work, a separate reviewer (or a fresh-context re-read) must approve. Anything beyond a typo / one-line fix gets the gate.
 
 **REVIEWERS MISS COMPOSITION-ROOT WIRING.** Reviewer briefs SHOULD include a "find the production call site" check.
+
+**ANTI-FAKE MUTATION TESTS MUST USE A REAL ISOLATION BOUNDARY.** To prove a
+regression test fails when only the production fix is removed, use a detached
+worktree (`git worktree add --detach <path> <base>`), a real clone, or read-only
+`git show`/`git diff`. **Never `cp -R` a Git worktree and run Git mutations in
+the copy.** A linked worktree's `.git` is a pointer file; copying it preserves
+the pointer to the original worktree's index and HEAD, so `checkout`, `revert`,
+`stash`, or `reset` in the supposed copy mutates the live worktree. To audit an
+existing scratch area, find pointer files with
+`find <scratch> -maxdepth 2 -name .git -type f` and cross-check each path
+against `git worktree list`.
 
 **TRUST `br ready` BUT VERIFY.** Cross-check `br stats`; `br ready --limit 0` before declaring a lane empty (default pagination hides ready beads).
 

@@ -354,7 +354,6 @@ func TestRC016_InvestigatorCategoriesRequirePlaybook(t *testing.T) {
 	}
 
 	for _, tc := range investigatorCategories {
-		tc := tc
 		t.Run(string(tc.cat), func(t *testing.T) {
 			t.Parallel()
 
@@ -423,7 +422,6 @@ func TestRC017_PerCategoryDefaultBudgetsMatchSpec(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(string(tc.cat), func(t *testing.T) {
 			t.Parallel()
 

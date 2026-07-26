@@ -104,7 +104,7 @@ func cp042RunID() core.RunID {
 	return core.RunID(uuid.MustParse("019e7342-0000-7000-a000-000000000042"))
 }
 
-func cp042MakeCognitionHookCP(name, triggerEvent string) core.ControlPoint {
+func cp042MakeCognitionHookCP(triggerEvent string) core.ControlPoint {
 	dp := core.DelegationPath{
 		Role:              "reviewer",
 		ModelClass:        "reviewer-tier-1",
@@ -113,7 +113,7 @@ func cp042MakeCognitionHookCP(name, triggerEvent string) core.ControlPoint {
 		PromptTemplateRef: "hook.review.prompt.v1",
 	}
 	return core.ControlPoint{
-		Name:          name,
+		Name:          "review-hook",
 		Kind:          core.KindHook,
 		Trigger:       core.Trigger{Name: triggerEvent},
 		Evaluator:     core.Evaluator{Mode: core.ModeTagCognition, DelegationPath: &dp},
@@ -171,7 +171,7 @@ func cp042BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 		EventPattern:  core.EventPattern{Wildcard: true},
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, ev core.Event) error {
-			collector.record(string(ev.Type))
+			collector.record(ev.Type)
 			return nil
 		},
 	}); err != nil {
@@ -205,7 +205,7 @@ func cp042BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 func TestCP042_ProductionAndPersistenceAreSeparateOperations(t *testing.T) {
 	t.Parallel()
 
-	cp := cp042MakeCognitionHookCP("review-hook", "on_agent_started")
+	cp := cp042MakeCognitionHookCP("on_agent_started")
 	reg := cp012FixtureNewRegistry(cp)
 
 	stubVerdict := core.HookVerdictRecord{
@@ -232,7 +232,7 @@ func TestCP042_ProductionAndPersistenceAreSeparateOperations(t *testing.T) {
 	})
 
 	runID := cp042RunID()
-	payload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	payload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	if err := bus.EmitWithRunID(context.Background(), runID, "agent_started", payload); err != nil {
 		t.Fatalf("EmitWithRunID: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestCP042_ProductionAndPersistenceAreSeparateOperations(t *testing.T) {
 func TestCP042_WriterPathIsCanonical(t *testing.T) {
 	t.Parallel()
 
-	cp := cp042MakeCognitionHookCP("review-hook", "on_run_completed")
+	cp := cp042MakeCognitionHookCP("on_run_completed")
 	reg := cp012FixtureNewRegistry(cp)
 
 	eval := &cp042StubEval{returnVerdict: core.HookVerdictRecord{
@@ -322,7 +322,7 @@ func TestCP042_WriterPathIsCanonical(t *testing.T) {
 	})
 
 	runID := cp042RunID()
-	payload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	payload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	if err := bus.EmitWithRunID(context.Background(), runID, "run_completed", payload); err != nil {
 		t.Fatalf("EmitWithRunID: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestCP042_WriterPathIsCanonical(t *testing.T) {
 func TestCP042_WriterNotCalledOnEvaluatorError(t *testing.T) {
 	t.Parallel()
 
-	cp := cp042MakeCognitionHookCP("review-hook", "on_agent_started")
+	cp := cp042MakeCognitionHookCP("on_agent_started")
 	reg := cp012FixtureNewRegistry(cp)
 
 	eval := &cp042StubEval{
@@ -381,7 +381,7 @@ func TestCP042_WriterNotCalledOnEvaluatorError(t *testing.T) {
 	})
 
 	runID := cp042RunID()
-	payload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	payload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	if err := bus.EmitWithRunID(context.Background(), runID, "agent_started", payload); err != nil {
 		t.Fatalf("EmitWithRunID: %v", err)
 	}
@@ -431,11 +431,11 @@ func TestCP042_WriterNotCalledOnEvaluatorError(t *testing.T) {
 func TestCP042_WriterNotCalledOnReplay(t *testing.T) {
 	t.Parallel()
 
-	cp := cp042MakeCognitionHookCP("review-hook", "on_agent_started")
+	cp := cp042MakeCognitionHookCP("on_agent_started")
 	reg := cp012FixtureNewRegistry(cp)
 
 	runID := cp042RunID()
-	evPayload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	evPayload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	correctHash := cp042ComputeEnvelopeHash(t, cp, evPayload)
 
 	persistedVerdict := core.HookVerdictRecord{

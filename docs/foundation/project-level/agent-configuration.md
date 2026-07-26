@@ -8,14 +8,14 @@
 2. **AGENTS.md canonical across all agents.** Claude Code, Pi, Codex, or any future agent reads `AGENTS.md` (possibly via `CLAUDE.md` symlink or its own convention). Single source of truth; no mirror drift. Claude-specific content (hook references, Skill tool usage, `/Users/gb/.claude/projects/...` memory paths) lives in a `## Claude-specific` section inside `AGENTS.md`; other-agent-specific sections similarly named (`## Pi-specific`, etc.).
 3. **Skills live in repo.** `.claude/skills/` at repo root. Project-specific skills are versioned and reviewed; user-global skills stay in `~/.claude/skills/`. Handler-contract skill-injection (foundation §4.11) reads from the project skills dir.
 4. **Memory is user-scoped, index-driven, agent-updated.** `/Users/gb/.claude/projects/-Users-gb-github-harmonik/memory/` stays the source; agents update `MEMORY.md` index + add per-topic files when a durable preference or project fact emerges. Not every session; only on new durable content.
-5. **SESSION_HANDOFF.md is the cross-session baton.** Overwritten at every session end. Git history preserves prior handoffs. Mandatory on session exit if any non-trivial work landed.
+5. **HANDOFF.md is the cross-session baton.** Repo-root `HANDOFF.md` carries this-session state; each long-lived role or crew thread additionally keeps its own `HANDOFF-<name>.md` at the repo root. Overwritten in place at every session end. All of them are **gitignored** (`.gitignore` entries `HANDOFF-*.md` and `HANDOFF.md`; the latter added by `15382e4f1` because a tracked handoff kept getting reverted to a stale copy), so git history does **not** preserve prior handoffs — see §Cross-session continuity. Mandatory on session exit if any non-trivial work landed. (Supersedes `SESSION_HANDOFF.md`, which existed 2026-04-21 → 2026-05-14 and was deleted in `5b5193110`; do not reinstate it.)
 6. **Update cadence: end-of-session + end-of-kerf-pass.** Every session end runs the config-review checklist below. Every `kerf` pass advance (problem-space → decompose → research → design → spec-draft) runs a richer review that MAY update rules and skills.
 7. **Review authority: reviewer subagent.** A dedicated `agent-config-reviewer` prompt (stored under `.claude/skills/agent-config-reviewer/`) runs at the cadence points above and emits a diff against the current configuration. Main agent applies or defers.
 8. **CONSTITUTION.md as non-recursive trust anchor.** `CONSTITUTION.md` at the repo root enumerates the immutable foundational decisions agents must not mutate without explicit human sign-off. Edits to it require a `Constitution-Edit-Approved-By: <human-name-or-email>` commit trailer; agents MUST NOT commit edits to CONSTITUTION.md without this trailer. Listed in Protected rule files (§Protected rule files); edit surfacing in CI is automatic.
 
 ## Repo-root AGENTS.md — what it contains
 
-Repo-root AGENTS.md stays under 120 lines (CLAUDE.md is a symlink → AGENTS.md; same content). Contents: **entry ritual** (read order `AGENT_INDEX.md` → `STATUS.md` → `TASKS.md` → `SESSION_HANDOFF.md`); **kerf planning rules** (keep current content); **the 10 locked + 4 candidate decisions** (as a list pointing to `STATUS.md`); **hard don'ts**; **pointers, not prose** (git → this doc; Go → this doc; tests → `testing.md`; layout → `subsystem-organization.md`). Per-directory or per-subsystem content does NOT belong here.
+Repo-root AGENTS.md stays under 120 lines (CLAUDE.md is a symlink → AGENTS.md; same content). Contents: **entry ritual** (read order `AGENT_INDEX.md` → `STATUS.md` → `HANDOFF.md`, with `.harmonik/context/captain-lanes.md` inserted before `HANDOFF.md` for a captain only — that file's own tier header reads "LOADED BY: captain @ STARTUP Step 0b; NOT loaded by crews or implementers", so the per-role load map in AGENTS.md carries the split; the older ritual named two paths that no longer resolve — `TASKS.md` was renamed to `docs/historical/phase-0-1-tasks.md` in `334bb759e`, and `SESSION_HANDOFF.md` was deleted in `5b5193110`, superseded by `HANDOFF.md`); **kerf planning rules** (keep current content); **the 10 locked + 4 candidate decisions** (as a list pointing to `STATUS.md`); **hard don'ts**; **pointers, not prose** (git → this doc; Go → this doc; tests → `testing.md`; layout → `subsystem-organization.md`). Per-directory or per-subsystem content does NOT belong here.
 
 ## Per-directory AGENTS.md (with CLAUDE.md symlink) — when to use
 
@@ -27,21 +27,35 @@ Repo-root `CLAUDE.md` is a symlink to `AGENTS.md`. Same for each per-directory p
 
 ## Skills
 
-Skills live at `.claude/skills/<skill-name>/` in the repo, plus `~/.claude/skills/` for user-global. Harmonik-MVH skills (load-bearing):
+Skills live at `.claude/skills/<skill-name>/` in the repo, plus `~/.claude/skills/` for user-global.
+
+**Scope of this registry.** The table below covers the **project-local** skills only — the ones versioned and reviewed in this repo under `.claude/skills/`. User-global skills in `~/.claude/skills/` (e.g. `orchestrator`, `session-handoff`, `session-resume`, `sentry-cli`) are user preferences, not project configuration, and deliberately do NOT appear here; a global-only skill is not drift.
+
+**Source of truth.** This table is the normative registry. The mirror in `agent-config-reviewer/SKILL.md §Review surface — check 3` exists so the reviewer can run without re-deriving the list; **when the two disagree, this table wins and the skill is the bug.** Adding or removing a directory under `.claude/skills/` requires updating both in the same commit. Reconciliation rule for the reviewer: a directory present here but absent on disk is `skill-missing`; a directory on disk but absent here is `skill-undocumented`; both are `skill-registry-drift`.
+
+A project-local skill is a directory containing a `SKILL.md` whose frontmatter `name` matches the directory name. A directory under `.claude/skills/` with no `SKILL.md` is not a skill — it is not loadable by Claude Code and is either a scratch artifact or an unfinished skill.
+
+Registry as of 2026-07-22 (15 skills):
 
 | Skill | Where | Purpose |
 |---|---|---|
-| `beads-cli` | `.claude/skills/beads-cli/` | `br` CLI usage patterns; injected by handler-contract §4.11 into every agentic node whose workflow declares `required_skills: [beads-cli]`. |
-| `kerf-workflow` | `.claude/skills/kerf-workflow/` | kerf jig advancement, review subagent invocation. Referenced from repo-root `CLAUDE.md`. |
-| `go-subsystem-add` | `.claude/skills/go-subsystem-add/` | adding a new Go package under `internal/<subsystem>/`: `.golangci.yml` `depguard` rule addition (files: scope + allow matrix), core-type discipline, test scaffolding. |
-| `go-test-run` | `.claude/skills/go-test-run/` | running the test tiers from `testing.md` (default, integration, scenario, crash, realagent); enforces `-race`. |
-| `project-quality-gates` | `.claude/skills/project-quality-gates/` | documents `make check-fast` / `make check` / `make check-full` targets and when each runs (author iteration / WIP / declared-done). Agents MUST invoke gauntlets via this skill rather than ad-hoc `go test` / `go vet` chains. |
-| `git-task-commit` | `.claude/skills/git-task-commit/` | per-node commit cadence, trailer format (`Harmonik-Run-ID`, etc.), integration-branch merge flow. |
-| `spec-finalize` | `.claude/skills/spec-finalize/` | `kerf finalize` handoff: copy drafts to `specs/`, update AGENT_INDEX, open a foundation-amendment log entry if needed. |
-| `agent-reviewer` | `.claude/skills/agent-reviewer/` | runs on every non-trivial commit (per `build-practices.md §Agent review on every commit`). Checks spec alignment, idiom compliance, test adequacy, unwanted-abstraction detection, bead/codename match. Emits `APPROVE` / `REQUEST_CHANGES` / `BLOCK` verdict; the non-`BLOCK` verdict lands as the commit's `Reviewed-By:` trailer. **Load-bearing; must not rot.** Tier 2 cadence explicitly checks its currency. Emits JSON verdict per `build-practices.md §Commit conventions`. Schema owned by this skill; versioned. |
-| `agent-config-reviewer` | `.claude/skills/agent-config-reviewer/` | the review subagent for the cadence below; emits a diff proposing CLAUDE.md / AGENTS.md / skills updates. |
-| `crew-launch` | `.claude/skills/crew-launch/` | boot context for a Captain & Crew crew orchestrator: parse handoff, join comms, mirror `--assignee` on every epic adoption (Gap 1, load-bearing), subscribe inbox with `event_id` dedupe, dispatch beads to the crew's OWN named queue (NEVER `main`), and emit the mandatory progress feed on both surfaces (comms `--topic status` + `br comments`) on the locked cadence. |
-| `captain` | `.claude/skills/captain/` | operating context for a Captain & Crew captain (LLM session, no Go supervisor): MECHANICS ONLY — spawn crew (`harmonik crew start`), write C3 mission handoffs, mail epics over comms (`--topic assign`), subscribe to `epic_completed`, read crew progress. Attributes completion via the durable `br show <epic> --assignee` mirror (Gap 1) and surfaces dual-channel to the operator (status line + `comms send --to operator --topic status`; `comms log` no-join fallback — Gap 3). JUDGMENT OUT — on completion/stuck/contention it SURFACES and AWAITS the operator; never ranks, fails, or rebalances. |
+| `agent-comms` | `.claude/skills/agent-comms/` | agent-facing contract for the `harmonik comms` bus: at-least-once delivery (N3), the NORMATIVE dedupe-on-`event_id` requirement, and the send/recv/log/join/leave/who surface. Required in every launch context that participates in agent-to-agent coordination. **Load-bearing; must not rot.** |
+| `agent-config-reviewer` | `.claude/skills/agent-config-reviewer/` | Tier-2 session-boundary reviewer for the cadence below: CLAUDE.md/AGENTS.md drift, `settings.json` drift, skill-registry drift (mirrors this table), and enforced-config drift (`.golangci.yml` vs. `agent-reviewer §2`). Emits a JSON verdict (`CLEAN` / `DRIFT_MINOR` / `DRIFT_MAJOR`) plus a proposed diff. |
+| `agent-reviewer` | `.claude/skills/agent-reviewer/` | runs on every non-trivial commit (per `build-practices.md §Agent review on every commit`). Checks spec alignment, idiom compliance, test adequacy, unwanted-abstraction detection, bead/codename match. Emits `APPROVE` / `REQUEST_CHANGES` / `BLOCK`; the non-`BLOCK` verdict lands as the commit's `Reviewed-By:` + `Review-Verdict:` trailers. **Load-bearing; must not rot.** Its §2 idiom list is the source of truth for Go idioms (see `quality-checks.md §Error handling conventions`). |
+| `beads-cli` | `.claude/skills/beads-cli/` | `br` CLI usage patterns: the read surface agents may use and the write discipline they must follow (agents MUST NOT issue terminal-transition writes; the daemon owns those per `beads-integration.md §4.4`). Injected by handler-contract §4.11 into every agentic node whose workflow declares `required_skills: [beads-cli]`. |
+| `captain` | `.claude/skills/captain/` | operating context for a Captain & Crew captain: run the `STARTUP.md` boot runbook, spawn and verify a crew per ready lane (`harmonik start crew`), write C3 mission handoffs, mail epics over comms (`--topic assign`), subscribe to `epic_completed`, read crew progress. Attributes completion via the durable `br show <epic> --assignee` mirror (Gap 1); surfaces dual-channel to the operator (Gap 3). Surfaces-and-awaits only for genuinely new judgment. |
+| `crew-launch` | `.claude/skills/crew-launch/` | boot context for a crew orchestrator: parse handoff, confirm identity, join comms, mirror `--assignee` on every epic adoption (Gap 1, load-bearing), subscribe inbox with `event_id` dedupe, dispatch to the crew's OWN named queue (NEVER `main`), and emit the mandatory progress feed on both surfaces (comms `--topic status` + `br comments`) on the locked cadence. |
+| `go-subsystem-add` | `.claude/skills/go-subsystem-add/` | adding a new Go package under `internal/<subsystem>/`: package layout per `subsystem-organization.md`, the `.golangci.yml` `depguard` component-matrix entry (files: scope + allow matrix), core-type discipline, and `internal/testhelpers/` hookup. |
+| `harmonik-dispatch` | `.claude/skills/harmonik-dispatch/` | the canonical main-agent daily loop: route ≥75% of substantive work through the daemon queue (`harmonik queue submit` / `append` / `subscribe`) rather than Agent-tool sub-agents. Owns the Monitor pattern and failure triage. Loads on session-resume; gates dispatch decisions. |
+| `harmonik-lifecycle` | `.claude/skills/harmonik-lifecycle/` | the four project/daemon lifecycle commands — `harmonik init`, `supervise`, `reconcile`, `promote` — with real flags and exit codes. Load when standing up, restarting, reconciling, or promoting a deployment (as opposed to the per-task dispatch loop). **Load-bearing; must not rot.** |
+| `keeper` | `.claude/skills/keeper/` | operating contract for the per-session context-fill watcher: the two thresholds (warn / act), the command surface (`enable` / `doctor` / `set-dispatching` / `clear-dispatching`), the `hold` / `release` co-working override, crew-restart re-hydration, and verifying watcher liveness with `keeper doctor --check live-watcher`. **Load-bearing; must not rot.** |
+| `major-issue-fanout` | `.claude/skills/major-issue-fanout/` | protocol for diagnosing recurring critical-path blockers via parallel agent fan-out. Triggers when a root cause has been refuted ≥2× or a wedge has survived ≥2 fix attempts. Never hand-grep `events.jsonl` by `run_id`; fan out on distinct angles plus ≥2 adversarial verifiers that can overrule a wrong synthesis. |
+| `no-jargon` | `.claude/skills/no-jargon/` | operator-invoked writing-mode switch: restate the current answer/status/open decisions in plain language and hold plain language for the rest of the session. No scripts, no side effects. |
+| `orchestrator-rules` | `.claude/skills/orchestrator-rules/` | the universal standing-rules contract for any harmonik orchestrator (captain, implementer-orchestrator, solo): dispatch discipline and its HARD-RULE exceptions, kerf-first priority, bead lifecycle (the daemon owns terminal transitions), the review gate, CWD discipline, autonomy boundaries, the fan-out trigger. Points at the detail-owner skills; does not duplicate them. **Load-bearing; must not rot.** |
+| `status-report` | `.claude/skills/status-report/` | on-demand operator-invoked program status: discover the active plan dir, reconcile plan/kerf/beads/git (git log is ground truth), print a phase scoreboard plus what needs the operator. Read-only. |
+| `watch` | `.claude/skills/watch/` | operating context for a Watch session: consume the bus and crew status posts, record every intercepted event to the ledger, triage, and escalate only actionable summaries to the captain event-driven. MAY record/classify/batch/dedupe; MUST escalate (never decide) crew-failure, new-initiative ranking, locked-decision reversal, destructive ops, staffing. |
+
+**Known non-skill directories under `.claude/skills/`:** `playing-field/` (holds `board.sh` only, no `SKILL.md`). Not a skill, not registry drift — but it should either grow a `SKILL.md` or move out of the skills tree.
 
 Any node whose workflow declares a skill MUST have that skill resolvable; handler fails launch otherwise (foundation §4.11).
 
@@ -137,7 +151,7 @@ The auto-memory at `/Users/gb/.claude/projects/-Users-gb-github-harmonik/memory/
 
 **Agents MUST:**
 
-1. Read `MEMORY.md` (the index) on session start, after `SESSION_HANDOFF.md`.
+1. Read `MEMORY.md` (the index) on session start, after `HANDOFF.md`.
 2. Add a new memory file when a durable preference or project-level fact emerges that future sessions will need. Update the `MEMORY.md` index in the same commit.
 3. NOT re-save things already in `CLAUDE.md`, `STATUS.md`, or existing memory files. Memory is the lowest-priority store; prefer the knowledge base.
 4. NOT edit existing memory files to flip a decision without explicit user sign-off.
@@ -146,17 +160,19 @@ Memory is user-scoped (not repo-scoped), so it survives repo resets but is not s
 
 ## Cross-session continuity
 
-`SESSION_HANDOFF.md` at repo root is the cross-session baton. Structure (enforced; existing file is the canonical template):
+`HANDOFF.md` at repo root is the cross-session baton — tier-1 operational state, session/hour cadence. The canonical template is `cmd/harmonik/assets/context/HANDOFF.md.tmpl`, seeded to the repo root by `harmonik init` (`provisionContextTiers` in `cmd/harmonik/init_cmd.go`) and mapped to the same destination by the asset reconciler behind `harmonik sync-assets` (`destFor` in `cmd/harmonik/sync_assets_cmd.go`). It opens with a `TIER / LOADED BY / OWNER / DO NOT PUT HERE` comment header (keep it), then:
 
-1. **Read this first** — numbered list of files.
-2. **What landed this session** — 1–3 paragraphs, concrete deltas.
-3. **Where the kerf work stands** — which kerf codename, what pass, next advancement.
-4. **Recommended next-session flow** — 2–5 numbered steps.
-5. **Open discussion threads** — carried items with IDs.
-6. **Important collaboration notes** — what was reinforced this session (not a re-dump of standing rules).
-7. **What should NOT be re-opened** — pointer to locked decisions + this-session additions.
-8. **Files worth knowing about** — paths the next session will touch.
-9. **Log entry** — link to `docs/log/<date>-<slug>.md` for this session.
+1. **STATE `<date>`** — one-line session summary.
+2. **Status** — `CLEAN` / `DIRTY` / `BLOCKED`: are commits pushed, are files mid-edit, is the daemon running.
+3. **What just shipped** — commits and beads closed this session.
+4. **Salvage / in-flight notes** — the volatile play-by-play: promoted cherry-picks, stranded run IDs, deploy actions.
+5. **Open / cleanup notes** — checklist of next actionable items.
+6. **Next** — the single highest-impact next step (usually `kerf next`).
+7. **Translations** — every internal code / bead-id used above, mapped to plain English.
+
+Long-lived role and crew threads each keep a sibling `HANDOFF-<name>.md` at the repo root — `HANDOFF-captain.md`, `HANDOFF-admiral.md`, one per crew. Same tier and same purpose as `HANDOFF.md`, but the section set is per-role in practice rather than the template's, so read the file rather than assuming the list above. These are session-continuity batons and are NOT the captain→crew *mission* handoff, which is a different artifact at `.harmonik/crew/missions/<crew>.md` governed by `specs/crew-handoff-schema.md`.
+
+**Handoffs do not leave the machine.** `HANDOFF.md` and `HANDOFF-*.md` are gitignored (decision 5 above), so a handoff is overwritten in place with no git history behind it and no copy on any other clone. Anything a future session on another machine must find belongs in the repo — `docs/`, `specs/`, or `.harmonik/context/` — not in a handoff.
 
 Handoff MUST be written before session exit if any of: a kerf pass advanced, a spec landed, a decision was taken, or ≥5 files changed. Trivial sessions (docs typo, one-line clarification) MAY skip.
 
@@ -165,17 +181,19 @@ Handoff MUST be written before session exit if any of: a kerf pass advanced, a s
 The user's suggestion — "review task after every section" — becomes a two-tier cadence:
 
 **Tier 1 — Every session end (lightweight, mandatory).**
-Before writing `SESSION_HANDOFF.md`, the main agent runs a self-check:
+Before writing `HANDOFF.md`, the main agent runs a self-check:
 1. Did any new rule emerge? → propose an edit to this doc.
-2. Did a skill fail or gap show up? → open a TASKS.md item to author/revise the skill.
+2. Did a skill fail or gap show up? → file a bead to author/revise the skill.
 3. Did a memory preference surface? → write the memory file.
 4. Did per-directory rules drift from repo-root rules? → flag.
-5. **Did `make check-full` pass for any code changes this session?** Outcome recorded in `SESSION_HANDOFF.md`. Failure to record is a process violation. (Sessions that did not touch code MAY skip this item; note the skip.)
-6. **Did `agent-reviewer` run on every non-trivial commit this session?** Outcome recorded via the `Reviewed-By:` commit trailer on each commit. A session with non-trivial commits lacking `Reviewed-By:` trailers is a process violation; open a TASKS.md item to retroactively review and note the gap in the session log.
+5. **Did `make check-full` pass for any code changes this session?** Outcome recorded in `HANDOFF.md`. Failure to record is a process violation. (Sessions that did not touch code MAY skip this item; note the skip.)
+6. **Did `agent-reviewer` run on every non-trivial commit this session?** Outcome recorded via the `Reviewed-By:` commit trailer on each commit. A session with non-trivial commits lacking `Reviewed-By:` trailers is a process violation; file a bead to retroactively review and note the gap in the session log.
 Output: a short `## Config review` stanza in the session log entry.
 
+Deferred work from any tier is always a bead — never a file-based log. Attach it to the owning epic bead when it was discovered inside one (`br create --parent <epic_id>`, which creates a parent-child dep); otherwise file it standalone (`br create`).
+
 **Tier 2 — Every kerf pass advance (heavier, reviewer subagent).**
-When `kerf status <work> <next-pass>` is about to run, invoke the `agent-config-reviewer` skill. It consumes: current `CLAUDE.md`, `AGENTS.md`, this doc, the kerf work's artifacts, the last N session handoffs. It emits a diff proposing updates. Main agent applies, defers (with a TASKS.md line), or rejects with reason in the log.
+When `kerf status <work> <next-pass>` is about to run, invoke the `agent-config-reviewer` skill. It consumes: current `CLAUDE.md`, `AGENTS.md`, this doc, the kerf work's artifacts, the last N session handoffs. It emits a diff proposing updates. Main agent applies, defers (by filing a bead), or rejects with reason in the log.
 
 **Tier 3 — Release / finalize (heaviest, explicit).**
 On `kerf finalize`, spec lands in `specs/`, and the finalize skill runs `agent-config-reviewer` with a wider prompt (include the new spec). This is the moment to register new skills the spec requires (e.g., if the spec introduces a new node type, add a skill for authoring it).
@@ -196,7 +214,7 @@ Failure mode this prevents: rules that exist only in one agent's head, rediscove
 ## Deferred / follow-up
 
 - **Hook-based enforcement (post-MVH).** `Gas Town Hooks` (concept I01) lets us enforce rules mechanically via Claude Code hooks — e.g., "before commit, verify trailer format." Register hooks once the hook-system subsystem (S05) has a concrete spec.
-- **Cross-agent skill sharing.** When Pi lands, audit which skills translate across agent types vs need per-handler variants. Initial assumption: beads-CLI is universal; go-test-run is universal; agent-config-reviewer may need per-handler system-prompt variants.
+- **Cross-agent skill sharing.** When Pi lands, audit which skills translate across agent types vs need per-handler variants. Initial assumption: `beads-cli` and `agent-comms` are universal; `agent-config-reviewer` may need per-handler system-prompt variants.
 - **Skill versioning.** If a skill's semantics change, in-flight runs may have the old version. Once `required_skills[]` is versioned (handler-contract §4.11), revisit here.
 - **Agent-config drift detector.** A nightly CI job that runs `agent-config-reviewer` against recent session logs and opens a PR if the config is stale. Requires CASS (S08) to be live.
 - **Multi-agent concurrent editing of this doc.** When two sessions both propose config edits, merge strategy. Unlikely pre-MVH (single-run concurrency); revisit when parallel runs land.

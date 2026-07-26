@@ -29,9 +29,16 @@ func (sessionFixtureStub) Wait(_ context.Context) (core.Outcome, error) {
 }
 func (sessionFixtureStub) LogLocation() string { return "" }
 
-// sessionFixtureAssertImplements is a compile-time assertion that
-// sessionFixtureStub satisfies the Session interface.
-var sessionFixtureAssertImplements handlercontract.Session = sessionFixtureStub{}
+// Compile-time assertion that sessionFixtureStub satisfies the Session
+// interface. The blank identifier is deliberate: the declaration exists purely
+// so the build fails when the interface and the stub drift apart.
+var _ handlercontract.Session = sessionFixtureStub{}
+
+// sessionFixtureAssertType fails to compile unless got is assignable to T. It
+// replaces the `var _ T = expr` idiom used by the return-type conformance tests
+// below, which staticcheck (QF1011) reads as a redundant type annotation rather
+// than the deliberate assertion it is.
+func sessionFixtureAssertType[T any](_ T) {}
 
 // TestSession_MethodSetConformance verifies that the Session interface
 // is declared with the expected 6-method surface
@@ -73,13 +80,16 @@ func TestSession_MethodSetConformance(t *testing.T) {
 // raw string), enforcing the typed-alias discipline from hk-8i31.75.
 func TestSession_IDReturnType(t *testing.T) {
 	var s handlercontract.Session = sessionFixtureStub{}
-	var _ core.SessionID = s.ID() // compile-time type check
+	sessionFixtureAssertType[core.SessionID](s.ID())
 }
 
 // TestSession_WaitReturnType verifies that Wait() returns core.Outcome (not a
 // raw struct), enforcing the typed record from hk-b3f.79.
 func TestSession_WaitReturnType(t *testing.T) {
 	var s handlercontract.Session = sessionFixtureStub{}
-	outcome, _ := s.Wait(context.Background())
-	var _ core.Outcome = outcome // compile-time type check
+	outcome, err := s.Wait(context.Background())
+	if err != nil {
+		t.Fatalf("Wait: unexpected error: %v", err)
+	}
+	sessionFixtureAssertType[core.Outcome](outcome)
 }

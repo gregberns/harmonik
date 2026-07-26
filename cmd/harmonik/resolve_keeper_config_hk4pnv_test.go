@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // resolve_keeper_config_hk4pnv_test.go — table-driven coverage for the single
@@ -28,7 +28,7 @@ func TestResolveKeeperConfig_PrecedenceAndSemantics(t *testing.T) {
 	tests := []struct {
 		name   string
 		flags  KeeperFlags
-		mutate func(*daemon.KeeperConfig)
+		mutate func(*projectconfig.KeeperConfig)
 		// expected resolved values
 		wantWarnAbs  int64
 		wantActAbs   int64
@@ -46,7 +46,7 @@ func TestResolveKeeperConfig_PrecedenceAndSemantics(t *testing.T) {
 		},
 		{
 			name: "config overrides baseline (warn-abs/act-abs)",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.WarnAbsTokens = 180_000
 				c.ActAbsTokens = 190_000
 				// force_act must stay above act; baseline force_act (240k) is fine.
@@ -60,7 +60,7 @@ func TestResolveKeeperConfig_PrecedenceAndSemantics(t *testing.T) {
 		{
 			name:  "flag beats config (warn-abs)",
 			flags: KeeperFlags{WarnAbsTokens: 160_000, WarnAbsSet: true},
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.WarnAbsTokens = 180_000
 				c.ActAbsTokens = 190_000
 			},
@@ -72,7 +72,7 @@ func TestResolveKeeperConfig_PrecedenceAndSemantics(t *testing.T) {
 		},
 		{
 			name: "explicit force_act_abs WINS over offset",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.ForceActAbsTokens = 250_000
 				c.Present.ForceActAbsTokens = true
 				c.ForceActAbsOffset = 99_000
@@ -87,7 +87,7 @@ func TestResolveKeeperConfig_PrecedenceAndSemantics(t *testing.T) {
 		},
 		{
 			name: "force_act offset used only when abs unset",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.ForceActAbsTokens = 0 // unset the baseline absolute
 				c.Present.ForceActAbsTokens = false
 				c.ForceActAbsOffset = 30_000
@@ -110,7 +110,7 @@ func TestResolveKeeperConfig_PrecedenceAndSemantics(t *testing.T) {
 		},
 		{
 			name: "config pct ceil overrides baseline",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.WarnPctCeil = 0.60
 				c.ActPctCeil = 0.80
 			},
@@ -160,12 +160,12 @@ func TestResolveKeeperConfig_FailLoud(t *testing.T) {
 	tests := []struct {
 		name      string
 		flags     KeeperFlags
-		mutate    func(*daemon.KeeperConfig)
+		mutate    func(*projectconfig.KeeperConfig)
 		wantField string // expected error's Field
 	}{
 		{
 			name: "band inversion: warn >= act (abs)",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.WarnAbsTokens = 220_000
 				c.ActAbsTokens = 210_000
 			},
@@ -173,7 +173,7 @@ func TestResolveKeeperConfig_FailLoud(t *testing.T) {
 		},
 		{
 			name: "band inversion: act >= force_act (explicit force below act)",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.ActAbsTokens = 215_000
 				c.ForceActAbsTokens = 200_000
 			},
@@ -181,7 +181,7 @@ func TestResolveKeeperConfig_FailLoud(t *testing.T) {
 		},
 		{
 			name: "band inversion: force_act >= hard_ceiling",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.ForceActAbsTokens = 300_000
 				c.HardCeilingAbsTokens = 290_000
 			},
@@ -189,7 +189,7 @@ func TestResolveKeeperConfig_FailLoud(t *testing.T) {
 		},
 		{
 			name: "band inversion: warn_pct >= act_pct (config)",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.WarnPctCeil = 0.90
 				c.ActPctCeil = 0.80
 			},
@@ -198,7 +198,7 @@ func TestResolveKeeperConfig_FailLoud(t *testing.T) {
 		{
 			// hk-z8d0: restart-mode ceiling AT force_act is nonsensical.
 			name: "restart-mode hard ceiling == force_act is rejected",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.WarnAbsTokens = 200_000
 				c.ActAbsTokens = 215_000
 				c.ForceActAbsTokens = 240_000
@@ -209,7 +209,7 @@ func TestResolveKeeperConfig_FailLoud(t *testing.T) {
 		},
 		{
 			name: "restart-mode hard ceiling below force_act is rejected",
-			mutate: func(c *daemon.KeeperConfig) {
+			mutate: func(c *projectconfig.KeeperConfig) {
 				c.WarnAbsTokens = 200_000
 				c.ActAbsTokens = 215_000
 				c.ForceActAbsTokens = 240_000

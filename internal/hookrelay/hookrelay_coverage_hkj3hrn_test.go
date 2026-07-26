@@ -9,7 +9,9 @@ package hookrelay_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -38,7 +40,7 @@ func TestHookRelay_Stop_MessageObjectContent(t *testing.T) {
 	// Build a Stop payload whose "message" field is a structured object with
 	// a "content" key — the second unmarshal branch in extractFinalMessage.
 	msgObj := map[string]string{"content": "structured content text"}
-	msgBytes, _ := json.Marshal(msgObj)
+	msgBytes := hookRelayFixtureJSON(t, msgObj)
 
 	rawMsg := map[string]interface{}{
 		"session_id":      e.ClaudeSessionID,
@@ -48,7 +50,7 @@ func TestHookRelay_Stop_MessageObjectContent(t *testing.T) {
 		"permission_mode": "auto",
 		"message":         json.RawMessage(msgBytes),
 	}
-	stdinBytes, _ := json.Marshal(rawMsg)
+	stdinBytes := hookRelayFixtureJSON(t, rawMsg)
 
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", bytes.NewReader(stdinBytes), &stderr, &e)
@@ -58,14 +60,7 @@ func TestHookRelay_Stop_MessageObjectContent(t *testing.T) {
 
 	select {
 	case recv := <-received:
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(recv, &msg); err != nil {
-			t.Fatalf("Stop message-object-content: unmarshal envelope: %v", err)
-		}
-		var pl map[string]interface{}
-		if err := json.Unmarshal(msg["payload"], &pl); err != nil {
-			t.Fatalf("Stop message-object-content: unmarshal payload: %v", err)
-		}
+		_, pl := hookRelayFixtureEnvelope(t, "Stop message-object-content", recv)
 		if pl["summary"] != "structured content text" {
 			t.Errorf("Stop message-object-content: summary=%v, want %q", pl["summary"], "structured content text")
 		}
@@ -86,7 +81,7 @@ func TestHookRelay_Stop_MessageObjectNoContent(t *testing.T) {
 
 	// Object with keys other than "content" — should return empty summary.
 	msgObj := map[string]string{"role": "assistant", "text": "no content key"}
-	msgBytes, _ := json.Marshal(msgObj)
+	msgBytes := hookRelayFixtureJSON(t, msgObj)
 
 	rawMsg := map[string]interface{}{
 		"session_id":      e.ClaudeSessionID,
@@ -96,7 +91,7 @@ func TestHookRelay_Stop_MessageObjectNoContent(t *testing.T) {
 		"permission_mode": "auto",
 		"message":         json.RawMessage(msgBytes),
 	}
-	stdinBytes, _ := json.Marshal(rawMsg)
+	stdinBytes := hookRelayFixtureJSON(t, rawMsg)
 
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", bytes.NewReader(stdinBytes), &stderr, &e)
@@ -106,16 +101,15 @@ func TestHookRelay_Stop_MessageObjectNoContent(t *testing.T) {
 
 	select {
 	case recv := <-received:
-		var msg map[string]json.RawMessage
-		_ = json.Unmarshal(recv, &msg)
-		var pl map[string]interface{}
-		_ = json.Unmarshal(msg["payload"], &pl)
-		// summary may be "" or non-nil empty string; both are acceptable
-		if summary, ok := pl["summary"]; ok && summary != "" && summary != nil {
-			// Only fail if we get a non-empty unexpected summary
-			if s, isStr := summary.(string); isStr && s != "" {
-				t.Logf("Stop message-object-no-content: summary=%q (non-empty but acceptable if key extraction failed gracefully)", s)
-			}
+		_, pl := hookRelayFixtureEnvelope(t, "Stop message-object-no-content", recv)
+		// An object with no "content" key yields no extractable text, so the
+		// relay must emit WORK_COMPLETE with an empty summary rather than
+		// inventing one from another field.
+		if pl["kind"] != "WORK_COMPLETE" {
+			t.Errorf("Stop message-object-no-content: kind=%v, want WORK_COMPLETE", pl["kind"])
+		}
+		if summary := pl["summary"]; summary != "" {
+			t.Errorf("Stop message-object-no-content: summary=%v, want empty", summary)
 		}
 	default:
 		t.Error("Stop message-object-no-content: no message received on socket")
@@ -136,7 +130,7 @@ func TestHookRelay_Stop_MessageLargeStringTruncated(t *testing.T) {
 
 	// Build a string well over 4 KiB.
 	longText := strings.Repeat("x", 8192)
-	longJSON, _ := json.Marshal(longText)
+	longJSON := hookRelayFixtureJSON(t, longText)
 
 	rawMsg := map[string]interface{}{
 		"session_id":      e.ClaudeSessionID,
@@ -146,7 +140,7 @@ func TestHookRelay_Stop_MessageLargeStringTruncated(t *testing.T) {
 		"permission_mode": "auto",
 		"message":         json.RawMessage(longJSON),
 	}
-	stdinBytes, _ := json.Marshal(rawMsg)
+	stdinBytes := hookRelayFixtureJSON(t, rawMsg)
 
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", bytes.NewReader(stdinBytes), &stderr, &e)
@@ -156,15 +150,15 @@ func TestHookRelay_Stop_MessageLargeStringTruncated(t *testing.T) {
 
 	select {
 	case recv := <-received:
-		var msg map[string]json.RawMessage
-		_ = json.Unmarshal(recv, &msg)
-		var pl map[string]interface{}
-		_ = json.Unmarshal(msg["payload"], &pl)
-		summary, _ := pl["summary"].(string)
+		_, pl := hookRelayFixtureEnvelope(t, "Stop large-message", recv)
+		summary, ok := pl["summary"].(string)
+		if !ok {
+			t.Fatalf("Stop large-message: summary is %T, want string; payload=%v", pl["summary"], pl)
+		}
 		if len(summary) > 4096 {
 			t.Errorf("Stop large-message: summary length %d exceeds 4 KiB limit 4096", len(summary))
 		}
-		if len(summary) == 0 {
+		if summary == "" {
 			t.Error("Stop large-message: summary is empty; expected truncated text")
 		}
 	default:
@@ -191,7 +185,7 @@ func TestHookRelay_Stop_MessageNilRawEmpty(t *testing.T) {
 		"permission_mode": "auto",
 		// message field intentionally absent
 	}
-	stdinBytes, _ := json.Marshal(rawMsg)
+	stdinBytes := hookRelayFixtureJSON(t, rawMsg)
 
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", bytes.NewReader(stdinBytes), &stderr, &e)
@@ -201,10 +195,9 @@ func TestHookRelay_Stop_MessageNilRawEmpty(t *testing.T) {
 
 	select {
 	case recv := <-received:
-		var msg map[string]json.RawMessage
-		_ = json.Unmarshal(recv, &msg)
-		if msg["type"] == nil {
-			t.Error("Stop nil-message: no 'type' field in envelope")
+		msg, _ := hookRelayFixtureEnvelope(t, "Stop nil-message", recv)
+		if got := hookRelayFixtureString(t, "Stop nil-message", msg, "type"); got != "outcome_emitted" {
+			t.Errorf("Stop nil-message: type=%q, want outcome_emitted", got)
 		}
 	default:
 		t.Error("Stop nil-message: no message received on socket")
@@ -228,7 +221,7 @@ func TestHookRelay_SendToSocket_DaemonRejectsMessage(t *testing.T) {
 	sockPath, _ := hookRelayFixtureListenAndRespond(t, `{"status":"bad_envelope","reason":"unknown_run_id"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 1 {
@@ -251,7 +244,7 @@ func TestHookRelay_SendToSocket_MalformedAckJSON(t *testing.T) {
 	sockPath, _ := hookRelayFixtureListenAndRespond(t, `not valid json at all`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 1 {
@@ -293,7 +286,7 @@ func TestHookRelay_SendToSocket_MessageTooLarge(t *testing.T) {
 	sockPath, _ := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 1 {
@@ -313,32 +306,29 @@ func TestHookRelay_SendToSocket_EmptyACKLine(t *testing.T) {
 	e.Phase = "single"
 
 	// Start a server that accepts the connection but closes without writing.
-	dir, err := os.MkdirTemp("", "hr")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	sockPath := filepath.Join(dir, "d.sock")
-
+	sockPath := filepath.Join(hookRelayFixtureShortSockDir(t), "d.sock")
 	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
-
-	go func() {
+	hookRelayFixtureWatch(t, "empty-ack", ln, func() error {
 		conn, acceptErr := ln.Accept()
 		if acceptErr != nil {
-			return
+			if errors.Is(acceptErr, net.ErrClosed) {
+				return nil // listener closed at teardown
+			}
+			return fmt.Errorf("accept: %w", acceptErr)
 		}
 		// Read the message bytes (drain connection) then close without ACK.
 		buf := make([]byte, 1<<16)
-		_, _ = conn.Read(buf)
-		_ = conn.Close()
-	}()
+		if _, readErr := conn.Read(buf); readErr != nil && !errors.Is(readErr, io.EOF) {
+			return errors.Join(fmt.Errorf("drain connection: %w", readErr), conn.Close())
+		}
+		return conn.Close()
+	})
 
 	e.DaemonSocket = sockPath
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 1 {
@@ -370,25 +360,17 @@ func TestHookRelay_EnvFromOS_MissingRequired(t *testing.T) {
 		"HARMONIK_AGENT_TYPE",
 		"HARMONIK_PHASE",
 	}
-	originals := make(map[string]string, len(harmonikVars))
+	// envFromOS treats an empty value as absent (it only reads os.Getenv, which
+	// cannot distinguish unset from set-to-empty), so blanking is equivalent to
+	// unsetting here and t.Setenv restores the originals for us.
 	for _, k := range harmonikVars {
-		originals[k] = os.Getenv(k)
-		_ = os.Unsetenv(k)
+		t.Setenv(k, "")
 	}
-	t.Cleanup(func() {
-		for k, v := range originals {
-			if v != "" {
-				_ = os.Setenv(k, v)
-			} else {
-				_ = os.Unsetenv(k)
-			}
-		}
-	})
 
 	// nil envOverride forces envFromOS path.
 	// When HARMONIK_RUN_ID is absent, hook-relay exits 0 silently (hk-f0xb6):
 	// not a harmonik-managed session, so the hook is a no-op.
-	stdin := fmt.Sprintf(`{"session_id":"","hook_event_name":"Stop"}`)
+	stdin := `{"session_id":"","hook_event_name":"Stop"}`
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", strings.NewReader(stdin), &stderr, nil)
 	if code != 0 {
@@ -412,41 +394,23 @@ func TestHookRelay_EnvFromOS_AllVarsPresent(t *testing.T) {
 		testAgentType  = "claude-code"
 	)
 
-	harmonikVars := []string{
-		"HARMONIK_RUN_ID",
-		"HARMONIK_DAEMON_SOCKET",
-		"HARMONIK_WORKSPACE_PATH",
-		"HARMONIK_HANDLER_SESSION_ID",
-		"HARMONIK_CLAUDE_SESSION_ID",
-		"HARMONIK_WORKFLOW_ID",
-		"HARMONIK_NODE_ID",
-		"HARMONIK_AGENT_TYPE",
-		"HARMONIK_PHASE",
-	}
-	originals := make(map[string]string, len(harmonikVars))
-	for _, k := range harmonikVars {
-		originals[k] = os.Getenv(k)
-	}
-	t.Cleanup(func() {
-		for k, v := range originals {
-			if v != "" {
-				_ = os.Setenv(k, v)
-			} else {
-				_ = os.Unsetenv(k)
-			}
-		}
-	})
-
 	tmpDir := t.TempDir()
-	_ = os.Setenv("HARMONIK_RUN_ID", testRunID)
-	_ = os.Setenv("HARMONIK_DAEMON_SOCKET", filepath.Join(tmpDir, "d.sock"))
-	_ = os.Setenv("HARMONIK_WORKSPACE_PATH", tmpDir)
-	_ = os.Setenv("HARMONIK_HANDLER_SESSION_ID", testHandlerSes)
-	_ = os.Setenv("HARMONIK_CLAUDE_SESSION_ID", testClauseSess)
-	_ = os.Setenv("HARMONIK_WORKFLOW_ID", testWorkflowID)
-	_ = os.Setenv("HARMONIK_NODE_ID", testNodeID)
-	_ = os.Setenv("HARMONIK_AGENT_TYPE", testAgentType)
-	_ = os.Unsetenv("HARMONIK_PHASE")
+	// t.Setenv restores every prior value at test end; HARMONIK_PHASE is blanked
+	// rather than unset because envFromOS reads it through os.Getenv, for which
+	// "absent" and "empty" are the same thing.
+	for k, v := range map[string]string{
+		"HARMONIK_RUN_ID":             testRunID,
+		"HARMONIK_DAEMON_SOCKET":      filepath.Join(tmpDir, "d.sock"),
+		"HARMONIK_WORKSPACE_PATH":     tmpDir,
+		"HARMONIK_HANDLER_SESSION_ID": testHandlerSes,
+		"HARMONIK_CLAUDE_SESSION_ID":  testClauseSess,
+		"HARMONIK_WORKFLOW_ID":        testWorkflowID,
+		"HARMONIK_NODE_ID":            testNodeID,
+		"HARMONIK_AGENT_TYPE":         testAgentType,
+		"HARMONIK_PHASE":              "",
+	} {
+		t.Setenv(k, v)
+	}
 
 	// Use wrong session_id to get a predictable session-mismatch exit 1 —
 	// this proves envFromOS succeeded (otherwise we'd get a different error).
@@ -488,7 +452,7 @@ func TestHookRelay_ReviewerVerdictSchemaVersionNotOne(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 0 {
@@ -497,10 +461,7 @@ func TestHookRelay_ReviewerVerdictSchemaVersionNotOne(t *testing.T) {
 
 	select {
 	case recv := <-received:
-		var msg map[string]json.RawMessage
-		_ = json.Unmarshal(recv, &msg)
-		var pl map[string]interface{}
-		_ = json.Unmarshal(msg["payload"], &pl)
+		_, pl := hookRelayFixtureEnvelope(t, "reviewer bad schema_version", recv)
 		if pl["error"] != "malformed_review_file" {
 			t.Errorf("reviewer bad schema_version: payload.error=%v, want malformed_review_file", pl["error"])
 		}
@@ -533,7 +494,7 @@ func TestHookRelay_ReviewerVerdictInvalidVerdictValue(t *testing.T) {
 	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e.DaemonSocket = sockPath
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 0 {
@@ -542,10 +503,7 @@ func TestHookRelay_ReviewerVerdictInvalidVerdictValue(t *testing.T) {
 
 	select {
 	case recv := <-received:
-		var msg map[string]json.RawMessage
-		_ = json.Unmarshal(recv, &msg)
-		var pl map[string]interface{}
-		_ = json.Unmarshal(msg["payload"], &pl)
+		_, pl := hookRelayFixtureEnvelope(t, "reviewer invalid verdict value", recv)
 		if pl["error"] != "malformed_review_file" {
 			t.Errorf("reviewer invalid verdict value: payload.error=%v, want malformed_review_file", pl["error"])
 		}

@@ -1,3 +1,4 @@
+// Package workflow provides workflow graph loading, validation, and dispatch helpers.
 package workflow
 
 // context_updates.go — context-update discipline for workflow_mode=dot.

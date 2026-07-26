@@ -171,7 +171,6 @@ func TestRC031_AllRecoveryRoutesHaveValidCategory(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range rc78CrashRecoveryRouteTable {
-		row := row
 		t.Run(string(row.crashPoint), func(t *testing.T) {
 			t.Parallel()
 			if !row.recoveryCategory.Valid() {

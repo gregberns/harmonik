@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // resolve_keeper_config_thread_hk4gtu_test.go — table coverage for hk-4gtu: every
@@ -313,4 +313,4 @@ func TestWarnOnlyNilsCycler(t *testing.T) {
 }
 
 // keep daemon import used (KeeperFlags-only tests above don't reference it directly).
-var _ = daemon.KeeperConfig{}
+var _ = projectconfig.KeeperConfig{}

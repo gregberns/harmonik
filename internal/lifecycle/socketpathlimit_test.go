@@ -28,13 +28,13 @@ func TestValidateSocketPathLength_Fits(t *testing.T) {
 func TestValidateSocketPathLength_TooLong(t *testing.T) {
 	t.Parallel()
 
-	max := sunPathMax()
+	limit := sunPathMax()
 	// Build a path well beyond the limit; TestValidateSocketPathLength_ExactlyAtLimit
-	// covers the true boundary (len == max vs len == max-1).
-	long := "/" + strings.Repeat("a", max) + "/.harmonik/daemon.sock"
+	// covers the true boundary (len == limit vs len == limit-1).
+	long := "/" + strings.Repeat("a", limit) + "/.harmonik/daemon.sock"
 	err := ValidateSocketPathLength(long)
 	if err == nil {
-		t.Fatalf("ValidateSocketPathLength(%d-byte path) = nil, want error (max=%d)", len(long), max)
+		t.Fatalf("ValidateSocketPathLength(%d-byte path) = nil, want error (max=%d)", len(long), limit)
 	}
 	if !strings.Contains(err.Error(), "sun_path") {
 		t.Errorf("error %q does not mention sun_path", err.Error())
@@ -49,15 +49,15 @@ func TestValidateSocketPathLength_TooLong(t *testing.T) {
 func TestValidateSocketPathLength_ExactlyAtLimit(t *testing.T) {
 	t.Parallel()
 
-	max := sunPathMax()
+	limit := sunPathMax()
 
-	atLimit := strings.Repeat("a", max)
+	atLimit := strings.Repeat("a", limit)
 	if err := ValidateSocketPathLength(atLimit); err == nil {
-		t.Errorf("ValidateSocketPathLength(len=%d) = nil, want error (max=%d, no room for NUL)", len(atLimit), max)
+		t.Errorf("ValidateSocketPathLength(len=%d) = nil, want error (max=%d, no room for NUL)", len(atLimit), limit)
 	}
 
-	underLimit := strings.Repeat("a", max-1)
+	underLimit := strings.Repeat("a", limit-1)
 	if err := ValidateSocketPathLength(underLimit); err != nil {
-		t.Errorf("ValidateSocketPathLength(len=%d) = %v, want nil (max=%d)", len(underLimit), err, max)
+		t.Errorf("ValidateSocketPathLength(len=%d) = %v, want nil (max=%d)", len(underLimit), err, limit)
 	}
 }

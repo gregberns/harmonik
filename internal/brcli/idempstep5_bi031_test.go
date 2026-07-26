@@ -86,7 +86,6 @@ func idempStep5FixtureIntentFile(t *testing.T, dir string, entry core.IntentLogE
 		`","requested_at":"` + entry.RequestedAt.Format(time.RFC3339) +
 		`","schema_version":1}`
 
-	//nolint:gosec // G306: test fixture
 	if err := os.WriteFile(path, []byte(jsonStr), 0o600); err != nil {
 		t.Fatalf("idempStep5FixtureIntentFile: WriteFile %q: %v", path, err)
 	}
@@ -114,7 +113,6 @@ func TestIdempStep5_NeitherPreNorPostPredicateForClaim(t *testing.T) {
 	}
 
 	for _, tc := range statuses {
-		tc := tc
 		t.Run(string(tc.status), func(t *testing.T) {
 			t.Parallel()
 
@@ -151,7 +149,6 @@ func TestIdempStep5_NeitherPreNorPostPredicateForClose(t *testing.T) {
 	}
 
 	for _, tc := range statuses {
-		tc := tc
 		t.Run(string(tc.status), func(t *testing.T) {
 			t.Parallel()
 
@@ -187,7 +184,6 @@ func TestIdempStep5_NeitherPreNorPostPredicateForReopen(t *testing.T) {
 	}
 
 	for _, tc := range statuses {
-		tc := tc
 		t.Run(string(tc.status), func(t *testing.T) {
 			t.Parallel()
 
@@ -358,7 +354,6 @@ func TestIdempStep5_AllOpsDivergedStatusMatrix(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.op), func(t *testing.T) {
 			t.Parallel()
 

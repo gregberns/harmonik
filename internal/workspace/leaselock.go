@@ -64,8 +64,7 @@ func WriteLeaseLockAtomic(target string, lock *core.LeaseLockFile) error {
 	}
 
 	dir := filepath.Dir(target)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: WriteLeaseLockAtomic: MkdirAll %q: %w", dir, err)
 	}
 
@@ -77,43 +76,47 @@ func WriteLeaseLockAtomic(target string, lock *core.LeaseLockFile) error {
 	}
 
 	if _, err := f.Write(content); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Write: %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteLeaseLockAtomic: Write: %w", err),
+			f.Close(), os.Remove(tmpPath))
 	}
 
 	// Step 2: fsync the temp file before rename so data is durable.
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Sync (pre-rename): %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteLeaseLockAtomic: Sync (pre-rename): %w", err),
+			f.Close(), os.Remove(tmpPath))
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Close (pre-rename): %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteLeaseLockAtomic: Close (pre-rename): %w", err),
+			os.Remove(tmpPath))
 	}
 
 	// Step 3: atomic test-and-set claim — link(2) fails with EEXIST when target
 	// already exists, so a second claimant on the same path fails instead of
 	// silently overwriting the holder's lease. (rename(2) would clobber.)
 	if err := os.Link(tmpPath, target); err != nil {
-		_ = os.Remove(tmpPath)
+		rmErr := os.Remove(tmpPath)
 		if errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("workspace: WriteLeaseLockAtomic: lease already held at %q: %w", target, ErrLeaseAlreadyHeld)
+			return withCleanupErrs(
+				fmt.Errorf("workspace: WriteLeaseLockAtomic: lease already held at %q: %w", target, ErrLeaseAlreadyHeld),
+				rmErr)
 		}
-		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Link %q → %q: %w", tmpPath, target, err)
+		return withCleanupErrs(
+			fmt.Errorf("workspace: WriteLeaseLockAtomic: Link %q → %q: %w", tmpPath, target, err),
+			rmErr)
 	}
 	_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup of the temp file now that the link holds the lease
 
 	// Step 4: parent-dir fsync to durably record the new link.
 	// Best-effort on macOS/APFS per spec; sync error is intentionally suppressed.
+	//nolint:gosec // G304: dir is derived from the validated workspace lease-lock path
 	dirFD, err := os.Open(dir)
 	if err != nil {
 		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Open dir %q for fsync: %w", dir, err)
 	}
-	_ = dirFD.Sync() // best-effort on APFS per WM-013a
-	if err := dirFD.Close(); err != nil {
-		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Close dir fd: %w", err)
+	syncErr := dirFD.Sync()
+	closeErr := dirFD.Close()
+	if syncErr != nil || closeErr != nil {
+		return fmt.Errorf("workspace: WriteLeaseLockAtomic: fsync/close dir fd: %w", errors.Join(syncErr, closeErr))
 	}
 
 	return nil
@@ -216,8 +219,7 @@ func WriteLeaseReleasedMarker(workspacePath, runID, workspaceID, reason string) 
 	eventsPath := WorkspaceLocalEventsPath(workspacePath, workspaceID)
 	eventsDir := filepath.Dir(eventsPath)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: MkdirAll %q: %w", eventsDir, err)
 	}
 
@@ -245,13 +247,11 @@ func WriteLeaseReleasedMarker(workspacePath, runID, workspaceID, reason string) 
 		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: OpenFile %q: %w", eventsPath, err)
 	}
 
-	if _, err := f.Write([]byte(line)); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: Write: %w", err)
+	if _, err := f.WriteString(line); err != nil {
+		return withCleanupErrs(fmt.Errorf("workspace: WriteLeaseReleasedMarker: Write: %w", err), f.Close())
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: Sync: %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteLeaseReleasedMarker: Sync: %w", err), f.Close())
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: Close: %w", err)

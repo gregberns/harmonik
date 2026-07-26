@@ -29,6 +29,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // cognJay1Fixture sets up a minimal project dir with a keeper gauge file for
@@ -65,7 +66,7 @@ func cognJay1Fixture(t *testing.T, agent string, tokens, windowSize int64) strin
 
 // cognJay1Cog builds the cognition block for agent directly via the test seam,
 // bypassing the tmux liveness check. Returns nil if the ctx file is absent.
-func cognJay1Cog(t *testing.T, projectDir string, kconfig daemon.KeeperConfig, agent string) *daemon.SessionCognition {
+func cognJay1Cog(t *testing.T, projectDir string, kconfig projectconfig.KeeperConfig, agent string) *daemon.SessionCognition { //nolint:unparam // agent is fixed "captain" across current callers; kept for fixture-shape parity
 	t.Helper()
 	ph := lifecycle.ComputeProjectHash(projectDir)
 	lb := daemon.NewLiveStateBuilderForTest(projectDir, core.ProjectHash(ph), kconfig)
@@ -79,7 +80,7 @@ func cognJay1Cog(t *testing.T, projectDir string, kconfig daemon.KeeperConfig, a
 func TestCognJay1_TooBig_ThresholdNilWhenUnconfigured(t *testing.T) {
 	t.Parallel()
 	root := cognJay1Fixture(t, "captain", 182_000, 200_000)
-	cog := cognJay1Cog(t, root, daemon.KeeperConfig{}, "captain")
+	cog := cognJay1Cog(t, root, projectconfig.KeeperConfig{}, "captain")
 	if cog == nil {
 		t.Fatal("expected cognition block, got nil")
 	}
@@ -101,7 +102,7 @@ func TestCognJay1_TooBig_ThresholdNilWhenUnconfigured(t *testing.T) {
 func TestCognJay1_TooBig_NotTripped(t *testing.T) {
 	t.Parallel()
 	root := cognJay1Fixture(t, "captain", 182_304, 1_000_000)
-	kconfig := daemon.KeeperConfig{WarnAbsTokens: 200_000}
+	kconfig := projectconfig.KeeperConfig{WarnAbsTokens: 200_000}
 	cog := cognJay1Cog(t, root, kconfig, "captain")
 	if cog == nil {
 		t.Fatal("expected cognition block, got nil")
@@ -131,7 +132,7 @@ func TestCognJay1_TooBig_NotTripped(t *testing.T) {
 func TestCognJay1_TooBig_TrippedWarnBand(t *testing.T) {
 	t.Parallel()
 	root := cognJay1Fixture(t, "captain", 205_000, 1_000_000)
-	kconfig := daemon.KeeperConfig{
+	kconfig := projectconfig.KeeperConfig{
 		WarnAbsTokens: 200_000,
 		ActAbsTokens:  215_000,
 	}
@@ -155,7 +156,7 @@ func TestCognJay1_TooBig_TrippedWarnBand(t *testing.T) {
 func TestCognJay1_TooBig_ActBand(t *testing.T) {
 	t.Parallel()
 	root := cognJay1Fixture(t, "captain", 220_000, 1_000_000)
-	kconfig := daemon.KeeperConfig{
+	kconfig := projectconfig.KeeperConfig{
 		WarnAbsTokens:     200_000,
 		ActAbsTokens:      215_000,
 		ForceActAbsTokens: 240_000,
@@ -176,7 +177,7 @@ func TestCognJay1_TooBig_ActBand(t *testing.T) {
 func TestCognJay1_TooBig_ForceActBand(t *testing.T) {
 	t.Parallel()
 	root := cognJay1Fixture(t, "captain", 245_000, 1_000_000)
-	kconfig := daemon.KeeperConfig{
+	kconfig := projectconfig.KeeperConfig{
 		WarnAbsTokens:     200_000,
 		ActAbsTokens:      215_000,
 		ForceActAbsTokens: 240_000,
@@ -201,7 +202,7 @@ func TestCognJay1_TooBig_ForceActBand(t *testing.T) {
 func TestCognJay1_ContextStatic_StalenessNilWhenUnconfigured(t *testing.T) {
 	t.Parallel()
 	root := cognJay1Fixture(t, "captain", 100_000, 200_000)
-	cog := cognJay1Cog(t, root, daemon.KeeperConfig{}, "captain")
+	cog := cognJay1Cog(t, root, projectconfig.KeeperConfig{}, "captain")
 	if cog == nil {
 		t.Fatal("expected cognition block, got nil")
 	}
@@ -217,7 +218,7 @@ func TestCognJay1_ContextStatic_StalenessNilWhenUnconfigured(t *testing.T) {
 func TestCognJay1_ContextStatic_StalenessSet(t *testing.T) {
 	t.Parallel()
 	root := cognJay1Fixture(t, "captain", 100_000, 200_000)
-	kconfig := daemon.KeeperConfig{Staleness: 120 * time.Second}
+	kconfig := projectconfig.KeeperConfig{Staleness: 120 * time.Second}
 	cog := cognJay1Cog(t, root, kconfig, "captain")
 	if cog == nil {
 		t.Fatal("expected cognition block, got nil")
@@ -243,7 +244,7 @@ func TestCognJay1_ContextStatic_FlatNilWhenStuckMinIntervalsUnset(t *testing.T) 
 	root := cognJay1Fixture(t, "captain", 100_000, 200_000)
 	// Even with WarnAbsTokens and Staleness configured, Flat must be null
 	// because stuck_min_intervals is not yet a KeeperConfig knob (SS-012 opt-in).
-	kconfig := daemon.KeeperConfig{
+	kconfig := projectconfig.KeeperConfig{
 		WarnAbsTokens: 200_000,
 		Staleness:     120 * time.Second,
 	}
@@ -267,7 +268,7 @@ func TestCognJay1_ContextStatic_FlatNilWhenStuckMinIntervalsUnset(t *testing.T) 
 func TestCognJay1_ContextStatic_TokensUnchangedIntervalsZero(t *testing.T) {
 	t.Parallel()
 	root := cognJay1Fixture(t, "captain", 150_000, 200_000)
-	cog := cognJay1Cog(t, root, daemon.KeeperConfig{}, "captain")
+	cog := cognJay1Cog(t, root, projectconfig.KeeperConfig{}, "captain")
 	if cog == nil {
 		t.Fatal("expected cognition block, got nil")
 	}
@@ -284,7 +285,7 @@ func TestCognJay1_ContextStatic_TokensUnchangedIntervalsZero(t *testing.T) {
 func TestCognJay1_TooBig_ThresholdRefAlwaysSet(t *testing.T) {
 	t.Parallel()
 	root := cognJay1Fixture(t, "captain", 50_000, 200_000)
-	cog := cognJay1Cog(t, root, daemon.KeeperConfig{}, "captain")
+	cog := cognJay1Cog(t, root, projectconfig.KeeperConfig{}, "captain")
 	if cog == nil {
 		t.Fatal("expected cognition block, got nil")
 	}

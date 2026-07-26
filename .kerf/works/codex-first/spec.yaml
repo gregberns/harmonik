@@ -1,0 +1,32 @@
+codename: codex-first
+title: 'Codex-first: local Codex as a reliable bead-runner (P0)'
+type: spec
+project:
+  id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+  - problem-space
+  - decompose
+  - research
+  - change-design
+  - spec-draft
+  - integration
+  - tasks
+  - ready
+created: 2026-07-21T22:12:57Z
+updated: 2026-07-22T03:00:35Z
+sessions:
+  - id: null
+    started: 2026-07-21T22:12:57Z
+    ended: 2026-07-22T03:00:35Z
+active_session: null
+depends_on: []
+bead_filter:
+  label: codename:codex-first
+pinned_beads: []
+implementation:
+  branch: null
+  pr: null
+  commits: []

@@ -36,6 +36,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hk6atjkE2EEnvValue returns the value of the first KEY=VALUE entry in env whose
@@ -90,7 +91,7 @@ func TestHk6atjkPiLaunchPath_ChildGetsWorkingPath(t *testing.T) {
 		Labels: nil,
 	}
 
-	piCfg := daemon.PiHarnessConfig{
+	piCfg := projectconfig.PiHarnessConfig{
 		Provider:   "ornith",
 		Model:      "ornith",
 		APIKeyEnv:  "HK_6ATJK_PI_KEY",

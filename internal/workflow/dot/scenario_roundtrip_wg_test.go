@@ -163,7 +163,6 @@ func TestScenarioAllFourNodeTypesParse(t *testing.T) {
 // semantics (unconditional fallback must be last).
 func TestScenarioEdgeCascadeOrdering(t *testing.T) {
 	// Use the canonical specs/examples/review-loop.dot fixture.
-	//nolint:gosec // G304: test-local constant path.
 	src, err := os.ReadFile("../../../specs/examples/review-loop.dot")
 	if err != nil {
 		t.Skipf("specs/examples/review-loop.dot not found: %v", err)
@@ -215,7 +214,7 @@ func TestScenarioEdgeCascadeOrdering(t *testing.T) {
 
 	// Edge 3 (reviewer -> implementer, REQUEST_CHANGES) must carry traversal_cap.
 	rcEdge := g.Edges[3]
-	if cap, ok := rcEdge.UnknownAttrs["traversal_cap"]; !ok || cap != "3" {
+	if traversalCap, ok := rcEdge.UnknownAttrs["traversal_cap"]; !ok || traversalCap != "3" {
 		t.Errorf("Edges[3] traversal_cap = %q (present=%v), want %q",
 			rcEdge.UnknownAttrs["traversal_cap"], ok, "3")
 	}
@@ -369,7 +368,6 @@ func TestScenarioUnknownAttrWarningAndRetention(t *testing.T) {
 // Also verifies the "role" attribute (used on every node in the canonical file)
 // is retained as an unknown permissive attribute per WG-032.
 func TestScenarioCanonicalReviewLoopRoundTrip(t *testing.T) {
-	//nolint:gosec // G304: test-local constant path.
 	src, err := os.ReadFile("../../../specs/examples/review-loop.dot")
 	if err != nil {
 		t.Skipf("specs/examples/review-loop.dot not found: %v", err)

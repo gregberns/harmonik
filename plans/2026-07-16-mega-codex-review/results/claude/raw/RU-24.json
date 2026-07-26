@@ -1,0 +1,62 @@
+{
+  "chunk": "RU-24",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "cmd/harmonik/assets/scripts/keeper-precompact-hook.sh",
+    "cmd/harmonik/assets/scripts/keeper-sessionstart-hook.sh",
+    "cmd/harmonik/assets/scripts/keeper-statusline.sh",
+    "cmd/harmonik/assets/scripts/keeper-stop-hook.sh",
+    "cmd/harmonik/assets/context/captain-lanes.md.tmpl",
+    "cmd/harmonik/assets/context/HANDOFF.md.tmpl",
+    "cmd/harmonik/assets/context/project.yaml.tmpl",
+    "cmd/harmonik/assets/context/roadmap.md.tmpl"
+  ],
+  "status": "reviewed",
+  "findings": [
+    {
+      "file": "cmd/harmonik/assets/scripts/keeper-statusline.sh",
+      "line": 65,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "statusline lacks the path-traversal guard its sibling hooks have; AGENT with '/' or '..' writes .ctx to an arbitrary path",
+      "detail": "keeper-precompact-hook.sh (L85-87) and keeper-sessionstart-hook.sh (L65-67) both reject agent names matching '*/*|*..*' before using them in a file path. keeper-statusline.sh derives AGENT the same way (env HARMONIK_AGENT, or the tmux session name via `tmux display-message -p '#S'`, or 'default') but performs NO such guard before building CTX_FILE=\"${CTX_DIR}/${AGENT}.ctx\" (L65) and writing/renaming to it (L142-143). A tmux session name or env value containing '/' or '..' (e.g. AGENT='../../../tmp/x') causes the atomic write+mv to land outside .harmonik/keeper. Because the statusLine command runs on every UI repaint, this is the most-frequently-executed of the four hooks. Inconsistent hardening within the same skill family is itself a maintainability hazard: a reader reasonably assumes all four scripts share the guard.",
+      "suggested_fix": "Add the same `case \"$AGENT\" in */*|*..*) ... ;; esac` guard (skip write / exit 0) immediately after AGENT derivation, mirroring precompact/sessionstart."
+    },
+    {
+      "file": "cmd/harmonik/assets/scripts/keeper-stop-hook.sh",
+      "line": 56,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "stop-hook lacks the path-traversal guard its sibling hooks have; AGENT with '/' or '..' touches an arbitrary path",
+      "detail": "keeper-stop-hook.sh derives AGENT from HARMONIK_AGENT / HARMONIK_KEEPER_AGENT / $1 / tmux session name / 'default' (L43-53) then builds IDLE_FILE=\"${KEEPER_DIR}/${AGENT}.idle\" (L56) and `touch`es it (L59) with no validation. Its siblings keeper-precompact-hook.sh and keeper-sessionstart-hook.sh both reject '*/*|*..*' agent names for exactly this file path. A crafted agent name (via $1 positional, env, or a tmux session name) makes the hook create/mtime-bump an arbitrary file outside .harmonik/keeper. Same guard-inconsistency class as the statusline finding.",
+      "suggested_fix": "Add the `case \"$AGENT\" in */*|*..*) exit 0 ;; esac` guard after AGENT derivation, matching precompact/sessionstart."
+    },
+    {
+      "file": "cmd/harmonik/assets/scripts/keeper-statusline.sh",
+      "line": 121,
+      "severity": "low",
+      "category": "correctness",
+      "title": "HARMONIK_KEEPER_1M_EFFECTIVE_FRACTION is interpolated unescaped into an awk program (code-injection / crash surface)",
+      "detail": "L120-121: `_1M_FRACTION=\"${HARMONIK_KEEPER_1M_EFFECTIVE_FRACTION:-0.5}\"` then `WINDOW_SIZE=\"$(awk \"BEGIN {printf \\\"%d\\n\\\", 1000000 * ${_1M_FRACTION}}\")\"`. The value is spliced directly into the awk source with no numeric validation. A non-numeric value injects awk syntax (e.g. `0.5} END {system(\"...\")` style) or simply produces a syntax error / 0, silently corrupting WINDOW_SIZE and thus the keeper's fill gauge. Every other numeric input in this script (TOKENS L95, WINDOW_SIZE L96, the override L101) is grep-validated as an integer first; this one is not. It is operator-controlled env, hence low, but it is an avoidable unvalidated-into-interpreter path.",
+      "suggested_fix": "Validate _1M_FRACTION against `^[0-9]+(\\.[0-9]+)?$` before use (fall back to 0.5 on mismatch), or pass it via `awk -v f=\"$_1M_FRACTION\"` instead of string interpolation."
+    },
+    {
+      "file": "cmd/harmonik/assets/scripts/keeper-statusline.sh",
+      "line": 53,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "statusline omits the HARMONIK_KEEPER_AGENT backward-compat alias that all three other hooks honor",
+      "detail": "precompact (L73-76), sessionstart (L55-58), and stop (L43-46) all fall back HARMONIK_AGENT -> HARMONIK_KEEPER_AGENT before tmux. keeper-statusline.sh (L53-59) checks only HARMONIK_AGENT then tmux, skipping HARMONIK_KEEPER_AGENT. An operator relying on the documented backward-compat alias gets a consistent agent name for the .idle/.sid/.precompact channels but a divergent one for .ctx, so the keeper's identity-comparison (.sid PRIMARY vs .ctx gauge) can key off two different agent names in the same session.",
+      "suggested_fix": "Add the HARMONIK_KEEPER_AGENT elif branch to statusline's AGENT derivation so all four scripts resolve identically."
+    },
+    {
+      "file": "cmd/harmonik/assets/scripts/keeper-statusline.sh",
+      "line": 143,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "TMP_FILE (.ctx.tmp.$$) is orphaned if the script dies between write and rename",
+      "detail": "L66 TMP_FILE=\"${CTX_FILE}.tmp.$$\"; L142 writes it; L143 `mv` renames. With `set -euo pipefail` and no trap, any failure of the printf write (disk full, EIO) after the file is partially created — or a signal between L142 and L143 — leaves a stale `.ctx.tmp.<pid>` in .harmonik/keeper. Because the statusline runs on every repaint with a fresh PID each time, these can accumulate over a long session. Minor, but a `trap 'rm -f \"$TMP_FILE\"' EXIT` would make the atomic-write pattern actually clean up after itself.",
+      "suggested_fix": "Add an EXIT trap removing TMP_FILE, or `rm -f` stale `${CTX_FILE}.tmp.*` at start."
+    }
+  ]
+}

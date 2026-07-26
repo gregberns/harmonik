@@ -16,11 +16,14 @@ package supervisecmd
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 const configSchemaVersion = 1
@@ -123,11 +126,10 @@ type AssetSyncConfig struct {
 
 // WriteConfigAtomic writes cfg to .harmonik/cognition/config.json atomically
 // via temp+rename+fsync per WM-026.
-func WriteConfigAtomic(projectDir string, cfg Config) error {
+func WriteConfigAtomic(projectDir string, cfg Config) (retErr error) {
 	configPath := ConfigPath(projectDir)
 	dir := filepath.Dir(configPath)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("supervisecmd: WriteConfigAtomic: mkdir %s: %w", dir, err)
 	}
 
@@ -143,10 +145,17 @@ func WriteConfigAtomic(projectDir string, cfg Config) error {
 	}
 	tmpPath := tmp.Name()
 	success := false
+	tmpClosed := false
 	defer func() {
-		_ = tmp.Close()
+		if !tmpClosed {
+			if err := tmp.Close(); err != nil && retErr == nil {
+				retErr = fmt.Errorf("supervisecmd: WriteConfigAtomic: close temp: %w", err)
+			}
+		}
 		if !success {
-			_ = os.Remove(tmpPath)
+			if err := os.Remove(tmpPath); err != nil && !errors.Is(err, os.ErrNotExist) && retErr == nil {
+				retErr = fmt.Errorf("supervisecmd: WriteConfigAtomic: remove temp: %w", err)
+			}
 		}
 	}()
 
@@ -159,6 +168,7 @@ func WriteConfigAtomic(projectDir string, cfg Config) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("supervisecmd: WriteConfigAtomic: close: %w", err)
 	}
+	tmpClosed = true
 	if err := os.Rename(tmpPath, configPath); err != nil {
 		return fmt.Errorf("supervisecmd: WriteConfigAtomic: rename: %w", err)
 	}
@@ -166,16 +176,24 @@ func WriteConfigAtomic(projectDir string, cfg Config) error {
 
 	// fsync parent directory to make rename durable.
 	//nolint:gosec // G304: dir is derived from operator-controlled projectDir
-	if dirFd, err := os.Open(dir); err == nil {
-		_ = dirFd.Sync()
-		_ = dirFd.Close()
+	dirFd, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("supervisecmd: WriteConfigAtomic: open parent dir: %w", err)
+	}
+	if err := dirFd.Sync(); err != nil {
+		return errors.Join(
+			fmt.Errorf("supervisecmd: WriteConfigAtomic: fsync parent dir: %w", err),
+			dirFd.Close(),
+		)
+	}
+	if err := dirFd.Close(); err != nil {
+		return fmt.Errorf("supervisecmd: WriteConfigAtomic: close parent dir: %w", err)
 	}
 	return nil
 }
 
 // ReadConfig reads and parses .harmonik/cognition/config.json.
 func ReadConfig(projectDir string) (Config, error) {
-	//nolint:gosec // G304: path derived from operator-controlled projectDir
 	data, err := os.ReadFile(ConfigPath(projectDir))
 	if err != nil {
 		return Config{}, fmt.Errorf("supervisecmd: ReadConfig: %w", err)
@@ -191,11 +209,10 @@ func ReadConfig(projectDir string) (Config, error) {
 // Content: schema_version=1\n
 func WriteSentinel(projectDir string) error {
 	dir := CognitionDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("supervisecmd: WriteSentinel: mkdir: %w", err)
 	}
-	return os.WriteFile(SentinelPath(projectDir), []byte("schema_version=1\n"), 0o644)
+	return os.WriteFile(SentinelPath(projectDir), []byte("schema_version=1\n"), 0o600)
 }
 
 // RemoveSentinel removes the supervisor.sentinel file; ignores ENOENT.
@@ -210,17 +227,15 @@ func RemoveSentinel(projectDir string) error {
 // WritePidfile writes the supervisor PID to supervisor.pid.
 func WritePidfile(projectDir string, pid int) error {
 	dir := CognitionDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("supervisecmd: WritePidfile: mkdir: %w", err)
 	}
 	content := fmt.Sprintf("%d\n", pid)
-	return os.WriteFile(PidfilePath(projectDir), []byte(content), 0o644)
+	return os.WriteFile(PidfilePath(projectDir), []byte(content), 0o600)
 }
 
 // ReadPidfile reads the supervisor PID from supervisor.pid.
 func ReadPidfile(projectDir string) (int, error) {
-	//nolint:gosec // G304: path derived from operator-controlled projectDir
 	data, err := os.ReadFile(PidfilePath(projectDir))
 	if err != nil {
 		return 0, fmt.Errorf("supervisecmd: ReadPidfile: %w", err)

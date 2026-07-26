@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,14 +56,13 @@ func TestWM035_WorktreeStableAfterIntraRunRollback(t *testing.T) {
 	}
 
 	for _, v := range intraRunVerdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
 			ws := intraRunRollbackFixtureWorkspace(t, string(v))
 			wantPath := ws.Path
 
-			if err := intraRunRollbackFixtureApplyVerdict(ws, v, ""); err != nil {
+			if err := intraRunRollbackFixtureApplyVerdict(t.Context(), ws, v, ""); err != nil {
 				t.Fatalf("WM-035[%s]: applyVerdict: %v", v, err)
 			}
 
@@ -89,14 +89,13 @@ func TestWM035_BranchStableAfterIntraRunRollback(t *testing.T) {
 	}
 
 	for _, v := range intraRunVerdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
 			ws := intraRunRollbackFixtureWorkspace(t, string(v))
 			wantBranch := ws.BranchName
 
-			if err := intraRunRollbackFixtureApplyVerdict(ws, v, ""); err != nil {
+			if err := intraRunRollbackFixtureApplyVerdict(t.Context(), ws, v, ""); err != nil {
 				t.Fatalf("WM-035[%s]: applyVerdict: %v", v, err)
 			}
 
@@ -122,14 +121,13 @@ func TestWM035_RunIDUnchangedAfterIntraRunRollback(t *testing.T) {
 	}
 
 	for _, v := range intraRunVerdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
 			ws := intraRunRollbackFixtureWorkspace(t, string(v))
 			wantRunID := ws.RunID
 
-			if err := intraRunRollbackFixtureApplyVerdict(ws, v, ""); err != nil {
+			if err := intraRunRollbackFixtureApplyVerdict(t.Context(), ws, v, ""); err != nil {
 				t.Fatalf("WM-035[%s]: applyVerdict: %v", v, err)
 			}
 
@@ -158,7 +156,6 @@ func TestWM035_WorktreeDirExistsAfterRollback(t *testing.T) {
 	}
 
 	for _, v := range intraRunVerdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
@@ -167,11 +164,11 @@ func TestWM035_WorktreeDirExistsAfterRollback(t *testing.T) {
 			branch := "run/" + runID
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-			//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
 
+			//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 			addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 			addCmd.Dir = repo
 			if out, err := addCmd.CombinedOutput(); err != nil {
@@ -209,7 +206,7 @@ func TestWM035_WorktreeDirExistsAfterRollback(t *testing.T) {
 
 			// Apply the intra-run rollback verdict. Per WM-035, the worktree
 			// MUST be kept — no git worktree remove is issued.
-			if err := intraRunRollbackFixtureApplyVerdict(ws, v, sha); err != nil {
+			if err := intraRunRollbackFixtureApplyVerdict(t.Context(), ws, v, sha); err != nil {
 				t.Fatalf("WM-035[%s]: applyVerdict: %v", v, err)
 			}
 
@@ -219,6 +216,7 @@ func TestWM035_WorktreeDirExistsAfterRollback(t *testing.T) {
 			}
 
 			// Task branch MUST still exist after rollback.
+			//nolint:gosec // G204: git command and repository path are controlled by this test fixture.
 			checkBranch := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", branch)
 			if out, err := checkBranch.CombinedOutput(); err != nil {
 				t.Errorf("WM-035[%s]: task branch %q absent after rollback; want persisted: %v\n%s",
@@ -244,11 +242,11 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, initialSHA)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -259,7 +257,7 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 	// work has been done). After applying reset-to-checkpoint, HEAD MUST
 	// revert to initialSHA (the rollback target).
 	extraFile := filepath.Join(worktreePath, "progress.txt")
-	if err := os.WriteFile(extraFile, []byte("work in progress\n"), 0o644); err != nil {
+	if err := os.WriteFile(extraFile, []byte("work in progress\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	addFiles := exec.CommandContext(t.Context(), "git", "add", "progress.txt")
@@ -298,7 +296,7 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 
 	// Apply reset-to-checkpoint with rollbackTarget = initialSHA (EM-044
 	// rollback_to_state_id points to the earlier state).
-	if err := intraRunRollbackFixtureApplyVerdict(ws, core.VerdictResetToCheckpoint, initialSHA); err != nil {
+	if err := intraRunRollbackFixtureApplyVerdict(t.Context(), ws, core.VerdictResetToCheckpoint, initialSHA); err != nil {
 		t.Fatalf("WM-035[reset-to-checkpoint]: applyVerdict: %v", err)
 	}
 
@@ -318,12 +316,13 @@ func TestWM035_ResetToCheckpointResetsHeadToRollbackTarget(t *testing.T) {
 	}
 
 	// HEAD in the worktree MUST now equal the rollback target (initialSHA).
+	//nolint:gosec // G204: git command and worktree path are controlled by this test fixture.
 	headOut, err := exec.CommandContext(t.Context(), "git", "-C", worktreePath, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("WM-035[reset-to-checkpoint]: git rev-parse HEAD: %v", err)
 	}
 	gotHead := string(headOut)
-	if len(gotHead) > 0 && gotHead[len(gotHead)-1] == '\n' {
+	if gotHead != "" && gotHead[len(gotHead)-1] == '\n' {
 		gotHead = gotHead[:len(gotHead)-1]
 	}
 	if gotHead != initialSHA {
@@ -396,7 +395,7 @@ func intraRunRollbackFixtureWorkspace(t *testing.T, verdictStr string) *Workspac
 // TODO(hk-8mwo.36): replace with real verdict-executor once the workspace-manager
 // intra-run rollback path is implemented. The real implementation will route through
 // the verdict-executor machinery and emit VerdictExecuted events per WM-015.
-func intraRunRollbackFixtureApplyVerdict(ws *Workspace, verdict core.Verdict, rollbackTarget string) error {
+func intraRunRollbackFixtureApplyVerdict(ctx context.Context, ws *Workspace, verdict core.Verdict, rollbackTarget string) error {
 	switch verdict {
 	case core.VerdictResumeHere, core.VerdictResumeWithContext:
 		// WM-035: no worktree change, no branch change, no run_id change.
@@ -413,7 +412,7 @@ func intraRunRollbackFixtureApplyVerdict(ws *Workspace, verdict core.Verdict, ro
 		}
 		// The git operation runs INSIDE ws.Path (the existing worktree) — the
 		// worktree directory is not removed or re-created (WM-035).
-		resetCmd := exec.Command("git", "reset", "--hard", rollbackTarget)
+		resetCmd := exec.CommandContext(ctx, "git", "reset", "--hard", rollbackTarget)
 		resetCmd.Dir = ws.Path
 		if out, err := resetCmd.CombinedOutput(); err != nil {
 			return intraRunRollbackFixtureError("reset-to-checkpoint: git reset --hard " + rollbackTarget + ": " + string(out))

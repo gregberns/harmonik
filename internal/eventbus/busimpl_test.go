@@ -180,7 +180,6 @@ func TestBusImplEmit_SafeFieldsReachConsumerUnchanged(t *testing.T) {
 	}
 
 	for k, wantVal := range want {
-		k, wantVal := k, wantVal
 		gotVal, ok := receivedPayload[k]
 		if !ok {
 			t.Errorf("consumer payload missing safe key %q", k)
@@ -558,7 +557,7 @@ func TestBusImplEmit_FsyncBoundaryEventWritesToJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if err := bus.Seal(); err != nil {
@@ -605,7 +604,7 @@ func TestBusImplEmit_OrdinaryEventWritesToJSONLWithoutSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if err := bus.Seal(); err != nil {
@@ -648,6 +647,46 @@ func TestBusImplEmit_OrdinaryEventWritesToJSONLWithoutSync(t *testing.T) {
 	}
 }
 
+func TestBusImplEmitAgentPresence_RefreshPersistsForWhoProjection(t *testing.T) {
+	t.Parallel()
+
+	logPath := busImplFixtureJSONLPath(t)
+	writer, err := eventbus.OpenJSONLWriter(logPath)
+	if err != nil {
+		t.Fatalf("OpenJSONLWriter: %v", err)
+	}
+	defer eventbusFixtureClose(t, writer)
+
+	bus := eventbus.NewBusImplWithWriter(nil, writer)
+	emitter, ok := bus.(eventbus.CommsPresenceEmitter)
+	if !ok {
+		t.Fatal("bus does not implement CommsPresenceEmitter")
+	}
+
+	_, err = emitter.EmitAgentPresence(context.Background(), core.AgentPresencePayload{
+		Agent:     "captain",
+		Status:    core.AgentPresenceStatusOnline,
+		Reason:    core.AgentPresenceReasonRefresh,
+		SessionID: "session-refresh-proof",
+	})
+	if err != nil {
+		t.Fatalf("EmitAgentPresence(refresh): %v", err)
+	}
+
+	lines := busImplFixtureReadJSONLLines(t, logPath)
+	if len(lines) != 1 {
+		t.Fatalf("JSONL file contains %d lines after refresh, want 1; lines: %v", len(lines), lines)
+	}
+	var evt core.Event
+	if err := json.Unmarshal([]byte(lines[0]), &evt); err != nil {
+		t.Fatalf("decode persisted refresh: %v", err)
+	}
+	const presenceType core.EventType = "agent_presence"
+	if evt.Type != string(presenceType) {
+		t.Fatalf("persisted event type = %q, want %q", evt.Type, presenceType)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PARA-1 / hk-n9f51: EmitWithRunID stamps run_id on the envelope
 // ─────────────────────────────────────────────────────────────────────────────
@@ -665,7 +704,7 @@ func TestBusImplEmitWithRunID_RunIDAppearsInJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if sealErr := bus.Seal(); sealErr != nil {
@@ -724,7 +763,7 @@ func TestBusImplEmit_PlainEmit_RunIDAbsentFromJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if sealErr := bus.Seal(); sealErr != nil {

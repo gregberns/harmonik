@@ -65,10 +65,14 @@ func runStart(args []string) int {
 // runStartWith is runStart with an injectable dispatch + writers for testing.
 func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		startUsage(stdout)
+		if err := startUsage(stdout); err != nil {
+			return 1
+		}
 		// A bare `start` with no role is a usage error; an explicit --help is not.
 		if len(args) == 0 {
-			_, _ = fmt.Fprintln(stderr, "harmonik start: a role is required — `start captain`, `start crew <name>`, `start commodore`, `start admiral`, or `start assessor`") //nolint:errcheck // best-effort
+			if _, err := fmt.Fprintln(stderr, "harmonik start: a role is required — `start captain`, `start crew <name>`, `start commodore`, `start admiral`, or `start assessor`"); err != nil {
+				return 1
+			}
 			return 2
 		}
 		return 0
@@ -146,7 +150,9 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 			},
 		}, stderr)
 	default:
-		_, _ = fmt.Fprintf(stderr, "harmonik start: unknown role %q — roles are: captain, crew, commodore, admiral, assessor\n", role) //nolint:errcheck // best-effort
+		if _, err := fmt.Fprintf(stderr, "harmonik start: unknown role %q — roles are: captain, crew, commodore, admiral, assessor\n", role); err != nil {
+			return 1
+		}
 		return 2
 	}
 }
@@ -197,23 +203,29 @@ func runStartRole(args []string, spec startRoleSpec, stderr io.Writer) int {
 
 	// XOR enforcement.
 	if hasFlag && len(positionals) > 0 {
-		fmt.Fprintf(stderr,
+		if _, err := fmt.Fprintf(stderr,
 			"harmonik start %s: positional name not allowed alongside flags — use %s %s\n",
-			spec.role, spec.downstreamName, positionals[0])
+			spec.role, spec.downstreamName, positionals[0]); err != nil {
+			return 1
+		}
 		return 2
 	}
 
 	if !spec.takesName && len(positionals) > 0 {
-		fmt.Fprintf(stderr,
+		if _, err := fmt.Fprintf(stderr,
 			"harmonik start %s: takes no positional argument (got %q) — captain has no name positional; pass %s NAME if you need a custom identity\n",
-			spec.role, positionals[0], spec.downstreamName)
+			spec.role, positionals[0], spec.downstreamName); err != nil {
+			return 1
+		}
 		return 2
 	}
 
 	if len(positionals) > 1 {
-		fmt.Fprintf(stderr,
+		if _, err := fmt.Fprintf(stderr,
 			"harmonik start %s: at most one positional name is allowed (got %d) — use %s NAME plus flags\n",
-			spec.role, len(positionals), spec.downstreamName)
+			spec.role, len(positionals), spec.downstreamName); err != nil {
+			return 1
+		}
 		return 2
 	}
 
@@ -234,8 +246,8 @@ func runStartRole(args []string, spec startRoleSpec, stderr io.Writer) int {
 
 // startUsage prints the `harmonik start` umbrella help. The per-role flag detail
 // lives on the downstream launchers (captain.go / crew.go).
-func startUsage(w io.Writer) {
-	_, _ = fmt.Fprint(w, //nolint:errcheck // best-effort
+func startUsage(w io.Writer) error {
+	_, err := fmt.Fprint(w,
 		`harmonik start — launch a captain, crew, commodore, admiral, or assessor (keeper auto-armed)
 
 USAGE
@@ -263,4 +275,5 @@ SEE ALSO
   harmonik captain --help        full captain flags
   harmonik crew start --help     full crew flags
 `)
+	return err
 }

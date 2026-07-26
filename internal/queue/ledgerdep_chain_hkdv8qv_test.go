@@ -9,8 +9,8 @@ package queue_test
 // deferred IFF at least one bead IT DEPENDS ON (its blockers) is still open,
 // and becomes eligible only when ALL its blockers are closed.
 //
-// The production inversion lived in daemon.brQueueLedger.BlocksEdge (pinned by
-// daemon/queueledger_bridge_hkdv8qv_test.go). This test pins the queue-side
+// The production inversion lived in queuewiring.BRQueueLedger.BlocksEdge (pinned
+// by queuewiring/beadledger_test.go). This test pins the queue-side
 // contract: given a fake ledger that reports blocks edges in the contract
 // direction — BlocksEdge(blocker, blocked)==true iff blocked depends on blocker
 // — a submitted dependency chain defers the dependents and leaves the root
@@ -84,7 +84,7 @@ func TestLedgerDepChain_RootEligible_DependentsDeferred_hkdv8qv(t *testing.T) {
 	projectDir := rpcFixtureTempProjectDir(t)
 	req := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, R, A, B)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(R, A, B)},
 	}
 
 	_, q, _, rpcErr := queue.HandleQueueSubmit(context.Background(), req, ledger, projectDir, 1)
@@ -154,7 +154,7 @@ func TestLedgerDepChain_DependentEligibleAfterBlockerCloses_hkdv8qv(t *testing.T
 	projectDir := rpcFixtureTempProjectDir(t)
 	req := queue.QueueSubmitRequest{
 		SchemaVersion: 1,
-		Groups:        []queue.Group{rpcFixtureWaveGroup(0, A, B)},
+		Groups:        []queue.Group{rpcFixtureWaveGroup(A, B)},
 	}
 
 	_, q, _, rpcErr := queue.HandleQueueSubmit(context.Background(), req, ledger, projectDir, 1)

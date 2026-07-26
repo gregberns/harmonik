@@ -18,15 +18,15 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// writeGauge writes a minimal <agent>.ctx with the given session_id.
-func writeGauge(t *testing.T, projectDir, agent, sid string) {
+// writeGauge writes a minimal <agent>.ctx carrying gaugeSID as its session_id.
+func writeGauge(t *testing.T, projectDir, agent string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir keeper dir: %v", err)
 	}
-	body := `{"pct":42.0,"tokens":1000,"window_size":200000,"session_id":"` + sid + `","ts":"2026-06-16T00:00:00Z"}` + "\n"
-	if err := os.WriteFile(filepath.Join(dir, agent+".ctx"), []byte(body), 0o644); err != nil {
+	body := `{"pct":42.0,"tokens":1000,"window_size":200000,"session_id":"` + gaugeSID + `","ts":"2026-06-16T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, agent+".ctx"), []byte(body), 0o600); err != nil {
 		t.Fatalf("write ctx: %v", err)
 	}
 }
@@ -37,10 +37,10 @@ func writeGauge(t *testing.T, projectDir, agent, sid string) {
 func writeSidFile(t *testing.T, projectDir, agent, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir keeper dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, agent+".sid"), []byte(sid+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, agent+".sid"), []byte(sid+"\n"), 0o600); err != nil {
 		t.Fatalf("write sid: %v", err)
 	}
 }
@@ -55,7 +55,7 @@ const (
 func TestReadCtxFile_SidChannelIsPrimary(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeGauge(t, dir, "captain", gaugeSID)
+	writeGauge(t, dir, "captain")
 	writeSidFile(t, dir, "captain", primarySID)
 
 	cf, _, err := keeper.ReadCtxFile(dir, "captain")
@@ -73,7 +73,7 @@ func TestReadCtxFile_SidChannelIsPrimary(t *testing.T) {
 func TestReadCtxFile_FallsBackWhenSidAbsent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeGauge(t, dir, "captain", gaugeSID)
+	writeGauge(t, dir, "captain")
 
 	cf, _, err := keeper.ReadCtxFile(dir, "captain")
 	if err != nil {
@@ -95,11 +95,10 @@ func TestReadCtxFile_FallsBackWhenSidMalformed(t *testing.T) {
 		"uuidv7":     "33333333-3333-7333-8333-333333333333", // version 7 → daemon implementer
 	}
 	for name, badSID := range cases {
-		badSID := badSID
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			writeGauge(t, dir, "captain", gaugeSID)
+			writeGauge(t, dir, "captain")
 			writeSidFile(t, dir, "captain", badSID)
 
 			cf, _, err := keeper.ReadCtxFile(dir, "captain")
@@ -120,11 +119,11 @@ func TestReadSessionIDFile_LowercasesAndTrims(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	// Trailing newline + surrounding whitespace; the value itself is lowercase v4.
-	if err := os.WriteFile(filepath.Join(keeperDir, "captain.sid"), []byte("  "+primarySID+"  \n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(keeperDir, "captain.sid"), []byte("  "+primarySID+"  \n"), 0o600); err != nil {
 		t.Fatalf("write sid: %v", err)
 	}
 	got, _, err := keeper.ReadSessionIDFile(dir, "captain")

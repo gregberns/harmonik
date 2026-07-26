@@ -88,8 +88,17 @@ Handoff files live at:
 ```
 
 `<crew_name>` is the same identifier as the `crew_name` field in the frontmatter.
-The `.harmonik/` tree is gitignored — handoff files do NOT appear in `git status`
-and are NOT committed to the repo.
+Mission handoffs **are tracked in git** — they DO appear in `git status` and they
+ARE committed. `.gitignore` ignores the `.harmonik/` tree broadly (`/.harmonik/*`)
+but then re-includes `/.harmonik/crew` and `/.harmonik/crew/missions` (alongside
+`/.harmonik/context`, `/.harmonik/agents`, `/.harmonik/release-ledger.json`), so
+this path is committed on purpose: a mission's self-terminate clause has to be
+reviewable in git (hk-ev9e). What stays ignored under `.harmonik/` is runtime
+state — `events/`, `queues/`, `runs/`, `worktrees/`, and the C2 crew registry
+`.harmonik/crew/*.json`.
+
+Do not confuse this file with the per-session `HANDOFF.md` / `HANDOFF-<name>.md`
+batons at the repo root: those *are* gitignored and have no git history.
 
 **C4 (captain) is responsible for creating this file before calling
 `harmonik crew start`.** C2 does not create or validate the handoff — it passes

@@ -64,7 +64,7 @@ esac
 exit 0
 `, closedJSON)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("hkcw4sxFixtureCloseLockedShowClosedBinary: write mock: %v", err)
 	}
 	return path
@@ -177,7 +177,7 @@ esac
 exit 0
 `, openJSON)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("TestConcurrentCloseStillFailsWhenNotClosed: write mock: %v", err)
 	}
 	adapter, err := brcli.New(path)
@@ -235,7 +235,7 @@ esac
 exit 0
 `
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(brPath, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(brPath, []byte(script), 0o700); err != nil {
 		t.Fatalf("TestConcurrentCloseN: write mock: %v", err)
 	}
 
@@ -316,7 +316,7 @@ func TestJitterReducesThunderingHerd_HkCw4sx(t *testing.T) {
 				return
 			}
 			if result.BrErr != brcli.BrOK {
-				retryErrors[idx] = fmt.Errorf("BrErr = %v; want BrOK", result.BrErr)
+				retryErrors[idx] = fmt.Errorf("BrErr = %w; want BrOK", result.BrErr)
 			}
 		}(i)
 	}

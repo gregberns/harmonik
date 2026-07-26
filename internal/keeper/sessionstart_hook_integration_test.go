@@ -67,11 +67,11 @@ func TestSessionStartHook_KeeperPicksUpNewIDAcrossClear(t *testing.T) {
 
 	// Gauge holds the OLD id (and never advances) — the multi-writer reality.
 	keeperDir := filepath.Join(project, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	gauge := `{"pct":50.0,"tokens":1000,"window_size":200000,"session_id":"` + hookOldSID + `","ts":"2026-06-16T00:00:00Z"}` + "\n"
-	if err := os.WriteFile(filepath.Join(keeperDir, agent+".ctx"), []byte(gauge), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(keeperDir, agent+".ctx"), []byte(gauge), 0o600); err != nil {
 		t.Fatalf("write gauge: %v", err)
 	}
 

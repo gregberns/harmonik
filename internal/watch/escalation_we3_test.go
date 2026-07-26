@@ -31,12 +31,12 @@ func (m *mockSender) SendEscalation(summary string) error {
 
 // escalationFixtureDir builds a temp harmonik dir and returns (harmonikDir, eventsPath).
 // Reuses the ledgerFixtureDir helper shape from ledger_we2_test.go.
-func escalationFixtureDir(t *testing.T) (string, string) {
+func escalationFixtureDir(t *testing.T) (harmonikDir, eventsPath string) {
 	t.Helper()
 	root := t.TempDir()
-	harmonikDir := filepath.Join(root, ".harmonik")
+	harmonikDir = filepath.Join(root, ".harmonik")
 	eventsDir := filepath.Join(harmonikDir, "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
 		t.Fatalf("escalationFixtureDir: mkdir %s: %v", eventsDir, err)
 	}
 	return harmonikDir, filepath.Join(eventsDir, "events.jsonl")
@@ -220,7 +220,6 @@ func TestWatchEscalation_ClassifyTable(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.evType, func(t *testing.T) {
 			t.Parallel()
 			ev := core.Event{Type: tc.evType}

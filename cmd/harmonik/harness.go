@@ -131,6 +131,11 @@ func runHarness(args []string, stdout, stderr io.Writer) int {
 	return runHarnessWithSigs(args, stdout, stderr, sigCh)
 }
 
+func harnessWritef(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
+}
+
 // runHarnessWithSigs is the testable core of the harness subcommand. Callers
 // supply the signal channel so that tests can pre-load signals without sending
 // real OS signals.
@@ -139,7 +144,8 @@ func runHarness(args []string, stdout, stderr io.Writer) int {
 func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os.Signal) int {
 	fset := flag.NewFlagSet("harness", flag.ContinueOnError)
 	fset.SetOutput(stderr)
-	fset.Usage = func() { fmt.Fprint(stdout, harnessTopUsage) }
+	var usageWriteErr error
+	fset.Usage = func() { usageWriteErr = harnessWritef(stdout, "%s", harnessTopUsage) }
 
 	var (
 		cadenceFlag     string
@@ -162,7 +168,10 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	fset.BoolVar(&verboseFlag, "verbose", false, "emit progress log to stderr")
 
 	if err := fset.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if usageWriteErr != nil {
+			return harnessExitInternalError
+		}
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return harnessExitInternalError
@@ -173,7 +182,9 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	if cadenceFlag != "" {
 		cf := scenario.CadenceFilter(cadenceFlag)
 		if !cf.Valid() {
-			fmt.Fprintf(stderr, "harmonik harness: invalid --cadence value %q; must be one of smoke, regression, nightly, all\n", cadenceFlag)
+			if err := harnessWritef(stderr, "harmonik harness: invalid --cadence value %q; must be one of smoke, regression, nightly, all\n", cadenceFlag); err != nil {
+				return harnessExitInternalError
+			}
 			return harnessExitInternalError
 		}
 		cadenceFilter = cf
@@ -181,7 +192,9 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 
 	// Validate --output.
 	if outputFlag != "human" && outputFlag != "json" {
-		fmt.Fprintf(stderr, "harmonik harness: invalid --output value %q; must be human or json\n", outputFlag)
+		if err := harnessWritef(stderr, "harmonik harness: invalid --output value %q; must be human or json\n", outputFlag); err != nil {
+			return harnessExitInternalError
+		}
 		return harnessExitInternalError
 	}
 
@@ -190,7 +203,9 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	suiteStart := time.Now().UTC().Truncate(time.Millisecond)
 	suiteUUID, suiteIDErr := uuid.NewV7()
 	if suiteIDErr != nil {
-		fmt.Fprintf(stderr, "harmonik harness: generate suite ID: %v\n", suiteIDErr)
+		if err := harnessWritef(stderr, "harmonik harness: generate suite ID: %v\n", suiteIDErr); err != nil {
+			return harnessExitInternalError
+		}
 		return harnessExitInternalError
 	}
 	suiteID := core.SuiteID(suiteUUID)
@@ -251,7 +266,9 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	// default.
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik harness: cannot determine working directory: %v\n", err)
+		if err := harnessWritef(stderr, "harmonik harness: cannot determine working directory: %v\n", err); err != nil {
+			return harnessExitInternalError
+		}
 		return harnessExitInternalError
 	}
 
@@ -259,7 +276,9 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	// Resolved paths are passed to BootstrapFixture per scenario in the G-02 loop.
 	twinSearchPaths := resolveTwinSearchPaths(twinSearchPath, os.Getenv("HARMONIK_TWIN_SEARCH_PATH"), cwd)
 	if verboseFlag {
-		fmt.Fprintf(stderr, "harness: twin-search-paths: %v\n", twinSearchPaths)
+		if err := harnessWritef(stderr, "harness: twin-search-paths: %v\n", twinSearchPaths); err != nil {
+			return harnessExitInternalError
+		}
 	}
 
 	// Discover + load scenarios (SH-006/SH-007).
@@ -274,19 +293,25 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	)
 	if len(loadErrs) > 0 {
 		for _, e := range loadErrs {
-			fmt.Fprintln(stderr, "harmonik harness:", e)
+			if err := harnessWritef(stderr, "harmonik harness: %v\n", e); err != nil {
+				return harnessExitInternalError
+			}
 		}
 		return harnessExitSuiteLoadAbort
 	}
 
 	if verboseFlag {
-		fmt.Fprintf(stderr, "harness: loaded %d scenario(s)\n", len(discovered))
+		if err := harnessWritef(stderr, "harness: loaded %d scenario(s)\n", len(discovered)); err != nil {
+			return harnessExitInternalError
+		}
 	}
 
 	// --list: print discovered scenarios and cadence; exit 0.
 	if listFlag {
 		for _, sf := range discovered {
-			fmt.Fprintf(stdout, "%s\t%s\n", sf.Name, sf.CadenceTag)
+			if err := harnessWritef(stdout, "%s\t%s\n", sf.Name, sf.CadenceTag); err != nil {
+				return harnessExitInternalError
+			}
 		}
 		return harnessExitPass
 	}
@@ -298,12 +323,16 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 			cells := harnessMatrixCellCount(sf.Matrix)
 			totalCells += cells
 			if verboseFlag {
-				fmt.Fprintf(stderr, "harness dry-run: scenario %q cadence=%s cells=%d\n",
-					sf.Name, sf.CadenceTag, cells)
+				if err := harnessWritef(stderr, "harness dry-run: scenario %q cadence=%s cells=%d\n",
+					sf.Name, sf.CadenceTag, cells); err != nil {
+					return harnessExitInternalError
+				}
 			}
 		}
-		fmt.Fprintf(stdout, "dry-run: %d scenario(s) loaded, %d total matrix cell(s)\n",
-			len(discovered), totalCells)
+		if err := harnessWritef(stdout, "dry-run: %d scenario(s) loaded, %d total matrix cell(s)\n",
+			len(discovered), totalCells); err != nil {
+			return harnessExitInternalError
+		}
 		return harnessExitPass
 	}
 
@@ -317,21 +346,25 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	// `harmonik harness clean`.
 	fixtureRoot := fixtureRootFlag
 	if fixtureRoot != "" {
-		if mkErr := os.MkdirAll(fixtureRoot, 0o755); mkErr != nil {
-			fmt.Fprintf(stderr, "harmonik harness: create fixture root %q: %v\n",
-				fixtureRoot, mkErr)
+		if mkErr := os.MkdirAll(fixtureRoot, 0o755); mkErr != nil { //dirmode:allow operator-supplied --fixture-root under TMPDIR, not .harmonik state
+			if err := harnessWritef(stderr, "harmonik harness: create fixture root %q: %v\n",
+				fixtureRoot, mkErr); err != nil {
+				return harnessExitInternalError
+			}
 			return harnessExitInternalError
 		}
 	} else {
 		var tmpErr error
 		fixtureRoot, tmpErr = os.MkdirTemp("", "harmonik-harness-*")
 		if tmpErr != nil {
-			fmt.Fprintf(stderr, "harmonik harness: create temp fixture root: %v\n", tmpErr)
+			if err := harnessWritef(stderr, "harmonik harness: create temp fixture root: %v\n", tmpErr); err != nil {
+				return harnessExitInternalError
+			}
 			return harnessExitInternalError
 		}
 	}
 
-	var completedResults []scenario.ScenarioResult
+	completedResults := make([]scenario.ScenarioResult, 0, len(discovered))
 
 	// executedRunIDs accumulates the distinct run_ids observed across every
 	// scenario's captured event log. It feeds the SH-INV-002 post-suite leak
@@ -360,10 +393,12 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 			}
 		default:
 		}
-		harnessEmitInterruptResult(stdout, stderr,
+		if err := harnessEmitInterruptResult(stdout, stderr,
 			scenario.SuiteResultOutputFormat(outputFlag),
 			suiteID, suiteStart, fixtureRoot, cadenceFilter,
-			completedResults, sig)
+			completedResults, sig); err != nil {
+			return harnessExitInternalError
+		}
 		return harnessInterruptExitCode(sig)
 	}
 
@@ -388,7 +423,12 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		if resolveErr != nil {
 			result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
 				evLogRelPath, scenario.FailureClassTwinBinaryNotFound, resolveErr.Error())
-			_ = scenario.WriteScenarioResult(fixtureRoot, result)
+			if writeErr := scenario.WriteScenarioResult(fixtureRoot, result); writeErr != nil {
+				if _, err := fmt.Fprintf(stderr, "harness: write scenario result %q: %v\n", scenarioName, writeErr); err != nil {
+					return harnessExitInternalError
+				}
+				return harnessExitInternalError
+			}
 			completedResults = append(completedResults, result)
 			continue
 		}
@@ -399,7 +439,12 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 			if checkErr := scenario.CheckTwinBinaryPath(resolvedBinary, twinSearchPaths); checkErr != nil {
 				result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
 					evLogRelPath, scenario.FailureClassHarnessInternalError, checkErr.Error())
-				_ = scenario.WriteScenarioResult(fixtureRoot, result)
+				if writeErr := scenario.WriteScenarioResult(fixtureRoot, result); writeErr != nil {
+					if _, err := fmt.Fprintf(stderr, "harness: write scenario result %q: %v\n", scenarioName, writeErr); err != nil {
+						return harnessExitInternalError
+					}
+					return harnessExitInternalError
+				}
 				completedResults = append(completedResults, result)
 				continue
 			}
@@ -419,7 +464,12 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 			if tdErrPartial != nil {
 				result.ErrorDetail += "; teardown: " + tdErrPartial.Error()
 			}
-			_ = scenario.WriteScenarioResult(fixtureRoot, result)
+			if writeErr := scenario.WriteScenarioResult(fixtureRoot, result); writeErr != nil {
+				if _, err := fmt.Fprintf(stderr, "harness: write scenario result %q: %v\n", scenarioName, writeErr); err != nil {
+					return harnessExitInternalError
+				}
+				return harnessExitInternalError
+			}
 			completedResults = append(completedResults, result)
 			continue
 		}
@@ -442,7 +492,12 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 			if tdErrPartial != nil {
 				result.ErrorDetail += "; teardown: " + tdErrPartial.Error()
 			}
-			_ = scenario.WriteScenarioResult(fixtureRoot, result)
+			if writeErr := scenario.WriteScenarioResult(fixtureRoot, result); writeErr != nil {
+				if _, err := fmt.Fprintf(stderr, "harness: write scenario result %q: %v\n", scenarioName, writeErr); err != nil {
+					return harnessExitInternalError
+				}
+				return harnessExitInternalError
+			}
 			completedResults = append(completedResults, result)
 			continue
 		}
@@ -462,7 +517,12 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 			if tdErrPartial != nil {
 				result.ErrorDetail += "; teardown: " + tdErrPartial.Error()
 			}
-			_ = scenario.WriteScenarioResult(fixtureRoot, result)
+			if writeErr := scenario.WriteScenarioResult(fixtureRoot, result); writeErr != nil {
+				if _, err := fmt.Fprintf(stderr, "harness: write scenario result %q: %v\n", scenarioName, writeErr); err != nil {
+					return harnessExitInternalError
+				}
+				return harnessExitInternalError
+			}
 			completedResults = append(completedResults, result)
 			continue
 		}
@@ -567,8 +627,11 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 
 		// SH-034: write per-scenario result before advancing to the next scenario.
 		if writeErr := scenario.WriteScenarioResult(fixtureRoot, result); writeErr != nil {
-			fmt.Fprintf(stderr, "harness: write scenario result %q: %v\n",
-				scenarioName, writeErr)
+			if err := harnessWritef(stderr, "harness: write scenario result %q: %v\n",
+				scenarioName, writeErr); err != nil {
+				return harnessExitInternalError
+			}
+			return harnessExitInternalError
 		}
 		completedResults = append(completedResults, result)
 
@@ -630,11 +693,17 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	}
 
 	if writeErr := scenario.WriteSuiteResult(fixtureRoot, sr); writeErr != nil {
-		fmt.Fprintf(stderr, "harness: write suite result: %v\n", writeErr)
+		if err := harnessWritef(stderr, "harness: write suite result: %v\n", writeErr); err != nil {
+			return harnessExitInternalError
+		}
+		return harnessExitInternalError
 	}
 	if emitErr := scenario.EmitSuiteResult(
 		stdout, scenario.SuiteResultOutputFormat(outputFlag), sr); emitErr != nil {
-		fmt.Fprintf(stderr, "harness: emit suite result: %v\n", emitErr)
+		if err := harnessWritef(stderr, "harness: emit suite result: %v\n", emitErr); err != nil {
+			return harnessExitInternalError
+		}
+		return harnessExitInternalError
 	}
 
 	if suiteVerdict == scenario.SuiteVerdictFail {
@@ -673,12 +742,14 @@ func harnessEmitInterruptResult(
 	cadenceFilter scenario.CadenceFilter,
 	completed []scenario.ScenarioResult,
 	sig os.Signal,
-) {
+) error {
 	sigName := "SIGINT"
 	if sig == syscall.SIGTERM {
 		sigName = "SIGTERM"
 	}
-	fmt.Fprintf(stderr, "harmonik harness: %s received — emitting partial SuiteResult\n", sigName)
+	if err := harnessWritef(stderr, "harmonik harness: %s received — emitting partial SuiteResult\n", sigName); err != nil {
+		return err
+	}
 
 	// Suite verdict is fail if any completed scenario failed; otherwise pass
 	// (the vacuous case of zero completed scenarios is pass per SH-029).
@@ -704,8 +775,11 @@ func harnessEmitInterruptResult(
 		format = scenario.SuiteResultOutputFormatHuman
 	}
 	if emitErr := scenario.EmitSuiteResult(stdout, format, sr); emitErr != nil {
-		fmt.Fprintf(stderr, "harmonik harness: emit partial SuiteResult: %v\n", emitErr)
+		if err := harnessWritef(stderr, "harmonik harness: emit partial SuiteResult: %v\n", emitErr); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // harnessDiscoverScenarios discovers scenario YAML files and returns them
@@ -746,13 +820,13 @@ func harnessDiscoverScenarios(
 	} else {
 		scenariosDir := filepath.Join(projectRoot, "scenarios")
 		if verbose {
-			fmt.Fprintf(stderr, "harness: discovering scenarios under %s\n", scenariosDir)
+			if err := harnessWritef(stderr, "harness: discovering scenarios under %s\n", scenariosDir); err != nil {
+				return nil, []error{fmt.Errorf("write scenario discovery progress: %w", err)}
+			}
 		}
-		var walkErr error
 		var wrongExt []error
-		_ = filepath.WalkDir(scenariosDir, func(path string, d fs.DirEntry, err error) error {
+		walkErr := filepath.WalkDir(scenariosDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				walkErr = err
 				return err
 			}
 			if d.IsDir() {
@@ -821,12 +895,14 @@ func harnessDiscoverScenarios(
 	}
 
 	// Apply cadence filter.
-	var scenarios []harnessScenarioEntry
+	scenarios := make([]harnessScenarioEntry, 0, len(allLoaded))
 	for _, entry := range allLoaded {
 		if !cadenceFilter.Includes(entry.CadenceTag) {
 			if verbose {
-				fmt.Fprintf(stderr, "harness: skip %q (cadence=%s not in filter=%s)\n",
-					entry.Name, entry.CadenceTag, cadenceFilter)
+				if err := harnessWritef(stderr, "harness: skip %q (cadence=%s not in filter=%s)\n",
+					entry.Name, entry.CadenceTag, cadenceFilter); err != nil {
+					return nil, append(loadErrs, fmt.Errorf("write scenario filter progress: %w", err))
+				}
 			}
 			continue
 		}
@@ -940,8 +1016,11 @@ func harnessResolveTwinBinary(
 // immediately; the caller classifies it as fixture-setup-failed per §8.3.
 func harnessApplyFixtureFiles(projectRoot string, files map[string]scenario.FileSeed) error {
 	for relPath, seed := range files {
+		if !filepath.IsLocal(relPath) {
+			return fmt.Errorf("fixture file path %q must be repository-relative", relPath)
+		}
 		absPath := filepath.Join(projectRoot, relPath)
-		if mkErr := os.MkdirAll(filepath.Dir(absPath), 0o755); mkErr != nil {
+		if mkErr := os.MkdirAll(filepath.Dir(absPath), 0o755); mkErr != nil { //dirmode:allow parent of a scenario-declared seeded fixture file, not .harmonik state
 			return fmt.Errorf("create parent dir for %q: %w", relPath, mkErr)
 		}
 
@@ -966,7 +1045,6 @@ func harnessApplyFixtureFiles(projectRoot string, files map[string]scenario.File
 			mode = fs.FileMode(v)
 		}
 
-		//nolint:gosec // G306: mode is declared in the scenario file, not raw user input
 		if writeErr := os.WriteFile(absPath, content, mode); writeErr != nil {
 			return fmt.Errorf("write %q: %w", relPath, writeErr)
 		}
@@ -994,13 +1072,18 @@ func harnessApplyWorkflowDOT(
 		return core.WorkflowModeReviewLoop, nil
 	}
 	dotRelPath := *sf.WorkflowPath
+	if !filepath.IsLocal(dotRelPath) {
+		return "", fmt.Errorf("workflow_path %q must be repository-relative", dotRelPath)
+	}
 
 	var dotContent []byte
 	candidate1 := filepath.Join(projectRoot, dotRelPath)
+	//nolint:gosec // G304: dotRelPath is constrained by filepath.IsLocal above.
 	if content, readErr := os.ReadFile(candidate1); readErr == nil {
 		dotContent = content
 	} else {
 		candidate2 := filepath.Join(cwd, "scenarios", "_workflows", dotRelPath)
+		//nolint:gosec // G304: dotRelPath is constrained by filepath.IsLocal above.
 		content, readErr2 := os.ReadFile(candidate2)
 		if readErr2 != nil {
 			return "", fmt.Errorf("resolve workflow_path %q: not found at %q or %q",
@@ -1012,7 +1095,7 @@ func harnessApplyWorkflowDOT(
 	// Seed to <projectRoot>/.harmonik/workflow.dot (BootstrapFixture already
 	// created the .harmonik/ directory via MkdirAll for the event-log dir).
 	targetPath := filepath.Join(projectRoot, ".harmonik", "workflow.dot")
-	if mkErr := os.MkdirAll(filepath.Dir(targetPath), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Dir(targetPath), core.HarmonikDirMode); mkErr != nil {
 		return "", fmt.Errorf("create .harmonik dir for workflow.dot: %w", mkErr)
 	}
 	//nolint:gosec // G306: workflow dot, not a user-controlled secret

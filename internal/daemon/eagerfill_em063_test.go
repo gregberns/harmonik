@@ -35,6 +35,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // ---------------------------------------------------------------------------
@@ -76,7 +77,7 @@ func em063FixtureStreamQueueWithBeads(beadIDs ...string) *queue.Queue {
 // em063FixtureDeps builds a minimal workLoopDeps with only the fields
 // required by preScreenCandidates and eagerRefillEval.  kerfPath is left
 // empty (no eager-refill) unless overridden by the caller.
-func em063FixtureDeps(t *testing.T, qs *QueueStore) workLoopDeps {
+func em063FixtureDeps(t *testing.T, qs *queuewiring.QueueStore) workLoopDeps {
 	t.Helper()
 	return workLoopDeps{
 		queueStore:    qs,
@@ -108,7 +109,7 @@ func (n *noopEmitter) EmitWithRunID(_ context.Context, _ core.RunID, _ core.Even
 func TestEM063_Phase1_AlreadyInQueue_PendingExcluded(t *testing.T) {
 	t.Parallel()
 
-	qs := newQueueStore()
+	qs := queuewiring.NewQueueStore()
 	q := em063FixtureStreamQueueWithBeads("hk-inqueue-01", "hk-inqueue-02")
 	qs.SetQueue(q)
 
@@ -132,7 +133,7 @@ func TestEM063_Phase1_AlreadyInQueue_PendingExcluded(t *testing.T) {
 func TestEM063_Phase1_AlreadyInQueue_DispatchedExcluded(t *testing.T) {
 	t.Parallel()
 
-	qs := newQueueStore()
+	qs := queuewiring.NewQueueStore()
 	now := time.Now().UTC()
 	runID := "019e0000-0000-7000-0000-000000000001"
 	q := &queue.Queue{
@@ -166,7 +167,7 @@ func TestEM063_Phase1_AlreadyInQueue_DispatchedExcluded(t *testing.T) {
 func TestEM063_Phase1_EmptyQueueAllSurvive(t *testing.T) {
 	t.Parallel()
 
-	deps := em063FixtureDeps(t, newQueueStore())
+	deps := em063FixtureDeps(t, queuewiring.NewQueueStore())
 
 	candidates := []core.BeadID{"hk-a", "hk-b", "hk-c"}
 	// Phase 2 git check will not find anything (temp dir has no git history).
@@ -240,7 +241,7 @@ func TestEM063_KerfNextBeads_BinaryAbsent(t *testing.T) {
 func TestEM063_EagerRefillEval_NoopWhenKerfPathEmpty(t *testing.T) {
 	t.Parallel()
 
-	qs := newQueueStore()
+	qs := queuewiring.NewQueueStore()
 	q := em063FixtureStreamQueueWithBeads("hk-existing")
 	qs.SetQueue(q)
 
@@ -579,7 +580,6 @@ func stagedBeadGitFixture(t *testing.T, dir, refBeadID string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()

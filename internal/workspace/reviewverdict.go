@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -198,7 +199,7 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 			}
 			// Non-transport cat failure (exit 1: no such file) → genuinely absent,
 			// mirroring ReadReviewVerdict's os.IsNotExist branch (nil,nil = inconclusive).
-			//nolint:nilnil,nilerr // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
+			//nolint:nilnil // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
 			return nil, nil
 		}
 		// Empty (whitespace-only) stdout → treat as absent. ROOT CAUSE: on some
@@ -341,8 +342,7 @@ func WriteReviewVerdictAtomic(workspacePath string, verdict *ReviewVerdict) erro
 	}
 
 	dir := filepath.Dir(target)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: MkdirAll %q: %w", dir, err)
 	}
 
@@ -354,24 +354,22 @@ func WriteReviewVerdictAtomic(workspacePath string, verdict *ReviewVerdict) erro
 	}
 
 	if _, err := f.Write(content); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Write: %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteReviewVerdictAtomic: Write: %w", err),
+			f.Close(), os.Remove(tmpPath))
 	}
 
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Sync (pre-rename): %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteReviewVerdictAtomic: Sync (pre-rename): %w", err),
+			f.Close(), os.Remove(tmpPath))
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Close (pre-rename): %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteReviewVerdictAtomic: Close (pre-rename): %w", err),
+			os.Remove(tmpPath))
 	}
 
 	if err := os.Rename(tmpPath, target); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Rename %q → %q: %w", tmpPath, target, err)
+		return withCleanupErrs(fmt.Errorf("workspace: WriteReviewVerdictAtomic: Rename %q → %q: %w", tmpPath, target, err),
+			os.Remove(tmpPath))
 	}
 
 	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
@@ -379,9 +377,10 @@ func WriteReviewVerdictAtomic(workspacePath string, verdict *ReviewVerdict) erro
 	if err != nil {
 		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Open dir %q for fsync: %w", dir, err)
 	}
-	_ = dirFD.Sync() // best-effort on APFS per WM-013a precedent
-	if err := dirFD.Close(); err != nil {
-		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Close dir fd: %w", err)
+	syncErr := dirFD.Sync()
+	closeErr := dirFD.Close()
+	if syncErr != nil || closeErr != nil {
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: fsync/close dir fd: %w", errors.Join(syncErr, closeErr))
 	}
 
 	return nil
@@ -411,13 +410,13 @@ func parseReviewVerdict(data []byte, target string) (*ReviewVerdict, error) {
 	// Unmarshal into a raw map first so we can detect missing keys vs. zero values.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("%w: json parse error at %q: %v", ErrMalformed, target, err)
+		return nil, fmt.Errorf("%w: json parse error at %q: %w", ErrMalformed, target, err)
 	}
 
 	// Unmarshal into typed struct for field access.
 	var v ReviewVerdict
 	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("%w: json unmarshal into ReviewVerdict at %q: %v", ErrMalformed, target, err)
+		return nil, fmt.Errorf("%w: json unmarshal into ReviewVerdict at %q: %w", ErrMalformed, target, err)
 	}
 
 	// Validate schema_version: key must be present and equal ReviewVerdictSchemaVersion.
@@ -493,7 +492,6 @@ func ArchiveVerdict(workspacePath string, iterationN int) error {
 	dst := ReviewVerdictArchivePath(workspacePath, iterationN)
 
 	// Check that the source exists; report ErrNotFound if absent.
-	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
 	if _, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("%w: review.json absent at %q", ErrNotFound, src)
@@ -502,7 +500,6 @@ func ArchiveVerdict(workspacePath string, iterationN int) error {
 	}
 
 	// Check that the destination does not exist; error on double-archive.
-	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
 	if _, err := os.Stat(dst); err == nil {
 		return fmt.Errorf("workspace: ArchiveVerdict: destination already exists at %q (double-archive at iteration %d)", dst, iterationN)
 	} else if !os.IsNotExist(err) {
@@ -522,9 +519,10 @@ func ArchiveVerdict(workspacePath string, iterationN int) error {
 	if err != nil {
 		return fmt.Errorf("workspace: ArchiveVerdict: Open dir %q for fsync: %w", dir, err)
 	}
-	_ = dirFD.Sync() // best-effort on APFS per WM-026 / WM-013a precedent
-	if err := dirFD.Close(); err != nil {
-		return fmt.Errorf("workspace: ArchiveVerdict: Close dir fd: %w", err)
+	syncErr := dirFD.Sync()
+	closeErr := dirFD.Close()
+	if syncErr != nil || closeErr != nil {
+		return fmt.Errorf("workspace: ArchiveVerdict: fsync/close dir fd: %w", errors.Join(syncErr, closeErr))
 	}
 
 	return nil

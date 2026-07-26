@@ -57,7 +57,6 @@ func (o OSAdapter) effectiveRunner() CommandRunner {
 // probe tmux at PL-005 step 4 (Cat 0 pre-check) by invoking `tmux -V` and
 // asserting major version ≥ 3.0."
 func (o OSAdapter) ProbeTmux(ctx context.Context) error {
-	//nolint:gosec // G204: arguments are hard-coded constants, not user input
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "-V")
 	out, err := cmd.Output()
 	if err != nil {
@@ -87,12 +86,12 @@ func (o OSAdapter) ProbeTmux(ctx context.Context) error {
 // Spec ref: process-lifecycle.md §4.5 PL-021c — window-level orphan sweep
 // enumerates all sessions first.
 func (o OSAdapter) ListSessions(ctx context.Context) ([]string, error) {
-	//nolint:gosec // G204: arguments are hard-coded constants, not user input
-	out, err := o.effectiveRunner().Command(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
+	out, err := o.effectiveRunner().Command(ctx, "tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
 	if err != nil {
-		// tmux exits non-zero when no sessions exist or server not running.
-		// Return empty list, not an error (mirrors OSTmuxSessionLister in parent package).
-		return nil, nil //nolint:nilerr // intentional: no-tmux / no-sessions is not an error
+		if isNoSessionErr(out) {
+			return nil, nil
+		}
+		return nil, &ErrTmuxFailure{Op: "list-sessions", ExitCode: exitCodeOf(err), Stderr: strings.TrimSpace(string(out))}
 	}
 	return parseLines(out), nil
 }
@@ -103,7 +102,6 @@ func (o OSAdapter) ListSessions(ctx context.Context) ([]string, error) {
 // Spec ref: process-lifecycle.md §4.5 PL-021c — window-level orphan sweep
 // enumerates windows per session to match hk-<hash6>- prefix.
 func (o OSAdapter) ListWindows(ctx context.Context, session string) ([]string, error) {
-	//nolint:gosec // G204: session is a validated harmonik-managed session name, not raw user input
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "list-windows", "-t", session, "-F", "#{window_name}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -140,7 +138,6 @@ func (o OSAdapter) ListWindows(ctx context.Context, session string) ([]string, e
 // -c <cwd> -e KEY=VALUE [...] -- <binary> <argv...>`."
 func (o OSAdapter) NewWindowIn(ctx context.Context, params NewWindowIn) Outcome {
 	args := buildNewWindowArgs(params)
-	//nolint:gosec // G204: args are constructed from validated caller-supplied parameters
 	cmd := o.effectiveRunner().Command(ctx, "tmux", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -178,7 +175,6 @@ func (o OSAdapter) NewWindowIn(ctx context.Context, params NewWindowIn) Outcome 
 // for each matched window.
 func (o OSAdapter) KillWindow(ctx context.Context, handle WindowHandle) error {
 	target := string(handle)
-	//nolint:gosec // G204: target is a WindowHandle constructed from validated session/window names
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "kill-window", "-t", target)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -208,7 +204,6 @@ func (o OSAdapter) KillWindow(ctx context.Context, handle WindowHandle) error {
 // available on demand per the adapter.go interface contract.
 func (o OSAdapter) WindowPanePID(ctx context.Context, handle WindowHandle) (int, error) {
 	target := string(handle)
-	//nolint:gosec // G204: target is a WindowHandle constructed from validated session/window names
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "display-message", "-p", "-t", target, "#{pane_pid}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -239,7 +234,6 @@ func (o OSAdapter) WindowPanePID(ctx context.Context, handle WindowHandle) (int,
 // target (hk-yngq2).
 func (o OSAdapter) WindowPaneID(ctx context.Context, handle WindowHandle) (string, error) {
 	target := string(handle)
-	//nolint:gosec // G204: target is a WindowHandle constructed from validated session/window names
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "display-message", "-p", "-t", target, "#{pane_id}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -258,7 +252,6 @@ func (o OSAdapter) WindowPaneID(ctx context.Context, handle WindowHandle) (strin
 // Spec ref: process-lifecycle.md §4.2 PL-006 — session-level orphan sweep
 // kills each matching session via tmux kill-session.
 func (o OSAdapter) KillSession(ctx context.Context, sessionName string) error {
-	//nolint:gosec // G204: sessionName is a validated harmonik-<hash>- prefixed name, not raw user input
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "kill-session", "-t", sessionName)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -288,7 +281,6 @@ func (o OSAdapter) EnsureSession(ctx context.Context, name, workDir string) erro
 	if workDir != "" {
 		args = append(args, "-c", workDir)
 	}
-	//nolint:gosec // G204: args are constructed from validated session names and operator-supplied project path
 	cmd := o.effectiveRunner().Command(ctx, "tmux", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -326,7 +318,6 @@ func (o OSAdapter) EnsureSession(ctx context.Context, name, workDir string) erro
 // sessionCreator interface in the daemon package.
 func (o OSAdapter) NewSessionIn(ctx context.Context, params NewWindowIn) Outcome {
 	args := buildNewSessionArgs(params)
-	//nolint:gosec // G204: args are constructed from validated caller-supplied parameters
 	cmd := o.effectiveRunner().Command(ctx, "tmux", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -382,7 +373,6 @@ func (o OSAdapter) LoadBuffer(ctx context.Context, bufferName string, payload []
 		return fmt.Errorf("%w: buffer name %q does not match required format harmonik-<session-id>-<purpose>",
 			ErrStructural, bufferName)
 	}
-	//nolint:gosec // G204: bufferName is validated against a strict regex above
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "load-buffer", "-b", bufferName, "-")
 	cmd.Stdin = bytes.NewReader(payload)
 	out, err := cmd.CombinedOutput()
@@ -408,7 +398,6 @@ func (o OSAdapter) PasteBuffer(ctx context.Context, bufferName, paneTarget strin
 		return fmt.Errorf("%w: buffer name %q does not match required format harmonik-<session-id>-<purpose>",
 			ErrStructural, bufferName)
 	}
-	//nolint:gosec // G204: bufferName is validated above; paneTarget is a daemon-managed pane address
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "paste-buffer", "-b", bufferName, "-t", paneTarget, "-d")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -440,7 +429,6 @@ func (o OSAdapter) SendKeysLiteral(ctx context.Context, paneTarget, text string)
 		return fmt.Errorf("%w: SendKeysLiteral payload contains a newline; use LoadBuffer+PasteBuffer instead",
 			ErrStructural)
 	}
-	//nolint:gosec // G204: paneTarget is a daemon-managed pane address; text is validated above
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "send-keys", "-l", "-t", paneTarget, text)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -514,7 +502,6 @@ func (o OSAdapter) CapturePane(ctx context.Context, paneTarget string, scrollbac
 	if scrollback < 0 {
 		scrollback = 0
 	}
-	//nolint:gosec // G204: paneTarget is a daemon-managed pane address; scrollback is an int
 	cmd := o.effectiveRunner().Command(ctx, "tmux", "capture-pane", "-p", "-t", paneTarget, "-S", fmt.Sprintf("-%d", scrollback))
 	out, err := cmd.Output()
 	if err != nil {

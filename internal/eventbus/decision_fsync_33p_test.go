@@ -21,7 +21,6 @@ func TestDecisionEvents_AreFsyncBoundary(t *testing.T) {
 		core.EventTypeDecisionResolved,
 		core.EventTypeDecisionWithdrawn,
 	} {
-		et := et
 		t.Run(string(et), func(t *testing.T) {
 			t.Parallel()
 			if _, ok := fsyncBoundaryEventTypes[et]; !ok {

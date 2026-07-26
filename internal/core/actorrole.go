@@ -73,8 +73,8 @@ func (r ActorRole) Valid() bool {
 // Note (A9 reconciliation, 2026-07-17): the handlercontract HC-016
 // WorkQueueSet helper that formerly consumed this slice was dead code (no
 // non-test caller) and has been deleted. The shipping dispatch surface is
-// per-queue-name, not per-actor-role — see internal/daemon
-// queuestore_hkj808w.go / perqueuespendmeter_tigaf11.go.
+// per-queue-name, not per-actor-role — see internal/queuewiring/store.go
+// and internal/daemon/perqueuespendmeter_tigaf11.go.
 //
 // Spec: [architecture.md §4.8 AR-032].
 func AllActorRoles() []ActorRole {

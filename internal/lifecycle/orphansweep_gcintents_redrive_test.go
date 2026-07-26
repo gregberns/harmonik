@@ -9,6 +9,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,7 +39,9 @@ func (f *fakeRedriveWriter) ReissueTerminalTransition(
 	f.calls = append(f.calls, entry.BeadID)
 	if f.succeed[entry.BeadID] {
 		// Simulate (4a): delete the intent file on success (step 6).
-		_ = os.Remove(filepath.Join(intentLogDir, entry.IdempotencyKey+".json")) //nolint:errcheck
+		if rmErr := os.Remove(filepath.Join(intentLogDir, entry.IdempotencyKey+".json")); rmErr != nil {
+			return fmt.Errorf("fake redrive writer: remove intent file: %w", rmErr)
+		}
 		return nil
 	}
 	if f.fail[entry.BeadID] {
@@ -295,7 +298,6 @@ func TestGCRetiredIntentsWithRedrive_PreStateOps(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

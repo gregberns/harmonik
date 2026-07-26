@@ -229,6 +229,7 @@ func (r collectorRunner) Command(ctx context.Context, name string, args ...strin
 	}
 	// Echo the canned stdout verbatim, passed as $0 to avoid quoting issues with
 	// the multi-line content.
+	//nolint:gosec // G204: stdout is a controlled test fixture, passed as shell data rather than code.
 	return exec.CommandContext(ctx, "sh", "-c", `printf '%s' "$0"`, r.stdout)
 }
 

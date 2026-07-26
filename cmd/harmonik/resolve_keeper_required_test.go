@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // resolve_keeper_required_test.go — operator-required-config change: harmonik imposes
@@ -21,7 +21,7 @@ import (
 // `keeper config --example` fix.
 func TestResolveKeeperConfig_ZeroConfig_AggregatesAllMissing(t *testing.T) {
 	projectDir := t.TempDir()
-	_, err := ResolveKeeperConfig(KeeperFlags{}, daemon.KeeperConfig{}, projectDir)
+	_, err := ResolveKeeperConfig(KeeperFlags{}, projectconfig.KeeperConfig{}, projectDir)
 	if err == nil {
 		t.Fatal("zero config: expected *KeeperConfigMissingError, got nil (must refuse to start, not silently default)")
 	}
@@ -182,7 +182,7 @@ func TestRunKeeperConfigExample_RoundTrips(t *testing.T) {
 	// Write schema_version + the example block to a real config.yaml.
 	projectDir := t.TempDir()
 	cfgDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	content := "schema_version: 1\n" + example
@@ -191,7 +191,7 @@ func TestRunKeeperConfigExample_RoundTrips(t *testing.T) {
 	}
 
 	// Parse it the way `harmonik keeper` does.
-	projCfg, err := daemon.LoadProjectConfig(projectDir)
+	projCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig on the --example output FAILED: %v\nconfig:\n%s", err, content)
 	}
@@ -204,6 +204,21 @@ func TestRunKeeperConfigExample_RoundTrips(t *testing.T) {
 			t.Fatalf("the `keeper config --example` block STILL has missing required values: %v", kme.Missing)
 		}
 		t.Fatalf("resolving the --example block failed: %v", rerr)
+	}
+}
+
+func TestRunKeeperConfigExample_AdvertisesWarnMessageOverrides(t *testing.T) {
+	example := keeperConfigExampleYAML()
+	for _, key := range []string{
+		"warn_messages:",
+		"default_warn_text:",
+		"actionable_warn_text:",
+		"leader_defer_text:",
+		"crew_defer_text:",
+	} {
+		if !strings.Contains(example, key) {
+			t.Errorf("keeper config --example must advertise %q", key)
+		}
 	}
 }
 
@@ -272,14 +287,14 @@ func TestKeeperBinaryUpgradeMigration_CorpusItem6(t *testing.T) {
 		t.Fatalf("keeper config --example exited %d; stderr=%s", code, exErr.String())
 	}
 	cfgDir := filepath.Join(projectDir, ".harmonik")
-	if mkErr := os.MkdirAll(cfgDir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(cfgDir, 0o750); mkErr != nil {
 		t.Fatalf("MkdirAll: %v", mkErr)
 	}
 	content := "schema_version: 1\n" + exOut.String()
 	if wErr := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(content), 0o600); wErr != nil {
 		t.Fatalf("WriteFile: %v", wErr)
 	}
-	projCfg, parseErr := daemon.LoadProjectConfig(projectDir)
+	projCfg, parseErr := projectconfig.LoadProjectConfig(projectDir)
 	if parseErr != nil {
 		t.Fatalf("LoadProjectConfig after example-merge: %v", parseErr)
 	}

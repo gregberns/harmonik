@@ -13,6 +13,7 @@ package keeper_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -31,7 +32,7 @@ func foreignSessionConfig(t *testing.T, projectDir, agent string, tokens int64) 
 	t.Helper()
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -139,7 +140,7 @@ func TestBlindKeeperAlarm_LatchClearedOnReadableGauge(t *testing.T) {
 	agent := "blind-latch-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -179,7 +180,9 @@ func TestBlindKeeperAlarm_LatchClearedOnReadableGauge(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx) //nolint:errcheck
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Watcher.Run: %v", err)
+		}
 	}()
 
 	// Phase 1: run a few ticks with foreign gauge — no blind event (5 min not crossed).
@@ -234,7 +237,7 @@ func TestBlindKeeperAlarm_EmitsAfterInjectedThreshold(t *testing.T) {
 	agent := "blind-emit-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -269,7 +272,9 @@ func TestBlindKeeperAlarm_EmitsAfterInjectedThreshold(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx) //nolint:errcheck
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Watcher.Run: %v", err)
+		}
 	}()
 
 	// Phase 1: foreign streak well past the 30ms threshold (≈ many ticks). The
@@ -552,7 +557,7 @@ func TestHardCeiling_NormalPath_NeverActsOnCeiling(t *testing.T) {
 	agent := "hard-ceiling-normal-path-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	// SID-MATCHED gauge ("sess-managed") above the ceiling — the NORMAL path.

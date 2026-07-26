@@ -69,6 +69,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -77,6 +78,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -157,7 +159,7 @@ func sha256File(path string) (string, error) {
 // buildDiskHashes computes the on-disk sha256 for every manifest path, keyed by
 // the EMBED path (so it lines up with the manifest + lock keys the planner uses).
 // Absent files map to "" per the planner's contract.
-func buildDiskHashes(projectDir string, m Manifest, stderr io.Writer) (map[string]string, error) {
+func buildDiskHashes(projectDir string, m Manifest) (map[string]string, error) {
 	disk := make(map[string]string, len(m.Files))
 	for _, f := range m.Files {
 		dest, ok := destFor(f.Path)
@@ -200,7 +202,9 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, syncAssetsUsage)
+			if syncAssetsWritef(stdout, "%s", syncAssetsUsage) != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--project" && i+1 < len(args):
 			i++
@@ -217,8 +221,12 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 		case args[i] == "--force":
 			force = true
 		default:
-			fmt.Fprintf(stderr, "harmonik sync-assets: unrecognised argument %q\n", args[i])
-			fmt.Fprint(stderr, syncAssetsUsage)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: unrecognised argument %q\n", args[i]) != nil {
+				return 1
+			}
+			if syncAssetsWritef(stderr, "%s", syncAssetsUsage) != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -231,43 +239,65 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: cannot determine working directory: %v\n", err)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: cannot determine working directory: %v\n", err) != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
 	}
 	absProject, err := filepath.Abs(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: cannot resolve project path %q: %v\n", projectDir, err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: cannot resolve project path %q: %v\n", projectDir, err) != nil {
+			return 1
+		}
 		return 1
 	}
 	projectDir = absProject
 	if _, err := os.Stat(projectDir); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: project directory %q does not exist or is not accessible: %v\n", projectDir, err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: project directory %q does not exist or is not accessible: %v\n", projectDir, err) != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Compute the plan.
 	manifest, err := BuildManifest()
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: build manifest: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: build manifest: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	lock, err := ReadLock(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: read lock: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: read lock: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	disk, err := buildDiskHashes(projectDir, manifest, stderr)
+	disk, err := buildDiskHashes(projectDir, manifest)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: hash project files: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: hash project files: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	plan := Reconcile(manifest, lock, disk)
 
 	if dryRun {
-		printPlanTable(plan, stdout)
-		fmt.Fprintln(stdout, "\nharmonik sync-assets: dry-run — no files written. Re-run with --apply to update.")
+		if err := printPlanTable(plan, stdout); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write plan: %v\n", err) != nil {
+				return 1
+			}
+			return 1
+		}
+		if _, err := fmt.Fprintln(stdout, "\nharmonik sync-assets: dry-run — no files written. Re-run with --apply to update."); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write dry-run summary: %v\n", err) != nil {
+				return 1
+			}
+			return 1
+		}
 		return 0
 	}
 
@@ -275,13 +305,21 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 	if !force {
 		dispatching, reason, gerr := daemonDispatchGate(projectDir)
 		if gerr != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: daemon-lull check failed: %v\n", gerr)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: daemon-lull check failed: %v\n", gerr) != nil {
+				return 1
+			}
 			return 1
 		}
 		if dispatching {
-			fmt.Fprintf(stderr, "harmonik sync-assets: REFUSING to apply — the daemon is actively dispatching (%s).\n", reason)
-			fmt.Fprintln(stderr, "  Editing the main working tree mid-dispatch trips implementer_escaped_worktree and fails in-flight beads.")
-			fmt.Fprintln(stderr, "  Wait for a lull (no active queue items), or re-run with --force to override.")
+			if syncAssetsWritef(stderr, "harmonik sync-assets: REFUSING to apply — the daemon is actively dispatching (%s).\n", reason) != nil {
+				return 1
+			}
+			if syncAssetsWritef(stderr, "  Editing the main working tree mid-dispatch trips implementer_escaped_worktree and fails in-flight beads.\n") != nil {
+				return 1
+			}
+			if syncAssetsWritef(stderr, "  Wait for a lull (no active queue items), or re-run with --force to override.\n") != nil {
+				return 1
+			}
 			return 3
 		}
 	}
@@ -300,11 +338,18 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 	// until the operator reconciles it (disk hash matches embed).
 	newLock := lockFromOutcomes(lock, outcomes)
 	if err := WriteLock(projectDir, newLock); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: write lock: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: write lock: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 
-	printApplySummary(outcomes, stdout)
+	if err := printApplySummary(outcomes, stdout); err != nil {
+		if syncAssetsWritef(stderr, "harmonik sync-assets: write apply summary: %v\n", err) != nil {
+			return 1
+		}
+		return 1
+	}
 
 	if commit {
 		if code := commitSync(projectDir, outcomes, stdout, stderr); code != 0 {
@@ -312,6 +357,11 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+func syncAssetsWritef(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
 }
 
 // applyPlan executes each ReconcileItem per its class policy. It returns the
@@ -341,7 +391,9 @@ func applyPlan(projectDir string, m Manifest, plan []ReconcileItem, stdout, stde
 		full := filepath.Join(projectDir, dest)
 		embedData, rerr := initSkillAssets.ReadFile(item.Path)
 		if rerr != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: read embedded asset %s: %v\n", item.Path, rerr)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: read embedded asset %s: %v\n", item.Path, rerr) != nil {
+				return outcomes, 1
+			}
 			return outcomes, 1
 		}
 		// Render template substitutions for the AGENTS template (matches init).
@@ -350,22 +402,22 @@ func applyPlan(projectDir string, m Manifest, plan []ReconcileItem, stdout, stde
 
 		switch item.Class {
 		case Managed:
-			code := applyManaged(full, dest, embedData, item.Action, &out, stdout, stderr)
+			code := applyManaged(full, dest, embedData, item.Action, &out, stderr)
 			if code != 0 {
 				return outcomes, code
 			}
 		case ManagedRegion:
-			code := applyManagedRegion(projectDir, full, dest, embedData, item.Action, &out, stdout, stderr)
+			code := applyManagedRegion(projectDir, full, dest, embedData, item.Action, &out, stderr)
 			if code != 0 {
 				return outcomes, code
 			}
 		case ContentOwned:
-			code := applyContentOwned(full, dest, embedData, item.Action, &out, stdout, stderr)
+			code := applyContentOwned(full, dest, embedData, item.Action, &out, stderr)
 			if code != 0 {
 				return outcomes, code
 			}
 		case Scaffold:
-			code := applyScaffold(full, dest, embedData, item.Action, &out, stdout, stderr)
+			code := applyScaffold(full, dest, embedData, item.Action, &out, stderr)
 			if code != 0 {
 				return outcomes, code
 			}
@@ -434,11 +486,13 @@ func lockFromOutcomes(prior Lock, outcomes []applyOutcome) Lock {
 
 // applyManaged handles product-owned skill files: overwrite on FastForward/Create;
 // on Conflict write <dest>.harmonik-new and NEVER touch the edited file.
-func applyManaged(full, dest string, embedData []byte, action Action, out *applyOutcome, stdout, stderr io.Writer) int {
+func applyManaged(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	switch action {
 	case ActionFastForward, ActionCreate:
-		if err := writeFileEnsureDir(full, embedData); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -446,12 +500,22 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 		out.note = "overwritten from embed"
 	case ActionConflict:
 		newPath := full + ".harmonik-new"
-		if err := writeFileEnsureDir(newPath, embedData); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err)
+		if err := writeFileEnsureDir(newPath, dest, embedData); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.conflic = true
 		out.note = "CONFLICT: local edits — embed written to " + dest + ".harmonik-new (original untouched)"
+	case ActionSkip, ActionLeave:
+		// applyPlan filters both of these out before dispatch. Reaching here means
+		// that filter and this switch have drifted apart, which would silently
+		// write nothing while reporting success.
+		if syncAssetsWritef(stderr, "harmonik sync-assets: internal error: action %q reached applyManaged for %s\n", action, dest) != nil {
+			return 1
+		}
+		return 1
 	}
 	return 0
 }
@@ -459,14 +523,16 @@ func applyManaged(full, dest string, embedData []byte, action Action, out *apply
 // applyManagedRegion handles the AGENTS router: replace only the marker-delimited
 // managed region(s); preserve everything outside the markers. Markers missing →
 // treat as Conflict.
-func applyManagedRegion(projectDir, full, dest string, embedData []byte, action Action, out *applyOutcome, stdout, stderr io.Writer) int {
+func applyManagedRegion(projectDir, full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	// Render template substitutions exactly as init does, so the managed region
 	// we splice in matches what init would have written.
 	rendered := renderAgentsTemplate(string(embedData), projectDir)
 
 	if action == ActionCreate {
-		if err := writeFileEnsureDir(full, []byte(rendered)); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+		if err := writeFileEnsureDir(full, dest, []byte(rendered)); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -480,8 +546,10 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 	if rerr != nil {
 		// Disk missing where the planner thought it present: fall back to create.
 		if os.IsNotExist(rerr) {
-			if err := writeFileEnsureDir(full, []byte(rendered)); err != nil {
-				fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+			if err := writeFileEnsureDir(full, dest, []byte(rendered)); err != nil {
+				if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+					return 1
+				}
 				return 1
 			}
 			out.written = true
@@ -489,7 +557,9 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 			out.note = "router (re)created from template"
 			return 0
 		}
-		fmt.Fprintf(stderr, "harmonik sync-assets: read %s: %v\n", dest, rerr)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: read %s: %v\n", dest, rerr) != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -498,8 +568,10 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 		// Markers missing/corrupt on disk OR in the template → don't clobber the
 		// project's file; write the fresh template alongside for manual reconcile.
 		newPath := full + ".harmonik-new"
-		if err := writeFileEnsureDir(newPath, []byte(rendered)); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err)
+		if err := writeFileEnsureDir(newPath, dest, []byte(rendered)); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest+".harmonik-new", err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.conflic = true
@@ -512,8 +584,10 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 		out.note = "managed region already current"
 		return 0
 	}
-	if err := writeFileEnsureDir(full, []byte(merged)); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+	if err := writeFileEnsureDir(full, dest, []byte(merged)); err != nil {
+		if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+			return 1
+		}
 		return 1
 	}
 	out.written = true
@@ -524,11 +598,13 @@ func applyManagedRegion(projectDir, full, dest string, embedData []byte, action 
 // applyContentOwned handles the project-owned context tiers: Create writes the
 // template; FastForward refreshes ONLY the TIER header region, body untouched;
 // Conflict reports only.
-func applyContentOwned(full, dest string, embedData []byte, action Action, out *applyOutcome, stdout, stderr io.Writer) int {
+func applyContentOwned(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	switch action {
 	case ActionCreate:
-		if err := writeFileEnsureDir(full, embedData); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -538,8 +614,10 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 		current, rerr := os.ReadFile(full) //nolint:gosec // G304: under resolved project dir
 		if rerr != nil {
 			if os.IsNotExist(rerr) {
-				if err := writeFileEnsureDir(full, embedData); err != nil {
-					fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+				if err := writeFileEnsureDir(full, dest, embedData); err != nil {
+					if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+						return 1
+					}
 					return 1
 				}
 				out.written = true
@@ -547,7 +625,9 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 				out.note = "created from template"
 				return 0
 			}
-			fmt.Fprintf(stderr, "harmonik sync-assets: read %s: %v\n", dest, rerr)
+			if syncAssetsWritef(stderr, "harmonik sync-assets: read %s: %v\n", dest, rerr) != nil {
+				return 1
+			}
 			return 1
 		}
 		merged, ok := replaceTierHeader(string(current), string(embedData))
@@ -562,8 +642,10 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 			out.note = "header already current"
 			return 0
 		}
-		if err := writeFileEnsureDir(full, []byte(merged)); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+		if err := writeFileEnsureDir(full, dest, []byte(merged)); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -572,6 +654,14 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 		// Body is project-owned: report only, write nothing.
 		out.skipped = true
 		out.note = "CONFLICT on content-owned file — body is project-owned; left untouched (reconcile manually)"
+	case ActionSkip, ActionLeave:
+		// applyPlan filters both of these out before dispatch. Reaching here means
+		// that filter and this switch have drifted apart, which would silently
+		// write nothing while reporting success.
+		if syncAssetsWritef(stderr, "harmonik sync-assets: internal error: action %q reached applyContentOwned for %s\n", action, dest) != nil {
+			return 1
+		}
+		return 1
 	}
 	return 0
 }
@@ -579,10 +669,12 @@ func applyContentOwned(full, dest string, embedData []byte, action Action, out *
 // applyScaffold handles create-once stub files: write only on Create; otherwise
 // leave (the planner only emits Create/Skip/Leave/Conflict for these — Conflict
 // and FastForward on a create-once stub are treated as leave-untouched).
-func applyScaffold(full, dest string, embedData []byte, action Action, out *applyOutcome, stdout, stderr io.Writer) int {
+func applyScaffold(full, dest string, embedData []byte, action Action, out *applyOutcome, stderr io.Writer) int {
 	if action == ActionCreate {
-		if err := writeFileEnsureDir(full, embedData); err != nil {
-			fmt.Fprintf(stderr, "harmonik sync-assets: write %s: %v\n", dest, err)
+		if err := writeFileEnsureDir(full, dest, embedData); err != nil {
+			if syncAssetsWritef(stderr, "harmonik sync-assets: write %s: %v\n", dest, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		out.written = true
@@ -706,9 +798,54 @@ func tierHeaderSpan(s string) (region, bool) {
 	return region{start: open, end: end}, true
 }
 
+// claudeAssetDirMode is the directory mode for the NON-.harmonik half of the
+// sync-assets destination set: .claude/skills/<name>/ and any parent a scaffold
+// needs under the repo root. 0o755, matching what `harmonik init` already
+// writes for .claude/skills/ (provisionSkills, init_cmd.go) and what the agent
+// harness and the operator's editor create siblings under. See
+// writeFileEnsureDir for why this is deliberately NOT core.HarmonikDirMode.
+const claudeAssetDirMode fs.FileMode = 0o755
+
+// destUnderHarmonik reports whether a project-relative destination lands inside
+// the .harmonik/ state tree. Segment-wise, so a ".harmonik-new" sidecar name or
+// a file merely called "x.harmonik" never counts.
+func destUnderHarmonik(dest string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(dest), "/") {
+		if seg == ".harmonik" {
+			return true
+		}
+	}
+	return false
+}
+
 // writeFileEnsureDir writes data to path, creating the parent directory tree.
-func writeFileEnsureDir(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // G301: 0755 matches .harmonik/.claude conventions
+// dest is the project-relative destination destFor returned (path is that dest
+// joined onto the project dir, possibly with a ".harmonik-new" suffix), and it
+// selects the directory mode.
+//
+// sync-assets is a GENERIC writer spanning two trees with two different owners,
+// and each parent must be created at the mode ITS owner uses. os.MkdirAll does
+// not chmod a directory that already exists, so a mismatch makes the final mode
+// depend on which creator ran first:
+//
+//   - .harmonik/... → core.HarmonikDirMode. internal/dashboard creates
+//     .harmonik/context/ at that mode, and WriteLock (asset_reconcile.go)
+//     creates .harmonik/ itself at that mode in THIS command's own run — an
+//     --apply that wrote a context tier used to leave .harmonik/context/ at
+//     0o755 while the lock write left .harmonik/ at 0o750, from one process.
+//   - everything else (.claude/skills/..., repo-root scaffolds) →
+//     claudeAssetDirMode. Deliberately not the constant: .claude/ is Claude
+//     Code's config tree, not harmonik state, and `harmonik init` creates
+//     .claude/skills/ at 0o755. Tightening it here alone would reproduce on the
+//     .claude side exactly the first-creator-wins split that HarmonikDirMode
+//     exists to remove on the .harmonik side.
+func writeFileEnsureDir(path, dest string, data []byte) error {
+	dir := filepath.Dir(path)
+	if destUnderHarmonik(dest) {
+		if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
+			return err
+		}
+	} else if err := os.MkdirAll(dir, claudeAssetDirMode); err != nil { //dirmode:allow .claude/ + repo-root asset tree, not .harmonik state — matches init's provisionSkills
 		return err
 	}
 	//nolint:gosec // G306: 0644 matches init's file-mode conventions
@@ -722,7 +859,7 @@ func writeFileEnsureDir(path string, data []byte) error {
 // daemonDispatchGate reports whether the daemon is up AND actively dispatching.
 // Returns (dispatching, reason, err). When the daemon socket is absent or refuses
 // the connection, the daemon is down → (false, "", nil) and apply proceeds.
-func daemonDispatchGate(projectDir string) (bool, string, error) {
+func daemonDispatchGate(projectDir string) (dispatching bool, reason string, err error) {
 	up := daemonSocketUp(projectDir)
 	if !up {
 		return false, "", nil
@@ -734,7 +871,7 @@ func daemonDispatchGate(projectDir string) (bool, string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	var queues []*queue.Queue
+	queues := make([]*queue.Queue, 0, len(names))
 	for _, name := range names {
 		q, lerr := queue.Load(ctx, projectDir, name)
 		if lerr != nil || q == nil {
@@ -760,7 +897,9 @@ func daemonSocketUp(projectDir string) bool {
 	if err != nil {
 		return false
 	}
-	_ = conn.Close() //nolint:errcheck
+	if closeErr := conn.Close(); closeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik sync-assets: close daemon probe connection: %v\n", closeErr)
+	}
 	return true
 }
 
@@ -774,7 +913,7 @@ func daemonSocketUp(projectDir string) bool {
 // then would trip implementer_escaped_worktree and fail that in-flight bead. So
 // ANY in-flight item in an active queue blocks --apply (unless --force). Returns
 // (true, reason) on the first such item, else (false, "").
-func dispatchingQueue(queues []*queue.Queue) (bool, string) {
+func dispatchingQueue(queues []*queue.Queue) (dispatching bool, reason string) {
 	for _, q := range queues {
 		if q == nil || q.Status != queue.QueueStatusActive {
 			continue
@@ -806,9 +945,10 @@ func queueLabel(q *queue.Queue) string {
 // ---------------------------------------------------------------------------
 
 // printPlanTable prints the dry-run plan as a path | class | action table.
-func printPlanTable(plan []ReconcileItem, out io.Writer) {
-	fmt.Fprintln(out, "harmonik sync-assets — plan (dry-run)")
-	fmt.Fprintln(out, "")
+func printPlanTable(plan []ReconcileItem, out io.Writer) error {
+	p := syncAssetsPrinter{out: out}
+	p.println("harmonik sync-assets — plan (dry-run)")
+	p.println("")
 	// Column widths.
 	maxPath := len("PATH")
 	for _, it := range plan {
@@ -821,8 +961,8 @@ func printPlanTable(plan []ReconcileItem, out io.Writer) {
 			maxPath = len(label)
 		}
 	}
-	fmt.Fprintf(out, "  %-*s  %-14s  %s\n", maxPath, "PATH", "CLASS", "ACTION")
-	fmt.Fprintf(out, "  %-*s  %-14s  %s\n", maxPath, strings.Repeat("-", maxPath), "--------------", "------")
+	p.printf("  %-*s  %-14s  %s\n", maxPath, "PATH", "CLASS", "ACTION")
+	p.printf("  %-*s  %-14s  %s\n", maxPath, strings.Repeat("-", maxPath), "--------------", "------")
 	// Sort by destination for stable, readable output.
 	rows := make([]ReconcileItem, len(plan))
 	copy(rows, plan)
@@ -837,13 +977,14 @@ func printPlanTable(plan []ReconcileItem, out io.Writer) {
 		if !ok {
 			label = it.Path
 		}
-		fmt.Fprintf(out, "  %-*s  %-14s  %s\n", maxPath, label, it.Class, it.Action)
+		p.printf("  %-*s  %-14s  %s\n", maxPath, label, it.Class, it.Action)
 	}
+	return p.err
 }
 
 // printApplySummary prints the applied/created/conflicted/skipped tallies and
 // prominently lists any .harmonik-new conflicts the operator must reconcile.
-func printApplySummary(outcomes []applyOutcome, out io.Writer) {
+func printApplySummary(outcomes []applyOutcome, out io.Writer) error {
 	var applied, created, conflicted, skipped int
 	var conflicts []applyOutcome
 	for _, o := range outcomes {
@@ -860,16 +1001,37 @@ func printApplySummary(outcomes []applyOutcome, out io.Writer) {
 			skipped++
 		}
 	}
-	fmt.Fprintln(out, "\nharmonik sync-assets — apply summary")
-	fmt.Fprintf(out, "  applied:    %d  (created: %d)\n", applied, created)
-	fmt.Fprintf(out, "  conflicted: %d\n", conflicted)
-	fmt.Fprintf(out, "  skipped:    %d\n", skipped)
+	p := syncAssetsPrinter{out: out}
+	p.println("\nharmonik sync-assets — apply summary")
+	p.printf("  applied:    %d  (created: %d)\n", applied, created)
+	p.printf("  conflicted: %d\n", conflicted)
+	p.printf("  skipped:    %d\n", skipped)
 	if len(conflicts) > 0 {
-		fmt.Fprintln(out, "\n  CONFLICTS — review and reconcile these by hand:")
+		p.println("\n  CONFLICTS — review and reconcile these by hand:")
 		for _, c := range conflicts {
-			fmt.Fprintf(out, "    - %s: %s\n", c.dest, c.note)
+			p.printf("    - %s: %s\n", c.dest, c.note)
 		}
 	}
+	return p.err
+}
+
+type syncAssetsPrinter struct {
+	out io.Writer
+	err error
+}
+
+func (p *syncAssetsPrinter) printf(format string, args ...any) {
+	if p.err != nil {
+		return
+	}
+	_, p.err = fmt.Fprintf(p.out, format, args...)
+}
+
+func (p *syncAssetsPrinter) println(args ...any) {
+	if p.err != nil {
+		return
+	}
+	_, p.err = fmt.Fprintln(p.out, args...)
 }
 
 // commitSync stages and commits the applied changes. The orchestrator normally
@@ -884,7 +1046,9 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 		}
 	}
 	if !anyChange {
-		fmt.Fprintln(stdout, "harmonik sync-assets: nothing to commit (no files changed)")
+		if syncAssetsWritef(stdout, "harmonik sync-assets: nothing to commit (no files changed)\n") != nil {
+			return 1
+		}
 		return 0
 	}
 	// Stage ONLY the paths this run touched — NEVER `git add -A`, which would
@@ -908,14 +1072,23 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 		}
 	}
 	msg := "chore(assets): sync embedded instruction assets via harmonik sync-assets"
-	commit := exec.Command("git", "-C", projectDir, "commit", "-m", msg) //nolint:gosec // G204: projectDir operator-controlled
+	// context.Background(), deliberately NOT a cancellable context: killing git
+	// between the index write and the ref update leaves a stale .git/index.lock
+	// and a half-staged tree in the operator's main working copy. `git commit`
+	// is short and must be allowed to finish, so this call is uncancellable by
+	// construction rather than by a nolint directive.
+	commit := exec.CommandContext(context.Background(), "git", "-C", projectDir, "commit", "-m", msg)
 	commit.Stdout = stdout
 	commit.Stderr = stderr
 	if err := commit.Run(); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: git commit failed: %v\n", err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: git commit failed: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "harmonik sync-assets: committed asset sync")
+	if syncAssetsWritef(stdout, "harmonik sync-assets: committed asset sync\n") != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -923,11 +1096,16 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 // using `--` so a path that looks like a flag is never misinterpreted. Returns
 // 0 on success, 1 on failure (after printing the error).
 func gitAddPath(projectDir, relPath string, stdout, stderr io.Writer) int {
-	add := exec.Command("git", "-C", projectDir, "add", "--", relPath) //nolint:gosec // G204: projectDir + manifest-derived relPath
+	// context.Background(): same reasoning as commitSync — `git add` takes the
+	// index lock, and killing it mid-write strands .git/index.lock in the
+	// operator's main working copy.
+	add := exec.CommandContext(context.Background(), "git", "-C", projectDir, "add", "--", relPath)
 	add.Stdout = stdout
 	add.Stderr = stderr
 	if err := add.Run(); err != nil {
-		fmt.Fprintf(stderr, "harmonik sync-assets: git add %s failed: %v\n", relPath, err)
+		if syncAssetsWritef(stderr, "harmonik sync-assets: git add %s failed: %v\n", relPath, err) != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0

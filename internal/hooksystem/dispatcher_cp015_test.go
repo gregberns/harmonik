@@ -39,7 +39,7 @@ func cp015FixtureCollectFailedCategories(categories *[]core.ErrorCategory, mu *s
 				}
 				var pl core.HookFailedPayload
 				if err := json.Unmarshal(ev.Payload, &pl); err != nil {
-					return nil
+					return err
 				}
 				mu.Lock()
 				*categories = append(*categories, pl.ErrorCategory)
@@ -65,7 +65,6 @@ func TestCP015_EvalErrorDeterministicOnCompileFailure(t *testing.T) {
 		"hook-compile-err",
 		"on_agent_started",
 		"undefined_variable_xyz > 0",
-		core.SideEffectKindEmitEvent,
 		false,
 		0,
 	)
@@ -119,7 +118,6 @@ func TestCP015_EvalErrorTransientOnContextCancellation(t *testing.T) {
 		"hook-ctx-cancel",
 		"on_agent_started",
 		"true",
-		core.SideEffectKindEmitEvent,
 		false,
 		0,
 	)
@@ -146,7 +144,7 @@ func TestCP015_EvalErrorTransientOnContextCancellation(t *testing.T) {
 			}
 			var pl core.HookFailedPayload
 			if err := json.Unmarshal(ev.Payload, &pl); err != nil {
-				return nil
+				return err
 			}
 			mu.Lock()
 			categories = append(categories, pl.ErrorCategory)
@@ -164,7 +162,7 @@ func TestCP015_EvalErrorTransientOnContextCancellation(t *testing.T) {
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately before Emit
 
-	payload, _ := json.Marshal(map[string]any{})
+	payload := cp012FixtureMarshal(t, map[string]any{})
 	if err := bus.Emit(canceledCtx, "agent_started", payload); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}

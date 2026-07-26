@@ -57,7 +57,6 @@ func TestAgentMessagePayloadValid(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -114,7 +113,6 @@ func TestAgentPresencePayloadValid(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {

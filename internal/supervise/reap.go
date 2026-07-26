@@ -2,6 +2,7 @@ package supervise
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -44,11 +45,15 @@ type FlywheelSession struct {
 type ReapAdapter interface {
 	// ListFlywheelSessions enumerates all live tmux sessions and returns the
 	// subset whose name matches the flywheel family, each annotated with its
-	// pane_dead state and creation time. When no tmux server is running (or no
-	// sessions exist) it returns (nil, nil) — a no-op, NOT an error.
+	// pane_dead state and creation time. Absence is not an error: no tmux
+	// server, no sessions, or no tmux binary at all all yield (nil, nil). Any
+	// OTHER failure (e.g. a permission error talking to the server) is returned.
 	ListFlywheelSessions(ctx context.Context) ([]FlywheelSession, error)
 	// KillSession destroys the named session (tmux kill-session). Idempotent:
-	// killing an absent session is not an error.
+	// an already-gone session — whether the session alone vanished or the whole
+	// tmux server exited between the list and the kill — is not an error. Any
+	// other kill failure IS returned, and the reaper then neither counts nor
+	// emits an event for that session.
 	KillSession(ctx context.Context, name string) error
 }
 
@@ -104,8 +109,16 @@ type ReapOptions struct {
 //   - a session with a live pane (pane_dead=0) is preserved.
 //   - a session created at/after DaemonStartTime is preserved.
 //   - opts.ProtectSession is never killed.
+//
+// Errors: a list failure aborts the pass (nothing was killed). A kill failure
+// does NOT abort the pass — that session is left out of Reaped/Events (a failed
+// kill is never reported as a successful reap), the remaining candidates are
+// still processed, and every kill error is joined into the returned error. So
+// the result is always the truth about what WAS killed even when err != nil;
+// callers that surface events must emit result.Events before acting on err.
 func ReapOrphanFlywheelSessions(ctx context.Context, adapter ReapAdapter, opts ReapOptions) (ReapResult, error) {
 	var result ReapResult
+	var killErrs []error
 	if adapter == nil {
 		return result, nil
 	}
@@ -145,10 +158,12 @@ func ReapOrphanFlywheelSessions(ctx context.Context, adapter ReapAdapter, opts R
 		// Eligible: dead pane, predates the daemon, not protected. Reap it.
 		now := time.Now().UTC()
 		if killErr := adapter.KillSession(ctx, s.Name); killErr != nil {
-			// TOCTOU (session vanished) or kill error: still count it as reaped —
-			// we positively identified it as a dead-supervisor orphan. Mirrors the
-			// daemon primitive's "proceed and count" behavior.
-			_ = killErr
+			// Record the failure and keep going: aborting here would drop the
+			// tmux_orphan_reaped events for the sessions this pass DID kill —
+			// losing observability exactly when something is going wrong. The
+			// joined error still makes the pass fail for the caller.
+			killErrs = append(killErrs, fmt.Errorf("supervise: reap: kill session %q: %w", s.Name, killErr))
+			continue
 		}
 		result.Reaped = append(result.Reaped, s.Name)
 		result.Events = append(result.Events, ReapEvent{
@@ -160,7 +175,8 @@ func ReapOrphanFlywheelSessions(ctx context.Context, adapter ReapAdapter, opts R
 		})
 	}
 
-	return result, nil
+	// errors.Join(nil-free empty slice) is nil, so a clean pass still returns nil.
+	return result, errors.Join(killErrs...)
 }
 
 // parseSessionCreated parses a tmux #{session_created} epoch field (unix

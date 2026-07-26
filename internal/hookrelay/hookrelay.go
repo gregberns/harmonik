@@ -169,34 +169,34 @@ func Run(eventKind string, stdin io.Reader, stderr io.Writer, envOverride *Env) 
 	// Read and validate stdin per CHB-012.
 	payload, err := io.ReadAll(stdin)
 	if err != nil {
-		fmt.Fprintf(stderr, "bridge_malformed_hook_payload: stdin read error: %v\n", err)
+		writeDiagnostic(stderr, "bridge_malformed_hook_payload: stdin read error: %v\n", err)
 		return 1
 	}
 
 	var inp hookInput
 	if err := json.Unmarshal(payload, &inp); err != nil {
-		fmt.Fprintf(stderr, "bridge_malformed_hook_payload: invalid JSON: %v\n", err)
+		writeDiagnostic(stderr, "bridge_malformed_hook_payload: invalid JSON: %v\n", err)
 		return 1
 	}
 
 	// CHB-012: required fields must be present (non-empty).
 	// "required field missing" maps to bridge_malformed_hook_payload per §8 error taxonomy.
 	if inp.SessionID == "" {
-		fmt.Fprintf(stderr, "bridge_malformed_hook_payload: required field session_id is absent\n")
+		writeDiagnostic(stderr, "bridge_malformed_hook_payload: required field session_id is absent\n")
 		return 1
 	}
 	if inp.TranscriptPath == "" {
-		fmt.Fprintf(stderr, "bridge_malformed_hook_payload: required field transcript_path is absent\n")
+		writeDiagnostic(stderr, "bridge_malformed_hook_payload: required field transcript_path is absent\n")
 		return 1
 	}
 	if inp.HookEventName == "" {
-		fmt.Fprintf(stderr, "bridge_malformed_hook_payload: required field hook_event_name is absent\n")
+		writeDiagnostic(stderr, "bridge_malformed_hook_payload: required field hook_event_name is absent\n")
 		return 1
 	}
 
 	// CHB-012: session_id MUST match HARMONIK_CLAUDE_SESSION_ID.
 	if inp.SessionID != e.ClaudeSessionID {
-		fmt.Fprintf(stderr,
+		writeDiagnostic(stderr,
 			"bridge_session_id_mismatch: stdin session_id %q != HARMONIK_CLAUDE_SESSION_ID %q\n",
 			inp.SessionID, e.ClaudeSessionID)
 		return 1
@@ -204,7 +204,7 @@ func Run(eventKind string, stdin io.Reader, stderr io.Writer, envOverride *Env) 
 
 	// CHB-012: hook_event_name MUST match argv event-kind.
 	if inp.HookEventName != eventKind {
-		fmt.Fprintf(stderr,
+		writeDiagnostic(stderr,
 			"bridge_event_kind_mismatch: stdin hook_event_name %q != argv event-kind %q\n",
 			inp.HookEventName, eventKind)
 		return 1
@@ -213,7 +213,7 @@ func Run(eventKind string, stdin io.Reader, stderr io.Writer, envOverride *Env) 
 	// Build the progress-stream message per CHB-013.
 	msgType, msgPayload, noOp, buildErr := buildMessage(eventKind, inp, e, start)
 	if buildErr != nil {
-		fmt.Fprintln(stderr, buildErr)
+		writeDiagnostic(stderr, "%v\n", buildErr)
 		return 1
 	}
 
@@ -235,13 +235,13 @@ func Run(eventKind string, stdin io.Reader, stderr io.Writer, envOverride *Env) 
 
 	msgBytes, err := json.Marshal(msg)
 	if err != nil {
-		fmt.Fprintf(stderr, "bridge_malformed_hook_payload: JSON marshal: %v\n", err)
+		writeDiagnostic(stderr, "bridge_malformed_hook_payload: JSON marshal: %v\n", err)
 		return 1
 	}
 
 	// CHB-015: one-shot UDS with retry per CHB-016.
 	if err := sendToSocket(e.DaemonSocket, msgBytes, stderr); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeDiagnostic(stderr, "%v\n", err)
 		return 1
 	}
 
@@ -414,14 +414,14 @@ func extractFinalMessage(raw json.RawMessage) string {
 
 // truncate4KiB truncates s to at most 4096 bytes (4 KiB) per CHB-013.
 func truncate4KiB(s string) string {
-	const max = 4096
-	if len(s) <= max {
+	const maxBytes = 4096
+	if len(s) <= maxBytes {
 		return s
 	}
 	// A byte-boundary cut can split the final multibyte rune. Trim up to
 	// utf8.UTFMax-1 trailing bytes until the result ends on a valid rune
 	// boundary, so we never emit an invalid trailing rune (CHB-013 / RU-14).
-	b := s[:max]
+	b := s[:maxBytes]
 	for i := 0; i < utf8.UTFMax-1 && !utf8.ValidString(b); i++ {
 		b = b[:len(b)-1]
 	}
@@ -494,7 +494,7 @@ func buildNotificationMessage(inp hookInput) (
 // endpoint (the REMOTE-run reverse-tunnel transport) rather than a unix-socket
 // path. A unix-socket path never starts with this prefix, so the dialer can pick
 // the transport purely from the env value. Kept in sync with the daemon side
-// (internal/daemon/reversetunnel.go tcpEndpointPrefix).
+// (internal/transport/tunnel/tunnel.go tcpEndpointPrefix).
 //
 // hk-ege6: remote runs dial a TCP loopback listener on the worker
 // (tcp://127.0.0.1:<port>) because the macOS-root sshd `-R` unix-socket bind is
@@ -586,7 +586,7 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 				if elapsed+retryDelay > wallMax {
 					return fmt.Errorf("bridge_daemon_startup_window_exceeded: dial failed after %v: %w", elapsed, dialErr)
 				}
-				fmt.Fprintf(stderr, "hook-relay: dial failed (%v), retrying in %v\n", dialErr, retryDelay) //nolint:errcheck // diagnostic write to stderr; error non-actionable
+				writeDiagnostic(stderr, "hook-relay: dial failed (%v), retrying in %v\n", dialErr, retryDelay)
 				time.Sleep(retryDelay)
 				retryDelay *= 2
 				if retryDelay > retryMax {
@@ -600,31 +600,29 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 		// CHB-015: write exactly one NDJSON line terminated by \n.
 		// Two sequential writes: the JSON bytes then the newline delimiter.
 		if _, writeErr := conn.Write(msgBytes); writeErr != nil {
-			_ = conn.Close()
-			return fmt.Errorf("bridge_dial_failed: write: %w", writeErr)
+			return errors.Join(fmt.Errorf("bridge_dial_failed: write: %w", writeErr), conn.Close())
 		}
 		if _, writeErr := conn.Write([]byte{'\n'}); writeErr != nil {
-			_ = conn.Close()
-			return fmt.Errorf("bridge_dial_failed: write newline: %w", writeErr)
+			return errors.Join(fmt.Errorf("bridge_dial_failed: write newline: %w", writeErr), conn.Close())
 		}
 
 		// CHB-015: read back one NDJSON line within 5s.
 		if deadlineErr := conn.SetReadDeadline(time.Now().Add(readTimeout)); deadlineErr != nil {
-			_ = conn.Close()
-			return fmt.Errorf("bridge_dial_failed: set read deadline: %w", deadlineErr)
+			return errors.Join(fmt.Errorf("bridge_dial_failed: set read deadline: %w", deadlineErr), conn.Close())
 		}
 
 		scanner := bufio.NewScanner(conn)
 		if !scanner.Scan() {
-			_ = conn.Close()
 			scanErr := scanner.Err()
 			if scanErr == nil {
 				scanErr = io.EOF
 			}
-			return fmt.Errorf("bridge_dial_failed: read ACK: %w", scanErr)
+			return errors.Join(fmt.Errorf("bridge_dial_failed: read ACK: %w", scanErr), conn.Close())
 		}
 		ackBytes := scanner.Bytes()
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			writeDiagnostic(stderr, "hook-relay: close after ACK failed: %v\n", closeErr)
+		}
 
 		var ack hookRelayAck
 		if jsonErr := json.Unmarshal(ackBytes, &ack); jsonErr != nil {
@@ -642,7 +640,7 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 			if elapsed+retryDelay > wallMax {
 				return fmt.Errorf("bridge_daemon_startup_window_exceeded: daemon_not_ready after %v", elapsed)
 			}
-			fmt.Fprintf(stderr, "hook-relay: daemon_not_ready (%s), retrying in %v\n", ack.Reason, retryDelay)
+			writeDiagnostic(stderr, "hook-relay: daemon_not_ready (%s), retrying in %v\n", ack.Reason, retryDelay)
 			time.Sleep(retryDelay)
 			retryDelay *= 2
 			if retryDelay > retryMax {
@@ -653,6 +651,14 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 
 		// Any other non-ok status (bad_envelope, unknown_session, etc.) is unrecoverable.
 		return fmt.Errorf("bridge_dial_failed: daemon rejected message: status=%s reason=%s", ack.Status, ack.Reason)
+	}
+}
+
+// writeDiagnostic emits a best-effort stderr diagnostic. A failure writing the
+// diagnostic cannot alter the already-determined hook result.
+func writeDiagnostic(w io.Writer, format string, args ...any) {
+	if _, err := fmt.Fprintf(w, format, args...); err != nil {
+		return
 	}
 }
 

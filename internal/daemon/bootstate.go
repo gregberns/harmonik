@@ -10,11 +10,14 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runlaunch"
 )
 
 // bootState threads the shared singletons constructed across the daemon
@@ -34,7 +37,7 @@ type bootState struct {
 	// P4 (constructBusAndRegistries) outputs.
 	bus                     eventbus.EventBus
 	clockRegressionDetected bool
-	qs                      *QueueStore
+	qs                      *queuewiring.QueueStore
 	handlerPauseCtrl        *HandlerPauseController
 	sharedRunRegistry       *RunRegistry
 	pollGate                *PollGate
@@ -53,8 +56,8 @@ type bootState struct {
 	concurrencyCtrl     *ConcurrencyController
 	queueHandlerAdapter *queue.HandlerAdapter
 	drainDet            *DrainDetector
-	crewHandler         CrewHandler
-	crewIdleReaper      *CrewIdleReaper
+	crewHandler         crewrun.CrewHandler
+	crewIdleReaper      *crewrun.CrewIdleReaper
 	branchReapWatcher   *BranchReapWatcher
 }
 
@@ -124,7 +127,7 @@ func (bs *bootState) constructBusAndRegistries() (*eventbus.JSONLWriter, error) 
 	// later (post-Seal, when ProjectDir is checked).
 	qs := cfg.QueueStore
 	if qs == nil {
-		qs = newQueueStore()
+		qs = queuewiring.NewQueueStore()
 	}
 	bs.qs = qs
 	bs.handlerPauseCtrl = NewHandlerPauseController(bs.bus, nil)
@@ -170,7 +173,7 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 	}
 
 	// QueueOperatorEventConsumer (hk-7urls): active ↔ paused-by-drain transitions.
-	queueOpConsumer := NewQueueOperatorEventConsumer(QueueOperatorEventConsumerConfig{
+	queueOpConsumer := queuewiring.NewQueueOperatorEventConsumer(queuewiring.QueueOperatorEventConsumerConfig{
 		QueueStore: bs.qs,
 		ProjectDir: cfg.ProjectDir,
 		Bus:        bus,
@@ -270,10 +273,10 @@ func (bs *bootState) wireWatchersAndObservers(ctx context.Context) error {
 	if hookSetter, ok := cfg.Substrate.(substrateDiagnosticHookSetter); ok {
 		hookSetter.setDiagnosticHooks(
 			func(waited time.Duration, inUse, capSize int) {
-				emitSpawnCapBlocked(ctx, bus, core.RunID{}, waited, inUse, capSize)
+				runlaunch.EmitSpawnCapBlocked(ctx, bus, core.RunID{}, waited, inUse, capSize)
 			},
 			func(waited time.Duration) {
-				emitTmuxNewWindowTimeout(ctx, bus, core.RunID{}, waited)
+				runlaunch.EmitTmuxNewWindowTimeout(ctx, bus, core.RunID{}, waited)
 			},
 		)
 	}

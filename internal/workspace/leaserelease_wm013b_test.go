@@ -68,9 +68,10 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 			workspaceID := "ws-" + runID
 
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
+			//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 			cmd.Dir = repo
 			if out, err := cmd.CombinedOutput(); err != nil {
@@ -82,7 +83,7 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			// helper for the initial write. WriteLeaseLockAtomic correctness is
 			// separately covered in TestWM013a_LeaseLockCanonicalPathAndContent.
 			leaseLockPath := LeaseLockPath(worktreePath)
-			leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+			leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 			// Verify lease-lock exists before terminal transition.
 			if _, err := os.Stat(leaseLockPath); err != nil {
@@ -106,11 +107,7 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 
 			// Assert marker file exists and has valid content BEFORE unlink.
 			eventsFile := WorkspaceLocalEventsPath(worktreePath, workspaceID)
-			//nolint:gosec // G304: path constructed from t.TempDir() + known relative segments, not user input
-			markerData, err := os.ReadFile(eventsFile)
-			if err != nil {
-				t.Fatalf("WM-013b[%s]: ReadFile events JSONL: %v", tc.name, err)
-			}
+			markerData := mustReadFile(t, eventsFile)
 
 			// Parse the JSONL marker line.
 			lines := strings.Split(strings.TrimRight(string(markerData), "\n"), "\n")
@@ -189,9 +186,10 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 		workspaceID := "ws-" + runID
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -202,7 +200,7 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 		// leaseFixtureSanitizeRunID). We use the fixture helper for the lock write
 		// only; the marker and release use production functions.
 		leaseLockPath := LeaseLockPath(worktreePath)
-		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 		// Simulate crash: write marker, but DON'T remove the lock yet.
 		if err := WriteLeaseReleasedMarker(worktreePath, runID, workspaceID, "post_escalation"); err != nil {

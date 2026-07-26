@@ -5,7 +5,6 @@ import (
 	"os"
 	"syscall"
 	"testing"
-	"time"
 )
 
 // TestPL_INV001_PidfileLockExclusivity exercises the PL-INV-001 sensor:
@@ -88,7 +87,7 @@ func TestPL_INV001_PidfileLockExclusivity(t *testing.T) {
 		// just-released flock alive via an inherited fd copy until that
 		// child's exec(2) closes it — see plFixtureEventuallyNoErr.
 		var release2 func()
-		err = plFixtureEventuallyNoErr(t, 2*time.Second, func() error {
+		err = plFixtureEventuallyNoErr(t, func() error {
 			r, acquireErr := plFixtureAcquirePidfile(t, projectDir, pid, pgid, instanceID2)
 			release2 = r
 			return acquireErr
@@ -136,14 +135,14 @@ func TestPL_INV004_SocketPathExclusivity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-INV-004 sensor: first bind: %v", err)
 		}
-		t.Cleanup(func() { _ = ln1.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln1.Close() })
 
 		// Second bind — does NOT call Remove (so it hits the live socket).
 		// Using ListenConfig directly to observe the raw EADDRINUSE.
 		sockPath := plFixtureSocketPath(projectDir)
 		ln2, err2 := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 		if err2 == nil {
-			_ = ln2.Close() //nolint:errcheck // cleanup error unactionable
+			_ = ln2.Close()
 			t.Fatal("PL-INV-004 sensor: second bind succeeded; invariant violated — only one listener allowed per project")
 		}
 
@@ -170,13 +169,13 @@ func TestPL_INV004_SocketPathExclusivity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-INV-004 reassign: first bind: %v", err)
 		}
-		_ = ln1.Close() //nolint:errcheck // cleanup error unactionable
+		_ = ln1.Close()
 
 		// After close, another bind must succeed (new daemon starts up).
 		ln2, err := plFixtureBindSocket(t, projectDir)
 		if err != nil {
 			t.Fatalf("PL-INV-004 reassign: second bind after close: %v", err)
 		}
-		t.Cleanup(func() { _ = ln2.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln2.Close() })
 	})
 }

@@ -110,7 +110,6 @@ func throughputFixtureSetupProject(t *testing.T, realBrPath, prefix string) (pro
 	projectDir, jsonlPath = smokeFixtureProjectDir(t)
 	smokeFixtureGitRepo(t, projectDir)
 
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", prefix)
 	initCmd.Dir = projectDir
 	initOut, initErr := initCmd.CombinedOutput()
@@ -129,7 +128,6 @@ func throughputFixtureCreateBeads(t *testing.T, brWrapper string, n int) []strin
 	t.Helper()
 	ids := make([]string, n)
 	for i := range n {
-		//nolint:gosec // G204: br args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), brWrapper,
 			"create", "throughput test bead", "--status", "open", "--silent")
 		out, err := cmd.CombinedOutput()

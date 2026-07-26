@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 func TestKeeperReloadWarnMessagesFn_ReturnsWarnTexts_223zs(t *testing.T) {
@@ -44,7 +44,7 @@ func TestKeeperReloadWarnMessagesFn_UnknownKeyRejected_223zs(t *testing.T) {
 	if err == nil {
 		t.Fatal("reload of a config with an unknown warn_messages key must error; got nil")
 	}
-	var uerr *daemon.ErrUnknownConfigKey
+	var uerr *projectconfig.ErrUnknownConfigKey
 	if !errors.As(err, &uerr) {
 		t.Fatalf("error type = %T (%v); want *ErrUnknownConfigKey", err, err)
 	}

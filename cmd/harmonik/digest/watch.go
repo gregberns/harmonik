@@ -6,6 +6,7 @@ package digestcmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -39,7 +40,9 @@ func RunWatch(ctx context.Context, in WatchInput, w io.Writer) error {
 	}
 
 	// Render immediately before the first tick so the screen is never blank.
-	renderWatchFrame(ctx, w, in.Build)
+	if err := renderWatchFrame(ctx, w, in.Build); err != nil {
+		return err
+	}
 
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
@@ -48,11 +51,17 @@ func RunWatch(ctx context.Context, in WatchInput, w io.Writer) error {
 		select {
 		case <-ctx.Done():
 			// Clear the status line and exit without leaving stale output.
-			fmt.Fprintln(w, "\033[H\033[2J")
-			fmt.Fprintln(w, "harmonik digest --watch: stopped.")
+			if _, err := fmt.Fprintln(w, "\033[H\033[2J"); err != nil {
+				return fmt.Errorf("clear watch display: %w", err)
+			}
+			if _, err := fmt.Fprintln(w, "harmonik digest --watch: stopped."); err != nil {
+				return fmt.Errorf("write watch shutdown message: %w", err)
+			}
 			return nil
 		case <-tick.C:
-			renderWatchFrame(ctx, w, in.Build)
+			if err := renderWatchFrame(ctx, w, in.Build); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -60,46 +69,47 @@ func RunWatch(ctx context.Context, in WatchInput, w io.Writer) error {
 // renderWatchFrame clears the terminal and emits one full digest snapshot.
 // ctx is propagated to digest.Build so that br/kerf subprocesses are
 // cancelled when the user hits Ctrl-C (CTX_PROPAGATION fix).
-func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) {
+func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) error {
 	now := time.Now()
 	d, buildErr := digest.Build(ctx, in)
+	frame := watchFrame{}
 
 	// Move cursor to top-left, then clear to end of screen.
-	fmt.Fprint(w, "\033[H\033[2J")
+	frame.print("\033[H\033[2J")
 
 	// Header ─────────────────────────────────────────────────────────────────
-	fmt.Fprintf(w, "harmonik digest --watch   %s   [file-poll]   Ctrl-C to exit\n",
+	frame.printf("harmonik digest --watch   %s   [file-poll]   Ctrl-C to exit\n",
 		now.Format("2006-01-02 15:04:05"))
-	fmt.Fprintln(w, strings.Repeat("─", 68))
+	frame.println(strings.Repeat("─", 68))
 
 	if buildErr != nil {
-		if buildErr == digest.ErrNoHarmonikDir {
-			fmt.Fprintln(w, "ERROR: .harmonik/ directory not found — is this a harmonik project?")
+		if errors.Is(buildErr, digest.ErrNoHarmonikDir) {
+			frame.println("ERROR: .harmonik/ directory not found — is this a harmonik project?")
 		} else {
-			fmt.Fprintf(w, "ERROR: %v\n", buildErr)
+			frame.printf("ERROR: %v\n", buildErr)
 		}
-		return
+		return frame.writeTo(w)
 	}
 
 	// Metadata row.
 	refreshLag := now.Sub(d.GeneratedAt).Truncate(time.Millisecond)
-	fmt.Fprintf(w, "schema_version: %d   refresh lag: %s\n", d.SchemaVersion, refreshLag)
+	frame.printf("schema_version: %d   refresh lag: %s\n", d.SchemaVersion, refreshLag)
 
 	// Watermark age: age of the most recent event (UUIDv7 timestamp).
 	watermarkAge := "(no events)"
 	if len(d.RecentEvents) > 0 {
 		watermarkAge = uuidv7Age(d.RecentEvents[0].EventID, now)
 	}
-	fmt.Fprintf(w, "watermark age:  %s\n", watermarkAge)
-	fmt.Fprintln(w)
+	frame.printf("watermark age:  %s\n", watermarkAge)
+	frame.println()
 
 	// In-flight runs ─────────────────────────────────────────────────────────
 	activeCount := d.Queue.ActiveRunCount
 	pendingCount := d.Queue.PendingCount
 	if !d.Queue.Present {
-		fmt.Fprintln(w, "=== In-flight runs === (no active queue)")
+		frame.println("=== In-flight runs === (no active queue)")
 	} else {
-		fmt.Fprintf(w, "=== In-flight runs (%d active, %d pending) ===\n",
+		frame.printf("=== In-flight runs (%d active, %d pending) ===\n",
 			activeCount, pendingCount)
 		for _, r := range d.Queue.ActiveRuns {
 			runID := r.RunID
@@ -108,22 +118,22 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) {
 			} else if len(runID) > 8 {
 				runID = runID[:8]
 			}
-			fmt.Fprintf(w, "  %-14s  run=%-8s  %s\n", r.BeadID, runID, r.Status)
+			frame.printf("  %-14s  run=%-8s  %s\n", r.BeadID, runID, r.Status)
 		}
 		if d.Truncated != nil && d.Truncated.ActiveRunsOmitted > 0 {
-			fmt.Fprintf(w, "  [+%d more omitted]\n", d.Truncated.ActiveRunsOmitted)
+			frame.printf("  [+%d more omitted]\n", d.Truncated.ActiveRunsOmitted)
 		}
 		if pendingCount > 0 {
-			fmt.Fprintf(w, "  [%d pending in queue]\n", pendingCount)
+			frame.printf("  [%d pending in queue]\n", pendingCount)
 		}
 	}
-	fmt.Fprintln(w)
+	frame.println()
 
 	// Recent completions ──────────────────────────────────────────────────────
 	completions := filterEventsByType(d.RecentEvents, "run_completed", "run_failed")
-	fmt.Fprintf(w, "=== Recent completions (%d) ===\n", len(completions))
+	frame.printf("=== Recent completions (%d) ===\n", len(completions))
 	if len(completions) == 0 {
-		fmt.Fprintln(w, "  (none)")
+		frame.println("  (none)")
 	}
 	for _, ev := range completions {
 		evAge := uuidv7Age(ev.EventID, now)
@@ -132,17 +142,17 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) {
 			runID = runID[:8]
 		}
 		if runID != "" {
-			fmt.Fprintf(w, "  %-16s  run=%-8s  %s ago\n", ev.Type, runID, evAge)
+			frame.printf("  %-16s  run=%-8s  %s ago\n", ev.Type, runID, evAge)
 		} else {
-			fmt.Fprintf(w, "  %-16s  %s ago\n", ev.Type, evAge)
+			frame.printf("  %-16s  %s ago\n", ev.Type, evAge)
 		}
 	}
-	fmt.Fprintln(w)
+	frame.println()
 
 	// Open notes ──────────────────────────────────────────────────────────────
-	fmt.Fprintf(w, "=== Open notes (%d) ===\n", len(d.OpenNotes))
+	frame.printf("=== Open notes (%d) ===\n", len(d.OpenNotes))
 	if len(d.OpenNotes) == 0 {
-		fmt.Fprintln(w, "  (none)")
+		frame.println("  (none)")
 	}
 	for _, n := range d.OpenNotes {
 		noteAge := formatDuration(now.Sub(n.Ts))
@@ -150,20 +160,60 @@ func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) {
 		if len(text) > 60 {
 			text = text[:57] + "..."
 		}
-		fmt.Fprintf(w, "  [%-10s]  %s  (%s ago)\n", n.Kind, text, noteAge)
+		frame.printf("  [%-10s]  %s  (%s ago)\n", n.Kind, text, noteAge)
 	}
 	if d.Truncated != nil && d.Truncated.OpenNotesOmitted > 0 {
-		fmt.Fprintf(w, "  [+%d more omitted]\n", d.Truncated.OpenNotesOmitted)
+		frame.printf("  [+%d more omitted]\n", d.Truncated.OpenNotesOmitted)
 	}
-	fmt.Fprintln(w)
+	frame.println()
 
 	// Non-fatal collection errors ─────────────────────────────────────────────
 	if len(d.Errors) > 0 {
-		fmt.Fprintln(w, "=== Collection errors ===")
+		frame.println("=== Collection errors ===")
 		for _, e := range d.Errors {
-			fmt.Fprintf(w, "  WARN: %s\n", e)
+			frame.printf("  WARN: %s\n", e)
 		}
 	}
+
+	return frame.writeTo(w)
+}
+
+// watchFrame accumulates a complete screen refresh and retains the first
+// formatting failure so it can be propagated to the caller.
+type watchFrame struct {
+	strings.Builder
+	err error
+}
+
+func (f *watchFrame) print(args ...any) {
+	if f.err != nil {
+		return
+	}
+	_, f.err = fmt.Fprint(&f.Builder, args...)
+}
+
+func (f *watchFrame) println(args ...any) {
+	if f.err != nil {
+		return
+	}
+	_, f.err = fmt.Fprintln(&f.Builder, args...)
+}
+
+func (f *watchFrame) printf(format string, args ...any) {
+	if f.err != nil {
+		return
+	}
+	_, f.err = fmt.Fprintf(&f.Builder, format, args...)
+}
+
+func (f *watchFrame) writeTo(w io.Writer) error {
+	if f.err != nil {
+		return fmt.Errorf("format watch frame: %w", f.err)
+	}
+	if _, err := io.WriteString(w, f.String()); err != nil {
+		return fmt.Errorf("write watch frame: %w", err)
+	}
+	return nil
 }
 
 // filterEventsByType returns events whose Type is one of the supplied types.

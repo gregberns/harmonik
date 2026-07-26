@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -83,8 +84,7 @@ func BootstrapFixture(ctx context.Context, fixtureRoot, scenarioName string, twi
 	// harness pre-creates the directory so the daemon can open the file
 	// without needing to create its parent per SH-014.
 	evLogDir := EventLogDir(projectRoot)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(evLogDir, 0o755); err != nil {
+	if err := os.MkdirAll(evLogDir, core.HarmonikDirMode); err != nil {
 		return nil, fmt.Errorf("%w: sub-step (b) create event-log dir %q: %w",
 			errFixtureSetupFailed, evLogDir, err)
 	}

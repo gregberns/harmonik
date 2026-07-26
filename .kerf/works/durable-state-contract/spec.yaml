@@ -1,0 +1,30 @@
+codename: durable-state-contract
+title: Shared durable-state write and corruption contract
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: decompose
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-25T05:46:07Z
+updated: 2026-07-25T05:46:33Z
+sessions:
+    - id: null
+      started: 2026-07-25T05:46:07Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

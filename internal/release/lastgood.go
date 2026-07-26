@@ -18,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // LastGoodStatePath returns the per-project state file path for the last-good
@@ -55,7 +57,7 @@ func ReadLastGoodBinary(statePath string) (string, error) {
 // WriteLastGoodBinary writes binPath to statePath atomically (write + rename).
 func WriteLastGoodBinary(statePath, binPath string) error {
 	dir := filepath.Dir(statePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: matches .harmonik dir conventions
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("release: mkdir last-good dir %s: %w", dir, err)
 	}
 	tmp := statePath + ".tmp"
@@ -63,8 +65,10 @@ func WriteLastGoodBinary(statePath, binPath string) error {
 		return fmt.Errorf("release: write last-good state: %w", err)
 	}
 	if err := os.Rename(tmp, statePath); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("release: rename last-good state: %w", err)
+		return errors.Join(
+			fmt.Errorf("release: rename last-good state: %w", err),
+			removeTempFile(tmp),
+		)
 	}
 	return nil
 }
@@ -108,40 +112,39 @@ func copyBinary(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("open src %s: %w", src, err)
 	}
-	defer in.Close()
-
 	st, err := in.Stat()
 	if err != nil {
-		return fmt.Errorf("stat src %s: %w", src, err)
+		return errors.Join(fmt.Errorf("stat src %s: %w", src, err), in.Close())
 	}
 
 	tmp := dst + ".tmp"
 	//nolint:gosec // G306: mode comes from source file stat
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, st.Mode())
 	if err != nil {
-		return fmt.Errorf("create dst tmp %s: %w", tmp, err)
+		return errors.Join(fmt.Errorf("create dst tmp %s: %w", tmp, err), in.Close())
 	}
-	success := false
-	defer func() {
-		_ = out.Close()
-		if !success {
-			_ = os.Remove(tmp)
-		}
-	}()
-
 	if _, err := io.Copy(out, in); err != nil {
-		return fmt.Errorf("copy body: %w", err)
+		return errors.Join(fmt.Errorf("copy body: %w", err), out.Close(), in.Close(), removeTempFile(tmp))
 	}
 	if err := out.Sync(); err != nil {
-		return fmt.Errorf("sync dst: %w", err)
+		return errors.Join(fmt.Errorf("sync dst: %w", err), out.Close(), in.Close(), removeTempFile(tmp))
 	}
 	if err := out.Close(); err != nil {
-		return fmt.Errorf("close dst tmp: %w", err)
+		return errors.Join(fmt.Errorf("close dst tmp: %w", err), in.Close(), removeTempFile(tmp))
 	}
-	success = true
+	if err := in.Close(); err != nil {
+		return errors.Join(fmt.Errorf("close src %s: %w", src, err), removeTempFile(tmp))
+	}
 
 	if err := os.Rename(tmp, dst); err != nil {
-		return fmt.Errorf("rename %s → %s: %w", tmp, dst, err)
+		return errors.Join(fmt.Errorf("rename %s → %s: %w", tmp, dst, err), removeTempFile(tmp))
+	}
+	return nil
+}
+
+func removeTempFile(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove temp file %s: %w", path, err)
 	}
 	return nil
 }

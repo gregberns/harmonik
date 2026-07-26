@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 )
 
 // TestBuildCodexRoutedLaunchSpec_Remote_RoutesAgentTaskThroughRunner asserts
@@ -32,19 +34,19 @@ func TestBuildCodexRoutedLaunchSpec_Remote_RoutesAgentTaskThroughRunner(t *testi
 	const workerWt = "/Users/gb/harmonik-worker/repo/.harmonik/worktrees/run-r36v"
 	rr := newNoOpRecorderZ8ek()
 
-	rc := claudeRunCtx{
-		runID:           z8ekRunID(t),
-		beadID:          "hk-r36v",
-		workspacePath:   workerWt,
-		phase:           "implementer-initial",
-		iterationCount:  1,
-		beadTitle:       "remote codex parity",
-		beadDescription: "Verify agent-task.md lands on the worker, not box A.",
-		model:           "o4-mini",
-		runner:          rr,
+	rc := shared.LaunchCtx{
+		RunID:           z8ekRunID(t),
+		BeadID:          "hk-r36v",
+		WorkspacePath:   workerWt,
+		Phase:           "implementer-initial",
+		IterationCount:  1,
+		BeadTitle:       "remote codex parity",
+		BeadDescription: "Verify agent-task.md lands on the worker, not box A.",
+		Model:           "o4-mini",
+		Runner:          rr,
 	}
 
-	h := NewCodexHarness("", "")
+	h := codex.NewHarness("", "")
 	if _, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypeCodex); err != nil {
 		t.Fatalf("buildCodexRoutedLaunchSpec (remote): %v", err)
 	}
@@ -87,19 +89,19 @@ func TestBuildCodexRoutedLaunchSpec_Local_UsesLocalFS(t *testing.T) {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
 
-	rc := claudeRunCtx{
-		runID:           z8ekRunID(t),
-		beadID:          "hk-r36v-local",
-		workspacePath:   wt,
-		phase:           "implementer-initial",
-		iterationCount:  1,
-		beadTitle:       "local codex parity",
-		beadDescription: "local body",
-		model:           "o4-mini",
-		runner:          nil, // LOCAL run
+	rc := shared.LaunchCtx{
+		RunID:           z8ekRunID(t),
+		BeadID:          "hk-r36v-local",
+		WorkspacePath:   wt,
+		Phase:           "implementer-initial",
+		IterationCount:  1,
+		BeadTitle:       "local codex parity",
+		BeadDescription: "local body",
+		Model:           "o4-mini",
+		Runner:          nil, // LOCAL run
 	}
 
-	h := NewCodexHarness("", "")
+	h := codex.NewHarness("", "")
 	if _, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypeCodex); err != nil {
 		t.Fatalf("buildCodexRoutedLaunchSpec (local): %v", err)
 	}

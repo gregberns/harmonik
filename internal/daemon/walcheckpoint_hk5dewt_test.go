@@ -44,7 +44,6 @@ func walCkptMakeWAL(t *testing.T, sizeBytes int64) (projectDir, walPath string) 
 // walCkptStatSize returns the current size of path, failing the test on error.
 func walCkptStatSize(t *testing.T, path string) int64 {
 	t.Helper()
-	//nolint:gosec // G304: path constructed from test helper; not user input
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("walCkptStatSize: stat %s: %v", path, err)
@@ -133,7 +132,6 @@ func TestWALCheckpointPreflight_TruncatesLargeWAL(t *testing.T) {
 	}
 
 	// After PRAGMA wal_checkpoint(TRUNCATE) the WAL must be 0 bytes (or absent).
-	//nolint:gosec // G304: walPath constructed from t.TempDir(); not user input
 	postInfo, statErr := os.Stat(walPath)
 	if statErr != nil && !os.IsNotExist(statErr) {
 		t.Fatalf("stat WAL after checkpoint: %v", statErr)
@@ -151,7 +149,6 @@ func TestWALCheckpointPreflight_TruncatesLargeWAL(t *testing.T) {
 // the sqlite3 binary at sqlite3Path.
 func walCkptInitDB(t *testing.T, sqlite3Path, dbPath string) {
 	t.Helper()
-	//nolint:gosec // G204: sqlite3Path resolved via exec.LookPath; dbPath from t.TempDir
 	cmd := exec.CommandContext(t.Context(), sqlite3Path, dbPath,
 		"PRAGMA journal_mode=WAL; CREATE TABLE t (id INTEGER PRIMARY KEY); INSERT INTO t VALUES (1);",
 	)

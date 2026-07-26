@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 const (
@@ -97,8 +99,7 @@ func Write(projectDir string, r Record) error {
 	}
 
 	dir := crewDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("%w: mkdir crew: %w", ErrWriteFailed, err)
 	}
 
@@ -112,13 +113,13 @@ func Write(projectDir string, r Record) error {
 	}
 
 	if _, err := f.Write(data); err != nil {
-		_ = f.Close()          //nolint:errcheck // cleanup; primary error returned below
+		err = errors.Join(err, f.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on write failure
 		return fmt.Errorf("%w: write temp %q: %w", ErrWriteFailed, tmpPath, err)
 	}
 
 	if err := f.Sync(); err != nil {
-		_ = f.Close()          //nolint:errcheck // cleanup; primary error returned below
+		err = errors.Join(err, f.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on sync failure
 		return fmt.Errorf("%w: fsync temp %q: %w", ErrWriteFailed, tmpPath, err)
 	}
@@ -138,7 +139,7 @@ func Write(projectDir string, r Record) error {
 		return fmt.Errorf("%w: open parent dir %q: %w", ErrWriteFailed, dir, err)
 	}
 	if err := d.Sync(); err != nil {
-		_ = d.Close() //nolint:errcheck // cleanup; primary error returned below
+		err = errors.Join(err, d.Close())
 		return fmt.Errorf("%w: fsync parent dir %q: %w", ErrWriteFailed, dir, err)
 	}
 	if err := d.Close(); err != nil {

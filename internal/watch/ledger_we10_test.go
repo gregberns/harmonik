@@ -76,11 +76,11 @@ func TestWatchEscalation_OpsMonitorReceiptRefinesDigestEventDriven(t *testing.T)
 
 	harmonikDir, _ := escalationFixtureDir(t)
 	opsDir := filepath.Join(harmonikDir, "ops-monitor")
-	if err := os.MkdirAll(opsDir, 0o755); err != nil {
+	if err := os.MkdirAll(opsDir, 0o750); err != nil {
 		t.Fatalf("mkdir ops-monitor: %v", err)
 	}
 	opsReport := []byte(`{"ts":"2026-06-25T00:00:00Z","checks":{"watch":{"status":"flagged"}}}`)
-	if err := os.WriteFile(filepath.Join(opsDir, "latest.json"), opsReport, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(opsDir, "latest.json"), opsReport, 0o600); err != nil {
 		t.Fatalf("write ops-monitor latest: %v", err)
 	}
 

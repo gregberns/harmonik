@@ -74,7 +74,7 @@ import (
 //	→ <workerDir>/.harmonik/review.json
 //
 // Being a distinct (non-LocalRunner) type it is classified as non-local by
-// runnerIsLocalFS, so Via functions route through it instead of falling back to
+// gitprobe.RunnerIsLocalFS, so Via functions route through it instead of falling back to
 // os.ReadFile/os.Stat on box A.
 type hk52xnrPathRemapRunner struct {
 	worktreesRoot string // <projectDir>/.harmonik/worktrees
@@ -121,7 +121,6 @@ func hk52xnrFixtureProjectSetup(t *testing.T) string {
 	}
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -153,7 +152,6 @@ func hk52xnrFixtureImplWorktree(t *testing.T, projectDir string) (wtPath, parent
 
 	wtDir := t.TempDir()
 	wtPath = filepath.Join(wtDir, "wt")
-	//nolint:gosec // G204: git args are test-internal
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "--detach", wtPath, parentSHA)
 	addCmd.Dir = projectDir
 	if addOut, addErr := addCmd.CombinedOutput(); addErr != nil {
@@ -164,7 +162,6 @@ func hk52xnrFixtureImplWorktree(t *testing.T, projectDir string) (wtPath, parent
 		t.Fatalf("hk52xnrFixtureImplWorktree: mkdir .harmonik: %v", err)
 	}
 	t.Cleanup(func() {
-		//nolint:gosec // G204: git args are test-internal
 		rmCmd := exec.Command("git", "worktree", "remove", "--force", "--force", wtPath)
 		rmCmd.Dir = projectDir
 		_ = rmCmd.Run()

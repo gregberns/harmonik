@@ -134,14 +134,49 @@ type Options struct {
 	// apply-patch prompts are declined and the crew's writes and commits never
 	// land. The composition root sets Sandbox="danger-full-access" +
 	// ApprovalPolicy="never" so codex runs non-interactively and its work lands.
-	// That posture is safe ONLY inside a real isolation boundary — the daemon's
-	// fail-closed guard (cmd/harmonik/substrate_select.go requireBoundary +
-	// workloop codexRequireIsolationBoundary) refuses to launch a codex crew
-	// with no enabled ssh worker bound. Empty (the zero value) OMITS the field
+	// That posture was originally described as safe ONLY inside a real isolation
+	// boundary, enforced by a daemon-side fail-closed guard. NO SUCH ENFORCEMENT
+	// EXISTS (hk-5vapm): this comment named a workloop codexRequireIsolationBoundary
+	// that is not in the tree — the only occurrences were comments describing it.
+	// hk-tckw3.1 Step 1 dropped that fence on purpose (D4 removed the ssh worker
+	// that was its only boundary supplier), and codex containment comes from
+	// harmonik's srt sandbox (hk-scaj0) instead.
+	//
+	// The only surviving refusal is the RUNNER-level one in
+	// cmd/harmonik/substrate_select.go (codexWorkerRoutingRunner.requireBoundary).
+	// Whether it should be armed is an OPEN OPERATOR DECISION recorded at the
+	// 2026-07-23 origin merge — hk-5vapm disarmed it, local commit 7273e95dc
+	// re-armed it, and the merge changed neither. Read the note on selectSubstrate
+	// before drawing any conclusion about what is or is not refused here.
+	// Empty (the zero value) OMITS the field
 	// on the wire, leaving codex's own default posture — so a driver built
 	// WITHOUT the composition root never silently runs danger-full-access.
 	Sandbox        string
 	ApprovalPolicy string
+
+	// WritableRoots, when non-nil, is called at every thread/start and
+	// thread/resume with the session's worktree cwd (SubstrateSpawn.Cwd); it
+	// returns the absolute paths stamped as that thread's `runtimeWorkspaceRoots`
+	// — the codex workspace-write writable roots ("Replace the thread's runtime
+	// workspace roots. Paths must be absolute.", app-server v2 schema).
+	//
+	// hk-daegv: codex app-server 0.142.0 under ChatGPT auth does NOT honor the
+	// danger-full-access sandbox posture (that is gated behind a
+	// --dangerously-bypass-approvals-and-sandbox flag app-server does not expose),
+	// so it runs the effective workspace-write seatbelt whose only writable root is
+	// the worktree cwd. A linked worktree's git COMMON dir (<repo>/.git, holding
+	// objects/refs and worktrees/<id>/) lives OUTSIDE that root, so codex's OWN
+	// `git commit` fails EPERM and only the daemon fallback commits. Stamping the
+	// git common dir here makes codex's own commit land.
+	//
+	// The hook keeps the driver BLIND to harmonik's worktree layout (RS-017): the
+	// composition root derives the roots from the cwd and injects them, exactly
+	// like Runner / PreSpawn. Because runtimeWorkspaceRoots REPLACES the thread's
+	// roots, the hook MUST also include the worktree cwd itself. A nil hook (or an
+	// empty result, or an empty spawn cwd) omits runtimeWorkspaceRoots entirely,
+	// leaving codex's default single-root behavior untouched — and an older codex
+	// that does not know the field ignores it, so this degrades gracefully.
+	WritableRoots func(worktreeCwd string) []string
 }
 
 // codexSubstrate is the handler.Substrate implementation.
@@ -218,7 +253,12 @@ func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, r
 	// exec.Cmd.Dir = in.Cwd path (byte-identical to before).
 	var cmd *exec.Cmd
 	if rc, ok := c.opts.Runner.(RemoteCwdRunner); ok && in.Cwd != "" {
-		cmd = rc.CommandInDir(procCtx, in.Cwd, argv[0], argv[1:]...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
+		// hk-okqyx: ssh does NOT forward the local process env (cmd.Env below),
+		// so in.Env would never reach the remote codex. Deliver it via an
+		// `env KEY=VAL … <binary> <args>` argv prefix the remote login-shell
+		// `exec`s in place. cmd.Env below stays load-bearing for the LOCAL branch.
+		name, remoteArgv := handler.RemoteExecArgv(in.Env, argv[0], argv[1:])
+		cmd = rc.CommandInDir(procCtx, in.Cwd, name, remoteArgv...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
 	} else {
 		cmd = c.opts.Runner.Command(procCtx, argv[0], argv[1:]...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
 		cmd.Dir = in.Cwd
@@ -251,6 +291,12 @@ func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, r
 	// the readLoop's handshake branch (handleResponse pendingInitialize) reads a
 	// fully-published value with no race against the reactor goroutines.
 	s.resumeThreadID = resumeThreadID
+	// spawnCwd is the worktree the thread/start|resume writable-roots hook keys off
+	// (hk-daegv). Captured from in.Cwd — NOT cmd.Dir — because the remote (ssh)
+	// spawn path leaves cmd.Dir UNSET (the cwd is applied on the worker via `cd`).
+	// Immutable for the session's life; set before start() so the readLoop handshake
+	// branch reads a fully-published value with no goroutine race.
+	s.spawnCwd = in.Cwd
 	s.start(ctx)
 	return s, nil
 }

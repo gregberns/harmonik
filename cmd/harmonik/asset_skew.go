@@ -40,7 +40,7 @@ func init() {
 			BuildManifest,
 			func() (Lock, error) { return ReadLock(projectDir) },
 			func(m Manifest) (map[string]string, error) {
-				return buildDiskHashes(projectDir, m, io.Discard)
+				return buildDiskHashes(projectDir, m)
 			},
 		)
 		if err != nil {
@@ -59,9 +59,7 @@ func init() {
 
 	// AutoApplyGateHook wraps daemonDispatchGate so the supervisecmd package can
 	// check for an active dispatch without importing package main.
-	supervisecmd.AutoApplyGateHook = func(projectDir string) (bool, string, error) {
-		return daemonDispatchGate(projectDir)
-	}
+	supervisecmd.AutoApplyGateHook = daemonDispatchGate
 
 	// AutoApplyHook applies only the safe (Managed + FastForward) reconcile items,
 	// re-stamps the lock, and returns the count of files written.
@@ -74,7 +72,7 @@ func init() {
 		if err != nil {
 			return 0, fmt.Errorf("auto-apply: read lock: %w", err)
 		}
-		disk, err := buildDiskHashes(projectDir, m, io.Discard)
+		disk, err := buildDiskHashes(projectDir, m)
 		if err != nil {
 			return 0, fmt.Errorf("auto-apply: hash project files: %w", err)
 		}
@@ -132,7 +130,7 @@ func PrintSkewHintIfStale(projectDir string, stderr io.Writer) {
 		BuildManifest,
 		func() (Lock, error) { return ReadLock(projectDir) },
 		func(m Manifest) (map[string]string, error) {
-			return buildDiskHashes(projectDir, m, io.Discard)
+			return buildDiskHashes(projectDir, m)
 		},
 	)
 	if err != nil || !res.Skewed || res.ChangedCount == 0 {
@@ -141,20 +139,20 @@ func PrintSkewHintIfStale(projectDir string, stderr io.Writer) {
 
 	switch {
 	case res.NeverSynced:
-		fmt.Fprintf(stderr,
+		fmt.Fprintf(stderr, //nolint:errcheck // best-effort operator hint must never block start/init when its writer is unavailable
 			"harmonik: WARNING  %d on-disk instruction file(s) have not been synced to this binary version\n",
 			res.ChangedCount)
 	case res.ConflictCount > 0:
-		fmt.Fprintf(stderr,
+		fmt.Fprintf(stderr, //nolint:errcheck // best-effort operator hint must never block start/init when its writer is unavailable
 			"harmonik: WARNING  %d on-disk instruction file(s) are stale vs the running binary (%d conflict(s) require manual review)\n",
 			res.ChangedCount, res.ConflictCount)
 	default:
-		fmt.Fprintf(stderr,
+		fmt.Fprintf(stderr, //nolint:errcheck // best-effort operator hint must never block start/init when its writer is unavailable
 			"harmonik: WARNING  %d on-disk instruction file(s) are stale vs the running binary\n",
 			res.ChangedCount)
 	}
-	fmt.Fprintln(stderr, "harmonik:   → run: harmonik sync-assets --dry-run   (review what would change)")
-	fmt.Fprintln(stderr, "harmonik:          harmonik sync-assets --apply      (apply updates)")
+	fmt.Fprintln(stderr, "harmonik:   → run: harmonik sync-assets --dry-run   (review what would change)") //nolint:errcheck // best-effort operator hint
+	fmt.Fprintln(stderr, "harmonik:          harmonik sync-assets --apply      (apply updates)")           //nolint:errcheck // best-effort operator hint
 }
 
 // Digest returns a single sha256 (hex) over the lock's sorted "path:sha\n" lines,

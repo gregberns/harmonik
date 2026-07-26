@@ -79,7 +79,6 @@ func TestSH015aWorkspaceSnapshotPathNonEmpty(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.scenarioName, func(t *testing.T) {
 			t.Parallel()
 			got := WorkspaceSnapshotPath(tc.scenarioName)

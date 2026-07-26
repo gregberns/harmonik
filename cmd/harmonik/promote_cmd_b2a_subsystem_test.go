@@ -71,7 +71,7 @@ func TestB2aNonFFRetrySucceeds(t *testing.T) {
 	defer cleanup()
 
 	// Locate the bare remote path so we can install a hook.
-	remoteRaw, remoteErr := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output() //nolint:gosec
+	remoteRaw, remoteErr := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output() //nolint:gosec // G204: test invokes git against its temporary repository fixture
 	if remoteErr != nil {
 		t.Fatalf("git remote get-url: %v", remoteErr)
 	}
@@ -99,6 +99,7 @@ func TestB2aNonFFRetrySucceeds(t *testing.T) {
 	if mkErr := os.MkdirAll(hooksDir, 0o750); mkErr != nil {
 		t.Fatalf("mkdir hooks: %v", mkErr)
 	}
+	//nolint:gosec // G306: executable mode is required for the temporary Git update hook
 	if writeErr := os.WriteFile(filepath.Join(hooksDir, "update"), []byte(hookScript), 0o750); writeErr != nil {
 		t.Fatalf("write update hook: %v", writeErr)
 	}
@@ -125,7 +126,7 @@ func TestB2aNonFFExhaustsRetries(t *testing.T) {
 	repoRoot, cleanup := setupPromoteRepo(t)
 	defer cleanup()
 
-	remoteRaw, remoteErr := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output() //nolint:gosec
+	remoteRaw, remoteErr := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output() //nolint:gosec // G204: test invokes git against its temporary repository fixture
 	if remoteErr != nil {
 		t.Fatalf("git remote get-url: %v", remoteErr)
 	}
@@ -147,6 +148,7 @@ func TestB2aNonFFExhaustsRetries(t *testing.T) {
 	if mkErr := os.MkdirAll(hooksDir, 0o750); mkErr != nil {
 		t.Fatalf("mkdir hooks: %v", mkErr)
 	}
+	//nolint:gosec // G306: executable mode is required for the temporary Git update hook
 	if writeErr := os.WriteFile(filepath.Join(hooksDir, "update"), []byte(hookScript), 0o750); writeErr != nil {
 		t.Fatalf("write update hook: %v", writeErr)
 	}

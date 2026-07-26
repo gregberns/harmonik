@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -103,7 +104,7 @@ func TestKeeperProbe_LiveWithinGrace(t *testing.T) {
 
 	h := &crewHandlerImpl{
 		projectDir: t.TempDir(),
-		keeperCfg:  KeeperConfig{FlockAcquireGrace: 5 * time.Second},
+		keeperCfg:  projectconfig.KeeperConfig{FlockAcquireGrace: 5 * time.Second},
 		eventBus:   evBus,
 		commsBus:   comms,
 		// Keeper is live immediately.
@@ -137,7 +138,7 @@ func TestKeeperProbe_WatcherDeadAfterGrace(t *testing.T) {
 
 	h := &crewHandlerImpl{
 		projectDir: t.TempDir(),
-		keeperCfg:  KeeperConfig{FlockAcquireGrace: grace},
+		keeperCfg:  projectconfig.KeeperConfig{FlockAcquireGrace: grace},
 		eventBus:   evBus,
 		commsBus:   comms,
 		// Watcher never comes up.
@@ -187,7 +188,7 @@ func TestKeeperProbe_GraceFromConfig(t *testing.T) {
 	const configuredGrace = 50 * time.Millisecond
 	h := &crewHandlerImpl{
 		projectDir:   t.TempDir(),
-		keeperCfg:    KeeperConfig{FlockAcquireGrace: configuredGrace},
+		keeperCfg:    projectconfig.KeeperConfig{FlockAcquireGrace: configuredGrace},
 		eventBus:     evBus,
 		liveKeeperFn: func(_, _ string) bool { return false },
 	}
@@ -216,7 +217,7 @@ func TestKeeperProbe_NilBusesDoNotPanic(t *testing.T) {
 	const grace = 40 * time.Millisecond
 	h := &crewHandlerImpl{
 		projectDir:   t.TempDir(),
-		keeperCfg:    KeeperConfig{FlockAcquireGrace: grace},
+		keeperCfg:    projectconfig.KeeperConfig{FlockAcquireGrace: grace},
 		eventBus:     nil, // deliberately nil
 		commsBus:     nil, // deliberately nil
 		liveKeeperFn: func(_, _ string) bool { return false },
@@ -236,7 +237,7 @@ func TestKeeperProbe_LiveOnSecondPoll(t *testing.T) {
 	liveAfter := 2 // return live on the 2nd call
 	h := &crewHandlerImpl{
 		projectDir: t.TempDir(),
-		keeperCfg:  KeeperConfig{FlockAcquireGrace: 10 * time.Second},
+		keeperCfg:  projectconfig.KeeperConfig{FlockAcquireGrace: 10 * time.Second},
 		eventBus:   evBus,
 		liveKeeperFn: func(_, _ string) bool {
 			calls++

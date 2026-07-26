@@ -1,0 +1,97 @@
+{
+  "chunk": "RU-01b",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/daemon/workloop.go (4100-end)",
+    "internal/daemon/runbridge.go",
+    "internal/daemon/dispatchsegment.go",
+    "internal/daemon/stategather.go",
+    "internal/daemon/runshell.go",
+    "internal/daemon/eagerfill_em063.go"
+  ],
+  "status": "reviewed",
+  "status_note": "workloop.go read selectively around the shell->machine->close/reopen mapping (5100-5301, 6127-6320) plus the full smaller files; the 4000-line workloop body was not read line-by-line.",
+  "findings": [
+    {
+      "file": "internal/daemon/runshell.go",
+      "line": 342,
+      "severity": "high",
+      "category": "concurrency",
+      "title": "drive()/fireOnCancel busy-spin when ctx is cancelled with no armed timer",
+      "detail": "In driveOnce (269-299) the select fires on ctx.Done() and calls fireOnCancel. fireOnCancel (342-356) returns immediately as a no-op when sh.timers is empty ('no phase edge to take'). But the outer drive() loop (242-252) only exits on !m.InFlight(); it does not exit on ctx cancellation. So if the Run machine is still InFlight, has no timer armed, and the parent ctx is cancelled while the event tap is NOT closed, driveOnce is called repeatedly: ctx.Done() is permanently ready, fireOnCancel does nothing, the machine never advances, and drive() hot-loops burning a CPU core indefinitely. The comment claims 'the outer InFlight loop exits when the tap closes' — but nothing closes the tap on ctx cancel, and fireOnCancel cannot force a terminal. Latent today only because the Run-machine drive path is exercised solely by tests that pass context.Background() (never cancelled).",
+      "suggested_fix": "In drive()/driveOnce, when ctx.Done() fires and fireOnCancel finds no armed timer, feed an explicit abort/terminal edge (mirroring driveDispatchOnce's EvAborted) or return from drive() rather than re-selecting a permanently-ready ctx.Done()."
+    },
+    {
+      "file": "internal/daemon/runshell.go",
+      "line": 242,
+      "severity": "medium",
+      "category": "dead-code",
+      "title": "Run-machine drive loop (drive/driveOnce/fireOnCancel) is production-dead, only test-exercised",
+      "detail": "driveRun (433) is the only caller of drive() (242), and grep shows driveRun is invoked exclusively from runshell_test.go and dispatchsegment_test.go. Production single-mode drives the Run machine synchronously via runBridge.feed (runbridge.go 139-146), and dispatch uses RunDispatch/driveDispatchOnce. So drive/driveOnce/fireOnCancel exist only to satisfy tests. This is test-theater: the tests assert behavior of a code path the daemon never takes, and (per the finding above) they cannot even catch the ctx-cancel busy-spin because they never cancel. Either the production Run drive should go through this loop, or the loop + its tests should be deleted.",
+      "suggested_fix": "Decide the single owner: either route production single-mode Run through drive() (so tests are representative) or remove drive/driveOnce/fireOnCancel/driveRun and their tests."
+    },
+    {
+      "file": "internal/daemon/eagerfill_em063.go",
+      "line": 251,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "EM-063 Phase-2 pre-screen hardcodes origin/main, ignoring the configured target branch",
+      "detail": "beadLandedOnOriginMain runs `git log origin/main --grep ...` with a literal 'main'. Everywhere else the run's landing branch is deps.targetBranch / resolved mergeTarget (runbridge.go 274-278, and beadOnOriginMain at line 461 correctly uses origin/<targetBranch>). On any deployment whose integration branch is not 'main' (this repo is currently on phase1-session-restart-substrate, and branching.yaml supports per-bead targets), the Phase-2 'already landed' check queries a branch the work never lands on, so it never detects a landed bead and eager-refill re-appends already-completed beads for re-dispatch (duplicated work). Inconsistent with the sibling guard beadOnOriginMain that threads targetBranch.",
+      "suggested_fix": "Thread deps.targetBranch (or the per-bead resolved base branch) into beadLandedOnOriginMain instead of the literal origin/main."
+    },
+    {
+      "file": "internal/daemon/eagerfill_em063.go",
+      "line": 252,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "beadLandedOnOriginMain does substring --grep without --fixed-strings → prefix-collision false positive",
+      "detail": "The Phase-2 check greps `Refs: <id>` as a regex substring anywhere in a commit message. A bead whose ID is a prefix of another bead's ID (e.g. 'hk-93' vs a landed 'hk-931v') matches the longer bead's 'Refs:' trailer, so the shorter open bead is wrongly classified as already-landed and silently dropped from eager-refill (its stale_open_bead_detected event even points at the wrong commit). The sibling guard beadOnOriginMain (455-473) correctly uses --fixed-strings AND an exact-line comparison; this function uses neither, so the two 'has it landed?' checks disagree.",
+      "suggested_fix": "Use --fixed-strings and match the exact trailer line (as beadOnOriginMain does) rather than a bare substring --grep."
+    },
+    {
+      "file": "internal/daemon/runshell.go",
+      "line": 108,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "normalize() silently no-ops load-bearing effectors (closeBead/submitMerge), masking mis-wiring",
+      "detail": "normalize() defaults every unset hook to a no-op returning nil, so the execute switch can call arms unconditionally. That is fine for genuinely best-effort emit/kill hooks, but it also silently defaults the terminal-spine effectors closeBead and submitMerge to functions that return no follow-up event. If wireSpine were ever not called (or a future refactor forgets one arm), executeRunAction would append nil pending events, the machine would receive no EvCloseResult/EvMergeResult, and the run could either hang InFlight or mis-terminate — with zero error surfaced. A missing bead-close binding presenting as a clean run is exactly the 'fabricated done-status' failure class this subsystem is meant to prevent.",
+      "suggested_fix": "Split the effector table: keep no-op defaults for best-effort emit/kill hooks, but leave the terminal-spine ops (closeBead, submitMerge, runGate) nil and hard-fail (or panic in tests) if the switch reaches an unset load-bearing arm."
+    },
+    {
+      "file": "internal/daemon/runbridge.go",
+      "line": 349,
+      "severity": "low",
+      "category": "correctness",
+      "title": "CloseBrUnavailable maps to a success terminal without an actual bead close or bead_closed emission",
+      "detail": "When CloseBead returns brcli.BrUnavailable after a successful merge, closeHook returns EvCloseResult{CloseBrUnavailable}, which the machine treats as a transient success ('close-transient-merged'), so the run terminates success=true and run_completed is emitted — but the bead is NOT closed in beads and emitBeadClosedAndMaybeEpic is skipped (only reached on CloseClosed at 363). This is a genuine fabricated done-status window: the ledger still shows the bead open/in_progress, and no bead_closed/epic_completed fires, so any epic roll-up waiting on this bead stalls until an out-of-band reconcile closes it. Sanctioned by hk-hypbi (merge already landed), but the success/ledger divergence is real and undocumented at the emission site.",
+      "suggested_fix": "On CloseBrUnavailable, emit a durable marker (e.g. bead_close_deferred) so reconcile and epic roll-up have an explicit signal, rather than a success terminal with a silently-open bead."
+    },
+    {
+      "file": "internal/daemon/dispatchsegment.go",
+      "line": 196,
+      "severity": "low",
+      "category": "correctness",
+      "title": "resumeReadyProbe fabricates agent_ready on a fixed 2s timer regardless of actual REPL readiness",
+      "detail": "resumeReadyProbe emits a synthetic agent_ready after resumeReadyProbeDelay=2s (const, line 61) on the tmux resume path, which then unblocks the brief paste-inject. If the welcome splash / REPL takes longer than 2s to accept input (slow box, cold start), the brief is pasted before the REPL is ready, violating the hk-kunm4 'do not paste before the REPL accepts input' invariant the comment itself cites. The probe is not bounded by any positive readiness signal — it is a blind wall-clock guess. Documented as transitional (M2 agent-input driver), but the failure mode (dropped/garbled brief on a slow resume) is live today.",
+      "suggested_fix": "Gate the synthetic ready on a cheap positive probe (e.g. tmux capture-pane showing the prompt) instead of a fixed delay, or make the delay adaptive/retried."
+    },
+    {
+      "file": "internal/daemon/eagerfill_em063.go",
+      "line": 80,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "eagerRefillEval computes the slot deficit from an inFlight snapshot read outside the append lock (TOCTOU)",
+      "detail": "inFlight := runRegistry.Len() (80) and the deficit/target are computed under one LockForMutation/Done (86-91), then survivors are appended under a second, later LockForMutation (121). Between the deficit computation and the append, concurrent run completions/dispatches change the in-flight count, so under bursty concurrent completion the function can append more items than the true available-slot deficit. The QueueID equality guard (123) only protects against a queue swap, not against an over-count. Best-effort/idempotent by design, but it can transiently overfill the stream group beyond the worker cap.",
+      "suggested_fix": "Recompute the deficit under the same lock used for AppendItems, or clamp the append against a freshly-read inFlight inside the second critical section."
+    },
+    {
+      "file": "internal/daemon/dispatchsegment.go",
+      "line": 146,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "Blocking launch closure inside launchAgent is not interruptible by ctx cancellation",
+      "detail": "launchAgent calls r.g.launch(actx) synchronously from the shell's execute path (RunDispatch → feed → execute). While launch is in flight the RunDispatch drive loop is blocked in a non-select synchronous call, so a parent-ctx cancel cannot preempt it — driveDispatchOnce's EvAborted mapping only takes effect at the next select. If a handler.Launch hangs (tmux new-window wedge, SSH stall) without honoring actx, the run goroutine is stuck and shutdown-drain cannot proceed for it. The segment relies entirely on launch respecting its context.",
+      "suggested_fix": "Ensure every launch closure is context-bounded (hard timeout), or run launch in a goroutine and select on its completion vs ctx.Done() so a wedged launch cannot pin the drive loop."
+    }
+  ]
+}

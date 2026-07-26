@@ -115,8 +115,11 @@ type Config struct {
 	// Default: DefaultHighWeight (10) — at least one terminal-progress event.
 	HighThreshold int
 
-	// LowThreshold: movement scores strictly below this value are "low".
-	// Default: DefaultHighWeight (10) — any score < 10 counts as low.
+	// LowThreshold: retained for config compatibility, NOT consumed by Evaluate.
+	// The staircase has a single decision point (HighThreshold): any window at or
+	// above it is dormant, and every window below it — "low" or "moderate" — counts
+	// toward the sustained-low gate. The spec's config surface (flywheel-motion.md
+	// §7) defines no low-threshold knob, so nothing wires this field.
 	LowThreshold int
 
 	// Weights overrides the per-event-type weight table. Nil uses DefaultWeights.
@@ -161,13 +164,6 @@ func (c Config) highThreshold() int {
 		return DefaultHighWeight
 	}
 	return c.HighThreshold
-}
-
-func (c Config) lowThreshold() int {
-	if c.LowThreshold <= 0 {
-		return DefaultHighWeight
-	}
-	return c.LowThreshold
 }
 
 func (c Config) weights() map[core.EventType]int {
@@ -354,6 +350,12 @@ func computeWindowMovement(
 				sample.MovementScore += w
 				sample.TerminalEventCount++
 			}
+
+		default:
+			// Every other event type is deliberately not movement. The governor
+			// scores TERMINAL progress only (flywheel-motion §6.1), so activity
+			// events — heartbeats, dispatches, state transitions — must not
+			// contribute to MovementScore no matter how many of them appear.
 		}
 	}
 
@@ -502,11 +504,10 @@ func Evaluate(
 
 	// --- Discrete inverse staircase (spec §1.2) ---
 	// A movement score >= highThreshold means at least one terminal-progress event
-	// in the window: the governor is dormant. Score < lowThreshold is "low".
+	// in the window: the governor is dormant. Every score below it counts toward
+	// the sustained-low gate.
 	// The staircase is auditable by reading sample.MovementScore directly.
 	isHighWindow := sample.MovementScore >= cfg.highThreshold()
-	isLowWindow := sample.MovementScore < cfg.lowThreshold()
-
 	if isHighWindow {
 		state.ConsecutiveLowWindows = 0
 		sig.Level = ActivationDormant
@@ -514,12 +515,8 @@ func Evaluate(
 		return sig
 	}
 
-	if isLowWindow {
-		state.ConsecutiveLowWindows++
-	} else {
-		// Moderate — in between thresholds. Count as low for the sustained gate.
-		state.ConsecutiveLowWindows++
-	}
+	// Low and moderate windows both count toward the sustained gate.
+	state.ConsecutiveLowWindows++
 	sig.ConsecutiveLowWindows = state.ConsecutiveLowWindows
 
 	// Default to WATCHING; gates below can promote to ACTIVE.

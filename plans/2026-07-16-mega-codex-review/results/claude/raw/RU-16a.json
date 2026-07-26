@@ -1,0 +1,127 @@
+{
+  "chunk": "RU-16a",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "cmd/harmonik/comms.go",
+    "cmd/harmonik/main.go",
+    "cmd/harmonik/run.go",
+    "cmd/harmonik/run_via_daemon.go",
+    "cmd/harmonik/harness.go",
+    "cmd/harmonik/subscribe.go",
+    "cmd/harmonik/handler.go",
+    "cmd/harmonik/graph.go",
+    "cmd/harmonik/state_cmd.go",
+    "cmd/harmonik/substrate_select.go",
+    "cmd/harmonik/smoke.go",
+    "cmd/harmonik/decisions.go",
+    "cmd/harmonik/decisions_k4.go",
+    "cmd/harmonik/confirm_verdict.go",
+    "cmd/harmonik/veto_verdict.go",
+    "cmd/harmonik/write_review_verdict_cmd.go",
+    "cmd/harmonik/greenlight_cmd.go",
+    "cmd/harmonik/goalkeeper_cmd.go"
+  ],
+  "status": "reviewed",
+  "status_note": "All 18 scoped files read in full. main.go read in full (paged). Daemon-side socket-router registration cross-checked in internal/daemon/socketdispatch.go and internal/daemon/router/router.go to verify the verdict-override control surface is (not) wired.",
+  "findings": [
+    {
+      "file": "cmd/harmonik/confirm_verdict.go",
+      "line": 131,
+      "severity": "critical",
+      "category": "correctness",
+      "title": "confirm-verdict / veto-verdict send socket ops that no daemon handler is registered for — the entire RC-027 operator verdict control surface is dead",
+      "detail": "confirm_verdict.go sends op=\"confirm\" (line 131) and veto_verdict.go sends op=\"veto_verdict\" (line 163) over daemon.sock via sendVerdictOverrideRequest. But the daemon's socket router (internal/daemon/socketdispatch.go buildSocketRouter, lines 362-386) registers NONE of \"confirm\", \"veto\", \"confirm_verdict\", or \"veto_verdict\". An unregistered op returns Result{Unknown:true} (internal/daemon/router/router.go:86-89), which the daemon turns into a \"daemon: unknown op\" error with error_code 0. A grep of all of internal/ finds no handler for these ops or for the promote_to field. Failure scenario: an operator runs 'harmonik confirm-verdict <run>' or 'harmonik veto-verdict <run> --promote-to escalate-to-human' against a live daemon that is genuinely blocked on a confirm_required verdict; the CLI prints 'daemon rejected request (code 0): daemon: unknown op' and returns exit 1, and the paused reconciliation verdict can NEVER be confirmed or vetoed through this surface. The documented exit codes 0/16 are unreachable. Both commands are shipped, documented, and routed from main.go (lines 338-358) but are non-functional end to end.",
+      "suggested_fix": "Either register the verdict-override op(s) in buildSocketRouter and implement the daemon handler that decodes OperatorVerdictOverrideRequest (internal/core/verdictoverride_rc027.go already defines the types), or remove/quarantine the confirm-verdict/veto-verdict commands until the daemon side lands. Also fix the op-string mismatch: confirm sends \"confirm\" while veto sends \"veto_verdict\" (and the sendVerdictOverrideRequest doc comment claims the op is \"confirm_verdict\") — pick one consistent contract that matches the daemon."
+    },
+    {
+      "file": "cmd/harmonik/confirm_verdict.go",
+      "line": 147,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "sendVerdictOverrideRequest doc comment and error-message prefix are wrong for the veto path",
+      "detail": "sendVerdictOverrideRequest is shared by both confirm and veto (veto_verdict.go:163 calls it with op=\"veto_verdict\"), but every stderr message it prints is hard-coded to the 'harmonik confirm-verdict:' prefix (lines 168, 176-181, 195, 202-210). When 'harmonik veto-verdict' hits a socket/dial/decode error the operator sees messages attributed to 'confirm-verdict', which is confusing during incident triage. The function's own doc comment (lines 138-146) also claims op is \"confirm_verdict\" or \"veto_verdict\" while the confirm caller passes \"confirm\".",
+      "suggested_fix": "Thread the command name (or a prefix string) into sendVerdictOverrideRequest so each error line is attributed to the actual invoking verb; reconcile the doc comment with the real op strings."
+    },
+    {
+      "file": "cmd/harmonik/smoke.go",
+      "line": 534,
+      "severity": "medium",
+      "category": "test-theater",
+      "title": "smoke Signal 3 greps for a 'Refs: <bead>' trailer the smoke task never instructs the agent to write",
+      "detail": "smokeCreateBead's task body (lines 239-249) instructs the implementer to commit with message 'smoke(<BEAD_ID>): 5-signal verification' — which contains no 'Refs:' trailer. But smokeCheckCommitOnBranch (line 534) asserts Signal 3 by running 'git log --grep \"Refs: <beadID>\" <branch>'. Nothing in the daemon merge path injects a 'Refs:' trailer (grep of internal/ finds no such injection). Failure scenario: the agent follows the task verbatim, produces a valid commit with no 'Refs:' line, and Signal 3 (commit-on-branch) reports FAIL even though the commit landed correctly — the smoke run returns exit 1/2 (false negative) on a healthy daemon. The self-check either passes only because agents happen to add Refs trailers by unrelated convention (fragile) or fails spuriously.",
+      "suggested_fix": "Make the smoke task body explicitly instruct the commit to include the exact 'Refs: <BEAD_ID>' trailer the assertion greps for, or change smokeCheckCommitOnBranch to match on the message the task actually dictates (e.g. the 'smoke(<BEAD_ID>)' subject)."
+    },
+    {
+      "file": "cmd/harmonik/smoke.go",
+      "line": 381,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "smokeWatchSignals uses a default 64KB bufio.Scanner buffer; a large event line aborts the smoke run as a false failure",
+      "detail": "scanner := bufio.NewScanner(conn) (line 381) with no Buffer() bump, unlike run_via_daemon.go:303 which raises the cap to 512KB. reviewer_verdict and run_completed events can carry large Notes/payload fields. If any single NDJSON event line exceeds bufio.MaxScanTokenSize (64KB), scanner.Scan() stops and scanner.Err() returns bufio.ErrTooLong. That is not 'use of closed', so line 519-521 reports 'event stream error' and returns exit 1 — a spurious smoke failure caused solely by a big-but-valid event, even though all signals may have been observable.",
+      "suggested_fix": "Call scanner.Buffer(make([]byte, 64*1024), 4*1024*1024) as decisions.go and run_via_daemon.go do, so oversized event lines are tolerated."
+    },
+    {
+      "file": "cmd/harmonik/goalkeeper_cmd.go",
+      "line": 156,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "goal-keeper's comms-log scanner uses a default 64KB buffer; a long operator directive makes goal-keeper hard-fail",
+      "detail": "readOperatorComms scans 'harmonik comms log --json' output with bufio.NewScanner(strings.NewReader(...)) (line 156) at the default 64KB token cap. Operator messages appended verbatim to operator_directives can be long (pasted plans, briefs). A single NDJSON line longer than 64KB makes scanner.Scan() stop and scanner.Err() return bufio.ErrTooLong, which is returned as an error (lines 180-182) and bubbles to exit 1 (lines 89-92). Failure scenario: the operator sends one large directive; every subsequent 'harmonik goal-keeper' run (daemon idle-realign spawn) fails to update goal-state and exits 1, silently starving the flywheel realign of ALL new directives (not just the oversized one).",
+      "suggested_fix": "Raise the scanner buffer (scanner.Buffer with a multi-MB max) or decode the NDJSON with a json.Decoder over the byte stream instead of a line scanner."
+    },
+    {
+      "file": "cmd/harmonik/run_via_daemon.go",
+      "line": 214,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "queue-already-active append fallback watches group-0 completion that can reflect UNRELATED beads' outcome",
+      "detail": "When queue-submit is rejected with queue_already_active, viaSubmitOrAppend falls back to appending the run's beads to group 0 of the pre-existing active queue (viaAppendToActiveQueue, lines 219-290) and then viaWatchGroupCompletion blocks on the queue_group_completed event for (activeQueueID, group 0). But group 0 may already contain other in-flight beads from the original submitter. The queue_group_completed event fires for the whole group and its final_status/success/fail counts aggregate ALL group-0 beads, not just the appended ones. Failure scenario: another submitter's bead in group 0 fails → final_status != complete-success → this 'harmonik run' returns exit 1 even though the caller's own beads succeeded (or vice-versa). The exit code no longer reflects the caller's beads. The comment at line 246-250 acknowledges the queue-disappeared edge but not this shared-group attribution problem.",
+      "suggested_fix": "Track per-bead terminal outcomes (bead_closed/run_failed for the specific submitted bead IDs) rather than group-level completion when appending to a shared group, or submit the appended beads as their own new group index and watch that."
+    },
+    {
+      "file": "cmd/harmonik/harness.go",
+      "line": 719,
+      "severity": "low",
+      "category": "correctness",
+      "title": "harness wrong-extension rejection (SH-002) misses uppercase '.YML'",
+      "detail": "The discovery walk rejects wrong-extension scenario files with 'if ext == \".yml\" || strings.ToLower(ext) == \".yaml\"' (line 719). This catches lowercase '.yml' and any-case '.yaml' variant (e.g. '.YAML'), but an uppercase '.YML' file hits neither predicate: ext != \".yml\" (case-sensitive) and strings.ToLower(ext) == \".yml\" != \".yaml\". So a '.YML' scenario file is silently skipped (treated as an unrelated extension) instead of being rejected as the SH-002 spec intends ('.yml and uppercase variants look like YAML but use the wrong extension'). Inconsistent enforcement of the very rule the comment claims to implement.",
+      "suggested_fix": "Compare on strings.ToLower(ext): reject when lower==\".yml\" as well as the uppercase-.yaml case; the .yaml accept branch above already returned, so a single lowercased check covers all variants."
+    },
+    {
+      "file": "cmd/harmonik/harness.go",
+      "line": 340,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "harness double-SIGINT hard-exit is racy: both the signal goroutine and interruptExit consume from sigCh",
+      "detail": "The SH-033 signal goroutine (lines 222-248) reads the second SIGINT from sigCh to trigger os.Exit(130). Independently, interruptExit (lines 340-354) also does a non-blocking receive on sigCh (line 343) to detect a double-SIGINT. Two receivers competing on the same channel means the second SIGINT is delivered to whichever happens to be ready — so the double-SIGINT hard-exit is nondeterministic: sometimes the goroutine wins (os.Exit), sometimes interruptExit consumes it and returns 130 through the normal path, sometimes neither is ready at the instant and interruptExit's default branch fires (emits a partial result instead of exiting immediately). The 'exit immediately on second SIGINT' guarantee is not reliably honored.",
+      "suggested_fix": "Route the double-SIGINT decision through a single consumer (e.g. have the goroutine own all sigCh reads and signal interruptExit via a dedicated channel), so the second-interrupt path is deterministic."
+    },
+    {
+      "file": "cmd/harmonik/state_cmd.go",
+      "line": 107,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "resolveProjectDirForState still honors the retired HK_PROJECT env var",
+      "detail": "resolveProjectDirForState reads os.Getenv(\"HK_PROJECT\") (line 107) as the first-priority project-dir source. Per AGENTS.md, the HK_PROJECT env var is RETIRED in favor of 'harmonik start ...'/--project. Honoring it here means 'harmonik state' can silently resolve to a different project than every other subcommand (which use --project/cwd and do NOT consult HK_PROJECT), producing a snapshot for the wrong project when a stale HK_PROJECT lingers in the environment. Inconsistent project resolution across the CLI surface.",
+      "suggested_fix": "Drop the HK_PROJECT lookup and use the same --project/cwd resolution the other subcommands use, or add a --project flag to 'harmonik state' for parity."
+    },
+    {
+      "file": "cmd/harmonik/main.go",
+      "line": 148,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "run() is a ~700-line god-function with ~40 sequential 'if os.Args[1] == ...' dispatch branches",
+      "detail": "The top of run() (lines 148-923) hand-dispatches every subcommand as a linear sequence of 'if len(os.Args) >= 2 && os.Args[1] == \"<verb>\"' blocks, each with inline help text and ad-hoc positional/flag parsing. There is no dispatch table, so verbs cannot be enumerated programmatically, ordering bugs are easy (an earlier branch can shadow a later one), and each new verb repeats the same len-check boilerplate. Combined with the per-file bespoke flag loops (every subcommand re-implements the same '--project'/'--project=' switch), this is a large, duplicative, drift-prone surface. Not a runtime bug, but a maintainability hazard that has already produced the shipped-but-unwired confirm/veto verdict commands (finding #1).",
+      "suggested_fix": "Introduce a map[string]func([]string) int dispatch table (or cobra-style command registry) and a shared flag-parsing helper for the common --project/--socket/--json flags."
+    },
+    {
+      "file": "cmd/harmonik/decisions_k4.go",
+      "line": 548,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "decisionsClientProjection is production-file code used only by tests (parity helper)",
+      "detail": "decisionsClientProjection (lines 548-594) and its decisionRow type are, by their own doc comment (lines 537-547), 'provided for parity with K3 and for the unit test' — the actual wait path uses the lighter decisionTerminalInLog and the list path uses the daemon op. Carrying a full open-set fold in the shipped binary purely to back a parity test is dead weight in production code and a second implementation of the projection that can silently drift from the daemon's K3 decisionsProjection it claims to mirror.",
+      "suggested_fix": "Move the parity helper into a _test.go file (or export the daemon projection for reuse) so production code carries only the one projection the CLI actually executes."
+    }
+  ]
+}

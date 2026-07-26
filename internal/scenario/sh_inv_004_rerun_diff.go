@@ -143,8 +143,6 @@ func ReadEventTypeMultiset(jsonlPath string) (map[core.EventType]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ReadEventTypeMultiset: open %q: %w", jsonlPath, err)
 	}
-	defer f.Close()
-
 	multiset := make(map[core.EventType]int)
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -158,8 +156,13 @@ func ReadEventTypeMultiset(jsonlPath string) (map[core.EventType]int, error) {
 		}
 		multiset[core.EventType(env.Type)]++
 	}
-	if err := scanner.Err(); err != nil {
-		return multiset, fmt.Errorf("ReadEventTypeMultiset: scan %q: %w", jsonlPath, err)
+	scanErr := scanner.Err()
+	closeErr := f.Close()
+	if scanErr != nil {
+		return multiset, fmt.Errorf("ReadEventTypeMultiset: scan %q: %w", jsonlPath, scanErr)
+	}
+	if closeErr != nil {
+		return multiset, fmt.Errorf("ReadEventTypeMultiset: close %q: %w", jsonlPath, closeErr)
 	}
 	return multiset, nil
 }

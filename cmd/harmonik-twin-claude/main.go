@@ -150,14 +150,16 @@ func run() int {
 
 	// Handle --version before any further validation.
 	if *showVersion {
-		writeVersion(os.Stdout)
+		if err := writeVersion(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: write version: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 
 	// Validate precondition: if --launch-spec is provided, the file must exist.
 	// The actual LaunchSpec parsing is deferred to hk-ahvq.48.2.
 	if *launchSpecPath != "" {
-		//nolint:gosec // G304: path is operator-supplied via --launch-spec flag; provenance is the daemon
 		if _, err := os.Stat(*launchSpecPath); err != nil {
 			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: --launch-spec file not found: %v\n", err)
 			return 1
@@ -224,19 +226,24 @@ func run() int {
 	//
 	// Neither scenario nor socket path: --socket-path is required.
 	var out io.Writer
-	if *socketPath != "" {
+	switch {
+	case *socketPath != "":
 		conn, err := dialSocket(ctx, *socketPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: dial %s: %v\n", *socketPath, err)
 			return 1
 		}
-		defer func() { _ = conn.Close() }()
+		defer func() {
+			if closeErr := conn.Close(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik-twin-claude: close conn: %v\n", closeErr)
+			}
+		}()
 		out = conn
-	} else if scriptFile != nil || *replayPath != "" {
+	case scriptFile != nil || *replayPath != "":
 		// Scenario / script / replay mode without socket path: stdout fallback
 		// (CHB-022 stdout-watcher topology).
 		out = os.Stdout
-	} else {
+	default:
 		// No scenario/script/replay and no socket path: socket-path is required.
 		fmt.Fprintln(os.Stderr, "harmonik-twin-claude: --socket-path is required")
 		return 1

@@ -102,7 +102,7 @@ func TestActLoop_HKVPNP_DoesNotTruncateNonEmptyHandoffOnTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read handoff after cycle: %v", err)
 	}
-	if len(strings.TrimSpace(string(got))) == 0 {
+	if strings.TrimSpace(string(got)) == "" {
 		t.Fatalf("Bug 3b: handoff truncated to 0 lines on aborted cycle; prior content lost")
 	}
 }

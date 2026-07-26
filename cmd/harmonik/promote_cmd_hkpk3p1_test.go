@@ -23,7 +23,7 @@ import (
 // gitRevParse returns the SHA of the given ref in dir.
 func gitRevParse(t *testing.T, dir, ref string) string {
 	t.Helper()
-	out, err := exec.Command("git", "-C", dir, "rev-parse", ref).Output() //nolint:gosec
+	out, err := exec.CommandContext(t.Context(), "git", "-C", dir, "rev-parse", ref).Output()
 	if err != nil {
 		t.Fatalf("git rev-parse %s in %s: %v", ref, dir, err)
 	}
@@ -33,7 +33,7 @@ func gitRevParse(t *testing.T, dir, ref string) string {
 // gitLogBody returns the full commit message body of the tip of ref in dir.
 func gitLogBody(t *testing.T, dir, ref string) string {
 	t.Helper()
-	out, err := exec.Command("git", "-C", dir, "log", "-1", "--format=%B", ref).Output() //nolint:gosec
+	out, err := exec.CommandContext(t.Context(), "git", "-C", dir, "log", "-1", "--format=%B", ref).Output()
 	if err != nil {
 		t.Fatalf("git log -1 %s in %s: %v", ref, dir, err)
 	}
@@ -42,7 +42,7 @@ func gitLogBody(t *testing.T, dir, ref string) string {
 
 // setupPromoteRepo creates a minimal git repo with a remote that has a "main"
 // branch. It returns the repo root (the "local" clone) and a cleanup function.
-func setupPromoteRepo(t *testing.T) (string, func()) {
+func setupPromoteRepo(t *testing.T) (repoRoot string, cleanup func()) {
 	t.Helper()
 
 	// Create the "remote" bare repo.
@@ -59,10 +59,10 @@ func setupPromoteRepo(t *testing.T) (string, func()) {
 	writeFile(t, local, "main.go", "package main\n\nfunc main() {}\n")
 
 	runGit(t, local, "add", ".")
-	runGitWithEnv(t, local, nil, "commit", "-m", "init")
+	runGit(t, local, "commit", "-m", "init")
 	runGit(t, local, "push", "-u", "origin", "main")
 
-	cleanup := func() {}
+	cleanup = func() {}
 	return local, cleanup
 }
 
@@ -83,7 +83,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 // runGitWithEnv runs a git command in dir with optional extra env vars.
 func runGitWithEnv(t *testing.T, dir string, extraEnv []string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...) //nolint:gosec
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=Test",
@@ -308,7 +308,7 @@ func setupCommitOnBranch(t *testing.T, repoRoot, branch, commitMsg string) strin
 	runGit(t, repoRoot, "checkout", "-b", branch)
 	writeFile(t, repoRoot, branch+".go", "package main\n// "+branch+"\n")
 	runGit(t, repoRoot, "add", branch+".go")
-	runGitWithEnv(t, repoRoot, nil, "commit", "-m", commitMsg)
+	runGit(t, repoRoot, "commit", "-m", commitMsg)
 	sha := gitRevParse(t, repoRoot, "HEAD")
 	runGit(t, repoRoot, "checkout", "main")
 	return sha

@@ -134,7 +134,7 @@ func TestKeeperDriftCanary_CorpusIntegrity(t *testing.T) {
 		if err := sc.Err(); err != nil {
 			t.Fatalf("scan %s.jsonl: %v", base, err)
 		}
-		_ = f.Close() //nolint:errcheck // read-only
+		_ = f.Close()
 		if lines == 0 {
 			t.Errorf("%s.jsonl is empty (truncated corpus?)", base)
 		}

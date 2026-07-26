@@ -16,7 +16,7 @@ package daemon
 //     fallback for flat branch names).  The directory (not the ref file) is
 //     required because git creates <ref>.lock as a sibling during commit.
 //   - <gitDir>/packed-refs and <gitDir>/packed-refs.lock (git pack-refs atomic pair).
-//   - OS temp directories (TmpDirs).
+//   - Per-run temp directories (TmpDirs) — never a world-shared root (hk-guapd).
 //   - srt's own hardcoded scratch TMPDIR, /tmp/claude (and /private/tmp/claude);
 //     see hk-cdpxu below.
 //   - Per-run private cache areas (PrivateWriteCacheDirs — never shared).
@@ -109,9 +109,13 @@ type SandboxProfileInput struct {
 	// already-parsed config field is honored rather than silently ignored.
 	WeakerNetworkIsolation bool
 
-	// TmpDirs are OS temp directories included in allowWrite.
-	// On macOS, both /tmp and /private/tmp are typically needed.
-	// Nil/empty → no temp dir entries.
+	// TmpDirs are PER-RUN temp directories included in allowWrite.
+	// Nil/empty → no temp dir entries, which is what both production call
+	// sites supply (hk-guapd). A world-shared root — "/tmp", "/private/tmp",
+	// "/var/tmp", "/" — is rejected by GenerateSandboxProfile; srt expands
+	// each entry recursively, so a shared root grants the run write access to
+	// every other process's scratch state. Pass /tmp/harmonik-run-<id> or
+	// similar if a run genuinely needs one.
 	TmpDirs []string
 
 	// SharedReadCacheDirs are warm toolchain cache directories included in
@@ -165,11 +169,25 @@ type srtSettings struct {
 //   - directory containing the run branch ref: filepath.Dir(<GitDir>/refs/heads/<BranchName>)
 //     when BranchName is set, or <GitDir>/refs/heads/ as fallback
 //   - <GitDir>/packed-refs and <GitDir>/packed-refs.lock (atomic update pair)
-//   - TmpDirs (OS temp directories)
+//   - TmpDirs (per-run temp directories; a world-shared root is rejected)
 //   - PrivateWriteCacheDirs (per-run private cache areas)
 //
 // Shared toolchain caches go in allowRead only. enableWeakerNetworkIsolation is
-// always false. Returns an error when any required field is absent or not absolute.
+// always false. Returns an error when any required field is absent or not
+// absolute, or when a TmpDirs entry is a world-shared temp root (hk-guapd).
+
+// worldSharedTempRoot reports whether dir is a temp root shared by every user
+// and process on the host. "/var/tmp" is included as the other POSIX shared-temp
+// location and an equally plausible $TMPDIR value; "/" is included because it is
+// the degenerate case of the same mistake.
+func worldSharedTempRoot(dir string) bool {
+	switch filepath.Clean(dir) {
+	case "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", "/":
+		return true
+	}
+	return false
+}
+
 func GenerateSandboxProfile(in SandboxProfileInput) ([]byte, error) {
 	if in.WorktreePath == "" {
 		return nil, fmt.Errorf("sandboxprofile: WorktreePath must be non-empty")
@@ -191,6 +209,21 @@ func GenerateSandboxProfile(in SandboxProfileInput) ([]byte, error) {
 	}
 	if !filepath.IsAbs(in.DaemonSockPath) {
 		return nil, fmt.Errorf("sandboxprofile: DaemonSockPath must be an absolute path, got %q", in.DaemonSockPath)
+	}
+	// hk-guapd: reject a world-shared temp root in TmpDirs. srt expands every
+	// entry into a RECURSIVE write rule, so granting one of these hands the run
+	// write access to every other process's scratch state on the box. The
+	// ambient feed that caused the original defect is gone from both call
+	// sites; this makes its return a launch-time error instead of a silent
+	// over-grant. Cleaning first is load-bearing — exact comparison alone lets
+	// "/tmp/" and "/tmp/../tmp" through. A per-run subdirectory such as
+	// /tmp/harmonik-run-<id> still passes, which is the supported escape hatch.
+	for _, dir := range in.TmpDirs {
+		if worldSharedTempRoot(dir) {
+			return nil, fmt.Errorf("sandboxprofile: TmpDirs entry %q is a world-shared temp root "+
+				"(hk-guapd) — srt expands it into a recursive write rule covering every other "+
+				"process's scratch state. Pass a per-run subdirectory instead", dir)
+		}
 	}
 
 	// Build allowWrite: exact per-spec set, all literal paths, no globs.

@@ -40,8 +40,7 @@ func branchReapFixtureInitRepo(t *testing.T, repoDir string) {
 	runGitRepo(t, repoDir, "config", "user.email", "test@harmonik")
 	runGitRepo(t, repoDir, "config", "user.name", "Harmonik Test")
 	readme := filepath.Join(repoDir, "README")
-	//nolint:gosec // G306: 0644 is fine for a test file; path is t.TempDir()
-	if err := os.WriteFile(readme, []byte("branchreap test repo\n"), 0o644); err != nil {
+	if err := os.WriteFile(readme, []byte("branchreap test repo\n"), 0o600); err != nil {
 		t.Fatalf("branchReapFixtureInitRepo: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", "README")
@@ -57,8 +56,7 @@ func branchReapFixtureCreateBranch(t *testing.T, repoDir, branchName string, epo
 	runGitRepo(t, repoDir, "checkout", "-b", branchName)
 
 	state := filepath.Join(repoDir, "state.txt")
-	//nolint:gosec // G306: 0644 test file; path is t.TempDir()
-	if err := os.WriteFile(state, []byte("branch="+branchName+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(state, []byte("branch="+branchName+"\n"), 0o600); err != nil {
 		t.Fatalf("branchReapFixtureCreateBranch: WriteFile: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", "state.txt")
@@ -357,6 +355,31 @@ func TestBranchReap_ScannedCount(t *testing.T) {
 	}
 	if result.Skipped != 1 {
 		t.Errorf("expected Skipped=1 (recent unmerged); got %d", result.Skipped)
+	}
+}
+
+// TestBranchReap_NonRepoDirReportsError verifies that a RepoDir that is not a
+// git repository is reported as an error, not silently reported as "nothing to
+// reap".
+//
+// Regression: listBranchCandidates used to swallow every non-zero git exit with
+// the comment "git exits non-zero when no refs match". `git for-each-ref` exits
+// 0 with empty output when nothing matches, so the only exits that reached that
+// branch were real failures — a broken or missing repository made the reaper
+// report Scanned=0 and return success forever.
+func TestBranchReap_NonRepoDirReportsError(t *testing.T) {
+	dir := t.TempDir() // deliberately NOT a git repo
+
+	result, err := ReapBranches(context.Background(), BranchReapOptions{
+		RepoDir:      dir,
+		TargetBranch: "main",
+		OrphanMaxAge: 30 * 24 * time.Hour,
+	})
+	if err == nil {
+		t.Fatalf("expected an error for a non-repository RepoDir; got nil (result=%+v)", result)
+	}
+	if len(result.Reaped) != 0 {
+		t.Errorf("expected no branches reaped on failure; got %v", result.Reaped)
 	}
 }
 

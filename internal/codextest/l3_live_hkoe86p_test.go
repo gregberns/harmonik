@@ -16,6 +16,7 @@ package codextest_test
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -47,6 +48,24 @@ func codexBinaryPath(t *testing.T) string {
 	return path
 }
 
+func cleanupAppServer(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	killed := false
+	if err := cmd.Process.Kill(); err != nil {
+		if !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("kill codex app-server: %v", err)
+		}
+	} else {
+		killed = true
+	}
+	if err := cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if !killed || !errors.As(err, &exitErr) {
+			t.Errorf("wait for codex app-server: %v", err)
+		}
+	}
+}
+
 // ─── L3 — happy-path live wire canary ────────────────────────────────────────
 
 // TestL3_HappyPathLive is the PRE-DEPLOY E2E gate for the codex-app-server
@@ -63,7 +82,8 @@ func TestL3_HappyPathLive(t *testing.T) {
 	binary := codexBinaryPath(t)
 	deadline := time.Now().Add(90 * time.Second)
 
-	cmd := exec.Command(binary, "app-server")
+	//nolint:gosec // G204: explicitly opt-in live test launches only the Codex binary resolved from CODEX_BIN or PATH.
+	cmd := exec.CommandContext(t.Context(), binary, "app-server")
 	cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()
@@ -79,14 +99,16 @@ func TestL3_HappyPathLive(t *testing.T) {
 		t.Fatalf("Start codex app-server: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		cleanupAppServer(t, cmd)
 	})
 
 	// writeFrame sends a JSON-RPC frame to the server's stdin.
 	writeFrame := func(v any) {
 		t.Helper()
-		b, _ := json.Marshal(v)
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshal frame: %v", err)
+		}
 		b = append(b, '\n')
 		if _, werr := stdin.Write(b); werr != nil {
 			t.Fatalf("write frame: %v", werr)
@@ -134,7 +156,7 @@ func TestL3_HappyPathLive(t *testing.T) {
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			return codexwire.Frame{}, fmt.Errorf("scan error: %v", err)
+			return codexwire.Frame{}, fmt.Errorf("scan error: %w", err)
 		}
 		return codexwire.Frame{}, fmt.Errorf("EOF before seeing %q", want)
 	}
@@ -165,7 +187,9 @@ func TestL3_HappyPathLive(t *testing.T) {
 		var params map[string]any
 		if jsonErr := json.Unmarshal(threadStartedFrame.RawParams, &params); jsonErr == nil {
 			if threadObj, ok := params["thread"].(map[string]any); ok {
-				threadID, _ = threadObj["id"].(string)
+				if id, ok := threadObj["id"].(string); ok {
+					threadID = id
+				}
 			}
 		}
 	}
@@ -206,7 +230,8 @@ func TestL3_ProtocolVersionCanary(t *testing.T) {
 	t.Parallel()
 
 	binary := codexBinaryPath(t)
-	cmd := exec.Command(binary, "app-server")
+	//nolint:gosec // G204: explicitly opt-in live test launches only the Codex binary resolved from CODEX_BIN or PATH.
+	cmd := exec.CommandContext(t.Context(), binary, "app-server")
 	cmd.Stderr = os.Stderr
 
 	stdin, err := cmd.StdinPipe()
@@ -221,11 +246,10 @@ func TestL3_ProtocolVersionCanary(t *testing.T) {
 		t.Fatalf("Start codex app-server: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		cleanupAppServer(t, cmd)
 	})
 
-	req, _ := json.Marshal(map[string]any{
+	req, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
@@ -234,7 +258,12 @@ func TestL3_ProtocolVersionCanary(t *testing.T) {
 			"capabilities": nil,
 		},
 	})
-	_, _ = stdin.Write(append(req, '\n'))
+	if err != nil {
+		t.Fatalf("marshal initialize request: %v", err)
+	}
+	if _, err := stdin.Write(append(req, '\n')); err != nil {
+		t.Fatalf("write initialize request: %v", err)
+	}
 
 	deadline := time.Now().Add(30 * time.Second)
 	scanner := bufio.NewScanner(stdout)
@@ -256,8 +285,8 @@ func TestL3_ProtocolVersionCanary(t *testing.T) {
 			var result map[string]any
 			if frame.RawResult != nil {
 				if jsonErr := json.Unmarshal(frame.RawResult, &result); jsonErr == nil {
-					ua, _ := result["userAgent"].(string)
-					if ua == "" {
+					ua, ok := result["userAgent"].(string)
+					if !ok || ua == "" {
 						t.Error("L3 version canary: initialize result missing userAgent (protocol drift?)")
 					} else {
 						t.Logf("L3 version canary: userAgent = %q", ua)

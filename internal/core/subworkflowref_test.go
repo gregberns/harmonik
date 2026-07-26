@@ -127,9 +127,6 @@ func TestSubWorkflowRefNilPointerEncoding(t *testing.T) {
 	// A present ref must be non-nil and valid.
 	ref := SubWorkflowRef("reconciliation-v1")
 	subworkflowFixturePresent := &ref
-	if subworkflowFixturePresent == nil {
-		t.Fatal("unexpected nil pointer")
-	}
 	if !subworkflowFixturePresent.Valid() {
 		t.Error("present SubWorkflowRef must be valid")
 	}

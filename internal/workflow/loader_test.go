@@ -28,7 +28,7 @@ func TestLoadDotWorkflow_Success(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "workflow.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestLoadDotWorkflow_FileNotFound(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 	var wlErr *workflow.ErrWorkflowLoad
-	if !isWorkflowLoadErr(err, &wlErr) {
+	if !errors.As(err, &wlErr) {
 		t.Fatalf("expected *ErrWorkflowLoad, got %T: %v", err, err)
 	}
 }
@@ -58,7 +58,7 @@ func TestLoadDotWorkflow_FileNotFound(t *testing.T) {
 func TestLoadDotWorkflow_ParseError(t *testing.T) {
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "bad.dot")
-	if err := os.WriteFile(dotPath, []byte("not valid dot at all {{{"), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte("not valid dot at all {{{"), 0o600); err != nil {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestLoadDotWorkflow_ParseError(t *testing.T) {
 		t.Fatal("expected parse error")
 	}
 	var wlErr *workflow.ErrWorkflowLoad
-	if !isWorkflowLoadErr(err, &wlErr) {
+	if !errors.As(err, &wlErr) {
 		t.Fatalf("expected *ErrWorkflowLoad, got %T: %v", err, err)
 	}
 }
@@ -80,7 +80,7 @@ func TestLoadDotWorkflow_ValidationError(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "invalid.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
@@ -89,18 +89,9 @@ func TestLoadDotWorkflow_ValidationError(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 	var wlErr *workflow.ErrWorkflowLoad
-	if !isWorkflowLoadErr(err, &wlErr) {
+	if !errors.As(err, &wlErr) {
 		t.Fatalf("expected *ErrWorkflowLoad, got %T: %v", err, err)
 	}
-}
-
-// isWorkflowLoadErr is a helper that uses errors.As semantics via type assertion.
-func isWorkflowLoadErr(err error, target **workflow.ErrWorkflowLoad) bool {
-	if e, ok := err.(*workflow.ErrWorkflowLoad); ok {
-		*target = e
-		return true
-	}
-	return false
 }
 
 // ── CP-056: policy_ref deprecation warning on stderr ─────────────────────────
@@ -125,26 +116,15 @@ func TestLoadDotWorkflow_PolicyRefDeprecationWarning(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "workflow.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
 	// Redirect stderr to capture the deprecation warning.
-	origStderr := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	os.Stderr = w
-
-	_, loadErr := workflow.LoadDotWorkflow(dotPath)
-
-	w.Close()
-	os.Stderr = origStderr
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	stderrOutput := buf.String()
+	var loadErr error
+	stderrOutput := loaderCaptureStderr(t, func() {
+		_, loadErr = workflow.LoadDotWorkflow(dotPath)
+	})
 
 	// LoadDotWorkflow must fail (policy_ref is a strict error per CP-056).
 	if loadErr == nil {
@@ -184,19 +164,15 @@ func TestLoadDotWorkflow_PolicyRefReturnsErrDeterministic(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "workflow.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
 	// Suppress stderr deprecation output for this test.
-	origStderr := os.Stderr
-	_, w, _ := os.Pipe()
-	os.Stderr = w
-
-	_, loadErr := workflow.LoadDotWorkflow(dotPath)
-
-	w.Close()
-	os.Stderr = origStderr
+	var loadErr error
+	loaderCaptureStderr(t, func() {
+		_, loadErr = workflow.LoadDotWorkflow(dotPath)
+	})
 
 	if loadErr == nil {
 		t.Fatal("expected error for policy_ref workflow, got nil")
@@ -209,7 +185,7 @@ func TestLoadDotWorkflow_PolicyRefReturnsErrDeterministic(t *testing.T) {
 
 	// Must NOT be ErrWorkflowLoad (wrong error class per spec).
 	var wlErr *workflow.ErrWorkflowLoad
-	if isWorkflowLoadErr(loadErr, &wlErr) {
+	if errors.As(loadErr, &wlErr) {
 		t.Errorf("expected *ErrPolicyRefRejected (not *ErrWorkflowLoad) for policy_ref rejection, got *ErrWorkflowLoad")
 	}
 }
@@ -244,7 +220,7 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefResolved(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "workflow.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
@@ -288,7 +264,7 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefUnresolved(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "workflow.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
@@ -298,7 +274,7 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefUnresolved(t *testing.T) {
 		t.Fatal("expected error for unresolved skills_ref, got nil")
 	}
 	var wlErr *workflow.ErrWorkflowLoad
-	if !isWorkflowLoadErr(err, &wlErr) {
+	if !errors.As(err, &wlErr) {
 		t.Fatalf("expected *ErrWorkflowLoad, got %T: %v", err, err)
 	}
 	if !strings.Contains(wlErr.Reason, "nonexistent-set") {
@@ -328,7 +304,7 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefOptional(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "workflow.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
@@ -365,7 +341,7 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefOnGateNode(t *testing.T) {
 	}`
 	dir := t.TempDir()
 	dotPath := filepath.Join(dir, "workflow.dot")
-	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write temp dot file: %v", err)
 	}
 
@@ -383,4 +359,45 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefOnGateNode(t *testing.T) {
 	if len(resolved) != 1 || resolved[0].NodeID != "guard" {
 		t.Errorf("expected skills_resolved for guard node, got: %v", resolved)
 	}
+}
+
+// loaderCaptureStderr runs fn with os.Stderr redirected to a pipe and returns
+// everything fn wrote there.
+//
+// The two call sites this replaces each dropped the pipe's READ end on the
+// floor (`_, w, _ := os.Pipe()` in one, an unclosed `r` in the other), leaking
+// a descriptor per call, and one of them discarded os.Pipe's error outright —
+// on failure it would have assigned a nil *os.File to os.Stderr. Draining on a
+// separate goroutine also removes the latent deadlock: a writer that outruns
+// the 64 KiB pipe buffer with nobody reading blocks forever.
+func loaderCaptureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+
+	var buf bytes.Buffer
+	drained := make(chan error, 1)
+	go func() {
+		_, copyErr := buf.ReadFrom(r)
+		drained <- copyErr
+	}()
+
+	fn()
+
+	os.Stderr = orig
+	if closeErr := w.Close(); closeErr != nil {
+		t.Errorf("loaderCaptureStderr: close pipe writer: %v", closeErr)
+	}
+	if copyErr := <-drained; copyErr != nil {
+		t.Errorf("loaderCaptureStderr: read captured stderr: %v", copyErr)
+	}
+	if closeErr := r.Close(); closeErr != nil {
+		t.Errorf("loaderCaptureStderr: close pipe reader: %v", closeErr)
+	}
+	return buf.String()
 }

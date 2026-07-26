@@ -194,7 +194,6 @@ func sc7FixtureHandlerScript(t *testing.T, twinPath string) string {
 		// Run the twin binary to emit NDJSON (output is discarded by the
 		// nil-stdout substrate, but the subprocess executes normally).
 		// Use '|| true' so a non-zero twin exit does not fail the implementer.
-		//nolint:gocritic // twinPath comes from TwinBinaryPath(); not user input
 		twinLine = `  "` + twinPath + `" --scenario single-happy-path >/dev/null 2>&1 || true`
 	}
 

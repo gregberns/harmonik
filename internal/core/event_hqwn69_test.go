@@ -59,7 +59,6 @@ func hqwn69CheckJSONTags(t *testing.T, structType reflect.Type, cases []jsonTagF
 	t.Helper()
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.goName, func(t *testing.T) {
 			t.Parallel()
 

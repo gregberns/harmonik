@@ -1,0 +1,121 @@
+{
+  "chunk": "RU-08",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/substrate/seam.go",
+    "internal/substrate/doubles.go",
+    "internal/substrate/replay.go",
+    "internal/substrate/clock.go",
+    "internal/substrate/fakeclock.go",
+    "internal/handler/handler.go",
+    "internal/handler/session.go",
+    "internal/handler/substrate.go",
+    "internal/handler/gate_dispatch.go",
+    "internal/handler/input_port.go",
+    "internal/handler/classify_hc023.go",
+    "internal/handler/claudehandler_chb006_024.go",
+    "internal/handler/wirecapture.go",
+    "internal/handler/twinlaunch.go",
+    "internal/handler/launchpath.go",
+    "internal/handlercontract/watcher_hc011.go",
+    "internal/handlercontract/outcomedelivery.go",
+    "internal/handlercontract/harnessregistry.go",
+    "internal/handlercontract/adapterregistry_hc012.go",
+    "internal/handlercontract/redactionregistry.go",
+    "internal/handlercontract/lifecycle/machine.go"
+  ],
+  "status": "partial",
+  "status_note": "Reviewed the substrate/Handler-contract interface seam and the largest production source files (~5k LOC of non-test source). The ~50 one-clause-per-file HC-xxx contract files and ~14k LOC of test files were sampled, not exhaustively read; findings focus on the interface seams and driver logic in scope.",
+  "findings": [
+    {
+      "file": "internal/handler/session.go",
+      "line": 370,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "Session.SendInput ignores ctx; stdin write can block indefinitely despite doc claiming ctx bounds it",
+      "detail": "session.SendInput has signature `func (s *session) SendInput(_ context.Context, line string) error` — the context is discarded and the body is a bare io.WriteString to the stdin pipe. But handler.Launch's HandlerSpec-delivery goroutine (handler.go:322) documents 'ctx bounds the write: if ctx is cancelled the subprocess stdin pipe will return an error and the goroutine exits.' That is false. If the subprocess never drains its stdin and the pipe buffer (~64KiB) fills — e.g. a large HandlerSpec, or a wedged child — io.WriteString blocks forever, the delivery goroutine leaks, and CloseStdin is never reached. Cancelling ctx does not unblock the write. This is a latent hang + goroutine leak that the surrounding code believes is bounded.",
+      "suggested_fix": "Either honor ctx in SendInput (do the write in a goroutine and select on ctx.Done, closing/aborting the pipe on cancel), or correct the handler.go comment and set a write deadline / close-on-cancel so the documented cancellation guarantee actually holds."
+    },
+    {
+      "file": "internal/handlercontract/watcher_hc011.go",
+      "line": 670,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Watcher-synthesized agent_failed events carry no session_id or run_id — failure cannot be attributed",
+      "detail": "buildWatcherFailedPayload takes sessionID but explicitly discards it (`_ = sessionID`) and marshals only {type, error_category, sub_reason}. Every watcher self-defect terminal (panic barrier line 363, line-too-long 414, I/O framing error 421, malformed JSON 445, HC-061 subworkflow-boundary 466) is emitted via plain pub.Emit with this payload. So a watcher_panic / ndjson_line_too_long / malformed_progress_message agent_failed reaches the bus and the JSONL with NO session_id and NO run_id envelope. Downstream (daemon workloop, ops-monitor, reconciler) cannot correlate the failure to the run/session that produced it, so a wedged or crashed session surfaces an unattributable failure event. The comment concedes the field is 'reserved for payload enrichment when event-model.md §8 rows land' — i.e. a known gap left unimplemented on the failure path.",
+      "suggested_fix": "Include session_id (and run_id where the Machine is available) in the agent_failed payload, and route watcher-failure emits through EmitWithRunID like driveLifecycleFSM does, so failure events are correlatable."
+    },
+    {
+      "file": "internal/handlercontract/watcher_hc011.go",
+      "line": 391,
+      "severity": "low",
+      "category": "concurrency",
+      "title": "readLoop only observes ctx cancellation between scans, not while blocked in scanner.Scan()",
+      "detail": "The `select { case <-ctx.Done(): ... default: }` guard runs once per loop iteration, before scanner.Scan(). scanner.Scan() then blocks in a Read on ProgressStream. If the handler stops producing lines but keeps the pipe open (a silent hang) and ctx is cancelled, the watcher goroutine cannot return until the underlying Read unblocks (EOF / pipe close). The type doc (lines 210-216) states the goroutine 'runs until ... the enclosing context is cancelled', which overstates the guarantee — cancellation is only honored between lines. In practice the session teardown closes the pipe, but a watcher relying on ctx alone for shutdown will wedge.",
+      "suggested_fix": "Document that pipe closure (not ctx) is the authoritative unblock, or wrap the reader so ctx cancellation closes it; alternatively run the scan in a goroutine and select on ctx.Done to guarantee the documented behavior."
+    },
+    {
+      "file": "internal/handler/classify_hc023.go",
+      "line": 103,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Two overlapping exit-classification code paths across handler and handlercontract packages",
+      "detail": "handler.ClassifyExitState (classify_hc023.go) maps an ExitState → sentinel error, while handlercontract.ClassifyExit / ClassifyCrash (outcomedelivery.go:179-225) independently map (exitCode, OutcomeDeliveryState) → sentinel/agent_failed payload. Both encode the HC-008/HC-023/HC-024 'exit-without-outcome is structural' rule, in different packages, over different input structs. They can drift: e.g. ClassifyExitState has an AdapterResult/CtxCanceled priority ladder that ClassifyExit has no notion of, so which one the daemon actually consults determines whether cancellation/transient conditions are honored. Duplicated classification of the same spec clauses is a maintenance hazard.",
+      "suggested_fix": "Consolidate the exit→sentinel mapping into one owner (likely handlercontract, since it also owns OutcomeDeliveryState) and have the other call it, so the HC-008/HC-023/HC-024 rules have a single source of truth."
+    },
+    {
+      "file": "internal/handler/session.go",
+      "line": 406,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "Session.Kill spawns a fresh waitOwner.Wait goroutine per call; repeated Kill/ctx-cancel accumulates goroutines",
+      "detail": "Kill launches `go func(){ _ = s.waitOwner.Wait(); close(waitDone) }()` on every invocation. On the ctx.Done branch it sends SIGKILL and returns immediately, leaving that goroutine parked in waitOwner.Wait until the process is actually reaped. Kill is idempotent-by-signal but not idempotent-by-goroutine: N Kill calls (e.g. a drain that retries) create N parked goroutines and N waitDone channels. They do drain once the process exits, so it is a bounded/transient leak, not permanent — but under a kill-storm or a grandchild-delayed reap it is unnecessary goroutine churn tied to an external process's lifetime.",
+      "suggested_fix": "Share a single completion signal (e.g. reuse s.outcomeDone from runWait) rather than spawning a new Wait goroutine on each Kill."
+    },
+    {
+      "file": "internal/substrate/replay.go",
+      "line": 114,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "Twin.Events replay goroutine leaks if the consumer abandons the channel without cancelling ctx",
+      "detail": "Twin.Events starts a goroutine that sends on a cap-16 channel via `send`, which selects on `ch <- ev` vs `<-ctx.Done()`. If a consumer stops draining the channel (e.g. Run returns early on an Effector error, or a test drains partially) and never cancels ctx, the replay goroutine blocks forever on the send. The substrate contract (seam.go:27-35) states 'Cancellation is delivered through ctx', so the caller is expected to always cancel — but Run itself (the normative driver) has no defer-cancel and does not cancel on early return, so an Effector error in Run leaves the source goroutine parked. This is the standard producer-leak-on-abandoned-channel hazard; worth documenting the caller obligation more forcefully or having Run derive a cancelable child ctx.",
+      "suggested_fix": "Have substrate.Run wrap ctx in a context.WithCancel and defer cancel() so any early return (Effector error) signals the source goroutine to stop, guaranteeing no producer leak."
+    },
+    {
+      "file": "internal/handler/handler.go",
+      "line": 320,
+      "severity": "low",
+      "category": "correctness",
+      "title": "HandlerSpec-delivery comment asserts a ctx-bounded write that the implementation does not provide",
+      "detail": "Lines 305-306 and 320-321 claim the stdin delivery 'runs in a goroutine bounded by ctx so that a slow subprocess cannot block Launch indefinitely' and that on ctx cancel 'the subprocess stdin pipe will return an error and the goroutine exits.' Because SendInput ignores ctx (see the SendInput finding), the goroutine is only bounded in the sense that Launch does not wait for it — the goroutine itself is unbounded and can leak. Launch returns fine, but the promised cancellation semantics of the spawned delivery are not real. This is doc/impl drift that will mislead the next maintainer debugging a stuck spawn.",
+      "suggested_fix": "Align the comment with reality (Launch is non-blocking, but the delivery goroutine is not ctx-cancelable) or make SendInput actually honor ctx."
+    },
+    {
+      "file": "internal/handler/claudehandler_chb006_024.go",
+      "line": 696,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Exported function name typo: DeriveCIaudeTranscriptPath (capital-I for lowercase-l in 'Claude')",
+      "detail": "The exported helper is spelled DeriveCIaudeTranscriptPath — 'CIaude' (capital I) instead of 'Claude' (lowercase l). It is an exported symbol, so the typo is baked into the package API and any caller/import. Cosmetic but sticky.",
+      "suggested_fix": "Rename to DeriveClaudeTranscriptPath and update call sites."
+    },
+    {
+      "file": "internal/handler/claudehandler_chb006_024.go",
+      "line": 705,
+      "severity": "nit",
+      "category": "correctness",
+      "title": "os.UserHomeDir failure falls back to literal '~' producing a non-expandable transcript path",
+      "detail": "When os.UserHomeDir errors, homeDir is set to the literal string \"~\", so the returned path becomes '~/.claude/projects/<slug>/<uuid>.jsonl'. A literal tilde is not shell-expanded by filepath/os consumers, so the resulting session_log_location would point at a nonexistent './~/.claude/...' relative directory. The comment calls this 'observable in tests', but in production a UserHomeDir failure would emit a bogus log path in the session_log_location progress message rather than surfacing the error.",
+      "suggested_fix": "Return an error (or empty logPath) on UserHomeDir failure rather than fabricating a '~' path that no consumer can resolve."
+    },
+    {
+      "file": "internal/handlercontract/watcher_hc011.go",
+      "line": 1,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "handlercontract package is fragmented into ~50 one-spec-clause-per-file units (HC-xxx naming)",
+      "detail": "The package splits each spec clause into its own file (sessionid.go, cancelbounds.go, versionnego_hc009.go, readystate_hc039.go, heartbeat_hc026a.go, ... ~50 source files plus a matching ~50 test files). Requirement traceability is a plus, but the extreme fragmentation means related state (e.g. the progress-message type set, the watcher, the outcome-delivery state, the FSM) is scattered across many tiny files, and the file names encode bead/spec IDs (private tracking handles) rather than what the code does — which the project's own working-style guidance discourages ('never make a private tracking ID the handle for a thing'). This raises navigation cost and the risk of duplicated logic (see the two exit-classification paths).",
+      "suggested_fix": "Consider grouping by concept (watcher, outcome, lifecycle, registries, redaction) with spec IDs cited in-doc rather than in filenames; no behavior change, purely organizational."
+    }
+  ]
+}

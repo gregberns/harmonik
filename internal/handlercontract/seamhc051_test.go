@@ -224,9 +224,16 @@ func TestSeam_HC051_AdapterIsSubstitutable(t *testing.T) {
 	// The compile-time assertion (var _ handlercontract.Adapter = ...) above
 	// is the load-bearing check.  This test body documents it and ensures the
 	// file participates in `go test` output so failures are visible in CI.
+	//
+	// The stub is a non-pointer concrete type, so `a == nil` can never be true
+	// and asserting it is dead code. Dispatch through the interface instead:
+	// that exercises the seam at runtime and would fail if a future Adapter
+	// method were added with a nil-panicking default.
 	var a handlercontract.Adapter = seamFixtureNoHandlerImportStub{}
-	if a == nil {
-		// Unreachable: interface values over concrete non-pointer types are never nil.
-		t.Fatal("seamFixtureNoHandlerImportStub unexpectedly nil as Adapter")
+	if a.DetectReady(core.EventEnvelope{}) {
+		t.Error("seamFixtureNoHandlerImportStub.DetectReady = true; want false")
+	}
+	if err := a.CleanExitSequence(t.Context(), nil); err != nil {
+		t.Errorf("seamFixtureNoHandlerImportStub.CleanExitSequence: %v", err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Test helpers use the per-bead prefix declared in implementer-protocol.md:
@@ -20,19 +21,44 @@ func twinHookFixtureEmitter(t *testing.T) (*wireEmitter, *bytes.Buffer) {
 	return newWireEmitter(&buf), &buf
 }
 
-// twinHookFixtureDecode decodes the nth NDJSON line (0-indexed) from buf into
-// a map[string]any. Calls t.Fatalf if line is missing or malformed.
-func twinHookFixtureDecode(t *testing.T, buf *bytes.Buffer, n int) map[string]any {
+// twinHookFixtureDecode decodes the emitted NDJSON line from buf into a
+// map[string]any. Calls t.Fatalf if the line is missing or malformed.
+func twinHookFixtureDecode(t *testing.T, buf *bytes.Buffer) map[string]any {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	if n >= len(lines) {
-		t.Fatalf("twinHookFixtureDecode: want line %d, only %d lines in buffer", n, len(lines))
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatal("twinHookFixtureDecode: no lines in buffer")
 	}
 	var m map[string]any
-	if err := json.Unmarshal([]byte(lines[n]), &m); err != nil {
-		t.Fatalf("twinHookFixtureDecode: line %d unmarshal: %v — raw: %q", n, err, lines[n])
+	if err := json.Unmarshal([]byte(lines[0]), &m); err != nil {
+		t.Fatalf("twinHookFixtureDecode: unmarshal: %v — raw: %q", err, lines[0])
 	}
 	return m
+}
+
+func twinHookFixtureContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func twinHookFixtureString(t *testing.T, m map[string]any, key string) string {
+	t.Helper()
+	value, ok := m[key].(string)
+	if !ok {
+		t.Fatalf("%s = %v (type %T), want string", key, m[key], m[key])
+	}
+	return value
+}
+
+func twinHookFixtureBool(t *testing.T, m map[string]any, key string) bool {
+	t.Helper()
+	value, ok := m[key].(bool)
+	if !ok {
+		t.Fatalf("%s = %v (type %T), want bool", key, m[key], m[key])
+	}
+	return value
 }
 
 // trueCmd returns the path to the "true" binary (which returns exit 0).
@@ -61,7 +87,7 @@ func falseCmd(t *testing.T) string {
 // "true" binary returns exit code 0 and a non-negative duration.
 func TestCallStopHook_TrueCommand(t *testing.T) {
 	dir := t.TempDir()
-	ctx := context.Background()
+	ctx := twinHookFixtureContext(t)
 
 	code, dur := callStopHook(ctx, trueCmd(t), dir)
 	if code != 0 {
@@ -76,7 +102,7 @@ func TestCallStopHook_TrueCommand(t *testing.T) {
 // "false" binary returns a non-zero exit code.
 func TestCallStopHook_FalseCommand(t *testing.T) {
 	dir := t.TempDir()
-	ctx := context.Background()
+	ctx := twinHookFixtureContext(t)
 
 	code, _ := callStopHook(ctx, falseCmd(t), dir)
 	if code == 0 {
@@ -88,7 +114,7 @@ func TestCallStopHook_FalseCommand(t *testing.T) {
 // nonexistent binary returns exit code -1 (launch failure).
 func TestCallStopHook_NonexistentCommand(t *testing.T) {
 	dir := t.TempDir()
-	ctx := context.Background()
+	ctx := twinHookFixtureContext(t)
 
 	code, _ := callStopHook(ctx, "/nonexistent-binary-harmonik-test", dir)
 	if code != -1 {
@@ -100,7 +126,7 @@ func TestCallStopHook_NonexistentCommand(t *testing.T) {
 // twin_error and returns an error when cfg.settings is nil.
 func TestRunCallStopHook_NilSettings(t *testing.T) {
 	emitter, buf := twinHookFixtureEmitter(t)
-	ctx := context.Background()
+	ctx := twinHookFixtureContext(t)
 	cfg := scriptRunConfig{
 		settings:     nil,
 		worktreePath: t.TempDir(),
@@ -112,8 +138,8 @@ func TestRunCallStopHook_NilSettings(t *testing.T) {
 	}
 
 	// Verify that a twin_error message was emitted.
-	m := twinHookFixtureDecode(t, buf, 0)
-	if got, _ := m["type"].(string); got != "twin_error" {
+	m := twinHookFixtureDecode(t, buf)
+	if got := twinHookFixtureString(t, m, "type"); got != "twin_error" {
 		t.Errorf("emitted type = %q, want %q", got, "twin_error")
 	}
 }
@@ -122,7 +148,7 @@ func TestRunCallStopHook_NilSettings(t *testing.T) {
 // twin_error when settings are loaded but stopHookPresent is false.
 func TestRunCallStopHook_NoStopHook(t *testing.T) {
 	emitter, buf := twinHookFixtureEmitter(t)
-	ctx := context.Background()
+	ctx := twinHookFixtureContext(t)
 	cfg := scriptRunConfig{
 		settings:     &cloneSettings{stopHookPresent: false},
 		worktreePath: t.TempDir(),
@@ -133,8 +159,8 @@ func TestRunCallStopHook_NoStopHook(t *testing.T) {
 		t.Fatal("runCallStopHook no stop hook: expected error, got nil")
 	}
 
-	m := twinHookFixtureDecode(t, buf, 0)
-	if got, _ := m["type"].(string); got != "twin_error" {
+	m := twinHookFixtureDecode(t, buf)
+	if got := twinHookFixtureString(t, m, "type"); got != "twin_error" {
 		t.Errorf("emitted type = %q, want %q", got, "twin_error")
 	}
 }
@@ -143,7 +169,7 @@ func TestRunCallStopHook_NoStopHook(t *testing.T) {
 // "true" binary emits twin_hook_called with hook_type="Stop" and exit_code=0.
 func TestRunCallStopHook_TrueCommand(t *testing.T) {
 	emitter, buf := twinHookFixtureEmitter(t)
-	ctx := context.Background()
+	ctx := twinHookFixtureContext(t)
 	cfg := scriptRunConfig{
 		settings: &cloneSettings{
 			stopHookPresent: true,
@@ -157,11 +183,11 @@ func TestRunCallStopHook_TrueCommand(t *testing.T) {
 		t.Fatalf("runCallStopHook /bin/true: unexpected error: %v", err)
 	}
 
-	m := twinHookFixtureDecode(t, buf, 0)
-	if got, _ := m["type"].(string); got != "twin_hook_called" {
+	m := twinHookFixtureDecode(t, buf)
+	if got := twinHookFixtureString(t, m, "type"); got != "twin_hook_called" {
 		t.Errorf("emitted type = %q, want %q", got, "twin_hook_called")
 	}
-	if got, _ := m["hook_type"].(string); got != "Stop" {
+	if got := twinHookFixtureString(t, m, "hook_type"); got != "Stop" {
 		t.Errorf("hook_type = %q, want %q", got, "Stop")
 	}
 	// exit_code is JSON number → float64 in map[string]any.
@@ -178,7 +204,7 @@ func TestRunCallStopHook_TrueCommand(t *testing.T) {
 // error (non-zero hook exit does NOT fail the twin per bead error policy).
 func TestRunCallStopHook_FalseCommand(t *testing.T) {
 	emitter, buf := twinHookFixtureEmitter(t)
-	ctx := context.Background()
+	ctx := twinHookFixtureContext(t)
 	cfg := scriptRunConfig{
 		settings: &cloneSettings{
 			stopHookPresent: true,
@@ -192,8 +218,8 @@ func TestRunCallStopHook_FalseCommand(t *testing.T) {
 		t.Fatalf("runCallStopHook /bin/false: expected nil error (non-zero hook exit should not fail twin), got: %v", err)
 	}
 
-	m := twinHookFixtureDecode(t, buf, 0)
-	if got, _ := m["type"].(string); got != "twin_hook_called" {
+	m := twinHookFixtureDecode(t, buf)
+	if got := twinHookFixtureString(t, m, "type"); got != "twin_hook_called" {
 		t.Errorf("emitted type = %q, want %q", got, "twin_hook_called")
 	}
 	if code, ok := m["exit_code"].(float64); !ok || int(code) == 0 {
@@ -210,17 +236,17 @@ func TestEmitTwinSettingsLoaded_Fields(t *testing.T) {
 		t.Fatalf("emitTwinSettingsLoaded: %v", err)
 	}
 
-	m := twinHookFixtureDecode(t, buf, 0)
-	if got, _ := m["type"].(string); got != "twin_settings_loaded" {
+	m := twinHookFixtureDecode(t, buf)
+	if got := twinHookFixtureString(t, m, "type"); got != "twin_settings_loaded" {
 		t.Errorf("type = %q, want %q", got, "twin_settings_loaded")
 	}
-	if got, _ := m["permissions_present"].(bool); !got {
+	if got := twinHookFixtureBool(t, m, "permissions_present"); !got {
 		t.Error("permissions_present = false, want true")
 	}
-	if got, _ := m["stop_hook_present"].(bool); !got {
+	if got := twinHookFixtureBool(t, m, "stop_hook_present"); !got {
 		t.Error("stop_hook_present = false, want true")
 	}
-	if got, _ := m["stop_hook_command"].(string); got != "harmonik" {
+	if got := twinHookFixtureString(t, m, "stop_hook_command"); got != "harmonik" {
 		t.Errorf("stop_hook_command = %q, want %q", got, "harmonik")
 	}
 }
@@ -235,8 +261,8 @@ func TestEmitTwinSettingsLoaded_Truncation(t *testing.T) {
 		t.Fatalf("emitTwinSettingsLoaded: %v", err)
 	}
 
-	m := twinHookFixtureDecode(t, buf, 0)
-	cmd, _ := m["stop_hook_command"].(string)
+	m := twinHookFixtureDecode(t, buf)
+	cmd := twinHookFixtureString(t, m, "stop_hook_command")
 	if len(cmd) > 200 {
 		t.Errorf("stop_hook_command len = %d, want <= 200", len(cmd))
 	}

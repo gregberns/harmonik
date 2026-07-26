@@ -86,7 +86,7 @@ func TestAISDriftCanary_ReactorScenariosWellFormed(t *testing.T) {
 		if err := sc.Err(); err != nil {
 			t.Fatalf("scan %s: %v", e.Name(), err)
 		}
-		_ = f.Close() //nolint:errcheck // read-only
+		_ = f.Close()
 		if lines == 0 {
 			t.Errorf("%s is empty (truncated corpus?)", e.Name())
 		}

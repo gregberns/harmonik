@@ -30,9 +30,16 @@ sources:
   - cmd/harmonik/promote_cmd.go
   - cmd/harmonik/reconcile.go
   - cmd/harmonik/init_cmd.go
-  - .claude/skills/keeper/SKILL.md
+  - cmd/harmonik/assets/skills/keeper/SKILL.md
   - AGENTS.md §"Work-project deployment"
 ---
+
+<!-- SOURCE OF TRUTH: cmd/harmonik/assets/skills/harmonik-lifecycle/SKILL.md (Go //go:embed).
+     The copy at .claude/skills/harmonik-lifecycle/SKILL.md is GENERATED OUTPUT — `harmonik sync-assets`
+     overwrites it from the embed and there is NO reverse sync, so an edit made
+     only there silently drifts and is eventually reverted. To change this skill:
+     edit the cmd/harmonik/assets/ copy, then mirror it byte-for-byte into
+     .claude/skills/ in the SAME commit. The two paths must stay byte-identical. -->
 
 # harmonik lifecycle / operator surface
 
@@ -50,9 +57,12 @@ skill, and from the **context-fill watcher** (`harmonik keeper`), which is the
 | `harmonik reconcile` | bead-ledger ⇄ git drift (Cat 3c) | a bead is stuck `in_progress` though its work merged |
 | `harmonik promote` | integration → target-branch promotion | landing a reviewed SHA, or opening the integration→main PR |
 
-Three of them resolve `--project` the same way (explicit flag → `$HARMONIK_PROJECT`
-→ cwd); always pass `--project $HARMONIK_PROJECT` explicitly from an
-orchestrator to avoid CWD drift (a known hazard with worktree sub-agents).
+**`--project` resolution differs — do not assume the env var is read.** Only
+`promote` falls back to `$HARMONIK_PROJECT` (`runPromoteSubcommand`,
+`cmd/harmonik/promote_cmd.go`). `init`, `reconcile`, and every `supervise` verb
+resolve **explicit flag → cwd** and never consult the env var. So always pass
+`--project $HARMONIK_PROJECT` explicitly from an orchestrator — it is the only
+thing that protects you from CWD drift (a known hazard with worktree sub-agents).
 
 ---
 
@@ -65,15 +75,25 @@ is **auto-revival of the harmonik daemon**: a `DaemonWatchdog` probes the
 daemon's Unix socket on a fixed interval and respawns the daemon (detached via
 `setsid`) when it is found dead.
 
-It is a **verb dispatcher** (`supervise_cmd.go:24-67`); the top-level usage is
-`supervise_cmd.go:69`. Each verb lives in its own file under
-`cmd/harmonik/supervise/`.
+It is a **verb dispatcher** (`runSuperviseSubcommand`, `cmd/harmonik/supervise_cmd.go`);
+the top-level usage is the `superviseTopUsage` const in the same file. Each verb
+lives in its own file under `cmd/harmonik/supervise/`.
 
 ### What the watchdog actually does (auto-revive)
 
-`internal/supervise/daemon_watchdog.go`. Only active when the supervisor was
-started with `--watch-restart` (`shim.go:143-203`, `runWithSupervisor`). Real
-defaults (`daemon_watchdog.go:61-78`):
+`internal/supervise/daemon_watchdog.go`. Two paths in the shim (`RunShim`,
+`cmd/harmonik/supervise/shim.go`) start it:
+
+- `--watch-restart` → `runWithSupervisor` runs the watchdog alongside the
+  supervisee.
+- **no supervisee at all** — `config.json` has an empty `Command` →
+  `runWatchdogOnly` runs the watchdog on its own, *regardless of
+  `--watch-restart`*. This is the expected state when the operator has dropped
+  the flywheel command.
+
+Without `--watch-restart` and *with* a supervisee configured, the shim
+exec-replaces itself with the supervisee (`runDirect`) and there is **no
+watchdog**. Real defaults (`DaemonWatchdogSpec.applyDefaults`):
 
 | param | default | meaning |
 |---|---|---|
@@ -83,29 +103,34 @@ defaults (`daemon_watchdog.go:61-78`):
 | `ReviveBackoff` | **10s** | poll interval while waiting for a just-revived daemon to bind its socket |
 | `ReviveWindow` | **15m** | max wait for socket-bind after a revive (must cover the daemon's `restartBackoffCap` of 10m) |
 
-The revive command is built from the current binary + project
-(`shim.go:223-233`, `buildDaemonCmd`): it re-launches the daemon with
-**`--no-auto-pull`** (queue-only safe default) and `--max-concurrent N` when
-configured. The supervisor (under restart-shim) also restarts the *supervisee*
-(the Pi/cognition process) on crash, with backoff base **1000ms** / cap
-**60000ms** / max **5** restarts (`shim.go:151-179`, from `config.json`).
+The revive command is built from the current binary + project (`buildDaemonCmd`,
+`cmd/harmonik/supervise/shim.go`): it re-launches the daemon with
+**`--no-auto-pull`** (queue-only safe default), `--max-concurrent N` when
+configured, and `--default-harness <v>` when `HARMONIK_DEFAULT_HARNESS` is set in
+the supervisor's env. The supervisor (under restart-shim) also restarts the
+*supervisee* (the Pi/cognition process) on crash, with backoff base **1000ms** /
+cap **60000ms** / max **5** restarts (`runWithSupervisor`, defaults applied when
+the `config.json` fields are zero).
 
 > **Restart-backoff delays socket-bind — this is expected.** After a rebuild +
 > daemon restart the socket can take **≈30s–1m** to appear, and during that
 > window `supervise status` / probes report `(no socket)`. The watchdog
 > tolerates this because `ReviveWindow` (15m) is sized to cover the daemon's
-> boot-backoff (`daemon_watchdog.go:39-43,186-201`). Do **not** declare the
+> boot-backoff — see the `DaemonWatchdogSpec.ReviveWindow` doc comment and the
+> `pollUntilAlive` call in `DaemonWatchdog.Run`. Do **not** declare the
 > daemon dead from a single snapshot in that window. See the
 > "Daemon supervisor auto-revives" operational note.
 
 ### Verbs
 
-`start | stop | status | attach | restart | logs | pause | resume`
-(`supervise_cmd.go:41-66`). `_shim` is internal (runs inside the pane; not for
-operator use).
+`start | stop | status | ps | attach | restart | logs | pause | resume | reap`
+(the `switch verb` in `runSuperviseSubcommand`). `ps` prints canonical supervisor
+process signatures + tmux sessions; `reap` clears dead flywheel orphan sessions
+(`start` also auto-reaps at boot). `_shim` is internal (runs inside the pane; not
+for operator use).
 
 #### `harmonik supervise start [--project DIR] [--watch-restart] [--require-api-key] [--command CMD ...] | -- CMD ...`
-(`start.go:41-232`, usage `start.go:308`)
+(`RunStart`, usage `startUsage` — `cmd/harmonik/supervise/start.go`)
 Probes the daemon socket first, acquires `supervisor.lock` (flock), refuses if a
 flywheel session already exists, writes a `config.json` snapshot, and creates the
 tmux session running the shim. **`--watch-restart`** interposes the restart-shim
@@ -115,42 +140,52 @@ gitignored `.env`); without it an empty key is allowed so the holder may auth vi
 OAuth. The supervisee argv comes from `--command` or after a `--` separator.
 
 #### `harmonik supervise stop [--project DIR]`
-(`stop.go:25-105`) SIGTERM → 10s wait → SIGKILL the supervisor PID, then
-**reap the flywheel tmux session child-tree** via `tmux kill-session` (verified
-by `supervise_reap_hkizs8s_test.go:24` — stop reaps the child tree, not just the
-PID), and remove `supervisor.pid` + sentinel. **Note:** stopping the *supervisor*
+(`RunStop`, `cmd/harmonik/supervise/stop.go`) SIGTERM → 10s wait → SIGKILL the
+supervisor PID, then **reap the flywheel tmux session child-tree** via
+`tmux kill-session` (covered by `TestSupervise_StopReapsFlywheelSession` in
+`cmd/harmonik/supervise_reap_hkizs8s_test.go` — stop reaps the child tree, not
+just the PID), and remove `supervisor.pid` + sentinel. **Idempotent:** a missing
+pidfile exits **0** ("supervisor not running"), not 1. **Note:** stopping the *supervisor*
 does not kill an already-revived *daemon* — the daemon is spawned detached
 (`setsid`) precisely so a SIGTERM to the pane does not cascade to it.
 
 #### `harmonik supervise status [--project DIR] [--json]`
-(`status.go:43-151`) **File-surface only — does NOT connect to the daemon
-socket.** Reads `supervisor.pid` and probes liveness via `kill(pid,0)`; reads
-`config.json` for restart-policy metadata; surfaces the cognition loop state
-(`loop_status` / `pause_reason`, incl. `budget-paused` / `circuit-tripped`).
-`--json` emits a schema-versioned `StatusResult`.
+(`RunStatus` / `buildStatusWithProbe`, `cmd/harmonik/supervise/status.go`)
+**File-surface only — does NOT connect to the daemon socket.** Reads
+`supervisor.pid` and probes liveness via `kill(pid,0)`; reads `config.json` for
+restart-policy metadata; surfaces the cognition loop state (`loop_status` /
+`pause_reason`, incl. `budget-paused` / `circuit-tripped`). When the pidfile is
+absent or stale it falls back to a **process/tmux signature probe** for a
+shell-based revive loop (`hk-keeper.sh` / `hk-supervise.sh`) and reports
+`presence_source: "keeper-loop"` rather than "stopped". `--json` emits a
+schema-versioned `StatusResult`.
 
 #### `harmonik supervise restart [--project DIR] [--watch-restart]`
-(`restart.go:21-68`) `stop` → re-read `config.json` (validate it parses) →
-`start`. **Re-reads config (does not hot-reload):** parameter changes take effect
-only on restart. This is the standard "deploy a new binary" step after
-`go install`.
+(`RunRestart`, `cmd/harmonik/supervise/restart.go`) `stop` → validate
+`config.json` parses → `start`. **Re-reads config (does not hot-reload):**
+parameter changes take effect only on restart. A *missing* `config.json` is not
+fatal — restart cold-starts and `RunStart` writes a fresh one; only a config that
+exists and fails to parse aborts (exit 1). This is the standard "deploy a new
+binary" step after `go install`.
 
 #### `harmonik supervise attach [--project DIR]`
-(`attach.go:24-64`) **execve-replaces** the current process with `tmux
-attach-session -t harmonik-<project_hash>-flywheel` (so you get a real terminal,
-not a subprocess). Returns 1 only on tmux-not-found / exec failure.
+(`RunAttach`, `cmd/harmonik/supervise/attach.go`) **execve-replaces** the current
+process with `tmux attach-session -t harmonik-<project_hash>-flywheel` (so you
+get a real terminal, not a subprocess). Returns 1 on tmux-not-found / exec
+failure / unresolvable project dir.
 
 #### `harmonik supervise logs [--project DIR] [--lines N]`
-(`logs.go:22-79`) Runs `tmux capture-pane -p -S -<N>` on the flywheel session
-(default `N=200`). The session must exist.
+(`RunLogs`, `cmd/harmonik/supervise/logs.go`) Runs `tmux capture-pane -p -S -<N>`
+on the flywheel session (default `N=200`). The session must exist.
 
 #### `harmonik supervise pause [--project DIR]` / `resume [--project DIR]`
-(`pause.go:33-70`, `resume.go:30-67`) These talk to the **daemon over its Unix
-socket** (`{"op":"operator-pause"}` / `operator-resume`), not the supervisor.
-`pause` blocks new dispatch immediately and lets in-flight runs finish (drain);
-`resume` re-enables dispatch. Both exit **17** when the daemon is not running.
+(`RunPause` / `RunResume` → `sendOperatorOp`, `cmd/harmonik/supervise/pause.go`)
+These talk to the **daemon over its Unix socket** (`{"op":"operator-pause"}` /
+`operator-resume`), not the supervisor. `pause` blocks new dispatch immediately
+and lets in-flight runs finish (drain); `resume` re-enables dispatch. Both exit
+**17** when the daemon socket is absent or refuses the connection.
 
-### Exit codes (`supervise_cmd.go:84-89` + per-verb)
+### Exit codes (the `EXIT CODES` block of `superviseTopUsage` + per-verb)
 
 | code | meaning | verbs |
 |---|---|---|
@@ -158,12 +193,14 @@ socket** (`{"op":"operator-pause"}` / `operator-resume`), not the supervisor.
 | `1` | argument / I/O / operational error | all |
 | `2` | unrecognised verb | dispatcher |
 | `17` | daemon not running (socket absent / refused) | start, restart, pause, resume |
-| `24` | flywheel tmux session already exists (lock free, pane left by a prior shim crash) | start (`ExitCodeFlywheelSessionExists`, `start.go:29`) |
-| `25` | supervisor already running (`supervisor.lock` held) | start (`ExitCodeSupervisorRunning`, `start.go:24`) |
+| `24` | flywheel tmux session already exists (lock free, pane left by a prior shim crash) | start (`ExitCodeFlywheelSessionExists`, `cmd/harmonik/supervise/start.go`) |
+| `25` | supervisor already running (`supervisor.lock` held) | start (`ExitCodeSupervisorRunning`, `cmd/harmonik/supervise/start.go`) |
 
-> The top-level usage string lists 0/1/2/17/25 but **not 24**; 24 is real and
-> emitted by `RunStart` when a prior shim left a `remain-on-exit` pane around
-> (`start.go:139-152,203-214`). Recover with `harmonik supervise stop` first.
+> `RunStart` returns 24 from **two** places: the pre-flight `tmux has-session`
+> check (before it writes sentinel or config), and the narrow race where
+> `tmux new-session` itself reports "duplicate session". Its own doc comment
+> lists only 0/1/17/25 and omits 24 — the top-level `superviseTopUsage` table is
+> the complete one. Recover with `harmonik supervise stop` first.
 
 **Cross-ref:** the **keeper** skill is the per-session *context-fill* watcher; it
 is a different process from the supervisor. The supervisor revives the *daemon*;
@@ -179,47 +216,55 @@ reconciles the older hk-gax8v "coming" plan referenced in AGENTS.md). It is the
 tool that crosses the integration→main boundary the daemon **never** auto-merges.
 
 ### Mode 1 — push-mode: `harmonik promote <sha>...`
-(`runPromotePush`, `promote_cmd.go:241-377`)
+(`runPromotePush`, `cmd/harmonik/promote_cmd.go`)
 Cherry-picks the given reviewed SHA(s) onto the target branch in a **temp
 worktree** rooted at the fetched `origin/<target>` tip, runs a **build gate**
-(`go build ./... && go vet ./...`, only when `go.mod` is present), and pushes
-**race-safely** with up to **3** non-fast-forward rebase retries
-(`maxPromotePushAttempts = 3`, `promote_cmd.go:82`). The cherry-pick uses `-x`
-(records provenance). This formalises the captain bypass-SOP for landing banked,
-reviewed-not-pushed commits.
+(`go build ./... && go vet ./...`, only when `go.mod` is present in the
+worktree), and pushes **race-safely** with up to **3** non-fast-forward rebase
+retries (`maxPromotePushAttempts`). The cherry-pick uses `-x` (records
+provenance). Each cherry-pick is then amended with a **`Harmonik-Bead-ID:`
+trailer** — from `--bead`, else auto-detected from a `(hk-xxx)` parenthetical in
+the source commit's subject — which is what lets `harmonik reconcile` auto-close
+the bead later; a failed stamp is a warning, not a failure. This formalises the
+captain bypass-SOP for landing banked, reviewed-not-pushed commits.
 
 ### Mode 2 — PR-mode: `harmonik promote --pr`
-(`runPromotePR`, `promote_cmd.go:379-410`)
+(`runPromotePR`, `cmd/harmonik/promote_cmd.go`)
 Opens a PR from `--from` (default **`integration`**) onto the target via
 `gh pr create --base <target> --head <from>` — **never pushes directly.** Requires
 the `gh` GitHub CLI on PATH (else exit 1). `--title` / `--body` pass through. This
 is the mode for the human integration→main review step.
 
 `--pr` and positional SHA args are **mutually exclusive**; push-mode requires ≥1
-SHA (`parsePromoteFlags`, `promote_cmd.go:222-229`).
+SHA (both checks in `parsePromoteFlags`, `cmd/harmonik/promote_cmd.go`).
 
-### Flags (`promote_cmd.go:52-59`, parsed `174-237`)
+### Flags (`promoteUsage` for the help text, `parsePromoteFlags` for what is actually accepted)
 
 | flag | mode | meaning |
 |---|---|---|
-| `--project DIR` | both | project root (default cwd / `$HARMONIK_PROJECT`) |
+| `--project DIR` | both | project root (default `$HARMONIK_PROJECT`, else cwd) |
 | `--target BRANCH` | both | target branch (default: `branching.yaml` `lands_on`, else `main`) |
+| `--bead ID` | push | bead ID stamped as the `Harmonik-Bead-ID` trailer; auto-detected from the commit subject when omitted |
 | `--pr` | PR | PR-mode; mutually exclusive with SHA args |
 | `--from BRANCH` | PR | head branch for the PR (default `integration`) |
 | `--title TEXT` / `--body TEXT` | PR | passthrough to `gh pr create` |
-| `--protect-branch BRANCH` | both | operator override of the protect-branch deny-list (repeatable) |
+| `--protect-branch BRANCH` | both | **replaces** (does not extend) the `branching.yaml` protect-branch deny-list; repeatable |
 | `--dry-run` | both | print planned actions; mutate nothing |
+
+Any other `-`-prefixed argument is an error (exit 1); bare arguments are treated
+as SHAs. Note `--protect-branch` is accepted by the parser but **absent from the
+`--help` text**.
 
 ### Protection gate (fail-closed)
 
 If the resolved target is in the project's `protect_branches`
 (`.harmonik/branching.yaml` or `--protect-branch`), **push-mode is refused**
-fail-closed (exit 5) with a message directing you to `--pr`
-(`promote_cmd.go:140-150`). This is what enforces the AGENTS.md "work-project
+fail-closed (exit 5) with a message directing you to `--pr` (the protection loop
+in `runPromoteSubcommand`). This is what enforces the AGENTS.md "work-project
 deployment" rule that the daemon must never push a protected `main`: a protected
 target can only be promoted via a PR.
 
-### Exit codes (`promote_cmd.go:23-31`, usage `65-71`)
+### Exit codes (`promote_cmd.go` file header + the `EXIT CODES` block of `promoteUsage`)
 
 | code | meaning |
 |---|---|
@@ -277,19 +322,22 @@ full procedure.
 bead is still `in_progress` even though its implementation already merged to the
 target branch.
 
-### What it does (`reconcile.go:171-236`)
+### What it does (`runReconcileSubcommandIO`, `cmd/harmonik/reconcile.go`)
 1. Lists all beads in coarse status `in_progress` (`adapter.ListInFlightBeads`).
+   Zero in-flight beads → exits **0** immediately.
 2. For each, scans `git log` on the target branch for a commit bearing the
-   trailer `Harmonik-Bead-ID: <bead_id>` (`lifecycle.GitMergeCommitScanner`).
-3. If a merge commit is found → **closes the bead** via `br close` (Cat 3c
-   auto-resolve). This is a **mutating** command (it writes bead closes).
-4. Reports `closed=N skipped=N failed=N` to stderr.
+   trailer `Harmonik-Bead-ID: <bead_id>` (`lifecycle.GitMergeCommitScanner`,
+   `HasMergeCommitForBead`).
+3. If a merge commit is found → **closes the bead** via `adapter.SweepCloseBead`
+   (`br close`, Cat 3c auto-resolve). This is a **mutating** command.
+4. Reports `closed=N skipped=N failed=N` to stderr (all of reconcile's progress
+   output goes to stderr, not stdout).
 
 It overlaps the daemon's own orphan sweep (`RunOrphanSweep`); the race is benign
-because `br close` is idempotent. Requires `br` on PATH (else exit 1). Has a 5-min
-internal timeout (`reconcile.go:168`).
+because `br close` is idempotent. Requires `br` on PATH (else exit 1). The whole
+run is under a **5-minute** `context.WithTimeout`.
 
-### Flags (`reconcile.go:73-79`)
+### Flags (`reconcileUsage` + the parse loop in `runReconcileSubcommandIO`)
 
 | flag | meaning |
 |---|---|
@@ -297,7 +345,7 @@ internal timeout (`reconcile.go:168`).
 | `--target-branch BRANCH` | branch to scan for merge commits (default `main`) |
 | `--run RUN_ID` | scope the scan to the single in-flight bead tied to that run_id (via the `main` queue ledger; fail-OPEN to a full scan if the queue can't load) |
 
-### Exit codes (`reconcile.go:80-83`)
+### Exit codes (`reconcile.go` file header + `reconcileUsage`)
 
 | code | meaning |
 |---|---|
@@ -314,58 +362,82 @@ operator-triggered case and one-off cleanups.
 
 ## § `harmonik init` — one-time project bootstrap
 
-`init_cmd.go`. First-time scaffold of a NEW repo for harmonik (`runInit`,
-`init_cmd.go:63-203`).
+`cmd/harmonik/init_cmd.go`. First-time scaffold of a NEW repo for harmonik
+(`runInit`).
 
-### What it scaffolds (in order, `init_cmd.go:140-202`)
-1. Precondition / doctor checks: git repo present, `br` and `harmonik` on PATH.
-2. **FAIL-CLOSED guard:** `--target-branch` MUST equal `main` until hk-m8vy2
-   (merge-retarget) lands — any other value exits 1 (`init_cmd.go:129-138`). So
-   `init` cannot yet stand up an integration-branch deployment directly; use the
-   integration-branch flags / `branching.yaml` on the daemon for that (AGENTS.md
-   §"Work-project deployment"), and promote via `harmonik promote --pr`.
-3. `.harmonik/` subdirs: `events/`, `worktrees/`, `beads-intents/`.
-4. `br init --prefix <prefix>` (default prefix `hk`) — skipped if `.beads/`
-   exists unless `--force`.
-5. `.harmonik/config.yaml` — daemon defaults (`target_branch`,
-   `max_concurrent: 4`, `workflow_mode: review-loop`).
-6. `.harmonik/branching.yaml` — `start_from` / `lands_on` (= target branch),
-   `landing_strategy: squash`.
-7. `.harmonik/.gitignore` — excludes runtime files (`daemon.pid`, `daemon.sock`,
-   `events/`, `worktrees/`, `cognition/`, `beads-intents/`, `queue.json`,
-   `comms/`).
-8. Renders `docs/templates/AGENTS.template.md` → `AGENTS.md` (substitutes
-   `$PROJECT_DIR`, `$TARGET_BRANCH`).
-9. Symlinks `CLAUDE.md` → `AGENTS.md`.
-10. Unless `--no-supervise`: runs `harmonik supervise start --watch-restart`
-    (non-fatal — if the daemon isn't up yet it exits 17 and init just warns).
-11. `--smoke`: post-init sanity checks (`.harmonik/`, the two YAMLs, `AGENTS.md`,
-    `br list` exits 0).
+> **There is no `--target-branch == main` guard in `init` any more.** Earlier
+> versions of this skill said `--target-branch` had to equal `main` until
+> hk-m8vy2 landed. That guard is gone: `init` passes `--target-branch` straight
+> through to `config.yaml` and `branching.yaml`, and the real fail-closed
+> enforcement is the **daemon's** boot guard (flag > file > default per WM-005b,
+> plus protect-branch / forbid-default-main). `harmonik init --target-branch
+> integration` is a supported invocation and is in the command's own examples.
+
+### What it scaffolds (in order, `runInit`)
+1. Flag parse — **fail-closed**: an unknown argument prints usage and exits 1, so
+   a typo like `--target-branc` cannot silently bootstrap against defaults.
+2. Doctor checks (`runDoctorChecks`): project dir exists, it is a git repo, `br`
+   on PATH, `harmonik` on PATH. `--doctor` stops here and exits 0.
+3. `.harmonik/` subdirs (`mkdirAll`): `events/`, `worktrees/`, `beads-intents/`,
+   `comms/`, `crew/`, `keeper/`, `queues/`, `intent/`.
+4. `br init --prefix <prefix>` (`runBrInit`) — skipped if `.beads/` exists unless
+   `--force`. The default prefix is **derived from the project directory name**
+   (`deriveBeadPrefix`), falling back to `hk` only when the name has no usable
+   alphanumerics.
+5. `.harmonik/config.yaml` (`writeConfigYAML`) — daemon defaults plus a complete,
+   uncommented `keeper:` block (harmonik ships no built-in keeper defaults, so
+   the generated block is what makes the keeper startable). `remote_control_prefix`
+   defaults to the same value passed to `br init --prefix`.
+6. `.harmonik/branching.yaml` (`writeBranchingYAML`) — `start_from` / `lands_on`
+   (both = target branch), `landing_strategy: squash`.
+7. `.harmonik/.gitignore` (`writeHarmonikGitignore`) — excludes runtime files
+   (`daemon.pid`, `daemon.sock`, `events/`, `worktrees/`, `cognition/`,
+   `beads-intents/`, `queue.json`, `comms/`, `crew/`, `keeper/`, `queues/`,
+   `schedules.json.lock`, `review.json`, `review.iter-*.json`).
+8. **Fleet skills** (`provisionSkills`) — every skill directory in the binary's
+   embedded bundle → `.claude/skills/<skill>/`. Never deletes or overwrites
+   sibling skill directories.
+9. Scaffolds (`provisionScaffolds`): `AGENT_INDEX.md`, `STATUS.md`. `TASKS.md` is
+   retired.
+10. Context tiers (`provisionContextTiers`): `.harmonik/context/project.yaml`,
+    `captain-lanes.md`, `roadmap.md`, plus `HANDOFF.md` **at the repo root**.
+11. Renders the *embedded* `assets/templates/AGENTS.template.md` → `AGENTS.md`
+    (`renderAgentsMD`, substitutes `$PROJECT_DIR` / `$TARGET_BRANCH`). Note it is
+    read from the embed, not from a `docs/templates/` path on disk.
+12. Symlinks `CLAUDE.md` → `AGENTS.md` (`ensureClaudeMDSymlink`).
+13. Seeds the goal-keeper job in `.harmonik/schedules.json`
+    (`seedGoalKeeperSchedule`) — every-1h backstop.
+14. Unless `--no-supervise`: runs `harmonik supervise start --watch-restart`
+    (`maybeStartSupervise`) — **non-fatal**; if the daemon isn't up it exits 17
+    and init only warns.
+15. `--smoke`: post-init sanity checks (`runSmokeTest` — `.harmonik/`, the two
+    YAMLs, `AGENTS.md`, and `br list` exits 0).
+16. Prints the stale-assets hint when existing managed files are behind the
+    running binary — this is how a re-`init` tells you to run `sync-assets`.
 
 ### Idempotency
-**Each step is skipped when its output artifact already exists**
-(`init_cmd.go:30-33`); the `CLAUDE.md` symlink and `br init` are also
-skip-if-present. **`--force`** overwrites config files and re-runs `br init
---force`. Safe to re-run on a partially-initialized project.
+**Each step is skipped when its output artifact already exists**; the `CLAUDE.md`
+symlink and `br init` are also skip-if-present. **`--force`** overwrites files
+and re-runs `br init --force`. Safe to re-run on a partially-initialized project.
 
-### Flags (`init_cmd.go:534-542`)
+### Flags (`initUsage` + the parse loop in `runInit`)
 
 | flag | meaning |
 |---|---|
-| `--project DIR` | project directory (default cwd) |
-| `--target-branch BRANCH` | merge target (default `main`; **only `main` allowed** until hk-m8vy2) |
-| `--prefix PREFIX` | bead-ID prefix for `br init` (default `hk`) |
+| `--project DIR` | project directory (default cwd; `$HARMONIK_PROJECT` is **not** consulted) |
+| `--target-branch BRANCH` | merge target (default `main`; any branch is accepted) |
+| `--prefix PREFIX` | bead-ID prefix for `br init` (default: derived from the project directory name) |
 | `--doctor` | run precondition checks only; mutate nothing |
-| `--force` | overwrite existing config + reinit the br database |
+| `--force` | overwrite existing files + reinit the br database |
 | `--smoke` | run post-init sanity checks |
 | `--no-supervise` | skip the auto `supervise start` |
 
-### Exit codes (`init_cmd.go:53-57`, `560-562`)
+### Exit codes (`runInitSubcommand` doc comment + `initUsage`)
 
 | code | meaning |
 |---|---|
 | `0` | success (or `--doctor` all-checks-passed) |
-| `1` | argument, precondition (no git repo / missing `br`/`harmonik`), or I/O error; **also `--target-branch != main`** |
+| `1` | unknown argument, precondition failure (no git repo / missing `br` or `harmonik`), or I/O error |
 
 **When you use it:** exactly once, when standing up harmonik on a brand-new repo.
 Run `harmonik init --doctor` first to confirm preconditions without mutating, then
@@ -404,25 +476,29 @@ harmonik promote --pr --from integration --title "Sprint 23"   # open integratio
 
 ## References
 
-- `cmd/harmonik/supervise_cmd.go` — verb dispatcher, top usage, exit-code table.
+- `cmd/harmonik/supervise_cmd.go` — `runSuperviseSubcommand` verb dispatcher,
+  `superviseTopUsage`, exit-code table.
 - `cmd/harmonik/supervise/{start,stop,status,restart,pause,resume,attach,logs,shim}.go`
   — per-verb behaviour, flags, exit codes 17/24/25, the restart-shim, the
   `buildDaemonCmd` revive argv.
 - `internal/supervise/daemon_watchdog.go` — the auto-revive watchdog: 30s probe,
   3s dial, 3-revive cap, 10s revive-backoff, 15m revive-window (covers the
   daemon's 10m boot-backoff = the "(no socket)" window).
-- `cmd/harmonik/supervise_reap_hkizs8s_test.go` — stop reaps the flywheel
-  child-tree; start exits 24 on an existing flywheel session.
+- `cmd/harmonik/supervise_reap_hkizs8s_test.go` — `TestSupervise_StopReapsFlywheelSession`
+  (stop reaps the flywheel child-tree) and `TestSupervise_StartRefuses_FlywheelSessionExists`
+  (start exits 24 on an existing flywheel session).
 - `cmd/harmonik/promote_cmd.go` — push-mode (`runPromotePush`) + PR-mode
   (`runPromotePR`), the protection gate (exit 5), exit codes 0–5 (hk-pk3p1).
 - `cmd/harmonik/reconcile.go` — Cat 3c reconciler, `Harmonik-Bead-ID` trailer
   scan, exit codes 0/1/2, `--run` scoping.
 - `cmd/harmonik/init_cmd.go` — bootstrap steps, idempotency, `--force`,
-  fail-closed `--target-branch == main` guard (hk-m8vy2).
-- `.claude/skills/keeper/SKILL.md` — the per-session context-fill watcher
-  (distinct from the supervisor; reset a Claude session, not the daemon).
-- `.claude/skills/harmonik-dispatch/SKILL.md` — the per-task dispatch loop these
-  lifecycle commands sit alongside.
+  `deriveBeadPrefix`, and the file-header note that target-branch enforcement is
+  the daemon's boot guard, **not** init's.
+- the **keeper** skill (`cmd/harmonik/assets/skills/keeper/SKILL.md`) — the
+  per-session context-fill watcher (distinct from the supervisor; it resets a
+  Claude session, not the daemon).
+- the **harmonik-dispatch** skill — the per-task dispatch loop these lifecycle
+  commands sit alongside.
 - AGENTS.md §"Work-project deployment" — integration-branch flags,
   `branching.yaml`, and "integration → main is a human step" (which `promote
   --pr` performs).

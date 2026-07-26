@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -19,8 +20,7 @@ func archiveVerdictFixtureMakeWorkspace(t *testing.T) string {
 	t.Helper()
 	workspacePath := t.TempDir()
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("archiveVerdictFixtureMakeWorkspace: MkdirAll: %v", err)
 	}
 	return workspacePath
@@ -32,8 +32,7 @@ func archiveVerdictFixtureWriteSource(t *testing.T, workspacePath string) {
 	t.Helper()
 	payload := []byte(`{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Looks good."}`)
 	target := ReviewVerdictPath(workspacePath)
-	//nolint:gosec // G306: test fixture; 0644 is appropriate
-	if err := os.WriteFile(target, payload, 0o644); err != nil {
+	if err := os.WriteFile(target, payload, 0o600); err != nil {
 		t.Fatalf("archiveVerdictFixtureWriteSource: WriteFile: %v", err)
 	}
 }
@@ -46,6 +45,9 @@ func archiveVerdictFixtureWriteSource(t *testing.T, workspacePath string) {
 // the canonical path ${workspace_path}/.harmonik/review.iter-<N>.json.
 func TestWM016_ArchivePathShape(t *testing.T) {
 	t.Parallel()
+	// Built rather than written as a "/ws" literal so the separator is not
+	// embedded in a filepath.Join argument.
+	wsRoot := filepath.Join(string(filepath.Separator), "ws")
 	cases := []struct {
 		iterN int
 		want  string
@@ -55,8 +57,8 @@ func TestWM016_ArchivePathShape(t *testing.T) {
 		{3, ".harmonik/review.iter-3.json"},
 	}
 	for _, tc := range cases {
-		got := ReviewVerdictArchivePath("/ws", tc.iterN)
-		want := filepath.Join("/ws", tc.want)
+		got := ReviewVerdictArchivePath(wsRoot, tc.iterN)
+		want := filepath.Join(wsRoot, tc.want)
 		if got != want {
 			t.Errorf("ReviewVerdictArchivePath(%d): got %q, want %q", tc.iterN, got, want)
 		}
@@ -98,8 +100,7 @@ func TestWM016_ArchivePreservesContent(t *testing.T) {
 	workspacePath := archiveVerdictFixtureMakeWorkspace(t)
 	payload := []byte(`{"schema_version":1,"verdict":"REQUEST_CHANGES","flags":["FLAG-A"],"notes":"Needs work."}`)
 	target := ReviewVerdictPath(workspacePath)
-	//nolint:gosec // G306: test fixture; 0644 is appropriate
-	if err := os.WriteFile(target, payload, 0o644); err != nil {
+	if err := os.WriteFile(target, payload, 0o600); err != nil {
 		t.Fatalf("WriteFile source: %v", err)
 	}
 
@@ -108,12 +109,8 @@ func TestWM016_ArchivePreservesContent(t *testing.T) {
 	}
 
 	dst := ReviewVerdictArchivePath(workspacePath, 2)
-	//nolint:gosec // G304: test fixture path from t.TempDir(); not user input
-	got, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("ReadFile archived file: %v", err)
-	}
-	if string(got) != string(payload) {
+	got := mustReadFile(t, dst)
+	if !bytes.Equal(got, payload) {
 		t.Errorf("archived content mismatch: got %q, want %q", got, payload)
 	}
 }

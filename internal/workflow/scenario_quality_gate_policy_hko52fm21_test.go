@@ -72,8 +72,8 @@ func qgpRun(t *testing.T) *core.Run {
 }
 
 // qgpOutcome returns a reviewer-style Outcome (status=SUCCESS, optional label).
-func qgpOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func qgpOutcome(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -109,19 +109,19 @@ func TestQGP_GateAllowHappyPath(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → implementer
-	dec := workflow.DecideNextNode(graph, "start", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", qgpOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// implementer → reviewer
-	dec = workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("implementer→reviewer: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// reviewer(APPROVE) → quality_gate
-	dec = workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer", qgpOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "quality_gate" {
 		t.Fatalf("reviewer(APPROVE)→quality_gate: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
@@ -133,7 +133,7 @@ func TestQGP_GateAllowHappyPath(t *testing.T) {
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", qgpOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -154,12 +154,14 @@ func TestQGP_GateDenyLoopThenAllow(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to quality_gate (first pass).
-	workflow.DecideNextNode(graph, "start", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	workflow.DecideNextNode(graph, "start", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "reviewer", qgpOutcome("APPROVE"), run, cycles)
 
 	// Simulate one gate deny traversal; increment the cycle counter for quality_gate→implementer.
-	cycles.Increment(run.RunID, "quality_gate", "implementer", nil)
+	if _, err := cycles.Increment(run.RunID, "quality_gate", "implementer", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter quality_gate\u2192implementer: %v", err)
+	}
 
 	// quality_gate(deny) → implementer.
 	dec := workflow.DecideNextNode(graph, "quality_gate", qgpGateOutcome(true, "deny"), run, cycles)
@@ -168,13 +170,13 @@ func TestQGP_GateDenyLoopThenAllow(t *testing.T) {
 	}
 
 	// implementer → reviewer (second pass)
-	dec = workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("implementer→reviewer (2nd pass): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// reviewer(APPROVE) → quality_gate (second pass)
-	dec = workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer", qgpOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "quality_gate" {
 		t.Fatalf("reviewer(APPROVE)→quality_gate (2nd pass): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
@@ -185,7 +187,7 @@ func TestQGP_GateDenyLoopThenAllow(t *testing.T) {
 		t.Fatalf("quality_gate(allow)→close (2nd pass): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "close", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", qgpOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -204,9 +206,9 @@ func TestQGP_GateEscalateToHuman(t *testing.T) {
 	run := qgpRun(t)
 	cycles := core.NewCycleCounter()
 
-	workflow.DecideNextNode(graph, "start", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	workflow.DecideNextNode(graph, "start", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "reviewer", qgpOutcome("APPROVE"), run, cycles)
 
 	// quality_gate(escalate-to-human) → close-needs-attention
 	dec := workflow.DecideNextNode(graph, "quality_gate", qgpGateOutcome(true, "escalate-to-human"), run, cycles)
@@ -215,7 +217,7 @@ func TestQGP_GateEscalateToHuman(t *testing.T) {
 			dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", qgpOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -235,9 +237,9 @@ func TestQGP_GateFallbackEvalFailure(t *testing.T) {
 	run := qgpRun(t)
 	cycles := core.NewCycleCounter()
 
-	workflow.DecideNextNode(graph, "start", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	workflow.DecideNextNode(graph, "start", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "reviewer", qgpOutcome("APPROVE"), run, cycles)
 
 	// quality_gate returns FAIL (eval-failure) → unconditional fallback → close-needs-attention.
 	dec := workflow.DecideNextNode(graph, "quality_gate", qgpGateOutcome(false, ""), run, cycles)
@@ -261,27 +263,29 @@ func TestQGP_ReviewerRequestChangesThenApprove(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → implementer → reviewer.
-	workflow.DecideNextNode(graph, "start", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
 
 	// Increment reviewer→implementer counter (simulates one prior traversal).
-	cycles.Increment(run.RunID, "reviewer", "implementer", nil)
+	if _, err := cycles.Increment(run.RunID, "reviewer", "implementer", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter reviewer\u2192implementer: %v", err)
+	}
 
 	// reviewer(REQUEST_CHANGES) → implementer.
-	dec := workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "reviewer", qgpOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("reviewer(REQUEST_CHANGES)→implementer: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// implementer → reviewer (second pass)
-	dec = workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("implementer→reviewer (2nd): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// reviewer(APPROVE) → quality_gate
-	dec = workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer", qgpOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "quality_gate" {
 		t.Fatalf("reviewer(APPROVE)→quality_gate: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
@@ -292,7 +296,7 @@ func TestQGP_ReviewerRequestChangesThenApprove(t *testing.T) {
 		t.Fatalf("quality_gate(allow)→close: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "close", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", qgpOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -311,17 +315,17 @@ func TestQGP_ReviewerBlock(t *testing.T) {
 	run := qgpRun(t)
 	cycles := core.NewCycleCounter()
 
-	workflow.DecideNextNode(graph, "start", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
 
 	// reviewer(BLOCK) → close-needs-attention
-	dec := workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "BLOCK"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "reviewer", qgpOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("reviewer(BLOCK)→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", qgpOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -341,11 +345,11 @@ func TestQGP_ReviewerFallback(t *testing.T) {
 	run := qgpRun(t)
 	cycles := core.NewCycleCounter()
 
-	workflow.DecideNextNode(graph, "start", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
 
 	// Unrecognized label → no conditional edge matches → unconditional fallback.
-	dec := workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "UNKNOWN"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "reviewer", qgpOutcome("UNKNOWN"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("reviewer(UNKNOWN)→fallback: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
@@ -367,17 +371,19 @@ func TestQGP_ReviewerCapHit(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to reviewer.
-	workflow.DecideNextNode(graph, "start", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
 
 	// Pre-fill cycle counter: 3 traversals of reviewer→implementer.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "reviewer", "implementer", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "reviewer", "implementer", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter reviewer\u2192implementer: %v", err)
+		}
 	}
 
 	// With cap exhausted, REQUEST_CHANGES back-edge is suppressed → cap_hit.
-	dec := workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "reviewer", qgpOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("reviewer cap-hit: expected Failed=true, got: %+v", dec)
 	}
@@ -404,14 +410,16 @@ func TestQGP_GateDenyCapHit(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to quality_gate.
-	workflow.DecideNextNode(graph, "start", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", qgpOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "reviewer", qgpOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	workflow.DecideNextNode(graph, "start", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", qgpOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "reviewer", qgpOutcome("APPROVE"), run, cycles)
 
 	// Pre-fill cycle counter: 3 traversals of quality_gate→implementer (deny).
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "quality_gate", "implementer", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "quality_gate", "implementer", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter quality_gate\u2192implementer: %v", err)
+		}
 	}
 
 	// With cap exhausted, deny back-edge is suppressed → cap_hit.

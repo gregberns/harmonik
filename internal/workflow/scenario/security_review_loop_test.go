@@ -57,8 +57,8 @@ func srlRun(t *testing.T) *core.Run {
 	}
 }
 
-func srlOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func srlOutcome(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -80,25 +80,25 @@ func TestSRL_ApproveOnFirstPass(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → implement
-	dec := workflow.DecideNextNode(graph, "start", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// implement → security_review
-	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "security_review" {
 		t.Fatalf("implement→security_review: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// security_review(APPROVE) → close
-	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("security_review→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", srlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -120,7 +120,7 @@ func TestSRL_TwoRequestChangesThenApprove(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → implement
-	dec := workflow.DecideNextNode(graph, "start", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: %+v", dec)
 	}
@@ -128,16 +128,18 @@ func TestSRL_TwoRequestChangesThenApprove(t *testing.T) {
 	// Loop twice: security_review(REQUEST_CHANGES) → implement
 	for i := 1; i <= 2; i++ {
 		// implement → security_review
-		dec = workflow.DecideNextNode(graph, "implement", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+		dec = workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "security_review" {
 			t.Fatalf("iteration %d implement→security_review: %+v", i, dec)
 		}
 
 		// Increment cycle counter for the security_review→implement back-edge.
-		cycles.Increment(run.RunID, "security_review", "implement", nil)
+		if _, err := cycles.Increment(run.RunID, "security_review", "implement", nil); err != nil {
+			t.Fatalf("pre-fill cycle counter security_review\u2192implement: %v", err)
+		}
 
 		// security_review(REQUEST_CHANGES) → implement
-		dec = workflow.DecideNextNode(graph, "security_review", srlOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+		dec = workflow.DecideNextNode(graph, "security_review", srlOutcome("REQUEST_CHANGES"), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "implement" {
 			t.Fatalf("iteration %d security_review→implement: Advance=%v NextNodeID=%q",
 				i, dec.Advance, dec.NextNodeID)
@@ -145,17 +147,17 @@ func TestSRL_TwoRequestChangesThenApprove(t *testing.T) {
 	}
 
 	// Third pass: implement → security_review → APPROVE → close
-	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "security_review" {
 		t.Fatalf("final implement→security_review: %+v", dec)
 	}
 
-	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("final security_review→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "close", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", srlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -176,26 +178,26 @@ func TestSRL_BlockOnFirst(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → implement
-	dec := workflow.DecideNextNode(graph, "start", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: %+v", dec)
 	}
 
 	// implement → security_review
-	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "security_review" {
 		t.Fatalf("implement→security_review: %+v", dec)
 	}
 
 	// security_review(BLOCK) → close-needs-attention
-	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome(core.OutcomeStatusSuccess, "BLOCK"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("security_review→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// close-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", srlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -217,18 +219,20 @@ func TestSRL_CapHitFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → implement → security_review.
-	workflow.DecideNextNode(graph, "start", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implement", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of security_review→implement.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "security_review", "implement", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "security_review", "implement", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter security_review\u2192implement: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is
 	// suppressed; the cascade reports a cap-hit failure.
-	dec := workflow.DecideNextNode(graph, "security_review", srlOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "security_review", srlOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
 	}
@@ -256,17 +260,17 @@ func TestSRL_UnrecognizedLabelFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → implement → security_review.
-	dec := workflow.DecideNextNode(graph, "start", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implement" {
 		t.Fatalf("start→implement: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implement", srlOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "security_review" {
 		t.Fatalf("implement→security_review: %+v", dec)
 	}
 
 	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
-	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome(core.OutcomeStatusSuccess, "UNKNOWN_LABEL"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "security_review", srlOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
 			dec.Advance, dec.Failed, dec.FailureReason)
@@ -277,7 +281,7 @@ func TestSRL_UnrecognizedLabelFallback(t *testing.T) {
 	}
 
 	// close-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", srlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", srlOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}

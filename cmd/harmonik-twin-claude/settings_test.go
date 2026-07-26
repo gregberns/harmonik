@@ -32,6 +32,15 @@ func twinSettingsFixtureWrite(t *testing.T, root string, content []byte) {
 	}
 }
 
+func twinSettingsFixtureMarshal(t *testing.T, value any) []byte {
+	t.Helper()
+	content, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("twinSettingsFixtureMarshal: %v", err)
+	}
+	return content
+}
+
 // TestLoadCloneSettings_Absent verifies that a missing settings.json returns
 // a zero-value cloneSettings with no error (both flags false).
 func TestLoadCloneSettings_Absent(t *testing.T) {
@@ -69,7 +78,7 @@ func TestLoadCloneSettings_MalformedJSON(t *testing.T) {
 // section returns both flags false but no error.
 func TestLoadCloneSettings_ValidNoHooks(t *testing.T) {
 	root := twinSettingsFixtureDir(t)
-	content, _ := json.Marshal(map[string]any{
+	content := twinSettingsFixtureMarshal(t, map[string]any{
 		"dangerouslyAllowedPermissions": []string{"Bash(*)"},
 	})
 	twinSettingsFixtureWrite(t, root, content)
@@ -91,7 +100,7 @@ func TestLoadCloneSettings_ValidNoHooks(t *testing.T) {
 func TestLoadCloneSettings_ValidWithStopHook(t *testing.T) {
 	root := twinSettingsFixtureDir(t)
 	// Build a minimal settings.json matching CHB-003 shape.
-	content, _ := json.Marshal(map[string]any{
+	content := twinSettingsFixtureMarshal(t, map[string]any{
 		"dangerouslyAllowedPermissions": []string{"Bash(*)", "Read(*)"},
 		"hooks": map[string]any{
 			"Stop": []any{
@@ -130,7 +139,7 @@ func TestLoadCloneSettings_ValidWithStopHook(t *testing.T) {
 // dangerouslyAllowedPermissions but an empty hooks map returns stopHookPresent=false.
 func TestLoadCloneSettings_MissingStopHook(t *testing.T) {
 	root := twinSettingsFixtureDir(t)
-	content, _ := json.Marshal(map[string]any{
+	content := twinSettingsFixtureMarshal(t, map[string]any{
 		"dangerouslyAllowedPermissions": []any{},
 		"hooks":                         map[string]any{},
 	})

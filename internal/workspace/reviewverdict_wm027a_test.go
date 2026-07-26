@@ -36,13 +36,11 @@ func reviewVerdictFixtureWrite(t *testing.T, data []byte) string {
 	t.Helper()
 	workspacePath := t.TempDir()
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("reviewVerdictFixtureWrite: MkdirAll: %v", err)
 	}
 	target := ReviewVerdictPath(workspacePath)
-	//nolint:gosec // G306: test fixture; 0644 is appropriate
-	if err := os.WriteFile(target, data, 0o644); err != nil {
+	if err := os.WriteFile(target, data, 0o600); err != nil {
 		t.Fatalf("reviewVerdictFixtureWrite: WriteFile: %v", err)
 	}
 	return workspacePath
@@ -172,7 +170,6 @@ func TestWM027a_ReadReviewVerdictEmptyFlagsAccepted(t *testing.T) {
 	t.Parallel()
 
 	for _, flagsJSON := range []string{"[]", "null"} {
-		flagsJSON := flagsJSON
 		t.Run("flags="+flagsJSON, func(t *testing.T) {
 			t.Parallel()
 
@@ -269,7 +266,6 @@ func TestWM027a_ReadReviewVerdictUnknownVerdict(t *testing.T) {
 	t.Parallel()
 
 	for _, bad := range []string{"UNKNOWN", "approve", "request_changes", "", "REJECT"} {
-		bad := bad
 		t.Run("verdict="+bad, func(t *testing.T) {
 			t.Parallel()
 

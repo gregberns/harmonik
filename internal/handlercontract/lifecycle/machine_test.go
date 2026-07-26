@@ -8,6 +8,22 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
+// machineFixtureMustTransition drives m through one transition that the caller
+// expects the HC-065 table to accept, and reports a failure if it is rejected.
+// It uses t.Errorf rather than t.Fatalf so it is safe to call from the driver
+// goroutine in TestConcurrentTransition.
+func machineFixtureMustTransition(
+	t *testing.T,
+	m *lifecycle.Machine,
+	to lifecycle.LifecycleState,
+	reason lifecycle.TransitionReason,
+) {
+	t.Helper()
+	if err := m.Transition(to, reason, "", ""); err != nil {
+		t.Errorf("Transition(%s, %s): unexpected error: %v", to, reason, err)
+	}
+}
+
 // TestTransition_LegalEdges verifies every legal edge in the valid-transitions
 // table succeeds.
 func TestTransition_LegalEdges(t *testing.T) {
@@ -136,8 +152,8 @@ func TestTerminalStates(t *testing.T) {
 // recorded when transitioning to StateFailed.
 func TestFailedTransition_ErrFields(t *testing.T) {
 	m := lifecycle.New("sess-1", "run-1")
-	_ = m.Transition(lifecycle.StateInitializing, lifecycle.ReasonInitComplete, "", "")
-	_ = m.Transition(lifecycle.StateReady, lifecycle.ReasonInitComplete, "", "")
+	machineFixtureMustTransition(t, m, lifecycle.StateInitializing, lifecycle.ReasonInitComplete)
+	machineFixtureMustTransition(t, m, lifecycle.StateReady, lifecycle.ReasonInitComplete)
 	if err := m.Transition(lifecycle.StateFailed, lifecycle.ReasonSilentHang, "SILENT_HANG", "agent did not respond"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,9 +222,9 @@ func TestHistory_RingEviction(t *testing.T) {
 // TestHistory_OrderOldestFirst verifies that History returns entries oldest→newest.
 func TestHistory_OrderOldestFirst(t *testing.T) {
 	m := lifecycle.New("sess-ord", "run-ord")
-	_ = m.Transition(lifecycle.StateInitializing, lifecycle.ReasonSpawnStarted, "", "")
-	_ = m.Transition(lifecycle.StateReady, lifecycle.ReasonInitComplete, "", "")
-	_ = m.Transition(lifecycle.StateExecuting, lifecycle.ReasonCommandStarted, "", "")
+	machineFixtureMustTransition(t, m, lifecycle.StateInitializing, lifecycle.ReasonSpawnStarted)
+	machineFixtureMustTransition(t, m, lifecycle.StateReady, lifecycle.ReasonInitComplete)
+	machineFixtureMustTransition(t, m, lifecycle.StateExecuting, lifecycle.ReasonCommandStarted)
 
 	h := m.History()
 	if len(h) != 3 {
@@ -238,11 +254,11 @@ func TestConcurrentTransition(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_ = m.Transition(lifecycle.StateInitializing, lifecycle.ReasonInitComplete, "", "")
-		_ = m.Transition(lifecycle.StateReady, lifecycle.ReasonInitComplete, "", "")
-		_ = m.Transition(lifecycle.StateExecuting, lifecycle.ReasonCommandStarted, "", "")
-		_ = m.Transition(lifecycle.StateTerminating, lifecycle.ReasonTerminateRequested, "", "")
-		_ = m.Transition(lifecycle.StateTerminated, lifecycle.ReasonTerminateComplete, "", "")
+		machineFixtureMustTransition(t, m, lifecycle.StateInitializing, lifecycle.ReasonInitComplete)
+		machineFixtureMustTransition(t, m, lifecycle.StateReady, lifecycle.ReasonInitComplete)
+		machineFixtureMustTransition(t, m, lifecycle.StateExecuting, lifecycle.ReasonCommandStarted)
+		machineFixtureMustTransition(t, m, lifecycle.StateTerminating, lifecycle.ReasonTerminateRequested)
+		machineFixtureMustTransition(t, m, lifecycle.StateTerminated, lifecycle.ReasonTerminateComplete)
 	}()
 
 	// Concurrent readers.

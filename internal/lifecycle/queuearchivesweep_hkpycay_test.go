@@ -16,8 +16,7 @@ import (
 func archiveSweepMakeHarmonikDir(t *testing.T) string {
 	t.Helper()
 	projectDir := t.TempDir()
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("archiveSweepMakeHarmonikDir: mkdir: %v", err)
 	}
 	return projectDir

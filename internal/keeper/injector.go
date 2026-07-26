@@ -98,6 +98,33 @@ const goodStoppingPointSelfTest = "A good stopping point is one where nothing ne
 	"(iii) no unanswered operator question is held; and " +
 	"(iv) the next session resumes from the handoff plus durable substrate with no redo and no lost decision."
 
+// handoffWriteGuardHint tells the agent to Read the handoff file before writing
+// it. Claude Code's Write tool REFUSES to overwrite a file the current session
+// has not Read, and after a /clear the rebooted session has read nothing — so a
+// crew handed a pre-existing HANDOFF-<name>.md burns a round trip discovering
+// that. The session-handoff skill is user-global (not in this repo), so the
+// injected directive is the only place we control. Kept in one constant so the
+// auto-cycle directive, the leader defer body, and the keeper SKILL.md all say
+// the same thing. Refs: hk-4tjyj / hk-pgtt6.
+const handoffWriteGuardHint = "The handoff file already EXISTS: Read it first, then Write it — " +
+	"the Write tool refuses a file this session has not Read."
+
+// handoffDirective renders the /session-handoff directive the keeper pastes into
+// the agent's pane at the start of a cycle.
+//
+// It is ONE LINE on purpose (hk-pgtt6). The previous shape put "\n\n" between the
+// path and the IMPORTANT clause; Claude Code collapses a pasted multi-line block
+// into a single slash-command argument, so the newlines vanished entirely and the
+// crew saw `HANDOFF-<name>.mdIMPORTANT: include exactly this line…` — the path and
+// the instruction fused into one token. A VISIBLE separator (" — ") survives that
+// collapse; whitespace does not.
+func handoffDirective(path, nonce string) string {
+	return fmt.Sprintf(
+		"/session-handoff %s — IMPORTANT: include exactly this line verbatim in the handoff file: %s — %s",
+		path, nonce, handoffWriteGuardHint,
+	)
+}
+
 // LeaderDeferBody renders the compiled-default K2 leader defer nudge body: the
 // normative four-slot template (SK-026) — defer-A, defer-B, the verbatim SK-027
 // self-test, and the SK-030 restart-now command carrying the cycle nonce. This is
@@ -112,13 +139,14 @@ func LeaderDeferBody(agent, nonce string) string {
 			"If you are mid-task, %s first. "+
 			"%s "+
 			"Then self-restart: run /session-handoff — include the marker %s verbatim in your "+
-			"HANDOFF-<name>.md — then run `%s`.",
+			"HANDOFF-<name>.md — then run `%s`. %s",
 		goodStoppingPointToken,
 		deferOperatorExchangeToken,
 		deferInflightUnitToken,
 		goodStoppingPointSelfTest,
 		nonceMarker(nonce),
 		fmt.Sprintf(restartNowNonceCmdToken, agent, nonce),
+		handoffWriteGuardHint,
 	)
 }
 
@@ -131,11 +159,6 @@ func LeaderDeferBody(agent, nonce string) string {
 func AckLine(nonce, kind string) string {
 	return fmt.Sprintf("[KEEPER ACK %s] received %s", nonce, kind)
 }
-
-// bufferName is the tmux buffer name used for keeper injections. Using a
-// keeper-specific name avoids clobbering buffers owned by the daemon's own
-// paste-inject step (which uses buffers like "hk-<run_id>").
-const bufferName = "hk-keeper-warn"
 
 // submitSettle is the grace period between the bracketed-paste write and the
 // first submit Enter. Without it the post-paste Enter can land before the REPL
@@ -154,6 +177,30 @@ const submitRetries = 2
 // tests can zero it to drive the retry loop instantly without skipping it. Its
 // designed value (400ms) is regression-guarded by TestInjectText_SettleConstants.
 var submitRetryDelay = 400 * time.Millisecond
+
+// injectBufferName is the tmux buffer name the injector loads its payload into.
+//
+// It MUST satisfy the PL-021d buffer-name format `harmonik-<id>-<purpose>` —
+// i.e. it must equal tmux.BufferName("keeper", "inject") in
+// internal/lifecycle/tmux/buffername.go, which is the shared constructor every
+// other production site uses.
+//
+// Hardcoded here rather than built by that helper because the keeper package is
+// depguard-isolated and may NOT import lifecycle (hk-ekap1 / hk-fzzc6) — the
+// same local-duplication pattern as windowAgent in tmuxresolve.go. The two
+// halves are pinned from both sides: the tmux package's
+// TestBufferName_KeeperInjectorDuplicate asserts the helper produces this exact
+// string (checked against the REAL bufferNameRe), and this package's
+// TestInjectText_BufferNameIsValidShape asserts the injector puts it on the
+// tmux argv.
+//
+// The retired value was "hk-keeper-inject", which FAILS bufferNameRe: the
+// prefix is "hk-", not "harmonik-". Nothing broke, because this path shells out
+// through tmuxRunFn instead of tmux.OSAdapter and so is never validated — but
+// consolidating the injector onto the adapter (the obvious next refactor) would
+// have turned every keeper injection into ErrStructural, silently dropping
+// /session-handoff, /clear, and /session-resume. Bead: hk-y466l.
+const injectBufferName = "harmonik-keeper-inject"
 
 // tmuxRunFn is the seam through which the injector shells out to tmux. It runs
 // the given tmux argv (with optional stdin) and returns the combined
@@ -210,13 +257,11 @@ func injectTextClocked(ctx context.Context, clock substrate.ClockPort, tmuxTarge
 		return fmt.Errorf("keeper: inject: tmuxTarget is empty")
 	}
 
-	const buf = "hk-keeper-inject"
-
-	if out, err := tmuxRunFn(ctx, text, "load-buffer", "-b", buf, "-"); err != nil {
+	if out, err := tmuxRunFn(ctx, text, "load-buffer", "-b", injectBufferName, "-"); err != nil {
 		return fmt.Errorf("keeper: tmux load-buffer: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
 	}
 
-	if out, err := tmuxRunFn(ctx, "", "paste-buffer", "-b", buf, "-t", tmuxTarget, "-d"); err != nil {
+	if out, err := tmuxRunFn(ctx, "", "paste-buffer", "-b", injectBufferName, "-t", tmuxTarget, "-d"); err != nil {
 		return fmt.Errorf("keeper: tmux paste-buffer: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
 	}
 

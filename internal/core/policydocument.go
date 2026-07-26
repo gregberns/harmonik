@@ -227,8 +227,6 @@ var requiredSections = []string{
 // Parsing does not validate the document against CP-035; call ValidateSections
 // after parsing. This separation allows test fixtures to exercise missing-section
 // detection explicitly.
-//
-//nolint:gosec // G304: path provenance is test-fixture YAML bytes, not user input
 func ParsePolicyDocument(data []byte) (PolicyDocument, error) {
 	// First, extract the set of top-level keys that were present in the YAML.
 	var rawMap map[string]yaml.Node

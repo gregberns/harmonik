@@ -13,12 +13,9 @@ package hookrelay_test
 // correct transport proves resolveDialTarget routed it there.
 
 import (
-	"bufio"
 	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -32,28 +29,21 @@ import (
 func tcpFixtureListenAndRespond(t *testing.T, ackJSON string) (endpoint string, received <-chan []byte) {
 	t.Helper()
 
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("tcpFixtureListenAndRespond: listen: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
 
 	ch := make(chan []byte, 1)
-	go func() {
-		conn, acceptErr := ln.Accept()
-		if acceptErr != nil {
-			return
-		}
-		defer func() { _ = conn.Close() }()
-		scanner := bufio.NewScanner(conn)
-		if scanner.Scan() {
-			ch <- scanner.Bytes()
-		}
-		_, _ = fmt.Fprintln(conn, ackJSON)
-	}()
+	hookRelayFixtureWatch(t, "tcpFixtureListenAndRespond", ln, func() error {
+		return hookRelayFixtureServe(ln, []string{ackJSON}, ch)
+	})
 
-	port := ln.Addr().(*net.TCPAddr).Port
-	return "tcp://" + net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port)), ch
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("tcpFixtureListenAndRespond: listener address is %T, want *net.TCPAddr", ln.Addr())
+	}
+	return "tcp://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(addr.Port)), ch
 }
 
 // TestHookRelay_TCPEndpoint_DialsTCP asserts a "tcp://host:port" endpoint makes
@@ -64,9 +54,9 @@ func TestHookRelay_TCPEndpoint_DialsTCP(t *testing.T) {
 
 	endpoint, received := tcpFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e := hookRelayFixtureEnv(t.TempDir())
-	e.DaemonSocket = endpoint // tcp://127.0.0.1:<port>
+	e.DaemonSocket = endpoint
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionStart", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "SessionStart", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("SessionStart", stdin, &stderr, &e)
 	if code != 0 {
@@ -75,13 +65,8 @@ func TestHookRelay_TCPEndpoint_DialsTCP(t *testing.T) {
 
 	select {
 	case msgBytes := <-received:
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(msgBytes, &msg); err != nil {
-			t.Fatalf("unmarshal sent message: %v", err)
-		}
-		var msgType string
-		_ = json.Unmarshal(msg["type"], &msgType)
-		if msgType != "agent_ready" {
+		msg, _ := hookRelayFixtureEnvelope(t, "SessionStart over tcp", msgBytes)
+		if msgType := hookRelayFixtureString(t, "SessionStart over tcp", msg, "type"); msgType != "agent_ready" {
 			t.Errorf("message type = %q, want agent_ready", msgType)
 		}
 	default:
@@ -99,7 +84,7 @@ func TestHookRelay_UnixEndpoint_DialsUnix(t *testing.T) {
 	e := hookRelayFixtureEnv(t.TempDir())
 	e.DaemonSocket = sockPath // plain unix path, no tcp:// prefix
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionStart", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "SessionStart", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("SessionStart", stdin, &stderr, &e)
 	if code != 0 {
@@ -127,21 +112,14 @@ func TestHookRelay_TCPEndpoint_DoesNotDialUnix(t *testing.T) {
 	// Use an in-dir name; the point is only that a unix socket EXISTS and the
 	// relay must not deliver to it for a tcp:// endpoint.
 	unixPath := dir + "/u.sock"
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", unixPath)
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", unixPath)
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
-	gotUnix := make(chan struct{}, 1)
-	go func() {
-		conn, acceptErr := ln.Accept()
-		if acceptErr != nil {
-			return
-		}
-		gotUnix <- struct{}{}
-		_, _ = fmt.Fprintln(conn, `{"status":"ok"}`)
-		_ = conn.Close()
-	}()
+	gotUnix := make(chan []byte, 1)
+	hookRelayFixtureWatch(t, "TCPEndpoint_DoesNotDialUnix", ln, func() error {
+		return hookRelayFixtureServe(ln, []string{`{"status":"ok"}`}, gotUnix)
+	})
 
 	e := hookRelayFixtureEnv(t.TempDir())
 	// A tcp:// endpoint the relay cannot dial. Use an out-of-range port so the
@@ -150,14 +128,14 @@ func TestHookRelay_TCPEndpoint_DoesNotDialUnix(t *testing.T) {
 	// (fail), and must NOT fall back to the unix path above.
 	e.DaemonSocket = "tcp://127.0.0.1:99999"
 
-	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionStart", nil)
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "SessionStart", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("SessionStart", stdin, &stderr, &e)
 
 	// Must NOT have reached the unix listener.
 	select {
-	case <-gotUnix:
-		t.Fatal("relay delivered to a unix socket for a tcp:// endpoint (transport not selected by prefix)")
+	case msg := <-gotUnix:
+		t.Fatalf("relay delivered %q to a unix socket for a tcp:// endpoint (transport not selected by prefix)", msg)
 	default:
 	}
 	// And the tcp dial to the dead port should fail → non-zero exit + dial error.

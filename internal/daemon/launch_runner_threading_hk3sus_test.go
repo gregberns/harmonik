@@ -1,7 +1,7 @@
 package daemon_test
 
 // launch_runner_threading_hk3sus_test.go — regression tests that the REMOTE
-// launch paths thread the run's CommandRunner into the claudeRunCtx they build,
+// launch paths thread the run's CommandRunner into the shared.LaunchCtx they build,
 // so buildClaudeLaunchSpec routes the worktree-trust / settings / agent-task
 // writes ONTO THE WORKER (runner != nil) rather than box-A-local.
 //
@@ -13,13 +13,13 @@ package daemon_test
 // no_commit_during_implementer. Root cause: runReviewLoop's implRC/revRC and
 // dispatchDotAgenticNode's rc were constructed WITHOUT runner:, so it defaulted
 // to nil; buildClaudeLaunchSpec then ran EnsureWorktreeTrustVia(nil, …) =
-// box-A-local. The fix sets runner: runner on all three claudeRunCtx values,
+// box-A-local. The fix sets runner: runner on all three shared.LaunchCtx values,
 // symmetric with how MaterializeClaudeSettingsVia / WriteAgentTaskVia already
 // reach the worker through rc.runner.
 //
 // These tests capture rc.runner via a stub launchSpecBuilder and assert it is
 // the SAME non-nil runner passed into the dispatch path. They pin against a
-// regression to nil: if the runner: field is dropped from either claudeRunCtx,
+// regression to nil: if the runner: field is dropped from either shared.LaunchCtx,
 // the captured runner is nil and the test fails.
 
 import (
@@ -68,7 +68,7 @@ func hk3susInitProject(t *testing.T) string {
 
 // TestReviewLoopThreadsRunnerIntoRunCtx_hk3sus proves runReviewLoop passes the
 // non-nil CommandRunner it receives (the REMOTE sshRunner) into the implementer
-// claudeRunCtx, so the worktree-trust write lands on the worker (hk-3sus).
+// shared.LaunchCtx, so the worktree-trust write lands on the worker (hk-3sus).
 func TestReviewLoopThreadsRunnerIntoRunCtx_hk3sus(t *testing.T) {
 	t.Parallel()
 
@@ -102,7 +102,7 @@ func TestReviewLoopThreadsRunnerIntoRunCtx_hk3sus(t *testing.T) {
 	select {
 	case got := <-captured:
 		if got == nil {
-			t.Fatal("review-loop implementer claudeRunCtx.runner is nil; remote trust/settings/agent-task writes would land box-A-local (hk-3sus regression)")
+			t.Fatal("review-loop implementer shared.LaunchCtx.Runner is nil; remote trust/settings/agent-task writes would land box-A-local (hk-3sus regression)")
 		}
 		if _, ok := got.(hk3susFakeRunner); !ok {
 			t.Fatalf("review-loop runner = %T; want the sentinel hk3susFakeRunner passed into runReviewLoop", got)
@@ -114,7 +114,7 @@ func TestReviewLoopThreadsRunnerIntoRunCtx_hk3sus(t *testing.T) {
 
 // TestDotThreadsRunnerIntoRunCtx_hk3sus proves dispatchDotAgenticNode (via
 // driveDotWorkflow) passes the non-nil CommandRunner it receives into the
-// agentic-node claudeRunCtx, so the worktree-trust write lands on the worker for
+// agentic-node shared.LaunchCtx, so the worktree-trust write lands on the worker for
 // a REMOTE DOT run (hk-3sus).
 func TestDotThreadsRunnerIntoRunCtx_hk3sus(t *testing.T) {
 	t.Parallel()
@@ -168,7 +168,7 @@ func TestDotThreadsRunnerIntoRunCtx_hk3sus(t *testing.T) {
 	select {
 	case got := <-captured:
 		if got == nil {
-			t.Fatal("DOT agentic-node claudeRunCtx.runner is nil; remote trust/settings/agent-task writes would land box-A-local (hk-3sus regression)")
+			t.Fatal("DOT agentic-node shared.LaunchCtx.Runner is nil; remote trust/settings/agent-task writes would land box-A-local (hk-3sus regression)")
 		}
 		if _, ok := got.(hk3susFakeRunner); !ok {
 			t.Fatalf("DOT runner = %T; want the sentinel hk3susFakeRunner passed into driveDotWorkflow", got)

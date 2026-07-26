@@ -183,7 +183,7 @@ func TestReadManagedSessionID_EmptyFileReturnsEmpty(t *testing.T) {
 
 	projectDir := t.TempDir()
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(keeperDir, "my-agent.managed"), []byte{}, 0o600); err != nil {
@@ -246,7 +246,6 @@ func TestWriteManagedSessionID_ConcurrentWrites(t *testing.T) {
 	errs := make([]error, writers)
 	sids := make([]string, writers)
 	for i := range writers {
-		i := i
 		sid := fmt.Sprintf("sess-%04d", i)
 		sids[i] = sid
 		go func() {

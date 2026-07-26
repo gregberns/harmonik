@@ -16,7 +16,7 @@ import (
 func TestPL014_WaitOwner_SingleWaitAndReap(t *testing.T) {
 	t.Parallel()
 
-	cmd := exec.CommandContext(t.Context(), "true") //nolint:noctx // true exits immediately; CommandContext is correct
+	cmd := exec.CommandContext(t.Context(), "true")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("PL-014 WaitOwner: cmd.Start: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestPL014_WaitOwner_SingleWaitAndReap(t *testing.T) {
 func TestPL014_WaitOwner_WaitBlocksUntilReap(t *testing.T) {
 	t.Parallel()
 
-	cmd := exec.CommandContext(t.Context(), "true") //nolint:noctx // true exits immediately; CommandContext is correct
+	cmd := exec.CommandContext(t.Context(), "true")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("PL-014 WaitOwner blocks: cmd.Start: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestPL014_WaitOwner_WaitBlocksUntilReap(t *testing.T) {
 func TestPL014_WaitOwner_MultipleWaiters(t *testing.T) {
 	t.Parallel()
 
-	cmd := exec.CommandContext(t.Context(), "true") //nolint:noctx // true exits immediately; CommandContext is correct
+	cmd := exec.CommandContext(t.Context(), "true")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("PL-014 WaitOwner multi: cmd.Start: %v", err)
 	}
@@ -79,7 +79,6 @@ func TestPL014_WaitOwner_MultipleWaiters(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, numWaiters)
 	for i := 0; i < numWaiters; i++ {
-		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -106,7 +105,7 @@ func TestPL014_WaitOwner_MultipleWaiters(t *testing.T) {
 func TestPL014_WaitOwner_WaitAndReapIdempotent(t *testing.T) {
 	t.Parallel()
 
-	cmd := exec.CommandContext(t.Context(), "true") //nolint:noctx // true exits immediately; CommandContext is correct
+	cmd := exec.CommandContext(t.Context(), "true")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("PL-014 WaitOwner idempotent: cmd.Start: %v", err)
 	}
@@ -116,17 +115,19 @@ func TestPL014_WaitOwner_WaitAndReapIdempotent(t *testing.T) {
 		t.Errorf("PL-014 WaitOwner idempotent: first WaitAndReap: %v", err)
 	}
 
-	// Second call must not panic and must return zero value (the once.Do guard
-	// prevents a second cmd.Wait(); result is the zero-value error from the
-	// outer variable, not a second Wait).
-	_ = owner.WaitAndReap() // must not panic
+	// Second call must not panic and must return the memoized result of the one
+	// cmd.Wait() that ran — nil here, because this child exits 0. The non-zero
+	// case is covered by TestPL014_WaitOwner_SecondWaitAndReapReturnsCachedExitError.
+	if secondErr := owner.WaitAndReap(); secondErr != nil {
+		t.Errorf("PL-014 WaitOwner idempotent: second WaitAndReap returned %v, want the memoized nil", secondErr)
+	}
 }
 
 // TestPL014_WaitOwner_Cmd verifies that Cmd() returns the underlying *exec.Cmd.
 func TestPL014_WaitOwner_Cmd(t *testing.T) {
 	t.Parallel()
 
-	cmd := exec.CommandContext(t.Context(), "true") //nolint:noctx // true exits immediately
+	cmd := exec.CommandContext(t.Context(), "true")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("PL-014 WaitOwner Cmd: cmd.Start: %v", err)
 	}
@@ -135,7 +136,9 @@ func TestPL014_WaitOwner_Cmd(t *testing.T) {
 	if owner.Cmd() != cmd {
 		t.Error("PL-014 WaitOwner Cmd: Cmd() returned wrong *exec.Cmd")
 	}
-	_ = owner.WaitAndReap() // reap to avoid zombie
+	if reapErr := owner.WaitAndReap(); reapErr != nil {
+		t.Errorf("PL-014 WaitOwner Cmd: reap: %v", reapErr)
+	}
 }
 
 // TestPL014_WaitOwner_NonZeroExitPreserved verifies that a non-zero exit code
@@ -147,7 +150,7 @@ func TestPL014_WaitOwner_NonZeroExitPreserved(t *testing.T) {
 	t.Parallel()
 
 	// false exits with code 1.
-	cmd := exec.CommandContext(t.Context(), "false") //nolint:noctx // false exits immediately
+	cmd := exec.CommandContext(t.Context(), "false")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("PL-014 WaitOwner non-zero: cmd.Start: %v", err)
 	}

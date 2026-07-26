@@ -65,6 +65,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // perQueueCounters holds one queue's per-day spend state. Reset on UTC midnight
@@ -96,7 +97,7 @@ type PerQueueSpendMeter struct {
 
 	// collaborators — immutable after construction.
 	reg        *RunRegistry
-	store      *QueueStore
+	store      *queuewiring.QueueStore
 	projectDir string
 
 	// globalCapUSD is the daemon-wide USD ceiling (derived the same way as
@@ -114,7 +115,7 @@ type PerQueueSpendMeter struct {
 // projectDir is the persist root (empty disables persistence, e.g. in tests).
 //
 // Bead ref: hk-tigaf.11.
-func NewPerQueueSpendMeter(reg *RunRegistry, store *QueueStore, projectDir string) *PerQueueSpendMeter {
+func NewPerQueueSpendMeter(reg *RunRegistry, store *queuewiring.QueueStore, projectDir string) *PerQueueSpendMeter {
 	return &PerQueueSpendMeter{
 		dayKey:        spendMeterTodayKey(),
 		counters:      make(map[string]*perQueueCounters),

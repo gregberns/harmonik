@@ -36,7 +36,9 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, branchReapUsage)
+			if _, err := io.WriteString(stdout, branchReapUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--dry-run" || args[i] == "-n":
 			dryRun = true
@@ -60,7 +62,9 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 		default:
 			// Fail closed: a mistyped flag (e.g. --dryrun) must not turn a
 			// dry run into a live `git branch -D` pass.
-			fmt.Fprintf(stderr, "harmonik gc branches: unknown argument %q\n\n%s", args[i], branchReapUsage) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
+			if _, err := fmt.Fprintf(stderr, "harmonik gc branches: unknown argument %q\n\n%s", args[i], branchReapUsage); err != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -68,7 +72,9 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik gc branches: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik gc branches: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -78,7 +84,9 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 	if maxAgeStr != "" {
 		parsed, err := time.ParseDuration(maxAgeStr)
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik gc branches: invalid --max-age %q: %v\n", maxAgeStr, err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik gc branches: invalid --max-age %q: %v\n", maxAgeStr, err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		maxAge = parsed
@@ -96,7 +104,9 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 
 	result, err := lifecycle.ReapBranches(ctx, opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik gc branches: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik gc branches: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -109,9 +119,11 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 	for _, ev := range result.Events {
 		b, mErr := json.Marshal(ev)
 		if mErr != nil {
-			continue
+			return 1
 		}
-		fmt.Fprintln(stdout, string(b))
+		if _, writeErr := fmt.Fprintln(stdout, string(b)); writeErr != nil {
+			return 1
+		}
 	}
 
 	if asJSON {
@@ -130,14 +142,21 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 		if summary.Reaped == nil {
 			summary.Reaped = []string{}
 		}
-		b, _ := json.Marshal(summary)
-		fmt.Fprintln(stdout, string(b))
+		b, marshalErr := json.Marshal(summary)
+		if marshalErr != nil {
+			return 1
+		}
+		if _, writeErr := fmt.Fprintln(stdout, string(b)); writeErr != nil {
+			return 1
+		}
 		return 0
 	}
 
-	fmt.Fprintf(stdout,
+	if _, err := fmt.Fprintf(stdout,
 		"harmonik gc branches%s: scanned %d branch(es), reaped %d, skipped %d\n",
-		dryRunTag, result.Scanned, len(result.Reaped), result.Skipped)
+		dryRunTag, result.Scanned, len(result.Reaped), result.Skipped); err != nil {
+		return 1
+	}
 	return 0
 }
 

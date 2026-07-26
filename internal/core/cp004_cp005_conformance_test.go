@@ -55,7 +55,6 @@ func TestCP005_BoundaryRule_AllowsCognition(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.kind), func(t *testing.T) {
 			t.Parallel()
 
@@ -192,7 +191,6 @@ func TestCP005_CognitionGateAndHookAccepted(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.kind), func(t *testing.T) {
 			t.Parallel()
 
@@ -276,7 +274,6 @@ func TestCP005_OutcomeActionVocabularyPerKind(t *testing.T) {
 	}
 
 	for _, r := range table {
-		r := r
 		t.Run(string(r.kind)+"/"+string(r.action), func(t *testing.T) {
 			t.Parallel()
 
@@ -323,7 +320,6 @@ func TestCP004_WrongOutcomeActionForKindRejectedByValid(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.kind)+"/"+string(tc.action), func(t *testing.T) {
 			t.Parallel()
 
@@ -358,7 +354,6 @@ func TestCP004_CorrectOutcomeActionPerKindIsValid(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.kind)+"/"+string(tc.action), func(t *testing.T) {
 			t.Parallel()
 

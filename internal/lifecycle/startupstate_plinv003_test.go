@@ -102,7 +102,7 @@ func TestPLINV003_StartupState_PanicMessageContainsDetectorName(t *testing.T) {
 			t.Error("PL-INV-003: panic message is empty")
 		}
 		// Panic message must identify the detector name for crash attribution.
-		if len(msg) > 0 {
+		if msg != "" {
 			found := false
 			for i := 0; i <= len(msg)-len(detectorName); i++ {
 				if msg[i:i+len(detectorName)] == detectorName {
@@ -162,7 +162,6 @@ func TestPLINV003_StartupState_MultipleAssertAfterMark(t *testing.T) {
 	}
 
 	for _, d := range detectors {
-		d := d
 		// Must not panic.
 		s.AssertOrphanSweepComplete(d)
 		_ = d // suppress lint

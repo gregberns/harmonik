@@ -20,6 +20,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +129,7 @@ func TestPasteInjectOnLaunch_RemoteRunner_RoutesStatViaRunner(t *testing.T) {
 
 	const sessionID = "hkhh5e-internal-sess"
 	briefDelivered := pasteInjectOnLaunch(
-		context.Background(), sub, sessionID,
+		context.Background(), substrate.SystemClock{}, sub, sessionID,
 		handlercontract.ReviewLoopPhase(""), // empty = implementer-initial
 		1, wtPath, nil, core.RunID{},
 	)

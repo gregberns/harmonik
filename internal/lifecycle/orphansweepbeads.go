@@ -786,7 +786,7 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 	var combinedErr error
 	switch {
 	case lastResetErr != nil && lastCat3cErr != nil:
-		combinedErr = fmt.Errorf("lifecycle: SweepStaleInProgressBeads: reset error: %w; cat3c error: %v", lastResetErr, lastCat3cErr)
+		combinedErr = fmt.Errorf("lifecycle: SweepStaleInProgressBeads: reset error: %w; cat3c error: %w", lastResetErr, lastCat3cErr)
 	case lastResetErr != nil:
 		combinedErr = fmt.Errorf("lifecycle: SweepStaleInProgressBeads: at least one reset failed (last: %w)", lastResetErr)
 	case lastCat3cErr != nil:

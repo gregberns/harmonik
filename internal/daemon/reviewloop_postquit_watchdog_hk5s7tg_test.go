@@ -202,7 +202,6 @@ func pqw5s7tgProjectDir(t *testing.T) string {
 	}
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {

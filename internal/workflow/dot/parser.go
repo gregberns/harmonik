@@ -316,15 +316,18 @@ func (p *dotParser) expectIdent(what string) (token, error) {
 	return t, nil
 }
 
-func (p *dotParser) expectKind(k tokenKind, sym string) (token, error) {
+// expectKind consumes the next token and reports a ParseError unless it is of
+// kind k. The token itself is not returned: every caller matches a fixed
+// punctuation symbol whose value it already knows.
+func (p *dotParser) expectKind(k tokenKind, sym string) error {
 	t, ok := p.consume()
 	if !ok {
-		return token{}, &ParseError{Line: p.currentLine(), Message: fmt.Sprintf("expected %q, got EOF", sym)}
+		return &ParseError{Line: p.currentLine(), Message: fmt.Sprintf("expected %q, got EOF", sym)}
 	}
 	if t.kind != k {
-		return token{}, &ParseError{Line: t.line, Message: fmt.Sprintf("expected %q, got %q", sym, t.value)}
+		return &ParseError{Line: t.line, Message: fmt.Sprintf("expected %q, got %q", sym, t.value)}
 	}
-	return t, nil
+	return nil
 }
 
 func (p *dotParser) consumeOptSemi() {
@@ -358,7 +361,7 @@ func (p *dotParser) parse() (*rawDoc, error) {
 		}
 	}
 
-	if _, err := p.expectKind(tokLBrace, "{"); err != nil {
+	if err := p.expectKind(tokLBrace, "{"); err != nil {
 		return nil, err
 	}
 
@@ -472,7 +475,7 @@ func (p *dotParser) parseStmt(doc *rawDoc, id string, idLine int) error {
 
 // parseAttrList parses a [ key=value; ... ] attribute list.
 func (p *dotParser) parseAttrList() ([]rawAttrPair, error) {
-	if _, err := p.expectKind(tokLBrack, "["); err != nil {
+	if err := p.expectKind(tokLBrack, "["); err != nil {
 		return nil, err
 	}
 	var pairs []rawAttrPair
@@ -493,7 +496,7 @@ func (p *dotParser) parseAttrList() ([]rawAttrPair, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := p.expectKind(tokEq, "="); err != nil {
+		if err := p.expectKind(tokEq, "="); err != nil {
 			return nil, err
 		}
 		valTok, err := p.expectIdent("attribute value")
@@ -517,21 +520,6 @@ const nodeModelMaxLen = 128
 // Mirrors the HC-055a enum in daemon/modelpreference.go.
 var validNodeEffortLevels = map[string]bool{
 	"low": true, "medium": true, "high": true, "xhigh": true, "max": true,
-}
-
-// reservedGraphAttrs is the set of reserved graph-level attribute names per WG-031.
-// Unknown names at the graph level are permissive (warning + retained) per WG-031/032.
-var reservedGraphAttrs = map[string]bool{
-	"schema_version":    true,
-	"version":           true,
-	"start_node":        true,
-	"start_node_id":     true, // alternate spelling accepted for compat
-	"terminal_node_ids": true,
-	"context_keys":      true,
-	"workflow_id":       true,
-	"workflow_class":    true,
-	"goal":              true, // WG-044: graph-level intent string
-	"no_progress_guard": true, // hk-nvd3: configurable no-progress guard
 }
 
 // ── graph builder (rawDoc → *Graph) ──────────────────────────────────────────
@@ -897,6 +885,19 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				"node %q: harness %q and agent_runtime %q conflict; they are alias spellings of the same per-node harness override (codex-harness C4/T5)",
 				rn.id, node.Harness, node.AgentRuntime),
 		})
+	}
+	// hk-ozbio: resolve the alias AT THE PARSE BOUNDARY. The two spellings are
+	// asserted equivalent above, but every consumer reads only Node.Harness
+	// (internal/daemon/dot_cascade.go), so a node written with agent_runtime=
+	// alone parsed clean and dispatched UNPINNED — a tier-1 harness:<x> bead
+	// label then decided a reviewer node's harness, which is exactly the hole
+	// pinnedHarnessLaunchSpecBuilder exists to close. Normalising here means no
+	// consumer has to know the second spelling exists. AgentRuntime is left
+	// populated so the parsed AST still reports the source spelling; parameter
+	// substitution (internal/workflow/params_graph.go) walks both fields, and
+	// since they now hold the same string they stay in agreement.
+	if node.Harness == "" && node.AgentRuntime != "" {
+		node.Harness = node.AgentRuntime
 	}
 	return node, errs, warns
 }

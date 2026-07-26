@@ -47,7 +47,7 @@ func TestShim_EmptyCommand_EntersWatchdogOnly(t *testing.T) {
 	dir := t.TempDir()
 
 	// Pre-create cognition dir so the lock file open in RunShim succeeds.
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "cognition"), 0o750); err != nil {
 		t.Fatalf("mkdir cognition: %v", err)
 	}
 
@@ -64,7 +64,7 @@ func TestShim_EmptyCommand_EntersWatchdogOnly(t *testing.T) {
 		"-test.timeout=15s",
 	}
 	//nolint:gosec // G204: testBin is os.Args[0], subprocess-pattern test-only
-	cmd := exec.Command(testBin, args...)
+	cmd := exec.CommandContext(t.Context(), testBin, args...)
 	cmd.Env = append(os.Environ(),
 		watchdogOnlyFixtureSubprocessEnv+"=1",
 		watchdogOnlyFixtureDirEnv+"="+dir,
@@ -92,7 +92,9 @@ func TestShim_EmptyCommand_EntersWatchdogOnly(t *testing.T) {
 	}
 
 	// Terminate cleanly.
-	_ = cmd.Process.Signal(syscall.SIGTERM)
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Errorf("send SIGTERM to subprocess: %v", err)
+	}
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -100,7 +102,9 @@ func TestShim_EmptyCommand_EntersWatchdogOnly(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		_ = cmd.Process.Kill()
+		if err := cmd.Process.Kill(); err != nil {
+			t.Errorf("kill unresponsive subprocess: %v", err)
+		}
 		t.Fatalf("subprocess did not exit within 5s after SIGTERM")
 	}
 
@@ -122,7 +126,9 @@ func TestShim_EmptyCommand_EntersWatchdogOnly(t *testing.T) {
 func watchdogOnlyFixtureRunShim() {
 	dir := os.Getenv(watchdogOnlyFixtureDirEnv)
 	if dir == "" {
-		os.Stderr.WriteString("watchdog-only helper: " + watchdogOnlyFixtureDirEnv + " not set\n")
+		if _, err := os.Stderr.WriteString("watchdog-only helper: " + watchdogOnlyFixtureDirEnv + " not set\n"); err != nil {
+			os.Exit(1)
+		}
 		os.Exit(1)
 	}
 

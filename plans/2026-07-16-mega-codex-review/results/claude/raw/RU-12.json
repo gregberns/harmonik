@@ -1,0 +1,87 @@
+{
+  "chunk": "RU-12",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/lifecycle/orphansweep.go",
+    "internal/lifecycle/orphansweepbr.go",
+    "internal/lifecycle/agentwatcherreap.go",
+    "internal/lifecycle/reconciliationlock_rc002a.go",
+    "internal/lifecycle/startup_pl005_qm002.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Scope names (startup/orphansweep/stalewatch/draindetect/reconcile) map to the sweep + reconcile source files listed above; reconcile-close seam (RU-12x) excluded. orphansweepbeads.go left to RU-12x since it owns the reconcile-close seam.",
+  "findings": [
+    {
+      "file": "internal/lifecycle/orphansweep.go",
+      "line": 834,
+      "severity": "high",
+      "category": "concurrency",
+      "title": "Stale-lock probe releases flock BEFORE unlink — violates RC-002a serialization, can delete a live lock",
+      "detail": "reconLockIsStale() acquires flock(LOCK_EX|LOCK_NB), then immediately calls flock(LOCK_UN) (line 840) and returns stale=true. SweepStaleReconciliationLocks then does further work (reconLockReadMeta reopens the file, line 787) and only later unlinks (line 797). Between the LOCK_UN and the unlink, another daemon/investigator can call AcquireReconciliationLock on the SAME path, win the flock, and write its own creator_pid — a live, in-flight reconciliation. The sweep then unlinks that live lock file. A third process can now create a fresh file at the same path and also acquire flock (different inode), yielding TWO concurrent reconciliations for the same target_run_id — exactly the RC-002a 'at most ONE reconciliation in-flight' invariant the lock exists to protect. The spec quoted in the function doc explicitly requires the flock probe to be the serialization point held through the unlink; releasing it first breaks that. Failure scenario: daemon boot orphan-sweep races a freshly-launched reconciliation dispatch for a run whose old crashed lock is still on disk.",
+      "suggested_fix": "Hold the LOCK_EX acquisition open across the meta-read and the unlink (do not LOCK_UN, unlink while still holding the fd's exclusive lock, then close). Re-probe/confirm liveness under the still-held lock rather than probe-release-then-act."
+    },
+    {
+      "file": "internal/lifecycle/orphansweepbr.go",
+      "line": 166,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "PID-reuse race: SIGKILL after grace deadline can signal an unrelated reused PID",
+      "detail": "In SweepOrphanBr (and identically in SweepOrphanHandlers orphansweep.go:360 and ReapPriorAgentFollowWatchers agentwatcherreap.go:215) the last liveness poll runs inside the loop, then the loop exits on the deadline, then Phase 3 sends syscall.Kill(pid, SIGKILL) to every pid still in `alive`. Between the final poll and the SIGKILL there is an unbounded window: the target br/handler process can exit and the OS can recycle its PID for an unrelated process, which then receives SIGKILL. On a busy host with rapid PID churn this kills an innocent process. The `alive` map is populated once from the initial enumeration and only re-checked by polling; it is not re-verified immediately before the kill.",
+      "suggested_fix": "Re-check orphanSweepIsPidLive(pid) immediately before each SIGKILL (best-effort narrowing of the window), and prefer process-group / handle-based termination where available. At minimum document the residual race; on Linux consider pidfd_send_signal to make the kill PID-reuse-safe."
+    },
+    {
+      "file": "internal/lifecycle/startup_pl005_qm002.go",
+      "line": 417,
+      "severity": "medium",
+      "category": "maintainability",
+      "title": "reconcileThreeWay is a ~315-line god-function with 4 interleaved mismatch classes and deep nesting",
+      "detail": "reconcileThreeWay handles Class A, A', C, D (queue-item scan) plus Class B (ledger scan) in one function with 5+ levels of nesting and heavily duplicated emitter/marshal/append blocks (the identical ReconciliationMismatchObservedPayload build + json.Marshal + pendingEvents append appears five times, lines ~488-510, 531-553, 578-599, 628-650, 685-706). The Class-C-vs-A' dispatch is expressed as an inverted !isPendingLike branch with a nested !isQueueTerminal branch and an early `continue`, which is very hard to follow and easy to break when adding a class. This is prime rot: any new mismatch class or payload-field change must be edited in five near-identical places.",
+      "suggested_fix": "Extract one helper that classifies a single item to (mismatchClass, newStatus, mutated) and one helper appendMismatchEvent(payload) that owns the marshal+append. Split Class B into its own function. This collapses the five duplicated emit blocks into one call site."
+    },
+    {
+      "file": "internal/lifecycle/orphansweep.go",
+      "line": 956,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "EnumerateStaleIntents overcounts: does not filter dirs / .tmp- / non-.json, unlike GCRetiredIntents",
+      "detail": "EnumerateStaleIntents iterates every dir entry and counts any whose mtime < daemonStartTime, with no filtering. The sibling GCRetiredIntentsWithRedrive (same directory) explicitly skips entry.IsDir(), non-.json names, and .tmp- half-written files (orphansweep.go:485-493). So the 'stale intent count' surfaced by EnumerateStaleIntents will include subdirectories and in-flight .tmp- atomic-write temp files, inflating the count relative to what the Cat 3a detector will actually process. If any operator/health logic gates on this count matching the GC pass, they will disagree.",
+      "suggested_fix": "Apply the same filters as GCRetiredIntentsWithRedrive (skip IsDir, require .json suffix, skip names containing '.tmp-') so the two passes agree on what 'stale intent file' means."
+    },
+    {
+      "file": "internal/lifecycle/orphansweep.go",
+      "line": 843,
+      "severity": "low",
+      "category": "correctness",
+      "title": "reconLockIsStale treats an unparseable creator_pid as stale → removable, even for a just-created lock",
+      "detail": "When the flock probe succeeds (lock acquirable) but reconLockReadCreatorPID fails to find/parse the creator_pid line, the function returns (true, nil) — 'treat as stale, remove it' (lines 844-847). AcquireReconciliationLock writes the pid via Truncate(0) then Seek then writeAll (reconciliationlock_rc002a.go:154-167); a lock file created by an older/newer schema, or one whose writer crashed after Truncate but the flock was somehow released, would parse-fail and be deleted. Because flock is advisory and the probe releases it, this compounds finding #1: an acquirable-but-unparseable file is unlinked with no PID-liveness gate at all.",
+      "suggested_fix": "On parse failure, do NOT classify as stale unless the flock has been continuously held from probe through unlink (see finding #1). Consider retaining and logging rather than deleting a lock whose metadata cannot be read."
+    },
+    {
+      "file": "internal/lifecycle/startup_pl005_qm002.go",
+      "line": 956,
+      "severity": "low",
+      "category": "correctness",
+      "title": "reconcileQueueTerminalState returns done=true on CompleteAndUnlink failure, leaving an active-status file on disk",
+      "detail": "When all groups are complete-success, CompleteAndUnlink is attempted; on failure the code logs and still returns (true, nil) (lines 956-965). done=true means the caller drops the queue from QueueStore, but the on-disk file still has Status=active and full group state. On the next daemon restart the file is reloaded and re-reconciled — idempotent in the happy case, but if unlink keeps failing (e.g. permission/FS error) the file lingers permanently while being invisible to the running daemon, and a fresh `submit` to the same queue name may collide with or be shadowed by the stale active file depending on QM-001 write semantics.",
+      "suggested_fix": "If CompleteAndUnlink fails, either demote the file to a terminal/paused status that QM-027 allows to be overwritten (so a resubmit is unblocked) or surface a hard error, rather than silently returning done=true with a live-looking file left behind."
+    },
+    {
+      "file": "internal/lifecycle/startup_pl005_qm002.go",
+      "line": 783,
+      "severity": "low",
+      "category": "efficiency",
+      "title": "reapOrphanWorktreesFromArchives re-reads and re-parses every archive file per Class B orphan bead",
+      "detail": "reapClassBOrphan calls reapOrphanWorktreesFromArchives once per orphan bead, and that function os.ReadDir + os.ReadFile + json.Unmarshal of every .cancelled-/.failed- archive on each call (lines 790-821). With N Class B orphans and M archive files this is O(N*M) full-file reads and JSON parses at every daemon startup. On a project with many archived queues this adds measurable startup latency in the exact path that 'MUST complete before the daemon reaches ready state'.",
+      "suggested_fix": "Load and parse archives once, build a bead_id -> []run_id index, then resolve each orphan against the in-memory index."
+    },
+    {
+      "file": "internal/lifecycle/orphansweep.go",
+      "line": 368,
+      "severity": "nit",
+      "category": "correctness",
+      "title": "SweepOrphanHandlers 'killed' count includes processes that were already dead before SIGTERM",
+      "detail": "The final tally (lines 368-372) counts every original pid that is now not live, including candidates that had already exited between enumeration and Phase 1 SIGTERM (SIGTERM returned ESRCH). The returned 'killed' therefore overstates how many processes this sweep actually terminated. Cosmetic/metrics-only, but the name implies a causal kill.",
+      "suggested_fix": "Track only pids that were observed live at SIGTERM time and later became dead, or rename the return to reflect 'not-alive-after-sweep'."
+    }
+  ]
+}

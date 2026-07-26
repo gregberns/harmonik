@@ -234,6 +234,186 @@ test-codex-l012:  ## Codex L0/L1/L2 + input-driver harness + fault matrix + N=10
 codex-capture-pane-gate:  ## SC6: forbid `capture-pane` in the structured input-driver packages (T9)
 	scripts/codex-capture-pane-gate.sh
 
+# transport-freeze-gate: the P2 E4 extraction ratchet — the reverse-tunnel
+# concern left internal/daemon for internal/transport/tunnel, and depguard can
+# only fence the import edge, not the creation of a new file. This grep gate
+# fails if a reverse-tunnel-shaped file or one of the moved symbols reappears in
+# internal/daemon. Wired into check-fast and check-short.
+.PHONY: transport-freeze-gate
+transport-freeze-gate:  ## P2 E4: forbid new reverse-tunnel files or moved symbols in internal/daemon
+	scripts/transport-freeze-gate.sh
+
+# queuewiring-freeze-gate: the P2 E3 extraction ratchet — the queue-ownership
+# concern (QueueStore, the brcli->queue.BeadLedger bridge, the operator
+# pause/resume consumer) left internal/daemon for internal/queuewiring, and
+# depguard can only fence the import edge, not the creation of a new file. This
+# grep gate fails if a queue-ownership-shaped file or one of the moved symbols
+# reappears in internal/daemon. Wired into check-fast and check-short.
+.PHONY: queuewiring-freeze-gate
+queuewiring-freeze-gate:  ## P2 E3: forbid new queue-ownership files or moved symbols in internal/daemon
+	scripts/queuewiring-freeze-gate.sh
+
+# crewrun-freeze-gate: the P2 E2 extraction ratchet — the crew launch contract
+# (the crew-start/crew-stop RPC payloads, the persistent-session launch-spec
+# builder, the crew-scoped harness resolver, the mission front-matter readers,
+# the idle-crew reaper) left internal/daemon for internal/crewrun, and depguard
+# can only fence the import edge, not the creation of a new file. This grep gate
+# fails if a crew-launch-shaped file or one of the moved symbols reappears in
+# internal/daemon. Wired into check-fast and check-short.
+.PHONY: crewrun-freeze-gate
+crewrun-freeze-gate:  ## P2 E2: forbid new crew-launch files or moved symbols in internal/daemon
+	scripts/crewrun-freeze-gate.sh
+
+# harnesscodex-freeze-gate: the P2 E1a extraction ratchet — the codex harness
+# implementation (the Harness impl, the launch-spec builder, the JSONL parser,
+# the stale-WAL and billing guards, the Refs-trailer fallback, the no-work
+# detector) left internal/daemon for internal/harness/codex, and depguard can
+# only fence the import edge, not the creation of a new file. This grep gate
+# fails if a codex-harness-shaped file or one of the moved symbols reappears in
+# internal/daemon. Wired into check-fast and check-short.
+.PHONY: harnesscodex-freeze-gate
+harnesscodex-freeze-gate:  ## P2 E1a: forbid new codex-harness files or moved symbols in internal/daemon
+	scripts/harnesscodex-freeze-gate.sh
+
+# harnessclaude-freeze-gate: the P2 E1b extraction ratchet — the claude harness
+# implementation (the Harness impl + the claude-hook-bridge launch-spec builder)
+# left internal/daemon for internal/harness/claude, and depguard can only fence
+# the import edge, not the creation of a new file. This grep gate fails if a
+# claude-harness-shaped file or one of the moved symbols reappears in
+# internal/daemon. claudeheartbeat.go (harness-blind heartbeat emitter) and
+# claudeworktreesweep.go (CLI-leftover janitor) are named exceptions — see the
+# script header. Wired into check-fast and check-short.
+.PHONY: harnessclaude-freeze-gate
+harnessclaude-freeze-gate:  ## P2 E1b: forbid new claude-harness files or moved symbols in internal/daemon
+	scripts/harnessclaude-freeze-gate.sh
+
+# harnesspi-freeze-gate: the P2 E1c extraction ratchet — the pi harness
+# implementation (Harness impl, launch-spec builder, NDJSON parser, billing
+# guard, Refs:-trailer fallback) left internal/daemon for internal/harness/pi,
+# and depguard can only fence the import edge, not the creation of a new file.
+# This grep gate fails if a pi-harness-shaped file or one of the moved symbols
+# reappears in internal/daemon. pi_profile_resolve.go (claim-time daemon wiring
+# over projectconfig) is a named exception — see the script header. The gate
+# also asserts test-pi-live below still points at a package that HAS the test,
+# because `go test -run` exits 0 on an empty match. Wired into check-fast and
+# check-short.
+.PHONY: harnesspi-freeze-gate
+harnesspi-freeze-gate:  ## P2 E1c: forbid new pi-harness files or moved symbols in internal/daemon
+	scripts/harnesspi-freeze-gate.sh
+
+# runmerge-freeze-gate: the P2 E5 RT13 extraction ratchet — the run-branch merge
+# path (the EM-052/EM-053 merge-to-main sequence, the pre-rebase worktree
+# hygiene, the gofumpt/gci format gate, the run-context strip, the review-trailer
+# amend) left internal/daemon for internal/runmerge, and depguard can only fence
+# the import edge, not the creation of a new file. This grep gate fails if a
+# merge-path-shaped file or one of the moved symbols reappears in internal/daemon,
+# or if the daemon re-acquires a raw `git merge` / `git rebase` exec.
+# beadsmergedriver.go (git merge-DRIVER registration), scenariotest/ and
+# branching.go (the WM-019b task-branch landing path) are named exceptions — see
+# the script header. Wired into check-fast and check-short.
+.PHONY: runmerge-freeze-gate
+runmerge-freeze-gate:  ## P2 E5 RT13: forbid new merge-path files or moved symbols in internal/daemon
+	scripts/runmerge-freeze-gate.sh
+
+# projectconfig-freeze-gate: the P2 LIFT crit 5 extraction ratchet — the
+# .harmonik/config.yaml loader + config value types left internal/daemon for
+# internal/projectconfig (a pure leaf). depguard fences the import edge; this
+# gate forbids re-creating a config-loader file OR re-declaring/re-aliasing a
+# moved symbol back inside internal/daemon (the operator's no-alias ruling).
+.PHONY: projectconfig-freeze-gate
+projectconfig-freeze-gate:  ## P2 LIFT crit 5: forbid new config-loader files, moved symbols, or aliases in internal/daemon
+	scripts/projectconfig-freeze-gate.sh
+
+# runlaunch-freeze-gate: the P2 E5 RT19b extraction ratchet — the run path's
+# launch-time effects (the CHB-018 pre-exec relay, the HC-056 readiness
+# deadlines and their sentinel, the spawn-cap / tmux-window / agent-ready
+# anomaly events, the implementer phase-complete report, the force-teardown
+# backstop) left internal/daemon for internal/runlaunch, internal/substrate and
+# internal/harness/shared. Symbol-anchored, not name-anchored: internal/daemon
+# legitimately keeps ~25 other emit* helpers that are E5 LIFT targets, so a
+# '*events*.go' file scan would fire on correct code. Wired into check-fast and
+# check-short.
+.PHONY: runlaunch-freeze-gate
+runlaunch-freeze-gate:  ## P2 E5 RT19b: forbid re-declaring the moved launch-effect symbols in internal/daemon
+	scripts/runlaunch-freeze-gate.sh
+
+# runloop-freeze-gate: the P2 LIFT extraction ratchet (chunk L0 onward) — the run
+# machine's boundary contract (the PORT interfaces LedgerPort … RunRegistryPort
+# and the BUNDLES RunPorts / RunEnv / SharedHandles) left internal/daemon for
+# internal/runloop. depguard fences the import edge; this ratchet forbids
+# re-declaring a moved TYPE back in internal/daemon. The daemon KEEPS the concrete
+# adapters + constructors (daemon → runloop, the legal direction); the `= runloop.`
+# forwarding arm allows the daemon-local aliases. Ratcheted: later chunks append
+# their moved run-path filenames/symbols. Wired into check-fast and check-short.
+.PHONY: runloop-freeze-gate
+runloop-freeze-gate:  ## P2 LIFT L0: forbid re-declaring the moved run-path port/bundle types in internal/daemon
+	scripts/runloop-freeze-gate.sh
+
+# readywait-freeze-gate: the P2 E5 RT14 extraction ratchet — the open-coded
+# agent_ready WAIT left internal/daemon. Every launch/ready/brief segment now
+# runs on the runexec Dispatch machine via dispatchSegment, whose ClockPort-timed
+# TimerAgentReady is the one ready bound (FakeClock-drivable, which
+# waitAgentReady's raw time.After never was). depguard cannot express "do not
+# re-hand-roll a wall-clock wait", so this grep ratchet closes that door: no
+# re-declaration of the retired symbols, no raw wall-clock in the run-path files
+# that are clean today or inside beadRunOne, and all four launch sites still bind
+# through the seam. Slice RT19c (landed f839121ff) clock-ported the Working-phase
+# watchdogs (pasteinject.go, dot_gate.go's pasteInjectQuitOnGateFile,
+# waitsocketgrace.go, postreadyhang.go) onto the injected ClockPort and added all
+# four to check (2), so they are now IN scope, not out. Wired into check-fast and
+# check-short.
+.PHONY: readywait-freeze-gate
+readywait-freeze-gate:  ## P2 E5 RT14: forbid re-hand-rolling the agent_ready wait in internal/daemon
+	scripts/readywait-freeze-gate.sh
+
+# workersbootwire-freeze-gate: the P2 E4c extraction ratchet — the remote-worker
+# registry BOOT WIRING (BuildRegistry / BuildRegistryWithRunner /
+# BootHealthRunner, formerly buildWorkerRegistry & friends in workloop.go) left
+# internal/daemon for internal/workers/bootwire.go, and depguard can only fence
+# the import edge, not the creation of a new file. This grep gate fails if a
+# worker-registry-construction file or one of the moved symbols reappears in
+# internal/daemon, or if the daemon re-acquires a direct workers.NewRegistry
+# construction. Wired into check-fast and check-short.
+.PHONY: workersbootwire-freeze-gate
+workersbootwire-freeze-gate:  ## P2 E4c: forbid new worker-registry boot-wiring files or moved symbols in internal/daemon
+	scripts/workersbootwire-freeze-gate.sh
+
+# runloop-emitter-gate: the P2 E5 RT16 ratchet — the DOT run path reaches its
+# event bus through EmitterPort (internal/daemon/runports.go), not through the
+# workLoopDeps bus field. RT16 converted 108 direct field reads on the six mover
+# files to 8 port reads so RT18's re-signature is an 8-line change, not a
+# 108-line one. depguard cannot express "reach this dependency through its
+# port", so this grep gate rations the field per file, asserts EmitterPort is
+# still an alias, and pins each mover to the seam. Wired into check-fast and
+# check-short.
+.PHONY: runloop-emitter-gate
+runloop-emitter-gate:  ## P2 E5 RT16: forbid bypassing EmitterPort with a raw bus-field read in internal/daemon
+	scripts/runloop-emitter-gate.sh
+
+
+# vet-tagged: typecheck the files that `go vet ./...` cannot see (hk-i1m20).
+# Static analyzers and the default build compile ONLY the untagged build, so a
+# call site behind a `//go:build <tag>` line emits zero signal when it breaks —
+# and an analyzer claim like unparam's "parameter X always receives value V" is
+# scoped to the build it analyzed, not to the repo. A real arity-increase break
+# in cmd/harmonik behind `//go:build scenario` survived two weeks undetected,
+# with five live assertions dead the whole time.
+#
+# ONE invocation, not a loop: build tags are ADDITIVE, so a single combined vet
+# compiles the union of all tagged files in ~4.6s cold / ~1.1s warm, where the
+# same tags as separate invocations cost ~25s for identical coverage.
+# `go vet` typechecks _test.go files but runs nothing, which is all this needs.
+#
+# Tag set = every tag with real files in the repo, minus `ignore` (deliberately
+# uncompiled) and the GOOS constraints (darwin/linux/windows), which are chosen
+# by the toolchain rather than by -tags. Add a tag here whenever one is
+# introduced, or its files go back to being invisible.
+TAGGED_BUILD_TAGS := specaudit,scenario,integration,e2e_real_claude,subprocess,crash
+
+.PHONY: vet-tagged
+vet-tagged:  ## hk-i1m20: typecheck every build-tagged file (invisible to plain `go vet ./...`)
+	go vet -tags=$(TAGGED_BUILD_TAGS) ./internal/... ./cmd/... ./test/...
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -291,7 +471,7 @@ test-twin-parity-claude:  ## Routine Claude twin-parity gate (twin-vs-reference-
 # HARMONIK_REQUIRE_PI_LIVE=1 turns a can't-run skip into a Fatalf.
 .PHONY: test-pi-live
 test-pi-live:  ## Real-pi oracle gate (PI_LIVE=1 required; pi provider auth; writes pi twin-parity fixtures)
-	PI_LIVE=1 go test -timeout 180s -count=1 -run TestPiA_ ./internal/daemon/...
+	PI_LIVE=1 go test -timeout 180s -count=1 -run TestPiA_ ./internal/harness/pi/...
 
 # test-twin-parity-pi: the ROUTINE pi twin-parity gate (WS3-pi / pi-C). Compares
 # the pi twin's NDJSON (committed testdata/twin-parity/pi/happy-path-sample/ndjson
@@ -368,8 +548,9 @@ twins: build-twin-generic build-twin-pi  ## Build all twin binaries into twins/ 
 build-all: build twins  ## go build ./... + all twins (full build artifact set)
 
 # ---------------------------------------------------------------------------
-# Secret scan — runs as the first pre-commit command (lefthook secret-scan).
-# Also callable standalone to audit a working tree before staging.
+# Secret scan — blocks staging content that adds API keys, credential
+# patterns, or .env files. Invoked by the agent-driven validation command
+# (git hooks are retired); also callable standalone to audit a working tree.
 # ---------------------------------------------------------------------------
 .PHONY: secret-scan
 secret-scan:  ## Scan staged diff for API keys / credentials / .env files
@@ -390,24 +571,11 @@ secret-scan:  ## Scan staged diff for API keys / credentials / .env files
 # satisfied after gofumpt runs.
 .PHONY: fmt
 fmt:  ## Auto-format all Go files with gofumpt + gci (writes in-place)
-	$(TOOLS_DIR)/gci write -s standard -s default -s 'prefix($(MODULE))' .
-	$(TOOLS_DIR)/gofumpt -w .
+	scripts/go-format.sh write
 
 .PHONY: fmt-check
 fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 'make fmt' to fix)
-	@UNFORMATTED=$$($(TOOLS_DIR)/gofumpt -l .); \
-	if [ -n "$$UNFORMATTED" ]; then \
-		echo "gofumpt: unformatted files (run 'make fmt' to fix):"; \
-		echo "$$UNFORMATTED"; \
-		$(TOOLS_DIR)/gofumpt -d .; \
-		exit 1; \
-	fi
-	@GCI_DIFF=$$($(TOOLS_DIR)/gci diff -s standard -s default -s 'prefix($(MODULE))' .); \
-	if [ -n "$$GCI_DIFF" ]; then \
-		echo "gci: import order drift detected (run 'make fmt' to fix):"; \
-		echo "$$GCI_DIFF"; \
-		exit 1; \
-	fi
+	scripts/go-format.sh check
 
 # ---------------------------------------------------------------------------
 # Tier 1 — check-fast (<15s target)
@@ -418,7 +586,21 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...
+	$(MAKE) vet-tagged
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=HEAD~1
+	scripts/transport-freeze-gate.sh
+	scripts/queuewiring-freeze-gate.sh
+	scripts/crewrun-freeze-gate.sh
+	scripts/harnesscodex-freeze-gate.sh
+	scripts/harnessclaude-freeze-gate.sh
+	scripts/harnesspi-freeze-gate.sh
+	scripts/runmerge-freeze-gate.sh
+	scripts/projectconfig-freeze-gate.sh
+	scripts/runlaunch-freeze-gate.sh
+	scripts/runloop-freeze-gate.sh
+	scripts/readywait-freeze-gate.sh
+	scripts/workersbootwire-freeze-gate.sh
+	scripts/runloop-emitter-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -439,7 +621,21 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...
+	$(MAKE) vet-tagged
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=origin/main
+	scripts/transport-freeze-gate.sh
+	scripts/queuewiring-freeze-gate.sh
+	scripts/crewrun-freeze-gate.sh
+	scripts/harnesscodex-freeze-gate.sh
+	scripts/harnessclaude-freeze-gate.sh
+	scripts/harnesspi-freeze-gate.sh
+	scripts/runmerge-freeze-gate.sh
+	scripts/projectconfig-freeze-gate.sh
+	scripts/runlaunch-freeze-gate.sh
+	scripts/runloop-freeze-gate.sh
+	scripts/readywait-freeze-gate.sh
+	scripts/workersbootwire-freeze-gate.sh
+	scripts/runloop-emitter-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation
@@ -451,6 +647,19 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	# Restore -parallel=2 only after the colliding pkgs are made hermetic
 	# (see follow-up hk-d515w).
 	TMPDIR=/tmp go test -short -race -count=1 -p=1 -parallel=1 -timeout=20m ./...
+
+# ---------------------------------------------------------------------------
+# check-report — QUIET unified reporter over the check gauntlet (hk-l4sen).
+# Runs EVERY step of a tier but presents ~10 lines on green (one ✓ per step)
+# and, on red, only the failing step's failing lines. Changes presentation
+# only; the step list is derived at runtime from `make -n <target>` so it can
+# never silently drop a step. TIER selects the underlying tier target:
+#   fast  -> check-fast    short -> check-short (default)    full -> check
+# ---------------------------------------------------------------------------
+TIER ?= short
+.PHONY: check-report
+check-report:  ## Quiet reporter: ~10 lines on green, only failing step's lines on red (TIER=fast|short|full, default short)
+	scripts/check-report.sh $(TIER)
 
 # ---------------------------------------------------------------------------
 # Tier 2b — check-race-full (non-gating nightly)
@@ -490,6 +699,13 @@ check:  ## Tier 2: fmt-check (fail-closed), full golangci-lint, go test -race, g
 	@rm -f go.mod.check go.sum.check
 	go run ./tools/forbid-import ./...
 	@if [ -x scripts/coverage-gate.sh ]; then scripts/coverage-gate.sh; else echo "coverage-gate.sh not yet present (hk-pvcs.5); skipping"; fi
+	@# cmd/** coverage ratchet. Lives in tier 2, not check-fast: it runs
+	@# `go test -covermode=atomic ./cmd/...`, which blows the 15s fast budget.
+	@# Runs under a private GOCACHE: measured on 2026-07-22, a shared-cache run
+	@# fails with "could not import flag ... no such file or directory" whenever a
+	@# concurrent process invalidates cache facts mid-run. The gate fails closed on
+	@# that, so without isolation it reports a spurious hard failure.
+	scripts/with-isolated-gocache.sh scripts/cmd-coverage-gate.sh
 	$(TOOLS_DIR)/govulncheck ./...
 
 # ---------------------------------------------------------------------------
@@ -556,9 +772,23 @@ release-validate: build-all  ## Optional local sanity check (NOT on the release 
 # ---------------------------------------------------------------------------
 # Lint shorthand
 # ---------------------------------------------------------------------------
-.PHONY: lint
+.PHONY: lint lint-full-count
 lint:  ## golangci-lint run (shorthand)
 	$(TOOLS_DIR)/golangci-lint run
+
+lint-full-count:  ## Publish the full-tree grandfathered lint finding count (not a gate)
+	@REPORT=$$(mktemp); \
+	trap 'rm -f "$$REPORT"' EXIT; \
+	LINT_STATUS=0; \
+	scripts/with-isolated-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --issues-exit-code=0 --max-issues-per-linter=0 --max-same-issues=0 \
+		--output.text.path=/dev/null --output.json.path="$$REPORT" >/dev/null || LINT_STATUS=$$?; \
+	if [ "$$LINT_STATUS" -ne 0 ]; then \
+		echo "lint-full-count: golangci-lint failed (exit $$LINT_STATUS)" >&2; \
+		exit "$$LINT_STATUS"; \
+	fi; \
+	jq -er 'if any(.Issues[]; .FromLinter == "typecheck") then \
+		error("full lint count unavailable: typecheck failed; fix compilation first") \
+		else "full lint findings: \(.Issues | length)" end' "$$REPORT"
 
 # ---------------------------------------------------------------------------
 # specaudit-lint — spec-drift lint (M1-1)
@@ -606,38 +836,26 @@ check-verdict:  ## Cross-check diff-keyed verdict: APPROVE → pass; absent/REQU
 	@scripts/check-verdict.sh --diff HEAD~1
 
 # ---------------------------------------------------------------------------
-# Tool installation + git-hooks setup
+# Tool installation
 # Pins dev tools into ./.tools/ to avoid polluting the global GOPATH.
-# Fresh-clone setup: make bootstrap  (installs tools + wires git hooks)
+# Fresh-clone setup: make bootstrap  (installs tools)
+#
+# NOTE: git hooks are RETIRED. lefthook (and its self-re-arming `install`)
+# was removed — validation now runs via the agent-driven validation command,
+# not a pre-commit/pre-push/commit-msg hook. scripts/validate-commit-msg.sh
+# and scripts/secret-scan.sh remain callable directly by that command.
 # ---------------------------------------------------------------------------
 .PHONY: tools
-tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck, lefthook)
+tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck)
 	@mkdir -p $(TOOLS_DIR)
 	$(GOBIN_TOOLS) go install mvdan.cc/gofumpt@v0.7.0
 	$(GOBIN_TOOLS) go install github.com/daixiang0/gci@v0.13.5
 	$(GOBIN_TOOLS) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.3.0
 	$(GOBIN_TOOLS) go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-	$(GOBIN_TOOLS) go install github.com/evilmartians/lefthook@v1.11.13
 
-# install-hooks: wire lefthook.yml hooks into .git/hooks/ so pre-commit,
-# pre-push, and commit-msg gates run automatically on every commit.
-# Prereq: lefthook binary must exist in .tools/ (run `make tools` first).
-.PHONY: install-hooks
-install-hooks:  ## Wire lefthook.yml hooks into .git/hooks/ (run after make tools)
-	$(TOOLS_DIR)/lefthook install
-
-# check-hooks: assert that the hooks installed in .git/hooks/ match lefthook.yml.
-# Fails if any hook declared in lefthook.yml is absent or does not invoke lefthook.
-# Run in CI after install-hooks to detect drift.
-.PHONY: check-hooks
-check-hooks:  ## Assert installed git hooks match lefthook.yml (CI drift check)
-	scripts/check-hooks.sh
-
-# bootstrap: one-stop fresh-clone setup — installs pinned tools then wires hooks.
-# Run this once after cloning; subsequent `make tools` re-pins tools without
-# re-running lefthook install (though re-running bootstrap is harmless).
+# bootstrap: one-stop fresh-clone setup — installs pinned tools.
 .PHONY: bootstrap
-bootstrap: tools install-hooks  ## Fresh-clone setup: install tools + wire git hooks (lefthook install)
+bootstrap: tools  ## Fresh-clone setup: install pinned dev tools
 
 # ---------------------------------------------------------------------------
 # Help

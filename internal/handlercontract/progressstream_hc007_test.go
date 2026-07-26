@@ -41,7 +41,6 @@ func TestProgressStream_MessageTypeValues(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.want, func(t *testing.T) {
 			t.Parallel()
 			if tc.constant != tc.want {

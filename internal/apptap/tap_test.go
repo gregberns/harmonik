@@ -26,20 +26,20 @@ import (
 
 // tapFixtureRunDirect runs binary with args, feeds input to its stdin, and
 // returns its combined stdout.  Fails the test on any subprocess error.
-func tapFixtureRunDirect(t *testing.T, binary string, args []string, input string) string {
+func tapFixtureRunDirect(t *testing.T, args []string, input string) string {
 	t.Helper()
-	cmd := exec.Command(binary, args...)
+	cmd := exec.CommandContext(t.Context(), "cat", args...)
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("tapFixtureRunDirect(%q %v): %v", binary, args, err)
+		t.Fatalf("tapFixtureRunDirect(%v): %v", args, err)
 	}
 	return string(out)
 }
 
 // tapFixtureRunTap runs the Tap with binary/args and the given input, returning
 // the stdout seen by the caller and the captured bytes from each direction.
-func tapFixtureRunTap(t *testing.T, binary string, args []string, input string) (stdout string, inCap string, outCap string) {
+func tapFixtureRunTap(t *testing.T, binary string, args []string, input string) (stdout, inCap, outCap string) {
 	t.Helper()
 	var stdoutBuf, inBuf, outBuf bytes.Buffer
 	tap := Tap{
@@ -64,7 +64,7 @@ func TestTapTransparent(t *testing.T) {
 	const input = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n" +
 		"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n"
 
-	direct := tapFixtureRunDirect(t, "cat", nil, input)
+	direct := tapFixtureRunDirect(t, nil, input)
 	through, _, _ := tapFixtureRunTap(t, "cat", nil, input)
 
 	if through != direct {
@@ -89,7 +89,7 @@ func TestTapInCaptureMatchesInput(t *testing.T) {
 func TestTapOutCaptureMatchesChildOutput(t *testing.T) {
 	const input = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n"
 
-	direct := tapFixtureRunDirect(t, "cat", nil, input)
+	direct := tapFixtureRunDirect(t, nil, input)
 	_, _, outCap := tapFixtureRunTap(t, "cat", nil, input)
 
 	if outCap != direct {
@@ -115,7 +115,7 @@ func TestTapGateLosslessRoundtrip(t *testing.T) {
 		"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"executeCode\",\"params\":{\"code\":\"echo hello\"}}\n"
 
 	// Step 1: control run without the tap.
-	directOut := tapFixtureRunDirect(t, "cat", nil, input)
+	directOut := tapFixtureRunDirect(t, nil, input)
 
 	// Step 2: tap run with both capture directions wired.
 	tapOut, inCap, outCap := tapFixtureRunTap(t, "cat", nil, input)
@@ -195,7 +195,11 @@ func TestTapDefaultsToOSStdio(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot open /dev/null: %v", err)
 	}
-	t.Cleanup(func() { devNull.Close() })
+	t.Cleanup(func() {
+		if closeErr := devNull.Close(); closeErr != nil {
+			t.Errorf("close stdin /dev/null: %v", closeErr)
+		}
+	})
 
 	origStdin := os.Stdin
 	origStdout := os.Stdout
@@ -210,7 +214,9 @@ func TestTapDefaultsToOSStdio(t *testing.T) {
 	defer func() {
 		os.Stdin = origStdin
 		os.Stdout = origStdout
-		devNullOut.Close()
+		if closeErr := devNullOut.Close(); closeErr != nil {
+			t.Errorf("close stdout /dev/null: %v", closeErr)
+		}
 	}()
 
 	tap := Tap{
@@ -236,7 +242,7 @@ func TestTapMultilineJSONL(t *testing.T) {
 	}
 	input := sb.String()
 
-	direct := tapFixtureRunDirect(t, "cat", nil, input)
+	direct := tapFixtureRunDirect(t, nil, input)
 	tapOut, inCap, outCap := tapFixtureRunTap(t, "cat", nil, input)
 
 	if tapOut != direct {

@@ -3,8 +3,6 @@ package lifecycle
 import (
 	"syscall"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 // i3151PlatformVerifyPdeathsig is the darwin implementation of the Pdeathsig
@@ -27,7 +25,7 @@ func i3151PlatformVerifyPdeathsig(_ *testing.T, _ *syscall.SysProcAttr) {
 func TestHC044_SpawnChildSysProcAttr_DarwinNoPdeathsig(t *testing.T) {
 	t.Parallel()
 
-	attr := SpawnChildSysProcAttr(core.PGID(i3151PGIDValue))
+	attr := SpawnChildSysProcAttr(i3151PGIDValue)
 
 	// Structural: compilation of this file proves no Pdeathsig was set.
 	// Runtime: confirm the attr is non-nil and Setpgid is correct.
@@ -37,4 +35,5 @@ func TestHC044_SpawnChildSysProcAttr_DarwinNoPdeathsig(t *testing.T) {
 	if !attr.Setpgid {
 		t.Error("HC-044 darwin: Setpgid = false, want true")
 	}
+	i3151PlatformVerifyPdeathsig(t, attr)
 }

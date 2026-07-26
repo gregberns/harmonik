@@ -10,6 +10,7 @@ package main
 // Bead ref: hk-7iyh (fleet-portability T11).
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,6 +60,7 @@ func TestSkillAssetsEmbedInSync(t *testing.T) {
 
 			// Navigate two levels up from cmd/harmonik/ to reach the repo root.
 			canonicalPath := filepath.Join("..", "..", ".claude", "skills", skill, fname)
+			//nolint:gosec // G304: canonicalPath is rooted at the fixed skills directory and names come from embedded assets.
 			canonical, err := os.ReadFile(canonicalPath)
 			if err != nil {
 				t.Fatalf("read canonical .claude/skills/%s/%s: %v\n"+
@@ -66,7 +68,7 @@ func TestSkillAssetsEmbedInSync(t *testing.T) {
 					skill, fname, err, skill)
 			}
 
-			if string(embedded) != string(canonical) {
+			if !bytes.Equal(embedded, canonical) {
 				t.Errorf("embedded assets/skills/%s/%s is OUT OF SYNC with .claude/skills/%s/%s.\n"+
 					"Re-sync with:\n  cp .claude/skills/%s/%s cmd/harmonik/assets/skills/%s/%s",
 					skill, fname, skill, fname,

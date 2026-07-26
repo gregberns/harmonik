@@ -113,7 +113,7 @@ func TestPL002a_FdLifetimeAdvisoryLock(t *testing.T) {
 	// inherited fd copy until that child's exec(2) closes it — see
 	// plFixtureEventuallyNoErr.
 	var release2 func()
-	err = plFixtureEventuallyNoErr(t, 2*time.Second, func() error {
+	err = plFixtureEventuallyNoErr(t, func() error {
 		r, acquireErr := plFixtureAcquirePidfile(t, projectDir, pid, pgid, instanceID2)
 		release2 = r
 		return acquireErr
@@ -311,7 +311,7 @@ func TestPL024_StalePidfileDetection(t *testing.T) {
 		t.Fatalf("PL-024: CreateTemp sync file: %v", err)
 	}
 	syncFilePath := syncFile.Name()
-	_ = syncFile.Close()                              //nolint:errcheck // cleanup error unactionable
+	_ = syncFile.Close()
 	_ = os.Remove(syncFilePath)                       //nolint:errcheck // child will create it; Remove error expected if already absent
 	t.Cleanup(func() { _ = os.Remove(syncFilePath) }) //nolint:errcheck // cleanup error unactionable
 

@@ -27,21 +27,18 @@ func corruptCheckpointFixtureTransitionID(n int) string {
 // corruptCheckpointFixtureWriteSiblingFile writes a JSON sibling file at the
 // canonical path `.harmonik/transitions/<runID>/<transitionID>.json` inside
 // repoDir. content is written verbatim; callers control validity.
-func corruptCheckpointFixtureWriteSiblingFile(t *testing.T, repoDir, runID, transitionID, content string) string {
+func corruptCheckpointFixtureWriteSiblingFile(t *testing.T, repoDir, runID, transitionID, content string) {
 	t.Helper()
 
 	dir := filepath.Join(repoDir, ".harmonik", "transitions", runID)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("corruptCheckpointFixtureWriteSiblingFile: MkdirAll: %v", err)
 	}
 
 	p := filepath.Join(dir, transitionID+".json")
-	//nolint:gosec // G306: 0644 is the correct mode for a JSON record file; path is t.TempDir()
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatalf("corruptCheckpointFixtureWriteSiblingFile: WriteFile: %v", err)
 	}
-	return p
 }
 
 // corruptCheckpointFixtureMinimalJSON returns a minimal valid transition record
@@ -61,8 +58,7 @@ func corruptCheckpointFixtureCommitWithTrailers(t *testing.T, repoDir, runID, tr
 	t.Helper()
 
 	stateFile := filepath.Join(repoDir, "state.txt")
-	//nolint:gosec // G306: 0644 is the correct mode for a state file in a test repo; path is t.TempDir()
-	if err := os.WriteFile(stateFile, []byte(fmt.Sprintf("run=%s node=%s tx=%s\n", runID, nodeID, transitionID)), 0o644); err != nil {
+	if err := os.WriteFile(stateFile, []byte(fmt.Sprintf("run=%s node=%s tx=%s\n", runID, nodeID, transitionID)), 0o600); err != nil {
 		t.Fatalf("corruptCheckpointFixtureCommitWithTrailers: WriteFile state.txt: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", "state.txt")
@@ -93,7 +89,6 @@ func corruptCheckpointFixtureSiblingPath(repoDir, runID, transitionID string) st
 func corruptCheckpointFixtureCheckTrailerPresent(t *testing.T, repoDir, commitSHA string) {
 	t.Helper()
 
-	//nolint:gosec // G204: commitSHA is a git SHA from durableFixtureReadTip; repoDir is t.TempDir()
 	out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"log", "-1", "--format=%B", commitSHA,
 	).Output()
@@ -103,28 +98,6 @@ func corruptCheckpointFixtureCheckTrailerPresent(t *testing.T, repoDir, commitSH
 	if !strings.Contains(string(out), "Harmonik-Transition-ID:") {
 		t.Fatalf("pre-condition violation: commit %s has no Harmonik-Transition-ID trailer; EM-017a sensor requires the trailer to be present", commitSHA)
 	}
-}
-
-// corruptCheckpointFixtureExtractTransitionID reads the Harmonik-Transition-ID
-// trailer from commitSHA and returns it.
-func corruptCheckpointFixtureExtractTransitionID(t *testing.T, repoDir, commitSHA string) string {
-	t.Helper()
-
-	//nolint:gosec // G204: commitSHA is a git SHA from durableFixtureReadTip; repoDir is t.TempDir()
-	out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir,
-		"log", "-1", "--format=%B", commitSHA,
-	).Output()
-	if err != nil {
-		t.Fatalf("corruptCheckpointFixtureExtractTransitionID: git log: %v", err)
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Harmonik-Transition-ID:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "Harmonik-Transition-ID:"))
-		}
-	}
-	t.Fatalf("corruptCheckpointFixtureExtractTransitionID: no Harmonik-Transition-ID trailer in commit %s", commitSHA)
-	return ""
 }
 
 // corruptCheckpointFixtureClassify is the sensor function under test.
@@ -147,7 +120,6 @@ func corruptCheckpointFixtureExtractTransitionID(t *testing.T, repoDir, commitSH
 func corruptCheckpointFixtureClassify(t *testing.T, repoDir, commitSHA string) (hasTrailer bool, err error) {
 	t.Helper()
 
-	//nolint:gosec // G204: commitSHA is a test-provided SHA; repoDir is t.TempDir()
 	out, gitErr := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"log", "-1", "--format=%B", commitSHA,
 	).Output()

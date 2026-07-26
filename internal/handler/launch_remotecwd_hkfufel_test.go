@@ -32,6 +32,8 @@ type recordingRemoteRunner struct {
 	commandCalls int
 	inDirCalls   int
 	inDirArg     string
+	inDirName    string
+	inDirArgs    []string
 	lastCmd      *exec.Cmd
 }
 
@@ -53,6 +55,8 @@ func (r *recordingRemoteRunner) CommandInDir(ctx context.Context, dir, name stri
 	defer r.mu.Unlock()
 	r.inDirCalls++
 	r.inDirArg = dir
+	r.inDirName = name
+	r.inDirArgs = append([]string(nil), args...)
 	c := r.benign(ctx) // deliberately does NOT set c.Dir — the remote cwd is applied on the worker
 	r.lastCmd = c
 	return c

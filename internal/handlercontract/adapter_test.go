@@ -29,9 +29,16 @@ func (adapterFixtureStub) Diagnose(_ context.Context) (handlercontract.Diagnosti
 	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
 }
 
-// adapterFixtureAssertImplements is a compile-time assertion that
-// adapterFixtureStub satisfies the Adapter interface.
-var adapterFixtureAssertImplements handlercontract.Adapter = adapterFixtureStub{}
+// Compile-time assertion that adapterFixtureStub satisfies the Adapter
+// interface. The blank identifier is deliberate: the declaration exists purely
+// so the build fails when the interface and the stub drift apart.
+var _ handlercontract.Adapter = adapterFixtureStub{}
+
+// adapterFixtureAssertType fails to compile unless got is assignable to T. It
+// replaces the `var _ T = expr` idiom used by the return-type conformance tests
+// below, which staticcheck (QF1011) reads as a redundant type annotation rather
+// than the deliberate assertion it is.
+func adapterFixtureAssertType[T any](_ T) {}
 
 // TestAdapter_MethodSetConformance verifies that the Adapter interface is
 // declared with the expected 5-method surface
@@ -69,7 +76,7 @@ func TestAdapter_MethodSetConformance(t *testing.T) {
 // (specs/handler-contract.md §6.1 Adapter).
 func TestAdapter_DetectReadyReturnType(t *testing.T) {
 	var a handlercontract.Adapter = adapterFixtureStub{}
-	var _ bool = a.DetectReady(core.EventEnvelope{}) // compile-time type check
+	adapterFixtureAssertType[bool](a.DetectReady(core.EventEnvelope{}))
 }
 
 // TestAdapter_DetectRateLimitReturnTypes verifies that DetectRateLimit returns
@@ -77,8 +84,8 @@ func TestAdapter_DetectReadyReturnType(t *testing.T) {
 func TestAdapter_DetectRateLimitReturnTypes(t *testing.T) {
 	var a handlercontract.Adapter = adapterFixtureStub{}
 	limited, retryAfter := a.DetectRateLimit(core.EventEnvelope{})
-	var _ bool = limited             // compile-time type check
-	var _ time.Duration = retryAfter // compile-time type check
+	adapterFixtureAssertType[bool](limited)
+	adapterFixtureAssertType[time.Duration](retryAfter)
 }
 
 // TestAdapter_DetectReadyEventParam verifies that DetectReady accepts a
@@ -102,5 +109,9 @@ func TestAdapter_DetectRateLimitEventParam(t *testing.T) {
 func TestAdapter_CleanExitSequenceSessionParam(t *testing.T) {
 	var a handlercontract.Adapter = adapterFixtureStub{}
 	var s handlercontract.Session = sessionFixtureStub{}
-	_ = a.CleanExitSequence(context.Background(), s) // compile-time parameter-type check
+	// Compile-time parameter-type check; the stub's nil return is also asserted
+	// so a signature change to a non-error result cannot pass silently.
+	if err := a.CleanExitSequence(context.Background(), s); err != nil {
+		t.Fatalf("CleanExitSequence: unexpected error: %v", err)
+	}
 }

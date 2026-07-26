@@ -29,7 +29,7 @@ func cancelFixtureWriteQueue(t *testing.T, projectDir, name string) string {
 	t.Helper()
 
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("cancelFixtureWriteQueue: MkdirAll %q: %v", queuesDir, err)
 	}
 
@@ -140,7 +140,7 @@ func TestRunQueueCancel_CompletedQueue_RefusesWithoutForce(t *testing.T) {
 
 	// Write a completed queue.
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	completedContent := `{
@@ -173,7 +173,7 @@ func TestRunQueueCancel_CompletedQueue_ForceArchives(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	completedContent := `{
@@ -262,7 +262,7 @@ func TestRunQueueCancel_QueueIDFlag_ArchivesByUUID(t *testing.T) {
 
 	// Write fwkeeper with a known queue_id.
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	fwkQueueID := "aaaabbbb-0000-7000-8000-fwkeeper00001"
@@ -311,7 +311,7 @@ func TestRunQueueCancel_CorruptStub_ArchivesByName(t *testing.T) {
 	projectDir := queueCliFixtureTempDir(t)
 
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	// Zero-value stub: schema_version is 0 (not 1) so UnmarshalQueue returns
@@ -387,18 +387,10 @@ func TestRunQueueCancel_LiveDaemon_RoutesThroughSocket(t *testing.T) {
 	var capturedQueue string
 	var capturedForce bool
 	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &msg); err == nil {
-			if opBytes, ok := msg["op"]; ok {
-				_ = json.Unmarshal(opBytes, &capturedOp)
-			}
-			if qBytes, ok := msg["queue"]; ok {
-				_ = json.Unmarshal(qBytes, &capturedQueue)
-			}
-			if fBytes, ok := msg["force"]; ok {
-				_ = json.Unmarshal(fBytes, &capturedForce)
-			}
-		}
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "op", &capturedOp)
+		queueCliFixtureCapture(t, msg, "queue", &capturedQueue)
+		queueCliFixtureCapture(t, msg, "force", &capturedForce)
 		return queueCliFixtureSuccessResponse(t, map[string]any{
 			"queue_id":     "qid-alpha-daemon-routed",
 			"prior_status": "active",

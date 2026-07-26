@@ -53,7 +53,6 @@ func TestResolveCrewStartArgs_QueueDefaulting(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			args, help, usageErr := resolveCrewStartArgs(tc.argv)
@@ -139,7 +138,6 @@ func TestResolveCrewStartArgs_MissionRule(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			args, help, usageErr := resolveCrewStartArgs(tc.argv)
@@ -170,11 +168,11 @@ func TestResolveCrewStartArgs_FreshStartIgnoresStaleOnDiskMission(t *testing.T) 
 
 	// Plant a stale on-disk default mission from a hypothetical prior agent.
 	missionsDir := filepath.Join(projectDir, ".harmonik", "crew", "missions")
-	if err := os.MkdirAll(missionsDir, 0o755); err != nil {
+	if err := os.MkdirAll(missionsDir, 0o750); err != nil {
 		t.Fatalf("mkdir missions: %v", err)
 	}
 	stalePath := filepath.Join(missionsDir, name+".md")
-	if err := os.WriteFile(stalePath, []byte("STALE PRIOR MISSION — must never be reused\n"), 0o644); err != nil {
+	if err := os.WriteFile(stalePath, []byte("STALE PRIOR MISSION — must never be reused\n"), 0o600); err != nil {
 		t.Fatalf("write stale mission: %v", err)
 	}
 
@@ -219,16 +217,17 @@ func TestCrewRestartRehydrationReadsOnDiskMission(t *testing.T) {
 	onDiskDefault := filepath.Join(projectDir, ".harmonik", "crew", "missions", name+".md")
 
 	missionsDir := filepath.Dir(onDiskDefault)
-	if err := os.MkdirAll(missionsDir, 0o755); err != nil {
+	if err := os.MkdirAll(missionsDir, 0o750); err != nil {
 		t.Fatalf("mkdir missions: %v", err)
 	}
 	want := "CREW'S OWN JUST-WRITTEN MISSION — restart re-reads this\n"
-	if err := os.WriteFile(onDiskDefault, []byte(want), 0o644); err != nil {
+	if err := os.WriteFile(onDiskDefault, []byte(want), 0o600); err != nil {
 		t.Fatalf("write on-disk mission: %v", err)
 	}
 
 	// The restart re-hydration path reads the on-disk default directly (the crew
 	// boot does this; here we exercise the same read to pin the contract).
+	//nolint:gosec // G304: onDiskDefault is rooted in this test's t.TempDir project fixture
 	got, err := os.ReadFile(onDiskDefault)
 	if err != nil {
 		t.Fatalf("restart re-hydration could not read on-disk mission %q: %v", onDiskDefault, err)

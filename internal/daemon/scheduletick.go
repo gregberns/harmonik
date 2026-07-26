@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/schedule"
 )
@@ -63,10 +64,11 @@ func scrubCredentialEnv(env []string) []string {
 	return out
 }
 
-// crewStarter is the minimal subset of CrewHandler the schedule tick needs to
-// fire a spawn-crew action. CrewHandler (crewstart.go) satisfies it. Extracting
-// the narrow interface keeps the tick testable with a lightweight double and
-// avoids a hard dependency on the full handler in tests that don't spawn.
+// crewStarter is the minimal subset of crewrun.CrewHandler the schedule tick
+// needs to fire a spawn-crew action. crewrun.CrewHandler (crewrun/wire.go)
+// satisfies it. Extracting the narrow interface keeps the tick testable with a
+// lightweight double and avoids a hard dependency on the full handler in tests
+// that don't spawn.
 type crewStarter interface {
 	HandleCrewStart(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
 }
@@ -274,7 +276,7 @@ func fireSpawnCrewAction(ctx context.Context, deps workLoopDeps, job schedule.Sc
 	if job.Action.Crew == "" || job.Action.Queue == "" {
 		return fmt.Errorf("spawn-crew action requires crew and queue")
 	}
-	req := CrewStartRequest{
+	req := crewrun.CrewStartRequest{
 		Name:        job.Action.Crew,
 		Queue:       job.Action.Queue,
 		MissionPath: job.Action.Mission,

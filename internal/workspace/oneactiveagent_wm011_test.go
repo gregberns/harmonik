@@ -36,9 +36,10 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -48,7 +49,7 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 		pid := os.Getpid()
 		now := time.Now()
 		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
-		lockContent := leaseFixtureMakeLockJSON(runID, pid, now, 3600)
+		lockContent := leaseFixtureMakeLockJSON(runID, pid, now)
 		leaseFixtureWriteLockAtomic(t, leaseLockPath, lockContent)
 
 		// The lease-lock must exist while an agent is "active".
@@ -57,10 +58,7 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 		}
 
 		// Read the lock content and verify it identifies the owning run.
-		data, err := os.ReadFile(leaseLockPath)
-		if err != nil {
-			t.Fatalf("WM-011: ReadFile lease-lock: %v", err)
-		}
+		data := mustReadFile(t, leaseLockPath)
 		content := string(data)
 
 		// Verify run_id is present in the lock content.
@@ -86,9 +84,10 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 		for i, runID := range runIDs {
 			branch := "run/" + runID
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
+			//nolint:gosec // G204: test invokes git with arguments derived from its temporary repository fixture
 			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 			cmd.Dir = repo
 			if out, err := cmd.CombinedOutput(); err != nil {
@@ -96,7 +95,7 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 			}
 			lp := leaseFixtureLeaseLockPath(worktreePath)
 			leasePaths[i] = lp
-			leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+			leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 		}
 
 		// Lease paths must be disjoint.
@@ -116,7 +115,7 @@ func TestWM011_OneActiveAgentAtATimeInsideWorkspace(t *testing.T) {
 // leaseFixtureContainsSubstring returns true if s contains substr.
 // Inlined to avoid adding an untested utility to the package.
 func leaseFixtureContainsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+	return len(s) >= len(substr) && (s == substr || substr == "" ||
 		leaseFixtureFindSubstring(s, substr))
 }
 

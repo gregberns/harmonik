@@ -86,6 +86,8 @@ func TestRunStreamHelpMentionsWave(t *testing.T) {
 func streamDefaultFixtureCaptureUsage(t *testing.T) string {
 	t.Helper()
 	var buf strings.Builder
-	runUsage(&buf)
+	if err := runUsage(&buf); err != nil {
+		t.Fatalf("runUsage: %v", err)
+	}
 	return buf.String()
 }

@@ -53,7 +53,7 @@ func keeperWriteEvents(t *testing.T, lines ...string) string {
 	if err != nil {
 		t.Fatalf("keeperWriteEvents: create: %v", err)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // best-effort close of test fixture file
+	defer func() { _ = f.Close() }()
 	for _, l := range lines {
 		if _, wErr := fmt.Fprintln(f, l); wErr != nil {
 			t.Fatalf("keeperWriteEvents: write: %v", wErr)

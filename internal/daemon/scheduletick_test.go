@@ -14,20 +14,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/crewrun"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
 // fakeCrewStarter records HandleCrewStart calls.
 type fakeCrewStarter struct {
 	mu     sync.Mutex
-	starts []CrewStartRequest
+	starts []crewrun.CrewStartRequest
 	err    error
 }
 
 func (f *fakeCrewStarter) HandleCrewStart(_ context.Context, payload json.RawMessage) (json.RawMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var req CrewStartRequest
+	var req crewrun.CrewStartRequest
 	_ = json.Unmarshal(payload, &req)
 	f.starts = append(f.starts, req)
 	if f.err != nil {
@@ -435,7 +437,7 @@ func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 		t.Fatal("ops-monitor job unexpectedly present before ensure call")
 	}
 
-	ensureOpsMonitorSchedule(store, OpsmonitorConfig{})
+	ensureOpsMonitorSchedule(store, projectconfig.OpsmonitorConfig{})
 
 	j, ok := store.Get(opsMonitorJobID)
 	if !ok {
@@ -452,7 +454,7 @@ func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 	}
 
 	// Second call is a no-op (idempotent).
-	ensureOpsMonitorSchedule(store, OpsmonitorConfig{})
+	ensureOpsMonitorSchedule(store, projectconfig.OpsmonitorConfig{})
 	_ = deps // satisfy unused import
 }
 
@@ -461,7 +463,7 @@ func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 func TestScheduleTick_EnsureOpsMonitor_Override(t *testing.T) {
 	_, store, _ := newTickDeps(t)
 
-	cfg := OpsmonitorConfig{Interval: "10m", ScriptPath: "scripts/custom-ops.sh"}
+	cfg := projectconfig.OpsmonitorConfig{Interval: "10m", ScriptPath: "scripts/custom-ops.sh"}
 	ensureOpsMonitorSchedule(store, cfg)
 
 	j, ok := store.Get(opsMonitorJobID)
@@ -584,7 +586,7 @@ func TestScheduleTick_CommsSendActionFires(t *testing.T) {
 func TestScheduleTick_EnsureWatchLiveness(t *testing.T) {
 	_, store, _ := newTickDeps(t)
 
-	cfg := WatchConfig{LivenessInterval: "1h", DigestInterval: "1h"}
+	cfg := projectconfig.WatchConfig{LivenessInterval: "1h", DigestInterval: "1h"}
 	ensureWatchLivenessSchedule(store, cfg, "")
 
 	j1, ok := store.Get(watchLivenessPingJobID)
@@ -624,7 +626,7 @@ func TestScheduleTick_EnsureWatchLiveness(t *testing.T) {
 func TestScheduleTick_EnsureWatchLivenessConfiguredBodies(t *testing.T) {
 	_, store, _ := newTickDeps(t)
 
-	cfg := WatchConfig{
+	cfg := projectconfig.WatchConfig{
 		LivenessInterval:   "1h",
 		DigestInterval:     "1h",
 		LivenessPingBody:   "custom-liveness-body",
@@ -654,7 +656,7 @@ func TestScheduleTick_EnsureWatchLivenessConfiguredBodies(t *testing.T) {
 // The fail-loud gate is checkMissingWatchValues (cmd/harmonik), not this function.
 func TestScheduleTick_WatchLivenessSkippedWhenNotConfigured(t *testing.T) {
 	_, store, _ := newTickDeps(t)
-	ensureWatchLivenessSchedule(store, WatchConfig{}, "")
+	ensureWatchLivenessSchedule(store, projectconfig.WatchConfig{}, "")
 	if _, ok := store.Get(watchLivenessPingJobID); ok {
 		t.Error("watch-liveness-ping registered despite missing LivenessInterval")
 	}

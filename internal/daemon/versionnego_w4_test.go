@@ -105,7 +105,7 @@ func TestSessionIDInterceptor_CapabilitiesAbsentTimeout(t *testing.T) {
 	defer func() { capsAbsentTimeout = origTimeout }()
 
 	pr, pw := io.Pipe() // silent handler: never writes
-	defer pw.Close()    //nolint:errcheck // best-effort close of test pipe writer
+	defer pw.Close()
 
 	ic := newSessionIDInterceptor(pr, func(string) {
 		t.Error("cb fired despite capabilities-absent timeout")

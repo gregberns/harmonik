@@ -60,6 +60,7 @@ func twinParityFixtureHCSpec(t *testing.T) string {
 	t.Helper()
 	root := twinParityFixtureModuleRoot(t)
 	specPath := filepath.Join(root, "specs", "handler-contract.md")
+	//nolint:gosec // G304: specPath is assembled from the test's verified module root.
 	content, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("reading handler-contract.md: %v", err)
@@ -224,7 +225,7 @@ func TestHC040_AgentReadyTypeIsStableConstant(t *testing.T) {
 	t.Parallel()
 
 	const wantValue = "agent_ready"
-	got := string(handlercontract.ProgressMsgTypeAgentReady)
+	got := handlercontract.ProgressMsgTypeAgentReady
 	if got != wantValue {
 		t.Errorf("HC-040: ProgressMsgTypeAgentReady = %q; want %q (stable wire type for twin parity)", got, wantValue)
 	}
@@ -259,7 +260,7 @@ func TestHC049a_SkillsProvisionedTypeIsStableConstant(t *testing.T) {
 	t.Parallel()
 
 	const wantValue = "skills_provisioned"
-	got := string(handlercontract.ProgressMsgTypeSkillsProvisioned)
+	got := handlercontract.ProgressMsgTypeSkillsProvisioned
 	if got != wantValue {
 		t.Errorf("HC-049a: ProgressMsgTypeSkillsProvisioned = %q; want %q (stable wire type for twin wire-parity)", got, wantValue)
 	}

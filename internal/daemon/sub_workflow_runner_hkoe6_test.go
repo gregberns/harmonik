@@ -124,8 +124,11 @@ func swMakeRunner(t *testing.T, bus *recordingBusDaemon, projectDir string, pare
 	}
 	iterCount := 1
 	sessID := ""
+	env, ports, handles := runBundlesFromDeps(deps, run.RunID)
 	return newDotSubWorkflowRunner(
-		deps,
+		env,
+		ports,
+		handles,
 		run.RunID,
 		core.BeadID("hk-test"),
 		core.BeadRecord{},

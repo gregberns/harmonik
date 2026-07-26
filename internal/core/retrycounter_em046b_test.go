@@ -379,7 +379,9 @@ func TestRetryCounterEM046b_ErrSentinelFailureClassTransient(t *testing.T) {
 	nodeID := NodeID("node-cap")
 	retryCap := 1
 
-	_, _ = rc.Increment(runID, nodeID, &retryCap) // first: allowed
+	if _, err := rc.Increment(runID, nodeID, &retryCap); err != nil {
+		t.Fatalf("first Increment: %v", err)
+	}
 	_, err := rc.Increment(runID, nodeID, &retryCap)
 	if !errors.Is(err, ErrRetryCapExhausted) {
 		t.Fatalf("cap-exhausted error does not wrap ErrRetryCapExhausted: %v", err)

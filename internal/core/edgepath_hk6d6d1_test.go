@@ -46,7 +46,6 @@ func TestParsePolicyDocument_MalformedYAML(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -158,7 +157,6 @@ budgets: []
 `
 
 	for _, section := range allSections {
-		section := section
 		t.Run("missing_"+section, func(t *testing.T) {
 			t.Parallel()
 
@@ -219,7 +217,6 @@ func TestContains_EdgePaths(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -270,7 +267,6 @@ func TestIsMaxNodesError_EdgePaths(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -360,7 +356,6 @@ func TestFreedomProfile_Valid_Table(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -430,7 +425,6 @@ func TestSchemaChangeKind_IsBreaking_UnknownKindIsConservative(t *testing.T) {
 	}
 
 	for _, k := range unknown {
-		k := k
 		t.Run(string(k)+"_is_breaking", func(t *testing.T) {
 			t.Parallel()
 
@@ -506,7 +500,6 @@ func TestPathGlob_Valid_Table(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

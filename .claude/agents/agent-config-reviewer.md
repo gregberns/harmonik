@@ -31,7 +31,7 @@ applies, defers, or rejects.
 
 Required fields: schema_version, verdict, notes, proposed_diff. flags may be [].
 DRIFT_MAJOR proposals require main-agent acknowledgment before continuing a pass.
-DRIFT_MINOR proposals may be deferred with a TASKS.md item.
+DRIFT_MINOR proposals may be deferred by filing a bead (`br create`).
 CLEAN — no action required.
 
 ---
@@ -40,8 +40,8 @@ CLEAN — no action required.
 
 | Event | Invoke? |
 |---|---|
-| Session start (after reading SESSION_HANDOFF.md) | Yes — lightweight scan |
-| Session end (before writing SESSION_HANDOFF.md) | Yes — full scan |
+| Session start (after reading HANDOFF.md) | Yes — lightweight scan |
+| Session end (before writing HANDOFF.md) | Yes — full scan |
 | `kerf status <work> <next-pass>` about to run | Yes — full scan |
 | `kerf finalize` about to run | Yes — full scan with wider prompt (include new spec) |
 | Foundation-doc change | Yes — drift from those docs into agent-configuration.md |
@@ -59,7 +59,7 @@ The invoker provides (all in the invocation prompt):
 3. **`.claude/settings.json`** (if present) — Claude Code hook and permission config.
 4. **Skill manifest** — output of `ls .claude/skills/` and the frontmatter of each
    `SKILL.md` found.
-5. **Last N session handoffs** — `SESSION_HANDOFF.md` plus recent git log.
+5. **Last N session handoffs** — `HANDOFF.md` plus recent git log.
 6. **Kerf work artifacts** (for kerf-pass triggers only).
 7. **Changed foundation docs** (for automatic Tier-2 trigger only).
 
@@ -76,7 +76,17 @@ Perform all four checks in order.
 Compare the current `CLAUDE.md` / `AGENTS.md` content against the normative
 `agent-configuration.md`:
 
-- Is the entry ritual present and correct?
+- Is the entry ritual present and correct? The read order is **role-scoped**; two
+  different orders for two roles is CORRECT, not drift:
+  - **captain** — `AGENT_INDEX.md` → `STATUS.md` → `.harmonik/context/captain-lanes.md`
+    → `HANDOFF.md` (four steps).
+  - **crew / implementer-orchestrator** — `AGENT_INDEX.md` → `STATUS.md` → `HANDOFF.md`
+    (three steps; no `captain-lanes.md` — its own tier header says "LOADED BY: captain
+    @ STARTUP Step 0b; NOT loaded by crews or implementers").
+
+  Flag only if a role's order is absent, internally contradictory, or stated
+  unconditionally as everyone's. Do NOT flatten the lists to match. `TASKS.md` and
+  `SESSION_HANDOFF.md` are dead paths from the older ritual; do not reinstate them.
 - Are the hard don'ts present?
 - Are pointers current — do the named docs still exist at the cited paths?
 - Is the file under 120 lines?
@@ -168,5 +178,9 @@ Emit a single JSON object. No prose before or after it.
 | Verdict | Meaning | Main-agent action |
 |---|---|---|
 | `CLEAN` | No drift detected | No action; note in session log. |
-| `DRIFT_MINOR` | Small gap; not immediately blocking | Apply the proposed diff OR open a TASKS.md item. |
-| `DRIFT_MAJOR` | Significant gap | Acknowledge explicitly. Apply or defer with TASKS.md item. Do NOT silently continue. |
+| `DRIFT_MINOR` | Small gap; not immediately blocking | Apply the proposed diff OR file a bead. |
+| `DRIFT_MAJOR` | Significant gap | Acknowledge explicitly. Apply, or defer by filing a bead. Do NOT silently continue. |
+
+Deferred work is always a bead. Attach it to the owning epic when the finding was
+discovered inside one (`br create --parent <epic_id>`, which creates a parent-child
+dep); otherwise file it standalone (`br create`).

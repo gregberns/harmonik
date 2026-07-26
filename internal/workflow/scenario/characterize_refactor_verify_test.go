@@ -60,8 +60,8 @@ func crvRun(t *testing.T) *core.Run {
 	}
 }
 
-func crvOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func crvOutcome(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -83,31 +83,31 @@ func TestCRV_ApproveOnFirstPass(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → characterize
-	dec := workflow.DecideNextNode(graph, "start", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "characterize" {
 		t.Fatalf("start→characterize: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// characterize → refactor
-	dec = workflow.DecideNextNode(graph, "characterize", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "characterize", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "refactor" {
 		t.Fatalf("characterize→refactor: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// refactor → verify_review
-	dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "verify_review" {
 		t.Fatalf("refactor→verify_review: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// verify_review(APPROVE) → close
-	dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("verify_review→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", crvOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -132,13 +132,13 @@ func TestCRV_TwoRequestChangesThenApprove(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → characterize
-	dec := workflow.DecideNextNode(graph, "start", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "characterize" {
 		t.Fatalf("start→characterize: %+v", dec)
 	}
 
 	// characterize → refactor (runs once; oracle committed)
-	dec = workflow.DecideNextNode(graph, "characterize", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "characterize", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "refactor" {
 		t.Fatalf("characterize→refactor: %+v", dec)
 	}
@@ -146,16 +146,18 @@ func TestCRV_TwoRequestChangesThenApprove(t *testing.T) {
 	// Loop twice: verify_review(REQUEST_CHANGES) → refactor
 	for i := 1; i <= 2; i++ {
 		// refactor → verify_review
-		dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+		dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(""), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "verify_review" {
 			t.Fatalf("iteration %d refactor→verify_review: %+v", i, dec)
 		}
 
 		// Increment cycle counter for the verify_review→refactor back-edge.
-		cycles.Increment(run.RunID, "verify_review", "refactor", nil)
+		if _, err := cycles.Increment(run.RunID, "verify_review", "refactor", nil); err != nil {
+			t.Fatalf("pre-fill cycle counter verify_review\u2192refactor: %v", err)
+		}
 
 		// verify_review(REQUEST_CHANGES) → refactor (back-edge, not characterize)
-		dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+		dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome("REQUEST_CHANGES"), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "refactor" {
 			t.Fatalf("iteration %d verify_review→refactor: Advance=%v NextNodeID=%q",
 				i, dec.Advance, dec.NextNodeID)
@@ -163,17 +165,17 @@ func TestCRV_TwoRequestChangesThenApprove(t *testing.T) {
 	}
 
 	// Third pass: refactor → verify_review → APPROVE → close
-	dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "verify_review" {
 		t.Fatalf("final refactor→verify_review: %+v", dec)
 	}
 
-	dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("final verify_review→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "close", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", crvOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -194,32 +196,32 @@ func TestCRV_BlockOnFirst(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → characterize
-	dec := workflow.DecideNextNode(graph, "start", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "characterize" {
 		t.Fatalf("start→characterize: %+v", dec)
 	}
 
 	// characterize → refactor
-	dec = workflow.DecideNextNode(graph, "characterize", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "characterize", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "refactor" {
 		t.Fatalf("characterize→refactor: %+v", dec)
 	}
 
 	// refactor → verify_review
-	dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "verify_review" {
 		t.Fatalf("refactor→verify_review: %+v", dec)
 	}
 
 	// verify_review(BLOCK) → close-needs-attention
-	dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome(core.OutcomeStatusSuccess, "BLOCK"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("verify_review→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// close-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", crvOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -241,19 +243,21 @@ func TestCRV_CapHitFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → characterize → refactor → verify_review.
-	workflow.DecideNextNode(graph, "start", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "characterize", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "refactor", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", crvOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "characterize", crvOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "refactor", crvOutcome(""), run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of verify_review→refactor.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "verify_review", "refactor", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "verify_review", "refactor", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter verify_review\u2192refactor: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is
 	// suppressed; the cascade reports a cap-hit failure.
-	dec := workflow.DecideNextNode(graph, "verify_review", crvOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "verify_review", crvOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
 	}
@@ -281,21 +285,21 @@ func TestCRV_UnrecognizedLabelFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → characterize → refactor → verify_review.
-	dec := workflow.DecideNextNode(graph, "start", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "characterize" {
 		t.Fatalf("start→characterize: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "characterize", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "characterize", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "refactor" {
 		t.Fatalf("characterize→refactor: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "refactor", crvOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "verify_review" {
 		t.Fatalf("refactor→verify_review: %+v", dec)
 	}
 
 	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
-	dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome(core.OutcomeStatusSuccess, "UNKNOWN_LABEL"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "verify_review", crvOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
 			dec.Advance, dec.Failed, dec.FailureReason)
@@ -306,7 +310,7 @@ func TestCRV_UnrecognizedLabelFallback(t *testing.T) {
 	}
 
 	// close-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", crvOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", crvOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}

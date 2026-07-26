@@ -19,6 +19,7 @@ import (
 func readCtxFor(t *testing.T, projectDir, agent string) (keeper.CtxFile, time.Time) {
 	t.Helper()
 	path := filepath.Join(projectDir, ".harmonik", "keeper", agent+".ctx")
+	//nolint:gosec // G304: path is constructed under this test's t.TempDir fixture.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read ctx: %v", err)
@@ -40,7 +41,7 @@ func readCtxFor(t *testing.T, projectDir, agent string) (keeper.CtxFile, time.Ti
 func writeStaleCtx(t *testing.T, projectDir, agent string, cf keeper.CtxFile, age time.Duration) {
 	t.Helper()
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	raw, err := json.Marshal(cf)
@@ -81,7 +82,7 @@ func TestHeartbeat_KeepsLiveGaugeFresh(t *testing.T) {
 	// Latch a real UUIDv4 so the heartbeat stamps it back into the gauge.
 	managedSID := "11111111-2222-4333-8444-555555555555"
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	if err := keeper.WriteManagedSessionID(projectDir, agent, managedSID); err != nil {
@@ -186,7 +187,7 @@ func TestDeriveContextTokens(t *testing.T) {
 		t.Fatalf("write transcript: %v", err)
 	}
 
-	got, ok := keeper.DeriveContextTokensForTest(dir, sid)
+	got, ok := keeper.DeriveContextTokensForTest(t.Context(), dir, sid)
 	if !ok {
 		t.Fatalf("expected derivation to succeed")
 	}
@@ -194,7 +195,7 @@ func TestDeriveContextTokens(t *testing.T) {
 		t.Fatalf("derived tokens = %d, want %d (last usage turn: input+cache_read+cache_creation+output)", got, want)
 	}
 
-	if _, ok := keeper.DeriveContextTokensForTest(dir, "no-such-session"); ok {
+	if _, ok := keeper.DeriveContextTokensForTest(t.Context(), dir, "no-such-session"); ok {
 		t.Fatalf("expected derivation to fail for a missing transcript")
 	}
 }
@@ -248,7 +249,7 @@ func TestDeriveContextTokens_TailWindow_LargeFile(t *testing.T) {
 		t.Fatalf("write transcript: %v", err)
 	}
 
-	got, ok := keeper.DeriveContextTokensForTest(dir, sid)
+	got, ok := keeper.DeriveContextTokensForTest(t.Context(), dir, sid)
 	if !ok {
 		t.Fatalf("expected derivation to succeed on large file")
 	}
@@ -272,7 +273,7 @@ func TestHeartbeat_Cache_SkipsRederiveWithinTTL(t *testing.T) {
 	managedSID := "cccccccc-1111-4222-8333-444444444444"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	if err := keeper.WriteManagedSessionID(projectDir, agent, managedSID); err != nil {
@@ -411,7 +412,7 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 		agent := "test-agent"
 		managedSID := "22222222-3333-4444-8555-666666666666"
 		keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-		if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 		if err := keeper.WriteManagedSessionID(projectDir, agent, managedSID); err != nil {
@@ -476,7 +477,7 @@ func TestHeartbeat_SIDChange_ResetsMissBudget(t *testing.T) {
 	newSID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	// .managed is empty (cleared by ClearSettle-timeout), mirroring the K1 scenario.

@@ -177,6 +177,9 @@ func TestRunReportLoop_TicksAndEmits(t *testing.T) {
 		Payload []byte
 	}
 	emit := func(ctx context.Context, et core.EventType, b []byte) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		mu.Lock()
 		captured = append(captured, struct {
 			Type    core.EventType

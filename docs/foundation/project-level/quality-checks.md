@@ -71,7 +71,7 @@ linters:
     - forbidigo       # ban specific calls (see config)
     - depguard        # import-graph + component-layer rules (subsystem-organization.md)
 linters-settings:
-  errcheck: { check-type-assertions: true, check-blank: true, exclude-functions: ["(io.Closer).Close"] }
+  errcheck: { check-type-assertions: true, check-blank: true }  # no close exclusions — production Close() is errcheck-gated (P2 hk-8dtiv)
   revive:   { rules: [{name: exported}, {name: package-comments}, {name: var-naming}, {name: error-return}, {name: error-naming}, {name: if-return}] }
   gocritic: { enabled-tags: [diagnostic, performance, style], disabled-checks: [hugeParam, rangeValCopy] }
   nolintlint: { require-explanation: true, require-specific: true, allow-unused: false }
@@ -96,15 +96,70 @@ linters-settings:
 issues: { max-issues-per-linter: 0, max-same-issues: 0, exclude-use-default: false }
 ```
 
-Explicit **NO** on: `wsl`, `lll`, `funlen`, `gocyclo`, `cyclop`, `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Style-taste linters; noise without catching real defects at MVH scope.
+> **The block above is an illustrative excerpt, not a mirror.** `.golangci.yml` in the repo root is the authority and has moved on from it (v2 schema, an `exclusions.rules` block, path-scoped `forbidigo` entries, the complexity linters below). Read the file; do not treat this excerpt as the enabled set.
+
+**Complexity ceilings are ENABLED** (Track C), contrary to earlier drafts of this section that listed them under "explicit NO":
+
+- `funlen` — 100 lines / 60 statements, `ignore-comments: true`.
+- `cyclop` — `max-complexity: 15` per function; `package-average: 0` (package averaging disabled).
+- `gocognit` — `min-complexity: 20` (stricter than the golangci default of 30).
+
+They ratchet via `--new-from-rev`, so existing functions are grandfathered but a function a diff rewrites is not. Excluded paths: `_test.go`, `internal/scenario/`, `internal/specaudit/`.
+
+Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Style-taste linters; noise without catching real defects at MVH scope.
+
+**Path-scoped exclusions worth knowing** (`.golangci.yml §exclusions.rules`): `tools/` is excluded from the *whole* `forbidigo` and `noctx` linters; `internal/testhelpers/` from the whole `forbidigo` linter — so both get `panic` **and** `fmt.Print*` for free, not just one of them. `cmd/` gets a narrower third carve-out: only the `fmt.Print*` ban (printing to stdout is what a CLI does), so `panic` stays banned there.
 
 ## Error handling conventions
 
-- **Always handle errors.** `errcheck` is blocking; only ignore with explicit `_ =` + `//nolint:errcheck // <reason>` (nolintlint forces justification).
+> **Source of truth for Go idioms:** `.claude/skills/agent-reviewer/SKILL.md §2 — Idiom compliance`, which is itself a description of the enforced `.golangci.yml`. Where this section and §2 disagree, §2 wins; where §2 and `.golangci.yml` disagree, the config wins and the prose is the bug. Never document an idiom the linter rejects — verify by running the pinned `.tools/golangci-lint` against the repo's own settings block.
+
+- **Always handle errors.** `errcheck` is blocking and runs with `check-blank: true`, so `_ = f()` is **itself a finding**, not an escape hatch. Discarding an error requires an explicit `//nolint:errcheck // <reason>` (nolintlint forces justification), and the quality lanes operate under *add no new `//nolint`* — reach for one only when no code change clears the finding. See `agent-reviewer §2 — Suppression discipline`.
+- **Comma-ok on every type assertion** — `v, ok := x.(T)`. `check-type-assertions: true` makes a bare `x.(T)` and `v, _ := x.(T)` findings.
 - **Prefer `%w` wrapping at subsystem boundaries** (crossing S01..S09). `errorlint` enforces correctness WHEN wrapping (e.g., non-`%w` for an error arg, direct `==` comparison where `errors.Is` is required), but it CANNOT detect missing-wraps — that needs semantic boundary knowledge, which is a custom `go/analysis` pass (deferred). Until that analyzer ships: reviewer-agents flag missing-wraps on subsystem-boundary imports during review. Do NOT wrap within a subsystem; wrapping the same error up-and-up produces noise without new context.
 - **Sentinel errors** as `var ErrFoo = errors.New("foo")`; typed errors as structs with `Error()`.
 - **No `panic` in production paths** — `forbidigo` blocks it outside `main`/`init`. Run supervisor handles recovery.
-- **`defer x.Close()` is acceptable** without error check (errcheck exclusion). When a close-error is material (commit, fsync) use named return + `defer func() { err = errors.Join(err, x.Close()) }()`.
+- **Deferred `Close()` — errcheck gates it; the reviewer owns materiality.** `.golangci.yml` sets `errcheck: { check-blank: true }` with **no** close exclusions. The four `(io.Closer|*os.File|net.Conn|net.Listener).Close` `exclude-functions` entries that used to live here were dropped in P2 (hk-8dtiv) once the whole production tree was migrated to the house Close idiom. Every unchecked production close is now an errcheck finding, in both the `defer f.Close()` and the `defer func() { _ = f.Close() }()` form (`_ =` does not satisfy `check-blank`). Test noise is held at zero by one `_test.go`-scoped `exclusions.rules` entry — the same `text:`-plus-`path:` machinery the `SC6-DRIVER-CLOCKPORT` rules use, matching the finding text `Close` is not checked` on `_test.go` paths — so `*_test.go` closes stay silent while 100% of production closes are checked.
+
+  ```go
+  defer f.Close()                  // errcheck finding on production code
+  defer func() { _ = f.Close() }() // likewise — check-blank: true
+  ```
+
+  errcheck gates the **presence** of a check, not its **correctness**: the finding text carries only the receiver name and `(*os.File).Close` is one method whether the file was opened for read or write, so the linter cannot tell a read close from a write close. **A close handled the wrong way — swallowed on a write/commit/fsync path, or closed in a `defer` that runs after the rename in a temp+rename sequence — can still be lint-green, and is still a defect the reviewer catches.** `cmd/harmonik/handler.go` `atomicWriteHandlerState` is the reference shape: it checks the close *before* the rename. Read-vs-write is expressible by a custom `go/analysis` pass that tracks a file's open flags forward to its close; nobody has written it — a cost, not an impossibility, the same shape as the deferred missing-wrap analyzer noted above.
+
+  Use one of the three forms landed in this tree. Pick by whether the close error is material; each is cited to its real home:
+
+  ```go
+  // MATERIAL (write / commit / fsync) — join it into a named return.
+  // internal/queue/cli/cancel.go (emitQueueCancelEvent) — deferred, verbatim.
+  // internal/supervise/daemon_watchdog.go (openCrashLog) — same fold written
+  // out non-deferred, because it runs on one early-return path only.
+  defer func() { err = errors.Join(err, f.Close()) }()
+
+  // MATERIAL but must not mask an earlier failure — first error wins.
+  // internal/keeper/watcher.go (FileEmitter.EmitWithRunID), commit 5a199ed3
+  defer func() {
+      if closeErr := file.Close(); closeErr != nil && err == nil {
+          err = closeErr
+      }
+  }()
+
+  // IMMATERIAL (read-only open) but observable — log and continue.
+  // WarnContext, not Warn: noctx reports "log/slog.Warn must not be called.
+  // use log/slog.WarnContext". A defer usually has no ctx in scope — pass
+  // context.Background(), as internal/keeper/tmuxresolve.go
+  // (recentTranscriptTurn) already does for its scan-truncation warning.
+  defer func() {
+      if closeErr := f.Close(); closeErr != nil {
+          slog.WarnContext(ctx, "keeper: close transcript", "err", closeErr, "path", path)
+      }
+  }()
+  ```
+
+  Note `internal/keeper` carries **no** `errors.Join` close — do not cite it for the first form. Its two third-form homes, `heartbeat.go` (`deriveContextTokens`) and `tmuxresolve.go` (`recentTranscriptTurn`), still call bare `slog.Warn` inside the defer; `--new-from-rev` grandfathers them, but the same lines in a new diff are a `noctx` finding. Copy the block above, not those call sites.
+
+  When you need to open the file too, prefer `os.OpenRoot(dir)` + `root.Open`/`root.Create(name)` over `os.Open`/`os.Create` with a constructed path: the rooted form clears gosec **G304** by construction (verified against the pinned linter with this repo's settings block), where the plain form fires it and tempts a `//nolint`. That is a rule for **new** code — nothing in this tree uses `os.OpenRoot` yet, and both first-form exemplars above open under a justified `//nolint:gosec` because their paths are operator-supplied at runtime, so G304 fires however they are validated. They are cited for the close, not for the open. Full treatment, including which suppressions are legitimate: `agent-reviewer §2 — Deferred Close()`.
 
 ## Logging
 

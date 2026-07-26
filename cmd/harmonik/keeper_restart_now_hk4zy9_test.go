@@ -19,7 +19,7 @@ import (
 func writeHandoffWithNonce(t *testing.T, projectDir, agent, _ string) {
 	t.Helper()
 	p := filepath.Join(projectDir, "HANDOFF-"+agent+".md")
-	if err := os.WriteFile(p, []byte("# Handoff\n"), 0o644); err != nil { //nolint:gosec
+	if err := os.WriteFile(p, []byte("# Handoff\n"), 0o644); err != nil { //nolint:gosec // G306: handoff files are intentionally group-readable collaboration artifacts.
 		t.Fatalf("writeHandoffWithNonce: %v", err)
 	}
 }

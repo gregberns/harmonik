@@ -1,0 +1,77 @@
+{
+  "chunk": "RU-09",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/queue/rpc.go",
+    "internal/queue/append.go",
+    "internal/queue/state.go",
+    "internal/queue/persistence.go (Persist/Load atomic-write surface)"
+  ],
+  "status": "reviewed",
+  "status_note": "Focused on the rpc.go two-writer path, HandlerAdapter, and the B1 lost-update lock. Read rpc.go in full, append.go/state.go in full, and the Persist/Load atomic-write helpers in persistence.go.",
+  "findings": [
+    {
+      "file": "internal/queue/rpc.go",
+      "line": 161,
+      "severity": "high",
+      "category": "concurrency",
+      "title": "queue-submit read-modify-write bypasses the B1 mutation lock (TOCTOU single-active + lost update)",
+      "detail": "HandleQueueSubmit performs Load(existing) -> Validate (QM-027 single-active-per-name guard) -> Persist entirely UNLOCKED. The B1 fix (appendUnderLock, LockForMutationView) serialised only the append path against the workloop's LockForMutation status mutations; submit was never brought under the same lock. Two concrete failures: (1) TOCTOU on QM-027 — two concurrent queue-submit calls for the same new queue name both Load (see no active queue), both pass the single-active check, both mint distinct queue_ids, and both Persist to the same <name>.json path; last-writer-wins silently drops one queue's items and queue_id, defeating the single-active-per-name invariant. (2) A submit's Persist can race the workloop's locked status Persist for a name that is transitioning, so the workloop's in-flight status write and the submit can clobber each other's file. The adapter then calls a.qs.SetQueue (rpc.go:1004) also outside the lock.",
+      "suggested_fix": "Route HandleQueueSubmit's load->validate->persist->SetQueue through the same MutationLocker.LockForMutationView path used by appendUnderLock, so the single-active check and the write are atomic w.r.t. the workloop and concurrent submits."
+    },
+    {
+      "file": "internal/queue/persistence.go",
+      "line": 110,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "Persist temp-file name keyed only on PID — concurrent in-process writes to the same queue collide",
+      "detail": "tmpPath := fmt.Sprintf(\"%s.tmp-%d\", target, os.Getpid()) uses only the PID as the uniquifier. Two concurrent Persist calls in the SAME daemon process targeting the SAME queue name produce the identical tmpPath. Because the file is opened O_CREATE|O_EXCL, the second call fails with ErrPersistFailed even though nothing is actually wrong — a spurious internal-error (-32099) returned to the caller. This is reachable precisely because the submit path is unlocked (finding above): an unlocked submit Persist and a locked append/workloop Persist for the same name can overlap. Even absent that, any future concurrent writer to one queue name hits it.",
+      "suggested_fix": "Add a per-call uniquifier to tmpPath (e.g. a random token / atomic counter / UUID) in addition to the PID so concurrent Persist attempts never collide on the temp filename."
+    },
+    {
+      "file": "internal/queue/rpc.go",
+      "line": 510,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Unbounded group-index access in the append path can panic instead of returning append_target_invalid",
+      "detail": "HandleQueueAppendOnQueue does targetGroup := mutated.Groups[req.GroupIndex] with no bounds check, relying entirely on AppendItems/Validate having rejected an out-of-range GroupIndex first. AppendItems itself dereferences q.Groups[groupIndex] at append.go:124 (existingGroup) and append.go:166 (g := &q.Groups[groupIndex]) — also unchecked. req.GroupIndex arrives directly from decoded JSON. If the Validate pipeline ever fails to reject an out-of-range or negative index (regression, or a code path where GroupIndex validation is skipped), the daemon panics on an index-out-of-range instead of returning the typed append_target_invalid error, taking down the socket handler goroutine.",
+      "suggested_fix": "Add an explicit `if req.GroupIndex < 0 || req.GroupIndex >= len(q.Groups) { return append_target_invalid }` guard before indexing, in both HandleQueueAppendOnQueue and AppendItems, as defense-in-depth independent of the validation pipeline."
+    },
+    {
+      "file": "internal/queue/rpc.go",
+      "line": 1295,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "HandleQueueSetConcurrency doc claims 'validates N >= 1' but no such validation exists",
+      "detail": "The doc comment states the handler 'validates N >= 1'. The body never checks req.N; a zero or negative N flows straight into the spawn-cap arithmetic req.N*2 > spawnCap (rpc.go:1337) and only later is rejected by a.concurrencySet(req.N) — if wired. For a negative N, req.N*2 stays <= spawnCap so the spawn-cap guard is silently skipped, and correctness depends entirely on the concurrencySet setter validating. A very large N makes req.N*2 an integer-overflow risk in the cap comparison (theoretical on 64-bit). Doc/impl drift plus reliance on an optional collaborator for input validation.",
+      "suggested_fix": "Add an explicit `if req.N < 1 { return invalid_concurrency }` at the top of the handler, matching the documented contract, and validate before the spawn-cap multiply."
+    },
+    {
+      "file": "internal/queue/rpc.go",
+      "line": 1092,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "appendUnderLock disk-fallback safety comment relies on an invariant that submit violates",
+      "detail": "The disk-fallback branch (q == nil -> resolveAppendTargetFromDisk) is annotated 'still safe because every writer persists under this same lock.' That invariant is false: HandleQueueSubmit persists WITHOUT taking LockForMutationView (see the high finding). So a locked append that fell back to a disk Load can read a queue that an unlocked concurrent submit is simultaneously rewriting, then persist a stale-derived mutation. The comment gives false assurance to future maintainers.",
+      "suggested_fix": "Once submit is brought under the mutation lock, the comment becomes true; until then, correct the comment to note submit is an unlocked writer, or eliminate the disk fallback for in-daemon callers."
+    },
+    {
+      "file": "internal/queue/rpc.go",
+      "line": 1023,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "Event payload marshal errors silently drop lifecycle events",
+      "detail": "In HandleQueueSubmit adapter, `if raw, err := json.Marshal(payload); err == nil { _ = a.bus.Emit(...) }` — a marshal failure silently skips emitting queue_submitted (and the same pattern at rpc.go:1037 for queue_item_deferred_for_ledger_dep). A consumer waiting on queue_submitted (e.g. the workloop / a subscriber) would never see it, with no log line explaining why. Marshal of these fixed-shape payloads rarely fails, but the swallow is invisible when it does.",
+      "suggested_fix": "Log to stderr (the daemon diagnostic channel) on marshal failure rather than silently discarding the event."
+    },
+    {
+      "file": "internal/queue/append.go",
+      "line": 194,
+      "severity": "nit",
+      "category": "dead-code",
+      "title": "Dead computed-and-discarded expression in AppendItems deferred-event loop",
+      "detail": "`_ = tailStart + i // index of the newly appended item; informational` computes a value and immediately discards it with a blank assignment. It has no effect and no downstream use; tailStart exists only to feed this dead line.",
+      "suggested_fix": "Delete the line and the now-unused tailStart local (or actually use the index if it was meant to populate the event)."
+    }
+  ]
+}

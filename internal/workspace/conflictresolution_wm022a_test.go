@@ -62,7 +62,7 @@ func wm022aFixtureWorkspace() *Workspace {
 func TestIsAllMechanicalBranch_NilRefIsAllMechanical(t *testing.T) {
 	t.Parallel()
 
-	ws := wm022aFixtureWorkspace() // ImplementerHandlerRef = nil
+	ws := wm022aFixtureWorkspace()
 	if !IsAllMechanicalBranch(ws) {
 		t.Errorf("WM-022a: IsAllMechanicalBranch(nil ref) = false; want true")
 	}

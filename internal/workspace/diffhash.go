@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -25,6 +26,9 @@ import (
 // Spec ref: execution-model.md §4.3.EM-015e — "the SHA-256 hash of
 // `git diff <parent>..<head>` output on the run's task branch".
 func ComputeDiffHash(ctx context.Context, worktreePath, parentSHA, headSHA string) (string, error) {
+	if err := validateDiffHashObjectIDs(parentSHA, headSHA); err != nil {
+		return "", err
+	}
 	rangeArg := parentSHA + ".." + headSHA
 	cmd := exec.CommandContext(ctx, "git", "diff", rangeArg)
 	cmd.Dir = worktreePath
@@ -44,6 +48,9 @@ func ComputeDiffHash(ctx context.Context, worktreePath, parentSHA, headSHA strin
 // which works for both local and SSH runners. Callers pass nil to use
 // ComputeDiffHash's byte-identical bare-exec path (NFR7).
 func ComputeDiffHashVia(ctx context.Context, runner tmux.CommandRunner, worktreePath, parentSHA, headSHA string) (string, error) {
+	if err := validateDiffHashObjectIDs(parentSHA, headSHA); err != nil {
+		return "", err
+	}
 	if runner == nil {
 		return ComputeDiffHash(ctx, worktreePath, parentSHA, headSHA)
 	}
@@ -54,4 +61,21 @@ func ComputeDiffHashVia(ctx context.Context, runner tmux.CommandRunner, worktree
 	}
 	sum := sha256.Sum256(out)
 	return fmt.Sprintf("%x", sum), nil
+}
+
+// validateDiffHashObjectIDs restricts git diff range components to complete
+// SHA-1 or SHA-256 object IDs. This keeps user-derived revision syntax out of
+// the subprocess argument boundary while supporting either Git hash format.
+func validateDiffHashObjectIDs(parentSHA, headSHA string) error {
+	if !isFullGitObjectID(parentSHA) || !isFullGitObjectID(headSHA) {
+		return fmt.Errorf("workspace: ComputeDiffHash: parent and head must be full Git object IDs")
+	}
+	return nil
+}
+
+func isFullGitObjectID(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	return strings.Trim(value, "0123456789abcdefABCDEF") == ""
 }

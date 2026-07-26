@@ -53,6 +53,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hkd170rRecordingEmitter records every emitted (eventType, payload) pair. It is
@@ -171,7 +172,7 @@ func TestHkd170rGated_CodexEmptyModelAccountDefault(t *testing.T) {
 
 	// Production model resolution: codex has no tier-3 default → empty.
 	sealedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, agentType, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if sealedModel != "" {
 		t.Fatalf("codex model resolution = %q; want empty (no tier-3 default → unpinned → account default)", sealedModel)
@@ -233,7 +234,7 @@ func TestHkd170rGated_CodexWithModelSucceeds(t *testing.T) {
 	}
 
 	sealedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, agentType, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if sealedModel != "o4-mini" {
 		t.Fatalf("model resolution with model:o4-mini label = %q; want o4-mini", sealedModel)
@@ -309,7 +310,7 @@ func TestHkd170rGated_CodexEmptyModel_ModelSelectedTieThrough(t *testing.T) {
 
 	// Production model resolution through the SAME recording emitter (empty).
 	sealedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, rec, string(bead.BeadID),
+		ctx, bead.Labels, agentType, projectconfig.ProjectConfig{}, rec, string(bead.BeadID),
 	)
 	if sealedModel != "" {
 		t.Fatalf("codex model resolution = %q; want empty", sealedModel)
@@ -362,4 +363,32 @@ func TestHkd170rGated_CodexEmptyModel_ModelSelectedTieThrough(t *testing.T) {
 			return
 		}
 	}
+}
+
+// codexLaunchSpecAssertArgContainsValue asserts that flag appears in args and is
+// immediately followed by value.
+//
+// This is a verbatim copy of the helper that used to live in
+// internal/daemon/codexlaunchspec_test.go. P2 unit E1a-1 moved that file to
+// internal/harness/codex/launchspec_test.go, and a Go export_test/test-helper is
+// visible only inside its own package's test binary — so a daemon test cannot
+// reach it across the package boundary. The assertion is preserved here, not
+// weakened or dropped: this file stays in the daemon because it tests daemon-side
+// harness ROUTING (routedLaunchSpecBuilder / resolveHarnessAgentTypeQuiet /
+// resolveModelPreference), not the codex unit.
+func codexLaunchSpecAssertArgContainsValue(t *testing.T, args []string, flag, value string) {
+	t.Helper()
+	for i, a := range args {
+		if a == flag {
+			if i+1 >= len(args) {
+				t.Errorf("flag %q found at args[%d] but no following value; args=%v", flag, i, args)
+				return
+			}
+			if args[i+1] != value {
+				t.Errorf("flag %q value = %q; want %q", flag, args[i+1], value)
+			}
+			return
+		}
+	}
+	t.Errorf("flag %q not found in args %v (expected value %q)", flag, args, value)
 }

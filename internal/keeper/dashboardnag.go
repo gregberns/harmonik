@@ -73,7 +73,17 @@ func (w *Watcher) maybeNagDashboardStale(ctx context.Context, now time.Time) {
 		return
 	}
 
-	if unlock, _ := dashboard.ReadUnlock(w.cfg.ProjectDir); unlock.Active(now) {
+	// An absent unlock file is (nil, nil) — the normal case. A non-nil error
+	// means the override state is UNREADABLE, which is not the same as "no
+	// override": discarding it silently made a corrupt unlock file look exactly
+	// like a fresh dashboard. Same treatment as the config-load failure above:
+	// fail loud toward nudging.
+	unlock, unlockErr := dashboard.ReadUnlock(w.cfg.ProjectDir)
+	if unlockErr != nil {
+		w.injectDashboardNag(ctx, now)
+		return
+	}
+	if unlock.Active(now) {
 		return
 	}
 

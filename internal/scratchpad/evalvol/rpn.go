@@ -7,8 +7,10 @@ import (
 )
 
 var (
+	// ErrDivideByZero reports division by zero in an RPN expression.
 	ErrDivideByZero = errors.New("divide by zero")
-	ErrMalformed    = errors.New("malformed expression")
+	// ErrMalformed reports an invalid RPN expression.
+	ErrMalformed = errors.New("malformed expression")
 )
 
 // EvalRPN evaluates a Reverse Polish Notation expression.

@@ -55,7 +55,6 @@ func TestBudgetWarningPayload_Valid(t *testing.T) {
 		{"threshold-one", BudgetWarningPayload{RunID: validRunID, BudgetRef: "b1", ThresholdFraction: 1.0, Remaining: 0}, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -102,7 +101,6 @@ func TestBudgetAccrualPayload_Valid(t *testing.T) {
 		{"zero-cost-units", BudgetAccrualPayload{RunID: validRunID, SessionID: "s1", CostUnits: 0, CostBasis: CostBasisOutputBytes}, true},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -154,7 +152,6 @@ func TestBudgetExhaustedEventPayload_Valid(t *testing.T) {
 		{"negative-cap-usd", BudgetExhaustedEventPayload{BudgetRef: "b1", CapUSD: &negFloat}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -183,7 +180,6 @@ func TestGuardReorderedPayload_Valid(t *testing.T) {
 		{"mismatched-lengths", GuardReorderedPayload{RunID: validRunID, GuardName: "g1", EdgeSetBefore: []string{"a", "b"}, EdgeSetAfter: []string{"a"}}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -210,7 +206,6 @@ func TestGuardFailedPayload_Valid(t *testing.T) {
 		{"empty-reason", GuardFailedPayload{RunID: validRunID, GuardName: "g1", ErrorCategory: ErrorCategoryStructural, Reason: ""}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -240,7 +235,6 @@ func TestGateAllowedPayload_Valid(t *testing.T) {
 		{"empty-reason-ptr", GateAllowedPayload{RunID: validRunID, GateName: "my-gate", Reason: &emptyStr}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -266,7 +260,6 @@ func TestGateDeniedPayload_Valid(t *testing.T) {
 		{"empty-reason", GateDeniedPayload{RunID: validRunID, GateName: "my-gate", Reason: ""}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -296,7 +289,6 @@ func TestGateEscalatedPayload_Valid(t *testing.T) {
 		{"empty-reason-ptr", GateEscalatedPayload{RunID: validRunID, GateName: "my-gate", Reason: &emptyStr}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -322,7 +314,6 @@ func TestControlPointsRegisteredPayload_Valid(t *testing.T) {
 		{"empty-started-at", ControlPointsRegisteredPayload{Count: 1, StartedAt: ""}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -348,7 +339,6 @@ func TestControlPointsRegistrationStartedPayload_Valid(t *testing.T) {
 		{"both-empty", ControlPointsRegistrationStartedPayload{}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -447,7 +437,6 @@ func TestVerdictEnvelopeMismatchPayload_Valid(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -574,7 +563,6 @@ func TestPolicyExpressionExceededCostPayload_Valid(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -631,7 +619,6 @@ func TestHookFiredPayload_Valid(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -691,7 +678,6 @@ func TestHookFailedPayload_Valid(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {
@@ -749,7 +735,6 @@ func TestHookVerdictPersistedPayload_Valid(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tc.p.Valid(); got != tc.valid {

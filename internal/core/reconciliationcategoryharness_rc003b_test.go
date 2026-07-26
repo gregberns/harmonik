@@ -298,7 +298,6 @@ func TestRC013_AllCategoriesProduceValidPayload(t *testing.T) {
 	}
 
 	for _, cat := range allCats {
-		cat := cat
 		t.Run(string(cat), func(t *testing.T) {
 			t.Parallel()
 			payload := ReconciliationCategoryAssignedPayload{
@@ -442,7 +441,6 @@ func TestRC016_Cat2PlaybookTypicalVerdicts(t *testing.T) {
 		VerdictReopenBead,
 	}
 	for _, v := range cat2Verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 			if !v.Valid() {
@@ -468,7 +466,6 @@ func TestRC016_Cat3PlaybookTypicalVerdicts(t *testing.T) {
 		VerdictNoOpAccept,
 	}
 	for _, v := range cat3Verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 			if !v.Valid() {

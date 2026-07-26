@@ -247,6 +247,10 @@ func countOutcomes(g *Group) (successCount, failCount int) {
 			successCount++
 		case ItemStatusFailed:
 			failCount++
+		case ItemStatusPending, ItemStatusDispatched, ItemStatusDeferredForLedgerDep:
+			// Non-terminal: not yet an outcome. Listed explicitly so that adding
+			// a new ItemStatus fails the exhaustive check here rather than being
+			// silently counted as neither.
 		}
 	}
 	return successCount, failCount

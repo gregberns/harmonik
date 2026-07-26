@@ -53,6 +53,8 @@ package main
 // Bead refs: hk-y171w, hk-7iyh (fleet-portability T11), hk-da3k (fleet-portability T12).
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -60,6 +62,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
@@ -93,7 +96,9 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, initUsage)
+			if initWritef(stdout, "%s", initUsage) != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--project" && i+1 < len(args):
 			i++
@@ -121,7 +126,9 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		default:
 			// Fail closed: a mistyped flag (e.g. --target-branc) must not
 			// silently bootstrap against defaults.
-			fmt.Fprintf(stderr, "harmonik init: unknown argument %q\n\n%s", args[i], initUsage) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
+			if initWritef(stderr, "harmonik init: unknown argument %q\n\n%s", args[i], initUsage) != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -130,14 +137,18 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik init: cannot determine working directory: %v\n", err)
+			if initWritef(stderr, "harmonik init: cannot determine working directory: %v\n", err) != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
 	}
 	absProject, err := filepath.Abs(projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik init: cannot resolve project path %q: %v\n", projectDir, err)
+		if initWritef(stderr, "harmonik init: cannot resolve project path %q: %v\n", projectDir, err) != nil {
+			return 1
+		}
 		return 1
 	}
 	projectDir = absProject
@@ -155,11 +166,15 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if doctorOnly {
-		fmt.Fprintln(stdout, "harmonik init --doctor: all checks passed")
+		if initWritef(stdout, "harmonik init --doctor: all checks passed\n") != nil {
+			return 1
+		}
 		return 0
 	}
 
-	fmt.Fprintf(stdout, "harmonik init: bootstrapping project at %s (target-branch: %s)\n", projectDir, targetBranch)
+	if initWritef(stdout, "harmonik init: bootstrapping project at %s (target-branch: %s)\n", projectDir, targetBranch) != nil {
+		return 1
+	}
 
 	// Step 3: create .harmonik/ subdirectories.
 	if code := mkdirAll(projectDir, stderr); code != 0 {
@@ -222,7 +237,9 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	if !noSupervise {
 		if code := maybeStartSupervise(projectDir, stdout, stderr); code != 0 {
 			// Non-fatal: supervisor start failure is logged but does not abort init.
-			fmt.Fprintf(stderr, "harmonik init: warning: supervisor start skipped (see above). Start manually with: harmonik supervise start --watch-restart\n")
+			if initWritef(stderr, "harmonik init: warning: supervisor start skipped (see above). Start manually with: harmonik supervise start --watch-restart\n") != nil {
+				return 1
+			}
 		}
 	}
 
@@ -241,8 +258,15 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		initSkewHintFn(projectDir, stderr)
 	}
 
-	fmt.Fprintln(stdout, "harmonik init: done")
+	if initWritef(stdout, "harmonik init: done\n") != nil {
+		return 1
+	}
 	return 0
+}
+
+func initWritef(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
 }
 
 // deriveBeadPrefix derives a short lowercase bead prefix from a project
@@ -256,7 +280,9 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 func deriveBeadPrefix(projectDir string) string {
 	base := strings.ToLower(filepath.Base(projectDir))
 	words := strings.FieldsFunc(base, func(r rune) bool {
-		return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9')
+		isLower := 'a' <= r && r <= 'z'
+		isDigit := '0' <= r && r <= '9'
+		return !isLower && !isDigit
 	})
 	if len(words) == 0 {
 		return "hk"
@@ -264,7 +290,7 @@ func deriveBeadPrefix(projectDir string) string {
 	if len(words) >= 2 {
 		var slug strings.Builder
 		for _, w := range words {
-			if len(w) > 0 {
+			if w != "" {
 				slug.WriteByte(w[0])
 			}
 			if slug.Len() >= 4 {
@@ -290,7 +316,9 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 
 	// Check: project dir exists.
 	if _, err := os.Stat(projectDir); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: project directory %q does not exist or is not accessible: %v\n", projectDir, err)
+		if initWritef(stderr, "harmonik init: project directory %q does not exist or is not accessible: %v\n", projectDir, err) != nil {
+			return false
+		}
 		ok = false
 	}
 
@@ -300,11 +328,16 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 		// Also check for worktrees (where .git is a file, not a directory).
 		gitFile := filepath.Join(projectDir, ".git")
 		info, ferr := os.Stat(gitFile)
-		if ferr != nil || info.IsDir() == false {
-			// More accurate: try `git -C <dir> rev-parse --git-dir`
-			cmd := exec.Command("git", "-C", projectDir, "rev-parse", "--git-dir") //nolint:gosec // G204: projectDir is operator-controlled
+		if ferr != nil || !info.IsDir() {
+			// More accurate: try `git -C <dir> rev-parse --git-dir`.
+			// context.Background(): `harmonik init` is a synchronous CLI entry
+			// point with no cancellable context in scope, and this probe is a
+			// sub-millisecond read-only git query.
+			cmd := exec.CommandContext(context.Background(), "git", "-C", projectDir, "rev-parse", "--git-dir")
 			if runErr := cmd.Run(); runErr != nil {
-				fmt.Fprintf(stderr, "harmonik init: %q is not a git repository (run git init first)\n", projectDir)
+				if initWritef(stderr, "harmonik init: %q is not a git repository (run git init first)\n", projectDir) != nil {
+					return false
+				}
 				ok = false
 			}
 		}
@@ -312,18 +345,24 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 
 	// Check: br on PATH.
 	if _, err := exec.LookPath("br"); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: 'br' (beads CLI) not found on PATH — install beads_rust first\n")
+		if initWritef(stderr, "harmonik init: 'br' (beads CLI) not found on PATH — install beads_rust first\n") != nil {
+			return false
+		}
 		ok = false
 	}
 
 	// Check: harmonik on PATH.
 	if _, err := exec.LookPath("harmonik"); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: 'harmonik' not found on PATH — ensure the binary is installed\n")
+		if initWritef(stderr, "harmonik init: 'harmonik' not found on PATH — ensure the binary is installed\n") != nil {
+			return false
+		}
 		ok = false
 	}
 
 	if ok {
-		fmt.Fprintln(stdout, "harmonik init: precondition checks passed")
+		if initWritef(stdout, "harmonik init: precondition checks passed\n") != nil {
+			return false
+		}
 	}
 	return ok
 }
@@ -342,9 +381,10 @@ func mkdirAll(projectDir string, stderr io.Writer) int {
 		filepath.Join(projectDir, ".harmonik", "intent"),
 	}
 	for _, d := range dirs {
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			fmt.Fprintf(stderr, "harmonik init: mkdir %s: %v\n", d, err)
+		if err := os.MkdirAll(d, core.HarmonikDirMode); err != nil {
+			if initWritef(stderr, "harmonik init: mkdir %s: %v\n", d, err) != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -356,13 +396,17 @@ func mkdirAll(projectDir string, stderr io.Writer) int {
 func runBrInit(projectDir, prefix string, force bool, stdout, stderr io.Writer) int {
 	beadsDir := filepath.Join(projectDir, ".beads")
 	if _, err := os.Stat(beadsDir); err == nil && !force {
-		fmt.Fprintln(stdout, "harmonik init: .beads/ already exists — skipping br init (use --force to reinitialize)")
+		if initWritef(stdout, "harmonik init: .beads/ already exists — skipping br init (use --force to reinitialize)\n") != nil {
+			return 1
+		}
 		return 0
 	}
 
 	brPath, err := exec.LookPath("br")
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik init: 'br' not on PATH — cannot initialise beads database\n")
+		if initWritef(stderr, "harmonik init: 'br' not on PATH — cannot initialise beads database\n") != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -371,12 +415,14 @@ func runBrInit(projectDir, prefix string, force bool, stdout, stderr io.Writer) 
 		brArgs = append(brArgs, "--force")
 	}
 	//nolint:gosec // G204: brPath from LookPath; brArgs constructed from validated inputs
-	cmd := exec.Command(brPath, brArgs...)
+	cmd := exec.CommandContext(context.Background(), brPath, brArgs...)
 	cmd.Dir = projectDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: br init failed: %v\n", err)
+		if initWritef(stderr, "harmonik init: br init failed: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0
@@ -484,25 +530,34 @@ sentinel:
 func writeConfigYAML(projectDir, targetBranch, rcPrefix string, force bool, stdout, stderr io.Writer) int {
 	path := filepath.Join(projectDir, ".harmonik", "config.yaml")
 	if _, err := os.Stat(path); err == nil && !force {
-		fmt.Fprintln(stdout, "harmonik init: .harmonik/config.yaml already exists — skipping (use --force to overwrite)")
+		if initWritef(stdout, "harmonik init: .harmonik/config.yaml already exists — skipping (use --force to overwrite)\n") != nil {
+			return 1
+		}
 		return 0
 	}
-	// Append the COMPLETE keeper: and harnesses.pi: blocks from their single
+	// Append the COMPLETE keeper:, codex: and harnesses.pi: blocks from their single
 	// sources of truth (shared with `harmonik keeper config --example` and
 	// `harmonik pi config --example`) so a generated project starts with a valid,
-	// operator-editable config: keeper has no runtime defaults, and folding in the
+	// operator-editable config: keeper has no runtime defaults, folding in the
 	// harnesses.pi block lets the daemon dispatch the Pi harness out of the box
-	// (the operator tunes the suggested provider/model/api_key_env). YAML key order
-	// is not semantic, so appending harnesses.pi after keeper is fine.
+	// (the operator tunes the suggested provider/model/api_key_env), and the codex:
+	// block carries codex.stale_wal_max_bytes — REQUIRED with no compiled default,
+	// so without it the FIRST codex launch in a fresh project fails loud at
+	// spec-build time (hk-yhvrh). YAML key order is not semantic, so appending these
+	// after the daemon/sentinel template is fine.
 	content := fmt.Sprintf(configYAMLContent, targetBranch, rcPrefix) +
 		keeperConfigExampleYAML() +
+		codexConfigExampleYAML() +
 		piConfigExampleYAML()
-	//nolint:gosec // G306: config file readable by owner only; 0644 matches conventions
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: write .harmonik/config.yaml: %v\n", err)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		if initWritef(stderr, "harmonik init: write .harmonik/config.yaml: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "harmonik init: wrote .harmonik/config.yaml")
+	if initWritef(stdout, "harmonik init: wrote .harmonik/config.yaml\n") != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -524,53 +579,78 @@ defaults:
 func writeBranchingYAML(projectDir, targetBranch string, force bool, stdout, stderr io.Writer) int {
 	path := filepath.Join(projectDir, ".harmonik", "branching.yaml")
 	if _, err := os.Stat(path); err == nil && !force {
-		fmt.Fprintln(stdout, "harmonik init: .harmonik/branching.yaml already exists — skipping (use --force to overwrite)")
+		if initWritef(stdout, "harmonik init: .harmonik/branching.yaml already exists — skipping (use --force to overwrite)\n") != nil {
+			return 1
+		}
 		return 0
 	}
 	content := fmt.Sprintf(branchingYAMLContent, targetBranch, targetBranch)
-	//nolint:gosec // G306
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: write .harmonik/branching.yaml: %v\n", err)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		if initWritef(stderr, "harmonik init: write .harmonik/branching.yaml: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "harmonik init: wrote .harmonik/branching.yaml")
+	if initWritef(stdout, "harmonik init: wrote .harmonik/branching.yaml\n") != nil {
+		return 1
+	}
 	return 0
 }
 
-// harmonikGitignoreContent lists the runtime files that should not be committed.
+// harmonikGitignoreContent excludes the whole .harmonik/ runtime tree, then
+// re-admits the few files a project is meant to track.
+//
+// hk-jcrzn: this list USED TO ENUMERATE what to hide (daemon.pid, daemon.sock,
+// events/, worktrees/, cognition/, beads-intents/, queue.json, comms/, crew/,
+// keeper/, queues/, schedules.json.lock, review.json, review.iter-*.json) and so
+// failed OPEN on everything it did not name — agent-task.md, commit-gate.log,
+// reviewer-feedback.iter-N.md, and this file itself. The daemon writes
+// agent-task.md into every run worktree, so in a freshly-initialised project a
+// run in which the agent did NOTHING still reported `?? .harmonik/`, the codex
+// fallback read that as uncommitted work, and it committed the daemon's own
+// scaffolding with a valid Refs trailer. commit_gate passed it, because by every
+// check the gate makes it was a real commit.
+//
+// Ignore-by-default with explicit exceptions means a newly-added runtime file is
+// hidden automatically instead of silently becoming forgeable "agent work". The
+// same enumerate-vs-membership failure was hk-1qgaz in sandbox.harnesses.
+//
+// Belt-and-braces only: codexWorktreeDirty and the fallback committer now
+// exclude .harmonik/ by pathspec (agentWorkPathspec), which holds regardless of
+// what any project's gitignore says. This makes fresh projects correct too.
 const harmonikGitignoreContent = `# harmonik runtime files — not committed
 # Generated by: harmonik init
-daemon.pid
-daemon.sock
-events/
-worktrees/
-cognition/
-beads-intents/
-queue.json
-comms/
-crew/
-keeper/
-queues/
-# goal-keeper schedule flock sidecar (runtime lock — not committed)
-schedules.json.lock
-# review-loop verdict files (hk-znou: must not be committed onto run branches)
-review.json
-review.iter-*.json
+#
+# Ignore EVERYTHING in .harmonik/ by default, then re-admit what is meant to be
+# tracked. Enumerating what to hide fails open on every file added later
+# (hk-jcrzn: agent-task.md was not listed, so an idle run looked like work).
+*
+
+# Project-tracked configuration — re-admitted explicitly.
+!config.yaml
+!branching.yaml
+!.gitignore
 `
 
 // writeHarmonikGitignore writes .harmonik/.gitignore.
 func writeHarmonikGitignore(projectDir string, force bool, stdout, stderr io.Writer) int {
 	path := filepath.Join(projectDir, ".harmonik", ".gitignore")
 	if _, err := os.Stat(path); err == nil && !force {
-		fmt.Fprintln(stdout, "harmonik init: .harmonik/.gitignore already exists — skipping (use --force to overwrite)")
+		if initWritef(stdout, "harmonik init: .harmonik/.gitignore already exists — skipping (use --force to overwrite)\n") != nil {
+			return 1
+		}
 		return 0
 	}
 	//nolint:gosec // G306
 	if err := os.WriteFile(path, []byte(harmonikGitignoreContent), 0o644); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: write .harmonik/.gitignore: %v\n", err)
+		if initWritef(stderr, "harmonik init: write .harmonik/.gitignore: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "harmonik init: wrote .harmonik/.gitignore")
+	if initWritef(stdout, "harmonik init: wrote .harmonik/.gitignore\n") != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -582,13 +662,17 @@ func writeHarmonikGitignore(projectDir string, force bool, stdout, stderr io.Wri
 func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr io.Writer) int {
 	outPath := filepath.Join(projectDir, "AGENTS.md")
 	if _, err := os.Stat(outPath); err == nil && !force {
-		fmt.Fprintln(stdout, "harmonik init: AGENTS.md already exists — skipping (use --force to overwrite)")
+		if initWritef(stdout, "harmonik init: AGENTS.md already exists — skipping (use --force to overwrite)\n") != nil {
+			return 1
+		}
 		return 0
 	}
 
 	data, err := initSkillAssets.ReadFile("assets/templates/AGENTS.template.md")
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik init: read embedded AGENTS.template.md: %v\n", err)
+		if initWritef(stderr, "harmonik init: read embedded AGENTS.template.md: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -597,10 +681,14 @@ func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr 
 
 	//nolint:gosec // G306
 	if err := os.WriteFile(outPath, []byte(rendered), 0o644); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: write AGENTS.md: %v\n", err)
+		if initWritef(stderr, "harmonik init: write AGENTS.md: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "harmonik init: wrote AGENTS.md")
+	if initWritef(stdout, "harmonik init: wrote AGENTS.md\n") != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -611,14 +699,18 @@ func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr 
 func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) int {
 	skillsRoot := filepath.Join(projectDir, ".claude", "skills")
 	//nolint:gosec // G301: 0755 for .claude/skills/
-	if err := os.MkdirAll(skillsRoot, 0o755); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: mkdir .claude/skills: %v\n", err)
+	if err := os.MkdirAll(skillsRoot, 0o755); err != nil { //dirmode:allow .claude/skills/ is Claude Code's config tree, not .harmonik state
+		if initWritef(stderr, "harmonik init: mkdir .claude/skills: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 
 	skillEntries, err := initSkillAssets.ReadDir("assets/skills")
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik init: read embedded assets/skills: %v\n", err)
+		if initWritef(stderr, "harmonik init: read embedded assets/skills: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -629,14 +721,18 @@ func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) in
 		skillName := skillEntry.Name()
 		skillDir := filepath.Join(skillsRoot, skillName)
 		//nolint:gosec // G301
-		if err := os.MkdirAll(skillDir, 0o755); err != nil {
-			fmt.Fprintf(stderr, "harmonik init: mkdir .claude/skills/%s: %v\n", skillName, err)
+		if err := os.MkdirAll(skillDir, 0o755); err != nil { //dirmode:allow .claude/skills/<name>/ is Claude Code's config tree, not .harmonik state
+			if initWritef(stderr, "harmonik init: mkdir .claude/skills/%s: %v\n", skillName, err) != nil {
+				return 1
+			}
 			return 1
 		}
 
 		fileEntries, err := initSkillAssets.ReadDir("assets/skills/" + skillName)
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik init: read embedded skill %s: %v\n", skillName, err)
+			if initWritef(stderr, "harmonik init: read embedded skill %s: %v\n", skillName, err) != nil {
+				return 1
+			}
 			return 1
 		}
 
@@ -650,16 +746,22 @@ func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) in
 			}
 			content, err := initSkillAssets.ReadFile("assets/skills/" + skillName + "/" + fileEntry.Name())
 			if err != nil {
-				fmt.Fprintf(stderr, "harmonik init: read embedded skill file %s/%s: %v\n", skillName, fileEntry.Name(), err)
+				if initWritef(stderr, "harmonik init: read embedded skill file %s/%s: %v\n", skillName, fileEntry.Name(), err) != nil {
+					return 1
+				}
 				return 1
 			}
 			//nolint:gosec // G306
 			if err := os.WriteFile(destPath, content, 0o644); err != nil {
-				fmt.Fprintf(stderr, "harmonik init: write .claude/skills/%s/%s: %v\n", skillName, fileEntry.Name(), err)
+				if initWritef(stderr, "harmonik init: write .claude/skills/%s/%s: %v\n", skillName, fileEntry.Name(), err) != nil {
+					return 1
+				}
 				return 1
 			}
 		}
-		fmt.Fprintf(stdout, "harmonik init: provisioned .claude/skills/%s\n", skillName)
+		if initWritef(stdout, "harmonik init: provisioned .claude/skills/%s\n", skillName) != nil {
+			return 1
+		}
 	}
 	return 0
 }
@@ -677,20 +779,28 @@ func provisionScaffolds(projectDir string, force bool, stdout, stderr io.Writer)
 	for _, name := range scaffolds {
 		outPath := filepath.Join(projectDir, name)
 		if _, err := os.Stat(outPath); err == nil && !force {
-			fmt.Fprintf(stdout, "harmonik init: %s already exists — skipping (use --force to overwrite)\n", name)
+			if initWritef(stdout, "harmonik init: %s already exists — skipping (use --force to overwrite)\n", name) != nil {
+				return 1
+			}
 			continue
 		}
 		content, err := initSkillAssets.ReadFile("assets/scaffolds/" + name)
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik init: read embedded scaffold %s: %v\n", name, err)
+			if initWritef(stderr, "harmonik init: read embedded scaffold %s: %v\n", name, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		//nolint:gosec // G306
 		if err := os.WriteFile(outPath, content, 0o644); err != nil {
-			fmt.Fprintf(stderr, "harmonik init: write %s: %v\n", name, err)
+			if initWritef(stderr, "harmonik init: write %s: %v\n", name, err) != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintf(stdout, "harmonik init: wrote %s\n", name)
+		if initWritef(stdout, "harmonik init: wrote %s\n", name) != nil {
+			return 1
+		}
 	}
 	return 0
 }
@@ -710,9 +820,10 @@ func provisionScaffolds(projectDir string, force bool, stdout, stderr io.Writer)
 // Idempotent: each output is skipped when it already exists and force is false.
 func provisionContextTiers(projectDir string, force bool, stdout, stderr io.Writer) int {
 	contextDir := filepath.Join(projectDir, ".harmonik", "context")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(contextDir, 0o755); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: mkdir .harmonik/context: %v\n", err)
+	if err := os.MkdirAll(contextDir, core.HarmonikDirMode); err != nil {
+		if initWritef(stderr, "harmonik init: mkdir .harmonik/context: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -730,20 +841,28 @@ func provisionContextTiers(projectDir string, force bool, stdout, stderr io.Writ
 	for _, t := range tiers {
 		outPath := filepath.Join(projectDir, t.outPath)
 		if _, err := os.Stat(outPath); err == nil && !force {
-			fmt.Fprintf(stdout, "harmonik init: %s already exists — skipping (use --force to overwrite)\n", t.label)
+			if initWritef(stdout, "harmonik init: %s already exists — skipping (use --force to overwrite)\n", t.label) != nil {
+				return 1
+			}
 			continue
 		}
 		content, err := initSkillAssets.ReadFile("assets/context/" + t.tmpl)
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik init: read embedded context template %s: %v\n", t.tmpl, err)
+			if initWritef(stderr, "harmonik init: read embedded context template %s: %v\n", t.tmpl, err) != nil {
+				return 1
+			}
 			return 1
 		}
 		//nolint:gosec // G306
 		if err := os.WriteFile(outPath, content, 0o644); err != nil {
-			fmt.Fprintf(stderr, "harmonik init: write %s: %v\n", t.label, err)
+			if initWritef(stderr, "harmonik init: write %s: %v\n", t.label, err) != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintf(stdout, "harmonik init: wrote %s\n", t.label)
+		if initWritef(stdout, "harmonik init: wrote %s\n", t.label) != nil {
+			return 1
+		}
 	}
 	return 0
 }
@@ -760,25 +879,35 @@ func ensureClaudeMDSymlink(projectDir string, force bool, stdout, stderr io.Writ
 			// Check if it already points to AGENTS.md.
 			existing, lerr := os.Readlink(claudePath)
 			if lerr == nil && existing == target {
-				fmt.Fprintln(stdout, "harmonik init: CLAUDE.md → AGENTS.md symlink already exists — skipping")
+				if initWritef(stdout, "harmonik init: CLAUDE.md → AGENTS.md symlink already exists — skipping\n") != nil {
+					return 1
+				}
 				return 0
 			}
 		}
 		if !force {
-			fmt.Fprintln(stdout, "harmonik init: CLAUDE.md already exists (not a symlink to AGENTS.md) — skipping (use --force to replace)")
+			if initWritef(stdout, "harmonik init: CLAUDE.md already exists (not a symlink to AGENTS.md) — skipping (use --force to replace)\n") != nil {
+				return 1
+			}
 			return 0
 		}
 		if err := os.Remove(claudePath); err != nil {
-			fmt.Fprintf(stderr, "harmonik init: remove existing CLAUDE.md: %v\n", err)
+			if initWritef(stderr, "harmonik init: remove existing CLAUDE.md: %v\n", err) != nil {
+				return 1
+			}
 			return 1
 		}
 	}
 
 	if err := os.Symlink(target, claudePath); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: create CLAUDE.md symlink: %v\n", err)
+		if initWritef(stderr, "harmonik init: create CLAUDE.md symlink: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "harmonik init: created CLAUDE.md → AGENTS.md symlink")
+	if initWritef(stdout, "harmonik init: created CLAUDE.md → AGENTS.md symlink\n") != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -791,49 +920,66 @@ func maybeStartSupervise(projectDir string, stdout, stderr io.Writer) int {
 		exe = "harmonik"
 	}
 	//nolint:gosec // G204: exe from os.Executable; projectDir operator-controlled
-	cmd := exec.Command(exe, "supervise", "start", "--project", projectDir, "--watch-restart")
+	cmd := exec.CommandContext(context.Background(), exe, "supervise", "start", "--project", projectDir, "--watch-restart")
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			if exitErr.ExitCode() == 17 {
-				fmt.Fprintf(stderr, "harmonik init: daemon not running yet — supervisor start deferred (start daemon first, then run: harmonik supervise start --watch-restart)\n")
+				if initWritef(stderr, "harmonik init: daemon not running yet — supervisor start deferred (start daemon first, then run: harmonik supervise start --watch-restart)\n") != nil {
+					return 1
+				}
 				return 1
 			}
 		}
-		fmt.Fprintf(stderr, "harmonik init: supervise start: %v\n", err)
+		if initWritef(stderr, "harmonik init: supervise start: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "harmonik init: supervisor started")
+	if initWritef(stdout, "harmonik init: supervisor started\n") != nil {
+		return 1
+	}
 	return 0
 }
 
 // runSmokeTest performs a basic post-init sanity check.
 func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
-	fmt.Fprintln(stdout, "harmonik init --smoke: running sanity checks...")
+	if initWritef(stdout, "harmonik init --smoke: running sanity checks...\n") != nil {
+		return 1
+	}
 
 	// Check: .harmonik/ exists.
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
 	if _, err := os.Stat(harmonikDir); err != nil {
-		fmt.Fprintf(stderr, "harmonik init --smoke: .harmonik/ missing: %v\n", err)
+		if initWritef(stderr, "harmonik init --smoke: .harmonik/ missing: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Check: .harmonik/config.yaml exists.
 	if _, err := os.Stat(filepath.Join(harmonikDir, "config.yaml")); err != nil {
-		fmt.Fprintf(stderr, "harmonik init --smoke: .harmonik/config.yaml missing\n")
+		if initWritef(stderr, "harmonik init --smoke: .harmonik/config.yaml missing\n") != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Check: .harmonik/branching.yaml exists.
 	if _, err := os.Stat(filepath.Join(harmonikDir, "branching.yaml")); err != nil {
-		fmt.Fprintf(stderr, "harmonik init --smoke: .harmonik/branching.yaml missing\n")
+		if initWritef(stderr, "harmonik init --smoke: .harmonik/branching.yaml missing\n") != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Check: AGENTS.md exists.
 	if _, err := os.Stat(filepath.Join(projectDir, "AGENTS.md")); err != nil {
-		fmt.Fprintf(stderr, "harmonik init --smoke: AGENTS.md missing\n")
+		if initWritef(stderr, "harmonik init --smoke: AGENTS.md missing\n") != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -841,15 +987,19 @@ func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
 	brPath, err := exec.LookPath("br")
 	if err == nil {
 		//nolint:gosec // G204: brPath from LookPath
-		brCmd := exec.Command(brPath, "list", "--status=open", "-q")
+		brCmd := exec.CommandContext(context.Background(), brPath, "list", "--status=open", "-q")
 		brCmd.Dir = projectDir
 		if runErr := brCmd.Run(); runErr != nil {
-			fmt.Fprintf(stderr, "harmonik init --smoke: 'br list' failed: %v\n", runErr)
+			if initWritef(stderr, "harmonik init --smoke: 'br list' failed: %v\n", runErr) != nil {
+				return 1
+			}
 			return 1
 		}
 	}
 
-	fmt.Fprintln(stdout, "harmonik init --smoke: all checks passed")
+	if initWritef(stdout, "harmonik init --smoke: all checks passed\n") != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -860,11 +1010,15 @@ func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
 func seedGoalKeeperSchedule(projectDir string, force bool, stdout, stderr io.Writer) int {
 	store := schedule.NewStore(projectDir)
 	if err := store.Load(); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: load schedules: %v\n", err)
+		if initWritef(stderr, "harmonik init: load schedules: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
 	if _, ok := store.Get("goal-keeper"); ok && !force {
-		fmt.Fprintln(stdout, "harmonik init: goal-keeper schedule already registered — skipping (use --force to overwrite)")
+		if initWritef(stdout, "harmonik init: goal-keeper schedule already registered — skipping (use --force to overwrite)\n") != nil {
+			return 1
+		}
 		return 0
 	}
 	job := schedule.ScheduledJob{
@@ -880,10 +1034,14 @@ func seedGoalKeeperSchedule(projectDir string, force bool, stdout, stderr io.Wri
 		Enabled: true,
 	}
 	if err := store.Add(job); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: seed goal-keeper schedule: %v\n", err)
+		if initWritef(stderr, "harmonik init: seed goal-keeper schedule: %v\n", err) != nil {
+			return 1
+		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "harmonik init: registered goal-keeper schedule (every 1h)")
+	if initWritef(stdout, "harmonik init: registered goal-keeper schedule (every 1h)\n") != nil {
+		return 1
+	}
 	return 0
 }
 

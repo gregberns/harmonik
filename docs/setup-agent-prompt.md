@@ -74,10 +74,12 @@ pidfile lock (exit 5).
 
   cat $PROJECT_DIR/AGENT_INDEX.md   # master knowledge-base map
   cat $PROJECT_DIR/STATUS.md        # current project state
-  cat $PROJECT_DIR/TASKS.md         # active work list
+  # this-session state — absent on projects inited before it was scaffolded
+  cat $PROJECT_DIR/HANDOFF.md 2>/dev/null || echo "(no HANDOFF.md yet)"
 
-Then run:
+The active work list is the bead ledger, not a file. Run:
 
+  br ready               # unblocked beads
   kerf next              # ranked bead feed
 
 Report: how many beads are ready, any warnings from kerf triage, and which

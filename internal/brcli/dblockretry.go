@@ -61,7 +61,7 @@ const UnavailableRetryBase = 50 * time.Millisecond
 const UnavailableRetryCap = 15 * time.Second
 
 // RunWithDBLockedRetry invokes RunWithTimeout and retries transient failures
-// with exponential backoff starting at base and capped at cap_. Retries fire
+// with exponential backoff starting at base and capped at maxBackoff. Retries fire
 // on either of two transient classes:
 //
 //  1. BrDbLocked Result (exit code 3 — SQLite WAL write contention) per
@@ -106,7 +106,7 @@ func (a *Adapter) RunWithDBLockedRetry(
 	kind CommandKind,
 	maxRetries int,
 	base time.Duration,
-	cap_ time.Duration,
+	maxBackoff time.Duration,
 	args ...string,
 ) (Result, error) {
 	backoff := base
@@ -194,8 +194,8 @@ func (a *Adapter) RunWithDBLockedRetry(
 		if jitterRange := int64(backoff / 4); jitterRange > 0 {
 			backoff += time.Duration(rand.Int63n(jitterRange)) //nolint:gosec // G404: non-crypto jitter for backoff scheduling
 		}
-		if backoff > cap_ {
-			backoff = cap_
+		if backoff > maxBackoff {
+			backoff = maxBackoff
 		}
 	}
 

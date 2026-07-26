@@ -219,7 +219,7 @@ func (b *DecisionBlocker) PendingBeadTokens(beadID core.BeadID) map[string]struc
 func LoadDecisionAckState(_ context.Context, projectDir string, blocker *DecisionBlocker) error {
 	acksDir := decisionAcksDir(projectDir)
 
-	entries, err := os.ReadDir(acksDir) //nolint:gosec // G304: operator-controlled project dir
+	entries, err := os.ReadDir(acksDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Directory absent → no decisions have been recorded; no-op.

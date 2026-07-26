@@ -11,10 +11,12 @@ import (
 	"github.com/gregberns/harmonik/internal/agentmanifest"
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // wireSocketListener performs PL-005 step 4 / step 8a and PL-003 (P9-P11):
@@ -130,8 +132,7 @@ func (bs *bootState) bindSocket(ctx context.Context) error {
 	}
 	// .harmonik/ may not exist when ProjectDir is set with BrPath="" (test mode
 	// skipping pidfile). MkdirAll is idempotent.
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(filepath.Dir(sockPath), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Dir(sockPath), core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("daemon.Start: mkdir-p .harmonik (socket): %w", mkErr)
 	}
 
@@ -160,7 +161,7 @@ func (bs *bootState) buildQueueHandler(ctx context.Context) QueueHandler {
 		_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brHandlerErr, "br-new-for-project-handler", bs.bus)
 		return queueHandler
 	}
-	adapter := queue.NewHandlerAdapter(newBRQueueLedger(brAdapterForHandler), cfg.ProjectDir, bs.qs, bs.bus)
+	adapter := queue.NewHandlerAdapter(queuewiring.NewBRQueueLedger(brAdapterForHandler), cfg.ProjectDir, bs.qs, bs.bus)
 	// Wire the global --max-concurrent so submit can default a queue's Workers
 	// count (QM-066) and warn on oversubscription (hk-tigaf.4 NQ-B1).
 	adapter.SetGlobalMaxConcurrent(cfg.MaxConcurrent)
@@ -168,7 +169,7 @@ func (bs *bootState) buildQueueHandler(ctx context.Context) QueueHandler {
 	bs.queueHandlerAdapter = adapter
 
 	// SS-INV-005 veto gate into the quiesce arbiter (P1-c, hk-zqb3).
-	bs.drainDet = NewDrainDetector(brAdapterForHandler, brAdapterForHandler, newBRQueueLedger(brAdapterForHandler), bs.sharedRunRegistry, bs.qs, cfg.ProjectDir)
+	bs.drainDet = NewDrainDetector(brAdapterForHandler, brAdapterForHandler, queuewiring.NewBRQueueLedger(brAdapterForHandler), bs.sharedRunRegistry, bs.qs, cfg.ProjectDir)
 	bs.quiesceArbiter.SetDrain(bs.drainDet)
 	return queueHandler
 }
@@ -248,7 +249,7 @@ func (bs *bootState) buildCommsAndCrewHandlers() CommsSendHandler {
 
 	// SD-3 (hk-s2eac): idle-completed-crew reaper. Started post-Seal in the work loop.
 	crewIdleReaperAgentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "agents")
-	bs.crewIdleReaper = NewCrewIdleReaper(CrewIdleReaperConfig{
+	bs.crewIdleReaper = crewrun.NewCrewIdleReaper(crewrun.CrewIdleReaperConfig{
 		ProjectDir: cfg.ProjectDir,
 		Queues:     bs.qs,
 		Stopper:    bs.crewHandler,

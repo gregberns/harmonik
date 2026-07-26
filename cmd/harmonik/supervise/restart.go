@@ -25,7 +25,9 @@ func RunRestart(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, restartUsage)
+			if _, err := fmt.Fprint(stdout, restartUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--watch-restart":
 			watchRestart = true
@@ -40,7 +42,9 @@ func RunRestart(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise restart: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise restart: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -49,7 +53,9 @@ func RunRestart(args []string, stdout, stderr io.Writer) int {
 	// Stop any running supervisor.
 	stopArgs := []string{"--project", projectDir}
 	if code := RunStop(stopArgs, stdout, stderr); code != 0 {
-		fmt.Fprintf(stderr, "harmonik supervise restart: stop failed (exit %d)\n", code)
+		if _, err := fmt.Fprintf(stderr, "harmonik supervise restart: stop failed (exit %d)\n", code); err != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -63,11 +69,15 @@ func RunRestart(args []string, stdout, stderr io.Writer) int {
 	// genuine corruption we refuse to relaunch over.
 	if _, statErr := os.Stat(ConfigPath(projectDir)); statErr == nil {
 		if _, err := ReadConfig(projectDir); err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise restart: read config: %v\n", err) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise restart: read config: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 	} else if !os.IsNotExist(statErr) {
-		fmt.Fprintf(stderr, "harmonik supervise restart: stat config: %v\n", statErr) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise restart: stat config: %v\n", statErr); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 

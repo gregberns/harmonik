@@ -26,10 +26,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // defaultRestartBackoffBase is the initial startup delay applied on the second
@@ -49,7 +53,7 @@ type resolvedRestartBackoffConfig struct {
 	Window time.Duration
 }
 
-func resolveRestartBackoffConfig(raw DaemonRestartBackoffConfig) resolvedRestartBackoffConfig {
+func resolveRestartBackoffConfig(raw projectconfig.DaemonRestartBackoffConfig) resolvedRestartBackoffConfig {
 	cfg := resolvedRestartBackoffConfig{
 		Base:   defaultRestartBackoffBase,
 		Cap:    defaultRestartBackoffCap,
@@ -100,7 +104,7 @@ type restartRecord struct {
 // The cognition/ directory under projectDir is created on demand.
 //
 // Bead ref: hk-7t9g1, hk-uzvt9.
-func applyBootBackoff(ctx context.Context, projectDir string, rawCfg DaemonRestartBackoffConfig) time.Duration {
+func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconfig.DaemonRestartBackoffConfig) time.Duration { //nolint:unparam // ctx kept for signature parity with the boot-backoff call site; not threaded through today
 	if projectDir == "" {
 		return 0
 	}
@@ -203,8 +207,7 @@ func readRestartRecord(path string) (restartRecord, error) {
 // The directory is created on demand.
 func writeRestartRecord(path string, rec restartRecord) error {
 	dir := filepath.Dir(path)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(dir, core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, mkErr)
 	}
 	data, marshalErr := json.MarshalIndent(rec, "", "  ")
@@ -220,9 +223,11 @@ func writeRestartRecord(path string, rec restartRecord) error {
 	tmpPath := tmp.Name()
 	ok := false
 	defer func() {
-		_ = tmp.Close()
 		if !ok {
-			_ = os.Remove(tmpPath)
+			if closeErr := tmp.Close(); closeErr != nil {
+				slog.WarnContext(context.Background(), "restartbackoff: close temp during cleanup", "err", closeErr, "path", tmpPath)
+			}
+			_ = os.Remove(tmpPath) //nolint:errcheck // cleanup; unactionable
 		}
 	}()
 	if _, writeErr := tmp.Write(data); writeErr != nil {

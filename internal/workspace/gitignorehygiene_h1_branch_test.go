@@ -64,10 +64,7 @@ func TestH1_GitignoreCommit_LandsOnDedicatedBranch(t *testing.T) {
 	// The required entries MUST still be present in the operator's working tree
 	// (an uncommitted change) so daemon control-plane state stays ignored even
 	// though the commit lives only on the dedicated branch (hk-3edb1).
-	data, err := os.ReadFile(filepath.Join(repo, ".gitignore")) //nolint:gosec // G304: test-controlled path
-	if err != nil {
-		t.Fatalf("read .gitignore after hygiene: %v", err)
-	}
+	data := mustReadFile(t, filepath.Join(repo, ".gitignore"))
 	for _, entry := range RequiredGitignoreEntries {
 		if !gitignoreEntryPresent(string(data), entry) {
 			t.Errorf("working-tree .gitignore missing %q after HEAD restore; entries must be re-materialized", entry)

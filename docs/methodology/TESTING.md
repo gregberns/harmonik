@@ -108,7 +108,7 @@ The single authoritative map of **which test tier runs where** and **which tier 
 | §1–§5 unit / integration / scenario(in-proc) / crash-recovery(fast) / property — via `-short` | `make check-short` | `ci.yml` → *check (Tier 2)* | **Yes** — blocks merge |
 | gofumpt+gci / vet / build / golangci-lint | `make check-short` | `ci.yml` → *check (Tier 2)* | **Yes** |
 | spec-drift lint | `make specaudit-lint` | `ci.yml` step | No (pre-existing drift; flip on when clean) |
-| installed-hooks match | `make check-hooks` | `ci.yml` → *hooks* | No |
+| commit-message trailers / secret scan | `scripts/validate-commit-msg.sh` · `make secret-scan` (via `/check`) | *(agent-driven; git hooks retired)* | No |
 | §3 scenario suite (full, `-tags=scenario`, incl. `internal/daemon` scenario files) | `make test-scenario` | `scenario.yml` → *scenario (Tier 3)* | **No today** (`continue-on-error`); WS1.1 flips the **`./test/scenario/...`-only** invocation to a required check — never the daemon bundle, which `t.Skipf`s green on sshd-less runners |
 | full `-race`, no `-short`, uncapped parallel | `make check-race-full` | `nightly-race.yml` | No (nightly shake-out) |
 | §6 Docker cross-container remote-substrate E2E | `make test-docker-e2e` | *(none — local / assessor-forced)* | Assessor gate, not CI |
@@ -126,7 +126,7 @@ Every change gets a **risk tier**; the risk tier sets the *minimum* set of layer
 - **R2 — other product code** (`internal/**` outside the R1 globs, `cmd/**`): CI Tier 2 green **and** any §3 scenario that exercises the touched path green. The assessor raises to R1 when a change reaches into a daemon/lifecycle seam indirectly (e.g. a shared type a daemon path depends on).
 - **R3 — docs / test-only / tooling** (`docs/**`, `*_test.go` with no product-source change, `Makefile`/CI-config where the change is self-evidently inert): CI Tier 2 green. No scenario/Docker requirement.
 
-**The path-glob is a floor, not a ceiling.** The assessor can only **raise** a change's tier above its glob floor, never lower it. An R1 path is R1 even if "it's just a one-liner." Conversely a nominally-R3 doc change that alters a *gate definition* (this file, a workflow, `lefthook.yml`) is raised by the assessor because it changes what "green" means.
+**The path-glob is a floor, not a ceiling.** The assessor can only **raise** a change's tier above its glob floor, never lower it. An R1 path is R1 even if "it's just a one-liner." Conversely a nominally-R3 doc change that alters a *gate definition* (this file, a workflow, `.golangci.yml`) is raised by the assessor because it changes what "green" means.
 
 ## What we deliberately do NOT test this way
 

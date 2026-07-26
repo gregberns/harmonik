@@ -1,13 +1,14 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // resolve_stall_sentinel_config_test.go — tests for stall-sentinel config resolver.
@@ -24,7 +25,7 @@ func TestStallSentinelConfigParity(t *testing.T) {
 		t.Fatalf("stallSentinelConfigExampleYAML() must contain 'stall_sentinel:' block:\n%s", example)
 	}
 
-	for _, v := range allStallSentinelValues(daemon.StallSentinelConfig{}) {
+	for _, v := range allStallSentinelValues(projectconfig.StallSentinelConfig{}) {
 		if !strings.Contains(example, v.keyPath) {
 			t.Errorf("stall_sentinel --example missing key path %q", v.keyPath)
 		}
@@ -38,7 +39,7 @@ func TestStallSentinelConfigParity(t *testing.T) {
 // TestCheckMissingStallSentinelValues_AllMissingWhenEmpty verifies that all 7
 // required keys appear as missing when StallSentinelConfig is the zero value.
 func TestCheckMissingStallSentinelValues_AllMissingWhenEmpty(t *testing.T) {
-	missing := checkMissingStallSentinelValues(daemon.StallSentinelConfig{})
+	missing := checkMissingStallSentinelValues(projectconfig.StallSentinelConfig{})
 	if len(missing) != 7 {
 		t.Errorf("empty config: want 7 missing keys, got %d: %v", len(missing), keyPaths(missing))
 	}
@@ -104,12 +105,12 @@ func TestResolveStallSentinelConfig_FullRoundTrip(t *testing.T) {
 // TestResolveStallSentinelConfig_MissingError verifies that an empty config returns
 // a *StallSentinelConfigMissingError naming all 7 keys and the project dir.
 func TestResolveStallSentinelConfig_MissingError(t *testing.T) {
-	_, err := ResolveStallSentinelConfig(daemon.StallSentinelConfig{}, "/tmp/myproj")
+	_, err := ResolveStallSentinelConfig(projectconfig.StallSentinelConfig{}, "/tmp/myproj")
 	if err == nil {
 		t.Fatal("empty config: expected an error, got nil")
 	}
-	merr, ok := err.(*StallSentinelConfigMissingError)
-	if !ok {
+	var merr *StallSentinelConfigMissingError
+	if !errors.As(err, &merr) {
 		t.Fatalf("empty config: expected *StallSentinelConfigMissingError; got %T: %v", err, err)
 	}
 	if merr.ProjectDir != "/tmp/myproj" {
@@ -168,7 +169,7 @@ func TestStallSentinelConfigMissingError_Rendering(t *testing.T) {
 func TestStallSentinelExampleBlock_ParseRoundTrip(t *testing.T) {
 	projectDir := t.TempDir()
 	cfgDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	content := "schema_version: 1\n" + stallSentinelConfigExampleYAML()
@@ -176,7 +177,7 @@ func TestStallSentinelExampleBlock_ParseRoundTrip(t *testing.T) {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
-	projCfg, err := daemon.LoadProjectConfig(projectDir)
+	projCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig on the --example output FAILED: %v\nconfig:\n%s", err, content)
 	}
@@ -188,8 +189,8 @@ func TestStallSentinelExampleBlock_ParseRoundTrip(t *testing.T) {
 }
 
 // fullStallSentinelConfig returns a StallSentinelConfig with all required fields set.
-func fullStallSentinelConfig() daemon.StallSentinelConfig {
-	return daemon.StallSentinelConfig{
+func fullStallSentinelConfig() projectconfig.StallSentinelConfig {
+	return projectconfig.StallSentinelConfig{
 		Tier1Crew:           10 * time.Minute,
 		Tier2Captain:        25 * time.Minute,
 		Tier3Operator:       45 * time.Minute,

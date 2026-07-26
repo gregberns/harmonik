@@ -1,0 +1,67 @@
+{
+  "chunk": "RU-12x",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/lifecycle/orphansweepbeads.go",
+    "internal/brcli/terminaltransition_bi010.go",
+    "internal/brcli/intentlogwrite.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Focus lens: fabricated-done-status close seam. Reviewed the Cat 3c auto-close path (SweepStaleInProgressBeads -> SweepCloseBead) and its sole gate, GitMergeCommitScanner.HasMergeCommitForBead, plus the BI-010/BI-030 terminal-transition write surface.",
+  "findings": [
+    {
+      "file": "internal/lifecycle/orphansweepbeads.go",
+      "line": 248,
+      "severity": "high",
+      "category": "correctness",
+      "title": "Cat 3c auto-close fabricates done-status for reverted/superseded work (scans full branch history)",
+      "detail": "HasMergeCommitForBead runs `git log --format=... <branch>` over the ENTIRE history of the target branch and returns true if ANY commit ever carried the `Harmonik-Bead-ID: <beadID>` trailer with a non-docs diff. There is no check that the change is still present in the current tree. Failure scenario: a crew's work merges to main with the trailer, is later found broken, and is `git revert`ed (or superseded by a follow-up commit that undoes it). The original trailer-bearing commit remains in history, so the next daemon startup orphan sweep sees the still-in_progress bead, HasMergeCommitForBead returns true, and SweepCloseBead closes the bead as DONE even though the delivered work was rolled back. The bead is silently marked complete for work no longer on the branch — a fabricated done-status with no operator signal.",
+      "suggested_fix": "Direction only: gate Cat 3c close on evidence the change is live (e.g. the trailer-bearing commit is an ancestor of branch tip AND not superseded by a later revert of the same trailer), or require the merge/squash commit to be reachable without an intervening revert. At minimum treat a revert-bearing history as ambiguous and leave the bead open for operator triage."
+    },
+    {
+      "file": "internal/lifecycle/orphansweepbeads.go",
+      "line": 700,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Cat 3c close is silent (no needs-attention marker) despite closing on inferred, unverifiable evidence",
+      "detail": "The trailer-based subsumption inference is fundamentally weaker than a run-completion close: it never verifies the bead's acceptance criteria were met, only that some commit mentioning the bead id (via trailer) with a non-docs diff exists. Yet SweepCloseBead closes the bead outright with no `needs-attention` label — contrast CloseBead(needsAttention=true) at terminaltransition_bi010.go:302-329, which exists precisely so ambiguous/incomplete terminations surface to the operator. A single false-positive trailer match (e.g. a trailer added by hand, a wrong bead id copy-pasted into a commit message trailer, a squash that merged multiple beads' trailers) irreversibly transitions the bead to closed/done with zero operator visibility. Because closed beads drop out of `br list --status in_progress`, the mistake is also self-hiding on the next sweep.",
+      "suggested_fix": "Direction only: have the Cat 3c auto-close apply a marker label (e.g. needs-attention or auto-closed-subsumed) so an operator can audit reconciler-driven closes, mirroring the review-loop close path's operator-drain marker."
+    },
+    {
+      "file": "internal/lifecycle/orphansweepbeads.go",
+      "line": 262,
+      "severity": "medium",
+      "category": "error-handling",
+      "title": "git scan errors swallowed as (false,nil) cause genuinely-done beads to be reset and re-dispatched",
+      "detail": "HasMergeCommitForBead maps every git failure (git absent, transient lock, OOM, branch-ref race) to (false, nil) — lines 263-267, 284-287, 294-296. In SweepStaleInProgressBeads (line 692-711) a (false,nil) result means exclusion (c) does NOT fire, so the bead falls through to the reset path (line 713) and is set back to open. Failure scenario: a bead whose implementation genuinely merged, but git transiently errors during the scan, gets reset to open and re-dispatched by the next `harmonik run` — re-doing already-merged work and risking duplicate/conflicting commits on the branch. The comment claims this direction is 'conservative' for false-close, but it is NOT conservative for data integrity: it trades a missed close for a spurious re-dispatch of completed work.",
+      "suggested_fix": "Direction only: distinguish 'no merge commit found' (safe to reset) from 'scan could not be performed' (git error). On a scan error, skip BOTH close and reset (leave in_progress) so a transient git failure never re-opens a subsumed bead."
+    },
+    {
+      "file": "internal/lifecycle/orphansweepbeads.go",
+      "line": 269,
+      "severity": "low",
+      "category": "correctness",
+      "title": "bufio.Scanner 64KB default line limit can drop a real trailer match on large git-log output",
+      "detail": "HasMergeCommitForBead feeds the raw `git log` output into bufio.NewScanner with the default MaxScanTokenSize (64KB per line). A commit with many NUL-joined Harmonik-Bead-ID trailers, or an unusually long %H+trailer line, exceeds the limit; scanner.Err() then returns bufio.ErrTooLong and the function returns (false,nil) at line 294-296, silently missing a valid subsumption match (and, per the reset fall-through, re-dispatching the bead). Low likelihood but it is an unbounded-input parse over subprocess output.",
+      "suggested_fix": "Direction only: raise the buffer with scanner.Buffer(...) or split git output per-record on NUL rather than per-line, so long trailer lines cannot silently truncate the scan."
+    },
+    {
+      "file": "internal/brcli/terminaltransition_bi010.go",
+      "line": 336,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "ReopenBead doc comment describes `br reopen --reason` but code issues `update --status open --notes`",
+      "detail": "The ReopenBead godoc (lines 336-337) states the reason 'is passed as `br reopen --reason <reason>`', but the implementation at lines 368-371 builds `br update <id> --status open` and appends `--notes <reason>` (not `--reason`, and not `br reopen`). A maintainer reading the contract will look for the reason under the wrong flag/subcommand and mis-diagnose why `br show` output differs from the doc. Doc/impl drift on a load-bearing terminal-transition method.",
+      "suggested_fix": "Direction only: update the godoc to match the actual argv (`br update --status open --notes <reason>`)."
+    },
+    {
+      "file": "internal/brcli/terminaltransition_bi010.go",
+      "line": 521,
+      "severity": "low",
+      "category": "correctness",
+      "title": "SweepCloseBead does not re-check bead status before closing; relies entirely on caller's stale list",
+      "detail": "SweepCloseBead issues an unconditional `br close <beadID>` with no pre-close status read. The bead status was observed at ListInFlightBeads time (SweepStaleInProgressBeads line 610) but the close happens later in the loop after per-bead git scans; a concurrent operator reopen/close or another daemon action in that window is not reconciled. Unlike the BI-030 terminalTransitionWrite path, there is no post-failure ShowBead idempotency check either — a br error is simply returned. This is a narrower window than the main findings but compounds the fabricated-done risk: the close acts on a snapshot that may already be stale.",
+      "suggested_fix": "Direction only: optionally ShowBead-confirm the bead is still in_progress immediately before the Cat 3c close, and treat an already-closed/already-open result as a no-op rather than an error."
+    }
+  ]
+}

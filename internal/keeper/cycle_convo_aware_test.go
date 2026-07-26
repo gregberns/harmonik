@@ -31,7 +31,7 @@ import (
 // turns) or real text response (for "assistant" turns).
 func writeTranscriptLine(t *testing.T, transcriptDir, sessionID, role, ts string, isReal bool) {
 	t.Helper()
-	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
+	if err := os.MkdirAll(transcriptDir, 0o700); err != nil {
 		t.Fatalf("mkdir transcriptDir: %v", err)
 	}
 	path := filepath.Join(transcriptDir, sessionID+".jsonl")
@@ -47,14 +47,22 @@ func writeTranscriptLine(t *testing.T, transcriptDir, sessionID, role, ts string
 	case role == "assistant" && !isReal:
 		contentItems = []map[string]string{{"type": "tool_use", "id": "y"}}
 	}
-	content, _ := json.Marshal(contentItems)
+	content, err := json.Marshal(contentItems)
+	if err != nil {
+		t.Fatalf("marshal transcript content: %v", err)
+	}
 	line := fmt.Sprintf(`{"type":%q,"timestamp":%q,"message":{"content":%s}}`,
 		role, ts, content)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec
+	//nolint:gosec // G304: path is constructed under this test's t.TempDir fixture.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open transcript: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close transcript: %v", closeErr)
+		}
+	}()
 	if _, err := fmt.Fprintln(f, line); err != nil {
 		t.Fatalf("write transcript line: %v", err)
 	}
@@ -175,7 +183,7 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
@@ -244,7 +252,7 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
@@ -313,7 +321,7 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
@@ -378,11 +386,11 @@ func TestCycler_Gate5d_WritesHoldMarker(t *testing.T) {
 
 	// Seed the .sid file so SetHold can resolve the live session id.
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("mkdir keeper dir: %v", err)
 	}
 	sidPath := filepath.Join(keeperDir, agent+".sid")
-	if err := os.WriteFile(sidPath, []byte(sid+"\n"), 0o600); err != nil { //nolint:gosec
+	if err := os.WriteFile(sidPath, []byte(sid+"\n"), 0o600); err != nil {
 		t.Fatalf("write .sid: %v", err)
 	}
 
@@ -471,7 +479,7 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
@@ -539,7 +547,7 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)

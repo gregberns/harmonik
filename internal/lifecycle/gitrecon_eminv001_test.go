@@ -177,11 +177,10 @@ func gitReconFixtureBeadID(n int) string {
 //
 // The file exists solely to act as a decoy: a correct EM-INV-001 implementation
 // ignores it; a buggy implementation would produce a wrong ActiveRunSet length.
-func gitReconFixtureJSONLEventLog(t *testing.T, dir string, decoyRunCount int) string {
+func gitReconFixtureJSONLEventLog(t *testing.T, dir string, decoyRunCount int) {
 	t.Helper()
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("gitReconFixtureJSONLEventLog: MkdirAll: %v", err)
 	}
 
@@ -196,11 +195,9 @@ func gitReconFixtureJSONLEventLog(t *testing.T, dir string, decoyRunCount int) s
 			i+1,
 		)
 	}
-	//nolint:gosec // G306: 0644 is correct for a JSONL event log; path is t.TempDir()
-	if err := os.WriteFile(jsonlPath, []byte(sb.String()), 0o644); err != nil {
+	if err := os.WriteFile(jsonlPath, []byte(sb.String()), 0o600); err != nil {
 		t.Fatalf("gitReconFixtureJSONLEventLog: WriteFile: %v", err)
 	}
-	return jsonlPath
 }
 
 // gitReconFixtureSpecContent reads specs/execution-model.md, locates the
@@ -343,9 +340,7 @@ func TestEMINV001_NoSubsystemWalksJSONLForStateReconstruction(t *testing.T) {
 	}
 
 	for _, filePath := range sourceFiles {
-		filePath := filePath
 		for _, pattern := range gitReconFixtureForbiddenPatterns {
-			pattern := pattern
 			t.Run(filepath.Base(filePath)+"/"+pattern, func(t *testing.T) {
 				t.Parallel()
 
@@ -444,7 +439,7 @@ func TestEMINV001_RestartScenario_StateReconstructableWithoutJSONL(t *testing.T)
 	durableFixtureInitRepo(t, repoDir)
 
 	// Land N checkpoint commits (simulates N in-flight runs at crash time).
-	var gitRunIDs []string
+	gitRunIDs := make([]string, 0, gitRunCount)
 	for i := range gitRunCount {
 		runID := gitReconFixtureRunID(10 + i)
 		gitRunIDs = append(gitRunIDs, runID)
@@ -475,7 +470,7 @@ func TestEMINV001_RestartScenario_StateReconstructableWithoutJSONL(t *testing.T)
 	// Build the fake BranchTipReader from the real git repo (uses the actual
 	// task branches we just created). The reader returns the branches whose
 	// tips carry Harmonik-Run-ID trailers — the git half of the union.
-	var tips []BranchTip
+	tips := make([]BranchTip, 0, len(gitRunIDs))
 	for _, runID := range gitRunIDs {
 		tips = append(tips, BranchTip{
 			BranchName: "run/" + runID,
@@ -524,7 +519,7 @@ func TestEMINV001_RestartScenario_JSONLLossDoesNotAffectDiscovery(t *testing.T) 
 	repoDir := t.TempDir()
 	durableFixtureInitRepo(t, repoDir)
 
-	var tips []BranchTip
+	tips := make([]BranchTip, 0, gitRunCount)
 	for i := range gitRunCount {
 		runID := gitReconFixtureRunID(30 + i)
 		durableFixtureCreateTaskBranch(t, repoDir, runID)

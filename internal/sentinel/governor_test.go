@@ -42,11 +42,16 @@ func writeEvent(t *testing.T, path string, evType core.EventType, ts time.Time, 
 	if err != nil {
 		t.Fatalf("marshal event: %v", err)
 	}
+	//nolint:gosec // G304: path is built beneath the test fixture's t.TempDir project.
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open events file: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	t.Cleanup(func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close events file: %v", closeErr)
+		}
+	})
 	_, err = f.Write(append(line, '\n'))
 	if err != nil {
 		t.Fatalf("write event: %v", err)
@@ -58,7 +63,7 @@ func makeEventsFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	return dir // return project dir (parent of .harmonik/)
@@ -180,7 +185,7 @@ func TestGovernor_ReviewerVerdictApprove_Dormant(t *testing.T) {
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"run_id":            "00000000-0000-0000-0000-000000000001",
 		"workflow_mode":     "review-loop",
 		"session_id":        "sess-1",
@@ -191,6 +196,9 @@ func TestGovernor_ReviewerVerdictApprove_Dormant(t *testing.T) {
 		"flags":             []string{},
 		"notes":             "looks good",
 	})
+	if err != nil {
+		t.Fatalf("marshal reviewer verdict payload: %v", err)
+	}
 	writeEvent(t, eventsPath, core.EventTypeReviewerVerdict, now.Add(-3*time.Minute), payload)
 
 	state := &sentinel.GovernorState{}
@@ -216,7 +224,7 @@ func TestGovernor_ReviewerVerdictRequestChanges_NotCounted(t *testing.T) {
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"run_id":            "00000000-0000-0000-0000-000000000001",
 		"workflow_mode":     "review-loop",
 		"session_id":        "sess-1",
@@ -227,6 +235,9 @@ func TestGovernor_ReviewerVerdictRequestChanges_NotCounted(t *testing.T) {
 		"flags":             []string{},
 		"notes":             "needs work",
 	})
+	if err != nil {
+		t.Fatalf("marshal reviewer verdict payload: %v", err)
+	}
 	writeEvent(t, eventsPath, core.EventTypeReviewerVerdict, now.Add(-3*time.Minute), payload)
 
 	state := &sentinel.GovernorState{}
@@ -538,7 +549,7 @@ func TestGLiveness_ConfiguredN_TripsAfterN(t *testing.T) {
 	projectDir := makeEventsFile(t)
 	configPath := filepath.Join(projectDir, ".harmonik", "config.yaml")
 	configYAML := fmt.Sprintf("sentinel:\n  window: 30m\n  liveness_no_progress_n: %d\n", n)
-	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 
@@ -821,8 +832,7 @@ func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func(
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -832,22 +842,22 @@ func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func(
 	run("init", "--initial-branch=main")
 	run("config", "user.email", "test@harmonik.local")
 	run("config", "user.name", "Harmonik Test")
-	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("init\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("init\n"), 0o600); err != nil {
 		t.Fatalf("makeGitProjectFixture: WriteFile: %v", err)
 	}
 	run("add", ".")
 	run("commit", "-m", "init")
 
 	originDir := t.TempDir()
-	//nolint:gosec // G204: git args are test-internal literals
-	if out, err := exec.Command("git", "init", "--bare", "--initial-branch=main", originDir).CombinedOutput(); err != nil {
+	//nolint:gosec // G204: originDir is this test's t.TempDir fixture and all git arguments are literals.
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir).CombinedOutput(); err != nil {
 		t.Fatalf("makeGitProjectFixture: git init --bare: %v\n%s", err, out)
 	}
 	run("remote", "add", "origin", originDir)
 	run("push", "origin", "main")
 
 	// Create events dir so the projectDir is valid for Evaluate.
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o750); err != nil {
 		t.Fatalf("makeGitProjectFixture: mkdir events: %v", err)
 	}
 
@@ -855,7 +865,7 @@ func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func(
 	pushNewCommit = func() {
 		counter++
 		fname := filepath.Join(dir, fmt.Sprintf("commit%d", counter))
-		if err := os.WriteFile(fname, []byte("work\n"), 0o644); err != nil {
+		if err := os.WriteFile(fname, []byte("work\n"), 0o600); err != nil {
 			t.Fatalf("makeGitProjectFixture: WriteFile commit%d: %v", counter, err)
 		}
 		run("add", ".")

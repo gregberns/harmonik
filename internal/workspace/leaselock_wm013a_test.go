@@ -40,9 +40,10 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -73,9 +74,10 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -101,11 +103,7 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		}
 
 		// Parse the written lock content and validate required fields.
-		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-		data, err := os.ReadFile(leaseLockPath)
-		if err != nil {
-			t.Fatalf("WM-013a: ReadFile lease-lock: %v", err)
-		}
+		data := mustReadFile(t, leaseLockPath)
 
 		var parsed struct {
 			RunID     string `json:"run_id"`
@@ -146,9 +144,10 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -210,9 +209,10 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -254,9 +254,10 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		// #nosec G204 -- git worktree fixture arguments are constructed entirely by this test.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {

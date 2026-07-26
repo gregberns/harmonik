@@ -138,6 +138,15 @@ type ConcurrentMergeConfig struct {
 	// BeadPrefix is the br workspace prefix (and bead-id namespace). Defaults to
 	// "rcm". Must be a short lowercase token accepted by `br init --prefix`.
 	BeadPrefix string
+
+	// ClaudeConfigPath overrides the test-local ~/.claude.json the fixture points
+	// HARMONIK_CLAUDE_CONFIG_PATH at. Zero value = the fixture mints its own temp
+	// path (the normal case: the redirect exists only so the test does not contend
+	// with a running daemon on the real config's lock).
+	//
+	// Set it when the TEST needs to observe or manipulate that file — e.g. the
+	// hk-qx065 trust-clobber scenario runs an adversarial writer against it.
+	ClaudeConfigPath string
 }
 
 // ConcurrentMergeResult reports the observed outcome for caller-side assertions
@@ -228,7 +237,10 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 
 	// Redirect EnsureWorktreeTrust to a test-local claude config so this test
 	// does not contend with a running harmonik daemon on ~/.claude.json.lock.
-	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	claudeConfigPath := cfg.ClaudeConfigPath
+	if claudeConfigPath == "" {
+		claudeConfigPath = filepath.Join(t.TempDir(), ".claude.json")
+	}
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("RunConcurrentMerge: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
@@ -365,8 +377,7 @@ func rcmProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 		filepath.Join(".harmonik", "beads-intents"),
 		filepath.Join(".harmonik", "queues"),
 	} {
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(filepath.Join(projectDir, sub), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(projectDir, sub), core.HarmonikDirMode); err != nil {
 			t.Fatalf("rcmProjectDir: mkdir %s: %v", sub, err)
 		}
 	}
@@ -443,7 +454,6 @@ func rcmBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 // beads, returning their IDs in creation order.
 func rcmInitBrWithBeads(t *testing.T, realBrPath, projectDir, brWrapper, prefix string, n int) []string {
 	t.Helper()
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", prefix)
 	initCmd.Dir = projectDir
 	if out, err := initCmd.CombinedOutput(); err != nil {

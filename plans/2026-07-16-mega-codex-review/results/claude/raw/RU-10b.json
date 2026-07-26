@@ -1,0 +1,74 @@
+{
+  "chunk": "RU-10b",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/core/eventtype.go",
+    "internal/core/eventregistry.go",
+    "internal/core/verdictexecution_rc025.go",
+    "internal/core/agentevents_hqwn59.go",
+    "internal/core/daemonevents_hqwn59.go",
+    "internal/core/cpevents_hqwn59.go",
+    "internal/core/guardevents_hqwn59.go",
+    "internal/core/hookevents_hqwn59.go",
+    "internal/core/freedomprofile.go",
+    "internal/core/ (237 non-test type/payload files, skim-classified)"
+  ],
+  "status": "reviewed",
+  "status_note": "Skim/classify pass over internal/core type & payload defs (237 src files, ~26k LOC). Not an exhaustive line-audit; focused on systemic drift, sloppiness, dead-type/deferred-type patterns, and crash-on-data hazards. Sampled the largest and most-referenced payload files directly.",
+  "findings": [
+    {
+      "file": "internal/core/verdictexecution_rc025.go",
+      "line": 223,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "PlanForVerdict panics on an unknown verdict value derived from event data",
+      "detail": "PlanForVerdict is a pure mapping function whose default branch panics ('unknown verdict ...; caller must validate VerdictEvent before calling'). VerdictEvent values originate from decoded event payloads (JSON off the bus / event log). A future enum value, a forward-compat event from a newer emitter, or any caller that forgets the validation contract turns a data condition into a hard process crash rather than a recoverable error. A single malformed/forward verdict string can panic the daemon goroutine that plans verdict execution. This is the pattern the file's own comment admits ('caller must validate') — a fragile push of a data-validation obligation onto every callsite, enforced only by panic.",
+      "suggested_fix": "Return (VerdictExecutionPlan, error) with a sentinel ErrUnknownVerdict on the default branch instead of panicking; let the dispatch layer decide (drop/escalate) rather than crash."
+    },
+    {
+      "file": "internal/core/agentevents_hqwn59.go",
+      "line": 570,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Pervasive deferred-typing debt: specced typed aliases carried as raw unvalidated strings",
+      "detail": "Dozens of payload fields across the core type defs are declared as plain string with a standing 'TODO: hoist to typed <Alias> when that type lands' note — SkillVersion/LogFormat (agentevents), BatchID/ControlPointName (cpevents_hqwn59.go:82,134,281), CommitHash/OperatorID/UpgradeVersion (daemonevents_hqwn59.go:118,379,489,531,541,583), GuardRef/EdgeLabel (guardevents_hqwn59.go:42,50,58,112), HookInvocationID (hookevents_hqwn59.go:171), ToolName/PathGlob (freedomprofile.go:38,44). The design clearly intended typed, validated identifiers; the implementation ships raw strings with no validation and defers the type indefinitely. Net effect: identifier fields that should be self-validating accept arbitrary strings (e.g. a malformed commit hash or an empty control-point name round-trips silently), and the promised type-safety layer is a package-wide backlog rather than code.",
+      "suggested_fix": "Land the small typed-alias types (a named string with a Valid() method) incrementally and burn down the TODO cluster; at minimum add construction-time validation for the identifier-shaped fields rather than leaving them as untyped strings."
+    },
+    {
+      "file": "internal/core/eventtype.go",
+      "line": 6,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "Header comment claims '~79 constants' but the file defines 179 EventType constants",
+      "detail": "The package doc comment states 'The ~79 constants below cover all active rows across §8.1-§8.8' and is presented as the coverage claim tying EventType to the event-model.md §8 taxonomy. The file actually defines 179 EventType constants (grep '^\\tEventType[A-Z]' = 179). The count is off by more than 2x, so the comment materially misrepresents the taxonomy coverage and is stale documentation on a load-bearing, spec-anchored file — a reader auditing §8 completeness against this comment would be misled.",
+      "suggested_fix": "Update the count (or drop the specific number and reference the taxonomy sections) and add a test that asserts len(registered types) matches the §8 row count so the claim cannot silently drift again."
+    },
+    {
+      "file": "internal/core/eventregistry.go",
+      "line": 57,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "EV-034 registry sealing never implemented — registry stays writable after first emit",
+      "detail": "The registry is specced (EV-034) to be sealed — writes forbidden — after the first event is emitted, but the code only guards concurrent init with a mutex and the sealing logic is punted ('out of scope for this bead'). As shipped, RegisterEventTypeAtVersion can succeed at any point in the process lifetime, including after dispatch has begun, meaning a late/dynamic registration (or a stray init in a plugged-in package/test-order quirk) silently mutates the dispatch table at runtime with no invariant enforcement. The spec-mandated safety property is absent.",
+      "suggested_fix": "Implement seal-on-first-emit (a sealed flag flipped by the bus/emit path; RegisterEventType returns ErrRegistrySealed thereafter) or explicitly downgrade the EV-034 requirement in the spec if it is genuinely deferred."
+    },
+    {
+      "file": "internal/core/daemonevents_hqwn59.go",
+      "line": 272,
+      "severity": "low",
+      "category": "spec-drift",
+      "title": "Self-declared stale payload field awaiting a cross-spec amendment",
+      "detail": "Comment at line 272 states the field is 'stale and needs a cross-spec amendment' with a dangling follow-up TODO(hk-sx9r.20-ev-patch). A payload definition that its own author flags as spec-inconsistent is live drift: consumers reading this field cannot tell whether the current shape or the amended shape is authoritative, and the amendment has no landing evidence in-tree.",
+      "suggested_fix": "Resolve hk-sx9r.20-ev-patch (amend or remove the field) or convert the inline TODO into a tracked bead with a decision, so the payload shape stops being ambiguous."
+    },
+    {
+      "file": "internal/core/agentevents_hqwn59.go",
+      "line": 1,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "56 core source files carry opaque bead-id filename suffixes",
+      "detail": "56 of 237 non-test source files in internal/core are named with trailing bead-id hashes (agentevents_hqwn59.go, budgetcounterstate_hka8bg25.go, agentlifecyclepayloads_gjyks.go, pertypecompat_hqwn38.go, etc.). The suffix conveys nothing about the file's content and makes navigation/grep-by-topic harder — a reader must first resolve the bead ID to learn what the file holds. This directly contradicts the project's own 'say the thing, not the pointer' principle (private tracking IDs should not be the handle for a thing). Good news: the hashes are confined to filenames and do NOT leak into exported identifiers (verified: zero exported symbols contain the hash tokens), so the blast radius is navigation ergonomics, not API pollution.",
+      "suggested_fix": "Rename files to content-descriptive names (agentevents.go, budget_counter_state.go, ...) and drop the bead-id suffix; keep the bead linkage in the file's doc comment where it already lives."
+    }
+  ]
+}

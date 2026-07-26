@@ -18,13 +18,11 @@ func autoStatusFixtureWrite(t *testing.T, data []byte) string {
 	t.Helper()
 	workspacePath := t.TempDir()
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatalf("autoStatusFixtureWrite: MkdirAll: %v", err)
 	}
 	target := AutoStatusMarkerPath(workspacePath)
-	//nolint:gosec // G306: test fixture; 0644 is appropriate
-	if err := os.WriteFile(target, data, 0o644); err != nil {
+	if err := os.WriteFile(target, data, 0o600); err != nil {
 		t.Fatalf("autoStatusFixtureWrite: WriteFile: %v", err)
 	}
 	return workspacePath
@@ -146,7 +144,6 @@ func TestHC068_ReadAutoStatusMarkerNonFailStatusTreatedAbsent(t *testing.T) {
 		"UNKNOWN",
 	}
 	for _, status := range nonFailStatuses {
-		status := status
 		t.Run("status="+status, func(t *testing.T) {
 			t.Parallel()
 
@@ -190,7 +187,6 @@ func TestHC068_ReadAutoStatusMarkerAcceptsFAILWithEachClass(t *testing.T) {
 		core.FailureClassCompilationLoop, // overridden to structural
 	}
 	for _, fc := range classes {
-		fc := fc
 		t.Run("class="+string(fc), func(t *testing.T) {
 			t.Parallel()
 
@@ -243,7 +239,6 @@ func TestHC068_ReadAutoStatusMarkerOutOfSetClassHintDropped(t *testing.T) {
 
 	badClasses := []string{"unknown", "STRUCTURAL", "FAIL", ""}
 	for _, bad := range badClasses {
-		bad := bad
 		t.Run("class="+bad, func(t *testing.T) {
 			t.Parallel()
 
@@ -418,7 +413,6 @@ func TestHC068_ReadAutoStatusMarkerHappyPathAllClasses(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run("class="+tc.inputClass, func(t *testing.T) {
 			t.Parallel()
 

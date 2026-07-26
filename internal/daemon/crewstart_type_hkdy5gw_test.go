@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/crew"
+	"github.com/gregberns/harmonik/internal/crewrun"
 )
 
 // TestCrewStart_StampsTypeFromAgentFolder: an oversight singleton launches with
@@ -24,7 +25,7 @@ func TestCrewStart_StampsTypeFromAgentFolder(t *testing.T) {
 		t.Fatalf("seed agent folder: %v", err)
 	}
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "admiral", Queue: "admiral-q"})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "admiral", Queue: "admiral-q"})
 
 	rec, err := crew.Load(dir, "admiral")
 	if err != nil {
@@ -44,7 +45,7 @@ func TestCrewStart_ExplicitTypeWins(t *testing.T) {
 	sub := &fakeSubstrate{}
 	h, dir := newTestCrewHandler(t, sub, nil)
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "watcher-1", Queue: "w-q", Type: "watch"})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "watcher-1", Queue: "w-q", Type: "watch"})
 
 	rec, err := crew.Load(dir, "watcher-1")
 	if err != nil {
@@ -62,7 +63,7 @@ func TestCrewStart_OrdinaryBeadCrewHasNoStampedType(t *testing.T) {
 	sub := &fakeSubstrate{}
 	h, dir := newTestCrewHandler(t, sub, nil)
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "paul", Queue: "paul-q"})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "paul", Queue: "paul-q"})
 
 	rec, err := crew.Load(dir, "paul")
 	if err != nil {

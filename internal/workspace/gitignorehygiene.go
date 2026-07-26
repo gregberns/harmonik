@@ -97,6 +97,7 @@ func EnsureGitignoreHygiene(ctx context.Context, repoRoot string) error {
 
 	// Append missing entries with a harmonik-managed section header.
 	toAppend := buildGitignoreBlock(existing, missing)
+	//nolint:gosec // G302: .gitignore is repository metadata and must remain group/world-readable
 	f, err := os.OpenFile(gitignorePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		if os.IsPermission(err) {
@@ -106,12 +107,10 @@ func EnsureGitignoreHygiene(ctx context.Context, repoRoot string) error {
 	}
 
 	if _, err := f.WriteString(toAppend); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("workspace: EnsureGitignoreHygiene: WriteString: %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: EnsureGitignoreHygiene: WriteString: %w", err), f.Close())
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("workspace: EnsureGitignoreHygiene: Sync: %w", err)
+		return withCleanupErrs(fmt.Errorf("workspace: EnsureGitignoreHygiene: Sync: %w", err), f.Close())
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("workspace: EnsureGitignoreHygiene: Close: %w", err)

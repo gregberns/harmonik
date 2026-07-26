@@ -25,7 +25,7 @@ func brcliFixtureMockBinary(t *testing.T, stdout, stderr string, exitCode int) s
 	path := filepath.Join(dir, "br")
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' %q\nprintf '%%s' %q >&2\nexit %d\n", stdout, stderr, exitCode)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("brcliFixtureMockBinary: write mock: %v", err)
 	}
 	return path
@@ -41,7 +41,7 @@ func brcliFixtureEchoArgsBinary(t *testing.T) string {
 	// "$*" expands all positional parameters space-separated.
 	script := "#!/bin/sh\nprintf '%s' \"$*\"\nexit 0\n"
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("brcliFixtureEchoArgsBinary: write mock: %v", err)
 	}
 	return path
@@ -55,7 +55,7 @@ func brcliFixtureSleepBinary(t *testing.T, seconds int) string {
 	path := filepath.Join(dir, "br")
 	script := fmt.Sprintf("#!/bin/sh\nsleep %d\nexit 0\n", seconds)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("brcliFixtureSleepBinary: write mock: %v", err)
 	}
 	return path
@@ -208,7 +208,7 @@ func brcliFixtureEchoArgsToFileBinary(t *testing.T, argsFile string) string {
 	// parse error — which is expected and asserted in the test.
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' \"$*\" > %q\nexit 0\n", argsFile)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("brcliFixtureEchoArgsToFileBinary: write mock: %v", err)
 	}
 	return path
@@ -223,7 +223,7 @@ func brcliFixturePWDBinary(t *testing.T) string {
 	path := filepath.Join(dir, "br")
 	script := "#!/bin/sh\npwd\nexit 0\n"
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("brcliFixturePWDBinary: write mock: %v", err)
 	}
 	return path

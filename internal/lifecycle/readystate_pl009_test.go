@@ -72,7 +72,6 @@ func TestPL009_ReadyCriteria_Met_EachMissing(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

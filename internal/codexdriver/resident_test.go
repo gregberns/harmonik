@@ -36,7 +36,7 @@ func TestResidentResumesAcrossChildDeath(t *testing.T) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = r.Close(ctx) //nolint:errcheck // test teardown; best-effort
+		_ = r.Close(ctx)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -99,7 +99,7 @@ func TestResidentEnqueueDeliversThroughQueue(t *testing.T) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = r.Close(ctx) //nolint:errcheck // test teardown; best-effort
+		_ = r.Close(ctx)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -129,7 +129,7 @@ func TestSuperviseProactivelyRevivesIdleChild(t *testing.T) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = r.Close(ctx) //nolint:errcheck // test teardown; best-effort
+		_ = r.Close(ctx)
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)

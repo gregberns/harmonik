@@ -22,6 +22,7 @@ package main
 // Bead ref: hk-n7ofb.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -80,7 +81,7 @@ EXAMPLES
 // subArgs is os.Args[2:].
 func runReleaseSubcommand(subArgs []string) int {
 	if len(subArgs) == 0 || subArgs[0] == "--help" || subArgs[0] == "-h" {
-		fmt.Print(releaseTopUsage) //nolint:forbidigo // help output to stdout
+		fmt.Print(releaseTopUsage)
 		return 0
 	}
 
@@ -334,10 +335,23 @@ func promoteGitHubRelease(projectDir, semver string) error {
 		return nil
 	}
 	if _, err := exec.LookPath("gh"); err != nil {
-		fmt.Fprintln(os.Stderr, "harmonik release certify: skipped GitHub release promotion (gh CLI not found)")
-		return nil
+		// "gh is not installed" is a legitimate skip. Anything else — an
+		// unreadable PATH entry, a gh that exists but is not executable — is a
+		// real failure and must not be reported as a successful skip.
+		if errors.Is(err, exec.ErrNotFound) {
+			fmt.Fprintln(os.Stderr, "harmonik release certify: skipped GitHub release promotion (gh CLI not found)")
+			return nil
+		}
+		return fmt.Errorf("locate gh CLI: %w", err)
 	}
-	cmd := exec.Command("gh", "release", "edit", semver, "--prerelease=false") //nolint:gosec // fixed executable + args
+	// context.Background(): `harmonik release certify` is a synchronous CLI entry
+	// point with no cancellable context in scope. Killing `gh release edit`
+	// part-way would also leave the GitHub release in an indeterminate state
+	// while the local ledger has NOT yet been written — SaveLedgerFile runs
+	// after this call, and a gh failure returns without saving. A mid-flight
+	// kill would therefore flip the GitHub release while the ledger never
+	// records the certification, so this call is deliberately not cancellable.
+	cmd := exec.CommandContext(context.Background(), "gh", "release", "edit", semver, "--prerelease=false")
 	cmd.Dir = projectDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -471,7 +485,11 @@ EXAMPLES
 		return 3
 	}
 
-	lastGood, _ := release.ReadLastGoodBinary(statePath)
+	lastGood, readErr := release.ReadLastGoodBinary(statePath)
+	if readErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik release rollback: read restored last-good state: %v\n", readErr)
+		return 3
+	}
 	fmt.Printf("harmonik release rollback: restored %s from %s\n", binPath, lastGood)
 	fmt.Println("harmonik release rollback: restart the daemon to use the restored binary")
 	return 0

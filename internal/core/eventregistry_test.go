@@ -142,7 +142,10 @@ func TestRegistry(t *testing.T) {
 
 		// Confirm the type is reachable via DecodePayload round-trip.
 		want := &testPayloadAlpha{Foo: "hello", Bar: 42}
-		raw, _ := json.Marshal(want)
+		raw, err := json.Marshal(want)
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
 		ev := minimalEvent(t, typeName, raw)
 		got, err := ev.DecodePayload()
 		if err != nil {
@@ -180,7 +183,10 @@ func TestRegistry(t *testing.T) {
 		}
 
 		want := &testPayloadBeta{Name: "widget", Score: 3.14}
-		raw, _ := json.Marshal(want)
+		raw, err := json.Marshal(want)
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
 		ev := minimalEvent(t, typeName, raw)
 
 		got, err := ev.DecodePayload()
@@ -253,13 +259,19 @@ func TestRegistry(t *testing.T) {
 		}
 
 		// Both types must be reachable.
-		rawA, _ := json.Marshal(&testPayloadAlpha{Foo: "concurrent", Bar: 1})
+		rawA, err := json.Marshal(&testPayloadAlpha{Foo: "concurrent", Bar: 1})
+		if err != nil {
+			t.Fatalf("marshal typeA payload: %v", err)
+		}
 		evA := minimalEvent(t, typeA, rawA)
 		if _, err := evA.DecodePayload(); err != nil {
 			t.Errorf("DecodePayload for typeA after concurrent registration: %v", err)
 		}
 
-		rawB, _ := json.Marshal(&testPayloadBeta{Name: "concurrent", Score: 2.0})
+		rawB, err := json.Marshal(&testPayloadBeta{Name: "concurrent", Score: 2.0})
+		if err != nil {
+			t.Fatalf("marshal typeB payload: %v", err)
+		}
 		evB := minimalEvent(t, typeB, rawB)
 		if _, err := evB.DecodePayload(); err != nil {
 			t.Errorf("DecodePayload for typeB after concurrent registration: %v", err)

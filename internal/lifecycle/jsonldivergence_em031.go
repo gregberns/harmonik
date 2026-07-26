@@ -68,7 +68,7 @@ func ReadJSONLForDivergenceEvidence(data []byte) ([]JSONLReadResult, error) {
 		return nil, nil
 	}
 
-	var results []JSONLReadResult
+	results := make([]JSONLReadResult, 0, len(lines))
 
 	for i, line := range lines {
 		lineNum := i + 1

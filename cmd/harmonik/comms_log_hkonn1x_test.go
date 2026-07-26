@@ -28,15 +28,20 @@ func commsLogFixture(t *testing.T, lines []string) string {
 	t.Helper()
 	dir := t.TempDir()
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
 		t.Fatalf("commsLogFixture: mkdir: %v", err)
 	}
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+	// #nosec G304 -- eventsPath is rooted in this test's temporary project.
 	f, err := os.Create(eventsPath)
 	if err != nil {
 		t.Fatalf("commsLogFixture: create events.jsonl: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("commsLogFixture: close: %v", err)
+		}
+	}()
 	for _, line := range lines {
 		if _, writeErr := fmt.Fprintln(f, line); writeErr != nil {
 			t.Fatalf("commsLogFixture: write: %v", writeErr)
@@ -47,7 +52,8 @@ func commsLogFixture(t *testing.T, lines []string) string {
 
 // commsLogEvent builds a minimal agent_message JSONL line.
 // eventID must be a UUIDv7 string. ts is the wall timestamp.
-func commsLogEvent(eventID, ts, from, to, topic, body string) string {
+func commsLogEvent(t *testing.T, eventID, ts, from, to, topic, body string) string {
+	t.Helper()
 	p := map[string]any{
 		"from": from,
 		"to":   to,
@@ -56,7 +62,10 @@ func commsLogEvent(eventID, ts, from, to, topic, body string) string {
 	if topic != "" {
 		p["topic"] = topic
 	}
-	payload, _ := json.Marshal(p)
+	payload, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("commsLogEvent: marshal payload: %v", err)
+	}
 	ev := map[string]any{
 		"event_id":         eventID,
 		"schema_version":   1,
@@ -65,12 +74,16 @@ func commsLogEvent(eventID, ts, from, to, topic, body string) string {
 		"source_subsystem": "daemon.comms",
 		"payload":          json.RawMessage(payload),
 	}
-	line, _ := json.Marshal(ev)
+	line, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("commsLogEvent: marshal event: %v", err)
+	}
 	return string(line)
 }
 
 // commsLogNonCommsEvent builds a non-agent_message JSONL line that must be ignored.
-func commsLogNonCommsEvent(eventID, ts string) string {
+func commsLogNonCommsEvent(t *testing.T, eventID, ts string) string {
+	t.Helper()
 	ev := map[string]any{
 		"event_id":         eventID,
 		"schema_version":   1,
@@ -79,13 +92,16 @@ func commsLogNonCommsEvent(eventID, ts string) string {
 		"source_subsystem": "daemon",
 		"payload":          json.RawMessage(`{}`),
 	}
-	line, _ := json.Marshal(ev)
+	line, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("commsLogNonCommsEvent: marshal event: %v", err)
+	}
 	return string(line)
 }
 
 // captureCommsLog runs runCommsLogSubcommand with args, capturing stdout.
 // Returns (stdout, exitCode).
-func captureCommsLog(t *testing.T, args []string) (string, int) {
+func captureCommsLog(t *testing.T, args []string) (output string, exitCode int) {
 	t.Helper()
 	// Redirect stdout.
 	oldStdout := os.Stdout
@@ -97,11 +113,17 @@ func captureCommsLog(t *testing.T, args []string) (string, int) {
 
 	code := runCommsLogSubcommand(args)
 
-	_ = w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("captureCommsLog: close write pipe: %v", err)
+	}
 	os.Stdout = oldStdout
 	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
-	_ = r.Close()
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("captureCommsLog: copy output: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("captureCommsLog: close read pipe: %v", err)
+	}
 	return buf.String(), code
 }
 
@@ -121,8 +143,8 @@ func TestCommsLogNoEvents(t *testing.T) {
 func TestCommsLogFiltersType(t *testing.T) {
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
-		commsLogNonCommsEvent("01965b00-0000-7000-8000-000000000001", ts),
-		commsLogEvent("01965b00-0000-7000-8000-000000000002", ts, "alice", "bob", "", "hello"),
+		commsLogNonCommsEvent(t, "01965b00-0000-7000-8000-000000000001", ts),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000002", ts, "alice", "bob", "", "hello"),
 	}
 	dir := commsLogFixture(t, lines)
 	out, code := captureCommsLog(t, []string{"--project", dir})
@@ -142,8 +164,8 @@ func TestCommsLogFiltersType(t *testing.T) {
 func TestCommsLogFromFilter(t *testing.T) {
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
-		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "from alice"),
-		commsLogEvent("01965b00-0000-7000-8000-000000000002", ts, "charlie", "bob", "", "from charlie"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "from alice"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000002", ts, "charlie", "bob", "", "from charlie"),
 	}
 	dir := commsLogFixture(t, lines)
 
@@ -163,9 +185,9 @@ func TestCommsLogFromFilter(t *testing.T) {
 func TestCommsLogToFilter(t *testing.T) {
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
-		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "to bob"),
-		commsLogEvent("01965b00-0000-7000-8000-000000000002", ts, "alice", "*", "", "broadcast"),
-		commsLogEvent("01965b00-0000-7000-8000-000000000003", ts, "alice", "charlie", "", "to charlie"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "to bob"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000002", ts, "alice", "*", "", "broadcast"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000003", ts, "alice", "charlie", "", "to charlie"),
 	}
 	dir := commsLogFixture(t, lines)
 
@@ -189,8 +211,8 @@ func TestCommsLogToFilter(t *testing.T) {
 func TestCommsLogTopicFilter(t *testing.T) {
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
-		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "status", "pong"),
-		commsLogEvent("01965b00-0000-7000-8000-000000000002", ts, "alice", "bob", "work", "task done"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "status", "pong"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000002", ts, "alice", "bob", "work", "task done"),
 	}
 	dir := commsLogFixture(t, lines)
 
@@ -210,9 +232,9 @@ func TestCommsLogTopicFilter(t *testing.T) {
 func TestCommsLogSinceEventID(t *testing.T) {
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
-		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "first"),
-		commsLogEvent("01965b00-0000-7000-8000-000000000002", ts, "alice", "bob", "", "second"),
-		commsLogEvent("01965b00-0000-7000-8000-000000000003", ts, "alice", "bob", "", "third"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "first"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000002", ts, "alice", "bob", "", "second"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000003", ts, "alice", "bob", "", "third"),
 	}
 	dir := commsLogFixture(t, lines)
 
@@ -238,8 +260,8 @@ func TestCommsLogSinceDuration(t *testing.T) {
 	old := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
 	recent := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
 	lines := []string{
-		commsLogEvent("01965b00-0000-7000-8000-000000000001", old, "alice", "bob", "", "old message"),
-		commsLogEvent("01965b00-0000-7000-8000-000000000002", recent, "alice", "bob", "", "recent message"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000001", old, "alice", "bob", "", "old message"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000002", recent, "alice", "bob", "", "recent message"),
 	}
 	dir := commsLogFixture(t, lines)
 
@@ -260,8 +282,8 @@ func TestCommsLogSinceDuration(t *testing.T) {
 func TestCommsLogJSONOutput(t *testing.T) {
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
-		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "status", "hello"),
-		commsLogEvent("01965b00-0000-7000-8000-000000000002", ts, "charlie", "dave", "", "world"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "status", "hello"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000002", ts, "charlie", "dave", "", "world"),
 	}
 	dir := commsLogFixture(t, lines)
 
@@ -288,7 +310,7 @@ func TestCommsLogJSONOutput(t *testing.T) {
 func TestCommsLogHumanReadableFormat(t *testing.T) {
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
-		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "orchestrator", "worker", "task", "do the thing"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000001", ts, "orchestrator", "worker", "task", "do the thing"),
 	}
 	dir := commsLogFixture(t, lines)
 
@@ -327,7 +349,7 @@ func TestCommsLogInvalidSince(t *testing.T) {
 func TestCommsLogDoesNotAdvanceCursor(t *testing.T) {
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
-		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "hello"),
+		commsLogEvent(t, "01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "hello"),
 	}
 	dir := commsLogFixture(t, lines)
 

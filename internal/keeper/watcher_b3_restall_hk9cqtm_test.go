@@ -42,7 +42,7 @@ const b3ResolvedTarget = "harmonik-b3test000000-testwatch:agent"
 // mangled target but true for the re-resolved canonical one; ResolveTmuxTargetFn
 // returns the canonical target. All other live-recover gates pass by default.
 // RespawnCmd is intentionally empty so idle-respawn is inert.
-func b3Config(projectDir, agent string, recover func(context.Context, string) error) keeper.WatcherConfig {
+func b3Config(projectDir, agent string, recoverFn func(context.Context, string) error) keeper.WatcherConfig {
 	return keeper.WatcherConfig{
 		AgentName:           agent,
 		ProjectDir:          projectDir,
@@ -58,7 +58,7 @@ func b3Config(projectDir, agent string, recover func(context.Context, string) er
 			return b3ResolvedTarget
 		},
 		OperatorAttachedFn: func(_ string) bool { return false },
-		LiveRecoverFn:      recover,
+		LiveRecoverFn:      recoverFn,
 		InjectFn:           func(_ context.Context, _ string) error { return nil },
 	}
 }
@@ -74,7 +74,7 @@ func TestWatcher_B3_ReStall_FiresViaReResolvedTarget(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "b3-fire-agent"
 
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	rec := &lprRecorder{}
@@ -108,7 +108,7 @@ func TestWatcher_B3_ReStall_CooldownPreventsLoop(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "b3-cooldown-agent"
 
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	rec := &lprRecorder{}
@@ -134,7 +134,7 @@ func TestWatcher_B3_ReStall_SuppressNoGaugeIntact(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "b3-suppress-agent"
 
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	rec := &lprRecorder{}
@@ -159,7 +159,7 @@ func TestWatcher_B3_ReStall_SkippedWhenReResolveAlsoFails(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "b3-deadpane-agent"
 
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	rec := &lprRecorder{}
@@ -185,7 +185,7 @@ func TestWatcher_B3_ReStall_SkippedWhenOperatorAttachedToResolvedTarget(t *testi
 	projectDir := t.TempDir()
 	agent := "b3-opattached-agent"
 
-	writeGauge(t, projectDir, agent, gaugeSID)
+	writeGauge(t, projectDir, agent)
 	writeSidFile(t, projectDir, agent, primarySID)
 
 	rec := &lprRecorder{}

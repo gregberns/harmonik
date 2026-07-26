@@ -7,6 +7,7 @@
 //
 // Spec: specs/harness-contract.md §2 (normative contract).
 // See also: C1-harness-interface-spec.md for the full AC set.
+
 package handlercontract
 
 import (

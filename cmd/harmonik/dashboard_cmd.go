@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -120,7 +121,9 @@ func runDashboardSubcommand(args []string) int {
 		return 0
 	}
 
-	printDashboardHuman(snap)
+	if err := printDashboardHuman(snap); err != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -151,28 +154,39 @@ func dashboardViaSocket(ctx context.Context, projectDir string) (daemon.Dashboar
 }
 
 // printDashboardHuman renders a compact operator panel.
-func printDashboardHuman(snap daemon.DashboardSnapshot) {
+func printDashboardHuman(snap daemon.DashboardSnapshot) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	defer w.Flush() //nolint:errcheck
 
-	fmt.Fprintf(w, "dashboard\tcaptured %s\n", snap.CapturedAt)
-	fmt.Fprintf(w, "activity\t%s\n", string(snap.State.ActivityLabel))
+	if err := writeDashboardRow(w, "dashboard\tcaptured %s\n", snap.CapturedAt); err != nil {
+		return err
+	}
+	if err := writeDashboardRow(w, "activity\t%s\n", string(snap.State.ActivityLabel)); err != nil {
+		return err
+	}
 
 	// Priorities from captain-curated dashboard.json.
 	if snap.Config != nil && len(snap.Config.PrioritiesCurrent) > 0 {
-		fmt.Fprintf(w, "\npriorities (current)\t\n")
+		if err := writeDashboardRow(w, "\npriorities (current)\t\n"); err != nil {
+			return err
+		}
 		for _, p := range snap.Config.PrioritiesCurrent {
 			crew := p.Crew
 			if crew == "" {
 				crew = "-"
 			}
-			fmt.Fprintf(w, "  #%d %s\tcrew=%s  %s\n", p.Rank, p.Lane, crew, p.Headline)
+			if err := writeDashboardRow(w, "  #%d %s\tcrew=%s  %s\n", p.Rank, p.Lane, crew, p.Headline); err != nil {
+				return err
+			}
 		}
 	}
 	if snap.Config != nil && len(snap.Config.PrioritiesFuture) > 0 {
-		fmt.Fprintf(w, "\npriorities (on-deck)\t\n")
+		if err := writeDashboardRow(w, "\npriorities (on-deck)\t\n"); err != nil {
+			return err
+		}
 		for _, p := range snap.Config.PrioritiesFuture {
-			fmt.Fprintf(w, "  %s\t%s\n", p.Lane, p.Headline)
+			if err := writeDashboardRow(w, "  %s\t%s\n", p.Lane, p.Headline); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -180,21 +194,27 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) {
 	if len(snap.Lanes) > 0 {
 		active := filterLanesByStatus(snap.Lanes, "active")
 		if len(active) > 0 {
-			fmt.Fprintf(w, "\ncrew↔lane (active)\t\n")
+			if err := writeDashboardRow(w, "\ncrew↔lane (active)\t\n"); err != nil {
+				return err
+			}
 			for _, l := range active {
 				crew := l.Crew
 				if crew == "" {
 					crew = "-"
 				}
 				health := laneHealth(l, snap)
-				fmt.Fprintf(w, "  %s\tcrew=%-12s queue=%-14s %s\n", l.Lane, crew, nvl(l.Queue), health)
+				if err := writeDashboardRow(w, "  %s\tcrew=%-12s queue=%-14s %s\n", l.Lane, crew, nvl(l.Queue), health); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
 	// Expected-vs-actual throughput.
 	if snap.Config != nil && len(snap.Config.ThroughputExpected) > 0 {
-		fmt.Fprintf(w, "\nthroughput expected\t\n")
+		if err := writeDashboardRow(w, "\nthroughput expected\t\n"); err != nil {
+			return err
+		}
 		for _, te := range snap.Config.ThroughputExpected {
 			actual := throughputActualForLane(te.Lane, snap.Throughput)
 			byStr := ""
@@ -203,17 +223,23 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) {
 					byStr = " by " + t.Format("15:04Z")
 				}
 			}
-			fmt.Fprintf(w, "  %s\texpected=%d%s actual=%s\n",
-				te.Lane, te.BeadsExpected, byStr, actual)
+			if err := writeDashboardRow(w, "  %s\texpected=%d%s actual=%s\n",
+				te.Lane, te.BeadsExpected, byStr, actual); err != nil {
+				return err
+			}
 		}
 	}
 
 	// Active stall signals.
 	if len(snap.ActiveStalls) > 0 {
-		fmt.Fprintf(w, "\nbottlenecks (%d)\t\n", len(snap.ActiveStalls))
+		if err := writeDashboardRow(w, "\nbottlenecks (%d)\t\n", len(snap.ActiveStalls)); err != nil {
+			return err
+		}
 		for _, s := range snap.ActiveStalls {
-			fmt.Fprintf(w, "  %s\tbead=%s sig=%s elapsed=%ds\n",
-				s.RunID, s.BeadID, s.Signature, s.ElapsedMs/1000)
+			if err := writeDashboardRow(w, "  %s\tbead=%s sig=%s elapsed=%ds\n",
+				s.RunID, s.BeadID, s.Signature, s.ElapsedMs/1000); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -222,7 +248,9 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) {
 	// unread count), sorted most-urgent first.
 	mailbox := filterDecisionsByTopic(snap.OpenDecisions, core.DecisionTopicOperatorMailbox)
 	if len(mailbox) > 0 {
-		fmt.Fprintf(w, "\nmailbox (%d unread)\t\n", len(mailbox))
+		if err := writeDashboardRow(w, "\nmailbox (%d unread)\t\n", len(mailbox)); err != nil {
+			return err
+		}
 		for _, d := range mailbox {
 			from := d.BlockedAgent
 			if from == "" {
@@ -236,14 +264,29 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) {
 			if urgency == "" {
 				urgency = "-"
 			}
-			fmt.Fprintf(w, "  %s\t[%s] from=%s  %s\n", d.DecisionID[:8], urgency, from, q)
+			if err := writeDashboardRow(w, "  %s\t[%s] from=%s  %s\n", d.DecisionID[:8], urgency, from, q); err != nil {
+				return err
+			}
 		}
 	}
 
 	// Notes from dashboard.json.
 	if snap.Config != nil && snap.Config.Notes != "" {
-		fmt.Fprintf(w, "\nnotes\t%s\n", strings.ReplaceAll(snap.Config.Notes, "\n", " "))
+		if err := writeDashboardRow(w, "\nnotes\t%s\n", strings.ReplaceAll(snap.Config.Notes, "\n", " ")); err != nil {
+			return err
+		}
 	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("write dashboard summary: %w", err)
+	}
+	return nil
+}
+
+func writeDashboardRow(w io.Writer, format string, args ...any) error {
+	if _, err := fmt.Fprintf(w, format, args...); err != nil {
+		return fmt.Errorf("write dashboard summary: %w", err)
+	}
+	return nil
 }
 
 // filterDecisionsByTopic returns the decisions matching topic, sorted
@@ -342,7 +385,9 @@ func runDashboardUnlock(projectDir string, until time.Duration) int {
 		fmt.Fprintf(os.Stderr, "harmonik dashboard: --unlock: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(os.Stdout, "dashboard gate unlocked until %s\n", expiry.Format(time.RFC3339))
+	if _, writeErr := fmt.Fprintf(os.Stdout, "dashboard gate unlocked until %s\n", expiry.Format(time.RFC3339)); writeErr != nil {
+		return 1
+	}
 	return 0
 }
 
@@ -353,6 +398,8 @@ func runDashboardLock(projectDir string) int {
 		fmt.Fprintf(os.Stderr, "harmonik dashboard: --lock: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(os.Stdout, "dashboard gate re-armed (unlock override cleared)\n")
+	if _, writeErr := fmt.Fprintf(os.Stdout, "dashboard gate re-armed (unlock override cleared)"); writeErr != nil {
+		return 1
+	}
 	return 0
 }

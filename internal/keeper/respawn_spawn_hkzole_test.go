@@ -45,6 +45,7 @@ func TestRespawn_ActuallyRunsCmdOnTrustedSid(t *testing.T) {
 		t.Fatalf("trusted .sid: want nil error from real respawn cmd; got %v", err)
 	}
 
+	//nolint:gosec // G304: sentinel is created under this test's t.TempDir fixture.
 	got, err := os.ReadFile(sentinel)
 	if err != nil {
 		t.Fatalf("respawn command did not run: sentinel %q absent: %v", sentinel, err)
@@ -66,7 +67,6 @@ func TestRespawn_GateBlocksUntrustedSidWithRealCmd(t *testing.T) {
 		"garbage": "not-a-uuid",
 	}
 	for name, sid := range cases {
-		sid := sid
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()

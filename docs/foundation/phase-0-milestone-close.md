@@ -136,7 +136,7 @@ After the trivial-slice runs end-to-end, the second cycle adds the twin handler 
 - [`docs/decompose-to-tasks/pilot-review-protocol.md`](../decompose-to-tasks/pilot-review-protocol.md) — 3-reviewer protocol gating each pilot.
 - [`docs/foundation/project-level/`](project-level/) — locked decisions (build practices, quality checks, subsystem organization, agent configuration).
 - [`STATUS.md`](../../STATUS.md) — flipped to "Phase 1 active" alongside this commit.
-- [`TASKS.md`](../../TASKS.md) — Phase 0 list reformatted as historical; Phase 1 implementation gate lifted.
+- [`docs/historical/phase-0-1-tasks.md`](../historical/phase-0-1-tasks.md) — Phase 0 list reformatted as historical; Phase 1 implementation gate lifted. Was `TASKS.md` at the repo root; `334bb759e` moved it here (a pure rename, `R100`, content unchanged) when instructions consolidated into the three-kinds load-discipline model.
 
 ## Revision history
 

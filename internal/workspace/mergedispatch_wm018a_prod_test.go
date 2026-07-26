@@ -16,7 +16,6 @@ func TestWM018a_MergeNodeKind_Valid(t *testing.T) {
 
 	valid := []MergeNodeKind{MergeNodeKindNonAgentic, MergeNodeKindAgentic}
 	for _, k := range valid {
-		k := k
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
 			if !k.Valid() {
@@ -27,7 +26,6 @@ func TestWM018a_MergeNodeKind_Valid(t *testing.T) {
 
 	invalid := []MergeNodeKind{"", "unknown", "both", "none"}
 	for _, k := range invalid {
-		k := k
 		t.Run("invalid/"+string(k), func(t *testing.T) {
 			t.Parallel()
 			if k.Valid() {
@@ -148,7 +146,7 @@ func TestWM018a_DetectSquashMergeConflict_WithConflict(t *testing.T) {
 	runID := "0196b100-0000-7000-8000-00000028a002"
 	taskBranch := "run/" + runID
 	taskPath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o700); err != nil {
 		t.Fatalf("MkdirAll task: %v", err)
 	}
 
@@ -164,7 +162,7 @@ func TestWM018a_DetectSquashMergeConflict_WithConflict(t *testing.T) {
 
 	gitRun(repo, "worktree", "add", "-b", taskBranch, taskPath, sha)
 	// Write conflicting change in task branch.
-	if err := os.WriteFile(filepath.Join(taskPath, "shared.txt"), []byte("task version\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskPath, "shared.txt"), []byte("task version\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile task: %v", err)
 	}
 	gitRun(taskPath, "add", ".")
@@ -173,13 +171,13 @@ func TestWM018a_DetectSquashMergeConflict_WithConflict(t *testing.T) {
 	// Create integration branch from sha: modify the same file with different content.
 	integSuffix := "integ-028a-clash"
 	integPath := filepath.Join(repo, ".harmonik", "worktrees", integSuffix)
-	if err := os.MkdirAll(filepath.Dir(integPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(integPath), 0o700); err != nil {
 		t.Fatalf("MkdirAll integ: %v", err)
 	}
 	integBranch := "harmonik/integration/" + integSuffix
 	gitRun(repo, "worktree", "add", "-b", integBranch, integPath, sha)
 	// Write different conflicting change in integration branch.
-	if err := os.WriteFile(filepath.Join(integPath, "shared.txt"), []byte("integration version\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(integPath, "shared.txt"), []byte("integration version\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile integ: %v", err)
 	}
 	gitRun(integPath, "add", ".")
@@ -226,7 +224,6 @@ func TestWM018a_IsConflictMarker(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		c := c
 		t.Run(c.xy+"/"+c.comment, func(t *testing.T) {
 			t.Parallel()
 			got := isConflictMarker(c.xy)

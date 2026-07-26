@@ -89,7 +89,6 @@ func TestJSONRPCErrorExhaustive(t *testing.T) {
 	t.Parallel()
 
 	for _, reason := range errorsAllReasons {
-		reason := reason
 		t.Run(string(reason), func(t *testing.T) {
 			t.Parallel()
 
@@ -128,7 +127,6 @@ func TestJSONRPCErrorStableRange(t *testing.T) {
 	reserved := map[int]bool{-32019: true}
 
 	for _, reason := range errorsAllReasons {
-		reason := reason
 		t.Run(string(reason), func(t *testing.T) {
 			t.Parallel()
 

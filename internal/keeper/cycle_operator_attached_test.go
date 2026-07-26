@@ -156,7 +156,7 @@ func TestCycler_OperatorDetached_Proceeds(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cycler := newAttachTestCycler(agent, t.TempDir(), cycleID, em, spy, jc, readHandoff, readGaugeFn, attach.fn)
 
@@ -200,7 +200,7 @@ func TestCycler_OperatorDetachThenResume(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	// Handoff returns the nonce immediately once polled; gauge flips to newSID.
 	alwaysNonce := func(_ string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil }
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cycler := newAttachTestCycler(agent, t.TempDir(), cycleID, em, spy, jc, alwaysNonce, readGaugeFn, attach.fn)
 

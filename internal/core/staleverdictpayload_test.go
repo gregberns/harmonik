@@ -36,7 +36,6 @@ func TestStaleVerdictPayloadValid_AllDivergenceReasons(t *testing.T) {
 		StaleDivergenceReasonBeadsAuditAdvanced,
 	}
 	for _, r := range reasons {
-		r := r
 		t.Run(string(r), func(t *testing.T) {
 			t.Parallel()
 			p := staleVerdictPayloadFixture(t)

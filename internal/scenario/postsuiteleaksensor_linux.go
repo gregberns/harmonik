@@ -23,6 +23,11 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
+// runIDEnvKey is the environment variable set on every handler subprocess by
+// the daemon's claude handler per specs/process-lifecycle.md §4.1 PL-006a.
+// Its value is the scenario's run_id UUID string.
+const runIDEnvKey = "HARMONIK_RUN_ID"
+
 // checkLeakedProcesses scans /proc for processes whose HARMONIK_RUN_ID
 // environment variable matches any executed scenario's run_id.
 //

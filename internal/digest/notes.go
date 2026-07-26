@@ -3,6 +3,7 @@ package digest
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"time"
 )
@@ -32,8 +33,6 @@ func readOpenNotes(path string) ([]noteEntry, error) {
 		}
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-
 	var open []noteEntry
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -45,5 +44,14 @@ func readOpenNotes(path string) ([]noteEntry, error) {
 			open = append(open, entry)
 		}
 	}
-	return open, scanner.Err()
+	if scanErr := scanner.Err(); scanErr != nil {
+		if closeErr := f.Close(); closeErr != nil {
+			return nil, errors.Join(scanErr, closeErr)
+		}
+		return nil, scanErr
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		return nil, closeErr
+	}
+	return open, nil
 }

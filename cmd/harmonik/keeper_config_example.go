@@ -83,6 +83,12 @@ const keeperConfigExampleBlock = `keeper:
     grace_seconds: 30                # grace before the self-service instruction repeats
     instruct_only_when_idle: false   # only inject the self-service instruction when idle
     crews_enabled: true              # crews self-restart by default (absent also resolves true)
+  # warn_messages — OPTIONAL live-reloadable wording overrides. Empty = compiled default.
+  warn_messages:
+    default_warn_text: ""            # ordinary wrap-up warning text
+    actionable_warn_text: ""         # must include the literal harmonik keeper restart-now command
+    leader_defer_text: ""            # leader finish-then-restart nudge; structural slots are validated
+    crew_defer_text: ""              # reserved crew-specific defer wording
 `
 
 // keeperConfigExampleYAML returns the complete keeper: example block. It is the
@@ -108,19 +114,29 @@ func runKeeperConfigTo(args []string, stdout, stderr io.Writer) int {
 		case "--example":
 			example = true
 		case "-h", "--help":
-			fmt.Fprint(stderr, keeperConfigUsage)
+			if _, err := fmt.Fprint(stderr, keeperConfigUsage); err != nil {
+				return 1
+			}
 			return 0
 		default:
-			fmt.Fprintf(stderr, "harmonik keeper config: unknown argument %q\n\n", a)
-			fmt.Fprint(stderr, keeperConfigUsage)
+			if _, err := fmt.Fprintf(stderr, "harmonik keeper config: unknown argument %q\n\n", a); err != nil {
+				return 1
+			}
+			if _, err := fmt.Fprint(stderr, keeperConfigUsage); err != nil {
+				return 1
+			}
 			return 2
 		}
 	}
 	if !example {
-		fmt.Fprint(stderr, keeperConfigUsage)
+		if _, err := fmt.Fprint(stderr, keeperConfigUsage); err != nil {
+			return 1
+		}
 		return 2
 	}
-	fmt.Fprint(stdout, keeperConfigExampleYAML())
+	if _, err := fmt.Fprint(stdout, keeperConfigExampleYAML()); err != nil {
+		return 1
+	}
 	return 0
 }
 

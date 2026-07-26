@@ -1,3 +1,4 @@
+// Package dot parses and validates DOT workflow graphs.
 package dot
 
 // ast.go — typed AST for workflow_mode=dot graphs.
@@ -238,6 +239,12 @@ type Node struct {
 	// core.AgentType.Valid() (AR-025). Empty when absent. When both harness and
 	// agent_runtime are present on the same node with different values, parsing
 	// is a strict error (ambiguous node-tier harness).
+	//
+	// The parser RESOLVES the alias at the parse boundary (hk-ozbio): when only
+	// agent_runtime is present, its value is also written to Harness, so every
+	// consumer reads exactly one field. This field is retained so the AST still
+	// reports the spelling the author wrote; NOTHING should read it to decide a
+	// harness — read Harness.
 	AgentRuntime string
 
 	// ReviewerHarness is the optional reviewer_harness attribute (codex-harness

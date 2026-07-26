@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -31,29 +32,34 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
 	// Write the sidecar (S06 action — write side).
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 		t.Fatalf("WM-029: sidecar write: %v", err)
 	}
 
 	// Also write a session.log to simulate handler output in the session dir.
 	sessionLog := filepath.Join(sessionDir, "session.log")
-	if err := os.WriteFile(sessionLog, []byte("handler output line 1\n"), 0o644); err != nil {
+	if err := os.WriteFile(sessionLog, []byte("handler output line 1\n"), 0o600); err != nil {
 		t.Fatalf("WM-029: WriteFile session.log: %v", err)
 	}
 
 	// S08 read-only access pattern: open sidecar with O_RDONLY and parse.
+	//nolint:gosec // G304: sidecarPath is derived from this test's temporary session fixture
 	f, err := os.OpenFile(sidecarPath, os.O_RDONLY, 0)
 	if err != nil {
 		t.Fatalf("WM-029: O_RDONLY open sidecar failed: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("WM-029: Close sidecar: %v", err)
+		}
+	}()
 
 	var parsed map[string]interface{}
 	if err := json.NewDecoder(f).Decode(&parsed); err != nil {
@@ -68,16 +74,21 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 	}
 
 	// S08 read-only access: read session.log without writing.
+	//nolint:gosec // G304: sessionLog is derived from this test's temporary session fixture
 	logF, err := os.OpenFile(sessionLog, os.O_RDONLY, 0)
 	if err != nil {
 		t.Fatalf("WM-029: O_RDONLY open session.log failed: %v", err)
 	}
-	defer logF.Close()
+	defer func() {
+		if err := logF.Close(); err != nil {
+			t.Errorf("WM-029: Close session.log: %v", err)
+		}
+	}()
 
 	// Assert: we can read from the log.
 	buf := make([]byte, 256)
 	n, err := logF.Read(buf)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("WM-029: logF.Read: %v", err)
 	}
 	if n == 0 {

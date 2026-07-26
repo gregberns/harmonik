@@ -282,7 +282,6 @@ func TestPL021a_NtmVersionPinOutsideSupportedSetIsCAT0(t *testing.T) {
 		t.Parallel()
 
 		for _, sv := range ntmAdapterFixtureSupportedVersions {
-			sv := sv // capture
 			t.Run("version-"+sv, func(t *testing.T) {
 				t.Parallel()
 
@@ -321,15 +320,6 @@ const (
 	ntmAdapterFixtureForbiddenAgentMail         ntmAdapterFixtureForbiddenImport = "ntm-agent-mail"
 )
 
-// ntmAdapterFixtureAllForbiddenImports is the full set of forbidden ntm features
-// per PL-022.
-var ntmAdapterFixtureAllForbiddenImports = []ntmAdapterFixtureForbiddenImport{
-	ntmAdapterFixtureForbiddenPipelineSystem,
-	ntmAdapterFixtureForbiddenSwarmPlan,
-	ntmAdapterFixtureForbiddenCheckpointRecover,
-	ntmAdapterFixtureForbiddenAgentMail,
-}
-
 // TestPL021_PL022_NtmAdapterAllowedSurfaceOnly verifies that the ntm adapter
 // package (when it exists) imports only the process/tmux surface and does NOT
 // import the forbidden ntm features declared by PL-022.
@@ -365,7 +355,6 @@ func TestPL021_PL022_NtmAdapterAllowedSurfaceOnly(t *testing.T) {
 		{ntmAdapterFixtureForbiddenAgentMail, "github.com/claude-ntm/ntm/agentmail"},
 	}
 
-	//nolint:gosec // G204: ntmAdapterPkg is a constant string, not user input
 	cmd := exec.CommandContext(t.Context(), "go", "list", "-deps", ntmAdapterPkg)
 	out, err := cmd.Output()
 	if err != nil {
@@ -417,7 +406,6 @@ func TestPL023_HandlerContractIsNtmBoundary(t *testing.T) {
 	}
 
 	for _, pkg := range peerPackages {
-		pkg := pkg // capture
 		t.Run("no-direct-ntm-import/"+lastSegment(pkg), func(t *testing.T) {
 			t.Parallel()
 
@@ -560,7 +548,6 @@ func TestPL021a_InfrastructureUnavailablePayload(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc // capture
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

@@ -48,14 +48,26 @@ func graphValidateFixtureCaptureOutput(t *testing.T, fn func()) (stdout, stderr 
 
 	fn()
 
-	wOut.Close()
-	wErr.Close()
+	if err := wOut.Close(); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: close stdout writer: %v", err)
+	}
+	if err := wErr.Close(); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: close stderr writer: %v", err)
+	}
 
 	var bufOut, bufErr bytes.Buffer
-	bufOut.ReadFrom(rOut)
-	bufErr.ReadFrom(rErr)
-	rOut.Close()
-	rErr.Close()
+	if _, err := bufOut.ReadFrom(rOut); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: read stdout: %v", err)
+	}
+	if _, err := bufErr.ReadFrom(rErr); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: read stderr: %v", err)
+	}
+	if err := rOut.Close(); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: close stdout reader: %v", err)
+	}
+	if err := rErr.Close(); err != nil {
+		t.Fatalf("graphValidateFixtureCaptureOutput: close stderr reader: %v", err)
+	}
 
 	return bufOut.String(), bufErr.String()
 }
@@ -65,7 +77,7 @@ func graphValidateFixtureCaptureOutput(t *testing.T, fn func()) (stdout, stderr 
 func graphValidateFixtureWriteFile(t *testing.T, name, content string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatalf("graphValidateFixtureWriteFile: %v", err)
 	}
 	return p
@@ -101,9 +113,9 @@ const validDOT = `digraph workflow {
 }
 `
 
-// invalidDOT_badNodeType has an unrecognised node type value ("banana"),
+// invalidDOTBadNodeType has an unrecognised node type value ("banana"),
 // which the unified validator rejects (WG-001 node-type enum).
-const invalidDOT_badNodeType = `digraph workflow {
+const invalidDOTBadNodeType = `digraph workflow {
     schema_version="1";
     version="0.1.0";
     workflow_id="018f1e2b-0040-7000-8000-000000000100";
@@ -162,7 +174,7 @@ func TestGraphValidate_ValidFile_JSONMode(t *testing.T) {
 }
 
 func TestGraphValidate_InvalidFile_BadNodeType_ExitNonZero(t *testing.T) {
-	path := graphValidateFixtureWriteFile(t, "bad-type.dot", invalidDOT_badNodeType)
+	path := graphValidateFixtureWriteFile(t, "bad-type.dot", invalidDOTBadNodeType)
 
 	var exitCode int
 	stdout, _ := graphValidateFixtureCaptureOutput(t, func() {
@@ -181,7 +193,7 @@ func TestGraphValidate_InvalidFile_BadNodeType_ExitNonZero(t *testing.T) {
 }
 
 func TestGraphValidate_InvalidFile_BadNodeType_JSONMode(t *testing.T) {
-	path := graphValidateFixtureWriteFile(t, "bad-type.dot", invalidDOT_badNodeType)
+	path := graphValidateFixtureWriteFile(t, "bad-type.dot", invalidDOTBadNodeType)
 
 	var exitCode int
 	stdout, _ := graphValidateFixtureCaptureOutput(t, func() {

@@ -101,6 +101,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-w6y70: epic_completed — emitted at most once per parent epic after last child closes (§8.13).
 	{TypeName: "epic_completed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "working_tree_refresh_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-7qmpp: working_tree_local_edits_overwritten — the EM-054 refresh named what it overwrote.
+	{TypeName: "working_tree_local_edits_overwritten", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "implementer_escaped_worktree", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "implementer_phase_complete", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-o68j3: post-merge build gate event.
@@ -161,6 +163,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "spawn_cap_blocked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-9vp51: implementer-budget-exceeded diagnostic (commit-budget kill).
 	{TypeName: "implementer_budget_exceeded", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-368i4: implementer-no-work-suspected detector (no commit + clean worktree + sub-floor duration).
+	{TypeName: "implementer_no_work_suspected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-da3rr: reviewer-budget-exceeded diagnostic (diff-scaled verdict-budget kill).
 	{TypeName: "reviewer_budget_exceeded", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-r1rup: tmux-new-window-timeout diagnostic (hung `tmux new-window`).

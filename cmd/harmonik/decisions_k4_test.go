@@ -22,6 +22,7 @@ package main
 // Bead ref: hk-kba (K4).
 
 import (
+	"bytes"
 	"os"
 	"testing"
 	"time"
@@ -29,8 +30,8 @@ import (
 
 // dk4Presence builds an agent_presence event line for the registry projection.
 // lastSeen is RFC3339 wall time; status "online"/"offline".
-func dk4Presence(eventID, agent, status, lastSeen, reason string) string {
-	return dx9Event(eventID, "agent_presence", map[string]any{
+func dk4Presence(t *testing.T, eventID, agent, status, lastSeen, reason string) string {
+	return dx9Event(t, eventID, "agent_presence", map[string]any{
 		"agent":     agent,
 		"status":    status,
 		"last_seen": lastSeen,
@@ -45,7 +46,7 @@ func dk4Presence(eventID, agent, status, lastSeen, reason string) string {
 func TestFlagOrphanedPending_OfflineFlaggedOthersNot(t *testing.T) {
 	now := time.Now().UTC()
 	fresh := now.Format(time.RFC3339)
-	// 15 minutes ago is past presenceStaleCutoff (10m) → Offline by age.
+	// 15 minutes ago is past presence.StaleCutoff (10m) → Offline by age.
 	stale := now.Add(-15 * time.Minute).Format(time.RFC3339)
 
 	// Three open decisions, three distinct blocked agents:
@@ -54,13 +55,13 @@ func TestFlagOrphanedPending_OfflineFlaggedOthersNot(t *testing.T) {
 	//   carol  → online beat 15m ago          → Offline by age (flagged).
 	//   dave   → NO presence record           → NOT flagged (no evidence gone).
 	lines := []string{
-		dx9Needed(dx9D1, " Q-alice", []string{"a", "b"}, "alice", "hk-a"),
-		dx9Needed(dx9D2, "Q-bob", []string{"c", "d"}, "bob", "hk-b"),
-		dx9Needed(dx9D3, "Q-carol", []string{"e", "f"}, "carol", "hk-c"),
-		dx9Needed(dx9D4, "Q-dave", []string{"g", "h"}, "dave", "hk-d"),
-		dk4Presence("01965b00-0000-7000-8000-0000000e0e01", "alice", "offline", fresh, "leave"),
-		dk4Presence("01965b00-0000-7000-8000-0000000e0e02", "bob", "online", fresh, "join"),
-		dk4Presence("01965b00-0000-7000-8000-0000000e0e03", "carol", "online", stale, "join"),
+		dx9Needed(t, dx9D1, " Q-alice", []string{"a", "b"}, "alice", "hk-a"),
+		dx9Needed(t, dx9D2, "Q-bob", []string{"c", "d"}, "bob", "hk-b"),
+		dx9Needed(t, dx9D3, "Q-carol", []string{"e", "f"}, "carol", "hk-c"),
+		dx9Needed(t, dx9D4, "Q-dave", []string{"g", "h"}, "dave", "hk-d"),
+		dk4Presence(t, "01965b00-0000-7000-8000-0000000e0e01", "alice", "offline", fresh, "leave"),
+		dk4Presence(t, "01965b00-0000-7000-8000-0000000e0e02", "bob", "online", fresh, "join"),
+		dk4Presence(t, "01965b00-0000-7000-8000-0000000e0e03", "carol", "online", stale, "join"),
 	}
 	eventsPath := dx9BuildEventsFile(t, lines)
 
@@ -97,11 +98,12 @@ func TestFlagOrphanedPending_OfflineFlaggedOthersNot(t *testing.T) {
 func TestFlagOrphanedPending_NoEmit(t *testing.T) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	lines := []string{
-		dx9Needed(dx9D1, "Q1", []string{"a", "b"}, "alice", ""),
-		dk4Presence("01965b00-0000-7000-8000-0000000e0e01", "alice", "offline", now, "leave"),
+		dx9Needed(t, dx9D1, "Q1", []string{"a", "b"}, "alice", ""),
+		dk4Presence(t, "01965b00-0000-7000-8000-0000000e0e01", "alice", "offline", now, "leave"),
 	}
 	eventsPath := dx9BuildEventsFile(t, lines)
 
+	//nolint:gosec // G304: eventsPath is created by this test's temporary event-log fixture
 	before, err := os.ReadFile(eventsPath)
 	if err != nil {
 		t.Fatalf("read events before: %v", err)
@@ -113,11 +115,12 @@ func TestFlagOrphanedPending_NoEmit(t *testing.T) {
 		t.Fatalf("expected alice flagged orphaned-pending, got %+v", rows)
 	}
 
+	//nolint:gosec // G304: eventsPath is created by this test's temporary event-log fixture
 	after, err := os.ReadFile(eventsPath)
 	if err != nil {
 		t.Fatalf("read events after: %v", err)
 	}
-	if string(before) != string(after) {
+	if !bytes.Equal(before, after) {
 		t.Error("flagOrphanedPending mutated events.jsonl — the flag must be read-pure (N9/S6), no emit")
 	}
 }
@@ -126,7 +129,7 @@ func TestFlagOrphanedPending_NoEmit(t *testing.T) {
 // blocked_agent is never flagged (nothing to liveness-check).
 func TestFlagOrphanedPending_EmptyBlockedAgentNotFlagged(t *testing.T) {
 	eventsPath := dx9BuildEventsFile(t, []string{
-		dx9Needed(dx9D1, "Q1", []string{"a", "b"}, "", ""),
+		dx9Needed(t, dx9D1, "Q1", []string{"a", "b"}, "", ""),
 	})
 	rows := flagOrphanedPending([]decisionListItem{{DecisionID: dx9D1, Options: []string{"a", "b"}}}, eventsPath)
 	if len(rows) != 1 || rows[0].OrphanedPending {

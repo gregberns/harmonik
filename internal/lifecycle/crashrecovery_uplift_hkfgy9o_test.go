@@ -35,7 +35,6 @@ import (
 // reconLockUpliftWriteFile writes content to path, failing the test on error.
 func reconLockUpliftWriteFile(t *testing.T, path, content string) {
 	t.Helper()
-	//nolint:gosec // G306: mode 0600 matches reconciliation-lock convention; path from t.TempDir()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("reconLockUpliftWriteFile: write %q: %v", path, err)
 	}
@@ -50,7 +49,7 @@ func reconLockUpliftOpenForRead(t *testing.T, path string) *os.File {
 	if err != nil {
 		t.Fatalf("reconLockUpliftOpenForRead: open %q: %v", path, err)
 	}
-	t.Cleanup(func() { _ = f.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = f.Close() })
 	return f
 }
 
@@ -70,12 +69,12 @@ func reconLockUpliftFindDeadPID(t *testing.T) int {
 // returns after observing EOF from its stdout pipe. At that point the child has
 // exited but cmd.Wait has not been called, so POSIX kernels keep it as a zombie
 // until the registered cleanup reaps it.
-func reconLockUpliftStartExitedChild(t *testing.T) (*exec.Cmd, int) {
+func reconLockUpliftStartExitedChild(t *testing.T) (cmd *exec.Cmd, pid int) {
 	t.Helper()
 
 	testBin := os.Args[0]
 	//nolint:gosec // G204: testBin is the current test binary.
-	cmd := exec.CommandContext(t.Context(), testBin, "-test.run=^TestReconLockZombieChildStub$")
+	cmd = exec.CommandContext(t.Context(), testBin, "-test.run=^TestReconLockZombieChildStub$")
 	cmd.Env = append(os.Environ(), "GO_RECON_LOCK_ZOMBIE_CHILD=1")
 
 	stdout, err := cmd.StdoutPipe()
@@ -262,7 +261,7 @@ func TestReconLockProbeStale_DeadPIDIsStaleAndHoldsFlock(t *testing.T) {
 	if held == nil {
 		t.Fatal("reconLockProbeStale dead-PID: stale=true but held file is nil")
 	}
-	defer func() { _ = held.Close() }() //nolint:errcheck // best-effort close of test lock file
+	defer func() { _ = held.Close() }()
 
 	// The flock must STILL be held: a competing acquirer (fresh fd on the same
 	// path, LOCK_EX|LOCK_NB) must observe EWOULDBLOCK. flock locks are held per
@@ -272,7 +271,7 @@ func TestReconLockProbeStale_DeadPIDIsStaleAndHoldsFlock(t *testing.T) {
 	if openErr != nil {
 		t.Fatalf("open competitor fd: %v", openErr)
 	}
-	defer func() { _ = competitor.Close() }() //nolint:errcheck // best-effort close of test lock file
+	defer func() { _ = competitor.Close() }()
 	flockErr := syscall.Flock(int(competitor.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr == nil {
 		t.Error("RC-002a regression: competing flock succeeded while probe result outstanding — flock was released before unlink")

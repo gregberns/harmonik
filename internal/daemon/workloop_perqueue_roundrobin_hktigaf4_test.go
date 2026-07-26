@@ -26,6 +26,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // perQueueRRHandle returns a minimal *RunHandle tagged with queueName.
@@ -189,7 +190,7 @@ func TestPerQueueRR_AllRemoteQueueAdmitsBeyondMaxConcurrent(t *testing.T) {
 	t.Parallel()
 
 	const globalCap = 4 // max_concurrent — the old gate would cap the queue here
-	qs := NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	// jessica-sat: no explicit Workers (defaults to globalCap), 3 pending items.
 	qs.SetQueueByName("jessica-sat", perQueueRRWaveQueue("jessica-sat", "qid-jsat", 3, 0 /*Workers=0 → default*/))
 

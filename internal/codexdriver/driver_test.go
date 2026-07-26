@@ -54,6 +54,20 @@ func emitPostureMarker(tag string, params json.RawMessage) {
 	fmt.Fprintf(os.Stderr, "%s sandbox=%s approval=%s\n", tag, p.Sandbox, p.ApprovalPolicy)
 }
 
+// emitWritableRootsMarker prints a stderr marker echoing the runtimeWorkspaceRoots
+// the driver stamped on a thread/start or thread/resume request (hk-daegv). A test
+// asserts the worktree cwd + git common dir reached the wire; an empty list proves
+// the omit path (no WritableRoots hook / empty cwd).
+func emitWritableRootsMarker(tag string, params json.RawMessage) {
+	var p struct {
+		RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		fmt.Fprintf(os.Stderr, "%s decode-error: %v\n", tag, err)
+	}
+	fmt.Fprintf(os.Stderr, "%s roots=%s\n", tag, strings.Join(p.RuntimeWorkspaceRoots, ","))
+}
+
 // runTwin speaks the codex app-server NDJSON wire on stdio.
 //
 // Modes:
@@ -125,6 +139,7 @@ func runTwin(mode string) {
 			// approvalPolicy) so a test can assert the headless posture reached the
 			// wire. Empty fields prove the omit path (NFR7 default posture).
 			emitPostureMarker("TWIN_POSTURE_START", env.Params)
+			emitWritableRootsMarker("TWIN_WRITABLE_ROOTS_START", env.Params)
 			emit(`{"id":%d,"result":{"thread":{"id":"th_1"},"model":"twin"}}`, *env.ID)
 			if mode == "dieafterhandshake" {
 				// Let the driver process the thread result → reach Ready and latch
@@ -148,6 +163,7 @@ func runTwin(mode string) {
 				fmt.Fprintf(os.Stderr, "twin thread/resume decode-error: %v\n", err)
 			}
 			emitPostureMarker("TWIN_POSTURE_RESUME", env.Params)
+			emitWritableRootsMarker("TWIN_WRITABLE_ROOTS_RESUME", env.Params)
 			fmt.Fprintln(os.Stderr, "TWIN_RESUME_RECEIVED "+rp.ThreadID)
 			emit(`{"id":%d,"result":{"thread":{"id":%q},"model":"twin"}}`, *env.ID, rp.ThreadID)
 		case "turn/start":

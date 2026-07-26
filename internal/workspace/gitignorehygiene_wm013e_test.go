@@ -46,15 +46,12 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		gitignorePath := filepath.Join(repo, ".gitignore")
 
 		entries := strings.Join(leaseFixtureRequiredGitignoreEntries, "\n") + "\n"
-		if err := os.WriteFile(gitignorePath, []byte(entries), 0o644); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte(entries), 0o600); err != nil {
 			t.Fatalf("WM-013e: WriteFile .gitignore: %v", err)
 		}
 
 		// Simulate the workspace manager's startup check.
-		data, err := os.ReadFile(gitignorePath)
-		if err != nil {
-			t.Fatalf("WM-013e: ReadFile .gitignore: %v", err)
-		}
+		data := mustReadFile(t, gitignorePath)
 		content := string(data)
 
 		for _, entry := range leaseFixtureRequiredGitignoreEntries {
@@ -73,15 +70,12 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		gitignorePath := filepath.Join(repo, ".gitignore")
 
 		// Write a partial .gitignore (missing all required entries).
-		if err := os.WriteFile(gitignorePath, []byte("*.log\n*.tmp\n"), 0o644); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte("*.log\n*.tmp\n"), 0o600); err != nil {
 			t.Fatalf("WM-013e: WriteFile .gitignore: %v", err)
 		}
 
 		// Simulate: detect missing entries and append them.
-		data, err := os.ReadFile(gitignorePath)
-		if err != nil {
-			t.Fatalf("WM-013e: ReadFile .gitignore: %v", err)
-		}
+		data := mustReadFile(t, gitignorePath)
 		existing := string(data)
 
 		var missing []string
@@ -95,29 +89,25 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		}
 
 		// Append the missing entries.
-		f, err := os.OpenFile(gitignorePath, os.O_WRONLY|os.O_APPEND, 0o644)
+		// #nosec G304 -- gitignorePath is a test-controlled path under t.TempDir.
+		f, err := os.OpenFile(gitignorePath, os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			t.Fatalf("WM-013e: OpenFile .gitignore for append: %v", err)
 		}
 		for _, entry := range missing {
 			if _, err := f.WriteString(entry + "\n"); err != nil {
-				_ = f.Close()
-				t.Fatalf("WM-013e: WriteString %q: %v", entry, err)
+				t.Fatalf("WM-013e: WriteString %q: %v", entry, withCleanupErrs(err, f.Close()))
 			}
 		}
 		if err := f.Sync(); err != nil {
-			_ = f.Close()
-			t.Fatalf("WM-013e: Sync .gitignore: %v", err)
+			t.Fatalf("WM-013e: Sync .gitignore: %v", withCleanupErrs(err, f.Close()))
 		}
 		if err := f.Close(); err != nil {
 			t.Fatalf("WM-013e: Close .gitignore: %v", err)
 		}
 
 		// Verify all required entries are now present.
-		data2, err := os.ReadFile(gitignorePath)
-		if err != nil {
-			t.Fatalf("WM-013e: ReadFile .gitignore after write: %v", err)
-		}
+		data2 := mustReadFile(t, gitignorePath)
 		updated := string(data2)
 		for _, entry := range leaseFixtureRequiredGitignoreEntries {
 			if !leaseFixtureFindSubstring(updated, entry) {
@@ -140,15 +130,12 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 
 		// Simulate: create .gitignore with required entries.
 		content := strings.Join(leaseFixtureRequiredGitignoreEntries, "\n") + "\n"
-		if err := os.WriteFile(gitignorePath, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(gitignorePath, []byte(content), 0o600); err != nil {
 			t.Fatalf("WM-013e: WriteFile .gitignore: %v", err)
 		}
 
 		// Verify.
-		data, err := os.ReadFile(gitignorePath)
-		if err != nil {
-			t.Fatalf("WM-013e: ReadFile .gitignore: %v", err)
-		}
+		data := mustReadFile(t, gitignorePath)
 		for _, entry := range leaseFixtureRequiredGitignoreEntries {
 			if !leaseFixtureFindSubstring(string(data), entry) {
 				t.Errorf("WM-013e: newly created .gitignore missing %q", entry)
@@ -191,17 +178,21 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		}
 
 		// Restrict the parent directory to read+execute: no write permission.
+		// #nosec G302 -- test fixture intentionally removes write permission.
 		if err := os.Chmod(repo, 0o555); err != nil {
 			t.Fatalf("WM-013e: Chmod repo 0o555: %v", err)
 		}
 		// Restore write permission on test cleanup so t.TempDir() cleanup can proceed.
 		t.Cleanup(func() {
-			_ = os.Chmod(repo, 0o755)
+			// #nosec G302 -- restores private test-fixture directory permissions.
+			if err := os.Chmod(repo, 0o700); err != nil {
+				t.Errorf("WM-013e: restore repo write permission: %v", err)
+			}
 		})
 
 		// Attempt to write .gitignore — MUST fail with a permission error.
 		content := strings.Join(leaseFixtureRequiredGitignoreEntries, "\n") + "\n"
-		writeErr := os.WriteFile(gitignorePath, []byte(content), 0o644)
+		writeErr := os.WriteFile(gitignorePath, []byte(content), 0o600)
 		if writeErr == nil {
 			t.Fatal("WM-013e: expected write to fail with permission denied, but it succeeded")
 		}

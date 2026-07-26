@@ -17,7 +17,9 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -136,25 +138,33 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 	outputFile := fs.String("output", "", "Output file")
 	filterRunID := fs.String("run-id", "", "Filter to a specific run_id")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
-			fmt.Fprint(stdout, evalCollectHelp)
+		if errors.Is(err, flag.ErrHelp) {
+			if _, writeErr := fmt.Fprint(stdout, evalCollectHelp); writeErr != nil {
+				return 1
+			}
 			return 0
 		}
-		fmt.Fprintf(stderr, "harmonik eval collect: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval collect: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if *projectDir == "" {
 		wd, err := getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik eval collect: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik eval collect: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		*projectDir = wd
 	}
 	absProject, err := filepath.Abs(*projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval collect: cannot resolve project path: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval collect: cannot resolve project path: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -167,7 +177,9 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 
 	states, err := evalReadEvents(*eventsFile, *filterRunID)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval collect: reading events: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval collect: reading events: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -177,27 +189,57 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 	// are skipped so re-collecting does not double-count the training set.
 	existing, err := evalReadExistingRunIDs(*outputFile)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval collect: reading existing output: %v\n", err) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval collect: reading existing output: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
-	f, err := os.OpenFile(*outputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(*outputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval collect: opening output: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval collect: opening output: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
-	defer f.Close()
+	written, skipped, writeErr := evalWriteRecords(f, states, existing, absProject, piModel, stderr)
+	// The output file is append-mode: a Close failure means the last records may
+	// never have reached disk, so it is reported as a collect failure rather than
+	// silently folded into a success message.
+	if closeErr := f.Close(); closeErr != nil && writeErr == nil {
+		writeErr = fmt.Errorf("close %s: %w", *outputFile, closeErr)
+	}
+	if writeErr != nil {
+		if _, outputErr := fmt.Fprintf(stderr, "harmonik eval collect: %v\n", writeErr); outputErr != nil {
+			return 1
+		}
+		return 1
+	}
 
-	// Emit in a deterministic run_id order so re-collecting the same events
-	// produces byte-identical output (map iteration order is randomised).
+	if _, err := fmt.Fprintf(stdout, "harmonik eval collect: wrote %d record(s) to %s (%d already present, skipped)\n", written, *outputFile, skipped); err != nil {
+		return 1
+	}
+	return 0
+}
+
+// evalWriteRecords appends one JSONL record per collectable run in deterministic
+// run_id order (map iteration order is randomised, and re-collecting the same
+// events must produce byte-identical output). Records that cannot be built or
+// marshalled are reported on stderr and skipped; a write failure aborts and is
+// returned so the caller can close the file and fail the command.
+func evalWriteRecords(
+	w io.Writer,
+	states map[string]*evalRunState,
+	existing map[string]struct{},
+	absProject, piModel string,
+	stderr io.Writer,
+) (written, skipped int, err error) {
 	runIDs := make([]string, 0, len(states))
 	for runID := range states {
 		runIDs = append(runIDs, runID)
 	}
 	sort.Strings(runIDs)
 
-	written := 0
-	skipped := 0
 	for _, runID := range runIDs {
 		st := states[runID]
 		if !st.gradeDispatched {
@@ -207,26 +249,26 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 			skipped++
 			continue // already collected on a prior run
 		}
-		rec, err := evalBuildRecord(runID, st, absProject, piModel)
-		if err != nil {
-			fmt.Fprintf(stderr, "harmonik eval collect: building record for run %s: %v\n", runID, err)
+		rec, buildErr := evalBuildRecord(runID, st, absProject, piModel)
+		if buildErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik eval collect: building record for run %s: %v\n", runID, buildErr); writeErr != nil {
+				return written, skipped, writeErr
+			}
 			continue
 		}
-		line, err := json.Marshal(rec)
-		if err != nil {
-			fmt.Fprintf(stderr, "harmonik eval collect: marshalling record: %v\n", err)
+		line, marshalErr := json.Marshal(rec)
+		if marshalErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik eval collect: marshalling record: %v\n", marshalErr); writeErr != nil {
+				return written, skipped, writeErr
+			}
 			continue
 		}
-		if _, err := f.Write(append(line, '\n')); err != nil {
-			fmt.Fprintf(stderr, "harmonik eval collect: writing record: %v\n", err)
-			return 1
+		if _, writeErr := w.Write(append(line, '\n')); writeErr != nil {
+			return written, skipped, fmt.Errorf("writing record for run %s: %w", runID, writeErr)
 		}
 		written++
 	}
-
-	fmt.Fprintf(stdout, "harmonik eval collect: wrote %d record(s) to %s (%d already present, skipped)\n", //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
-		written, *outputFile, skipped)
-	return 0
+	return written, skipped, nil
 }
 
 // evalReadExistingRunIDs returns the set of run_ids already present in the
@@ -240,7 +282,11 @@ func evalReadExistingRunIDs(path string) (map[string]struct{}, error) {
 		}
 		return nil, err
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // read-only file; close error is non-actionable
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik eval: close %s: %v\n", path, closeErr)
+		}
+	}()
 
 	scanner := bufio.NewScanner(f)
 	setLargeScanBuffer(scanner)
@@ -270,7 +316,11 @@ func evalReadEvents(path, filterRunID string) (map[string]*evalRunState, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik eval: close %s: %v\n", path, closeErr)
+		}
+	}()
 
 	states := map[string]*evalRunState{}
 
@@ -434,7 +484,7 @@ func evalBuildRecord(runID string, st *evalRunState, projectDir, piModel string)
 
 // evalFetchBeadLabels invokes `br show --json <beadID>` and returns the labels slice.
 func evalFetchBeadLabels(beadID, projectDir string) ([]string, error) {
-	cmd := exec.Command("br", "show", "--json", beadID)
+	cmd := exec.CommandContext(context.Background(), "br", "show", "--json", beadID)
 	cmd.Dir = projectDir
 	out, err := cmd.Output()
 	if err != nil {
@@ -491,7 +541,9 @@ func evalReadPiModel(projectDir string) string {
 // runEvalCmd dispatches harmonik eval sub-verbs.
 func runEvalCmd(subArgs []string, stdout, stderr io.Writer) int {
 	if len(subArgs) == 0 || subArgs[0] == "--help" || subArgs[0] == "-h" {
-		fmt.Fprint(stdout, evalCmdHelp)
+		if _, err := fmt.Fprint(stdout, evalCmdHelp); err != nil {
+			return 1
+		}
 		return 0
 	}
 	switch subArgs[0] {
@@ -502,7 +554,9 @@ func runEvalCmd(subArgs []string, stdout, stderr io.Writer) int {
 	case "report":
 		return runEvalReport(subArgs[1:], stdout, stderr, os.Getwd)
 	default:
-		fmt.Fprintf(stderr, "harmonik eval: unknown verb %q\n\n%s", subArgs[0], evalCmdHelp)
+		if _, err := fmt.Fprintf(stderr, "harmonik eval: unknown verb %q\n\n%s", subArgs[0], evalCmdHelp); err != nil {
+			return 1
+		}
 		return 2
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,12 +28,19 @@ func captureProjectHashOutput(t *testing.T, args []string) (stdout string, exitC
 
 	exitCode = runProjectHashSubcommand(args)
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stdout writer: %v", err)
+	}
 	os.Stdout = old
 
-	var buf [64]byte
-	n, _ := r.Read(buf[:])
-	return string(buf[:n]), exitCode
+	buf, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close stdout reader: %v", err)
+	}
+	return string(buf), exitCode
 }
 
 func TestRunProjectHashSubcommand_DefaultDir(t *testing.T) {
@@ -123,7 +131,7 @@ func TestRunProjectHashSubcommand_OutputFormat(t *testing.T) {
 		t.Errorf("hash length = %d, want 12", len(hash))
 	}
 	for _, c := range hash {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			t.Errorf("hash %q contains non-lowercase-hex char %q", hash, c)
 		}
 	}
@@ -132,10 +140,18 @@ func TestRunProjectHashSubcommand_OutputFormat(t *testing.T) {
 func TestRunProjectHashSubcommand_HelpExitsZero(t *testing.T) {
 	// --help exits 0. Capture stdout to suppress output in test log.
 	old := os.Stdout
-	_, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
 	os.Stdout = w
 	code := runProjectHashSubcommand([]string{"--help"})
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stdout writer: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close stdout reader: %v", err)
+	}
 	os.Stdout = old
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 for --help", code)

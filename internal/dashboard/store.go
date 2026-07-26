@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ErrNotFound is returned by Read when dashboard.json does not exist yet.
@@ -40,8 +42,7 @@ func Write(projectDir string, ds *DashboardState) error {
 	data = append(data, '\n')
 
 	dir := filepath.Join(projectDir, ".harmonik", "context")
-	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return err
 	}
 

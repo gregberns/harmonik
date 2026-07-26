@@ -33,8 +33,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // ---------------------------------------------------------------------------
@@ -108,6 +108,8 @@ func namedQueuesWorkersInvestigateQueue() queue.Queue {
 // Returns 0 when running >= maxConcurrent (capacity full).
 //
 // Spec ref: specs/queue-model.md §9.3 QM-062.
+//
+//nolint:unparam // The helper models the configurable production capacity gate.
 func namedQueuesWorkersAdmitItems(g *queue.Group, maxConcurrent, currentlyRunning int) int {
 	available := maxConcurrent - currentlyRunning
 	if available <= 0 {
@@ -376,7 +378,7 @@ func TestNamedQueuesWorkers_QueueStore_HoldsBothNamedQueues(t *testing.T) {
 	mainQ := namedQueuesWorkersMainQueue()
 	invQ := namedQueuesWorkersInvestigateQueue()
 
-	qs := daemon.NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(&mainQ)
 	qs.SetQueueByName("investigate", &invQ)
 
@@ -429,7 +431,7 @@ func TestNamedQueuesWorkers_QueueStore_EligibleFromBothQueues(t *testing.T) {
 	mainQ := namedQueuesWorkersMainQueue()
 	invQ := namedQueuesWorkersInvestigateQueue()
 
-	qs := daemon.NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(&mainQ)
 	qs.SetQueueByName("investigate", &invQ)
 

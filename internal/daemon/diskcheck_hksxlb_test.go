@@ -7,14 +7,18 @@ package daemon_test
 //      flight (runRegistry.Len() > 0 — ActiveRuns count guard).
 //   2. The reaper DOES run `go clean -cache` when idle (runRegistry.Len()==0).
 //
-// Both the reactive (below-watermark) and proactive (60-min cadence) paths are
-// covered for each scenario.
+// The reap is reactive-only (hk-gjbpp): it only fires when disk is below the
+// watermark. A time-based proactive cadence that also reaped on a healthy
+// disk existed here previously and was removed — see the doc comment on
+// diskcheck_hksxlb.go for why. TestDiskCheck_ReactiveOnly_NoProactiveCadence
+// guards against its reintroduction.
 //
 // Shared stubs (stubBeadLedger, stubEventCollector) are defined in
 // workloop_test.go in this same package (daemon_test).
 //
 // Helper prefix: diskCheckFixture (per implementer-protocol.md §Helper-prefix).
 // Bead ref: hk-guez.
+// Bead ref: hk-gjbpp (removed proactive cadence; reactive-only).
 
 import (
 	"context"
@@ -74,9 +78,8 @@ func diskCheckFixtureRegisterRuns(t *testing.T, reg *daemon.RunRegistry, runCoun
 //   - freeBytesFunc controls the apparent free-space reading.
 //   - cleanFn captures or stubs `go clean -cache`.
 //
-// The caller must set interval overrides via ExportedDiskCheckSetCheckInterval /
-// ExportedDiskCheckSetGoCacheCleanInterval before calling
-// ExportedRunPeriodicDiskCheck.
+// The caller must set the check-interval override via
+// ExportedDiskCheckSetCheckInterval before calling ExportedRunPeriodicDiskCheck.
 func diskCheckFixtureBuildDeps(
 	t *testing.T,
 	runCount int,
@@ -149,56 +152,65 @@ func TestDiskCheck_ReactiveReaper_RunsWhenIdle(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests — proactive (60-min cadence) path
+// Tests — reactive-only guard (hk-gjbpp)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestDiskCheck_ProactiveReaper_SkipsWhenRunsInFlight verifies that the
-// proactive reap does NOT fire when ActiveRuns > 0, even when the proactive
-// interval has elapsed and disk is healthy.
-func TestDiskCheck_ProactiveReaper_SkipsWhenRunsInFlight(t *testing.T) {
+// TestDiskCheck_ReactiveOnly_NoProactiveCadence guards against reintroducing
+// a cadence-based reap (hk-gjbpp): the reap must fire only on genuine disk
+// pressure, never merely because the daemon is idle and healthy-disk time has
+// passed.
+//
+//  1. Healthy disk + idle: `go clean -cache` must be called zero times.
+//  2. Disk below watermark + idle: the reap must fire exactly once.
+func TestDiskCheck_ReactiveOnly_NoProactiveCadence(t *testing.T) {
 	t.Parallel()
 
-	cleanCount, cleanFn := diskCheckFixtureCounter()
-	deps := daemon.ExportedWorkLoopDeps(
-		diskCheckFixtureBuildDeps(t, 1 /* run in flight */, diskCheckFixtureAboveWatermark(), cleanFn),
-	)
-	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
-	daemon.ExportedDiskCheckSetGoCacheCleanInterval(&deps, time.Nanosecond)
+	t.Run("healthy_disk_idle_never_reaps", func(t *testing.T) {
+		t.Parallel()
 
-	ms := daemon.ExportedNewMaintState()
-	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
+		cleanCount, cleanFn := diskCheckFixtureCounter()
+		deps := daemon.ExportedWorkLoopDeps(
+			diskCheckFixtureBuildDeps(t, 0 /* idle */, diskCheckFixtureAboveWatermark(), cleanFn),
+		)
+		daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
 
-	if got := atomic.LoadInt32(cleanCount); got != 0 {
-		t.Errorf("proactive go clean -cache called %d time(s) with a run in flight; want 0", got)
-	}
+		ms := daemon.ExportedNewMaintState()
+		daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
+
+		if got := atomic.LoadInt32(cleanCount); got != 0 {
+			t.Errorf("go clean -cache called %d time(s) on healthy disk while idle; want 0 (sub-step B was removed, hk-gjbpp)", got)
+		}
+	})
+
+	t.Run("below_watermark_idle_reaps_exactly_once", func(t *testing.T) {
+		t.Parallel()
+
+		cleanCount, cleanFn := diskCheckFixtureCounter()
+		deps := daemon.ExportedWorkLoopDeps(
+			diskCheckFixtureBuildDeps(t, 0 /* idle */, diskCheckFixtureBelowWatermark(), cleanFn),
+		)
+		daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
+
+		ms := daemon.ExportedNewMaintState()
+		daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
+
+		if got := atomic.LoadInt32(cleanCount); got != 1 {
+			t.Errorf("go clean -cache called %d time(s) below watermark while idle; want exactly 1", got)
+		}
+	})
 }
 
-// TestDiskCheck_ProactiveReaper_RunsWhenIdle verifies that the proactive reap
-// fires when idle AND the proactive interval has elapsed (hk-y3frr restored).
-func TestDiskCheck_ProactiveReaper_RunsWhenIdle(t *testing.T) {
-	t.Parallel()
-
-	cleanCount, cleanFn := diskCheckFixtureCounter()
-	deps := daemon.ExportedWorkLoopDeps(
-		diskCheckFixtureBuildDeps(t, 0 /* idle */, diskCheckFixtureAboveWatermark(), cleanFn),
-	)
-	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
-	daemon.ExportedDiskCheckSetGoCacheCleanInterval(&deps, time.Nanosecond)
-
-	ms := daemon.ExportedNewMaintState()
-	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
-
-	if got := atomic.LoadInt32(cleanCount); got != 1 {
-		t.Errorf("proactive go clean -cache called %d time(s) when idle; want 1", got)
-	}
-}
-
-// TestDiskCheck_ProactiveReaper_TOCTOU verifies that cacheReapMu provides
-// reap↔dispatch mutual exclusion: Register (RLock) blocks while the proactive
-// reap holds the WLock, and proceeds immediately after the reap releases it.
+// TestDiskCheck_ReactiveReaper_TOCTOU verifies that cacheReapMu provides
+// reap↔dispatch mutual exclusion on the reactive (below-watermark) reap path:
+// Register (RLock) blocks while the reap holds the WLock, and proceeds
+// immediately after the reap releases it.
+//
+// Formerly exercised via the proactive cadence; re-pointed at the reactive
+// path when sub-step B was removed (hk-gjbpp) — the cacheReapMu semantics
+// (hk-y3frr) are unchanged and still live on this path.
 //
 // Bead ref: hk-y3frr.
-func TestDiskCheck_ProactiveReaper_TOCTOU(t *testing.T) {
+func TestDiskCheck_ReactiveReaper_TOCTOU(t *testing.T) {
 	t.Parallel()
 
 	// cleanStarted signals that the reap has acquired the WLock and is
@@ -216,13 +228,12 @@ func TestDiskCheck_ProactiveReaper_TOCTOU(t *testing.T) {
 	}
 
 	mu := &sync.RWMutex{}
-	params := diskCheckFixtureBuildDeps(t, 0 /* idle */, diskCheckFixtureAboveWatermark(), stubClean)
+	params := diskCheckFixtureBuildDeps(t, 0 /* idle */, diskCheckFixtureBelowWatermark(), stubClean)
 	params.CacheReapMu = mu
 	deps := daemon.ExportedWorkLoopDeps(params)
 	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
-	daemon.ExportedDiskCheckSetGoCacheCleanInterval(&deps, time.Nanosecond)
 
-	// Start the proactive reap in a goroutine; it will block inside stubClean.
+	// Start the reactive reap in a goroutine; it will block inside stubClean.
 	reapDone := make(chan struct{})
 	go func() {
 		defer close(reapDone)

@@ -16,10 +16,10 @@ package daemon_test
 // worker a DOT run failed with:
 //
 //	dot: resolve HEAD before agentic node "implement" at iteration 0:
-//	daemon: resolveWorktreeHEAD: git rev-parse HEAD in
+//	daemon: gitprobe.ResolveWorktreeHEAD: git rev-parse HEAD in
 //	"<worker>/.harmonik/worktrees/<run_id>": chdir … no such file
 //
-// i.e. the DOT workflow ran resolveWorktreeHEAD LOCALLY on box A against the
+// i.e. the DOT workflow ran gitprobe.ResolveWorktreeHEAD LOCALLY on box A against the
 // WORKER's worktree path, instead of via the run's SSHRunner. This test drives
 // the SAME ssh-localhost remote lifecycle as the single-mode E2E but in DOT
 // workflow mode, so every DOT-specific worktree probe is exercised over ssh.

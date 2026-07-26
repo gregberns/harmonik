@@ -39,9 +39,12 @@ func (s AgentPresenceStatus) Valid() bool {
 type AgentPresenceReason string
 
 const (
-	AgentPresenceReasonJoin    AgentPresenceReason = "join"
+	// AgentPresenceReasonJoin marks an agent's initial presence event.
+	AgentPresenceReasonJoin AgentPresenceReason = "join"
+	// AgentPresenceReasonRefresh marks a periodic presence refresh.
 	AgentPresenceReasonRefresh AgentPresenceReason = "refresh"
-	AgentPresenceReasonLeave   AgentPresenceReason = "leave"
+	// AgentPresenceReasonLeave marks an agent's departure event.
+	AgentPresenceReasonLeave AgentPresenceReason = "leave"
 )
 
 // Valid reports whether r is one of the three declared AgentPresenceReason constants.

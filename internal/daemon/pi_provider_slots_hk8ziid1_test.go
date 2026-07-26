@@ -10,7 +10,7 @@ package daemon_test
 import (
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // TestPiHarnessConfig_ProviderSlots_ParsedFromConfig asserts
@@ -30,7 +30,7 @@ harnesses:
       openrouter: 4
       ornith: 2
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -61,7 +61,7 @@ harnesses:
     model: deepseek/deepseek-v4-flash
     api_key_env: OPENROUTER_API_KEY
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}

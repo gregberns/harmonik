@@ -22,7 +22,7 @@ import (
 )
 
 // dryRunFixtureBeads builds a slice of minimal BeadRecords for plan tests.
-func dryRunFixtureBeads(ids []string, titles []string) []core.BeadRecord {
+func dryRunFixtureBeads(ids, titles []string) []core.BeadRecord {
 	recs := make([]core.BeadRecord, len(ids))
 	for i, id := range ids {
 		recs[i] = core.BeadRecord{
@@ -42,7 +42,9 @@ func TestDryRunPlanSingleMode(t *testing.T) {
 
 	recs := dryRunFixtureBeads([]string{"hk-aaa111"}, []string{"Fix the thing"})
 	var buf strings.Builder
-	printDryRunPlan(&buf, recs, string(core.WorkflowModeSingle), "", 1, queue.GroupKindStream)
+	if err := printDryRunPlan(&buf, recs, string(core.WorkflowModeSingle), "", 1, queue.GroupKindStream); err != nil {
+		t.Fatalf("print dry-run plan: %v", err)
+	}
 
 	out := buf.String()
 	if !strings.Contains(out, "hk-aaa111") {
@@ -69,7 +71,9 @@ func TestDryRunPlanReviewLoopMode(t *testing.T) {
 		[]string{"Add feature A", "Add feature B"},
 	)
 	var buf strings.Builder
-	printDryRunPlan(&buf, recs, string(core.WorkflowModeReviewLoop), "", 2, queue.GroupKindWave)
+	if err := printDryRunPlan(&buf, recs, string(core.WorkflowModeReviewLoop), "", 2, queue.GroupKindWave); err != nil {
+		t.Fatalf("print dry-run plan: %v", err)
+	}
 
 	out := buf.String()
 	if !strings.Contains(out, "hk-bbb222") || !strings.Contains(out, "hk-ccc333") {
@@ -97,7 +101,9 @@ func TestDryRunPlanDotMode(t *testing.T) {
 
 	recs := dryRunFixtureBeads([]string{"hk-ddd444"}, []string{"Dot workflow bead"})
 	var buf strings.Builder
-	printDryRunPlan(&buf, recs, string(core.WorkflowModeDot), "./my.dot", 1, queue.GroupKindStream)
+	if err := printDryRunPlan(&buf, recs, string(core.WorkflowModeDot), "./my.dot", 1, queue.GroupKindStream); err != nil {
+		t.Fatalf("print dry-run plan: %v", err)
+	}
 
 	out := buf.String()
 	if !strings.Contains(out, "hk-ddd444") {
@@ -119,7 +125,9 @@ func TestDryRunPlanLongTitle(t *testing.T) {
 	longTitle := strings.Repeat("x", 80)
 	recs := dryRunFixtureBeads([]string{"hk-eee555"}, []string{longTitle})
 	var buf strings.Builder
-	printDryRunPlan(&buf, recs, string(core.WorkflowModeSingle), "", 1, queue.GroupKindStream)
+	if err := printDryRunPlan(&buf, recs, string(core.WorkflowModeSingle), "", 1, queue.GroupKindStream); err != nil {
+		t.Fatalf("print dry-run plan: %v", err)
+	}
 
 	out := buf.String()
 	// The title should appear truncated (≤53 chars including the "..." suffix).

@@ -300,7 +300,6 @@ func TestRunStartedPayload_Valid_AllWorkflowModes(t *testing.T) {
 	}
 
 	for _, mode := range modes {
-		mode := mode
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			p := runstartedFixture(t)

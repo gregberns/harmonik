@@ -1,0 +1,116 @@
+{
+  "chunk": "RU-05b",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/lifecycle/tmux/adapter.go",
+    "internal/lifecycle/tmux/osadapter.go",
+    "internal/lifecycle/tmux/runner.go",
+    "internal/lifecycle/tmux/subcommand.go",
+    "internal/lifecycle/tmux/windowname.go",
+    "internal/lifecycle/tmux/orphansession.go",
+    "internal/lifecycle/tmux/orphanwindow.go",
+    "internal/keeper/tmuxresolve.go"
+  ],
+  "status": "reviewed",
+  "findings": [
+    {
+      "file": "internal/lifecycle/tmux/orphansession.go",
+      "line": 161,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Session orphan-detection hardcodes \"zsh\" as the idle-shell window name",
+      "detail": "countNonZshWindows treats a window as an idle/abandonable shell ONLY when its name equals the literal string \"zsh\". tmux derives the default window name from the running command's basename, so on a host whose login shell is bash/fish/sh (or where the operator overrides $SHELL, or on Linux CI runners where bash is default), an idle shell window is named \"bash\"/\"fish\"/\"sh\", not \"zsh\". Condition 1 (all-windows-are-idle-shells) then counts that idle window as an active workload, nonZsh>0, and the orphaned session is never reclaimed by that condition. Detection then leans entirely on the PID-liveness fallback, which itself skips (returns false) on any WindowPanePID read error. Net: on non-zsh hosts orphaned daemon sessions leak and accumulate across daemon restarts, defeating PL-006.",
+      "suggested_fix": "Detect idle shells by the actual shell basename (derive from $SHELL or match a set {zsh,bash,sh,fish,dash}) rather than the single literal \"zsh\"; or key orphan-detection off the harmonik window-name prefix / pane PID rather than the shell name."
+    },
+    {
+      "file": "internal/lifecycle/tmux/windowname.go",
+      "line": 106,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Window-name truncation still exceeds the stated 64-byte max",
+      "detail": "The documented invariant (line 50-53) and windowNameMaxBytes=64 promise a name no longer than 64 bytes. But the truncation branch produces beadPart = raw[:56] + \"~\" + 8-hex-chars = 56+1+8 = 65 bytes for the bead portion ALONE, before the sentinel prefix (\"hk-<hash6>-\" = 9 bytes when ownsSession=false) and the phase suffix (\"/i<n>\", \"/r<n>\") are prepended/appended. So a truncated name is always >=65 bytes and can reach ~78 bytes — it never satisfies the <=64 invariant the code claims to enforce. beadIDMaxBytes (56) is mis-sized: it must leave room for the 9-byte \"~<hash8>\" plus prefix+suffix inside 64.",
+      "suggested_fix": "Compute the truncation budget from windowNameMaxBytes minus len(sentinelPrefix) minus len(suffix) minus len(\"~\"+hash8) (=9), rather than the fixed constant 56; add a test asserting len(result) <= 64 for a long bead_id in each phase with ownsSession=false."
+    },
+    {
+      "file": "internal/lifecycle/tmux/osadapter.go",
+      "line": 541,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "WriteToPane leaks the loaded tmux buffer when PasteBuffer fails",
+      "detail": "WriteToPane calls LoadBuffer (which loads payload into named buffer <bufferName>) then PasteBuffer (which pastes AND deletes via -d). If PasteBuffer returns an error (pane gone, tmux transient failure), WriteToPane returns early and the loaded buffer is never deleted — the -d cleanup only runs on paste success. The named buffer persists in the tmux server. Because bufferName is deterministic it is overwritten on the next write, so the leak is bounded, but a failed write leaves stale payload bytes resident in the tmux server indefinitely if that pane/session is never written again (payloads can be large seed/context blobs).",
+      "suggested_fix": "On PasteBuffer failure, issue a best-effort `tmux delete-buffer -b <bufferName>` before returning, or document that callers must not rely on cleanup on the error path."
+    },
+    {
+      "file": "internal/lifecycle/tmux/osadapter.go",
+      "line": 617,
+      "severity": "low",
+      "category": "correctness",
+      "title": "parseTmuxMajorVersion rejects tmux dev/master builds (\"tmux next-3.x\")",
+      "detail": "tmux master/dev builds report `tmux next-3.4` (and some distro builds `tmux 3.4-rc`). parseTmuxMajorVersion takes parts[1]=\"next-3.4\", finds the '.' → majorStr=\"next-3\", strconv.Atoi fails, ProbeTmux returns a hard error. A perfectly capable tmux >=3.0 is then treated as unusable and the daemon aborts the tmux-dependent dispatch path (exit 22). Operators on rolling/dev tmux hit a false 'tmux probe failed'.",
+      "suggested_fix": "Strip a leading non-numeric token / extract the first run of digits before the dot (regex like `([0-9]+)\\.` on parts[1]), so \"next-3.4\" and \"3.4a\" both yield major=3."
+    },
+    {
+      "file": "internal/lifecycle/tmux/orphanwindow.go",
+      "line": 146,
+      "severity": "low",
+      "category": "dead-code",
+      "title": "windowSweepAnyRemain takes a prefix parameter it never uses",
+      "detail": "windowSweepAnyRemain accepts `prefix string` but immediately discards it (`_ = prefix` on line 166) and checks membership only against the killedSet. The parameter is threaded from the call site (line 111) purely to be ignored — dead signature surface that misleads a reader into thinking prefix filtering still happens during polling.",
+      "suggested_fix": "Drop the prefix parameter from windowSweepAnyRemain and its call site."
+    },
+    {
+      "file": "internal/lifecycle/tmux/windowname.go",
+      "line": 14,
+      "severity": "nit",
+      "category": "dead-code",
+      "title": "Unused constant hashSuffixLen",
+      "detail": "hashSuffixLen = 8 is declared in the const block but never referenced (the truncation code uses a literal sum[:4] → 8 hex chars via fmt, not this constant). grep confirms zero other uses. Dead declaration that will drift from the actual hash width.",
+      "suggested_fix": "Either use hashSuffixLen to derive the hash slice width, or delete the constant."
+    },
+    {
+      "file": "internal/lifecycle/tmux/osadapter.go",
+      "line": 651,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "isNotFoundErr / isNoSessionErr / isWindowCollisionErr rely on brittle substring matching",
+      "detail": "Binary-absence and tmux error classification is done by substring-scanning error/stderr text: isNotFoundErr matches on exec.ErrNotFound.Error() text and \"executable file not found\"; isWindowCollisionErr matches the very broad \"already exists\". These are locale/version fragile — a tmux stderr wording change, a localized message, or an unrelated error containing \"already exists\" silently misclassifies the failure (e.g. a genuine tmux failure swallowed as an idempotent no-op collision). isNotFoundErr in particular should use errors.Is(err, exec.ErrNotFound).",
+      "suggested_fix": "Use errors.Is(err, exec.ErrNotFound) for binary-absence; tighten the collision/no-session matchers to tmux's exact message tokens and add a regression test pinning the current tmux wording."
+    },
+    {
+      "file": "internal/lifecycle/tmux/orphansession.go",
+      "line": 93,
+      "severity": "low",
+      "category": "correctness",
+      "title": "SweepOrphanTmuxSessions increments killed even when KillSession errored",
+      "detail": "When adapter.KillSession returns a non-nil error that is NOT a benign TOCTOU (e.g. a real *ErrTmuxFailure), the code logs it but still executes killed++ and treats the session as reclaimed. The returned count then overstates how many sessions were actually destroyed, and the sweep reports success while a genuinely-stuck session survives. A caller using the count for health/alerting gets a false-clean signal.",
+      "suggested_fix": "Only increment killed when KillSession returns nil or ErrNoSession; surface other failures in the count or an aggregated error."
+    },
+    {
+      "file": "internal/lifecycle/tmux/subcommand.go",
+      "line": 283,
+      "severity": "low",
+      "category": "correctness",
+      "title": "tmuxStartLookupBin resolves tmux from the passed env's PATH but ProbeTmux/EnsureSession use the process PATH",
+      "detail": "RunTmuxStart probes and ensures the session via OSAdapter{} (LocalRunner → exec.CommandContext, which resolves \"tmux\" against the CURRENT PROCESS PATH), then locates the binary for exec-replace by scanning the PATH entry inside the caller-supplied `env` slice (tmuxStartLookupBin). When env diverges from os.Environ() (any caller passing a curated env), the probe can succeed against one tmux while the exec targets a different (or missing) binary path, yielding an inconsistent 'cannot locate tmux binary' exit-22 after a successful probe, or exec-ing a stale tmux.",
+      "suggested_fix": "Resolve the binary once (exec.LookPath honoring the same env used for the probe) and use that single path for both the probe and the exec-replace."
+    },
+    {
+      "file": "internal/keeper/tmuxresolve.go",
+      "line": 312,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "recentTranscriptTurn ignores scanner error, silently truncating on an over-long line",
+      "detail": "The bufio.Scanner buffer is capped at 16 MB per line. If a transcript line exceeds that (a large inline tool_result), sc.Scan() returns false with bufio.ErrTooLong and the loop terminates early; sc.Err() is never checked. The function then returns whatever lastTs it had found before the giant line — which, because it scans forward keeping the LAST match, means the truly-most-recent turn (after the oversized line) is missed and a stale timestamp is returned as if authoritative. The keeper then mis-judges session idleness.",
+      "suggested_fix": "Check sc.Err() after the loop; on ErrTooLong either skip past the oversized line via a raw reader or return (zero,false) so the caller does not act on a partial scan."
+    },
+    {
+      "file": "internal/lifecycle/tmux/orphansession.go",
+      "line": 173,
+      "severity": "nit",
+      "category": "error-handling",
+      "title": "isESRCH uses == instead of errors.Is",
+      "detail": "isESRCH compares `err == syscall.ESRCH`. syscall.Kill currently returns the bare Errno so this works today, but a wrapped error (or a future change routing through an error-wrapping helper) would break liveness detection and cause a dead PID to be read as alive, suppressing an orphan kill. errors.Is(err, syscall.ESRCH) is the robust form.",
+      "suggested_fix": "Use errors.Is(err, syscall.ESRCH)."
+    }
+  ]
+}

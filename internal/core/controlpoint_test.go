@@ -79,7 +79,6 @@ func TestControlPointValid_AllKinds(t *testing.T) {
 
 	kinds := []Kind{KindGate, KindHook, KindGuard, KindBudget}
 	for _, k := range kinds {
-		k := k
 		t.Run(string(k), func(t *testing.T) {
 			t.Parallel()
 
@@ -145,7 +144,6 @@ func TestControlPointValid_WrongOutcomeActionForKind(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.kind)+"/"+string(tc.action), func(t *testing.T) {
 			t.Parallel()
 
@@ -191,7 +189,6 @@ func TestControlPointValid_InvalidSchemaVersion(t *testing.T) {
 		{"negative_large", -100},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.label, func(t *testing.T) {
 			t.Parallel()
 
@@ -272,7 +269,6 @@ func TestOutcomeActionValidForKind(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.kind)+"/"+string(tc.action), func(t *testing.T) {
 			t.Parallel()
 
@@ -293,7 +289,6 @@ func TestKindPayloadValidForKind(t *testing.T) {
 	// Empty (all nil) is invalid for all Kinds.
 	var empty KindPayload
 	for _, k := range []Kind{KindGate, KindHook, KindGuard, KindBudget} {
-		k := k
 		t.Run("empty/"+string(k), func(t *testing.T) {
 			t.Parallel()
 			if empty.ValidForKind(k) {
@@ -424,7 +419,6 @@ func TestDelegationPathValid(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if tc.dp.Valid() {

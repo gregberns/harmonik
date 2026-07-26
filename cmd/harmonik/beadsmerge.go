@@ -112,19 +112,16 @@ func runBeadsMergeSubcommand(subArgs []string) int {
 	otherPath := subArgs[2]    // %B
 	workingPath := subArgs[3]  // %P (working-tree path for conflict log)
 
-	//nolint:gosec // G304: paths provided by git invocation via registered merge driver
 	ancestorRows, err := parseBeadsJSONL(ancestorPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik beads-merge: parse ancestor (%s): %v\n", ancestorPath, err)
 		return 1
 	}
-	//nolint:gosec // G304: paths provided by git invocation via registered merge driver
 	currentRows, err := parseBeadsJSONL(currentPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik beads-merge: parse current (%s): %v\n", currentPath, err)
 		return 1
 	}
-	//nolint:gosec // G304: paths provided by git invocation via registered merge driver
 	otherRows, err := parseBeadsJSONL(otherPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik beads-merge: parse other (%s): %v\n", otherPath, err)
@@ -164,7 +161,11 @@ func parseBeadsJSONL(path string) ([]beadRow, error) {
 		}
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik beads-merge: close %s: %v\n", path, closeErr)
+		}
+	}()
 
 	var rows []beadRow
 	scanner := bufio.NewScanner(f)
@@ -418,33 +419,49 @@ type conflictRecord struct {
 // appendConflictLog appends conflict records to .beads/merge-conflicts.log.
 // The log path is derived from the working-tree path of issues.jsonl.
 // Format: <iso8601-timestamp> CONFLICT bead=<id> field=status a=<A_value> b=<B_value> resolution=took-ours
-func appendConflictLog(workingPath string, conflicts []conflictRecord) error {
+func appendConflictLog(workingPath string, conflicts []conflictRecord) (err error) {
 	dir := filepath.Dir(workingPath)
 	logPath := filepath.Join(dir, "merge-conflicts.log")
 	//nolint:gosec // G304: derived from git-provided working-tree path; G302: append-only log
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
+	f, openErr := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if openErr != nil {
+		return openErr
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		// A write handle's Close is where deferred write errors surface (ENOSPC,
+		// EDQUOT, EIO). Dropping it reports a conflict log that was never durably
+		// recorded as if it had been.
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close conflict log %s: %w", logPath, closeErr)
+		}
+	}()
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, c := range conflicts {
-		fmt.Fprintf(f, "%s CONFLICT bead=%s field=status a=%s b=%s resolution=took-ours\n",
+		if _, writeErr := fmt.Fprintf(f, "%s CONFLICT bead=%s field=status a=%s b=%s resolution=took-ours\n",
 			now, c.BeadID, c.AStatus, c.BStatus,
-		)
+		); writeErr != nil {
+			return fmt.Errorf("append conflict log %s: %w", logPath, writeErr)
+		}
 	}
 	return nil
 }
 
 // writeBeadsJSONL writes rows to path as JSONL (one JSON object per line).
-func writeBeadsJSONL(path string, rows []beadRow) error {
+func writeBeadsJSONL(path string, rows []beadRow) (err error) {
 	//nolint:gosec // G304: path provided by git merge driver invocation
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
-	if err != nil {
-		return err
+	f, openErr := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
+	if openErr != nil {
+		return openErr
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		// This is the merge driver's O_TRUNC rewrite of the beads ledger. A Close
+		// error here means the tail of the ledger may never have reached disk, so
+		// it must not be reported as a successful merge.
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close %s: %w", path, closeErr)
+		}
+	}()
 
 	enc := json.NewEncoder(f)
 	enc.SetEscapeHTML(false)

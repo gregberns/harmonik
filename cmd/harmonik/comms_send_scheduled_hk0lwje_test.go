@@ -50,18 +50,26 @@ func TestRunCommsSendSubcommand_ScheduledArgvRoundtrip(t *testing.T) {
 	origStderr := os.Stderr
 	os.Stderr = w
 
-	_ = runCommsSendSubcommand(argv)
+	code := runCommsSendSubcommand(argv)
 
-	w.Close()
+	closeWriterErr := w.Close()
 	os.Stderr = origStderr
+	if closeWriterErr != nil {
+		t.Fatalf("close captured stderr writer: %v", closeWriterErr)
+	}
 
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, r); err != nil {
 		t.Fatalf("read captured stderr: %v", err)
 	}
-	r.Close()
+	if closeReaderErr := r.Close(); closeReaderErr != nil {
+		t.Fatalf("close captured stderr reader: %v", closeReaderErr)
+	}
 
 	stderr := buf.String()
+	if code == 0 {
+		t.Error("runCommsSendSubcommand unexpectedly succeeded without a daemon socket")
+	}
 
 	// Arg parsing must not fail — "unknown flag" must not appear in stderr.
 	if strings.Contains(stderr, "unknown flag") {

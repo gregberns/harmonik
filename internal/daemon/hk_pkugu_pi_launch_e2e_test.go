@@ -42,6 +42,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hkpkuguE2EArgFlagValue returns the token following the first occurrence of flag
@@ -117,7 +118,7 @@ func TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault(t *testing.T) {
 	}
 
 	const wantModel = "ornith"
-	piCfg := daemon.PiHarnessConfig{
+	piCfg := projectconfig.PiHarnessConfig{
 		Provider:   "ornith",
 		Model:      wantModel,
 		APIKeyEnv:  "HK_PKUGU_PI_KEY",
@@ -138,7 +139,7 @@ func TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault(t *testing.T) {
 		t.Fatalf("resolved agentType = %q; want pi", agentType)
 	}
 	sealedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, agentType, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if sealedModel != "" {
 		t.Fatalf("pi run sealed model = %q; want empty (no pi tier-3 default → config fallback)", sealedModel)
@@ -188,7 +189,7 @@ func TestPkuguPiLaunchPath_EmitsConfiguredModelNotClaudeDefault(t *testing.T) {
 	// argv — exactly the failure mode. This proves the assertions above are not
 	// vacuous (the path genuinely threads rc.model into pi's --model).
 	leakedModel, _ := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, core.AgentTypeClaudeCode, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, core.AgentTypeClaudeCode, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if leakedModel != "sonnet" {
 		t.Fatalf("counterfactual: claude tier-3 default = %q; want sonnet", leakedModel)
@@ -230,7 +231,7 @@ func TestPkuguClaudeLaunchPath_ModelUnchanged(t *testing.T) {
 		t.Fatalf("resolved agentType = %q; want claude-code", agentType)
 	}
 	sealedModel, sealedEffort := daemon.ExportedResolveModelPreference(
-		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
+		ctx, bead.Labels, agentType, projectconfig.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if sealedModel != "sonnet" || sealedEffort != "medium" {
 		t.Fatalf("claude tier-3 default = (%q,%q); want (sonnet,medium) — claude path changed", sealedModel, sealedEffort)

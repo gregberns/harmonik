@@ -22,11 +22,11 @@ func startupSweepFixtureAcquireReconciliationLockEX(t *testing.T, lockPath strin
 		t.Fatalf("startupSweepFixtureAcquireReconciliationLockEX: OpenFile: %v", err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		_ = f.Close()
 		t.Fatalf("startupSweepFixtureAcquireReconciliationLockEX: Flock LOCK_EX: %v", err)
 	}
 	return func() {
-		_ = f.Close() //nolint:errcheck // closing fd releases the flock; cleanup error unactionable
+		_ = f.Close()
 	}
 }
 
@@ -41,7 +41,7 @@ func startupSweepFixtureProbeIsHeld(t *testing.T, lockPath string) bool {
 	if err != nil {
 		t.Fatalf("startupSweepFixtureProbeIsHeld: OpenFile: %v", err)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = f.Close() }()
 
 	flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr == nil {
@@ -74,8 +74,7 @@ func TestPL007_ActiveFlockHeldLockNotRemoved(t *testing.T) {
 
 	// Create the reconciliation locks directory and a lock file.
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatalf("PL-007 active flock: MkdirAll: %v", err)
 	}
 
@@ -162,8 +161,7 @@ func TestPL007_ActiveFlockSweepCounterNotIncremented(t *testing.T) {
 	projectDir := plFixtureTempProjectDir(t)
 
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatalf("PL-007 counter: MkdirAll: %v", err)
 	}
 

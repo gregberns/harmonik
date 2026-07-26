@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -43,21 +44,25 @@ block drop out all
 // Spec ref: specs/scenario-harness.md §4.8 SH-028, OQ-SH-013.
 func applyNetworkSandbox() (*NetworkSandboxHandle, error) {
 	// Load the anchor rules from stdin to avoid a temp file.
-	loadCmd := exec.Command("pfctl", "-a", harmonikPFAnchor, "-f", "-")
+	loadCmd := exec.CommandContext(context.Background(), "pfctl", "-a", harmonikPFAnchor, "-f", "-")
 	loadCmd.Stdin = strings.NewReader(harmonikPFRules)
 	if out, err := loadCmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf(
-			"%w: pfctl load anchor %q: %v (output: %s; requires root/admin)",
+			"%w: pfctl load anchor %q: %w (output: %s; requires root/admin)",
 			ErrNetworkSandboxUnsupported, harmonikPFAnchor, err, strings.TrimSpace(string(out)),
 		)
 	}
 
-	// Enable pf if not already running; ignore "already enabled" non-zero exits.
-	_ = exec.Command("pfctl", "-e").Run()
+	// Enable pf if not already running. macOS reports an error when it was
+	// already enabled, which is an idempotent success.
+	if out, err := exec.CommandContext(context.Background(), "pfctl", "-e").CombinedOutput(); err != nil && !strings.Contains(string(out), "already enabled") {
+		return nil, fmt.Errorf("%w: pfctl enable: %w (output: %s; requires root/admin)",
+			ErrNetworkSandboxUnsupported, err, strings.TrimSpace(string(out)))
+	}
 
 	return &NetworkSandboxHandle{
 		release: func() error {
-			out, err := exec.Command("pfctl", "-a", harmonikPFAnchor, "-F", "rules").CombinedOutput()
+			out, err := exec.CommandContext(context.Background(), "pfctl", "-a", harmonikPFAnchor, "-F", "rules").CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("network sandbox release: pfctl flush anchor %q: %w (output: %s)",
 					harmonikPFAnchor, err, strings.TrimSpace(string(out)))
@@ -72,7 +77,7 @@ func applyNetworkSandbox() (*NetworkSandboxHandle, error) {
 // Queries the pf anchor installed by ApplyNetworkSandbox and returns true if
 // the anchor exists and contains a block rule, indicating the sandbox is active.
 func isNetworkSandboxActive() bool {
-	out, err := exec.Command("pfctl", "-a", harmonikPFAnchor, "-s", "rules").Output()
+	out, err := exec.CommandContext(context.Background(), "pfctl", "-a", harmonikPFAnchor, "-s", "rules").Output()
 	if err != nil {
 		return false
 	}

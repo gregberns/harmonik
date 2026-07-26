@@ -92,7 +92,6 @@ func idempStep4FixtureIntentFile(t *testing.T, dir string, entry core.IntentLogE
 		`","requested_at":"` + entry.RequestedAt.Format(time.RFC3339) +
 		`","schema_version":1}`
 
-	//nolint:gosec // G306: test fixture
 	if err := os.WriteFile(path, []byte(jsonStr), 0o600); err != nil {
 		t.Fatalf("idempStep4FixtureIntentFile: WriteFile %q: %v", path, err)
 	}
@@ -118,7 +117,6 @@ func TestIdempStep4_PreStateGuard(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.op), func(t *testing.T) {
 			t.Parallel()
 
@@ -407,7 +405,6 @@ func TestIdempStep4_BrErrorClassificationFromExitCode(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.branch, func(t *testing.T) {
 			t.Parallel()
 

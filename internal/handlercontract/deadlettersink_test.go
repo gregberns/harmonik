@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,7 +44,13 @@ func TestDeadLetterSink_ThreeRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenDeadLetterSink: %v", err)
 	}
-	defer func() { _ = sink.Close() }()
+	// Safety net for the t.Fatalf paths below; the happy path closes explicitly
+	// and this second Close then reports os.ErrClosed, which is expected.
+	defer func() {
+		if cerr := sink.Close(); cerr != nil && !errors.Is(cerr, os.ErrClosed) {
+			t.Errorf("deferred sink.Close: %v", cerr)
+		}
+	}()
 
 	ctx := context.Background()
 	reasons := []string{"consumer_error", "panic_in_observer", "redaction_config_missing"}
@@ -65,7 +72,11 @@ func TestDeadLetterSink_ThreeRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Errorf("close %s: %v", path, cerr)
+		}
+	}()
 
 	var lines []map[string]json.RawMessage
 	sc := bufio.NewScanner(f)

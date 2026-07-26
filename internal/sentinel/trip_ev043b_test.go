@@ -19,7 +19,7 @@ func makeProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	for _, sub := range []string{".harmonik/events", ".harmonik/decision_acks"} {
-		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o750); err != nil {
 			t.Fatalf("mkdir %s: %v", sub, err)
 		}
 	}
@@ -48,7 +48,7 @@ var zeroID = core.EventID{}
 func scanEventTypes(t *testing.T, projectDir string) []string {
 	t.Helper()
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
-	var types []string
+	types := make([]string, 0, 16)
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
 		types = append(types, ev.Type)
 	}
@@ -59,7 +59,7 @@ func scanEventTypes(t *testing.T, projectDir string) []string {
 func scanDecisionRequired(t *testing.T, projectDir string) []map[string]interface{} {
 	t.Helper()
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
-	var out []map[string]interface{}
+	out := make([]map[string]interface{}, 0, 16)
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
 		if ev.Type != "decision_required" {
 			continue
@@ -77,7 +77,7 @@ func scanDecisionRequired(t *testing.T, projectDir string) []map[string]interfac
 func scanDecisionAcknowledged(t *testing.T, projectDir string) []map[string]interface{} {
 	t.Helper()
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
-	var out []map[string]interface{}
+	out := make([]map[string]interface{}, 0, 16)
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
 		if ev.Type != "decision_acknowledged" {
 			continue
@@ -122,7 +122,10 @@ func TestEmitTrip_WritesAckFileAndEvent(t *testing.T) {
 	if ack["subject_id"] != "sentinel" {
 		t.Errorf("subject_id: got %q, want %q", ack["subject_id"], "sentinel")
 	}
-	reason, _ := ack["reason"].(string)
+	reason, ok := ack["reason"].(string)
+	if !ok {
+		t.Fatalf("ack reason is not a string: %T", ack["reason"])
+	}
 	if !strings.Contains(reason, "hk-aaa") {
 		t.Errorf("reason should name ready bead IDs; got %q", reason)
 	}
@@ -139,7 +142,10 @@ func TestEmitTrip_WritesAckFileAndEvent(t *testing.T) {
 	if p["ack_token"] != tok {
 		t.Errorf("event ack_token: got %q, want %q", p["ack_token"], tok)
 	}
-	subj, _ := p["subject"].(map[string]interface{})
+	subj, ok := p["subject"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("event subject is not an object: %T", p["subject"])
+	}
 	if subj == nil || subj["id"] != "sentinel" {
 		t.Errorf("event subject.id: got %v, want %q", subj, "sentinel")
 	}
@@ -180,7 +186,10 @@ func TestEmitTrip_Idempotent(t *testing.T) {
 
 	// Exactly one ack file in decision_acks/.
 	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
-	entries, _ := os.ReadDir(acksDir)
+	entries, err := os.ReadDir(acksDir)
+	if err != nil {
+		t.Fatalf("read acknowledgement directory: %v", err)
+	}
 	if len(entries) != 1 {
 		t.Errorf("expected 1 ack file; got %d", len(entries))
 	}

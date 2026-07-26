@@ -105,10 +105,11 @@ func cp017DelegationPath() core.DelegationPath {
 	}
 }
 
-func cp017MakeCognitionHookCP(name, triggerEvent string, sideEffectKind core.SideEffectKind, haltOnFailure bool) core.ControlPoint {
+func cp017MakeCognitionHookCP() core.ControlPoint {
+	const triggerEvent = "on_agent_started"
 	dp := cp017DelegationPath()
 	return core.ControlPoint{
-		Name:          name,
+		Name:          "review-hook",
 		Kind:          core.KindHook,
 		Trigger:       core.Trigger{Name: triggerEvent},
 		Evaluator:     core.Evaluator{Mode: core.ModeTagCognition, DelegationPath: &dp},
@@ -116,8 +117,8 @@ func cp017MakeCognitionHookCP(name, triggerEvent string, sideEffectKind core.Sid
 		Payload: core.KindPayload{
 			Hook: &core.HookPayload{
 				TriggerEvent:      triggerEvent,
-				SideEffectKind:    sideEffectKind,
-				HaltOnFailure:     haltOnFailure,
+				SideEffectKind:    core.SideEffectKindEmitEvent,
+				HaltOnFailure:     false,
 				SubsystemPriority: 0,
 				IdempotencyClass:  core.IdempotencyClassNonIdempotent,
 			},
@@ -171,7 +172,7 @@ func cp017BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 		EventPattern:  core.EventPattern{Wildcard: true},
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, ev core.Event) error {
-			collector.record(string(ev.Type))
+			collector.record(ev.Type)
 			return nil
 		},
 	}); err != nil {
@@ -184,13 +185,13 @@ func cp017BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 }
 
 // cp017EmitRunEvent emits an event scoped to a runID.
-func cp017EmitRunEvent(t *testing.T, bus eventbus.EventBus, eventType string, runID core.RunID) json.RawMessage {
+func cp017EmitRunEvent(t *testing.T, bus eventbus.EventBus, runID core.RunID) {
 	t.Helper()
-	payload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	const eventType = "agent_started"
+	payload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	if err := bus.EmitWithRunID(context.Background(), runID, core.EventType(eventType), payload); err != nil {
 		t.Fatalf("EmitWithRunID(%q): %v", eventType, err)
 	}
-	return payload
 }
 
 // cp017MakeSuccessVerdict builds a non-failing HookVerdictRecord stub.
@@ -219,7 +220,7 @@ func cp017MakeSuccessVerdict(hookName string) core.HookVerdictRecord {
 func TestCP017_CognitionHookFiresOnSuccess(t *testing.T) {
 	t.Parallel()
 
-	cp := cp017MakeCognitionHookCP("review-hook", "on_agent_started", core.SideEffectKindEmitEvent, false)
+	cp := cp017MakeCognitionHookCP()
 	reg := cp012FixtureNewRegistry(cp)
 
 	eval := &cp017StubCognitionEval{returnVerdict: cp017MakeSuccessVerdict("review-hook")}
@@ -235,7 +236,7 @@ func TestCP017_CognitionHookFiresOnSuccess(t *testing.T) {
 	})
 	_ = disp
 
-	cp017EmitRunEvent(t, bus, "agent_started", cp017RunID())
+	cp017EmitRunEvent(t, bus, cp017RunID())
 	cp012FixtureWaitDrain(t, bus)
 
 	events := collector.all()
@@ -263,7 +264,7 @@ func TestCP017_CognitionHookFiresOnSuccess(t *testing.T) {
 func TestCP017_CognitionHookEmitsHookFailedOnFailureVerdict(t *testing.T) {
 	t.Parallel()
 
-	cp := cp017MakeCognitionHookCP("review-hook", "on_agent_started", core.SideEffectKindEmitEvent, false)
+	cp := cp017MakeCognitionHookCP()
 	reg := cp012FixtureNewRegistry(cp)
 
 	reason := "reviewer rejected: insufficient quality"
@@ -293,7 +294,7 @@ func TestCP017_CognitionHookEmitsHookFailedOnFailureVerdict(t *testing.T) {
 	})
 	_ = disp
 
-	cp017EmitRunEvent(t, bus, "agent_started", cp017RunID())
+	cp017EmitRunEvent(t, bus, cp017RunID())
 	cp012FixtureWaitDrain(t, bus)
 
 	events := collector.all()
@@ -326,7 +327,7 @@ func TestCP017_CognitionHookEmitsHookFailedOnFailureVerdict(t *testing.T) {
 func TestCP017_CognitionHookRequiresRunScopedEvent(t *testing.T) {
 	t.Parallel()
 
-	cp := cp017MakeCognitionHookCP("review-hook", "on_agent_started", core.SideEffectKindEmitEvent, false)
+	cp := cp017MakeCognitionHookCP()
 	reg := cp012FixtureNewRegistry(cp)
 
 	eval := &cp017StubCognitionEval{}
@@ -343,7 +344,7 @@ func TestCP017_CognitionHookRequiresRunScopedEvent(t *testing.T) {
 	_ = disp
 
 	// Emit without a RunID (plain Emit, not EmitWithRunID).
-	payload, _ := json.Marshal(map[string]any{})
+	payload := cp012FixtureMarshal(t, map[string]any{})
 	if err := bus.Emit(context.Background(), "agent_started", payload); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -374,7 +375,7 @@ func TestCP017_CognitionHookRequiresRunScopedEvent(t *testing.T) {
 func TestCP017_CognitionHookWithoutEvaluatorEmitsHookFailed(t *testing.T) {
 	t.Parallel()
 
-	cp := cp017MakeCognitionHookCP("review-hook", "on_agent_started", core.SideEffectKindEmitEvent, false)
+	cp := cp017MakeCognitionHookCP()
 	reg := cp012FixtureNewRegistry(cp)
 
 	collector := &cp012FixtureEventCollector{}
@@ -386,7 +387,7 @@ func TestCP017_CognitionHookWithoutEvaluatorEmitsHookFailed(t *testing.T) {
 	})
 	_ = disp
 
-	cp017EmitRunEvent(t, bus, "agent_started", cp017RunID())
+	cp017EmitRunEvent(t, bus, cp017RunID())
 	cp012FixtureWaitDrain(t, bus)
 
 	events := collector.all()
@@ -412,13 +413,13 @@ func TestCP017_CognitionHookWithoutEvaluatorEmitsHookFailed(t *testing.T) {
 func TestCP017_ReplayMatchingHashConsumesPersistedVerdict(t *testing.T) {
 	t.Parallel()
 
-	cp := cp017MakeCognitionHookCP("review-hook", "on_agent_started", core.SideEffectKindEmitEvent, false)
+	cp := cp017MakeCognitionHookCP()
 	reg := cp012FixtureNewRegistry(cp)
 
 	// Compute the envelope hash that the dispatcher will compute for the event
 	// we're about to emit, so we can pre-seed the reader with the correct hash.
 	runID := cp017RunID()
-	evPayload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	evPayload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	correctHash := cp017ComputeEnvelopeHash(t, cp, evPayload)
 
 	persistedVerdict := core.HookVerdictRecord{
@@ -481,7 +482,7 @@ func TestCP017_ReplayMatchingHashConsumesPersistedVerdict(t *testing.T) {
 func TestCP017_ReplayMismatchedHashEmitsVerdictEnvelopeMismatch(t *testing.T) {
 	t.Parallel()
 
-	cp := cp017MakeCognitionHookCP("review-hook", "on_agent_started", core.SideEffectKindEmitEvent, false)
+	cp := cp017MakeCognitionHookCP()
 	reg := cp012FixtureNewRegistry(cp)
 
 	staleHash := strings.Repeat("f", 64) // deliberately wrong hash
@@ -511,7 +512,7 @@ func TestCP017_ReplayMismatchedHashEmitsVerdictEnvelopeMismatch(t *testing.T) {
 	})
 	_ = disp
 
-	cp017EmitRunEvent(t, bus, "agent_started", cp017RunID())
+	cp017EmitRunEvent(t, bus, cp017RunID())
 	cp012FixtureWaitDrain(t, bus)
 
 	events := collector.all()
@@ -554,7 +555,9 @@ func TestCP017_WithCognitionPanicsOnNilArg(t *testing.T) {
 
 	reg := cp012FixtureNewRegistry()
 	bus := eventbus.NewBusImpl()
-	_ = bus.Seal()
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
 	eval := &cp017StubCognitionEval{}
 	writer := &cp017StubVerdictWriter{}
@@ -571,7 +574,6 @@ func TestCP017_WithCognitionPanicsOnNilArg(t *testing.T) {
 		{"nil reader", eval, writer, nil},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			defer func() {

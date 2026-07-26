@@ -333,8 +333,5 @@ func (p PolicyExpressionExceededCostPayload) Valid() bool {
 			return false
 		}
 	}
-	if p.AbortedAt == "" {
-		return false
-	}
-	return true
+	return p.AbortedAt != ""
 }

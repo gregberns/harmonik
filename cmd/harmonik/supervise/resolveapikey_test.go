@@ -15,17 +15,25 @@ import (
 // unsetenvWithRestore calls os.Unsetenv and registers a t.Cleanup that restores
 // the prior value (or re-unsets if absent), preventing env contamination across
 // tests regardless of execution order.
-func unsetenvWithRestore(t *testing.T, key string) {
+func unsetenvWithRestore(t *testing.T, keys ...string) {
 	t.Helper()
+	if len(keys) != 1 {
+		t.Fatalf("unsetenvWithRestore: got %d keys, want 1", len(keys))
+	}
+	key := keys[0]
 	prior, had := os.LookupEnv(key)
 	if err := os.Unsetenv(key); err != nil {
 		t.Fatalf("unsetenv %s: %v", key, err)
 	}
 	t.Cleanup(func() {
 		if had {
-			_ = os.Setenv(key, prior)
+			if err := os.Setenv(key, prior); err != nil {
+				t.Errorf("restore %s: %v", key, err)
+			}
 		} else {
-			_ = os.Unsetenv(key)
+			if err := os.Unsetenv(key); err != nil {
+				t.Errorf("clear %s during cleanup: %v", key, err)
+			}
 		}
 	})
 }

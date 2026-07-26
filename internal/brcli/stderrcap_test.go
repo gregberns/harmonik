@@ -42,7 +42,7 @@ func stderrCapFixtureBinary(t *testing.T, stdoutText, stderrText string, exitCod
 		stdoutFile, stderrFile, exitCode,
 	)
 	//nolint:gosec // G306: test fixture binary; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("stderrCapFixtureBinary: write: %v", err)
 	}
 	return path
@@ -50,7 +50,7 @@ func stderrCapFixtureBinary(t *testing.T, stdoutText, stderrText string, exitCod
 
 // stderrCapFixtureLargeStderrBinary writes a binary that emits exactly n bytes
 // to stderr and exits 0.  Used for the 1 MiB cap scenario.
-func stderrCapFixtureLargeStderrBinary(t *testing.T, n int, exitCode int) string {
+func stderrCapFixtureLargeStderrBinary(t *testing.T, n, exitCode int) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "br")
@@ -65,7 +65,7 @@ func stderrCapFixtureLargeStderrBinary(t *testing.T, n int, exitCode int) string
 		n, exitCode,
 	)
 	//nolint:gosec // G306: test fixture binary; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("stderrCapFixtureLargeStderrBinary: write: %v", err)
 	}
 	return path
@@ -94,7 +94,7 @@ func stderrCapFixtureSIGKILLBinary(t *testing.T, partialStderr string, sleepSeco
 		stderrFile, sleepSeconds,
 	)
 	//nolint:gosec // G306: test fixture binary; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("stderrCapFixtureSIGKILLBinary: write: %v", err)
 	}
 	return path
@@ -103,9 +103,8 @@ func stderrCapFixtureSIGKILLBinary(t *testing.T, partialStderr string, sleepSeco
 // runWithStderrCap is a thin helper that wires a stderrCapWriter to a command's
 // Stderr, starts and waits for the command, and returns the StderrResult plus
 // exit code. It models how the adapter will use stderrCapWriter in production.
-func runWithStderrCap(t *testing.T, name string, args ...string) (StderrResult, int) {
+func runWithStderrCap(t *testing.T, name string, args ...string) (result StderrResult, exitCode int) {
 	t.Helper()
-	//nolint:gosec // G204: test helper; name/args are synthetic fixture paths, not user input
 	cmd := exec.CommandContext(t.Context(), name, args...)
 	capW := newStderrCapWriter()
 	cmd.Stderr = capW
@@ -197,7 +196,7 @@ func TestStderrCapScenarioRustPanicExit101(t *testing.T) {
 		}
 		if !strings.HasSuffix(string(sr.Bytes), StderrTruncationSuffix) {
 			t.Errorf("Bytes does not end with StderrTruncationSuffix; got suffix: %q",
-				string(sr.Bytes[max(0, len(sr.Bytes)-len(StderrTruncationSuffix)-10):]))
+				string(sr.Bytes[maxInt(0, len(sr.Bytes)-len(StderrTruncationSuffix)-10):]))
 		}
 		// The captured payload before the suffix must be exactly the cap.
 		// sr.Bytes = cap-bytes + '\n' + suffix
@@ -333,7 +332,9 @@ func TestStderrCapScenarioPartialStderrAtSIGKILL(t *testing.T) {
 		_ = stdoutR.Close()
 
 		// Wait to reap per PL-014; ignore the error (SIGKILL always returns one).
-		_ = cmd.Wait()
+		if err := cmd.Wait(); err == nil {
+			t.Error("Wait: expected SIGKILL exit error, got nil")
+		}
 
 		sr := capW.Result()
 
@@ -441,8 +442,8 @@ func TestStderrCapWriterEmptyResult(t *testing.T) {
 	}
 }
 
-// max returns the larger of a and b.  Avoids importing "math" for a single use.
-func max(a, b int) int {
+// maxInt returns the larger of a and b. Avoids importing "math" for a single use.
+func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}

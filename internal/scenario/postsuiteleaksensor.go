@@ -36,11 +36,6 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// runIDEnvKey is the environment variable set on every handler subprocess by
-// the daemon's claude handler per specs/process-lifecycle.md §4.1 PL-006a.
-// Its value is the scenario's run_id UUID string.
-const runIDEnvKey = "HARMONIK_RUN_ID"
-
 // LeakKind categorises the type of resource leak detected by CheckPostSuiteLeaks.
 type LeakKind string
 
@@ -126,10 +121,7 @@ func CheckPostSuiteLeaks(ctx context.Context, params PostSuiteLeakParams) (*Post
 	report.Leaks = append(report.Leaks, leaseLeaks...)
 
 	// Check (iii): open file descriptors under the fixture root.
-	fdLeaks, err := checkLeakedFDs(ctx, params.FixtureRoot)
-	if err != nil {
-		return nil, fmt.Errorf("post-suite leak sensor (fd check): %w", err)
-	}
+	fdLeaks := checkLeakedFDs(ctx, params.FixtureRoot)
 	report.Leaks = append(report.Leaks, fdLeaks...)
 
 	return report, nil
@@ -159,7 +151,7 @@ func checkLeakedLeases(fixtureRoot string, executedRunIDs []core.RunID) ([]LeakD
 	var leaks []LeakDescriptor
 	err := filepath.WalkDir(fixtureRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil // skip unreadable entries without failing the walk
+			return walkErr
 		}
 		if d.IsDir() || filepath.Base(path) != "lease.lock" {
 			return nil
@@ -195,30 +187,29 @@ func checkLeakedLeases(fixtureRoot string, executedRunIDs []core.RunID) ([]LeakD
 // comprehensive superset, giving the operator full visibility.
 //
 // Spec ref: specs/scenario-harness.md §5 SH-INV-002(iii).
-func checkLeakedFDs(ctx context.Context, fixtureRoot string) ([]LeakDescriptor, error) {
+func checkLeakedFDs(ctx context.Context, fixtureRoot string) []LeakDescriptor {
 	if fixtureRoot == "" {
-		return nil, nil
+		return nil
 	}
 
-	//nolint:gosec // G204: fixtureRoot is a harness-internal temp dir, not user input
 	out, err := exec.CommandContext(ctx, "lsof", "+D", fixtureRoot).Output()
 	if err != nil {
 		if lsofNotFound(err) {
-			return nil, nil // lsof not installed: skip check
+			return nil // lsof not installed: skip check
 		}
 		// lsof exits 1 when no files are found — that is the clean case.
 		if exitCodeIs(err, 1) && len(out) == 0 {
-			return nil, nil
+			return nil
 		}
 		// Other errors (permission, signal, etc.): skip rather than fail.
-		return nil, nil
+		return nil
 	}
 
 	// lsof default output columns:
 	//   COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
 	// Indices (0-based): 0=COMMAND 1=PID 2=USER 3=FD 4=TYPE … N-1=NAME
 	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
-	var leaks []LeakDescriptor
+	leaks := make([]LeakDescriptor, 0, len(lines)-1)
 	for _, line := range lines[1:] { // skip header
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -238,7 +229,7 @@ func checkLeakedFDs(ctx context.Context, fixtureRoot string) ([]LeakDescriptor, 
 			Detail: fmt.Sprintf("pid=%s cmd=%s has open fd to %s", pid, cmd, name),
 		})
 	}
-	return leaks, nil
+	return leaks
 }
 
 // lsofNotFound reports whether err indicates lsof is not installed.

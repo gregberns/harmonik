@@ -31,12 +31,13 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
 	// Create the parent directory so that git can place the worktree there.
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
 	// (a) + (b): successful `git worktree add -b`.
-	cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
+	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add -b: %v\n%s", err, out)
@@ -49,7 +50,8 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 	}
 
 	// (b) Assert the branch exists and its tip matches the parent commit.
-	out, err := exec.Command("git", "-C", repo, "rev-parse", branch).Output()
+	//nolint:gosec // G204: git command, repository path, and branch are controlled by this test fixture.
+	out, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", branch).Output()
 	if err != nil {
 		t.Fatalf("WM-001: rev-parse %q: %v", branch, err)
 	}
@@ -64,7 +66,8 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 	badBranch := "run/" + badRunID
 	badPath := filepath.Join(repo, ".harmonik", "worktrees", badRunID)
 
-	cmd2 := exec.Command("git", "worktree", "add", "-b", badBranch, badPath, sha)
+	//nolint:gosec // G204: git command and deliberately invalid fixture branch are test-controlled.
+	cmd2 := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", badBranch, badPath, sha)
 	cmd2.Dir = repo
 	// We expect this to fail; the exit code is non-zero.
 	if out2, err2 := cmd2.CombinedOutput(); err2 == nil {
@@ -75,9 +78,11 @@ func TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch(t *testing.T) {
 	if _, err := os.Stat(badPath); !os.IsNotExist(err) {
 		t.Errorf("WM-001: atomicity: worktree dir %q still exists after failed git worktree add", badPath)
 	}
-	out3, _ := exec.Command("git", "-C", repo, "rev-parse", "--verify", badBranch).Output()
-	if strings.TrimSpace(string(out3)) != "" {
-		t.Errorf("WM-001: atomicity: branch %q still exists after failed git worktree add", badBranch)
+	//nolint:gosec // G204: git command, repository path, and fixture branch are test-controlled.
+	out3, verifyErr := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", badBranch).Output()
+	if verifyErr == nil || strings.TrimSpace(string(out3)) != "" {
+		t.Errorf("WM-001: atomicity: branch %q still exists after failed git worktree add (rev-parse err=%v, out=%q)",
+			badBranch, verifyErr, strings.TrimSpace(string(out3)))
 	}
 }
 
@@ -189,7 +194,6 @@ func TestWM003_RunIDFilesystemSafetyRegex(t *testing.T) {
 	}
 
 	for _, tc := range valid {
-		tc := tc
 		t.Run("valid/"+tc.desc, func(t *testing.T) {
 			t.Parallel()
 			if !runIDValid(tc.input) {
@@ -199,7 +203,6 @@ func TestWM003_RunIDFilesystemSafetyRegex(t *testing.T) {
 	}
 
 	for _, tc := range filtered {
-		tc := tc
 		t.Run("invalid/"+tc.desc, func(t *testing.T) {
 			t.Parallel()
 			if runIDValid(tc.input) {
@@ -231,14 +234,15 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 
 		// Simulate crash state: `git worktree add` completed (so the worktree is
 		// registered with git), but the lease-lock file was never written and no
 		// session-log directory exists.
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -272,12 +276,13 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 
 		// Create the worktree (registered with git).
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -288,12 +293,12 @@ func TestWM003a_CrashEvidenceTypes(t *testing.T) {
 		// of WM-016).
 		sessionID := "sess-0196a1b2-c3d4-7ef0-8a1b-000000000001"
 		sidecarDir := filepath.Join(worktreePath, ".harmonik", "sessions", sessionID)
-		if err := os.MkdirAll(sidecarDir, 0o755); err != nil {
+		if err := os.MkdirAll(sidecarDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll sidecarDir: %v", err)
 		}
 		sidecarPath := filepath.Join(sidecarDir, "harmonik.meta.json")
 		sidecarContent := `{"run_id":"` + runID + `","session_id":"` + sessionID + `","schema_version":"1"}`
-		if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o644); err != nil {
+		if err := os.WriteFile(sidecarPath, []byte(sidecarContent), 0o600); err != nil {
 			t.Fatalf("WriteFile sidecar: %v", err)
 		}
 

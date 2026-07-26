@@ -115,10 +115,7 @@ func TestW4_DetectSquashMergeConflict_Conflict_LeavesWorktreeClean(t *testing.T)
 	gitOutput(t, integPath, "commit", "-m", "integ: change shared.txt")
 
 	headBefore := gitOutput(t, integPath, "rev-parse", "HEAD")
-	sharedBefore, err := os.ReadFile(filepath.Join(integPath, "shared.txt")) //nolint:gosec // G304: test-controlled path
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
+	sharedBefore := mustReadFile(t, filepath.Join(integPath, "shared.txt"))
 
 	result, err := DetectSquashMergeConflict(integPath, taskBranch)
 	if err != nil {
@@ -131,10 +128,7 @@ func TestW4_DetectSquashMergeConflict_Conflict_LeavesWorktreeClean(t *testing.T)
 	assertWorktreeByteClean(t, integPath, headBefore, "conflict probe")
 
 	// The conflicted file must be restored byte-for-byte (no conflict markers).
-	sharedAfter, err := os.ReadFile(filepath.Join(integPath, "shared.txt")) //nolint:gosec // G304: test-controlled path
-	if err != nil {
-		t.Fatalf("ReadFile after: %v", err)
-	}
+	sharedAfter := mustReadFile(t, filepath.Join(integPath, "shared.txt"))
 	if !bytes.Equal(sharedAfter, sharedBefore) {
 		t.Errorf("shared.txt mutated by probe:\nbefore: %q\nafter:  %q", sharedBefore, sharedAfter)
 	}

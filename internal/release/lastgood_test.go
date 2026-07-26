@@ -1,6 +1,7 @@
 package release_test
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -21,7 +22,7 @@ func TestReadLastGoodBinary_Missing(t *testing.T) {
 func TestReadLastGoodBinary_Empty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "last-good-binary")
-	if err := os.WriteFile(path, []byte("\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := release.ReadLastGoodBinary(path)
@@ -55,7 +56,7 @@ func TestPinLastGoodBinary(t *testing.T) {
 	// Create a fake binary to pin.
 	srcBin := filepath.Join(dir, "harmonik")
 	content := []byte("fake binary content for testing")
-	if err := os.WriteFile(srcBin, content, 0o755); err != nil {
+	if err := os.WriteFile(srcBin, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,11 +66,12 @@ func TestPinLastGoodBinary(t *testing.T) {
 
 	// Verify the .last-good file was created.
 	dstBin := srcBin + ".last-good"
+	//nolint:gosec // G304: dstBin is constructed under t.TempDir.
 	got, err := os.ReadFile(dstBin)
 	if err != nil {
 		t.Fatalf("read last-good file: %v", err)
 	}
-	if string(got) != string(content) {
+	if !bytes.Equal(got, content) {
 		t.Errorf("last-good content mismatch: got %q, want %q", got, content)
 	}
 
@@ -90,7 +92,7 @@ func TestRestoreLastGoodBinary(t *testing.T) {
 	// Set up a last-good binary.
 	lastGoodContent := []byte("last-good binary content")
 	lastGoodBin := filepath.Join(dir, "harmonik.last-good")
-	if err := os.WriteFile(lastGoodBin, lastGoodContent, 0o755); err != nil {
+	if err := os.WriteFile(lastGoodBin, lastGoodContent, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := release.WriteLastGoodBinary(statePath, lastGoodBin); err != nil {
@@ -99,18 +101,19 @@ func TestRestoreLastGoodBinary(t *testing.T) {
 
 	// Restore to a new target path.
 	dstBin := filepath.Join(dir, "harmonik")
-	if err := os.WriteFile(dstBin, []byte("bad binary"), 0o755); err != nil {
+	if err := os.WriteFile(dstBin, []byte("bad binary"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := release.RestoreLastGoodBinary(statePath, dstBin); err != nil {
 		t.Fatalf("RestoreLastGoodBinary: %v", err)
 	}
 
+	//nolint:gosec // G304: dstBin is constructed under t.TempDir.
 	got, err := os.ReadFile(dstBin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(lastGoodContent) {
+	if !bytes.Equal(got, lastGoodContent) {
 		t.Errorf("restored content mismatch: got %q, want %q", got, lastGoodContent)
 	}
 }

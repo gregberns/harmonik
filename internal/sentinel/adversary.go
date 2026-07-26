@@ -53,9 +53,9 @@ type AdversaryInput struct {
 	MissionPath string
 }
 
-// adversaryCrewStartRequest mirrors daemon.CrewStartRequest without importing
+// adversaryCrewStartRequest mirrors crewrun.CrewStartRequest without importing
 // the daemon package (which would create an import cycle). The JSON shape is
-// identical; the daemon socket decodes it to daemon.CrewStartRequest.
+// identical; the daemon socket decodes it to crewrun.CrewStartRequest.
 type adversaryCrewStartRequest struct {
 	Name        string `json:"name"`
 	Queue       string `json:"queue"`

@@ -88,14 +88,6 @@ type startupSeqFixtureDaemonStartedPayload struct {
 	BinaryCommitHash string `json:"binary_commit_hash"`
 }
 
-// startupSeqFixtureDaemonReadyPayload models the daemon_ready event payload per
-// event-model.md §8.7.2. Emitted at step 9 on the normal path.
-type startupSeqFixtureDaemonReadyPayload struct {
-	ReadyAt            string   `json:"ready_at"`
-	ReadyAtNsSinceBoot int64    `json:"ready_at_ns_since_boot"`
-	InvestigatorRunIDs []string `json:"investigator_run_ids"`
-}
-
 // startupSeqFixtureStartupMarkers models the durable startup markers read in
 // step 8a: daemon.state and daemon.upgrading per ON-030a / ON-020a.
 type startupSeqFixtureStartupMarkers struct {
@@ -243,7 +235,7 @@ func startupSeqFixtureRunFullSequence(
 		return nil, startupSeqFixtureDaemonStartedPayload{}, startupSeqFixtureStep9Target{},
 			fmt.Errorf("step 3a: bind socket: %w", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = ln.Close() })
 
 	// Step 4: Cat 0 pre-check.
 	state.startupSeqFixtureMark(startupSeqStep4)
@@ -693,8 +685,13 @@ func TestPL005_Cat0FailureHaltsAfterStep4(t *testing.T) {
 		t.Parallel()
 
 		projectDir := plFixtureTempProjectDir(t)
-		state, _, _, _ := startupSeqFixtureRunFullSequence( //nolint:errcheck // test focuses on step execution
-			t, projectDir, startupSeqFixtureStartupMarkers{}, false) // cat0Passes=false
+		// The final argument is cat0Passes: false makes the Cat 0 gate fail, so
+		// the sequence halts after step 4 and returns no error.
+		state, _, _, seqErr := startupSeqFixtureRunFullSequence(
+			t, projectDir, startupSeqFixtureStartupMarkers{}, false)
+		if seqErr != nil {
+			t.Fatalf("halt-after-failed-Cat-0 must not error: %v", seqErr)
+		}
 
 		// Steps 0–4 must have run.
 		for _, step := range []string{
@@ -756,8 +753,7 @@ func TestPL005_Step8a_CorruptMarkerTreatedAsAbsent(t *testing.T) {
 
 		// Write a corrupt daemon.upgrading marker (truncated / unparseable).
 		harmonikDir := filepath.Join(projectDir, ".harmonik")
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 			t.Fatalf("PL-005 step 8a corrupt: MkdirAll: %v", err)
 		}
 		upgradingPath := filepath.Join(harmonikDir, "daemon.upgrading")

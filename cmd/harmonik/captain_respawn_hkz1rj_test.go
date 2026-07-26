@@ -108,6 +108,7 @@ func TestCaptainRespawn_RefreshesCaptainPid_hkz1rj(t *testing.T) {
 		t.Errorf("pane-pid read does not target the agent window: %q", pidRead)
 	}
 	pidFile := filepath.Join(proj, ".harmonik", "cognition", "captain.pid")
+	//nolint:gosec // G304: pidFile is constructed beneath this test's t.TempDir fixture.
 	b, err := os.ReadFile(pidFile)
 	if err != nil {
 		t.Fatalf("captain.pid not written: %v", err)

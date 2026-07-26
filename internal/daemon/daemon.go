@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -21,6 +22,8 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/projectconfig"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -206,6 +209,13 @@ type Config struct {
 	// Bead ref: hk-kqdpf.4.
 	Substrate handler.Substrate
 
+	// ReviewerSubstrate is the substrate for a claude (SessionIDMinted)
+	// reviewer/cognition-gate node; it is always the tmux substrate. Under
+	// codexdriver mode Substrate is the protocol-locked codex driver, and a
+	// claude reviewer handed to it never emits agent_ready (hk-qxvc2). A nil
+	// value falls back to Substrate for backward compatibility.
+	ReviewerSubstrate handler.Substrate
+
 	// DaemonBinaryPath is the absolute path to the running harmonik binary,
 	// resolved via os.Executable() at daemon startup (hk-kqdpf.6).
 	//
@@ -253,7 +263,7 @@ type Config struct {
 	//
 	// Spec ref: specs/execution-model.md §4.3 EM-012b — tier-2 slot.
 	// Bead ref: hk-bfvk7.
-	ProjectCfg ProjectConfig
+	ProjectCfg projectconfig.ProjectConfig
 
 	// BinaryCommitHash is the git commit hash of the running daemon binary,
 	// injected at build time via -ldflags "-X main.commitHash=<sha>" and
@@ -395,7 +405,7 @@ type Config struct {
 	// as before.
 	//
 	// Bead ref: hk-8jh26.
-	QueueStore *QueueStore
+	QueueStore *queuewiring.QueueStore
 
 	// HandlerPauseController, when non-nil, is wired into the work loop to
 	// enable the skip-on-paused dispatch gate (hk-kac8g).  When nil the gate
@@ -564,20 +574,6 @@ type Config struct {
 	// blind). No-op for the tmux substrate (observer is nil there).
 	WorkerRegistryObserver func(*workers.Registry)
 
-	// CodexRequireIsolationBoundary makes the work loop FAIL CLOSED for codex
-	// app-server crews (hk-5h759). The composition root sets it true iff
-	// HARMONIK_SUBSTRATE=codexdriver — a codex crew runs with a permissive sandbox
-	// posture (danger-full-access) that is safe ONLY inside a real isolation
-	// boundary (an enabled remote ssh worker / container IS the sandbox). With it
-	// set, beadRunOne refuses to launch any codex run unless the worker registry's
-	// WorkerSnapshot() yields an enabled ssh worker — mirroring the runner's own
-	// routing predicate. Any other state (no registry, no worker, disabled, or a
-	// non-ssh transport) would otherwise fall through codexWorkerRoutingRunner.Command
-	// to LocalRunner and run codex UNSANDBOXED on the daemon host. Operator mandate:
-	// never a silent local fallback; commits must land inside the boundary. False
-	// (default) for the tmux path — no permissive posture, nothing to guard.
-	CodexRequireIsolationBoundary bool
-
 	// Runner is the CommandRunner used for remote-aware marker-file reads on the
 	// DOT run path (hk-hd2w6). At runtime, local runs set it to nil (NFR7:
 	// byte-identical local path) and remote runs override it with rbc.sshRunner
@@ -682,7 +678,7 @@ func newDaemonHookStore(bus eventbus.EventBus) *hookSessionStore {
 // Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
 // Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
 // Bead ref: hk-tigaf.3.
-func loadStartupQueues(ctx context.Context, cfg Config, hooks daemonTestHooks, bus eventbus.EventBus, qs *QueueStore, daemonStartTime time.Time) error {
+func loadStartupQueues(ctx context.Context, cfg Config, hooks daemonTestHooks, bus eventbus.EventBus, qs *queuewiring.QueueStore, daemonStartTime time.Time) error {
 	if cfg.ProjectDir == "" || cfg.BrPath == "" {
 		return nil
 	}
@@ -799,8 +795,7 @@ func acquirePidfile(cfg Config) (*lifecycle.Pidfile, error) {
 	}
 	// mkdir-p <ProjectDir>/.harmonik/ so AcquirePidfile can open the file.
 	harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(harmonikDir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(harmonikDir, core.HarmonikDirMode); mkErr != nil {
 		return nil, fmt.Errorf("daemon.Start: mkdir-p .harmonik: %w", mkErr)
 	}
 
@@ -864,7 +859,7 @@ func resolveBootConfig(cfg *Config) (core.WorkflowMode, string, error) {
 	// EM-012b tier-2: load + cache .harmonik/config.yaml. A parse/schema error is
 	// fatal; a missing file is a zero-value ProjectConfig (hk-bfvk7).
 	if cfg.ProjectDir != "" {
-		projectCfg, loadErr := LoadProjectConfig(cfg.ProjectDir)
+		projectCfg, loadErr := projectconfig.LoadProjectConfig(cfg.ProjectDir)
 		if loadErr != nil {
 			return "", "", fmt.Errorf("daemon.Start: load .harmonik/config.yaml: %w", loadErr)
 		}
@@ -1028,6 +1023,33 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	if startupErr != nil {
 		return startupErr
 	}
+	// Register this after the JSONL-writer close defer so LIFO ordering emits
+	// and fsyncs the graceful-shutdown landmark while the writer is still open.
+	// A forced termination never runs defers and therefore correctly emits no
+	// daemon_shutdown event.
+	defer func() {
+		shutdownAtNs, clockErr := lifecycle.MonotonicNsSinceBoot()
+		if clockErr != nil {
+			log.Printf("warn: daemon.Start: read shutdown monotonic clock: %v", clockErr)
+			return
+		}
+		payload := core.DaemonShutdownPayload{
+			ShutdownAt:            time.Now().UTC().Format(time.RFC3339Nano),
+			ShutdownAtNsSinceBoot: shutdownAtNs,
+			Mode:                  core.ShutdownModeGraceful,
+		}
+		payloadBytes, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			log.Printf("warn: daemon.Start: marshal daemon_shutdown payload: %v", marshalErr)
+			return
+		}
+		// WithoutCancel, not Background: this defer runs precisely BECAUSE ctx was
+		// cancelled, so the emit must outlive it — but it should still carry ctx's
+		// values (tracing/request scope) rather than starting from an empty root.
+		if emitErr := bus.Emit(context.WithoutCancel(ctx), core.EventTypeDaemonShutdown, payloadBytes); emitErr != nil {
+			log.Printf("warn: daemon.Start: emit daemon_shutdown: %v", emitErr)
+		}
+	}()
 
 	// Step 3 (PL-005 / PL-006, hk-60uvn): orphan sweep + in-flight-run reconcile,
 	// BEFORE any socket or listener bind. Extracted into runStartupReconcile (and

@@ -174,7 +174,9 @@ func TestLifecycleFSM_AgentFailedDuringInitializing(t *testing.T) {
 
 	m := lifecycle.New("sess-init-fail", "run-init-fail")
 	// cmd.Start → Initializing
-	_ = m.Transition(lifecycle.StateInitializing, lifecycle.ReasonSpawnStarted, "", "")
+	if err := m.Transition(lifecycle.StateInitializing, lifecycle.ReasonSpawnStarted, "", ""); err != nil {
+		t.Fatalf("Spawning→Initializing: %v", err)
+	}
 
 	// agent_failed before agent_ready
 	if err := m.Transition(lifecycle.StateFailed, lifecycle.ReasonError, "agent_failed", "process exited before ready"); err != nil {

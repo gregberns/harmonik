@@ -108,8 +108,8 @@ func (e *ErrPreReadyRejection) Error() string {
 	return fmt.Sprintf(`daemon_not_ready{"reason":"unknown_run_id"} (method %q rejected in pre-ready window)`, e.Method)
 }
 
-// JSONRPCErrorCode is the JSON-RPC error code for daemon_not_ready rejections.
-// -32001 is in the implementation-defined error range per JSON-RPC 2.0 spec.
+// JSONRPCErrorCodeDaemonNotReady is the JSON-RPC error code for daemon_not_ready
+// rejections. -32001 is in the implementation-defined error range per JSON-RPC 2.0 spec.
 //
 // Spec ref: process-lifecycle.md §4.1 PL-003b.
 const JSONRPCErrorCodeDaemonNotReady = -32001

@@ -33,6 +33,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -110,12 +111,12 @@ func TestMergeToMain_ForcedLostPushRace_ReEntersAndRetries(t *testing.T) {
 	q.Start(qctx)
 	t.Cleanup(qcancel)
 
-	out := mergeRunBranchToMain(context.Background(), q.Submit, projectDir, runID, &noopEmitter{},
+	out := runmerge.RunBranchToTarget(context.Background(), q.Submit, projectDir, runID, &noopEmitter{},
 		core.BeadID("hk-t7-pushrace"), "", "main", nil, "")
 
 	// (A) Merge succeeded despite the forced first-push non-FF rejection.
-	if !out.success {
-		t.Fatalf("forced lost-push race did not recover: reason=%q noChange=%v", out.reason, out.noChange)
+	if !out.Success {
+		t.Fatalf("forced lost-push race did not recover: reason=%q noChange=%v", out.Reason, out.NoChange)
 	}
 
 	// (B) origin main contains BOTH the race commit and the run work.

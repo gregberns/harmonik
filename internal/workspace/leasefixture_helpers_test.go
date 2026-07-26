@@ -11,20 +11,24 @@ import (
 // leaseFixtureMakeLockJSON returns the JSON body for a lease-lock file per
 // workspace-model.md §4.3 WM-013a. All fields are required.
 //
+// leaseFixtureTTLSec is the advisory ttl_sec every fixture lock carries.
+const leaseFixtureTTLSec = 3600
+
 // Fields:
 //   - run_id:     UUID of the owning run.
 //   - pid:        daemon process ID that wrote the lock.
 //   - created_at: RFC 3339 wall-clock time the lock was written.
-//   - ttl_sec:    advisory lifetime (informative; does not enforce auto-expiry).
+//   - ttl_sec:    advisory lifetime, always leaseFixtureTTLSec (informative;
+//     does not enforce auto-expiry, and no test varies it).
 //
 // Prefixed leaseFixture to avoid sibling-package collisions (bead hk-8mwo.67).
-func leaseFixtureMakeLockJSON(runID string, pid int, createdAt time.Time, ttlSec int) []byte {
+func leaseFixtureMakeLockJSON(runID string, pid int, createdAt time.Time) []byte {
 	return []byte(fmt.Sprintf(
 		`{"run_id":%q,"pid":%d,"created_at":%q,"ttl_sec":%d}`,
 		runID,
 		pid,
 		createdAt.UTC().Format(time.RFC3339),
-		ttlSec,
+		leaseFixtureTTLSec,
 	))
 }
 
@@ -43,7 +47,7 @@ func leaseFixtureWriteLockAtomic(t *testing.T, target string, content []byte) {
 	t.Helper()
 
 	dir := filepath.Dir(target)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("leaseFixtureWriteLockAtomic: MkdirAll %q: %v", dir, err)
 	}
 
@@ -51,43 +55,45 @@ func leaseFixtureWriteLockAtomic(t *testing.T, target string, content []byte) {
 	// guaranteeing rename(2) is atomic).
 	tmpPath := target + fmt.Sprintf(".tmp-%d", os.Getpid())
 	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o644)
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o600)
 	if err != nil {
 		t.Fatalf("leaseFixtureWriteLockAtomic: OpenFile %q: %v", tmpPath, err)
 	}
 
 	if _, err := f.Write(content); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		t.Fatalf("leaseFixtureWriteLockAtomic: Write: %v", err)
+		t.Fatalf("leaseFixtureWriteLockAtomic: Write: %v",
+			withCleanupErrs(err, f.Close(), os.Remove(tmpPath)))
 	}
 
 	// fsync the temp file before rename so the data is durable.
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		t.Fatalf("leaseFixtureWriteLockAtomic: Sync (pre-rename): %v", err)
+		t.Fatalf("leaseFixtureWriteLockAtomic: Sync (pre-rename): %v",
+			withCleanupErrs(err, f.Close(), os.Remove(tmpPath)))
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		t.Fatalf("leaseFixtureWriteLockAtomic: Close (pre-rename): %v", err)
+		t.Fatalf("leaseFixtureWriteLockAtomic: Close (pre-rename): %v",
+			withCleanupErrs(err, os.Remove(tmpPath)))
 	}
 
 	// Atomic rename: POSIX rename(2) is atomic within the same filesystem.
 	if err := os.Rename(tmpPath, target); err != nil {
-		_ = os.Remove(tmpPath)
-		t.Fatalf("leaseFixtureWriteLockAtomic: Rename %q → %q: %v", tmpPath, target, err)
+		t.Fatalf("leaseFixtureWriteLockAtomic: Rename %q → %q: %v", tmpPath, target,
+			withCleanupErrs(err, os.Remove(tmpPath)))
 	}
 
 	// Parent-directory fsync to durably record the rename.
 	// On macOS this is best-effort (APFS may suppress fsync on directory fds),
 	// but the call MUST be made for spec compliance per WM-013a.
+	//nolint:gosec // G304: dir is derived from the controlled test fixture lock path.
 	dirFD, err := os.Open(dir)
 	if err != nil {
 		t.Fatalf("leaseFixtureWriteLockAtomic: Open dir %q for fsync: %v", dir, err)
 	}
-	// Ignore fsync error on directories on macOS — it is best-effort per APFS docs.
-	_ = dirFD.Sync()
+	// Directory fsync is best-effort on macOS/APFS, but failures remain useful
+	// test diagnostics.
+	if syncErr := dirFD.Sync(); syncErr != nil {
+		t.Errorf("leaseFixtureWriteLockAtomic: Sync dir: %v", syncErr)
+	}
 	if err := dirFD.Close(); err != nil {
 		t.Fatalf("leaseFixtureWriteLockAtomic: Close dir fd: %v", err)
 	}
@@ -120,63 +126,4 @@ func leaseFixtureReleaseLock(t *testing.T, target string) {
 // Prefixed leaseFixture to avoid sibling-package collisions (bead hk-8mwo.67).
 func leaseFixtureLeaseLockPath(workspacePath string) string {
 	return filepath.Join(workspacePath, ".harmonik", "lease.lock")
-}
-
-// leaseFixtureWorkspaceLocalEventsDir returns the directory containing
-// workspace-local JSONL files per WM-013b.
-//
-// Prefixed leaseFixture to avoid sibling-package collisions (bead hk-8mwo.67).
-func leaseFixtureWorkspaceLocalEventsDir(workspacePath string) string {
-	return filepath.Join(workspacePath, ".harmonik", "events")
-}
-
-// leaseFixtureWorkspaceLocalEventsFile returns the workspace-local durability
-// JSONL file path for the given workspace_id per WM-013b and §6.2:
-//
-//	${workspace_path}/.harmonik/events/workspace-<workspace_id>.jsonl
-//
-// Prefixed leaseFixture to avoid sibling-package collisions (bead hk-8mwo.67).
-func leaseFixtureWorkspaceLocalEventsFile(workspacePath, workspaceID string) string {
-	return filepath.Join(leaseFixtureWorkspaceLocalEventsDir(workspacePath),
-		"workspace-"+workspaceID+".jsonl")
-}
-
-// leaseFixtureWriteReleaseMarker appends the lease_released JSONL marker to the
-// workspace-local events file per WM-013b and fsyncs the file.
-//
-// The marker format per WM-013b post-escalation path:
-//
-//	{"event":"lease_released","run_id":"<run_id>","workspace_id":"<workspace_id>","reason":"<reason>","released_at":"<rfc3339>"}
-//
-// Prefixed leaseFixture to avoid sibling-package collisions (bead hk-8mwo.67).
-func leaseFixtureWriteReleaseMarker(t *testing.T, workspacePath, runID, workspaceID, reason string) {
-	t.Helper()
-
-	eventsDir := leaseFixtureWorkspaceLocalEventsDir(workspacePath)
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
-		t.Fatalf("leaseFixtureWriteReleaseMarker: MkdirAll %q: %v", eventsDir, err)
-	}
-
-	eventsFile := leaseFixtureWorkspaceLocalEventsFile(workspacePath, workspaceID)
-	marker := fmt.Sprintf(
-		`{"event":"lease_released","run_id":%q,"workspace_id":%q,"reason":%q,"released_at":%q}`,
-		runID, workspaceID, reason, time.Now().UTC().Format(time.RFC3339),
-	) + "\n"
-
-	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-	f, err := os.OpenFile(eventsFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		t.Fatalf("leaseFixtureWriteReleaseMarker: OpenFile %q: %v", eventsFile, err)
-	}
-	if _, err := f.Write([]byte(marker)); err != nil {
-		_ = f.Close()
-		t.Fatalf("leaseFixtureWriteReleaseMarker: Write: %v", err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		t.Fatalf("leaseFixtureWriteReleaseMarker: Sync: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("leaseFixtureWriteReleaseMarker: Close: %v", err)
-	}
 }

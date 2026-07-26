@@ -140,16 +140,20 @@ func sensorBeadIDFixtureSidecarWriteAndRead(t *testing.T, sidecarJSON []byte) ma
 	tmpPath := fmt.Sprintf("%s.tmp-%d", sidecarPath, os.Getpid())
 
 	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		t.Fatalf("sensorBeadIDFixtureSidecarWriteAndRead: open tmp: %v", err)
 	}
 	if _, err := f.Write(sidecarJSON); err != nil {
-		_ = f.Close() //nolint:errcheck // best-effort close before fatal
+		if closeErr := f.Close(); closeErr != nil {
+			t.Fatalf("sensorBeadIDFixtureSidecarWriteAndRead: close after write failure: %v", closeErr)
+		}
 		t.Fatalf("sensorBeadIDFixtureSidecarWriteAndRead: write: %v", err)
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close() //nolint:errcheck // best-effort close before fatal
+		if closeErr := f.Close(); closeErr != nil {
+			t.Fatalf("sensorBeadIDFixtureSidecarWriteAndRead: close after sync failure: %v", closeErr)
+		}
 		t.Fatalf("sensorBeadIDFixtureSidecarWriteAndRead: sync: %v", err)
 	}
 	if err := f.Close(); err != nil {

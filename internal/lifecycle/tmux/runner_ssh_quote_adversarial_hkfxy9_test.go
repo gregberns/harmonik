@@ -49,6 +49,7 @@ func recoverArgvViaLoginShell(ctx context.Context, t *testing.T, remoteOperand s
 	// into positional params, then we NUL-delimit each. This is precisely the
 	// remote-login-shell re-parse path, with a faithful (NUL) recovery channel.
 	script := "set -- " + remoteOperand + `; for a in "$@"; do printf '%s\0' "$a"; done`
+	// #nosec G204 -- script is assembled from this test's controlled adversarial fixture.
 	out, err := exec.CommandContext(ctx, "/bin/sh", "-c", script).Output()
 	if err != nil {
 		t.Fatalf("login-shell simulation failed for operand %q: %v", remoteOperand, err)
@@ -133,7 +134,6 @@ func TestSSHRunner_AdversarialArgvRoundTrip(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			name := tc.argv[0]
 			args := tc.argv[1:]

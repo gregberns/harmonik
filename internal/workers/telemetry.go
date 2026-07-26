@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -303,7 +304,9 @@ func emitWorkerReport(ctx context.Context, p WorkerReportPayload, emit EmitFunc)
 	if err != nil {
 		return
 	}
-	_ = emit(ctx, core.EventTypeWorkerReport, b)
+	if err := emit(ctx, core.EventTypeWorkerReport, b); err != nil {
+		slog.ErrorContext(ctx, "worker event emit failed", "event_type", core.EventTypeWorkerReport, "error", err)
+	}
 }
 
 // defaultDarwinPageSize is the fallback vm_stat page size (bytes) used only when

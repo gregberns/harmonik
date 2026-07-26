@@ -36,7 +36,6 @@ func pidfileLockFixtureWritePidfile(t *testing.T, projectDir string, pid, pgid i
 func pidfileLockFixtureSpawnAndKill(t *testing.T) (int, error) {
 	t.Helper()
 
-	//nolint:gosec // G204: "true" is a compile-time constant, not user input
 	cmd := exec.CommandContext(t.Context(), "true")
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("pidfileLockFixtureSpawnAndKill: Start: %w", err)
@@ -119,6 +118,47 @@ func TestProbePidfileLock_StaleDeadPID(t *testing.T) {
 	}
 	if probedPID != deadPID {
 		t.Errorf("TestProbePidfileLock_StaleDeadPID: pid = %d, want %d", probedPID, deadPID)
+	}
+}
+
+// TestProbePidfileLock_UnsignallableLivePIDIsNotStale verifies that a recorded
+// PID we are not permitted to signal is NOT reported as a stale pidfile.
+//
+// Regression: step 4 collapsed every non-ESRCH kill(pid, 0) error into
+// "stale", so EPERM — which means the process EXISTS but belongs to another
+// uid — read as "process is gone". Step 4a's own comment already claimed EPERM
+// reached it; it never did. A second daemon would declare a live owner's
+// pidfile stale and take it over, putting two daemons on one project.
+//
+// PID 1 is the portable unsignallable-but-alive process: it always exists and
+// is owned by root, so kill(1, 0) returns EPERM for any non-root caller.
+//
+// Spec ref: process-lifecycle.md §4.1 PL-002a — only "recorded PID not live"
+// is the stale case; ambiguity refuses startup.
+func TestProbePidfileLock_UnsignallableLivePIDIsNotStale(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skipf("skipping on %s (POSIX kill(pid,0) only)", runtime.GOOS)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: kill(1, 0) succeeds rather than returning EPERM")
+	}
+	if err := syscall.Kill(1, 0); !errors.Is(err, syscall.EPERM) {
+		t.Skipf("kill(1, 0) returned %v, want EPERM — no unsignallable live PID available here", err)
+	}
+
+	projectDir := plFixtureTempProjectDir(t)
+	myPGID, _ := syscall.Getpgid(os.Getpid()) //nolint:errcheck // always valid
+	pidfileLockFixtureWritePidfile(t, projectDir, 1, myPGID)
+
+	status, probedPID, probeErr := ProbePidfileLock(projectDir)
+
+	if status == PidfileLockStatusStale {
+		t.Errorf("status = PidfileLockStatusStale for a live, unsignallable PID; want a non-stale verdict (err=%v)", probeErr)
+	}
+	if probedPID != 1 {
+		t.Errorf("pid = %d, want 1", probedPID)
 	}
 }
 

@@ -55,7 +55,7 @@ func TestL1_CorpusZeroUnknownFrames(t *testing.T) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		lineNum++
-		if len(strings.TrimSpace(string(line))) == 0 {
+		if strings.TrimSpace(string(line)) == "" {
 			continue
 		}
 		frame, parseErr := codexwire.Parse(line)
@@ -97,7 +97,7 @@ func TestL1_CorpusZeroUnmodeledFields(t *testing.T) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		lineNum++
-		if len(strings.TrimSpace(string(line))) == 0 {
+		if strings.TrimSpace(string(line)) == "" {
 			continue
 		}
 		frame, parseErr := codexwire.Parse(line)
@@ -112,7 +112,10 @@ func TestL1_CorpusZeroUnmodeledFields(t *testing.T) {
 		}
 		if frame.Kind == codexwire.FrameKindServerResponse {
 			if method, ok := requestsByID[string(frame.ID)]; ok {
-				_ = codexwire.ResolveResponseResult(&frame, method)
+				if err := codexwire.ResolveResponseResult(&frame, method); err != nil {
+					t.Errorf("line %d: resolve response result for %q: %v", lineNum, method, err)
+					continue
+				}
 			}
 		}
 		// Collect Extra fields via reflection on the typed payload.
@@ -140,7 +143,7 @@ func TestL1_CorpusRoundTrip(t *testing.T) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		lineNum++
-		if len(strings.TrimSpace(string(line))) == 0 {
+		if strings.TrimSpace(string(line)) == "" {
 			continue
 		}
 		frame, parseErr := codexwire.Parse(line)
@@ -155,7 +158,10 @@ func TestL1_CorpusRoundTrip(t *testing.T) {
 		}
 		if frame.Kind == codexwire.FrameKindServerResponse {
 			if method, ok := requestsByID[string(frame.ID)]; ok {
-				_ = codexwire.ResolveResponseResult(&frame, method)
+				if err := codexwire.ResolveResponseResult(&frame, method); err != nil {
+					t.Errorf("line %d: resolve response result for %q: %v", lineNum, method, err)
+					continue
+				}
 			}
 		}
 		got, marshalErr := codexwire.Marshal(frame)
@@ -164,8 +170,14 @@ func TestL1_CorpusRoundTrip(t *testing.T) {
 			continue
 		}
 		var orig, remarshal map[string]any
-		_ = json.Unmarshal(line, &orig)
-		_ = json.Unmarshal(got, &remarshal)
+		if err := json.Unmarshal(line, &orig); err != nil {
+			t.Errorf("line %d: unmarshal original frame: %v", lineNum, err)
+			continue
+		}
+		if err := json.Unmarshal(got, &remarshal); err != nil {
+			t.Errorf("line %d: unmarshal reserialized frame: %v", lineNum, err)
+			continue
+		}
 		if !reflect.DeepEqual(orig, remarshal) {
 			t.Errorf("line %d: round-trip mismatch\n  orig:  %s\n  got:   %s", lineNum, line, got)
 		}

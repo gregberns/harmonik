@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
 // newTestState builds a twinState with a deterministic seed session_id and an
 // isolated HANDOFF path under t.TempDir() — no exec, no tmux, no real scripts.
-func newTestState(t *testing.T) (*twinState, string) {
+func newTestState(t *testing.T) (state *twinState, handoffPath string) {
 	t.Helper()
 	handoff := filepath.Join(t.TempDir(), "HANDOFF-twin.md")
 	return &twinState{
@@ -49,6 +50,81 @@ func TestHandleLine_HandoffWritesNonce(t *testing.T) {
 	got := readHandoff(t, handoff)
 	if !contains(got, nonce) {
 		t.Fatalf("handoff file missing nonce line.\nwant substring: %q\ngot: %q", nonce, got)
+	}
+}
+
+// TestHandleLine_HandoffPreservesExistingBody_hk4tjyj proves the twin APPENDS the
+// nonce to an existing handoff instead of overwriting the file with it.
+//
+// This is what gives the twin teeth against handoff-DESTRUCTION defects. While
+// the twin overwrote the file with a bare nonce line, a keeper that deleted the
+// crew's prose and a keeper that preserved it produced byte-identical twin
+// output — so hk-4tjyj (the keeper zeroing HANDOFF-<agent>.md on nearly every
+// restart) was invisible to every twin-driven test and reached the field. A
+// test-harness defect that hides a production bug is worse than no harness.
+func TestHandleLine_HandoffPreservesExistingBody_hk4tjyj(t *testing.T) {
+	st, handoff := newTestState(t)
+	const nonce = "<!-- KEEPER:cyc-body-1 -->"
+	const body = "# HANDOFF-crew\n\nDECISION: hold the review gate.\nNEXT: drain the queue.\n"
+
+	if err := os.WriteFile(handoff, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed body: %v", err)
+	}
+
+	st.handleLine("/session-handoff " + handoff + " — include verbatim: " + nonce)
+
+	got := readHandoff(t, handoff)
+	if !contains(got, body) {
+		t.Errorf("the crew's handoff body was destroyed by the nonce write.\nwant to contain: %q\ngot: %q", body, got)
+	}
+	if !contains(got, nonce) {
+		t.Errorf("nonce missing after append.\nwant to contain: %q\ngot: %q", nonce, got)
+	}
+}
+
+// TestHandleLine_HandoffAcrossScrubbedCycles_hk4tjyj models the REAL two-cycle
+// production shape now that the keeper scrubs rather than truncates: the crew
+// writes a body + nonce, the keeper strips only the marker (leaving the body),
+// and the next cycle's nonce is appended to that surviving body.
+//
+// The invariant is that the body accumulates and survives, and exactly one
+// marker is live at a time. Under the old overwrite the cycle-1 body would be
+// gone by cycle 2 — which is the loss this whole bead is about.
+func TestHandleLine_HandoffAcrossScrubbedCycles_hk4tjyj(t *testing.T) {
+	st, handoff := newTestState(t)
+	const body = "# HANDOFF-crew\n\nDECISION: hold the review gate.\n"
+	const nonce1 = "<!-- KEEPER:cyc-1 -->"
+	const nonce2 = "<!-- KEEPER:cyc-2 -->"
+
+	if err := os.WriteFile(handoff, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed body: %v", err)
+	}
+
+	// Cycle 1: the crew appends the nonce to its handoff.
+	st.handleLine("/session-handoff " + handoff + " — include verbatim: " + nonce1)
+	if got := readHandoff(t, handoff); !contains(got, body) || !contains(got, nonce1) {
+		t.Fatalf("cycle 1 did not leave body+nonce.\ngot: %q", got)
+	}
+
+	// The production keeper scrubs the stale marker and preserves the rest
+	// (internal/keeper defaultScrubHandoffNonces). Model that by removing only
+	// the marker line, which is what the real scrub does.
+	scrubbed := strings.ReplaceAll(readHandoff(t, handoff), nonce1+"\n", "")
+	if err := os.WriteFile(handoff, []byte(scrubbed), 0o600); err != nil {
+		t.Fatalf("scrub: %v", err)
+	}
+
+	// Cycle 2: a NEW nonce is appended to the SURVIVING body.
+	st.handleLine("/session-handoff " + handoff + " — include verbatim: " + nonce2)
+	got := readHandoff(t, handoff)
+	if !contains(got, body) {
+		t.Errorf("the crew's handoff body did not survive to cycle 2.\nwant to contain: %q\ngot: %q", body, got)
+	}
+	if !contains(got, nonce2) {
+		t.Errorf("cycle-2 nonce missing.\nwant to contain: %q\ngot: %q", nonce2, got)
+	}
+	if contains(got, nonce1) {
+		t.Errorf("cycle-1 nonce should have been scrubbed.\ngot: %q", got)
 	}
 }
 
@@ -291,7 +367,10 @@ func TestBuildStatusJSON_WindowSetPresentAndCorrect(t *testing.T) {
 	if !ok || int64(top) != 1_000_000 {
 		t.Fatalf(".context_window_size missing/wrong; json: %s", raw)
 	}
-	cw := generic["context_window"].(map[string]any)
+	cw, ok := generic["context_window"].(map[string]any)
+	if !ok {
+		t.Fatalf(".context_window missing/wrong; json: %s", raw)
+	}
 	// Nested fallback path (.context_window.context_window_size).
 	nested, ok := cw["context_window_size"].(float64)
 	if !ok || int64(nested) != 1_000_000 {
@@ -461,7 +540,7 @@ func isHex(r rune) bool {
 }
 
 func contains(haystack, needle string) bool {
-	return len(needle) == 0 || (len(haystack) >= len(needle) && indexOfTest(haystack, needle) >= 0)
+	return needle == "" || (len(haystack) >= len(needle) && indexOfTest(haystack, needle) >= 0)
 }
 
 func indexOfTest(h, n string) int {

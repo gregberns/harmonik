@@ -10,9 +10,17 @@ import (
 	"time"
 )
 
+// sessionLogFixtureAgentType is the agent_type every sidecar fixture carries.
+const sessionLogFixtureAgentType = "agentic"
+
+// sessionLogFixtureWorkflowID is the workflow_id every sidecar fixture carries.
+const sessionLogFixtureWorkflowID = "wf-01"
+
 // sessionLogFixtureMakeMetaJSON builds a minimal harmonik.meta.json payload
 // with all required WM-026 fields. beadID may be empty to omit bead_id.
-func sessionLogFixtureMakeMetaJSON(t *testing.T, runID, sessionID, nodeID, agentType, workflowID, beadID string) []byte {
+// agent_type and workflow_id are fixed at sessionLogFixtureAgentType /
+// sessionLogFixtureWorkflowID — no test varies either.
+func sessionLogFixtureMakeMetaJSON(t *testing.T, runID, sessionID, nodeID, beadID string) []byte {
 	t.Helper()
 	type meta struct {
 		RunID         string  `json:"run_id"`
@@ -28,8 +36,8 @@ func sessionLogFixtureMakeMetaJSON(t *testing.T, runID, sessionID, nodeID, agent
 		RunID:         runID,
 		SessionID:     sessionID,
 		NodeID:        nodeID,
-		AgentType:     agentType,
-		WorkflowID:    workflowID,
+		AgentType:     sessionLogFixtureAgentType,
+		WorkflowID:    sessionLogFixtureWorkflowID,
 		LaunchedAt:    time.Now().UTC().Format(time.RFC3339),
 		SchemaVersion: "1",
 	}
@@ -56,18 +64,17 @@ func sessionLogFixtureWriteSidecarAtomic(sidecarPath string, content []byte) err
 	tmpPath := fmt.Sprintf("%s.tmp-%d", sidecarPath, pid)
 
 	// (i) Write to temp file.
-	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	//nolint:gosec // G304: tmpPath is derived from this test helper's temporary sidecar fixture
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("open tmp: %w", err)
 	}
 	if _, err := f.Write(content); err != nil {
-		f.Close()
-		return fmt.Errorf("write tmp: %w", err)
+		return withCleanupErrs(fmt.Errorf("write tmp: %w", err), f.Close())
 	}
 	// (ii) fsync temp file.
 	if err := f.Sync(); err != nil {
-		f.Close()
-		return fmt.Errorf("fsync tmp: %w", err)
+		return withCleanupErrs(fmt.Errorf("fsync tmp: %w", err), f.Close())
 	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close tmp: %w", err)
@@ -80,13 +87,13 @@ func sessionLogFixtureWriteSidecarAtomic(sidecarPath string, content []byte) err
 
 	// (iv) fsync the parent directory.
 	parentDir := filepath.Dir(sidecarPath)
+	//nolint:gosec // G304: parentDir is derived from this test helper's temporary sidecar fixture
 	d, err := os.Open(parentDir)
 	if err != nil {
 		return fmt.Errorf("open parent dir: %w", err)
 	}
 	if err := d.Sync(); err != nil {
-		d.Close()
-		return fmt.Errorf("fsync parent dir: %w", err)
+		return withCleanupErrs(fmt.Errorf("fsync parent dir: %w", err), d.Close())
 	}
 	return d.Close()
 }
@@ -135,12 +142,12 @@ func TestWM026_SidecarAtomicWrite(t *testing.T) {
 
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 
 	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 		t.Fatalf("WM-026: atomic write failed: %v", err)
@@ -163,10 +170,7 @@ func TestWM026_SidecarAtomicWrite(t *testing.T) {
 	}
 
 	// Assert: the file content parses and contains required fields.
-	raw, err := os.ReadFile(sidecarPath)
-	if err != nil {
-		t.Fatalf("WM-026: ReadFile: %v", err)
-	}
+	raw := mustReadFile(t, sidecarPath)
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		t.Fatalf("WM-026: sidecar is not valid JSON: %v", err)
@@ -195,14 +199,14 @@ func TestWM026_OrphanTmpSweep(t *testing.T) {
 
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
 	// Simulate a crashed write: pre-write a .tmp-<somepid> orphan with no canonical file.
 	orphanPID := 99999
 	orphanPath := filepath.Join(sessionDir, fmt.Sprintf("harmonik.meta.json.tmp-%d", orphanPID))
-	if err := os.WriteFile(orphanPath, []byte(`{"partial":true}`), 0o644); err != nil {
+	if err := os.WriteFile(orphanPath, []byte(`{"partial":true}`), 0o600); err != nil {
 		t.Fatalf("WriteFile orphan: %v", err)
 	}
 

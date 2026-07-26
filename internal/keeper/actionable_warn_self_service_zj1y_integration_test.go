@@ -97,7 +97,7 @@ const zj1yLowWarnTokens int64 = 60_000
 func zj1yWriteGauge(t *testing.T, projectDir, agent string, tokens int64, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("zj1y: mkdir keeper dir: %v", err)
 	}
 	cf := CtxFile{
@@ -122,7 +122,7 @@ func zj1yWriteGauge(t *testing.T, projectDir, agent string, tokens int64, sid st
 func zj1yWriteSid(t *testing.T, projectDir, agent, sid string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("zj1y: mkdir keeper dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, agent+".sid"), []byte(sid+"\n"), 0o600); err != nil {
@@ -199,7 +199,7 @@ func TestZJ1Y_ActionableWarn_LowConfigWarn_NamesVerbatimRestartNowCommand(t *tes
 		WarnAbsTokens:      zj1yLowWarnTokens,
 	}
 	wantCmd := "harmonik keeper restart-now --agent " + agent
-	selected := cfg.selectWarnText(ctxWith(primarySID, 70_000), true /*crispIdle*/, false /*operatorAttached*/)
+	selected := cfg.selectWarnText(&CtxFile{SessionID: primarySID, Tokens: 70_000, WindowSize: 200_000, Pct: 85}, true /*crispIdle*/, false /*operatorAttached*/)
 	if !strings.Contains(selected, restartNowStem) {
 		t.Fatalf("zj1y: selected warn text must carry the restart-now stem; got: %s", selected)
 	}

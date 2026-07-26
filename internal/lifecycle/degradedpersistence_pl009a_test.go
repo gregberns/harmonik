@@ -57,7 +57,7 @@ func readyFixtureServeDegradedState(t *testing.T, ln net.Listener, state *readyF
 				return // listener closed
 			}
 			go func(c net.Conn) {
-				defer func() { _ = c.Close() }() //nolint:errcheck // cleanup error unactionable
+				defer func() { _ = c.Close() }()
 				readyFixtureServeDegradedConn(c, state)
 			}(conn)
 		}
@@ -93,7 +93,10 @@ func readyFixtureServeDegradedConn(conn net.Conn, state *readyFixtureDaemonState
 		result["investigator_run_ids"] = investigators
 	}
 
-	resultBytes, _ := json.Marshal(result) //nolint:errcheck,errchkjson // stub: encoding a known-good map never fails
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return
+	}
 	raw := json.RawMessage(resultBytes)
 	resp := struct {
 		JSONRPC string           `json:"jsonrpc"`
@@ -101,8 +104,13 @@ func readyFixtureServeDegradedConn(conn net.Conn, state *readyFixtureDaemonState
 		Result  *json.RawMessage `json:"result,omitempty"`
 	}{JSONRPC: "2.0", ID: req.ID, Result: &raw}
 
-	respBytes, _ := json.Marshal(resp)          //nolint:errcheck,errchkjson // stub: encoding a known-good struct never fails
-	_, _ = fmt.Fprintf(conn, "%s\n", respBytes) //nolint:errcheck // stub: write errors intentionally ignored
+	respBytes, err := json.Marshal(resp)
+	if err != nil {
+		return
+	}
+	if _, err := fmt.Fprintf(conn, "%s\n", respBytes); err != nil {
+		return
+	}
 }
 
 // readyFixtureProbeStatusFull returns both status and failing_prerequisite
@@ -114,14 +122,17 @@ func readyFixtureProbeStatusFull(t *testing.T, projectDir string) (status, faili
 	if dialErr != nil {
 		return "", "", fmt.Errorf("readyFixtureProbeStatusFull: dial: %w", dialErr)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := struct {
 		JSONRPC string `json:"jsonrpc"`
 		ID      int    `json:"id"`
 		Method  string `json:"method"`
 	}{JSONRPC: "2.0", ID: 2, Method: "status"}
-	reqBytes, _ := json.Marshal(req) //nolint:errcheck,errchkjson // encoding a known-good struct
+	reqBytes, marshalErr := json.Marshal(req)
+	if marshalErr != nil {
+		return "", "", fmt.Errorf("readyFixtureProbeStatusFull: marshal request: %w", marshalErr)
+	}
 	if _, writeErr := fmt.Fprintf(conn, "%s\n", reqBytes); writeErr != nil {
 		return "", "", fmt.Errorf("readyFixtureProbeStatusFull: write: %w", writeErr)
 	}
@@ -170,7 +181,7 @@ func TestPL009a_AutoResolverFailureRoutesToCat3WithoutBlockingReady(t *testing.T
 		if err != nil {
 			t.Fatalf("PL-009a cat3-route: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		state := &readyFixtureDaemonState{
 			status: "ready",
@@ -206,7 +217,7 @@ func TestPL009a_AutoResolverFailureRoutesToCat3WithoutBlockingReady(t *testing.T
 		if err != nil {
 			t.Fatalf("PL-009a investigator-ids: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		investigatorRunID := "01950000-ffff-7000-8000-000000000011"
 		state := &readyFixtureDaemonState{
@@ -219,14 +230,17 @@ func TestPL009a_AutoResolverFailureRoutesToCat3WithoutBlockingReady(t *testing.T
 		if err != nil {
 			t.Fatalf("PL-009a investigator-ids: dial: %v", err)
 		}
-		defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+		defer func() { _ = conn.Close() }()
 
 		req := struct {
 			JSONRPC string `json:"jsonrpc"`
 			ID      int    `json:"id"`
 			Method  string `json:"method"`
 		}{JSONRPC: "2.0", ID: 3, Method: "status"}
-		reqBytes, _ := json.Marshal(req) //nolint:errcheck // encoding a known-good struct
+		reqBytes, marshalErr := json.Marshal(req)
+		if marshalErr != nil {
+			t.Fatalf("PL-009a investigator-ids: marshal request: %v", marshalErr)
+		}
 		if _, err := fmt.Fprintf(conn, "%s\n", reqBytes); err != nil {
 			t.Fatalf("PL-009a investigator-ids: write: %v", err)
 		}
@@ -272,7 +286,7 @@ func TestPL009a_AutoResolverFailureRoutesToCat3WithoutBlockingReady(t *testing.T
 		if err != nil {
 			t.Fatalf("PL-009a multi-failure: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		investigatorIDs := []string{
 			"01950000-ffff-7000-8000-000000000020",
@@ -321,7 +335,7 @@ func TestPL010_DegradedPersistsUntilCat0Clears(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-010 degraded: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		state := &readyFixtureDaemonState{
 			status:              "degraded",
@@ -354,7 +368,7 @@ func TestPL010_DegradedPersistsUntilCat0Clears(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-010 clear: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		state := &readyFixtureDaemonState{
 			status:              "degraded",
@@ -425,7 +439,7 @@ func TestPL010_DegradedPersistsUntilCat0Clears(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-010 failing-prereq: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		const wantPrereq = "beads-br-timeout"
 		state := &readyFixtureDaemonState{
@@ -502,7 +516,7 @@ func TestPL010_DegradedPersistsUntilCat0Clears(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-010 state-order: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		// Walk through the lifecycle: degraded → reconciling → ready.
 		state := &readyFixtureDaemonState{status: "degraded", failingPrerequisite: "git-unavailable"}

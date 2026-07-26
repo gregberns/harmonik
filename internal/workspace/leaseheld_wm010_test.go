@@ -31,9 +31,10 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
 		// Create the worktree (simulating workspace creation).
-		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
+		//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -43,12 +44,12 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 		// Write the lease-lock file (simulating workspace_leased emission ordering
 		// per WM-016: worktree → branch → sessions dir + sidecar → lease lock).
 		leaseLockDir := filepath.Join(worktreePath, ".harmonik")
-		if err := os.MkdirAll(leaseLockDir, 0o755); err != nil {
+		if err := os.MkdirAll(leaseLockDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll leaseLockDir: %v", err)
 		}
 		leaseLockPath := filepath.Join(leaseLockDir, "lease.lock")
 		pid := os.Getpid()
-		lockContent := leaseFixtureMakeLockJSON(runID, pid, time.Now(), 3600)
+		lockContent := leaseFixtureMakeLockJSON(runID, pid, time.Now())
 		leaseFixtureWriteLockAtomic(t, leaseLockPath, lockContent)
 
 		// Verify the lease-lock exists at the canonical path.
@@ -63,13 +64,13 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 		for i, agentType := range agentTypes {
 			sessionID := leaseFixtureSessionID(i)
 			sessionDir := filepath.Join(worktreePath, ".harmonik", "sessions", sessionID)
-			if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+			if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 				t.Fatalf("WM-010: agent %q: MkdirAll sessionDir: %v", agentType, err)
 			}
 			sidecar := filepath.Join(sessionDir, "harmonik.meta.json")
 			content := `{"run_id":"` + runID + `","session_id":"` + sessionID +
 				`","agent_type":"` + agentType + `","schema_version":"1"}`
-			if err := os.WriteFile(sidecar, []byte(content), 0o644); err != nil {
+			if err := os.WriteFile(sidecar, []byte(content), 0o600); err != nil {
 				t.Fatalf("WM-010: agent %q: WriteFile sidecar: %v", agentType, err)
 			}
 
@@ -120,20 +121,21 @@ func TestWM010_LeaseHeldByRunNotByAgent(t *testing.T) {
 		for _, runID := range runIDs {
 			branch := "run/" + runID
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
+			//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 			cmd.Dir = repo
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("git worktree add %q: %v\n%s", runID, err, out)
 			}
 			leaseLockDir := filepath.Join(worktreePath, ".harmonik")
-			if err := os.MkdirAll(leaseLockDir, 0o755); err != nil {
+			if err := os.MkdirAll(leaseLockDir, 0o700); err != nil {
 				t.Fatalf("MkdirAll leaseLockDir: %v", err)
 			}
 			leaseLockPath := filepath.Join(leaseLockDir, "lease.lock")
-			lockContent := leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600)
+			lockContent := leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now())
 			leaseFixtureWriteLockAtomic(t, leaseLockPath, lockContent)
 		}
 

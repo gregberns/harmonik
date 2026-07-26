@@ -173,7 +173,10 @@ func TestHandleQueueCancel_AlreadyCompleted_RefusesWithoutForce(t *testing.T) {
 	setter := newQueueCancelHk0mmy4FakeSetter()
 	a := queue.NewHandlerAdapter(nil, projectDir, setter, nil)
 
-	params, _ := json.Marshal(queue.QueueCancelRequest{})
+	params, marshalErr := json.Marshal(queue.QueueCancelRequest{})
+	if marshalErr != nil {
+		t.Fatalf("marshal QueueCancelRequest: %v", marshalErr)
+	}
 	_, rpcErr := a.HandleQueueCancel(ctx, params)
 	if rpcErr == nil {
 		t.Fatal("HandleQueueCancel(completed, force=false): expected an RPCError, got nil")
@@ -190,7 +193,7 @@ func TestHandleQueueCancel_AbsentQueue_StillReapsStaleSlot(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "queues"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "queues"), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 
@@ -198,7 +201,10 @@ func TestHandleQueueCancel_AbsentQueue_StillReapsStaleSlot(t *testing.T) {
 	setter.slots["ghost"] = &queue.Queue{Name: "ghost", Status: queue.QueueStatusActive}
 	a := queue.NewHandlerAdapter(nil, projectDir, setter, nil)
 
-	params, _ := json.Marshal(queue.QueueCancelRequest{Queue: "ghost"})
+	params, marshalErr := json.Marshal(queue.QueueCancelRequest{Queue: "ghost"})
+	if marshalErr != nil {
+		t.Fatalf("marshal QueueCancelRequest: %v", marshalErr)
+	}
 	res, rpcErr := a.HandleQueueCancel(context.Background(), params)
 	if rpcErr != nil {
 		t.Fatalf("HandleQueueCancel(absent): unexpected RPCError %+v", rpcErr)

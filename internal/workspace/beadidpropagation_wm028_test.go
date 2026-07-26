@@ -31,23 +31,19 @@ func TestWM028_BeadIDPropagatesIntoSessionMetadata(t *testing.T) {
 
 		workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 		sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll sessionDir: %v", err)
 		}
 
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", beadID)
+		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", beadID)
 
 		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-028: atomic write: %v", err)
 		}
 
 		// Parse and assert bead_id round-trips correctly.
-		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-		raw, err := os.ReadFile(sidecarPath)
-		if err != nil {
-			t.Fatalf("WM-028: ReadFile: %v", err)
-		}
+		raw := mustReadFile(t, sidecarPath)
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(raw, &parsed); err != nil {
 			t.Fatalf("WM-028: unmarshal: %v", err)
@@ -81,23 +77,19 @@ func TestWM028_BeadIDPropagatesIntoSessionMetadata(t *testing.T) {
 
 		workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 		sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll sessionDir: %v", err)
 		}
 
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
 		// Empty beadID → sessionLogFixtureMakeMetaJSON omits the field.
-		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 
 		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-028: atomic write: %v", err)
 		}
 
-		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-		raw, err := os.ReadFile(sidecarPath)
-		if err != nil {
-			t.Fatalf("WM-028: ReadFile: %v", err)
-		}
+		raw := mustReadFile(t, sidecarPath)
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(raw, &parsed); err != nil {
 			t.Fatalf("WM-028: unmarshal: %v", err)
@@ -124,22 +116,18 @@ func TestWM028_BeadIDPropagatesIntoSessionMetadata(t *testing.T) {
 
 		workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 		sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll sessionDir: %v", err)
 		}
 
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, namespacedNodeID, "agentic", "wf-01", beadID)
+		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, namespacedNodeID, beadID)
 
 		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-028: atomic write: %v", err)
 		}
 
-		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-		raw, err := os.ReadFile(sidecarPath)
-		if err != nil {
-			t.Fatalf("WM-028: ReadFile: %v", err)
-		}
+		raw := mustReadFile(t, sidecarPath)
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(raw, &parsed); err != nil {
 			t.Fatalf("WM-028: unmarshal: %v", err)

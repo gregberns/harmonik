@@ -12,12 +12,12 @@ import (
 // gitVersionFixtureFakeBinary writes a shell script at dir/git that prints the
 // given version line and exits 0 (or exits 1 if exitCode is non-zero).
 //
-// The returned path is the directory containing the fake binary; callers MUST
-// prepend it to PATH via t.Setenv so that exec.CommandContext picks it up.
+// The fake binary is written into dir; callers MUST prepend dir to PATH via
+// t.Setenv so that exec.CommandContext picks it up.
 //
 // Prefixed gitVersionFixture per implementer-protocol helper-prefix discipline
 // (bead hk-8mwo.2).
-func gitVersionFixtureFakeBinary(t *testing.T, dir, versionLine string, exitCode int) string {
+func gitVersionFixtureFakeBinary(t *testing.T, dir, versionLine string, exitCode int) {
 	t.Helper()
 
 	script := "#!/bin/sh\n"
@@ -28,10 +28,9 @@ func gitVersionFixtureFakeBinary(t *testing.T, dir, versionLine string, exitCode
 	}
 
 	binPath := filepath.Join(dir, "git")
-	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil { //nolint:gosec // G306: executable bit required for fake git binary
+	if err := os.WriteFile(binPath, []byte(script), 0o700); err != nil { //nolint:gosec // G306: executable bit required for fake git binary
 		t.Fatalf("gitVersionFixtureFakeBinary: WriteFile %q: %v", binPath, err)
 	}
-	return dir
 }
 
 // gitVersionFixturePrependPath prepends dir to PATH for the duration of the test.
@@ -109,7 +108,6 @@ func TestParseGitVersion_WellFormedInputs(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -142,7 +140,6 @@ func TestParseGitVersion_MalformedInputs(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -180,7 +177,6 @@ func TestWMENV002_DetectGitVersion_BelowMinimumReturnsErrGitVersionTooOld(t *tes
 	}
 
 	for _, versionLine := range oldVersions {
-		versionLine := versionLine
 		t.Run(versionLine, func(t *testing.T) {
 			dir := t.TempDir()
 			gitVersionFixtureFakeBinary(t, dir, versionLine, 0)
@@ -217,7 +213,6 @@ func TestWMENV002_DetectGitVersion_AtOrAboveMinimumSucceeds(t *testing.T) {
 	}
 
 	for _, tc := range goodVersions {
-		tc := tc
 		t.Run(tc.versionLine, func(t *testing.T) {
 			dir := t.TempDir()
 			gitVersionFixtureFakeBinary(t, dir, tc.versionLine, 0)

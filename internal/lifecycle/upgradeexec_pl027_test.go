@@ -13,21 +13,6 @@ import (
 	"time"
 )
 
-// upgradeExecFixtureUpgradeMarkerContent models the on-disk content of the
-// `.harmonik/daemon.upgrading` marker file per ON-020a. The content is owned
-// by ON-020a; PL-027(iv) writes the marker and PL-005 step 8a reads it.
-//
-// Spec ref: process-lifecycle.md §4.9 PL-027(iv) — "The outgoing binary MUST
-// write the upgrade-intent marker .harmonik/daemon.upgrading … before invoking
-// execve."
-// Spec ref: operator-nfr.md §4.6 ON-020a — content is expected_commit_hash +
-// upgrade-initiation timestamp + operator's session_id.
-type upgradeExecFixtureUpgradeMarkerContent struct {
-	ExpectedCommitHash string `json:"expected_commit_hash"`
-	InitiatedAt        string `json:"initiated_at"`
-	SessionID          string `json:"session_id"`
-}
-
 // upgradeExecFixtureUpgradeState models the full state of a daemon upgrade
 // exec-replacement scenario. Fields are set as the harness advances through
 // the upgrade protocol steps.
@@ -322,14 +307,13 @@ func TestPL027_UpgradeExecReplacementHarness(t *testing.T) {
 		// Verify the full bracket: upgrading (pre-exec) → exec → completed (post-ready).
 		var events []string
 
-		// Outgoing daemon emits upgrading before exec.
-		events = append(events, "operator_upgrading") // event from outgoing
-		events = append(events, "execve")             // exec boundary
-
-		// Incoming daemon reaches ready and emits completed.
-		events = append(events, "daemon_started")             // new instance starts
-		events = append(events, "daemon_ready")               // new instance ready
-		events = append(events, "operator_upgrade_completed") // post-ready emission
+		events = append(events,
+			"operator_upgrading",         // outgoing daemon, pre-exec
+			"execve",                     // exec boundary
+			"daemon_started",             // new instance starts
+			"daemon_ready",               // new instance ready
+			"operator_upgrade_completed", // post-ready emission
+		)
 
 		// Assert: upgrading must be before execve; completed must be after execve.
 		upgradingIdx, execveIdx, completedIdx := -1, -1, -1
@@ -408,10 +392,10 @@ func TestPL027_UpgradingMarkerAtomicWrite(t *testing.T) {
 		t.Fatalf("PL-027 atomic-write: open temp for fsync: %v", err)
 	}
 	if err := tmpF.Sync(); err != nil {
-		_ = tmpF.Close() //nolint:errcheck // cleanup error unactionable
+		_ = tmpF.Close()
 		t.Fatalf("PL-027 atomic-write: fsync temp: %v", err)
 	}
-	_ = tmpF.Close() //nolint:errcheck // cleanup error unactionable
+	_ = tmpF.Close()
 	recordStep("fsync-temp")
 
 	// Step 3: rename temp → final.
@@ -426,10 +410,10 @@ func TestPL027_UpgradingMarkerAtomicWrite(t *testing.T) {
 		t.Fatalf("PL-027 atomic-write: open parent dir: %v", err)
 	}
 	if err := parentF.Sync(); err != nil {
-		_ = parentF.Close() //nolint:errcheck // cleanup error unactionable
+		_ = parentF.Close()
 		t.Fatalf("PL-027 atomic-write: fsync parent dir: %v", err)
 	}
-	_ = parentF.Close() //nolint:errcheck // cleanup error unactionable
+	_ = parentF.Close()
 	recordStep("fsync-parent-dir")
 
 	// Assert the marker is present on disk.
@@ -488,7 +472,7 @@ func TestPL027_ListenerFdAdoptionNoConnRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-027 fd-adoption: bind socket: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = ln.Close() })
 
 	sockPath := plFixtureSocketPath(projectDir)
 
@@ -497,7 +481,7 @@ func TestPL027_ListenerFdAdoptionNoConnRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PL-027 fd-adoption: client connect pre-exec: %v", err)
 	}
-	_ = clientConn.Close() //nolint:errcheck // cleanup error unactionable
+	_ = clientConn.Close()
 
 	// Phase 3: simulate fd adoption by the "new daemon" by accepting on the
 	// same listener. In the real exec-replacement path, the new binary receives
@@ -510,7 +494,7 @@ func TestPL027_ListenerFdAdoptionNoConnRefused(t *testing.T) {
 		t.Fatalf("PL-027 fd-adoption: client connect during adoption window: %v; "+
 			"no ECONNREFUSED should be observable per PL-027(iii)", err)
 	}
-	_ = clientConn2.Close() //nolint:errcheck // cleanup error unactionable
+	_ = clientConn2.Close()
 
 	t.Logf("PL-027 fd-adoption: listener remains accepting across exec window; no ECONNREFUSED observed")
 }
@@ -602,10 +586,14 @@ func TestPL027_ExecReplacementSkipsOrphanSweep_SelfExec(t *testing.T) {
 
 		if upgradeEnv == "1" && listenerFD != "" {
 			// Orphan sweep skipped (correct).
-			os.Stdout.WriteString("orphan_sweep=skipped\n") //nolint:errcheck // child process stub
+			if _, werr := os.Stdout.WriteString("orphan_sweep=skipped\n"); werr != nil {
+				os.Exit(1) // parent asserts on the missing line
+			}
 		} else {
 			// Orphan sweep would run (should not happen on upgrade path).
-			os.Stdout.WriteString("orphan_sweep=ran\n") //nolint:errcheck // child process stub
+			if _, werr := os.Stdout.WriteString("orphan_sweep=ran\n"); werr != nil {
+				os.Exit(1) // parent asserts on the missing line
+			}
 		}
 		os.Exit(0)
 	}
@@ -692,10 +680,10 @@ func TestPL027_UpgradingMarkerRemovedOnCleanTransition(t *testing.T) {
 		t.Fatalf("PL-027 marker lifecycle: open parent dir for fsync: %v", err)
 	}
 	if err := parentF.Sync(); err != nil {
-		_ = parentF.Close() //nolint:errcheck // cleanup error unactionable
+		_ = parentF.Close()
 		t.Fatalf("PL-027 marker lifecycle: fsync parent dir: %v", err)
 	}
-	_ = parentF.Close() //nolint:errcheck // cleanup error unactionable
+	_ = parentF.Close()
 
 	// Phase 5: assert marker is gone.
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {

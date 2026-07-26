@@ -6,7 +6,7 @@ package main
 // labels on the captain launch path while HARMONIK_AGENT stays bare, proving
 // that crew wake / keeper rebind are unaffected by the RC prefix.
 //
-// The crew-launch side lives in internal/daemon/crewlaunchspec_twoproj_hk25bg_test.go.
+// The crew-launch side lives in internal/crewrun/launchspec_twoproj_hk25bg_test.go.
 //
 // Run: go test ./cmd/harmonik/ -run TwoProject -v
 
@@ -21,11 +21,11 @@ import (
 func writeTwoProjConfig(t *testing.T, projectDir, prefix string) {
 	t.Helper()
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatalf("writeTwoProjConfig: MkdirAll: %v", err)
 	}
 	content := "schema_version: 1\ndaemon:\n  remote_control_prefix: " + prefix + "\n"
-	if err := os.WriteFile(filepath.Join(harmonikDir, "config.yaml"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(harmonikDir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatalf("writeTwoProjConfig: WriteFile: %v", err)
 	}
 }

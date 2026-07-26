@@ -2,7 +2,6 @@ package cli_test
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -40,7 +39,6 @@ func TestQueueVerbsRejectUnrecognizedDashFlag(t *testing.T) {
 	t.Parallel()
 	const wantExit = 2 // exitTransportError
 	for name, run := range allQueueVerbs() {
-		name, run := name, run
 		t.Run(name+"/leading", func(t *testing.T) {
 			t.Parallel()
 			var out, errOut strings.Builder
@@ -69,18 +67,13 @@ func TestQueuePauseResumeFlagWinsPositional(t *testing.T) {
 		"resume": cli.RunQueueResume,
 	}
 	for name, run := range verbs {
-		name, run := name, run
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			projectDir := queueCliFixtureTempDir(t)
 			var capturedQueue string
 			queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
-				var msg map[string]json.RawMessage
-				if err := json.Unmarshal(raw, &msg); err == nil {
-					if qBytes, ok := msg["queue"]; ok {
-						_ = json.Unmarshal(qBytes, &capturedQueue)
-					}
-				}
+				msg := queueCliFixtureDecodeRequest(t, raw)
+				queueCliFixtureCapture(t, msg, "queue", &capturedQueue)
 				return queueCliFixtureSuccessResponse(t, map[string]any{})
 			})
 

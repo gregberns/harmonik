@@ -31,6 +31,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
@@ -41,7 +42,9 @@ import (
 // used as the "parent vertex" in the sub-workflow reference graph acyclicity
 // check (SW-003).
 func newDotSubWorkflowRunner(
-	deps workLoopDeps,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadRecord core.BeadRecord,
@@ -61,7 +64,9 @@ func newDotSubWorkflowRunner(
 ) *dotSubWorkflowRunner {
 	parentName := parentGraphName(parentGraph)
 	return &dotSubWorkflowRunner{
-		deps:               deps,
+		env:                env,
+		ports:              ports,
+		handles:            handles,
 		runID:              runID,
 		beadID:             beadID,
 		beadRecord:         beadRecord,
@@ -108,7 +113,9 @@ func parentGraphName(g *dot.Graph) string {
 // driveDotWorkflow call so the Run method can dispatch expanded sub-workflow
 // nodes using the same infrastructure as the parent cascade.
 type dotSubWorkflowRunner struct {
-	deps            workLoopDeps
+	env             runloop.RunEnv
+	ports           runloop.RunPorts
+	handles         runloop.SharedHandles
 	runID           core.RunID
 	beadID          core.BeadID
 	beadRecord      core.BeadRecord
@@ -171,7 +178,7 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 	// ── Step 1: Three-tier graph resolution (SW-004) ──────────────────────────
 	subGraph, resolvedPath, resolveErr := resolveSubWorkflowGraph(
 		string(spec.SubWorkflowRef),
-		r.deps.projectDir,
+		r.env.ProjectDir,
 	)
 	if resolveErr != nil {
 		fc := core.FailureClassStructural
@@ -246,7 +253,9 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 	// subRunner is a nested dotSubWorkflowRunner for dispatching sub-workflow
 	// nodes found inside the child graph (recursive expansion).
 	subRunner := &dotSubWorkflowRunner{
-		deps:               r.deps,
+		env:                r.env,
+		ports:              r.ports,
+		handles:            r.handles,
 		runID:              r.runID,
 		beadID:             r.beadID,
 		beadRecord:         r.beadRecord,
@@ -287,7 +296,7 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 	// ── Step 6: Dispatch the expanded sub-workflow (SW-005/SW-006) ────────────
 	// DispatchSubWorkflow emits sub_workflow_entered, walks the expanded graph
 	// via nodeRunner, emits sub_workflow_exited, and returns the terminal Outcome.
-	outcome, dispatchErr := workflow.DispatchSubWorkflow(ctx, r.run, expansion, subGraph, r.cycles, nodeRunner, r.deps.bus)
+	outcome, dispatchErr := workflow.DispatchSubWorkflow(ctx, r.run, expansion, subGraph, r.cycles, nodeRunner, r.ports.Emitter)
 	if dispatchErr != nil {
 		return core.Outcome{}, fmt.Errorf("sub-workflow node %q: dispatch: %w", spec.ParentNodeID, dispatchErr)
 	}
@@ -314,7 +323,7 @@ func dispatchSubWorkflowExpandedNode(
 	switch n.Type {
 	case core.NodeTypeNonAgentic:
 		if n.ToolCommand != "" && n.HandlerRef == "shell" {
-			return dispatchDotToolNode(ctx, r.deps.bus, r.runID, r.runner, r.wtPath, n, r.deps.handlerEnv)
+			return dispatchDotToolNode(ctx, r.ports.Emitter, r.runID, r.runner, r.wtPath, n, r.env.HandlerEnv)
 		}
 		// Non-shell non-agentic: synthesize SUCCESS.
 		return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
@@ -322,7 +331,9 @@ func dispatchSubWorkflowExpandedNode(
 	case core.NodeTypeAgentic:
 		return dispatchDotAgenticNode(
 			ctx,
-			r.deps,
+			r.env,
+			r.ports,
+			r.handles,
 			r.runID,
 			r.beadID,
 			r.beadRecord,
@@ -349,9 +360,10 @@ func dispatchSubWorkflowExpandedNode(
 
 	case core.NodeTypeGate:
 		return dispatchDotGateNode(
-			ctx, r.deps, r.runID, r.run, r.wtPath, r.daemonSocket, n,
+			ctx, r.env, r.ports, r.handles, r.runID, r.run, r.wtPath, r.daemonSocket, n,
 			*r.iterationCount, r.resolvedModel, r.resolvedEffort,
-			r.beadID, r.beadTitle, r.beadDescription, r.extraContext, r.baseBranch, r.runner,
+			r.beadID, r.beadRecord, // hk-01vs0: tier-1 harness label reaches the gate's harness resolution
+			r.beadTitle, r.beadDescription, r.extraContext, r.baseBranch, r.runner,
 			r.workerBinaryPath, r.workerSessionName, r.workerSessionCwd,
 		)
 

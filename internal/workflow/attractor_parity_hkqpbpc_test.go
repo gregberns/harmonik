@@ -52,7 +52,7 @@ func writeTempDot(t *testing.T, src string) string {
 	t.Helper()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "workflow.dot")
-	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
 		t.Fatalf("writeTempDot: %v", err)
 	}
 	return p

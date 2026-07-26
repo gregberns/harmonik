@@ -269,7 +269,6 @@ func intentReadFixtureWrite(t *testing.T, dir string, entry IntentLogEntry) stri
 	name := encoded + ".json"
 	path := filepath.Join(dir, name)
 
-	//nolint:gosec // G306: intent files are readable by the daemon user only; 0o600 is correct
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("intentReadFixtureWrite: WriteFile %q: %v", path, err)
 	}
@@ -345,7 +344,6 @@ func TestReadIntentLogEntry_InvalidJSON(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.json")
-	//nolint:gosec // G306: test file
 	if err := os.WriteFile(path, []byte("{not valid json}"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -373,7 +371,6 @@ func TestReadIntentLogEntry_InvalidEntry(t *testing.T) {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 	path := filepath.Join(dir, "invalid_entry.json")
-	//nolint:gosec // G306: test file
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -412,7 +409,6 @@ func TestReadIntentLogEntry_SnakeCaseKeys(t *testing.T) {
 	}`
 
 	path := filepath.Join(dir, "snake_case.json")
-	//nolint:gosec // G306: test file
 	if err := os.WriteFile(path, []byte(snakeCaseJSON), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -601,7 +597,6 @@ func TestIdempCrashRecovery_TmpFileSkipped(t *testing.T) {
 	}
 
 	tmpPath := filepath.Join(dir, "run-abc_trans-xyz_claim.json.tmp-deadbeef")
-	//nolint:gosec // G306: test temp dir
 	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}

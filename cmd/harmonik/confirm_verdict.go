@@ -33,10 +33,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"strings"
+	"syscall"
 )
 
 // confirmVerdictUsage prints help for `harmonik confirm-verdict`.
@@ -220,18 +223,16 @@ func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
 }
 
 // isVerdictSocketAbsent reports whether the dial error indicates the socket
-// file does not exist.
+// file does not exist. Linux connect(2) on a missing unix socket returns
+// ENOENT; macOS returns EINVAL because the kernel rejects a path with no
+// socket file at it. Both are matched through the whole error chain rather
+// than by message text, so an unrelated error that merely mentions a missing
+// file cannot be mistaken for "daemon down".
 func isVerdictSocketAbsent(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "no such file or directory")
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.EINVAL)
 }
 
 // isVerdictConnectionRefused reports whether the dial error is ECONNREFUSED.
 func isVerdictConnectionRefused(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "connection refused")
+	return errors.Is(err, syscall.ECONNREFUSED)
 }

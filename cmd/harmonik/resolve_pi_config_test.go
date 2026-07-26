@@ -23,12 +23,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // fullPiCfg is a valid PiHarnessConfig with all required fields set.
-func fullPiCfg() daemon.PiHarnessConfig {
-	return daemon.PiHarnessConfig{
+func fullPiCfg() projectconfig.PiHarnessConfig {
+	return projectconfig.PiHarnessConfig{
 		Provider:  "openrouter",
 		Model:     "openrouter/qwen/qwen3-coder",
 		APIKeyEnv: "OPENROUTER_API_KEY",
@@ -49,7 +49,7 @@ func TestResolvePiConfig_AllRequired_OK(t *testing.T) {
 
 func TestResolvePiConfig_AllMissing_AggregatesAllThree(t *testing.T) {
 	t.Parallel()
-	_, err := ResolvePiConfig(daemon.PiHarnessConfig{}, "/proj")
+	_, err := ResolvePiConfig(projectconfig.PiHarnessConfig{}, "/proj")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -123,7 +123,7 @@ func TestResolvePiConfig_MissingAPIKeyEnv(t *testing.T) {
 
 func TestResolvePiConfig_MissingErrorMessage_NamesPathsAndExample(t *testing.T) {
 	t.Parallel()
-	_, err := ResolvePiConfig(daemon.PiHarnessConfig{}, "/my/project")
+	_, err := ResolvePiConfig(projectconfig.PiHarnessConfig{}, "/my/project")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -153,7 +153,6 @@ func TestResolvePiConfig_ModelShape_ValidVariants(t *testing.T) {
 		strings.Repeat("a", 128), // exactly 128 chars
 	}
 	for _, m := range validModels {
-		m := m
 		t.Run(m[:min(len(m), 30)], func(t *testing.T) {
 			t.Parallel()
 			cfg := fullPiCfg()
@@ -177,7 +176,6 @@ func TestResolvePiConfig_ModelShape_InvalidChars(t *testing.T) {
 		"model\x00null",
 	}
 	for _, m := range invalidModels {
-		m := m
 		t.Run(m, func(t *testing.T) {
 			t.Parallel()
 			cfg := fullPiCfg()
@@ -211,7 +209,7 @@ func TestResolvePiConfig_Fallback_AllFields_OK(t *testing.T) {
 	t.Parallel()
 	cfg := fullPiCfg()
 	cfg.HasFallback = true
-	cfg.Fallback = daemon.PiFallbackConfig{
+	cfg.Fallback = projectconfig.PiFallbackConfig{
 		Provider:  "anthropic",
 		Model:     "anthropic/claude-haiku-4-5-20251001",
 		APIKeyEnv: "ANTHROPIC_API_KEY",
@@ -226,7 +224,7 @@ func TestResolvePiConfig_Fallback_PartialFields_AggregatesMissing(t *testing.T) 
 	cfg := fullPiCfg()
 	cfg.HasFallback = true
 	// Leave fallback.provider and fallback.api_key_env empty.
-	cfg.Fallback = daemon.PiFallbackConfig{
+	cfg.Fallback = projectconfig.PiFallbackConfig{
 		Model: "anthropic/claude-haiku-4-5-20251001",
 	}
 	_, err := ResolvePiConfig(cfg, "/proj")
@@ -263,7 +261,7 @@ func TestResolvePiConfig_Fallback_ModelShape_Invalid(t *testing.T) {
 	t.Parallel()
 	cfg := fullPiCfg()
 	cfg.HasFallback = true
-	cfg.Fallback = daemon.PiFallbackConfig{
+	cfg.Fallback = projectconfig.PiFallbackConfig{
 		Provider:  "anthropic",
 		Model:     "invalid model with spaces",
 		APIKeyEnv: "ANTHROPIC_API_KEY",
@@ -367,7 +365,11 @@ func TestResolvePiConfig_APIKeyFile_TildeExpanded(t *testing.T) {
 	if err := os.WriteFile(keyFile, []byte("sk-or-tilde-test"), 0o600); err != nil {
 		t.Fatalf("setup: write key file: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Remove(keyFile) })
+	t.Cleanup(func() {
+		if err := os.Remove(keyFile); err != nil && !os.IsNotExist(err) {
+			t.Errorf("cleanup key file: %v", err)
+		}
+	})
 
 	cfg := fullPiCfg()
 	cfg.APIKeyFile = "~/.harmonik-test-xmfoi-expand.key"
@@ -498,7 +500,7 @@ func TestResolvePiConfig_API_PassesThrough(t *testing.T) {
 func TestResolvePiConfig_ProfileMap_Valid(t *testing.T) {
 	t.Parallel()
 	cfg := fullPiCfg()
-	cfg.Profiles = map[string]daemon.PiProfileConfig{
+	cfg.Profiles = map[string]projectconfig.PiProfileConfig{
 		"cloud": {
 			Provider:  "openrouter",
 			Model:     "openrouter/qwen/qwen3-coder",
@@ -534,7 +536,7 @@ func TestResolvePiConfig_ProfileMap_Valid(t *testing.T) {
 func TestResolvePiConfig_Profile_OrnithShape(t *testing.T) {
 	t.Parallel()
 	cfg := fullPiCfg()
-	cfg.Profiles = map[string]daemon.PiProfileConfig{
+	cfg.Profiles = map[string]projectconfig.PiProfileConfig{
 		"ornith": {
 			Provider:  "ornith",
 			Model:     "deepseek/deepseek-r1",
@@ -558,7 +560,7 @@ func TestResolvePiConfig_Profile_OrnithShape(t *testing.T) {
 func TestResolvePiConfig_Profile_InvalidShape(t *testing.T) {
 	t.Parallel()
 	cfg := fullPiCfg()
-	cfg.Profiles = map[string]daemon.PiProfileConfig{
+	cfg.Profiles = map[string]projectconfig.PiProfileConfig{
 		"bad": {
 			Provider:  "bad provider",
 			Model:     "some/model",
@@ -581,11 +583,11 @@ func TestResolvePiConfig_Profile_InvalidShape(t *testing.T) {
 func TestResolvePiConfig_Profile_MissingRequiredKey_Aggregates(t *testing.T) {
 	t.Parallel()
 	// Top-level missing provider + profile missing api_key_env → both in one error.
-	cfg := daemon.PiHarnessConfig{
+	cfg := projectconfig.PiHarnessConfig{
 		// Provider intentionally absent
 		Model:     "openrouter/qwen/qwen3-coder",
 		APIKeyEnv: "OPENROUTER_API_KEY",
-		Profiles: map[string]daemon.PiProfileConfig{
+		Profiles: map[string]projectconfig.PiProfileConfig{
 			"myprofile": {
 				Provider: "openrouter",
 				Model:    "openrouter/qwen/qwen3-coder",
@@ -621,7 +623,7 @@ func TestResolvePiConfig_Profile_APIKeyFile_Expanded(t *testing.T) {
 		t.Fatalf("setup: write key file: %v", err)
 	}
 	cfg := fullPiCfg()
-	cfg.Profiles = map[string]daemon.PiProfileConfig{
+	cfg.Profiles = map[string]projectconfig.PiProfileConfig{
 		"withkey": {
 			Provider:   "openrouter",
 			Model:      "openrouter/qwen/qwen3-coder",
@@ -639,7 +641,7 @@ func TestResolvePiConfig_Profile_APIKeyFile_Expanded(t *testing.T) {
 
 	// Unreadable file → fail loud.
 	cfg2 := fullPiCfg()
-	cfg2.Profiles = map[string]daemon.PiProfileConfig{
+	cfg2.Profiles = map[string]projectconfig.PiProfileConfig{
 		"badkey": {
 			Provider:   "openrouter",
 			Model:      "openrouter/qwen/qwen3-coder",

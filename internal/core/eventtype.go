@@ -94,6 +94,16 @@ const (
 	// Refs: hk-4goy3.
 	EventTypeWorkingTreeRefreshFailed EventType = "working_tree_refresh_failed"
 
+	// EventTypeWorkingTreeLocalEditsOverwritten is the
+	// working_tree_local_edits_overwritten event type (§4.12.EM-054). Emitted
+	// when the post-merge refresh overwrites an uncommitted local edit on a path
+	// the merged commit itself changed. The merge is authoritative for its own
+	// paths, so the overwrite is intended — but it MUST be named rather than
+	// silent, and the payload carries the paths plus a recovery patch.
+	// Durability class: O.
+	// Refs: hk-7qmpp.
+	EventTypeWorkingTreeLocalEditsOverwritten EventType = "working_tree_local_edits_overwritten"
+
 	// EventTypeImplementerEscapedWorktree is emitted by the daemon when, after
 	// the implementer process exits, the MAIN repo's working tree contains
 	// dirty files outside the normal harmonik churn allowlist
@@ -353,6 +363,23 @@ const (
 	// Durability class: O.
 	// Refs: hk-9vp51.
 	EventTypeImplementerBudgetExceeded EventType = "implementer_budget_exceeded"
+
+	// EventTypeImplementerNoWorkSuspected is the implementer_no_work_suspected
+	// event type. Emitted by the daemon when a process-exit implementer (codex)
+	// produced NO commit and left a CLEAN worktree (codexRefsNoChange) AND its
+	// phase ran for less than the no-work duration floor. Either signal alone is
+	// ambiguous — a legitimately trivial bead can finish fast, and a slow run can
+	// still fail to commit — so the event fires only on the conjunction, which no
+	// observed real run has produced.
+	//
+	// Diagnostic only: the run is ALREADY failing via the no-commit guard when
+	// this fires. The event exists because the hk-jcrzn silent-implementer failure
+	// was invisible at every layer that was checked; it names the shape so a
+	// future failure of a DIFFERENT cause is still caught.
+	// Payload: run_id, bead_id, duration_seconds, floor_seconds.
+	// Durability class: O.
+	// Refs: hk-368i4 (detector), hk-jcrzn (the cause it was split from).
+	EventTypeImplementerNoWorkSuspected EventType = "implementer_no_work_suspected"
 
 	// EventTypeTmuxNewWindowTimeout is the tmux_new_window_timeout event type.
 	// Emitted by the daemon when tmuxSubstrate.SpawnWindow's underlying

@@ -3,8 +3,8 @@ package main
 import (
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // resolve_keeper_config_helpers_test.go — shared test fixtures for the resolver.
@@ -21,8 +21,8 @@ import (
 // keeper value set to its suggested (keeper.Default*) value and the corresponding
 // Present flag true. Resolving it (with empty flags) yields zero missing-value errors
 // and a valid band. Tests start from this and override the field(s) under test.
-func completeTestKeeperConfig() daemon.KeeperConfig {
-	cfg := daemon.KeeperConfig{
+func completeTestKeeperConfig() projectconfig.KeeperConfig {
+	cfg := projectconfig.KeeperConfig{
 		// ── thresholds ──
 		WarnAbsTokens:      keeper.DefaultWarnAbsTokens,
 		ActAbsTokens:       keeper.DefaultActAbsTokens,
@@ -60,7 +60,7 @@ func completeTestKeeperConfig() daemon.KeeperConfig {
 		HeartbeatMaxMisses: keeper.DefaultMaxHeartbeatMisses,
 		MaxHandoffTimeouts: keeper.DefaultMaxHandoffTimeouts,
 	}
-	cfg.Present = daemon.KeeperConfigPresence{
+	cfg.Present = projectconfig.KeeperConfigPresence{
 		WarnAbsTokens:        true,
 		ActAbsTokens:         true,
 		ForceActAbsTokens:    true,

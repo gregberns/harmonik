@@ -172,7 +172,9 @@ func TestSRC_R1BuildRCLoopsToAuthor(t *testing.T) {
 	}
 
 	// r1_build(REQUEST_CHANGES) → author
-	cycles.Increment(run.RunID, "r1_build", "author", nil)
+	if _, err := cycles.Increment(run.RunID, "r1_build", "author", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter r1_build\u2192author: %v", err)
+	}
 	dec = workflow.DecideNextNode(graph, "r1_build", srcOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "author" {
 		t.Fatalf("r1_build→author (RC): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
@@ -248,7 +250,9 @@ func TestSRC_R1CriticRCLoopsToAuthor(t *testing.T) {
 	workflow.DecideNextNode(graph, "r1_build", srcOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
 
 	// r1_critic(REQUEST_CHANGES) → author (not r1_build directly)
-	cycles.Increment(run.RunID, "r1_critic", "author", nil)
+	if _, err := cycles.Increment(run.RunID, "r1_critic", "author", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter r1_critic\u2192author: %v", err)
+	}
 	dec := workflow.DecideNextNode(graph, "r1_critic", srcOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "author" {
 		t.Fatalf("r1_critic→author (RC): Advance=%v NextNodeID=%q, want author", dec.Advance, dec.NextNodeID)
@@ -302,7 +306,9 @@ func TestSRC_R2SkepticRCLoopsToIntegrateR1(t *testing.T) {
 	workflow.DecideNextNode(graph, "integrate_r1", srcOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
 
 	// r2_skeptic(REQUEST_CHANGES) → integrate_r1 (NOT author)
-	cycles.Increment(run.RunID, "r2_skeptic", "integrate_r1", nil)
+	if _, err := cycles.Increment(run.RunID, "r2_skeptic", "integrate_r1", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter r2_skeptic\u2192integrate_r1: %v", err)
+	}
 	dec := workflow.DecideNextNode(graph, "r2_skeptic", srcOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "integrate_r1" {
 		t.Fatalf("r2_skeptic→integrate_r1 (RC): Advance=%v NextNodeID=%q, want integrate_r1",
@@ -357,7 +363,9 @@ func TestSRC_R2AdversaryRCLoopsToIntegrateR1(t *testing.T) {
 	workflow.DecideNextNode(graph, "r2_skeptic", srcOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
 
 	// r2_adversary(REQUEST_CHANGES) → integrate_r1 (NOT author)
-	cycles.Increment(run.RunID, "r2_adversary", "integrate_r1", nil)
+	if _, err := cycles.Increment(run.RunID, "r2_adversary", "integrate_r1", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter r2_adversary\u2192integrate_r1: %v", err)
+	}
 	dec := workflow.DecideNextNode(graph, "r2_adversary", srcOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "integrate_r1" {
 		t.Fatalf("r2_adversary→integrate_r1 (RC): Advance=%v NextNodeID=%q, want integrate_r1",
@@ -460,9 +468,11 @@ func TestSRC_R1BuildCapHit(t *testing.T) {
 	workflow.DecideNextNode(graph, "author", srcOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of r1_build→author.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "r1_build", "author", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "r1_build", "author", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter r1_build\u2192author: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is suppressed;

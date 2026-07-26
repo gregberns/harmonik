@@ -40,14 +40,13 @@ type OSProcessLister struct{}
 
 // ListOrphanBrPIDs implements ProcessLister using `ps -eo pid,ppid,comm`.
 func (OSProcessLister) ListOrphanBrPIDs(ctx context.Context) ([]int, error) {
-	//nolint:gosec // G204: arguments are hard-coded constants, not user input
 	out, err := exec.CommandContext(ctx, "ps", "-eo", "pid,ppid,comm").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle: OSProcessLister: ps: %w", err)
 	}
 
-	var pids []int
 	lines := strings.Split(string(out), "\n")
+	pids := make([]int, 0, len(lines))
 	for _, line := range lines[1:] { // skip header line
 		line = strings.TrimSpace(line)
 		if line == "" {

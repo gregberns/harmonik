@@ -1,0 +1,197 @@
+package runloop
+
+// waitsocketgrace.go — waitWithSocketGrace helper for the workloop completion path.
+//
+// Implements OQ2 resolution: Stop hook wins over bare exit code.  After
+// cmd.Wait() returns, the daemon first checks the hookSessionStore for an
+// already-arrived outcome_emitted payload.  If none is present it blocks on
+// WaitForOutcome with a stopHookGrace timeout, giving the Stop hook relay
+// time to complete the socket round-trip.
+//
+// CHB-020 branch semantics (specs/claude-hook-bridge.md §4.7):
+//   Branch 1/2: outcome_emitted present (WORK_COMPLETE / REVIEWER_VERDICT /
+//               FAILURE_SIGNAL) → returned with exitInfo.
+//   Branch 3:   grace window expires with no outcome → nil outcome returned;
+//               caller uses MapWaitReturnToTerminalEvent branch 3.
+//
+// Spec refs:
+//   - specs/claude-hook-bridge.md §4.7 CHB-020 (terminal-event mapping)
+//   - specs/claude-hook-bridge.md §4.10 CHB-025 (last-received-wins)
+//
+// Bead: hk-gql20.22.
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/substrate"
+)
+
+// stopHookGrace is the time the daemon waits after cmd.Wait() returns for a
+// pending Stop hook relay to deliver its outcome_emitted payload.
+//
+// Rationale (OQ2): the Stop hook fires inside Claude's shutdown — Claude must
+// exit before the hook finishes running and the relay completes the socket
+// write.  3 s covers hook execution + relay process startup + socket
+// round-trip with margin; longer windows risk operator-perceived hangs on
+// crash cases where no hook will arrive.
+const StopHookGrace = 3 * time.Second
+
+// killWatcherReapGrace bounds the post-Kill wait for the watcher goroutine to
+// drain on the ctx-cancel (operator-stop / SIGINT / SIGTERM) path.
+//
+// Why a bound is needed (hk-4c7kw): after sess.Kill reaps the immediate handler
+// process, the watcher's NDJSON read-loop may still be blocked on its progress
+// stream because a grandchild the handler forked (e.g. a `sleep` left running by
+// a shell handler) inherited the stdout write-end and keeps it open until it
+// exits naturally.  Blocking unbounded on watcher.Done() in that case made
+// daemon shutdown wait the full handler runtime (~30 s in the T3 scenario tests)
+// instead of returning promptly.  Bounding the wait lets the daemon proceed to
+// reap + reopen the bead within budget; the watcher goroutine unblocks on its
+// own once the grandchild exits or its enclosing ctx is observed.
+//
+// 3 s mirrors stopHookGrace (a generous margin over the normal sub-millisecond
+// watcher teardown) while keeping the operator-perceived shutdown well under the
+// 10 s T3 budget.
+//
+// Bead: hk-4c7kw.
+const killWatcherReapGrace = 3 * time.Second
+
+// exitInfo carries the process exit metadata captured after sess.Wait() returns.
+type ExitInfo struct {
+	ExitCode   int
+	WaitErr    error
+	StderrTail []byte // last ~4 KiB of subprocess stderr; nil for substrate sessions
+}
+
+// waitWithSocketGrace races ctx cancellation against watcher completion, reaps
+// the subprocess, then checks the hookSessionStore for a Stop-hook outcome.
+//
+// Flow:
+//  1. Race watcher.Done() vs ctx.Done().
+//     - ctx fires first → Kill the session and drain watcher.
+//  2. Call sess.Wait(ctx) to reap; capture exit code from sess.Outcome().
+//  3. Check store for an already-present outcome (fast path — branch 1/2).
+//  4. If absent, block on WaitForOutcome with a stopHookGrace context (slow
+//     path).
+//  5. Return whatever arrived, or nil if the grace window expired (branch 3).
+//
+// The returned *handler.ExportedOutcomeEmittedPayload is nil on branch 3.
+// exitInfo is always populated from the completed sess.Wait return.
+//
+// clk is the determinism port for the killWatcherReapGrace bound (P2 E5 RT19c);
+// nil is backstopped to substrate.SystemClock{} for struct-literal test callers.
+//
+// Spec: specs/claude-hook-bridge.md §4.7 CHB-020, §4.10 CHB-025.
+// Bead: hk-gql20.22.
+func WaitWithSocketGrace(
+	ctx context.Context,
+	clk substrate.ClockPort,
+	store HookStore,
+	watcher *handlercontract.Watcher,
+	sess handler.Session,
+	runID, claudeSessID string,
+) (*handler.ExportedOutcomeEmittedPayload, ExitInfo) {
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
+
+	// Step 1: race watcher completion vs context cancellation.
+	//
+	// Substrate path: watcher is nil when deps.substrate != nil (tmux-hosted
+	// sessions). Completion is signalled via HookSessionStore.WaitForOutcome,
+	// not via the watcher. Skip the watcher-based select; if the context is
+	// already cancelled just kill the session and fall through to sess.Wait().
+	if watcher != nil {
+		select {
+		case <-watcher.Done():
+			// Normal exit: handler process terminated.
+		case <-ctx.Done():
+			// Operator/daemon cancellation: kill the session, then wait for the
+			// watcher to drain — but bound that wait. The watcher's read-loop can
+			// stay blocked on the progress stream when a handler grandchild
+			// inherited the stdout write-end and is still alive (hk-4c7kw); without
+			// a bound, shutdown would block for the full handler runtime. The reap
+			// (sess.Wait below) returns promptly once the immediate handler exits.
+			_ = sess.Kill(ctx)
+			select {
+			case <-watcher.Done():
+			case <-substrate.After(clk, killWatcherReapGrace): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (the ctx here is already cancelled)
+				// Watcher still draining (grandchild holds the pipe open). Proceed;
+				// the goroutine unblocks on its own once the grandchild exits.
+			}
+		}
+	} else if ctx.Err() != nil {
+		// Substrate path, context already cancelled — kill and fall through.
+		_ = sess.Kill(ctx)
+	}
+
+	// Step 2: reap the subprocess.
+	//
+	// On the ctx-cancel path above, this Wait now returns the child's real
+	// *exec.ExitError. It used to return nil there: handler.Session.Wait read
+	// lifecycle.WaitOwner's buffered(1) result channel, and Kill's reap-observer
+	// goroutine had already consumed the single delivery, so every later reader
+	// saw the closed-channel nil.
+	//
+	// That changes ONE emitted field on cancelled runs whose child exited
+	// non-zero: MapWaitReturnToTerminalEvent branch 3 keys its sub_reason off
+	// (waitErr, exitCode), so those runs now report `claude_crashed` where they
+	// previously reported `claude_exit_without_outcome`. This is the correction,
+	// not a regression — the class-derivation bullet of CHB-020 in
+	// specs/claude-hook-bridge.md §4.7 defines the split as "exit code 0 →
+	// claude_exit_without_outcome; non-zero exit code → claude_crashed", and a
+	// killed non-zero child is the second case. Class
+	// stays `structural` and Type stays `agent_failed`, so nothing routes
+	// differently: term.SubReason is read only to format the human-readable
+	// failReason in workloop.go's reopen path.
+	waitErr := sess.Wait(ctx)
+	outcome := sess.Outcome()
+	ei := ExitInfo{ExitCode: outcome.ExitCode, WaitErr: waitErr, StderrTail: outcome.StderrTail}
+
+	// Step 3: fast path — check for an outcome already present in the store.
+	if outcome := parseLatestOutcome(store.LatestOutcome(runID, claudeSessID)); outcome != nil {
+		return outcome, ei
+	}
+
+	// Step 4: slow path — wait up to stopHookGrace for a Stop hook relay.
+	graceCtx, cancel := context.WithTimeout(context.Background(), StopHookGrace)
+	defer cancel()
+	rawOutcome, _ := store.WaitForOutcome(graceCtx, runID, claudeSessID)
+	if rawOutcome != nil {
+		if outcome := parseOutcomePayload(rawOutcome); outcome != nil {
+			return outcome, ei
+		}
+	}
+
+	// Step 5: grace expired or no relay arrived — branch 3.
+	return nil, ei
+}
+
+// parseLatestOutcome unmarshals a *json.RawMessage from hookSessionStore.LatestOutcome
+// into an ExportedOutcomeEmittedPayload.  Returns nil when raw is nil or
+// unmarshalling fails.
+func parseLatestOutcome(raw *json.RawMessage) *handler.ExportedOutcomeEmittedPayload {
+	if raw == nil {
+		return nil
+	}
+	return parseOutcomePayload(*raw)
+}
+
+// parseOutcomePayload unmarshals a json.RawMessage into an
+// ExportedOutcomeEmittedPayload.  Returns nil on empty input or unmarshal
+// error — callers treat unmarshal failure as "no outcome present" and fall
+// through to branch 3.
+func parseOutcomePayload(raw json.RawMessage) *handler.ExportedOutcomeEmittedPayload {
+	if len(raw) == 0 {
+		return nil
+	}
+	var p handler.ExportedOutcomeEmittedPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil
+	}
+	return &p
+}

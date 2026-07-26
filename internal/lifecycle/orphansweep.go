@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,19 +45,29 @@ type TmuxSessionKiller interface {
 // OSTmuxSessionLister is the production TmuxSessionLister. It invokes
 // `tmux list-sessions -F "#{session_name}"` and returns the session names.
 //
-// If tmux is not installed or no sessions exist, the command may exit non-zero;
-// those cases are treated as an empty list (not an error) to keep the sweep
-// non-fatal on systems without tmux.
+// tmux exits non-zero both when no server is running and when the call
+// genuinely failed. Only "no server running" is reported as an empty list; every
+// other failure — including tmux not being installed — is now returned, so a
+// broken tmux can no longer masquerade as "zero sessions" and silently reap
+// nothing. RunOrphanSweep accumulates that error and continues, and the boot
+// call site discards it per PL-006, so a tmux-less host still boots cleanly.
 type OSTmuxSessionLister struct{}
+
+func tmuxServerAbsent(out []byte) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(string(out))), "no server running")
+}
 
 // ListTmuxSessions implements TmuxSessionLister.
 func (OSTmuxSessionLister) ListTmuxSessions(ctx context.Context) ([]string, error) {
-	//nolint:gosec // G204: arguments are hard-coded constants, not user input
-	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
+	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").CombinedOutput()
 	if err != nil {
-		// tmux exits non-zero when there are no sessions or tmux is not running.
-		// Return empty list rather than propagating a hard error.
-		return nil, nil //nolint:nilerr // intentional: no-tmux / no-sessions is not an error
+		// tmux exits non-zero when there are no sessions or the server is not
+		// running. Other failures (missing binary, permissions, cancellation)
+		// must remain observable or the sweep silently skips live orphans.
+		if tmuxServerAbsent(out) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("lifecycle: ListTmuxSessions: %w (output: %s)", err, strings.TrimSpace(string(out)))
 	}
 	var names []string
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
@@ -75,7 +86,6 @@ type OSTmuxSessionKiller struct{}
 
 // KillTmuxSession implements TmuxSessionKiller.
 func (OSTmuxSessionKiller) KillTmuxSession(ctx context.Context, sessionName string) error {
-	//nolint:gosec // G204: sessionName is a validated harmonik-<hash>- prefixed name, not raw user input
 	out, err := exec.CommandContext(ctx, "tmux", "kill-session", "-t", sessionName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("lifecycle: KillTmuxSession %q: %w (output: %s)", sessionName, err, strings.TrimSpace(string(out)))
@@ -154,37 +164,51 @@ func SweepOrphanTmuxSessions(
 		return 0, nil
 	}
 
-	// Poll for process exit at 100 ms cadence up to the ceiling.
-	// The sweep does NOT track individual session PIDs here — the polling is
-	// best-effort after the kill-session commands have been sent.
+	waitForTmuxSessionsGone(ctx, lister, prefix, logger)
+
+	return killed, nil
+}
+
+// waitForTmuxSessionsGone polls at tmuxPollInterval, up to tmuxPollCeiling, for
+// every session matching prefix to disappear after kill-session.
+//
+// The sweep does NOT track individual session PIDs — the polling is best-effort
+// confirmation after the kill-session commands have been sent, and the caller
+// proceeds regardless of the outcome (PL-006: "after the ceiling expires, the
+// daemon proceeds").
+func waitForTmuxSessionsGone(ctx context.Context, lister TmuxSessionLister, prefix string, logger *log.Logger) {
 	deadline := time.Now().Add(tmuxPollCeiling)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			orphanLog(logger, "SweepOrphanTmuxSessions: context cancelled during poll; proceeding")
-			return killed, nil
+			return
 		case <-time.After(tmuxPollInterval):
 		}
 
-		// Re-list to check whether our target sessions are still present.
+		// A failed re-list says nothing about whether the sessions exited, so it
+		// must not end the wait — a single transient tmux hiccup used to abort
+		// exit verification entirely. Keep polling; the 2 s ceiling bounds it.
 		remaining, listErr := lister.ListTmuxSessions(ctx)
 		if listErr != nil {
-			break // list failed; treat as done
+			orphanLog(logger, "SweepOrphanTmuxSessions: re-list during exit poll failed (retrying): %v", listErr)
+			continue
 		}
-		anyRemain := false
-		for _, name := range remaining {
-			if strings.HasPrefix(name, prefix) {
-				anyRemain = true
-				break
-			}
-		}
-		if !anyRemain {
+		if !anyNameHasPrefix(remaining, prefix) {
 			orphanLog(logger, "SweepOrphanTmuxSessions: all matching sessions exited after kill")
-			break
+			return
 		}
 	}
+}
 
-	return killed, nil
+// anyNameHasPrefix reports whether any name in names starts with prefix.
+func anyNameHasPrefix(names []string, prefix string) bool {
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -223,14 +247,13 @@ type OSHandlerProcessLister struct{}
 //     PGID check (darwin, OQ-PL-008).
 //  3. Return PIDs whose provenance marker matches projectHash.
 func (OSHandlerProcessLister) ListOrphanHandlerPIDs(ctx context.Context, projectHash core.ProjectHash) ([]int, error) {
-	//nolint:gosec // G204: arguments are hard-coded constants, not user input
 	out, err := exec.CommandContext(ctx, "ps", "-eo", "pid,ppid").Output()
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle: OSHandlerProcessLister: ps: %w", err)
 	}
 
-	var candidates []int
 	lines := strings.Split(string(out), "\n")
+	candidates := make([]int, 0, len(lines))
 	for _, line := range lines[1:] { // skip header
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -252,7 +275,7 @@ func (OSHandlerProcessLister) ListOrphanHandlerPIDs(ctx context.Context, project
 		candidates = append(candidates, pid)
 	}
 
-	var matched []int
+	matched := make([]int, 0, len(candidates))
 	for _, pid := range candidates {
 		env, err := ReadProcessEnviron(pid)
 		if err != nil {
@@ -607,10 +630,7 @@ func GCRetiredIntentsWithRedrive(ctx context.Context, cfg GCRetiredIntentsConfig
 
 	// fsync the parent directory once after all removals.
 	if result.Removed > 0 {
-		if dirFd, openErr := os.Open(intentsDir); openErr == nil {
-			_ = dirFd.Sync()  //nolint:errcheck
-			_ = dirFd.Close() //nolint:errcheck
-		}
+		fsyncDirBestEffort(intentsDir, cfg.Logger, "GCRetiredIntentsWithRedrive")
 	}
 
 	return result, nil
@@ -813,7 +833,9 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 
 		// Stale: remove via unlink + fsync(parent dir) — with the flock still held.
 		removeErr := reconLockUnlinkAndFsync(lockPath, lockDir, logger)
-		_ = held.Close() //nolint:errcheck // releases the flock; cleanup error unactionable
+		if closeErr := held.Close(); closeErr != nil {
+			orphanLog(logger, "SweepStaleReconciliationLocks: close held lock %q after unlink: %v", name, closeErr)
+		}
 		if removeErr != nil {
 			orphanLog(logger, "SweepStaleReconciliationLocks: remove %q: %v", name, removeErr)
 			lastRemoveErr = removeErr
@@ -848,9 +870,11 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 //
 // Returns (nil, false, nil) if the lock is actively held (EWOULDBLOCK) or the
 // recorded creator PID is live (lock released before returning).
-// Returns (nil, false, err) if the file cannot be opened or the creator_pid
-// line cannot be parsed — an unparseable creator PID cannot be confirmed dead,
-// so the file is skipped rather than removed.
+// Returns (nil, false, err) if the file cannot be opened, the flock fails for
+// any reason other than contention, or the creator_pid line cannot be parsed.
+// All three are "cannot confirm this lock is dead", so the file is skipped
+// rather than removed — the error is reported instead of being silently folded
+// into the actively-held case, but the outcome for the caller is the same.
 func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error) {
 	//nolint:gosec // G304: path is constructed from projectDir + .harmonik/reconciliation-locks/ + entry name, not user input
 	f, err := os.OpenFile(lockPath, os.O_RDWR, 0o600)
@@ -860,22 +884,31 @@ func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error)
 
 	flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr != nil {
-		// EWOULDBLOCK: lock is actively held — not stale.
-		_ = f.Close()          //nolint:errcheck // cleanup error unactionable
-		return nil, false, nil //nolint:nilerr // EWOULDBLOCK = lock actively held (not stale); a normal signal, not an error to return
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: reconLockProbeStale: close probe fd after flock failure", "err", closeErr, "path", lockPath)
+		}
+		if errors.Is(flockErr, syscall.EWOULDBLOCK) || errors.Is(flockErr, syscall.EAGAIN) {
+			// Lock contention is a normal signal: the lock is actively held.
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("reconLockProbeStale: flock %q: %w", lockPath, flockErr)
 	}
 
 	// Parse creator_pid from file content (flock held throughout).
 	pid, parseErr := reconLockReadCreatorPID(f)
 	if parseErr != nil {
 		// Cannot parse: cannot prove the creator is dead — skip, don't remove.
-		_ = f.Close() //nolint:errcheck // releases the flock; cleanup error unactionable
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: reconLockProbeStale: close probe fd after parse failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, false, fmt.Errorf("reconLockProbeStale: %w", parseErr)
 	}
 
 	if orphanSweepIsPidLive(pid) {
 		// Creator still alive — not stale.
-		_ = f.Close() //nolint:errcheck // releases the flock; cleanup error unactionable
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: reconLockProbeStale: close probe fd (live creator)", "err", closeErr, "path", lockPath)
+		}
 		return nil, false, nil
 	}
 
@@ -922,7 +955,11 @@ func reconLockReadMeta(lockPath string) (runID string, hasVerdictExecuted bool, 
 	if err != nil {
 		return "", false, fmt.Errorf("reconLockReadMeta: open %q: %w", lockPath, err)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: reconLockReadMeta: close lock fd", "err", closeErr, "path", lockPath)
+		}
+	}()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -954,7 +991,11 @@ func reconLockUnlinkAndFsync(lockPath, lockDir string, logger *log.Logger) error
 		orphanLog(logger, "reconLockUnlinkAndFsync: open parent dir for fsync: %v (proceeding)", err)
 		return nil
 	}
-	defer func() { _ = dirFd.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() {
+		if closeErr := dirFd.Close(); closeErr != nil {
+			orphanLog(logger, "reconLockUnlinkAndFsync: close parent dir after fsync: %v", closeErr)
+		}
+	}()
 	if syncErr := dirFd.Sync(); syncErr != nil {
 		orphanLog(logger, "reconLockUnlinkAndFsync: fsync parent dir: %v (non-fatal)", syncErr)
 	}
@@ -1002,4 +1043,26 @@ func EnumerateStaleIntents(projectDir string, daemonStartTime time.Time) (count 
 		}
 	}
 	return count, nil
+}
+
+// fsyncDirBestEffort fsyncs a directory so preceding unlinks/renames survive a
+// crash. It is best-effort: the directory entries are already gone from the
+// live filesystem, so a failure does not invalidate the caller's pass.
+//
+// "Best-effort" means the caller does not abort — not that the failure is
+// invisible. Every step reports through logger, because a filesystem that
+// silently refuses every directory fsync is exactly the condition an operator
+// needs to know about before trusting crash-recovery behaviour.
+func fsyncDirBestEffort(dir string, logger *log.Logger, caller string) {
+	dirFd, openErr := os.Open(dir)
+	if openErr != nil {
+		orphanLog(logger, "%s: open %q for fsync failed (proceeding): %v", caller, dir, openErr)
+		return
+	}
+	if syncErr := dirFd.Sync(); syncErr != nil {
+		orphanLog(logger, "%s: fsync %q failed (proceeding): %v", caller, dir, syncErr)
+	}
+	if closeErr := dirFd.Close(); closeErr != nil {
+		orphanLog(logger, "%s: close %q after fsync failed: %v", caller, dir, closeErr)
+	}
 }

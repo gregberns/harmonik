@@ -24,17 +24,23 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/claude"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/policy"
+	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -70,7 +76,9 @@ var gateFilePollInterval = 2 * time.Second
 // errors.
 func dispatchDotGateNode(
 	ctx context.Context,
-	deps workLoopDeps,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	run *core.Run,
 	wtPath string,
@@ -80,6 +88,10 @@ func dispatchDotGateNode(
 	resolvedModel string,
 	resolvedEffort string,
 	beadID core.BeadID,
+	// beadRecord carries the tier-1 harness:<agent-type> LABEL. hk-01vs0 needs it
+	// to compute (quietly) the harness the cognition gate WOULD inherit, so a
+	// reviewer-class gate never lands on a SessionIDCaptured harness.
+	beadRecord core.BeadRecord,
 	beadTitle string,
 	beadDescription string,
 	extraContext string,
@@ -95,7 +107,7 @@ func dispatchDotGateNode(
 	gateRef := core.GateRef(node.GateRef)
 
 	// Step 1: resolve gate_ref → ControlPoint via the GatePort (RSM-010).
-	cp, ok, registryLoaded := deps.runPorts().Gate.LookupGate(gateRef)
+	cp, ok, registryLoaded := ports.Gate.LookupGate(gateRef)
 	// No registry → structural failure; no ControlPoint can be resolved.
 	if !registryLoaded {
 		return policy.GateEvalFailureOutcome("no ControlPoint registry loaded in daemon"), nil
@@ -114,7 +126,7 @@ func dispatchDotGateNode(
 		evalFn = buildMechanismGateEval(cp)
 	case core.ModeTagCognition:
 		var cogErr error
-		evalFn, cogErr = buildCognitionGateEval(deps, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
+		evalFn, cogErr = buildCognitionGateEval(env, ports, handles, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadRecord, beadTitle, beadDescription, extraContext, baseBranch, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
 		if cogErr != nil {
 			return core.Outcome{}, fmt.Errorf("dot: gate node %q: build cognition eval: %w", node.ID, cogErr)
 		}
@@ -124,7 +136,7 @@ func dispatchDotGateNode(
 
 	// Step 3: call handler.DispatchGateNode. It invokes evalFn, maps the result
 	// to an Outcome, and emits gate_decision_recorded on success.
-	result, err := handler.DispatchGateNode(ctx, run, core.NodeID(node.ID), gateRef, evalFn, deps.bus)
+	result, err := handler.DispatchGateNode(ctx, run, core.NodeID(node.ID), gateRef, evalFn, ports.Emitter)
 	if err != nil {
 		return core.Outcome{}, fmt.Errorf("dot: gate node %q: DispatchGateNode: %w", node.ID, err)
 	}
@@ -193,7 +205,9 @@ func buildMechanismGateEval(cp core.ControlPoint) handler.GateEvalFunc {
 //
 // DecisionActor is the DelegationPath.Role per GateDecisionPayload §3.
 func buildCognitionGateEval(
-	deps workLoopDeps,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	cp core.ControlPoint,
 	wtPath string,
@@ -203,6 +217,7 @@ func buildCognitionGateEval(
 	resolvedModel string,
 	resolvedEffort string,
 	beadID core.BeadID,
+	beadRecord core.BeadRecord, // hk-01vs0: tier-1 harness label source
 	beadTitle string,
 	beadDescription string,
 	extraContext string,
@@ -218,7 +233,7 @@ func buildCognitionGateEval(
 	}
 
 	return func(ctx context.Context, run *core.Run, nodeID core.NodeID, gateRef core.GateRef) (*core.GateDecisionPayload, error) {
-		return executeCognitionGate(ctx, deps, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, gateRef, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
+		return executeCognitionGate(ctx, env, ports, handles, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadRecord, beadTitle, beadDescription, extraContext, baseBranch, gateRef, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
 	}, nil
 }
 
@@ -226,7 +241,9 @@ func buildCognitionGateEval(
 // launch subprocess, wait, read verdict. Called from the GateEvalFunc closure.
 func executeCognitionGate(
 	ctx context.Context,
-	deps workLoopDeps,
+	env runloop.RunEnv,
+	ports runloop.RunPorts,
+	handles runloop.SharedHandles,
 	runID core.RunID,
 	run *core.Run,
 	cp core.ControlPoint,
@@ -238,6 +255,7 @@ func executeCognitionGate(
 	resolvedModel string,
 	resolvedEffort string,
 	beadID core.BeadID,
+	beadRecord core.BeadRecord, // hk-01vs0: tier-1 harness label source
 	beadTitle string,
 	beadDescription string,
 	extraContext string,
@@ -248,6 +266,11 @@ func executeCognitionGate(
 	workerSessionName string,
 	workerSessionCwd string,
 ) (*core.GateDecisionPayload, error) {
+	// RSM-010: the run's EmitterPort, bound once for this call. Deliberately the
+	// NARROW emitterPort accessor (runports.go) rather than the runPorts() bundle,
+	// which would assemble every port for one read (RT18: the clock default it
+	// once guarded now folds inside runPorts() via clockOrSystem).
+	emit := ports.Emitter
 	// Remove any stale verdict from a prior attempt. Routed through runner so a
 	// REMOTE run (runner != nil) clears the verdict on the WORKER's filesystem,
 	// not box A's (hk-9fe2).
@@ -264,45 +287,99 @@ func executeCognitionGate(
 
 	// Build launch spec. Use ReviewLoopPhaseReviewer for a fresh session with
 	// no resume, mirroring how the reviewer is launched.
-	rc := claudeRunCtx{
-		runID:         runID,
-		beadID:        string(beadID),
-		workspacePath: wtPath,
+	rc := shared.LaunchCtx{
+		RunID:         runID,
+		BeadID:        string(beadID),
+		WorkspacePath: wtPath,
 		// remote-substrate (hk-9fe2): thread the run's CommandRunner + worker
-		// harmonik path into the cognition-gate's claudeRunCtx the same way
+		// harmonik path into the cognition-gate's shared.LaunchCtx the same way
 		// dispatchDotAgenticNode does (dot_cascade.go), so the trust/settings/
 		// agent-task materialization writes land on the WORKER for a REMOTE
 		// DOT run and stay box-A-local for a LOCAL run (runner == nil, NFR7).
-		runner:            runner,
-		workerBinaryPath:  workerBinaryPath,
-		daemonSocket:      daemonSocket,
-		workflowMode:      core.WorkflowModeDot,
-		phase:             handlercontract.ReviewLoopPhaseReviewer,
-		iterationCount:    iterationCount,
-		priorClaudeSessID: nil,
-		handlerBinary:     deps.handlerBinary,
-		daemonBinaryPath:  deps.daemonBinaryPath,
-		baseEnv:           deps.handlerEnv,
-		beadTitle:         beadTitle,
-		beadDescription:   beadDescription,
-		nodePrompt:        "",
-		model:             resolvedModel,
-		effort:            resolvedEffort,
-		worktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
-		extraContext:      extraContext,
-		baseBranch:        baseBranch,
+		Runner:            runner,
+		WorkerBinaryPath:  workerBinaryPath,
+		DaemonSocket:      daemonSocket,
+		WorkflowMode:      core.WorkflowModeDot,
+		Phase:             handlercontract.ReviewLoopPhaseReviewer,
+		IterationCount:    iterationCount,
+		PriorClaudeSessID: nil,
+		HandlerBinary:     env.HandlerBinary,
+		DaemonBinaryPath:  env.DaemonBinaryPath,
+		BaseEnv:           env.HandlerEnv,
+		BeadTitle:         beadTitle,
+		BeadDescription:   beadDescription,
+		NodePrompt:        "",
+		Model:             resolvedModel,
+		Effort:            resolvedEffort,
+		WorktreeRootPath:  workspace.WorktreeRootPath(env.ProjectDir, workspace.NoWorktreeRootOverride()),
+		ExtraContext:      extraContext,
+		BaseBranch:        baseBranch,
 	}
 
-	specBuilder := deps.launchSpecBuilder
+	// hk-01vs0: the cognition gate is REVIEWER-CLASS — it launches with
+	// ReviewLoopPhaseReviewer, is briefed with .harmonik/gate-task.md, and must
+	// write .harmonik/gate-verdict.json. It therefore must never run on a
+	// SessionIDCaptured harness (codex, pi), for exactly the two reasons
+	// reviewerharness_hkiv748.go documents for reviewers:
+	//   - codexlaunchspec.go emits ONLY an IMPLEMENTER seed prompt and never reads
+	//     rc.phase, so a codex "gate evaluator" is told to implement the bead and
+	//     never learns gate-task.md exists, let alone writes a verdict;
+	//   - codex never emits agent_ready, but the waitAgentReady below blocks on it,
+	//     so the gate dies at "cognition gate %q: agent_ready_timeout".
+	//
+	// Before this fix the gate took the pre-built launch-spec builder UNCONDITIONALLY. That
+	// builder is routedLaunchSpecBuilder(reg, beadRecord, …) (workloop.go), whose
+	// tier-1 leg returns a per-bead `harness:codex` LABEL immediately
+	// (harnessresolve.go) — so a single labelled bead, not just a global codex
+	// default, routed the gate onto codex. This is the third site of the
+	// "reviewer silently inherits a harness that cannot review" class; hk-pkxju
+	// closed reviewloop.go and dot_cascade.go and left this one out of scope.
+	//
+	// Reuse of dotReviewerInheritedHarnessOverride (the DOT-cascade adapter) rather
+	// than raw reviewerDefaultHarness: the correction needs the harness the gate
+	// WOULD have inherited, which is the same quiet tier-1/tier-4 walk the adapter
+	// already performs; calling reviewerDefaultHarness directly would mean
+	// duplicating that walk here. Both pin arguments are deliberately empty:
+	//   - reviewer_harness= is an attribute of an IMPLEMENTER node naming its
+	//     reviewer; no implementer node feeds a gate node, so it never applies.
+	//   - node.Harness is read ONLY by dispatchDotAgenticNode (dot_cascade.go). The
+	//     gate path has never consulted it, so there is no operator pin to protect
+	//     here — passing it would merely re-open the inherit hole for any gate node
+	//     that happens to carry harness=. Teaching gate nodes to honour a harness=
+	//     pin is a separate feature, not this fix.
+	// Non-empty return ⇒ pin via pinnedHarnessLaunchSpecBuilder, NOT
+	// routedLaunchSpecBuilder: the latter re-runs resolveHarness and would let the
+	// tier-1 `harness:codex` bead label override the correction (the hk-2jxqg
+	// footgun). Empty return ⇒ the pre-built launch-spec builder stands untouched, so an
+	// all-claude run is byte-identical to pre-hk-01vs0 behaviour.
+	specBuilder := ports.LaunchBuilder
+	gateInheritedHarness := runloop.DotReviewerInheritedHarnessOverride(
+		handles.HarnessRegistry,
+		resolveHarnessAgentTypeQuiet,
+		true,               // a cognition gate is reviewer-class by construction
+		core.AgentType(""), // reviewer_harness=: never applies to a gate node
+		core.AgentType(""), // node.Harness: not a gate-path mechanism (see above)
+		beadRecord,
+		env.DefaultHarness,
+		string(beadID),
+	)
+	if gateInheritedHarness.Valid() && handles.HarnessRegistry != nil {
+		specBuilder = pinnedHarnessLaunchSpecBuilder(
+			handles.HarnessRegistry,
+			beadRecord,
+			gateInheritedHarness,
+			emit,
+		)
+	}
 	if specBuilder == nil {
-		specBuilder = buildClaudeLaunchSpec
+		specBuilder = claude.BuildLaunchSpec
 	}
 	spec, artifacts, specErr := specBuilder(ctx, rc)
 	if specErr != nil {
 		return nil, fmt.Errorf("cognition gate %q: build launch spec: %w", gateRef, specErr)
 	}
-	if len(deps.handlerArgs) > 0 {
-		spec.Args = append(deps.handlerArgs, spec.Args...)
+	if len(env.HandlerArgs) > 0 {
+		spec.Args = append(env.HandlerArgs, spec.Args...)
 	}
 
 	// remote-substrate (hk-9fe2): thread the run's runner (SSHRunner for remote,
@@ -310,25 +387,39 @@ func executeCognitionGate(
 	// spawns on the WORKER, mirroring dispatchDotAgenticNode (dot_cascade.go).
 	// LATENT: the default workflow.dot uses a tool-command commit_gate, not a
 	// cognition gate, so no live remote run exercises this path today.
-	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runner)
-	var substrate handler.Substrate = deps.substrate
-	var pasteTarget handler.Substrate = deps.substrate
+	// hk-qxvc2: the cognition-gate node runs a claude (SessionIDMinted) evaluator;
+	// route it onto the tmux/claude substrate, never the codexdriver app-server
+	// substrate. runner (SSHRunner/remote) is preserved so a remote gate still
+	// spawns on the worker (hk-9fe2).
+	gateHarnessIsClaude := true
+	if handles.HarnessRegistry != nil {
+		if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
+			gateHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
+		}
+	}
+	gateBaseSubstrate := handles.Substrate
+	if gateHarnessIsClaude && handles.ReviewerSubstrate != nil {
+		gateBaseSubstrate = handles.ReviewerSubstrate
+	}
+	prs := newPerRunSubstrate(gateBaseSubstrate, env.HandlerBinary, runner)
+	runSubstrate := gateBaseSubstrate
+	pasteTarget := gateBaseSubstrate
 	if prs != nil {
-		substrate = prs
+		runSubstrate = prs
 		pasteTarget = prs
 		if runner != nil && workerSessionName != "" {
 			prs.workerSessionName = workerSessionName
 			prs.workerSessionCwd = workerSessionCwd
 		}
 	}
-	spec.Substrate = substrate
+	spec.Substrate = runSubstrate
 
-	if deps.hookStore != nil {
-		deps.hookStore.RegisterHookSession(runID.String(), artifacts.claudeSessionID)
+	if handles.HookStore != nil {
+		handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
-	tap, tapCh := newPerRunEventTap(deps.bus, runID)
-	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
+	tap, tapCh := runloop.NewPerRunEventTap(emit, runID)
+	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 	// hk-goczd: emit the CHB-018 pre-exec messages before Launch, holding back
 	// launch_initiated for after the window is live — same false-positive
@@ -336,104 +427,165 @@ func executeCognitionGate(
 	// single-mode path (workloop.go:2098/2137). Without this the cognition-gate
 	// node never emits launch_initiated and the stale watcher (stalewatch.go:296)
 	// flags a phantom launch stall on every gate dispatch.
-	gateLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.preExecMsgs)
+	gateLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, emit, runID, artifacts.PreExecMsgs)
 
-	sess, watcher, launchErr := runH.Launch(ctx, spec)
-	if launchErr != nil {
-		if deps.hookStore != nil {
-			deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
-		}
-		return nil, fmt.Errorf("cognition gate %q: launch: %w", gateRef, launchErr)
-	}
+	// RT14: predeclared so the dispatch segment's launch / onLaunched hooks can
+	// assign them from inside their closures. Safe because RunDispatch drives
+	// every effector inline on this goroutine (runshell.go RunDispatch).
+	var sess handler.Session
+	var watcher *handlercontract.Watcher
+	var launchErr error
+	var gateHBDone chan struct{}
 
-	// hk-goczd: window is live — emit the held-back launch_initiated to clear the
-	// false stall. Mirrors workloop.go:2137-2139.
-	if gateLaunchInitiatedMsg != nil {
-		emitPreExecMessage(ctx, deps.bus, runID, gateLaunchInitiatedMsg)
-	}
-
-	// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
-	// receives agent_heartbeat events (with run_id) after launch_initiated.
-	// Without this, lastEventType stays frozen at "launch_initiated" for the
-	// full run duration, causing false-positive run_stale on every gate dispatch.
-	// Mirrors the single-mode path (workloop.go Step 5).
-	gateHBDone := make(chan struct{})
-	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
-		handler.HeartbeatInterval, gateHBDone,
-		newDaemonHeartbeatEmitter(tap, runID))
-	defer close(gateHBDone)
-
-	// hk-goczd / hk-68pvl: slot-reclaim backstop — guarantee the spawn-semaphore
-	// slot (hk-xb5yi / hk-4l7zs) is released on EVERY return path. The success path
-	// below kills the session only when watcher == nil (dot_gate.go ~line 397);
-	// this defer covers the exec path and any early return (agent_ready timeout,
-	// ctx-cancel, verdict-read error). Kill is idempotent, so it is a no-op when
-	// the session was already torn down.
-	defer forceTeardownSession(sess)
-
-	if deps.hookStore != nil {
-		capturedTap := tap
-		deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
-			_ = capturedTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
-		})
-	}
-
-	// HC-056: wait for agent_ready before paste-inject.
-	adapter, adapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+	// HC-056: the adapter supplies DetectReady for the segment's ready pump.
+	// hk-01vs0: the cognition gate is claude-pinned, so the agent type is
+	// hardcoded and there is no completionMode to resolve — the gate never runs a
+	// ProcessExit harness, hence cfg.SkipReadyHandshake stays false.
+	adapter, adapterErr := handles.AdapterRegistry.ForAgent(core.AgentTypeClaudeCode)
 	if adapterErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: dot: gate: ForAgent(claude-code) node %q: %v (skipping ready-wait)\n",
 			node.ID, adapterErr)
-	} else {
-		readyCtx, readyCancel := context.WithCancel(ctx)
-		if watcher != nil {
-			go func() {
-				select {
-				case <-watcher.Done():
-					readyCancel()
-				case <-readyCtx.Done():
-				}
-			}()
-		}
-		eventSrc := newChanAgentEventSource(tapCh)
-		// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
-		readyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil)
-		readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, readyTimeout)
-		readyCancel()
+		adapter = nil
+	}
 
-		if errors.Is(readyErr, ErrAgentReadyTimeout) {
+	gateSeg := &runloop.DispatchSegment{
+		Clock: ports.Clock,
+		RunID: runID,
+		Config: runexec.DispatchConfig{
+			SkipReadyHandshake: false,
+			IsResume:           false,
+			MaxInputAttempts:   1,
+			// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
+			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, runner != nil),
+			InputAck:      runloop.DispatchSegmentInputAckWindow,
+			ReadyKillReap: runlaunch.KillReapTimeout,
+		},
+		// nil adapter (no claude-code adapter registered) → the segment feeds a
+		// synthetic ready so the gate brief is still delivered without a wait.
+		Adapter: adapter,
+		// pre-RT14 parity: the gate always launches fresh, never `claude --resume`.
+		ProbeResume: false,
+		Tap:         tap,
+		TapCh:       tapCh,
+		Launch: func(lctx context.Context) (<-chan struct{}, error) {
+			sess, watcher, launchErr = runH.Launch(lctx, spec)
+			if launchErr != nil {
+				return nil, launchErr
+			}
+			if watcher != nil {
+				return watcher.Done(), nil
+			}
+			return nil, nil
+		},
+		OnLaunchFailed: func(context.Context, error) {
+			if handles.HookStore != nil {
+				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
+			}
+		},
+		OnLaunched: func(lctx context.Context) {
+			// hk-goczd: window is live — emit the held-back launch_initiated to clear the
+			// false stall. Mirrors workloop.go's single-mode path.
+			if gateLaunchInitiatedMsg != nil {
+				runlaunch.EmitPreExecMessage(lctx, emit, runID, gateLaunchInitiatedMsg)
+			}
+
+			// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
+			// receives agent_heartbeat events (with run_id) after launch_initiated.
+			// Without this, lastEventType stays frozen at "launch_initiated" for the
+			// full run duration, causing false-positive run_stale on every gate dispatch.
+			// Mirrors the single-mode path (workloop.go Step 5). Closed via the defer
+			// registered after the segment returns.
+			gateHBDone = make(chan struct{})
+			go handler.RunHeartbeatLoop(ctx, artifacts.HandlerSessionID,
+				handler.HeartbeatInterval, gateHBDone,
+				newDaemonHeartbeatEmitter(tap, runID))
+
+			if handles.HookStore != nil {
+				capturedTap := tap
+				handles.HookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+					_ = capturedTap.Emit(context.Background(), core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
+				})
+			}
+		},
+		Deliver: func(dctx context.Context) {
+			// Deliver gate-evaluator kick-off message and watch for verdict file.
+			briefDelivered := pasteInjectCognitionGate(dctx, ports.Clock, pasteTarget, artifacts.ClaudeSessionID, wtPath, emit, runID)
+			if qs, ok := pasteTarget.(quitSender); ok {
+				go pasteInjectQuitOnGateFile(ctx, ports.Clock, runner, qs, sess, wtPath, briefDelivered)
+			}
+		},
+		KillReady: func(kctx context.Context) {
 			fmt.Fprintf(os.Stderr, "daemon: dot: gate: waitAgentReady node %q run %s: %v\n",
-				node.ID, runID.String(), readyErr)
-			_ = sess.Kill(ctx)
+				node.ID, runID.String(), runlaunch.ErrAgentReadyTimeout)
+			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
-				case <-time.After(agentReadyKillReapTimeout):
+				case <-substrate.After(ports.Clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 				}
 			}
-			_ = sess.Wait(ctx)
-			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+			// The gate's reap Wait is deliberately UNBOUNDED — it does not carry
+			// workloop.go's hk-4hso5 bounded context; adding one would be a logic change.
+			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)
+			if handles.HookStore != nil {
+				handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 			}
-			emitAgentReadyTimeout(ctx, deps.bus, runID, artifacts.claudeSessionID, deps.agentReadyTimeout)
-			return nil, fmt.Errorf("cognition gate %q: agent_ready_timeout", gateRef)
-		}
+		},
+		EmitReadyTimeout: func(ectx context.Context) {
+			runlaunch.EmitAgentReadyTimeout(ectx, emit, runID, artifacts.ClaudeSessionID, env.AgentReadyTimeout)
+		},
+		KillAbort: func(context.Context) {
+			// Ctx-cancel abort edge: Kill is idempotent (the runlaunch.ForceTeardownSession
+			// backstop registered below rides behind it either way — unlike workloop.go's
+			// single-mode path, this site's teardown is unconditional).
+			if sess != nil {
+				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
+			}
+		},
+		SpawnCapTimeout:      ErrSpawnCapTimeout,
+		TmuxNewWindowTimeout: ErrTmuxNewWindowTimeout,
+	}
+	gateDispatch := gateSeg.Run(ctx)
+
+	if launchErr != nil {
+		return nil, fmt.Errorf("cognition gate %q: launch: %w", gateRef, launchErr)
 	}
 
-	// Deliver gate-evaluator kick-off message and watch for verdict file.
-	briefDelivered := pasteInjectCognitionGate(ctx, pasteTarget, artifacts.claudeSessionID, wtPath, deps.bus, runID)
-	if qs, ok := pasteTarget.(quitSender); ok {
-		go pasteInjectQuitOnGateFile(ctx, runner, qs, sess, wtPath, briefDelivered)
+	// RT14: the two cleanup defers are registered here, in their pre-RT14 textual
+	// order, and BEFORE the ready-timeout terminal check below so LIFO firing
+	// order is preserved on the agent_ready_timeout path. The order matters and is
+	// this site's OWN, not the dot_cascade template's: pre-RT14 close(gateHBDone)
+	// was registered first and ForceTeardownSession second, so under LIFO the
+	// session is torn down BEFORE the heartbeat loop is stopped. Registering them
+	// the other way round would silently invert that.
+	if gateHBDone != nil {
+		gateHBDoneToClose := gateHBDone
+		defer close(gateHBDoneToClose)
 	}
 
-	_, _ = waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
-		runID.String(), artifacts.claudeSessionID)
+	// hk-goczd / hk-68pvl: slot-reclaim backstop — guarantee the spawn-semaphore
+	// slot (hk-xb5yi / hk-4l7zs) is released on EVERY return path. The success path
+	// below kills the session only when watcher == nil; this defer covers the exec
+	// path and any early return (agent_ready timeout, ctx-cancel, verdict-read
+	// error). Kill is idempotent, so it is a no-op when the session was already
+	// torn down.
+	defer runlaunch.ForceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom); it deliberately reaps on context.Background() so the kill completes even after the run ctx is cancelled
+
+	if gateDispatch.Phase == runexec.DispatchFailed && gateDispatch.Reason == "agent_ready_timeout" {
+		return nil, fmt.Errorf("cognition gate %q: agent_ready_timeout", gateRef)
+	}
+	// Working / Exited / Aborted: fall through — the pre-RT14 posture for
+	// agent_ready-observed, watcher-exit-first, and ctx-cancel.
+
+	_, _ = runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
+		runID.String(), artifacts.ClaudeSessionID)
 
 	if watcher == nil {
 		_ = sess.Kill(context.Background())
 	}
 
-	if deps.hookStore != nil {
-		deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+	if handles.HookStore != nil {
+		handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
 	if ctx.Err() != nil {
@@ -564,7 +716,7 @@ func readGateVerdict(verdictPath string) (core.GateAction, error) {
 //
 // Bead: hk-hd2w6.
 func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdictPath string) (core.GateAction, error) {
-	if runner == nil || runnerIsLocalFS(runner) {
+	if runner == nil || gitprobe.RunnerIsLocalFS(runner) {
 		return readGateVerdict(verdictPath)
 	}
 	out, err := runner.Command(ctx, "cat", verdictPath).Output()
@@ -582,7 +734,7 @@ func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdict
 //
 // Bead: hk-hd2w6.
 func gateVerdictExistsVia(ctx context.Context, runner ltmux.CommandRunner, path string) bool {
-	if runner == nil || runnerIsLocalFS(runner) {
+	if runner == nil || gitprobe.RunnerIsLocalFS(runner) {
 		info, err := os.Stat(path)
 		return err == nil && info.Size() > 0
 	}
@@ -594,19 +746,23 @@ func gateVerdictExistsVia(ctx context.Context, runner ltmux.CommandRunner, path 
 // Returns a channel closed once the kick-off paste has been written.
 func pasteInjectCognitionGate(
 	ctx context.Context,
-	substrate handler.Substrate,
+	clk substrate.ClockPort,
+	subst handler.Substrate,
 	claudeSessID string,
 	wtPath string,
 	bus handlercontract.EventEmitter,
 	runID core.RunID,
 ) <-chan struct{} {
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
-		if substrate == nil {
+		if subst == nil {
 			return
 		}
-		inj, ok := substrate.(pasteInjecter)
+		inj, ok := subst.(pasteInjecter)
 		if !ok {
 			return
 		}
@@ -626,7 +782,7 @@ func pasteInjectCognitionGate(
 			if err := es.SendEnterToLastPane(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "daemon: pasteinject: cognition-gate SendEnterToLastPane: %v\n", err)
 			}
-			splashDismissWait(ctx)
+			splashDismissWait(ctx, clk)
 		}
 
 		bufName := bufferName(claudeSessID, "gate")
@@ -661,42 +817,52 @@ func pasteInjectCognitionGate(
 // pasteInjectQuitOnGateFile watches for gate-verdict.json to appear, then
 // sends /quit to terminate the gate evaluator session. Analogous to
 // pasteInjectQuitOnReviewFile for the reviewer path.
+//
+// clk is the determinism port for the whole watchdog (P2 E5 RT19c). The verdict
+// deadline and the poll ticker are read from the SAME clock so a FakeClock can
+// drive the 10-minute gateFileTimeout branch instantly; mixing a fake deadline
+// with a real ticker (or vice versa) would leave the loop unable to terminate.
+// nil is backstopped to substrate.SystemClock{} for struct-literal test callers.
 func pasteInjectQuitOnGateFile(
 	ctx context.Context,
+	clk substrate.ClockPort,
 	runner ltmux.CommandRunner,
 	qs quitSender,
 	killer sessionKiller,
 	wtPath string,
 	briefDelivered <-chan struct{},
 ) {
+	if clk == nil {
+		clk = substrate.SystemClock{}
+	}
 	if briefDelivered != nil {
 		select {
 		case <-ctx.Done():
 			return
 		case <-briefDelivered:
-		case <-time.After(briefDeliveredTimeout):
+		case <-substrate.After(clk, briefDeliveredTimeout): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 			fmt.Fprintf(os.Stderr,
 				"daemon: pasteinject: quit-on-gate-file: brief_delivered timeout for %s; proceeding\n", wtPath)
 		}
 	}
 
 	verdictPath := filepath.Join(wtPath, gateVerdictRelPath)
-	deadline := time.Now().Add(gateFileTimeout)
-	ticker := time.NewTicker(gateFilePollInterval)
+	deadline := clk.Now().Add(gateFileTimeout)
+	ticker := clk.NewTicker(gateFilePollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if time.Now().After(deadline) {
+		case <-ticker.C():
+			if clk.Now().After(deadline) {
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-gate-file: timeout waiting for %s; sending /quit\n", verdictPath)
 				_ = qs.SendQuitToLastPane(ctx)
 				select {
 				case <-ctx.Done():
-				case <-time.After(noChangeKillDelay):
+				case <-substrate.After(clk, noChangeKillDelay): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
 					_ = killer.Kill(ctx)
@@ -709,7 +875,7 @@ func pasteInjectQuitOnGateFile(
 				_ = qs.SendQuitToLastPane(ctx)
 				select {
 				case <-ctx.Done():
-				case <-time.After(postQuitKillGrace):
+				case <-substrate.After(clk, postQuitKillGrace): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
 					_ = killer.Kill(ctx)

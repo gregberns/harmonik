@@ -7,6 +7,15 @@ import (
 	"testing"
 )
 
+func cleanupTempDir(t *testing.T, dir string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove temporary directory %q: %v", dir, err)
+		}
+	})
+}
+
 // fixtureRootFixtureParentDir creates a temporary directory to act as the
 // parent (operator-supplied --fixture-root override) in fixture-root tests.
 // The directory is cleaned up by t.Cleanup; this simulates the operator's
@@ -17,7 +26,7 @@ func fixtureRootFixtureParentDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("fixtureRootFixtureParentDir: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cleanupTempDir(t, dir)
 	return dir
 }
 
@@ -47,7 +56,7 @@ func TestNewFixtureRoot_CreatesDirectory(t *testing.T) {
 	}
 
 	// Clean up the fixture root itself (test isolation).
-	t.Cleanup(func() { _ = os.RemoveAll(got) })
+	cleanupTempDir(t, got)
 }
 
 func TestNewFixtureRoot_AbsolutePathUnderParent(t *testing.T) {
@@ -58,7 +67,7 @@ func TestNewFixtureRoot_AbsolutePathUnderParent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFixtureRoot(%q) error = %v", parentDir, err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(got) })
+	cleanupTempDir(t, got)
 
 	// Result must be an absolute path.
 	if !filepath.IsAbs(got) {
@@ -83,13 +92,13 @@ func TestNewFixtureRoot_UniquePerInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFixtureRoot first call error = %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(first) })
+	cleanupTempDir(t, first)
 
 	second, err := NewFixtureRoot(parentDir)
 	if err != nil {
 		t.Fatalf("NewFixtureRoot second call error = %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(second) })
+	cleanupTempDir(t, second)
 
 	if first == second {
 		t.Errorf("NewFixtureRoot returned the same path on two successive calls: %q", first)
@@ -105,14 +114,14 @@ func TestNewFixtureRoot_PriorRootAccumulates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFixtureRoot first call error = %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(first) })
+	cleanupTempDir(t, first)
 
 	// Create the second root — simulates a new suite invocation.
 	second, err := NewFixtureRoot(parentDir)
 	if err != nil {
 		t.Fatalf("NewFixtureRoot second call error = %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(second) })
+	cleanupTempDir(t, second)
 
 	// The first fixture root MUST still exist after the second is created.
 	// NewFixtureRoot MUST NOT delete prior fixture roots (SH-016).
@@ -129,7 +138,7 @@ func TestNewFixtureRoot_EmptyParentUsesOSTempDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFixtureRoot(\"\") error = %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(got) })
+	cleanupTempDir(t, got)
 
 	// Path must be under os.TempDir().
 	tmpPrefix := fixtureRootFixtureOSTempSubdir()
@@ -146,7 +155,7 @@ func TestNewFixtureRoot_HasHarnessPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFixtureRoot(%q) error = %v", parentDir, err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(got) })
+	cleanupTempDir(t, got)
 
 	// The directory name must carry the "harmonik-harness-" prefix so
 	// operators can identify harness fixture roots by visual inspection.

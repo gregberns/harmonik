@@ -539,7 +539,7 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 //  6. Both A and B are "closed" in br.
 //
 // The br dependency edge (B depends on A) is set up via `br dep add` so the
-// daemon's internal brQueueLedger reports BlocksEdge(A, B) = true during the
+// queuewiring.BRQueueLedger reports BlocksEdge(A, B) = true during the
 // ReevaluateDeferred pass (§2.8 un-defer condition check).
 //
 // Bead: hk-sk00a; regression guard for hk-nbjht.
@@ -606,7 +606,7 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 
 	// qsdBlockingLedger mirrors the real br dep (A blocks B) at submit time so
 	// QM-025 marks B as deferred-for-ledger-dep in the persisted queue.json.
-	// The daemon's internal brQueueLedger independently reads the same dep from
+	// queuewiring.BRQueueLedger independently reads the same dep from
 	// br for the §2.8 ReevaluateDeferred pass.
 	adapter := queue.NewHandlerAdapter(
 		&qsdBlockingLedger{blocker: aID, blocked: bID},

@@ -33,7 +33,9 @@ func RunResume(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, resumeUsage)
+			if _, err := fmt.Fprint(stdout, resumeUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--project" && i+1 < len(args):
 			i++
@@ -41,7 +43,9 @@ func RunResume(args []string, stdout, stderr io.Writer) int {
 		case strings.HasPrefix(args[i], "--project="):
 			projectDir = strings.TrimPrefix(args[i], "--project=")
 		default:
-			fmt.Fprintf(stderr, "harmonik supervise resume: unknown argument %q\n", args[i])
+			if _, err := fmt.Fprintf(stderr, "harmonik supervise resume: unknown argument %q\n", args[i]); err != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -49,7 +53,9 @@ func RunResume(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise resume: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise resume: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -59,9 +65,11 @@ func RunResume(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	sockPath := lifecycle.SocketPath(projectDir)
-	code := sendOperatorOp(ctx, sockPath, "operator-resume", stdout, stderr)
+	code := sendOperatorOp(ctx, sockPath, "operator-resume", stderr)
 	if code == 0 {
-		fmt.Fprintln(stdout, "harmonik supervise resume: daemon resumed")
+		if _, err := fmt.Fprintln(stdout, "harmonik supervise resume: daemon resumed"); err != nil {
+			return 1
+		}
 	}
 	return code
 }

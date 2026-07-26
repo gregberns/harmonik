@@ -68,12 +68,8 @@ func rgRun(t *testing.T) *core.Run {
 	}
 }
 
-func rgOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
-	if label != "" {
-		o.PreferredLabel = &label
-	}
-	return o
+func rgOutcome(status core.OutcomeStatus) core.Outcome {
+	return core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
 }
 
 // rgOutcomeFC builds a FAIL outcome carrying failure_class.
@@ -106,31 +102,31 @@ func TestRG_HappyPathBugReproduced(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → reproduce
-	dec := workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reproduce" {
 		t.Fatalf("start→reproduce: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// reproduce(FAIL) → fix_bug  (FAIL is the forward path: bug reproduces)
-	dec = workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusFail, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusFail), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "fix_bug" {
 		t.Fatalf("reproduce(FAIL)→fix_bug: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// fix_bug(SUCCESS) → regression_suite
-	dec = workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "regression_suite" {
 		t.Fatalf("fix_bug→regression_suite: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// regression_suite(SUCCESS) → close
-	dec = workflow.DecideNextNode(graph, "regression_suite", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "regression_suite", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("regression_suite(SUCCESS)→close: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -147,25 +143,25 @@ func TestRG_CannotReproduce(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → reproduce
-	dec := workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reproduce" {
 		t.Fatalf("start→reproduce: %+v", dec)
 	}
 
 	// reproduce(SUCCESS) → cannot_reproduce  (zero exit = bug absent)
-	dec = workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "cannot_reproduce" {
 		t.Fatalf("reproduce(SUCCESS)→cannot_reproduce: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// cannot_reproduce → close-needs-attention
-	dec = workflow.DecideNextNode(graph, "cannot_reproduce", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "cannot_reproduce", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("cannot_reproduce→close-needs-attention: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// close-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -183,13 +179,13 @@ func TestRG_ReproduceInfraFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → reproduce
-	dec := workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reproduce" {
 		t.Fatalf("start→reproduce: %+v", dec)
 	}
 
 	// reproduce(RETRY) → close-needs-attention via unconditional fallback
-	dec = workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusRetry, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusRetry), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("reproduce(RETRY) fallback→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
@@ -209,27 +205,29 @@ func TestRG_RegressionFixLoop(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → reproduce
-	dec := workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reproduce" {
 		t.Fatalf("start→reproduce: %+v", dec)
 	}
 
 	// reproduce(FAIL) → fix_bug
-	dec = workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusFail, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusFail), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "fix_bug" {
 		t.Fatalf("reproduce(FAIL)→fix_bug: %+v", dec)
 	}
 
 	// fix_bug → regression_suite
-	dec = workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "regression_suite" {
 		t.Fatalf("fix_bug→regression_suite: %+v", dec)
 	}
 
 	// regression_suite(FAIL+deterministic): fix didn't hold → back to fix_bug.
 	// Increment cycle counter to model the traversal.
-	cap := 3
-	cycles.Increment(run.RunID, "regression_suite", "fix_bug", &cap)
+	traversalCap := 3
+	if _, err := cycles.Increment(run.RunID, "regression_suite", "fix_bug", &traversalCap); err != nil {
+		t.Fatalf("pre-fill cycle counter regression_suite\u2192fix_bug: %v", err)
+	}
 
 	dec = workflow.DecideNextNode(graph, "regression_suite", rgOutcomeFC(core.FailureClassDeterministic), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "fix_bug" {
@@ -238,19 +236,19 @@ func TestRG_RegressionFixLoop(t *testing.T) {
 	}
 
 	// Second fix_bug attempt → regression_suite
-	dec = workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "regression_suite" {
 		t.Fatalf("fix_bug (2nd)→regression_suite: %+v", dec)
 	}
 
 	// regression_suite(SUCCESS) → close
-	dec = workflow.DecideNextNode(graph, "regression_suite", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "regression_suite", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("regression_suite(SUCCESS)→close: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -267,14 +265,16 @@ func TestRG_RegressionCapHit(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to regression_suite via reproduce(FAIL) → fix_bug.
-	workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusFail, ""), run, cycles)
-	workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
+	workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusFail), run, cycles)
+	workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 
 	// Pre-fill the cycle counter: 3 traversals of regression_suite→fix_bug at cap=3.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "regression_suite", "fix_bug", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "regression_suite", "fix_bug", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter regression_suite\u2192fix_bug: %v", err)
+		}
 	}
 
 	// With the cap exhausted, FAIL+deterministic can no longer take the back-edge.
@@ -301,9 +301,9 @@ func TestRG_RegressionTransientFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to regression_suite.
-	workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusFail, ""), run, cycles)
-	workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
+	workflow.DecideNextNode(graph, "reproduce", rgOutcome(core.OutcomeStatusFail), run, cycles)
+	workflow.DecideNextNode(graph, "fix_bug", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 
 	// regression_suite(FAIL+transient): does NOT match FAIL+deterministic condition.
 	// The unconditional fallback fires → close-needs-attention.
@@ -314,7 +314,7 @@ func TestRG_RegressionTransientFallback(t *testing.T) {
 	}
 
 	// close-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", rgOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", rgOutcome(core.OutcomeStatusSuccess), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}

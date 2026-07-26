@@ -41,18 +41,19 @@ func countLines(b []byte) int {
 	return n
 }
 
-// decodeFirstLine decodes the first '\n'-terminated JSON object from b into dst.
-// Returns the number of bytes consumed (including the '\n') and any error.
-func decodeFirstLine(b []byte, dst *map[string]any) (int, error) {
+// decodeFirstLine decodes the first '\n'-terminated JSON object from b.
+// It returns the number of bytes consumed (including the '\n'), the decoded
+// object, and any error.
+func decodeFirstLine(b []byte) (consumed int, decoded map[string]any, err error) {
 	idx := bytes.IndexByte(b, '\n')
 	if idx == -1 {
-		return 0, nil // no complete line
+		return 0, nil, nil // no complete line
 	}
 	line := b[:idx]
-	if err := json.Unmarshal(line, dst); err != nil {
-		return idx + 1, err
+	if err := json.Unmarshal(line, &decoded); err != nil {
+		return idx + 1, nil, err
 	}
-	return idx + 1, nil
+	return idx + 1, decoded, nil
 }
 
 // requiredEnvelopeKeys lists the field names required by event-model.md §6.1 EV-001.
@@ -95,8 +96,7 @@ func TestJSONLFixtureMinimalEnvelope_ValidJSON(t *testing.T) {
 	t.Parallel()
 
 	got := testhelpers.JSONLFixtureMinimalEnvelope()
-	var obj map[string]any
-	if _, err := decodeFirstLine(got, &obj); err != nil {
+	if _, _, err := decodeFirstLine(got); err != nil {
 		t.Fatalf("JSONLFixtureMinimalEnvelope: JSON decode error: %v", err)
 	}
 }
@@ -107,8 +107,8 @@ func TestJSONLFixtureMinimalEnvelope_RequiredKeys(t *testing.T) {
 	t.Parallel()
 
 	got := testhelpers.JSONLFixtureMinimalEnvelope()
-	var obj map[string]any
-	if _, err := decodeFirstLine(got, &obj); err != nil {
+	_, obj, err := decodeFirstLine(got)
+	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	assertEnvelopeKeys(t, "JSONLFixtureMinimalEnvelope", obj)
@@ -121,8 +121,8 @@ func TestJSONLFixtureMinimalEnvelope_OptionalFieldsAbsent(t *testing.T) {
 	t.Parallel()
 
 	got := testhelpers.JSONLFixtureMinimalEnvelope()
-	var obj map[string]any
-	if _, err := decodeFirstLine(got, &obj); err != nil {
+	_, obj, err := decodeFirstLine(got)
+	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	for _, k := range []string{"run_id", "state_id", "timestamp_mono_nsec", "trace_context"} {
@@ -152,8 +152,8 @@ func TestJSONLFixtureFullEnvelope_RequiredKeys(t *testing.T) {
 	t.Parallel()
 
 	got := testhelpers.JSONLFixtureFullEnvelope()
-	var obj map[string]any
-	if _, err := decodeFirstLine(got, &obj); err != nil {
+	_, obj, err := decodeFirstLine(got)
+	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	assertEnvelopeKeys(t, "JSONLFixtureFullEnvelope", obj)
@@ -165,8 +165,8 @@ func TestJSONLFixtureFullEnvelope_OptionalFieldsPresent(t *testing.T) {
 	t.Parallel()
 
 	got := testhelpers.JSONLFixtureFullEnvelope()
-	var obj map[string]any
-	if _, err := decodeFirstLine(got, &obj); err != nil {
+	_, obj, err := decodeFirstLine(got)
+	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	for _, k := range []string{"run_id", "state_id", "timestamp_mono_nsec", "trace_context"} {
@@ -227,7 +227,10 @@ func TestJSONLFixtureMultipleValid_StrictlyIncreasingEventIDs(t *testing.T) {
 		if err := dec.Decode(&obj); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		id, _ := obj["event_id"].(string)
+		id, ok := obj["event_id"].(string)
+		if !ok {
+			t.Fatalf("event_id is missing or not a string: %v", obj["event_id"])
+		}
 		ids = append(ids, id)
 	}
 	for i := 1; i < len(ids); i++ {
@@ -279,11 +282,10 @@ func TestJSONLFixtureDurabilityClasses_EachLineIsValidJSON(t *testing.T) {
 	t.Parallel()
 
 	for _, dcl := range testhelpers.JSONLFixtureDurabilityClasses() {
-		dcl := dcl
 		t.Run(string(dcl.Class), func(t *testing.T) {
 			t.Parallel()
-			var obj map[string]any
-			if _, err := decodeFirstLine(dcl.Line, &obj); err != nil {
+			_, obj, err := decodeFirstLine(dcl.Line)
+			if err != nil {
 				t.Fatalf("class %q: JSON decode error: %v", dcl.Class, err)
 			}
 			assertEnvelopeKeys(t, string(dcl.Class), obj)
@@ -311,7 +313,6 @@ func TestJSONLFixtureTornTail_ValidLinesBefore(t *testing.T) {
 	t.Parallel()
 
 	for _, fix := range testhelpers.JSONLFixtureTornTail() {
-		fix := fix
 		t.Run(string(fix.Kind), func(t *testing.T) {
 			t.Parallel()
 			if fix.ValidLineCount != 1 {
@@ -560,8 +561,7 @@ func TestJSONLFixtureConcurrentTail_CompletedLinesDecodeOK(t *testing.T) {
 	fix := testhelpers.JSONLFixtureConcurrentTail()
 	remaining := fix.JSONL
 	for i := 0; i < fix.CompletedLines; i++ {
-		var obj map[string]any
-		n, err := decodeFirstLine(remaining, &obj)
+		n, obj, err := decodeFirstLine(remaining)
 		if err != nil {
 			t.Fatalf("line %d: decode error: %v", i, err)
 		}

@@ -74,8 +74,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // KeeperConfigError is the loud failure returned by ResolveKeeperConfig on any bad
@@ -285,7 +285,7 @@ type requiredKeeperValue struct {
 //     then NOT required (an off ceiling never trips, so the trigger is moot).
 //   - boot_grace presence is honored even for "0s" (explicit "disable boot grace");
 //     daemon.KeeperConfig.Present.BootGrace is true for any non-empty string.
-func checkMissingKeeperValues(flags KeeperFlags, cfg daemon.KeeperConfig) []string {
+func checkMissingKeeperValues(flags KeeperFlags, cfg projectconfig.KeeperConfig) []string { //nolint:cyclop // checkMissingKeeperValues is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 	p := cfg.Present
 
 	// hard_ceiling.mode resolves to "off" only via an EXPLICIT config value (no flag
@@ -347,7 +347,7 @@ func checkMissingKeeperValues(flags KeeperFlags, cfg daemon.KeeperConfig) []stri
 // (see file header): an unset required value aggregates into a *KeeperConfigMissingError
 // (refuse to start), and a bad PRESENT value returns a *KeeperConfigError — NEVER a
 // silent default. projectDir names the file to fix in the missing-value message.
-func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir string) (ResolvedKeeperConfig, error) {
+func ResolveKeeperConfig(flags KeeperFlags, cfg projectconfig.KeeperConfig, projectDir string) (ResolvedKeeperConfig, error) { //nolint:gocognit,cyclop,funlen // ResolveKeeperConfig is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 	// ── Missing-value gate (checked FIRST, precedence over cross-field errors). ──
 	// Every required value must be set by the operator (config or flag); harmonik
 	// imposes NO built-in default at runtime. Aggregate ALL missing keys.
@@ -532,13 +532,13 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir 
 
 	// ── cross-field invariants (fail-loud — NEVER revert to defaults) ──
 	// Band ordering: warn < act < force_act < hard_ceiling.
-	if !(out.WarnAbsTokens < out.ActAbsTokens) {
+	if out.WarnAbsTokens >= out.ActAbsTokens {
 		return ResolvedKeeperConfig{}, &KeeperConfigError{
 			Field:  "warn<act",
 			Reason: fmt.Sprintf("band inversion: warn_abs_tokens (%d) must be < act_abs_tokens (%d)", out.WarnAbsTokens, out.ActAbsTokens),
 		}
 	}
-	if !(out.ActAbsTokens < out.ForceActAbsTokens) {
+	if out.ActAbsTokens >= out.ForceActAbsTokens {
 		return ResolvedKeeperConfig{}, &KeeperConfigError{
 			Field:  "act<force_act",
 			Reason: fmt.Sprintf("band inversion: act_abs_tokens (%d) must be < force_act_abs_tokens (%d)", out.ActAbsTokens, out.ForceActAbsTokens),
@@ -564,7 +564,7 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir 
 				Reason: fmt.Sprintf("restart-mode hard ceiling (%d) must be > force_act_abs_tokens (%d): a restart ceiling at/below force_act is nonsensical (force_act already restarts via the cycle there)", out.HardCeilingAbsTokens, out.ForceActAbsTokens),
 			}
 		}
-		if !(out.ForceActAbsTokens < out.HardCeilingAbsTokens) {
+		if out.ForceActAbsTokens >= out.HardCeilingAbsTokens {
 			return ResolvedKeeperConfig{}, &KeeperConfigError{
 				Field:  "force_act<hard_ceiling",
 				Reason: fmt.Sprintf("band inversion: force_act_abs_tokens (%d) must be < hard_ceiling_abs_tokens (%d)", out.ForceActAbsTokens, out.HardCeilingAbsTokens),
@@ -671,5 +671,10 @@ func emitKeeperConfigRejected(projectDir, agentName string, err error) {
 		return
 	}
 	emitter := keeper.NewFileEmitter(projectDir)
-	_ = emitter.EmitWithRunID(context.Background(), core.RunID{}, "session_keeper_config_rejected", payload)
+	if emitErr := emitter.EmitWithRunID(context.Background(), core.RunID{}, "session_keeper_config_rejected", payload); emitErr != nil {
+		// The state/configuration error is authoritative; event persistence is
+		// observational, so preserve the original fail-loud path even if this
+		// supplemental event cannot be recorded.
+		return
+	}
 }

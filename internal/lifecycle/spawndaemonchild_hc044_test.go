@@ -1,7 +1,6 @@
 package lifecycle
 
 import (
-	"syscall"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -98,14 +97,4 @@ func TestHC044_SpawnChildSysProcAttr_DistinctFromSpawnSysProcAttr(t *testing.T) 
 	if childAttr.Pgid != plAttr.Pgid {
 		t.Errorf("HC-044 vs PL-006a: Pgid mismatch: child=%d pl=%d", childAttr.Pgid, plAttr.Pgid)
 	}
-}
-
-// i3151VerifyPdeathsig is called by the platform-specific test file to assert
-// the Pdeathsig field value. On Linux it checks syscall.SIGTERM; on darwin the
-// field does not exist and the platform file is a no-op.
-//
-// Helper prefix: i3151 (hk-8i31.51).
-func i3151VerifyPdeathsig(t *testing.T, attr *syscall.SysProcAttr) {
-	t.Helper()
-	i3151PlatformVerifyPdeathsig(t, attr)
 }

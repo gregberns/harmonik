@@ -32,13 +32,16 @@ var t0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 // at the given ts.
 func matrixJoinLine(eventID string, ts time.Time, agent string) string {
 	tsStr := ts.UTC().Format(time.RFC3339)
-	payload, _ := json.Marshal(map[string]any{
+	payload, err := json.Marshal(map[string]any{
 		"agent":     agent,
 		"status":    "online",
 		"last_seen": tsStr,
 		"reason":    "join",
 	})
-	ev, _ := json.Marshal(map[string]any{
+	if err != nil {
+		return ""
+	}
+	ev, err := json.Marshal(map[string]any{
 		"event_id":         eventID,
 		"schema_version":   1,
 		"type":             "agent_presence",
@@ -46,18 +49,24 @@ func matrixJoinLine(eventID string, ts time.Time, agent string) string {
 		"source_subsystem": "test",
 		"payload":          json.RawMessage(payload),
 	})
+	if err != nil {
+		return ""
+	}
 	return string(ev)
 }
 
 // matrixSendLine builds a raw JSONL event line for an agent_message send at ts.
 // The envelope timestamp_wall is ts — ComputeRegistry uses this for lastActivity.
 func matrixSendLine(eventID string, ts time.Time, from, to string) string {
-	payload, _ := json.Marshal(map[string]any{
+	payload, err := json.Marshal(map[string]any{
 		"from": from,
 		"to":   to,
 		"body": "ping",
 	})
-	ev, _ := json.Marshal(map[string]any{
+	if err != nil {
+		return ""
+	}
+	ev, err := json.Marshal(map[string]any{
 		"event_id":         eventID,
 		"schema_version":   1,
 		"type":             "agent_message",
@@ -65,6 +74,9 @@ func matrixSendLine(eventID string, ts time.Time, from, to string) string {
 		"source_subsystem": "test",
 		"payload":          json.RawMessage(payload),
 	})
+	if err != nil {
+		return ""
+	}
 	return string(ev)
 }
 
@@ -75,7 +87,11 @@ func writeMatrixFixture(t *testing.T, lines []string) string {
 	if err != nil {
 		t.Fatalf("writeMatrixFixture: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("writeMatrixFixture: close: %v", closeErr)
+		}
+	}()
 	for _, l := range lines {
 		if _, writeErr := fmt.Fprintln(f, l); writeErr != nil {
 			t.Fatalf("writeMatrixFixture: write: %v", writeErr)
@@ -241,9 +257,13 @@ func TestPresenceTTLClockMatrix_Scenario(t *testing.T) {
 				t.Fatalf("create fixture: %v", err)
 			}
 			for _, l := range tc.lines {
-				fmt.Fprintln(f, l)
+				if _, writeErr := fmt.Fprintln(f, l); writeErr != nil {
+					t.Fatalf("write fixture: %v", writeErr)
+				}
 			}
-			_ = f.Close()
+			if closeErr := f.Close(); closeErr != nil {
+				t.Fatalf("close fixture: %v", closeErr)
+			}
 
 			reg := presence.ComputeRegistry(path)
 			rec, ok := reg[tc.agent]

@@ -138,7 +138,7 @@ func TestDefaultHarness_SubmitCarriesValidValue(t *testing.T) {
 	req := queue.QueueSubmitRequest{
 		SchemaVersion:  1,
 		DefaultHarness: core.AgentTypeCodex,
-		Groups:         []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+		Groups:         []queue.Group{rpcFixtureWaveGroup(beadA)},
 	}
 
 	_, q, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 1)
@@ -181,7 +181,7 @@ func TestDefaultHarness_SubmitNormalisesInvalid(t *testing.T) {
 	req := queue.QueueSubmitRequest{
 		SchemaVersion:  1,
 		DefaultHarness: core.AgentType("Codex"),
-		Groups:         []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+		Groups:         []queue.Group{rpcFixtureWaveGroup(beadA)},
 	}
 
 	_, q, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 1)
@@ -214,7 +214,6 @@ func TestNormaliseDefaultHarness(t *testing.T) {
 		{"leading-digit-invalid", core.AgentType("1codex"), core.AgentType("")},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := queue.NormaliseDefaultHarness(tc.in); got != tc.want {

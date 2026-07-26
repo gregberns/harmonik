@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -172,11 +173,21 @@ type RemoveStaleWorktreeResult struct {
 // Bead ref: hk-ldzp — daemon worktree/disk GC.
 func RemoveStaleWorktrees(ctx context.Context, repoRoot string, paths []string, logger *log.Logger) RemoveStaleWorktreeResult {
 	var result RemoveStaleWorktreeResult
+	worktreeRoot := filepath.Join(repoRoot, ".harmonik", "worktrees")
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
 			// Context cancelled: stop processing.
 			break
 		}
+		rel, err := filepath.Rel(worktreeRoot, p)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			if logger != nil {
+				logger.Printf("workspace: RemoveStaleWorktrees: refusing path outside worktree root %q", p)
+			}
+			result.Failed = append(result.Failed, p)
+			continue
+		}
+		//nolint:gosec // G204: p is validated as a descendant of the managed worktree root above.
 		cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", "--force", p)
 		cmd.Dir = repoRoot
 		if out, err := cmd.CombinedOutput(); err != nil {

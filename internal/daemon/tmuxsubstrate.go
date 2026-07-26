@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -1868,7 +1869,7 @@ func crewKeeperWindowArgv(keeperBin, crewName, sessName, projectDir string) []st
 // (already created by SpawnCrewSession) and launches the per-crew keeper in it.
 //
 // projectDir is derived from the crew spawn: spawn.Cwd is the crew's WorkDir
-// (the project root per buildCrewLaunchSpec), with HARMONIK_PROJECT from
+// (the project root per crewrun.BuildCrewLaunchSpec), with HARMONIK_PROJECT from
 // spawn.Env as a fallback. The keeper binary is the currently-running harmonik
 // executable (os.Executable, "harmonik" on failure), matching the CLI crew
 // keeper resolution.
@@ -2240,10 +2241,46 @@ func (p *perRunSubstrate) WriteLastPane(ctx context.Context, bufferName string, 
 	return p.pasteAdapter().WriteToPane(ctx, bufferName, target, payload)
 }
 
-// inputBufferName is the tmux buffer name the interim InputPort.SubmitInput uses
-// for its bracketed paste (perRunSubstrate is the input-bearing handle at the
-// process-spawn seam in the tmux/paste path).
-const inputBufferName = "harmonik-input"
+// inputBufferPurpose is the PL-021d purpose slug the interim
+// InputPort.SubmitInput bracketed paste tags its buffer with.
+const inputBufferPurpose = "input"
+
+// inputBufferName builds the PL-021d buffer name this run's SubmitInput uses for
+// its bracketed paste: "harmonik-<run-id>-input". The <run-id> segment MUST
+// satisfy bufferNameRe ([a-z0-9-] after the "harmonik-" prefix), or LoadBuffer /
+// PasteBuffer reject it with ErrStructural — which is exactly what the retired
+// hardcoded "harmonik-input" did, wedging every tmux-substrate dispatch
+// (hk-9hvr0: implementer-initial SubmitInput failed the buffer-name invariant so
+// the task prompt never reached the worker). The minted run id is a lowercase
+// UUIDv7 that already matches; we sanitize defensively and fall back to the
+// per-run pane target (then a literal) so a shared-session or remote run with no
+// runSessionID still yields a valid, per-run-unique name. Mirrors the daemon's
+// own bufferName(sessionID, purpose) helper used by the "task"/"review" pastes.
+func (p *perRunSubstrate) inputBufferName() string {
+	id := sanitizeBufferSegment(p.runSessionID)
+	if id == "" {
+		id = sanitizeBufferSegment(p.paneTarget())
+	}
+	if id == "" {
+		id = "run"
+	}
+	return bufferName(id, inputBufferPurpose)
+}
+
+// sanitizeBufferSegment lowercases s and maps every character outside [a-z0-9]
+// to '-', so the result is safe to embed as the <session-id> segment of a
+// bufferNameRe-valid buffer name. Leading/trailing hyphens are trimmed so the
+// segment never collapses the "harmonik-<id>-<purpose>" delimiters. Returns ""
+// when s has no usable characters.
+//
+// This was a byte-identical restatement of the tmux package's own sanitizer.
+// It now delegates, so the two cannot drift — the same reason tmux exports
+// ValidBufferName rather than letting callers restate the regex. The local name
+// is kept because inputBufferName below and its regression test both read as
+// prose against it.
+func sanitizeBufferSegment(s string) string {
+	return tmux.SanitizeBufferSegment(s)
+}
 
 // SubmitInput is the interim tmux/paste implementation of handler.InputPort
 // (AIS-001 / AIS-003 / HC-069 / HC-070). It delivers the payload to this run's
@@ -2259,7 +2296,7 @@ const inputBufferName = "harmonik-input"
 // error. Seq/Token are codec-owned and remain zero for the interim paste path
 // (no wire protocol supplies them).
 func (p *perRunSubstrate) SubmitInput(ctx context.Context, req handler.InputRequest) (handler.Ack, error) {
-	if err := p.WriteLastPane(ctx, inputBufferName, req.Payload); err != nil {
+	if err := p.WriteLastPane(ctx, p.inputBufferName(), req.Payload); err != nil {
 		return handler.Ack{}, err
 	}
 	return handler.Ack{Outcome: handler.Delivered}, nil
@@ -2541,7 +2578,49 @@ func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 				killRemoteProcessWithGrace(ctx, s.runner, s.pid, killGracePeriod)
 			}
 		} else if s.pid > 0 {
-			killProcessWithGrace(s.pid, killGracePeriod)
+			// hk-bl2k6: RE-RESOLVE the pane PID from tmux immediately before
+			// signalling, and signal nothing if tmux no longer knows the pane.
+			//
+			// s.pid is captured at spawn and, without this, never re-verified —
+			// so the staleness window is spawn→kill, potentially HOURS, against
+			// a pid space that wraps in ~45 minutes on this platform. That is a
+			// provenance question ("is this pid still my pane?"), and a process
+			// group cannot answer it (HC-044(c): a group is a kill handle and
+			// carries no provenance meaning). tmux, the owner of record, can.
+			// Asking it collapses staleness from hours to microseconds.
+			//
+			// Wait already does exactly this on its liveness poll (see runWait's
+			// secondary WindowPanePID check); this is the same question asked on
+			// the kill path. panePIDTarget() rather than s.handle for the same
+			// hk-kuxxl reason Wait uses it: a slash-bearing window-name handle
+			// makes tmux fall back to the session's ACTIVE pane, which under
+			// MaxConcurrent>1 reports a SIBLING's pane — here that would mean
+			// killing another run's agent.
+			//
+			// KillWindow below remains the authoritative cleanup, so skipping
+			// the signal never leaves the window behind.
+			livePID, panePIDErr := s.adapter.WindowPanePID(ctx, s.panePIDTarget())
+			switch {
+			case panePIDErr != nil:
+				slog.WarnContext(ctx, "kill_skipped_pane_unknown_to_tmux",
+					"spawn_pid", s.pid,
+					"pane_target", string(s.panePIDTarget()),
+					"err", panePIDErr,
+					"reason", "tmux no longer resolves this pane; the spawn-time pid may have been recycled, so signal nothing",
+					"bead", "hk-bl2k6")
+			case livePID > 0:
+				if livePID != s.pid {
+					slog.WarnContext(ctx, "kill_pane_pid_changed_since_spawn",
+						"spawn_pid", s.pid, "live_pid", livePID,
+						"reason", "tmux reports a different pane pid than the one captured at spawn; killing the live one",
+						"bead", "hk-bl2k6")
+				}
+				killProcessWithGrace(ctx, livePID, killGracePeriod)
+			default:
+				// tmux answered but reported no pid. Nothing new was learned, so
+				// keep the pre-existing behaviour and use the spawn-time pid.
+				killProcessWithGrace(ctx, s.pid, killGracePeriod)
+			}
 		}
 		// Step 2: destroy the tmux window (cleans up pane/window state).
 		killErr = s.adapter.KillWindow(ctx, s.handle)
@@ -2554,26 +2633,102 @@ func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 	return killErr
 }
 
-// killProcessWithGrace sends SIGTERM to pid, waits up to grace for the process
-// to exit, then sends SIGKILL if it is still alive. It is a best-effort
-// helper: all errors are silently swallowed because the window cleanup in
-// KillWindow is the authoritative cleanup step.
-func killProcessWithGrace(pid int, grace time.Duration) {
-	// Send SIGTERM. Ignore errors: process may already be gone.
-	_ = syscall.Kill(pid, syscall.SIGTERM)
+// killProcessSignal is the raw signal syscall used by killProcessWithGrace.
+// It is a package-level var for ONE reason: so a test can prove that the
+// pid<=1 guard signals nothing at all (hk-bl2k6). Production always holds
+// syscall.Kill; tests that swap it must restore it and must not run in
+// parallel with anything that kills a process.
+var killProcessSignal = syscall.Kill
 
-	// Poll for process exit using kill(pid, 0) which returns ESRCH when gone.
+// killProcessWithGrace terminates the tmux pane identified by pid — the pane
+// shell AND everything it spawned — by signalling the pane's PROCESS GROUP:
+// SIGTERM, then up to grace for the group to drain, then SIGKILL.
+//
+// Why the group and not the pid (hk-bl2k6): pid is the shell tmux started via
+// new-window (see the Kill doc comment above); the hosted agent process is a
+// CHILD of that shell. Signalling the shell alone reparents the agent to init,
+// where it survives the daemon's kill, keeps burning CPU and holding a provider
+// slot. In the field this leaked orphan agents for 40+ minutes after a keeper
+// restart. tmux setsid()s every pane, so a pane PID is already a session and
+// process-group leader — kill(-pid, …) therefore names a real group containing
+// the shell and the agent. No spawn-side change is needed for this path (unlike
+// the handler path, whose children deliberately JOIN the daemon's group).
+//
+// Identity is NOT this function's job. It signals whatever pid it is handed.
+// Confirming that the pid still belongs to the caller's pane belongs to the
+// caller, and tmuxSubstrateSession.Kill does it by re-resolving the pane pid
+// from tmux immediately before calling in.
+//
+// It is a best-effort helper: all signal errors are swallowed because the
+// window cleanup in KillWindow is the authoritative cleanup step.
+func killProcessWithGrace(ctx context.Context, pid int, grace time.Duration) {
+	// GUARD — the single most dangerous line in this function is
+	// killProcessSignal(-pid, …). With pid==0 that signals the CALLER'S OWN
+	// process group, i.e. the daemon and every one of its siblings; with
+	// pid==1 kill(-1, …) signals every process the daemon may signal; negative
+	// pids are nonsense here. Refuse loudly and signal nothing.
+	if pid <= 1 {
+		slog.WarnContext(ctx, "kill_process_with_grace_invalid_pid",
+			"pid", pid,
+			"reason", "kill(-pid) with pid<=1 would signal the daemon's own process group or every process",
+			"bead", "hk-bl2k6")
+		return
+	}
+
+	// Prefer the process GROUP led by pid, but check leadership with Getpgid
+	// first. tmux setsid()s each pane, so a live pane genuinely is its own group
+	// leader and this check passes on every healthy path.
+	//
+	// WHAT THE CHECK BUYS, STATED HONESTLY (hk-3d9df): it NARROWS THE GROUP-KILL
+	// BLAST RADIUS. It is not a provenance test and must not be read as one —
+	// HC-044(c) is explicit that "a process group is a kill handle and carries
+	// no provenance meaning", and the only predicate a group could offer,
+	// "processes whose group ID equals their own process ID", is true of every
+	// group leader on the machine (measured on this box: 454 of 534 processes,
+	// 85%). Against a wrapped-around, recycled pid it therefore filters roughly
+	// one case in seven — worth having, nowhere near a guarantee.
+	//
+	// What it DOES fully close is the reaped-leader hazard: when the pane is
+	// gone but some setsid descendant still holds the old group, Getpgid returns
+	// ESRCH, so we take the single-process path and signal nothing live, whereas
+	// a bare kill(-pid) would have reached that unrelated group. It likewise
+	// keeps the daemon's own fabricated test pids (999, 1000, 1234) from
+	// becoming live group kills on an operator's machine.
+	//
+	// The identity question — "is this pid still MY pane?" — is answered by the
+	// caller re-resolving the pane pid from tmux before calling in, not here.
+	//
+	// Whichever target we settle on is used for the liveness poll and the
+	// SIGKILL escalation too, so the poll asks the same question the signal
+	// answered: "is the thing I am trying to kill still there?"
+	target := pid
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
+		target = -pid
+	} else {
+		slog.WarnContext(ctx, "kill_process_with_grace_not_group_leader",
+			"pid", pid, "pgid", pgid, "err", err,
+			"reason", "pid is not its own process-group leader; signalling the single process only, since kill(-pid) would reach an unrelated group",
+			"bead", "hk-3d9df")
+	}
+	_ = killProcessSignal(target, syscall.SIGTERM) //nolint:errcheck // best-effort; the process may already be gone and KillWindow is authoritative
+
+	// Poll with kill(target, 0), which returns ESRCH once the group is empty
+	// (or, on the fallback path, once the process is gone). Polling the group
+	// rather than the leader is load-bearing: a pane shell typically dies on
+	// the first SIGTERM while a hosted agent that traps or ignores SIGTERM
+	// lives on. Polling only the leader would see ESRCH immediately, return
+	// early, and skip the SIGKILL that actually reaps the orphan.
 	deadline := time.Now().Add(grace)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); err != nil {
-			// ESRCH means no such process — it has exited.
+		if err := killProcessSignal(target, 0); errors.Is(err, syscall.ESRCH) {
+			// No such process/group — everything has exited.
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Grace period elapsed; escalate to SIGKILL.
-	_ = syscall.Kill(pid, syscall.SIGKILL)
+	// Grace period elapsed; escalate to SIGKILL on the same target.
+	_ = killProcessSignal(target, syscall.SIGKILL) //nolint:errcheck // best-effort; KillWindow is authoritative
 }
 
 // killRemoteProcessWithGrace forcefully terminates a WORKER pane PID over the

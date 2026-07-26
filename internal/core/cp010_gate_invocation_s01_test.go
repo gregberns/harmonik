@@ -198,7 +198,6 @@ func TestCP010_MultipleGates_AppliedInDeclarationOrder(t *testing.T) {
 	var callOrder []string
 	fns := map[string]GateEvaluator{}
 	for _, n := range names {
-		n := n
 		fns[n] = cp010RecordingFn(n, &callOrder)
 	}
 

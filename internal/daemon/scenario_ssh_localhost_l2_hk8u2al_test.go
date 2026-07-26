@@ -65,7 +65,6 @@ import (
 func hk8u2alSSHAvailable(ctx context.Context) (bool, string) {
 	cctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	//nolint:gosec // G204: args are test-controlled literals
 	cmd := exec.CommandContext(cctx, "ssh",
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",

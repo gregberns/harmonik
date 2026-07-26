@@ -268,7 +268,7 @@ func TestHasPrecompactTrigger(t *testing.T) {
 	}
 
 	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	markerPath := filepath.Join(keeperDir, agent+".precompact")

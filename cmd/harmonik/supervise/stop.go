@@ -1,6 +1,7 @@
 package supervisecmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,9 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, stopUsage)
+			if _, err := fmt.Fprint(stdout, stopUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--project" && i+1 < len(args):
 			i++
@@ -43,7 +46,9 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise stop: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise stop: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDir = wd
@@ -58,28 +63,42 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 		// `restart --watch-restart` revive of a standalone daemon (hk-ky7ye).
 		// errors.Is unwraps to fs.ErrNotExist correctly.
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(stdout, "harmonik supervise stop: supervisor not running (no pidfile)")
+			if _, writeErr := fmt.Fprintln(stdout, "harmonik supervise stop: supervisor not running (no pidfile)"); writeErr != nil {
+				return 1
+			}
 			return 0
 		}
-		fmt.Fprintf(stderr, "harmonik supervise stop: read pidfile: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise stop: read pidfile: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise stop: find process %d: %v\n", pid, err)
-		_ = cleanup(projectDir)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise stop: find process %d: %v\n", pid, err); writeErr != nil {
+			return 1
+		}
+		if cleanupErr := cleanup(projectDir); cleanupErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// PL-011: SIGTERM → bounded wait → SIGKILL.
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		if err == os.ErrProcessDone {
-			fmt.Fprintln(stdout, "harmonik supervise stop: supervisor already exited")
-			_ = cleanup(projectDir)
+		if errors.Is(err, os.ErrProcessDone) {
+			if _, writeErr := fmt.Fprintln(stdout, "harmonik supervise stop: supervisor already exited"); writeErr != nil {
+				return 1
+			}
+			if cleanupErr := cleanup(projectDir); cleanupErr != nil {
+				return 1
+			}
 			return 0
 		}
-		fmt.Fprintf(stderr, "harmonik supervise stop: SIGTERM: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise stop: SIGTERM: %v\n", err); writeErr != nil {
+			return 1
+		}
 	}
 
 	deadline := time.Now().Add(stopTimeout)
@@ -93,27 +112,45 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 
 	// If still alive, SIGKILL.
 	if err := proc.Signal(syscall.Signal(0)); err == nil {
-		fmt.Fprintf(stderr, "harmonik supervise stop: SIGTERM timeout — sending SIGKILL\n")
-		_ = proc.Signal(syscall.SIGKILL)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise stop: SIGTERM timeout — sending SIGKILL\n"); writeErr != nil {
+			return 1
+		}
+		if killErr := proc.Signal(syscall.SIGKILL); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise stop: SIGKILL: %v\n", killErr); writeErr != nil {
+				return 1
+			}
+			return 1
+		}
 		// Brief wait for kernel reaping.
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	// Reap the flywheel tmux session (child tree). This kills the pane and any
 	// processes still running under it even if the shim already exited.
-	// Ignore errors: session may not exist if the shim already cleaned up.
+	// A missing session is expected if the shim already cleaned up.
 	sessionName := FlywheelSessionName(projectDir)
 	//nolint:gosec // G204: sessionName derived from operator-controlled projectDir
-	_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+	if err := exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", sessionName).Run(); err != nil {
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik supervise stop: tmux kill-session %q: %v\n", sessionName, err); writeErr != nil {
+			return 1
+		}
+		return 1
+	}
 
-	_ = cleanup(projectDir)
-	fmt.Fprintln(stdout, "harmonik supervise stop: supervisor stopped")
+	if err := cleanup(projectDir); err != nil {
+		return 1
+	}
+	if _, err := fmt.Fprintln(stdout, "harmonik supervise stop: supervisor stopped"); err != nil {
+		return 1
+	}
 	return 0
 }
 
 // cleanup removes pidfile and sentinel on supervisor exit.
 func cleanup(projectDir string) error {
-	_ = os.Remove(PidfilePath(projectDir))
+	if err := os.Remove(PidfilePath(projectDir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove pidfile: %w", err)
+	}
 	return RemoveSentinel(projectDir)
 }
 

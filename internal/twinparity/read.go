@@ -2,8 +2,10 @@ package twinparity
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -18,7 +20,11 @@ func LoadStream(path string) (Stream, error) {
 	if err != nil {
 		return Stream{}, fmt.Errorf("twinparity: open %s: %w", path, err)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // read-only fixture handle; close error is irrelevant
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "twinparity: close stream", "err", closeErr, "path", path)
+		}
+	}()
 
 	var lines []string
 	scanner := bufio.NewScanner(f)

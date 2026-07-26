@@ -196,7 +196,7 @@ func Load(agentsDir, typeName string) (*TypeFolder, error) {
 	}
 	var m Manifest
 	if err := yaml.Unmarshal(mData, &m); err != nil {
-		return nil, fmt.Errorf("%w: parse %q: %v", ErrInvalid, mPath, err)
+		return nil, fmt.Errorf("%w: parse %q: %w", ErrInvalid, mPath, err)
 	}
 
 	soulPath := filepath.Join(dir, soulFile)

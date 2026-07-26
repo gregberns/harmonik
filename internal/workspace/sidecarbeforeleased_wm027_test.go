@@ -31,12 +31,12 @@ func TestWM027_SidecarPrecedesWorkspaceLeased(t *testing.T) {
 
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "")
 
 	// Step 1: Write sidecar atomically (simulates workspace manager action before workspace_leased).
 	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
@@ -52,10 +52,7 @@ func TestWM027_SidecarPrecedesWorkspaceLeased(t *testing.T) {
 	// Step 3: Conceptual ordering gate — workspace_leased would emit here.
 	// The real emitter is downstream (S06). This fixture captures the durability
 	// pre-condition: sidecar is present and readable before any event fires.
-	raw, err := os.ReadFile(sidecarPath)
-	if err != nil {
-		t.Fatalf("WM-027: ReadFile sidecar: %v", err)
-	}
+	raw := mustReadFile(t, sidecarPath)
 	if len(raw) == 0 {
 		t.Errorf("WM-027: sidecar is empty; must be non-empty before workspace_leased")
 	}
@@ -105,11 +102,11 @@ func TestWM027_SubsequentSessionsDoNotReemitWorkspaceLeased(t *testing.T) {
 
 	for i, s := range sessions {
 		sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", s.sessionID)
-		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 			t.Fatalf("MkdirAll sessionDir[%d]: %v", i, err)
 		}
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-		content := sessionLogFixtureMakeMetaJSON(t, runID, s.sessionID, "node-01", "agentic", "wf-01", "")
+		content := sessionLogFixtureMakeMetaJSON(t, runID, s.sessionID, "node-01", "")
 		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-027: session[%d] sidecar write: %v", i, err)
 		}

@@ -56,6 +56,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeBeadClosed, func() EventPayload { return &BeadClosedPayload{} }},
 	{EventTypeEpicCompleted, func() EventPayload { return &EpicCompletedPayload{} }},
 	{EventTypeWorkingTreeRefreshFailed, func() EventPayload { return &WorkingTreeRefreshFailedPayload{} }},
+	{EventTypeWorkingTreeLocalEditsOverwritten, func() EventPayload { return &WorkingTreeLocalEditsOverwrittenPayload{} }},
 	{EventTypeImplementerEscapedWorktree, func() EventPayload { return &ImplementerEscapedWorktreePayload{} }},
 	{EventTypeImplementerPhaseComplete, func() EventPayload { return &ImplementerPhaseCompletePayload{} }},
 	{EventTypeMergeBuildFailed, func() EventPayload { return &MergeBuildFailedPayload{} }},
@@ -181,6 +182,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 
 	// Launch / dispatch diagnostics (hk-9vp51, hk-da3rr)
 	{EventTypeImplementerBudgetExceeded, func() EventPayload { return &ImplementerBudgetExceededPayload{} }},
+	{EventTypeImplementerNoWorkSuspected, func() EventPayload { return &ImplementerNoWorkSuspectedPayload{} }},
 	{EventTypeReviewerBudgetExceeded, func() EventPayload { return &ReviewerBudgetExceededPayload{} }},
 
 	// Launch_initiated → agent_ready stall detector (hk-1s1or)
@@ -238,7 +240,6 @@ func TestAllEventTypeConstantsHaveRegistryEntries(t *testing.T) {
 	}
 
 	for _, entry := range allEventTypeCohort {
-		entry := entry // capture loop variable
 		t.Run(string(entry.et), func(t *testing.T) {
 			t.Parallel()
 

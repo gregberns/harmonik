@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,10 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // heartbeat.go — keeper-side gauge liveness (hk-81wk).
-//
+
 // MaxHeartbeatMisses is the number of consecutive ticks on which
 // deriveContextTokens may return false before the heartbeat stops writing the
 // gauge file. At the default 10 s tick cadence, 12 misses ≈ 2 minutes — roughly
@@ -82,7 +85,7 @@ const deriveContextTailBytes = 512 * 1024
 // Scan is bounded to the tail window (deriveContextTailBytes) because the last
 // usage turn is always near EOF; scanning the full file on every heartbeat tick
 // caused sustained 20-47% CPU on long captain sessions. Refs: hk-div6c.
-func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
+func deriveContextTokens(ctx context.Context, transcriptDir, sessionID string) (int64, bool) {
 	if transcriptDir == "" || sessionID == "" {
 		return 0, false
 	}
@@ -92,7 +95,11 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(ctx, "keeper: close transcript while deriving context", "err", closeErr, "path", path)
+		}
+	}()
 
 	type usage struct {
 		InputTokens         int64 `json:"input_tokens"`
@@ -171,11 +178,11 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 // miss-budget counter (heartbeatMissCount) increments correctly per tick.
 // Single-threaded: only the Run goroutine calls this via maybeHeartbeat.
 // Refs: hk-div6c.
-func (w *Watcher) deriveCachedTokens(transcriptDir, sid string, now time.Time) (int64, bool) {
+func (w *Watcher) deriveCachedTokens(ctx context.Context, transcriptDir, sid string, now time.Time) (int64, bool) {
 	if w.deriveCacheSID == sid && now.Before(w.deriveCacheExpiry) {
 		return w.deriveCacheTokens, true
 	}
-	tokens, ok := deriveContextTokens(transcriptDir, sid)
+	tokens, ok := deriveContextTokens(ctx, transcriptDir, sid)
 	if ok {
 		w.deriveCacheSID = sid
 		w.deriveCacheTokens = tokens
@@ -193,8 +200,7 @@ func WriteCtxFile(projectDir, agent string, cf *CtxFile) error {
 	}
 	path := ctxFilePath(projectDir, agent)
 	keeperDir := filepath.Dir(path)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("keeper: create keeper dir for heartbeat: %w", err)
 	}
 	raw, err := json.Marshal(cf)
@@ -202,14 +208,13 @@ func WriteCtxFile(projectDir, agent string, cf *CtxFile) error {
 		return fmt.Errorf("keeper: marshal heartbeat ctx: %w", err)
 	}
 	raw = append(raw, '\n')
-	//nolint:gosec // G304: keeperDir derived from operator-controlled projectDir; pattern uses validated agent name
 	tmp, err := os.CreateTemp(keeperDir, agent+".ctx.*.tmp")
 	if err != nil {
 		return fmt.Errorf("keeper: create heartbeat ctx tmp: %w", err)
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
+		err = errors.Join(err, tmp.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: write heartbeat ctx tmp %q: %w", tmpPath, err)
 	}
@@ -296,7 +301,7 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 	// O(filesize) JSONL re-scans on consecutive heartbeat ticks. Misses bypass
 	// the cache so the miss-budget counter increments correctly per tick.
 	// Refs: hk-div6c.
-	derivedTokens, derivedOk := w.deriveCachedTokens(transcriptDir, sid, now)
+	derivedTokens, derivedOk := w.deriveCachedTokens(ctx, transcriptDir, sid, now)
 	if derivedOk {
 		w.heartbeatMissCount = 0
 		fresh.Tokens = derivedTokens

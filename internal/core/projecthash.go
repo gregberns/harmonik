@@ -36,7 +36,7 @@ func (h *ProjectHash) UnmarshalText(data []byte) error {
 		return fmt.Errorf("core: ProjectHash: want 12 hex chars, got %d: %q", len(s), s)
 	}
 	for i, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return fmt.Errorf("core: ProjectHash: non-lowercase-hex char %q at position %d in %q", c, i, s)
 		}
 	}

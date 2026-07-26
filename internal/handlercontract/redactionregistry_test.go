@@ -202,7 +202,6 @@ func TestRegistryFixture_SafeFieldsPassThrough(t *testing.T) {
 	}
 
 	for k, want := range safePayload {
-		k, want := k, want
 		t.Run(k, func(t *testing.T) {
 			t.Parallel()
 			v, ok := got[k]

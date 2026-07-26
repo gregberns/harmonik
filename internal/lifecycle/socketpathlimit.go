@@ -20,7 +20,7 @@ import (
 //     non-fatal so the daemon still comes up — but a too-long path never
 //     self-heals (unlike a transient stale-socket race), leaving the daemon
 //     permanently socket-less with no clear signal why.
-//   - the remote reverse-tunnel (daemon/reversetunnel.go) forwards a worker
+//   - the remote reverse-tunnel (internal/transport/tunnel/tunnel.go) forwards a
 //     TCP port back to this same socket path via `ssh -R <port>:<path>`. ssh
 //     does not validate that local forward destination at tunnel start —
 //     only when a connection actually needs forwarding — so the tunnel
@@ -55,10 +55,10 @@ func sunPathMax() int {
 //
 // Bead ref: hk-ta6dg.
 func ValidateSocketPathLength(sockPath string) error {
-	max := sunPathMax()
+	limit := sunPathMax()
 	// One byte of the array is reserved for the NUL terminator the kernel
-	// writes, so the usable path length is max-1.
-	if len(sockPath) < max {
+	// writes, so the usable path length is limit-1.
+	if len(sockPath) < limit {
 		return nil
 	}
 	return fmt.Errorf(
@@ -66,6 +66,6 @@ func ValidateSocketPathLength(sockPath string) error {
 			"(%d usable, incl. NUL terminator) — bind/connect will fail with EINVAL/ENAMETOOLONG; "+
 			"move the project to a shorter path (e.g. a shallower directory or a shorter symlink) "+
 			"so <projectDir>/.harmonik/daemon.sock fits",
-		sockPath, len(sockPath), max, max-1,
+		sockPath, len(sockPath), limit, limit-1,
 	)
 }

@@ -36,6 +36,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,7 +126,7 @@ func rlBudgetProjectDir(t *testing.T) string {
 // rlBudgetSeedQueue writes a queue.json with a single stream item that has
 // ReviewLoopFailures = MaxReviewLoopFailures - 1 (one failure away from budget
 // exhaustion) and WorkflowMode = "review-loop".
-func rlBudgetSeedQueue(t *testing.T, projectDir string) *daemon.QueueStore {
+func rlBudgetSeedQueue(t *testing.T, projectDir string) *queuewiring.QueueStore {
 	t.Helper()
 	item := queue.Item{
 		BeadID:             rlBudgetBeadID,

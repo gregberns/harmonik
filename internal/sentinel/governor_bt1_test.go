@@ -30,18 +30,21 @@ func setupGitRepoWithCommit(t *testing.T, commitTime time.Time) string {
 	tmp := t.TempDir()
 
 	bareDir := filepath.Join(tmp, "origin.git")
-	if out, err := exec.Command("git", "init", "--bare", bareDir).CombinedOutput(); err != nil {
+	//nolint:gosec // G204: bareDir is derived from this test's t.TempDir fixture.
+	if out, err := exec.CommandContext(t.Context(), "git", "init", "--bare", bareDir).CombinedOutput(); err != nil {
 		t.Fatalf("git init --bare: %v\n%s", err, out)
 	}
 
 	projectDir := filepath.Join(tmp, "project")
-	if out, err := exec.Command("git", "init", projectDir).CombinedOutput(); err != nil {
+	//nolint:gosec // G204: projectDir is derived from this test's t.TempDir fixture.
+	if out, err := exec.CommandContext(t.Context(), "git", "init", projectDir).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
 
 	runGit := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		//nolint:gosec // G204: dir and args are controlled by this local test fixture helper.
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir}, args...)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -51,13 +54,14 @@ func setupGitRepoWithCommit(t *testing.T, commitTime time.Time) string {
 	runGit(projectDir, "config", "user.name", "Test User")
 	runGit(projectDir, "remote", "add", "origin", bareDir)
 
-	if err := os.WriteFile(filepath.Join(projectDir, "x.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir, "x.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 	runGit(projectDir, "add", "x.txt")
 
 	dateStr := commitTime.UTC().Format(time.RFC3339)
-	cmd := exec.Command("git", "-C", projectDir, "commit", "-m", "test commit")
+	//nolint:gosec // G204: projectDir is t.TempDir-backed and the commit arguments are literals.
+	cmd := exec.CommandContext(t.Context(), "git", "-C", projectDir, "commit", "-m", "test commit")
 	cmd.Env = append(os.Environ(),
 		"GIT_COMMITTER_DATE="+dateStr,
 		"GIT_AUTHOR_DATE="+dateStr,
@@ -68,7 +72,7 @@ func setupGitRepoWithCommit(t *testing.T, commitTime time.Time) string {
 	// Push whatever branch is checked out to origin/main.
 	runGit(projectDir, "push", "origin", "HEAD:main")
 
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o750); err != nil {
 		t.Fatalf("mkdir events: %v", err)
 	}
 	return projectDir
@@ -163,12 +167,15 @@ func TestGovernor_Weight0Chatter_PopulatedFile(t *testing.T) {
 	}
 
 	// Also write a reviewer_verdict{REQUEST_CHANGES} — weight-0 per spec §1.1.
-	rcPayload, _ := json.Marshal(map[string]interface{}{
+	rcPayload, err := json.Marshal(map[string]interface{}{
 		"verdict":        "REQUEST_CHANGES",
 		"schema_version": 1,
 		"flags":          []string{},
 		"notes":          "needs work",
 	})
+	if err != nil {
+		t.Fatalf("marshal reviewer verdict payload: %v", err)
+	}
 	writeEvent(t, eventsPath, core.EventTypeReviewerVerdict, now.Add(-1*time.Minute), rcPayload)
 
 	sample := sentinel.ComputeWindowMovement(

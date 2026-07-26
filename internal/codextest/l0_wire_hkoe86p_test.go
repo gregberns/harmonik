@@ -19,21 +19,13 @@
 package codextest_test
 
 import (
+	"bytes"
 	"encoding/json"
-	"path/filepath"
 	"reflect"
-	"runtime"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/codexwire"
 )
-
-// ─── corpus path helper ──────────────────────────────────────────────────────
-
-func l0CorpusDir() string {
-	_, thisFile, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(thisFile), "..", "..", "testdata", "codex-app-server", "corpus")
-}
 
 // ─── L0 — golden frame tests ─────────────────────────────────────────────────
 
@@ -198,7 +190,7 @@ func TestL0_Wire_UnknownMethodYieldsRaw(t *testing.T) {
 	if frame.Kind != codexwire.FrameKindRaw {
 		t.Errorf("Kind: got %v, want FrameKindRaw for unregistered method", frame.Kind)
 	}
-	if string(frame.Raw) != string(raw) {
+	if !bytes.Equal(frame.Raw, raw) {
 		t.Errorf("Raw bytes not preserved: got %q, want %q", frame.Raw, raw)
 	}
 }

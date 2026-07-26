@@ -2,7 +2,6 @@ package handlercontract_test
 
 import (
 	"context"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -75,12 +74,10 @@ func TestHC061_WatcherRejectsOutcomeOnSubWorkflowNode(t *testing.T) {
 
 	outcomeMsg := `{"type":"outcome_emitted","run_id":"00000000-0000-0000-0000-000000000001","session_id":"test-hc061","node_id":"subwf-node","outcome_status":"SUCCESS"}` + "\n"
 
-	pr, pw := io.Pipe()
-
-	go func() {
-		_, _ = pw.Write([]byte(outcomeMsg))
-		pw.Close()
-	}()
+	// A strings.Reader delivers the single NDJSON line and then EOF, which is
+	// exactly the io.Pipe write-then-close sequence this test used to spawn a
+	// goroutine for — without the unchecked Write/Close or the goroutine race.
+	pr := strings.NewReader(outcomeMsg)
 
 	pub := &watcherFixturePublisher{}
 	dl := &watcherFixtureDeadLetter{}
@@ -126,12 +123,10 @@ func TestHC061_WatcherAllowsOutcomeOnNonSubWorkflowNode(t *testing.T) {
 
 	outcomeMsg := `{"type":"outcome_emitted","run_id":"00000000-0000-0000-0000-000000000002","session_id":"test-hc061-allow","node_id":"agentic-node","outcome_status":"SUCCESS"}` + "\n"
 
-	pr, pw := io.Pipe()
-
-	go func() {
-		_, _ = pw.Write([]byte(outcomeMsg))
-		pw.Close()
-	}()
+	// A strings.Reader delivers the single NDJSON line and then EOF, which is
+	// exactly the io.Pipe write-then-close sequence this test used to spawn a
+	// goroutine for — without the unchecked Write/Close or the goroutine race.
+	pr := strings.NewReader(outcomeMsg)
 
 	pub := &watcherFixturePublisher{}
 	dl := &watcherFixtureDeadLetter{}
@@ -169,12 +164,10 @@ func TestHC061_WatcherAllowsOutcomeWhenNodeTypeUnset(t *testing.T) {
 
 	outcomeMsg := `{"type":"outcome_emitted","run_id":"00000000-0000-0000-0000-000000000003","session_id":"test-hc061-zero","node_id":"some-node","outcome_status":"SUCCESS"}` + "\n"
 
-	pr, pw := io.Pipe()
-
-	go func() {
-		_, _ = pw.Write([]byte(outcomeMsg))
-		pw.Close()
-	}()
+	// A strings.Reader delivers the single NDJSON line and then EOF, which is
+	// exactly the io.Pipe write-then-close sequence this test used to spawn a
+	// goroutine for — without the unchecked Write/Close or the goroutine race.
+	pr := strings.NewReader(outcomeMsg)
 
 	pub := &watcherFixturePublisher{}
 	dl := &watcherFixtureDeadLetter{}

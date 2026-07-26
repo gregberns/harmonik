@@ -22,7 +22,7 @@ import (
 
 // presenceJoinEventWithSession emits an agent_presence join/online event that
 // includes a session_id field.
-func presenceJoinEventWithSession(eventID, ts, agent, sessionID string) string {
+func presenceJoinEventWithSession(ts, agent, sessionID string) string {
 	payload := map[string]any{
 		"agent":      agent,
 		"status":     "online",
@@ -30,7 +30,7 @@ func presenceJoinEventWithSession(eventID, ts, agent, sessionID string) string {
 		"reason":     "join",
 		"session_id": sessionID,
 	}
-	return presenceTestEvent(eventID, ts, "agent_presence", payload)
+	return presenceTestEvent("01965b00-0000-7000-8000-000000000001", ts, "agent_presence", payload)
 }
 
 // presenceRefreshEventNoSession emits a refresh beat without session_id (simulates
@@ -51,7 +51,7 @@ func presenceRefreshEventNoSession(eventID, ts, agent string) string {
 func TestCheckCommsNameConflict_ConflictDetected(t *testing.T) {
 	ts := time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339)
 	lines := []string{
-		presenceJoinEventWithSession("01965b00-0000-7000-8000-000000000001", ts, "captain", "session-A"),
+		presenceJoinEventWithSession(ts, "captain", "session-A"),
 	}
 	eventsPath := buildEventsFile(t, lines)
 
@@ -68,7 +68,7 @@ func TestCheckCommsNameConflict_ConflictDetected(t *testing.T) {
 func TestCheckCommsNameConflict_SameSession(t *testing.T) {
 	ts := time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339)
 	lines := []string{
-		presenceJoinEventWithSession("01965b00-0000-7000-8000-000000000001", ts, "captain", "session-A"),
+		presenceJoinEventWithSession(ts, "captain", "session-A"),
 	}
 	eventsPath := buildEventsFile(t, lines)
 
@@ -85,7 +85,7 @@ func TestCheckCommsNameConflict_SameSession(t *testing.T) {
 func TestCheckCommsNameConflict_EmptySessionID(t *testing.T) {
 	ts := time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339)
 	lines := []string{
-		presenceJoinEventWithSession("01965b00-0000-7000-8000-000000000001", ts, "captain", "session-A"),
+		presenceJoinEventWithSession(ts, "captain", "session-A"),
 	}
 	eventsPath := buildEventsFile(t, lines)
 
@@ -103,7 +103,7 @@ func TestCheckCommsNameConflict_OfflineAfterLeave(t *testing.T) {
 	joinTS := time.Now().Add(-20 * time.Second).UTC().Format(time.RFC3339)
 	leaveTS := time.Now().Add(-5 * time.Second).UTC().Format(time.RFC3339)
 	lines := []string{
-		presenceJoinEventWithSession("01965b00-0000-7000-8000-000000000001", joinTS, "captain", "session-A"),
+		presenceJoinEventWithSession(joinTS, "captain", "session-A"),
 		presenceLeaveEvent("01965b00-0000-7000-8000-000000000002", leaveTS, "captain"),
 	}
 	eventsPath := buildEventsFile(t, lines)
@@ -151,7 +151,7 @@ func TestCheckCommsNameConflict_RegistryNoSessionID(t *testing.T) {
 func TestPresenceRegistry_SessionIDTracked(t *testing.T) {
 	ts := time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339)
 	lines := []string{
-		presenceJoinEventWithSession("01965b00-0000-7000-8000-000000000001", ts, "captain", "my-session-123"),
+		presenceJoinEventWithSession(ts, "captain", "my-session-123"),
 	}
 	eventsPath := buildEventsFile(t, lines)
 
@@ -173,7 +173,7 @@ func TestPresenceRegistry_SessionIDCarriedForward(t *testing.T) {
 	joinTS := time.Now().Add(-20 * time.Second).UTC().Format(time.RFC3339)
 	refreshTS := time.Now().Add(-5 * time.Second).UTC().Format(time.RFC3339)
 	lines := []string{
-		presenceJoinEventWithSession("01965b00-0000-7000-8000-000000000001", joinTS, "captain", "my-session-abc"),
+		presenceJoinEventWithSession(joinTS, "captain", "my-session-abc"),
 		// Refresh beat without session_id (simulates recv-path auto-refresh).
 		presenceRefreshEventNoSession("01965b00-0000-7000-8000-000000000002", refreshTS, "captain"),
 	}

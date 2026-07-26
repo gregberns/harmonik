@@ -22,7 +22,7 @@ import (
 func TestSeedGoalKeeperSchedule_Seeds(t *testing.T) {
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +70,7 @@ func TestSeedGoalKeeperSchedule_Seeds(t *testing.T) {
 func TestSeedGoalKeeperSchedule_IdempotentSkip(t *testing.T) {
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,16 +81,26 @@ func TestSeedGoalKeeperSchedule_IdempotentSkip(t *testing.T) {
 
 	// Tamper with the job so we can verify the second call leaves it unchanged.
 	store := schedule.NewStore(dir)
-	_ = store.Load()
-	original, _ := store.Get("goal-keeper")
+	if err := store.Load(); err != nil {
+		t.Fatalf("load schedules before idempotent skip: %v", err)
+	}
+	original, ok := store.Get("goal-keeper")
+	if !ok {
+		t.Fatal("goal-keeper job missing before idempotent skip")
+	}
 
 	out.Reset()
 	errBuf.Reset()
 	if code := seedGoalKeeperSchedule(dir, false, &out, &errBuf); code != 0 {
 		t.Fatalf("second call returned %d; stderr: %s", code, errBuf.String())
 	}
-	_ = store.Load()
-	afterSkip, _ := store.Get("goal-keeper")
+	if err := store.Load(); err != nil {
+		t.Fatalf("load schedules after idempotent skip: %v", err)
+	}
+	afterSkip, ok := store.Get("goal-keeper")
+	if !ok {
+		t.Fatal("goal-keeper job missing after idempotent skip")
+	}
 	if afterSkip.Schedule.Interval != original.Schedule.Interval {
 		t.Errorf("job changed on idempotent skip: interval %q → %q", original.Schedule.Interval, afterSkip.Schedule.Interval)
 	}
@@ -99,7 +109,7 @@ func TestSeedGoalKeeperSchedule_IdempotentSkip(t *testing.T) {
 func TestSeedGoalKeeperSchedule_ForceOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,7 +124,9 @@ func TestSeedGoalKeeperSchedule_ForceOverwrites(t *testing.T) {
 		t.Fatalf("force call: %d; stderr: %s", code, errBuf.String())
 	}
 	store := schedule.NewStore(dir)
-	_ = store.Load()
+	if err := store.Load(); err != nil {
+		t.Fatalf("load schedules after force overwrite: %v", err)
+	}
 	if _, ok := store.Get("goal-keeper"); !ok {
 		t.Fatal("goal-keeper job missing after force overwrite")
 	}

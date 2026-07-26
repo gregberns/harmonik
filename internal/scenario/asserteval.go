@@ -80,7 +80,7 @@ func ReadEventLog(logPath string) ([]RawEvent, error) {
 	lines := bytes.Split(data, []byte("\n"))
 	toProcess := lines[:len(lines)-1]
 
-	var events []RawEvent
+	events := make([]RawEvent, 0, len(toProcess))
 	for i, line := range toProcess {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -353,8 +353,11 @@ func isFilePredicateKind(k WorkspacePredicateKind) bool {
 		WorkspacePredicateKindFileContentsEqual,
 		WorkspacePredicateKindFileContentsMatch:
 		return true
+	case WorkspacePredicateKindGitRefAt,
+		WorkspacePredicateKindCommitTrailerPresent:
+		return false
 	}
-	return false
+	return false // invalid values are rejected while loading the scenario.
 }
 
 // checkSymlinkSafety returns an error if targetPath escapes workspaceDir via a
@@ -485,6 +488,10 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 			}
 			ar.Passed = re.Match(contents)
 			ar.ActualValue = string(contents)
+
+		case WorkspacePredicateKindGitRefAt,
+			WorkspacePredicateKindCommitTrailerPresent:
+			// These are handled by the git-predicate switch below.
 		}
 		return ar
 	}
@@ -492,7 +499,13 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 	// Git predicates: pred.Path is interpreted as a git ref name.
 	switch pred.Kind {
 	case WorkspacePredicateKindGitRefAt:
+		if !validScenarioGitRef(pred.Path) {
+			ar.Passed = false
+			ar.ActualValue = fmt.Sprintf("invalid git ref %q", pred.Path)
+			return ar
+		}
 		// Resolve the ref at pred.Path to a SHA.
+		//nolint:gosec // G204: ref is validated by validScenarioGitRef and workspaceDir passed symlink/root containment checks above.
 		out, gitErr := exec.CommandContext(context.Background(), "git", "-C", workspaceDir, "rev-parse", "--verify", pred.Path).Output()
 		if gitErr != nil {
 			ar.Passed = false
@@ -504,6 +517,12 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 		expected := *pred.Expected
 		// If expected is a ref name (not a full 40-char SHA), resolve it.
 		if !sha1Re.MatchString(expected) {
+			if !validScenarioGitRef(expected) {
+				ar.Passed = false
+				ar.ActualValue = fmt.Sprintf("invalid expected git ref %q", expected)
+				return ar
+			}
+			//nolint:gosec // G204: expected is validated by validScenarioGitRef and workspaceDir passed symlink/root containment checks above.
 			expOut, expErr := exec.CommandContext(context.Background(), "git", "-C", workspaceDir, "rev-parse", "--verify", expected).Output()
 			if expErr != nil {
 				ar.Passed = false
@@ -516,7 +535,13 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 		ar.ActualValue = actualSHA
 
 	case WorkspacePredicateKindCommitTrailerPresent:
+		if !validScenarioGitRef(pred.Path) {
+			ar.Passed = false
+			ar.ActualValue = fmt.Sprintf("invalid git ref %q", pred.Path)
+			return ar
+		}
 		// Read the commit message at pred.Path (ref name).
+		//nolint:gosec // G204: ref is validated by validScenarioGitRef and workspaceDir passed symlink/root containment checks above.
 		out, gitErr := exec.CommandContext(context.Background(), "git", "-C", workspaceDir, "log", "-1", "--format=%B", pred.Path).Output()
 		if gitErr != nil {
 			ar.Passed = false
@@ -527,8 +552,27 @@ func evalWorkspacePredicate(pred WorkspacePredicate, workspaceDir string) Assert
 		trailerKey := *pred.Expected
 		ar.Passed = commitMessageHasTrailer(message, trailerKey)
 		ar.ActualValue = strings.TrimSpace(message)
+
+	case WorkspacePredicateKindFileExists,
+		WorkspacePredicateKindFileContentsEqual,
+		WorkspacePredicateKindFileContentsMatch:
+		// File predicates are handled above.
 	}
 	return ar
+}
+
+// validScenarioGitRef accepts the restricted ref syntax supported by scenario
+// fixtures and rejects option-like, traversal-like, and shell-significant input.
+func validScenarioGitRef(ref string) bool {
+	if ref == "" || strings.HasPrefix(ref, "-") || strings.Contains(ref, "..") || strings.Contains(ref, "//") {
+		return false
+	}
+	for _, r := range ref {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._/-", r)) {
+			return false
+		}
+	}
+	return true
 }
 
 // commitMessageHasTrailer reports whether the commit message contains a trailer

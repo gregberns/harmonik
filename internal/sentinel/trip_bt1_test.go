@@ -101,13 +101,16 @@ func TestEmitTrip_NeverClearsOnBareSelfAck(t *testing.T) {
 	// Simulate a "bare self-ack": append a fake decision_acknowledged event
 	// directly to events.jsonl without calling ClearTrip.
 	eventsPath := filepath.Join(dir, ".harmonik", "events", "events.jsonl")
-	fakePayload, _ := json.Marshal(map[string]interface{}{
+	fakePayload, err := json.Marshal(map[string]interface{}{
 		"ack_token":  tok,
 		"subject":    map[string]interface{}{"kind": "queue", "id": "sentinel"},
 		"ack_method": "self_ack",
 		"acked_at":   now.UTC().Format(time.RFC3339),
 	})
-	fakeEvent, _ := json.Marshal(map[string]interface{}{
+	if err != nil {
+		t.Fatalf("marshal fake acknowledgement payload: %v", err)
+	}
+	fakeEvent, err := json.Marshal(map[string]interface{}{
 		"event_id":         "00000000-0000-0000-0000-000000000001",
 		"schema_version":   1,
 		"type":             "decision_acknowledged",
@@ -115,12 +118,19 @@ func TestEmitTrip_NeverClearsOnBareSelfAck(t *testing.T) {
 		"source_subsystem": "test",
 		"payload":          json.RawMessage(fakePayload),
 	})
-	f, openErr := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("marshal fake acknowledgement event: %v", err)
+	}
+	f, openErr := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if openErr != nil {
 		t.Fatalf("open events.jsonl: %v", openErr)
 	}
-	fmt.Fprintf(f, "%s\n", fakeEvent)
-	_ = f.Close()
+	if _, err := fmt.Fprintf(f, "%s\n", fakeEvent); err != nil {
+		t.Fatalf("append fake acknowledgement event: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close events.jsonl: %v", err)
+	}
 
 	// The ack FILE must still be "pending" — the JSONL event has no authority
 	// over the file-backed durability anchor.

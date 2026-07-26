@@ -29,14 +29,19 @@ func TestInitModernize_ContextTiers_HK5qey(t *testing.T) {
 	}
 
 	repo := t.TempDir()
-	if out, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
+	//nolint:gosec // G204: test invokes git against its t.TempDir repository fixture
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", repo, "init").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
-	_ = exec.Command("git", "-C", repo, "config", "user.email", "test@example.com").Run()
-	_ = exec.Command("git", "-C", repo, "config", "user.name", "Test").Run()
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", repo, "config", "user.email", "test@example.com").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.email: %v\n%s", err, out)
+	}
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", repo, "config", "user.name", "Test").CombinedOutput(); err != nil {
+		t.Fatalf("git config user.name: %v\n%s", err, out)
+	}
 
 	// Pre-seed .beads/ so runBrInit is a no-op (br init is not under test).
-	if err := os.MkdirAll(filepath.Join(repo, ".beads"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".beads"), 0o750); err != nil {
 		t.Fatalf("pre-seed .beads/: %v", err)
 	}
 
@@ -71,6 +76,7 @@ func TestInitModernize_ContextTiers_HK5qey(t *testing.T) {
 	}
 
 	// AGENTS.md must be the managed three-kinds router.
+	//nolint:gosec // G304: path is rooted in this test's t.TempDir repository fixture
 	agentsMD, err := os.ReadFile(filepath.Join(repo, "AGENTS.md"))
 	if err != nil {
 		t.Fatalf("read AGENTS.md: %v", err)

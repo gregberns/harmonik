@@ -89,7 +89,6 @@ func TestNodeValid_AllNodeTypes(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.nodeType), func(t *testing.T) {
 			t.Parallel()
 			var n Node
@@ -216,7 +215,6 @@ func TestNodeValid_AllIdempotencyClasses(t *testing.T) {
 		{IdempotencyClassRecoverableNonIdempotent, AxisIdempotencyRecoverableNonIdempotent},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(string(tc.class), func(t *testing.T) {
 			t.Parallel()
 			n := b3f73NodeValid(t)
@@ -474,7 +472,6 @@ func TestNodeValid_EM011_AxisIdempotencyMatchesClass(t *testing.T) {
 	t.Parallel()
 
 	for _, pair := range axisTagsNodeFixtureMatchedPairs() {
-		pair := pair
 		t.Run(string(pair.class), func(t *testing.T) {
 			t.Parallel()
 			n := b3f73NodeValid(t)
@@ -494,7 +491,7 @@ func TestNodeValid_EM011_AxisIdempotencyMismatchRejected(t *testing.T) {
 	t.Parallel()
 
 	for _, pair := range axisTagsNodeFixtureMismatchedPairs() {
-		pair := pair
+
 		name := string(pair.class) + "/" + string(pair.axis)
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

@@ -66,7 +66,6 @@ func TestRFDA7c_WorkspaceState_ValidForAllDeclaredConstants(t *testing.T) {
 	t.Parallel()
 
 	for _, s := range allWorkspaceStates {
-		s := s
 		t.Run(string(s), func(t *testing.T) {
 			t.Parallel()
 			if !s.Valid() {
@@ -92,7 +91,6 @@ func TestRFDA7c_WorkspaceState_ValidRejectsNonConstants(t *testing.T) {
 	}
 
 	for _, v := range invalidValues {
-		v := v
 		t.Run("value="+repr(v), func(t *testing.T) {
 			t.Parallel()
 			s := core.WorkspaceState(v)
@@ -134,7 +132,6 @@ func TestRFDA7c_IsTerminal_TrueForTerminalStatesOnly(t *testing.T) {
 	t.Parallel()
 
 	for _, s := range terminalWorkspaceStates {
-		s := s
 		t.Run("terminal/"+string(s), func(t *testing.T) {
 			t.Parallel()
 			if !IsTerminal(s) {
@@ -143,7 +140,6 @@ func TestRFDA7c_IsTerminal_TrueForTerminalStatesOnly(t *testing.T) {
 		})
 	}
 	for _, s := range inFlightWorkspaceStates {
-		s := s
 		t.Run("in-flight/"+string(s), func(t *testing.T) {
 			t.Parallel()
 			if IsTerminal(s) {
@@ -160,7 +156,6 @@ func TestRFDA7c_IsInFlight_TrueForInFlightStatesOnly(t *testing.T) {
 	t.Parallel()
 
 	for _, s := range inFlightWorkspaceStates {
-		s := s
 		t.Run("in-flight/"+string(s), func(t *testing.T) {
 			t.Parallel()
 			if !IsInFlight(s) {
@@ -169,7 +164,6 @@ func TestRFDA7c_IsInFlight_TrueForInFlightStatesOnly(t *testing.T) {
 		})
 	}
 	for _, s := range terminalWorkspaceStates {
-		s := s
 		t.Run("terminal/"+string(s), func(t *testing.T) {
 			t.Parallel()
 			if IsInFlight(s) {
@@ -186,7 +180,6 @@ func TestRFDA7c_IsTerminalIsInFlight_Partition(t *testing.T) {
 	t.Parallel()
 
 	for _, s := range allWorkspaceStates {
-		s := s
 		t.Run(string(s), func(t *testing.T) {
 			t.Parallel()
 			terminal := IsTerminal(s)
@@ -207,7 +200,6 @@ func TestRFDA7c_IsTerminalIsInFlight_AreComplementaryForValidStates(t *testing.T
 	t.Parallel()
 
 	for _, s := range allWorkspaceStates {
-		s := s
 		t.Run(string(s), func(t *testing.T) {
 			t.Parallel()
 			if IsInFlight(s) == IsTerminal(s) {
@@ -230,7 +222,6 @@ func TestRFDA7c_IsTerminalIsInFlight_InvalidStateReturnsFalse(t *testing.T) {
 	}
 
 	for _, s := range invalidValues {
-		s := s
 		t.Run("value="+repr(string(s)), func(t *testing.T) {
 			t.Parallel()
 			if IsTerminal(s) {
@@ -249,7 +240,6 @@ func TestRFDA7c_InterruptState_ValidForAllDeclaredConstants(t *testing.T) {
 	t.Parallel()
 
 	for _, s := range allInterruptStates {
-		s := s
 		t.Run(string(s), func(t *testing.T) {
 			t.Parallel()
 			if !s.Valid() {
@@ -274,7 +264,6 @@ func TestRFDA7c_InterruptState_ValidRejectsNonConstants(t *testing.T) {
 	}
 
 	for _, v := range invalidValues {
-		v := v
 		t.Run("value="+repr(v), func(t *testing.T) {
 			t.Parallel()
 			s := core.InterruptState(v)
@@ -331,7 +320,6 @@ func TestRFDA7c_WorkspaceValid_RequiresAllFields(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ws := wsRecordFixtureValid(t) // fresh copy per sub-test

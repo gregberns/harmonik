@@ -35,7 +35,10 @@ import (
 // UUIDv7 timestamp. seq is mixed into the random bits to ensure uniqueness.
 // This mirrors how the daemon generates events: the UUID timestamp matches the
 // wall-clock at emission time, which is the invariant the floor-cursor fix relies on.
-func writeEventWithV7ID(t *testing.T, path string, evType core.EventType, ts time.Time, seq int, payload []byte) {
+// The event type is fixed to bead_closed: it is the only type this test's
+// bounded-scan assertions score, so making it a parameter would be flexibility
+// no call site uses.
+func writeEventWithV7ID(t *testing.T, path string, ts time.Time, seq int) {
 	t.Helper()
 	ms := ts.UnixMilli()
 	var b [16]byte
@@ -55,20 +58,25 @@ func writeEventWithV7ID(t *testing.T, path string, evType core.EventType, ts tim
 	ev := core.Event{
 		EventID:         id,
 		SchemaVersion:   1,
-		Type:            string(evType),
+		Type:            string(core.EventTypeBeadClosed),
 		TimestampWall:   ts,
 		SourceSubsystem: "test",
-		Payload:         payload,
+		Payload:         nil,
 	}
 	line, err := json.Marshal(ev)
 	if err != nil {
 		t.Fatalf("marshal event: %v", err)
 	}
+	//nolint:gosec // G304: path is constructed under t.TempDir by this test fixture.
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open events file: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	t.Cleanup(func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close events file: %v", closeErr)
+		}
+	})
 	if _, wErr := f.Write(append(line, '\n')); wErr != nil {
 		t.Fatalf("write event: %v", wErr)
 	}
@@ -98,11 +106,11 @@ func TestGovernor_BoundedScan_SkipsOldEvents(t *testing.T) {
 
 	// Write 100 old bead_closed events (2 hours ago, well before the window).
 	for i := range 100 {
-		writeEventWithV7ID(t, evPath, core.EventTypeBeadClosed, now.Add(-2*time.Hour), i, nil)
+		writeEventWithV7ID(t, evPath, now.Add(-2*time.Hour), i)
 	}
 	// Write 3 in-window bead_closed events (15 minutes ago).
 	for i := range 3 {
-		writeEventWithV7ID(t, evPath, core.EventTypeBeadClosed, now.Add(-15*time.Minute), 100+i, nil)
+		writeEventWithV7ID(t, evPath, now.Add(-15*time.Minute), 100+i)
 	}
 
 	sample := sentinel.ComputeWindowMovement(
@@ -145,10 +153,10 @@ func TestGovernor_BoundedScan_CursorSkipsPreWindow(t *testing.T) {
 	const nNew = 3
 
 	for i := range nOld {
-		writeEventWithV7ID(t, evPath, core.EventTypeBeadClosed, now.Add(-2*time.Hour), i, nil)
+		writeEventWithV7ID(t, evPath, now.Add(-2*time.Hour), i)
 	}
 	for i := range nNew {
-		writeEventWithV7ID(t, evPath, core.EventTypeBeadClosed, now.Add(-15*time.Minute), nOld+i, nil)
+		writeEventWithV7ID(t, evPath, now.Add(-15*time.Minute), nOld+i)
 	}
 
 	// Construct the same floor cursor that computeWindowMovement now uses.

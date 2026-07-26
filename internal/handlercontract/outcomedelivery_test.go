@@ -56,6 +56,9 @@ func TestOutcomeDeliveryStateValues(t *testing.T) {
 	t.Run("transition_from_not_delivered_to_delivered", func(t *testing.T) {
 		t.Parallel()
 		s := handlercontract.OutcomeNotYetDelivered
+		if s == handlercontract.OutcomeDelivered {
+			t.Fatal("OutcomeNotYetDelivered must not already equal OutcomeDelivered")
+		}
 		s = handlercontract.OutcomeDelivered
 		if s != handlercontract.OutcomeDelivered {
 			t.Error("OutcomeDeliveryState transition failed")
@@ -119,7 +122,6 @@ func TestClassifyExit(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			err := handlercontract.ClassifyExit(tc.exitCode, tc.state)
@@ -427,7 +429,6 @@ func TestCrashClassFixture_ClassifyCrashPayloadTable(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := handlercontract.ClassifyCrash(tc.exitCode, tc.state)
@@ -490,7 +491,6 @@ func TestCrashClassFixture_ClassifyCrashCategoryMatchesClassOfClassifyExit(t *te
 	}
 
 	for _, sc := range scenarios {
-		sc := sc
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 			classifyErr := handlercontract.ClassifyExit(sc.exitCode, sc.state)
@@ -533,7 +533,6 @@ func TestCrashClassFixture_ClassifyCrashWrapsErrStructural(t *testing.T) {
 	}
 
 	for _, sc := range crashScenarios {
-		sc := sc
 		t.Run(sc.name, func(t *testing.T) {
 			t.Parallel()
 			err := handlercontract.ClassifyExit(sc.exitCode, sc.state)

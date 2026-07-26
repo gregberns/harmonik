@@ -36,6 +36,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // hk8ziid2BranchingBody is a bead description carrying a `## Branching`
@@ -129,11 +130,11 @@ func TestBeadRunOne_ProviderSelected_ProfileMatch(t *testing.T) {
 	runID := core.RunID(uuid.New())
 	ExportedRunRegistryRegister(runRegistry, runID, &RunHandle{BeadID: core.BeadID("hk-8ziid2-match-bead")})
 
-	projectCfg := ProjectConfig{
-		Harnesses: HarnessesConfig{
-			Pi: PiHarnessConfig{
+	projectCfg := projectconfig.ProjectConfig{
+		Harnesses: projectconfig.HarnessesConfig{
+			Pi: projectconfig.PiHarnessConfig{
 				Provider: "harness-global-default",
-				Profiles: map[string]PiProfileConfig{
+				Profiles: map[string]projectconfig.PiProfileConfig{
 					"ornith-dgx": {
 						Provider:  "ornith-provider",
 						Model:     "ornith-provider/some-id",
@@ -170,9 +171,8 @@ func TestBeadRunOne_ProviderSelected_ProfileMatch(t *testing.T) {
 		Labels:      []string{"profile:ornith-dgx"},
 	}
 
-	beadRunOne(ctx, deps, runID, beadRecord,
-		"", nil, nil, 0, "", "", "", nil,
-		false, "", nil, false)
+	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
+		"", nil, false)
 
 	rh, ok := runRegistry.Get(runID)
 	if !ok || rh == nil {
@@ -209,9 +209,9 @@ func TestBeadRunOne_ProviderSelected_NoProfile_UsesGlobalDefault(t *testing.T) {
 	runID := core.RunID(uuid.New())
 	ExportedRunRegistryRegister(runRegistry, runID, &RunHandle{BeadID: core.BeadID("hk-8ziid2-noprofile-bead")})
 
-	projectCfg := ProjectConfig{
-		Harnesses: HarnessesConfig{
-			Pi: PiHarnessConfig{
+	projectCfg := projectconfig.ProjectConfig{
+		Harnesses: projectconfig.HarnessesConfig{
+			Pi: projectconfig.PiHarnessConfig{
 				Provider: "harness-global-default",
 			},
 		},
@@ -242,9 +242,8 @@ func TestBeadRunOne_ProviderSelected_NoProfile_UsesGlobalDefault(t *testing.T) {
 		Status:      core.CoarseStatusOpen,
 	}
 
-	beadRunOne(ctx, deps, runID, beadRecord,
-		"", nil, nil, 0, "", "", "", nil,
-		false, "", nil, false)
+	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
+		"", nil, false)
 
 	rh, ok := runRegistry.Get(runID)
 	if !ok || rh == nil {
@@ -303,9 +302,8 @@ func TestBeadRunOne_ProviderSelected_NonPiRun_LeavesUnresolved(t *testing.T) {
 		Status:      core.CoarseStatusOpen,
 	}
 
-	beadRunOne(ctx, deps, runID, beadRecord,
-		"", nil, nil, 0, "", "", "", nil,
-		false, "", nil, false)
+	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
+		"", nil, false)
 
 	rh, ok := runRegistry.Get(runID)
 	if !ok || rh == nil {

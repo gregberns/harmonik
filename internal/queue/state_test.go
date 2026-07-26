@@ -21,6 +21,7 @@ package queue_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -249,10 +250,13 @@ func TestAdvanceGroup_ActiveToCompleteWithFailures_AllFailed(t *testing.T) {
 		stateFixtureItem("hk-ddd01", queue.ItemStatusFailed),
 		stateFixtureItem("hk-ddd02", queue.ItemStatusFailed),
 	})
-	newStatus, _, _ := queue.AdvanceGroup(
+	newStatus, _, advErr := queue.AdvanceGroup(
 		context.Background(), &g, queue.QueueStatusActive,
 		stateFixtureQueueID, stateFixtureNow,
 	)
+	if advErr != nil {
+		t.Fatalf("AdvanceGroup: unexpected error %v", advErr)
+	}
 	if newStatus != queue.GroupStatusCompleteWithFailures {
 		t.Errorf("newStatus = %q, want %q", newStatus, queue.GroupStatusCompleteWithFailures)
 	}
@@ -597,7 +601,7 @@ func TestAdvanceGroup_NilGroup(t *testing.T) {
 		context.Background(), nil,
 		queue.QueueStatusActive, stateFixtureQueueID, stateFixtureNow,
 	)
-	if err != queue.ErrGroupNil {
+	if !errors.Is(err, queue.ErrGroupNil) {
 		t.Errorf("err = %v, want ErrGroupNil", err)
 	}
 }
@@ -611,7 +615,7 @@ func TestAdvanceGroup_EmptyQueueID(t *testing.T) {
 		context.Background(), &g,
 		queue.QueueStatusActive, "", stateFixtureNow,
 	)
-	if err != queue.ErrQueueIDEmpty {
+	if !errors.Is(err, queue.ErrQueueIDEmpty) {
 		t.Errorf("err = %v, want ErrQueueIDEmpty", err)
 	}
 }

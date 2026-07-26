@@ -184,7 +184,15 @@ func hki0377WriteProfile(t *testing.T, repo hki0377GitRepo) string {
 		RunID:          repo.RunID,
 		BranchName:     "", // broader refs/heads/ subtree — accommodates .lock files
 		DaemonSockPath: filepath.Join(repo.RepoDir, ".harmonik", "daemon.sock"),
-		TmpDirs:        []string{"/tmp", "/private/tmp"},
+		// hk-guapd: NO TmpDirs. This fixture used to pass ["/tmp","/private/tmp"],
+		// which GenerateSandboxProfile expands into a RECURSIVE write grant — and
+		// this test's own "main repo" is t.TempDir()-derived, so under TMPDIR=/tmp
+		// it was created INSIDE that grant. AC-B (write-to-main-denied) then failed
+		// 3/3, because the sandbox correctly permitted the write it was asked to
+		// permit. That was misread as srt intermittently failing to apply under
+		// fork saturation; it is deterministic and has nothing to do with load.
+		// Production supplies no TmpDirs at all now, so neither does this fixture.
+		TmpDirs: nil,
 	}
 	data, err := daemon.GenerateSandboxProfile(in)
 	if err != nil {
@@ -214,7 +222,6 @@ func hki0377SrtShell(t *testing.T, ctx context.Context, srtBin, profilePath, she
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	hktch4tAcquireSrt()
-	//nolint:gosec // G204: srtBin from LookPath/stat; profilePath is t.TempDir-derived; shellCmd test-controlled
 	cmd := exec.CommandContext(cctx, srtBin, "--settings", profilePath, "sh", "-c", shellCmd)
 	out, err := cmd.CombinedOutput()
 	hktch4tReleaseSrt()
@@ -420,7 +427,6 @@ func TestSandboxAcceptance_BranchMergesBack_hki0377(t *testing.T) {
 // in the repo at dir.  Used to switch back for the merge step.
 func hki0377DefaultBranch(t *testing.T, ctx context.Context, dir string) string {
 	t.Helper()
-	//nolint:gosec // G204: dir is t.TempDir()-derived
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("hki0377DefaultBranch: git rev-parse HEAD: %v", err)

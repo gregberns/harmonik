@@ -149,7 +149,13 @@ func TestPL024_TornPidfileIsTreatedAsStale(t *testing.T) {
 		t.Fatalf("PL-024 torn: WriteFile: %v", err)
 	}
 
-	status, _, _ := ProbePidfileLock(projectDir)
+	status, probedPID, probeErr := ProbePidfileLock(projectDir)
+	if probeErr != nil {
+		t.Errorf("PL-024 torn: ProbePidfileLock err = %v, want nil (a torn pidfile is a definitive stale verdict)", probeErr)
+	}
+	if probedPID != 0 {
+		t.Errorf("PL-024 torn: ProbePidfileLock pid = %d, want 0 (nothing parseable to report)", probedPID)
+	}
 	if status != PidfileLockStatusStale {
 		t.Errorf("PL-024 torn: ProbePidfileLock status = %d, want PidfileLockStatusStale (%d)",
 			status, PidfileLockStatusStale)

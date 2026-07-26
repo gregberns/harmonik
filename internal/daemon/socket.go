@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/gregberns/harmonik/internal/crewrun"
 	socketrouter "github.com/gregberns/harmonik/internal/daemon/router"
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -243,7 +246,9 @@ func removeStaleSocket(sockPath string) error {
 	conn, err := (&net.Dialer{}).DialContext(probeCtx, "unix", sockPath)
 	if err == nil {
 		// Dial succeeded → a live daemon owns this socket.
-		_ = conn.Close() //nolint:errcheck // probe conn; close error unactionable
+		if closeErr := conn.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "daemon: stale-socket probe: close probe conn", "err", closeErr)
+		}
 		return errLiveDaemon
 	}
 	// Any dial error (ECONNREFUSED, context deadline, no-such-file, etc.)
@@ -327,7 +332,7 @@ type QuiesceOverrideHandler interface {
 //
 // Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1.
 // Bead ref: hk-5tg5o (C2 daemon handler).
-func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, qh ...QueueHandler) error {
+func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh crewrun.CrewHandler, qh ...QueueHandler) error {
 	return RunSocketListenerWithSleepWake(ctx, sockPath, h, hr, sub, oh, ch, crewh, nil, qh...)
 }
 
@@ -336,7 +341,7 @@ func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHa
 // daemon-sleep and daemon-wake ops return an error response.
 //
 // Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
-func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, qh ...QueueHandler) error {
+func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh crewrun.CrewHandler, sleepWakeh QuiesceOverrideHandler, qh ...QueueHandler) error {
 	return Serve(ctx, sockPath, SocketHandlers{
 		Request: h, HookRelay: hr, Queue: firstQueueHandler(qh), Subscribe: sub,
 		Operator: oh, Comms: ch, Crew: crewh, SleepWake: sleepWakeh,
@@ -354,7 +359,7 @@ type SocketHandlers struct {
 	Subscribe SubscribeHandler
 	Operator  OperatorControlHandler
 	Comms     CommsSendHandler
-	Crew      CrewHandler
+	Crew      crewrun.CrewHandler
 	SleepWake QuiesceOverrideHandler
 	State     StateHandler
 	Dashboard DashboardHandler
@@ -393,7 +398,20 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	if err != nil {
 		return fmt.Errorf("daemon: Serve: listen unix %q: %w", sockPath, err)
 	}
-	defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
+	// ln is closed from two paths — the Serve-return defer and the ctx-cancel
+	// goroutine below (which unblocks Accept). sync.Once collapses that
+	// deliberate double-close to a single Close so a genuine close error is
+	// surfaced once, without the "use of closed network connection" noise a
+	// second Close would log on every clean shutdown.
+	var closeListenerOnce sync.Once
+	closeListener := func() {
+		closeListenerOnce.Do(func() {
+			if closeErr := ln.Close(); closeErr != nil {
+				slog.WarnContext(ctx, "daemon: Serve: close listener", "err", closeErr)
+			}
+		})
+	}
+	defer closeListener()
 
 	// Restrict access to the daemon's own uid per specs/process-lifecycle.md PL-003.
 	if err := os.Chmod(sockPath, 0o600); err != nil {
@@ -403,7 +421,7 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	// Close the listener when ctx is cancelled so Accept unblocks.
 	go func() {
 		<-ctx.Done()
-		_ = ln.Close() //nolint:errcheck // cleanup error unactionable
+		closeListener()
 	}()
 
 	// Build the router ONCE, before the Accept loop (never per-connection).
@@ -444,7 +462,11 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 // best-effort bad_envelope ack — the relay will have exited already, so the
 // write is best-effort.
 func handleSocketConn(ctx context.Context, conn net.Conn, hr HookRelayHandler, sub SubscribeHandler, router *socketrouter.Router) {
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			slog.WarnContext(ctx, "daemon: handleSocketConn: close conn", "err", closeErr)
+		}
+	}()
 
 	raw, err := decodeRawMap(conn)
 	if err != nil {

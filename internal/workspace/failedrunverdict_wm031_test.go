@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -49,12 +50,12 @@ func TestWM031_FailedRunWorktreePersists(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
 	// Add the task branch worktree.
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -93,6 +94,7 @@ func TestWM031_FailedRunWorktreePersists(t *testing.T) {
 	}
 
 	// Branch MUST still exist.
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	checkBranch := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", branch)
 	if out, err := checkBranch.CombinedOutput(); err != nil {
 		t.Errorf("WM-031: task branch %q absent after lease release; want persisted: %v\n%s",
@@ -123,7 +125,6 @@ func TestWM032_FailedRunStateIsDiscarded(t *testing.T) {
 	}
 
 	for _, iv := range interruptValues {
-		iv := iv // capture for parallel sub-test
 		t.Run(string(iv), func(t *testing.T) {
 			t.Parallel()
 
@@ -177,7 +178,7 @@ func TestWM033_OrphanSweepContentFirstStaleness(t *testing.T) {
 
 		// PID 0 is never a live process.
 		deadPID := 0
-		content := leaseFixtureMakeLockJSON("some-run-id", deadPID, time.Now(), 3600)
+		content := leaseFixtureMakeLockJSON("some-run-id", deadPID, time.Now())
 		stale := failedRunFixtureIsLeaseLockStale(content)
 		if !stale {
 			t.Errorf("WM-033: dead PID %d: stale = false; want true", deadPID)
@@ -189,7 +190,7 @@ func TestWM033_OrphanSweepContentFirstStaleness(t *testing.T) {
 
 		// Own PID is definitely live.
 		livePID := os.Getpid()
-		content := leaseFixtureMakeLockJSON("some-run-id", livePID, time.Now(), 3600)
+		content := leaseFixtureMakeLockJSON("some-run-id", livePID, time.Now())
 		stale := failedRunFixtureIsLeaseLockStale(content)
 		if stale {
 			t.Errorf("WM-033: live PID %d: stale = true; want false", livePID)
@@ -254,11 +255,11 @@ func TestWM033_GitWorktreePruneAfterSweep(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -292,7 +293,7 @@ func TestWM033_GitWorktreePruneAfterSweep(t *testing.T) {
 // contains reports whether s contains substr.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr ||
-		len(s) > 0 && containsAt(s, substr))
+		s != "" && containsAt(s, substr))
 }
 
 func containsAt(s, substr string) bool {
@@ -320,11 +321,11 @@ func TestWM033_OperatorWorktreeLockRespected(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -332,15 +333,21 @@ func TestWM033_OperatorWorktreeLockRespected(t *testing.T) {
 	}
 
 	// Operator issues git worktree lock on the worktree.
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	lockCmd := exec.CommandContext(t.Context(), "git", "worktree", "lock", worktreePath)
 	lockCmd.Dir = repo
 	if out, err := lockCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git worktree lock: %v\n%s", err, out)
 	}
 	t.Cleanup(func() {
-		unlockCmd := exec.CommandContext(t.Context(), "git", "worktree", "unlock", worktreePath)
+		// t.Context() is already cancelled by the time cleanups run, so derive a
+		// non-cancellable context for the unlock.
+		//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
+		unlockCmd := exec.CommandContext(context.WithoutCancel(t.Context()), "git", "worktree", "unlock", worktreePath)
 		unlockCmd.Dir = repo
-		_, _ = unlockCmd.CombinedOutput()
+		if out, err := unlockCmd.CombinedOutput(); err != nil {
+			t.Errorf("git worktree unlock (cleanup): %v\n%s", err, out)
+		}
 	})
 
 	// `git worktree prune` MUST NOT remove the locked worktree entry.
@@ -385,10 +392,10 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 	branchA := "run/" + runIDA
 	worktreePathA := filepath.Join(repo, ".harmonik", "worktrees", runIDA)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o700); err != nil {
 		t.Fatalf("MkdirAll A: %v", err)
 	}
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addA := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
 	addA.Dir = repo
 	if out, err := addA.CombinedOutput(); err != nil {
@@ -424,10 +431,10 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 		t.Fatalf("WM-034: run A and run B share canonical path %q; want distinct paths", worktreePathA)
 	}
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o700); err != nil {
 		t.Fatalf("MkdirAll B: %v", err)
 	}
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addB := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchB, worktreePathB, sha)
 	addB.Dir = repo
 	if out, err := addB.CombinedOutput(); err != nil {
@@ -438,6 +445,7 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 	if _, err := os.Stat(worktreePathA); err != nil {
 		t.Errorf("WM-034+WM-031: run A worktree absent after reopen-bead; want persisted: %v", err)
 	}
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	checkA := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", branchA)
 	if out, err := checkA.CombinedOutput(); err != nil {
 		t.Errorf("WM-034+WM-031: run A branch %q absent; want persisted: %v\n%s", branchA, err, out)
@@ -506,7 +514,6 @@ func TestWM036_VerdictDispositionClassification(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.verdict, func(t *testing.T) {
 			t.Parallel()
 
@@ -598,7 +605,6 @@ func TestWM036_AcceptCloseAndEscalateProduceNoRerun(t *testing.T) {
 	t.Parallel()
 
 	for _, verdict := range []string{"accept-close-with-note", "escalate-to-human"} {
-		verdict := verdict
 		t.Run(verdict, func(t *testing.T) {
 			t.Parallel()
 
@@ -630,7 +636,6 @@ func TestWM036_NoOpAcceptClearsInterruptState(t *testing.T) {
 	}
 
 	for _, iv := range interruptedValues {
-		iv := iv
 		t.Run(string(iv), func(t *testing.T) {
 			t.Parallel()
 
@@ -697,7 +702,6 @@ func TestWM037_InterruptStateOrthogonalToInFlightLifecycle(t *testing.T) {
 
 	for _, ls := range inFlightStates {
 		for _, is := range interruptValues {
-			ls, is := ls, is
 			name := string(ls) + "/" + string(is)
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
@@ -752,18 +756,14 @@ func TestWM038a_InterruptStateChangedMarkerWritten(t *testing.T) {
 
 	// Write the marker as the workspace manager would.
 	marker := failedRunFixtureBuildInterruptStateMarker(
-		workspaceID, runID, priorInterruptState, newInterruptState, cause,
+		t, workspaceID, runID, priorInterruptState, newInterruptState, cause,
 	)
 	// WorkspaceLocalEventsPath is the production function (WM-013b / §6.2).
 	eventsFile := WorkspaceLocalEventsPath(dir, workspaceID)
 	failedRunFixtureAppendJSONLMarker(t, eventsFile, marker)
 
 	// Read back and verify the marker fields.
-	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-	data, err := os.ReadFile(eventsFile)
-	if err != nil {
-		t.Fatalf("WM-038a: ReadFile events: %v", err)
-	}
+	data := mustReadFile(t, eventsFile)
 	var parsed map[string]string
 	if err := json.Unmarshal(data[:len(data)-1], &parsed); err != nil { // trim trailing newline
 		t.Fatalf("WM-038a: parse marker: %v\nraw: %s", err, data)
@@ -793,8 +793,10 @@ func TestWM038a_InterruptStateChangedMarkerWritten(t *testing.T) {
 // failedRunFixtureBuildInterruptStateMarker builds the interrupt_state_changed
 // JSONL marker per WM-038a.
 func failedRunFixtureBuildInterruptStateMarker(
+	t *testing.T,
 	workspaceID, runID, priorInterruptState, newInterruptState, cause string,
 ) []byte {
+	t.Helper()
 	m := map[string]string{
 		"event":                 "interrupt_state_changed",
 		"workspace_id":          workspaceID,
@@ -804,7 +806,10 @@ func failedRunFixtureBuildInterruptStateMarker(
 		"cause":                 cause,
 		"changed_at":            time.Now().UTC().Format(time.RFC3339),
 	}
-	b, _ := json.Marshal(m)
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("failedRunFixtureBuildInterruptStateMarker: marshal: %v", err)
+	}
 	return b
 }
 
@@ -813,23 +818,24 @@ func failedRunFixtureBuildInterruptStateMarker(
 func failedRunFixtureAppendJSONLMarker(t *testing.T, path string, marker []byte) {
 	t.Helper()
 	dir := filepath.Dir(path)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("failedRunFixtureAppendJSONLMarker MkdirAll %q: %v", dir, err)
 	}
 	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatalf("failedRunFixtureAppendJSONLMarker OpenFile %q: %v", path, err)
 	}
-	line := append(marker, '\n')
+	// Own buffer: append(marker, '\n') would write into marker's spare capacity
+	// and mutate the caller's slice.
+	line := make([]byte, 0, len(marker)+1)
+	line = append(line, marker...)
+	line = append(line, '\n')
 	if _, err := f.Write(line); err != nil {
-		_ = f.Close()
-		t.Fatalf("failedRunFixtureAppendJSONLMarker Write: %v", err)
+		t.Fatalf("failedRunFixtureAppendJSONLMarker Write: %v", withCleanupErrs(err, f.Close()))
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		t.Fatalf("failedRunFixtureAppendJSONLMarker Sync: %v", err)
+		t.Fatalf("failedRunFixtureAppendJSONLMarker Sync: %v", withCleanupErrs(err, f.Close()))
 	}
 	if err := f.Close(); err != nil {
 		t.Fatalf("failedRunFixtureAppendJSONLMarker Close: %v", err)
@@ -951,11 +957,11 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 	branch := "run/" + runID
 	worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 	addCmd.Dir = repo
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -964,7 +970,7 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 
 	// Add a normal checkpoint commit (append-only — valid).
 	f := filepath.Join(worktreePath, "checkpoint.txt")
-	if err := os.WriteFile(f, []byte("checkpoint content\n"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("checkpoint content\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile checkpoint: %v", err)
 	}
 	gitRun := func(dir string, args ...string) {
@@ -979,6 +985,7 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 	gitRun(worktreePath, "commit", "-m", "checkpoint: node-1\n\nHarmonik-Run-ID: "+runID)
 
 	// Capture tip SHA before any history edit.
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	tipOut, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", branch).Output()
 	if err != nil {
 		t.Fatalf("rev-parse branch: %v", err)
@@ -989,6 +996,7 @@ func TestWMINV003PartB_HistoryEditingAuditObligation(t *testing.T) {
 	// entries (filter-branch, replace, reset --hard) on in-flight task branches.
 	// Since the auditor is not yet implemented (tracked in OQ-WM-017), we verify
 	// the OBLIGATION at the prose level and assert the tip is unchanged (fast-forward).
+	//nolint:gosec // G204: git command and worktree paths are controlled by this test fixture.
 	tipOut2, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", branch).Output()
 	if err != nil {
 		t.Fatalf("rev-parse branch (post): %v", err)

@@ -76,17 +76,19 @@ func bi010FixtureReadIntentFile(t *testing.T, intentLogDir string) core.IntentLo
 		t.Fatalf("bi010FixtureReadIntentFile: ReadDir: %v", err)
 	}
 	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".json") && !strings.Contains(e.Name(), ".json.tmp-") {
-			data, readErr := os.ReadFile(filepath.Join(intentLogDir, e.Name()))
-			if readErr != nil {
-				t.Fatalf("bi010FixtureReadIntentFile: ReadFile: %v", readErr)
-			}
-			var entry core.IntentLogEntry
-			if err := json.Unmarshal(data, &entry); err != nil {
-				t.Fatalf("bi010FixtureReadIntentFile: Unmarshal: %v", err)
-			}
-			return entry
+		if !strings.HasSuffix(e.Name(), ".json") || strings.Contains(e.Name(), ".json.tmp-") {
+			continue
 		}
+		//nolint:gosec // G304: file name comes from the controlled intent-log fixture directory.
+		data, readErr := os.ReadFile(filepath.Join(intentLogDir, e.Name()))
+		if readErr != nil {
+			t.Fatalf("bi010FixtureReadIntentFile: ReadFile: %v", readErr)
+		}
+		var entry core.IntentLogEntry
+		if err := json.Unmarshal(data, &entry); err != nil {
+			t.Fatalf("bi010FixtureReadIntentFile: Unmarshal: %v", err)
+		}
+		return entry
 	}
 	t.Fatal("bi010FixtureReadIntentFile: no *.json intent file found in " + intentLogDir)
 	return core.IntentLogEntry{}
@@ -204,7 +206,9 @@ func TestBI010_ClaimBead_IntendedPostState_InProgress(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ClaimBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID)
+	if err := adapter.ClaimBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID); err == nil {
+		t.Fatal("ClaimBead: expected failure from fixture adapter")
+	}
 
 	entry := bi010FixtureReadIntentFile(t, intentLogDir)
 	if entry.IntendedPostState != core.CoarseStatusInProgress {
@@ -258,7 +262,9 @@ func TestBI010_CloseBead_IntendedPostState_Closed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.CloseBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, false)
+	if err := adapter.CloseBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, false); err == nil {
+		t.Fatal("CloseBead: expected failure from fixture adapter")
+	}
 
 	entry := bi010FixtureReadIntentFile(t, intentLogDir)
 	if entry.IntendedPostState != core.CoarseStatusClosed {
@@ -284,7 +290,7 @@ func bi010FixtureAppendArgsAdapter(t *testing.T, argsFile string) *brcli.Adapter
 	// Append positional args as a newline-terminated record; exit 0.
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexit 0\n", argsFile)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("bi010FixtureAppendArgsAdapter: write mock: %v", err)
 	}
 	adapter, err := brcli.New(path)
@@ -431,7 +437,9 @@ func TestBI010_ReopenBead_IntendedPostState_Open(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ReopenBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, "")
+	if err := adapter.ReopenBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, ""); err == nil {
+		t.Fatal("ReopenBead: expected failure from fixture adapter")
+	}
 
 	entry := bi010FixtureReadIntentFile(t, intentLogDir)
 	if entry.IntendedPostState != core.CoarseStatusOpen {
@@ -483,7 +491,9 @@ func TestBI010_ReopenBead_InProgress_IntendedPostState_Open(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ReopenBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, "")
+	if err := adapter.ReopenBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, ""); err == nil {
+		t.Fatal("ReopenBead: expected failure from fixture adapter")
+	}
 
 	entry := bi010FixtureReadIntentFile(t, intentLogDir)
 	if entry.IntendedPostState != core.CoarseStatusOpen {
@@ -516,7 +526,9 @@ func TestBI010_IntentLogEntry_IdempotencyKeyShape(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ClaimBead(ctx, intentLogDir, brcli.TimeoutConfig{}, runID, transitionID, beadID)
+	if err := adapter.ClaimBead(ctx, intentLogDir, brcli.TimeoutConfig{}, runID, transitionID, beadID); err == nil {
+		t.Fatal("ClaimBead: expected failure from fixture adapter")
+	}
 
 	entry := bi010FixtureReadIntentFile(t, intentLogDir)
 	wantKey := runID.String() + ":" + transitionID.String() + ":" + string(core.TerminalOpClaim)
@@ -539,7 +551,9 @@ func TestBI010_IntentLogEntry_SchemaVersion1(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ClaimBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), core.BeadID("hk-1"))
+	if err := adapter.ClaimBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), core.BeadID("hk-1")); err == nil {
+		t.Fatal("ClaimBead: expected failure from fixture adapter")
+	}
 
 	entry := bi010FixtureReadIntentFile(t, intentLogDir)
 	if entry.SchemaVersion != brcli.IntentLogEntrySchemaVersion {

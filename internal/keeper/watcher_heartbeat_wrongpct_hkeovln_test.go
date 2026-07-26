@@ -80,7 +80,7 @@ func TestWatcher_Heartbeat_NoWarnWhenWindowSizeZero(t *testing.T) {
 // deriveContextTokens will parse, returning the given total token count.
 func writeTranscriptForHeartbeat(t *testing.T, transcriptDir, sessionID string, totalTokens int64) {
 	t.Helper()
-	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
+	if err := os.MkdirAll(transcriptDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll transcriptDir: %v", err)
 	}
 	// The JSONL format matches the inner structure deriveContextTokens expects:

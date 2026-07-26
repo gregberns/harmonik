@@ -94,7 +94,6 @@ func chbInv002FixtureProjectDir(t *testing.T) string {
 	// Initialise git repo with one commit so resolveParentCommit succeeds.
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()

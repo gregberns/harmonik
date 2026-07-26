@@ -12,7 +12,7 @@
 // # Two spines — pi-native wire vs daemon-projected durable
 //
 // pi's NDJSON dialect is NOT harmonik-native: its wire kinds are session /
-// message_start / message_end / agent_end (internal/daemon/pijsonlparser.go),
+// message_start / message_end / agent_end (internal/harness/pi/ndjsonparser.go),
 // none of which are the durable terminal kinds. So the wire spine asserted over
 // the raw ndjson is the pi-native session → agent_end. The daemon PROJECTS the
 // durable terminal triad (outcome_emitted → bead_closed → run_completed) from the

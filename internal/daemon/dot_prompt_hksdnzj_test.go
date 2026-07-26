@@ -9,7 +9,7 @@ package daemon_test
 //    to pass nodePrompt = "X" to the launchSpecBuilder (threading test).
 //
 // 2. An agentic reviewer node with Prompt = "Y" also passes nodePrompt = "Y" to
-//    the launchSpecBuilder — the value is retained on the claudeRunCtx even for
+//    the launchSpecBuilder — the value is retained on the shared.LaunchCtx even for
 //    reviewers; the spec builder (buildClaudeLaunchSpec) is responsible for
 //    treating it as inert for that phase.
 //
@@ -138,7 +138,7 @@ func TestDotNodePromptThreadedIntoRunCtxForImplementer(t *testing.T) {
 
 // TestDotNodePromptRetainedOnRunCtxForReviewer verifies that a reviewer agentic
 // node with Prompt = "Y" passes nodePrompt = "Y" to the launchSpecBuilder —
-// the value is retained on the claudeRunCtx even for reviewer nodes. The spec
+// the value is retained on the shared.LaunchCtx even for reviewer nodes. The spec
 // builder (buildClaudeLaunchSpec) treats it as inert for that phase (hk-sdnzj).
 func TestDotNodePromptRetainedOnRunCtxForReviewer(t *testing.T) {
 	t.Parallel()
@@ -219,7 +219,7 @@ func TestDotNodePromptRetainedOnRunCtxForReviewer(t *testing.T) {
 		t.Fatal("launchSpecBuilder was never called — nodePrompt not captured")
 	}
 
-	// nodePrompt is retained on the claudeRunCtx even for reviewer nodes.
+	// nodePrompt is retained on the shared.LaunchCtx even for reviewer nodes.
 	if capturedPrompt != wantPrompt {
 		t.Errorf("nodePrompt = %q; want %q (retained even for reviewer)", capturedPrompt, wantPrompt)
 	}

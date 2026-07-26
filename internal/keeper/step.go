@@ -125,7 +125,10 @@ type ActionKind string
 
 // The reactor→effector action vocabulary (design §3b / SK §6.3).
 const (
-	ActWriteJournal      ActionKind = "write_journal"
+	ActWriteJournal ActionKind = "write_journal"
+	// ActTruncateHandoff SCRUBS the stale keeper nonce marker(s) out of the
+	// handoff file; the crew's handoff body is preserved. Name retained for
+	// compatibility with the on-disk/action vocabulary (hk-4tjyj).
 	ActTruncateHandoff   ActionKind = "truncate_handoff"
 	ActSendEscape        ActionKind = "send_escape"
 	ActInjectHandoffCmd  ActionKind = "inject_handoff_cmd"
@@ -845,8 +848,13 @@ func stepStartCycle(cfg *CyclerConfig, s CycleState, ev Event, cf *CtxFile) (Cyc
 		journalAction(&s, "opened", ev.At),
 		emitHandoffStartedAction(cfg, s.CycleID, cf.SessionID),
 	}
-	// Clear a STALE keeper nonce from a prior cycle so it cannot pre-satisfy
-	// the poll (DEFECT-2); a genuine handoff with no keeper nonce is preserved.
+	// SCRUB a STALE keeper nonce from a prior cycle so it cannot pre-satisfy the
+	// poll (DEFECT-2). ActTruncateHandoff is a misnomer kept for compatibility:
+	// the effector strips ONLY the `<!-- KEEPER:... -->` marker(s) and leaves the
+	// crew's handoff body byte-for-byte intact. It used to zero the whole file,
+	// which destroyed the handoff on every cycle after the first — every
+	// completed cycle leaves its own nonce, and that nonce is "stale" next time
+	// (hk-4tjyj). A handoff with no keeper nonce is untouched either way.
 	if ev.HandoffReadOK && handoffContentHasStaleNonce(ev.HandoffContent, nonceMarker(s.CycleID)) {
 		actions = append(actions, Action{Kind: ActTruncateHandoff})
 	}

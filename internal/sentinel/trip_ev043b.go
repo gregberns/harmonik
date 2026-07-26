@@ -337,7 +337,7 @@ func eventsJSONLPath(projectDir string) string {
 // findPendingSentinelAck scans acksDir for a file with subject_kind=sentinelSubjectKind,
 // subject_id=sentinelSubjectID, and status=pending. Returns the ack_token, or "".
 func findPendingSentinelAck(acksDir string) (string, error) {
-	entries, err := os.ReadDir(acksDir) //nolint:gosec // G304: daemon-controlled dir
+	entries, err := os.ReadDir(acksDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -368,7 +368,7 @@ func findPendingSentinelAck(acksDir string) (string, error) {
 
 // writeSentinelAckFile atomically writes the ack-state file at acksDir/<ackToken>.
 func writeSentinelAckFile(acksDir, ackToken string, rec sentinelAckRecord) error {
-	if err := os.MkdirAll(acksDir, 0o755); err != nil {
+	if err := os.MkdirAll(acksDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir %s: %w", acksDir, err)
 	}
 	data, err := json.Marshal(rec)
@@ -376,7 +376,7 @@ func writeSentinelAckFile(acksDir, ackToken string, rec sentinelAckRecord) error
 		return fmt.Errorf("marshal: %w", err)
 	}
 	path := filepath.Join(acksDir, ackToken)
-	return os.WriteFile(path, data, 0o600) //nolint:gosec // G306: ack files are private
+	return os.WriteFile(path, data, 0o600)
 }
 
 // appendDecisionRequired appends a decision_required event line to eventsPath.
@@ -440,17 +440,20 @@ func appendEventLine(eventsPath, evType string, now time.Time, payload interface
 	if marshalErr != nil {
 		return fmt.Errorf("marshal event: %w", marshalErr)
 	}
-	if mkErr := os.MkdirAll(filepath.Dir(eventsPath), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Dir(eventsPath), 0o700); mkErr != nil {
 		return fmt.Errorf("mkdir events dir: %w", mkErr)
 	}
 	f, openErr := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // G304: daemon-controlled path
 	if openErr != nil {
 		return fmt.Errorf("open events.jsonl: %w", openErr)
 	}
-	defer func() { _ = f.Close() }()
 	lineBytes = append(lineBytes, '\n')
 	_, writeErr := f.Write(lineBytes)
-	return writeErr
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }
 
 // buildTripReason constructs the human-readable reason string for a sentinel trip.

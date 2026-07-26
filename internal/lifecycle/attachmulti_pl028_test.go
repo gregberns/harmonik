@@ -153,7 +153,7 @@ func (srv *cliFixtureMultiAttachServer) serveN(n int) {
 //  3. Wait for the client to close the connection (detach).
 //  4. Record the detach.
 func (srv *cliFixtureMultiAttachServer) handleAttach(conn net.Conn) {
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	srv.state.Attach()
 
@@ -163,8 +163,15 @@ func (srv *cliFixtureMultiAttachServer) handleAttach(conn net.Conn) {
 		ID:      1,
 		Error:   nil,
 	}
-	data, _ := json.Marshal(resp)          //nolint:errcheck,errchkjson // encoding a known-good struct; RawMessage field is nil
-	_, _ = fmt.Fprintf(conn, "%s\n", data) //nolint:errcheck // stub write errors are not actionable
+	data, err := json.Marshal(resp)
+	if err != nil {
+		srv.t.Errorf("handleAttach: marshal attach-started response: %v", err)
+		return
+	}
+	if _, err := fmt.Fprintf(conn, "%s\n", data); err != nil {
+		srv.t.Errorf("handleAttach: write attach-started response: %v", err)
+		return
+	}
 
 	// Read until the client closes (detach signal).
 	scanner := bufio.NewScanner(conn)
@@ -185,11 +192,14 @@ func cliFixtureSimulateAttach(t *testing.T, sockPath string, id int) error {
 	if err != nil {
 		return fmt.Errorf("cliFixtureSimulateAttach[%d]: Dial: %w", id, err)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	// Send attach request.
 	req := jsonrpcRequest{JSONRPC: "2.0", ID: id, Method: "attach.session"}
-	reqBytes, _ := json.Marshal(req) //nolint:errcheck,errchkjson // encoding a known-good struct; interface{} Params field is always nil
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("cliFixtureSimulateAttach[%d]: marshal request: %w", id, err)
+	}
 	if _, err := fmt.Fprintf(conn, "%s\n", reqBytes); err != nil {
 		return fmt.Errorf("cliFixtureSimulateAttach[%d]: write: %w", id, err)
 	}
@@ -224,7 +234,7 @@ func TestPL028_AttachMultipleSimultaneous(t *testing.T) {
 
 	projectDir := plFixtureTempProjectDir(t)
 	srv := cliFixtureStartMultiAttachServer(t, projectDir, numAttachers)
-	t.Cleanup(func() { _ = srv.ln.Close() }) //nolint:errcheck // cleanup error unactionable
+	t.Cleanup(func() { _ = srv.ln.Close() })
 
 	sockPath := plFixtureSocketPath(projectDir)
 
@@ -295,7 +305,7 @@ func TestPL028_AttachDetachDoesNotKillDaemon(t *testing.T) {
 
 			projectDir := plFixtureTempProjectDir(t)
 			srv := cliFixtureStartMultiAttachServer(t, projectDir, 1)
-			t.Cleanup(func() { _ = srv.ln.Close() }) //nolint:errcheck // cleanup error unactionable
+			t.Cleanup(func() { _ = srv.ln.Close() })
 
 			sockPath := plFixtureSocketPath(projectDir)
 

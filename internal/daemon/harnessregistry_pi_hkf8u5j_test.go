@@ -13,6 +13,8 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/harness/pi"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // TestHarnessRegistry_PiHarness_ConfiguredFields_NonEmpty verifies that when
@@ -25,7 +27,7 @@ import (
 func TestHarnessRegistry_PiHarness_ConfiguredFields_NonEmpty(t *testing.T) {
 	t.Parallel()
 
-	piCfg := daemon.PiHarnessConfig{
+	piCfg := projectconfig.PiHarnessConfig{
 		Provider:  "openrouter",
 		Model:     "openrouter/qwen/qwen3-coder",
 		APIKeyEnv: "OPENROUTER_API_KEY",
@@ -41,9 +43,9 @@ func TestHarnessRegistry_PiHarness_ConfiguredFields_NonEmpty(t *testing.T) {
 		t.Fatalf("ForAgent(pi): %v", err)
 	}
 
-	ph, ok := h.(*daemon.PiHarness)
+	ph, ok := h.(*pi.Harness)
 	if !ok {
-		t.Fatalf("ForAgent(pi) returned %T; want *daemon.PiHarness", h)
+		t.Fatalf("ForAgent(pi) returned %T; want *pi.Harness", h)
 	}
 
 	provider, model, apiKeyEnv, _ := daemon.ExportedPiHarnessFields(ph)
@@ -87,9 +89,9 @@ func TestHarnessRegistry_PiHarness_EmptyConfig_FieldsEmpty(t *testing.T) {
 		t.Fatalf("ForAgent(pi): %v", err)
 	}
 
-	ph, ok := h.(*daemon.PiHarness)
+	ph, ok := h.(*pi.Harness)
 	if !ok {
-		t.Fatalf("ForAgent(pi) returned %T; want *daemon.PiHarness", h)
+		t.Fatalf("ForAgent(pi) returned %T; want *pi.Harness", h)
 	}
 
 	provider, model, apiKeyEnv, _ := daemon.ExportedPiHarnessFields(ph)
@@ -115,7 +117,7 @@ func TestHarnessRegistry_PiHarness_EmptyConfig_FieldsEmpty(t *testing.T) {
 func TestEffectiveModel_Pi_RcModelOverride(t *testing.T) {
 	t.Parallel()
 
-	piCfg := daemon.PiHarnessConfig{
+	piCfg := projectconfig.PiHarnessConfig{
 		Provider:  "openrouter",
 		Model:     "openrouter/qwen/qwen3-coder",
 		APIKeyEnv: "OPENROUTER_API_KEY",
@@ -142,7 +144,7 @@ func TestEffectiveModel_Pi_ConfigFallback(t *testing.T) {
 	t.Parallel()
 
 	const configModel = "openrouter/qwen/qwen3-coder"
-	piCfg := daemon.PiHarnessConfig{
+	piCfg := projectconfig.PiHarnessConfig{
 		Provider:  "openrouter",
 		Model:     configModel,
 		APIKeyEnv: "OPENROUTER_API_KEY",

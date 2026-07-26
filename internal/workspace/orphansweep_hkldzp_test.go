@@ -31,7 +31,7 @@ func TestHkLdzp_RemoveStaleWorktrees(t *testing.T) {
 		// Write a stale lease-lock with a dead PID.
 		leaseLockPath := LeaseLockPath(worktreePath)
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
-			leaseFixtureMakeLockJSON(runID, 99999999, time.Now(), 3600))
+			leaseFixtureMakeLockJSON(runID, 99999999, time.Now()))
 
 		// Confirm the worktree directory exists before removal.
 		if _, err := os.Stat(worktreePath); err != nil {
@@ -101,7 +101,7 @@ func TestHkLdzp_RemoveStaleWorktrees(t *testing.T) {
 		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 		leaseLockPath := LeaseLockPath(worktreePath)
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
-			leaseFixtureMakeLockJSON(runID, 99999998, time.Now(), 3600))
+			leaseFixtureMakeLockJSON(runID, 99999998, time.Now()))
 
 		sweepResult, err := SweepStaleLeaseLocks(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {

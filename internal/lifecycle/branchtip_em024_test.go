@@ -23,7 +23,7 @@ func durableFixtureInitRepo(t *testing.T, repoDir string) {
 
 	// Root commit so branches can be created from a known base.
 	root := filepath.Join(repoDir, "README")
-	if err := os.WriteFile(root, []byte("harmonik durable-state test repo\n"), 0o644); err != nil {
+	if err := os.WriteFile(root, []byte("harmonik durable-state test repo\n"), 0o600); err != nil {
 		t.Fatalf("durableFixtureInitRepo: WriteFile README: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", "README")
@@ -49,8 +49,7 @@ func durableFixtureCommitCheckpoint(t *testing.T, repoDir, runID, nodeID string)
 
 	// Write/update a simple state file so each checkpoint has a distinct tree.
 	stateFile := filepath.Join(repoDir, "state.txt")
-	//nolint:gosec // G306: 0644 is the correct mode for a state file in a test repo; path is t.TempDir()
-	if err := os.WriteFile(stateFile, []byte(fmt.Sprintf("run=%s node=%s\n", runID, nodeID)), 0o644); err != nil {
+	if err := os.WriteFile(stateFile, []byte(fmt.Sprintf("run=%s node=%s\n", runID, nodeID)), 0o600); err != nil {
 		t.Fatalf("durableFixtureCommitCheckpoint: WriteFile state.txt: %v", err)
 	}
 	runGitRepo(t, repoDir, "add", "state.txt")
@@ -69,7 +68,6 @@ func durableFixtureCommitCheckpoint(t *testing.T, repoDir, runID, nodeID string)
 func durableFixtureReadTip(t *testing.T, repoDir, branchRef string) string {
 	t.Helper()
 
-	//nolint:gosec // G204: branchRef is a test-only constant derived from a deterministic fixture; repoDir is t.TempDir()
 	out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"rev-parse", "--verify", branchRef,
 	).Output()
@@ -262,7 +260,6 @@ func TestEM024_CheckpointSHAIsAncestorOfSubsequentTip(t *testing.T) {
 func durableFixtureAssertAncestor(t *testing.T, repoDir, ancestor, descendant, label string) {
 	t.Helper()
 
-	//nolint:gosec // G204: ancestor/descendant are commit SHAs produced by durableFixtureCommitCheckpoint; repoDir is t.TempDir()
 	cmd := exec.CommandContext(t.Context(), "git", "-C", repoDir,
 		"merge-base", "--is-ancestor", ancestor, descendant,
 	)

@@ -267,7 +267,9 @@ func TestAdapterRegistry_ForAgent_UnknownAlsoSeals(t *testing.T) {
 	r := handlercontract.NewAdapterRegistry()
 
 	// Call ForAgent for an unregistered type — should seal even on error.
-	_, _ = r.ForAgent(core.AgentType("not-registered"))
+	if _, err := r.ForAgent(core.AgentType("not-registered")); err == nil {
+		t.Error("ForAgent(unregistered): got nil error, want non-nil")
+	}
 
 	if !r.Sealed() {
 		t.Error("Sealed() = false after ForAgent on unknown type; want true")
@@ -301,7 +303,9 @@ func TestAdapterRegistry_ForAgent_ConcurrentNoRace(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start // all goroutines unblock at once to maximise contention
-			_, _ = r.ForAgent(agentType)
+			if _, err := r.ForAgent(agentType); err != nil {
+				t.Errorf("ForAgent(%q): unexpected error: %v", agentType, err)
+			}
 		}()
 	}
 
@@ -340,7 +344,9 @@ func TestAdapterRegistry_RegisterAndForAgent_ConcurrentNoRace(t *testing.T) {
 			<-start
 			// Half the goroutines look up; the other half read sealed state.
 			// Both paths touch shared fields and must not race.
-			_, _ = r.ForAgent(baseType)
+			if _, err := r.ForAgent(baseType); err != nil {
+				t.Errorf("ForAgent(%q): unexpected error: %v", baseType, err)
+			}
 			_ = r.Sealed()
 		}()
 	}

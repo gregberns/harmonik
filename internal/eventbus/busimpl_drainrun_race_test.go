@@ -84,13 +84,18 @@ func TestBusImpl_DrainRunConcurrentEmitNoWaitGroupMisuse(t *testing.T) {
 		go func() {
 			defer emitters.Done()
 			for atomic.LoadInt32(&stop) == 0 {
-				_ = bus.EmitWithRunID(ctx, runID, core.EventTypeRunCompleted, payload)
+				if err := bus.EmitWithRunID(ctx, runID, core.EventTypeRunCompleted, payload); err != nil {
+					t.Errorf("EmitWithRunID: %v", err)
+					return
+				}
 			}
 		}()
 	}
 
 	for i := 0; i < 50000; i++ {
-		_ = rd.DrainRun(ctx, runID)
+		if err := rd.DrainRun(ctx, runID); err != nil {
+			t.Fatalf("DrainRun: %v", err)
+		}
 	}
 	atomic.StoreInt32(&stop, 1)
 	emitters.Wait()

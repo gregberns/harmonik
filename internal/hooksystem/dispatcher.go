@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -65,6 +66,23 @@ type Registry interface {
 	// LookupByTrigger returns all Hooks whose Trigger.Name matches trigger,
 	// sorted by Name ascending (CP-046).
 	LookupByTrigger(trigger string) []core.ControlPoint
+}
+
+// reportHookFailure records a hook failure without changing observer dispatch
+// semantics. A lifecycle-event write can fail after the underlying hook has
+// already failed; that secondary failure must be observable but must not hide
+// the original evaluator error or alter the triggering event's progression.
+func (d *Dispatcher) reportHookFailure(
+	ctx context.Context,
+	ev core.Event,
+	hookName core.HookName,
+	triggeringID core.EventID,
+	category core.ErrorCategory,
+	reason string,
+) {
+	if err := d.emitHookFailed(ctx, ev, hookName, triggeringID, category, reason); err != nil {
+		log.Printf("hooksystem: emit hook_failed for hook %q: %v", hookName, err)
+	}
 }
 
 // NewDispatcher constructs a Dispatcher wired to the given registry and bus.
@@ -192,7 +210,7 @@ func (d *Dispatcher) fireHook(ctx context.Context, ev core.Event, cp core.Contro
 	if hookPL.SubscriptionFilter != nil {
 		match, err := d.evalBoolFilter(ctx, string(*hookPL.SubscriptionFilter), ev)
 		if err != nil {
-			_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, classifyEvalError(ctx, err),
+			d.reportHookFailure(ctx, ev, hookName, triggeringID, classifyEvalError(ctx, err),
 				fmt.Sprintf("subscription_filter evaluation failed: %v", err))
 			return haltOnFailure, err
 		}
@@ -208,7 +226,7 @@ func (d *Dispatcher) fireHook(ctx context.Context, ev core.Event, cp core.Contro
 		return d.fireCognitionHook(ctx, ev, cp, hookName, triggeringID, hookPL, haltOnFailure)
 	default:
 		msg := fmt.Sprintf("unknown evaluator mode %q", cp.Evaluator.Mode)
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 }
@@ -235,14 +253,14 @@ func (d *Dispatcher) fireMechanismHook(
 ) (halt bool, _ error) {
 	if cp.Evaluator.Expression == nil {
 		msg := "mechanism hook has nil evaluator expression"
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 
 	fires, err := d.evalBoolFilter(ctx, string(*cp.Evaluator.Expression), ev)
 	if err != nil {
 		errMsg := fmt.Sprintf("evaluator expression failed: %v", err)
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, classifyEvalError(ctx, err), errMsg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, classifyEvalError(ctx, err), errMsg)
 		return haltOnFailure, err
 	}
 	if !fires {
@@ -265,7 +283,7 @@ func (d *Dispatcher) fireMechanismHook(
 	}
 
 	if err := d.emitHookFired(ctx, ev, hookName, triggeringID, se); err != nil {
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient,
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient,
 			fmt.Sprintf("hook_fired emit failed: %v", err))
 		return haltOnFailure, err
 	}

@@ -5,11 +5,10 @@ package daemon_test
 //
 // # What this test proves
 //
-// codex runs with --sandbox workspace-write, which blocks writes to .git. In a
-// git worktree the .git entry is a FILE pointing to the MAIN repo's
-// .git/worktrees/<run-id>/ directory, which is OUTSIDE the sandbox root, so
-// codex self-commit fails 100% of the time
-// ("fatal: Unable to create .git/index.lock").
+// codex may exit WITHOUT self-committing its edits (historically a restrictive
+// sandbox blocked writes to the worktree's .git, which is a FILE pointing to the
+// MAIN repo's .git/worktrees/<run-id>/ directory outside the worktree; and in
+// general codex can simply finish without producing a trailer-carrying commit).
 //
 // The fix (hk-gd9r) wires ensureCodexRefsTrailer (codexcommit.go:180) as a
 // daemon-side commit-after-exit in workloop.go: after the codex process exits

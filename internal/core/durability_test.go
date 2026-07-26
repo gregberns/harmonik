@@ -47,7 +47,6 @@ func TestIsDurable_EM023a_TruthTable(t *testing.T) {
 
 	for _, kind := range durabilityFixtureAllKinds() {
 		for _, status := range durabilityFixtureAllStatuses() {
-			kind, status := kind, status
 			want := durableStatuses[status] // all five kinds are durable when status is durable
 			t.Run(string(kind)+"/"+string(status), func(t *testing.T) {
 				t.Parallel()
@@ -66,7 +65,6 @@ func TestIsDurable_EM023a_DurableKindsWithSuccess(t *testing.T) {
 	t.Parallel()
 
 	for _, kind := range durabilityFixtureAllKinds() {
-		kind := kind
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			if !IsDurable(kind, OutcomeStatusSuccess) {
@@ -82,7 +80,6 @@ func TestIsDurable_EM023a_DurableKindsWithPartialSuccess(t *testing.T) {
 	t.Parallel()
 
 	for _, kind := range durabilityFixtureAllKinds() {
-		kind := kind
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			if !IsDurable(kind, OutcomeStatusPartialSuccess) {
@@ -98,7 +95,6 @@ func TestIsDurable_EM023a_RetryIsNeverDurable(t *testing.T) {
 	t.Parallel()
 
 	for _, kind := range durabilityFixtureAllKinds() {
-		kind := kind
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			if IsDurable(kind, OutcomeStatusRetry) {
@@ -114,7 +110,6 @@ func TestIsDurable_EM023a_FailIsNeverDurable(t *testing.T) {
 	t.Parallel()
 
 	for _, kind := range durabilityFixtureAllKinds() {
-		kind := kind
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			if IsDurable(kind, OutcomeStatusFail) {

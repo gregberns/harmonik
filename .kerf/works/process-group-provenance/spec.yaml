@@ -1,0 +1,32 @@
+codename: process-group-provenance
+title: 'Process-group provenance: make daemon group leadership real (setsid) and give the darwin orphan sweep a marker it can actually read'
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-22T10:02:22Z
+updated: 2026-07-22T12:54:20Z
+sessions:
+    - id: null
+      started: 2026-07-22T10:02:22Z
+      ended: 2026-07-22T12:54:20Z
+active_session: null
+depends_on: []
+bead_filter:
+    label: codename:process-group-provenance
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

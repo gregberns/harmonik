@@ -52,7 +52,7 @@ func readyFixtureServeMonotonicReady(t *testing.T, ln net.Listener, readyAtNs in
 				return // listener closed
 			}
 			go func(c net.Conn) {
-				defer func() { _ = c.Close() }() //nolint:errcheck // cleanup error unactionable
+				defer func() { _ = c.Close() }()
 				readyFixtureServeMonotonicConn(c, readyAtNs)
 			}(conn)
 		}
@@ -100,7 +100,7 @@ func readyFixtureProbeMonotonic(t *testing.T, projectDir string) (readyAtNs int6
 	if dialErr != nil {
 		return 0, fmt.Errorf("readyFixtureProbeMonotonic: dial: %w", dialErr)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -163,7 +163,7 @@ func TestPL010_ReadyAtNsSinceBootMonotonicCompanion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-010 monotonic-companion field-present: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		simulatedNs := readyFixtureMonotonicNow()
 		readyFixtureServeMonotonicReady(t, ln, simulatedNs)
@@ -193,7 +193,7 @@ func TestPL010_ReadyAtNsSinceBootMonotonicCompanion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-010 monotonic-companion bracket: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		before := readyFixtureMonotonicNow()
 		simulatedNs := readyFixtureMonotonicNow()

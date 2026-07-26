@@ -142,9 +142,7 @@ func TestHandlerSelect_HC003_NoDaemonRuntimeBranching(t *testing.T) {
 	}
 
 	for _, filePath := range sourceFiles {
-		filePath := filePath // capture
 		for _, pattern := range handlerselectFixtureForbiddenPatterns {
-			pattern := pattern // capture
 			t.Run(filepath.Base(filePath)+"/"+pattern, func(t *testing.T) {
 				t.Parallel()
 

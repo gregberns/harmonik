@@ -173,7 +173,6 @@ func TestValFixtureCycleWithCapClean(t *testing.T) {
 // ── specs/examples/review-loop.dot validates clean (acceptance criterion) ─────
 
 func TestValFixtureSpecsExamplesReviewLoopClean(t *testing.T) {
-	//nolint:gosec // G304: path is a test-local constant.
 	src, err := os.ReadFile("../../../specs/examples/review-loop.dot")
 	if err != nil {
 		t.Fatalf("read specs/examples/review-loop.dot: %v", err)

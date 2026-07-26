@@ -812,7 +812,6 @@ func TestParseScopeTarget_Wildcard(t *testing.T) {
 	t.Parallel()
 
 	for _, raw := range []string{"*", ""} {
-		raw := raw
 		t.Run(raw, func(t *testing.T) {
 			t.Parallel()
 			st, err := parseScopeTarget(raw)
@@ -891,7 +890,6 @@ func TestS02Registrar_RegisterFromDocument_CP035_MissingSection(t *testing.T) {
 	t.Parallel()
 
 	for _, section := range requiredSections {
-		section := section
 		t.Run("missing_"+section, func(t *testing.T) {
 			t.Parallel()
 

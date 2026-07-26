@@ -28,6 +28,7 @@ type Emitter interface {
 // NoopEmitter is an Emitter that silently discards all events.
 type NoopEmitter struct{}
 
+// EmitWithRunID implements Emitter by discarding the event and reporting success.
 func (NoopEmitter) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
 	return nil
 }
@@ -69,7 +70,7 @@ func NewFileEmitterWithClock(projectDir string, clock substrate.ClockPort) *File
 // EmitWithRunID appends a typed event line to the harmonik events JSONL file.
 // runID is embedded when non-zero. On write error the event is also logged via
 // slog so it is never fully silent.
-func (f *FileEmitter) EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error {
+func (f *FileEmitter) EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) (err error) {
 	eventID, genErr := f.idGen.Next()
 	if genErr != nil {
 		slog.WarnContext(ctx, "keeper: FileEmitter: generate event_id", "err", genErr)
@@ -105,7 +106,11 @@ func (f *FileEmitter) EmitWithRunID(ctx context.Context, runID core.RunID, event
 		slog.WarnContext(ctx, "keeper: FileEmitter: open events.jsonl", "err", openErr, "path", f.path)
 		return openErr
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	_, writeErr := file.Write(append(raw, '\n'))
 	if writeErr != nil {
@@ -1704,7 +1709,7 @@ func (w *Watcher) maybeReapOrphanedDecisions(ctx context.Context, lastReapAt *ti
 
 // gaugeUnavailable returns (true, reason) when the gauge file is absent or
 // stale. Used at boot for the initial no_gauge check.
-func (w *Watcher) gaugeUnavailable(ctx context.Context) (bool, string) {
+func (w *Watcher) gaugeUnavailable(ctx context.Context) (unavailable bool, reason string) {
 	_, modTime, err := ReadCtxFile(w.cfg.ProjectDir, w.cfg.AgentName)
 	if errors.Is(err, os.ErrNotExist) {
 		return true, "absent"
@@ -1800,8 +1805,6 @@ func (w *Watcher) emitWarn(ctx context.Context, cf *CtxFile) {
 	}
 	slog.WarnContext(ctx, "keeper: context window warn threshold crossed",
 		"agent", w.cfg.AgentName, "pct", cf.Pct, "warn_pct", w.cfg.WarnPct)
-	fmt.Printf("keeper: warn — agent %q context window at %.1f%% (threshold %.1f%%)\n",
-		w.cfg.AgentName, cf.Pct, w.cfg.WarnPct)
 }
 
 // maybeRespawn fires the respawn command if all gates pass:
@@ -1855,7 +1858,6 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 
 	slog.InfoContext(ctx, "keeper: respawning agent via --respawn-cmd",
 		"agent", w.cfg.AgentName, "cmd", w.cfg.RespawnCmd)
-	fmt.Printf("keeper: respawn — agent %q exited; re-launching via respawn-cmd\n", w.cfg.AgentName)
 
 	//nolint:gosec // G204: RespawnCmd is operator-supplied via --respawn-cmd flag, not user input.
 	cmd := exec.CommandContext(ctx, "sh", "-c", w.cfg.RespawnCmd)
@@ -1962,8 +1964,6 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 	staleSeconds := int64(w.cfg.Clock.Since(staleSince).Seconds())
 	slog.WarnContext(ctx, "keeper: live-pane recovery — gauge stale over a live pane; firing gated ForceRestart last-resort",
 		"agent", w.cfg.AgentName, "stale_seconds", staleSeconds, "bound_sid", boundSID)
-	fmt.Printf("keeper: live-pane recovery — agent %q hung mid-turn (gauge stale %ds, pane alive); force-restarting\n",
-		w.cfg.AgentName, staleSeconds)
 
 	runErr := w.cfg.LiveRecoverFn(ctx, w.cfg.AgentName)
 

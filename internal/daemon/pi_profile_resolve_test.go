@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // piProfFixtureBus is a minimal event collector for testing label-conflict events.
@@ -42,12 +43,12 @@ func (b *piProfFixtureBus) hasEventType(et core.EventType) bool {
 	return false
 }
 
-func piProfFixtureCfg() PiHarnessConfig {
-	return PiHarnessConfig{
+func piProfFixtureCfg() projectconfig.PiHarnessConfig {
+	return projectconfig.PiHarnessConfig{
 		Provider:  "ornith",
 		Model:     "ornith/default",
 		APIKeyEnv: "ORNITH_API_KEY",
-		Profiles: map[string]PiProfileConfig{
+		Profiles: map[string]projectconfig.PiProfileConfig{
 			"ornith-dgx": {
 				Provider:   "ornith",
 				Model:      "ornith/dgx-model",
@@ -99,7 +100,7 @@ func TestResolvePiProfile_UnlabeledBead_ZeroTuple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolvePiProfile: unexpected error: %v", err)
 	}
-	if profile != (PiProfileConfig{}) {
+	if profile != (projectconfig.PiProfileConfig{}) {
 		t.Errorf("resolvePiProfile = %+v; want zero tuple", profile)
 	}
 }
@@ -119,7 +120,7 @@ func TestResolvePiProfile_ClaudeHarness_ZeroTuple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolvePiProfile: unexpected error: %v", err)
 	}
-	if profile != (PiProfileConfig{}) {
+	if profile != (projectconfig.PiProfileConfig{}) {
 		t.Errorf("resolvePiProfile (harness gate) = %+v; want zero tuple", profile)
 	}
 	if bus.hasEventType(core.EventTypeBeadLabelConflict) {
@@ -163,7 +164,7 @@ func TestResolvePiProfile_MultipleLabels_Conflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolvePiProfile: unexpected error: %v", err)
 	}
-	if profile != (PiProfileConfig{}) {
+	if profile != (projectconfig.PiProfileConfig{}) {
 		t.Errorf("resolvePiProfile (conflict) = %+v; want zero tuple", profile)
 	}
 	if !bus.hasEventType(core.EventTypeBeadLabelConflict) {

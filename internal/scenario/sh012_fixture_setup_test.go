@@ -37,7 +37,7 @@ func sh012FixtureEphemeralRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("sh012FixtureEphemeralRoot: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cleanupTempDir(t, dir)
 	return dir
 }
 
@@ -225,8 +225,14 @@ func TestSH012_BootstrapFixture_FailFast_BadFixtureRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTemp: %v", err)
 	}
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
-	defer func() { _ = tmpFile.Close() }()
+	t.Cleanup(func() {
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			t.Errorf("close temporary fixture root: %v", closeErr)
+		}
+		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil {
+			t.Errorf("remove temporary fixture root: %v", removeErr)
+		}
+	})
 
 	// Use the temp file's path as the fixtureRoot — MkdirAll will fail because
 	// it is a file, not a directory.
@@ -348,8 +354,14 @@ func TestSH012_BootstrapFixtureFailureClass_ErrorReturnsFixtureSetupFailed(t *te
 	if err != nil {
 		t.Fatalf("CreateTemp: %v", err)
 	}
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
-	defer func() { _ = tmpFile.Close() }()
+	t.Cleanup(func() {
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			t.Errorf("close temporary fixture root: %v", closeErr)
+		}
+		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil {
+			t.Errorf("remove temporary fixture root: %v", removeErr)
+		}
+	})
 
 	_, bootstrapErr := BootstrapFixture(t.Context(), tmpFile.Name(), "check", nil)
 	if bootstrapErr == nil {

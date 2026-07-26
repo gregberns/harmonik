@@ -24,8 +24,7 @@ import (
 func implRefFixtureWriteSidecar(t *testing.T, workspacePath, sessionID string, agentType core.AgentType, launchedAt time.Time) {
 	t.Helper()
 	dir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("implRefFixtureWriteSidecar MkdirAll %q: %v", dir, err)
 	}
 	m := map[string]interface{}{
@@ -41,7 +40,7 @@ func implRefFixtureWriteSidecar(t *testing.T, workspacePath, sessionID string, a
 		t.Fatalf("implRefFixtureWriteSidecar Marshal: %v", err)
 	}
 	sidecarPath := filepath.Join(dir, "harmonik.meta.json")
-	if err := os.WriteFile(sidecarPath, data, 0o644); err != nil {
+	if err := os.WriteFile(sidecarPath, data, 0o600); err != nil {
 		t.Fatalf("implRefFixtureWriteSidecar WriteFile %q: %v", sidecarPath, err)
 	}
 }
@@ -277,7 +276,6 @@ func TestWM022_AgentTypeIsAgentic(t *testing.T) {
 		"merge-node",
 	}
 	for _, at := range nonAgenticCases {
-		at := at
 		t.Run("non-agentic/"+string(at), func(t *testing.T) {
 			t.Parallel()
 			if agentTypeIsAgentic(at) {
@@ -293,7 +291,6 @@ func TestWM022_AgentTypeIsAgentic(t *testing.T) {
 		"pi-twin",
 	}
 	for _, at := range agenticCases {
-		at := at
 		t.Run("agentic/"+string(at), func(t *testing.T) {
 			t.Parallel()
 			if !agentTypeIsAgentic(at) {

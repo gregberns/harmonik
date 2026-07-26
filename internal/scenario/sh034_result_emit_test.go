@@ -36,7 +36,7 @@ func sh034TempDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("sh034TempDir: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cleanupTempDir(t, dir)
 	return dir
 }
 
@@ -85,7 +85,7 @@ func TestSH034_ScenarioResultPath(t *testing.T) {
 	t.Parallel()
 
 	got := ScenarioResultPath("/tmp/fixture-root", "my-scenario")
-	want := filepath.Join("/tmp/fixture-root", "my-scenario", "result.json")
+	want := "/tmp/fixture-root/my-scenario/result.json"
 	if got != want {
 		t.Errorf("ScenarioResultPath = %q; want %q", got, want)
 	}
@@ -97,7 +97,7 @@ func TestSH034_SuiteResultPath(t *testing.T) {
 	t.Parallel()
 
 	got := SuiteResultPath("/tmp/fixture-root")
-	want := filepath.Join("/tmp/fixture-root", "suite-result.json")
+	want := "/tmp/fixture-root/suite-result.json"
 	if got != want {
 		t.Errorf("SuiteResultPath = %q; want %q", got, want)
 	}
@@ -120,6 +120,7 @@ func TestSH034_WriteScenarioResult_WritesValidJSON(t *testing.T) {
 	}
 
 	p := ScenarioResultPath(fixtureRoot, r.ScenarioName)
+	//nolint:gosec // G304: p is generated below this test's t.TempDir fixture root.
 	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("ReadFile %q: %v", p, err)
@@ -194,6 +195,7 @@ func TestSH034_WriteScenarioResult_MultipleScenarios(t *testing.T) {
 
 	for _, name := range names {
 		p := ScenarioResultPath(fixtureRoot, name)
+		//nolint:gosec // G304: p is generated below this test's t.TempDir fixture root.
 		data, err := os.ReadFile(p)
 		if err != nil {
 			t.Fatalf("ReadFile %q: %v", p, err)
@@ -228,6 +230,7 @@ func TestSH034_WriteSuiteResult_WritesValidJSON(t *testing.T) {
 	}
 
 	p := SuiteResultPath(fixtureRoot)
+	//nolint:gosec // G304: p is generated below this test's t.TempDir fixture root.
 	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("ReadFile %q: %v", p, err)
@@ -277,6 +280,7 @@ func TestSH034_WriteSuiteResult_VacuousPassOnEmptyResults(t *testing.T) {
 	}
 
 	p := SuiteResultPath(fixtureRoot)
+	//nolint:gosec // G304: p is generated below this test's t.TempDir fixture root.
 	data, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("ReadFile %q: %v", p, err)

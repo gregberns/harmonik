@@ -29,6 +29,7 @@ package main
 // Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -36,6 +37,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -46,6 +48,11 @@ import (
 // sh033SubprocessEnv is the env var that puts the test binary into the
 // double-SIGINT subprocess role.
 const sh033SubprocessEnv = "HARMONIK_TEST_SH033_SUBPROCESS"
+
+const (
+	sh033ReadyMarker         = "SH033_READY"
+	sh033GracefulWriteMarker = "SH033_GRACEFUL_WRITE_STARTED"
+)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -194,7 +201,6 @@ func TestHarnessSH033_StderrMentionsSignal(t *testing.T) {
 		{syscall.SIGINT, "SIGINT"},
 		{syscall.SIGTERM, "SIGTERM"},
 	} {
-		tc := tc
 		t.Run(tc.sigName, func(t *testing.T) {
 			t.Parallel()
 
@@ -220,16 +226,11 @@ func TestHarnessSH033_StderrMentionsSignal(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // sh033SubprocessRoleDoubleSIGINT is the subprocess worker for
-// TestHarnessSH033_DoubleSIGINTHardExit. It pre-loads both SIGINT signals into
-// the harness signal channel before calling runHarnessWithSigs so the
-// double-SIGINT detection is deterministic (no OS signal timing races).
-//
-// The first signal triggers the graceful-shutdown path; the main goroutine's
-// non-blocking pre-check reads the second signal from the buffer and returns
-// harnessExitOperatorInterrupt (130) before writing any SuiteResult to stdout.
-//
-// In a concurrent race (goroutine's second select wins the sigCh read instead),
-// os.Exit(harnessExitOperatorInterrupt) fires — same exit code, same empty stdout.
+// TestHarnessSH033_DoubleSIGINTHardExit. It announces when signal handling is
+// armed, then blocks the graceful SuiteResult write after announcing that the
+// shutdown path has begun. The parent sends SIGINT only at those two explicit
+// barriers, proving the second signal lands during graceful shutdown rather
+// than racing harness startup or completion.
 //
 // This function MUST be called only from the subprocess role; it always exits
 // via os.Exit and never returns normally.
@@ -256,15 +257,33 @@ func sh033SubprocessRoleDoubleSIGINT() {
 		os.Exit(99)
 	}
 
-	// Pre-load both signals so the main goroutine's non-blocking sigCh check
-	// reads the second SIGINT deterministically before calling
-	// harnessEmitInterruptResult. No OS signals from the parent are needed.
 	sigCh := make(chan os.Signal, 2)
-	sigCh <- syscall.SIGINT // first signal — triggers graceful shutdown
-	sigCh <- syscall.SIGINT // second signal — caught by main's pre-check → return 130
+	signal.Notify(sigCh, syscall.SIGINT)
+	if _, wErr := fmt.Fprintln(os.Stdout, sh033ReadyMarker); wErr != nil {
+		fmt.Fprintf(os.Stderr, "sh033 subprocess: write ready marker: %v\n", wErr)
+		os.Exit(99)
+	}
 
-	code := runHarnessWithSigs([]string{"--scenario", scenarioFile}, os.Stdout, os.Stderr, sigCh)
+	code := runHarnessWithSigs(
+		[]string{"--scenario", scenarioFile},
+		sh033BlockingResultWriter{}, os.Stderr, sigCh,
+	)
 	os.Exit(code)
+}
+
+// sh033BlockingResultWriter holds the subprocess inside graceful result
+// emission. The second SIGINT must therefore take the goroutine's os.Exit(130)
+// hard-exit path; a normal return is impossible after this write begins.
+type sh033BlockingResultWriter struct{}
+
+func (sh033BlockingResultWriter) Write(_ []byte) (int, error) {
+	// If the barrier marker cannot be emitted the parent will never send the
+	// second SIGINT, so fail the write instead of blocking forever — the parent
+	// then fails fast at its waitMarker barrier rather than at the 5 s timeout.
+	if _, wErr := fmt.Fprintln(os.Stdout, sh033GracefulWriteMarker); wErr != nil {
+		return 0, wErr
+	}
+	select {}
 }
 
 // TestHarnessSH033_DoubleSIGINTHardExit verifies that a second SIGINT during
@@ -281,10 +300,6 @@ func TestHarnessSH033_DoubleSIGINTHardExit(t *testing.T) {
 	}
 
 	// Parent role: locate and spawn the test binary as a subprocess.
-	// The subprocess role pre-loads both signals into the harness channel, so
-	// the parent does NOT need to send any OS signals or wait for the child to
-	// reach a blocking state. Without -test.v the test framework emits nothing
-	// to stdout before the subprocess role runs.
 	testBin, lookErr := exec.LookPath(os.Args[0])
 	if lookErr != nil {
 		testBin = os.Args[0]
@@ -296,22 +311,75 @@ func TestHarnessSH033_DoubleSIGINTHardExit(t *testing.T) {
 		"-test.run=TestHarnessSH033_DoubleSIGINTHardExit",
 	)
 	cmd.Env = append(os.Environ(), sh033SubprocessEnv+"=1")
-	var subStdout bytes.Buffer
-	cmd.Stdout = &subStdout
+	stdout, pipeErr := cmd.StdoutPipe()
+	if pipeErr != nil {
+		t.Fatalf("subprocess stdout pipe: %v", pipeErr)
+	}
 	cmd.Stderr = os.Stderr
 
 	if startErr := cmd.Start(); startErr != nil {
 		t.Fatalf("subprocess start: %v", startErr)
 	}
 
-	// Wait for the subprocess to exit. It pre-loads both SIGINTs so it exits
-	// almost immediately (no signals or sleeps needed from the parent side).
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	// Exactly one goroutine owns Wait. Every post-Start failure runs the defer,
+	// which kills a still-live child and synchronously waits for that owner to
+	// reap it. The success path marks the already-reaped child so the defer is a
+	// no-op; this avoids both leaked subprocesses and double-Wait races.
+	var waitErr error
+	done := make(chan struct{})
+	go func() {
+		waitErr = cmd.Wait()
+		close(done)
+	}()
+	reaped := false
+	defer func() {
+		if reaped {
+			return
+		}
+		// A kill error is not actionable here — the child may have exited between
+		// the failure and this defer — but it must not be silently discarded.
+		// os.ErrProcessDone is that benign race and is filtered out; anything
+		// else means a subprocess may have leaked, which is worth surfacing.
+		if killErr := cmd.Process.Kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+			t.Logf("sh033: kill subprocess: %v", killErr)
+		}
+		<-done
+	}()
+
+	lines := make(chan string, 4)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		close(lines)
+	}()
+
+	waitMarker := func(want string) {
+		t.Helper()
+		select {
+		case got := <-lines:
+			if got != want {
+				t.Fatalf("subprocess marker = %q, want %q", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for subprocess marker %q", want)
+		}
+	}
+
+	waitMarker(sh033ReadyMarker)
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("send first SIGINT: %v", err)
+	}
+	waitMarker(sh033GracefulWriteMarker)
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("send second SIGINT: %v", err)
+	}
 
 	const deadline = 5 * time.Second
 	select {
-	case waitErr := <-done:
+	case <-done:
+		reaped = true
 		var exitErr *exec.ExitError
 		if !errors.As(waitErr, &exitErr) {
 			t.Fatalf("subprocess did not exit via os.Exit: %v", waitErr)
@@ -319,16 +387,7 @@ func TestHarnessSH033_DoubleSIGINTHardExit(t *testing.T) {
 		if exitErr.ExitCode() != 130 {
 			t.Errorf("double-SIGINT: want exit 130, got %d", exitErr.ExitCode())
 		}
-		// Hard-exit path must NOT write a SuiteResult to stdout. Any SuiteResult
-		// content proves the graceful-shutdown path ran instead (the two paths
-		// produce the same exit code 130, so stdout is the only distinguishing
-		// observable).
-		if strings.Contains(subStdout.String(), "suite_id:") || strings.Contains(subStdout.String(), `"suite_id"`) {
-			t.Errorf("double-SIGINT hard-exit: stdout contains SuiteResult (graceful-shutdown path ran):\n%s",
-				subStdout.String())
-		}
 	case <-time.After(deadline):
-		_ = cmd.Process.Kill()
 		t.Errorf("subprocess did not exit within %s", deadline)
 	}
 }

@@ -49,7 +49,11 @@ func runReplay(ctx context.Context, out io.Writer, replayPath string, preserveTi
 	if err != nil {
 		return fmt.Errorf("open replay capture: %w", err)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // read-only capture handle; close error is irrelevant.
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: close replay capture: %v\n", closeErr)
+		}
+	}()
 
 	scanner := bufio.NewScanner(f)
 	// Match the watcher's 1 MiB max-line cap (HC-007a) so replay never accepts a

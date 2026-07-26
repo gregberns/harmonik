@@ -1,0 +1,102 @@
+{
+  "chunk": "RU-18",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/brcli/adapter.go",
+    "internal/brcli/timeout.go",
+    "internal/brcli/stderrcap.go",
+    "internal/brcli/brerror.go",
+    "internal/brcli/dblockretry.go",
+    "internal/brcli/show.go",
+    "internal/brcli/ready.go",
+    "internal/brcli/audit.go",
+    "internal/brcli/version.go",
+    "internal/brcli/breakage.go",
+    "internal/brcli/beadsownedsentinel.go",
+    "internal/brcli/classifyreconciliation.go",
+    "internal/brcli/classifyreconciliation_bi031b.go",
+    "internal/brcli/listdependencies.go",
+    "internal/brcli/listinflight.go",
+    "internal/brcli/listbystatus_em031a.go",
+    "internal/brcli/reissueintent_bi031.go",
+    "internal/brcli/syncflushonly.go",
+    "internal/brcli/workflowlabelconflict.go",
+    "internal/brcli/workflowlabelwrite_bi010c.go"
+  ],
+  "status": "reviewed",
+  "status_note": "Excluded terminaltransition_bi010.go and intentlogwrite.go per RU-12x scope carve-out. All other non-test .go source files in internal/brcli/ read in full.",
+  "findings": [
+    {
+      "file": "internal/brcli/workflowlabelwrite_bi010c.go",
+      "line": 90,
+      "severity": "high",
+      "category": "correctness",
+      "title": "BI-010c workflow-label guard is bypassed by `--flag=value` argv form",
+      "detail": "CheckWorkflowLabelWrite scans brArgs with strings.HasPrefix(arg, \"workflow:\"). It only detects the label when it appears as its own standalone argv element (e.g. `--label`, `workflow:dot` as two args, or a bare positional `workflow:dot`). If any caller instead constructs the joined form `--label=workflow:dot` (a completely valid exec argv that `br`/most flag parsers accept), the offending element is `\"--label=workflow:dot\"`, whose prefix is `--label=`, not `workflow:`. The guard returns nil and the forbidden agent-context workflow-label mutation proceeds silently. This is a conformance/authority guard (BI-INV-001) whose whole purpose is to block a class of write; a trivially-reachable argv encoding defeats it. The guard should normalize `--flag=value` args (split on first '=') and also match `workflow:` appearing after an '=' before scanning.",
+      "suggested_fix": "Before the HasPrefix check, split each arg on the first '=' and test the value half; or scan for the substring `workflow:` in a value position rather than only a leading prefix on the whole token."
+    },
+    {
+      "file": "internal/brcli/brerror.go",
+      "line": 124,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Exit code 1 hard-mapped to BrNotFound risks misrouting generic br failures to Cat 3 divergence",
+      "detail": "BrErrorFromExitCode maps exit 1 -> BrNotFound unconditionally. Many CLIs (and br historically) use exit 1 as a *generic* error, not specifically 'issue not found'. When a generic br failure exits 1, BrErr becomes BrNotFound, which BrErrReconciliationCategory routes to Cat 3 (store disagreement -> investigator dispatch). The higher-level read methods (ShowBead/AuditLog/ListDependencies) protect themselves by re-parsing the JSON error envelope for error.code==ISSUE_NOT_FOUND before trusting the exit code, but any caller that consumes Result.BrErr directly (the documented canonical classification per adapter.go:100-103) inherits the mis-classification. The code comments explicitly flag the table as 'illustrative' and requiring re-validation on version change, but no runtime guard enforces that the pinned br actually reserves exit 1 for not-found only. A drift here silently converts routine failures into spurious divergence-investigation dispatches.",
+      "suggested_fix": "Either gate the BrNotFound classification on the ISSUE_NOT_FOUND envelope (not exit code alone) or add a pinned-version conformance test that asserts br emits exit 1 only for not-found; document that Result.BrErr for exit 1 is provisional."
+    },
+    {
+      "file": "internal/brcli/dblockretry.go",
+      "line": 152,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "Escalation diagnostic reports empty stderr for the BrUnavailable-timeout exhaustion path",
+      "detail": "On retry exhaustion the escalation error formats `stderr=%q` from lastResult.Stderr. But when the last transient attempt was a wall-clock timeout, RunWithTimeout/terminateAndClassify returns Result{} (empty stdout/stderr/exit) plus the BrUnavailable-wrapped error — the subprocess's captured stderr is discarded on the timeout path. So for the exact failure class this retry loop most exists to diagnose (persistent BrUnavailable under contention), the diagnostic string is always `stderr=\"\" exit=0 brErr=OK`, giving operators no signal. The lastResult is only populated with real content on the BrDbLocked (err==nil) branch.",
+      "suggested_fix": "Preserve captured stdout/stderr in the Result returned on the timeout path (terminateAndClassify), or omit the stderr/exit fields from the BrUnavailable escalation message so they are not misleadingly empty."
+    },
+    {
+      "file": "internal/brcli/show.go",
+      "line": 133,
+      "severity": "low",
+      "category": "correctness",
+      "title": "ShowBead treats a 0-element success array as schema mismatch rather than not-found",
+      "detail": "ShowBead detects ISSUE_NOT_FOUND only on the non-zero-exit envelope path. If br ever returns exit 0 with an empty JSON array `[]` for an unknown id (a plausible br behavior), len(items) != 1 fires and the caller gets BrSchemaMismatch, which routes to Cat 0 -> daemon startup failure / exit 8 (per the routing table) rather than the benign ErrBeadNotFound path. A single missing bead could thus escalate to an infrastructure-fatal classification.",
+      "suggested_fix": "Special-case len(items)==0 on exit 0 to return ErrBeadNotFound rather than BrSchemaMismatch."
+    },
+    {
+      "file": "internal/brcli/reissueintent_bi031.go",
+      "line": 65,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "TerminalOpReset and TerminalOpReopen re-issue identical br argv, collapsing a semantic distinction",
+      "detail": "The switch maps both core.TerminalOpReset and core.TerminalOpReopen to `update <id> --status open`. The two ops are distinct terminal operations elsewhere in the model (reset vs reopen carry different intent, e.g. assignee clearing). Re-driving them with byte-identical br commands means a reset that was interrupted is replayed as a plain reopen; if reset is supposed to also clear assignee or other fields, the re-drive silently under-applies. Even if identical-by-design today, the duplication is a latent drift trap: a future change to the primary reset path won't be mirrored here.",
+      "suggested_fix": "If the ops are genuinely identical, add a comment asserting so with a spec ref; otherwise derive the argv from the same helper the primary terminal-transition path uses so the two stay in lockstep."
+    },
+    {
+      "file": "internal/brcli/dblockretry.go",
+      "line": 190,
+      "severity": "low",
+      "category": "resource-leak",
+      "title": "time.After timer in backoff select leaks until fire when ctx is canceled",
+      "detail": "The backoff sleep uses `case <-time.After(backoff)`. If ctx.Done() wins the select, the time.After timer is not stopped and remains armed until backoff (capped at 15s) elapses, holding a runtime timer. Under a canceled context with many concurrent terminal-write retries this accumulates up-to-15s-lived timers. Bounded and self-healing, but avoidable.",
+      "suggested_fix": "Use an explicit time.NewTimer with defer Stop() (as timeout.go already does for budgetTimer/graceTimer) instead of time.After inside the retry loop."
+    },
+    {
+      "file": "internal/brcli/beadsownedsentinel.go",
+      "line": 50,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Sentinel path built from bead ID verbatim with no separator/traversal guard",
+      "detail": "beadsOwnedSentinelPath joins ownedDir with beadID used verbatim as the filename, relying solely on the documented assumption that bead IDs are opaque and contain no path separators (BI-008a). There is no defensive validation. If a malformed or externally-influenced bead ID ever contained '/' or '..', writeBeadsOwnedSentinel/deleteBeadsOwnedSentinel would create/remove files outside beads-owned/. Because these are best-effort and non-fatal, a traversal would fail silently rather than being caught. Given the value flows from br output (an external subprocess), a cheap filepath.Base or reject-on-separator check would harden it.",
+      "suggested_fix": "Validate beadID contains no path separators / '..' before Join (or wrap with filepath.Base and compare), erroring the best-effort write rather than touching an unexpected path."
+    },
+    {
+      "file": "internal/brcli/version.go",
+      "line": 98,
+      "severity": "nit",
+      "category": "correctness",
+      "title": "Observed version discards pre-release suffix, guaranteeing a mismatch warning if pinned carries one",
+      "detail": "observedVersion is reconstructed as MAJOR.MINOR.PATCH only (pre-release capture group is dropped). If pinnedVersion is ever supplied with a pre-release suffix (e.g. 0.2.10-rc1), the equality check always fails and emits ErrBrVersionMismatch even against an exactly-matching binary. Benign today (mismatch is warning-only) but the reconstruction and the comparand can silently disagree in form.",
+      "suggested_fix": "Either strip any pre-release from pinnedVersion before comparing, or compare the full captured token including the suffix."
+    }
+  ]
+}

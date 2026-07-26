@@ -129,8 +129,7 @@ func WriteInterruptStateChangedMarker(
 	eventsPath := WorkspaceLocalEventsPath(workspacePath, workspaceID)
 	eventsDir := filepath.Dir(eventsPath)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: WriteInterruptStateChangedMarker: MkdirAll %q: %w", eventsDir, err)
 	}
 
@@ -176,14 +175,19 @@ func WriteInterruptStateChangedMarker(
 		return fmt.Errorf("workspace: WriteInterruptStateChangedMarker: close: %w", closeErr)
 	}
 
-	// fsync the parent directory for unlink durability.
+	// fsync the parent directory for unlink durability. Non-fatal throughout:
+	// the marker's own content is already fsynced above, so failing to open or
+	// sync the directory does not make this write unsuccessful. Structured as a
+	// scoped "if it opened, sync it" rather than an early `return nil` on a
+	// non-nil error, so the success path is not confusable with a swallowed
+	// failure.
 	//nolint:gosec // G304: eventsDir is derived from workspacePath + .harmonik/events, not user input
-	dirFd, err := os.Open(eventsDir)
-	if err != nil {
-		// Non-fatal: file content is already fsynced; dir fsync is best-effort.
-		return nil
+	if dirFd, openErr := os.Open(eventsDir); openErr == nil {
+		syncErr := dirFd.Sync()
+		closeErr := dirFd.Close()
+		if syncErr != nil || closeErr != nil {
+			return fmt.Errorf("workspace: write interrupt state: fsync/close events dir: %w", errors.Join(syncErr, closeErr))
+		}
 	}
-	_ = dirFd.Sync()  //nolint:errcheck // dir fsync failure is non-fatal
-	_ = dirFd.Close() //nolint:errcheck // cleanup error unactionable
 	return nil
 }

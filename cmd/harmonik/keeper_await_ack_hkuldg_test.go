@@ -31,7 +31,6 @@ func TestKeeperAwaitAck_ExitCodes(t *testing.T) {
 		{"no-pane-timeout", []string{"--project", projectDir, "--agent", "await-ack-no-pane-xyz", "--nonce", "n1", "--timeout", "50ms", "--poll", "10ms"}, 3},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			if code := runKeeperAwaitAck(tc.args); code != tc.want {
 				t.Fatalf("args %v: want exit %d, got %d", tc.args, tc.want, code)

@@ -49,6 +49,7 @@ import (
 	"github.com/gregberns/harmonik/internal/hookrelay"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	queuecli "github.com/gregberns/harmonik/internal/queue/cli"
 	"github.com/gregberns/harmonik/internal/release"
 	"github.com/gregberns/harmonik/internal/supervise"
@@ -165,7 +166,20 @@ func run() int {
 	// the positional "version" argument.
 	//
 	// Spec ref: specs/release-pipeline.md §2.3; bead hk-ww7ee.
+	//
+	// The POSITIONAL form with trailing arguments — `harmonik version --binary
+	// PATH …` — is the authoritative binary-provenance check; see
+	// cmd/harmonik/version_verify.go for why `strings | grep` and
+	// `go tool nm | grep` are not answers. The FLAG forms (`--version` /
+	// `-version`) deliberately do NOT route there: §2.3 makes their output
+	// format normative and says any other format is a spec violation, so
+	// `harmonik --version --json` must still print the version line.
+	//
+	// Bead ref: hk-9hvr0.
 	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
+		if versionArgsRouteToInspect(os.Args) {
+			return runVersionInspect(os.Args[2:], os.Stdout, os.Stderr)
+		}
 		fmt.Printf("harmonik %s (commit: %s)\n", version, resolvedCommitHash())
 		return 0
 	}
@@ -618,7 +632,7 @@ EXAMPLES
 		}
 		for _, arg := range subArgs {
 			if arg == "--help" || arg == "-h" {
-				fmt.Print(keeperTopUsage) //nolint:forbidigo // help output to stdout is intentional (hk-fzzc6)
+				fmt.Print(keeperTopUsage)
 				return 0
 			}
 		}
@@ -944,8 +958,8 @@ EXAMPLES
 	//
 	// Spec ref: docs/foundation/phase-1-readiness-gap-analysis.md §A5;
 	// specs/scenario-harness.md §4.3.SH-018; bootstrap-subset.md §1.
-	var policyEngine core.PolicyEngine = core.NoOpPolicyEngine{} //nolint:ineffassign // composition-root binding; dispatcher wiring is pending (hk-b3f.*)
-	_ = policyEngine                                             // consumed by dispatcher once cluster-A EM beads land
+	var policyEngine core.PolicyEngine = core.NoOpPolicyEngine{}
+	_ = policyEngine // consumed by dispatcher once cluster-A EM beads land
 
 	// TODO(hk-b3f): pass policyEngine to the EM dispatcher once the
 	// dispatcher wiring beads (hk-b3f cluster-A) land. The binding site is
@@ -1120,7 +1134,7 @@ EXAMPLES
 	// the workflow_mode value and returns *ErrWorkflowModeFloorViolation when
 	// single is found (PL-004a review floor — daemon-level config must never
 	// lower the mode below review-loop).
-	projCfg, projCfgErr := daemon.LoadProjectConfig(projectDir)
+	projCfg, projCfgErr := projectconfig.LoadProjectConfig(projectDir)
 	if projCfgErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", projCfgErr)
 		return 1
@@ -1178,11 +1192,11 @@ EXAMPLES
 	// hk-sm6j7: resolve br binary via PATH so the work loop is reachable.
 	// If br is not on PATH, BrPath remains empty and daemon.Start skips the
 	// work loop (existing nil-path guard at daemon.go:251 is preserved).
-	brPath, _ := exec.LookPath("br")
+	brPath := optionalExecutablePath("br")
 
 	// hk-9321v: resolve kerf binary via PATH for EM-062/EM-063 eager-refill.
 	// If kerf is not on PATH, KerfPath remains empty and eager-refill is disabled.
-	kerfPath, _ := exec.LookPath("kerf")
+	kerfPath := optionalExecutablePath("kerf")
 	// M6 WS4-3: HARMONIK_DISABLE_EAGER_REFILL forces eager-refill off without
 	// removing kerf from PATH. The core-loop-proof matrix needs queue-submit to
 	// be the SOLE deterministic dispatcher: otherwise the daemon auto-dispatches
@@ -1200,13 +1214,11 @@ EXAMPLES
 
 	// hk-woebv: create required subdirectories before daemon.Start so that
 	// eventbus.OpenJSONLWriter never fails with "no such file or directory".
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), core.HarmonikDirMode); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: cannot create .harmonik/events/: %v\n", err)
 		return 1
 	}
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), core.HarmonikDirMode); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: cannot create .harmonik/beads-intents/: %v\n", err)
 		return 1
 	}
@@ -1264,8 +1276,10 @@ EXAMPLES
 	// that must not receive implementer windows.
 	//
 	// We ask tmux for the current session via `display-message -p
-	// '#{session_name}'` (exec.Command, not OSAdapter, because no window handle
-	// exists yet). That returns whatever session the daemon was launched inside:
+	// '#{session_name}'` (a direct exec, not OSAdapter, because no window handle
+	// exists yet; it runs on the signal ctx so a SIGINT during boot cancels it
+	// like every other tmux call here). That returns whatever session the daemon
+	// was launched inside:
 	//   - operator's `hk tmux-start` session, or an ambient `harmonik` session →
 	//     use it verbatim; it provably exists right now so SpawnWindow can never
 	//     hit "session does not exist".
@@ -1282,7 +1296,7 @@ EXAMPLES
 	// reverted fe94e0b1). We keep the always-exists live session and only depart
 	// from it for the unusable system-session cases.
 	liveSession := ""
-	if out, dmErr := exec.Command("tmux", "display-message", "-p", "#{session_name}").Output(); dmErr != nil { //nolint:gosec // G204: arguments are hard-coded constants
+	if out, dmErr := exec.CommandContext(ctx, "tmux", "display-message", "-p", "#{session_name}").Output(); dmErr != nil {
 		// display-message failure is non-fatal: ResolveDaemonSpawnSession treats
 		// an empty live session as "force fallback to the ensured daemon session".
 		fmt.Fprintf(os.Stderr, "harmonik: tmux display-message failed (%v); falling back to deterministic daemon session\n", dmErr)
@@ -1342,30 +1356,30 @@ EXAMPLES
 
 	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
 	// the live worker registry into the Codex driver's runner (nil for tmux).
-	codexSubstrate, codexRegObserver, codexRequireBoundary := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag)
+	codexSubstrate, codexRegObserver, reviewerSubstrate := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag)
 
 	cfg := daemon.Config{
-		ProjectDir:                    projectDir,
-		BrPath:                        brPath,
-		KerfPath:                      kerfPath, // hk-9321v: kerf next for EM-062/EM-063 eager-refill
-		JSONLLogPath:                  jsonlLogPath,
-		MaxConcurrent:                 maxConcurrentFlag,
-		NoAutoPull:                    !autoPullFlag,                       // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
-		Substrate:                     codexSubstrate,                      // AIS-015 selection axis; default tmux
-		WorkerRegistryObserver:        codexRegObserver,                    // M4-C3: late-bind live registry into Codex runner
-		CodexRequireIsolationBoundary: codexRequireBoundary,                // hk-5h759: fail-closed — refuse codex crew w/o bound worker/container boundary
-		DaemonBinaryPath:              daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
-		BinaryCommitHash:              resolvedHash,                        // ldflags stamp or runtime/debug fallback (hk-mz0x4, hk-v3nv)
-		AgentReadyTimeout:             agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (150s)
-		RemoteAgentReadyTimeout:       remoteAgentReadyTimeoutFlag,         // hk-96d7w: remote-worker ready timeout; 0 = built-in default (210s)
-		SubscriptionTokenCeiling:      subscriptionTokenCeilingFlag,        // hk-ymav1: bandwidth auto-tuner
-		WorkflowModeDefault:           core.WorkflowMode(workflowModeFlag), // hk-30vlb: default to dot (embedded standard-bead.dot)
-		TargetBranch:                  targetBranchFlag,                    // hk-mkxw1: merge target branch
-		ProtectBranches:               []string(protectBranchesFlag),       // hk-mkxw1: branches protected from daemon merges
-		ForbidUnprotectedDefault:      forbidUnprotectedDefaultFlag,        // hk-mkxw1: guard against unprotected default branch
-		DefaultHarness:                core.AgentType(defaultHarnessFlag),  // hk-y01k6: tier-4 harness default
-		CodexBinary:                   codexBinaryFlag,                     // hk-y01k6: codex executable path
-		Workers:                       workersCfg,                          // hk-rs-b4-bootwire-b44z: remote-substrate worker registry
+		ProjectDir:               projectDir,
+		BrPath:                   brPath,
+		KerfPath:                 kerfPath, // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		JSONLLogPath:             jsonlLogPath,
+		MaxConcurrent:            maxConcurrentFlag,
+		NoAutoPull:               !autoPullFlag,  // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
+		Substrate:                codexSubstrate, // AIS-015 selection axis; default tmux
+		ReviewerSubstrate:        reviewerSubstrate,
+		WorkerRegistryObserver:   codexRegObserver,                    // M4-C3: late-bind live registry into Codex runner
+		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
+		BinaryCommitHash:         resolvedHash,                        // ldflags stamp or runtime/debug fallback (hk-mz0x4, hk-v3nv)
+		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (150s)
+		RemoteAgentReadyTimeout:  remoteAgentReadyTimeoutFlag,         // hk-96d7w: remote-worker ready timeout; 0 = built-in default (210s)
+		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag,        // hk-ymav1: bandwidth auto-tuner
+		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-30vlb: default to dot (embedded standard-bead.dot)
+		TargetBranch:             targetBranchFlag,                    // hk-mkxw1: merge target branch
+		ProtectBranches:          []string(protectBranchesFlag),       // hk-mkxw1: branches protected from daemon merges
+		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag,        // hk-mkxw1: guard against unprotected default branch
+		DefaultHarness:           core.AgentType(defaultHarnessFlag),  // hk-y01k6: tier-4 harness default
+		CodexBinary:              codexBinaryFlag,                     // hk-y01k6: codex executable path
+		Workers:                  workersCfg,                          // hk-rs-b4-bootwire-b44z: remote-substrate worker registry
 	}
 
 	// Yanked-binary check (specs/release-pipeline.md §7.2 point 4).

@@ -469,7 +469,6 @@ func TestRunWM003_WorkflowModeSetAtClaimTime(t *testing.T) {
 	}
 
 	for _, tc := range modes {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := runFixtureWMRun(t, tc.mode)
@@ -538,7 +537,6 @@ func TestRunWM003_WorkflowModeJSONRoundTrip(t *testing.T) {
 	}
 
 	for _, mode := range modes {
-		mode := mode
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 

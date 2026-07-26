@@ -34,6 +34,7 @@ func TestShellQuoteArg_RoundTripsThroughPOSIXShell(t *testing.T) {
 	// argv to printf, which prints each on its own line. If quoting were wrong
 	// (e.g. `#{pane_id}` truncating as a comment) the count/values would differ.
 	script := "printf '%s\\n' " + strings.Join(quoted, " ")
+	// #nosec G204 -- script is assembled from this test's controlled quoted arguments.
 	out, err := exec.CommandContext(context.Background(), "/bin/sh", "-c", script).Output()
 	if err != nil {
 		t.Fatalf("sh -c failed: %v", err)

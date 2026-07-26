@@ -44,6 +44,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,7 +52,9 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 // runContextFileName is the filename of the run-context JSON file written
@@ -60,7 +63,11 @@ const runContextFileName = "context.json"
 
 // runContextDirPrefix is the directory prefix under .harmonik/ for run-context files.
 // Full path: <worktree>/.harmonik/run-context/<run_id>/context.json
-const runContextDirPrefix = ".harmonik/run-context"
+//
+// Aliased to runmerge.RunContextDirPrefix so the CHB-023 writer and the
+// merge-time stripper (internal/runmerge/stripruncontext.go, moved there by P2
+// E5 RT13) can never drift apart.
+const runContextDirPrefix = runmerge.RunContextDirPrefix
 
 // runContextFile holds the persisted Run.context fields written to git.
 // Only fields updated at each checkpoint pass are included; other Run.context
@@ -130,8 +137,7 @@ func persistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID
 		}
 	}
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(contextDir, 0o755); err != nil {
+	if err := os.MkdirAll(contextDir, core.HarmonikDirMode); err != nil {
 		return persistClaudeSessionIDResult{}, fmt.Errorf(
 			"daemon: persistClaudeSessionID: mkdir %q: %w", contextDir, err)
 	}
@@ -176,7 +182,7 @@ func persistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID
 	}
 
 	// Resolve the new HEAD SHA to return as the checkpoint commit hash.
-	sha, shaErr := resolveWorktreeHEAD(ctx, wtPath)
+	sha, shaErr := gitprobe.ResolveWorktreeHEAD(ctx, wtPath)
 	if shaErr != nil {
 		return persistClaudeSessionIDResult{}, fmt.Errorf(
 			"daemon: persistClaudeSessionID: resolve HEAD after commit: %w", shaErr)
@@ -185,23 +191,9 @@ func persistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID
 	return persistClaudeSessionIDResult{CommitSHA: sha}, nil
 }
 
-// resolveWorktreeHEAD returns the current HEAD commit SHA in the worktree at wtPath.
-func resolveWorktreeHEAD(ctx context.Context, wtPath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
-	cmd.Dir = wtPath
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("daemon: resolveWorktreeHEAD: git rev-parse HEAD in %q: %w", wtPath, err)
-	}
-	sha := string(out)
-	for len(sha) > 0 && sha[len(sha)-1] == '\n' {
-		sha = sha[:len(sha)-1]
-	}
-	if sha == "" {
-		return "", fmt.Errorf("daemon: resolveWorktreeHEAD: git rev-parse HEAD returned empty in %q", wtPath)
-	}
-	return sha, nil
-}
+// ResolveWorktreeHEAD moved to internal/gitprobe in P2 unit E1a — the extracted
+// harness packages need it and must not import the daemon to get it. Bead: CHB-023
+// (origin).
 
 // emitClaudeSessionIDPersisted emits a transition_event to the bus after the
 // checkpoint commit lands (EM-025a ordering: commit first, then event).
@@ -326,7 +318,9 @@ func newSessionIDInterceptor(inner io.Reader, cb func(string)) *SessionIDInterce
 			"daemon: version negotiation: handler_capabilities absent within %s: %w",
 			capsAbsentTimeout, handlercontract.ErrProtocolMismatch)
 		if c, ok := s.inner.(io.Closer); ok {
-			_ = c.Close()
+			if closeErr := c.Close(); closeErr != nil {
+				slog.WarnContext(context.Background(), "daemon: version negotiation: close inner reader to unwedge Read", "err", closeErr)
+			}
 		}
 	})
 	return s

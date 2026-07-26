@@ -354,7 +354,7 @@ func constructBudget(pb PolicyBudget, schemaVersion int) (ControlPoint, error) {
 
 	st, err := parseScopeTarget(pb.ScopeTarget)
 	if err != nil {
-		return ControlPoint{}, fmt.Errorf("%w: budget %q: %v",
+		return ControlPoint{}, fmt.Errorf("%w: budget %q: %w",
 			ErrConstructControlPoint, pb.Name, err)
 	}
 

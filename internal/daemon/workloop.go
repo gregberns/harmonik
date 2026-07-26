@@ -56,20 +56,32 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
 	"github.com/gregberns/harmonik/internal/digest"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
+	"github.com/gregberns/harmonik/internal/harness/claude"
+	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/pi"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/orchestrator"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/runexec"
+	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/sessiondata"
 	"github.com/gregberns/harmonik/internal/substrate"
+	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
+	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -124,26 +136,23 @@ type windowCleaner interface {
 // Bead ref: hk-6pspu.
 const maxItemAttempts = queue.MaxItemAttempts
 
-// agentReadyKillReapTimeout bounds two operations in the HC-056
-// agent_ready_timeout path:
+// queuePreClaimAttemptKey identifies ONE queue item for the queue-path
+// pre-claim ShowBead attempt counter (hk-pina9).
 //
-//  1. Watcher-reap: maximum time to wait for watcher.Done() after Kill().
-//     Kill() itself sends SIGTERM then SIGKILL (3 s grace); this 10 s covers
-//     watcher teardown after SIGKILL lands. If the watcher does not exit, the
-//     bead is still reopened — the stuck goroutine eventually unblocks when ctx
-//     is cancelled.
+// Keyed on queueID (NOT queueName): a queue name slot is reusable — `queue
+// clear` + a fresh submit installs a NEW QueueID under the same name — so a
+// name-keyed counter would carry a dead queue's failures onto a fresh item.
+// itemIdx + beadID together pin the exact item: itemIdx alone is reused when a
+// bead is re-appended to a group, and beadID alone would conflate two entries
+// for the same bead in one stream group (the hk-wifef re-append case).
 //
-//  2. Session-reap (hk-4hso5): bounds sess.Wait in the ErrAgentReadyTimeout
-//     branch. For remote sessions where the pane stays alive after Kill,
-//     runWait polls WindowPanePID until ctx is cancelled (up to 30 min). This
-//     timeout caps that wait so ReopenBead is reached promptly regardless of
-//     pane liveness.
-//
-// Declared as var so tests can override without waiting real wall time.
-//
-// Spec ref: specs/handler-contract.md §4.9 HC-056.
-// Bead ref: hk-do7te, hk-4hso5.
-var agentReadyKillReapTimeout = 10 * time.Second
+// Bead ref: hk-pina9.
+type queuePreClaimAttemptKey struct {
+	queueID    string
+	groupIndex int
+	itemIdx    int
+	beadID     core.BeadID
+}
 
 // periodicCoordinatorReapInterval is the default minimum interval between
 // successive periodic coordinator-session reap passes in the work loop
@@ -170,13 +179,6 @@ const diskLowWatermarkDefault uint64 = 10 * 1024 * 1024 * 1024 // 10 GiB
 // to catch rapid accumulation (go build cache) without adding syscall overhead
 // on every 2-second poll tick.
 const diskCheckInterval = 10 * time.Minute
-
-// goCacheCleanInterval is the default minimum interval between proactive
-// `go clean -cache` runs in the work loop (hk-sxlb). 60 minutes prevents the
-// build cache from accumulating to 20 GiB between disk-low crossings. The
-// reactive path (triggered when disk < watermark) runs independently of this
-// timer and may fire sooner.
-const goCacheCleanInterval = 60 * time.Minute
 
 // workLoopDeps bundles the injectable dependencies of the work loop.  All
 // fields are required (non-nil).  Use newWorkLoopDeps to construct the
@@ -244,7 +246,7 @@ type workLoopDeps struct {
 
 	// daemonBinaryPath is the absolute path to the running harmonik binary,
 	// resolved via os.Executable() at daemon startup (hk-kqdpf.6). Threaded
-	// into claudeRunCtx so MaterializeClaudeSettings emits absolute-path hook
+	// into shared.LaunchCtx so MaterializeClaudeSettings emits absolute-path hook
 	// commands instead of bare "harmonik". When empty, falls back to "harmonik".
 	daemonBinaryPath string
 
@@ -343,7 +345,7 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.21.
 	hookStore hookStoreIface
 
-	// launchSpecBuilder builds the handler.LaunchSpec and claudeRunArtifacts for
+	// launchSpecBuilder builds the handler.LaunchSpec and shared.LaunchArtifacts for
 	// a given bead run. Production always uses buildClaudeLaunchSpec. Test fixtures
 	// that do not need real bridge setup (e.g. MaterializeClaudeSettings fsyncs)
 	// may inject a lightweight stub via ExportedWorkLoopDeps.
@@ -351,7 +353,7 @@ type workLoopDeps struct {
 	// When nil, buildClaudeLaunchSpec is used (production default).
 	//
 	// Bead ref: hk-kqdpf.1.
-	launchSpecBuilder func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)
+	launchSpecBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
 
 	// worktreeFactory creates a worktree directory for a bead run and returns its
 	// absolute path. Production always uses workspace.CreateWorktree and then
@@ -404,7 +406,7 @@ type workLoopDeps struct {
 	// worktreeCreateMu governs worktree creation only, so the two operations can
 	// proceed independently (a merge does not block a create, and vice versa —
 	// unlike the current implicit serialisation under mergeMu which also serialises
-	// fetchBaseOnWorker with the create for hk-lt091 correctness; that invariant is
+	// the codesync fetch-base with the create for hk-lt091 correctness; that invariant is
 	// preserved because both fetch and create remain inside mergeMu).
 	//
 	// Production: newWorkLoopDeps always sets this to a non-nil &sync.Mutex{}.
@@ -493,6 +495,10 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.14.
 	substrate handler.Substrate
 
+	// reviewerSubstrate is the claude reviewer/gate substrate from
+	// cfg.ReviewerSubstrate; nil falls back to substrate.
+	reviewerSubstrate handler.Substrate
+
 	// clock is the determinism port through which the RUN path reads time
 	// (RSM-013 / M3-D4). Production wires substrate.SystemClock{}; tests inject
 	// substrate.FakeClock so agent-ready / reap timeouts replay in virtual time
@@ -508,7 +514,7 @@ type workLoopDeps struct {
 	spawnSubstrateReadyCh <-chan struct{}
 
 	// agentReadyTimeout is the maximum duration waitAgentReady blocks waiting
-	// for an agent_ready event per HC-056.  Zero → defaultAgentReadyTimeout (30s).
+	// for an agent_ready event per HC-056.  Zero → runlaunch.DefaultAgentReadyTimeout (30s).
 	// Sourced from Config.AgentReadyTimeout (also zero-value safe).
 	//
 	// Spec ref: specs/handler-contract.md §4.9 HC-056.
@@ -516,9 +522,9 @@ type workLoopDeps struct {
 	agentReadyTimeout time.Duration
 
 	// remoteAgentReadyTimeout is agentReadyTimeout's counterpart for a dispatch
-	// routed to a REMOTE (SSH worker) node. Zero → defaultRemoteAgentReadyTimeout
+	// routed to a REMOTE (SSH worker) node. Zero → runlaunch.DefaultRemoteAgentReadyTimeout
 	// (210s). Sourced from Config.RemoteAgentReadyTimeout (zero-value safe).
-	// Resolved via effectiveAgentReadyTimeout at each waitAgentReady call site
+	// Resolved via runlaunch.EffectiveAgentReadyTimeout at each waitAgentReady call site
 	// that has a remote/local signal in scope.
 	//
 	// Spec ref: specs/handler-contract.md §4.9 HC-056.
@@ -539,7 +545,7 @@ type workLoopDeps struct {
 	//
 	// Spec ref: specs/execution-model.md §4.3 EM-012b.
 	// Bead ref: hk-bfvk7.
-	projectCfg ProjectConfig
+	projectCfg projectconfig.ProjectConfig
 
 	// defaultHarness is the tier-4 (global) default for the harness-selection
 	// precedence walk (resolveHarness in harnessresolve.go). Sourced from
@@ -559,7 +565,7 @@ type workLoopDeps struct {
 	// Spec ref: specs/execution-model.md §7.4 (TS-1 dispatch loop); §4.3.EM-015f
 	// (group-advance gate).
 	// Bead ref: hk-45ude.
-	queueStore *QueueStore
+	queueStore *queuewiring.QueueStore
 
 	// submitWakeC, when non-nil, is the channel returned by queueStore.WakeCh().
 	// The workloop's idle sleeps select on this channel so that a queue-submit
@@ -577,7 +583,7 @@ type workLoopDeps struct {
 	// re-evaluate deferred-for-ledger-dep items on every tick (queue-model.md
 	// §2.8: "when the blocking bead closes, the dispatcher MUST re-evaluate and
 	// transition the item back to pending"). Production wires
-	// newBRQueueLedger(brAdapter); tests inject a fake. When nil the re-evaluation
+	// queuewiring.NewBRQueueLedger(brAdapter); tests inject a fake. When nil the re-evaluation
 	// pass is skipped (queue.ReevaluateDeferred no-ops on a nil ledger), preserving
 	// legacy behaviour for callers that do not exercise ledger-dep deferral.
 	//
@@ -746,14 +752,6 @@ type workLoopDeps struct {
 	// Bead ref: hk-rs-b8-codesync-3fk0.
 	workerRegistry *workers.Registry
 
-	// codexRequireIsolationBoundary mirrors Config.CodexRequireIsolationBoundary
-	// (hk-5h759): true iff this daemon dispatches codex app-server crews, whose
-	// permissive sandbox posture is safe ONLY inside a bound worker/container
-	// boundary. When true, beadRunOne fails closed unless workerRegistry's
-	// WorkerSnapshot() yields an enabled ssh worker (the runner's own routing
-	// predicate) rather than launching codex unsandboxed on the daemon host.
-	codexRequireIsolationBoundary bool
-
 	// runner is the CommandRunner threaded into the DOT run path for remote-aware
 	// marker-file reads (hk-hd2w6). nil for local runs (NFR7: byte-identical
 	// box-A path). Set from Config.Runner at startup so the contract test can
@@ -830,9 +828,9 @@ type workLoopDeps struct {
 	coordinatorReapInterval time.Duration
 
 	// NOTE (RSM-011): the periodic-maintenance VALUE fields formerly here —
-	// lastCoordinatorReap, lastDiskCheck, lastGoCacheClean, diskLow — were lifted
-	// out onto runWorkLoop-local loopMaintenanceState. workLoopDeps is passed BY
-	// VALUE into every run goroutine, so a mutation of these fields from a run
+	// lastCoordinatorReap, lastDiskCheck, diskLow — were lifted out onto
+	// runWorkLoop-local loopMaintenanceState. workLoopDeps is passed BY VALUE
+	// into every run goroutine, so a mutation of these fields from a run
 	// goroutine would be a silent no-op (PF §3 hazard). Keeping them off the
 	// bundle makes the ownership (the single work-loop goroutine) structural.
 
@@ -848,11 +846,14 @@ type workLoopDeps struct {
 	// Bead ref: hk-sxlb.
 	diskCheckIntervalOverride time.Duration
 
-	// goCacheCleanIntervalOverride overrides goCacheCleanInterval for tests.
-	// Zero → goCacheCleanInterval (60 min).
+	// codexNoWorkDurationFloor overrides codexNoWorkDurationFloorDefault (10s),
+	// the implement-phase duration below which a codexRefsNoChange outcome is
+	// flagged as a no-work run.  Zero → the default.  Production leaves this
+	// zero; the measured no-work/real-work gap is ~5x wide, so the value is not
+	// delicate.
 	//
-	// Bead ref: hk-sxlb.
-	goCacheCleanIntervalOverride time.Duration
+	// Bead ref: hk-368i4.
+	codexNoWorkDurationFloor time.Duration
 
 	// diskFreeBytesFunc, when non-nil, replaces the diskFreeBytes call inside
 	// runPeriodicDiskCheck.  Tests use this to control the apparent free-space
@@ -926,7 +927,7 @@ type workLoopDeps struct {
 	// for every harness listed in Harnesses. Zero value = no sandboxing.
 	//
 	// Bead ref: hk-6596l.
-	sandboxCfg SandboxConfig
+	sandboxCfg projectconfig.SandboxConfig
 }
 
 // loopMaintenanceState holds the periodic-maintenance value fields owned solely
@@ -942,11 +943,6 @@ type loopMaintenanceState struct {
 	// lastDiskCheck records when the periodic disk free-space probe last ran.
 	// Zero → the first tick fires after diskCheckInterval elapses (hk-sxlb).
 	lastDiskCheck time.Time
-
-	// lastGoCacheClean records when `go clean -cache` was last run proactively
-	// (independently of a disk-low crossing). Zero → first proactive clean fires
-	// after goCacheCleanInterval (hk-sxlb).
-	lastGoCacheClean time.Time
 
 	// diskLow is true when the most recent disk probe found available space below
 	// diskLowWatermarkDefault (or deps.diskLowWatermark). The dispatch loop skips
@@ -985,41 +981,15 @@ func (deps *workLoopDeps) closeBeadWithHistoryTrim(
 	return deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, tid, beadID, needsAttention)
 }
 
-// beadLedger is the subset of brcli.Adapter used by the work loop.  It is
-// extracted as an interface so that workloop_test.go can substitute a stub.
-//
-// # Bead body access — architectural note (hk-33tcf / T6 finding F-T6-004)
-//
-// The work loop intentionally does NOT read the bead body (description field)
-// from Beads-SQLite before or after claiming.  The bead body is the agent's
-// work brief, not the daemon's.  The daemon's responsibility is lifecycle
-// management (Ready → claim → dispatch → close/reopen); interpretation of the
-// brief is the handler subprocess's responsibility.
-//
-// Consequence — handler contract: the handler subprocess is responsible for
-// calling `br show <beadID> --format json` to obtain the work spec.  For MVH,
-// the bead ID is supplied to the handler via the implementer-protocol brief
-// in the SCOPE line (i.e., as content of the prompt passed by the operator to
-// claude).  Programmatic injection of the bead ID (e.g. a HARMONIK_BEAD_ID
-// env var) is a post-MVH hardening task; no bead exists for that yet.
-//
-// # ShowBead — pre-claim status guard (hk-p4xbw)
-//
-// ShowBead is called between Ready and ClaimBead to confirm the bead is still
-// "open" before dispatching.  This is the harmonik-side guard against double-
-// dispatch when two concurrent work loops both observe the same bead in the
-// Ready list.  The guard has a TOCTOU window (another loop could claim between
-// Show and Claim), but this is acceptable at MaxConcurrent>1 because the claim
-// semaphore (hk-e61c3.3) serialises claims on this daemon to N at a time.
-// Cross-daemon double-dispatch (post-MVH multi-daemon) is addressed by the
-// deferred upstream br patch (option 2, out of scope for this bead).
-type beadLedger interface {
-	Ready(ctx context.Context) ([]core.BeadRecord, error)
-	ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error)
-	ClaimBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID) error
-	CloseBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, needsAttention bool) error
-	ReopenBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, reason string) error
-}
+// beadLedger is the work loop's Beads-ledger interface (the subset of
+// brcli.Adapter it uses, extracted so tests can substitute a stub). The
+// interface itself moved to internal/runloop (LIFT L0) because SharedHandles —
+// which carries it — now lives there; this alias keeps the daemon's uses (the
+// workLoopDeps.brAdapter field, resolveOwningEpicFromRecord, ~25 test stubs)
+// spelled with the local name. The architectural note (bead-body access, the
+// pre-claim ShowBead guard hk-p4xbw / hk-33tcf) lives with the definition in
+// internal/runloop/ports.go.
+type beadLedger = runloop.BeadLedger
 
 // strandedInProgressResetter is the subset of brcli.Adapter used to auto-reset
 // an in_progress bead that has no active run (hk-l2xd1). Separated from
@@ -1119,7 +1089,15 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 	// Build the remote-worker registry from cfg.Workers and run the boot-time
 	// health check (remote-substrate B4/B6). Returns nil when no worker is
 	// enabled so the dispatch path takes the existing local-only branch (NFR7).
-	workerReg := buildWorkerRegistry(ctx, cfg.Workers, bus)
+	// The nil guard is load-bearing: bus is a handlercontract.EventEmitter
+	// INTERFACE, so `bus.Emit` on a nil bus is a method value on a nil interface
+	// and panics at the call site. Building the workers.EmitFunc here keeps the
+	// pre-E4c behaviour — a nil bus degrades to no-emit, it does not crash boot.
+	var workerEmit workers.EmitFunc
+	if bus != nil {
+		workerEmit = bus.Emit
+	}
+	workerReg := workers.BuildRegistry(ctx, cfg.Workers, workerEmit)
 
 	// M4-C3: hand the SAME live registry to the composition root's Codex
 	// runner-selection seam so a worker-selected codexdriver run routes over
@@ -1156,23 +1134,24 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		hookStore:                  store,
 		cpRegistry:                 cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
 		adapterRegistry:            registry,
-		harnessRegistry:            harnessReg,              // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
-		substrate:                  cfg.Substrate,           // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		harnessRegistry:            harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
+		substrate:                  cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		reviewerSubstrate:          cfg.ReviewerSubstrate,
 		clock:                      substrate.SystemClock{}, // RSM-013 / M3-D4: run-path determinism port (SystemClock in prod, FakeClock in tests)
 		agentReadyTimeout:          cfg.AgentReadyTimeout,
 		remoteAgentReadyTimeout:    cfg.RemoteAgentReadyTimeout, // hk-96d7w: remote-worker agent_ready wait window
 		cancelOnQueueDrain:         cfg.CancelOnQueueDrain,
 		projectCfg:                 cfg.ProjectCfg,
-		defaultHarness:             cfg.DefaultHarness,        // hk-ytzj2: tier-4 global harness default wired from Config
-		queueStore:                 nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		queueLedger:                newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
-		staleBlockerCloser:         adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
-		strandedInProgressResetter: adapter,                   // hk-l2xd1: auto-reset in_progress bead with no run
-		strandedResetProjectHash:   projectHash,               // hk-l2xd1: idempotency key component
-		strandedResetDaemonNS:      time.Now().UnixNano(),     // hk-l2xd1: daemon-session epoch for idempotency key scoping
-		kerfPath:                   cfg.KerfPath,              // hk-9321v: kerf next for EM-062/EM-063 eager-refill
-		brPath:                     cfg.BrPath,                // hk-f722: staged-bead generator br create
-		followUpLedger:             make(map[string]struct{}), // hk-f722: at-most-once guard per daemon session
+		defaultHarness:             cfg.DefaultHarness,                    // hk-ytzj2: tier-4 global harness default wired from Config
+		queueStore:                 nil,                                   // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueLedger:                queuewiring.NewBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
+		staleBlockerCloser:         adapter,                               // hk-rnsjs: auto-close stale blockers on claim failure
+		strandedInProgressResetter: adapter,                               // hk-l2xd1: auto-reset in_progress bead with no run
+		strandedResetProjectHash:   projectHash,                           // hk-l2xd1: idempotency key component
+		strandedResetDaemonNS:      time.Now().UnixNano(),                 // hk-l2xd1: daemon-session epoch for idempotency key scoping
+		kerfPath:                   cfg.KerfPath,                          // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		brPath:                     cfg.BrPath,                            // hk-f722: staged-bead generator br create
+		followUpLedger:             make(map[string]struct{}),             // hk-f722: at-most-once guard per daemon session
 		followUpLedgerMu:           &sync.Mutex{},
 		followUpLedgerPath:         filepath.Join(cfg.ProjectDir, ".harmonik", followUpLedgerFileName), // hk-3ndb: durable ledger path
 		noAutoPull:                 cfg.NoAutoPull,                                                     // hk-exd7m: queue-only mode for flywheel topology
@@ -1181,139 +1160,20 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		// creates AND owns the production queue (starts its owner, cancels on
 		// return after the drain). A test may inject a pre-started queue via
 		// WithMergeQueue, which runWorkLoop then leaves untouched (hk-yyso7).
-		worktreeCreateMu:              &sync.Mutex{},                  // hk-5qp7z: global worktree-create serialisation for remote runs
-		agentSpawnSem:                 make(chan struct{}, 3),         // hk-5z1f0: per-worker cold-start spawn semaphore (cap 3, remote-only)
-		cacheReapMu:                   &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
-		emittedEpics:                  make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
-		emittedEpicsMu:                &sync.Mutex{},
-		targetBranch:                  bootconfig.ResolveTargetBranch(cfg.TargetBranch),
-		protectBranches:               cfg.ProtectBranches,
-		allowedRepos:                  cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
-		workerRegistry:                workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
-		codexRequireIsolationBoundary: cfg.CodexRequireIsolationBoundary,  // hk-5h759: fail-closed codex-crew isolation guard
-		coordinatorReapAdapter:        coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
-		coordinatorReapProjectHash:    projectHash,                        // hk-t08m: pre-computed for session name derivation
-		runner:                        cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
-		sandboxCfg:                    cfg.ProjectCfg.Sandbox,             // hk-6596l: srt sandbox config block
+		worktreeCreateMu:           &sync.Mutex{},                  // hk-5qp7z: global worktree-create serialisation for remote runs
+		agentSpawnSem:              make(chan struct{}, 3),         // hk-5z1f0: per-worker cold-start spawn semaphore (cap 3, remote-only)
+		cacheReapMu:                &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
+		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
+		emittedEpicsMu:             &sync.Mutex{},
+		targetBranch:               bootconfig.ResolveTargetBranch(cfg.TargetBranch),
+		protectBranches:            cfg.ProtectBranches,
+		allowedRepos:               cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
+		workerRegistry:             workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
+		coordinatorReapAdapter:     coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
+		coordinatorReapProjectHash: projectHash,                        // hk-t08m: pre-computed for session name derivation
+		runner:                     cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
+		sandboxCfg:                 cfg.ProjectCfg.Sandbox,             // hk-6596l: srt sandbox config block
 	}, nil
-}
-
-// clockAfter is the ClockPort-backed analogue of time.After for use in a select:
-// it returns a channel that receives once, after d has elapsed on clk. Like
-// time.After (and UNLIKE a ctx-bound sleep) the deadline fires UNCONDITIONALLY —
-// the reap/fallback guards that use it must bound the wait even after the run
-// ctx is cancelled, so the internal Sleep is anchored to context.Background().
-// Under substrate.FakeClock the wake is driven by Advance, making run-path
-// timeouts (agent-ready reap, resume-ready fallback) deterministic in tests
-// (RSM-013 / M3-D4). The goroutine outlives the caller by at most d, matching
-// time.After's un-cancellable timer. Buffered cap 1 so the send never blocks
-// when the select picked another case first.
-func clockAfter(clk substrate.ClockPort, d time.Duration) <-chan time.Time {
-	ch := make(chan time.Time, 1)
-	go func() {
-		if clk.Sleep(context.Background(), d) {
-			ch <- clk.Now()
-		}
-	}()
-	return ch
-}
-
-// buildWorkerRegistry turns the loaded workers.Config into a live *workers.Registry
-// and runs the boot-time health check (remote-substrate B4/B6).
-//
-// It returns nil — keeping the dispatch path on the existing local-only branch
-// (NFR7) — ONLY when NO worker is CONFIGURED (empty workers.yaml). When at least
-// one worker is configured it ALWAYS builds the registry, even if every worker
-// booted with enabled:false, so a later live `harmonik worker enable <name>`
-// (hk-xjbvi) can flip the worker selectable WITHOUT a daemon restart. A
-// disabled-at-boot worker is still local-only at dispatch time: SelectWorker
-// returns nil while Enabled==false, so dispatch behaviour is byte-identical to
-// the old nil-for-disabled case until an operator enables it. When a worker is
-// configured it:
-//
-//  1. Constructs the registry via workers.NewRegistry (B5 selection + slot
-//     tracking).
-//  2. Runs workers.RunHealthCheck over the worker's transport runner (B6),
-//     which probes tmux/claude/git/no-API-key, disables (SetEnabled(false)) any
-//     worker that fails a probe, and emits a worker_unhealthy event via bus.Emit.
-//     A worker that fails the boot health check is therefore SelectWorker()-skipped
-//     so its beads run locally rather than against an unhealthy host. The runner
-//     is nil for an all-disabled config (bootHealthRunner skips disabled workers),
-//     so an all-disabled config builds the registry but runs no probes.
-//
-// The runner for the health check is tmux.SSHRunner{Host: worker.Host} for
-// transport "ssh" (the only supported transport); other transports run no probes
-// and the worker stays enabled as configured.
-//
-// Bead ref: hk-rs-b4-bootwire-b44z, hk-rs-b6-healthcheck-isda.
-func buildWorkerRegistry(ctx context.Context, cfg workers.Config, bus handlercontract.EventEmitter) *workers.Registry {
-	return buildWorkerRegistryWithRunner(ctx, cfg, bus, bootHealthRunner(cfg))
-}
-
-// buildWorkerRegistryWithRunner is the runner-injectable core of
-// buildWorkerRegistry. Production passes the transport-resolved runner from
-// bootHealthRunner; tests pass a recording/no-op runner so the boot path is
-// exercisable without real ssh.
-//
-// runner == nil ⇒ the B6 boot health check is skipped (the worker stays enabled
-// as configured); this is also the unsupported-transport AND all-disabled
-// behaviour (the registry is built but no probes run).
-func buildWorkerRegistryWithRunner(ctx context.Context, cfg workers.Config, bus handlercontract.EventEmitter, runner tmuxpkg.CommandRunner) *workers.Registry {
-	// Build the registry whenever a worker is CONFIGURED — not only when one is
-	// ENABLED — so a live `worker enable` (hk-xjbvi) has a registry to flip without
-	// a restart. An all-disabled config still dispatches local-only because
-	// SelectWorker returns nil while Enabled==false (verified identical to the old
-	// nil-registry path). Zero configured workers stays nil (NFR7 local-only).
-	if len(cfg.Workers) == 0 {
-		return nil
-	}
-
-	// hk-qmyis: make "workers.yaml has entries but none enabled" visible at
-	// startup — previously this looked identical to "no workers.yaml at all"
-	// because both paths were silent. The registry is rebuilt at process start
-	// only, so editing workers.yaml under a running daemon is a no-op until the
-	// next restart; the warning below says so explicitly.
-	enabledCount := 0
-	for _, w := range cfg.Workers {
-		if w.Enabled {
-			enabledCount++
-		}
-	}
-	slog.Info("worker_registry_init", "workers_loaded", len(cfg.Workers), "workers_enabled", enabledCount)
-	if enabledCount == 0 {
-		slog.Warn("remote routing DISABLED (0 enabled workers); restart the daemon after editing workers.yaml to pick up changes")
-	}
-
-	reg := workers.NewRegistry(cfg)
-
-	// B6 boot health check: probe each enabled worker over its transport runner.
-	// On a probe failure the worker is disabled in-registry and a worker_unhealthy
-	// event is emitted, so SelectWorker() skips it and the run falls back to local.
-	if runner != nil {
-		var emit workers.EmitFunc
-		if bus != nil {
-			emit = bus.Emit
-		}
-		_ = workers.RunHealthCheck(ctx, runner, cfg, reg, emit)
-	}
-	return reg
-}
-
-// bootHealthRunner resolves the CommandRunner used for the boot health-check
-// probes against the (single, v1) enabled worker. Returns an SSHRunner for
-// transport "ssh"; nil for any other transport (probes skipped, worker stays
-// enabled as configured).
-func bootHealthRunner(cfg workers.Config) tmuxpkg.CommandRunner {
-	for _, w := range cfg.Workers {
-		if !w.Enabled {
-			continue
-		}
-		if w.Transport == "ssh" {
-			return tmuxpkg.SSHRunner{Host: w.Host}
-		}
-		return nil
-	}
-	return nil
 }
 
 // runWorkLoop is the main dispatch goroutine. It blocks until ctx is cancelled
@@ -1427,7 +1287,7 @@ func effectiveQueueWorkers(q *queue.Queue, globalCap int) int {
 // stale dashboard.json. A gated queue contributes nothing to dispatch this
 // tick but — like a paused-by-failure queue — MUST NOT block sibling queues.
 // nil disables the gate (pre-hk-xg6rw behaviour).
-func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) (queueSelection, bool) {
+func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) (queueSelection, bool) {
 	// M5 slice 3A: the pure NQ-B1 decision moved to internal/orchestrator. This
 	// shell projects the live QueueStore/RunRegistry into a narrow FleetSnapshot
 	// under the (already-held) write lock, calls the pure selector, and maps the
@@ -1460,7 +1320,7 @@ func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor
 // QueueStore write lock (mirrors drainSnapshot in draindetect.go). WorkerCap is
 // precomputed here via effectiveQueueWorkers so orchestrator never imports
 // internal/queue; enum-typed status/kind fields are projected as booleans.
-func snapshotFleet(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) orchestrator.FleetSnapshot {
+func snapshotFleet(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) orchestrator.FleetSnapshot {
 	names := lq.LockedAllQueueNames()
 	queues := make([]orchestrator.QueueSnapshot, 0, len(names))
 	for _, name := range names {
@@ -1488,8 +1348,6 @@ func snapshotFleet(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor i
 // the dispatch stamp lands on the right item (addendum fix #1). The absolute
 // index is resolved exactly as the legacy selectNextQueue did: the first
 // Items entry matching the eligible item's BeadID with ItemStatusPending.
-//
-//nolint:gocognit // slated for giant-retirement refactor (TRACK 3); do not split here
 func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 	for gi := range q.Groups {
 		if q.Groups[gi].Status != queue.GroupStatusActive {
@@ -1627,6 +1485,22 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	//
 	// Bead ref: hk-kupeo (ShowBead bounded retry), hk-6pspu (dispatch bound).
 	readyPathAttempts := make(map[core.BeadID]int)
+
+	// queuePreClaimShowAttempts tracks consecutive pre-claim ShowBead failures
+	// per QUEUE ITEM on the queue path. Bounded by maxItemAttempts; the entry is
+	// deleted as soon as ShowBead succeeds (so a transient error episode never
+	// accumulates) and when the item is failed at the bound.
+	//
+	// Deliberately NOT the item's persisted Attempts field, which the hk-6pspu
+	// dispatch-stamp bound owns. Sharing that budget would mean two transient
+	// ShowBead blips leave the item with only one real dispatch attempt left —
+	// a bead that recovers would be failed at the stamp without ever running.
+	// The two failure modes get independent budgets. In-memory (like
+	// readyPathAttempts) so a daemon restart forgives a transient outage rather
+	// than resuming a half-spent budget.
+	//
+	// Bead ref: hk-pina9.
+	queuePreClaimShowAttempts := make(map[queuePreClaimAttemptKey]int)
 
 	// sentinelPendingAckToken is the ack_token of the in-flight sentinel trip
 	// (ACT mode, FW3 hk-4toh). Empty when no trip is pending. Persists across
@@ -1786,21 +1660,20 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			}
 		}
 
-		// Step 1d: periodic disk watermark check and proactive go-cache reap
-		// (hk-sxlb, hk-guez). Two rate-limited sub-steps run from the same block:
+		// Step 1d: periodic disk watermark check and reactive go-cache reap
+		// (hk-sxlb, hk-guez). Reactive only — every diskCheckInterval (default
+		// 10 min). When the probe finds available space below the watermark,
+		// deps.diskLow is set true, a disk_low event is emitted, and
+		// `go clean -cache` is run immediately (reactive reap) — but ONLY when
+		// no merge-build is in flight (runRegistry.Len()==0). If a merge is in
+		// flight the reap is skipped and a loud warning is logged instead
+		// (hk-guez fix). The loop then skips dispatch this iteration (see the
+		// gate below).
 		//
-		// (A) Disk probe — every diskCheckInterval (default 10 min). When the
-		//     probe finds available space below the watermark, deps.diskLow is set
-		//     true, a disk_low event is emitted, and `go clean -cache` is run
-		//     immediately (reactive reap) — but ONLY when no merge-build is in
-		//     flight (runRegistry.Len()==0). If a merge is in flight the reap is
-		//     skipped and a loud warning is logged instead (hk-guez fix).
-		//     The loop then skips dispatch this iteration (see the gate below).
-		//
-		// (B) Proactive go-cache reap — every goCacheCleanInterval (default
-		//     60 min) even when disk is healthy, preventing the cache from
-		//     growing to 20 GiB between low-disk crossings. Also gated on idle
-		//     (runRegistry.Len()==0) to avoid racing merge-builds (hk-guez).
+		// A second sub-step used to live here — a cadence-based reap that ran
+		// `go clean -cache` even when disk was healthy. It was REMOVED and must
+		// not be restored (hk-gjbpp); full rationale in the file-level comment
+		// on diskcheck_hksxlb.go.
 		runPeriodicDiskCheck(ctx, &deps, &maint)
 		if maint.diskLow {
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
@@ -2384,17 +2257,53 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// anything changed between the pre-claim read and the claim write.
 				var preClaimRecord core.BeadRecord
 				{
+					// hk-pina9: bound the pre-claim ShowBead retry on the QUEUE path.
+					// Without a bound this item stays pending at the head of its group
+					// and is re-selected every tick forever, so one bead whose `br show`
+					// persistently errors wedges the whole queue.
+					//
+					// Mirrors the br-ready bound (hk-kupeo/hk-6pspu, readyPathAttempts)
+					// with ONE deliberate difference: the ready path merely SKIPS the
+					// bead, because a ready bead has no queue state and the next poll
+					// simply looks past it. A queue item does have state, and skipping
+					// it would leave it pending at the head of its group — the wedge we
+					// are fixing. So the queue path drives the item to a TERMINAL status
+					// (failed) via evaluateGroupAdvanceWithOutcome, which is what lets
+					// the group reach allItemsTerminal and advance. `queue resume` resets
+					// failed items to pending with Attempts=0, so this is recoverable.
+					preClaimKey := queuePreClaimAttemptKey{
+						queueID:    snapQueueID,
+						groupIndex: snapGroupIndex,
+						itemIdx:    snapItemIdx,
+						beadID:     snapItemBeadID,
+					}
 					rec, preClaimErr := deps.brAdapter.ShowBead(ctx, snapItemBeadID)
 					if preClaimErr != nil {
 						if dispatchCtx.Err() != nil {
 							return exitClean()
 						}
-						fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim (queue-path) %s error (will retry): %v\n", snapItemBeadID, preClaimErr)
+						queuePreClaimShowAttempts[preClaimKey]++
+						preClaimAttempts := queuePreClaimShowAttempts[preClaimKey]
+						if preClaimAttempts >= maxItemAttempts {
+							delete(queuePreClaimShowAttempts, preClaimKey)
+							fmt.Fprintf(os.Stderr,
+								"daemon: workloop: ShowBead pre-claim (queue-path) %s failed %d times — failing queue item so the group can advance (hk-pina9): %v\n",
+								snapItemBeadID, preClaimAttempts, preClaimErr)
+							markQueueItemFailureReason(ctx, deps, snapQueueName, snapGroupIndex, snapItemIdx, snapItemBeadID, "show_bead_failed")
+							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+							continue
+						}
+						fmt.Fprintf(os.Stderr,
+							"daemon: workloop: ShowBead pre-claim (queue-path) %s error (attempt %d/%d, will retry): %v\n",
+							snapItemBeadID, preClaimAttempts, maxItemAttempts, preClaimErr)
 						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
 					}
+					// Success clears the counter: only a CONSECUTIVE run of failures
+					// consumes the budget, so a transient blip never poisons the item.
+					delete(queuePreClaimShowAttempts, preClaimKey)
 					preClaimRecord = rec
 					if preClaimRecord.Status != core.CoarseStatusOpen && preClaimRecord.Status != core.CoarseStatusBlocked {
 						// BI-013c: non-open status observed — skip claim, emit bead_claim_skipped.
@@ -3113,7 +3022,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			defer deps.runRegistry.Unregister(runID)
 			// The run outcome is the Run machine's terminal state, returned by
 			// beadRunOne (RSM-022) and read here for EM-015f group-advance.
-			runOK := beadRunOne(runCtx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, extraCtx, itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget, preSelected, localSlotHeld)
+			// RSM-010: build the per-run value bundle from THIS goroutine's
+			// explicitly-captured parameters, not the loop variables, so the
+			// capture guard the parameter list exists for still holds.
+			env := deps.runEnv(runID, beadRecord, qname, qid, qgidx, itemIdx,
+				itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget)
+			rp, handles := deps.buildRunBundles(env)
+			runOK := beadRunOne(runCtx, env, rp, handles, extraCtx, preSelected, localSlotHeld)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				// hk-ly0hg Fix-1: if the daemon context was cancelled (shutdown),
@@ -3136,6 +3051,42 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	}
 }
 
+// buildRunBundles assembles the per-run RunPorts + SharedHandles for a bead run
+// and resolves the routed launch builder ONCE, threading it onto RunPorts so
+// every sub-driver reaches it via ports.LaunchBuilder / ports.Launch. It is the
+// caller-side relocation of the resolver that used to live inside beadRunOne
+// (RT18.11): performing it here — where deps is still live — is what lets
+// beadRunOne take the bundles as parameters instead of deps.
+//
+// The routing selection is load-bearing. A test fixture may pre-inject
+// deps.launchSpecBuilder; that carve-out is preserved byte-for-byte. Production
+// (nil) resolves from the harness registry + the bead's tier-1 labels, so a
+// codex/pi-labelled bead routes to its harness rather than silently falling to
+// the claude builder.
+func (deps *workLoopDeps) buildRunBundles(env runloop.RunEnv) (runloop.RunPorts, runloop.SharedHandles) {
+	rp := deps.runPorts()
+	handles := deps.sharedHandles()
+	builder := deps.launchSpecBuilder
+	if builder == nil {
+		if handles.HarnessRegistry != nil {
+			builder = routedLaunchSpecBuilder(
+				handles.HarnessRegistry,
+				env.BeadRecord,
+				core.AgentType(""), // queue default: per-queue harness field not yet landed (hk-4x3rg)
+				core.AgentType(""), // node default: overridden per-node in driveDotWorkflow (T5/T12)
+				env.DefaultHarness, // global default: Config.DefaultHarness (empty → built-in claude-code)
+				rp.Emitter,
+			)
+		} else {
+			// No registry (legacy test fixtures): fall back to direct claude builder.
+			builder = claude.BuildLaunchSpec
+		}
+	}
+	rp.Launch = launchPort(builder)
+	rp.LaunchBuilder = builder
+	return rp, handles
+}
+
 // beadRunOne executes a single claimed bead end-to-end: worktree creation,
 // mode dispatch, close/reopen, worktree removal. It is called from within a
 // goroutine spawned by the outer poll loop of runWorkLoop.
@@ -3145,7 +3096,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // (UUID generation, worktree setup) are surfaced to stderr and cause the bead
 // to be reopened rather than aborting the daemon.
 //
-// queueID and queueGroupIndex are optional: when non-nil they are stamped into
+// env carries the immutable per-run values (RSM-010): the daemon-level config
+// plus the dispatched item's identity and per-item overrides. env.QueueID and
+// env.QueueGroupIndex are optional: when non-nil they are stamped into
 // run_started / run_completed / run_failed payloads per EM-015a/EM-015b and
 // QM-011/QM-012. They are nil for non-queue-dispatched runs.
 //
@@ -3157,19 +3110,28 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
 //
-//nolint:gocognit,cyclop,funlen // grandfathered pre-reactor guard sequence (M3-D2); the M5 full reactorization decomposes it
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, extraContext, itemWorkflowMode, itemWorkflowRef string, itemTemplateParams map[string]string, itemLocalOnly bool, itemWorkerTarget string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
-	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
-	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
-	// deps is by-value, so this default propagates to every downstream site.
-	if deps.clock == nil {
-		deps.clock = substrate.SystemClock{}
-	}
-	// RSM-010: the run-lifecycle port bundle for this run. Reaching a dependency
-	// through rp.<Port> is byte-identical to the pre-port deps field access.
-	rp := deps.runPorts()
+//nolint:funlen,gocognit,cyclop // pre-existing: beadRunOne is the run-path giant the RT ports stream (RT15-RT20) exists to decompose; the signature change re-anchors the grandfathered findings and splitting the body here would defeat the behaviour-preserving property of the slice
+func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, handles runloop.SharedHandles, extraContext string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
+	// RSM-010: alias the eleven per-run values off env under the names the body
+	// already uses. Aliasing rather than rewriting ~140 reads is what keeps the
+	// signature change behaviour-obvious — in particular itemWorkflowRef stays a
+	// LOCAL, because the EM-012a tier-0/tier-1 resolveWorkflowRef resolution
+	// below reassigns it and two later readers depend on the resolved value.
+	// The bundle's own copy of that field must never be read on the run path;
+	// the alias below is its one and only reader.
+	runID, beadRecord := env.RunID, env.BeadRecord
+	queueName, queueID := env.QueueName, env.QueueID
+	queueGroupIndex, queueItemIndex := env.QueueGroupIndex, env.QueueItemIndex
+	itemWorkflowMode, itemWorkflowRef := env.ItemWorkflowMode, env.ItemWorkflowRef
+	itemTemplateParams, itemLocalOnly := env.ItemTemplateParams, env.ItemLocalOnly
+	itemWorkerTarget := env.ItemWorkerTarget
 	// mport.Submit() is the merge exclusion-domain submit surface (RSM-015).
 	mport := rp.Merge
+	// RSM-010: the run's EmitterPort, off the bundle rp already holds.
+	// EmitterPort is a type ALIAS for handlercontract.EventEmitter
+	// (runports.go), so this is the same value and the same static type the
+	// 24 emissions below already used — only the spelling changes.
+	emit := rp.Emitter
 	beadID := beadRecord.BeadID
 
 	// hk-hs7ex: release the local slot on exit when the outer loop incremented
@@ -3180,8 +3142,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// cleanup.
 	relLocalSlot := localSlotHeld
 	defer func() {
-		if relLocalSlot && deps.localInFlight != nil {
-			deps.localInFlight.Add(-1)
+		if relLocalSlot && handles.LocalInFlight != nil {
+			handles.LocalInFlight.Add(-1)
 		}
 	}()
 
@@ -3198,10 +3160,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Keyed on preSelectedWorker so it is inert for the fallback path (which is
 	// mutually exclusive — it runs only when rbc==nil, i.e. preSelectedWorker==nil —
 	// and acquires+releases its own slot after these early returns).
-	relWorkerSlot := preSelectedWorker != nil && deps.workerRegistry != nil
+	relWorkerSlot := preSelectedWorker != nil && handles.Workers != nil
 	defer func() {
 		if relWorkerSlot {
-			deps.workerRegistry.ReleaseSlot()
+			handles.Workers.ReleaseSlot()
 		}
 	}()
 
@@ -3215,18 +3177,17 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// epic from the bead's edges and look up its assignee (the crew name) so
 	// terminal events carry it directly, eliminating captain br round-trips.
 	// Best-effort: errors leave the fields empty (non-fatal).
-	owningEpicID, owningEpicAssignee := resolveOwningEpicFromRecord(ctx, deps.brAdapter, beadRecord)
+	owningEpicID, owningEpicAssignee := resolveOwningEpicFromRecord(ctx, handles.BrAdapter, beadRecord)
 	// Propagate to RunHandle so StaleWatcher can read the attribution without
 	// its own br calls.
-	if handle, ok := deps.runRegistry.Get(runID); ok {
-		handle.OwningEpicID = owningEpicID
-		handle.OwningEpicAssignee = owningEpicAssignee
+	if handle, ok := handles.RunRegistry.Get(runID); ok {
+		handle.SetOwningEpic(owningEpicID, owningEpicAssignee)
 	}
 
 	// sdStartedAt, sdModel, sdHarness are captured by the run-terminal effector
 	// for the sessiondata.Collect goroutine. They are assigned after their
 	// respective resolutions below (ResolveModelPreference, implHarnessWL).
-	sdStartedAt := deps.clock.Now()
+	sdStartedAt := rp.Clock.Now()
 	var sdModel, sdHarness string
 
 	// emitRunTerminalEff is the ActEmitRunTerminal effector binding (RT9,
@@ -3244,14 +3205,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if emitCtx.Err() != nil {
 			emitCtx = context.Background()
 		}
-		emitRunCompleted(emitCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, success, summary, queueID, queueGroupIndex, runTipSHA)
+		emitRunCompleted(emitCtx, emit, runID, string(beadID), owningEpicID, owningEpicAssignee, success, summary, queueID, queueGroupIndex, runTipSHA)
 		if draining {
 			return // RSM-021: the drain batch collects no sessiondata.
 		}
 		// Fire sessiondata.Collect off the hot path (hk-eval-prog-sessiondata-hook-vmxrk).
 		// Best-effort: errors are silently discarded — a missed record is preferable
 		// to a panicking goroutine that could affect the daemon.
-		sdEndedAt := deps.clock.Now()
+		sdEndedAt := rp.Clock.Now()
 		sdQID := ""
 		if queueID != nil {
 			sdQID = *queueID
@@ -3260,7 +3221,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if runTipSHA != nil {
 			sdCommitSHA = *runTipSHA
 		}
-		go func() { //nolint:errcheck // best-effort; see comment above.
+		go func() {
 			_ = sessiondata.Collect(sessiondata.CollectParams{
 				RunID:             runID.String(),
 				BeadID:            string(beadID),
@@ -3271,7 +3232,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				CommitSHA:         sdCommitSHA,
 				StartedAt:         sdStartedAt,
 				EndedAt:           sdEndedAt,
-				ProjectDir:        deps.projectDir,
+				ProjectDir:        env.ProjectDir,
 				ClaudeProjectsDir: filepath.Join(os.Getenv("HOME"), ".claude", "projects"),
 			})
 		}()
@@ -3285,7 +3246,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hk-hiqrl: itemWorkflowMode is a tier-0 per-item override set by the
 	// CLI --review-loop flag via queue.Item.WorkflowMode. When set and valid
 	// it takes precedence over the full EM-012a walk.
-	workflowMode := resolveWorkflowMode(ctx, beadRecord, deps.workflowModeDefault, deps.bus)
+	workflowMode := resolveWorkflowMode(ctx, beadRecord, env.WorkflowModeDefault, emit)
 	if itemWorkflowMode != "" {
 		if candidate := core.WorkflowMode(itemWorkflowMode); candidate.Valid() {
 			workflowMode = candidate
@@ -3305,11 +3266,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// pairing below rides its actions instead of open-coded blocks. Constructed
 	// here, before the worktree critical section, so provisioning-phase failures
 	// ride the reopen spine via EvProvisionFailed (RSM-032). The run's success
-	// is the machine's terminal state (bridge.success(), RSM-022).
+	// is the machine's terminal state (bridge.Success(), RSM-022).
 	// Guard paths that return before (or without) feeding the machine yield the
-	// zero value (false); every terminal-spine path returns bridge.success().
-	bridge := newRunBridge(deps, rp, runID, beadID, workflowMode, emitRunTerminalEff)
-	failRun := func(reason, summary string) { bridge.fail(ctx, reason, summary) }
+	// zero value (false); every terminal-spine path returns bridge.Success().
+	bridge := runloop.NewRunBridge(env, rp, handles, runID, beadID, workflowMode, emitRunTerminalEff)
+	failRun := func(reason, summary string) { bridge.Fail(ctx, reason, summary) }
 
 	// Resolve (model, effort) per EM-012b four-tier precedence walk.
 	// Resolved once at claim time; sealed into the run for its lifetime.
@@ -3329,14 +3290,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		beadRecord,
 		core.AgentType(""), // queue default (hk-4x3rg not landed)
 		core.AgentType(""), // node default (per-node override in driveDotWorkflow)
-		deps.defaultHarness,
+		env.DefaultHarness,
 	)
 	resolvedModel, resolvedEffort := ResolveModelPreference(
 		ctx,
 		beadRecord.Labels,
 		resolvedAgentType,
-		deps.projectCfg,
-		deps.bus,
+		env.ProjectCfg,
+		emit,
 		string(beadID),
 	)
 	sdModel = resolvedModel
@@ -3349,12 +3310,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// StartFromRefError use below, and return before any launch-spec is built.
 	resolvedProfile, profErr := resolvePiProfile(
 		ctx, beadRecord.Labels, resolvedAgentType,
-		deps.projectCfg.Harnesses.Pi, deps.bus, string(beadID),
+		env.ProjectCfg.Harnesses.Pi, emit, string(beadID),
 	)
 	if profErr != nil {
-		reopenTID, _ := deps.tidGen.Next()
+		reopenTID, _ := handles.TIDGen.Next()
 		fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, profErr)
-		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg,
+		_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 			runID, reopenTID, beadID, profErr.Error())
 		return
 	}
@@ -3362,7 +3323,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// arrive atomically from the profile and are never split; model: overrides
 	// ONLY the model field. When a profile is present and no exactly-one
 	// model: label resolved it, coalesce resolvedModel to profile.Model.
-	if resolvedProfile != (PiProfileConfig{}) && !hasSingleModelLabel(beadRecord.Labels) {
+	if resolvedProfile != (projectconfig.PiProfileConfig{}) && !hasSingleModelLabel(beadRecord.Labels) {
 		resolvedModel = resolvedProfile.Model
 	}
 
@@ -3375,43 +3336,43 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// "resolved to the empty-string default").
 	if resolvedAgentType == core.AgentTypePi {
 		resolvedProvider := resolvedProfile.Provider
-		if resolvedProfile == (PiProfileConfig{}) {
-			resolvedProvider = deps.projectCfg.Harnesses.Pi.Provider
+		if resolvedProfile == (projectconfig.PiProfileConfig{}) {
+			resolvedProvider = env.ProjectCfg.Harnesses.Pi.Provider
 		}
-		if rh, ok := deps.runRegistry.Get(runID); ok && rh != nil {
+		if rh, ok := handles.RunRegistry.Get(runID); ok && rh != nil {
 			rh.SetResolvedProvider(resolvedProvider)
 		}
-		emitProviderSelected(ctx, deps.bus, runID, resolvedProvider)
+		emitProviderSelected(ctx, emit, runID, resolvedProvider)
 	}
 
 	// Determine activeRepo: the repository where the per-bead worktree lives,
 	// commits happen, and merges are pushed (hk-xfuc cross-repo dispatch).
 	//
 	// For local beads (no target_repo or target_repo == projectDir):
-	//   activeRepo = deps.projectDir  (unchanged behaviour)
+	//   activeRepo = env.ProjectDir  (unchanged behaviour)
 	//
 	// For cross-repo beads (target_repo declared in ## Branching):
 	//   1. Check the allowed_repos safelist — refuse with CrossRepoUnsafeError
 	//      when the target is not in the list (prevents arbitrary path injection).
 	//   2. Set activeRepo = target_repo; all git-touching operations below use
-	//      activeRepo instead of deps.projectDir.
+	//      activeRepo instead of env.ProjectDir.
 	//
-	// Note: deps.projectDir remains the harmonik project root for non-git
+	// Note: env.ProjectDir remains the harmonik project root for non-git
 	// operations (daemon socket, queue persistence, br adapter, workflow.dot).
 	//
 	// Bead: hk-xfuc (cross-repo dispatch follow-up to hk-3r3 guard).
-	activeRepo := deps.projectDir
+	activeRepo := env.ProjectDir
 
 	// Parse the bead body cheaply (tier-1 only; no I/O) to extract target_repo
 	// so we can determine activeRepo before resolveParentCommit, which must run
 	// against the correct repository.
 	earlyBrCfg, _ := parseBranchingSection(beadRecord.Description) // errors treated as absent per BI-009b
-	if earlyBrCfg.TargetRepo != "" && earlyBrCfg.TargetRepo != deps.projectDir {
-		if !isInAllowedRepos(earlyBrCfg.TargetRepo, deps.allowedRepos) {
-			crErr := &CrossRepoUnsafeError{TargetRepo: earlyBrCfg.TargetRepo, ProjectDir: deps.projectDir}
+	if earlyBrCfg.TargetRepo != "" && earlyBrCfg.TargetRepo != env.ProjectDir {
+		if !isInAllowedRepos(earlyBrCfg.TargetRepo, env.AllowedRepos) {
+			crErr := &CrossRepoUnsafeError{TargetRepo: earlyBrCfg.TargetRepo, ProjectDir: env.ProjectDir}
 			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, crErr)
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+			reopenTID, _ := handles.TIDGen.Next()
+			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 				crErr.Error())
 			return
 		}
@@ -3419,17 +3380,17 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		slog.InfoContext(ctx, "cross_repo_dispatch",
 			"bead_id", string(beadID),
 			"active_repo", activeRepo,
-			"project_dir", deps.projectDir,
+			"project_dir", env.ProjectDir,
 		)
 	}
 
-	// effectiveMergeProtectBranches is deps.protectBranches for local runs.
+	// effectiveMergeProtectBranches is env.ProtectBranches for local runs.
 	// For cross-repo runs the daemon's ProtectBranches guards harmonik's branches,
 	// not the target repo's; pass nil so the merge gate doesn't refuse a legitimate
 	// target-repo branch (e.g. merging into kerf's "main" when harmonik protects its
 	// own "main"). Hk-xfuc.
-	effectiveMergeProtectBranches := deps.protectBranches
-	if activeRepo != deps.projectDir {
+	effectiveMergeProtectBranches := env.ProtectBranches
+	if activeRepo != env.ProjectDir {
 		effectiveMergeProtectBranches = nil
 	}
 
@@ -3440,11 +3401,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// present but names a ref that does not exist locally, the error is
 	// surfaced as a typed StartFromRefError and the bead is reopened.
 	// Use activeRepo so cross-repo beads resolve against the target repository.
-	headSHA, headErr := resolveParentCommit(ctx, activeRepo, string(beadID), beadRecord.Description, deps.targetBranch)
+	headSHA, headErr := resolveParentCommit(ctx, activeRepo, string(beadID), beadRecord.Description, env.TargetBranch)
 	if headErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: resolveParentCommit for bead %s: %v (reopening)\n", beadID, headErr)
-		reopenTID, _ := deps.tidGen.Next()
-		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+		reopenTID, _ := handles.TIDGen.Next()
+		_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 			fmt.Sprintf("resolve start_from failed: %v", headErr))
 		return
 	}
@@ -3465,16 +3426,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// list governs the harmonik project's branches, not the target repo's; skip the
 	// protect check for cross-repo runs to avoid refusing legitimate target branches.
 	var baseBranch string
-	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, activeRepo, deps.targetBranch); brErr == nil {
+	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, activeRepo, env.TargetBranch); brErr == nil {
 		baseBranch = brCfg.LandsOn
 
-		if activeRepo == deps.projectDir {
-			for _, protected := range deps.protectBranches {
+		if activeRepo == env.ProjectDir {
+			for _, protected := range env.ProtectBranches {
 				if baseBranch == protected {
 					protErr := &LandsOnProtectedError{LandsOn: baseBranch}
 					fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, protErr)
-					reopenTID, _ := deps.tidGen.Next()
-					_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					reopenTID, _ := handles.TIDGen.Next()
+					_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 						protErr.Error())
 					return
 				}
@@ -3486,13 +3447,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// on the same branch it was rebased onto (baseBranch = resolved lands_on),
 	// not the daemon-wide default target. baseBranch already carries the three-
 	// tier precedence (bead ## Branching > branching.yaml > default) resolved by
-	// resolveBranching above, and equals deps.targetBranch when no per-bead
+	// resolveBranching above, and equals env.TargetBranch when no per-bead
 	// override is present. It is empty only when resolveBranching errored; fall
 	// back to the daemon-wide target in that case so the merge is never directed
 	// at an empty ref (mergeRunBranchToMain fail-closes on empty target).
 	mergeTarget := baseBranch
 	if mergeTarget == "" {
-		mergeTarget = deps.targetBranch
+		mergeTarget = env.TargetBranch
 	}
 
 	// ── DD1 code-sync: select remote worker (remote-substrate B8) ───────────
@@ -3545,18 +3506,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// dispatch time, or a race where a worker slot freed up after the outer loop's
 	// HasFreeSlot peek). This path is rare after the hk-hs7ex hoist but kept for
 	// correctness.
-	if rbc == nil && !itemLocalOnly && deps.workerRegistry != nil {
+	if rbc == nil && !itemLocalOnly && handles.Workers != nil {
 		var w *workers.Worker
 		if itemWorkerTarget != "" {
-			w = deps.workerRegistry.SelectWorkerByName(itemWorkerTarget)
+			w = handles.Workers.SelectWorkerByName(itemWorkerTarget)
 		} else {
-			w = deps.workerRegistry.SelectWorker()
+			w = handles.Workers.SelectWorker()
 		}
 		if w != nil {
 			rbc = &remoteBeadCtx{
 				worker: *w,
 				// hk-zexsj: pin the tmux SSHRunner off the shared SSH ControlMaster
-				// (mirroring reversetunnel.go's tunnel opts). A churning multiplexed
+				// (mirroring internal/transport/tunnel's tunnel opts). A churning multiplexed
 				// master can silently drop a multiplexed load-buffer / paste-buffer
 				// mid-write (the hk-cnp17 truncation family), discarding the seed
 				// paste → agent never starts → 30-min timeout. A dedicated,
@@ -3565,19 +3526,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// worker opts.
 				sshRunner: tmuxpkg.SSHRunner{Host: w.Host, Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"}},
 			}
-			defer deps.workerRegistry.ReleaseSlot()
+			defer handles.Workers.ReleaseSlot()
 			// hk-hs7ex: the outer loop incremented localInFlight thinking this was
 			// a local run. A worker slot became available between the gate and here
 			// so this run is actually remote. Correct the count immediately and
 			// disable the deferred cleanup.
-			if localSlotHeld && deps.localInFlight != nil {
-				deps.localInFlight.Add(-1)
+			if localSlotHeld && handles.LocalInFlight != nil {
+				handles.LocalInFlight.Add(-1)
 				relLocalSlot = false
 			}
 			// hk-4tjt6: mirror the Remote flag update so LenForQueueLocal
 			// stops counting this run against the per-queue local cap.
-			if h, ok := deps.runRegistry.Get(runID); ok {
-				h.Remote.Store(true)
+			if h, ok := handles.RunRegistry.Get(runID); ok {
+				h.SetRemote(true)
 			}
 		}
 	}
@@ -3588,8 +3549,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//     binds (tcp://127.0.0.1:<port>), shared by beads 1, 2, and 3. The
 	//     port is allocated from box A's free ephemeral space as a HINT for
 	//     sshd's worker-side bind (collision-safe: see
-	//     allocateReverseTunnelPort + ExitOnForwardFailure=yes).
-	//  2. ensureWorkerHarmonikDir (bead 2) mkdir-p's the worker's .harmonik/
+	//     tunnel.AllocatePort + ExitOnForwardFailure=yes).
+	//  2. tunnel.EnsureWorkerHarmonikDir (bead 2) mkdir-p's the worker's .harmonik/
 	//     dir for other per-run artifacts; non-fatal — the readiness gate
 	//     (bead 3) is the authority.
 	//  3. The tunnel (bead 1) is a SEPARATE long-lived `ssh -N -R`
@@ -3600,37 +3561,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//     lifetime, forwarding the worker-side per-run socket back to box
 	//     A's daemon hook socket. Start is non-fatal; teardown defers a
 	//     Kill+Wait.
-	//
-	// hk-5h759: FAIL-CLOSED codex isolation-boundary guard. A codex app-server
-	// crew runs with a permissive sandbox posture (danger-full-access) that is
-	// safe ONLY inside a real isolation boundary — an ENABLED, ssh-transport
-	// remote worker (container/host) IS that boundary. The guard MUST mirror the
-	// runner's own host decision exactly: codexWorkerRoutingRunner.Command routes
-	// to the remote worker ONLY when the shared registry's WorkerSnapshot() peek
-	// yields `w.Enabled && w.Transport == "ssh"`, and otherwise (no registry, no
-	// worker, disabled, or non-ssh transport) falls through to LocalRunner —
-	// UNSANDBOXED on the daemon host. NOTE: rbc != nil is NOT a sufficient proxy:
-	// SelectWorker binds rbc without inspecting Transport, so an enabled non-ssh
-	// worker yields rbc != nil yet the runner still runs codex locally. So we ask
-	// the same question against the same registry the runner consults. If this
-	// daemon dispatches codex crews (codexRequireIsolationBoundary, set iff
-	// HARMONIK_SUBSTRATE=codexdriver) but no enabled ssh worker is selectable,
-	// refuse — never a silent local fallback; commits must land inside the
-	// boundary. Fail fast here, before any worktree/tunnel setup. Placed with the
-	// other pre-launch sandbox refusals (srt engagement gate below).
-	if deps.codexRequireIsolationBoundary {
-		var boundary *workers.Worker
-		if deps.workerRegistry != nil {
-			boundary = deps.workerRegistry.WorkerSnapshot()
-		}
-		if boundary == nil || !boundary.Enabled || boundary.Transport != "ssh" {
-			reason := "codex isolation-boundary guard: refusing to launch a codex app-server crew with no enabled ssh worker boundary (danger-full-access would run unsandboxed on the daemon host) — enable an ssh-transport worker"
-			fmt.Fprintf(os.Stderr, "daemon: workloop: %s (bead %s run %s, reopening)\n",
-				reason, beadID, runID.String())
-			failRun(reason, reason)
-			return //nolint:nakedret // giant legacy function; naming returns here is a large risky edit — deferred
-		}
-	}
 
 	// hk-hs7ex: this block is now outside both the pre-selected and fallback
 	// worker selection blocks, so it runs for ALL remote runs (rbc != nil)
@@ -3639,27 +3569,27 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if rbc != nil {
 		// Allocate a free TCP port (hint for sshd's worker-side loopback bind)
 		// and form the per-run worker TCP endpoint the hook relay will dial.
-		tunnelPort, portErr := allocateReverseTunnelPort()
+		tunnelPort, portErr := tunnelpkg.AllocatePort()
 		if portErr != nil {
 			// Non-fatal: log and skip the tunnel; the readiness gate below would
 			// fail an empty endpoint, so guard the gate on workerHookSock != "".
 			fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel port alloc bead %s run %s: %v\n",
 				beadID, runID.String(), portErr)
 		} else {
-			rbc.workerHookSock = workerTCPEndpoint(tunnelPort)
+			rbc.workerHookSock = tunnelpkg.WorkerTCPEndpoint(tunnelPort)
 			// hk-cnp17: free the reserved port when this run ends, so a later
 			// run may reuse it (the reservation prevents two concurrent runs
 			// from being handed the same worker-side hint port).
-			defer releaseReverseTunnelPort(tunnelPort)
+			defer tunnelpkg.ReleasePort(tunnelPort)
 		}
 
-		if mkErr := ensureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
+		if mkErr := tunnelpkg.EnsureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
 			fmt.Fprintf(os.Stderr,
-				"daemon: workloop: ensureWorkerHarmonikDir bead %s run %s: %v (non-fatal; readiness gate is authority)\n",
+				"daemon: workloop: tunnel.EnsureWorkerHarmonikDir bead %s run %s: %v (non-fatal; readiness gate is authority)\n",
 				beadID, runID.String(), mkErr)
 		}
 
-		daemonHookSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+		daemonHookSock := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
 		// hk-ta6dg: `ssh -N -R <port>:<daemonHookSock>` never validates this local
 		// forward destination at tunnel start — only when a connection actually
 		// needs forwarding — so a too-long daemonHookSock would let the tunnel
@@ -3673,21 +3603,21 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				"daemon: workloop: reverse-tunnel socket-path bead %s run %s: %v (reopening, not launching)\n",
 				beadID, runID.String(), lenErr)
 			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
-				rbc.worker.Name, rbc.worker.Host, daemonHookSock, lenErr.Error(), deps.bus.Emit)
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				rbc.worker.Name, rbc.worker.Host, daemonHookSock, lenErr.Error(), emit.Emit)
+			reopenTID, _ := handles.TIDGen.Next()
+			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 				fmt.Sprintf("reverse-tunnel not ready: %v", lenErr))
 			return
 		}
 		// Mirror the SSHRunner host/opts argv pattern (runner.go SSHRunner.Command):
 		// extra opts BEFORE the host. Fall back to the worker record's Host when
 		// the runner is not an SSHRunner (e.g. a test double).
-		tunnelHost, tunnelOpts, hostOK := sshHostOpts(rbc.sshRunner)
+		tunnelHost, tunnelOpts, hostOK := tunnelpkg.SSHHostOpts(rbc.sshRunner)
 		if !hostOK {
 			tunnelHost = rbc.worker.Host
 		}
-		tunnelArgs := buildReverseTunnelArgs(tunnelPort, daemonHookSock, tunnelHost, tunnelOpts)
-		rbc.tunnelCmd = reverseTunnelRunner(ctx, "ssh", tunnelArgs...)
+		tunnelArgs := tunnelpkg.BuildArgs(tunnelPort, daemonHookSock, tunnelHost, tunnelOpts)
+		rbc.tunnelCmd = tunnelpkg.ReverseTunnelRunner(ctx, "ssh", tunnelArgs...)
 		if startErr := rbc.tunnelCmd.Start(); startErr != nil {
 			// Non-fatal: a failed tunnel start means the worker-side agent's hooks
 			// will not reach box A, but the readiness gate (bead 3) is the
@@ -3719,14 +3649,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// (above) and ReleaseSlot run on the way out, so the `ssh -N` process
 		// does not leak. The gate runs ONLY here, inside the remote branch
 		// (NFR7: local runs never construct a tunnel and never reach it).
-		if waitErr := waitWorkerSocketLive(ctx, rbc.sshRunner, rbc.workerHookSock, workerSocketReadyTimeout); waitErr != nil {
+		if waitErr := tunnelpkg.WaitWorkerSocketLive(ctx, rbc.sshRunner, rbc.workerHookSock, tunnelpkg.WorkerSocketReadyTimeout); waitErr != nil {
 			fmt.Fprintf(os.Stderr,
 				"daemon: workloop: reverse-tunnel readiness gate bead %s run %s: %v (reopening, not launching)\n",
 				beadID, runID.String(), waitErr)
 			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
-				rbc.worker.Name, rbc.worker.Host, rbc.workerHookSock, waitErr.Error(), deps.bus.Emit)
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				rbc.worker.Name, rbc.worker.Host, rbc.workerHookSock, waitErr.Error(), emit.Emit)
+			reopenTID, _ := handles.TIDGen.Next()
+			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 				fmt.Sprintf("reverse-tunnel not ready: %v", waitErr))
 			return
 		}
@@ -3739,9 +3669,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if rbc == nil {
 			return
 		}
-		workers.EmitWorkerOfflineEvent(ctx, rbc.worker.Name, rbc.worker.Host, phase, detail, deps.bus.Emit)
-		if deps.workerRegistry != nil {
-			deps.workerRegistry.SetEnabled(false)
+		workers.EmitWorkerOfflineEvent(ctx, rbc.worker.Name, rbc.worker.Host, phase, detail, emit.Emit)
+		if handles.Workers != nil {
+			handles.Workers.SetEnabled(false)
 		}
 	}
 
@@ -3758,11 +3688,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 		// host/opts come from the worker SSHRunner so git's ssh:// fetch dials the
 		// worker exactly like the rest of the remote path.
-		workerHost, sshOpts, _ := sshHostOpts(rbc.sshRunner)
-		if err := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
+		workerHost, sshOpts, _ := tunnelpkg.SSHHostOpts(rbc.sshRunner)
+		if err := codesyncpkg.FetchRunBranchBoxA(ctx, nil, env.ProjectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
 			// B11: SSH connection failure → emit worker_offline + disable worker.
 			if tmuxpkg.IsSSHConnectionFailure(err) {
-				notifyWorkerOffline("spawn", fmt.Sprintf("fetchRunBranchBoxA: %v", err))
+				notifyWorkerOffline("spawn", fmt.Sprintf("codesync.FetchRunBranchBoxA: %v", err))
 			}
 			return fmt.Sprintf("fetch run branch from worker on box A: %v", err)
 		}
@@ -3770,7 +3700,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 	// ── end DD1 code-sync setup ──────────────────────────────────────────────
 
-	wtFactory := deps.worktreeFactory
+	wtFactory := handles.WorktreeFactory
 	if wtFactory == nil {
 		if rbc != nil {
 			// Remote run: create the worktree on the worker via SSHRunner (B7+B8).
@@ -3780,7 +3710,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// hk-5qp7z: thread worktreeCreateMu into the config so CreateWorktree
 				// serialises the git-worktree-add + HEAD-resolve loop across all
 				// concurrent remote dispatch goroutines (prevents empty-HEAD race).
-				cfg := workspace.NoWorktreeRootOverride().WithRunner(sshRunner).WithCreateMutex(deps.worktreeCreateMu)
+				cfg := workspace.NoWorktreeRootOverride().WithRunner(sshRunner).WithCreateMutex(handles.WorktreeCreateMu)
 				if err := workspace.CreateWorktree(ctx, workerRepoPath, runID, headSHA, cfg); err != nil {
 					return "", nil, err
 				}
@@ -3805,7 +3735,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// The create call site below reaches it via rp.Worktree — byte-identical to
 	// calling wtFactory directly (ports-design §6).
 	rp.Worktree = worktreePort(wtFactory)
-	// Serialize fetchBaseOnWorker (step a, DD1 code-sync) + 'git worktree add'
+	// Serialize codesync.EnsureBaseOnWorker (step a, DD1 code-sync) + 'git worktree add'
 	// inside the merge exclusion domain (mergeq, RSM-018) so concurrent
 	// beadRunOne goroutines do not run concurrent git operations on the same
 	// remote worker (hk-lt091) or race on projectDir/.git/index.lock (hk-h8u7p),
@@ -3814,10 +3744,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hk-lt091: before hk-zexsj added -o ControlMaster=no, all SSH commands to a
 	// worker shared one TCP connection, so the remote OS serialised them naturally.
 	// With ControlMaster=no each SSH command is an independent TCP connection; a
-	// sibling bead's fetchBaseOnWorker (git-fetch) can therefore race git-worktree-add
+	// sibling bead's codesync fetch-base (git-fetch) can therefore race git-worktree-add
 	// at the remote-OS level, leaving the worktree dir created but HEAD uninitialised
 	// — the empty-HEAD race that hk-iaj1w retries cannot fix because the race persists
-	// across all retry attempts. Running fetchBaseOnWorker + worktree-add as ONE
+	// across all retry attempts. Running codesync fetch-base + worktree-add as ONE
 	// critical section in the domain eliminates the race at its source.
 	var baseSyncErr error
 	var wtPath string
@@ -3827,12 +3757,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// Step (a): for remote runs, ensure baseSHA is on the worker before the
 		// worktree is created there (DD1 code-sync, remote-substrate B8).
 		if rbc != nil {
-			// hk-2hfyt: use ensureBaseOnWorker (not fetchBaseOnWorker directly) so
+			// hk-2hfyt: use codesync.EnsureBaseOnWorker (not a bare fetch-base) so
 			// an unpushed base commit triggers a direct push from box A to the worker
 			// rather than leaving an empty-HEAD worktree.
-			workerHostEBOW, sshOptsEBOW, _ := sshHostOpts(rbc.sshRunner)
-			baseSyncErr = ensureBaseOnWorker(qctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA,
-				nil, deps.projectDir, workerHostEBOW, sshOptsEBOW)
+			workerHostEBOW, sshOptsEBOW, _ := tunnelpkg.SSHHostOpts(rbc.sshRunner)
+			baseSyncErr = codesyncpkg.EnsureBaseOnWorker(qctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA,
+				nil, env.ProjectDir, workerHostEBOW, sshOptsEBOW)
 		}
 		// baseSyncErr (a business outcome, handled after the critical section) does
 		// not fail the critical section itself; only skip the worktree-add on it.
@@ -3847,19 +3777,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		wtErr = subErr
 	}
 	if baseSyncErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: ensureBaseOnWorker bead %s run %s: %v (reopening)\n",
+		fmt.Fprintf(os.Stderr, "daemon: workloop: codesync.EnsureBaseOnWorker bead %s run %s: %v (reopening)\n",
 			beadID, runID.String(), baseSyncErr)
 		// B11: SSH connection failure → emit worker_offline + disable worker.
 		if tmuxpkg.IsSSHConnectionFailure(baseSyncErr) {
-			notifyWorkerOffline("spawn", fmt.Sprintf("ensureBaseOnWorker: %v", baseSyncErr))
+			notifyWorkerOffline("spawn", fmt.Sprintf("codesync.EnsureBaseOnWorker: %v", baseSyncErr))
 		}
-		reopenTID, tidErr := deps.tidGen.Next()
+		reopenTID, tidErr := handles.TIDGen.Next()
 		if tidErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: tidGen.Next (ensureBaseOnWorker reopen) bead %s: %v\n", beadID, tidErr)
+			fmt.Fprintf(os.Stderr, "daemon: workloop: tidGen.Next (codesync.EnsureBaseOnWorker reopen) bead %s: %v\n", beadID, tidErr)
 		}
-		if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+		if reopenErr := handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID,
 			fmt.Sprintf("ensure base on worker failed: %v", baseSyncErr)); reopenErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (ensureBaseOnWorker) bead %s run %s: %v\n",
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (codesync.EnsureBaseOnWorker) bead %s run %s: %v\n",
 				beadID, runID.String(), reopenErr)
 		}
 		return succeeded
@@ -3875,7 +3805,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 	// useIndepSession is set true when this run is launched in an independent tmux
 	// session (runSessionSpawner path, hk-o85ye). Deferred cleanup (wtCleanup,
-	// forceTeardownSession) is skipped on daemon shutdown so the session and its
+	// runlaunch.ForceTeardownSession) is skipped on daemon shutdown so the session and its
 	// worktree survive SIGKILL; on normal exit cleanup runs as usual.
 	useIndepSession := false
 
@@ -3884,7 +3814,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// error — e.g. the ~4.5s exit0-no-commit against a locally-hosted
 	// OpenAI-compatible endpoint (ornith) — is observable post-mortem. runIsPi is
 	// set true once the harness resolves to Pi (below); the run outcome is the
-	// Run machine's terminal state (bridge.success(), RSM-022). This mirrors the hk-o85ye survive-cleanup
+	// Run machine's terminal state (bridge.Success(), RSM-022). This mirrors the hk-o85ye survive-cleanup
 	// gate: skip the deferred wtCleanup on an abnormal outcome so the artifacts
 	// survive, instead of deleting the only evidence of why the run failed.
 	// Successful Pi runs and ALL non-Pi runs clean up exactly as before, so there
@@ -3894,8 +3824,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Remove the run registry entry on normal exit (session completed).
 	// Registered first (LIFO) so it runs LAST — after session teardown + worktree removal.
 	defer func() {
-		if useIndepSession && ctx.Err() == nil && deps.projectDir != "" {
-			_ = runpkg.Remove(deps.projectDir, runID.String())
+		if useIndepSession && ctx.Err() == nil && env.ProjectDir != "" {
+			// Non-fatal: an absent record is the already-cleaned case, and any
+			// other failure is retried by the next boot's adoption sweep. Report
+			// it rather than discarding it (errcheck check-blank), matching
+			// adoptDeadRunSessions' handling of the same call.
+			if remErr := runpkg.Remove(env.ProjectDir, runID.String()); remErr != nil &&
+				!errors.Is(remErr, runpkg.ErrNotFound) {
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: Remove run registry entry %s: %v\n", runID.String(), remErr)
+			}
 		}
 	}()
 
@@ -3904,7 +3842,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// hk-j6wm7: on a Pi FAILURE, retain the worktree (skip cleanup) and log
 			// where the retained artifacts live so an operator/captain can inspect
 			// the pi-agent dir + captured pi-stdout.log / pi-stderr.log.
-			if runIsPi && !bridge.success() {
+			if runIsPi && !bridge.Success() {
 				fmt.Fprintf(os.Stderr,
 					"daemon: workloop: hk-j6wm7: Pi run %s (bead %s) FAILED — retaining worktree for post-mortem inspection at %s (pi output under %s/.harmonik/pi-agent/)\n",
 					runID.String(), beadID, wtPath, wtPath)
@@ -3922,9 +3860,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// snapshot leaves preRunUntracked nil — the escape check then degrades to its
 	// prior, baseline-free behaviour rather than silently suppressing escapes.
 	// Use activeRepo: cross-repo runs create the worktree in the target repo.
-	preRunUntracked, snapErr := snapshotUntrackedFiles(ctx, activeRepo)
+	preRunUntracked, snapErr := runmerge.SnapshotUntrackedFiles(ctx, activeRepo)
 	if snapErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: snapshotUntrackedFiles for bead %s run %s: %v (escape check will run without baseline)\n", beadID, runID.String(), snapErr)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.SnapshotUntrackedFiles for bead %s run %s: %v (escape check will run without baseline)\n", beadID, runID.String(), snapErr)
 	}
 
 	// Emit run_started with optional queue_id + queue_group_index per QM-011/QM-012.
@@ -3934,10 +3872,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		runStartedWorkerName = rbc.worker.Name
 		runStartedWorkerOS = rbc.worker.OS
 	}
-	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS, string(workflowMode))
+	emitRunStarted(ctx, emit, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS, string(workflowMode))
 
 	// hk-f38n: the pre-dispatch subsumption check (hk-ly0hg Fix-2 / hk-wcv) was
-	// REMOVED here. That check called beadAlreadySubsumedInMain — a bare
+	// REMOVED here. That check called shared.MainHistoryHasRefsTrailer — a bare
 	// "Refs: <id>" git-log grep — and closed the bead pre-dispatch when it
 	// matched. For multi-aspect / partially-committed beads this was a
 	// false-positive: old partial commits carrying the same bead ID caused the
@@ -3949,7 +3887,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// before CloseBead completed) is correctly handled by the RUNTIME paths
 	// instead:
 	//   • noChange-timeout (pasteInjectQuitOnCommit): agent makes no commit →
-	//     noChangeTimeoutCh fires → beadAlreadySubsumedInMain → CloseBead.
+	//     noChangeTimeoutCh fires → shared.MainHistoryHasRefsTrailer → CloseBead.
 	//   • noCommitGuard (beadRunOne): no HEAD advance + Refs on main →
 	//     noCommitGuardShouldReopen=false → auto-close branch.
 	// Both paths inspect whether work is actually present before closing, so
@@ -3966,7 +3904,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// normally (spec §REVIEW FLOOR item b: fall through to review-loop, NEVER single).
 	var preloadedDotGraph *dot.Graph
 	if workflowMode == core.WorkflowModeDot && itemWorkflowRef == "" {
-		defaultDotPath := filepath.Join(deps.projectDir, "workflow.dot")
+		defaultDotPath := filepath.Join(env.ProjectDir, "workflow.dot")
 		if _, statErr := os.Stat(defaultDotPath); os.IsNotExist(statErr) {
 			g, embErr := loadStandardGraph(itemTemplateParams)
 			if embErr != nil {
@@ -3982,33 +3920,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 
-	// Pre-build the routed launchSpecBuilder once (T12 hk-xhawy) so ALL workflow
-	// modes (review-loop, DOT cascade, single) share the same harness-resolved
-	// builder. deps.launchSpecBuilder may be pre-injected by test fixtures; leave
-	// it untouched in that case. For production (nil), build from harnessRegistry +
-	// beadRecord (tier-1 labels) now — before the mode switch — so runReviewLoop and
-	// driveDotWorkflow can read deps.launchSpecBuilder instead of calling
-	// buildClaudeLaunchSpec directly.
-	if deps.launchSpecBuilder == nil {
-		if deps.harnessRegistry != nil {
-			deps.launchSpecBuilder = routedLaunchSpecBuilder(
-				deps.harnessRegistry,
-				beadRecord,
-				core.AgentType(""),  // queue default: per-queue harness field not yet landed (hk-4x3rg)
-				core.AgentType(""),  // node default: overridden per-node in driveDotWorkflow (T5/T12)
-				deps.defaultHarness, // global default: Config.DefaultHarness (empty → built-in claude-code)
-				deps.bus,
-			)
-		} else {
-			// No registry (legacy test fixtures): fall back to direct claude builder.
-			deps.launchSpecBuilder = buildClaudeLaunchSpec
-		}
-	}
-	// RSM-010 (RT7): thread the resolved builder onto RunPorts as LaunchPort. The
-	// single-mode build call site reaches it via rp.Launch — byte-identical to
-	// calling deps.launchSpecBuilder directly (ports-design §6). The review-loop /
-	// DOT sub-drivers still read deps.launchSpecBuilder (RT8 migrates them).
-	rp.Launch = launchPort(deps.launchSpecBuilder)
+	// The routed launch builder (T12 hk-xhawy) is resolved ONCE by the caller in
+	// buildRunBundles and threaded here on rp.Launch / rp.LaunchBuilder, so ALL
+	// workflow modes (review-loop, DOT cascade, single) share the same
+	// harness-resolved builder. RT18.11 relocated that resolution to the caller —
+	// where deps is live — which is what let this function drop the deps param; the
+	// old by-value deps.launchSpecBuilder smuggle is gone.
 
 	// Mode-dispatch: route to the mode-specific driver.
 	//
@@ -4036,60 +3953,63 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		var rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd string
 		if rbc != nil {
 			rlRunner = rbc.sshRunner
-			rlWorkerBinary = workerHarmonikPath(rbc.worker)
+			rlWorkerBinary = tunnelpkg.WorkerHarmonikPath(rbc.worker)
 			rlWorkerHookSock = rbc.workerHookSock
 			rlWorkerCwd = rbc.worker.RepoPath
-			if ts, ok := deps.substrate.(*tmuxSubstrate); ok {
+			if ts, ok := handles.Substrate.(*tmuxSubstrate); ok {
 				rlWorkerSession = ts.workerSpawnSessionName(rbc.worker.Name)
 			}
 		}
-		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch, rlRunner, rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd)
+		rlResult := runReviewLoop(ctx, env, rp, handles, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch, rlRunner, rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd)
 
 		// ── RT9: the review-loop terminal rides the Run tail (RSM-020) ────────
 		//
 		// The gate → code-sync → merge-retry → close/reopen sequence below is the
 		// machine's Gating→Merging→Finalizing spine; the pre-RT9 open-coded block
-		// survives as spineArgs policy (trailer amend + per-retry re-amend
+		// survives as SpineArgs policy (trailer amend + per-retry re-amend
 		// hk-dyim/RF :3899, isRetryableMergeReason classification hk-f9xzs) and
 		// event data (the label-parameterized reason/summary strings, RSM-033).
-		transitionTID, _ := deps.tidGen.Next()
-		bridge.start(ctx, workflowMode)
-		bridge.wireSpine(spineArgs{
-			runRunner:       rlRunner,
-			wtPath:          wtPath,
-			headSHA:         headSHA,
-			preMergeSync:    preMergeSync,
-			mport:           mport,
-			activeRepo:      activeRepo,
-			protectBranches: effectiveMergeProtectBranches,
-			transitionTID:   transitionTID,
-			mergeTarget:     mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
-			retryable:       isRetryableMergeReason,
+		transitionTID, _ := handles.TIDGen.Next()
+		bridge.Start(ctx, workflowMode)
+		bridge.WireSpine(runloop.SpineArgs{
+			RunRunner:       rlRunner,
+			WTPath:          wtPath,
+			HeadSHA:         headSHA,
+			PreMergeSync:    preMergeSync,
+			MPort:           mport,
+			ActiveRepo:      activeRepo,
+			ProtectBranches: effectiveMergeProtectBranches,
+			TransitionTID:   transitionTID,
+			EmitBeadClosed: func(c context.Context) {
+				emitBeadClosedAndMaybeEpic(c, rp, handles, runID, beadID)
+			},
+			MergeTarget: mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
+			Retryable:   runmerge.IsRetryableReason,
 			// hk-dyim: amend the HEAD commit to embed Reviewed-By/Review-Verdict
 			// trailers before each FF-merge attempt. Non-fatal. LOCAL runs only
 			// (rbc == nil): for REMOTE runs the trailers land post-rebase on box-A
 			// in a follow-up (FLAGGED). Re-amends before each retry: the prior
 			// inner rebase may have rewritten HEAD (idempotent, RF :3899).
-			amendTrailers: func(c context.Context, retry int) {
+			AmendTrailers: func(c context.Context, retry int) {
 				if rlResult.approveVerdict == nil || rbc != nil {
 					return
 				}
-				if amendErr := appendReviewTrailersToHEAD(c, wtPath, rlResult.approveVerdict); amendErr != nil {
+				if amendErr := runmerge.AppendReviewTrailersToHEAD(c, wtPath, rlResult.approveVerdict); amendErr != nil {
 					if retry == 0 {
-						fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
+						fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
 					} else {
-						fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD (merge retry %d) bead %s: %v (non-fatal)\n",
+						fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD (merge retry %d) bead %s: %v (non-fatal)\n",
 							retry, beadID, amendErr)
 					}
 				}
 			},
 		})
 		if rlResult.success {
-			bridge.feed(ctx, runexec.Event{
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSuccess,
 				PathLabel: "review-loop", Detail: rlResult.summary,
 			})
-			return bridge.success()
+			return bridge.Success()
 		}
 		// Review-loop failed. For queue-dispatched runs with needsAttention=true,
 		// increment the per-item ReviewLoopFailures counter and check whether the
@@ -4098,7 +4018,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// only the close-vs-reopen CHOICE the event carries.
 		budgetExhausted := false
 		if rlResult.needsAttention {
-			budgetExhausted = deps.budgetPort().ChargeReviewLoopFailure(
+			budgetExhausted = handles.Budget.ChargeReviewLoopFailure(
 				ctx, queueName, queueID, queueGroupIndex, queueItemIndex, beadID)
 		}
 		if budgetExhausted {
@@ -4108,19 +4028,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				queue.MaxReviewLoopFailures, rlResult.summary)
 			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s review-loop budget exhausted — closing with needs-attention (hk-c1ah6)\n",
 				beadID, runID.String())
-			bridge.rejectReason = exhaustedSummary
-			bridge.feed(ctx, runexec.Event{
+			bridge.SetRejectReason(exhaustedSummary)
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeBudget,
 				NeedsAttention: true, Detail: exhaustedSummary,
 			})
-			return bridge.success()
+			return bridge.Success()
 		}
 		// Budget not exhausted (or no queue): reopen the bead for retry.
-		bridge.feed(ctx, runexec.Event{
+		bridge.Feed(ctx, runexec.Event{
 			Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure,
 			Reason: rlResult.summary, Detail: rlResult.summary,
 		})
-		return bridge.success()
+		return bridge.Success()
 
 	case core.WorkflowModeDot:
 		// DOT workflow mode: load + validate the .dot artifact, then hand the
@@ -4140,12 +4060,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		} else {
 			// Tier 1 or 2: explicit ref or <projectDir>/workflow.dot.
 			// WG-046 ordering: read → substitute(itemTemplateParams) → parse → validate → dispatch.
-			dotPath := filepath.Join(deps.projectDir, "workflow.dot")
+			dotPath := filepath.Join(env.ProjectDir, "workflow.dot")
 			if itemWorkflowRef != "" {
 				if filepath.IsAbs(itemWorkflowRef) {
 					dotPath = itemWorkflowRef
 				} else {
-					dotPath = filepath.Join(deps.projectDir, itemWorkflowRef)
+					dotPath = filepath.Join(env.ProjectDir, itemWorkflowRef)
 				}
 			}
 			var loadErr error
@@ -4157,7 +4077,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// run_failed with the same workflow_load reason, RSM-009/032).
 				reason := fmt.Sprintf("workflow_load: %v", loadErr)
 				failRun(reason, reason)
-				return bridge.success()
+				return bridge.Success()
 			}
 		}
 
@@ -4187,20 +4107,20 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		var dotWorkerBinary, dotWorkerHookSock, dotWorkerSession, dotWorkerCwd string
 		if rbc != nil {
 			dotRunner = rbc.sshRunner
-			dotWorkerBinary = workerHarmonikPath(rbc.worker)
+			dotWorkerBinary = tunnelpkg.WorkerHarmonikPath(rbc.worker)
 			dotWorkerHookSock = rbc.workerHookSock
 			dotWorkerCwd = rbc.worker.RepoPath
-			if ts, ok := deps.substrate.(*tmuxSubstrate); ok {
+			if ts, ok := handles.Substrate.(*tmuxSubstrate); ok {
 				dotWorkerSession = ts.workerSpawnSessionName(rbc.worker.Name)
 			}
-		} else if deps.runner != nil {
-			dotRunner = deps.runner // hk-hd2w6: Config.Runner injection (test seam)
+		} else if handles.Runner != nil {
+			dotRunner = handles.Runner // hk-hd2w6: Config.Runner injection (test seam)
 		}
 
 		// Drive the cascade: walk start → … → terminal, dispatching each node by
 		// type (non-agentic synthesize-success, agentic substrate-dispatch,
 		// gate/sub-workflow out-of-scope error).
-		dotResult := driveDotWorkflow(ctx, deps, runID, beadID, beadRecord, beadRecord.Title, beadRecord.Description,
+		dotResult := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, beadRecord, beadRecord.Title, beadRecord.Description,
 			wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch, dotRunner,
 			dotWorkerBinary, dotWorkerHookSock, dotWorkerSession, dotWorkerCwd)
 
@@ -4213,29 +4133,32 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// classifier onto the machine's AlreadyApprovedOnMain row; the hk-tnui
 		// trailer stamp is the amendTrailers policy (single attempt — DOT has no
 		// merge-retry loop).
-		transitionTID, _ := deps.tidGen.Next()
-		bridge.start(ctx, workflowMode)
-		bridge.wireSpine(spineArgs{
-			runRunner:       dotRunner,
-			wtPath:          wtPath,
-			headSHA:         headSHA,
-			preMergeSync:    preMergeSync,
-			mport:           mport,
-			activeRepo:      activeRepo,
-			protectBranches: effectiveMergeProtectBranches,
-			transitionTID:   transitionTID,
-			mergeTarget:     mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
-			skipGate:        true,
+		transitionTID, _ := handles.TIDGen.Next()
+		bridge.Start(ctx, workflowMode)
+		bridge.WireSpine(runloop.SpineArgs{
+			RunRunner:       dotRunner,
+			WTPath:          wtPath,
+			HeadSHA:         headSHA,
+			PreMergeSync:    preMergeSync,
+			MPort:           mport,
+			ActiveRepo:      activeRepo,
+			ProtectBranches: effectiveMergeProtectBranches,
+			TransitionTID:   transitionTID,
+			EmitBeadClosed: func(c context.Context) {
+				emitBeadClosedAndMaybeEpic(c, rp, handles, runID, beadID)
+			},
+			MergeTarget: mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
+			SkipGate:    true,
 			// hk-tnui: stamp Reviewed-By / Review-Verdict trailers on the HEAD
 			// commit before the FF merge, mirroring the review-loop path. LOCAL
 			// runs only (rbc == nil): remote runs keep the trailer injection
 			// deferred (same FLAGGED note as the review-loop path).
-			amendTrailers: func(c context.Context, retry int) {
+			AmendTrailers: func(c context.Context, retry int) {
 				if retry > 0 || dotResult.approveVerdict == nil || rbc != nil {
 					return
 				}
-				if amendErr := appendReviewTrailersToHEAD(c, wtPath, dotResult.approveVerdict); amendErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
+				if amendErr := runmerge.AppendReviewTrailersToHEAD(c, wtPath, dotResult.approveVerdict); amendErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
 				}
 			},
 			// hk-whru3: advisory-RC + rebase_dropped_commits → work already on
@@ -4244,7 +4167,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// (terminalNodeID == "close") and the hk-8ps7q approved-and-done path
 			// (approveVerdict != nil). Falls through to CloseBead so the infinite
 			// re-dispatch loop terminates instead of re-queuing.
-			carveOut: func(reason string) bool {
+			CarveOut: func(reason string) bool {
 				alreadyApprovedOnMain := dotResult.advisoryRC ||
 					dotResult.terminalNodeID == "close" ||
 					dotResult.approveVerdict != nil
@@ -4253,7 +4176,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		})
 		switch {
 		case dotResult.success:
-			bridge.feed(ctx, runexec.Event{
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSuccess,
 				PathLabel: "dot", Detail: dotResult.summary,
 			})
@@ -4261,7 +4184,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// noChange-subsumed: implementer exited without advancing HEAD because
 			// the work already landed in main via a prior run. Approved close, no
 			// merge — no new commits (hk-9v5yo); RSM-035 event-carried strings.
-			bridge.feed(ctx, runexec.Event{
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSubsumed,
 				EmitOutcome: true, PathLabel: "dot noChange-subsumed",
 				Detail: "noChange-subsumed: bead found in main",
@@ -4285,15 +4208,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			if ctx.Err() != nil {
 				tipResolveCtx = context.Background()
 			}
-			if tipSHA, tipErr := resolveWorktreeHEADVia(tipResolveCtx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
+			if tipSHA, tipErr := gitprobe.ResolveWorktreeHEADVia(tipResolveCtx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
 				runTipSHA = &tipSHA
 			}
-			bridge.feed(ctx, runexec.Event{
+			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure,
 				Reason: dotResult.summary, Detail: dotResult.summary,
 			})
 		}
-		return bridge.success()
+		return bridge.Success()
 
 	default:
 		// WorkflowModeSingle or any normalised-to-single value: fall through
@@ -4303,13 +4226,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// ─── Single-mode dispatch (production path) ───────────────────────────────
 
 	// Step 1: build the Claude launch spec via buildClaudeLaunchSpec.
-	daemonSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+	daemonSock := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
 	// gap #7 bead 2: a REMOTE worker cannot reach box A's local daemon.sock. For
 	// remote runs, the implementer agent must dial the worker-side reverse-tunnel
 	// TCP endpoint (rbc.workerHookSock, tcp://127.0.0.1:<port>) instead, which the
 	// `ssh -N -R` tunnel launched above forwards back to box A's daemon.sock (it is
 	// a TCP loopback listener, not a unix socket, so the unprivileged hook user can
-	// connect — hk-ege6). resolveAgentDaemonSocket returns
+	// connect — hk-ege6). tunnel.ResolveAgentDaemonSocket returns
 	// rbc.workerHookSock for a remote run and the unchanged box-A daemonSock for a
 	// local run (rbc == nil), so local runs remain byte-identical (NFR7). The
 	// resolved path flows into rc.daemonSocket → ClaudeEnvVars(HARMONIK_DAEMON_SOCKET).
@@ -4317,34 +4240,34 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if rbc != nil {
 		rbcHookSock = rbc.workerHookSock
 	}
-	agentDaemonSock := resolveAgentDaemonSocket(rbcHookSock, daemonSock)
-	rc := claudeRunCtx{
-		runID:             runID,
-		beadID:            string(beadID),
-		workspacePath:     wtPath,
-		daemonSocket:      agentDaemonSock,
-		workflowMode:      workflowMode,
-		phase:             "", // empty = single-mode
-		iterationCount:    1,
-		priorClaudeSessID: nil,
-		handlerBinary:     deps.handlerBinary,
-		daemonBinaryPath:  deps.daemonBinaryPath,
-		baseEnv:           deps.handlerEnv,
-		beadTitle:         beadRecord.Title,
-		beadDescription:   beadRecord.Description,
-		model:             resolvedModel,
-		effort:            resolvedEffort,
-		provider:          resolvedProfile.Provider,
-		apiKeyEnv:         resolvedProfile.APIKeyEnv,
-		apiKeyFile:        resolvedProfile.APIKeyFile,
-		baseURL:           resolvedProfile.BaseURL,
-		api:               resolvedProfile.API,
+	agentDaemonSock := tunnelpkg.ResolveAgentDaemonSocket(rbcHookSock, daemonSock)
+	rc := shared.LaunchCtx{
+		RunID:             runID,
+		BeadID:            string(beadID),
+		WorkspacePath:     wtPath,
+		DaemonSocket:      agentDaemonSock,
+		WorkflowMode:      workflowMode,
+		Phase:             "", // empty = single-mode
+		IterationCount:    1,
+		PriorClaudeSessID: nil,
+		HandlerBinary:     env.HandlerBinary,
+		DaemonBinaryPath:  env.DaemonBinaryPath,
+		BaseEnv:           env.HandlerEnv,
+		BeadTitle:         beadRecord.Title,
+		BeadDescription:   beadRecord.Description,
+		Model:             resolvedModel,
+		Effort:            resolvedEffort,
+		Provider:          resolvedProfile.Provider,
+		APIKeyEnv:         resolvedProfile.APIKeyEnv,
+		APIKeyFile:        resolvedProfile.APIKeyFile,
+		BaseURL:           resolvedProfile.BaseURL,
+		API:               resolvedProfile.API,
 		// worktreeRootPath is used by buildClaudeLaunchSpec to check whether the
 		// workspace is a harmonik-managed worktree for --dangerously-skip-permissions
 		// per HC-055b. Derived from activeRepo (= target repo for cross-repo runs).
-		worktreeRootPath: workspace.WorktreeRootPath(activeRepo, workspace.NoWorktreeRootOverride()),
-		extraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
-		baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
+		WorktreeRootPath: workspace.WorktreeRootPath(activeRepo, workspace.NoWorktreeRootOverride()),
+		ExtraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
+		BaseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 	}
 	// hk-z8ek: for a REMOTE run, thread the worker's SSHRunner into the launch
 	// spec so the three materialization writes (.claude/settings.json,
@@ -4354,8 +4277,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hook subprocess runs ON THE WORKER). Nil runner + empty workerBinaryPath
 	// for a LOCAL run keeps the materialization byte-identical (NFR7).
 	if rbc != nil {
-		rc.runner = rbc.sshRunner
-		rc.workerBinaryPath = workerHarmonikPath(rbc.worker)
+		rc.Runner = rbc.sshRunner
+		rc.WorkerBinaryPath = tunnelpkg.WorkerHarmonikPath(rbc.worker)
 	}
 	// RSM-010 (RT7): build the launch spec through LaunchPort (assembled above,
 	// before the mode switch, over the pre-built routed builder). Byte-identical to
@@ -4371,12 +4294,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// PI-073: record the resolved agent type on the RunHandle so that
 	// bandwidthTunerBackstop can filter Pi rate-limit events from the global
 	// tuner. The type is only known after specBuilder resolves the harness.
-	if rh, ok := deps.runRegistry.Get(runID); ok && rh != nil {
-		rh.SetAgentType(artifactAgentType(artifacts))
+	if rh, ok := handles.RunRegistry.Get(runID); ok && rh != nil {
+		rh.SetAgentType(shared.ArtifactAgentType(artifacts))
 	}
 	// hk-j6wm7: record whether this run is a Pi run so the deferred wtCleanup can
 	// retain the worktree (and the captured pi output under it) on failure.
-	if artifactAgentType(artifacts) == core.AgentTypePi {
+	if shared.ArtifactAgentType(artifacts) == core.AgentTypePi {
 		runIsPi = true
 	}
 
@@ -4385,25 +4308,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// For test fixtures that supply HandlerArgs (e.g. ["-c", "exit 0"]), prepend
 	// them so that the bridge flags become extra positional args the fixture can
 	// safely ignore (e.g. /bin/sh -c "exit 0" sh --session-id <uuid>).
-	if len(deps.handlerArgs) > 0 {
-		spec.Args = append(deps.handlerArgs, spec.Args...)
+	if len(env.HandlerArgs) > 0 {
+		spec.Args = append(env.HandlerArgs, spec.Args...)
 	}
 
-	// D2 (fail-closed): refuse to forward ANTHROPIC_API_KEY to a remote worker.
-	// A key present in spec.Env for a remote run would bill the worker's own API
-	// quota (the 2026-05-30 credential-leak incident). Fail the dispatch rather
-	// than silently forwarding it.
-	if rbc != nil && hasAPIKeyInEnv(spec.Env) {
-		const reason = "remote run: ANTHROPIC_API_KEY in spawn env (D2 fail-closed)"
-		fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s run %s (reopening)\n",
-			reason, beadID, runID.String())
-		failRun(reason, reason)
-		return
-	}
-
-	// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
+	// Attach the optional tmux substrate (nil at MVH; set from handles.Substrate).
 	//
-	// hk-012af: when deps.substrate is a *tmuxSubstrate, wrap it in a
+	// hk-012af: when handles.Substrate is a *tmuxSubstrate, wrap it in a
 	// perRunSubstrate so this goroutine gets its own isolated pane handle.
 	// Under MaxConcurrent>1, each concurrent beadRunOne call would otherwise
 	// race on a shared pane-target; the second SpawnWindow would overwrite the
@@ -4415,13 +4326,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// B10: for remote runs pass the SSHRunner so liveness probes (pgrep, ps) and
 	// git commit-detect are tunnelled to the worker host instead of executing locally.
-	var runSubstrate handler.Substrate = deps.substrate
-	var runPasteTarget handler.Substrate = deps.substrate // fallback: shared substrate
+	var runSubstrate handler.Substrate = handles.Substrate
+	var runPasteTarget handler.Substrate = handles.Substrate // fallback: shared substrate
 	var runRunner tmuxpkg.CommandRunner
 	if rbc != nil {
 		runRunner = rbc.sshRunner
 	}
-	if prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runRunner); prs != nil {
+	if prs := newPerRunSubstrate(handles.Substrate, env.HandlerBinary, runRunner); prs != nil {
 		// B11: wire the offline callback so mid-run SSH failures emit worker_offline
 		// and disable the worker. Nil for local runs (rbc == nil).
 		if rbc != nil {
@@ -4445,17 +4356,17 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// supports independent session creation (sessionCreator). Adapters that lack
 		// sessionCreator (e.g. test stubs, the $TMUX-reuse mode) fall through to the
 		// standard shared-session path — no behavior change for them.
-		if rbc == nil && deps.projectDir != "" {
+		if rbc == nil && env.ProjectDir != "" {
 			canIndepSession := false
-			if ts, tsOK := deps.substrate.(*tmuxSubstrate); tsOK {
+			if ts, tsOK := handles.Substrate.(*tmuxSubstrate); tsOK {
 				_, canIndepSession = ts.adapter.(sessionCreator)
 			}
-			if _, ok := deps.substrate.(runSessionSpawner); ok && canIndepSession {
+			if _, ok := handles.Substrate.(runSessionSpawner); ok && canIndepSession {
 				prs.runSessionID = runID.String()
 				useIndepSession = true
 				// Pre-compute session name for the registry (best-effort; empty is fine).
 				sessName := ""
-				if ts, tsOK := deps.substrate.(*tmuxSubstrate); tsOK {
+				if ts, tsOK := handles.Substrate.(*tmuxSubstrate); tsOK {
 					if sn, snErr := ts.runSessionName(runID.String()); snErr == nil {
 						sessName = sn
 					}
@@ -4468,7 +4379,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				if queueGroupIndex != nil {
 					queueGroupIdx = *queueGroupIndex
 				}
-				if writeErr := runpkg.Write(deps.projectDir, runpkg.Record{
+				if writeErr := runpkg.Write(env.ProjectDir, runpkg.Record{
 					SchemaVersion: 1,
 					RunID:         runID.String(),
 					BeadID:        string(beadID),
@@ -4477,7 +4388,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					GroupIndex:    queueGroupIdx,
 					ItemIndex:     queueItemIndex,
 					SessionName:   sessName,
-					StartedAt:     deps.clock.Now(),
+					StartedAt:     rp.Clock.Now(),
 				}); writeErr != nil {
 					// Registry write failed: fall back to shared-session path (no survive-restart).
 					fmt.Fprintf(os.Stderr, "daemon: workloop: run registry write failed for %s: %v (using shared session)\n", runID.String(), writeErr)
@@ -4494,8 +4405,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// real stdout pipe. Mirrors the reviewloop implIsSessionIDCaptured block.
 	implIsSessionIDCapturedWL := false
 	var implHarnessWL handlercontract.Harness
-	if deps.harnessRegistry != nil {
-		if implH, implHErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); implHErr == nil {
+	if handles.HarnessRegistry != nil {
+		if implH, implHErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); implHErr == nil {
 			implIsSessionIDCapturedWL = implH.SessionIDPolicy() == handlercontract.SessionIDCaptured
 			implHarnessWL = implH
 			sdHarness = string(implH.AgentType())
@@ -4504,7 +4415,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hk-6596l: srt sandbox argv-wrap wiring. hk-r4p0l: key the gate off the
 	// resolved harness identity (implHarnessWL.AgentType()), NOT the
 	// artifacts-derived agent type. The originally-shipped gate matched
-	// string(artifactAgentType(artifacts)); for a pi run that value could read
+	// string(shared.ArtifactAgentType(artifacts)); for a pi run that value could read
 	// "claude-code" and the wrap silently no-op'd even with backend=srt +
 	// harnesses:[pi]. resolveGateAgentType prefers implHarnessWL (the concrete
 	// Harness resolved via HarnessRegistry.ForAgent just above) whose AgentType()
@@ -4530,17 +4441,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//     runs. The wrap is instead applied directly to spec.Binary/spec.Args in
 	//     the SessionIDCaptured branch below. The two branches are mutually
 	//     exclusive, so there is no double-wrap.
-	sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(implHarnessWL, artifactAgentType(artifacts)), SandboxProfileInput{
+	sandboxSpawn := sandboxSpawnForRun(env.SandboxCfg, resolveGateAgentType(implHarnessWL, shared.ArtifactAgentType(artifacts)), SandboxProfileInput{
 		WorktreePath:           wtPath,
-		GitDir:                 filepath.Join(deps.projectDir, ".git"),
+		GitDir:                 filepath.Join(env.ProjectDir, ".git"),
 		RunID:                  runID.String(),
 		DaemonSockPath:         agentDaemonSock,
-		AllowedDomains:         deps.sandboxCfg.Network.AllowedDomains,
-		AllowLocalBinding:      deps.sandboxCfg.Network.AllowLocalBinding,
-		WeakerNetworkIsolation: deps.sandboxCfg.Network.WeakerNetworkIsolation,
-		TmpDirs:                sandboxOSTmpDirs(),
-		SharedReadCacheDirs:    deps.sandboxCfg.Cache.WarmRead,
-		PrivateWriteCacheDirs:  deps.sandboxCfg.Cache.PrivateWrite,
+		AllowedDomains:         env.SandboxCfg.Network.AllowedDomains,
+		AllowLocalBinding:      env.SandboxCfg.Network.AllowLocalBinding,
+		WeakerNetworkIsolation: env.SandboxCfg.Network.WeakerNetworkIsolation,
+		SharedReadCacheDirs:    env.SandboxCfg.Cache.WarmRead,
+		PrivateWriteCacheDirs:  env.SandboxCfg.Cache.PrivateWrite,
 	})
 	if prs, ok := runSubstrate.(*perRunSubstrate); ok && sandboxSpawn != nil {
 		prs.sandboxSpawn = sandboxSpawn
@@ -4553,7 +4463,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// trustworthy for this run; refuse to launch the agent unsandboxed and
 	// hard-fail the run loud rather than treating it as green.
 	if sandboxSpawn != nil {
-		canaryPath := srtEngagementCanaryPath(deps.projectDir, runID.String())
+		canaryPath := srtEngagementCanaryPath(env.ProjectDir, runID.String())
 		if engageErr := verifySandboxEngaged(ctx, sandboxSpawn, canaryPath, func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s: "+format+"\n",
 				append([]any{beadID, runID.String()}, args...)...)
@@ -4612,10 +4522,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	spec.Terminal = true
 
 	// PI-014 workloop analog: predeclare sess so agentEndCb can capture it by
-	// reference. Go's `:=` redeclaration (below, at Launch) assigns to this same
-	// variable since watcher/launchErr are new in this scope; the closure is safe
-	// because agent_end can only arrive after Launch returns and sets sess.
+	// reference. RT14: watcher/launchErr/hbDone join it because the dispatch
+	// segment's launch and onLaunched hooks assign them from inside closures;
+	// the closure capture is safe because agent_end can only arrive after Launch
+	// returns and sets sess, and because RunDispatch drives every effector
+	// inline on this goroutine (runshell.go RunDispatch).
 	var sess handler.Session
+	var watcher *handlercontract.Watcher
+	var launchErr error
+	var hbDone chan struct{}
 	// hk-j6wm7: for a Pi run, capture a COPY of the child's stdout to a file under
 	// the run worktree so the fast-fail NDJSON output is observable post-mortem
 	// when the worktree is retained on failure. The pi-agent dir is where
@@ -4626,14 +4541,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	var piStdoutFile *os.File
 	if runIsPi {
 		piCaptureDir = filepath.Join(wtPath, ".harmonik", "pi-agent")
-		if mkErr := os.MkdirAll(piCaptureDir, 0o755); mkErr != nil {
+		// 0o700, NOT core.HarmonikDirMode: same directory as
+		// pi.BuildLaunchSpec's PI_CODING_AGENT_DIR (internal/harness/pi/
+		// launchspec.go), which holds agent credentials and is deliberately
+		// 0o700. MkdirAll does not chmod an existing dir, so the first creator
+		// decides the mode; match the credential owner, never widen it.
+		if mkErr := os.MkdirAll(piCaptureDir, 0o700); mkErr != nil { //dirmode:allow tighter on purpose: pi agent credential dir, matches internal/harness/pi.BuildLaunchSpec
 			fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: create pi capture dir %q: %v (stdout capture disabled)\n", piCaptureDir, mkErr)
 			piCaptureDir = ""
 		} else if f, ferr := os.Create(filepath.Join(piCaptureDir, "pi-stdout.log")); ferr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: create pi-stdout.log: %v (stdout capture disabled)\n", ferr)
 		} else {
 			piStdoutFile = f
-			defer func() { _ = piStdoutFile.Close() }()
+			defer func() {
+				if closeErr := piStdoutFile.Close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: close pi-stdout.log: %v\n", closeErr)
+				}
+			}()
 		}
 	}
 	if implIsSessionIDCapturedWL {
@@ -4657,8 +4581,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	// Step 2: register the hook session so incoming Stop-hook relays are routed
 	// to this run's hookSessionStore entry (CHB-025).
-	deps.hookStore.RegisterHookSession(runID.String(), artifacts.claudeSessionID)
-	defer deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+	handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
+	defer handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
 
 	// Step 3: emit pre-exec messages on the bus BEFORE Launch (CHB-018 ordering).
 	// Each message carries a "type" field that maps directly to a core.EventType.
@@ -4668,14 +4592,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// it must signal that a tmux window actually spawned, not merely that the
 	// daemon is about to try (which would mislead operators when SpawnWindow is
 	// wedged on a leaked spawn slot).
-	implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.preExecMsgs)
+	implLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, emit, runID, artifacts.PreExecMsgs)
 
 	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
 	// watcher events without a post-seal bus subscription (EV-009).
-	tap, tapCh := newPerRunEventTap(deps.bus, runID)
-	// Precondition: deps.adapterRegistry must be non-nil (enforced by
+	tap, tapCh := runloop.NewPerRunEventTap(emit, runID)
+	// Precondition: handles.AdapterRegistry must be non-nil (enforced by
 	// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
-	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
+	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 
 	// hk-5z1f0: per-worker cold-start spawn semaphore. Acquire immediately before
 	// the remote agent Launch so no more than cap (3) claude cold-starts run
@@ -4686,9 +4610,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// agent_ready resolves (success/failure/timeout); the sync.Once + defer backstop
 	// guarantees the slot is returned on every exit path so it can never leak.
 	releaseSpawnSlot := func() {}
-	if rbc != nil && deps.agentSpawnSem != nil {
+	if rbc != nil && handles.AgentSpawnSem != nil {
 		select {
-		case deps.agentSpawnSem <- struct{}{}:
+		case handles.AgentSpawnSem <- struct{}{}:
 		case <-ctx.Done():
 			// ctx cancelled while waiting for a slot — reopen and bail before Launch.
 			reason := fmt.Sprintf("cancelled awaiting cold-start spawn slot: %v", ctx.Err())
@@ -4696,53 +4620,351 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			return
 		}
 		var once sync.Once
-		releaseSpawnSlot = func() { once.Do(func() { <-deps.agentSpawnSem }) }
+		releaseSpawnSlot = func() { once.Do(func() { <-handles.AgentSpawnSem }) }
 		defer releaseSpawnSlot() // leak backstop; explicit release after agent_ready below
 	}
 
 	// RT7: provisioning is complete — start the Run machine so every
 	// dispatch-phase failure below rides EvModeOutcome{failure} (RSM-031) and
 	// the terminal spine rides the machine.
-	bridge.start(ctx, workflowMode)
+	bridge.Start(ctx, workflowMode)
 
-	implementerLaunchedAt := deps.clock.Now()
-	sess, watcher, launchErr := runH.Launch(ctx, spec)
+	implementerLaunchedAt := rp.Clock.Now()
+	// D2 (fail-closed): inspect the final spawn environment at the launch
+	// boundary, after every spec mutation, and refuse live Anthropic credentials
+	// on remote workers (the 2026-05-30 credential-leak incident).
+	if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused {
+		reason := string(refusal)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s run %s (reopening)\n",
+			reason, beadID, runID.String())
+		failRun(reason, reason)
+		return false
+	}
+	// hk-zlo8: resolve completionMode BEFORE the segment so it is accessible at
+	// the paste-inject deliver hook below (pasteInjectOnLaunch +
+	// pasteInjectQuitOnCommit must be skipped for ProcessExit harnesses — same
+	// class as hk-f6g7) and so cfg.SkipReadyHandshake can carry the hk-f6g7
+	// posture: ProcessExit harnesses (codex) self-terminate on turn completion
+	// and never emit agent_ready, so the readiness handshake is skipped.
+	// Spec: specs/harness-contract.md §2 N5.
+	completionMode := handlercontract.CompletionEventStreamThenQuit
+	if handles.HarnessRegistry != nil {
+		if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
+			completionMode = h.Completion()
+		}
+	}
+
+	// Precondition: handles.AdapterRegistry is non-nil (enforced by newWorkLoopDeps;
+	// hk-d8u1y). Obtain the adapter from the registry for DetectReady.
+	adapter, adapterErr := handles.AdapterRegistry.ForAgent(shared.ArtifactAgentType(artifacts))
+	if adapterErr != nil {
+		// No adapter for the resolved agent type — non-fatal; skip ready-wait
+		// (the segment feeds a synthetic ready so the brief is still delivered).
+		fmt.Fprintf(os.Stderr, "daemon: workloop: ForAgent(%s) bead %s: %v (skipping ready-wait)\n",
+			shared.ArtifactAgentType(artifacts), beadID, adapterErr)
+		adapter = nil
+	}
+
+	// Capture values for the agent-ready callback closure and the ready-timeout
+	// emission; claudeSessionID is a plain string (not core.SessionID) so copy it
+	// explicitly to avoid capturing a loop var.
+	cbRunID := runID
+	cbClaudeSessionID := artifacts.ClaudeSessionID
+
+	// noChangeTimeoutCh is declared unconditionally so the default switch branch at
+	// the post-wait select can read it (nil = no watchdog, treated as open channel).
+	// The segment's deliver hook is what assigns it (hk-trjef).
+	var noChangeTimeoutCh chan struct{}
+
+	implSeg := &runloop.DispatchSegment{
+		Clock: rp.Clock,
+		RunID: runID,
+		Config: runexec.DispatchConfig{
+			SkipReadyHandshake: completionMode == handlercontract.CompletionProcessExit,
+			// Single-mode beadRunOne is always a fresh launch (pre-RT14 parity):
+			// it has no iteration counter and never issues `claude --resume`.
+			IsResume:         false,
+			MaxInputAttempts: 1,
+			// hk-96d7w: remote dispatch (rbc != nil) gets the longer remote window.
+			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, rbc != nil),
+			InputAck:      runloop.DispatchSegmentInputAckWindow,
+			ReadyKillReap: runlaunch.KillReapTimeout,
+		},
+		// nil adapter (no adapter for the resolved agent type) → the segment feeds
+		// a synthetic ready so the brief is still delivered without a wait.
+		Adapter: adapter,
+		// pre-RT14 parity: the single-mode path had no resume accommodation.
+		ProbeResume: false,
+		Tap:         tap,
+		TapCh:       tapCh,
+		Launch: func(lctx context.Context) (<-chan struct{}, error) {
+			sess, watcher, launchErr = runH.Launch(lctx, spec)
+			if launchErr != nil {
+				return nil, launchErr
+			}
+			if watcher != nil {
+				return watcher.Done(), nil
+			}
+			return nil, nil
+		},
+		OnLaunchFailed: func(lctx context.Context, lErr error) {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
+				beadID, runID.String(), lErr)
+			// hk-4l7zs: a spawn-cap-timeout launch failure is the slot-leak signature.
+			// Emit spawn_cap_blocked so operators see WHY the launch failed (pool
+			// saturated) instead of an opaque launch-error reopen.
+			if errors.Is(lErr, ErrSpawnCapTimeout) {
+				inUse, capSize := substrateSpawnStats(handles.Substrate)
+				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, rp.Clock.Since(implementerLaunchedAt), inUse, capSize)
+			}
+			// hk-r1rup: a tmux-new-window-timeout launch failure is the hung-tmux
+			// signature (the no-spawn wedge). Emit tmux_new_window_timeout so operators
+			// see WHY the launch failed (tmux new-window did not return) instead of an
+			// opaque launch-error reopen.
+			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
+				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, rp.Clock.Since(implementerLaunchedAt))
+			}
+		},
+		OnLaunched: func(lctx context.Context) {
+			// hk-4l7zs: now that the tmux window has actually spawned (Launch returned a
+			// live session), emit the held-back launch_initiated. Emitting it here — not
+			// before SpawnWindow — keeps the event truthful when the spawn semaphore is
+			// wedged on a leaked slot (in that case Launch returns an error above and
+			// launch_initiated is never emitted).
+			if implLaunchInitiatedMsg != nil {
+				runlaunch.EmitPreExecMessage(lctx, emit, runID, implLaunchInitiatedMsg)
+			}
+
+			// Store the session's lifecycle Machine in the RunHandle so the stale watcher
+			// can read the current state and drive Ready→Failed(silent_hang) before
+			// emitting run_stale (SPEC_ACCEPTANCE_GAP fix per hk-xrygh iter-2).
+			if handle, ok := handles.RunRegistry.Get(runID); ok {
+				handle.SetMachine(sess.Machine())
+			}
+
+			// hk-xnnd: register the implementer identity on the comms bus so peers can
+			// attribute escalation messages sent under "<beadID>-impl". Retire on run-end
+			// via the defer registered after the segment returns, so the leave event
+			// fires on every exit path (normal, abort, error).
+			emitImplPresence(lctx, emit, beadID, core.AgentPresenceStatusOnline, core.AgentPresenceReasonJoin)
+
+			// Wire the agent-ready callback so that incoming agent_ready relay
+			// messages from the hook-relay subprocess (CHB-013 / HC-039) are forwarded
+			// into tapCh, which the segment's ready pump consumes.
+			//
+			// Without this call, hookSessionStore.notifyAgentReady finds agentReadyCallback
+			// == nil and is a no-op: tapCh stays empty and the ready pump never observes
+			// agent_ready, so HC-056 fires runlaunch.ErrAgentReadyTimeout. This is the root
+			// cause identified in smoke v6 (docs/dogfood-smoke-run-2026-05-13-bridge-substrate-v6.md
+			// §9, bead hk-lj1p9.4).
+			//
+			// The callback is invoked from the socket-acceptor goroutine and MUST be
+			// non-blocking. tap.EmitWithRunID is used to forward the event through the
+			// same path as watcher events, ensuring the ready pump receives it.
+			// context.Background() is intentional: the callback fires asynchronously from
+			// a socket-acceptor goroutine whose lifetime is decoupled from ctx; bus.Emit
+			// with Background is non-blocking and safe to call after ctx is cancelled.
+			//
+			// The defer CloseHookSession (step 2 above) ensures the callback is never
+			// called after the hook session is torn down: notifyAgentReady reads the
+			// callback under the mutex, and CloseHookSession deletes the session entry,
+			// so any post-close relay message returns unknown_session before reaching the
+			// callback.
+			//
+			// Ordering: tap is created before Launch, Launch returns before this hook
+			// runs (the machine emits launch_initiated only on EvLaunched), and the ready
+			// pump consumes tapCh from segment start — so the callback is registered
+			// before the machine's TimerAgentReady can expire.
+			//
+			// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
+			// Bead ref: hk-lj1p9.4.
+			handles.HookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
+				// hk-5cox8 observability: populate run_id, claude_session_id, and provenance
+				// so the emitted agent_ready event in events.jsonl can be correlated per-run.
+				// Previously this called tap.Emit with nil payload, producing payload:null
+				// in the JSONL and making it impossible to determine which runs received
+				// agent_ready and which timed out.
+				pl := core.AgentReadyPayload{
+					RunID:           cbRunID,
+					SessionID:       core.SessionID(cbClaudeSessionID),
+					Capabilities:    []string{},
+					ClaudeSessionID: cbClaudeSessionID,
+					Provenance:      "claude_session_start",
+				}
+				b, marshalErr := json.Marshal(pl)
+				if marshalErr != nil {
+					// Fallback: emit without payload rather than silently dropping the event.
+					// hk-wths: use EmitWithRunID so the bus envelope carries run_id and the
+					// stale watcher's never-spawned reaper sees agentReadySeen = true.
+					_ = tap.EmitWithRunID(context.Background(), cbRunID, core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
+					return
+				}
+				// hk-wths: use EmitWithRunID so the bus envelope carries run_id and the
+				// stale watcher's never-spawned reaper sees agentReadySeen = true.
+				_ = tap.EmitWithRunID(context.Background(), cbRunID, core.EventTypeAgentReady, b) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
+			})
+
+			// Step 5: start CHB-019 heartbeat goroutine.  Daemon-owned per OQ5 resolution.
+			// Closed via the defer registered after the segment returns.
+			hbDone = make(chan struct{})
+			go handler.RunHeartbeatLoop(ctx, artifacts.HandlerSessionID,
+				handler.HeartbeatInterval, hbDone,
+				newDaemonHeartbeatEmitter(tap, runID))
+		},
+		Deliver: func(dctx context.Context) {
+			// Steps 6a/6b: paste-inject — only for interactive TUI harnesses (not ProcessExit).
+			// hk-zlo8: CodexHarness (CompletionProcessExit) has no tmux pane; calling
+			// pasteInjectOnLaunch causes "WriteLastPane: cant find pane" → no_commit in ~4s.
+			// ProcessExit harnesses receive their task via argv (launch spec), not pane paste.
+			// Belt to cfg.SkipReadyHandshake's braces: that config already keeps the
+			// machine from reaching the deliver edge for a ProcessExit harness, but the
+			// guard is the pre-RT14 gate and removing it would be a logic change.
+			if completionMode != handlercontract.CompletionProcessExit {
+				// Step 6a: pasteInjectOnLaunch — deliver "Please read .harmonik/agent-task.md
+				// and begin." (or phase-appropriate equivalent) to the tmux pane via
+				// WriteLastPane.
+				//
+				// MUST run on the machine's post-ready deliver edge (smoke v9 RED, hk-zchbu):
+				// when paste-inject fires before agent_ready, the trailing \n is consumed by
+				// Claude Code's welcome-splash render before the REPL input state is
+				// active; the buffered text sits in the input bar unsubmitted, claude
+				// never reads agent-task.md, HC-056 never fires (the splash itself
+				// doesn't emit SessionStart on its own), and the run hangs.
+				//
+				// Errors are logged to stderr but non-fatal (PL-021d).
+				//
+				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
+				// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
+				briefDelivered := pasteInjectOnLaunch(dctx, rp.Clock, runPasteTarget, artifacts.ClaudeSessionID,
+					rc.Phase, rc.IterationCount, wtPath,
+					emit, runID)
+
+				// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
+				// worktree, send `/quit Enter` to Claude Code's REPL to trigger the Stop
+				// hook and unblock the workloop (CHB-028 session-completion-instruction,
+				// hk-cmybm).
+				//
+				// Background: in interactive TUI mode the Stop hook fires on session exit
+				// (/quit or Ctrl-C) — NOT after each assistant response.  Claude Code agents
+				// cannot execute slash commands from their tool API; the daemon detects the
+				// commit and injects /quit programmatically via tmux send-keys.
+				//
+				// The goroutine polls the worktree HEAD every 500ms.  When HEAD changes from
+				// headSHA (the pre-commit parent), it sends /quit.  Non-fatal on error.
+				//
+				// hk-012af: use runPasteTarget (per-run substrate) so /quit targets this
+				// run's pane, not the shared "last pane" which may have been overwritten by
+				// a concurrent beadRunOne goroutine.
+				//
+				// hk-930o3: briefDelivered is passed so pasteInjectQuitOnCommit blocks on
+				// brief delivery before starting the commit poll loop, preventing a stale
+				// tmux pane /exit race.
+				//
+				// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
+				// Beads: hk-cmybm, hk-930o3.
+				// noChangeTimeoutCh is closed by pasteInjectQuitOnCommit when it kills the
+				// session after commitPollTimeout without a new commit (hk-trjef).  The
+				// workloop checks it non-blockingly in the default switch branch to
+				// distinguish a forced-kill from a genuine agent failure.
+				//
+				// hk-7srrd: pass a per-run heartbeat channel so pasteInjectQuitOnCommit can
+				// track agent_heartbeat events and use heartbeat staleness as the primary
+				// kill trigger instead of a fixed wall-clock deadline.
+				//
+				// hk-37giq: this MUST be an INDEPENDENT subscription (tap.Subscribe()), NOT
+				// the same tapCh that the segment's ready pump consumes. A Go channel receive
+				// is exclusive, so sharing tapCh let the ready-side drain goroutine — which
+				// can keep running until the segment ends — steal every heartbeat from this
+				// watchdog under concurrent dispatch. With the fan-out tap, the watchdog gets
+				// its own copy of every event and observes firstHeartbeatSeen, so it advances
+				// instead of spinning in the launch-suppression branch forever
+				// (launch_stall_detected → run_stale wedge).
+				if qs, ok := runPasteTarget.(quitSender); ok {
+					noChangeTimeoutCh = make(chan struct{})
+					watchdogCh := tap.Subscribe()
+					go pasteInjectQuitOnCommit(ctx, rp.Clock, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, emit, runID)
+				}
+			}
+		},
+		KillReady: func(kctx context.Context) {
+			// HC-056: agent_ready_timeout — kill, reap. The reopen follows at the
+			// segment return below (the machine emits agent_ready_timeout after this
+			// hook returns, preserving the pre-RT14 kill-then-emit ordering).
+			fmt.Fprintf(os.Stderr, "daemon: workloop: waitAgentReady bead %s run %s: %v (reopening)\n",
+				beadID, runID.String(), runlaunch.ErrAgentReadyTimeout)
+			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
+			if watcher != nil {
+				// Wait for the watcher goroutine to exit, but do not block
+				// indefinitely — runlaunch.KillReapTimeout guards against a
+				// hung watcher after SIGKILL. The bead is still reopened even
+				// if reaping times out; the watcher goroutine will unblock
+				// when the outer ctx is eventually cancelled.
+				// Bead ref: hk-do7te.
+				select {
+				case <-watcher.Done():
+				case <-substrate.After(rp.Clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+					fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
+						beadID, runID.String())
+				}
+			}
+			// hk-4hso5: bound sess.Wait so a remote pane that stays alive after
+			// Kill cannot hold this goroutine up to 30 min (never-spawned reaper
+			// deadline). runlaunch.KillReapTimeout gives the pane time to close
+			// after SIGKILL; if not closed by then, proceed to ReopenBead anyway.
+			// context.Background() as parent makes this independent of the per-run
+			// ctx that the reaper may have already cancelled.
+			{
+				waitCtx, waitCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
+				_ = sess.Wait(waitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
+				waitCancel()
+			}
+		},
+		EmitReadyTimeout: func(context.Context) {
+			// hk-5cox8 observability: emit agent_ready_timeout to events.jsonl so
+			// post-hoc analysis can distinguish "never ready" runs from runs that
+			// received agent_ready. hk-4hso5: use context.Background() so the
+			// emission succeeds even when the never-spawned reaper has cancelled
+			// the per-run ctx before this point (the reopen hook applies the same
+			// Background fallback per RSM-022).
+			runlaunch.EmitAgentReadyTimeout(context.Background(), emit, runID, cbClaudeSessionID, env.AgentReadyTimeout) //nolint:contextcheck // hk-4hso5: Background is deliberate so the emission survives a reaper-cancelled run ctx (pre-RT14 idiom)
+		},
+		KillAbort: func(context.Context) {
+			// hk-o85ye: SITE-SPECIFIC — unlike reviewloop.go / dot_cascade.go, whose
+			// ForceTeardownSession backstop is unconditional, this site's backstop is
+			// guarded (`!useIndepSession || ctx.Err() == nil`) because on daemon
+			// shutdown an independent-session run MUST survive: the session outlives
+			// SIGKILL and the next boot's adoption pass monitors it, which is why the
+			// shutdown branch below returns without ReopenBead. Killing here would
+			// strand the bead in_progress with no live session to adopt, so the abort
+			// edge carries the identical guard.
+			if useIndepSession && ctx.Err() != nil {
+				return
+			}
+			// Ctx-cancel abort edge: Kill is idempotent (the runlaunch.ForceTeardownSession
+			// backstop registered below rides behind it either way).
+			if sess != nil {
+				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
+			}
+		},
+		SpawnCapTimeout:      ErrSpawnCapTimeout,
+		TmuxNewWindowTimeout: ErrTmuxNewWindowTimeout,
+	}
+	implDispatch := implSeg.Run(ctx)
+
 	if launchErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
-			beadID, runID.String(), launchErr)
-		// hk-4l7zs: a spawn-cap-timeout launch failure is the slot-leak signature.
-		// Emit spawn_cap_blocked so operators see WHY the launch failed (pool
-		// saturated) instead of an opaque launch-error reopen.
-		if errors.Is(launchErr, ErrSpawnCapTimeout) {
-			inUse, capSize := substrateSpawnStats(deps.substrate)
-			emitSpawnCapBlocked(ctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt), inUse, capSize)
-		}
-		// hk-r1rup: a tmux-new-window-timeout launch failure is the hung-tmux
-		// signature (the no-spawn wedge). Emit tmux_new_window_timeout so operators
-		// see WHY the launch failed (tmux new-window did not return) instead of an
-		// opaque launch-error reopen.
-		if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
-			emitTmuxNewWindowTimeout(ctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt))
-		}
 		reason := fmt.Sprintf("launch error: %v", launchErr)
 		failRun(reason, reason)
-		return
-	}
-	// hk-4l7zs: now that the tmux window has actually spawned (Launch returned a
-	// live session), emit the held-back launch_initiated. Emitting it here — not
-	// before SpawnWindow — keeps the event truthful when the spawn semaphore is
-	// wedged on a leaked slot (in that case Launch returns an error above and
-	// launch_initiated is never emitted).
-	if implLaunchInitiatedMsg != nil {
-		emitPreExecMessage(ctx, deps.bus, runID, implLaunchInitiatedMsg)
+		// succeeded is never assigned before this point, so the explicit false is
+		// byte-equivalent to the pre-RT14 naked return (nakedret).
+		return false
 	}
 
-	// Store the session's lifecycle Machine in the RunHandle so the stale watcher
-	// can read the current state and drive Ready→Failed(silent_hang) before
-	// emitting run_stale (SPEC_ACCEPTANCE_GAP fix per hk-xrygh iter-2).
-	if handle, ok := deps.runRegistry.Get(runID); ok {
-		handle.SetMachine(sess.Machine())
-	}
+	// RT14: the four post-launch cleanup defers are registered here, in their
+	// pre-RT14 textual order, so LIFO firing order is preserved exactly. They
+	// MUST be registered BEFORE the ready-timeout terminal check below —
+	// otherwise the agent_ready_timeout path stops tearing down the session,
+	// stops emitting presence-offline, and leaks the heartbeat goroutine.
+	// (reviewloop.go and dot_cascade.go register theirs at the same point.)
 
 	// hk-j6wm7: on a Pi FAILURE, persist the session's stderr tail alongside the
 	// captured stdout so the fast-fail error output survives with the retained
@@ -4755,7 +4977,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		capturedSess := sess
 		capturedCaptureDir := piCaptureDir
 		defer func() {
-			if bridge.success() {
+			if bridge.Success() {
 				return
 			}
 			if capturedSess == nil {
@@ -4785,193 +5007,33 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// the session must survive so the adoption pass on next boot can monitor it.
 	defer func() {
 		if !useIndepSession || ctx.Err() == nil {
-			forceTeardownSession(sess)
+			runlaunch.ForceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom); it deliberately reaps on context.Background() so the kill completes even after the run ctx is cancelled
 		}
 	}()
 
-	// hk-xnnd: register the implementer identity on the comms bus so peers can
-	// attribute escalation messages sent under "<beadID>-impl". Retire on run-end
-	// via defer so the leave event fires on every exit path (normal, abort, error).
-	emitImplPresence(ctx, deps.bus, beadID, core.AgentPresenceStatusOnline, core.AgentPresenceReasonJoin)
+	// hk-xnnd: retire the implementer identity on the comms bus. The join is
+	// emitted by the segment's onLaunched hook; this defer fires the leave on
+	// every exit path (normal, abort, error).
 	defer func() {
-		emitImplPresence(context.Background(), deps.bus, beadID, core.AgentPresenceStatusOffline, core.AgentPresenceReasonLeave)
+		emitImplPresence(context.Background(), emit, beadID, core.AgentPresenceStatusOffline, core.AgentPresenceReasonLeave)
 	}()
 
-	// Step 4a: wire the agent-ready callback so that incoming agent_ready relay
-	// messages from the hook-relay subprocess (CHB-013 / HC-039) are forwarded
-	// into tapCh, which waitAgentReady blocks on.
-	//
-	// Without this call, hookSessionStore.notifyAgentReady finds agentReadyCallback
-	// == nil and is a no-op: tapCh stays empty and waitAgentReady always fires
-	// ErrAgentReadyTimeout (HC-056). This is the root cause identified in smoke v6
-	// (docs/dogfood-smoke-run-2026-05-13-bridge-substrate-v6.md §9, bead hk-lj1p9.4).
-	//
-	// The callback is invoked from the socket-acceptor goroutine and MUST be
-	// non-blocking. tap.Emit is used to forward the event through the same path
-	// as watcher events, ensuring waitAgentReady's observer goroutine receives it.
-	// context.Background() is intentional: the callback fires asynchronously from
-	// a socket-acceptor goroutine whose lifetime is decoupled from ctx; bus.Emit
-	// with Background is non-blocking and safe to call after ctx is cancelled.
-	//
-	// The defer CloseHookSession (step 2 above) ensures the callback is never
-	// called after the hook session is torn down: notifyAgentReady reads the
-	// callback under the mutex, and CloseHookSession deletes the session entry,
-	// so any post-close relay message returns unknown_session before reaching the
-	// callback.
-	//
-	// Ordering: tap is created before Launch (step 4), Launch returns before this
-	// call (step 4a), and waitAgentReady is called after (step 6). This ensures
-	// the callback is registered before waitAgentReady blocks on tapCh.
-	//
-	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
-	// Bead ref: hk-lj1p9.4.
-	// Capture values for the callback closure; claudeSessionID is a plain string
-	// (not core.SessionID) so copy it explicitly to avoid capturing a loop var.
-	cbRunID := runID
-	cbClaudeSessionID := artifacts.claudeSessionID
-	deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
-		// hk-5cox8 observability: populate run_id, claude_session_id, and provenance
-		// so the emitted agent_ready event in events.jsonl can be correlated per-run.
-		// Previously this called tap.Emit with nil payload, producing payload:null
-		// in the JSONL and making it impossible to determine which runs received
-		// agent_ready and which timed out.
-		pl := core.AgentReadyPayload{
-			RunID:           cbRunID,
-			SessionID:       core.SessionID(cbClaudeSessionID),
-			Capabilities:    []string{},
-			ClaudeSessionID: cbClaudeSessionID,
-			Provenance:      "claude_session_start",
-		}
-		b, marshalErr := json.Marshal(pl)
-		if marshalErr != nil {
-			// Fallback: emit without payload rather than silently dropping the event.
-			// hk-wths: use EmitWithRunID so the bus envelope carries run_id and the
-			// stale watcher's never-spawned reaper sees agentReadySeen = true.
-			_ = tap.EmitWithRunID(context.Background(), cbRunID, core.EventTypeAgentReady, nil)
-			return
-		}
-		// hk-wths: use EmitWithRunID so the bus envelope carries run_id and the
-		// stale watcher's never-spawned reaper sees agentReadySeen = true.
-		_ = tap.EmitWithRunID(context.Background(), cbRunID, core.EventTypeAgentReady, b)
-	})
-
-	// Step 4b: paste-inject the kick-off message into the Claude pane (hk-zrj83).
-	//
-	// Step 5: start CHB-019 heartbeat goroutine.  Daemon-owned per OQ5 resolution.
-	hbDone := make(chan struct{})
-	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
-		handler.HeartbeatInterval, hbDone,
-		newDaemonHeartbeatEmitter(tap, runID))
-	defer close(hbDone)
-
-	// Step 6: waitAgentReady — HC-056 agent_ready timeout guard.
-	//
-	// Precondition: deps.adapterRegistry is non-nil (enforced by newWorkLoopDeps;
-	// hk-d8u1y). Obtain the adapter from the registry for DetectReady.
-	//
-	// HC-056 timeout semantics: we only treat this as a hard failure requiring
-	// reopen if the SPECIFIC HC-056 timeout sentinel (ErrAgentReadyTimeout)
-	// fires. If the watcher exits first (handler crash, clean exit without
-	// agent_ready) the watcher-done cancel fires first, returning
-	// context.Canceled — in that case we skip the reopen and fall through to
-	// the normal waitWithSocketGrace path which handles the exit correctly per
-	// CHB-020 branch 3.
-	// hk-zlo8: resolve completionMode before the adapter check so it is accessible
-	// at the paste-inject gate below (pasteInjectOnLaunch + pasteInjectQuitOnCommit
-	// must be skipped for ProcessExit harnesses — same class as hk-f6g7).
-	completionMode := handlercontract.CompletionEventStreamThenQuit
-	if deps.harnessRegistry != nil {
-		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
-			completionMode = h.Completion()
-		}
+	if hbDone != nil {
+		hbDoneToClose := hbDone
+		defer close(hbDoneToClose)
 	}
 
-	adapter, adapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(artifacts))
-	if adapterErr != nil {
-		// No adapter for the resolved agent type — non-fatal; skip ready-wait.
-		fmt.Fprintf(os.Stderr, "daemon: workloop: ForAgent(%s) bead %s: %v (skipping ready-wait)\n",
-			artifactAgentType(artifacts), beadID, adapterErr)
-	} else {
-		// hk-f6g7: skip waitAgentReady for ProcessExit harnesses (codex). These
-		// self-terminate on turn completion and never emit agent_ready; calling
-		// waitAgentReady unconditionally caused HC-056 timeout in all workflow modes.
-		// Spec: specs/harness-contract.md §2 N5.
-		// completionMode was resolved above (hk-zlo8) and is used here directly.
-		if completionMode != handlercontract.CompletionProcessExit {
-			// Derive a child context that cancels when the watcher finishes (handler
-			// exit). This prevents waitAgentReady from blocking for the full timeout
-			// when the handler exits before emitting agent_ready (e.g. a crash).
-			//
-			// Substrate path: watcher is nil when deps.substrate != nil (tmux-hosted
-			// sessions return watcher=nil; completion flows via HookSessionStore.WaitForOutcome).
-			// Skip the watcher-done goroutine in that case — readyCtx is still valid
-			// and will be cancelled by the outer ctx or readyCancel below.
-			readyCtx, readyCancel := context.WithCancel(ctx)
-			if watcher != nil {
-				go func() {
-					select {
-					case <-watcher.Done():
-						readyCancel()
-					case <-readyCtx.Done():
-					}
-				}()
-			}
-
-			eventSrc := newChanAgentEventSource(tapCh)
-			// hk-96d7w: remote dispatch (rbc != nil) gets the longer remote window.
-			readyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, rbc != nil)
-			readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, readyTimeout)
-			readyCancel() // always release the watcher-done goroutine above
-
-			if errors.Is(readyErr, ErrAgentReadyTimeout) {
-				// HC-056: agent_ready_timeout — kill, reap, reopen.
-				fmt.Fprintf(os.Stderr, "daemon: workloop: waitAgentReady bead %s run %s: %v (reopening)\n",
-					beadID, runID.String(), readyErr)
-				_ = sess.Kill(ctx)
-				if watcher != nil {
-					// Wait for the watcher goroutine to exit, but do not block
-					// indefinitely — agentReadyKillReapTimeout guards against a
-					// hung watcher after SIGKILL. The bead is still reopened even
-					// if reaping times out; the watcher goroutine will unblock
-					// when the outer ctx is eventually cancelled.
-					// Bead ref: hk-do7te.
-					select {
-					case <-watcher.Done():
-					case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
-						fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
-							beadID, runID.String())
-					}
-				}
-				// hk-4hso5: bound sess.Wait so a remote pane that stays alive after
-				// Kill cannot hold this goroutine up to 30 min (never-spawned reaper
-				// deadline). agentReadyKillReapTimeout gives the pane time to close
-				// after SIGKILL; if not closed by then, proceed to ReopenBead anyway.
-				// context.Background() as parent makes this independent of the per-run
-				// ctx that the reaper may have already cancelled.
-				{
-					waitCtx, waitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
-					_ = sess.Wait(waitCtx)
-					waitCancel()
-				}
-				// hk-5cox8 observability: emit agent_ready_timeout to events.jsonl so
-				// post-hoc analysis can distinguish "never ready" runs from runs that
-				// received agent_ready. hk-4hso5: use context.Background() so the
-				// emission succeeds even when the never-spawned reaper has cancelled
-				// the per-run ctx before this point (the reopen hook applies the same
-				// Background fallback per RSM-022).
-				emitAgentReadyTimeout(context.Background(), deps.bus, runID, cbClaudeSessionID, deps.agentReadyTimeout)
-				// RT7 / RSM-031 row 1: the ready-timeout Dispatch terminal maps onto
-				// the Run reopen spine (reopen "agent_ready_timeout" + run_failed).
-				failRun("agent_ready_timeout", "agent_ready_timeout")
-				return
-			}
-			// readyErr == nil (agent_ready observed) OR context.Canceled (watcher
-			// exited first, outer ctx cancelled, or watcher-done cancel).
-			// Fall through to waitWithSocketGrace.
-		}
-		// CompletionProcessExit: process self-terminates; fall through directly to
-		// waitWithSocketGrace without the agent_ready handshake.
+	if implDispatch.Phase == runexec.DispatchFailed && implDispatch.Reason == "agent_ready_timeout" {
+		// RT7 / RSM-031 row 1: the ready-timeout Dispatch terminal maps onto
+		// the Run reopen spine (reopen "agent_ready_timeout" + run_failed).
+		failRun("agent_ready_timeout", "agent_ready_timeout")
+		// succeeded is never assigned before this point, so the explicit false is
+		// byte-equivalent to the pre-RT14 naked return (nakedret).
+		return false
 	}
+	// Working / Exited / Aborted: fall through to waitWithSocketGrace — the
+	// pre-RT14 posture for agent_ready-observed, watcher-exit-first
+	// (context.Canceled), and ctx-cancel.
 
 	// hk-5z1f0: agent_ready has resolved (or was skipped for a ProcessExit
 	// harness / missing adapter) — the cold-start window is over, so release the
@@ -4981,86 +5043,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// keeps the gate scoped to cold-start only. No-op for local runs.
 	releaseSpawnSlot()
 
-	// Steps 6a/6b: paste-inject — only for interactive TUI harnesses (not ProcessExit).
-	// hk-zlo8: CodexHarness (CompletionProcessExit) has no tmux pane; calling
-	// pasteInjectOnLaunch causes "WriteLastPane: cant find pane" → no_commit in ~4s.
-	// ProcessExit harnesses receive their task via argv (launch spec), not pane paste.
-	// Mirrors the existing hk-f6g7 gate above for waitAgentReady.
-	//
-	// noChangeTimeoutCh is declared unconditionally so the default switch branch at
-	// the post-wait select can read it (nil = no watchdog, treated as open channel).
-	var noChangeTimeoutCh chan struct{}
-	if completionMode != handlercontract.CompletionProcessExit {
-		// Step 6a: pasteInjectOnLaunch — deliver "Please read .harmonik/agent-task.md
-		// and begin." (or phase-appropriate equivalent) to the tmux pane via
-		// WriteLastPane.
-		//
-		// MUST run AFTER waitAgentReady returns (smoke v9 RED, hk-zchbu): when
-		// paste-inject fires before agent_ready, the trailing \n is consumed by
-		// Claude Code's welcome-splash render before the REPL input state is
-		// active; the buffered text sits in the input bar unsubmitted, claude
-		// never reads agent-task.md, HC-056 never fires (the splash itself
-		// doesn't emit SessionStart on its own), and the run hangs.
-		//
-		// Errors are logged to stderr but non-fatal (PL-021d).
-		//
-		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
-		// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
-		briefDelivered := pasteInjectOnLaunch(ctx, runPasteTarget, artifacts.claudeSessionID,
-			handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath,
-			deps.bus, runID)
-
-		// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
-		// worktree, send `/quit Enter` to Claude Code's REPL to trigger the Stop
-		// hook and unblock the workloop (CHB-028 session-completion-instruction,
-		// hk-cmybm).
-		//
-		// Background: in interactive TUI mode the Stop hook fires on session exit
-		// (/quit or Ctrl-C) — NOT after each assistant response.  Claude Code agents
-		// cannot execute slash commands from their tool API; the daemon detects the
-		// commit and injects /quit programmatically via tmux send-keys.
-		//
-		// The goroutine polls the worktree HEAD every 500ms.  When HEAD changes from
-		// headSHA (the pre-commit parent), it sends /quit.  Non-fatal on error.
-		//
-		// hk-012af: use runPasteTarget (per-run substrate) so /quit targets this
-		// run's pane, not the shared "last pane" which may have been overwritten by
-		// a concurrent beadRunOne goroutine.
-		//
-		// hk-930o3: briefDelivered is passed so pasteInjectQuitOnCommit blocks on
-		// brief delivery before starting the commit poll loop, preventing a stale
-		// tmux pane /exit race.
-		//
-		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
-		// Beads: hk-cmybm, hk-930o3.
-		// noChangeTimeoutCh is closed by pasteInjectQuitOnCommit when it kills the
-		// session after commitPollTimeout without a new commit (hk-trjef).  The
-		// workloop checks it non-blockingly in the default switch branch to
-		// distinguish a forced-kill from a genuine agent failure.
-		//
-		// hk-7srrd: pass a per-run heartbeat channel so pasteInjectQuitOnCommit can
-		// track agent_heartbeat events and use heartbeat staleness as the primary
-		// kill trigger instead of a fixed wall-clock deadline.
-		//
-		// hk-37giq: this MUST be an INDEPENDENT subscription (tap.Subscribe()), NOT
-		// the same tapCh that waitAgentReady consumes. A Go channel receive is
-		// exclusive, so sharing tapCh let waitAgentReady's drain goroutine — which can
-		// keep running after readyCancel() until it happens to select ctx.Done() —
-		// steal every heartbeat from this watchdog under concurrent dispatch. With the
-		// fan-out tap, the watchdog gets its own copy of every event and observes
-		// firstHeartbeatSeen, so it advances instead of spinning in the launch-
-		// suppression branch forever (launch_stall_detected → run_stale wedge).
-		if qs, ok := runPasteTarget.(quitSender); ok {
-			noChangeTimeoutCh = make(chan struct{})
-			watchdogCh := tap.Subscribe()
-			go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, deps.bus, runID)
-		}
-	}
-
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
 	// apply the stop-hook grace window for a pending outcome_emitted payload.
-	socketOutcome, ei := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
-		runID.String(), artifacts.claudeSessionID)
+	socketOutcome, ei := runloop.WaitWithSocketGrace(ctx, rp.Clock, handles.HookStore, watcher, sess,
+		runID.String(), artifacts.ClaudeSessionID)
 
 	// hk-0z5x: per-run abort check — fired when the never-spawned reaper in
 	// StaleWatcher cancels the per-run context (ctx) because launch_initiated
@@ -5072,7 +5058,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// check in the no-commit path (line ~3441) which leaves the item 'dispatched'
 	// for QM-002a recovery.
 	if ctx.Err() != nil {
-		if handle, ok := deps.runRegistry.Get(runID); ok && handle.aborted.Load() {
+		if handle, ok := handles.RunRegistry.Get(runID); ok && handle.Aborted() {
 			// RT7 / RSM-031 row 1b: the never-spawned-reaper abort is the Aborted
 			// dispatch-terminal class; its reason rides the mode-failure event
 			// (reopen + run_failed via the spine, Background ctx per RSM-022).
@@ -5089,8 +5075,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// the Machine through Terminating to a terminal state. Transitions that are
 	// invalid for the current state (e.g. machine already in StateFailed from
 	// agent_failed) are silently ignored.
-	transitionToTerminated(context.Background(), sess.Machine(), runID, deps.bus,
-		ei.exitCode, ei.waitErr)
+	transitionToTerminated(context.Background(), sess.Machine(), runID, emit,
+		ei.ExitCode, ei.WaitErr)
 
 	// hk-e6mtt: destroy the tmux window after the session completes so dead panes
 	// do not persist after run-fail/cancel. On the natural-exit path (claude /quit),
@@ -5110,26 +5096,32 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// implementer failures previously produced no structured event.
 	//
 	// commitLanded is determined by comparing the current worktree HEAD against
-	// headSHA.  resolveWorktreeHEAD errors are treated as "not landed" (conservative).
+	// headSHA.  gitprobe.ResolveWorktreeHEAD errors are treated as "not landed" (conservative).
 	// REMOTE: route via runRunner so HEAD is read from the worker (nil ⇒ box-A-local).
+	//
+	// hk-368i4: implementerPhaseDur is captured ONCE here and reused by the
+	// no-work detector below, so the event's duration_seconds and the detector's
+	// verdict are computed from the same measurement — a reader correlating the
+	// two can never see them disagree.
+	implementerPhaseDur := rp.Clock.Since(implementerLaunchedAt)
 	{
-		curHead, _ := resolveWorktreeHEADVia(ctx, runRunner, wtPath)
+		curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA
-		emitImplementerPhaseComplete(ctx, deps.bus, runID, ei.exitCode, ei.stderrTail,
-			commitLanded, deps.clock.Since(implementerLaunchedAt))
+		runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, ei.ExitCode, ei.StderrTail,
+			commitLanded, implementerPhaseDur)
 	}
 
 	// ── ProcessExit daemon-side commit fallback (hk-gd9r / hk-mazln) ─────────
 	//
 	// codex: --sandbox workspace-write blocks writes to .git. The daemon runs
-	// git OUTSIDE the sandbox and calls ensureCodexRefsTrailer to stage+commit
+	// git OUTSIDE the sandbox and calls codex.EnsureRefsTrailer to stage+commit
 	// any worktree changes codex produced but could not commit.
 	//
 	// Pi: unsandboxed, so Pi can self-commit, but a weak free model may not (or
 	// may omit the trailer). ensurePiRefsTrailer applies the same deterministic
 	// fallback so the standard trailer-detection path succeeds.
 	//
-	// Shared decision table (see codexcommit.go / picommit.go):
+	// Shared decision table (see internal/harness/codex/commit.go / internal/harness/pi/commit.go):
 	//   • HEAD already carries "Refs: <beadID>" → no-op (agent self-committed).
 	//   • HEAD advanced but lacks the trailer → amend HEAD to add it.
 	//   • HEAD unchanged, worktree dirty → stage all + create trailer commit.
@@ -5138,12 +5130,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Fires only for CompletionProcessExit harnesses (codex, pi). claude runs
 	// through the interactive TUI and self-commits; this block is a no-op for
 	// claude. On error we log and fall through to the no-commit guard.
-	if deps.harnessRegistry != nil {
-		agType := artifactAgentType(artifacts)
-		if h, hErr := deps.harnessRegistry.ForAgent(agType); hErr == nil &&
+	if handles.HarnessRegistry != nil {
+		agType := shared.ArtifactAgentType(artifacts)
+		if h, hErr := handles.HarnessRegistry.ForAgent(agType); hErr == nil &&
 			h.Completion() == handlercontract.CompletionProcessExit {
 			if agType == core.AgentTypePi {
-				outcome, ensureErr := ensurePiRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
+				outcome, ensureErr := pi.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
 				if ensureErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ensurePiRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
 						beadID, ensureErr)
@@ -5152,13 +5144,25 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 						beadID, outcome)
 				}
 			} else {
-				outcome, ensureErr := ensureCodexRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
+				outcome, ensureErr := codex.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
 				if ensureErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
 						beadID, ensureErr)
 				} else {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ensureCodexRefsTrailer bead %s: %s\n",
 						beadID, outcome)
+					// hk-368i4: a no-change outcome from a phase that finished in
+					// seconds is a no-work run, not a bead that had nothing to do.
+					// Diagnostic only — the run is already failing via the
+					// no-commit guard; this records WHY, which is what was
+					// missing when hk-jcrzn went undetected.
+					if codex.NoWorkSuspected(outcome, implementerPhaseDur, env.CodexNoWorkDurationFloor) {
+						floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
+						fmt.Fprintf(os.Stderr,
+							"daemon: workloop: bead %s: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
+							beadID, implementerPhaseDur, floor)
+						codex.EmitImplementerNoWorkSuspected(ctx, emit, runID, beadID, implementerPhaseDur, floor)
+					}
 				}
 			}
 		}
@@ -5166,7 +5170,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	// Step 8: map Wait-return to a terminal event (CHB-020 branches 1/2/3).
 	term := handler.MapWaitReturnToTerminalEvent(
-		artifacts.handlerSessionID, ei.exitCode, ei.waitErr, socketOutcome,
+		artifacts.HandlerSessionID, ei.ExitCode, ei.WaitErr, socketOutcome,
 	)
 
 	// Step 9: emit terminal event and close or reopen the bead.
@@ -5190,20 +5194,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		watcherErr = watcher.Err()
 	}
 	watcherFailed := watcherErr != nil && !isWatcherErrCanceled(watcherErr)
-	transitionTID, _ := deps.tidGen.Next()
+	transitionTID, _ := handles.TIDGen.Next()
 
 	// RT7: wire the single-mode terminal-spine hooks (gate → code-sync → merge →
 	// close/reopen) now that the merge-window context is in scope (runbridge.go).
-	bridge.wireSpine(spineArgs{
-		runRunner:       runRunner,
-		wtPath:          wtPath,
-		headSHA:         headSHA,
-		preMergeSync:    preMergeSync,
-		mport:           mport,
-		activeRepo:      activeRepo,
-		protectBranches: effectiveMergeProtectBranches,
-		transitionTID:   transitionTID,
-		mergeTarget:     mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
+	bridge.WireSpine(runloop.SpineArgs{
+		RunRunner:       runRunner,
+		WTPath:          wtPath,
+		HeadSHA:         headSHA,
+		PreMergeSync:    preMergeSync,
+		MPort:           mport,
+		ActiveRepo:      activeRepo,
+		ProtectBranches: effectiveMergeProtectBranches,
+		TransitionTID:   transitionTID,
+		EmitBeadClosed: func(c context.Context) {
+			emitBeadClosedAndMaybeEpic(c, rp, handles, runID, beadID)
+		},
+		MergeTarget: mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
 	})
 
 	// ── Implementer-escaped-worktree guard (hk-6zylj) ─────────────────
@@ -5240,7 +5247,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	var dirtyFiles []string
 	var escapeErr error
 	if subErr := mport.Submit()(ctx, "escape-check", func(qctx context.Context) error {
-		mainDirty, dirtyFiles, escapeErr = checkMainWorkingTreeDirty(qctx, activeRepo, preRunUntracked)
+		mainDirty, dirtyFiles, escapeErr = runmerge.CheckMainWorkingTreeDirty(qctx, activeRepo, preRunUntracked)
 		return nil
 	}); subErr != nil {
 		// Domain unavailable (shutdown) — treat as an errored check (no escape flag).
@@ -5251,7 +5258,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// spine then carries the classified reason, RSM-031/033 row 2 — the
 		// guards run for every dispatch-terminal class, so escape maps onto the
 		// mode-failure edge rather than the close-class-only Guarding phase).
-		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, activeRepo, dirtyFiles)
+		emitImplementerEscapedWorktree(ctx, emit, runID, beadID, activeRepo, dirtyFiles)
 		failReason := fmt.Sprintf("implementer_escaped_worktree: %d file(s) dirty in main: %s",
 			len(dirtyFiles), strings.Join(dirtyFiles, ", "))
 		failRun(failReason, failReason)
@@ -5275,8 +5282,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// REMOTE: route the worktree-HEAD probe via runRunner so the no-commit guard
 	// reads the WORKER's run-branch HEAD (nil runRunner ⇒ box-A-local, NFR7). The
 	// noCommitGuardShouldReopen checks if THIS bead's code landed in the target
-	// repo's main branch (cross-repo: activeRepo; local: deps.projectDir).
-	if curHeadSHA, curHeadErr := resolveWorktreeHEADVia(ctx, runRunner, wtPath); curHeadErr == nil &&
+	// repo's main branch (cross-repo: activeRepo; local: env.ProjectDir).
+	if curHeadSHA, curHeadErr := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath); curHeadErr == nil &&
 		noCommitGuardShouldReopen(ctx, activeRepo, curHeadSHA, headSHA, beadID) {
 		// hk-4ie1z: the implementer's worktree HEAD never advanced past the
 		// parent (NO commit) AND this bead's own work is not on main. The prior
@@ -5291,7 +5298,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// (workloop.go ~2804), regardless of where main points. This mirrors the
 		// review-loop no-commit guard (reviewloop.go ~567), which never had the
 		// escape.
-		failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.exitCode)
+		failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.ExitCode)
 		failRun(failReason, failReason)
 		return
 	}
@@ -5306,13 +5313,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
 		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT. Latches
 		// path label "agent_completed" + its close summary (RSM-033).
-		bridge.feed(ctx, runexec.Event{Kind: runexec.EvAgentCompleted, Detail: "agent_completed: stop-hook outcome"})
+		bridge.Feed(ctx, runexec.Event{Kind: runexec.EvAgentCompleted, Detail: "agent_completed: stop-hook outcome"})
 
-	case socketOutcome == nil && ei.exitCode == exitCodeClean && !watcherFailed:
+	case socketOutcome == nil && ei.ExitCode == exitCodeClean && !watcherFailed:
 		// No stop-hook arrived AND handler exited 0 without watcher error: the
 		// pre-bridge close-on-exit-0 heuristic for MVH twin-blind runs. Latches
 		// path label "auto-close" (RSM-033).
-		bridge.feed(ctx, runexec.Event{Kind: runexec.EvCleanExit, Detail: "auto-close: exit=0"})
+		bridge.Feed(ctx, runexec.Event{Kind: runexec.EvCleanExit, Detail: "auto-close: exit=0"})
 
 	default:
 		// noChange-timeout path (hk-trjef): pasteInjectQuitOnCommit killed the
@@ -5320,10 +5327,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// the bead was already subsumed by a prior run that landed on main.
 		select {
 		case <-noChangeTimeoutCh:
-			if beadAlreadySubsumedInMain(ctx, activeRepo, beadID) {
+			if shared.MainHistoryHasRefsTrailer(ctx, activeRepo, beadID) {
 				// RSM-035: subsumed-but-stalled closes with an approved outcome;
 				// the emit-approved flag + close summary ride the event.
-				bridge.feed(ctx, runexec.Event{
+				bridge.Feed(ctx, runexec.Event{
 					Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSubsumed,
 					EmitOutcome: true, Detail: "noChange-subsumed: bead found in main",
 				})
@@ -5338,7 +5345,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// hk-o85ye: independent session path — leave session and worktree alive.
 				// The session survives SIGKILL; on next boot the adoption pass detects
 				// it, waits for Claude to finish, then resets the bead for re-dispatch.
-				// The deferred cleanup (wtCleanup, forceTeardownSession) is skipped by
+				// The deferred cleanup (wtCleanup, runlaunch.ForceTeardownSession) is skipped by
 				// the useIndepSession guard. No ReopenBead: bead stays in_progress so
 				// QM-002a on next boot leaves the queue item dispatched (alive) ✓.
 				if useIndepSession {
@@ -5355,11 +5362,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// requeue reopen with no run terminal (QM-002a reverts the queue
 				// item to pending at next startup, hk-ly0hg Fix-1 / hk-1h5q).
 				drainSHA := ""
-				if curHeadSHA, headErr := resolveWorktreeHEAD(context.Background(), wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
+				if curHeadSHA, headErr := gitprobe.ResolveWorktreeHEAD(context.Background(), wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
 					drainSHA = curHeadSHA
 				}
-				bridge.drain(ctx, drainSHA)
-				return bridge.success()
+				bridge.Drain(ctx, drainSHA)
+				return bridge.Success()
 			}
 
 			// CHB-020 branch 2 (FAILURE_SIGNAL), branch 3 with non-zero exit, or
@@ -5367,18 +5374,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			var failReason string
 			if watcherFailed {
 				failReason = fmt.Sprintf("watcher error: %v exit=%d run_id=%s",
-					watcherErr, ei.exitCode, runID.String())
+					watcherErr, ei.ExitCode, runID.String())
 			} else if term.SubReason != "" {
 				failReason = fmt.Sprintf("agent_failed class=%s sub_reason=%s exit=%d run_id=%s",
-					term.Class, term.SubReason, ei.exitCode, runID.String())
+					term.Class, term.SubReason, ei.ExitCode, runID.String())
 			} else {
-				failReason = fmt.Sprintf("exit=%d run_id=%s", ei.exitCode, runID.String())
+				failReason = fmt.Sprintf("exit=%d run_id=%s", ei.ExitCode, runID.String())
 			}
 			// Surface stderr tail when available — helps diagnose exit=-1 crashes
 			// where the agent produced no NDJSON output (hk-ajhqw).
-			if len(ei.stderrTail) > 0 {
+			if len(ei.StderrTail) > 0 {
 				const maxTailInReason = 200
-				tail := ei.stderrTail
+				tail := ei.StderrTail
 				truncated := ""
 				if len(tail) > maxTailInReason {
 					tail = tail[len(tail)-maxTailInReason:]
@@ -5391,7 +5398,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			failRun(failReason, "auto-reopen: "+failReason)
 		}
 	}
-	return bridge.success()
+	return bridge.Success()
 }
 
 // isWatcherErrCanceled reports whether err is the ErrCanceled sentinel that
@@ -5422,7 +5429,7 @@ func isWatcherErrCanceled(err error) bool {
 // success (hk-4ie1z, observed live on hk-tigaf.4). The only legitimate
 // fall-through (the run made no commit, but the bead's work is genuinely on
 // main because a prior run subsumed it) is preserved via
-// beadAlreadySubsumedInMain. Mirrors the review-loop guard
+// shared.MainHistoryHasRefsTrailer. Mirrors the review-loop guard
 // (reviewloop.go ~567), which compares HEAD == parentSHA with no escape.
 //
 // Bead: hk-4ie1z.
@@ -5432,41 +5439,7 @@ func noCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, pare
 		return false
 	}
 	// No commit. Fail (reopen) UNLESS this bead's own work is already on main.
-	return !beadAlreadySubsumedInMain(ctx, projectDir, beadID)
-}
-
-// beadAlreadySubsumedInMain checks whether beadID appears as a "Refs: <id>"
-// trailer in any of the last 20 commits on main in projectDir.
-//
-// This is used after a noChange-timeout kill to determine whether the work
-// was already completed by a prior run that merged to main — in which case
-// the bead should be closed (not reopened).
-//
-// Returns false on any git error (conservative: treat as not subsumed).
-//
-// Bead: hk-trjef.
-func beadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
-	// hk-ly0hg: use --grep to pre-filter across the full main history rather
-	// than reading a fixed window of -20 commits. This prevents false negatives
-	// when a restart-interrupted run had its commit land >20 commits ago.
-	//
-	// --fixed-strings prevents regex interpretation of bead IDs.
-	// The line-exact check in Go prevents "Refs: hk-foo.1" from matching a
-	// commit whose message contains "Refs: hk-foo.10".
-	needle := "Refs: " + string(beadID)
-	cmd := exec.CommandContext(ctx, "git", "log", "main", "--format=%B",
-		"--fixed-strings", "--grep", needle)
-	cmd.Dir = projectDir
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.TrimRight(line, "\r") == needle {
-			return true
-		}
-	}
-	return false
+	return !shared.MainHistoryHasRefsTrailer(ctx, projectDir, beadID)
 }
 
 // beadExplicitlyReopened returns true when the bead's audit log contains a
@@ -5509,7 +5482,7 @@ func beadExplicitlyReopened(ctx context.Context, auditLogger func(context.Contex
 // The function:
 //  1. Calls ShowBead to confirm the bead's current status is CoarseStatusBlocked.
 //  2. Collects all bead IDs referenced in the bead's edge list (both directions).
-//  3. For each candidate blocker, calls beadAlreadySubsumedInMain.
+//  3. For each candidate blocker, calls shared.MainHistoryHasRefsTrailer.
 //  4. If subsumed, calls SweepCloseBead to close the stale record.
 //
 // On the next workloop retry the bead should no longer be blocked and
@@ -5546,7 +5519,7 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps
 		}
 	}
 	for blockerID := range seen {
-		if !beadAlreadySubsumedInMain(ctx, deps.projectDir, blockerID) {
+		if !shared.MainHistoryHasRefsTrailer(ctx, deps.projectDir, blockerID) {
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "daemon: workloop: claim-failure auto-close stale blocker %s (subsumed in main, unblocks %s)\n", blockerID, beadID)
@@ -5710,7 +5683,7 @@ func productionWorktreeFactory(ctx context.Context, projectDir, runID, headSHA s
 	// cancellation). This mirrors the intent of the original `defer removeWorktree`
 	// call — git worktree prune is best-effort.
 	cleanup := func() {
-		removeWorktree(context.Background(), projectDir, wtPath)
+		runmerge.RemoveWorktree(context.Background(), projectDir, wtPath)
 	}
 	return wtPath, cleanup, nil
 }
@@ -5733,128 +5706,6 @@ func resolveHEAD(ctx context.Context, repoRoot string) (string, error) {
 		return "", fmt.Errorf("daemon: resolveHEAD: git rev-parse HEAD returned empty output")
 	}
 	return sha, nil
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Worktree cleanup helpers (hk-fgdgz)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// forceTeardownSession force-terminates sess and blocks until the hosted
-// process has been reaped, using a non-cancellable background context.
-//
-// This is the load-bearing guard for hk-68pvl: the worktree-removal cleanup
-// (removeWorktree, run via the deferred wtCleanup in beadRunOne) must NEVER
-// delete the worktree directory while the implementer/reviewer claude is still
-// live inside it. On the tmux substrate path, tmuxSubstrateSession.Wait returns
-// ctx.Err() the instant the run ctx is cancelled even though the hosted process
-// may still be alive (runWait keeps polling in the background); the subsequent
-// `git worktree remove --force` then races a live `go test`, the agent's
-// `git add`/commit lands in a deleted directory, and the run is recorded as a
-// false `no_commit_during_implementer ... exit=0`.
-//
-// sess.Kill blocks until the process group is terminated on both paths:
-//   - substrate: killProcessWithGrace (SIGTERM → grace poll → SIGKILL) then
-//     KillWindow — synchronous, idempotent via killOnce.
-//   - exec: SIGTERM the process group, then await reap (escalating to SIGKILL
-//     on the background ctx, which never expires, so it waits for exit).
-//
-// Kill is safe to call more than once (idempotent on substrate; harmless ESRCH
-// on exec). Callers register this as a deferred backstop immediately after
-// Launch so EVERY return path (success, failure, early error, ctx-cancel) tears
-// the session down before the function returns — and therefore before the
-// beadRunOne-level deferred wtCleanup runs.
-//
-// Bead: hk-68pvl.
-func forceTeardownSession(sess handler.Session) {
-	if sess == nil {
-		return
-	}
-	_ = sess.Kill(context.Background())
-}
-
-// removeWorktree removes the git worktree at wtPath and prunes stale metadata
-// from the repository at repoRoot. It uses `git worktree remove --force` twice
-// to handle locked worktrees (the second --force overrides the lock).
-//
-// Errors are non-fatal: the work loop continues even if cleanup fails (orphan
-// sweep at next startup will recover stale worktrees per PL-006).
-//
-// hk-68pvl: the caller (beadRunOne via the deferred wtCleanup) MUST ensure the
-// run's implementer/reviewer session has been force-torn-down
-// (forceTeardownSession) before this runs, so the directory is never deleted
-// out from under a live agent mid-`go test`.
-func removeWorktree(ctx context.Context, repoRoot, wtPath string) {
-	cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", "--force", wtPath)
-	cmd.Dir = repoRoot
-	_ = cmd.Run()
-
-	// hk-bfvby: GC the per-worktree trust key from ~/.claude.json. harmonik
-	// creates one ephemeral worktree per bead and never reuses the path, so
-	// without this the trust "projects" map grows unbounded (observed 36.6k
-	// leaked keys / 8.6MB bloat that, with the per-call rewrite, produced the
-	// ~16-min spawn stall). Best-effort: cleanup failure is non-fatal — the
-	// bounded lock inside PruneWorktreeTrust ensures it can never wedge the loop.
-	_ = workspace.PruneWorktreeTrust(wtPath)
-}
-
-// emitPreExecMessage emits a single CHB-018 pre-exec progress message on the
-// bus using the message's embedded "type" field as the event type.
-//
-// Each pre-exec message is compact JSON with a top-level "type" field matching
-// one of the §8.3 event-type constants (handler_capabilities,
-// session_log_location, skills_provisioned, agent_ready). Parsing the type
-// avoids emitting all four under a single catch-all envelope, which would
-// break per-type JSONL filtering for consumers.
-//
-// If the type field cannot be parsed the message is still emitted under the
-// agent_ready type as a safe fallback (no information is lost; the payload
-// is the ground truth).
-//
-// Spec: specs/claude-hook-bridge.md §4.7 CHB-018.
-// Bead: hk-gql20.14.
-func emitPreExecMessage(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, msg json.RawMessage) {
-	var envelope struct {
-		Type string `json:"type"`
-	}
-	eventType := core.EventTypeAgentReady // safe fallback
-	if err := json.Unmarshal(msg, &envelope); err == nil && envelope.Type != "" {
-		eventType = core.EventType(envelope.Type)
-	}
-	_ = bus.EmitWithRunID(ctx, runID, eventType, msg)
-}
-
-// preExecMsgType extracts the "type" field of a pre-exec message, or "" on
-// parse failure.
-func preExecMsgType(msg json.RawMessage) string {
-	var envelope struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(msg, &envelope); err == nil {
-		return envelope.Type
-	}
-	return ""
-}
-
-// emitPreExecBeforeLaunch emits every pre-exec message EXCEPT launch_initiated
-// and returns the launch_initiated message (if any) for the caller to emit
-// AFTER SpawnWindow/Launch returns.
-//
-// hk-4l7zs: launch_initiated previously fired BEFORE SpawnWindow. When the spawn
-// semaphore was wedged (a leaked slot), SpawnWindow blocked indefinitely yet the
-// daemon had already emitted launch_initiated — so operators (and the stale
-// watcher) saw a "launched" run that had, in fact, never spawned a tmux window.
-// Deferring launch_initiated until the window is actually live makes the event
-// mean what it says and lets launch_stall_detected fire correctly when the spawn
-// is wedged. Ordering of the other pre-exec messages is preserved.
-func emitPreExecBeforeLaunch(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, msgs []json.RawMessage) (launchInitiated json.RawMessage) {
-	for _, msg := range msgs {
-		if preExecMsgType(msg) == string(core.EventTypeLaunchInitiated) {
-			launchInitiated = msg
-			continue
-		}
-		emitPreExecMessage(ctx, bus, runID, msg)
-	}
-	return launchInitiated
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5907,6 +5758,21 @@ type workloopRunCompletedPayload struct {
 	QueueID            *string `json:"queue_id,omitempty"`
 	QueueGroupIndex    *int    `json:"queue_group_index,omitempty"`
 	WorktreeTipSHA     *string `json:"worktree_tip_sha,omitempty"`
+}
+
+type d2Refusal string
+
+//nolint:gosec // G101: refusal text names an environment variable; it contains no credential.
+const d2APIKeyRefusal d2Refusal = "remote run: ANTHROPIC_API_KEY in spawn env (D2 fail-closed)"
+
+// d2RemoteAPIKeyRefusal makes the post-build, pre-launch D2 decision. Keeping
+// the remote/local distinction in this predicate makes every harness use the
+// same fail-closed behavior without coupling the decision to an agent type.
+func d2RemoteAPIKeyRefusal(remote bool, env []string) (d2Refusal, bool) {
+	if remote && hasAPIKeyInEnv(env) {
+		return d2APIKeyRefusal, true
+	}
+	return "", false
 }
 
 // hasAPIKeyInEnv reports whether any element of env would forward a *live*
@@ -6154,7 +6020,7 @@ func activateFirstPendingGroup(ctx context.Context, deps workLoopDeps) bool {
 //
 // Spec ref: specs/queue-model.md §5 QM-031; §8 QM-063.
 // Bead ref: hk-tigaf.4 (NQ-B1).
-func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq *LockedQueueStore, q *queue.Queue) (bool, []core.Event) {
+func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq *queuewiring.LockedQueueStore, q *queue.Queue) (bool, []core.Event) {
 	if q == nil {
 		return false, nil
 	}
@@ -6196,6 +6062,38 @@ func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq 
 	// write lock (EV-002a emit-after-persist-and-unlock idiom, matching
 	// activateFirstPendingGroup / evaluateGroupAdvanceWithOutcome).
 	return true, events
+}
+
+// markQueueItemFailureReason stamps LastFailureReason on one queue item without
+// touching its Status. It is called immediately BEFORE
+// evaluateGroupAdvanceWithOutcome(..., false), which sets the terminal status
+// and persists — so the reason lands in queue.json on the same write, giving an
+// operator reading `harmonik queue status` the WHY behind a failed item.
+//
+// No-op when the queue, group, or item cannot be resolved: the caller's
+// evaluateGroupAdvanceWithOutcome applies the same guards and is the load-
+// bearing half of the pair.
+//
+// Bead ref: hk-pina9.
+func markQueueItemFailureReason(_ context.Context, deps workLoopDeps, queueName string, groupIndex, itemIdx int, beadID core.BeadID, reason string) {
+	if deps.queueStore == nil {
+		return
+	}
+	lq := deps.queueStore.LockForMutation()
+	defer lq.Done()
+	q := lq.LockedQueueByName(queue.NormaliseQueueName(queueName))
+	if q == nil {
+		return
+	}
+	for gi := range q.Groups {
+		if q.Groups[gi].GroupIndex != groupIndex {
+			continue
+		}
+		if itemIdx < len(q.Groups[gi].Items) && q.Groups[gi].Items[itemIdx].BeadID == beadID {
+			q.Groups[gi].Items[itemIdx].LastFailureReason = reason
+		}
+	}
+	lq.LockedSetQueueByName(queue.NormaliseQueueName(queueName), q)
 }
 
 // evaluateGroupAdvance — EM-015f group-advance gate (hk-45ude)
@@ -6390,48 +6288,12 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// mergeRunBranchToMain — Step 9 merge-to-main helper (§4.12.EM-052/EM-053)
+// bead-closed / epic-completion emission (the merge path itself moved to
+// internal/runmerge in P2 unit E5 RT13; these helpers stay in the daemon shell
+// but now reach the emittedEpics dedupe set / mutex and the ledger+emitter
+// through the SharedHandles + RunPorts bundles rather than raw workLoopDeps,
+// so the runBridge close hook can drop deps entirely (RT18.9)).
 // ─────────────────────────────────────────────────────────────────────────────
-
-// isRetryableMergeReason returns true when a mergeRunBranchToMain failure is a
-// race-condition artifact worth retrying at the workloop level WITHOUT
-// re-running the full implementer+reviewer cycle. The APPROVE verdict is
-// preserved across retries.
-//
-// Retryable (transient race): rebase_conflict, non_ff_merge, merge_fmt_failed.
-// Non-retryable (structural): merge_build_failed, push_failed, strip_run_context_failed, etc.
-//
-// Bead: hk-f9xzs.
-func isRetryableMergeReason(reason string) bool {
-	for _, prefix := range []string{"rebase_conflict", "non_ff_merge", "merge_fmt_failed"} {
-		if strings.HasPrefix(reason, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// mergeOutcome carries the result of mergeRunBranchToMain so the caller can
-// decide which terminal event sequence to emit.
-type mergeOutcome struct {
-	// success is true when the merge-and-push completed without error.
-	success bool
-	// reason is the failure reason for emit/logging when success is false.
-	reason string
-	// noChange is true when the run-branch has no commits beyond its merge-base
-	// with main, i.e. the agent made no commits. The caller proceeds to CloseBead
-	// normally (no merge required).
-	noChange bool
-}
-
-// mergeRunBranchToMainPayload is the JSON payload for outcome_emitted and
-// bead_closed events emitted during the merge-to-main sequence.
-type mergeRunBranchToMainPayload struct {
-	RunID  string `json:"run_id"`
-	BeadID string `json:"bead_id"`
-	Kind   string `json:"kind"`
-	Reason string `json:"reason,omitempty"`
-}
 
 // beadClosedPayload is the JSON payload for the bead_closed event.
 type beadClosedPayload struct {
@@ -6444,1161 +6306,6 @@ type epicCompletedPayload struct {
 	EpicID          string `json:"epic_id"`
 	LastChildBeadID string `json:"last_child_bead_id"`
 	ClosedAt        string `json:"closed_at"`
-}
-
-// workingTreeRefreshFailedPayload is the JSON payload for the
-// working_tree_refresh_failed event (§4.12.EM-054).
-type workingTreeRefreshFailedPayload struct {
-	RunID  string `json:"run_id"`
-	BeadID string `json:"bead_id,omitempty"`
-	Error  string `json:"error"`
-}
-
-// mergeBuildFailedPayload is the JSON payload for the merge_build_failed event
-// (hk-o68j3).
-type mergeBuildFailedPayload struct {
-	RunID  string `json:"run_id"`
-	BeadID string `json:"bead_id"`
-	Error  string `json:"error"`
-}
-
-// mergeSubmit runs a critical section inside the merge exclusion domain
-// (mergeq.Queue.Submit) or, when no queue is wired (unit tests that drive a
-// single beadRunOne directly), inline under the caller's context. It mirrors
-// mergeq.Queue.Submit's signature so the two are interchangeable.
-type mergeSubmit func(ctx context.Context, label string, critical func(context.Context) error) error
-
-// inlineMergeSubmit runs critical directly under ctx — the nil-queue fallback.
-func inlineMergeSubmit(ctx context.Context, _ string, critical func(context.Context) error) error {
-	return critical(ctx)
-}
-
-// mergePrepareKind selects which reason-string vocabulary a re-prepare rebase
-// emits, matching the pre-split call site: the first prepare, a re-prepare after
-// a lost FF-check (non_ff_merge retry), or a re-prepare after a non-fast-forward
-// push rejection (push retry).
-type mergePrepareKind int
-
-const (
-	mergePrepareFirst mergePrepareKind = iota
-	mergePrepareNonFFRetry
-	mergePreparePushRetry
-)
-
-// commitOutcome is commitHandlePushFailure's classified result.
-//
-//   - done != nil  → a terminal merge outcome (a fatal push failure or an
-//     exhausted budget); the driver returns it directly.
-//   - otherwise    → the driver re-prepares (rebase) and re-attempts. retryKind
-//     picks the reason-string variant; newMainTip is the fresh origin tip to
-//     rebase onto.
-type commitOutcome struct {
-	done       *mergeOutcome
-	retryKind  mergePrepareKind
-	newMainTip string
-}
-
-// commitAdvanceResult is commitAdvanceRef's classified result (Phase A, inside
-// the exclusion domain).
-//
-//   - done != nil     → a terminal outcome (a fresh rev-parse failure, an
-//     exhausted non-FF budget, or an update-ref failure); returned directly.
-//   - retry == true   → a lost FF race: the target advanced concurrently below
-//     the cap. The driver re-prepares (rebase onto newMainTip) and re-attempts.
-//   - advanced == true → the local target ref now points at runTip. priorMainTip
-//     is the target tip BEFORE the advance, carried out for the Phase-D
-//     CAS-rollback and the Phase-C ledger diff base.
-type commitAdvanceResult struct {
-	done         *mergeOutcome
-	retry        bool
-	newMainTip   string
-	advanced     bool
-	priorMainTip string
-}
-
-// mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence,
-// split (RSM-012..016, merge-queue-design §2) into a speculative prepare phase
-// that runs OUTSIDE the merge exclusion domain (rebase, strip, go build/vet, the
-// gofumpt/gci auto-fix) and a commit phase whose ref-mutations run INSIDE the
-// domain via `submit` (the fresh FF re-validation + git update-ref in Phase A;
-// the working-tree reset + conditional br sync in Phase C; the CAS-rollback +
-// fetch + re-base-to-origin in Phase D). The network `git push origin <target>`
-// runs OUTSIDE the domain (Phase B) per the F4 relocation (RSM-019 / M4-C5): the
-// exclusive section serializes local ref + working-tree mutation, not the
-// publication to origin. No build-class command (go build/vet, gofumpt, gci, git
-// rebase) runs inside the domain (RSM-017 / RSM-INV-005); the retry loop's
-// re-rebase re-prepares OUTSIDE it.
-//
-// The retry budget (maxPushAttempts = 3) and every mergeOutcome.reason string
-// are preserved from the pre-split single-function form.
-//
-// Steps:
-//  1. Resolve run-branch tip; no-change short-circuits.
-//  2. Rebase run-branch onto the target (prepare; rebase_conflict → EM-053).
-//  3. Fast-forward re-validation against a freshly read target tip (commit).
-//  4. git update-ref refs/heads/<target> <tip> (Phase A, inside the domain).
-//  5. git push origin <target>, OUTSIDE the domain (Phase B), with a CAS-rollback
-//     + re-prepare on a non-FF rejection (Phase D, inside the domain).
-//  6. git restore --staged . + git reset --hard HEAD (Phase C, inside; EM-054).
-//  7. br sync --import-only when .beads/issues.jsonl is in the diff (Phase C).
-//
-// Spec ref: specs/run-state-machine.md RSM-012..019; specs/execution-model.md
-// §4.12 EM-052/EM-053/EM-054. Bead: hk-ftyvo, hk-4goy3, hk-6r6xv, hk-zgt4u,
-// hk-yyso7 (mergeMu → mergeq).
-//
-//nolint:gocognit,cyclop // slated for giant-retirement refactor (TRACK 3); do not split here
-func mergeRunBranchToMain(ctx context.Context, submit mergeSubmit, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA, targetBranch string, protectBranches []string, brPath string) mergeOutcome {
-	if submit == nil {
-		submit = inlineMergeSubmit
-	}
-
-	runBranch := workspace.TaskBranchName(runID.String())
-
-	// Guards + tip resolution + no-change short-circuits (all cheap rev-parse
-	// reads, OUTSIDE the exclusion domain).
-	runTip, mainTip, done := resolveMergeTips(ctx, projectDir, runBranch, targetBranch, headSHA, protectBranches)
-	if done != nil {
-		return *done
-	}
-
-	wtPath := workspace.WorktreePath(projectDir, runID.String(), workspace.NoWorktreeRootOverride())
-
-	// hk-sfy7f: no-worktree fallback for remote runs. When wtPath does not exist,
-	// attempt to create a temporary local worktree linked to refs/heads/run/<id>
-	// so the prepare-phase rebase/build/fmt have a tree to operate on; the
-	// deferred cleanup removes it after the merge (success or failure).
-	if _, statErr := os.Stat(wtPath); statErr != nil {
-		addWtCmd := exec.CommandContext(ctx, "git", "worktree", "add", wtPath, runBranch)
-		addWtCmd.Dir = projectDir
-		if _, addErr := addWtCmd.CombinedOutput(); addErr == nil {
-			defer func() {
-				removeWorktree(context.Background(), projectDir, wtPath)
-			}()
-		}
-	}
-
-	// Initial prepare (OUTSIDE the exclusion domain): churn discard, rebase onto
-	// the target, rebase-drop guard, and run-context strip.
-	if prepOut := prepareInitialMerge(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, &mainTip); prepOut != nil {
-		return *prepOut
-	}
-
-	// ── prepare→commit attempt loop ──────────────────────────────────────────
-	// Each attempt has three phases, per RSM-016/019 (F4 push relocation, M4-C5):
-	//
-	//   Prepare (OUTSIDE the domain): the build + fmt gates and the rebase.
-	//   Phase A (INSIDE the domain):  fresh FF re-validation + local update-ref.
-	//   Phase B (OUTSIDE the domain): git push origin <target> — the network I/O
-	//                                 is NO LONGER held under the exclusive section.
-	//   Phase C (INSIDE the domain):  on push success, the working-tree reset +
-	//                                 br sync reconciliation.
-	//   Phase D (INSIDE the domain):  on push failure, CAS-rollback + fetch +
-	//                                 re-base to origin (classify retry/terminal).
-	//
-	// A lost FF race (Phase A) or a non-FF push rejection (Phase D) re-prepares
-	// (rebase OUTSIDE the domain) and re-attempts, up to maxPushAttempts. The
-	// RSM-019 taxonomy (reason strings, retry cap, terminals) is byte-identical to
-	// the pre-relocation form.
-	//
-	// Bead ref: hk-svieq (retry taxonomy); M4-C5 / T7 (push relocation).
-	const maxPushAttempts = 3
-	for pushAttempt := 1; pushAttempt <= maxPushAttempts; pushAttempt++ {
-		// Post-merge build gate (hk-o68j3 / hk-ycp62) — prepare phase.
-		if buildOut := runMergeBuildGate(ctx, wtPath, projectDir, runID, beadID, bus); buildOut != nil {
-			return *buildOut
-		}
-		// Post-merge fmt gate (hk-k1hn) — prepare phase; may advance runTip via
-		// the gofumpt/gci auto-fix commit landed in the worktree.
-		if fmtOut, fmtRunTip := runMergeFmtGate(ctx, wtPath, projectDir, runID, beadID, bus); fmtOut != nil {
-			return *fmtOut
-		} else if fmtRunTip != "" {
-			runTip = fmtRunTip
-		}
-
-		// Phase A (INSIDE the domain): re-validate the fast-forward against a
-		// freshly read target tip and advance the LOCAL target ref. No network
-		// push runs here (RSM-019 relocation) — only the cheap ref-mutation the
-		// exclusion domain must serialize.
-		var adv commitAdvanceResult
-		if submitErr := submit(ctx, "commit-merge", func(qctx context.Context) error {
-			adv = commitAdvanceRef(qctx, projectDir, runTip, targetBranch, pushAttempt, maxPushAttempts)
-			return nil
-		}); submitErr != nil {
-			return mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("merge_queue_submit_failed: %v", submitErr),
-			}
-		}
-		if adv.done != nil {
-			return *adv.done
-		}
-		if adv.retry {
-			// Lost FF race: re-prepare (rebase onto the fresh target) OUTSIDE the
-			// domain and re-attempt (non_ff_merge retry vocabulary, RSM-019).
-			mainTip = adv.newMainTip
-			if prepOut := prepareRebase(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, mainTip, mergePrepareNonFFRetry, pushAttempt); prepOut != nil {
-				return *prepOut
-			}
-			continue
-		}
-
-		// Phase B (OUTSIDE the domain, RSM-019): publish the already-committed
-		// local target ref to origin. The exclusive section is NOT held across
-		// this network I/O — correctness comes from Phase D re-validating inside
-		// the domain on conflict, not from holding the lock across the push.
-		pushOut, pushErr := gitPushOrigin(ctx, projectDir, targetBranch)
-		if pushErr == nil {
-			// Phase C (INSIDE the domain): refresh the project working tree
-			// (index restore + reset --hard, RSM-016/¶1) and reconcile the ledger.
-			if submitErr := submit(ctx, "commit-merge", func(qctx context.Context) error {
-				commitFinalizeWorkingTree(qctx, projectDir, runID, bus, beadID, adv.priorMainTip, runTip, brPath)
-				return nil
-			}); submitErr != nil {
-				// The push already published durably; the working-tree refresh is
-				// best-effort (EM-054 is non-fatal), so still report success.
-				fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: post-push finalize submit failed (bead %s run %s): %v\n",
-					beadID, runID.String(), submitErr)
-			}
-			return mergeOutcome{success: true}
-		}
-
-		// Phase D (INSIDE the domain): classify the push failure. A non-FF
-		// rejection below the cap CAS-rolls-back the local ref, fetches, advances
-		// to the fresh origin tip, and signals a push-retry re-prepare; any other
-		// failure (or an exhausted budget) is terminal.
-		var co commitOutcome
-		if submitErr := submit(ctx, "commit-merge", func(qctx context.Context) error {
-			co = commitHandlePushFailure(qctx, projectDir, targetBranch, adv.priorMainTip, runTip, pushOut, pushErr, pushAttempt, maxPushAttempts)
-			return nil
-		}); submitErr != nil {
-			return mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("merge_queue_submit_failed: %v", submitErr),
-			}
-		}
-		if co.done != nil {
-			return *co.done
-		}
-
-		// Retry: re-prepare (rebase onto the fresh origin tip) OUTSIDE the domain.
-		mainTip = co.newMainTip
-		if prepOut := prepareRebase(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, mainTip, co.retryKind, pushAttempt); prepOut != nil {
-			return *prepOut
-		}
-	}
-
-	// Defensive: Phase A / Phase D return a terminal outcome once attempts are
-	// exhausted, so the loop always returns above. Fail closed if it does not.
-	return mergeOutcome{success: false, reason: "non_ff_merge: retry budget exhausted"}
-}
-
-// resolveMergeTips runs the merge preflight: the fail-closed target guards
-// (hk-6r6xv), run-branch/target tip resolution, and the no-change short-circuits
-// (hk-cwxow). It returns (runTip, mainTip, nil) to proceed, or (_, _, outcome)
-// when the merge is already resolved (no-change or a guard failure). All reads
-// are cheap rev-parse, OUTSIDE the exclusion domain.
-func resolveMergeTips(ctx context.Context, projectDir, runBranch, targetBranch, headSHA string, protectBranches []string) (runTip, mainTip string, done *mergeOutcome) {
-	if targetBranch == "" {
-		return "", "", &mergeOutcome{success: false, reason: "merge_target_empty: targetBranch must not be empty"}
-	}
-	for _, protected := range protectBranches {
-		if targetBranch == protected {
-			return "", "", &mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("merge_target_protected: %q is in ProtectBranches", targetBranch),
-			}
-		}
-	}
-
-	// Step 1: resolve run-branch tip. A missing branch means no commits → no-change.
-	rt, rtErr := gitRevParse(ctx, projectDir, "refs/heads/"+runBranch)
-	if rtErr != nil {
-		return "", "", &mergeOutcome{noChange: true}
-	}
-
-	// Step 1b: resolve the target tip; equal tips → the agent made no commits.
-	mt, mtErr := gitRevParse(ctx, projectDir, "refs/heads/"+targetBranch)
-	if mtErr != nil {
-		return "", "", &mergeOutcome{success: false, reason: fmt.Sprintf("git rev-parse %s: %v", targetBranch, mtErr)}
-	}
-	if mt == rt {
-		return "", "", &mergeOutcome{noChange: true}
-	}
-
-	// hk-cwxow: false-positive guard — runTip == fork-point SHA ⇒ no commits,
-	// regardless of where the target now points.
-	if headSHA != "" && rt == headSHA {
-		return "", "", &mergeOutcome{noChange: true}
-	}
-	return rt, mt, nil
-}
-
-// prepareInitialMerge runs the first prepare pass OUTSIDE the exclusion domain:
-// discard churn, rebase the run-branch onto the target, guard against a
-// silently-dropped rebase, and strip run-context. It updates *runTip / *mainTip
-// in place and returns nil on success, a terminal outcome on failure. All
-// commands run in the per-run worktree (build-class → OUTSIDE the domain,
-// RSM-017).
-func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID core.RunID, runBranch, targetBranch string, runTip, mainTip *string) *mergeOutcome {
-	if _, statErr := os.Stat(wtPath); statErr == nil {
-		// Pre-rebase cleanup (hk-3yz2d, hk-aiw63): discard UNCOMMITTED churn.
-		discardDirtyChurn(ctx, wtPath)
-		// hk-rljho class: commit any residual TRACKED-but-uncommitted delta.
-		commitResidualDelta(ctx, wtPath, runID)
-		// hk-g9zz: remove untracked //go:build integration-test artifacts.
-		cleanUntrackedFiles(ctx, wtPath)
-
-		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
-		rebaseCmd.Dir = wtPath
-		if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
-			gitRebaseAbort(ctx, wtPath)
-			return &mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("rebase_conflict: %v\n%s", rebaseErr, strings.TrimRight(string(out), "\n")),
-			}
-		}
-		// Rebase succeeded — re-resolve runTip and targetTip (both may have changed).
-		if t, rerr := gitRevParse(ctx, projectDir, "refs/heads/"+runBranch); rerr == nil {
-			*runTip = t
-		}
-		if t, rerr := gitRevParse(ctx, projectDir, "refs/heads/"+targetBranch); rerr == nil {
-			*mainTip = t
-		}
-
-		// hk-zmpd: rebase-drop guard — a rebase that silently drops every commit
-		// as "already applied" must fail-closed so reviewed work is salvageable.
-		if *runTip == *mainTip {
-			return &mergeOutcome{
-				success: false,
-				reason: fmt.Sprintf(
-					"rebase_dropped_commits: rebase of %s onto %s produced no commits"+
-						" ahead of target; reviewed work silently dropped — salvage from run-branch",
-					runBranch, targetBranch),
-			}
-		}
-	}
-
-	// hk-4je: strip .harmonik/run-context/** from the run-branch before the
-	// fast-forward update-ref.
-	stripped, stripErr := stripRunContextFromMerge(ctx, wtPath)
-	if stripErr != nil {
-		return &mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("strip_run_context_failed: %v", stripErr),
-		}
-	}
-	if stripped {
-		if newTip, resolveErr := resolveWorktreeHEAD(ctx, wtPath); resolveErr == nil {
-			*runTip = newTip
-		}
-	}
-	return nil
-}
-
-// gitRebaseAbort runs `git rebase --abort` best-effort in wtPath, logging on
-// failure (the caller has already captured the originating rebase error).
-func gitRebaseAbort(ctx context.Context, wtPath string) {
-	abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
-	abortCmd.Dir = wtPath
-	if out, err := abortCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: git rebase --abort failed in %s: %v\n%s", wtPath, err, out)
-	}
-}
-
-// runMergeBuildGate runs go build+vet on the merged tree in the run-branch
-// worktree (or projectDir when the worktree is gone) — the prepare-phase build
-// gate. It runs OUTSIDE the merge exclusion domain (RSM-017): no update-ref has
-// advanced the target, so a failure needs no rollback (a deliberate delta from
-// the pre-split form, allowlisted M3-D12: build failures no longer transiently
-// advance the target ref). Returns nil on pass, a terminal outcome on failure.
-func runMergeBuildGate(ctx context.Context, wtPath, projectDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) *mergeOutcome {
-	buildDir := projectDir
-	if _, statErr := os.Stat(wtPath); statErr == nil {
-		buildDir = wtPath
-	}
-	if _, goModErr := os.Stat(filepath.Join(buildDir, "go.mod")); goModErr != nil {
-		return nil
-	}
-	for _, buildArgs := range [][]string{
-		{"build", "./..."},
-		{"vet", "./..."},
-	} {
-		buildCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-		buildCmd.Dir = buildDir
-		out, buildErr := buildCmd.CombinedOutput()
-		if buildErr == nil {
-			continue
-		}
-		// Cold-cache retry (hk-44ab2): the go-cache reaper can wipe the cache in
-		// the TOCTOU window; retry once when the output matches the signature.
-		if isMergeBuildColdCacheError(out) {
-			retryCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-			retryCmd.Dir = buildDir
-			if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
-				continue
-			} else {
-				out = retryOut
-				buildErr = retryErr
-			}
-		}
-		emitMergeBuildFailed(ctx, bus, runID, beadID, buildErr, out)
-		return &mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("merge_build_failed (go %s): %v\n%s", buildArgs[0], buildErr, strings.TrimRight(string(out), "\n")),
-		}
-	}
-	return nil
-}
-
-// runMergeFmtGate runs the gofumpt/gci fmt gate on the merged tree — the
-// prepare-phase fmt gate (RSM-017: OUTSIDE the exclusion domain). It wraps
-// runMergeFmtCheck, which auto-fixes and commits format drift into the worktree.
-// Returns (nil, newRunTip) where newRunTip is non-empty when the auto-fix
-// advanced the worktree HEAD; (outcome, "") on a terminal fmt failure.
-func runMergeFmtGate(ctx context.Context, wtPath, projectDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (outcome *mergeOutcome, newRunTip string) {
-	buildDir := projectDir
-	if _, statErr := os.Stat(wtPath); statErr == nil {
-		buildDir = wtPath
-	}
-	if _, goModErr := os.Stat(filepath.Join(buildDir, "go.mod")); goModErr != nil {
-		return nil, ""
-	}
-	return runMergeFmtCheck(ctx, buildDir, projectDir, runID, beadID, bus)
-}
-
-// commitAdvanceRef is the Phase-A merge exclusion-domain critical section
-// (RSM-016): it runs entirely INSIDE mergeq.Queue.Submit and performs no
-// build-class command and NO network push (RSM-017 / RSM-019 relocation). It
-// re-reads the target tip freshly (re-validate under lock), re-runs the FF-check,
-// and advances the LOCAL target ref to runTip. The network `git push` runs
-// OUTSIDE this section (Phase B); a lost FF race is classified as a retry so the
-// driver re-prepares (rebase) OUTSIDE the domain.
-func commitAdvanceRef(ctx context.Context, projectDir, runTip, targetBranch string, pushAttempt, maxPushAttempts int) commitAdvanceResult {
-	// Re-validate under lock (RSM-016): re-read the target tip freshly. Between
-	// the prepare-phase rebase (OUTSIDE the domain) and this critical section, a
-	// sibling merge may have advanced the target; the fresh read + FF-check below
-	// is the re-validation the pre-split form got implicitly from holding mergeMu
-	// across the whole sequence.
-	freshMainCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+targetBranch) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	freshMainCmd.Dir = projectDir
-	freshMainOut, freshMainErr := freshMainCmd.Output()
-	if freshMainErr != nil {
-		return commitAdvanceResult{done: &mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("non_ff_merge_retry_rev_parse (attempt %d): %v", pushAttempt, freshMainErr),
-		}}
-	}
-	mainTip := strings.TrimRight(string(freshMainOut), "\n")
-
-	// Step 3: fast-forward check. target MUST be an ancestor of runTip.
-	isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip) //nolint:gosec // G204: fixed git binary; args are git SHAs, not user input
-	isAncCmd.Dir = projectDir
-	if err := isAncCmd.Run(); err != nil {
-		// Non-FF: the target advanced concurrently (hk-1u4wp). Re-prepare (rebase
-		// onto the fresh target) and retry — up to maxPushAttempts total.
-		if pushAttempt >= maxPushAttempts {
-			return commitAdvanceResult{done: &mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("non_ff_merge: %s advanced concurrently", targetBranch),
-			}}
-		}
-		return commitAdvanceResult{retry: true, newMainTip: mainTip}
-	}
-
-	// Step 3a: fast-forward the target branch to runTip.
-	updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, runTip) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	updateRefCmd.Dir = projectDir
-	if out, err := updateRefCmd.CombinedOutput(); err != nil {
-		return commitAdvanceResult{done: &mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("git update-ref %s: %v\n%s", targetBranch, err, out),
-		}}
-	}
-
-	return commitAdvanceResult{advanced: true, priorMainTip: mainTip}
-}
-
-// gitPushOrigin publishes refs/heads/<targetBranch> to origin. It runs OUTSIDE
-// the merge exclusion domain (RSM-019 / M4-C5 F4 relocation): the exclusive
-// section serializes local ref + working-tree mutation, not network publication.
-func gitPushOrigin(ctx context.Context, projectDir, targetBranch string) ([]byte, error) {
-	pushCmd := exec.CommandContext(ctx, "git", "push", "origin", targetBranch)
-	pushCmd.Dir = projectDir
-	return pushCmd.CombinedOutput()
-}
-
-// commitHandlePushFailure rolls back the local ref-advance and classifies a push
-// failure (Phase D, inside the exclusion domain): a non-fast-forward rejection
-// below the retry cap fetches the new remote tip, advances the local target to
-// it, and signals a push-retry re-prepare; any other failure (or an exhausted
-// budget) is terminal. All commands (update-ref, fetch, rev-parse) are
-// commit-allowlisted (RSM-017).
-//
-// The rollback is COMPARE-AND-SWAP on advancedTip: because the push now runs
-// OUTSIDE the domain (Phase B), a sibling merge may have advanced+published the
-// local target in the window between our Phase-A update-ref and this handler.
-// Rolling the ref back unconditionally would clobber the sibling's advance, so we
-// only regress to priorMainTip when the target still points at the tip WE set.
-func commitHandlePushFailure(ctx context.Context, projectDir, targetBranch, priorMainTip, advancedTip string, pushOut []byte, pushErr error, pushAttempt, maxPushAttempts int) commitOutcome {
-	// CAS rollback: only regress the local target if it is STILL the tip we
-	// advanced it to (a sibling may have moved it under the relocated push).
-	if cur, rerr := gitRevParse(ctx, projectDir, "refs/heads/"+targetBranch); rerr == nil && cur == advancedTip {
-		gitUpdateRefBestEffort(ctx, projectDir, targetBranch, priorMainTip)
-	}
-
-	pushOutStr := string(pushOut)
-	isNonFF := strings.Contains(pushOutStr, "non-fast-forward") || strings.Contains(pushOutStr, "[rejected]")
-	if !isNonFF || pushAttempt >= maxPushAttempts {
-		return commitOutcome{done: &mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("push_failed: %v\n%s", pushErr, pushOut),
-		}}
-	}
-
-	// Non-FF push rejection: fetch the new remote tip, advance the local target to
-	// it, and re-prepare (rebase) OUTSIDE the domain on retry.
-	fetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", targetBranch)
-	fetchCmd.Dir = projectDir
-	if fetchOut, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
-		return commitOutcome{done: &mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("push_failed_fetch (attempt %d): %v\n%s", pushAttempt, fetchErr, fetchOut),
-		}}
-	}
-	newMainTip, rerr := gitRevParse(ctx, projectDir, "refs/remotes/origin/"+targetBranch)
-	if rerr != nil {
-		return commitOutcome{done: &mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("push_failed_rev_parse_remote (attempt %d): rev-parse refs/remotes/origin/%s", pushAttempt, targetBranch),
-		}}
-	}
-	updateToRemoteCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, newMainTip) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	updateToRemoteCmd.Dir = projectDir
-	if updateOut, updateErr := updateToRemoteCmd.CombinedOutput(); updateErr != nil {
-		return commitOutcome{done: &mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("push_failed_update_to_remote (attempt %d): %v\n%s", pushAttempt, updateErr, updateOut),
-		}}
-	}
-	return commitOutcome{retryKind: mergePreparePushRetry, newMainTip: newMainTip}
-}
-
-// commitFinalizeWorkingTree refreshes the project working tree after a successful
-// push (EM-054) and reconciles the bead ledger (BL-MRG-004/005). All steps are
-// best-effort / non-fatal — the merge is already durable.
-func commitFinalizeWorkingTree(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, mainTip, runTip, brPath string) {
-	// Step 5a: restore the staged index (best-effort / non-fatal).
-	restoreCmd := exec.CommandContext(ctx, "git", "restore", "--staged", ".")
-	restoreCmd.Dir = projectDir
-	if out, restoreErr := restoreCmd.CombinedOutput(); restoreErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: git restore --staged failed (bead %s run %s): %v\n%s",
-			beadID, runID.String(), restoreErr, out)
-	}
-
-	// Step 5b: git reset --hard HEAD re-syncs the index + working tree. On failure
-	// the merge is already durable: warn, emit working_tree_refresh_failed, and
-	// still report success.
-	resetCmd := exec.CommandContext(ctx, "git", "reset", "--hard", "HEAD")
-	resetCmd.Dir = projectDir
-	if out, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: git reset --hard HEAD failed (bead %s run %s): %v\n%s",
-			beadID, runID.String(), resetErr, out)
-		emitWorkingTreeRefreshFailed(ctx, bus, runID, beadID, resetErr)
-	}
-
-	// BL-MRG-004/005: reconcile the bead ledger when the merge touched
-	// .beads/issues.jsonl (non-fatal). brPath == "" disables the step.
-	if brPath == "" {
-		return
-	}
-	diffCmd := exec.CommandContext(ctx, "git", "diff", "--name-only", mainTip, runTip)
-	diffCmd.Dir = projectDir
-	diffOut, diffErr := diffCmd.Output()
-	if diffErr != nil {
-		return
-	}
-	for _, p := range strings.Split(strings.TrimRight(string(diffOut), "\n"), "\n") {
-		if p == ".beads/issues.jsonl" {
-			syncCmd := exec.CommandContext(ctx, brPath, "sync", "--import-only")
-			syncCmd.Dir = projectDir
-			if syncOut, syncErr := syncCmd.CombinedOutput(); syncErr != nil {
-				emitBeadSyncFailed(ctx, bus, runID, syncErr, syncOut)
-			}
-			return
-		}
-	}
-}
-
-// gitUpdateRefBestEffort advances refs/heads/<branch> to sha in dir, logging on
-// failure (used for the push-failure rollback, where a failed rollback is
-// surfaced to reconciliation, EM-INV-005, rather than aborting).
-func gitUpdateRefBestEffort(ctx context.Context, dir, branch, sha string) {
-	cmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+branch, sha) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: rollback update-ref %s failed: %v\n%s", branch, err, out)
-	}
-}
-
-// prepareRebase re-prepares the run-branch for a re-attempt after a lost FF race
-// or a non-FF push rejection: it rebases the run-branch onto the (already
-// updated) target OUTSIDE the exclusion domain (RSM-017). It updates *runTip in
-// place and returns nil on success, a terminal outcome on a rebase conflict or a
-// silently-dropped rebase. The kind selects the reason-string variant so the
-// pre-split "(attempt N)" strings are preserved.
-func prepareRebase(ctx context.Context, wtPath, projectDir string, runID core.RunID, runBranch, targetBranch string, runTip *string, mainTip string, kind mergePrepareKind, pushAttempt int) *mergeOutcome {
-	conflictReason := "rebase_conflict_on_non_ff_merge_retry"
-	droppedReason := "rebase_dropped_commits_on_non_ff_merge_retry"
-	if kind == mergePreparePushRetry {
-		conflictReason = "rebase_conflict_on_push_retry"
-		droppedReason = "rebase_dropped_commits_on_push_retry"
-	}
-
-	if _, statErr := os.Stat(wtPath); statErr == nil {
-		discardDirtyChurn(ctx, wtPath)
-		commitResidualDelta(ctx, wtPath, runID)
-		retryRebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
-		retryRebaseCmd.Dir = wtPath
-		if out, rebaseErr := retryRebaseCmd.CombinedOutput(); rebaseErr != nil {
-			gitRebaseAbort(ctx, wtPath)
-			return &mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("%s (attempt %d): %v\n%s", conflictReason, pushAttempt, rebaseErr, strings.TrimRight(string(out), "\n")),
-			}
-		}
-	}
-
-	if t, rerr := gitRevParse(ctx, projectDir, "refs/heads/"+runBranch); rerr == nil {
-		*runTip = t
-	}
-
-	// hk-zmpd: rebase-drop guard — reviewed commits must survive onto the new base.
-	if *runTip == mainTip {
-		return &mergeOutcome{
-			success: false,
-			reason: fmt.Sprintf(
-				"%s (attempt %d): rebase of %s onto %s produced no commits ahead of target",
-				droppedReason, pushAttempt, runBranch, targetBranch),
-		}
-	}
-	return nil
-}
-
-// discardDirtyChurn discards UNCOMMITTED changes to daemon/agent-owned churn
-// files in the run worktree, restoring each to the run-branch's committed
-// version, so `git rebase main` can proceed.
-//
-// `git rebase` refuses to start when the worktree has unstaged changes
-// (it aborts with "error: cannot rebase: You have unstaged changes" before any
-// conflict detection). Two distinct tracked files get dirtied during every run
-// without the implementer ever touching them as part of its task work:
-//
-//   - .beads/issues.jsonl — the bead ledger. Becomes dirty whenever a `br`
-//     operation flushes its shared SQLite DB to the per-worktree JSONL during the
-//     run. Its canonical source of truth is main (the daemon owns all terminal
-//     bead transitions).
-//   - .claude/settings.json — the Claude hook-bridge settings. The daemon's
-//     MaterializeClaudeSettings (CHB-001..005) merges the bridge hooks +
-//     permissions.allow into the worktree copy on every launch, and the running
-//     claude agent may further mutate it. Because this repo TRACKS the file (the
-//     root .gitignore only covers /.claude/worktrees/, not .claude/settings.json),
-//     the per-launch materialization leaves it modified-but-unstaged. This is the
-//     hk-aiw63 blocker: it persisted after hk-i1n7j (which only discarded the
-//     ledger) and aborted every real merge-to-main where claude mutates settings.
-//
-// Discarding either is safe: both are reconstructed deterministically (the
-// ledger from main, the settings from the next MaterializeClaudeSettings call)
-// and neither carries implementer task work.
-//
-// The set of discardable paths is exactly isHarmonikChurn — the same allowlist
-// the post-merge escape check (checkMainWorkingTreeDirty) uses to classify
-// expected churn. This preserves the hk-i1n7j safety property: a dirty file that
-// is NOT recognized churn is left untouched, so an implementer that escaped its
-// worktree (left genuine uncommitted work) still fails the rebase loudly rather
-// than being silently reset.
-//
-// Errors are non-fatal and best-effort: if `git status` or a `git checkout`
-// fails, the function continues / returns silently and the subsequent rebase
-// reports the real failure. It is a no-op when no churn paths are dirty.
-//
-// Beads: hk-3yz2d (ledger), hk-aiw63 (generalized to .claude/settings.json and
-// the full isHarmonikChurn allowlist).
-func discardDirtyChurn(ctx context.Context, wtPath string) {
-	// Enumerate ALL dirty paths in the worktree once, then discard only those
-	// the churn allowlist recognizes. Untracked files (status "??") are not
-	// git-checkout-restorable and are excluded by tracked-status filtering below.
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-	statusCmd.Dir = wtPath
-	statusOut, statusErr := statusCmd.Output()
-	if statusErr != nil || len(strings.TrimSpace(string(statusOut))) == 0 {
-		return
-	}
-
-	var churnPaths []string
-	for _, line := range strings.Split(strings.TrimRight(string(statusOut), "\n"), "\n") {
-		if len(line) < 4 {
-			continue
-		}
-		// Porcelain v1: "XY <path>". Untracked is "?? <path>" — skip (cannot be
-		// `git checkout`-restored).
-		xy := line[:2]
-		if xy == "??" {
-			continue
-		}
-		path := line[3:]
-		// Handle rename "old -> new": restore the destination path.
-		if idx := strings.Index(path, " -> "); idx >= 0 {
-			path = path[idx+4:]
-		}
-		path = strings.Trim(path, "\"")
-		if isHarmonikChurn(path) {
-			churnPaths = append(churnPaths, path)
-		}
-	}
-	if len(churnPaths) == 0 {
-		return
-	}
-
-	// Restore each churn path to its committed version. Use one checkout per
-	// path so a failure on one (e.g. a path that is staged-only) does not block
-	// the others; mirrors hk-i1n7j's best-effort/non-fatal style.
-	for _, path := range churnPaths {
-		checkoutCmd := exec.CommandContext(ctx, "git", "checkout", "--", path)
-		checkoutCmd.Dir = wtPath
-		if out, err := checkoutCmd.CombinedOutput(); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: discardDirtyChurn: git checkout -- %s: %v\n%s",
-				path, err, out)
-		}
-	}
-}
-
-// commitResidualDelta commits any UNCOMMITTED change that survives
-// discardDirtyChurn onto the run-branch, immediately before the pre-merge
-// `git rebase main`.
-//
-// Bug (hk-rljho class): a review-loop iteration can leave a TRACKED but
-// UNCOMMITTED change in the run worktree (e.g. a staged deletion of a test file
-// an iteration removed, whose deletion never got its own commit because the
-// daemon's commit-detection had already fired). discardDirtyChurn deliberately
-// restores only the isHarmonikChurn allowlist and leaves genuine work untouched
-// (hk-i1n7j safety property), so this real iteration delta survives to
-// `git rebase main`, which aborts with "cannot rebase: You have unstaged
-// changes" — failing the merge even though the bead's work is complete.
-//
-// Bug (hk-cmry defect #3): the implementer / a review-loop iteration can author
-// genuinely NEW files (untracked, status "??") that were never committed — e.g.
-// hk-8prq's GREEN added internal/keeper/sessionid.go and a new hook script as
-// brand-new files. The original `git add -u` staged only TRACKED modifications
-// and SILENTLY DROPPED those new files: the residual commit then carried only
-// the tracked changes (often the RED test) and the new-file GREEN was lost when
-// the worktree was later cleaned. That is how the daemon silently dropped a
-// reviewed GREEN and broke main fleet-wide. The fix stages with `git add -A` so
-// authored new files can NEVER be silently dropped.
-//
-// The fix PRESERVES hk-i1n7j: it does NOT discard the residual work. It COMMITS
-// the delta onto the run-branch (it IS the bead's own work — a review-loop edit
-// or new source file that never got committed) so the rebase proceeds with the
-// work intact.
-//
-// On the original `git add -u` → `git add -A` concern: -A also stages untracked
-// files, which the prior code feared would sweep "stray junk" to main+origin.
-// That concern is now mitigated on two grounds: (1) `git add -A` HONORS
-// .gitignore, and this repo's .gitignore excludes every class of daemon/runtime
-// junk (.harmonik/, .beads/*, .env, build outputs, worktrees, *.test, etc.), so
-// none of it is stageable; (2) discardDirtyChurn has already restored the
-// isHarmonikChurn allowlist, so any non-gitignored untracked file that SURVIVES
-// to this point is the bead's authored work, not stray junk. Dropping it (the
-// old behavior) is the actual bug; capturing it is correct.
-//
-// It is a no-op when no non-churn change remains after churn cleanup (so it
-// never manufactures an empty commit). Errors are best-effort/non-fatal in the
-// same style as discardDirtyChurn: a failure leaves the residual delta in place
-// and the subsequent rebase surfaces the real "unstaged changes" failure rather
-// than masking it.
-//
-// Bead: review-loop residual-delta merge fix (hk-rljho class); untracked-capture
-// fix (hk-cmry defect #3).
-func commitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
-	// Enumerate dirty paths once. We commit only if a non-churn change survives
-	// churn cleanup. Untracked files ("??") ARE counted now: an untracked file
-	// surviving discardDirtyChurn is the bead's authored work (a new source
-	// file), and `git add -A` will stage it. Gitignored paths never appear in
-	// `git status --porcelain`, so they are excluded here and by `git add -A`.
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-	statusCmd.Dir = wtPath
-	statusOut, statusErr := statusCmd.Output()
-	if statusErr != nil {
-		return
-	}
-
-	var residual bool
-	for _, line := range strings.Split(strings.TrimRight(string(statusOut), "\n"), "\n") {
-		if len(line) < 4 {
-			continue
-		}
-		// Porcelain v1: "XY <path>". Untracked is "?? <path>" — a NEW authored
-		// file that must be captured, NOT skipped (hk-cmry defect #3).
-		path := line[3:]
-		// Handle rename "old -> new": classify on the destination path.
-		if idx := strings.Index(path, " -> "); idx >= 0 {
-			path = path[idx+4:]
-		}
-		path = strings.Trim(path, "\"")
-		if isHarmonikChurn(path) {
-			continue // should already be restored by discardDirtyChurn; skip defensively
-		}
-		residual = true
-		break
-	}
-	if !residual {
-		return // no genuine residual delta — do not create an empty commit
-	}
-
-	// Stage all residual work — tracked modifications/deletions AND untracked
-	// NEW files. `git add -A` HONORS .gitignore (so daemon/runtime/build junk
-	// stays excluded), and discardDirtyChurn already restored the churn
-	// allowlist, so -A captures exactly the bead's genuine residual iteration
-	// delta, including any newly authored source files that would otherwise be
-	// silently dropped (hk-cmry defect #3).
-	//
-	// Hardening (hk-igq3): use explicit pathspec EXCLUSIONS for .claude/ and
-	// .harmonik/ so that neither is ever swept into a commit even when a
-	// legitimate non-churn change is present in the same worktree.
-	// .claude/ is only partially gitignored (worktrees/ + scheduled_tasks.lock),
-	// so a blanket -A could stage and push credential-adjacent files to origin.
-	// .harmonik/ contains daemon runtime state (review.json, run-context, etc.)
-	// that MUST NOT land on the merge target; gitignore covers it but the
-	// explicit exclusion is belt-and-suspenders (GH #7, hk-znou: review.json
-	// committed via -A caused add/add rebase conflicts on concurrent runs).
-	// The :(exclude) pathspec magic is honored by git ≥ 2.0 and matches the
-	// directory and all descendants.
-	addCmd := exec.CommandContext(ctx, "git", "add", "-A", "--",
-		".",
-		":(exclude).claude",
-		":(exclude).harmonik",
-	)
-	addCmd.Dir = wtPath
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: commitResidualDelta: git add -A: %v\n%s", err, out)
-		return
-	}
-
-	// Subject ≤72 chars with CC type + runID for traceability.
-	// Trivial: true bypasses the Reviewed-By/Review-Verdict trailer requirement
-	// for this machine-generated commit (commit-msg gate; build-practices.md).
-	commitMsg := fmt.Sprintf(
-		"chore: residual iteration delta [%s]\n\nTrivial: true",
-		runID.String(),
-	)
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
-	commitCmd.Dir = wtPath
-	if out, err := commitCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: commitResidualDelta: git commit: %v\n%s", err, out)
-	}
-}
-
-// cleanUntrackedFiles removes untracked non-gitignored files and directories
-// from the run worktree using `git clean -fd`. Called after discardDirtyChurn
-// and commitResidualDelta as the final pre-rebase cleanup step so that
-// integration-test artifacts (binaries built without an output path, temp
-// objects, etc.) cannot abort the rebase.
-//
-// `git rebase` aborts when an untracked file in the working tree would be
-// overwritten by a commit being replayed ("error: The following untracked
-// working tree files would be overwritten by checkout"). `git clean -fd`
-// removes those files — it honours .gitignore, so platform/build artifacts
-// already covered by .gitignore are left untouched.
-//
-// Safety: at this point commitResidualDelta has already committed any genuine
-// authored untracked files (new source files the implementer added), so the
-// only files that survive to this step are integration-test artifacts, not
-// bead work. Gitignored files (*.test, /harmonik-twin-claude, /.harmonik/)
-// are unaffected and do not interfere with the rebase.
-//
-// Non-fatal and best-effort: errors are logged to stderr; the subsequent
-// rebase will surface the real dirty-state failure if cleaning did not fully
-// succeed.
-//
-// Bead: hk-g9zz.
-func cleanUntrackedFiles(ctx context.Context, wtPath string) {
-	cleanCmd := exec.CommandContext(ctx, "git", "clean", "-fd")
-	cleanCmd.Dir = wtPath
-	if out, err := cleanCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: cleanUntrackedFiles: git clean -fd: %v\n%s", err, out)
-	}
-}
-
-// emitOutcomeEmitted emits an outcome_emitted event with the given kind and
-// optional reason. kind is "approved" on success, "rejected" on failure.
-//
-// Spec ref: specs/execution-model.md §4.12.EM-052, EM-053.
-// Bead: hk-ftyvo.
-func emitOutcomeEmitted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, kind, reason string) {
-	pl := mergeRunBranchToMainPayload{
-		RunID:  runID.String(),
-		BeadID: string(beadID),
-		Kind:   kind,
-		Reason: reason,
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.Emit(ctx, core.EventTypeOutcomeEmitted, b)
-}
-
-// emitWorkingTreeRefreshFailed emits a working_tree_refresh_failed event when
-// git reset --hard HEAD fails after a successful merge-to-main (EM-054).
-// The event is informational: the merge is already durable.
-//
-// Spec ref: specs/execution-model.md §4.12 EM-054.
-// Bead: hk-4goy3.
-func emitWorkingTreeRefreshFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, refreshErr error) {
-	pl := workingTreeRefreshFailedPayload{
-		RunID:  runID.String(),
-		BeadID: string(beadID),
-		Error:  refreshErr.Error(),
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeRefreshFailed, b)
-}
-
-// isMergeBuildColdCacheError reports whether the go build/vet output matches
-// the cold-build-cache failure signature observed after the proactive go-cache
-// reaper runs in the TOCTOU window before the merge-build starts (hk-44ab2):
-//
-//   - "go-build cache" in output: Go toolchain references the deleted cache path
-//   - "could not import" + "no such file": stdlib lookup fails against cold cache
-//
-// These are transient: a single retry almost always succeeds because the first
-// attempt repopulates cache entries for subsequent compilations.
-func isMergeBuildColdCacheError(out []byte) bool {
-	s := string(out)
-	return strings.Contains(s, "go-build cache") ||
-		(strings.Contains(s, "could not import") && strings.Contains(s, "no such file"))
-}
-
-// emitMergeBuildFailed emits a merge_build_failed event when go build or go
-// vet fails on the freshly fast-forwarded merged tree (hk-o68j3). The
-// update-ref has already been rolled back before this is called.
-//
-// Bead: hk-o68j3.
-func emitMergeBuildFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, buildErr error, output []byte) {
-	errMsg := buildErr.Error()
-	if len(output) > 0 {
-		errMsg = fmt.Sprintf("%s\n%s", errMsg, strings.TrimRight(string(output), "\n"))
-	}
-	pl := mergeBuildFailedPayload{
-		RunID:  runID.String(),
-		BeadID: string(beadID),
-		Error:  errMsg,
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeMergeBuildFailed, b)
-}
-
-// emitBeadSyncFailed emits a bead_sync_failed event when `br sync --import-only`
-// fails after a merge touching .beads/issues.jsonl (BL-MRG-004). The merge is
-// already durable; this event flags that the SQLite DB is out of sync with the
-// JSONL so the Cat-BL2 routing obligation can be fulfilled.
-//
-// Spec ref: event-model.md §8.15.1 BL-MRG-004.
-// Bead: hk-zgt4u.
-func emitBeadSyncFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, syncErr error, output []byte) {
-	errMsg := syncErr.Error()
-	if len(output) > 0 {
-		errMsg = fmt.Sprintf("%s\n%s", errMsg, strings.TrimRight(string(output), "\n"))
-	}
-	pl := core.BeadSyncFailedPayload{
-		RunID:     runID.String(),
-		Error:     errMsg,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeBeadSyncFailed, b)
-}
-
-// runMergeFmtCheck detects formatting drift (gofumpt, gci) on buildDir before
-// the push and auto-heals it when an isolated worktree is available.
-//
-// Auto-heal path (buildDir != projectDir — worktree exists): runs gofumpt -w
-// and/or gci write to reformat in place, then stages and commits the changes
-// in the worktree and advances refs/heads/<targetBranch> to the new tip so the
-// caller's push step picks up the format commit.
-//
-// Fallback path (buildDir == projectDir — worktree already removed): rolls
-// back the update-ref and emits merge_build_failed, same as the original
-// reject behaviour, because committing in the live project directory is unsafe.
-//
-// Fail-open: if either tool binary is absent in projectDir/.tools/ the check
-// is silently skipped (non-Go repos, bare test fixtures, CI without tools).
-//
-// Beads: hk-k1hn (original gate), hk-0lrt (auto-heal).
-// runMergeFmtCheck runs gofumpt+gci on the merged tree in buildDir and, when the
-// worktree is isolated (buildDir != projectDir), auto-fixes drift and commits it
-// onto the run-branch. It is the prepare-phase fmt gate (RSM-017): it runs
-// OUTSIDE the merge exclusion domain and never advances the target ref — the
-// post-fmt worktree HEAD is returned as the new run-branch tip, and the commit
-// phase's update-ref advances the target to it.
-//
-// Returns (nil, newRunTip) on success — newRunTip is the post-fmt worktree HEAD
-// when the auto-fix committed, else ""; (outcome, "") on a terminal fmt failure.
-func runMergeFmtCheck(ctx context.Context, buildDir, projectDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (outcome *mergeOutcome, newRunTip string) {
-	// Auto-format is only safe when an isolated worktree is available.
-	canAutoFmt := buildDir != projectDir
-	needsCommit := false
-
-	gofumptBin := filepath.Join(projectDir, ".tools", "gofumpt")
-	gciBin := filepath.Join(projectDir, ".tools", "gci")
-	_, gofumptAvail := os.Stat(gofumptBin)
-	_, gciAvail := os.Stat(gciBin)
-	mod := readGoModule(buildDir)
-
-	const maxFmtIter = 5
-	for i := range maxFmtIter {
-		iterDirty, out := runFmtPassesOnce(ctx, buildDir, gofumptBin, gciBin, mod,
-			gofumptAvail == nil, gciAvail == nil, canAutoFmt, runID, beadID, bus)
-		if out != nil {
-			return out, ""
-		}
-		needsCommit = needsCommit || iterDirty
-
-		if !iterDirty {
-			break
-		}
-		if i == maxFmtIter-1 {
-			emitMergeBuildFailed(ctx, bus, runID, beadID,
-				errors.New("gofumpt+gci did not converge after "+fmt.Sprint(maxFmtIter)+" passes"), nil)
-			return &mergeOutcome{
-				success: false,
-				reason:  "merge_fmt_failed: gofumpt+gci did not converge after " + fmt.Sprint(maxFmtIter) + " passes (check gci local-prefix config vs module path)",
-			}, ""
-		}
-	}
-
-	if !needsCommit {
-		return nil, ""
-	}
-	return commitFmtChanges(ctx, buildDir, runID, beadID, bus)
-}
-
-// runFmtPassesOnce runs one gofumpt then one gci pass over buildDir (each gated
-// on tool availability), returning (dirty, nil) when either reformatted the tree
-// and (false, outcome) on the first terminal failure.
-func runFmtPassesOnce(ctx context.Context, buildDir, gofumptBin, gciBin, mod string, gofumptAvail, gciAvail, canAutoFmt bool, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (dirty bool, out *mergeOutcome) {
-	if gofumptAvail {
-		d, o := fmtGofumptPass(ctx, buildDir, gofumptBin, canAutoFmt, runID, beadID, bus)
-		if o != nil {
-			return false, o
-		}
-		dirty = dirty || d
-	}
-	if gciAvail && mod != "" {
-		d, o := fmtGciPass(ctx, buildDir, gciBin, mod, canAutoFmt, runID, beadID, bus)
-		if o != nil {
-			return false, o
-		}
-		dirty = dirty || d
-	}
-	return dirty, nil
-}
-
-// fmtGofumptPass runs one gofumpt pass over buildDir. It returns (dirty, nil)
-// when files were reformatted (auto-fix) and (false, outcome) on a terminal
-// failure. When canAutoFmt is false, unformatted files are a terminal failure.
-func fmtGofumptPass(ctx context.Context, buildDir, gofumptBin string, canAutoFmt bool, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (bool, *mergeOutcome) {
-	listCmd := exec.CommandContext(ctx, gofumptBin, "-l", ".")
-	listCmd.Dir = buildDir
-	out, err := listCmd.Output()
-	if err != nil || strings.TrimSpace(string(out)) == "" {
-		return false, nil
-	}
-	if !canAutoFmt {
-		msg := "gofumpt: unformatted files (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
-		emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-		return false, &mergeOutcome{success: false, reason: "merge_fmt_failed (gofumpt): " + strings.TrimRight(string(out), "\n")}
-	}
-	fmtCmd := exec.CommandContext(ctx, gofumptBin, "-w", ".")
-	fmtCmd.Dir = buildDir
-	if fmtErr := fmtCmd.Run(); fmtErr != nil {
-		emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New("gofumpt -w: "+fmtErr.Error()), nil)
-		return false, &mergeOutcome{success: false, reason: "merge_fmt_failed (gofumpt -w): " + fmtErr.Error()}
-	}
-	return true, nil
-}
-
-// fmtGciPass runs one gci import-order pass over buildDir, with the same
-// (dirty, outcome) contract as fmtGofumptPass.
-func fmtGciPass(ctx context.Context, buildDir, gciBin, mod string, canAutoFmt bool, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (bool, *mergeOutcome) {
-	diffCmd := exec.CommandContext(ctx, gciBin, "diff", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".") //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	diffCmd.Dir = buildDir
-	out, err := diffCmd.Output()
-	if err != nil || strings.TrimSpace(string(out)) == "" {
-		return false, nil
-	}
-	if !canAutoFmt {
-		msg := "gci: import order drift (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
-		emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-		return false, &mergeOutcome{success: false, reason: "merge_fmt_failed (gci): import order drift detected"}
-	}
-	writeCmd := exec.CommandContext(ctx, gciBin, "write", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".") //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	writeCmd.Dir = buildDir
-	if writeErr := writeCmd.Run(); writeErr != nil {
-		emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New("gci write: "+writeErr.Error()), nil)
-		return false, &mergeOutcome{success: false, reason: "merge_fmt_failed (gci write): " + writeErr.Error()}
-	}
-	return true, nil
-}
-
-// commitFmtChanges stages and commits the gofumpt/gci auto-fix onto the
-// run-branch in buildDir and returns (nil, newRunTip) — the post-fmt worktree
-// HEAD the commit phase advances the target to — or (outcome, "") on failure.
-func commitFmtChanges(ctx context.Context, buildDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (outcome *mergeOutcome, newRunTip string) {
-	addCmd := exec.CommandContext(ctx, "git", "add", "-A")
-	addCmd.Dir = buildDir
-	if addOut, addErr := addCmd.CombinedOutput(); addErr != nil {
-		emitMergeBuildFailed(ctx, bus, runID, beadID, addErr, addOut)
-		return &mergeOutcome{success: false, reason: "merge_fmt_failed (git add): " + addErr.Error()}, ""
-	}
-
-	commitMsg := fmt.Sprintf("chore: auto-format via gofumpt+gci\n\nRefs: %s\nTrivial: true", beadID)
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
-	commitCmd.Dir = buildDir
-	if commitOut, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
-		emitMergeBuildFailed(ctx, bus, runID, beadID, commitErr, commitOut)
-		return &mergeOutcome{success: false, reason: "merge_fmt_failed (fmt commit): " + commitErr.Error()}, ""
-	}
-
-	// Return the post-fmt worktree HEAD; the commit phase advances the target to it.
-	if newTip, rerr := gitRevParse(ctx, buildDir, "HEAD"); rerr == nil {
-		return nil, newTip
-	}
-	return nil, ""
-}
-
-// readGoModule parses the first "module <path>" directive from dir/go.mod.
-// Returns empty string on any error.
-func readGoModule(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "module" {
-			return fields[1]
-		}
-	}
-	return ""
 }
 
 // emitBeadClosed emits a bead_closed event after a successful CloseBead call.
@@ -7620,9 +6327,9 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 // emitBeadClosedAndMaybeEpic emits bead_closed then checks whether the closed
 // bead's parent epic just completed (hk-w6y70 C1). It is the single insertion
 // point replacing the seven raw emitBeadClosed call sites.
-func emitBeadClosedAndMaybeEpic(ctx context.Context, deps workLoopDeps, runID core.RunID, beadID core.BeadID) {
-	emitBeadClosed(ctx, deps.runPorts().Emitter, runID, beadID)
-	maybeEmitEpicCompleted(ctx, deps, runID, beadID)
+func emitBeadClosedAndMaybeEpic(ctx context.Context, ports runloop.RunPorts, handles runloop.SharedHandles, runID core.RunID, beadID core.BeadID) {
+	emitBeadClosed(ctx, ports.Emitter, runID, beadID)
+	maybeEmitEpicCompleted(ctx, ports, handles, runID, beadID)
 }
 
 // maybeEmitEpicCompleted checks whether closedBeadID's parent epic now has all
@@ -7631,8 +6338,8 @@ func emitBeadClosedAndMaybeEpic(ctx context.Context, deps workLoopDeps, runID co
 // or already-emitted guard hit.
 //
 // Bead: hk-w6y70.
-func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.RunID, closedBeadID core.BeadID) {
-	ledger := deps.runPorts().Ledger
+func maybeEmitEpicCompleted(ctx context.Context, ports runloop.RunPorts, handles runloop.SharedHandles, runID core.RunID, closedBeadID core.BeadID) {
+	ledger := ports.Ledger
 	// Step 1: ShowBead(closedBead) to find the parent via a parent-child edge.
 	// The closed bead's outgoing parent-child edge has FromBeadID == closedBead,
 	// ToBeadID == parent (per brcli/show.go: dependencies[] → outgoing edges).
@@ -7674,13 +6381,13 @@ func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.R
 	// children recorded yet; we emit to avoid silent gaps, consistent with AC-1).
 
 	// Step 3: claim under emittedEpicsMu BEFORE emit (at-most-once guard AC-1).
-	deps.emittedEpicsMu.Lock()
-	if _, already := deps.emittedEpics[parentID]; already {
-		deps.emittedEpicsMu.Unlock()
+	handles.EmittedEpicsMu.Lock()
+	if _, already := handles.EmittedEpics[parentID]; already {
+		handles.EmittedEpicsMu.Unlock()
 		return
 	}
-	deps.emittedEpics[parentID] = struct{}{}
-	deps.emittedEpicsMu.Unlock()
+	handles.EmittedEpics[parentID] = struct{}{}
+	handles.EmittedEpicsMu.Unlock()
 
 	// Step 4: emit epic_completed.
 	pl := epicCompletedPayload{
@@ -7692,304 +6399,7 @@ func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.R
 	if err != nil {
 		return
 	}
-	_ = deps.bus.EmitWithRunID(ctx, runID, core.EventTypeEpicCompleted, b)
-}
-
-// snapshotUntrackedFiles (hk-ooexj) captures the set of paths the main repo's
-// working tree reports as dirty/untracked at run-start, BEFORE the implementer
-// launches. The returned set is fed to checkMainWorkingTreeDirty after the run
-// so that files which already existed (and which the implementer never touched)
-// are NOT mistaken for an escape.
-//
-// It uses the same `git status --porcelain` surface as the escape check (which
-// already excludes gitignored paths by default), so a pre-existing
-// untracked-but-not-ignored file (e.g. a scratch note in the project root) is
-// baselined and excluded, while a NET-NEW file the implementer writes outside
-// its worktree still surfaces as an escape.
-//
-// Errors (e.g. git not in PATH) return (nil, err); the caller treats a failed
-// snapshot as "no baseline" — the escape check then degrades to its prior
-// behaviour rather than silently suppressing genuine escapes.
-func snapshotUntrackedFiles(ctx context.Context, mainPath string) (map[string]struct{}, error) {
-	if mainPath == "" {
-		return nil, fmt.Errorf("snapshotUntrackedFiles: empty mainPath")
-	}
-	cmd := exec.CommandContext(ctx, "git", "-C", mainPath, "status", "--porcelain")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("snapshotUntrackedFiles: git status: %w", err)
-	}
-	baseline := make(map[string]struct{})
-	for _, path := range parsePorcelainPaths(string(out)) {
-		baseline[path] = struct{}{}
-	}
-	return baseline, nil
-}
-
-// parsePorcelainPaths extracts the destination path from each line of
-// `git status --porcelain` output, stripping the XY status prefix, resolving
-// rename "old -> new" to the destination, and unquoting special-char paths.
-func parsePorcelainPaths(out string) []string {
-	var paths []string
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		// Porcelain v1 format: "XY <path>" (rename: "XY <oldpath> -> <newpath>").
-		// The first three runes are the XY status and the separating space.
-		if len(line) < 4 {
-			continue
-		}
-		path := line[3:]
-		// Handle rename "old -> new": consider the destination path.
-		if idx := strings.Index(path, " -> "); idx >= 0 {
-			path = path[idx+4:]
-		}
-		// Strip surrounding quotes (git quotes paths with special chars).
-		path = strings.Trim(path, "\"")
-		paths = append(paths, path)
-	}
-	return paths
-}
-
-// checkMainWorkingTreeDirty (hk-6zylj) reports whether the main repo's working
-// tree contains dirty files outside the harmonik churn allowlist that did NOT
-// exist before the run started.
-//
-// It runs `git -C <mainPath> status --porcelain` and filters the output:
-//   - `.harmonik/...`        — daemon state (expected churn)
-//   - `.claude/...`          — orchestrator/Claude state (expected churn)
-//   - `.beads/issues.jsonl`  — bead ledger (expected churn from br sync)
-//   - `AGENT_COMMS.md`       — orchestrator scratch (expected churn, hk-77q8e)
-//   - paths in `baseline`    — pre-existing untracked files (hk-ooexj)
-//   - gitignored paths       — never the implementer's escape (hk-ooexj)
-//
-// `git status --porcelain` already omits gitignored paths by default; the
-// explicit check-ignore pass is defense-in-depth against a parent-repo
-// `.gitignore` or core.excludesFile that surfaces an ignored path here.
-//
-// The caller (runAgentImplementer) holds mergeMu across this call (hk-zguy6),
-// so no sibling merge can be mid-flight (between update-ref and reset-hard)
-// when we inspect the working tree. No path-exclusion heuristic is needed for
-// sibling-merge races — the lock provides the full guarantee (hk-xux36).
-//
-// Anything else dirty is treated as an escape. The returned list contains the
-// destination path of each surviving porcelain status line.
-//
-// Errors (e.g. git not in PATH) return (false, nil, err) so the caller can
-// treat the check as informational and skip without failing the run.
-func checkMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}) (bool, []string, error) {
-	if mainPath == "" {
-		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: empty mainPath")
-	}
-	cmd := exec.CommandContext(ctx, "git", "-C", mainPath, "status", "--porcelain")
-	out, err := cmd.Output()
-	if err != nil {
-		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: git status: %w", err)
-	}
-
-	var candidates []string
-	for _, path := range parsePorcelainPaths(string(out)) {
-		if isHarmonikChurn(path) {
-			continue
-		}
-		// hk-ooexj: pre-existing untracked file — present at run-start, so the
-		// implementer did not create it. Not an escape.
-		if _, preexisting := baseline[path]; preexisting {
-			continue
-		}
-		candidates = append(candidates, path)
-	}
-	// hk-ooexj: drop any gitignored paths (defense-in-depth — git status already
-	// omits these by default, but a parent gitignore could surface them).
-	dirty := filterIgnoredPaths(ctx, mainPath, candidates)
-	return len(dirty) > 0, dirty, nil
-}
-
-// filterIgnoredPaths returns paths minus those git considers ignored under
-// mainPath. It batches the paths through a single `git check-ignore` call
-// (NUL-delimited via --stdin -z). On any real error it returns paths unchanged
-// — failing open keeps genuine escapes visible rather than swallowing them.
-func filterIgnoredPaths(ctx context.Context, mainPath string, paths []string) []string {
-	if len(paths) == 0 {
-		return paths
-	}
-	cmd := exec.CommandContext(ctx, "git", "-C", mainPath, "check-ignore", "--stdin", "-z")
-	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00"))
-	out, err := cmd.Output()
-	// check-ignore exits 0 when ≥1 path is ignored, 1 when none are ignored
-	// (not an error for us), and ≥128 on a real failure. Treat exit 1 (no
-	// matches) as "nothing ignored"; treat other non-zero codes as fail-open.
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return paths // none ignored
-		}
-		return paths // fail open: keep all candidates visible
-	}
-	ignored := make(map[string]struct{})
-	for _, p := range strings.Split(strings.TrimRight(string(out), "\x00"), "\x00") {
-		if p != "" {
-			ignored[p] = struct{}{}
-		}
-	}
-	var kept []string
-	for _, p := range paths {
-		if _, isIgnored := ignored[p]; isIgnored {
-			continue
-		}
-		kept = append(kept, p)
-	}
-	return kept
-}
-
-// isHarmonikChurn reports whether a path is part of the expected harmonik
-// churn surface that should be excluded from the escape check.
-func isHarmonikChurn(path string) bool {
-	switch {
-	case strings.HasPrefix(path, ".harmonik/"), path == ".harmonik":
-		return true
-	case strings.HasPrefix(path, ".claude/"), path == ".claude":
-		return true
-	case path == ".beads/issues.jsonl":
-		return true
-	// hk-77q8e: AGENT_COMMS.md was the v0 file-outbox comms channel (retired by
-	// hk-8sm4f — use `harmonik comms send/recv` instead). The exemption is kept
-	// for the live-transition period: any session still tailing the old file must
-	// not cause a false implementer_escape on in-flight beads.
-	case path == "AGENT_COMMS.md":
-		return true
-	}
-	return false
-}
-
-// emitImplementerPhaseComplete emits an implementer_phase_complete event
-// (hk-cd8yu) immediately after the implementer session ends.
-//
-// stderrTail is the raw stderr bytes captured by waitWithSocketGrace; only the
-// first 200 bytes are included in the event payload per the spec.
-// duration is the wall-clock time from implementer launch to session end.
-//
-// Spec ref: hk-cd8yu.
-func emitImplementerPhaseComplete(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, exitCode int, stderrTail []byte, commitLanded bool, duration time.Duration) {
-	const maxStderrHead = 200
-	stderrHead := ""
-	if len(stderrTail) > 0 {
-		head := stderrTail
-		if len(head) > maxStderrHead {
-			head = head[:maxStderrHead]
-		}
-		stderrHead = string(head)
-	}
-	pl := core.ImplementerPhaseCompletePayload{
-		RunID:           runID,
-		ExitCode:        exitCode,
-		StderrTailHead:  stderrHead,
-		CommitLanded:    commitLanded,
-		DurationSeconds: duration.Seconds(),
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerPhaseComplete, b)
-}
-
-// emitSpawnCapBlocked emits a spawn_cap_blocked event (hk-4l7zs) when a launch's
-// SpawnWindow times out waiting for a spawn-semaphore slot — the observable
-// signature of a slot leak (every slot held by an acquired-but-never-released
-// session). Non-fatal: emit-marshal errors are silently discarded; the launch
-// failure is already surfaced via the reopen/done path.
-//
-// capSize/slotsInUse describe the saturated pool; when unknown (0) the payload
-// still validates via a minimum capSize of 1 so the event is never dropped.
-func emitSpawnCapBlocked(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, waited time.Duration, slotsInUse, capSize int) {
-	if bus == nil {
-		return
-	}
-	if capSize <= 0 {
-		capSize = 1
-	}
-	waitedMS := waited.Milliseconds()
-	if waitedMS <= 0 {
-		waitedMS = 1
-	}
-	pl := core.SpawnCapBlockedPayload{
-		RunID:      runID.String(),
-		WaitedMS:   waitedMS,
-		SlotsInUse: slotsInUse,
-		CapSize:    capSize,
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeSpawnCapBlocked, b)
-}
-
-// emitTmuxNewWindowTimeout emits a tmux_new_window_timeout event (hk-r1rup) when
-// a launch's SpawnWindow times out waiting for the underlying `tmux new-window`
-// call to return — the observable signature of a hung tmux invocation (the
-// no-spawn wedge). Non-fatal: emit-marshal errors are silently discarded; the
-// launch failure is already surfaced via the reopen/done path.
-//
-// waited is the duration the new-window call blocked before the bound fired;
-// when unknown (<= 0) the payload still validates via a minimum waited_ms of 1
-// so the event is never dropped. Mirrors emitSpawnCapBlocked (hk-4l7zs).
-func emitTmuxNewWindowTimeout(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, waited time.Duration) {
-	if bus == nil {
-		return
-	}
-	waitedMS := waited.Milliseconds()
-	if waitedMS <= 0 {
-		waitedMS = 1
-	}
-	pl := core.TmuxNewWindowTimeoutPayload{
-		RunID:    runID.String(),
-		WaitedMS: waitedMS,
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeTmuxNewWindowTimeout, b)
-}
-
-// emitAgentReadyTimeout emits an agent_ready_timeout event (hk-5cox8) when
-// the HC-056 timeout fires — no agent_ready relay message arrived within the
-// configured deadline. The event carries run_id, claude_session_id, and
-// artifactAgentType returns the resolved agent type from claudeRunArtifacts,
-// falling back to core.AgentTypeClaudeCode when the field is empty (e.g. from a
-// legacy test fixture that builds artifacts directly without going through
-// routedLaunchSpecBuilder).
-//
-// Used to look up the correct Adapter via adapterRegistry.ForAgent instead of
-// hardcoding core.AgentTypeClaudeCode (T12, hk-xhawy).
-func artifactAgentType(a claudeRunArtifacts) core.AgentType {
-	if a.resolvedAgentType.Valid() {
-		return a.resolvedAgentType
-	}
-	return core.AgentTypeClaudeCode
-}
-
-// timeout_ms so post-hoc analysis can correlate which runs never became ready.
-//
-// effectiveTimeout: zero is replaced by defaultAgentReadyTimeout (30s) to
-// match the semantics of waitAgentReady.
-func emitAgentReadyTimeout(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, claudeSessionID string, effectiveTimeout time.Duration) {
-	if effectiveTimeout <= 0 {
-		effectiveTimeout = defaultAgentReadyTimeout
-	}
-	pl := core.AgentReadyTimeoutPayload{
-		RunID:           runID,
-		ClaudeSessionID: claudeSessionID,
-		TimeoutMs:       effectiveTimeout.Milliseconds(),
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeAgentReadyTimeout, b)
+	_ = ports.Emitter.EmitWithRunID(ctx, runID, core.EventTypeEpicCompleted, b)
 }
 
 // transitionToTerminated advances the per-session lifecycle Machine from its
@@ -8163,17 +6573,55 @@ func adoptLiveRunSession(ctx context.Context, deps workLoopDeps, rec runpkg.Reco
 	}
 }
 
-// sandboxOSTmpDirs returns the OS temp directories to include in the srt sandbox
-// allowWrite set (hk-6596l). On macOS /tmp is a symlink to /private/tmp; srt
-// requires the canonical path, so both are included when os.TempDir() returns "/tmp".
-func sandboxOSTmpDirs() []string {
-	tmpDir := os.TempDir()
-	dirs := []string{tmpDir}
-	if tmpDir == "/tmp" {
-		dirs = append(dirs, "/private/tmp")
-	}
-	return dirs
-}
+// sandboxOSTmpDirs is REMOVED (hk-guapd). It used to return os.TempDir() (plus
+// /private/tmp when that was "/tmp") for the sandbox profile's allowWrite set,
+// and GenerateSandboxProfile expands every TmpDirs entry into a RECURSIVE write
+// rule. os.TempDir() honours $TMPDIR and falls back to "/tmp" when TMPDIR is
+// UNSET, so a daemon started without a per-user TMPDIR — or with TMPDIR=/tmp,
+// which Makefile:453 and :465 do routinely — granted every sandboxed run write
+// access to all of /tmp: other runs' scratch state, other tools' temp files, and
+// any socket or lockfile living there. That is a hole in a mechanism whose only
+// purpose is confinement.
+//
+// No consumer can regress, and the argument is exhaustive rather than "the suite
+// stayed green". srt injects TMPDIR=/tmp/claude into every sandboxed child
+// regardless of the parent's TMPDIR (sandboxgate.go:87, MkdirAll'd
+// unconditionally at :122), and children inherit it. So every consumer falls in
+// one of two branches:
+//
+//   - HONOURS TMPDIR: resolves to /tmp/claude, granted separately by section 6a.
+//     It never reached the host temp root even before this change.
+//   - HARDCODES A HOST TEMP ROOT (C's P_tmpdir/tmpfile(), mkstemp("/tmp/..."),
+//     and tmux, whose socket is /tmp/tmux-<uid> via TMUX_TMPDIR — not TMPDIR):
+//     the old grant covered these only when os.TempDir() happened to EQUAL that
+//     root, i.e. TMPDIR=/tmp or unset. Under the macOS default per-user TMPDIR
+//     the grant was /var/folders/<...> and every such consumer was already
+//     denied.
+//
+// A consumer could therefore only regress if it hardcodes /tmp AND has only ever
+// run under TMPDIR=/tmp — that is, only in the gating configuration, never in
+// normal operation. The old grant bought nothing in any configuration and opened
+// a hole in one. The run worktree is granted separately too (section 1,
+// in.WorktreePath), so a worktree that itself lives under the host temp root
+// still gets its writes.
+//
+// Measured, not assumed (hk-guapd): TestSandboxAcceptance_WriteToMainDenied_hki0377
+// failed 3/3 with TMPDIR=/tmp and passed 3/3 with a per-user TMPDIR, at load 7.53
+// — the band the "srt fails to apply under fork saturation" theory predicted
+// failure in. srt was applying correctly the whole time; the profile was too wide
+// and the test's own fixture sat inside the grant. Do not reintroduce an ambient
+// os.TempDir() feed here. If a future caller genuinely needs a temp grant, pass an
+// explicit PER-RUN directory via SandboxProfileInput.TmpDirs — never a shared
+// root. That is not left to review: GenerateSandboxProfile now REJECTS a
+// world-shared root in TmpDirs, so reintroducing the ambient feed fails at launch
+// with a named error instead of silently restoring the over-grant.
+//
+// NOT ESTABLISHED ON LINUX. srtClaudeTmpDir is hardcoded with no GOOS gate and the
+// acceptance suite skips non-darwin (sandboxacceptance_hki0377_test.go:79), so
+// section 6a's coverage on Linux rests on srt injecting the same TMPDIR there.
+// That is plausible — it is a property of srt, not of the host — but it is
+// untested, and Linux is uncertified either way. The Linux-pass bead inherits the
+// question.
 
 // strandedBeadHasOnDiskRun reports whether any record in .harmonik/runs/ is
 // associated with beadID. An on-disk record means an adoptLiveRunSession

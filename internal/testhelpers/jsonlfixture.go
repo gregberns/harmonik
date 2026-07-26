@@ -235,11 +235,11 @@ func JSONLFixtureDurabilityClasses() []DurabilityClassLine {
 type TornTailKind string
 
 const (
-	// TornTailMissingNewline: final line is valid JSON but lacks the terminating "\n".
+	// TornTailMissingNewline is a final valid JSON line lacking the terminating "\n".
 	TornTailMissingNewline TornTailKind = "missing-newline"
-	// TornTailBadJSON: final line is not valid JSON.
+	// TornTailBadJSON is a final line that is not valid JSON.
 	TornTailBadJSON TornTailKind = "bad-json"
-	// TornTailBadEnvelope: final line is valid JSON but fails envelope schema
+	// TornTailBadEnvelope is a final valid JSON line that fails envelope schema
 	// validation (missing required field).
 	TornTailBadEnvelope TornTailKind = "bad-envelope"
 )
@@ -368,11 +368,11 @@ func JSONLFixtureMidFileCorruption() MidFileCorruptionFixture {
 type EmptyLogKind string
 
 const (
-	// EmptyLogFreshProject: no events.jsonl and no prior daemon cycle in git/Beads.
+	// EmptyLogFreshProject has no events.jsonl and no prior daemon cycle in git/Beads.
 	// Valid state; reader treats this as a clean start.
 	EmptyLogFreshProject EmptyLogKind = "fresh-project"
 
-	// EmptyLogWithPriorCycle: empty events.jsonl but git/Beads carry prior-cycle
+	// EmptyLogWithPriorCycle has an empty events.jsonl while git/Beads carry prior-cycle
 	// evidence. Reader MUST emit store_divergence_detected{log_missing}.
 	EmptyLogWithPriorCycle EmptyLogKind = "prior-cycle-mismatch"
 )

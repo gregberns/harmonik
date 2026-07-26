@@ -16,24 +16,15 @@
 
 ## Fresh-clone bootstrap
 
-After cloning, run one command to install pinned dev tools and wire the git hooks:
+After cloning, run one command to install the pinned dev tools:
 
 ```sh
-make bootstrap
+make bootstrap      # == make tools
 ```
 
-This runs two steps in order:
-1. **`make tools`** — installs gofumpt, gci, golangci-lint, govulncheck, and lefthook into `.tools/` (no global GOPATH pollution).
-2. **`make install-hooks`** — runs `$(TOOLS_DIR)/lefthook install`, which reads `lefthook.yml` and registers the pre-commit, pre-push, and commit-msg hooks in `.git/hooks/`.
+This installs gofumpt, gci, golangci-lint, and govulncheck into `.tools/` (no global GOPATH pollution).
 
-Without `make install-hooks` (or `make bootstrap`), the hooks in `lefthook.yml` are never wired and commits bypass the Tier 1 gate entirely. **`--no-verify` is forbidden** per Git hygiene below; installing the hooks is the way to comply.
-
-To re-run steps independently after the initial setup:
-
-```sh
-make tools          # re-pin tools (idempotent; skips hook re-registration)
-make install-hooks  # re-wire hooks (requires .tools/lefthook to exist)
-```
+**Git hooks are retired.** lefthook (and its self-re-arming `install`) was removed because it re-wired itself on every commit. Validation — the Tier 1/Tier 2 gates, secret scan, and commit-message trailers — now runs via the agent-driven validation command (`/check`), not a pre-commit / pre-push / commit-msg hook. The underlying scripts (`scripts/validate-commit-msg.sh`, `scripts/secret-scan.sh`) remain callable directly by that flow. **`--no-verify` is moot** (no hook to bypass); the way to comply is to run `/check` (or `make check`) after committing and fix + re-commit if it comes back red.
 
 ## Commit conventions
 
@@ -52,11 +43,11 @@ Required trailers when applicable: `Refs: <bead-id>` or `Refs: <kerf-codename>` 
 - `Reviewed-By: agent-reviewer` (presence-only marker; names the reviewer skill that ran).
 - `Review-Verdict: {"verdict": "APPROVE|REQUEST_CHANGES", "flags": [...], "notes": "..."}` — a structured JSON trailer emitted by `agent-reviewer`. JSON schema versioned via `schema_version` field inside the object. `flags[]` is a list of issue tags (e.g., `spec-divergence`, `missing-tests`, `unwanted-abstraction`); `notes` is free text for human consumption.
 
-The JSON trailer is schema-validated in the pre-commit hook; an unparseable JSON trailer blocks the commit. Prevents prompt-injection that would pass a free-text verdict.
+The JSON trailer is schema-validated by `scripts/validate-commit-msg.sh` (run via the agent-driven `/check` flow, no longer a git hook); an unparseable JSON trailer fails validation. Prevents prompt-injection that would pass a free-text verdict.
 
 Trivial commits (typo, whitespace, obvious one-line fix) MAY omit these trailers. `BLOCK` verdicts never land in commits — the agent fixes first.
 
-**`Trivial: true` bypass trailer.** To opt a single commit out of the `Reviewed-By:` / `Review-Verdict:` requirement, add the trailer `Trivial: true` anywhere in the commit message's trailer block (after the blank line separating the body from trailers). The pre-commit hook (`scripts/validate-commit-msg.sh`) detects this trailer and skips the reviewer-trailer check. Use ONLY for: typo fixes, whitespace normalization, obvious one-line corrections, and test-infrastructure trivial changes. The `make check-full` requirement still applies — `Trivial: true` does not bypass linting or tests, only the agent-reviewer trailer.
+**`Trivial: true` bypass trailer.** To opt a single commit out of the `Reviewed-By:` / `Review-Verdict:` requirement, add the trailer `Trivial: true` anywhere in the commit message's trailer block (after the blank line separating the body from trailers). `scripts/validate-commit-msg.sh` (run via the agent-driven `/check` flow) detects this trailer and skips the reviewer-trailer check. Use ONLY for: typo fixes, whitespace normalization, obvious one-line corrections, and test-infrastructure trivial changes. The `make check-full` requirement still applies — `Trivial: true` does not bypass linting or tests, only the agent-reviewer trailer.
 
 Forbidden: emoji, "WIP" subjects on main, single-word subjects, messages that describe the diff instead of the intent.
 

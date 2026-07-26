@@ -10,6 +10,30 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
+func TestCommsShouldWake(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		directed bool
+		noWake   bool
+		want     bool
+	}{
+		{name: "directed send wakes by default", directed: true, want: true},
+		{name: "directed send can opt out", directed: true, noWake: true, want: false},
+		{name: "broadcast never wakes", directed: false, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := commsShouldWake(tt.directed, tt.noWake); got != tt.want {
+				t.Fatalf("commsShouldWake(directed=%v, noWake=%v) = %v, want %v", tt.directed, tt.noWake, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestCommsWakePaneCandidates_CaptainAndCrew verifies the recipient → tmux pane
 // derivation handles the crew-vs-captain naming asymmetry (hk-y7v8 / CE5, M10):
 //
@@ -111,12 +135,12 @@ func TestCommsWakePaneCandidates_SymlinkedProjectMatchesTmuxSessionHash(t *testi
 	// the same hash as a tmux session spawned from the symlink path (which
 	// EvalSymlinks-resolves to `real`).
 	base := t.TempDir()
-	real := filepath.Join(base, "real-project")
-	if err := os.Mkdir(real, 0o755); err != nil {
+	realProject := filepath.Join(base, "real-project")
+	if err := os.Mkdir(realProject, 0o750); err != nil {
 		t.Fatalf("mkdir real: %v", err)
 	}
 	link := filepath.Join(base, "link-project")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realProject, link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
 

@@ -64,7 +64,7 @@ func scenarioFileFixtureFull(t *testing.T) ScenarioFile {
 		AgentOverrides: map[string]AgentOverride{
 			"worker": agentOverrideFixtureBasic(t),
 		},
-		FixtureSetup:      fixtureSetupFixtureEmpty(t),
+		FixtureSetup:      fixtureSetupFixtureEmpty(),
 		ExpectedEvents:    []EventExpectation{eventExpectationFixturePresent(t)},
 		ExpectedWorkspace: []WorkspacePredicate{workspacePredicateFixtureFileExists(t)},
 		ExpectedOutcome:   &outcome,
@@ -553,7 +553,6 @@ func TestScenarioFileNameRegex(t *testing.T) {
 	}
 
 	for _, n := range valid {
-		n := n
 		t.Run("valid:"+n, func(t *testing.T) {
 			t.Parallel()
 			sf := base
@@ -585,7 +584,6 @@ func TestScenarioFileNameRegex(t *testing.T) {
 	}
 
 	for _, n := range invalid {
-		n := n
 		t.Run("invalid:"+n, func(t *testing.T) {
 			t.Parallel()
 			sf := base

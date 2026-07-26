@@ -1,4 +1,4 @@
-// Package agentmanifest: brief.go — boot-document builder + renderers (harmonik agent brief).
+// Package agentmanifest builds and renders agent boot documents.
 // Spec: .kerf/works/agent-manifest/SPEC.md §3–§4.
 // Bead: hk-j784q (T3 — brief command + boot-document ORDER, emit-only).
 package agentmanifest
@@ -35,7 +35,8 @@ type SkillEntry struct {
 
 // BootDoc is the structured boot document emitted by BuildBootDoc.
 // Sections are ordered per SPEC §4: identity → wake → operating+skills → triggers → handoff.
-// Handoff is empty string when no HANDOFF-<agent>.md file exists.
+// Handoff is the empty string BOTH when no HANDOFF-<agent>.md exists and when one
+// exists but is zero-byte; HandoffPresent disambiguates the two. Refs: hk-4tjyj.
 type BootDoc struct {
 	AgentName      string       `json:"agent_name"      yaml:"agent_name"`
 	TypeName       string       `json:"type_name"       yaml:"type_name"`
@@ -47,6 +48,13 @@ type BootDoc struct {
 	Docs           []SkillEntry `json:"docs"            yaml:"docs"`
 	ActiveTriggers []Trigger    `json:"active_triggers" yaml:"active_triggers"`
 	Handoff        string       `json:"handoff"         yaml:"handoff"`
+	// HandoffPresent reports whether HANDOFF-<agent>.md EXISTS on disk, regardless
+	// of its size. Handoff=="" && HandoffPresent is an EMPTY handoff file — the
+	// prior session's state was lost, not never written. That distinction was
+	// invisible before hk-4tjyj: both rendered "(no handoff on record)", which made
+	// a keeper-destroyed handoff indistinguishable from a first boot, and is why
+	// the destruction went undiagnosed fleet-wide for as long as it did.
+	HandoffPresent bool `json:"handoff_present" yaml:"handoff_present"`
 }
 
 // BuildBootDoc assembles the boot document for an agent.
@@ -91,6 +99,8 @@ func BuildBootDoc(agentsDir, repoRoot, agentName, typeName, wake string) (*BootD
 		wake = "fresh"
 	}
 
+	handoffContent, handoffPresent := readHandoff(repoRoot, agentName)
+
 	return &BootDoc{
 		AgentName:      agentName,
 		TypeName:       typeName,
@@ -101,7 +111,8 @@ func BuildBootDoc(agentsDir, repoRoot, agentName, typeName, wake string) (*BootD
 		Skills:         skills,
 		Docs:           docs,
 		ActiveTriggers: activeTriggers,
-		Handoff:        readHandoff(repoRoot, agentName),
+		Handoff:        handoffContent,
+		HandoffPresent: handoffPresent,
 	}, nil
 }
 
@@ -242,83 +253,103 @@ func readSkillShortDesc(skillMDPath string) string {
 	return ""
 }
 
-// readHandoff reads HANDOFF-<agentName>.md from repoRoot. Returns "" if absent.
-func readHandoff(repoRoot, agentName string) string {
+// readHandoff reads HANDOFF-<agentName>.md from repoRoot. It returns the content
+// and whether the file EXISTS. ("", false) = absent; ("", true) = present but
+// zero-byte — a LOST handoff, which the renderers must call out loudly rather
+// than silently conflate with "never written". Refs: hk-4tjyj.
+func readHandoff(repoRoot, agentName string) (string, bool) {
 	path := filepath.Join(repoRoot, fmt.Sprintf("HANDOFF-%s.md", agentName))
 	//nolint:gosec // G304: agentName is validated by the caller
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return string(data)
+	return string(data), true
+}
+
+// emptyHandoffWarning is the loud, distinct rendering for a handoff file that
+// EXISTS but is empty. It must never read like "no handoff on record": the two
+// mean opposite things to a rebooting agent, and conflating them is precisely
+// what hid hk-4tjyj (the keeper zeroing the handoff it exists to preserve).
+func emptyHandoffWarning(agentName string) string {
+	return fmt.Sprintf(
+		"**WARNING — HANDOFF-%s.md EXISTS but is EMPTY.** The previous session's handoff was "+
+			"lost (not \"never written\"). Do NOT assume there was nothing to carry over: "+
+			"re-ground from `harmonik digest`, the bead ledger, and recent git history before acting.",
+		agentName)
 }
 
 // RenderMarkdown writes the boot document in markdown format to w.
 // Sections are emitted in SPEC §4 order: identity → wake → operating+skills → triggers → handoff.
-func RenderMarkdown(doc *BootDoc, w io.Writer) {
+func RenderMarkdown(doc *BootDoc, w io.Writer) error {
+	out := &errorWriter{w: w}
 	// §1 Identity / SOUL — soul content byte-identical + grafted parent intent.
-	fmt.Fprintln(w, "## Identity")
-	fmt.Fprintln(w)
-	writeContent(w, doc.Soul)
-	fmt.Fprintf(w, "\n**Parent intent:** %s\n", doc.ParentIntent)
+	out.println("## Identity")
+	out.println()
+	writeContent(out, doc.Soul)
+	out.printf("\n**Parent intent:** %s\n", doc.ParentIntent)
 
-	sectionDivider(w)
+	sectionDivider(out)
 
 	// §2 Wake reason.
-	fmt.Fprintln(w, "## Wake reason")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, doc.WakeReason)
+	out.println("## Wake reason")
+	out.println()
+	out.println(doc.WakeReason)
 
-	sectionDivider(w)
+	sectionDivider(out)
 
 	// §3 Operating instructions + skills.
-	fmt.Fprintln(w, "## Operating instructions")
-	fmt.Fprintln(w)
-	writeContent(w, doc.Operating)
+	out.println("## Operating instructions")
+	out.println()
+	writeContent(out, doc.Operating)
 
 	if len(doc.Skills) > 0 {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "### Skills")
-		fmt.Fprintln(w)
+		out.println()
+		out.println("### Skills")
+		out.println()
 		for _, s := range doc.Skills {
-			renderSkillLine(w, s)
+			renderSkillLine(out, s)
 		}
 	}
 
 	if len(doc.Docs) > 0 {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "### Docs")
-		fmt.Fprintln(w)
+		out.println()
+		out.println("### Docs")
+		out.println()
 		for _, d := range doc.Docs {
-			renderDocLine(w, d)
+			renderDocLine(out, d)
 		}
 	}
 
-	sectionDivider(w)
+	sectionDivider(out)
 
 	// §4 Active triggers.
-	fmt.Fprintln(w, "## Active triggers")
-	fmt.Fprintln(w)
+	out.println("## Active triggers")
+	out.println()
 	if len(doc.ActiveTriggers) == 0 {
-		fmt.Fprintln(w, "_(no active triggers)_")
+		out.println("_(no active triggers)_")
 	} else {
 		for _, t := range doc.ActiveTriggers {
-			renderTriggerLine(w, t)
+			renderTriggerLine(out, t)
 		}
 	}
 
-	sectionDivider(w)
+	sectionDivider(out)
 
 	// §5 Handoff — LAST (episodic state only; no identity re-statement).
-	fmt.Fprintln(w, "## Handoff")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, handoffClaimHeader)
-	fmt.Fprintln(w)
-	if doc.Handoff == "" {
-		fmt.Fprintln(w, "_(no handoff on record)_")
-	} else {
-		writeContent(w, doc.Handoff)
+	out.println("## Handoff")
+	out.println()
+	out.println(handoffClaimHeader)
+	out.println()
+	switch {
+	case doc.Handoff != "":
+		writeContent(out, doc.Handoff)
+	case doc.HandoffPresent:
+		out.println(emptyHandoffWarning(doc.AgentName))
+	default:
+		out.println("_(no handoff on record)_")
 	}
+	return out.err
 }
 
 // RenderJSON writes the boot document as an indented JSON object to w.
@@ -337,133 +368,178 @@ func RenderYAML(doc *BootDoc, w io.Writer) error {
 
 // RenderToon writes the boot document in toon (decorated terminal) format.
 // Content is identical to markdown; sections use ASCII box borders.
-func RenderToon(doc *BootDoc, w io.Writer) {
+func RenderToon(doc *BootDoc, w io.Writer) error {
+	out := &errorWriter{w: w}
 	bar := strings.Repeat("═", 60)
 	boxHeader := func(title string) {
-		fmt.Fprintf(w, "\n╔%s╗\n║ %-58s ║\n╚%s╝\n\n", bar, title, bar)
+		out.printf("\n╔%s╗\n║ %-58s ║\n╚%s╝\n\n", bar, title, bar)
 	}
 
 	// §1 Identity.
 	boxHeader("IDENTITY")
-	writeContent(w, doc.Soul)
-	fmt.Fprintf(w, "\nParent intent: %s\n", doc.ParentIntent)
+	writeContent(out, doc.Soul)
+	out.printf("\nParent intent: %s\n", doc.ParentIntent)
 
 	// §2 Wake reason.
 	boxHeader("WAKE REASON")
-	fmt.Fprintln(w, doc.WakeReason)
+	out.println(doc.WakeReason)
 
 	// §3 Operating + skills.
 	boxHeader("OPERATING INSTRUCTIONS")
-	writeContent(w, doc.Operating)
-	if len(doc.Skills) > 0 {
-		fmt.Fprintln(w, "\nSkills:")
-		for _, s := range doc.Skills {
-			if s.Presence == "retrieved" || s.ShortDesc == "" {
-				fmt.Fprintf(w, "  • %s (pull on demand)", s.Name)
-			} else {
-				fmt.Fprintf(w, "  • %s: %s", s.Name, s.ShortDesc)
-			}
-			if s.Pointer != "" {
-				fmt.Fprintf(w, " — see %s", s.Pointer)
-			}
-			fmt.Fprintln(w)
-		}
-	}
-	if len(doc.Docs) > 0 {
-		fmt.Fprintln(w, "\nDocs:")
-		for _, d := range doc.Docs {
-			if d.ShortDesc != "" {
-				fmt.Fprintf(w, "  • %s: %s", d.Name, d.ShortDesc)
-			} else {
-				fmt.Fprintf(w, "  • %s", d.Name)
-			}
-			if d.Pointer != "" {
-				fmt.Fprintf(w, " — see %s", d.Pointer)
-			}
-			fmt.Fprintln(w)
-		}
-	}
+	writeContent(out, doc.Operating)
+	renderToonSkills(out, doc.Skills)
+	renderToonDocs(out, doc.Docs)
 
 	// §4 Triggers.
 	boxHeader("ACTIVE TRIGGERS")
-	if len(doc.ActiveTriggers) == 0 {
-		fmt.Fprintln(w, "(no active triggers)")
-	} else {
-		for _, t := range doc.ActiveTriggers {
-			meta := t.Source
-			if t.Every != "" {
-				meta += ", every " + t.Every
-			}
-			if t.ActivityGuard != "" {
-				meta += ", activity_guard " + t.ActivityGuard
-			}
-			if t.Message != "" {
-				fmt.Fprintf(w, "  • %s [%s]: %s\n", t.ID, meta, t.Message)
-			} else {
-				fmt.Fprintf(w, "  • %s [%s]\n", t.ID, meta)
-			}
-		}
-	}
+	renderToonTriggers(out, doc.ActiveTriggers)
 
 	// §5 Handoff — LAST.
 	boxHeader("HANDOFF")
-	fmt.Fprintln(w, handoffClaimHeader)
-	fmt.Fprintln(w)
-	if doc.Handoff == "" {
-		fmt.Fprintln(w, "(no handoff on record)")
-	} else {
-		writeContent(w, doc.Handoff)
+	out.println(handoffClaimHeader)
+	out.println()
+	switch {
+	case doc.Handoff != "":
+		writeContent(out, doc.Handoff)
+	case doc.HandoffPresent:
+		out.println(emptyHandoffWarning(doc.AgentName))
+	default:
+		out.println("(no handoff on record)")
+	}
+	return out.err
+}
+
+func renderToonSkills(out *errorWriter, skills []SkillEntry) {
+	if len(skills) == 0 {
+		return
+	}
+	out.println("\nSkills:")
+	for _, skill := range skills {
+		if skill.Presence == "retrieved" || skill.ShortDesc == "" {
+			out.printf("  • %s (pull on demand)", skill.Name)
+		} else {
+			out.printf("  • %s: %s", skill.Name, skill.ShortDesc)
+		}
+		if skill.Pointer != "" {
+			out.printf(" — see %s", skill.Pointer)
+		}
+		out.println()
 	}
 }
 
+func renderToonDocs(out *errorWriter, docs []SkillEntry) {
+	if len(docs) == 0 {
+		return
+	}
+	out.println("\nDocs:")
+	for _, doc := range docs {
+		if doc.ShortDesc != "" {
+			out.printf("  • %s: %s", doc.Name, doc.ShortDesc)
+		} else {
+			out.printf("  • %s", doc.Name)
+		}
+		if doc.Pointer != "" {
+			out.printf(" — see %s", doc.Pointer)
+		}
+		out.println()
+	}
+}
+
+func renderToonTriggers(out *errorWriter, triggers []Trigger) {
+	if len(triggers) == 0 {
+		out.println("(no active triggers)")
+		return
+	}
+	for _, trigger := range triggers {
+		meta := trigger.Source
+		if trigger.Every != "" {
+			meta += ", every " + trigger.Every
+		}
+		if trigger.ActivityGuard != "" {
+			meta += ", activity_guard " + trigger.ActivityGuard
+		}
+		if trigger.Message != "" {
+			out.printf("  • %s [%s]: %s\n", trigger.ID, meta, trigger.Message)
+		} else {
+			out.printf("  • %s [%s]\n", trigger.ID, meta)
+		}
+	}
+}
+
+type errorWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (w *errorWriter) print(args ...any) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = fmt.Fprint(w.w, args...)
+}
+
+func (w *errorWriter) printf(format string, args ...any) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = fmt.Fprintf(w.w, format, args...)
+}
+
+func (w *errorWriter) println(args ...any) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = fmt.Fprintln(w.w, args...)
+}
+
 // sectionDivider writes the markdown section separator.
-func sectionDivider(w io.Writer) {
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "---")
-	fmt.Fprintln(w)
+func sectionDivider(w *errorWriter) {
+	w.println()
+	w.println("---")
+	w.println()
 }
 
 // writeContent writes content ensuring it ends with a newline.
-func writeContent(w io.Writer, content string) {
-	fmt.Fprint(w, content)
+func writeContent(w *errorWriter, content string) {
+	w.print(content)
 	if !strings.HasSuffix(content, "\n") {
-		fmt.Fprintln(w)
+		w.println()
 	}
 }
 
 // renderSkillLine renders a single skill entry as a markdown list item.
-func renderSkillLine(w io.Writer, s SkillEntry) {
+func renderSkillLine(w *errorWriter, s SkillEntry) {
 	if s.Presence == "retrieved" || s.ShortDesc == "" {
 		if s.Pointer != "" {
-			fmt.Fprintf(w, "- **%s** _(pull on demand)_ — see `%s`\n", s.Name, s.Pointer)
+			w.printf("- **%s** _(pull on demand)_ — see `%s`\n", s.Name, s.Pointer)
 		} else {
-			fmt.Fprintf(w, "- **%s** _(pull on demand)_\n", s.Name)
+			w.printf("- **%s** _(pull on demand)_\n", s.Name)
 		}
 		return
 	}
 	if s.Pointer != "" {
-		fmt.Fprintf(w, "- **%s:** %s — see `%s`\n", s.Name, s.ShortDesc, s.Pointer)
+		w.printf("- **%s:** %s — see `%s`\n", s.Name, s.ShortDesc, s.Pointer)
 	} else {
-		fmt.Fprintf(w, "- **%s:** %s\n", s.Name, s.ShortDesc)
+		w.printf("- **%s:** %s\n", s.Name, s.ShortDesc)
 	}
 }
 
 // renderDocLine renders a single doc entry (as: doc) as a markdown list item, always
 // showing the explicit resolved path and, when present, the frontmatter description.
-func renderDocLine(w io.Writer, d SkillEntry) {
+func renderDocLine(w *errorWriter, d SkillEntry) {
 	if d.Pointer == "" {
-		fmt.Fprintf(w, "- **%s**\n", d.Name)
+		w.printf("- **%s**\n", d.Name)
 		return
 	}
 	if d.ShortDesc != "" {
-		fmt.Fprintf(w, "- **%s:** %s — see `%s`\n", d.Name, d.ShortDesc, d.Pointer)
+		w.printf("- **%s:** %s — see `%s`\n", d.Name, d.ShortDesc, d.Pointer)
 	} else {
-		fmt.Fprintf(w, "- **%s** — see `%s`\n", d.Name, d.Pointer)
+		w.printf("- **%s** — see `%s`\n", d.Name, d.Pointer)
 	}
 }
 
 // renderTriggerLine renders a single trigger as a markdown list item.
-func renderTriggerLine(w io.Writer, t Trigger) {
+func renderTriggerLine(w *errorWriter, t Trigger) {
 	meta := "source: " + t.Source
 	if t.Every != "" {
 		meta += ", every: " + t.Every
@@ -472,8 +548,8 @@ func renderTriggerLine(w io.Writer, t Trigger) {
 		meta += ", activity_guard: " + t.ActivityGuard
 	}
 	if t.Message != "" {
-		fmt.Fprintf(w, "- **%s** (%s): %s\n", t.ID, meta, t.Message)
+		w.printf("- **%s** (%s): %s\n", t.ID, meta, t.Message)
 	} else {
-		fmt.Fprintf(w, "- **%s** (%s)\n", t.ID, meta)
+		w.printf("- **%s** (%s)\n", t.ID, meta)
 	}
 }

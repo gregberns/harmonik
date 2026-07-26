@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // keeperBuildParams carries the per-invocation, side-effect-free inputs the
@@ -38,7 +38,7 @@ type keeperBuildParams struct {
 	ActPctRaw  int
 	// KeeperCfg carries the config-only warn-text overrides (the only KeeperConfig
 	// fields the literals read directly rather than via ResolvedKeeperConfig).
-	KeeperCfg daemon.KeeperConfig
+	KeeperCfg projectconfig.KeeperConfig
 }
 
 // buildKeeperConfigs builds the CyclerConfig and WatcherConfig literals the keeper
@@ -278,14 +278,14 @@ func runKeeperSubcommand(args []string) int {
 	// Load .harmonik/config.yaml keeper: block for threshold + text defaults.
 	// Errors are non-fatal (logged to stderr); missing file is silently a no-op.
 	// Precedence: CLI flag > config.yaml > compiled default (applied in applyDefaults).
-	projCfg, projCfgErr := daemon.LoadProjectConfig(projectDir)
+	projCfg, projCfgErr := projectconfig.LoadProjectConfig(projectDir)
 	if projCfgErr != nil {
 		// hk-9f3f (operator decision): an unknown / typo'd key under the keeper:
 		// block is a HARD ERROR — `harmonik keeper` REFUSES to start so the
 		// operator notices and fixes the key, rather than silently running on
 		// defaults with their intended config dropped. Other loader errors remain
 		// non-fatal (logged; defaults used) per the prior keeper-startup contract.
-		var unknownKey *daemon.ErrUnknownConfigKey
+		var unknownKey *projectconfig.ErrUnknownConfigKey
 		if errors.As(projCfgErr, &unknownKey) {
 			fmt.Fprintf(os.Stderr, "keeper: refusing to start: %v\n", projCfgErr)
 			return 2
@@ -593,7 +593,7 @@ func keeperOperatorWarnFn(projectDir, agentName string) func(ctx context.Context
 // cmd/harmonik because internal/keeper may not import internal/daemon (depguard).
 func keeperReloadWarnMessagesFn(projectDir string) func() (keeper.WarnMessageTexts, error) {
 	return func() (keeper.WarnMessageTexts, error) {
-		cfg, err := daemon.LoadProjectConfig(projectDir)
+		cfg, err := projectconfig.LoadProjectConfig(projectDir)
 		if err != nil {
 			return keeper.WarnMessageTexts{}, err
 		}
@@ -831,6 +831,10 @@ func runKeeperRestartNow(args []string) int {
 	nonceFlag := fs.String("nonce", "",
 		"provenance nonce carried on the [KEEPER ACK <nonce>] line and the emitted "+
 			"session_keeper_restart_now event; carry-for-audit, never validated (default: rn-<ms> timestamp)")
+	forceFlag := fs.Bool("force", false,
+		"restart even when the agent has in-flight queue work (.dispatching marker present). "+
+			"Restarting mid-run cancels the crew's in-flight tool work and can leak orphaned "+
+			"processes (hk-bl2k6); use only when you know the marker is stale")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 1
@@ -873,6 +877,7 @@ func runKeeperRestartNow(args []string) int {
 		AgentName:   agent,
 		TmuxTarget:  tmuxTarget,
 		RequestedAt: requestedAt,
+		Force:       *forceFlag,
 		// Durable audit record carrying the nonce (SK-030). FileEmitter appends to
 		// <projectDir>/.harmonik/events/events.jsonl.
 		Emitter: keeper.NewFileEmitter(projectDir),

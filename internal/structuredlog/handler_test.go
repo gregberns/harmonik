@@ -7,6 +7,7 @@ package structuredlog_test
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -30,6 +31,20 @@ func on035HandlerFixtureCfg(t *testing.T) structuredlog.Config {
 	}
 }
 
+func on035HandlerFixtureClose(t *testing.T, h *structuredlog.Handler) {
+	t.Helper()
+	if err := h.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
+
+func on035HandlerFixtureCloseFile(t *testing.T, f *os.File) {
+	t.Helper()
+	if err := f.Close(); err != nil {
+		t.Errorf("close log file: %v", err)
+	}
+}
+
 // on035HandlerFixtureReadLines returns the lines written to the active log file.
 func on035HandlerFixtureReadLines(t *testing.T, cfg structuredlog.Config) []map[string]any {
 	t.Helper()
@@ -39,7 +54,7 @@ func on035HandlerFixtureReadLines(t *testing.T, cfg structuredlog.Config) []map[
 	if err != nil {
 		t.Fatalf("on035HandlerFixtureReadLines: open %s: %v", active, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer on035HandlerFixtureCloseFile(t, f)
 
 	var out []map[string]any
 	scanner := bufio.NewScanner(f)
@@ -72,10 +87,10 @@ func TestON035Handler_RequiredFieldsPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
 	logger := slog.New(h)
-	logger.Info("hello world")
+	logger.InfoContext(context.Background(), "hello world")
 
 	recs := on035HandlerFixtureReadLines(t, cfg)
 	if len(recs) != 1 {
@@ -102,9 +117,9 @@ func TestON035Handler_SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("test")
+	slog.New(h).InfoContext(context.Background(), "test")
 
 	recs := on035HandlerFixtureReadLines(t, cfg)
 	if got := recs[0]["log_schema_version"]; got != "1.0" {
@@ -130,7 +145,6 @@ func TestON035Handler_LevelMapping(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.wantLevel, func(t *testing.T) {
 			t.Parallel()
 
@@ -139,7 +153,7 @@ func TestON035Handler_LevelMapping(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewHandler: %v", err)
 			}
-			defer func() { _ = h.Close() }()
+			defer on035HandlerFixtureClose(t, h)
 
 			logger := slog.New(h)
 			logger.Log(context.Background(), tc.slogLevel, "test")
@@ -166,9 +180,9 @@ func TestON035Handler_SubsystemAndSourceSubsystem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("test")
+	slog.New(h).InfoContext(context.Background(), "test")
 	recs := on035HandlerFixtureReadLines(t, cfg)
 	rec := recs[0]
 
@@ -191,9 +205,9 @@ func TestON035Handler_SourceSubsystemOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("test")
+	slog.New(h).InfoContext(context.Background(), "test")
 	recs := on035HandlerFixtureReadLines(t, cfg)
 	if got := recs[0]["source_subsystem"]; got != "peer_subsystem" {
 		t.Errorf("source_subsystem = %q, want %q", got, "peer_subsystem")
@@ -212,9 +226,9 @@ func TestON035Handler_OptionalFieldsOmitted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("test")
+	slog.New(h).InfoContext(context.Background(), "test")
 	recs := on035HandlerFixtureReadLines(t, cfg)
 	rec := recs[0]
 
@@ -235,9 +249,9 @@ func TestON035Handler_OptionalFieldsPopulated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("test",
+	slog.New(h).InfoContext(context.Background(), "test",
 		"run_id", "run-abc",
 		"node_id", "node-xyz",
 		"event_id", "01950000-0000-7000-8000-000000000000",
@@ -281,9 +295,9 @@ func TestON035Handler_SecretsRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("auth event", "api_token", "supersecret123", "user", "alice")
+	slog.New(h).InfoContext(context.Background(), "auth event", "api_token", "supersecret123", "user", "alice")
 
 	recs := on035HandlerFixtureReadLines(t, cfg)
 	fieldsRaw, ok := recs[0]["fields"].(map[string]any)
@@ -291,8 +305,9 @@ func TestON035Handler_SecretsRedaction(t *testing.T) {
 		t.Fatalf("fields is not map[string]any: %T", recs[0]["fields"])
 	}
 
-	if got := fieldsRaw["api_token"]; got != sentinel {
-		t.Errorf("ON-022: api_token = %v, want %q (not redacted)", got, sentinel)
+	gotToken, ok := fieldsRaw["api_token"].(string)
+	if !ok || subtle.ConstantTimeCompare([]byte(gotToken), []byte(sentinel)) != 1 {
+		t.Errorf("ON-022: api_token = %v, want %q (not redacted)", fieldsRaw["api_token"], sentinel)
 	}
 	if got := fieldsRaw["user"]; got != "alice" {
 		t.Errorf("user = %v, want %q (should not be redacted)", got, "alice")
@@ -310,9 +325,9 @@ func TestON035Handler_TSFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("test")
+	slog.New(h).InfoContext(context.Background(), "test")
 	recs := on035HandlerFixtureReadLines(t, cfg)
 	ts, ok := recs[0]["ts"].(string)
 	if !ok {
@@ -337,12 +352,12 @@ func TestON035Handler_RotationBySize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
 	// Inflate the internal counter above the 100 MiB threshold by writing a
 	// large record. We do this by padding the fields map.
 	padding := strings.Repeat("x", rotateMaxBytesForTest+1)
-	slog.New(h).Info("big record", "padding", padding)
+	slog.New(h).InfoContext(context.Background(), "big record", "padding", padding)
 
 	logsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "logs")
 	entries, err := os.ReadDir(logsDir)
@@ -352,8 +367,8 @@ func TestON035Handler_RotationBySize(t *testing.T) {
 
 	// After writing 1 oversized record the file rotates on the NEXT write.
 	// Emit one more record to trigger rotation.
-	slog.New(h).Info("trigger rotation")
-	_ = h.Close()
+	slog.New(h).InfoContext(context.Background(), "trigger rotation")
+	on035HandlerFixtureClose(t, h)
 
 	entries, err = os.ReadDir(logsDir)
 	if err != nil {
@@ -413,14 +428,14 @@ func TestON035Handler_RotationByAge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
 	logger := slog.New(h)
-	logger.Info("first record")
-	logger.Info("second record")
-	logger.Info("trigger rotation after 25h")
+	logger.InfoContext(context.Background(), "first record")
+	logger.InfoContext(context.Background(), "second record")
+	logger.InfoContext(context.Background(), "trigger rotation after 25h")
 
-	_ = h.Close()
+	on035HandlerFixtureClose(t, h)
 
 	logsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "logs")
 	entries, err := os.ReadDir(logsDir)
@@ -468,11 +483,11 @@ func TestON035Handler_RotatedPathContainsSubsystem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("first")
-	slog.New(h).Info("rotate trigger")
-	_ = h.Close()
+	slog.New(h).InfoContext(context.Background(), "first")
+	slog.New(h).InfoContext(context.Background(), "rotate trigger")
+	on035HandlerFixtureClose(t, h)
 
 	logsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "logs")
 	entries, err := os.ReadDir(logsDir)
@@ -512,11 +527,10 @@ func TestON035Handler_ConcurrentWritesFromClones(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
 	var wg sync.WaitGroup
 	for i := 0; i < goroutines; i++ {
-		i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -529,12 +543,12 @@ func TestON035Handler_ConcurrentWritesFromClones(t *testing.T) {
 				logger = slog.New(h.WithGroup(fmt.Sprintf("g%d", i)))
 			}
 			for j := 0; j < recsPerGoroutine; j++ {
-				logger.Info("concurrent write", "seq", j)
+				logger.InfoContext(context.Background(), "concurrent write", "seq", j)
 			}
 		}()
 	}
 	wg.Wait()
-	_ = h.Close()
+	on035HandlerFixtureClose(t, h)
 
 	// Every line must be valid JSON. A corrupted line (interleaved bytes) will
 	// fail to parse.
@@ -544,7 +558,7 @@ func TestON035Handler_ConcurrentWritesFromClones(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open log: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer on035HandlerFixtureCloseFile(t, f)
 
 	lineN := 0
 	scanner := bufio.NewScanner(f)
@@ -580,9 +594,9 @@ func TestON035Handler_FieldsIsAlwaysPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("no extra fields")
+	slog.New(h).InfoContext(context.Background(), "no extra fields")
 	recs := on035HandlerFixtureReadLines(t, cfg)
 
 	fieldsVal, ok := recs[0]["fields"]
@@ -604,11 +618,14 @@ func TestON035Handler_ExtraAttrsInFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer on035HandlerFixtureClose(t, h)
 
-	slog.New(h).Info("with extras", "bead_id", "hk-abc", "phase", "run")
+	slog.New(h).InfoContext(context.Background(), "with extras", "bead_id", "hk-abc", "phase", "run")
 	recs := on035HandlerFixtureReadLines(t, cfg)
-	fields := recs[0]["fields"].(map[string]any)
+	fields, ok := recs[0]["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("fields is not map[string]any: %T", recs[0]["fields"])
+	}
 
 	if got := fields["bead_id"]; got != "hk-abc" {
 		t.Errorf("fields.bead_id = %v, want %q", got, "hk-abc")
@@ -672,7 +689,7 @@ func TestON035Handler_ConcurrentHandleAndClose(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_ = h.Close() //nolint:errcheck // concurrent-close stress; the race detector is the assertion, close error non-actionable
+		_ = h.Close()
 	}()
 	wg.Wait()
 }

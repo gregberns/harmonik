@@ -35,7 +35,7 @@ func TestWM033_SweepStaleLeaseLocks(t *testing.T) {
 		// to be running.
 		deadPID := 99999999
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
-			leaseFixtureMakeLockJSON(runID, deadPID, time.Now(), 3600))
+			leaseFixtureMakeLockJSON(runID, deadPID, time.Now()))
 
 		// Confirm the lock file exists before the sweep.
 		if _, err := os.Stat(leaseLockPath); err != nil {
@@ -84,7 +84,7 @@ func TestWM033_SweepStaleLeaseLocks(t *testing.T) {
 
 		// Write a lock file with the CURRENT process PID (live).
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
-			leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+			leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now()))
 
 		_, err := SweepStaleLeaseLocks(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
@@ -168,7 +168,7 @@ func TestWM033_SweepStaleLeaseLocks(t *testing.T) {
 		leaseLockPath := LeaseLockPath(worktreePath)
 
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
-			leaseFixtureMakeLockJSON(runID, 99999998, time.Now(), 3600))
+			leaseFixtureMakeLockJSON(runID, 99999998, time.Now()))
 
 		if _, err := SweepStaleLeaseLocks(t.Context(), repo, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-033: SweepStaleLeaseLocks: %v", err)

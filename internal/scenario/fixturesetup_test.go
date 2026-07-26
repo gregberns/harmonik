@@ -8,8 +8,7 @@ import (
 
 // fixtureSetupFixtureEmpty returns a zero-value FixtureSetup (all nil fields).
 // A zero-value is valid per the spec: all fields are optional (|None).
-func fixtureSetupFixtureEmpty(t *testing.T) FixtureSetup {
-	t.Helper()
+func fixtureSetupFixtureEmpty() FixtureSetup {
 	return FixtureSetup{}
 }
 
@@ -67,7 +66,7 @@ func TestFixtureSetupValid(t *testing.T) {
 	}{
 		{
 			name:  "zero value (all nil) is valid",
-			input: fixtureSetupFixtureEmpty(t),
+			input: fixtureSetupFixtureEmpty(),
 			want:  true,
 		},
 		{
@@ -172,7 +171,7 @@ func TestFixtureSetupJSONRoundTrip(t *testing.T) {
 		name  string
 		input FixtureSetup
 	}{
-		{name: "zero value", input: fixtureSetupFixtureEmpty(t)},
+		{name: "zero value", input: fixtureSetupFixtureEmpty()},
 		{name: "git_seed only", input: fixtureSetupFixtureGitOnly(t)},
 		{name: "files only", input: fixtureSetupFixtureFilesOnly(t)},
 		{name: "skill_search_paths only", input: fixtureSetupFixtureSkillPathsOnly(t)},

@@ -43,7 +43,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -89,7 +88,9 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
-			fmt.Fprint(stdout, smokeUsage)
+			if _, err := fmt.Fprint(stdout, smokeUsage); err != nil {
+				return 1
+			}
 			return 0
 		case args[i] == "--project" && i+1 < len(args):
 			i++
@@ -100,14 +101,18 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 			i++
 			d, err := time.ParseDuration(args[i])
 			if err != nil {
-				fmt.Fprintf(stderr, "harmonik smoke: --timeout: %v\n", err)
+				if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: --timeout: %v\n", err); writeErr != nil {
+					return 1
+				}
 				return 1
 			}
 			timeoutFlag = d
 		case strings.HasPrefix(args[i], "--timeout="):
 			d, err := time.ParseDuration(strings.TrimPrefix(args[i], "--timeout="))
 			if err != nil {
-				fmt.Fprintf(stderr, "harmonik smoke: --timeout: %v\n", err)
+				if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: --timeout: %v\n", err); writeErr != nil {
+					return 1
+				}
 				return 1
 			}
 			timeoutFlag = d
@@ -127,7 +132,9 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 		case strings.HasPrefix(args[i], "--bead-id="):
 			beadIDFlag = strings.TrimPrefix(args[i], "--bead-id=")
 		default:
-			fmt.Fprintf(stderr, "harmonik smoke: unknown argument %q\n", args[i])
+			if _, err := fmt.Fprintf(stderr, "harmonik smoke: unknown argument %q\n", args[i]); err != nil {
+				return 1
+			}
 			return 1
 		}
 	}
@@ -136,14 +143,18 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 	if projectFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik smoke: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectFlag = wd
 	}
 	absProject, err := filepath.Abs(projectFlag)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik smoke: cannot resolve project path %q: %v\n", projectFlag, err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: cannot resolve project path %q: %v\n", projectFlag, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	projectDir := absProject
@@ -157,47 +168,64 @@ func runSmoke(args []string, stdout, stderr io.Writer) int {
 
 	sockPath := filepath.Join(harmonikDir, "daemon.sock")
 
-	fmt.Fprintf(stdout, "harmonik smoke: project=%s target-branch=%s timeout=%s\n",
-		projectDir, targetBranch, timeoutFlag)
+	if _, err := fmt.Fprintf(stdout, "harmonik smoke: project=%s target-branch=%s timeout=%s\n",
+		projectDir, targetBranch, timeoutFlag); err != nil {
+		return 1
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutFlag)
+	defer cancel()
 
 	// Step 1: create or reuse the smoke bead.
 	smokeBeadID := beadIDFlag
 	ownBead := smokeBeadID == ""
 	if ownBead {
-		id, code := smokeCreateBead(projectDir, stdout, stderr)
+		id, code := smokeCreateBead(ctx, projectDir, stdout, stderr)
 		if code != 0 {
 			return code
 		}
 		smokeBeadID = id
 	}
-	fmt.Fprintf(stdout, "harmonik smoke: smoke bead %s\n", smokeBeadID)
+	if _, err := fmt.Fprintf(stdout, "harmonik smoke: smoke bead %s\n", smokeBeadID); err != nil {
+		return 1
+	}
 
 	// Step 2: submit the smoke bead to the queue.
-	if code := smokeSubmitBead(projectDir, smokeBeadID, queueFlag, stderr); code != 0 {
+	if code := smokeSubmitBead(ctx, projectDir, smokeBeadID, queueFlag, stderr); code != 0 {
 		if ownBead {
-			smokeCleanupBead(projectDir, smokeBeadID, stderr)
+			if cleanupErr := smokeCleanupBead(ctx, projectDir, smokeBeadID, stderr); cleanupErr != nil {
+				return 1
+			}
 		}
 		return code
 	}
-	fmt.Fprintf(stdout, "harmonik smoke: submitted %s to queue\n", smokeBeadID)
+	if _, err := fmt.Fprintf(stdout, "harmonik smoke: submitted %s to queue\n", smokeBeadID); err != nil {
+		return 1
+	}
 
 	// Step 3: subscribe and wait for all signals.
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutFlag)
-	defer cancel()
 
 	result, exitCode := smokeWatchSignals(ctx, sockPath, projectDir, targetBranch, smokeBeadID, stdout, stderr)
 
 	// Print result table.
-	smokePrintResults(stdout, smokeBeadID, result)
+	if err := smokePrintResults(stdout, smokeBeadID, result); err != nil {
+		return 1
+	}
 
 	if exitCode != 0 {
 		if exitCode == 2 {
-			fmt.Fprintf(stderr, "harmonik smoke: TIMEOUT — not all signals observed within %s\n", timeoutFlag)
+			if _, err := fmt.Fprintf(stderr, "harmonik smoke: TIMEOUT — not all signals observed within %s\n", timeoutFlag); err != nil {
+				return 1
+			}
 		} else {
-			fmt.Fprintf(stderr, "harmonik smoke: FAILED\n")
+			if _, err := fmt.Fprintf(stderr, "harmonik smoke: FAILED\n"); err != nil {
+				return 1
+			}
 		}
 	} else {
-		fmt.Fprintln(stdout, "harmonik smoke: PASS — all 5 signals observed")
+		if _, err := fmt.Fprintln(stdout, "harmonik smoke: PASS — all 5 signals observed"); err != nil {
+			return 1
+		}
 	}
 	return exitCode
 }
@@ -227,10 +255,12 @@ func smokeReadTargetBranch(harmonikDir string) string {
 }
 
 // smokeCreateBead creates a smoke bead via `br create` and returns its ID.
-func smokeCreateBead(projectDir string, stdout, stderr io.Writer) (string, int) {
+func smokeCreateBead(ctx context.Context, projectDir string, stdout, stderr io.Writer) (beadID string, exitCode int) {
 	brPath, err := exec.LookPath("br")
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik smoke: 'br' not found on PATH\n")
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: 'br' not found on PATH\n"); writeErr != nil {
+			return "", 1
+		}
 		return "", 1
 	}
 
@@ -250,7 +280,7 @@ and include the line "Refs: <BEAD_ID>" on its own line in the commit body.
 This task is complete when the file is updated and committed.`
 
 	//nolint:gosec // G204: brPath from LookPath; args are literals or validated values
-	cmd := exec.Command(brPath,
+	cmd := exec.CommandContext(ctx, brPath,
 		"create",
 		"--title", title,
 		"--description", body,
@@ -264,20 +294,26 @@ This task is complete when the file is updated and committed.`
 	cmd.Stdout = &out
 	cmd.Stderr = stderr
 	if runErr := cmd.Run(); runErr != nil {
-		fmt.Fprintf(stderr, "harmonik smoke: br create failed: %v\n", runErr)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: br create failed: %v\n", runErr); writeErr != nil {
+			return "", 1
+		}
 		return "", 1
 	}
 	id := strings.TrimSpace(out.String())
 	if id == "" {
-		fmt.Fprintf(stderr, "harmonik smoke: br create returned empty ID\n")
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: br create returned empty ID\n"); writeErr != nil {
+			return "", 1
+		}
 		return "", 1
 	}
-	fmt.Fprintf(stdout, "harmonik smoke: created smoke bead %s\n", id)
+	if _, writeErr := fmt.Fprintf(stdout, "harmonik smoke: created smoke bead %s\n", id); writeErr != nil {
+		return "", 1
+	}
 	return id, 0
 }
 
 // smokeSubmitBead submits the smoke bead to the daemon queue.
-func smokeSubmitBead(projectDir, beadID, queueName string, stderr io.Writer) int {
+func smokeSubmitBead(ctx context.Context, projectDir, beadID, queueName string, stderr io.Writer) int {
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "harmonik"
@@ -287,17 +323,22 @@ func smokeSubmitBead(projectDir, beadID, queueName string, stderr io.Writer) int
 		queueArgs = append(queueArgs, "--queue", queueName)
 	}
 	//nolint:gosec // G204: exe from os.Executable; args are validated values
-	cmd := exec.Command(exe, queueArgs...)
+	cmd := exec.CommandContext(ctx, exe, queueArgs...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = stderr
 	if runErr := cmd.Run(); runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
 			if exitErr.ExitCode() == 17 {
-				fmt.Fprintf(stderr, "harmonik smoke: daemon not running (exit 17 from queue submit)\n")
+				if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: daemon not running (exit 17 from queue submit)\n"); writeErr != nil {
+					return 1
+				}
 				return 17
 			}
 		}
-		fmt.Fprintf(stderr, "harmonik smoke: queue submit failed: %v\n", runErr)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: queue submit failed: %v\n", runErr); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0
@@ -305,17 +346,20 @@ func smokeSubmitBead(projectDir, beadID, queueName string, stderr io.Writer) int
 
 // smokeCleanupBead closes the smoke bead if the smoke run failed before
 // the daemon could close it naturally.
-func smokeCleanupBead(projectDir, beadID string, stderr io.Writer) {
+func smokeCleanupBead(ctx context.Context, projectDir, beadID string, stderr io.Writer) error {
 	brPath, err := exec.LookPath("br")
 	if err != nil {
-		return
+		return fmt.Errorf("find br for smoke bead cleanup: %w", err)
 	}
 	//nolint:gosec // G204: brPath from LookPath; beadID from br create output
-	cmd := exec.Command(brPath, "close", beadID, "--reason", "smoke-test-cleanup: run failed before daemon closed bead")
+	cmd := exec.CommandContext(ctx, brPath, "close", beadID, "--reason", "smoke-test-cleanup: run failed before daemon closed bead")
 	cmd.Dir = projectDir
 	cmd.Stdout = io.Discard
 	cmd.Stderr = stderr
-	_ = cmd.Run()
+	if runErr := cmd.Run(); runErr != nil {
+		return fmt.Errorf("close smoke bead %s: %w", beadID, runErr)
+	}
+	return nil
 }
 
 // smokeWatchSignals subscribes to daemon events and collects the 5 signals.
@@ -332,24 +376,37 @@ func smokeWatchSignals(
 	defer cancelDial()
 	conn, err := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
 	if err != nil {
-		var sysErr *os.PathError
-		if errors.As(err, &sysErr) && errors.Is(sysErr.Err, syscall.ENOENT) {
-			fmt.Fprintf(stderr, "harmonik smoke: daemon not running (socket %s missing)\n", sockPath)
+		// Use the shared daemon-down predicates: net.Dial to a missing unix
+		// socket returns *net.OpError wrapping *os.SyscallError (errno ENOENT on
+		// Linux, EINVAL on macOS), which an *os.PathError type-assert never
+		// matches — that was the hk-d4y2p bug that leaked exit 1.
+		if commsIsSocketAbsent(err) || commsIsConnRefused(err) {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: daemon not running (socket %s missing or refused)\n", sockPath); writeErr != nil {
+				return result, 1
+			}
 			return result, 17
 		}
-		if errors.Is(err, syscall.ECONNREFUSED) {
-			fmt.Fprintf(stderr, "harmonik smoke: daemon not running (ECONNREFUSED on %s)\n", sockPath)
-			return result, 17
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: dial daemon socket: %v\n", err); writeErr != nil {
+			return result, 1
 		}
-		fmt.Fprintf(stderr, "harmonik smoke: dial daemon socket: %v\n", err)
 		return result, 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: close daemon connection: %v\n", closeErr); writeErr != nil {
+				return
+			}
+		}
+	}()
 
 	// Close the connection when the context expires so the reader goroutine exits.
 	go func() {
 		<-ctx.Done()
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: close daemon connection on signal: %v\n", closeErr); writeErr != nil {
+				return
+			}
+		}
 	}()
 
 	// Send subscribe request for the relevant event types.
@@ -366,11 +423,15 @@ func smokeWatchSignals(
 	}
 	reqBytes, marshalErr := json.Marshal(reqBody)
 	if marshalErr != nil {
-		fmt.Fprintf(stderr, "harmonik smoke: marshal subscribe request: %v\n", marshalErr)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: marshal subscribe request: %v\n", marshalErr); writeErr != nil {
+			return result, 1
+		}
 		return result, 1
 	}
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
-		fmt.Fprintf(stderr, "harmonik smoke: write subscribe request: %v\n", writeErr)
+		if _, reportErr := fmt.Fprintf(stderr, "harmonik smoke: write subscribe request: %v\n", writeErr); reportErr != nil {
+			return result, 1
+		}
 		return result, 1
 	}
 
@@ -413,7 +474,9 @@ func smokeWatchSignals(
 				result.observed[0] = true
 				result.detail[0] = fmt.Sprintf("run_id=%s", p.RunID)
 				smokeRunID = p.RunID
-				fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 1] run_started run_id=%s\n", p.RunID)
+				if _, writeErr := fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 1] run_started run_id=%s\n", p.RunID); writeErr != nil {
+					return result, 1
+				}
 			}
 
 		case "run_completed":
@@ -432,19 +495,25 @@ func smokeWatchSignals(
 			if !result.observed[1] {
 				result.observed[1] = true
 				result.detail[1] = fmt.Sprintf("run_id=%s", p.RunID)
-				fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 2] run_completed run_id=%s\n", p.RunID)
+				if _, writeErr := fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 2] run_completed run_id=%s\n", p.RunID); writeErr != nil {
+					return result, 1
+				}
 
 				// Signal 3: verify the commit landed on the target branch.
-				branchOK, commitRef := smokeCheckCommitOnBranch(projectDir, targetBranch, smokeBeadID, stderr)
+				branchOK, commitRef := smokeCheckCommitOnBranchContext(ctx, projectDir, targetBranch, smokeBeadID, stderr)
 				result.observed[2] = branchOK
 				if branchOK {
 					result.detail[2] = fmt.Sprintf("branch=%s commit=%s", targetBranch, commitRef)
-					fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 3] commit on target branch=%s commit=%s\n",
-						targetBranch, commitRef)
+					if _, writeErr := fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 3] commit on target branch=%s commit=%s\n",
+						targetBranch, commitRef); writeErr != nil {
+						return result, 1
+					}
 				} else {
 					result.detail[2] = fmt.Sprintf("FAIL: no commit referencing %s on branch %s", smokeBeadID, targetBranch)
-					fmt.Fprintf(stderr, "harmonik smoke: [SIGNAL 3 FAIL] no commit referencing %s on branch %s\n", //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
-						smokeBeadID, targetBranch)
+					if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: [SIGNAL 3 FAIL] no commit referencing %s on branch %s\n",
+						smokeBeadID, targetBranch); writeErr != nil {
+						return result, 1
+					}
 				}
 			}
 
@@ -462,7 +531,9 @@ func smokeWatchSignals(
 				continue
 			}
 			runFailed = true
-			fmt.Fprintf(stderr, "harmonik smoke: run_failed received for smoke run — smoke bead dispatch failed\n")
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: run_failed received for smoke run — smoke bead dispatch failed\n"); writeErr != nil {
+				return result, 1
+			}
 
 		case "reviewer_verdict":
 			if smokeRunID == "" {
@@ -482,7 +553,9 @@ func smokeWatchSignals(
 			if !result.observed[3] {
 				result.observed[3] = true
 				result.detail[3] = fmt.Sprintf("verdict=%s", p.Verdict)
-				fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 4] reviewer_verdict=%s\n", p.Verdict)
+				if _, writeErr := fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 4] reviewer_verdict=%s\n", p.Verdict); writeErr != nil {
+					return result, 1
+				}
 			}
 
 		case "bead_closed":
@@ -499,7 +572,9 @@ func smokeWatchSignals(
 			if !result.observed[4] {
 				result.observed[4] = true
 				result.detail[4] = fmt.Sprintf("bead_id=%s", p.BeadID)
-				fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 5] bead_closed bead_id=%s\n", p.BeadID)
+				if _, writeErr := fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 5] bead_closed bead_id=%s\n", p.BeadID); writeErr != nil {
+					return result, 1
+				}
 			}
 		}
 
@@ -520,7 +595,9 @@ func smokeWatchSignals(
 		return result, 2
 	}
 	if scanErr := scanner.Err(); scanErr != nil && !strings.Contains(scanErr.Error(), "use of closed") {
-		fmt.Fprintf(stderr, "harmonik smoke: event stream error: %v\n", scanErr)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: event stream error: %v\n", scanErr); writeErr != nil {
+			return result, 1
+		}
 		return result, 1
 	}
 	// Connection closed cleanly without all signals: treat as timeout.
@@ -533,9 +610,12 @@ func smokeWatchSignals(
 // the bead ID as a fixed string covers both forms, so a correct commit passes
 // even if the agent omits the trailer.
 // Returns (true, short-sha) on success; (false, "") on failure.
-func smokeCheckCommitOnBranch(projectDir, branch, beadID string, stderr io.Writer) (bool, string) {
-	//nolint:gosec // G204: git args are validated values; projectDir is operator-controlled
-	cmd := exec.Command("git", "-C", projectDir,
+func smokeCheckCommitOnBranch(projectDir, branch, beadID string, stderr io.Writer) (found bool, commitRef string) {
+	return smokeCheckCommitOnBranchContext(context.Background(), projectDir, branch, beadID, stderr)
+}
+
+func smokeCheckCommitOnBranchContext(ctx context.Context, projectDir, branch, beadID string, stderr io.Writer) (found bool, commitRef string) {
+	cmd := exec.CommandContext(ctx, "git", "-C", projectDir,
 		"log", "--oneline", "--max-count=1",
 		"--fixed-strings", "--grep", beadID,
 		branch,
@@ -556,10 +636,16 @@ func smokeCheckCommitOnBranch(projectDir, branch, beadID string, stderr io.Write
 }
 
 // smokePrintResults prints the signal result table to stdout.
-func smokePrintResults(stdout io.Writer, beadID string, result smokeResult) {
-	fmt.Fprintf(stdout, "\nharmonik smoke: result for bead %s\n", beadID)
-	fmt.Fprintf(stdout, "%-5s %-30s %-6s %s\n", "#", "Signal", "Result", "Detail")
-	fmt.Fprintf(stdout, "%-5s %-30s %-6s %s\n", "---", "------------------------------", "------", "------")
+func smokePrintResults(stdout io.Writer, beadID string, result smokeResult) error {
+	if _, err := fmt.Fprintf(stdout, "\nharmonik smoke: result for bead %s\n", beadID); err != nil {
+		return fmt.Errorf("print smoke result header: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "%-5s %-30s %-6s %s\n", "#", "Signal", "Result", "Detail"); err != nil {
+		return fmt.Errorf("print smoke result columns: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "%-5s %-30s %-6s %s\n", "---", "------------------------------", "------", "------"); err != nil {
+		return fmt.Errorf("print smoke result separator: %w", err)
+	}
 	for i, name := range smokeSignalNames {
 		status := "FAIL"
 		if result.observed[i] {
@@ -569,9 +655,14 @@ func smokePrintResults(stdout io.Writer, beadID string, result smokeResult) {
 		if detail == "" && !result.observed[i] {
 			detail = "(not observed)"
 		}
-		fmt.Fprintf(stdout, "%-5d %-30s %-6s %s\n", i+1, name, status, detail)
+		if _, err := fmt.Fprintf(stdout, "%-5d %-30s %-6s %s\n", i+1, name, status, detail); err != nil {
+			return fmt.Errorf("print smoke result row %d: %w", i+1, err)
+		}
 	}
-	fmt.Fprintln(stdout)
+	if _, err := fmt.Fprintln(stdout); err != nil {
+		return fmt.Errorf("finish smoke result table: %w", err)
+	}
+	return nil
 }
 
 const smokeUsage = `harmonik smoke — 5-signal end-to-end verification of a live daemon

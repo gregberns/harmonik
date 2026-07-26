@@ -22,18 +22,17 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
-// hwmFixtureOpenWriter opens a JSONLWriter in a temp dir and returns both the
-// writer and its path.
-func hwmFixtureOpenWriter(t *testing.T) (*eventbus.JSONLWriter, string) {
+// hwmFixtureOpenWriter opens a JSONLWriter in a temp dir.
+func hwmFixtureOpenWriter(t *testing.T) *eventbus.JSONLWriter {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
-	w, err := eventbus.OpenJSONLWriter(path)
+	writer, err := eventbus.OpenJSONLWriter(path)
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	t.Cleanup(func() { _ = w.Close() })
-	return w, path
+	t.Cleanup(func() { eventbusFixtureClose(t, writer) })
+	return writer
 }
 
 // hwmFixtureReadHWM reads the HWM file and returns the stored EventID.
@@ -64,7 +63,7 @@ func hwmFixtureMakePayload(t *testing.T) []byte {
 func TestBusImpl_HWM_UpdatedAfterFClassEmit(t *testing.T) {
 	dir := t.TempDir()
 	hwmPath := filepath.Join(dir, "event_id_hwm")
-	writer, _ := hwmFixtureOpenWriter(t)
+	writer := hwmFixtureOpenWriter(t)
 
 	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "")
 	if sealErr := bus.Seal(); sealErr != nil {
@@ -91,7 +90,7 @@ func TestBusImpl_HWM_UpdatedAfterFClassEmit(t *testing.T) {
 func TestBusImpl_HWM_NotWrittenAfterOClassEmit(t *testing.T) {
 	dir := t.TempDir()
 	hwmPath := filepath.Join(dir, "event_id_hwm")
-	writer, _ := hwmFixtureOpenWriter(t)
+	writer := hwmFixtureOpenWriter(t)
 
 	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "")
 	if sealErr := bus.Seal(); sealErr != nil {
@@ -118,7 +117,7 @@ func TestBusImpl_HWM_NotWrittenAfterOClassEmit(t *testing.T) {
 func TestBusImpl_HWM_UpdatedAfterEmitWithRunID(t *testing.T) {
 	dir := t.TempDir()
 	hwmPath := filepath.Join(dir, "event_id_hwm")
-	writer, _ := hwmFixtureOpenWriter(t)
+	writer := hwmFixtureOpenWriter(t)
 
 	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "")
 	if sealErr := bus.Seal(); sealErr != nil {
@@ -146,13 +145,16 @@ func TestBusImpl_HWM_UpdatedAfterEmitWithRunID(t *testing.T) {
 func TestBusImpl_HWM_UpdatedAfterEmitAgentMsg(t *testing.T) {
 	dir := t.TempDir()
 	hwmPath := filepath.Join(dir, "event_id_hwm")
-	writer, _ := hwmFixtureOpenWriter(t)
+	writer := hwmFixtureOpenWriter(t)
 
 	commsEmitter, ok := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "").(eventbus.CommsMessageEmitter)
 	if !ok {
 		t.Fatal("EV-002c: bus does not implement CommsMessageEmitter")
 	}
-	bus := commsEmitter.(eventbus.EventBus)
+	bus, ok := commsEmitter.(eventbus.EventBus)
+	if !ok {
+		t.Fatal("EV-002c: comms emitter does not implement EventBus")
+	}
 	if sealErr := bus.Seal(); sealErr != nil {
 		t.Fatalf("Seal: %v", sealErr)
 	}
@@ -180,7 +182,7 @@ func TestBusImpl_HWM_UpdatedAfterEmitAgentMsg(t *testing.T) {
 func TestBusImpl_HWM_MonotonicAcrossEmits(t *testing.T) {
 	dir := t.TempDir()
 	hwmPath := filepath.Join(dir, "event_id_hwm")
-	writer, _ := hwmFixtureOpenWriter(t)
+	writer := hwmFixtureOpenWriter(t)
 
 	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "")
 	if sealErr := bus.Seal(); sealErr != nil {
@@ -205,7 +207,7 @@ func TestBusImpl_HWM_MonotonicAcrossEmits(t *testing.T) {
 // TestBusImpl_HWM_EmptyPathNoWrite asserts that when hwmPath is empty, no
 // HWM file is created (test/no-project-dir mode).
 func TestBusImpl_HWM_EmptyPathNoWrite(t *testing.T) {
-	writer, _ := hwmFixtureOpenWriter(t)
+	writer := hwmFixtureOpenWriter(t)
 
 	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, "" /* no HWM */, "")
 	if sealErr := bus.Seal(); sealErr != nil {

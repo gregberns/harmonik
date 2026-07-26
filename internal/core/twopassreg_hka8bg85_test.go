@@ -575,7 +575,9 @@ func TestTwoPassReg_ReplayRebuildsFromPolicyYAML(t *testing.T) {
 
 	// Crashed state: registry has in-memory state from incomplete pass.
 	crashedReg := newTwoPassRegRegistry()
-	_ = crashedReg.Register(twoPassRegGateFixture())
+	if err := crashedReg.Register(twoPassRegGateFixture()); err != nil {
+		t.Fatalf("fixture Register: %v", err)
+	}
 	// At crash, the registry has 1 entry.
 	if len(crashedReg.All()) != 1 {
 		t.Fatal("fixture setup: crashed registry should have 1 entry")
@@ -721,7 +723,6 @@ func TestTwoPassReg_CP003_UnclassifiedEvaluatorRejected(t *testing.T) {
 	}
 
 	for _, mode := range unclassifiedModes {
-		mode := mode
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 
@@ -802,7 +803,6 @@ func TestTwoPassReg_CP003_MechanismAndCognitionBothAccepted(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

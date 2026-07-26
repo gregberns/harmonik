@@ -108,7 +108,7 @@ func (d *Dispatcher) fireCognitionHook(
 ) (halt bool, _ error) {
 	if d.cognitionEval == nil || d.verdictWriter == nil || d.verdictReader == nil {
 		msg := "cognition-tagged hook evaluator not wired (call WithCognition to enable)"
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 
@@ -117,7 +117,7 @@ func (d *Dispatcher) fireCognitionHook(
 	// specs/control-points.md §10).
 	if ev.RunID == nil {
 		msg := "cognition-tagged hook requires a run-scoped event (ev.RunID is nil)"
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 	runID := *ev.RunID
@@ -126,7 +126,7 @@ func (d *Dispatcher) fireCognitionHook(
 	currentHash, err := computeHookEnvelopeHash(cp, ev)
 	if err != nil {
 		msg := fmt.Sprintf("envelope hash computation failed: %v", err)
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 
@@ -134,7 +134,7 @@ func (d *Dispatcher) fireCognitionHook(
 	existing, found, readErr := d.verdictReader.LookupVerdict(ctx, runID, cp.Name, triggeringID)
 	if readErr != nil {
 		msg := fmt.Sprintf("verdict lookup failed: %v", readErr)
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 	if found {
@@ -146,10 +146,12 @@ func (d *Dispatcher) fireCognitionHook(
 		// Hash mismatch: the envelope has drifted since the verdict was persisted.
 		// Emit verdict_envelope_mismatch and fail; only a Cat 6 reconciliation
 		// verdict can authorize re-invocation per CP-041.
-		_ = d.emitVerdictEnvelopeMismatch(ctx, runID, cp.Name, triggeringID,
-			existing.InputEnvelopeHash, currentHash)
+		if err := d.emitVerdictEnvelopeMismatch(ctx, runID, cp.Name, triggeringID,
+			existing.InputEnvelopeHash, currentHash); err != nil {
+			return haltOnFailure, fmt.Errorf("hooksystem: %s: emit verdict_envelope_mismatch: %w", cp.Name, err)
+		}
 		msg := "verdict_envelope_mismatch: envelope hash drifted since persisted verdict — escalate to Cat 6"
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 
@@ -158,7 +160,7 @@ func (d *Dispatcher) fireCognitionHook(
 	verdict, dispatchErr := d.cognitionEval.EvaluateCognitionHook(ctx, cp, ev)
 	if dispatchErr != nil {
 		msg := fmt.Sprintf("cognition dispatch to role failed: %v", dispatchErr)
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 
@@ -166,7 +168,7 @@ func (d *Dispatcher) fireCognitionHook(
 	invocationID, uuidErr := uuid.NewV7()
 	if uuidErr != nil {
 		msg := fmt.Sprintf("invocation UUID generation failed: %v", uuidErr)
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 	verdict.HookName = cp.Name
@@ -188,7 +190,7 @@ func (d *Dispatcher) fireCognitionHook(
 	// CP-040: persist the verdict to the run's task branch (mechanism-tagged).
 	if err := PersistHookVerdict(ctx, runID, verdict, d.verdictWriter, d.bus); err != nil {
 		msg := fmt.Sprintf("verdict persistence failed: %v", err)
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient, msg)
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient, msg)
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
 	}
 
@@ -212,7 +214,7 @@ func (d *Dispatcher) applyHookVerdictResult(
 		if verdict.Reason != nil {
 			reason = *verdict.Reason
 		}
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic,
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic,
 			fmt.Sprintf("cognition evaluator returned failure: %s", reason))
 		return haltOnFailure, fmt.Errorf("hooksystem: %s: cognition evaluator failed: %s", cp.Name, reason)
 	}
@@ -227,7 +229,7 @@ func (d *Dispatcher) applyHookVerdictResult(
 		IdempotencyClass: ic,
 	}
 	if err := d.emitHookFired(ctx, ev, hookName, triggeringID, se); err != nil {
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient,
+		d.reportHookFailure(ctx, ev, hookName, triggeringID, core.ErrorCategoryTransient,
 			fmt.Sprintf("hook_fired emit failed: %v", err))
 		return haltOnFailure, err
 	}

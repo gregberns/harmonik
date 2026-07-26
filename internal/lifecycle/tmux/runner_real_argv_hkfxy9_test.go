@@ -55,6 +55,7 @@ import (
 func recoverRemoteArgv(t *testing.T, remoteOperand string) []string {
 	t.Helper()
 	script := "printf '%s\\0' " + remoteOperand
+	// #nosec G204 -- script is assembled from this test's controlled quoted operand.
 	out, err := exec.CommandContext(context.Background(), "/bin/sh", "-c", script).Output()
 	if err != nil {
 		t.Fatalf("/bin/sh -c failed for operand %q: %v", remoteOperand, err)

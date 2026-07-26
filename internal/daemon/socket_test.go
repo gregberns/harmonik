@@ -104,7 +104,6 @@ func socketFixtureSendRecv(t *testing.T, conn net.Conn, req daemon.SocketRequest
 		t.Fatalf("socketFixtureSendRecv: write: %v", err)
 	}
 	// Half-close the write side so the server's json.Decoder can detect EOF.
-	//nolint:errorlint // *net.UnixConn specific; type assertion is intentional
 	if uw, ok := conn.(*net.UnixConn); ok {
 		_ = uw.CloseWrite() //nolint:errcheck // cleanup error unactionable
 	}
@@ -162,7 +161,7 @@ func socketFixtureWaitReady(t *testing.T, sockPath string) {
 	for time.Now().Before(deadline) {
 		conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
-			_ = conn.Close() //nolint:errcheck // probe conn; cleanup error unactionable
+			_ = conn.Close()
 			return
 		}
 		runtime.Gosched()
@@ -273,7 +272,7 @@ func socketFixtureCreateStaleSocket(t *testing.T, sockPath string) func() {
 
 	sa := &syscall.SockaddrUnix{Name: sockPath}
 	if err := syscall.Bind(fd, sa); err != nil {
-		_ = syscall.Close(fd) //nolint:errcheck // cleanup; fd close error unactionable
+		_ = syscall.Close(fd)
 		t.Fatalf("socketFixtureCreateStaleSocket: bind %q: %v", sockPath, err)
 	}
 	// Close the fd — the socket inode remains on disk (no automatic removal like
@@ -351,7 +350,7 @@ func TestRunSocketListener_EmitOutcome(t *testing.T) {
 	socketFixtureWaitReady(t, sockPath)
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := daemon.SocketRequest{
 		Op:      "emit-outcome",
@@ -391,7 +390,7 @@ func TestRunSocketListener_ClaimNext(t *testing.T) {
 	socketFixtureWaitReady(t, sockPath)
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := daemon.SocketRequest{
 		Op:   "claim-next",
@@ -424,7 +423,7 @@ func TestRunSocketListener_UnknownOp(t *testing.T) {
 	socketFixtureWaitReady(t, sockPath)
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := daemon.SocketRequest{Op: "not-a-real-op"}
 	resp := socketFixtureSendRecv(t, conn, req)
@@ -443,13 +442,12 @@ func TestRunSocketListener_HandlerError(t *testing.T) {
 	t.Parallel()
 
 	sockPath := socketFixtureTempSockPath(t)
-	//nolint:goerr113 // test sentinel error; inline construction is intentional
 	h := &stubHandler{claimNextErr: fmt.Errorf("brcli: no ready beads")}
 	socketFixtureStartListener(t, sockPath, h)
 	socketFixtureWaitReady(t, sockPath)
 
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	req := daemon.SocketRequest{Op: "claim-next", Role: "implementer"}
 	resp := socketFixtureSendRecv(t, conn, req)
@@ -497,7 +495,6 @@ func hookRelayFixtureSendAndReadAck(t *testing.T, conn net.Conn, envBytes []byte
 	if _, err := conn.Write(envBytes); err != nil {
 		t.Fatalf("hookRelayFixtureSendAndReadAck: write: %v", err)
 	}
-	//nolint:errorlint // *net.UnixConn specific; type assertion is intentional
 	if uw, ok := conn.(*net.UnixConn); ok {
 		_ = uw.CloseWrite() //nolint:errcheck // cleanup error unactionable
 	}
@@ -551,7 +548,7 @@ func TestSocketListener_HookRelayHandler(t *testing.T) {
 
 	// Send the envelope and read the ACK.
 	conn := socketFixtureDial(t, sockPath)
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	ack := hookRelayFixtureSendAndReadAck(t, conn, envBytes)
 

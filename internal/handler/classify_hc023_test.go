@@ -75,7 +75,6 @@ func TestClassifyExitState_CtxCanceled_SupersedesAll(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := handler.ClassifyExitState(tc.state)
@@ -121,7 +120,6 @@ func TestClassifyExitState_AdapterCondition(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			state := handler.ExitState{
@@ -167,7 +165,6 @@ func TestClassifyExitState_AdapterCondition_MutualExclusion(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.wantPrimary.Error(), func(t *testing.T) {
 			t.Parallel()
 			state := handler.ExitState{
@@ -176,7 +173,7 @@ func TestClassifyExitState_AdapterCondition_MutualExclusion(t *testing.T) {
 			got := handler.ClassifyExitState(state)
 			for _, p := range primaries {
 				want := errors.Is(got, p.err)
-				should := p.err == tc.wantPrimary
+				should := errors.Is(p.err, tc.wantPrimary)
 				if want != should {
 					t.Errorf(
 						"ClassifyExitState adapter=%v: errors.Is(got, %v) = %v, want %v — "+
@@ -238,7 +235,6 @@ func TestClassifyExitState_ExitCodeFallback(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := handler.ClassifyExitState(tc.state)
@@ -281,7 +277,6 @@ func TestClassifyExitState_Determinism(t *testing.T) {
 	}
 
 	for _, s := range states {
-		s := s
 		r1 := handler.ClassifyExitState(s)
 		r2 := handler.ClassifyExitState(s)
 		for _, p := range primaries {
@@ -333,7 +328,6 @@ func TestClassifyExitState_ExactlyOnePrimary(t *testing.T) {
 	}
 
 	for _, inp := range inputs {
-		inp := inp
 		t.Run(inp.name, func(t *testing.T) {
 			t.Parallel()
 			got := handler.ClassifyExitState(inp.state)

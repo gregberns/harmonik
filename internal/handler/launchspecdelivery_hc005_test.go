@@ -70,7 +70,7 @@ func TestSession_CloseStdin_SendInputThenClose(t *testing.T) {
 	}
 
 	// Use NewSession with 'cat' to verify SendInput + CloseStdin round-trip.
-	cmd := exec.CommandContext(t.Context(), "sh", "-c", "cat") //nolint:gosec // G204: test-only constant
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "cat")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	sess, err := handler.NewSession(t.Context(), cmd)
 	if err != nil {
@@ -154,7 +154,9 @@ func TestHandler_Launch_HandlerSpecDeliveredViaLaunch(t *testing.T) {
 	case <-t.Context().Done():
 		t.Fatal("watcher.Done() did not close before test context cancelled")
 	}
-	_ = sess.Wait(t.Context())
+	if waitErr := sess.Wait(t.Context()); waitErr != nil {
+		t.Fatalf("sess.Wait: child exited abnormally: %v", waitErr)
+	}
 
 	// Read the captured stdin from the temp file.
 	//nolint:gosec // G304: path is test-generated; not user-controlled
@@ -232,7 +234,9 @@ func TestHandler_Launch_NilHandlerSpec_StdinNotClosed(t *testing.T) {
 	case <-t.Context().Done():
 		t.Fatal("watcher.Done() did not close before test context cancelled")
 	}
-	_ = sess.Wait(t.Context())
+	if waitErr := sess.Wait(t.Context()); waitErr != nil {
+		t.Fatalf("sess.Wait: child exited abnormally: %v", waitErr)
+	}
 
 	// Read the captured line from the temp file.
 	//nolint:gosec // G304: path is test-generated; not user-controlled
@@ -285,5 +289,7 @@ func TestHandler_Launch_NilHandlerSpec_StdinDevNull_ClosesStdinImmediately(t *te
 	case <-t.Context().Done():
 		t.Fatal("watcher.Done() did not close before test context cancelled — stdin was not closed (hk-y20d2 regression)")
 	}
-	_ = sess.Wait(t.Context())
+	if waitErr := sess.Wait(t.Context()); waitErr != nil {
+		t.Fatalf("sess.Wait: child exited abnormally: %v", waitErr)
+	}
 }

@@ -1,6 +1,9 @@
 package keeper
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // export_test.go — test-only helpers that expose internal Cycler state to the
 // keeper_test package. Only compiled during `go test`. Refs: hk-wjzf.
@@ -39,12 +42,26 @@ func SetCyclerLastFiredSID(c *Cycler, sid string) {
 // DeriveContextTokensForTest exposes deriveContextTokens to the keeper_test
 // package so the transcript token-derivation logic can be exercised directly.
 // Refs: hk-81wk.
-func DeriveContextTokensForTest(transcriptDir, sessionID string) (int64, bool) {
-	return deriveContextTokens(transcriptDir, sessionID)
+func DeriveContextTokensForTest(ctx context.Context, transcriptDir, sessionID string) (int64, bool) {
+	return deriveContextTokens(ctx, transcriptDir, sessionID)
 }
 
 // RecentTranscriptTurnForTest exposes recentTranscriptTurn to the keeper_test
 // package for deterministic transcript-detection testing. Refs: hk-74iyd.
 func RecentTranscriptTurnForTest(transcriptDir, sessionID, role string) (time.Time, bool) {
 	return recentTranscriptTurn(transcriptDir, sessionID, role)
+}
+
+// StripNonceMarkersForTest exposes the pure stripNonceMarkers scrub to the
+// keeper_test package so its behavior can be pinned directly, character by
+// character, instead of only through a full cycle. Refs: hk-4tjyj.
+func StripNonceMarkersForTest(content string) string {
+	return stripNonceMarkers(content)
+}
+
+// ShellQuoteIfNeededForTest exposes the shell-quoting allowlist used to build the
+// injected reboot command. The output is pasted into a live pane and executed, so
+// the quoting rule is directly test-pinned. Refs: hk-4tjyj.
+func ShellQuoteIfNeededForTest(s string) string {
+	return shellQuoteIfNeeded(s)
 }

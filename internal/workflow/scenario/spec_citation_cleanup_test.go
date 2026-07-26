@@ -154,7 +154,9 @@ func TestSCC_ContentReviewRCLoopsToAuthor(t *testing.T) {
 	}
 
 	// content_review(REQUEST_CHANGES) → author
-	cycles.Increment(run.RunID, "content_review", "author", nil)
+	if _, err := cycles.Increment(run.RunID, "content_review", "author", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter content_review\u2192author: %v", err)
+	}
 	dec = workflow.DecideNextNode(graph, "content_review", sccOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "author" {
 		t.Fatalf("content_review→author (RC): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
@@ -243,9 +245,11 @@ func TestSCC_ContentReviewCapHit(t *testing.T) {
 	workflow.DecideNextNode(graph, "author", sccOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of content_review→author.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "content_review", "author", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "content_review", "author", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter content_review\u2192author: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is suppressed;
@@ -356,7 +360,9 @@ func TestSCC_CitationVerifyRCLoopsToFixer(t *testing.T) {
 	workflow.DecideNextNode(graph, "citation_fixer", sccOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
 
 	// citation_verify(REQUEST_CHANGES) → citation_fixer (NOT author)
-	cycles.Increment(run.RunID, "citation_verify", "citation_fixer", nil)
+	if _, err := cycles.Increment(run.RunID, "citation_verify", "citation_fixer", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter citation_verify\u2192citation_fixer: %v", err)
+	}
 	dec := workflow.DecideNextNode(graph, "citation_verify", sccOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "citation_fixer" {
 		t.Fatalf("citation_verify→citation_fixer (RC): Advance=%v NextNodeID=%q, want citation_fixer",
@@ -440,9 +446,11 @@ func TestSCC_CitationVerifyCapHit(t *testing.T) {
 	workflow.DecideNextNode(graph, "citation_fixer", sccOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of citation_verify→citation_fixer.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "citation_verify", "citation_fixer", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "citation_verify", "citation_fixer", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter citation_verify\u2192citation_fixer: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is suppressed;

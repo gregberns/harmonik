@@ -64,6 +64,7 @@ func versionLine() string {
 
 // writeVersion writes the version line followed by a newline to w.
 // Called by run() when --version is set.
-func writeVersion(w io.Writer) {
-	fmt.Fprintln(w, versionLine())
+func writeVersion(w io.Writer) error {
+	_, err := fmt.Fprintln(w, versionLine())
+	return err
 }

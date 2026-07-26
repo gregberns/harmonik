@@ -265,10 +265,16 @@ func TestRunHelp_DocumentsWorkflowModeFlags(t *testing.T) {
 
 	exitCode := runBeadSubcommand([]string{"--help"})
 
-	_ = w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close help stdout writer: %v", err)
+	}
 	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-	_ = r.Close()
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("read help stdout: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close help stdout reader: %v", err)
+	}
 
 	output := buf.String()
 

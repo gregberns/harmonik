@@ -45,7 +45,6 @@ func TestGatePayloadValid_GoalGateAllAttachPoints(t *testing.T) {
 		AttachPointEdgeAfterSelection,
 	}
 	for _, ap := range points {
-		ap := ap
 		t.Run(string(ap), func(t *testing.T) {
 			t.Parallel()
 

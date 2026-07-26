@@ -9,9 +9,9 @@ package daemon
 // remembered to invoke it by hand. Branch counts grew unbounded between
 // logmine passes (run/* 408→512, worktree-agent-* 173→230) because nothing
 // ever called it. BranchReapWatcher closes that gap by running the exact same
-// lifecycle.ReapBranches pass on a ticker, shaped after CrewIdleReaper
-// (crewidlereap.go): a background goroutine started post-Seal alongside the
-// other daemon watchers, ticking independently of any bead/queue activity.
+// lifecycle.ReapBranches pass on a ticker, shaped after crewrun.CrewIdleReaper
+// (crewrun/idlereap.go): a background goroutine started post-Seal alongside
+// the other daemon watchers, ticking independently of any bead/queue activity.
 //
 // Bead ref: hk-2i36s.
 

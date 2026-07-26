@@ -12,14 +12,6 @@ import (
 	"time"
 )
 
-// orphanSweepFakeProcess represents a fake process entry used by the
-// stub ProcessLister in tests.
-type orphanSweepFakeProcess struct {
-	pid  int
-	ppid int
-	comm string
-}
-
 // orphanSweepFakeLister is a test-injectable ProcessLister that returns a
 // deterministic list of fake orphan PIDs without consulting the OS process
 // table. This avoids spawning real processes for most test cases.

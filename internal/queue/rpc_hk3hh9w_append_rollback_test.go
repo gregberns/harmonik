@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/queue" //nolint:depguard // external test package (queue_test) self-import; queue allow-list omits self (cf. eventbus/mergeq leaf pattern)
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // hk3FakeLocker is a QueueSetter+MutationLocker double backed by an in-memory

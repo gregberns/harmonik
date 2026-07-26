@@ -7,7 +7,7 @@ package daemon_test
 //
 // # The defect (hk-fxy9 review-loop / hk-538l DOT)
 //
-// hk-3sus fixed the SPEC runner (claudeRunCtx.runner — controls WHERE trust /
+// hk-3sus fixed the SPEC runner (shared.LaunchCtx.Runner — controls WHERE trust /
 // settings / agent-task files are written). But there is a SECOND, independent
 // runner threading: the SUBSTRATE-SPAWN runner passed to
 // newPerRunSubstrate(sub, bin, runner) — it controls WHERE the claude PROCESS

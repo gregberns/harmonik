@@ -34,6 +34,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -219,10 +220,10 @@ func TestMergeQDomain_RSMInv005_NoBuildClassInsideDomain(t *testing.T) {
 		return cerr
 	}
 
-	out := mergeRunBranchToMain(t.Context(), recSubmit, projectDir, runID, &noopEmitter{},
+	out := runmerge.RunBranchToTarget(t.Context(), recSubmit, projectDir, runID, &noopEmitter{},
 		core.BeadID("hk-rsminv005"), "", "main", nil, "")
-	if !out.success {
-		t.Fatalf("merge did not succeed: reason=%q noChange=%v", out.reason, out.noChange)
+	if !out.Success {
+		t.Fatalf("merge did not succeed: reason=%q noChange=%v", out.Reason, out.NoChange)
 	}
 
 	inside, outside := rsmInvReadDomainInventory(t, logPath)
@@ -290,9 +291,9 @@ func TestMergeQDomain_ShutdownDrain_BgCtxSubmission(t *testing.T) {
 	// bgCtx mirrors the shutdown-drain submission context (outlives the per-run
 	// ctx). The queue owner is alive, so the critical section drains.
 	bgCtx := context.Background()
-	out := mergeRunBranchToMain(bgCtx, q.Submit, projectDir, runID, &noopEmitter{},
+	out := runmerge.RunBranchToTarget(bgCtx, q.Submit, projectDir, runID, &noopEmitter{},
 		core.BeadID("hk-drain"), "", "main", nil, "")
-	if !out.success {
-		t.Fatalf("shutdown-drain merge did not succeed: reason=%q noChange=%v", out.reason, out.noChange)
+	if !out.Success {
+		t.Fatalf("shutdown-drain merge did not succeed: reason=%q noChange=%v", out.Reason, out.NoChange)
 	}
 }

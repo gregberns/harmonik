@@ -43,11 +43,14 @@ func exprEnvFixtureOutcome(t *testing.T) Outcome {
 // exprEnvFixtureEvent returns a valid Event for PolicyExprEnv tests.
 func exprEnvFixtureEvent(t *testing.T) Event {
 	t.Helper()
-	payload, _ := json.Marshal(map[string]any{
+	payload, err := json.Marshal(map[string]any{
 		"run_id":    "some-run-id",
 		"bead_id":   "hk-test",
 		"exit_code": 0,
 	})
+	if err != nil {
+		t.Fatalf("exprEnvFixtureEvent: marshal payload: %v", err)
+	}
 	return Event{
 		EventID:         EventID(uuid.New()),
 		SchemaVersion:   1,
@@ -62,7 +65,7 @@ func exprEnvFixtureEvent(t *testing.T) Event {
 func exprEnvFixtureEdges(t *testing.T) []Edge {
 	t.Helper()
 	label := "success"
-	cap := 3
+	traversalCap := 3
 	return []Edge{
 		{
 			FromNode:       NodeID("node-a"),
@@ -70,7 +73,7 @@ func exprEnvFixtureEdges(t *testing.T) []Edge {
 			Weight:         10,
 			OrderingKey:    "a",
 			PreferredLabel: &label,
-			TraversalCap:   &cap,
+			TraversalCap:   &traversalCap,
 		},
 		{
 			FromNode:    NodeID("node-a"),
@@ -150,7 +153,6 @@ func TestPolicyExprEnv_GateEnv_BindingNames(t *testing.T) {
 	evaluator := NewPolicyExprEvaluator(DefaultPolicyExprEvaluatorConfig())
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			prog, _, err := evaluator.Compile(tc.expr, env)
@@ -213,7 +215,6 @@ func TestPolicyExprEnv_HookEnv_EventBinding(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			prog, _, err := evaluator.Compile(tc.expr, env)
@@ -280,7 +281,6 @@ func TestPolicyExprEnv_GuardEnv_EdgesBinding(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			prog, _, err := evaluator.Compile(tc.expr, env)
@@ -418,7 +418,7 @@ func TestPolicyExprEnv_GateExpr_E2E(t *testing.T) {
 	t.Parallel()
 
 	run := exprEnvFixtureRun(t)
-	outcome := exprEnvFixtureOutcome(t) // status = SUCCESS
+	outcome := exprEnvFixtureOutcome(t)
 	policyMeta := map[string]string{"required_version": string(run.WorkflowVersion)}
 
 	env := NewPolicyExprGateEnv(run, outcome, false, policyMeta, nil)
@@ -494,7 +494,10 @@ func TestPolicyExprEnv_SideEffectFree(t *testing.T) {
 
 	// Capture initial context state.
 	initialLen := len(env.Context)
-	initialPhase, _ := env.Context["phase"].(string)
+	initialPhase, ok := env.Context["phase"].(string)
+	if !ok {
+		t.Fatalf("context[\"phase\"] missing or not a string: %v", env.Context["phase"])
+	}
 
 	evaluator := NewPolicyExprEvaluator(DefaultPolicyExprEvaluatorConfig())
 
@@ -511,7 +514,11 @@ func TestPolicyExprEnv_SideEffectFree(t *testing.T) {
 	if len(env.Context) != initialLen {
 		t.Errorf("context len changed after evaluation: before=%d, after=%d", initialLen, len(env.Context))
 	}
-	if got, _ := env.Context["phase"].(string); got != initialPhase {
+	got, ok := env.Context["phase"].(string)
+	if !ok {
+		t.Fatalf("context[\"phase\"] missing or not a string after evaluation: %v", env.Context["phase"])
+	}
+	if got != initialPhase {
 		t.Errorf("context[\"phase\"] changed after evaluation: before=%q, after=%q", initialPhase, got)
 	}
 }

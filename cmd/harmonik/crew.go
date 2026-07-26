@@ -56,6 +56,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -216,6 +217,15 @@ type crewBriefSeedFn func(project, name, sessionID string)
 // between the paste and the submit Enter (T10/hk-ncg9m).
 const crewBriefSeedDelay = 750 * time.Millisecond
 
+// crewBootBufferName is the PL-021d tmux buffer name for a crew's boot-seed
+// paste. Mirrors captainBootBufferName: built by [ltmux.BufferName], never by
+// fmt.Sprintf, so a session id that the crew-start RPC returns in an unexpected
+// shape (uppercase, underscored) cannot produce a name WriteToPane rejects with
+// ErrStructural — which would silently drop the seed. Bead: hk-y466l.
+func crewBootBufferName(sessionID string) string {
+	return ltmux.BufferName(sessionID, "crew-boot")
+}
+
 // pasteCrewBriefSeedViaTmux is the production crewBriefSeedFn. It derives the
 // crew's tmux session name (harmonik-<project-hash>-crew-<name>) and pastes
 // "Please run `harmonik agent brief` and begin your operating loop." to the
@@ -239,7 +249,7 @@ func pasteCrewBriefSeedViaTmux(project, name, sessionID string) {
 		return
 	case <-time.After(crewBriefSeedDelay):
 	}
-	bufName := fmt.Sprintf("harmonik-%s-crew-boot", sessionID)
+	bufName := crewBootBufferName(sessionID)
 	const bootSeedMsg = "Please run `harmonik agent brief` and begin your operating loop.\n"
 	if err := adapter.WriteToPane(ctx, bufName, paneTarget, []byte(bootSeedMsg)); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: boot-seed paste: %v\n", err)
@@ -319,7 +329,9 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
 	// before the daemon spawns the crew so a foreign project (never run harmonik
 	// init) has the files the crew agent reads at boot. (hk-2nmbq)
-	ensureBootAssets(absProject, os.Stdout, os.Stderr)
+	if err := ensureBootAssets(absProject, os.Stdout, os.Stderr); err != nil {
+		return 1
+	}
 
 	// Wire keeper hooks BEFORE sending the RPC so the new crew session reads the
 	// statusLine + Stop + PreCompact + SessionStart stanzas at session start.
@@ -397,13 +409,12 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 // Non-fatal: errors are logged to stderr but do not propagate. Refs: hk-yfcc.
 func seedSID(projectDir, name, sessionID string) {
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if mkErr := os.MkdirAll(keeperDir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(keeperDir, core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: seed .sid: mkdir %q: %v\n", keeperDir, mkErr)
 		return
 	}
 	sidPath := filepath.Join(keeperDir, name+".sid")
-	//nolint:gosec // G306: .sid is readable by the keeper process (same user)
-	if writeErr := os.WriteFile(sidPath, []byte(sessionID+"\n"), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(sidPath, []byte(sessionID+"\n"), 0o600); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: seed .sid: write %q: %v\n", sidPath, writeErr)
 	}
 }
@@ -624,14 +635,23 @@ func crewDialAndSend(sockPath, verb string, reqBytes []byte) (crewSocketResponse
 		fmt.Fprintf(os.Stderr, "harmonik %s: dial %s: %v\n", verb, sockPath, dialErr)
 		return crewSocketResponse{}, 1
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik %s: close connection: %v\n", verb, closeErr)
+		}
+	}()
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik %s: write request: %v\n", verb, writeErr)
 		return crewSocketResponse{}, 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite()
+		if closeWriteErr := uw.CloseWrite(); closeWriteErr != nil {
+			if _, err := fmt.Fprintf(os.Stderr, "harmonik %s: close request write side: %v\n", verb, closeWriteErr); err != nil {
+				return crewSocketResponse{}, 1
+			}
+			return crewSocketResponse{}, 1
+		}
 	}
 
 	var resp crewSocketResponse

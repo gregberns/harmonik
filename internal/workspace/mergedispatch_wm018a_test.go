@@ -62,6 +62,7 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 		}
 
 		// Assert author = daemon, committer = daemon (both same for non-agentic).
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		identity, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%an <%ae> | %cn <%ce>").Output()
 		if err != nil {
@@ -118,6 +119,7 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 		}
 
 		// Assert author = agent, committer = daemon.
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		identity, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%an <%ae> | %cn <%ce>").Output()
 		if err != nil {
@@ -136,14 +138,14 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 // mergeBackFixtureSetupTaskBranch creates a tempRepo, adds a task worktree for the
 // given runID, and writes one commit per subject string. Returns (repo, initialSHA).
 // Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
-func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []string) (string, string) {
+func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []string) (repo, initialSHA string) {
 	t.Helper()
 
 	repo, sha := tempRepo(t)
 	taskBranch := "run/" + runID
 	taskPath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o700); err != nil {
 		t.Fatalf("mergeBackFixtureSetupTaskBranch MkdirAll: %v", err)
 	}
 
@@ -161,7 +163,7 @@ func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []stri
 	for i, subj := range subjects {
 		fname := filepath.Join(taskPath, "node"+strings.ReplaceAll(subj, " ", "_")+".txt")
 		content := subj + " output\n"
-		if err := os.WriteFile(fname, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(fname, []byte(content), 0o600); err != nil {
 			t.Fatalf("WriteFile node %d: %v", i, err)
 		}
 		gitRun(taskPath, "add", ".")
@@ -180,10 +182,11 @@ func mergeBackFixtureMakeIntegWorktree(t *testing.T, repo, sha, suffix string) s
 	branch := "harmonik/integration/" + suffix
 	path := filepath.Join(repo, ".harmonik", "worktrees", suffix)
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("mergeBackFixtureMakeIntegWorktree MkdirAll: %v", err)
 	}
 
+	// #nosec G204 -- git worktree fixture arguments are constructed by this test.
 	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, path, sha)
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {

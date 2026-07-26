@@ -141,7 +141,6 @@ func SweepQueueArchives(projectDir string, cfg SweepQueueArchivesConfig) (SweepQ
 
 		for _, name := range toDelete {
 			path := filepath.Join(hDir, name)
-			//nolint:gosec // G304: path constructed from projectDir + .harmonik/ + archive filename, not user input
 			if removeErr := os.Remove(path); removeErr != nil {
 				orphanLog(cfg.Logger, "SweepQueueArchives: remove %q (category %q): %v", name, cat, removeErr)
 				lastErr = removeErr

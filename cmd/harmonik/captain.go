@@ -69,10 +69,12 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/agentlaunch"
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // captainSplashDismissDelay is the wait between the splash-dismiss Enter and the
@@ -192,10 +194,39 @@ func (o osCaptainTmuxOps) AgentPaneAlive(ctx context.Context, sess string) (bool
 		return false, nil
 	}
 	// signal-0: existence probe, no signal delivered.
+	//
+	// ESRCH is the only answer that actually means "gone". EPERM means the
+	// process exists but is owned by another uid — still alive, and reaping it
+	// would be wrong. Anything else is a probe failure, which the doc contract
+	// above says must reach the caller rather than masquerade as "dead".
 	if perr := syscall.Kill(pid, 0); perr != nil {
-		return false, nil
+		switch {
+		case errors.Is(perr, syscall.ESRCH):
+			return false, nil
+		case errors.Is(perr, syscall.EPERM):
+			return true, nil
+		default:
+			return false, fmt.Errorf("probe agent pane pid %d in session %q: %w", pid, sess, perr)
+		}
 	}
 	return true, nil
+}
+
+// captainBootBufferName is the PL-021d tmux buffer name for the captain's
+// boot-seed paste.
+//
+// It goes through [ltmux.BufferName] rather than the retired
+// fmt.Sprintf("harmonik-%s-captain-boot", sessionID) so the name cannot depend
+// on the caller having a well-formed session id. Today it always does — the
+// flag parser hard-rejects a non-UUIDv4 --session-id and mints a UUIDv4
+// otherwise — so this is defense in depth, not a live bug fix. What it defends
+// against is the hk-lckbv shape: a session id carrying an uppercase letter or
+// an underscore produces a name WriteToPane rejects with ErrStructural,
+// silently dropping the boot seed so the captain never runs
+// `harmonik agent brief`. The daemon side is already guarded; this closes the
+// launcher side. Bead: hk-y466l.
+func captainBootBufferName(sessionID string) string {
+	return ltmux.BufferName(sessionID, "captain-boot")
 }
 
 // PasteSeedToAgentPane delivers the boot seed to the captain's agent pane via
@@ -215,7 +246,7 @@ func (o osCaptainTmuxOps) PasteSeedToAgentPane(ctx context.Context, sessionID, p
 		return
 	case <-time.After(captainSplashDismissDelay):
 	}
-	bufName := fmt.Sprintf("harmonik-%s-captain-boot", sessionID)
+	bufName := captainBootBufferName(sessionID)
 	const bootSeedMsg = "Please run `harmonik agent brief` and begin your operating loop.\n"
 	if err := o.adapter.WriteToPane(ctx, bufName, paneTarget, []byte(bootSeedMsg)); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik captain: boot-seed paste: %v\n", err)
@@ -245,7 +276,7 @@ func (o osCaptainTmuxOps) PasteSeedToAgentPane(ctx context.Context, sessionID, p
 // lets the test assert the exact argv via the injected run func.
 //
 // rcPrefix (hk-igpg) is the per-project Claude RC label prefix: the
-// --remote-control LABEL is daemon.JoinRemoteControlName(rcPrefix, name) so it
+// --remote-control LABEL is crewrun.JoinRemoteControlName(rcPrefix, name) so it
 // shows as "<prefix>-<name>" in the picker. Empty prefix ⇒ bare name (backward
 // compatible). HARMONIK_AGENT stays BARE — the prefix is cosmetic, RC-label-only.
 func buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix string) *exec.Cmd {
@@ -255,7 +286,7 @@ func buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix string) *exec.Cm
 		"-n", ltmux.WindowAgent,
 		"-e", "HARMONIK_AGENT="+name,
 		"claude", "--dangerously-skip-permissions",
-		"--remote-control", daemon.JoinRemoteControlName(rcPrefix, name),
+		"--remote-control", crewrun.JoinRemoteControlName(rcPrefix, name),
 		"--session-id", sessionID,
 	)
 }
@@ -297,31 +328,33 @@ func buildCaptainKeeperConfig(name, projectDir string) (enableConfig, error) {
 // but never block the launch. Called on every start captain/crew to close the
 // portability gap on foreign projects that have not run harmonik init (hk-2nmbq).
 // Mirrors the keeper-scripts embed-and-extract approach (hk-ybmqp).
-func ensureBootAssets(projectDir string, stdout, stderr io.Writer) {
+func ensureBootAssets(projectDir string, stdout, stderr io.Writer) error {
 	if code := provisionSkills(projectDir, false, stdout, stderr); code != 0 {
-		fmt.Fprintf(stderr, "harmonik: warning: skill provisioning failed (code %d) — agent may lack .claude/skills/\n", code)
+		if _, err := fmt.Fprintf(stderr, "harmonik: warning: skill provisioning failed (code %d) — agent may lack .claude/skills/\n", code); err != nil {
+			return err
+		}
 	}
 	if code := provisionScaffolds(projectDir, false, stdout, stderr); code != 0 {
-		fmt.Fprintf(stderr, "harmonik: warning: scaffold provisioning failed (code %d)\n", code)
+		if _, err := fmt.Fprintf(stderr, "harmonik: warning: scaffold provisioning failed (code %d)\n", code); err != nil {
+			return err
+		}
 	}
 	if code := provisionContextTiers(projectDir, false, stdout, stderr); code != 0 {
-		fmt.Fprintf(stderr, "harmonik: warning: context-tier provisioning failed (code %d)\n", code)
+		if _, err := fmt.Fprintf(stderr, "harmonik: warning: context-tier provisioning failed (code %d)\n", code); err != nil {
+			return err
+		}
 	}
 	// renderAgentsMD substitutes $TARGET_BRANCH; read from config when available.
 	targetBranch := "main"
-	if pc, err := daemon.LoadProjectConfig(projectDir); err == nil && pc.Daemon.TargetBranch != "" {
+	if pc, err := projectconfig.LoadProjectConfig(projectDir); err == nil && pc.Daemon.TargetBranch != "" {
 		targetBranch = pc.Daemon.TargetBranch
 	}
 	if code := renderAgentsMD(projectDir, targetBranch, false, stdout, stderr); code != 0 {
-		fmt.Fprintf(stderr, "harmonik: warning: AGENTS.md provisioning failed (code %d)\n", code)
+		if _, err := fmt.Fprintf(stderr, "harmonik: warning: AGENTS.md provisioning failed (code %d)\n", code); err != nil {
+			return err
+		}
 	}
-}
-
-// runCaptainLaunch keeps the hk-ly0n/hk-igek signature for back-compat with the
-// existing argv + keeper-enable tests. It delegates to runCaptainLaunchWithOps
-// with the production tmux ops.
-func runCaptainLaunch(subArgs []string, run captainLaunchRunFn, enableKeeper keeperEnableFn) int {
-	return runCaptainLaunchWithOps(subArgs, run, enableKeeper, osCaptainTmuxOps{adapter: ltmux.OSAdapter{}})
+	return nil
 }
 
 // captainTmuxSessionName resolves the tmux session name for the captain:
@@ -408,7 +441,7 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	rcPrefix := *rcPrefixFlag
 	if rcPrefix == rcPrefixUnset {
 		rcPrefix = ""
-		if pc, perr := daemon.LoadProjectConfig(project); perr == nil {
+		if pc, perr := projectconfig.LoadProjectConfig(project); perr == nil {
 			rcPrefix = pc.Daemon.RemoteControlPrefix
 		} else {
 			fmt.Fprintf(os.Stderr, "harmonik captain: could not load .harmonik/config.yaml for rc-prefix (%v) — launching with a bare --remote-control label\n", perr)
@@ -490,7 +523,9 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	// files the agent reads at boot. Create-if-missing (force=false): existing
 	// files are never overwritten. Non-fatal: failures WARN, never block launch.
 	// Mirrors the keeper-scripts embed-and-extract approach (hk-ybmqp, hk-2nmbq).
-	ensureBootAssets(project, os.Stdout, os.Stderr)
+	if err := ensureBootAssets(project, os.Stdout, os.Stderr); err != nil {
+		return 1
+	}
 
 	// Wire keeper hooks BEFORE launching tmux so the new `claude` session reads
 	// the statusLine + Stop + PreCompact stanzas at session start. A failure here
@@ -596,20 +631,20 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 // is skipped with the error returned for a WARN.
 func writeCaptainSentinelAndPID(ctx context.Context, ops captainTmuxOps, project, tmuxSession string) error {
 	cognitionDir := filepath.Join(project, ".harmonik", "cognition")
-	if err := os.MkdirAll(cognitionDir, 0o755); err != nil {
+	if err := os.MkdirAll(cognitionDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("create cognition dir %q: %w", cognitionDir, err)
 	}
 	sentinelPath := filepath.Join(cognitionDir, "captain.sentinel")
-	if err := os.WriteFile(sentinelPath, []byte("schema_version=1\n"), 0o644); err != nil {
+	if err := os.WriteFile(sentinelPath, []byte("schema_version=1\n"), 0o600); err != nil {
 		return fmt.Errorf("write captain.sentinel: %w", err)
 	}
 
 	pid, perr := ops.AgentPanePID(ctx, tmuxSession)
 	if perr != nil || pid <= 0 {
-		return fmt.Errorf("captain.sentinel written but could not resolve agent pane PID for captain.pid (%v)", perr)
+		return fmt.Errorf("captain.sentinel written but could not resolve agent pane PID for captain.pid: %w", perr)
 	}
 	pidPath := filepath.Join(cognitionDir, "captain.pid")
-	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", pid)), 0o644); err != nil {
+	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", pid)), 0o600); err != nil {
 		return fmt.Errorf("write captain.pid: %w", err)
 	}
 	return nil

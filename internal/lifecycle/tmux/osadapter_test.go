@@ -43,14 +43,11 @@ func osAdapterFixtureBinDir(t *testing.T) string {
 	return t.TempDir()
 }
 
-// osAdapterFixtureWithFakeTmux returns a context and a PATH that prepends
-// binDir, so exec.CommandContext calls in OSAdapter find the fake tmux.
-func osAdapterFixtureWithFakeTmux(t *testing.T, binDir string) string {
+// osAdapterFixtureWithFakeTmux prepends binDir to PATH for the duration of the
+// test, so exec.CommandContext calls in OSAdapter find the fake tmux.
+func osAdapterFixtureWithFakeTmux(t *testing.T, binDir string) {
 	t.Helper()
-	origPath := os.Getenv("PATH")
-	newPath := binDir + string(os.PathListSeparator) + origPath
-	t.Setenv("PATH", newPath)
-	return newPath
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -304,6 +301,30 @@ func TestOSAdapter_ListSessions_NoServer(t *testing.T) {
 	}
 	if sessions != nil {
 		t.Errorf("ListSessions no-server: want nil sessions, got %v", sessions)
+	}
+}
+
+// TestOSAdapter_ListSessions_UnexpectedFailure verifies that list failures are
+// not mistaken for an absent tmux server.
+func TestOSAdapter_ListSessions_UnexpectedFailure(t *testing.T) {
+	binDir := osAdapterFixtureBinDir(t)
+	osAdapterFixtureWriteFakeTmux(t, binDir, []string{"permission denied"}, 1)
+	osAdapterFixtureWithFakeTmux(t, binDir)
+
+	a := OSAdapter{}
+	sessions, err := a.ListSessions(context.Background())
+	if err == nil {
+		t.Fatal("ListSessions unexpected failure: want error, got nil")
+	}
+	if sessions != nil {
+		t.Errorf("ListSessions unexpected failure: want nil sessions, got %v", sessions)
+	}
+	var tf *ErrTmuxFailure
+	if !errors.As(err, &tf) {
+		t.Fatalf("ListSessions unexpected failure: want *ErrTmuxFailure, got %T: %v", err, err)
+	}
+	if tf.Op != "list-sessions" || tf.Stderr != "permission denied" {
+		t.Errorf("ListSessions unexpected failure: got %+v", tf)
 	}
 }
 

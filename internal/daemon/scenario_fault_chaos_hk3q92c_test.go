@@ -50,7 +50,6 @@ import (
 type hk3q92cErrRunner struct{}
 
 func (r hk3q92cErrRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
-	//nolint:gosec // G204: test-controlled literal; not user input
 	return exec.CommandContext(ctx, "false") // exits 1
 }
 
@@ -73,13 +72,11 @@ type hk3q92cFlakyRunner struct {
 func (r *hk3q92cFlakyRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
 	n := r.called.Add(1)
 	if n <= atomic.LoadInt32(&r.failN) {
-		//nolint:gosec // G204: test-controlled literal; not user input
 		return exec.CommandContext(ctx, "false") // exits 1 — simulates a transient failure
 	}
 	if r.base != nil {
 		return r.base.Command(ctx, name, args...)
 	}
-	//nolint:gosec // G204: test-controlled literal; not user input
 	return exec.CommandContext(ctx, "true") // exits 0
 }
 
@@ -99,10 +96,8 @@ type hk3q92cReplayRunner struct{}
 
 func (r hk3q92cReplayRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
 	if name == "test" {
-		//nolint:gosec // G204: test-controlled literal; not user input
 		return exec.CommandContext(ctx, "true") // any 'test' call → "yes, exists"
 	}
-	//nolint:gosec // G204: test-controlled literal; not user input
 	return exec.CommandContext(ctx, "false")
 }
 

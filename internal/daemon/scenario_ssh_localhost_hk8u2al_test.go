@@ -77,7 +77,7 @@ import (
 //  2. SSH transport: routes the remapped command through SSHRunner{Host:"localhost"}
 //     so every cat/stat travels through a real ssh binary, exercising shell quoting.
 //
-// Because it is neither nil nor LocalRunner{}, runnerIsLocalFS classifies it as a
+// Because it is neither nil nor LocalRunner{}, gitprobe.RunnerIsLocalFS classifies it as a
 // remote runner, so all Via functions route through it rather than falling back to
 // bare os.ReadFile / os.Stat on box A.
 type hk8u2alSSHRemapRunner struct {
@@ -131,7 +131,6 @@ func hk8u2alSkipIfSSHLocalhostUnavailable(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	//nolint:gosec // G204: fixed args; no user input
 	cmd := exec.CommandContext(ctx, "ssh",
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
@@ -162,7 +161,6 @@ func hk8u2alFixtureProjectSetup(t *testing.T) string {
 	}
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -195,7 +193,6 @@ func hk8u2alFixtureImplWorktree(t *testing.T, projectDir string) (wtPath, parent
 
 	wtDir := t.TempDir()
 	wtPath = filepath.Join(wtDir, "wt")
-	//nolint:gosec // G204: git args are test-internal
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "--detach", wtPath, parentSHA)
 	addCmd.Dir = projectDir
 	if addOut, addErr := addCmd.CombinedOutput(); addErr != nil {
@@ -206,7 +203,6 @@ func hk8u2alFixtureImplWorktree(t *testing.T, projectDir string) (wtPath, parent
 		t.Fatalf("hk8u2alFixtureImplWorktree: mkdir .harmonik: %v", err)
 	}
 	t.Cleanup(func() {
-		//nolint:gosec // G204: git args are test-internal
 		rmCmd := exec.Command("git", "worktree", "remove", "--force", "--force", wtPath)
 		rmCmd.Dir = projectDir
 		_ = rmCmd.Run()
@@ -237,7 +233,6 @@ func hk8u2alFixtureWorkerCheckout(t *testing.T) string {
 	}
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {

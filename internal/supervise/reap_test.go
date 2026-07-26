@@ -13,6 +13,7 @@ import (
 type fakeReapAdapter struct {
 	sessions []FlywheelSession
 	listErr  error
+	killErr  error
 	killed   []string
 }
 
@@ -25,7 +26,7 @@ func (f *fakeReapAdapter) ListFlywheelSessions(_ context.Context) ([]FlywheelSes
 
 func (f *fakeReapAdapter) KillSession(_ context.Context, name string) error {
 	f.killed = append(f.killed, name)
-	return nil
+	return f.killErr
 }
 
 // TestReap_KillsOnlyDeadFlywheel_LeavesDefaultUntouched is the core gate: a fake
@@ -155,6 +156,25 @@ func TestReap_ListError_Propagates(t *testing.T) {
 	}
 	if len(adapter.killed) != 0 {
 		t.Fatalf("nothing should be killed on list error, got %v", adapter.killed)
+	}
+}
+
+func TestReap_KillErrorDoesNotReportSuccessfulReap(t *testing.T) {
+	name := "harmonik-0123456789ab-flywheel"
+	adapter := &fakeReapAdapter{
+		sessions: []FlywheelSession{{Name: name, PaneDead: true}},
+		killErr:  errors.New("permission denied"),
+	}
+
+	result, err := ReapOrphanFlywheelSessions(context.Background(), adapter, ReapOptions{})
+	if err == nil || !errors.Is(err, adapter.killErr) {
+		t.Fatalf("kill error = %v, want wrapped permission error", err)
+	}
+	if len(result.Reaped) != 0 || len(result.Events) != 0 {
+		t.Fatalf("failed kill reported as successful: %+v", result)
+	}
+	if len(adapter.killed) != 1 || adapter.killed[0] != name {
+		t.Fatalf("kill calls = %v, want [%q]", adapter.killed, name)
 	}
 }
 

@@ -19,7 +19,9 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/crew"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,34 +84,34 @@ func (f *fakePauseCtrl) HandleOperatorResume(_ context.Context, _ string) error 
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-func newTestCrewHandler(t *testing.T, sub handler.Substrate, opCtrl OperatorControlHandler) (CrewHandler, string) {
+func newTestCrewHandler(t *testing.T, sub handler.Substrate, opCtrl OperatorControlHandler) (crewrun.CrewHandler, string) {
 	t.Helper()
 	dir := t.TempDir()
 	return NewCrewHandler("claude", dir, "", sub, opCtrl), dir
 }
 
-func mustCrewStart(t *testing.T, h CrewHandler, req CrewStartRequest) CrewStartResult {
+func mustCrewStart(t *testing.T, h crewrun.CrewHandler, req crewrun.CrewStartRequest) crewrun.CrewStartResult {
 	t.Helper()
 	raw, err := json.Marshal(req)
 	if err != nil {
-		t.Fatalf("marshal CrewStartRequest: %v", err)
+		t.Fatalf("marshal crewrun.CrewStartRequest: %v", err)
 	}
 	out, err := h.HandleCrewStart(context.Background(), json.RawMessage(raw))
 	if err != nil {
 		t.Fatalf("HandleCrewStart: %v", err)
 	}
-	var result CrewStartResult
+	var result crewrun.CrewStartResult
 	if err := json.Unmarshal(out, &result); err != nil {
-		t.Fatalf("unmarshal CrewStartResult: %v", err)
+		t.Fatalf("unmarshal crewrun.CrewStartResult: %v", err)
 	}
 	return result
 }
 
-func mustCrewStop(t *testing.T, h CrewHandler, req CrewStopRequest) {
+func mustCrewStop(t *testing.T, h crewrun.CrewHandler, req crewrun.CrewStopRequest) {
 	t.Helper()
 	raw, err := json.Marshal(req)
 	if err != nil {
-		t.Fatalf("marshal CrewStopRequest: %v", err)
+		t.Fatalf("marshal crewrun.CrewStopRequest: %v", err)
 	}
 	_, err = h.HandleCrewStop(context.Background(), json.RawMessage(raw))
 	if err != nil {
@@ -127,7 +129,7 @@ func TestCrewStart_HappyPath(t *testing.T) {
 	sub := &fakeSubstrate{}
 	h, dir := newTestCrewHandler(t, sub, nil)
 
-	result := mustCrewStart(t, h, CrewStartRequest{
+	result := mustCrewStart(t, h, crewrun.CrewStartRequest{
 		Name:  "alpha",
 		Queue: "crew-q",
 	})
@@ -189,7 +191,7 @@ func TestCrewStart_SessionIDMintedBeforeLaunch(t *testing.T) {
 	dir = t.TempDir()
 	h.projectDir = dir
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "beta", Queue: "q2"})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "beta", Queue: "q2"})
 
 	if !registryExistsDuringSpawn {
 		t.Error("registry record was NOT written before SpawnWindow was called")
@@ -217,13 +219,13 @@ func TestCrewStart_QueueEnsureIdempotent(t *testing.T) {
 	h, dir := newTestCrewHandler(t, &fakeSubstrate{}, nil)
 
 	// First start.
-	r1 := mustCrewStart(t, h, CrewStartRequest{Name: "gamma", Queue: "shared-q"})
+	r1 := mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "gamma", Queue: "shared-q"})
 	if r1.SessionID == "" {
 		t.Fatal("first start: empty session_id")
 	}
 
 	// Second start reuses the same name → re-launch path (resume=true).
-	r2 := mustCrewStart(t, h, CrewStartRequest{Name: "gamma", Queue: "shared-q"})
+	r2 := mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "gamma", Queue: "shared-q"})
 	// session_id must match the first (re-launch reuses it).
 	if r2.SessionID != r1.SessionID {
 		t.Errorf("re-launch session_id = %q, want %q (first session)", r2.SessionID, r1.SessionID)
@@ -240,9 +242,9 @@ func TestCrewStart_QueueEnsureIdempotent(t *testing.T) {
 func TestCrewStart_QueueConflict(t *testing.T) {
 	h, _ := newTestCrewHandler(t, &fakeSubstrate{}, nil)
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "first", Queue: "contested"})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "first", Queue: "contested"})
 
-	raw, _ := json.Marshal(CrewStartRequest{Name: "second", Queue: "contested"})
+	raw, _ := json.Marshal(crewrun.CrewStartRequest{Name: "second", Queue: "contested"})
 	_, err := h.HandleCrewStart(context.Background(), json.RawMessage(raw))
 	if err == nil {
 		t.Error("expected error for queue conflict, got nil")
@@ -255,7 +257,7 @@ func TestCrewStart_SpawnFailRollback(t *testing.T) {
 	sub := &fakeSubstrate{spawnErr: errors.New("tmux: no session")}
 	h, dir := newTestCrewHandler(t, sub, nil)
 
-	raw, _ := json.Marshal(CrewStartRequest{Name: "delta", Queue: "q-delta"})
+	raw, _ := json.Marshal(crewrun.CrewStartRequest{Name: "delta", Queue: "q-delta"})
 	_, err := h.HandleCrewStart(context.Background(), json.RawMessage(raw))
 	if err == nil {
 		t.Fatal("expected spawn error, got nil")
@@ -270,7 +272,7 @@ func TestCrewStart_SpawnFailRollback(t *testing.T) {
 // TestCrewStart_RequiresName verifies that an empty name returns an error.
 func TestCrewStart_RequiresName(t *testing.T) {
 	h, _ := newTestCrewHandler(t, &fakeSubstrate{}, nil)
-	raw, _ := json.Marshal(CrewStartRequest{Name: "", Queue: "q"})
+	raw, _ := json.Marshal(crewrun.CrewStartRequest{Name: "", Queue: "q"})
 	_, err := h.HandleCrewStart(context.Background(), json.RawMessage(raw))
 	if err == nil {
 		t.Error("expected error for empty name, got nil")
@@ -280,7 +282,7 @@ func TestCrewStart_RequiresName(t *testing.T) {
 // TestCrewStart_RequiresQueue verifies that an empty queue returns an error.
 func TestCrewStart_RequiresQueue(t *testing.T) {
 	h, _ := newTestCrewHandler(t, &fakeSubstrate{}, nil)
-	raw, _ := json.Marshal(CrewStartRequest{Name: "epsilon", Queue: ""})
+	raw, _ := json.Marshal(crewrun.CrewStartRequest{Name: "epsilon", Queue: ""})
 	_, err := h.HandleCrewStart(context.Background(), json.RawMessage(raw))
 	if err == nil {
 		t.Error("expected error for empty queue, got nil")
@@ -293,17 +295,17 @@ func TestCrewStart_RequiresQueue(t *testing.T) {
 
 // TestCrewStart_HarnessResolutionEndToEnd exercises the full composition line
 // inside HandleCrewStart — req.Harness / mission harness: front-matter / the
-// per-crew crews: config tier all reach resolveCrewHarness and, for the
+// per-crew crews: config tier all reach crewrun.ResolveCrewHarness and, for the
 // supported "claude" resolution, flow through to a normal spawn (no
-// buildCrewLaunchSpec error, substrate.SpawnWindow called). This complements
-// the component-level tests in crewlaunchspec_test.go (resolveCrewHarness,
-// readMissionHarness, buildCrewLaunchSpec's branch in isolation).
+// crewrun.BuildCrewLaunchSpec error, substrate.SpawnWindow called). This complements
+// the component-level tests in internal/crewrun/launchspec_test.go
+// (ResolveCrewHarness, ReadMissionHarness, BuildCrewLaunchSpec's branch in isolation).
 func TestCrewStart_HarnessResolutionEndToEnd(t *testing.T) {
 	t.Run("flag_claude_spawns_normally", func(t *testing.T) {
 		sub := &fakeSubstrate{}
 		h, _ := newTestCrewHandler(t, sub, nil)
 
-		mustCrewStart(t, h, CrewStartRequest{Name: "flag-claude", Queue: "q-flag", Harness: "claude"})
+		mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "flag-claude", Queue: "q-flag", Harness: "claude"})
 
 		if !sub.spawnCalled {
 			t.Error("substrate.SpawnWindow was not called for the explicit claude harness")
@@ -320,7 +322,7 @@ func TestCrewStart_HarnessResolutionEndToEnd(t *testing.T) {
 			t.Fatalf("write mission: %v", err)
 		}
 
-		mustCrewStart(t, h, CrewStartRequest{Name: "mission-claude", Queue: "q-mission", MissionPath: missionPath})
+		mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "mission-claude", Queue: "q-mission", MissionPath: missionPath})
 
 		if !sub.spawnCalled {
 			t.Error("substrate.SpawnWindow was not called for a mission harness: claude front-matter")
@@ -331,9 +333,9 @@ func TestCrewStart_HarnessResolutionEndToEnd(t *testing.T) {
 		sub := &fakeSubstrate{}
 		dir := t.TempDir()
 		h := NewCrewHandler("claude", dir, "", sub, nil,
-			WithCrewsConfig(map[string]CrewConfig{"config-claude": {Harness: "claude"}}))
+			WithCrewsConfig(map[string]projectconfig.CrewConfig{"config-claude": {Harness: "claude"}}))
 
-		mustCrewStart(t, h, CrewStartRequest{Name: "config-claude", Queue: "q-config"})
+		mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "config-claude", Queue: "q-config"})
 
 		if !sub.spawnCalled {
 			t.Error("substrate.SpawnWindow was not called for a per-crew config harness: claude")
@@ -348,7 +350,7 @@ func TestCrewStart_HarnessResolutionEndToEnd(t *testing.T) {
 		sub := &fakeSubstrate{}
 		dir := t.TempDir()
 		h := NewCrewHandler("claude", dir, "", sub, nil,
-			WithCrewsConfig(map[string]CrewConfig{"precedence": {Harness: "pi"}}))
+			WithCrewsConfig(map[string]projectconfig.CrewConfig{"precedence": {Harness: "pi"}}))
 
 		missionPath := filepath.Join(dir, "mission.md")
 		const mission = "---\nschema_version: 1\nharness: codex\n---\n\n# Mission\n"
@@ -356,7 +358,7 @@ func TestCrewStart_HarnessResolutionEndToEnd(t *testing.T) {
 			t.Fatalf("write mission: %v", err)
 		}
 
-		mustCrewStart(t, h, CrewStartRequest{
+		mustCrewStart(t, h, crewrun.CrewStartRequest{
 			Name: "precedence", Queue: "q-precedence", MissionPath: missionPath, Harness: "claude",
 		})
 
@@ -367,7 +369,7 @@ func TestCrewStart_HarnessResolutionEndToEnd(t *testing.T) {
 }
 
 // TestCrewStart_UnsupportedHarnessRollback verifies that an unsupported
-// resolved harness (hk-l63b9: buildCrewLaunchSpec rejects anything but
+// resolved harness (hk-l63b9: crewrun.BuildCrewLaunchSpec rejects anything but
 // ""/"claude") fails HandleCrewStart with an explicit error, never spawns a
 // window, and rolls back the registry record written in step 2 — mirroring
 // TestCrewStart_SpawnFailRollback's rollback assertion for the harness-branch
@@ -376,9 +378,9 @@ func TestCrewStart_UnsupportedHarnessRollback(t *testing.T) {
 	sub := &fakeSubstrate{}
 	h, dir := newTestCrewHandler(t, sub, nil)
 
-	raw, mErr := json.Marshal(CrewStartRequest{Name: "zeta", Queue: "q-zeta", Harness: "codex"})
+	raw, mErr := json.Marshal(crewrun.CrewStartRequest{Name: "zeta", Queue: "q-zeta", Harness: "codex"})
 	if mErr != nil {
-		t.Fatalf("marshal CrewStartRequest: %v", mErr)
+		t.Fatalf("marshal crewrun.CrewStartRequest: %v", mErr)
 	}
 	_, err := h.HandleCrewStart(context.Background(), json.RawMessage(raw))
 	if err == nil {
@@ -406,7 +408,7 @@ func TestCrewStart_StopHappyPath(t *testing.T) {
 	h, dir := newTestCrewHandler(t, sub, nil)
 
 	// Start first to populate the registry + .managed.
-	mustCrewStart(t, h, CrewStartRequest{Name: "zeta", Queue: "q-zeta"})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "zeta", Queue: "q-zeta"})
 
 	// Verify .managed exists before stop.
 	markerPath := filepath.Join(dir, ".harmonik", "keeper", "zeta.managed")
@@ -414,7 +416,7 @@ func TestCrewStart_StopHappyPath(t *testing.T) {
 		t.Fatalf(".managed not created before stop: %v", err)
 	}
 
-	mustCrewStop(t, h, CrewStopRequest{Name: "zeta"})
+	mustCrewStop(t, h, crewrun.CrewStopRequest{Name: "zeta"})
 
 	// Registry record must be gone.
 	_, err := crew.Load(dir, "zeta")
@@ -437,7 +439,7 @@ func TestCrewStart_StopHappyPath(t *testing.T) {
 // an error.
 func TestCrewStart_StopNotFound(t *testing.T) {
 	h, _ := newTestCrewHandler(t, &fakeSubstrate{}, nil)
-	raw, _ := json.Marshal(CrewStopRequest{Name: "ghost"})
+	raw, _ := json.Marshal(crewrun.CrewStopRequest{Name: "ghost"})
 	_, err := h.HandleCrewStop(context.Background(), json.RawMessage(raw))
 	if err == nil {
 		t.Error("expected error for unknown crew, got nil")
@@ -451,8 +453,8 @@ func TestCrewStart_StopPauseQueue(t *testing.T) {
 	ctrl := &fakePauseCtrl{}
 	h, _ := newTestCrewHandler(t, sub, ctrl)
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "eta", Queue: "q-eta"})
-	mustCrewStop(t, h, CrewStopRequest{Name: "eta", PauseQueue: true})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "eta", Queue: "q-eta"})
+	mustCrewStop(t, h, crewrun.CrewStopRequest{Name: "eta", PauseQueue: true})
 
 	if ctrl.pausedQueue != "q-eta" {
 		t.Errorf("paused queue = %q, want %q", ctrl.pausedQueue, "q-eta")
@@ -465,8 +467,8 @@ func TestCrewStart_StopNoPauseQueue(t *testing.T) {
 	ctrl := &fakePauseCtrl{}
 	h, _ := newTestCrewHandler(t, &fakeSubstrate{}, ctrl)
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "theta", Queue: "q-theta"})
-	mustCrewStop(t, h, CrewStopRequest{Name: "theta", PauseQueue: false})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "theta", Queue: "q-theta"})
+	mustCrewStop(t, h, crewrun.CrewStopRequest{Name: "theta", PauseQueue: false})
 
 	if ctrl.pausedQueue != "" {
 		t.Errorf("expected no pause, but paused queue = %q", ctrl.pausedQueue)

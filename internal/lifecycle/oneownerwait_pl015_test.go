@@ -11,16 +11,21 @@ import (
 )
 
 // supervisionFixtureWaitOwner encapsulates the single-owner Wait discipline for
-// a *exec.Cmd: only one goroutine may call cmd.Wait(); all others must observe
-// the result through the shared result channel.
+// a *exec.Cmd: only one goroutine may call cmd.Wait(); all others observe the
+// memoized result once the shared channel signals that the reap has happened.
 //
 // Spec ref: process-lifecycle.md §4.5 PL-014 — "Every spawn MUST have exactly
 // one Go goroutine that owns the *exec.Cmd and that goroutine MUST call
 // cmd.Wait() exactly once to reap the child's exit status."
 type supervisionFixtureWaitOwner struct {
-	cmd    *exec.Cmd
-	waitCh chan error // closed after the single Wait call completes
-	once   sync.Once
+	cmd  *exec.Cmd
+	err  error // cmd.Wait's result; written once inside once.Do
+	once sync.Once
+	// waitCh is closed after the single cmd.Wait call completes. It carries the
+	// "reaped" edge only — the exit error is read from err. Sending the error
+	// over the channel instead would deliver it to the FIRST receiver and leave
+	// every later one seeing the closed-channel nil (hk-qun49).
+	waitCh chan error
 }
 
 // supervisionFixtureNewWaitOwner wraps cmd in a WaitOwner. The cmd must have
@@ -33,16 +38,16 @@ func supervisionFixtureNewWaitOwner(cmd *exec.Cmd) *supervisionFixtureWaitOwner 
 }
 
 // Wait may be called from any goroutine. The FIRST caller performs the actual
-// cmd.Wait(); subsequent callers receive the same error via the shared channel.
-// This enforces the single-owner discipline: the channel replaces the need to
-// call cmd.Wait() more than once.
+// cmd.Wait(); every subsequent caller receives the same memoized error. This
+// enforces the single-owner discipline: the memo replaces the need to call
+// cmd.Wait() more than once.
 func (o *supervisionFixtureWaitOwner) Wait() error {
 	o.once.Do(func() {
-		err := o.cmd.Wait()
-		o.waitCh <- err
+		o.err = o.cmd.Wait()
 		close(o.waitCh)
 	})
-	return <-o.waitCh
+	<-o.waitCh
+	return o.err
 }
 
 // supervisionFixtureSpawnSelfExit spawns the test binary with a sentinel that
@@ -166,8 +171,9 @@ func TestPL015_OneOwnerWait(t *testing.T) {
 	t.Run("single-owner/wait-owner-result-is-consistent", func(t *testing.T) {
 		t.Parallel()
 
-		// Verify the WaitOwner result channel is closed after Wait so that
-		// subsequent reads return immediately with the same value.
+		// Verify the fixture WaitOwner memoizes cmd.Wait's result so that every
+		// subsequent Wait returns immediately with the same value. The channel
+		// carries only the "reaped" edge; the value comes from the err field.
 		cmd := supervisionFixtureSpawnSelfExit(t)
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("PL-015 consistent-result: cmd.Start: %v", err)
@@ -177,12 +183,12 @@ func TestPL015_OneOwnerWait(t *testing.T) {
 
 		// First call.
 		err1 := owner.Wait()
-		// Second call on a closed channel — must return same value immediately.
+		// Second call after waitCh is closed — must return the same value
+		// immediately.
 		err2 := owner.Wait()
 
-		// Both calls must return the same error value.
-		// Since both calls share the same cached channel result, we compare by
-		// string representation (both are nil or carry the same wrapped error).
+		// Both calls must read the same memoized err field, so they must be the
+		// identical error value (both nil, or both the same wrapped error).
 		// We intentionally avoid errors.Is here because we are comparing two
 		// results of the same operation, not checking for a specific sentinel.
 		//nolint:errorlint // comparing two results of the same Wait() call, not checking sentinel

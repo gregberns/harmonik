@@ -64,14 +64,14 @@ func filterFixtureEvent(t *testing.T, evType string, runID *core.RunID) core.Eve
 }
 
 // filterFixtureWriteEvents marshals each event as a JSONL line into path using
-// JSONLWriter. Returns the path for chaining.
-func filterFixtureWriteEvents(t *testing.T, path string, events []core.Event) string {
+// JSONLWriter.
+func filterFixtureWriteEvents(t *testing.T, path string, events []core.Event) {
 	t.Helper()
 	w, err := eventbus.OpenJSONLWriter(path)
 	if err != nil {
 		t.Fatalf("filterFixtureWriteEvents: OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer eventbusFixtureClose(t, w)
 	for i, ev := range events {
 		b, marshalErr := json.Marshal(ev)
 		if marshalErr != nil {
@@ -81,7 +81,6 @@ func filterFixtureWriteEvents(t *testing.T, path string, events []core.Event) st
 			t.Fatalf("filterFixtureWriteEvents: Append event %d: %v", i, appendErr)
 		}
 	}
-	return path
 }
 
 // filterFixtureCollect drains an iter.Seq[core.Event] into a slice.
@@ -171,8 +170,14 @@ func TestFilterMalformedLinesSkipped(t *testing.T) {
 	evA1 := filterFixtureEvent(t, "run_started", &runA)
 	evA2 := filterFixtureEvent(t, "run_finished", &runA)
 
-	b1, _ := json.Marshal(evA1)
-	b2, _ := json.Marshal(evA2)
+	b1, err := json.Marshal(evA1)
+	if err != nil {
+		t.Fatalf("marshal first event: %v", err)
+	}
+	b2, err := json.Marshal(evA2)
+	if err != nil {
+		t.Fatalf("marshal second event: %v", err)
+	}
 
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input.
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -188,7 +193,7 @@ func TestFilterMalformedLinesSkipped(t *testing.T) {
 			t.Fatalf("write: %v", writeErr)
 		}
 	}
-	_ = f.Close()
+	eventbusFixtureClose(t, f)
 
 	got := filterFixtureCollect(t, eventbus.Filter(path, runA))
 	if len(got) != 2 {
@@ -241,11 +246,12 @@ func TestFilterEmptyFile(t *testing.T) {
 
 	path := filterFixtureTempPath(t, "empty.jsonl")
 	// Create the file but write nothing.
+	//nolint:gosec // G304: path is a t.TempDir fixture path constructed by filterFixtureTempPath.
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	_ = f.Close()
+	eventbusFixtureClose(t, f)
 
 	runA := filterFixtureRunID(t)
 	got := filterFixtureCollect(t, eventbus.Filter(path, runA))

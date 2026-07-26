@@ -93,10 +93,10 @@ var hc034FixtureAnthropicPattern = regexp.MustCompile(`^sk-ant-[A-Za-z0-9_\-]{10
 const hc034FixtureAnthropicKeyStub = "sk-ant-" +
 	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
-// hc034FixtureSecretFieldValue is a clearly-fake secret value used in HC-031
+// hc034FixtureRedactedFieldValue is a clearly-fake value used in HC-031
 // path tests (field-name redaction).  The value does NOT match any pattern
 // shape so that the test exercises HC-031 in isolation.
-const hc034FixtureSecretFieldValue = "hc034-fake-secret-field-value"
+const hc034FixtureRedactedFieldValue = "hc034-redacted-field-value"
 
 // hc034FixtureJSONLPath returns a temporary JSONL log path for one test.
 func hc034FixtureJSONLPath(t *testing.T) string {
@@ -142,11 +142,6 @@ func hc034FixtureDecodePayload(t *testing.T, line string) map[string]any {
 	return payload
 }
 
-// hc034FixtureWildcardPattern returns a wildcard EventPattern matching all event types.
-func hc034FixtureWildcardPattern() core.EventPattern {
-	return core.EventPattern{Wildcard: true}
-}
-
 // hc034FixtureNewRunID generates a UUIDv7-based RunID for EmitWithRunID tests.
 func hc034FixtureNewRunID(t *testing.T) core.RunID {
 	t.Helper()
@@ -184,7 +179,7 @@ func TestHC034_SecretNamedFieldAbsentFromJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	// Construct a bus with no HC-032 patterns — only HC-031 fires here.
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
@@ -194,7 +189,7 @@ func TestHC034_SecretNamedFieldAbsentFromJSONL(t *testing.T) {
 
 	// Payload: "token" matches HC-031; "node_id" is safe.
 	payload, marshalErr := json.Marshal(map[string]any{
-		"token":   hc034FixtureSecretFieldValue,
+		"token":   hc034FixtureRedactedFieldValue,
 		"node_id": "hc034-node-hc031",
 	})
 	if marshalErr != nil {
@@ -213,13 +208,13 @@ func TestHC034_SecretNamedFieldAbsentFromJSONL(t *testing.T) {
 	line := lines[0]
 
 	// HC-034: the raw secret value MUST NOT appear in the raw JSONL bytes.
-	if strings.Contains(line, hc034FixtureSecretFieldValue) {
+	if strings.Contains(line, hc034FixtureRedactedFieldValue) {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-031 path): persisted JSONL raw bytes contain the secret value %q;\n"+
 				"  want: value replaced by %q before JSONL append\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034 — no secret value MAY appear in "+
 				"any persisted event record",
-			hc034FixtureSecretFieldValue, core.RedactedSentinel,
+			hc034FixtureRedactedFieldValue, core.RedactedSentinel,
 		)
 	}
 
@@ -269,7 +264,7 @@ func TestHC034_SecretValuePatternAbsentFromJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	// Register the Anthropic key-shape pattern for one subsystem.
 	registry := core.NewRedactionRegistry()
@@ -357,7 +352,7 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	// Registry with Anthropic key pattern (HC-032 path).
 	registry := core.NewRedactionRegistry()
@@ -373,7 +368,7 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 	//   - "provider_key": benign name, value matches HC-032 Anthropic pattern
 	//   - "node_id": safe field (MUST NOT be redacted)
 	payload, marshalErr := json.Marshal(map[string]any{
-		"token":        hc034FixtureSecretFieldValue,
+		"token":        hc034FixtureRedactedFieldValue,
 		"provider_key": hc034FixtureAnthropicKeyStub,
 		"node_id":      "hc034-node-composed",
 	})
@@ -393,12 +388,12 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 	line := lines[0]
 
 	// HC-034 / HC-031: raw value of "token" field MUST NOT appear in JSONL bytes.
-	if strings.Contains(line, hc034FixtureSecretFieldValue) {
+	if strings.Contains(line, hc034FixtureRedactedFieldValue) {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-031 path, composed): raw JSONL bytes contain secret %q;\n"+
 				"  want: value replaced by %q\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034",
-			hc034FixtureSecretFieldValue, core.RedactedSentinel,
+			hc034FixtureRedactedFieldValue, core.RedactedSentinel,
 		)
 	}
 
@@ -464,7 +459,7 @@ func TestHC034_SafeFieldsPreservedInJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	// Registry with Anthropic pattern — neither field name nor value matches here.
 	registry := core.NewRedactionRegistry()
@@ -501,7 +496,6 @@ func TestHC034_SafeFieldsPreservedInJSONL(t *testing.T) {
 
 	// Every safe field MUST be preserved verbatim.
 	for k, want := range safePayload {
-		k, want := k, want
 		t.Run(k, func(t *testing.T) {
 			t.Parallel()
 			v, exists := got[k]
@@ -553,7 +547,7 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	// No HC-032 patterns — HC-031 field-name redaction only.
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
@@ -565,7 +559,7 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 
 	// Payload with a secret-named field ("password") and a safe field.
 	payload, marshalErr := json.Marshal(map[string]any{
-		"password": hc034FixtureSecretFieldValue,
+		"password": hc034FixtureRedactedFieldValue,
 		"node_id":  "hc034-node-runid",
 	})
 	if marshalErr != nil {
@@ -584,12 +578,12 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 	line := lines[0]
 
 	// HC-034: raw secret MUST NOT appear in the run-stamped JSONL raw bytes.
-	if strings.Contains(line, hc034FixtureSecretFieldValue) {
+	if strings.Contains(line, hc034FixtureRedactedFieldValue) {
 		t.Errorf(
 			"HC-034 VIOLATED (EmitWithRunID path): raw JSONL bytes contain secret %q;\n"+
 				"  EmitWithRunID MUST apply the same HC-031 redaction pipeline as Emit\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034",
-			hc034FixtureSecretFieldValue,
+			hc034FixtureRedactedFieldValue,
 		)
 	}
 

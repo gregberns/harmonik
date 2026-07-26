@@ -63,6 +63,21 @@ linters:
       - path: ^internal/testhelpers/
         linters:
           - forbidigo
+      # cmd/ is the CLI. Printing to stdout IS its output, so "use the structured
+      # logger" is a false positive there by construction — it accounted for 184
+      # of the tree's 235 forbidigo findings. tools/ and internal/testhelpers/
+      # above are the same carve-out; this extends it to the one tree whose whole
+      # job is to print.
+      #
+      # Deliberately NARROWER than those two: they exclude the WHOLE forbidigo
+      # linter, which also hands them the `panic` ban for free. This rule matches
+      # only the fmt.Print* ban (by its msg text), so `panic` stays forbidden in
+      # cmd/ — a CLI that panics instead of returning an exit code is still a
+      # defect, and the ban's own wording ("panics only in main/init") says so.
+      - linters:
+          - forbidigo
+        text: 'use the structured logger'
+        path: ^cmd/
       # SC6 (agent-input-substrate T9): the time.Sleep/After/NewTimer ban is
       # PATH-SCOPED to the structured input-driver packages. This rule EXCLUDES
       # the SC6-DRIVER-CLOCKPORT finding for every file EXCEPT those packages
@@ -80,8 +95,27 @@ linters:
           - forbidigo
         text: 'SC6-DRIVER-CLOCKPORT'
         path: _test\.go$
+      # P2 hk-8dtiv: production Close() is now mechanically errcheck-gated (the four
+      # (io.Closer|*os.File|net.Conn|net.Listener).Close exclude-functions entries were
+      # dropped). Test Close noise stays at zero by matching the finding text on _test.go
+      # paths — the same text:+path: mechanism the SC6 rules above use.
+      - linters:
+          - errcheck
+        text: 'Close` is not checked'
+        path: _test\.go$
   settings:
-    errcheck: { check-type-assertions: true, check-blank: true, exclude-functions: ["(io.Closer).Close"] }
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      # Close() is mechanically errcheck-gated on production code (P2 hk-8dtiv).
+      # The four (io.Closer|*os.File|net.Conn|net.Listener).Close exclude-functions
+      # entries that used to live here were dropped once the whole production tree
+      # was migrated to the house Close idiom (see .claude/skills/agent-reviewer/
+      # SKILL.md §"Deferred Close()" for the three landed forms). Test noise is
+      # carried by the `_test.go`-scoped errcheck exclusion in exclusions.rules
+      # above (text: 'Close` is not checked'), not by a function exclusion — so
+      # every production close is checked while `*_test.go` closes stay silent.
+      # There are no Close exclude-functions entries; do not re-add them.
     revive:   { rules: [{name: exported}, {name: package-comments}, {name: var-naming}, {name: error-return}, {name: error-naming}, {name: if-return}] }
     gocritic: { enabled-tags: [diagnostic, performance, style], disabled-checks: [hugeParam, rangeValCopy] }
     nolintlint: { require-explanation: true, require-specific: true, allow-unused: false }
@@ -161,6 +195,282 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "crew MUST NOT import daemon (c2-spec.md §3.3)" }
 
+        # gitprobe: stdlib + the tmux CommandRunner seam + self-import (external test
+        # pattern); MUST NOT import daemon. The read-only git probes live here so the
+        # extracted harness packages (P2 unit E1a onward) can reach them without
+        # linking the daemon — which is the whole point of the extraction. If this
+        # package ever imports daemon, the harness closure silently drags the monolith
+        # back in and E1's "linkable unit" property is lost.
+        # Rationale: plans/2026-07-21-p2-extraction/_plan.md unit E1a.
+        gitprobe:
+          files: ["**/internal/gitprobe/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "gitprobe is a leaf: importing daemon would re-couple every harness that uses it (P2 E1a)" }
+
+        # projectconfig: the .harmonik/config.yaml loader + config value types
+        # extracted out of internal/daemon (P2 LIFT crit 5). It is a pure leaf —
+        # parseProjectConfig is the pure boundary, LoadProjectConfig the one edge
+        # (os.ReadFile + UserHomeDir) — so RunEnv.ProjectCfg / RunEnv.SandboxCfg
+        # can become daemon-free types and the run machine can later move to
+        # internal/runloop without dragging config across the boundary. The allow
+        # list is the MEASURED import set: stdlib, yaml.v3 (the on-disk decoder),
+        # internal/core (AgentType / WorkflowMode), and self (white-box tests).
+        # It MUST NOT import daemon: doing so would re-couple every daemon file
+        # that names a config type back through the leaf and defeat the extraction.
+        # Rationale: plans/2026-07-21-p2-extraction LIFT crit 5.
+        projectconfig:
+          files: ["**/internal/projectconfig/**"]
+          allow:
+            - "$gostd"
+            - "gopkg.in/yaml.v3"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/projectconfig"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "projectconfig is a leaf: importing daemon would re-couple the config value types to the monolith (P2 LIFT crit 5)" }
+
+        # runloop: the run machine's boundary contract — the narrow structural
+        # PORT interfaces (LedgerPort … RunRegistryPort) and the value/handle
+        # BUNDLES (RunEnv, RunPorts, SharedHandles) the run path consumes. This is
+        # the P2 LIFT foundation (chunk L0): the run-path FILES still live in
+        # internal/daemon and move here over chunks L1–L9; L0 lifts only the shared
+        # port surface so those moves are pure git mv's onto a package that already
+        # compiles daemon-free. The daemon → runloop edge is the ONLY legal one:
+        # the concrete adapters (daemonLedger, daemonRunRegistry, …) stay in daemon
+        # and satisfy these interfaces, so a runloop → daemon edge would invert the
+        # extraction and re-couple the ports to the monolith — the deny below IS the
+        # unit's success criterion in CI. The allow list is the MEASURED direct
+        # import set of internal/runloop/ports.go (via `go list`), nothing
+        # speculative: stdlib; internal/core; internal/projectconfig (RunEnv.
+        # ProjectCfg / SandboxCfg); internal/substrate (RunPorts.Clock ClockPort);
+        # internal/brcli (BeadLedger method sigs + RunEnv.BrTimeoutCfg);
+        # internal/handler + internal/handlercontract (the prefix covers
+        # handlercontract/lifecycle, whose hclifecycle.Machine RunHandlePort.
+        # SetMachine names) for the launch/emitter/substrate surfaces;
+        # internal/harness/shared (LaunchPort's LaunchCtx / LaunchArtifacts);
+        # internal/lifecycle/tmux (SharedHandles.Runner CommandRunner);
+        # internal/runmerge (MergePort.Submit); internal/workers
+        # (SharedHandles.Workers); google/uuid (PerRunEventTap synthetic event
+        # IDs); and self (white-box tests). depguard allow
+        # entries are PREFIX matches. NOTE: internal/runlaunch is DELIBERATELY
+        # absent — ports.go does not import it at L0; later chunks that move
+        # run-path files widen this list as the compiler demands.
+        # Rationale: plans/2026-07-21-p2-extraction/DAEMON-PARALLEL-ROADMAP.md (LIFT L0).
+        runloop:
+          files: ["**/internal/runloop/**"]
+          allow:
+            - "$gostd"
+            - "github.com/google/uuid"
+            - "github.com/stretchr/testify"
+            - "github.com/gregberns/harmonik/internal/brcli"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/projectconfig"
+            - "github.com/gregberns/harmonik/internal/runloop"
+            - "github.com/gregberns/harmonik/internal/runexec"
+            - "github.com/gregberns/harmonik/internal/runmerge"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/workers"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runloop is a leaf: the run machine's ports must not import daemon back — the concrete adapters live in daemon and satisfy these interfaces (daemon → runloop is the only legal edge; P2 LIFT L0)" }
+
+        # harness-shared: the cross-harness leaf (P2 unit E1a-0). Holds the pieces
+        # that more than one harness implementation needs and none of them owns:
+        # the resume seed prompt (seedprompt.go), the Refs:<bead> trailer
+        # machinery (refstrailer.go, shared by codex and pi — picommit.go's
+        # piRefsOutcome is literally an alias of it) and the launch-spec env-key
+        # split (env.go). It may reach the same seam leaves the harness impls
+        # reach, and NOTHING else: not the daemon, and not any concrete harness.
+        # Allowing a harness edge here would turn the leaf into a hub and
+        # re-couple pi to codex through the back door — the exact coupling this
+        # split removed. Note this is a PER-PACKAGE rule, not a blanket
+        # **/internal/harness/** one: a single rule whose allow list named both
+        # shared and codex would silently permit shared -> codex.
+        # Rationale: plans/2026-07-21-p2-extraction/E1a-codex-harness.md §5.
+        harness-shared:
+          files: ["**/internal/harness/shared/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "harness/shared MUST NOT import daemon — the container links the harness, not the monolith (P2 E1a)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/codex", desc: "harness/shared is a leaf BELOW every harness impl; a codex edge re-couples pi to codex (P2 E1a)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/claude", desc: "harness/shared is a leaf BELOW every harness impl (P2 E1b)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/pi", desc: "harness/shared is a leaf BELOW every harness impl (P2 E1c)" }
+
+        # harness-codex: the codex harness implementation, lifted out of
+        # internal/daemon by P2 unit E1a-1. The rule is PRE-ARMED here in E1a-0 —
+        # it matches nothing today — so the brake exists before the mass arrives
+        # and the move cannot land unfenced. Its whole point is that a P3
+        # container can link THIS package without dragging the 57k-LOC daemon in
+        # with it, so the deny edge below is the unit's success criterion
+        # expressed in CI: if it ever goes green while codex imports daemon, the
+        # extraction has been silently undone. The allow list is the verified
+        # import set of the seven files E1a-1 moves — nothing speculative. A
+        # denied import is a FINDING: prove the dependency belongs before
+        # widening this list.
+        # Rationale: plans/2026-07-21-p2-extraction/E1a-codex-harness.md §5.
+        harness-codex:
+          files: ["**/internal/harness/codex/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+            - "github.com/gregberns/harmonik/internal/harness/codex"
+            - "github.com/google/uuid"
+            - "gopkg.in/yaml.v3"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "harness impls MUST NOT import daemon back — the container links the harness, not the monolith (P2 E1a)" }
+
+        # harness-claude: the Claude Code harness implementation, lifted out of
+        # internal/daemon by P2 unit E1b — the launch-spec builder that threads
+        # the claude-hook-bridge pieces together, plus the
+        # handlercontract.Harness adapter over it. Same success criterion as
+        # harness-codex: a P3 container must be able to link THIS package
+        # without dragging the 57k-LOC daemon in with it, so the deny edge below
+        # IS the unit expressed in CI — if it ever goes green while claude
+        # imports daemon, the extraction has been silently undone.
+        #
+        # This list is WIDER than harness-codex by exactly one entry:
+        # internal/workspace. Claude is the only harness that materializes
+        # per-launch worktree state (.claude/settings.json, the ~/.claude.json
+        # trust + theme upserts, the isolated remote config dir, agent-task.md).
+        # That edge is an IMPL dependency and is deliberately NOT granted to
+        # internal/harness/shared — a helper that needs workspace is not shared,
+        # it belongs to one impl.
+        #
+        # A denied import is a FINDING: prove the dependency belongs before
+        # widening this list.
+        # Rationale: plans/2026-07-21-p2-extraction/E1b-claude.md §5.1.
+        harness-claude:
+          files: ["**/internal/harness/claude/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/workspace"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+            - "github.com/gregberns/harmonik/internal/harness/claude"
+            - "github.com/google/uuid"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "harness impls MUST NOT import daemon back — the container links the harness, not the monolith (P2 E1b)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/codex", desc: "a harness impl MUST NOT import a sibling impl; cross-harness helpers belong in internal/harness/shared (P2 E1b)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/pi", desc: "a harness impl MUST NOT import a sibling impl; cross-harness helpers belong in internal/harness/shared (P2 E1b)" }
+
+        # harness-pi: the Pi harness implementation, lifted out of internal/daemon
+        # by P2 unit E1c — the argv/env launch-spec builder (PI-015/020/021 plus
+        # the base_url models.json passthrough), the NDJSON parser and
+        # session-id/agent_end interceptor, the fail-closed PI-040 billing guard,
+        # and the PI-030/031 Refs:<bead> trailer fallback. Same success criterion
+        # as harness-codex and harness-claude: a P3 container must be able to
+        # link THIS package without dragging the 57k-LOC daemon in with it, so
+        # the daemon deny below IS the unit expressed in CI.
+        #
+        # The SIBLING denies matter as much as the daemon one here, and this is
+        # the unit that made them load-bearing: five of pi's six outbound symbols
+        # used to live in codexcommit.go, so before E1a-0 split them into
+        # internal/harness/shared a pi -> codex edge was the natural shape. It is
+        # a daemon back-edge in disguise (_plan.md §6) and must stay denied.
+        # This is also why these are PER-PACKAGE rules and not one umbrella
+        # **/internal/harness/** rule: depguard allow entries are PREFIX matches,
+        # so a single allow of .../internal/harness would silently permit every
+        # sibling edge it is the point of these rules to forbid.
+        #
+        # The allow list is the verified import set of the five files E1c moves
+        # plus its test files — nothing speculative. A denied import is a
+        # FINDING: prove the dependency belongs before widening this list.
+        # Rationale: plans/2026-07-21-p2-extraction/E1c-pi.md §5.1.
+        harness-pi:
+          files: ["**/internal/harness/pi/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+            - "github.com/gregberns/harmonik/internal/harness/pi"
+            - "github.com/google/uuid"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "harness impls MUST NOT import daemon back — the container links the harness, not the monolith (P2 E1c)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/codex", desc: "a harness impl MUST NOT import a sibling impl; cross-harness helpers belong in internal/harness/shared (P2 E1c)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/harness/claude", desc: "a harness impl MUST NOT import a sibling impl; cross-harness helpers belong in internal/harness/shared (P2 E1c)" }
+
+        # transport: the remote-execution transport leaves (P2 unit E4). tunnel owns
+        # the per-run `ssh -N -R` reverse tunnel + its readiness gate; codesync owns
+        # the DD1 worker<->box-A git sync (fetch-base on the worker, direct ssh://
+        # fetch of the run branch back to box A). Both sit BEHIND the pre-existing
+        # lifecycle/tmux.CommandRunner seam (runner.go:16) and address workers via
+        # internal/workers. They MUST NOT import daemon:
+        # P3's remote/container dispatch links this transport, and a daemon
+        # back-edge would drag the 57k-LOC monolith into every dispatcher — exactly
+        # the coupling E4 exists to remove. Note the self-allow is the
+        # "internal/transport" PREFIX, which does not collide with the daemon deny,
+        # so sub-packages and their external _test packages resolve cleanly.
+        # CAVEAT: depguard only checks DIRECT imports. internal/workers,
+        # internal/workspace and internal/lifecycle/tmux are verified daemon-free
+        # today (workspace's own allow-list below has no daemon entry, so a daemon
+        # import there is itself a lint failure); if one ever grows a daemon import
+        # this rule will NOT fire. The transitive check is
+        # `go list -deps ./internal/transport/... | grep internal/daemon`.
+        # internal/workspace: codesync needs workspace.TaskBranchName to form the
+        # run-branch refspec (E4b).
+        # Rationale: plans/2026-07-21-p2-extraction/E4-ssh.md slices E4a, E4b.
+        transport:
+          files: ["**/internal/transport/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/workers"
+            - "github.com/gregberns/harmonik/internal/workspace"
+            - "github.com/gregberns/harmonik/internal/transport"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "transport is a leaf: importing daemon would re-couple every remote dispatcher to the monolith (P2 E4)" }
+
+        # workers: worker addressing, selection/slot tracking, health probing,
+        # telemetry — and, since P2 unit E4c, the BOOT WIRING that turns a loaded
+        # workers.Config into a live *Registry (BuildRegistry / BootHealthRunner,
+        # bootwire.go, lifted out of internal/daemon/workloop.go). This rule is the
+        # fence that makes that lift stick: workers is a LEAF that internal/daemon,
+        # internal/transport and a P3 remote dispatcher all sit above, so a daemon
+        # import here would invert the direction of the whole extraction.
+        # The allow list is the MEASURED import set — core, lifecycle/tmux, the
+        # self-import used by the package's workers_test external tests, yaml for
+        # decoding workers.yaml (workers.go), and rapid for routing_prop_test.go.
+        # It is deliberately NARROW: handlercontract is
+        # absent on purpose, which is the whole reason BuildRegistry takes this
+        # package's own workers.EmitFunc instead of a handlercontract.EventEmitter.
+        # Widening it needs proof, not convenience.
+        # Rationale: plans/2026-07-21-p2-extraction/E4-ssh.md slice E4c.
+        workers:
+          files: ["**/internal/workers/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/workers"
+            - "gopkg.in/yaml.v3"
+            - "pgregory.net/rapid"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "workers is a leaf BELOW daemon and transport; a daemon edge would invert the P2 E4c boot-wire extraction" }
+
         # keeper: stdlib + core + eventbus + presence + self-import (external test
         # pattern); MUST NOT import daemon or workloop.
         # presence: the hitl-decisions K5 orphan reaper (presence.ReapOrphanedDecisions)
@@ -197,16 +507,82 @@ linters:
           allow:
             - "$gostd"
             - "github.com/google/uuid"
+            - "pgregory.net/rapid"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/", desc: "core is a leaf; no subsystem imports" }
   
-        # Queue: core only at scaffold time. eventbus import added by T12 (hk-hn363)
-        # when queue-lifecycle events are wired. Spec ref: specs/queue-model.md §1.
+        # Queue production code imports core plus UUID for queue/event identity.
+        # External tests also need the self-import used by package queue_test.
+        # eventbus import added by T12 (hk-hn363) when queue-lifecycle events are
+        # wired. Spec ref: specs/queue-model.md §1.
         queue:
           files: ["**/internal/queue/**"]
           allow:
             - "$gostd"
+            - "github.com/google/uuid"
             - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/queue"
+
+        # queuewiring: the daemon-side queue OWNERSHIP + operator-transition wiring
+        # extracted out of internal/daemon (P2 unit E3a). The queue ENGINE is already a
+        # clean leaf (internal/queue); this package holds the in-memory QueueStore that
+        # satisfies queue.QueueSetter / queue.LockedQueueView / queue.MutationLocker, the
+        # brcli -> queue.BeadLedger bridge, and the operator pause/resume consumer. The
+        # daemon is the composition root and injects these; it MUST NOT be imported back,
+        # or the queue control surface silently re-couples to the 56k-LOC monolith.
+        # uuid + testify are needed by the moved external test files (depguard `files:`
+        # globs match _test.go too); the self-import row is the external-test-package
+        # pattern (queuewiring_test importing queuewiring). Note the `internal/queue` row
+        # is a PREFIX match and so already covers `internal/queuewiring` (see the
+        # bootconfig rule's comment below) — the explicit self-row is kept so the list
+        # stays correct if `internal/queue` is ever tightened to an exact match.
+        # CAVEAT: depguard checks DIRECT imports only. internal/{core,queue,eventbus,brcli}
+        # are verified daemon-free today; the transitive check is
+        # `go list -deps ./internal/queuewiring | grep internal/daemon`.
+        # Rationale: plans/2026-07-21-p2-extraction/E3-queue-wiring.md slice E3a.
+        queuewiring:
+          files: ["**/internal/queuewiring/**"]
+          allow:
+            - "$gostd"
+            - "github.com/google/uuid"
+            - "github.com/stretchr/testify/require"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/queue"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/brcli"
+            - "github.com/gregberns/harmonik/internal/queuewiring"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "queuewiring is the extracted queue-ownership layer; daemon composes it, never the reverse (P2 E3)" }
+
+        # crewrun: the daemon-side crew launch contract — crew-start/crew-stop RPC
+        # payloads, the persistent-session launch-spec builder, the crew-scoped
+        # harness resolver, the mission front-matter readers, and the idle-crew
+        # reaper — extracted from internal/daemon behind the already-fenced
+        # internal/crew registry leaf and the handler.LaunchSpec value type
+        # (P2 unit E2, slice E2a). The daemon composition root threads the queue
+        # lookup and the crew stopper IN. crewrun MUST NOT import daemon back —
+        # that back-edge re-links the ~57k-LOC monolith into the crew launch path
+        # and voids the extraction.
+        # internal/daemon/crewstart.go (the tmux-native crew-start handler) is the
+        # ONE sanctioned residue: it type-asserts substrateWithAdapter, whose only
+        # method tmuxAdapter() is unexported and therefore package-qualified, so the
+        # assertion cannot be written outside internal/daemon. Moving it is slice
+        # E2b, which needs an operator waiver of the no-new-seam rule.
+        # CAVEAT: depguard checks DIRECT imports only. internal/{crew,handler,queue}
+        # are verified daemon-free today; the transitive check is
+        # `go list -deps ./internal/crewrun | grep internal/daemon`.
+        # Rationale: plans/2026-07-21-p2-extraction/E2-crew.md slice E2a.
+        crewrun:
+          files: ["**/internal/crewrun/**"]
+          allow:
+            - "$gostd"
+            - "gopkg.in/yaml.v3"
+            - "github.com/gregberns/harmonik/internal/crew"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/queue"
+            - "github.com/gregberns/harmonik/internal/crewrun"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "crewrun is a leaf behind the crew-registry + handler.LaunchSpec seams; importing daemon back voids P2 E2" }
 
         # socketrouter: the pure protocol dispatch table (giant-retirement follow-up), a daemon
         # sub-package. Value-in/value-out routing: Classify + Router.Dispatch + neutral Result over
@@ -223,13 +599,19 @@ linters:
 
         # schedule: generic recurring-job primitive (codename:schedule, hk-0es).
         # Pure types + next-fire clock + durable single-writer store. Leaf:
-        # stdlib + self-import only (no core dep today; action execution + the
-        # work-loop tick live in internal/daemon which imports this package).
+        # stdlib + core + self-import (action execution + the work-loop tick live
+        # in internal/daemon, which imports this package).
+        # core: the store creates .harmonik/ lazily and needs core.HarmonikDirMode
+        # — os.MkdirAll does NOT chmod an existing directory, so a package that
+        # hardcodes its own mode leaves the result dependent on which package
+        # created the tree first (internal/core/harmonikdirmode.go). core is the
+        # universal leaf and imports nothing back, so no cycle is possible.
         # MUST NOT import daemon. Spec ref: hk-0es brief (operator-locked D1/D2).
         schedule:
           files: ["**/internal/schedule/**"]
           allow:
             - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/schedule"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "schedule MUST NOT import daemon (hk-0es: leaf primitive)" }
@@ -301,13 +683,19 @@ linters:
         # owns no file format (RS-016); this package is the caller-supplied
         # writer that does persistence + HC-032 OUTPUT scrub + keep-N/age-prune
         # retention + the mechanical CAPTURE-LOG ledger. It may import substrate
-        # (ClockPort for the age-prune cutoff, RS-015) and self only. It MUST
-        # NEVER import daemon (composition root injects, never the reverse), the
-        # codex vertical, or tmux.
+        # (ClockPort for the age-prune cutoff, RS-015), core, and self only. It
+        # MUST NEVER import daemon (composition root injects, never the reverse),
+        # the codex vertical, or tmux.
+        # core: it creates .harmonik/sessions/ lazily and needs
+        # core.HarmonikDirMode for the same reason schedule does — os.MkdirAll
+        # does NOT chmod an existing directory, so a private mode constant makes
+        # the result depend on creation order (internal/core/harmonikdirmode.go).
+        # core is the universal leaf and imports nothing back; no cycle.
         sessioncapture:
           files: ["**/internal/sessioncapture/**"]
           allow:
             - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/substrate"
             - "github.com/gregberns/harmonik/internal/sessioncapture"
           deny:
@@ -635,6 +1023,81 @@ linters:
             - "github.com/gregberns/harmonik/internal/mergeq"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "mergeq MUST NOT import daemon (leaf exclusion domain; daemon drives it)" }
+
+        # runmerge: the run-branch merge / commit / fmt-gate path carved out of
+        # workloop.go lines 6391-8009 (P2 unit E5, RT13), plus the two whole
+        # files that only the merge path called (stripruncontext, reviewtrailers).
+        # Param-in/value-out git plumbing: it takes ctx + paths + an
+        # EventEmitter + a runmerge.Submit closure and returns an Outcome. The
+        # daemon threads its mergeq exclusion-domain submit IN, so the direction
+        # is daemon -> runmerge; runmerge MUST NOT import daemon back.
+        #
+        # Measured allow-list (widen only on proof, per the E1a-1 finding):
+        #   workspace       — the spine calls workspace.TaskBranchName /
+        #                     WorktreePath / NoWorktreeRootOverride, and
+        #                     RemoveWorktree calls PruneWorktreeTrust.
+        #   gitprobe        — RevParse / ResolveWorktreeHEAD.
+        #   harness/shared  — reviewtrailers.go's ContainsExactLine idempotency
+        #                     check (moved there by P2 E1a-0).
+        #   core            — RunID/BeadID/EventType + the two shared payloads.
+        #   handlercontract — the EventEmitter the merge path emits through.
+        # mergeq is deliberately NOT allowed — it appears in this region only in
+        # comments, and the queue handle stays on the daemon side of the seam.
+        # uuid is needed by the moved external test files (depguard `files:` globs
+        # match _test.go too); it is a leaf utility with no harmonik-internal deps.
+        # CAVEAT: depguard checks DIRECT imports only. The transitive check is
+        # `go list -deps ./internal/runmerge | grep internal/daemon` (empty).
+        # Rationale: plans/2026-07-21-p2-extraction/E5-dot-runloop.md; RSM-015.
+        runmerge:
+          files: ["**/internal/runmerge/**"]
+          allow:
+            - "$gostd"
+            - "github.com/google/uuid"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/gitprobe"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/harness/shared"
+            - "github.com/gregberns/harmonik/internal/workspace"
+            - "github.com/gregberns/harmonik/internal/runmerge"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runmerge MUST NOT import daemon (leaf merge path; daemon drives it) — P2 E5 RT13" }
+
+        # runlaunch: the effects a bead run performs AROUND an agent launch,
+        # stranded in workloop.go outside both E5 extraction regions and drained
+        # here (P2 unit E5, RT19b). Four families, one concern — everything the
+        # run path does at launch/ready time that is not the launch itself:
+        #   - the CHB-018 pre-exec announcement relay (EmitPreExecMessage /
+        #     EmitPreExecBeforeLaunch), which holds launch_initiated back until
+        #     SpawnWindow returns (hk-4l7zs);
+        #   - the HC-056 readiness deadlines (DefaultAgentReadyTimeout 150s /
+        #     DefaultRemoteAgentReadyTimeout 210s / EffectiveAgentReadyTimeout /
+        #     ErrAgentReadyTimeout / KillReapTimeout), which populate
+        #     runexec.DispatchConfig.ReadyTimeout and .ReadyKillReap;
+        #   - the launch/ready anomaly events (EmitSpawnCapBlocked hk-4l7zs,
+        #     EmitTmuxNewWindowTimeout hk-r1rup, EmitAgentReadyTimeout hk-5cox8)
+        #     and EmitImplementerPhaseComplete (hk-cd8yu);
+        #   - ForceTeardownSession, the hk-68pvl kill-before-worktree-removal
+        #     backstop.
+        # It is the EFFECT vocabulary paired with internal/runexec's PURE Dispatch
+        # machine, which models the same launch -> ready -> working segment.
+        # It MUST be a leaf and not a runloop-private file: internal/daemon/
+        # bootstate.go calls EmitSpawnCapBlocked / EmitTmuxNewWindowTimeout
+        # from the BOOT path, and bootstate.go never moves.
+        # internal/handler is required for handler.Session (ForceTeardownSession);
+        # handlercontract for EventEmitter; core for the payload types.
+        # CAVEAT: depguard checks DIRECT imports only. The transitive check is
+        # `go list -deps ./internal/runlaunch | grep internal/daemon` (empty).
+        # Rationale: plans/2026-07-21-p2-extraction/RT19b-stranded-run-path-helpers.md.
+        runlaunch:
+          files: ["**/internal/runlaunch/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/runlaunch"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runlaunch is a leaf: the run path's launch-time effects must not re-couple to the monolith, and bootstate.go depends on them too (P2 E5 RT19b)" }
 
         # runexec: the two pure run-lifecycle reactors (Dispatch + Run machines,
         # RSM-001/028, codename:run-state-machine). Trimmed leaf allow-list

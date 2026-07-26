@@ -77,7 +77,7 @@ except BaseException:
 // worktreePath as argv[1]. env holds extra environment entries (e.g. HK_TEST_SLEEP).
 func runTrustUpsert(t *testing.T, home, program, worktreePath string, env ...string) error {
 	t.Helper()
-	cmd := exec.Command("python3", "-", worktreePath)
+	cmd := exec.CommandContext(t.Context(), "python3", "-", worktreePath)
 	cmd.Stdin = bytes.NewReader([]byte(program))
 	cmd.Env = append(os.Environ(), "HOME="+home)
 	cmd.Env = append(cmd.Env, env...)
@@ -92,10 +92,7 @@ func runTrustUpsert(t *testing.T, home, program, worktreePath string, env ...str
 // (projects[realpath].hasTrustDialogAccepted == true) in home/.claude.json.
 func countTrustedWorktrees(t *testing.T, home string, worktreePaths []string) int {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
-	if err != nil {
-		t.Fatalf("read .claude.json: %v", err)
-	}
+	data := mustReadFile(t, filepath.Join(home, ".claude.json"))
 	var cfg struct {
 		Projects map[string]struct {
 			HasTrustDialogAccepted bool `json:"hasTrustDialogAccepted"`
@@ -124,7 +121,7 @@ func makeWorktreePaths(t *testing.T, home string, n int) []string {
 	paths := make([]string, n)
 	for i := 0; i < n; i++ {
 		p := filepath.Join(home, "worktrees", fmt.Sprintf("run-%03d", i))
-		if err := os.MkdirAll(p, 0o755); err != nil {
+		if err := os.MkdirAll(p, 0o700); err != nil {
 			t.Fatalf("mkdir worktree %d: %v", i, err)
 		}
 		paths[i] = p
@@ -148,7 +145,11 @@ func TestWorkerTrustUpsert_UnlockedLosesUpdatesUnderBarrier(t *testing.T) {
 		go func(p string) {
 			defer wg.Done()
 			// 0.5s barrier guarantees all copies read the empty config before any write.
-			_ = runTrustUpsert(t, home, unlockedTrustUpsertProgramWithBarrier, p, "HK_TEST_SLEEP=0.5")
+			// A lost update is what this test measures, so an upsert that loses the
+			// race is not a failure; a writer that could not run at all is.
+			if err := runTrustUpsert(t, home, unlockedTrustUpsertProgramWithBarrier, p, "HK_TEST_SLEEP=0.5"); err != nil {
+				t.Errorf("concurrent trust upsert for %q did not run: %v", p, err)
+			}
 		}(paths[i])
 	}
 	wg.Wait()
@@ -181,7 +182,10 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 		}
 	}
 	seed := map[string]interface{}{"theme": "dark", "projects": projects}
-	raw, _ := json.MarshalIndent(seed, "", "  ")
+	raw, err := json.MarshalIndent(seed, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal seed config: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(home, ".claude.json"), append(raw, '\n'), 0o600); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
@@ -210,7 +214,7 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 	}
 
 	// The pre-existing keys and top-level content must be preserved too.
-	data, _ := os.ReadFile(filepath.Join(home, ".claude.json"))
+	data := mustReadFile(t, filepath.Join(home, ".claude.json"))
 	var got map[string]interface{}
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal final config: %v", err)
@@ -218,7 +222,7 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 	if got["theme"] != "dark" {
 		t.Errorf("top-level key clobbered: theme=%v", got["theme"])
 	}
-	gotProjects, _ := got["projects"].(map[string]interface{})
+	gotProjects := mustJSONObject(t, got, "projects", "config after concurrent writers")
 	if _, ok := gotProjects["/preexisting/run-00000"]; !ok {
 		t.Errorf("pre-existing project key was clobbered by the concurrent writers")
 	}

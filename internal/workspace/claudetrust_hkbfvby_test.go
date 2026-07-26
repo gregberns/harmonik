@@ -105,11 +105,12 @@ func TestHkbfvby_AlreadyTrusted_LockFree(t *testing.T) {
 
 	// Hold LOCK_EX on the sidecar for the duration of the call.
 	lockPath := cfgPath + ".lock"
+	//nolint:gosec // G304: lockPath is derived from this test's t.TempDir fixture
 	lockFd, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("hk-bfvby: open lockfile: %v", err)
 	}
-	defer lockFd.Close() //nolint:errcheck // advisory lock fd
+	defer lockFd.Close()
 	if err := syscall.Flock(int(lockFd.Fd()), syscall.LOCK_EX); err != nil {
 		t.Fatalf("hk-bfvby: hold LOCK_EX: %v", err)
 	}
@@ -138,20 +139,22 @@ func TestHkbfvby_BoundedAcquire_TimesOut(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, ".claude.json.lock")
 
+	//nolint:gosec // G304: lockPath is derived from this test's t.TempDir fixture
 	holder, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("hk-bfvby: open holder: %v", err)
 	}
-	defer holder.Close() //nolint:errcheck // advisory lock fd
+	defer holder.Close()
 	if err := syscall.Flock(int(holder.Fd()), syscall.LOCK_EX); err != nil {
 		t.Fatalf("hk-bfvby: holder LOCK_EX: %v", err)
 	}
 
+	//nolint:gosec // G304: lockPath is derived from this test's t.TempDir fixture
 	waiter, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("hk-bfvby: open waiter: %v", err)
 	}
-	defer waiter.Close() //nolint:errcheck // advisory lock fd
+	defer waiter.Close()
 
 	start := time.Now()
 	gotErr := acquireExclusiveBounded(int(waiter.Fd()), 200*time.Millisecond)
@@ -179,11 +182,12 @@ func TestHkbfvby_BoundedAcquire_SucceedsWhenFree(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, ".claude.json.lock")
 
+	//nolint:gosec // G304: lockPath is derived from this test's t.TempDir fixture
 	fd, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatalf("hk-bfvby: open lock: %v", err)
 	}
-	defer fd.Close() //nolint:errcheck // advisory lock fd
+	defer fd.Close()
 
 	if err := acquireExclusiveBounded(int(fd.Fd()), 2*time.Second); err != nil {
 		t.Fatalf("hk-bfvby: bounded acquire on a free lock errored: %v", err)
@@ -245,7 +249,10 @@ func TestHkbfvby_PruneWorktreeTrust_RemovesEntry(t *testing.T) {
 			keep:   map[string]interface{}{"hasTrustDialogAccepted": true},
 		},
 	}
-	raw, _ := json.MarshalIndent(cfg, "", "  ")
+	raw, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("hk-bfvby: marshal config: %v", err)
+	}
 	if err := os.WriteFile(cfgPath, append(raw, '\n'), 0o600); err != nil {
 		t.Fatalf("hk-bfvby: write config: %v", err)
 	}
@@ -254,7 +261,7 @@ func TestHkbfvby_PruneWorktreeTrust_RemovesEntry(t *testing.T) {
 		t.Fatalf("hk-bfvby: pruneWorktreeTrustAt: %v", err)
 	}
 
-	data, _ := os.ReadFile(cfgPath)
+	data := mustReadFile(t, cfgPath)
 	var got map[string]interface{}
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("hk-bfvby: unmarshal after prune: %v", err)
@@ -262,7 +269,7 @@ func TestHkbfvby_PruneWorktreeTrust_RemovesEntry(t *testing.T) {
 	if got["theme"] != "dark" {
 		t.Errorf("hk-bfvby: prune lost top-level key; theme=%v", got["theme"])
 	}
-	projects, _ := got["projects"].(map[string]interface{})
+	projects := mustJSONObject(t, got, "projects", "hk-bfvby: config after prune")
 	if _, present := projects[target]; present {
 		t.Errorf("hk-bfvby: prune did not remove target entry %s", target)
 	}

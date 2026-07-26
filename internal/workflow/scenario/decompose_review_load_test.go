@@ -141,7 +141,9 @@ func TestDRL_TwoRequestChangesThenApprove(t *testing.T) {
 		}
 
 		// Increment cycle counter for the decomp_review→decompose back-edge.
-		cycles.Increment(run.RunID, "decomp_review", "decompose", nil)
+		if _, err := cycles.Increment(run.RunID, "decomp_review", "decompose", nil); err != nil {
+			t.Fatalf("pre-fill cycle counter decomp_review\u2192decompose: %v", err)
+		}
 
 		// decomp_review(REQUEST_CHANGES) → decompose
 		dec = workflow.DecideNextNode(graph, "decomp_review", drlOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
@@ -233,9 +235,11 @@ func TestDRL_CapHitFallback(t *testing.T) {
 	workflow.DecideNextNode(graph, "decompose", drlOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of decomp_review→decompose.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "decomp_review", "decompose", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "decomp_review", "decompose", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter decomp_review\u2192decompose: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is

@@ -40,7 +40,7 @@ func hkyjsk8FixtureSleepThenSucceedBinary(t *testing.T, sleepDuration time.Durat
 	dir := t.TempDir()
 	path := filepath.Join(dir, "br")
 	countDir := filepath.Join(dir, "calls")
-	if err := os.MkdirAll(countDir, 0o755); err != nil { //nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(countDir, 0o700); err != nil {
 		t.Fatalf("hkyjsk8FixtureSleepThenSucceedBinary: mkdir: %v", err)
 	}
 	// Sleep on first failCount calls so the harness sees a wall-clock timeout
@@ -54,7 +54,7 @@ fi
 exit 0
 `, countDir, countDir, failCount, sleepDuration.Seconds())
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("hkyjsk8FixtureSleepThenSucceedBinary: write: %v", err)
 	}
 	return path

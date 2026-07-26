@@ -26,34 +26,36 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/harness/pi"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// piRemoteRunCtx builds a fully-configured pi claudeRunCtx (provider tuple +
+// piRemoteRunCtx builds a fully-configured pi shared.LaunchCtx (provider tuple +
 // base_url) so buildPiLaunchSpec succeeds and emits the base_url wiring.
-func piRemoteRunCtx(t *testing.T, ws string, runner tmux.CommandRunner) claudeRunCtx {
+func piRemoteRunCtx(t *testing.T, ws string, runner tmux.CommandRunner) shared.LaunchCtx {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(ws, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
-	return claudeRunCtx{
-		runID:           z8ekRunID(t),
-		beadID:          "hk-m4c4-pi",
-		workspacePath:   ws,
-		phase:           "implementer-initial",
-		iterationCount:  1,
-		beadTitle:       "pi remote runner",
-		beadDescription: "route the pi process to the worker via SSHRunner",
-		handlerBinary:   "pi",
+	return shared.LaunchCtx{
+		RunID:           z8ekRunID(t),
+		BeadID:          "hk-m4c4-pi",
+		WorkspacePath:   ws,
+		Phase:           "implementer-initial",
+		IterationCount:  1,
+		BeadTitle:       "pi remote runner",
+		BeadDescription: "route the pi process to the worker via SSHRunner",
+		HandlerBinary:   "pi",
 		// Landed pi provider config (pi-provider-switch). base_url points at a
 		// locally-hosted OpenAI-compatible endpoint (e.g. the DGX). Decision 6: M4
 		// must NOT touch this — only WHICH host the pi process runs on changes.
-		provider:  "openrouter",
-		model:     "openrouter/qwen/qwen3-coder",
-		apiKeyEnv: "OPENROUTER_API_KEY",
-		baseURL:   "http://dgx.local:8080/v1",
-		api:       "openai",
-		runner:    runner,
+		Provider:  "openrouter",
+		Model:     "openrouter/qwen/qwen3-coder",
+		APIKeyEnv: "OPENROUTER_API_KEY",
+		BaseURL:   "http://dgx.local:8080/v1",
+		API:       "openai",
+		Runner:    runner,
 	}
 }
 
@@ -66,7 +68,7 @@ func TestBuildPiRoutedLaunchSpec_NoWorker_RunnerNil_NFR7(t *testing.T) {
 	ctx := context.Background()
 
 	rc := piRemoteRunCtx(t, t.TempDir(), nil) // LOCAL run
-	h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
+	h := pi.NewHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 
 	spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
 	if err != nil {
@@ -89,7 +91,7 @@ func TestBuildPiRoutedLaunchSpec_Worker_ThreadsRunner(t *testing.T) {
 
 	rr := newNoOpRecorderZ8ek()
 	rc := piRemoteRunCtx(t, t.TempDir(), rr) // REMOTE run (worker selected)
-	h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
+	h := pi.NewHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 
 	spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
 	if err != nil {
@@ -140,7 +142,7 @@ func TestBuildPiRoutedLaunchSpec_ProviderConfigIntactAcrossHosts(t *testing.T) {
 	readBaseURL := func(t *testing.T, runner tmux.CommandRunner) string {
 		t.Helper()
 		rc := piRemoteRunCtx(t, t.TempDir(), runner)
-		h := NewPiHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
+		h := pi.NewHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
 		spec, _, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
 		if err != nil {
 			t.Fatalf("buildCodexRoutedLaunchSpec: %v", err)

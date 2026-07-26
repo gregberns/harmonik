@@ -216,7 +216,6 @@ func OperatorAttached(target string) bool {
 		return false
 	}
 	// context.Background(): synchronous sub-second probe, mirroring tmuxSessionLive.
-	//nolint:gosec // G204: target is the resolved tmux target (derived from validated agentName / operator --tmux flag)
 	cmd := exec.CommandContext(context.Background(), "tmux", "list-clients", "-t", target, "-F", "#{client_activity}")
 	out, err := cmd.Output()
 	if err != nil {
@@ -274,7 +273,11 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 	if err != nil {
 		return time.Time{}, false
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "keeper: close transcript while finding recent turn", "err", closeErr, "path", path)
+		}
+	}()
 
 	// Seek to the tail so the scan is O(recentTranscriptTailBytes), not O(filesize).
 	partialStart := false

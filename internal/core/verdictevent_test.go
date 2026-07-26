@@ -89,7 +89,6 @@ func TestVerdictEventValid_AllOtherVerdicts(t *testing.T) {
 		VerdictEscalateToHuman,
 	}
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 			e := b3f93VerdictEventValid(t)
@@ -194,7 +193,6 @@ func TestVerdictEventValid_OtherVerdicts_ContextMustBeAbsent(t *testing.T) {
 		VerdictEscalateToHuman,
 	}
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 			e := b3f93VerdictEventValid(t)
@@ -247,7 +245,6 @@ func TestVerdictEventValid_OtherVerdicts_CheckpointRefMustBeAbsent(t *testing.T)
 		VerdictEscalateToHuman,
 	}
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 			e := b3f93VerdictEventValid(t)
@@ -325,7 +322,6 @@ func TestVerdictEventValid_EmptySnapshotToken(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := b3f93VerdictEventValid(t)

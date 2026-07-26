@@ -27,14 +27,14 @@ func TestWM025_SessionLogDirectoryLayout(t *testing.T) {
 	// Construct the canonical worktree path per WM-002.
 	// No real git worktree add needed — these are filesystem-shape tests.
 	workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+	if err := os.MkdirAll(workspacePath, 0o700); err != nil {
 		t.Fatalf("MkdirAll worktree: %v", err)
 	}
 
 	// Simulate the workspace manager pre-creating the session-log directory
 	// before the handler launches.
 	sessionDir := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID)
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 
@@ -61,7 +61,7 @@ func TestWM025_SessionLogDirectoryLayout(t *testing.T) {
 		// never collide because session_id is unique per launch.
 		sessionID2 := "sess-0196a1b2-c3d4-7ef0-8a1b-000000002502"
 		sessionDir2 := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID2)
-		if err := os.MkdirAll(sessionDir2, 0o755); err != nil {
+		if err := os.MkdirAll(sessionDir2, 0o700); err != nil {
 			t.Fatalf("MkdirAll sessionDir2: %v", err)
 		}
 

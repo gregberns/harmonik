@@ -30,6 +30,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // LockFormatVersion is the schema version of the assets.lock structure. Bump it
@@ -110,10 +112,10 @@ func WriteLock(dir string, l Lock) error {
 	data = append(data, '\n')
 
 	full := filepath.Join(dir, lockRelPath)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("mkdir for lock: %w", err)
 	}
-	if err := os.WriteFile(full, data, 0o644); err != nil {
+	if err := os.WriteFile(full, data, 0o600); err != nil {
 		return fmt.Errorf("write lock %s: %w", full, err)
 	}
 	return nil
@@ -260,11 +262,11 @@ func Reconcile(m Manifest, lock Lock, diskHashes map[string]string) []ReconcileI
 		case !inLock:
 			// New asset: shipped but never installed here.
 			item.Class = ef.Class
-			switch {
-			case diskSha == "":
+			switch diskSha {
+			case "":
 				item.Action = ActionCreate
 				item.Reason = "new embedded asset, absent on disk; create"
-			case diskSha == ef.Sha256:
+			case ef.Sha256:
 				item.Action = ActionSkip
 				item.Reason = "new embedded asset but disk already matches embed; skip (lock should be re-stamped)"
 			default:

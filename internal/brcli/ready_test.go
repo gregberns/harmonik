@@ -359,7 +359,9 @@ func TestReadyAllPassesLimitZero(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	// The spy binary prints nothing → JSON parse fails; we only care about args.
-	_, _ = adapter.ReadyAll(context.Background())
+	if _, readyErr := adapter.ReadyAll(context.Background()); readyErr == nil {
+		t.Fatal("ReadyAll: expected parse error from empty spy output")
+	}
 
 	raw, err := os.ReadFile(argsFile) //nolint:gosec // G304: test-controlled tempdir path
 	if err != nil {

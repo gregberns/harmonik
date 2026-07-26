@@ -179,7 +179,7 @@ func handoffNeverReturnsNonce(_ string) (string, error) {
 
 // gaugeReturnsNewSIDAfter returns a ReadGaugeFn fake that returns prevSID for
 // the first n calls, then switches to newSID.
-func gaugeReturnsNewSIDAfter(n int, projectDir, agentName, prevSID, newSID string) func(string, string) (*keeper.CtxFile, time.Time, error) {
+func gaugeReturnsNewSIDAfter(n int, prevSID, newSID string) func(string, string) (*keeper.CtxFile, time.Time, error) {
 	var count int
 	var mu sync.Mutex
 	return func(_, _ string) (*keeper.CtxFile, time.Time, error) {
@@ -290,7 +290,7 @@ func TestCycler_HappyPath(t *testing.T) {
 	readHandoff := handoffReturnsNonceAfter(2, nonce)
 
 	// ReadGaugeFn: first 2 calls return prevSID; call 3+ returns newSID.
-	readGaugeFn := gaugeReturnsNewSIDAfter(2, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(2, prevSID, newSID)
 
 	cycler := newTestCycler(
 		agent, t.TempDir(), em, spy, jc, cycleID,
@@ -329,6 +329,18 @@ func TestCycler_HappyPath(t *testing.T) {
 	}
 	if !containsSubstr(texts[0], nonce) {
 		t.Errorf("inject[0] should contain nonce %q; got %q", nonce, texts[0])
+	}
+	// hk-pgtt6: the directive must be ONE line with a VISIBLE separator. Claude
+	// Code collapses a pasted "\n\n" away entirely, fusing the handoff path onto
+	// the instruction; a trailing space is not enough. See
+	// inject_directive_shape_hkpgtt6_test.go for the full collapse assertion.
+	if containsSubstr(texts[0], "\n") {
+		t.Errorf("inject[0] must be a single line (hk-pgtt6); got %q", texts[0])
+	}
+	// hk-4tjyj: the reboot command must be self-describing, not dependent on
+	// $HARMONIK_AGENT and the pane's CWD.
+	if !containsSubstr(texts[2], "--agent ") || !containsSubstr(texts[2], "--project ") {
+		t.Errorf("inject[2] should pin --agent and --project (hk-4tjyj); got %q", texts[2])
 	}
 	if texts[1] != "/clear" {
 		t.Errorf("inject[1] = %q; want \"/clear\"", texts[1])
@@ -469,7 +481,6 @@ func TestCycler_Gating(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -954,7 +965,6 @@ func TestCycler_BootRecovery_PhaseComplete(t *testing.T) {
 	spy := &cycleSpyInjector{}
 
 	for _, phase := range []string{"complete", "aborted"} {
-		phase := phase
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 
@@ -1191,7 +1201,7 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	var (
 		envKey      string
@@ -1201,12 +1211,11 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 		injectCount int
 	)
 
-	spyInject := func(_ context.Context, _, text string) error {
+	spyInject := func(ctx context.Context, _, text string) error {
 		mu.Lock()
 		defer mu.Unlock()
 		injectCount++
-		_ = spy.inject(context.Background(), "fake-pane", text)
-		return nil
+		return spy.inject(ctx, "fake-pane", text)
 	}
 	setEnvFn := func(_ context.Context, _, key, value string) error {
 		mu.Lock()
@@ -1498,7 +1507,7 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	var gotProjectDir, gotAgent, gotSessionID string
 	setManagedCalled := 0
@@ -1650,7 +1659,7 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 	readHandoff := handoffReturnsNonceAfter(0, nonce) // nonce present immediately
 
 	// Gauge always returns the same SID (timeout path), starting at high pct.
-	var gaugePct float64 = 95.0
+	gaugePct := 95.0
 	readGaugeFn := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: gaugePct, SessionID: sid}, time.Now(), nil
 	}
@@ -1757,7 +1766,7 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
@@ -1956,7 +1965,7 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
@@ -2024,14 +2033,6 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		t.Errorf("Escape (idx=%d) must precede /session-handoff inject (idx=%d); order=%v",
 			firstEscapeIdx, firstHandoffIdx, order)
 	}
-}
-
-// min is a local helper for the escape test above (avoids importing math).
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // TestCycler_ForcedClear_EscalatesAfterNTimeouts verifies that after
@@ -2573,7 +2574,7 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	// ActPct=35, ForceActPct left at zero → must default to 35+5=40.
 	// Session at pct=41 (above force threshold) with CrispIdle=false must fire.
@@ -2670,7 +2671,7 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 
 	const bootGrace = 500 * time.Millisecond // long grace — force-path should bypass it
 
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, bootSID, bootSID+"_new")
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, bootSID, bootSID+"_new")
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
@@ -2834,7 +2835,7 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 
 	const bootGrace = 150 * time.Millisecond
 
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, novelSID, novelSID+"_resumed")
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, novelSID, novelSID+"_resumed")
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
@@ -2967,7 +2968,7 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 	const bootGrace = 150 * time.Millisecond
 
 	// ReadGaugeFn returns a new SID after 1 call (for the resume cycle settle).
-	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, resumeSID, resumeSID+"_post")
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, resumeSID, resumeSID+"_post")
 
 	cfg := keeper.CyclerConfig{
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
@@ -3109,7 +3110,6 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 		{name: "prev-then-abort", prevSID: "sess-prev-A", abortSID: "sess-abort-A", novelSID: "sess-novel-A"},
 		{name: "first-session-abort", prevSID: "", abortSID: "sess-abort-B", novelSID: "sess-novel-B"},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -3141,7 +3141,7 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				}
 				return nonce2, nil
 			}
-			readGaugeFn := gaugeReturnsNewSIDAfter(1, "", "agent-cross", tc.novelSID, tc.novelSID+"_post")
+			readGaugeFn := gaugeReturnsNewSIDAfter(1, tc.novelSID, tc.novelSID+"_post")
 
 			clock := newSteppingAdvanceClock(time.Unix(1_700_000_000, 0), 5*time.Millisecond)
 

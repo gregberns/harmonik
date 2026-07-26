@@ -72,8 +72,6 @@ func wireFixtureDecodeJSON(t *testing.T, b []byte) map[string]any {
 
 // wireFixtureWriteTempFile writes content to a new file in t.TempDir() and
 // returns its absolute path.
-//
-//nolint:gosec // G306: 0o600 is the correct mode for LaunchSpec files (daemon-written, operator-readable)
 func wireFixtureWriteTempFile(t *testing.T, name string, content []byte) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -334,7 +332,6 @@ func TestWireFixtureMalformedJSONClosesWithError(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			r := newWireReader(strings.NewReader(tc.line))
 			msg, err := r.readControlMsg()

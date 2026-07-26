@@ -152,7 +152,9 @@ func TestWriteVersion(t *testing.T) {
 	defer func() { commitHash = orig }()
 
 	var buf bytes.Buffer
-	writeVersion(&buf)
+	if err := writeVersion(&buf); err != nil {
+		t.Fatalf("writeVersion: %v", err)
+	}
 
 	got := buf.String()
 	if !strings.HasPrefix(got, "harmonik-twin-generic commit=") {

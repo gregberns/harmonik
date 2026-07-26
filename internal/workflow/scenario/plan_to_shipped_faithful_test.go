@@ -300,7 +300,9 @@ func TestPTSF_PlanReviewRCThenApprove(t *testing.T) {
 	ptsfWalkPlanPhase(t, graph, run, cycles)
 
 	// Increment cycle counter for the plan_review→draft_plan back-edge.
-	cycles.Increment(run.RunID, "plan_review", "draft_plan", nil)
+	if _, err := cycles.Increment(run.RunID, "plan_review", "draft_plan", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter plan_review\u2192draft_plan: %v", err)
+	}
 
 	// plan_review(REQUEST_CHANGES) → draft_plan
 	dec := workflow.DecideNextNode(graph, "plan_review", ptsfOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
@@ -475,9 +477,11 @@ func TestPTSF_ConsolidateCapHit(t *testing.T) {
 	ptsfWalkToConsolidate(t, graph, run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of consolidate→implement.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "consolidate", "implement", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "consolidate", "implement", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter consolidate\u2192implement: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is suppressed.

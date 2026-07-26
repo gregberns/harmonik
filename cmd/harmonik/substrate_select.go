@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/gregberns/harmonik/internal/sessioncapture"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // substrateSelectEnv is the composition-root substrate-selection axis
@@ -49,8 +51,10 @@ const (
 // The spawn seam stays remote-capable (AIS-016): the driver takes the same
 // CommandRunner shape as the tmux path. For the Codex path the injected runner
 // is a per-run worker-routing runner (M4-C3): a healthy selected worker routes
-// the codex process to that worker over SSHRunner; zero/disabled workers stay
-// byte-identical LOCAL (NFR7). See codexWorkerRoutingRunner.
+// the codex process to that worker over SSHRunner. Zero/disabled workers no
+// longer fall through to a byte-identical LOCAL run as NFR7 originally
+// specified — see requireIsolationBoundary below, which now makes that case a
+// refusal. See codexWorkerRoutingRunner.
 //
 // The second return value is a worker-registry observer the daemon MUST invoke
 // once at work-loop startup with the SAME live registry the tmux dispatch path
@@ -59,21 +63,51 @@ const (
 // health/live-disable state — WITHOUT the driver ever learning about workers
 // (RS-017 twin-blindness: selection lives at the composition root, not the
 // driver). It is nil for the tmux path (nothing to bind).
-// The third return value, requireIsolationBoundary, is true ONLY on the
-// codexdriver path: a codex app-server crew runs with a permissive sandbox
-// posture (danger-full-access) that is safe solely inside a real isolation
-// boundary — an enabled remote ssh worker IS that boundary. It is the signal the
-// daemon's fail-closed guard keys off (hk-5h759): with it set, the work loop
-// REFUSES to launch a codex run that has no worker bound (which would otherwise
-// fall through codexWorkerRoutingRunner.Command to LocalRunner and run codex
-// UNSANDBOXED on the daemon host). False for the tmux path (no such posture).
-func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), requireIsolationBoundary bool) {
+// reviewerSubstrate is always tmuxSub so a claude (SessionIDMinted) reviewer
+// runs on tmux/claude, not the codex app-server driver (hk-qxvc2).
+//
+// hk-5vapm: this used to return a third value, requireIsolationBoundary, meant
+// as the signal a daemon-side fail-closed guard would key off to refuse a codex
+// run with no ssh worker bound. IT IS GONE, and two things about it are worth
+// recording because the comments that described it outlived the design.
+//
+// First, hk-tckw3.1 Step 1 dropped the fence deliberately (plan section 3a). D4
+// scrapped ssh-per-node, so nothing can supply the boundary the fence demanded
+// — leaving it armed would not sandbox codex, it would only stop codex running
+// at all. D3 then put local codex on danger-full-access, the same host posture
+// claude already ran under, so this path is no more permissive than the default
+// it was singled out from. Both production callers had already been discarding
+// the value; it was always false and unparam flagged it.
+//
+// Second, and this is the part that was NOT true in the source: the daemon half
+// never existed. Comments here and in internal/codexdriver referred to a
+// workloop codexRequireIsolationBoundary that "REFUSES to launch" — no such
+// symbol is in the tree, and the only occurrences were those comments describing
+// it. The fence was only ever half-built: codexWorkerRoutingRunner.requireBoundary
+// still has live refusal logic below. Anyone auditing codex isolation would have
+// read those comments and believed an enforcement existed. They are corrected
+// rather than carried forward.
+//
+// Containment for codex comes from harmonik's own srt sandbox (hk-scaj0), a
+// different mechanism entirely, so removing this dead signal forecloses nothing.
+//
+// OPERATOR DECISION (2026-07-23): the fence is REMOVED. `requireBoundary: false`
+// below restores hk-tckw3.1 Step 3a — the operator-directed, reviewer-approved
+// drop that lets local codex-first runs launch. Local commit 7273e95dc ("make
+// SH-033 deterministic and drop exec.Command from the CLI") had silently re-armed
+// it (`true`) hours later, citing neither hk-tckw3.1 nor hk-5h759; that was an
+// unauthorized reversal of a locked decision, not a fix. The fence isolates
+// nothing (there is no daemon-side counterpart; codex containment comes from the
+// srt sandbox, hk-scaj0), it only stops codex launching, and D4 scrapped the
+// ssh-per-node worker that was the only thing able to satisfy it. Restored to
+// `false` per the operator's standing "Codex must work" decision.
+func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), reviewerSubstrate handler.Substrate) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
-		return tmuxSub, nil, false
+		return tmuxSub, nil, tmuxSub
 	}
-	router := &codexWorkerRoutingRunner{requireBoundary: true}
+	router := &codexWorkerRoutingRunner{requireBoundary: false}
 	opts, _ := codexSubstrateOptions(codexBinary, router)
-	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, true
+	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, tmuxSub
 }
 
 // codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that
@@ -96,18 +130,29 @@ func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler
 // worker logic lives here at the wire/root, never inside internal/codexdriver.
 type codexWorkerRoutingRunner struct {
 	// reg is the live worker registry, late-bound by the daemon. nil until
-	// bound (and stays nil when no worker is configured) ⇒ LOCAL codex,
-	// byte-identical to the pre-M4 hardcoded LocalRunner path (NFR7).
+	// bound, and stays nil when no worker is configured. That used to mean
+	// LOCAL codex, byte-identical to the pre-M4 hardcoded LocalRunner path
+	// (NFR7) — it no longer does when requireBoundary is set; see below.
 	reg atomic.Pointer[workers.Registry]
 
-	// requireBoundary makes this runner FAIL CLOSED (hk-5h759). Set true on the
-	// codexdriver path (a codex crew runs danger-full-access, safe ONLY inside an
-	// enabled ssh worker/container). When set and no enabled ssh worker is bound,
-	// Command REFUSES rather than falling through to LocalRunner — which would run
-	// codex UNSANDBOXED on the daemon host. This is the authoritative, race-free
-	// enforcement point: it evaluates the SAME predicate that decides ssh-vs-local
-	// AT spawn time, so it closes the TOCTOU window a caller-side admission check
-	// alone cannot (a worker disabled between admission and spawn is caught here).
+	// requireBoundary would make this runner FAIL CLOSED (hk-5h759): when set and
+	// no enabled ssh worker is bound, Command REFUSES rather than falling through
+	// to LocalRunner.
+	//
+	// hk-5vapm intended this to be inert: it called this field "the authoritative,
+	// race-free enforcement point", which it is not — there is no daemon-side
+	// counterpart, and an auditor reading the old wording would have concluded that
+	// unsandboxed codex launches are refused somewhere they are not.
+	//
+	// hk-tckw3.1 Step 3a dropped the fence deliberately: D4 scrapped the ssh worker
+	// that was the only thing able to supply the boundary, so arming this would
+	// stop codex launching rather than isolate it. Codex containment comes from the
+	// srt sandbox (hk-scaj0) instead.
+	//
+	// selectSubstrate above passes `false` per the 2026-07-23 operator decision, so
+	// the composition-root runner never refuses. The refusal logic below is retained
+	// only for the explicit ssh-worker path (and its tests), which construct their
+	// own runner with requireBoundary: true.
 	requireBoundary bool
 }
 
@@ -122,7 +167,11 @@ const refusedIsolationBoundaryArgv0 = "/nonexistent/harmonik-REFUSED-codex-dange
 // (hk-5h759) codex thread posture for headless crew orchestration: run codex
 // non-interactively with full workspace access so its writes and commits land.
 // This posture is safe ONLY inside the isolation boundary enforced by the
-// fail-closed guard (requireBoundary above / workloop codexRequireIsolationBoundary).
+// fail-closed guard (requireBoundary above). NOTE (hk-5vapm): there is no
+// daemon-side counterpart -- earlier comments here named a workloop
+// codexRequireIsolationBoundary that does not exist anywhere in the tree. Whether
+// the runner-level guard should be armed at all is an OPEN OPERATOR DECISION; see
+// the note on selectSubstrate.
 const (
 	codexHeadlessSandbox        = "danger-full-access"
 	codexHeadlessApprovalPolicy = "never"
@@ -141,7 +190,12 @@ func (r *codexWorkerRoutingRunner) setRegistry(reg *workers.Registry) {
 // ssh, the codex process is spawned on that worker via SSHRunner{Host}. Any
 // other state (no registry bound, no worker, disabled/unhealthy worker,
 // non-ssh transport) falls through to LocalRunner — byte-identical local codex
-// (NFR7).
+// (NFR7). The composition root passes requireBoundary: false (2026-07-23 operator
+// decision), so the codexdriver path takes this local fallthrough. requireBoundary
+// is retained only for the explicit ssh-worker path and its tests: when set, the
+// same states are refused instead, by returning a command at
+// refusedIsolationBoundaryArgv0 so the spawn fails closed rather than running
+// codex unsandboxed on the daemon host.
 //
 // Slot capacity accounting stays owned by the daemon's dispatch gate
 // (workloop SelectWorker/ReleaseSlot, which runs for every dispatched run);
@@ -220,6 +274,20 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 	}
 	opts := codexdriver.Options{
 		Binary: codexBinary,
+		// hk-daegv: force the sandbox posture at app-server LAUNCH via a codex
+		// config override — NOT only per-thread. codex app-server (0.142/0.144) does
+		// not honor the thread/start `sandbox` field for the exec seatbelt; it runs
+		// its config default (workspace-write). Under workspace-write the worktree's
+		// real git dir (<repo>/.git/worktrees/<id>/ — a PARENT of the worktree
+		// writable-root) is denied, so codex's own `git commit` fails ("Operation
+		// not permitted") AND its /bin/zsh exec_command spawn fails (hk-wwyse, same
+		// seatbelt) — the turn silently no-ops and only the daemon fallback commits.
+		// `-c sandbox_mode="<posture>"` overrides ~/.codex/config.toml and applies to
+		// the exec seatbelt. Safe ONLY inside the isolation boundary the fail-closed
+		// guard enforces (danger-full-access = no seatbelt), set here at the
+		// composition root alongside Sandbox/requireBoundary. One override restores
+		// BOTH facets: .git-writable commit and working shell-spawn.
+		Args:   []string{"app-server", "-c", `sandbox_mode="` + codexHeadlessSandbox + `"`},
 		Runner: runner, // M4-C3: per-run worker-routing runner (SSHRunner remote / LocalRunner local)
 		Clock:  substrate.SystemClock{},
 		// hk-5h759: headless crew-orchestration posture. The driver auto-declines
@@ -233,6 +301,16 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 		// default posture, so it can never silently run danger-full-access.
 		Sandbox:        codexHeadlessSandbox,
 		ApprovalPolicy: codexHeadlessApprovalPolicy,
+		// hk-daegv: codex app-server 0.142.0 under ChatGPT auth does NOT honor the
+		// danger-full-access posture above — it runs the effective workspace-write
+		// seatbelt whose only writable root is the worktree cwd. A linked worktree's
+		// git common dir (<repo>/.git) lives OUTSIDE that root, so codex's OWN
+		// `git commit` fails EPERM and only the daemon fallback commits. Wire the
+		// composition-root hook that adds the git common dir to the thread's
+		// runtimeWorkspaceRoots so codex's own commit lands. Kept ALONGSIDE the
+		// `-c sandbox_mode` override and Sandbox/ApprovalPolicy (harmless
+		// forward-intent for a codex build that does honor danger-full-access).
+		WritableRoots: codexWorktreeWritableRoots,
 	}
 	sess := openCaptureSession()
 	if sess != nil {
@@ -240,6 +318,48 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 		opts.OutCapture = sess.Output()
 	}
 	return opts, sess
+}
+
+// codexWorktreeWritableRoots is the composition-root hook wired into
+// codexdriver.Options.WritableRoots (hk-daegv). Given the session's worktree cwd
+// it returns the absolute paths codex stamps as the thread's
+// `runtimeWorkspaceRoots` (the workspace-write writable roots).
+//
+// It ALWAYS includes the worktree cwd itself (runtimeWorkspaceRoots REPLACES the
+// thread's roots — dropping the cwd would make the worktree unwritable) and, when
+// the cwd matches harmonik's linked-worktree layout, the repo's git COMMON dir
+// (<repo>/.git). The git common dir holds objects/refs and worktrees/<id>/ and
+// lives OUTSIDE the worktree writable root, so without it codex's OWN `git commit`
+// fails EPERM under 0.142.0's effective workspace-write seatbelt (see WritableRoots
+// doc). An empty cwd, or a cwd not under the worktree root, adds no git dir and
+// leaves the behavior unchanged (degrades gracefully).
+func codexWorktreeWritableRoots(worktreeCwd string) []string {
+	if worktreeCwd == "" {
+		return nil
+	}
+	roots := []string{worktreeCwd}
+	if gitCommon := codexGitCommonDir(worktreeCwd); gitCommon != "" {
+		roots = append(roots, gitCommon)
+	}
+	return roots
+}
+
+// codexGitCommonDir derives the git COMMON dir (<repo>/.git) of a harmonik linked
+// worktree from its path (hk-daegv). A worktree lives at
+// <repo>/<worktreeRoot>/<name> (worktreeRoot default ".harmonik/worktrees"); its
+// common dir is <repo>/.git. Returns "" when the path does not match that layout
+// (e.g. an overridden worktree root, or a non-worktree cwd) — the caller then adds
+// no git dir.
+//
+// Uses plain "/" string ops, NOT filepath: the cwd may be a REMOTE (ssh worker)
+// POSIX path, so the derivation must not depend on the local OS path separator.
+func codexGitCommonDir(worktreeCwd string) string {
+	marker := "/" + workspace.DefaultWorktreeRoot + "/" // "/.harmonik/worktrees/"
+	idx := strings.LastIndex(worktreeCwd, marker)
+	if idx < 0 {
+		return ""
+	}
+	return worktreeCwd[:idx] + "/.git"
 }
 
 // openCaptureSession opens a live-capture corpus session when opted in, else

@@ -88,6 +88,13 @@ func registerRunLifecycle() {
 	// last child closes. Durability class: O (ordinary — observational).
 	mustRegister("epic_completed", func() EventPayload { return &EpicCompletedPayload{} })
 	mustRegister("working_tree_refresh_failed", func() EventPayload { return &WorkingTreeRefreshFailedPayload{} })
+	// working_tree_local_edits_overwritten (hk-7qmpp): emitted when the EM-054
+	// post-merge refresh overwrites an uncommitted local edit on a path the
+	// merged commit itself changed. Names the paths and the recovery patch so
+	// the overwrite is never silent. Durability class: O.
+	mustRegister("working_tree_local_edits_overwritten", func() EventPayload {
+		return &WorkingTreeLocalEditsOverwrittenPayload{}
+	})
 	// implementer_escaped_worktree (hk-6zylj): emitted by the daemon workloop
 	// when, after the implementer exits, the MAIN repo's working tree contains
 	// dirty files outside the .harmonik/.claude/.beads churn allowlist —
@@ -208,6 +215,11 @@ func registerAgentEvents() {
 	// when an implementer session is force-killed for exhausting its commit
 	// budget (hard ceiling reached, or progress went stale). Durability class: O.
 	mustRegister("implementer_budget_exceeded", func() EventPayload { return &ImplementerBudgetExceededPayload{} })
+	// implementer_no_work_suspected (hk-368i4): emitted when a process-exit
+	// implementer produced no commit and a clean worktree AND ran for less than
+	// the no-work duration floor — the independent detector for the silent
+	// implementer failure hk-jcrzn exposed. Durability class: O.
+	mustRegister("implementer_no_work_suspected", func() EventPayload { return &ImplementerNoWorkSuspectedPayload{} })
 	// reviewer_budget_exceeded (hk-da3rr): emitted by the builtin review-loop
 	// and the DOT reviewer-node path when pasteInjectQuitOnReviewFile
 	// force-kills a reviewer session that exhausted its diff-scaled verdict

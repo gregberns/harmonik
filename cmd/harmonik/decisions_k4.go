@@ -13,11 +13,11 @@ package main
 //              on an unknown/already-terminal id (N3 first-writer-wins).
 //
 // Orphaned-pending flag (N9, read-pure — NO EMIT). An open decision whose
-// blocked_agent is OFFLINE (past the ~10-min presenceStaleCutoff, NOT merely
+// blocked_agent is OFFLINE (past the ~10-min presence.StaleCutoff, NOT merely
 // Stale) is flagged "orphaned-pending" in the list/show output — DISPLAY ONLY.
 // Why here and not in the daemon op: agent presence is computable ONLY in this
 // (cmd/harmonik, package main) layer — ComputePresenceRegistry / GetPresenceState
-// / the presenceStaleCutoff (10m) live in comms.go and there is no daemon-side
+// / the presence.StaleCutoff (10m) live in internal/presence and there is no daemon-side
 // presence projection. The daemon decisions-list op therefore returns the raw
 // open set, and this CLI computes the Offline → orphaned-pending flag from the
 // SAME events.jsonl, read-pure (no socket write, no event). That keeps the list
@@ -28,7 +28,7 @@ package main
 // EXACT Offline determination used for orphaned-pending:
 //   ComputePresenceRegistry(eventsPath) → PresenceRecord per agent;
 //   GetPresenceState(rec) == PresenceStateOffline  ⟺  the blocked_agent emitted
-//   an explicit leave beat OR its effective_last_seen is ≥ presenceStaleCutoff
+//   an explicit leave beat OR its effective_last_seen is ≥ presence.StaleCutoff
 //   (10 * time.Minute). A Stale agent (120s ≤ age < 10m) is NOT flagged — it is
 //   presumed still-blocked (SPEC §5 / N9). An agent with NO presence record at
 //   all (never seen) is treated as NOT-offline for flagging purposes: absence of

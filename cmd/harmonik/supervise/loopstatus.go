@@ -12,9 +12,12 @@ package supervisecmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // CognitionLoopStatus is the cognition loop's current operational state.
@@ -97,7 +100,6 @@ func LoopStatusPath(projectDir string) string {
 // ReadLoopStatus reads .harmonik/cognition/loop-status.json. Returns nil when
 // the file does not exist (cognition loop has not written status yet).
 func ReadLoopStatus(projectDir string) (*LoopStatusRecord, error) {
-	//nolint:gosec // G304: path derived from operator-controlled projectDir
 	data, err := os.ReadFile(LoopStatusPath(projectDir))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -115,10 +117,9 @@ func ReadLoopStatus(projectDir string) (*LoopStatusRecord, error) {
 // WriteLoopStatusAtomic writes rec to .harmonik/cognition/loop-status.json
 // atomically via temp+rename+fsync per WM-026. Called by the cognition loop
 // on every LoopStatus transition.
-func WriteLoopStatusAtomic(projectDir string, rec LoopStatusRecord) error {
+func WriteLoopStatusAtomic(projectDir string, rec LoopStatusRecord) (retErr error) {
 	dir := CognitionDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: mkdir: %w", err)
 	}
 
@@ -134,10 +135,17 @@ func WriteLoopStatusAtomic(projectDir string, rec LoopStatusRecord) error {
 	}
 	tmpPath := tmp.Name()
 	success := false
+	tmpClosed := false
 	defer func() {
-		_ = tmp.Close()
+		if !tmpClosed {
+			if err := tmp.Close(); err != nil && retErr == nil {
+				retErr = fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: close temp: %w", err)
+			}
+		}
 		if !success {
-			_ = os.Remove(tmpPath)
+			if err := os.Remove(tmpPath); err != nil && !errors.Is(err, os.ErrNotExist) && retErr == nil {
+				retErr = fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: remove temp: %w", err)
+			}
 		}
 	}()
 
@@ -150,6 +158,7 @@ func WriteLoopStatusAtomic(projectDir string, rec LoopStatusRecord) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: close: %w", err)
 	}
+	tmpClosed = true
 	destPath := LoopStatusPath(projectDir)
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		return fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: rename: %w", err)
@@ -158,9 +167,18 @@ func WriteLoopStatusAtomic(projectDir string, rec LoopStatusRecord) error {
 
 	// fsync parent directory to make rename durable (WM-026).
 	//nolint:gosec // G304
-	if dirFd, err := os.Open(dir); err == nil {
-		_ = dirFd.Sync()
-		_ = dirFd.Close()
+	dirFd, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: open parent dir: %w", err)
+	}
+	if err := dirFd.Sync(); err != nil {
+		return errors.Join(
+			fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: fsync parent dir: %w", err),
+			dirFd.Close(),
+		)
+	}
+	if err := dirFd.Close(); err != nil {
+		return fmt.Errorf("supervisecmd: WriteLoopStatusAtomic: close parent dir: %w", err)
 	}
 	return nil
 }

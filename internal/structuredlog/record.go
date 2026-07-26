@@ -15,9 +15,13 @@ const SchemaVersion = "1.0"
 type Level string
 
 const (
+	// LevelDebug is the debug structured-log severity.
 	LevelDebug Level = "debug"
-	LevelInfo  Level = "info"
-	LevelWarn  Level = "warn"
+	// LevelInfo is the informational structured-log severity.
+	LevelInfo Level = "info"
+	// LevelWarn is the warning structured-log severity.
+	LevelWarn Level = "warn"
+	// LevelError is the error structured-log severity.
 	LevelError Level = "error"
 )
 

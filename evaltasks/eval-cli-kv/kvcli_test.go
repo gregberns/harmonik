@@ -67,9 +67,9 @@ func TestCLI(t *testing.T) {
 	}
 
 	// ── populate then list ────────────────────────────────────────────────────
-	invoke(t, store, "set", "b", "2") //nolint:errcheck
-	invoke(t, store, "set", "a", "1") //nolint:errcheck
-	invoke(t, store, "set", "c", "3") //nolint:errcheck
+	invoke(t, store, "set", "b", "2")
+	invoke(t, store, "set", "a", "1")
+	invoke(t, store, "set", "c", "3")
 
 	out, _, code = invoke(t, store, "list")
 	if code != 0 {
@@ -117,8 +117,8 @@ func TestCLI_Idempotent(t *testing.T) {
 	}
 
 	// double set overwrites silently → get returns the latest value
-	invoke(t, store, "set", "x", "first")  //nolint:errcheck
-	invoke(t, store, "set", "x", "second") //nolint:errcheck
+	invoke(t, store, "set", "x", "first")
+	invoke(t, store, "set", "x", "second")
 	out, _, code := invoke(t, store, "get", "x")
 	if code != 0 {
 		t.Fatalf("get after double-set: want exit 0, got %d", code)

@@ -17,10 +17,7 @@ import (
 
 func readClaudeCfg(t *testing.T, path string) map[string]interface{} {
 	t.Helper()
-	data, err := os.ReadFile(path) //nolint:gosec // G304: test-controlled path
-	if err != nil {
-		t.Fatalf("read cfg: %v", err)
-	}
+	data := mustReadFile(t, path)
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("parse cfg: %v", err)

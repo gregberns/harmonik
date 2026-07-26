@@ -29,7 +29,6 @@ package hooksystem_test
 
 import (
 	"context"
-	"encoding/json"
 	"reflect"
 	"sync"
 	"testing"
@@ -147,7 +146,7 @@ func TestCP047_S05Dispatcher_DispatchesHookKindCPs(t *testing.T) {
 		t.Fatalf("bus.Seal: %v", err)
 	}
 
-	payload, _ := json.Marshal(map[string]any{"run_id": "cp047-run"})
+	payload := cp012FixtureMarshal(t, map[string]any{"run_id": "cp047-run"})
 	if err := bus.Emit(context.Background(), "agent_started", payload); err != nil {
 		t.Fatalf("Emit agent_started: %v", err)
 	}
@@ -194,7 +193,7 @@ func TestCP047_S05Dispatcher_LookupByTriggerNotAttachPoint(t *testing.T) {
 		t.Fatalf("bus.Seal: %v", err)
 	}
 
-	payload, _ := json.Marshal(map[string]any{})
+	payload := cp012FixtureMarshal(t, map[string]any{})
 	if err := bus.Emit(context.Background(), "agent_started", payload); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}

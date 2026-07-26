@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ErrTaskFileCollision is retained for backwards compatibility of the public
@@ -234,8 +236,7 @@ func WriteAgentTask(workspacePath string, payload AgentTaskPayload) error {
 	// Ensure .harmonik/ directory exists in the worktree before writing.
 	// git worktree add creates the worktree root but not its .harmonik/ subdirectory;
 	// this MkdirAll is idempotent and safe to call on every launch.
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target), core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: WriteAgentTask: MkdirAll %q: %w", filepath.Dir(target), err)
 	}
 
@@ -245,9 +246,9 @@ func WriteAgentTask(workspacePath string, payload AgentTaskPayload) error {
 	}
 
 	// Post-write assertion: file MUST exist and be non-empty.
-	fi, err := os.Stat(target) //nolint:gosec // G304: path constructed from workspacePath + known suffix
+	fi, err := os.Stat(target)
 	if err != nil {
-		return fmt.Errorf("%w: stat after write failed for %q: %v", ErrTaskFileEmpty, target, err)
+		return fmt.Errorf("%w: stat after write failed for %q: %w", ErrTaskFileEmpty, target, err)
 	}
 	if fi.Size() == 0 {
 		return fmt.Errorf("%w: file is zero bytes after write at %q", ErrTaskFileEmpty, target)
@@ -559,8 +560,7 @@ func WriteReviewTarget(payload ReviewTargetPayload) error {
 	target := ReviewTargetPath(payload.WorkspacePath)
 	content := buildReviewTargetContent(payload)
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target), core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("workspace: WriteReviewTarget: MkdirAll %q: %w", filepath.Dir(target), err)
 	}
 	if err := atomicWriteWithParentFsync(target, []byte(content)); err != nil {

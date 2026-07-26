@@ -67,7 +67,6 @@ func idempStep2FixtureEntryFile(t *testing.T, dir string, entry core.IntentLogEn
 
 	name := string(entry.BeadID) + ".json"
 	path := filepath.Join(dir, name)
-	//nolint:gosec // G306: test fixture; intent files are readable by the daemon user only in production
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("idempStep2FixtureEntryFile: WriteFile %q: %v", path, err)
 	}
@@ -184,7 +183,6 @@ func TestIdempStep2_AllCoarseStatusValues(t *testing.T) {
 	}
 
 	for _, tc := range statuses {
-		tc := tc
 		t.Run(tc.jsonVal, func(t *testing.T) {
 			t.Parallel()
 

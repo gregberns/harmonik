@@ -77,7 +77,6 @@ func reviewHangFixtureProjectDir(t *testing.T) string {
 	}
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
@@ -111,7 +110,6 @@ func reviewHangFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentS
 
 	wtDir := t.TempDir()
 	wtPath = filepath.Join(wtDir, "wt")
-	//nolint:gosec // G204: git args are test-internal literals; not user input
 	addCmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "--detach", wtPath, parentSHA)
 	addCmd.Dir = projectDir
 	if addOut, addErr := addCmd.CombinedOutput(); addErr != nil {
@@ -122,7 +120,6 @@ func reviewHangFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentS
 		t.Fatalf("reviewHangFixtureWorktree: mkdir .harmonik: %v", err)
 	}
 	t.Cleanup(func() {
-		//nolint:gosec // G204: git args are test-internal; not user input
 		rmCmd := exec.Command("git", "worktree", "remove", "--force", "--force", wtPath)
 		rmCmd.Dir = projectDir
 		_ = rmCmd.Run()

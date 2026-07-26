@@ -300,7 +300,6 @@ func TestRC019a_DivergenceCorroborationRoundTrip(t *testing.T) {
 	}
 
 	for _, c := range values {
-		c := c
 		t.Run(string(c), func(t *testing.T) {
 			t.Parallel()
 

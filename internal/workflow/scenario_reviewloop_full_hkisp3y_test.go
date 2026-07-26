@@ -59,8 +59,8 @@ func rlFullRun(t *testing.T) *core.Run {
 	}
 }
 
-func rlFullOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func rlFullOutcome(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -82,25 +82,25 @@ func TestRLFull_ApproveOnFirstPass(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → implementer
-	dec := workflow.DecideNextNode(graph, "start", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", rlFullOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// implementer → reviewer
-	dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("implementer→reviewer: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// reviewer(APPROVE) → close
-	dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("reviewer→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", rlFullOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -122,7 +122,7 @@ func TestRLFull_TwoRequestChangesThenApprove(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → implementer
-	dec := workflow.DecideNextNode(graph, "start", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", rlFullOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("step 1 start→implementer failed: %+v", dec)
 	}
@@ -130,17 +130,19 @@ func TestRLFull_TwoRequestChangesThenApprove(t *testing.T) {
 	// Loop twice: reviewer(REQUEST_CHANGES) → implementer
 	for i := 1; i <= 2; i++ {
 		// implementer → reviewer
-		dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+		dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(""), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "reviewer" {
 			t.Fatalf("iteration %d implementer→reviewer failed: %+v", i, dec)
 		}
 
 		// Increment cycle counter for the reviewer→implementer edge (the caller
 		// is responsible for incrementing after committing the transition).
-		cycles.Increment(run.RunID, "reviewer", "implementer", nil)
+		if _, err := cycles.Increment(run.RunID, "reviewer", "implementer", nil); err != nil {
+			t.Fatalf("pre-fill cycle counter reviewer\u2192implementer: %v", err)
+		}
 
 		// reviewer(REQUEST_CHANGES) → implementer
-		dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+		dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome("REQUEST_CHANGES"), run, cycles)
 		if !dec.Advance || dec.NextNodeID != "implementer" {
 			t.Fatalf("iteration %d reviewer→implementer failed: Advance=%v NextNodeID=%q",
 				i, dec.Advance, dec.NextNodeID)
@@ -148,17 +150,17 @@ func TestRLFull_TwoRequestChangesThenApprove(t *testing.T) {
 	}
 
 	// Third pass: implementer → reviewer → APPROVE → close
-	dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("final implementer→reviewer failed: %+v", dec)
 	}
 
-	dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("final reviewer→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
-	dec = workflow.DecideNextNode(graph, "close", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", rlFullOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -179,26 +181,26 @@ func TestRLFull_BlockOnFirst(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → implementer
-	dec := workflow.DecideNextNode(graph, "start", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", rlFullOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: %+v", dec)
 	}
 
 	// implementer → reviewer
-	dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("implementer→reviewer: %+v", dec)
 	}
 
 	// reviewer(BLOCK) → close-needs-attention
-	dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome(core.OutcomeStatusSuccess, "BLOCK"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("reviewer→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// close-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", rlFullOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -228,20 +230,22 @@ func TestRLFull_CapHitFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to reviewer.
-	workflow.DecideNextNode(graph, "start", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", rlFullOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", rlFullOutcome(""), run, cycles)
 
 	// Pre-fill cycle counter: simulate 3 prior traversals of reviewer→implementer
 	// (the back-edge's traversal_cap is 3 in review-loop.dot).
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "reviewer", "implementer", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "reviewer", "implementer", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter reviewer\u2192implementer: %v", err)
+		}
 	}
 
 	// With the traversal_cap now bridged into core.Edge, the cascade enforces the
 	// cap: the REQUEST_CHANGES back-edge is suppressed at cap-hit and the cascade
 	// reports a compilation_loop failure with completion_reason=cap_hit.
-	dec := workflow.DecideNextNode(graph, "reviewer", rlFullOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "reviewer", rlFullOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
 	}
@@ -262,9 +266,11 @@ func TestRLFull_CapHitFallback_DirectCascade(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Simulate 3 prior traversals of reviewer→implementer.
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "reviewer", "implementer", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "reviewer", "implementer", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter reviewer\u2192implementer: %v", err)
+		}
 	}
 
 	// Build edges matching review-loop.dot's reviewer outgoing edges, but with
@@ -290,7 +296,7 @@ func TestRLFull_CapHitFallback_DirectCascade(t *testing.T) {
 			ToNode:       "implementer",
 			Condition:    &rcCondition,
 			Label:        &requestChangesLabel,
-			TraversalCap: &cap,
+			TraversalCap: &traversalCap,
 			OrderingKey:  "implementer",
 		},
 		{
@@ -329,7 +335,7 @@ func TestRLFull_CapHitFallback_DirectCascade(t *testing.T) {
 	// REQUEST_CHANGES with cap exhausted: the conditional REQUEST_CHANGES edge
 	// is the highest-priority match (conditional-before-unconditional), but its
 	// traversal cap is hit. SelectNextEdge should return FailureClassCompilationLoop.
-	result := core.SelectNextEdge(run, candidates, rlFullOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), eval, cycles)
+	result := core.SelectNextEdge(run, candidates, rlFullOutcome("REQUEST_CHANGES"), eval, cycles)
 
 	if !result.Failed {
 		t.Fatalf("expected Failed=true (cap hit), got Matched=%v Edge.ToNode=%v",
@@ -349,9 +355,11 @@ func TestRLFull_CapHitFallback_DirectCascade_FallbackFires(t *testing.T) {
 	run := rlFullRun(t)
 	cycles := core.NewCycleCounter()
 
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "reviewer", "implementer", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "reviewer", "implementer", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter reviewer\u2192implementer: %v", err)
+		}
 	}
 
 	// Unconditional fallback edge only (simulating the daemon's retry without
@@ -402,7 +410,7 @@ func TestRLFull_CapHitFallback_DirectCascade_FallbackFires(t *testing.T) {
 
 	// With REQUEST_CHANGES label but capped edge removed: the APPROVE and BLOCK
 	// conditions don't match, so the unconditional fallback fires.
-	result := core.SelectNextEdge(run, candidatesWithoutCapped, rlFullOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), eval, cycles)
+	result := core.SelectNextEdge(run, candidatesWithoutCapped, rlFullOutcome("REQUEST_CHANGES"), eval, cycles)
 
 	if !result.Matched {
 		t.Fatalf("expected Matched=true (unconditional fallback), got Failed=%v FailureReason=%q",
@@ -440,11 +448,11 @@ func TestRLFull_NoProgress(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate: start → implementer → reviewer.
-	dec := workflow.DecideNextNode(graph, "start", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", rlFullOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "implementer" {
 		t.Fatalf("start→implementer: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "implementer", rlFullOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "reviewer" {
 		t.Fatalf("implementer→reviewer: %+v", dec)
 	}
@@ -453,7 +461,7 @@ func TestRLFull_NoProgress(t *testing.T) {
 	// routing, so the reviewer emits an outcome with no label (or an
 	// unrecognized label like "NO_PROGRESS"). No conditional edge matches;
 	// the unconditional fallback fires.
-	dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome(core.OutcomeStatusSuccess, "NO_PROGRESS"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "reviewer", rlFullOutcome("NO_PROGRESS"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("no-progress fallback: Advance=%v Failed=%v FailureReason=%q",
 			dec.Advance, dec.Failed, dec.FailureReason)
@@ -464,7 +472,7 @@ func TestRLFull_NoProgress(t *testing.T) {
 	}
 
 	// close-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", rlFullOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -484,11 +492,11 @@ func TestRLFull_NoProgress_EmptyLabel(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to reviewer.
-	workflow.DecideNextNode(graph, "start", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "implementer", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", rlFullOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "implementer", rlFullOutcome(""), run, cycles)
 
 	// Empty label → no conditional match → unconditional fallback.
-	dec := workflow.DecideNextNode(graph, "reviewer", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "reviewer", rlFullOutcome(""), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("empty-label fallback: Advance=%v Failed=%v", dec.Advance, dec.Failed)
 	}

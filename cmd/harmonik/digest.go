@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -114,8 +115,8 @@ EXAMPLES
 		lim = digest.FullLimits()
 	}
 
-	brPath, _ := exec.LookPath("br")
-	kerfPath, _ := exec.LookPath("kerf")
+	brPath := optionalExecutablePath("br")
+	kerfPath := optionalExecutablePath("kerf")
 
 	in := digest.BuildInput{
 		ProjectDir:   projectDir,
@@ -129,13 +130,16 @@ EXAMPLES
 	if watchFlag {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
-		_ = digestcmd.RunWatch(ctx, digestcmd.WatchInput{Build: in}, os.Stdout)
+		if watchErr := digestcmd.RunWatch(ctx, digestcmd.WatchInput{Build: in}, os.Stdout); watchErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik digest --watch: %v\n", watchErr)
+			return 1
+		}
 		return 0
 	}
 
 	d, err := digest.Build(context.Background(), in)
 	if err != nil {
-		if err == digest.ErrNoHarmonikDir {
+		if errors.Is(err, digest.ErrNoHarmonikDir) {
 			fmt.Fprintf(os.Stderr, "harmonik digest: .harmonik/ not found in %q\n", projectDir)
 			return 7
 		}
@@ -156,6 +160,16 @@ EXAMPLES
 	// Human-readable output.
 	printHumanDigest(d)
 	return 0
+}
+
+// optionalExecutablePath resolves name when installed and preserves the
+// existing empty-path behavior when the optional tool is absent.
+func optionalExecutablePath(name string) string {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 // printHumanDigest renders d as a compact human-readable status sheet.
@@ -240,10 +254,8 @@ func printHumanDigest(d *digest.DigestJSON) {
 	}
 	for _, ev := range d.RecentEvents {
 		if ev.RunID != "" {
-			//nolint:forbidigo // G-CLI: digest is a terminal report command; the whole printer writes to stdout via fmt.Print* (surrounding lines are grandfathered)
 			fmt.Printf("  %s  type=%s  run=%s\n", digestShortID(ev.EventID), ev.Type, digestShortID(ev.RunID))
 		} else {
-			//nolint:forbidigo // G-CLI: digest is a terminal report command; the whole printer writes to stdout via fmt.Print* (surrounding lines are grandfathered)
 			fmt.Printf("  %s  type=%s\n", digestShortID(ev.EventID), ev.Type)
 		}
 	}

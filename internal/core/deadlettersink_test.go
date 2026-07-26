@@ -43,7 +43,7 @@ func makeTestEnvelope(t *testing.T, eventType string) EventEnvelope {
 // a deadLetterRecord.  It returns the slice in file order.
 func readDeadLetterRecords(t *testing.T, path string) []deadLetterRecord {
 	t.Helper()
-	f, err := os.Open(path) //nolint:gosec
+	f, err := os.Open(path) //nolint:gosec // G304: path is supplied by this package's temporary test fixtures
 	if err != nil {
 		t.Fatalf("open %q: %v", path, err)
 	}
@@ -242,7 +242,7 @@ func TestProp_DeadLetterSink_EnvelopeRoundTrip(t *testing.T) {
 		if err != nil {
 			rt.Fatalf("MkdirTemp: %v", err)
 		}
-		defer os.RemoveAll(dir) //nolint:errcheck
+		defer os.RemoveAll(dir) //nolint:errcheck // best-effort cleanup of the property test's temporary directory
 		path := filepath.Join(dir, "dead.jsonl")
 
 		id, err := uuid.NewRandom()
@@ -270,7 +270,7 @@ func TestProp_DeadLetterSink_EnvelopeRoundTrip(t *testing.T) {
 		}
 
 		// Re-read and verify.
-		f, err := os.Open(path) //nolint:gosec
+		f, err := os.Open(path) //nolint:gosec // G304: path is rooted in the property test's temporary directory
 		if err != nil {
 			rt.Fatalf("open: %v", err)
 		}

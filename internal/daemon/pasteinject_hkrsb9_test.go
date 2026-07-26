@@ -4,7 +4,8 @@ package daemon
 // probes routed through the run's CommandRunner.
 //
 // Problem addressed: hasAnyDirectChild (pgrep -P), commandMatchesLiveAgent
-// (ps -o comm=), resolveWorktreeHEAD and worktreeActivityFingerprint all used
+// (ps -o comm=), resolveWorktreeHEAD (now gitprobe.ResolveWorktreeHEAD) and
+// worktreeActivityFingerprint all used
 // bare exec.Command / exec.CommandContext, which cannot be redirected to a
 // remote host for remote-substrate workers.
 //
@@ -17,8 +18,8 @@ package daemon
 //   - RSB9_HasAnyDirectChildVia_SSHArgv: SSHRunner argv is ssh host -- pgrep -P <pid>.
 //   - RSB9_CommandMatchesLiveAgentVia_Matches: canned ps output "claude" → true.
 //   - RSB9_CommandMatchesLiveAgentVia_NoMatch: canned ps output "bash" → false.
-//   - RSB9_ResolveWorktreeHEADVia_RealGit: real local git repo → correct SHA.
-//   - RSB9_ResolveWorktreeHEADVia_SSHArgv: SSHRunner argv is ssh host -- git -C <path> rev-parse HEAD.
+//   (the two ResolveWorktreeHEADVia cases moved to internal/gitprobe with the
+//    function itself — P2 unit E1a)
 //   - RSB9_WorktreeActivityFingerprintVia_RealGit: stable fingerprint on clean repo.
 //   - RSB9_CommitDetect_ViaRunner: pasteInjectQuitOnCommit uses runner from qs.
 //
@@ -36,6 +37,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,54 +184,9 @@ func TestRSB9_CommandMatchesLiveAgentVia_PSArgv(t *testing.T) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// resolveWorktreeHEADVia
-// ─────────────────────────────────────────────────────────────────────────────
-
-func TestRSB9_ResolveWorktreeHEADVia_RealGit(t *testing.T) {
-	t.Parallel()
-	repoPath, wantSHA := initGitRepoB9(t)
-
-	rr := &tmux.RecordingRunner{} // nil CmdFunc → real git runs
-	got, err := resolveWorktreeHEADVia(context.Background(), rr, repoPath)
-	if err != nil {
-		t.Fatalf("RSB9: resolveWorktreeHEADVia: %v", err)
-	}
-	if got != wantSHA {
-		t.Errorf("RSB9: HEAD = %q, want %q", got, wantSHA)
-	}
-	// Verify the call used git -C <path> rev-parse HEAD.
-	if len(rr.Calls) < 1 || rr.Calls[0].Name != "git" {
-		t.Fatalf("RSB9: expected git call, got %v", rr.Calls)
-	}
-	args := rr.Calls[0].Args
-	if len(args) < 4 || args[0] != "-C" || args[1] != repoPath || args[2] != "rev-parse" || args[3] != "HEAD" {
-		t.Errorf("RSB9: git args = %v, want [-C %s rev-parse HEAD]", args, repoPath)
-	}
-}
-
-func TestRSB9_ResolveWorktreeHEADVia_SSHArgv(t *testing.T) {
-	sshHost := "worker@remote.internal"
-	ssh := tmux.SSHRunner{Host: sshHost}
-	rr := &tmux.RecordingRunner{
-		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
-			return ssh.Command(ctx, name, args...)
-		},
-	}
-	// Will fail (no real ssh) but we only care about the recorded argv.
-	_, _ = resolveWorktreeHEADVia(context.Background(), rr, "/remote/path/wt")
-
-	if len(rr.Calls) < 1 {
-		t.Fatal("RSB9/ssh: no calls recorded")
-	}
-	call := rr.Calls[0]
-	if call.Name != "git" {
-		t.Errorf("RSB9/ssh: name = %q, want git", call.Name)
-	}
-	if len(call.Args) < 4 || call.Args[0] != "-C" || call.Args[2] != "rev-parse" || call.Args[3] != "HEAD" {
-		t.Errorf("RSB9/ssh: git args = %v, want [-C <path> rev-parse HEAD]", call.Args)
-	}
-}
+// The two ResolveWorktreeHEADVia cases that used to sit here moved to
+// internal/gitprobe with the function itself (P2 unit E1a), along with two new
+// cases the move exposed as untested: nil-runner delegation and RunnerIsLocalFS.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // worktreeActivityFingerprintVia
@@ -340,7 +297,7 @@ func TestRSB9_CommitDetect_ViaRunner(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	go pasteInjectQuitOnCommit(ctx, qs, nil, repoPath, initialSHA, nil, nil, nil, nil, core.RunID{})
+	go pasteInjectQuitOnCommit(ctx, substrate.SystemClock{}, qs, nil, repoPath, initialSHA, nil, nil, nil, nil, core.RunID{})
 
 	select {
 	case <-quitSent:

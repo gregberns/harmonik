@@ -21,6 +21,7 @@ package queue_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -393,7 +394,6 @@ func TestAppendItemsQM044TerminalGroupReject(t *testing.T) {
 	}
 
 	for _, gs := range terminalStatuses {
-		gs := gs // capture
 		t.Run(string(gs), func(t *testing.T) {
 			t.Parallel()
 
@@ -428,7 +428,7 @@ func TestAppendItemsNilQueue(t *testing.T) {
 
 	ledger := appendFixtureOpenLedger()
 	_, _, err := queue.AppendItems(context.Background(), nil, 0, []string{"hk-x"}, ledger)
-	if err != queue.ErrAppendQueueNil {
+	if !errors.Is(err, queue.ErrAppendQueueNil) {
 		t.Errorf("err = %v, want ErrAppendQueueNil", err)
 	}
 }
@@ -441,7 +441,7 @@ func TestAppendItemsEmptyBeadIDs(t *testing.T) {
 	q := appendFixtureStreamQueue(queue.GroupStatusActive, nil)
 	ledger := appendFixtureOpenLedger()
 	_, _, err := queue.AppendItems(context.Background(), q, 0, []string{}, ledger)
-	if err != queue.ErrAppendEmptyBeadIDs {
+	if !errors.Is(err, queue.ErrAppendEmptyBeadIDs) {
 		t.Errorf("err = %v, want ErrAppendEmptyBeadIDs", err)
 	}
 }

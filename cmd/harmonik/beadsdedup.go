@@ -69,7 +69,6 @@ func runBeadsDedupSubcommand(subArgs []string) int {
 		}
 	}
 
-	//nolint:gosec // G304: path is operator-supplied or default project-relative path
 	rows, err := parseBeadsJSONL(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik beads-dedup: read %s: %v\n", path, err)

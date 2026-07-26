@@ -17,6 +17,7 @@ package sentinel_test
 // Bead: hk-l087e.
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -34,10 +35,18 @@ func makeSnapshot(now time.Time, runs ...sentinel.RunSignal) sentinel.Snapshot {
 	return sentinel.Snapshot{Now: now, Runs: m, Lanes: map[string]sentinel.LaneSignal{}}
 }
 
-func baseRun(id, beadID string, startedAt time.Time) sentinel.RunSignal {
+// baseRunID and baseBeadID are the identifiers every Layer A fixture run uses.
+// The detectors under test key off phase and timing, never off the identifiers,
+// so a single run/bead pair keeps the fixtures readable.
+const (
+	baseRunID  = "run-1"
+	baseBeadID = "bead-1"
+)
+
+func baseRun(startedAt time.Time) sentinel.RunSignal {
 	return sentinel.RunSignal{
-		RunID:        id,
-		BeadID:       beadID,
+		RunID:        baseRunID,
+		BeadID:       baseBeadID,
 		LaneName:     "default",
 		StartedAt:    startedAt,
 		LastEventAt:  startedAt,
@@ -81,7 +90,7 @@ func TestDetectLayerA_HeartbeatGap(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	started := now.Add(-30 * time.Minute)
 
-	run1 := baseRun("run-1", "bead-1", started)
+	run1 := baseRun(started)
 	// Last event was 25 min ago — exceeds RunSilenceStall (20m).
 	run1 = withLastEvent(run1, now, now.Add(-25*time.Minute))
 
@@ -117,7 +126,7 @@ func TestDetectLayerA_HeartbeatGap_BelowThreshold(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	started := now.Add(-30 * time.Minute)
 
-	run1 := baseRun("run-1", "bead-1", started)
+	run1 := baseRun(started)
 	// Last event was 5 min ago — below RunSilenceStall (20m). Should NOT fire.
 	run1 = withLastEvent(run1, now, now.Add(-5*time.Minute))
 
@@ -140,7 +149,7 @@ func TestDetectLayerA_ReviewStall(t *testing.T) {
 	// reviewer_verdict fired 15 min ago; ReviewFinalizeStall is 10m — exceeds threshold.
 	verdictAt := now.Add(-15 * time.Minute)
 
-	run1 := baseRun("run-1", "bead-1", started)
+	run1 := baseRun(started)
 	run1 = withLastEvent(run1, now, verdictAt) // last event is the verdict
 	run1 = withVerdict(run1, verdictAt)
 
@@ -174,7 +183,7 @@ func TestDetectLayerA_ReviewStall_NotVerdictPhase(t *testing.T) {
 	started := now.Add(-30 * time.Minute)
 
 	// A run in RunPhaseInImplementation with a long gap — review_stall must NOT fire.
-	run1 := baseRun("run-1", "bead-1", started)
+	run1 := baseRun(started)
 	run1 = withLastEvent(run1, now, now.Add(-25*time.Minute))
 	run1 = withPhase(run1, sentinel.RunPhaseInImplementation)
 
@@ -196,7 +205,7 @@ func TestDetectLayerA_RunAge(t *testing.T) {
 	// Run started 90 min ago; RunMaxAge is 60m — exceeds threshold.
 	started := now.Add(-90 * time.Minute)
 
-	run1 := baseRun("run-1", "bead-1", started)
+	run1 := baseRun(started)
 	run1 = withLastEvent(run1, now, now.Add(-5*time.Minute)) // recent heartbeat, but too old overall
 
 	snap := makeSnapshot(now, run1)
@@ -229,7 +238,7 @@ func TestDetectLayerA_TerminalRunSkipped(t *testing.T) {
 	// A terminal run that is very old — no signature should fire.
 	started := now.Add(-120 * time.Minute)
 
-	run1 := baseRun("run-1", "bead-1", started)
+	run1 := baseRun(started)
 	run1 = withLastEvent(run1, now, now.Add(-60*time.Minute))
 	run1 = withPhase(run1, sentinel.RunPhaseTerminal)
 
@@ -251,7 +260,7 @@ func TestDetectLayerA_MultipleHitsPerRun(t *testing.T) {
 	started := now.Add(-90 * time.Minute)
 	lastEvent := now.Add(-25 * time.Minute)
 
-	run1 := baseRun("run-1", "bead-1", started)
+	run1 := baseRun(started)
 	run1 = withLastEvent(run1, now, lastEvent)
 
 	snap := makeSnapshot(now, run1)
@@ -368,9 +377,5 @@ func TestStallHit_StallDetectedPayload(t *testing.T) {
 // The sentinel package exports ErrLayerAConfigInvalid so we can do a direct
 // type assertion.
 func isLayerAConfigInvalid(err error, out **sentinel.ErrLayerAConfigInvalid) bool {
-	if e, ok := err.(*sentinel.ErrLayerAConfigInvalid); ok {
-		*out = e
-		return true
-	}
-	return false
+	return errors.As(err, out)
 }

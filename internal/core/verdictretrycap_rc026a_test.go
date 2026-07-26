@@ -218,7 +218,6 @@ func TestCheckVerdictRetryCap_NextAttemptIsAlwaysCurrentPlusOne(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -247,7 +246,6 @@ func TestCheckVerdictRetryCap_AllowedAndCapExceededAreMutuallyExclusive(t *testi
 	t.Parallel()
 
 	for attempt := 0; attempt <= 10; attempt++ {
-		attempt := attempt
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 

@@ -297,7 +297,6 @@ func TestCPINV003_Sensor_CP039DelegationPathIsNamedOnBothKinds(t *testing.T) {
 		{"Gate", gateCP},
 		{"Hook", hookCP},
 	} {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -861,7 +860,6 @@ func TestCPINV003_Sensor_GateDecisionTable(t *testing.T) {
 	}
 
 	for _, row := range rows {
-		row := row
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -940,7 +938,6 @@ func TestCPINV003_Sensor_HookDecisionTable(t *testing.T) {
 	}
 
 	for _, row := range rows {
-		row := row
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 

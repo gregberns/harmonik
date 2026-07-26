@@ -1,3 +1,5 @@
+package sentinel
+
 // signals.go — signal library for stall-sentinel detection.
 //
 // Deterministic primitive that reads events.jsonl + the run registry and
@@ -13,7 +15,6 @@
 //	02-analysis.md §Signal-library-core, DESIGN.md §7.1 (Signal library).
 //
 // Bead: hk-mxxsl.
-package sentinel
 
 import (
 	"context"
@@ -188,16 +189,9 @@ func ComputeSnapshot(
 		}
 	}
 
-	// Per-run mutable state accumulated during the scan.
-	type runState struct {
-		rec         run.Record
-		lastEventAt time.Time
-		phase       RunPhase
-		verdictAt   time.Time
-	}
-	states := make(map[string]*runState, len(activeRuns))
+	states := make(map[string]*runScanState, len(activeRuns))
 	for _, r := range activeRuns {
-		states[r.RunID] = &runState{
+		states[r.RunID] = &runScanState{
 			rec:         r,
 			lastEventAt: r.StartedAt, // baseline before any events are seen
 		}
@@ -209,94 +203,63 @@ func ComputeSnapshot(
 	// Live-crew tracking: agent name → most-recent online last_seen timestamp.
 	agentLastSeen := make(map[string]time.Time)
 
-	// Scan events.jsonl starting from scanStart.
-	cursor := eventIDFloorForTime(scanStart)
-	for ev := range eventbus.ScanAfter(eventsPath, cursor) {
-		// Guard: skip events before our window (UUIDv7 cursor is an
-		// approximation; wall-clock check is authoritative).
-		if ev.TimestampWall.Before(scanStart) {
-			continue
-		}
+	scanSignalEvents(eventsPath, scanStart, states, laneForwardProgress, agentLastSeen)
 
-		evType := core.EventType(ev.Type)
+	liveCrews := liveCrewsWithin(agentLastSeen, now.Add(-presenceTTL))
 
-		// --- agent_presence events are not run-scoped; handle separately ---
-		// core.EventType("agent_presence") has no named constant in eventtype.go;
-		// use the string literal from the event registry (eventreg_hqwn59.go).
-		if ev.Type == "agent_presence" {
-			var p core.AgentPresencePayload
-			if err := json.Unmarshal(ev.Payload, &p); err != nil || !p.Valid() {
-				continue
-			}
-			switch p.Status {
-			case core.AgentPresenceStatusOnline:
-				t, err := time.Parse(time.RFC3339, p.LastSeen)
-				if err == nil && t.After(agentLastSeen[p.Agent]) {
-					agentLastSeen[p.Agent] = t
-				}
-			case core.AgentPresenceStatusOffline:
-				delete(agentLastSeen, p.Agent)
-			}
-			continue
-		}
-
-		// --- All other events require a run_id on the envelope ---
-		if ev.RunID == nil {
-			continue
-		}
-		runIDStr := (*ev.RunID).String()
-		st, ok := states[runIDStr]
-		if !ok {
-			// Event for a run not in the active registry (already completed
-			// and its record removed). Ignore it.
-			continue
-		}
-
-		// Update last-event timestamp for any run-scoped event.
-		if ev.TimestampWall.After(st.lastEventAt) {
-			st.lastEventAt = ev.TimestampWall
-		}
-
-		// Update phase and lane forward-progress based on event type.
-		switch evType {
-		case core.EventTypeRunStarted:
-			if st.phase < RunPhaseStarted {
-				st.phase = RunPhaseStarted
-			}
-			advanceLaneProgress(laneForwardProgress, st.rec.QueueName, ev.TimestampWall)
-
-		case core.EventTypeImplementerPhaseComplete:
-			if st.phase < RunPhaseInImplementation {
-				st.phase = RunPhaseInImplementation
-			}
-
-		case core.EventTypeReviewerVerdict:
-			if st.phase < RunPhaseVerdictFired {
-				st.phase = RunPhaseVerdictFired
-				st.verdictAt = ev.TimestampWall
-			}
-
-		case core.EventTypeRunCompleted, core.EventTypeRunFailed:
-			st.phase = RunPhaseTerminal
-
-		case core.EventTypeBeadClosed:
-			advanceLaneProgress(laneForwardProgress, st.rec.QueueName, ev.TimestampWall)
-
-			// agent_heartbeat and agent_message already covered by the
-			// generic lastEventAt update above; no extra logic needed.
+	// Build Snapshot.Runs.
+	runs := make(map[string]RunSignal, len(states))
+	for id, st := range states {
+		runs[id] = RunSignal{
+			RunID:        id,
+			BeadID:       st.rec.BeadID,
+			LaneName:     st.rec.QueueName,
+			StartedAt:    st.rec.StartedAt,
+			LastEventAt:  st.lastEventAt,
+			LastEventAge: now.Sub(st.lastEventAt),
+			Phase:        st.phase,
+			VerdictAt:    st.verdictAt,
 		}
 	}
 
-	// Compute the global live-crew set (within TTL).
-	presenceThreshold := now.Add(-presenceTTL)
+	lanes := buildLaneSignals(activeRuns, laneStates, states, laneForwardProgress, liveCrews)
+
+	return Snapshot{
+		Now:   now,
+		Runs:  runs,
+		Lanes: lanes,
+	}
+}
+
+// liveCrewsWithin returns the sorted set of agents whose most recent online beat
+// is at or after threshold. Agents that went offline are already absent from
+// agentLastSeen.
+func liveCrewsWithin(agentLastSeen map[string]time.Time, threshold time.Time) []string {
+	// Left nil (not empty) when nothing is live, preserving what callers saw
+	// before this was extracted out of ComputeSnapshot.
 	var liveCrews []string
 	for agent, lastSeen := range agentLastSeen {
-		if !lastSeen.Before(presenceThreshold) {
+		if !lastSeen.Before(threshold) {
 			liveCrews = append(liveCrews, agent)
 		}
 	}
 	sort.Strings(liveCrews)
+	return liveCrews
+}
 
+// buildLaneSignals projects the scan state into one LaneSignal per lane.
+//
+// A lane is included when it is named by an active run OR by a LaneStateInput,
+// so a lane with queued work but no running bead still gets a signal — that
+// combination is exactly what the Layer B expectation-of-progress predicate
+// needs to see. Mid-flight run IDs are sorted for deterministic output.
+func buildLaneSignals(
+	activeRuns []run.Record,
+	laneStates []LaneStateInput,
+	states map[string]*runScanState,
+	laneForwardProgress map[string]time.Time,
+	liveCrews []string,
+) map[string]LaneSignal {
 	// Index lane state inputs for O(1) lookup.
 	laneInputIdx := make(map[string]LaneStateInput, len(laneStates))
 	for _, ls := range laneStates {
@@ -327,22 +290,6 @@ func ComputeSnapshot(
 		sort.Strings(laneMidFlight[lane])
 	}
 
-	// Build Snapshot.Runs.
-	runs := make(map[string]RunSignal, len(states))
-	for id, st := range states {
-		runs[id] = RunSignal{
-			RunID:        id,
-			BeadID:       st.rec.BeadID,
-			LaneName:     st.rec.QueueName,
-			StartedAt:    st.rec.StartedAt,
-			LastEventAt:  st.lastEventAt,
-			LastEventAge: now.Sub(st.lastEventAt),
-			Phase:        st.phase,
-			VerdictAt:    st.verdictAt,
-		}
-	}
-
-	// Build Snapshot.Lanes.
 	lanes := make(map[string]LaneSignal, len(laneNames))
 	for laneName := range laneNames {
 		inp := laneInputIdx[laneName]
@@ -355,11 +302,120 @@ func ComputeSnapshot(
 			HasAssignedBead:       inp.HasAssignedBead,
 		}
 	}
+	return lanes
+}
 
-	return Snapshot{
-		Now:   now,
-		Runs:  runs,
-		Lanes: lanes,
+// runScanState is the per-run mutable state ComputeSnapshot accumulates while
+// scanning events.jsonl, before it is projected into a RunSignal.
+type runScanState struct {
+	rec         run.Record
+	lastEventAt time.Time
+	phase       RunPhase
+	verdictAt   time.Time
+}
+
+// scanSignalEvents replays events.jsonl from scanStart and folds each event into
+// the scan state: per-run last-event time and phase in states, per-lane
+// forward-progress timestamps in laneForwardProgress, and crew liveness in
+// agentLastSeen. All three maps are mutated in place.
+//
+// Events before scanStart, events for runs outside the active registry, and
+// events with no run_id (other than agent_presence) are ignored.
+func scanSignalEvents(
+	eventsPath string,
+	scanStart time.Time,
+	states map[string]*runScanState,
+	laneForwardProgress map[string]time.Time,
+	agentLastSeen map[string]time.Time,
+) {
+	cursor := eventIDFloorForTime(scanStart)
+	for ev := range eventbus.ScanAfter(eventsPath, cursor) {
+		// Guard: skip events before our window (UUIDv7 cursor is an
+		// approximation; wall-clock check is authoritative).
+		if ev.TimestampWall.Before(scanStart) {
+			continue
+		}
+
+		// --- agent_presence events are not run-scoped; handle separately ---
+		// core.EventType("agent_presence") has no named constant in eventtype.go;
+		// use the string literal from the event registry (eventreg_hqwn59.go).
+		if ev.Type == "agent_presence" {
+			applyAgentPresence(agentLastSeen, ev)
+			continue
+		}
+
+		// --- All other events require a run_id on the envelope ---
+		if ev.RunID == nil {
+			continue
+		}
+		st, ok := states[ev.RunID.String()]
+		if !ok {
+			// Event for a run not in the active registry (already completed
+			// and its record removed). Ignore it.
+			continue
+		}
+
+		// Update last-event timestamp for any run-scoped event.
+		if ev.TimestampWall.After(st.lastEventAt) {
+			st.lastEventAt = ev.TimestampWall
+		}
+
+		applyRunEvent(st, core.EventType(ev.Type), ev.TimestampWall, laneForwardProgress)
+	}
+}
+
+// applyAgentPresence folds one agent_presence event into agentLastSeen. An
+// online beat advances the agent's last-seen time; an offline beat drops the
+// agent outright. A malformed or invalid payload is ignored.
+func applyAgentPresence(agentLastSeen map[string]time.Time, ev core.Event) {
+	var p core.AgentPresencePayload
+	if err := json.Unmarshal(ev.Payload, &p); err != nil || !p.Valid() {
+		return
+	}
+	switch p.Status {
+	case core.AgentPresenceStatusOnline:
+		t, err := time.Parse(time.RFC3339, p.LastSeen)
+		if err == nil && t.After(agentLastSeen[p.Agent]) {
+			agentLastSeen[p.Agent] = t
+		}
+	case core.AgentPresenceStatusOffline:
+		delete(agentLastSeen, p.Agent)
+	}
+}
+
+// applyRunEvent advances a run's phase and its lane's forward-progress
+// timestamp for one run-scoped event. Phase only ever moves forward.
+func applyRunEvent(st *runScanState, evType core.EventType, at time.Time, laneForwardProgress map[string]time.Time) {
+	switch evType {
+	case core.EventTypeRunStarted:
+		if st.phase < RunPhaseStarted {
+			st.phase = RunPhaseStarted
+		}
+		advanceLaneProgress(laneForwardProgress, st.rec.QueueName, at)
+
+	case core.EventTypeImplementerPhaseComplete:
+		if st.phase < RunPhaseInImplementation {
+			st.phase = RunPhaseInImplementation
+		}
+
+	case core.EventTypeReviewerVerdict:
+		if st.phase < RunPhaseVerdictFired {
+			st.phase = RunPhaseVerdictFired
+			st.verdictAt = at
+		}
+
+	case core.EventTypeRunCompleted, core.EventTypeRunFailed:
+		st.phase = RunPhaseTerminal
+
+	case core.EventTypeBeadClosed:
+		advanceLaneProgress(laneForwardProgress, st.rec.QueueName, at)
+
+	default:
+		// Every other event type only refreshes lastEventAt, which the caller
+		// already did. In particular agent_heartbeat and agent_message keep a run
+		// looking alive without advancing its phase or its lane's forward
+		// progress — that asymmetry is the whole point of the Layer B
+		// expectation-of-progress predicate.
 	}
 }
 

@@ -117,7 +117,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 	// Emit reconciliation_started{trigger:"scheduled-hourly"} (RC-020a).
 	reconciliationRunID, uidErr := uuid.NewV7()
 	if uidErr != nil {
-		fmt.Fprintf(logW, "reconciliation scheduler: generate run ID: %v (skipping tick)\n", uidErr)
+		fmt.Fprintf(logW, "reconciliation scheduler: generate run ID: %v (skipping tick)\n", uidErr) //nolint:errcheck // best-effort stderr status log
 		return
 	}
 	runID := core.RunID(reconciliationRunID)
@@ -127,11 +127,11 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 	}
 	payloadBytes, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {
-		fmt.Fprintf(logW, "reconciliation scheduler: marshal reconciliation_started: %v (skipping tick)\n", marshalErr)
+		fmt.Fprintf(logW, "reconciliation scheduler: marshal reconciliation_started: %v (skipping tick)\n", marshalErr) //nolint:errcheck // best-effort stderr status log
 		return
 	}
 	if emitErr := cfg.Emitter.Emit(ctx, core.EventTypeReconciliationStarted, payloadBytes); emitErr != nil {
-		fmt.Fprintf(logW, "reconciliation scheduler: emit reconciliation_started: %v\n", emitErr)
+		fmt.Fprintf(logW, "reconciliation scheduler: emit reconciliation_started: %v\n", emitErr) //nolint:errcheck // best-effort stderr status log
 		// Non-fatal: continue with the Cat 3c scan regardless.
 	}
 
@@ -150,7 +150,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 			CompletedAt:         time.Now().UTC().Format(time.RFC3339),
 		}
 		if completedBytes, cErr := json.Marshal(completedPayload); cErr == nil {
-			_ = cfg.Emitter.Emit(ctx, core.EventTypeReconciliationCompleted, completedBytes)
+			_ = cfg.Emitter.Emit(ctx, core.EventTypeReconciliationCompleted, completedBytes) //nolint:errcheck // best-effort audit emit; reconciliation_completed pairs the started event for hang detection only
 		}
 	}()
 
@@ -161,7 +161,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 
 	adapter, adapterErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
 	if adapterErr != nil {
-		fmt.Fprintf(logW, "reconciliation scheduler: br adapter: %v (skipping Cat 3c scan)\n", adapterErr)
+		fmt.Fprintf(logW, "reconciliation scheduler: br adapter: %v (skipping Cat 3c scan)\n", adapterErr) //nolint:errcheck // best-effort stderr status log
 		return
 	}
 
@@ -170,7 +170,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 
 	beads, listErr := adapter.ListInFlightBeads(scanCtx)
 	if listErr != nil {
-		fmt.Fprintf(logW, "reconciliation scheduler: list in_progress beads: %v\n", listErr)
+		fmt.Fprintf(logW, "reconciliation scheduler: list in_progress beads: %v\n", listErr) //nolint:errcheck // best-effort stderr status log
 		return
 	}
 	if len(beads) == 0 {
@@ -192,7 +192,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 	for _, bead := range beads {
 		merged, scanErr := mergeScanner.HasMergeCommitForBead(scanCtx, bead.BeadID)
 		if scanErr != nil {
-			fmt.Fprintf(logW, "reconciliation scheduler: bead %s git scan: %v (skipping)\n", bead.BeadID, scanErr)
+			fmt.Fprintf(logW, "reconciliation scheduler: bead %s git scan: %v (skipping)\n", bead.BeadID, scanErr) //nolint:errcheck // best-effort stderr status log
 			continue
 		}
 		if !merged {
@@ -200,11 +200,11 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 		}
 		// Cat 3c auto-resolve: implementation has landed; close the bead.
 		if closeErr := adapter.SweepCloseBead(scanCtx, timeoutCfg, bead.BeadID); closeErr != nil {
-			fmt.Fprintf(logW, "reconciliation scheduler: bead %s close: %v\n", bead.BeadID, closeErr)
+			fmt.Fprintf(logW, "reconciliation scheduler: bead %s close: %v\n", bead.BeadID, closeErr) //nolint:errcheck // best-effort stderr status log
 			continue
 		}
 		beadsClosed++
-		fmt.Fprintf(logW, "reconciliation scheduler: bead %s closed (Cat 3c scheduled)\n", bead.BeadID)
+		fmt.Fprintf(logW, "reconciliation scheduler: bead %s closed (Cat 3c scheduled)\n", bead.BeadID) //nolint:errcheck // best-effort stderr status log
 	}
 
 	// Class B orphan repair: reset any in_progress beads that have no queue
@@ -239,6 +239,8 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 //
 // Spec ref: hk-m3ydd — reconciliation must repair bead_inprogress_queue_absent.
 // Bead ref: hk-e3fy — extend to also repair bead_inprogress_queue_terminal.
+//
+//nolint:gocognit,cyclop // over the threshold; splitting the queue-scan + per-bead repair mid-release is riskier than the marginal complexity
 func runScheduledClassBRepair(
 	ctx context.Context,
 	cfg ReconciliationSchedulerConfig,
@@ -269,7 +271,7 @@ func runScheduledClassBRepair(
 	beadsInAnyQueue := make(map[core.BeadID]struct{})
 	names, enumErr := queue.EnumerateQueueNames(cfg.ProjectDir)
 	if enumErr != nil {
-		fmt.Fprintf(logW, "reconciliation scheduler (Class B): EnumerateQueueNames: %v (skipping repair)\n", enumErr)
+		fmt.Fprintf(logW, "reconciliation scheduler (Class B): EnumerateQueueNames: %v (skipping repair)\n", enumErr) //nolint:errcheck // best-effort stderr status log
 		return 0
 	}
 	for _, name := range names {
@@ -306,7 +308,7 @@ func runScheduledClassBRepair(
 			mismatchClass = "bead_inprogress_queue_terminal"
 		}
 
-		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s in_progress but %s\n", rec.BeadID, mismatchClass)
+		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s in_progress but %s\n", rec.BeadID, mismatchClass) //nolint:errcheck // best-effort stderr status log
 
 		// Emit reconciliation_mismatch_observed for operator visibility.
 		if cfg.Emitter != nil {
@@ -321,9 +323,9 @@ func runScheduledClassBRepair(
 			}
 			payloadBytes, marshalErr := json.Marshal(p)
 			if marshalErr != nil {
-				fmt.Fprintf(logW, "reconciliation scheduler (Class B): marshal mismatch payload for %s: %v\n", rec.BeadID, marshalErr)
+				fmt.Fprintf(logW, "reconciliation scheduler (Class B): marshal mismatch payload for %s: %v\n", rec.BeadID, marshalErr) //nolint:errcheck // best-effort stderr status log
 			} else if emitErr := cfg.Emitter.Emit(ctx, core.EventTypeReconciliationMismatchObserved, payloadBytes); emitErr != nil {
-				fmt.Fprintf(logW, "reconciliation scheduler (Class B): emit mismatch event for %s: %v\n", rec.BeadID, emitErr)
+				fmt.Fprintf(logW, "reconciliation scheduler (Class B): emit mismatch event for %s: %v\n", rec.BeadID, emitErr) //nolint:errcheck // best-effort stderr status log
 			}
 		}
 
@@ -339,11 +341,11 @@ func runScheduledClassBRepair(
 		)
 		cancelReset()
 		if resetErr != nil {
-			fmt.Fprintf(logW, "reconciliation scheduler (Class B): ResetBead %s: %v\n", rec.BeadID, resetErr)
+			fmt.Fprintf(logW, "reconciliation scheduler (Class B): ResetBead %s: %v\n", rec.BeadID, resetErr) //nolint:errcheck // best-effort stderr status log
 			continue
 		}
 		resetCount++
-		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s reset to open (%s)\n", rec.BeadID, mismatchClass)
+		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s reset to open (%s)\n", rec.BeadID, mismatchClass) //nolint:errcheck // best-effort stderr status log
 	}
 	return resetCount
 }

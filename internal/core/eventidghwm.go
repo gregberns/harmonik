@@ -20,6 +20,7 @@ import (
 //
 // Spec ref: event-model.md §4.1 EV-002c.
 func ReadEventIDHWM(path string) (EventID, bool, error) {
+	// #nosec G304 -- caller supplies the project-scoped HWM path; this API must read that exact file.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -51,8 +52,6 @@ func ReadEventIDHWM(path string) (EventID, bool, error) {
 // from the wall clock; cross-restart ordering is not guaranteed in that case.
 //
 // Spec ref: event-model.md §4.1 EV-002c.
-//
-//nolint:gosec // G304: path is lifecycle.EventIDHWMPath, not user input.
 func WriteEventIDHWMAtomicNoSync(path string, hwm EventID) error {
 	dir := filepath.Dir(path)
 	tmp, tmpErr := os.CreateTemp(dir, "event_id_hwm.*.tmp")
@@ -63,17 +62,24 @@ func WriteEventIDHWMAtomicNoSync(path string, hwm EventID) error {
 
 	content := hex.EncodeToString(hwm[:])
 	if _, writeErr := tmp.WriteString(content); writeErr != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("event_id HWM write: write temp: %w", writeErr)
+		return errors.Join(
+			fmt.Errorf("event_id HWM write: write temp: %w", writeErr),
+			tmp.Close(),
+			removeEventIDHWMTemp(tmpPath),
+		)
 	}
 	if closeErr := tmp.Close(); closeErr != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("event_id HWM write: close temp: %w", closeErr)
+		return errors.Join(fmt.Errorf("event_id HWM write: close temp: %w", closeErr), removeEventIDHWMTemp(tmpPath))
 	}
 	if renameErr := os.Rename(tmpPath, path); renameErr != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("event_id HWM write: rename to %s: %w", path, renameErr)
+		return errors.Join(fmt.Errorf("event_id HWM write: rename to %s: %w", path, renameErr), removeEventIDHWMTemp(tmpPath))
+	}
+	return nil
+}
+
+func removeEventIDHWMTemp(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("event_id HWM write: remove temp: %w", err)
 	}
 	return nil
 }
@@ -91,7 +97,12 @@ const hwmClockRegressionThreshold = time.Second
 func ExtractUUIDv7Timestamp(id EventID) time.Time {
 	ms := uint64(id[0])<<40 | uint64(id[1])<<32 | uint64(id[2])<<24 |
 		uint64(id[3])<<16 | uint64(id[4])<<8 | uint64(id[5])
-	return time.Unix(0, int64(ms)*int64(time.Millisecond)).UTC()
+	const maxInt64 = uint64(^uint64(0) >> 1)
+	if ms > maxInt64 {
+		return time.Time{}
+	}
+	milliseconds := int64(ms)
+	return time.UnixMilli(milliseconds).UTC()
 }
 
 // IsHWMClockRegression reports whether wallClock is more than

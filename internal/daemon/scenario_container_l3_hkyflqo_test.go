@@ -70,7 +70,6 @@ import (
 func hkyflqoDockerAvailable(ctx context.Context) (bool, string) {
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	//nolint:gosec // G204: test-controlled literal; not user input
 	out, err := exec.CommandContext(cctx, "docker", "info", "--format", "{{.ServerVersion}}").CombinedOutput()
 	if err != nil {
 		return false, strings.TrimSpace(string(out)) + " (" + err.Error() + ")"
@@ -85,7 +84,6 @@ func hkyflqoAlpineAvailable(ctx context.Context) bool {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	// `docker image inspect` exits 0 iff the image is already in the local cache.
-	//nolint:gosec // G204: test-controlled literal
 	err := exec.CommandContext(cctx, "docker", "image", "inspect", "alpine:latest").Run()
 	if err == nil {
 		return true
@@ -93,7 +91,6 @@ func hkyflqoAlpineAvailable(ctx context.Context) bool {
 	// Not cached: attempt a pull (requires network, may timeout in air-gapped CI).
 	pullCtx, pullCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer pullCancel()
-	//nolint:gosec // G204: test-controlled literal
 	pullErr := exec.CommandContext(pullCtx, "docker", "pull", "--quiet", "alpine:latest").Run()
 	return pullErr == nil
 }
@@ -134,7 +131,6 @@ var _ tmux.CommandRunner = hkyflqoDockerExecRunner{}
 // stops and removes the container. If start fails, t.Fatalf is called.
 func hkyflqoStartContainer(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	//nolint:gosec // G204: test-controlled literals
 	out, err := exec.CommandContext(ctx,
 		"docker", "run", "--rm", "-d", "alpine:latest", "sleep", "3600").Output()
 	if err != nil {

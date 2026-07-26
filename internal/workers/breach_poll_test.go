@@ -53,6 +53,7 @@ func (r stdoutRunner) Command(ctx context.Context, name string, args ...string) 
 	if r.calls != nil {
 		atomic.AddInt64(r.calls, 1)
 	}
+	//nolint:gosec // G204: stdout is a controlled test fixture, passed as shell data rather than code.
 	return exec.CommandContext(ctx, "sh", "-c", `printf '%s' "$0"`, *r.stdout)
 }
 
@@ -80,12 +81,12 @@ func (s *safeCapture) emit() EmitFunc {
 	}
 }
 
-func (s *safeCapture) byType(t core.EventType) []ResourceBreachPayload {
+func (s *safeCapture) breachPayloads() []ResourceBreachPayload {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []ResourceBreachPayload
 	for _, c := range s.captured {
-		if c.Type != t {
+		if c.Type != core.EventTypeResourceBreach {
 			continue
 		}
 		var p ResourceBreachPayload
@@ -128,7 +129,7 @@ func TestRunReportLoop_FastWhenInFlight(t *testing.T) {
 	sout := highCPUCollectorStdout
 	runner := stdoutRunner{stdout: &sout, calls: &calls}
 
-	cap := &safeCapture{}
+	capture := &safeCapture{}
 	cfg := Config{Version: 1, Workers: []Worker{reportTestWorker()}}
 	reg := regInFlight(1) // InFlight()==1 ⇒ fast cadence
 
@@ -136,7 +137,7 @@ func TestRunReportLoop_FastWhenInFlight(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		// slow=200ms, fast=5ms: a ~120ms window should produce many fast sweeps.
-		runReportLoopWithInterval(ctx, cfg, reg, fixedRunnerFor(runner), cap.emit(), 200*time.Millisecond, 5*time.Millisecond)
+		runReportLoopWithInterval(ctx, cfg, reg, fixedRunnerFor(runner), capture.emit(), 200*time.Millisecond, 5*time.Millisecond)
 		close(done)
 	}()
 	time.Sleep(120 * time.Millisecond)
@@ -154,7 +155,7 @@ func TestRunReportLoop_FastWhenInFlight(t *testing.T) {
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	done2 := make(chan struct{})
 	go func() {
-		runReportLoopWithInterval(ctx2, cfg, regIdle, fixedRunnerFor(runner), cap.emit(), 200*time.Millisecond, 5*time.Millisecond)
+		runReportLoopWithInterval(ctx2, cfg, regIdle, fixedRunnerFor(runner), capture.emit(), 200*time.Millisecond, 5*time.Millisecond)
 		close(done2)
 	}()
 	time.Sleep(120 * time.Millisecond)
@@ -176,7 +177,7 @@ func TestRunReportLoop_FastWhenInFlight(t *testing.T) {
 func TestBreachSweep_SustainedBreachThenClear(t *testing.T) {
 	sout := highCPUCollectorStdout
 	runner := stdoutRunner{stdout: &sout}
-	cap := &safeCapture{}
+	capture := &safeCapture{}
 	cfg := Config{Version: 1, Workers: []Worker{reportTestWorker()}}
 	reg := regInFlight(2) // InFlight()==2 ⇒ breaches stamp InFlight=2
 	st := newBreachLoopState(cfg)
@@ -185,10 +186,10 @@ func TestBreachSweep_SustainedBreachThenClear(t *testing.T) {
 	// Sweep at t=0,5,10,15,20,25s — sustained over enter. Breach fires once the
 	// dwell (20s from the first over-enter at t=0) matures, i.e. at t>=20s.
 	for _, sec := range []int{0, 5, 10, 15, 20, 25} {
-		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), cap.emit(), st, true, slow, at(sec))
+		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), capture.emit(), st, true, slow, at(sec))
 	}
 
-	breaches := cap.byType(core.EventTypeResourceBreach)
+	breaches := capture.breachPayloads()
 	var fired []ResourceBreachPayload
 	for _, b := range breaches {
 		if b.Kind == "breach" {
@@ -209,11 +210,11 @@ func TestBreachSweep_SustainedBreachThenClear(t *testing.T) {
 	// fires once the clear dwell (15s) matures, i.e. at t>=45s.
 	sout = cannedCollectorStdout // load5/ncpu = 1.10/8 ≈ 0.14, well under exit 0.70
 	for _, sec := range []int{30, 35, 40, 45} {
-		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), cap.emit(), st, true, slow, at(sec))
+		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), capture.emit(), st, true, slow, at(sec))
 	}
 
 	var clears []ResourceBreachPayload
-	for _, b := range cap.byType(core.EventTypeResourceBreach) {
+	for _, b := range capture.breachPayloads() {
 		if b.Kind == "clear" {
 			clears = append(clears, b)
 		}
@@ -235,7 +236,7 @@ func TestBreachSweep_SustainedBreachThenClear(t *testing.T) {
 func TestBreachSweep_IdleTransitionResetsBreach(t *testing.T) {
 	sout := highCPUCollectorStdout
 	runner := stdoutRunner{stdout: &sout}
-	cap := &safeCapture{}
+	capture := &safeCapture{}
 	cfg := Config{Version: 1, Workers: []Worker{reportTestWorker()}}
 	reg := regInFlight(1)
 	st := newBreachLoopState(cfg)
@@ -243,19 +244,19 @@ func TestBreachSweep_IdleTransitionResetsBreach(t *testing.T) {
 
 	// Drive into BREACHED (over enter sustained past the 20s dwell).
 	for _, sec := range []int{0, 5, 10, 15, 20} {
-		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), cap.emit(), st, true, slow, at(sec))
+		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), capture.emit(), st, true, slow, at(sec))
 	}
-	if n := countKind(cap, "breach"); n != 1 {
+	if n := countKind(capture, "breach"); n != 1 {
 		t.Fatalf("pre-idle breach events: got %d, want 1", n)
 	}
 
 	// Transition to idle: release the slot so InFlight()==0, then sweep. The
 	// detector should Reset and emit a clear with InFlight 0.
 	reg.ReleaseSlot()
-	breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), cap.emit(), st, true, slow, at(25))
+	breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), capture.emit(), st, true, slow, at(25))
 
 	clears := []ResourceBreachPayload{}
-	for _, b := range cap.byType(core.EventTypeResourceBreach) {
+	for _, b := range capture.breachPayloads() {
 		if b.Kind == "clear" {
 			clears = append(clears, b)
 		}
@@ -276,7 +277,7 @@ func TestBreachSweep_IdleTransitionResetsBreach(t *testing.T) {
 func TestBreachSweep_WorkerReportThrottledToSlow(t *testing.T) {
 	sout := cannedCollectorStdout
 	runner := stdoutRunner{stdout: &sout}
-	cap := &safeCapture{}
+	capture := &safeCapture{}
 	cfg := Config{Version: 1, Workers: []Worker{reportTestWorker()}}
 	reg := regInFlight(1)
 	st := newBreachLoopState(cfg)
@@ -286,10 +287,10 @@ func TestBreachSweep_WorkerReportThrottledToSlow(t *testing.T) {
 	// 5,10,...,60 (the t=60 sweep crosses the next slow boundary, due), 65.
 	secs := []int{0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65}
 	for _, sec := range secs {
-		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), cap.emit(), st, true, slow, at(sec))
+		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), capture.emit(), st, true, slow, at(sec))
 	}
 
-	reports := cap.countType(core.EventTypeWorkerReport)
+	reports := capture.countType(core.EventTypeWorkerReport)
 	// Due at t=0 (first sight) and t=60 (>= slow since last report). 14 fast
 	// sweeps but only 2 worker_reports.
 	if reports != 2 {
@@ -305,7 +306,7 @@ func TestBreachSweep_WorkerReportThrottledToSlow(t *testing.T) {
 func TestBreachSweep_DisabledNoBreachEvents(t *testing.T) {
 	sout := highCPUCollectorStdout
 	runner := stdoutRunner{stdout: &sout}
-	cap := &safeCapture{}
+	capture := &safeCapture{}
 	disabled := false
 	cfg := Config{Version: 1, Workers: []Worker{reportTestWorker()}, BreachDetectionEnabledPtr: &disabled}
 	reg := regInFlight(1)
@@ -313,13 +314,13 @@ func TestBreachSweep_DisabledNoBreachEvents(t *testing.T) {
 	const slow = 60 * time.Second
 
 	for _, sec := range []int{0, 5, 10, 15, 20, 25} {
-		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), cap.emit(), st, false /*breachEnabled*/, slow, at(sec))
+		breachSweep(context.Background(), cfg, reg, fixedRunnerFor(runner), capture.emit(), st, false /*breachEnabled*/, slow, at(sec))
 	}
 
-	if n := cap.countType(core.EventTypeResourceBreach); n != 0 {
+	if n := capture.countType(core.EventTypeResourceBreach); n != 0 {
 		t.Fatalf("disabled: resource_breach events got %d, want 0", n)
 	}
-	if n := cap.countType(core.EventTypeWorkerReport); n == 0 {
+	if n := capture.countType(core.EventTypeWorkerReport); n == 0 {
 		t.Fatalf("disabled: expected at least one worker_report (Phase-1 behaviour), got 0")
 	}
 }
@@ -331,7 +332,7 @@ func TestRunReportLoop_DisabledNeverFast(t *testing.T) {
 	var calls int64
 	sout := highCPUCollectorStdout
 	runner := stdoutRunner{stdout: &sout, calls: &calls}
-	cap := &safeCapture{}
+	capture := &safeCapture{}
 	disabled := false
 	cfg := Config{Version: 1, Workers: []Worker{reportTestWorker()}, BreachDetectionEnabledPtr: &disabled}
 	reg := regInFlight(1) // in flight, but breach disabled ⇒ still slow
@@ -341,7 +342,7 @@ func TestRunReportLoop_DisabledNeverFast(t *testing.T) {
 	go func() {
 		// slow=40ms, fast=2ms: if the loop honoured fast we'd see ~50 sweeps; with
 		// breach disabled it must collapse to slow ⇒ only a handful.
-		runReportLoopWithInterval(ctx, cfg, reg, fixedRunnerFor(runner), cap.emit(), 40*time.Millisecond, 2*time.Millisecond)
+		runReportLoopWithInterval(ctx, cfg, reg, fixedRunnerFor(runner), capture.emit(), 40*time.Millisecond, 2*time.Millisecond)
 		close(done)
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -351,7 +352,7 @@ func TestRunReportLoop_DisabledNeverFast(t *testing.T) {
 	if got := atomic.LoadInt64(&calls); got > 6 {
 		t.Fatalf("disabled loop ticked fast: got %d sweeps in 100ms, want slow (<=6 @40ms)", got)
 	}
-	if n := cap.countType(core.EventTypeResourceBreach); n != 0 {
+	if n := capture.countType(core.EventTypeResourceBreach); n != 0 {
 		t.Fatalf("disabled loop emitted %d resource_breach events, want 0", n)
 	}
 }
@@ -364,16 +365,16 @@ func TestBreachSweep_NilRegistryNoOp(t *testing.T) {
 	var calls int64
 	sout := highCPUCollectorStdout
 	runner := stdoutRunner{stdout: &sout, calls: &calls}
-	cap := &safeCapture{}
+	capture := &safeCapture{}
 	st := newBreachLoopState(Config{})
 
-	breachSweep(context.Background(), Config{}, nil, fixedRunnerFor(runner), cap.emit(), st, true, 60*time.Second, at(0))
+	breachSweep(context.Background(), Config{}, nil, fixedRunnerFor(runner), capture.emit(), st, true, 60*time.Second, at(0))
 
 	if got := atomic.LoadInt64(&calls); got != 0 {
 		t.Errorf("nil-registry sweep: collector calls got %d, want 0", got)
 	}
-	if len(cap.captured) != 0 {
-		t.Errorf("nil-registry sweep: events got %d, want 0", len(cap.captured))
+	if len(capture.captured) != 0 {
+		t.Errorf("nil-registry sweep: events got %d, want 0", len(capture.captured))
 	}
 }
 
@@ -429,7 +430,7 @@ func TestConfig_BreachAccessorsDefaults(t *testing.T) {
 // countKind counts captured resource_breach events of a given Kind.
 func countKind(c *safeCapture, kind string) int {
 	n := 0
-	for _, b := range c.byType(core.EventTypeResourceBreach) {
+	for _, b := range c.breachPayloads() {
 		if b.Kind == kind {
 			n++
 		}

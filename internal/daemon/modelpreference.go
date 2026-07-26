@@ -4,7 +4,8 @@ package daemon
 // HC-055a and EM-012b (hk-xo03m, hk-bfvk7).
 //
 // Provides:
-//   - regex + enum guards for model/effort fields (validateModel, validateEffort).
+//   - regex + enum guards for model/effort fields (shared.ValidateModel,
+//     shared.ValidateEffort — moved to internal/harness/shared by P2 unit E1b-prep).
 //   - compiled tier-3 defaults per agent type (defaultModelEntries).
 //   - ResolveModelPreference: the EM-012b 4-tier precedence walk.
 //
@@ -31,91 +32,25 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/shared"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
-// modelRegex is the shape constraint for the model alias (HC-055a).
-// Allows alphanumeric characters plus the punctuation required by common model
-// identifiers (dots, underscores, colons, slashes, hyphens). Rejects shell
-// metacharacters and whitespace.
-var modelRegex = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
-
-// modelMaxLen is the maximum permitted length for a model alias (HC-055a).
-const modelMaxLen = 128
-
-// validEffortLevels is the closed enum of permitted effort values (HC-055a).
-// Empty string is handled by the caller (empty → no flag emitted, no validation).
-var validEffortLevels = map[string]struct{}{
-	"low":    {},
-	"medium": {},
-	"high":   {},
-	"xhigh":  {},
-	"max":    {},
-}
-
-// ModelPreferenceError is the typed error returned by validateModel and
-// validateEffort when a ModelPreference field fails its shape or enum
+// ModelPreferenceError is the typed error returned by shared.ValidateModel and
+// shared.ValidateEffort when a ModelPreference field fails its shape or enum
 // constraint (HC-055a).
-type ModelPreferenceError struct {
-	// Field is the name of the failing field: "model" or "effort".
-	Field string
-	// Value is the supplied value that failed validation.
-	Value string
-	// Reason is a short human-readable description of the constraint violated.
-	Reason string
-}
-
-func (e *ModelPreferenceError) Error() string {
-	return fmt.Sprintf("daemon: ModelPreference: field %q value %q is invalid: %s (HC-055a)", e.Field, e.Value, e.Reason)
-}
-
-// validateModel checks that model satisfies the HC-055a shape constraint:
-//   - matches ^[A-Za-z0-9._:/-]+$
-//   - length ≤ 128 chars
 //
-// Returns *ModelPreferenceError on violation; nil on success.
-// Callers MUST NOT call validateModel with an empty string; the convention is
-// to skip validation (and flag emission) when the field is empty.
-func validateModel(model string) error {
-	if len(model) > modelMaxLen {
-		return &ModelPreferenceError{
-			Field:  "model",
-			Value:  model,
-			Reason: fmt.Sprintf("exceeds maximum length %d", modelMaxLen),
-		}
-	}
-	if !modelRegex.MatchString(model) {
-		return &ModelPreferenceError{
-			Field:  "model",
-			Value:  model,
-			Reason: fmt.Sprintf("does not match shape constraint %q", modelRegex.String()),
-		}
-	}
-	return nil
-}
-
-// validateEffort checks that effort is a member of the closed enum
-// {low, medium, high, xhigh, max} (HC-055a).
-//
-// Returns *ModelPreferenceError on violation; nil on success.
-// Callers MUST NOT call validateEffort with an empty string; the convention is
-// to skip validation (and flag emission) when the field is empty.
-func validateEffort(effort string) error {
-	if _, ok := validEffortLevels[effort]; !ok {
-		return &ModelPreferenceError{
-			Field:  "effort",
-			Value:  effort,
-			Reason: "must be one of {low, medium, high, xhigh, max}",
-		}
-	}
-	return nil
-}
+// The validators moved to internal/harness/shared (P2 unit E1b-prep) because the
+// claude launch-spec builder calls them and is itself leaving the daemon. This
+// alias — not a fresh struct — is load-bearing: export_test.go re-exports it as
+// ExportedModelPreferenceError and modelpreference_hkxo03m_test.go does errors.As
+// against that, which only matches if the two names denote the same type.
+type ModelPreferenceError = shared.ModelPreferenceError
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tier-2.5: operator env-var defaults (hk-c5oxy)
@@ -191,7 +126,7 @@ func ResolveModelPreference(
 	ctx context.Context,
 	beadLabels []string,
 	agentType core.AgentType,
-	projectCfg ProjectConfig,
+	projectCfg projectconfig.ProjectConfig,
 	bus handlercontract.EventEmitter,
 	beadID string,
 ) (model, effort string) {
@@ -205,7 +140,7 @@ func resolveModelField(
 	ctx context.Context,
 	beadLabels []string,
 	agentType core.AgentType,
-	projectCfg ProjectConfig,
+	projectCfg projectconfig.ProjectConfig,
 	bus handlercontract.EventEmitter,
 	beadID string,
 ) string {
@@ -240,7 +175,7 @@ func resolveModelField(
 
 	// Tier 2.5: operator env var — read at call time for hot-reload (hk-c5oxy).
 	if envModel := os.Getenv(EnvModelKey); envModel != "" {
-		if validateModel(envModel) == nil {
+		if shared.ValidateModel(envModel) == nil {
 			return envModel
 		}
 		// Invalid shape: skip silently, fall through to tier 3.
@@ -260,7 +195,7 @@ func resolveEffortField(
 	ctx context.Context,
 	beadLabels []string,
 	agentType core.AgentType,
-	projectCfg ProjectConfig,
+	projectCfg projectconfig.ProjectConfig,
 	bus handlercontract.EventEmitter,
 	beadID string,
 ) string {
@@ -275,7 +210,7 @@ func resolveEffortField(
 	if len(effortLabels) == 1 {
 		val := strings.TrimPrefix(effortLabels[0], labelPrefixEffort)
 		// Validate the effort value per EM-012b: unrecognised → tier absent + event.
-		if _, ok := validEffortLevels[val]; !ok {
+		if shared.ValidateEffort(val) != nil {
 			emitBeadLabelConflict(ctx, bus,
 				core.BeadRecord{BeadID: core.BeadID(beadID), Labels: beadLabels},
 				effortLabels,
@@ -302,7 +237,7 @@ func resolveEffortField(
 
 	// Tier 2.5: operator env var — read at call time for hot-reload (hk-c5oxy).
 	if envEffort := os.Getenv(EnvEffortKey); envEffort != "" {
-		if validateEffort(envEffort) == nil {
+		if shared.ValidateEffort(envEffort) == nil {
 			return envEffort
 		}
 		// Invalid value: skip silently, fall through to tier 3.

@@ -2,6 +2,7 @@ package digest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,13 +15,16 @@ import (
 )
 
 // writeResolverEvent appends a minimal event envelope to eventsPath.
-func writeResolverEvent(t *testing.T, eventsPath string, evType string, payload interface{}, ts time.Time) {
+func writeResolverEvent(t *testing.T, eventsPath, evType string, payload interface{}, ts time.Time) {
 	t.Helper()
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("writeResolverEvent: marshal payload: %v", err)
 	}
-	uid, _ := uuid.NewV7()
+	uid, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("writeResolverEvent: new event ID: %v", err)
+	}
 	ev := map[string]interface{}{
 		"event_id":         uid.String(),
 		"schema_version":   1,
@@ -33,12 +37,27 @@ func writeResolverEvent(t *testing.T, eventsPath string, evType string, payload 
 	if err != nil {
 		t.Fatalf("writeResolverEvent: marshal event: %v", err)
 	}
-	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	// #nosec G304 -- eventsPath is a test-controlled path under t.TempDir.
+	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("writeResolverEvent: open: %v", err)
 	}
-	defer f.Close()
-	fmt.Fprintf(f, "%s\n", b)
+	if _, err := fmt.Fprintf(f, "%s\n", b); err != nil {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Fatalf("writeResolverEvent: write: %v; close: %v", err, closeErr)
+		}
+		t.Fatalf("writeResolverEvent: write: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("writeResolverEvent: close: %v", err)
+	}
+}
+
+func makeHarmonikDir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o700); err != nil {
+		t.Fatalf("create .harmonik: %v", err)
+	}
 }
 
 // TestResolveSuppressionState_Default verifies that with no events and no config,
@@ -238,7 +257,7 @@ func TestResolveSuppressionState_PhaseFlagMissingExpiry(t *testing.T) {
 func TestLoadSentinelConfig_Absent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755) //nolint:errcheck
+	makeHarmonikDir(t, dir)
 	cfg, err := LoadSentinelConfig(dir)
 	if err != nil {
 		t.Fatalf("expected nil error; got %v", err)
@@ -252,7 +271,7 @@ func TestLoadSentinelConfig_Absent(t *testing.T) {
 func TestLoadSentinelConfig_ValidBlock(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755) //nolint:errcheck
+	makeHarmonikDir(t, dir)
 	yaml := `schema_version: 1
 sentinel:
   suppression_ttl: 15m
@@ -260,7 +279,7 @@ sentinel:
   phase_flag: design
   phase_flag_expiry: "2030-01-01T00:00:00Z"
 `
-	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "config.yaml"), []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "config.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 	cfg, err := LoadSentinelConfig(dir)
@@ -286,12 +305,12 @@ sentinel:
 func TestLoadSentinelConfig_PhaseFlagMissingExpiry(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755) //nolint:errcheck
+	makeHarmonikDir(t, dir)
 	yaml := `schema_version: 1
 sentinel:
   phase_flag: design
 `
-	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "config.yaml"), []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".harmonik", "config.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
 	}
 	_, err := LoadSentinelConfig(dir)
@@ -299,14 +318,9 @@ sentinel:
 		t.Fatal("expected error for phase_flag without expiry; got nil")
 	}
 	var pfe *ErrPhaseFlagMissingExpiry
-	if !func() bool {
-		e, ok := err.(*ErrPhaseFlagMissingExpiry)
-		pfe = e
-		return ok
-	}() {
+	if !errors.As(err, &pfe) {
 		t.Errorf("expected *ErrPhaseFlagMissingExpiry; got %T: %v", err, err)
 	}
-	_ = pfe
 }
 
 // findSource returns the SuppressionSourceState with the given name, or nil.

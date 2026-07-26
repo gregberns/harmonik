@@ -120,7 +120,6 @@ func dtOrphanBrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 func dtOrphanInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrapper string) string {
 	t.Helper()
 
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "dto")
 	initCmd.Dir = projectDir
 	initOut, initErr := initCmd.CombinedOutput()
@@ -128,7 +127,6 @@ func dtOrphanInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrappe
 		t.Fatalf("dtOrphanInitBrWithInProgress: br init: %v\n%s", initErr, initOut)
 	}
 
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	createCmd := exec.CommandContext(t.Context(), brWrapper, "create",
 		"dispatch-tracker orphan test bead", "--status", "open", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()

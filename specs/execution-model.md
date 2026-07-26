@@ -8,10 +8,10 @@ requirement-prefix: EM
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.9.2
+version: 0.9.3
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-14
+last-updated: 2026-07-22
 depends-on:
   - architecture
 ---
@@ -968,63 +968,116 @@ Tags: mechanism
 
 After step 4 (`git update-ref`) and step 5 (`git push`) of §4.12.EM-052 both
 succeed, the daemon MUST refresh the project working tree to match the new HEAD
-using a two-sub-step sequence:
-
-**Step 6a — staged-index restore (best-effort):**
+**scoped to the paths the merged commit itself changed**:
 
 ```
-git restore --staged .
+paths = git diff --name-only <main_tip> <run_tip>
+git restore --source=HEAD --staged --worktree -- <paths>
 ```
 
-run from the project repository root. This clears the index to match HEAD without
-touching the working tree. After `git update-ref` advances HEAD, the index is
-still at the pre-merge state: files added or modified by the merged commit appear
-as "staged deletions" in the index relative to the new HEAD. If `git reset --hard
-HEAD` (step 6b) subsequently fails (non-fatal per the refresh-failure policy
-below), those phantom staged changes would persist into the next bead's run and
-trigger false `implementer_escaped_worktree` positives in
-`checkMainWorkingTreeDirty`. Running `git restore --staged .` first — which is
-lighter (index-only, no working-tree I/O) and less likely to fail under lock
-contention — ensures the staged index is clean even on a step-6b failure.
+run from the project repository root. `git restore --source=HEAD --staged
+--worktree` re-syncs both the index and the working tree for the given
+pathspec, and correctly handles deletions (paths the merged commit removed are
+removed from disk). The pathspec MUST be passed in a form that cannot overflow
+the platform argument limit on a large merge (e.g. `--pathspec-from-file=-`).
+When the merged commit changed no paths, the refresh is a no-op and MUST be
+skipped.
 
-Step 6a is best-effort: if `git restore --staged .` fails, log a warning to
-stderr and continue to step 6b.
+The refresh MUST NOT be tree-wide. A tree-wide `git reset --hard HEAD` is
+strictly stronger than this requirement needs: the obligation is that the
+**merged commit's own paths** match HEAD (see the §10.2 test obligation, which
+asserts exactly that), and a tree-wide reset additionally destroys uncommitted
+state on paths the merge never touched.
 
-**Step 6b — working-tree reset:**
+**Why the scope matters (hk-7qmpp).** On 2026-07-22 the tree-wide form silently
+destroyed uncommitted fleet state in the main project root, once per completed
+merge. The reason it was invisible rather than merely destructive is an
+interaction with the pre-merge escape check (`checkMainWorkingTreeDirty`),
+which FAILS a run when the main root is dirty — but whose churn allowlist
+deliberately exempts `.harmonik/` and `.claude/`, where agent and fleet state
+live. The one region waved through as expected churn was the one region the
+refresh then deleted. Scoping the refresh removes the interaction: paths the
+merge did not write are never touched, so the allowlist's exemption becomes
+harmless. The allowlist itself MUST NOT be narrowed to compensate — those paths
+churn constantly during normal daemon operation, and treating them as escapes
+would fail nearly every run.
 
-```
-git reset --hard HEAD
-```
+**Why `git update-ref` STAYS in Phase A (do not re-propose `git merge
+--ff-only`).** The obvious alternative is to replace the hand-rolled
+fast-forward (`git update-ref` in Phase A + a refresh in Phase C) with a single
+worktree-aware `git merge --ff-only <run_tip>`, which refuses to clobber local
+modifications by construction. It is REFUTED, and the reason is recorded here so
+it is not rediscovered and re-proposed: `run-state-machine.md` RSM-016 requires
+Phase A's ref advance to be cheaply and losslessly REVERSIBLE, because Phase D
+performs a compare-and-swap ROLLBACK of that ref when the push (Phase B) fails.
+`git merge --ff-only` advances the ref AND the working tree together, so the
+Phase-D rollback would restore the ref and leave the tree ahead of it — a
+desynced main working tree in which every merged change reads as an inverted
+diff. The constraint is reversibility, NOT (as might be assumed) anything about
+index locks: RSM-017 explicitly permits the working-tree reset, the CAS
+rollback, and the `br sync` reconciliation to run inside the exclusion domain.
 
-run from the project repository root. `git reset --hard HEAD` re-syncs both the
-index and the working tree to the new HEAD in a single atomic operation, correctly
-handles deletions (files removed by the agent's commits will be removed from
-disk), and its semantics are stable across git versions available in CI
-environments.
+**Uncommitted-changes policy.** Uncommitted changes in the project working tree
+are an abnormal state — the operator and agents are expected to keep the main
+root clean while the daemon is running, and uncommitted work there is not
+durable. The daemon MUST nonetheless not destroy such work silently:
 
-**Uncommitted-changes policy.** If the project working tree has uncommitted
-changes at the time of the refresh (i.e., `git status --porcelain` is non-empty
-before the reset), that is an abnormal state — the operator is expected to keep
-the project working tree clean while the daemon is running. The daemon MUST:
+1. On a path the merged commit did NOT change: the refresh MUST leave it
+   untouched. It is outside the refresh's scope.
+2. On a path the merged commit DID change: the merged commit is authoritative
+   for its own paths, so the refresh MUST proceed and overwrite the local edit —
+   but MUST NOT do so silently. Before overwriting, the daemon MUST:
+   a. Write the about-to-be-overwritten edits to a recovery patch (a `git diff`
+      of those paths against the pre-merge target tip) at a location outside the
+      refresh's own scope, so the patch cannot itself be overwritten. A failure
+      to write the patch MUST NOT suppress step (b).
+   b. Log a warning to stderr naming the affected paths and the patch location.
+   c. Emit a `working_tree_local_edits_overwritten` event on the bus carrying
+      `run_id`, `bead_id`, `main_path`, the overwritten `paths`, and the
+      `recovery_patch` location (empty when the patch could not be written).
 
-1. Log a warning to stderr describing the uncommitted changes.
-2. Still execute `git reset --hard HEAD`. The daemon owns the working tree during
-   operation; preserving uncommitted operator changes is not a daemon
-   responsibility.
+Local edits MUST be detected against the **pre-merge target tip**, not against
+HEAD: Phase A has already advanced the ref, so every merged path reads as
+modified relative to HEAD whether or not anyone touched it. Diffing against the
+pre-merge tip is what separates a real local edit from that phantom staleness.
 
-**Refresh failure.** If `git reset --hard HEAD` fails (e.g., I/O error, git
-lock contention), the merge itself has already succeeded and is durable — the
-ref and remote are already updated. The daemon MUST NOT reopen the bead on
-refresh failure. Instead it MUST:
+**Refresh failure.** If the refresh fails (e.g., I/O error, git lock
+contention), or if the merged path list cannot be computed, the merge itself has
+already succeeded and is durable — the ref and remote are already updated. The
+daemon MUST NOT reopen the bead on refresh failure. Instead it MUST:
 
 1. Log a warning to stderr with the error detail.
 2. Emit a `working_tree_refresh_failed` event on the bus carrying `run_id`,
    `bead_id`, and the error message.
 3. Continue to the CloseBead step normally.
 
+When the path list cannot be computed there is no safe scope for the refresh,
+and the daemon MUST SKIP it rather than fall back to a tree-wide reset. The
+merged paths then remain stale in the working tree.
+
+Be precise about what is loud here: the **event** is, the resulting **state** is
+not. The skip emits `working_tree_refresh_failed` and a stderr warning at the
+moment it happens, and that is the signal to act on. But the stale paths
+themselves are NOT reliably reported afterwards: `isHarmonikChurn` exempts
+`.harmonik/`, `.claude/`, `.beads/issues.jsonl`, and `AGENT_COMMS.md`, and
+`checkMainWorkingTreeDirty` drops exempt paths before reporting — so a merge
+touching only those (the exact region whose deletion motivated this requirement)
+leaves stale state the escape check never surfaces. This is the original
+interaction one layer up: the allowlist that made the destruction invisible also
+makes the fallback's stale state invisible.
+
+A further consequence, recorded so it is not rediscovered the hard way: the skip
+leaves the INDEX stale as well (index at the pre-merge tip, HEAD at the merged
+tip). Anything that subsequently commits those paths from the main root would
+commit the PRE-MERGE content — a silent revert of the merged change, inside the
+exempt region, undetected by the escape check. The trigger is rare (it requires
+`git diff --name-only` between two known-good commits to fail), which is why the
+skip remains the right choice over a tree-wide reset that fires on every merge —
+but it is a real hole, not a clean fallback.
+
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
-Refs: hk-4goy3, hk-my7y8
+Refs: hk-4goy3, hk-my7y8, hk-7qmpp
 
 ## 4.13 Eager refill obligation
 
@@ -1783,7 +1836,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **EM-049 — EM-051 (concurrency primitives).** Capacity-gate tests: with `max_concurrent = K` and a wave of N > K items, verify at most K runs are in-flight at any instant; verify slot-release on terminal triggers next dispatch (EM-049). Claim-serialization tests: concurrent ClaimBead writes are serialized through the token-pool of size `max_concurrent` (EM-050). Configuration tests: `--max-concurrent` accepts integer ≥ 1, defaults to 1, is sealed at startup (EM-051).
 - **EM-066 — EM-067 (no-auto-pull topology + operator-pause fallback gate).** Quiet-daemon test: boot a daemon without `--auto-pull` (the default) and submit no queue; verify over a bounded observation window that zero `run_started` events are emitted, no agent subprocess is spawned, and the daemon sits in the `idle_wait_for_queue_submission` branch (EM-066). Historical-topology test: boot a daemon WITH `--auto-pull` with ≥1 ready bead and no queue; verify the `br ready` fallback dispatches `ready[0]` (EM-066 opt-in branch). Sealing test: verify the auto-pull configuration is sealed at startup and not re-read for the daemon's lifetime (parity with EM-051). Pause-gate test (observable outcome): with the fallback enabled (flag unset), ≥1 ready bead, no queue, and the daemon's operator-control state driven to `paused` (via the ON-056/ON-057 producer), verify no new `run_started` is emitted while paused — this is the observable EM-067 conformance criterion regardless of whether the primary §7.4 loop-top ON-008 gate or the inline defense-in-depth assertion enforces it — and that on `resume` (state → `running`) fallback dispatch of `ready[0]` resumes (EM-067). Single-source-of-truth test: assert the pause state observed by the fallback gate is the same `operator_pause_status` value (ON-056/ON-057) that drives the queue-level QM-054 transition — not a divergent pause concept.
 - **EM-052 — EM-053 (merge-to-main on success).** Integration test: simulate a successful run on a worktree branch (`run/<run_id>`) with one commit; verify (a) `refs/heads/main` advances to the run-branch tip after Step 9 success branch executes, (b) a push-origin-main attempt is made, (c) `outcome_emitted{kind=approved}` event is emitted before `bead_closed`, (d) `bead_closed` event is emitted after `CloseBead`, (e) `run_completed{success:true}` is the final lifecycle event. Non-FF test: place an out-of-ancestry commit on `main` after the worktree branch is cut AND after the rebase completes; verify (f) `ReopenBead` is called, (g) `outcome_emitted{kind=rejected, reason=non_ff_merge}` is emitted, (h) `CloseBead` is NOT called (EM-053). Rebase test: advance `main` concurrently without conflicts; verify (i) rebase succeeds, (j) `refs/heads/main` advances to the rebased run-branch tip, (k) `outcome_emitted{kind=approved}` is emitted. Rebase-conflict test: advance `main` with a conflicting change; verify (l) `ReopenBead` is called with `rebase_conflict` reason, (m) `CloseBead` is NOT called. Build-gate test (EM-052 step 4a): commit a Go module (`go.mod`) to the initial `main` branch; agent commit introduces a compile error; verify (n1) `merge_build_failed` is emitted, (n2) `ReopenBead` is called, (n3) `CloseBead` is NOT called, (n4) `refs/heads/main` is NOT advanced (rollback fired). Vet-gate test: agent commit introduces a `go vet` failure; verify same assertions (n1)–(n4) with reason containing `go vet`. No-go.mod test: project dir has no `go.mod`; agent commits any file; verify (p) the build gate is skipped, normal success path runs (`CloseBead` called, `refs/heads/main` advances).
-- **EM-054 (working-tree refresh after successful merge).** Integration test: after a successful merge-to-main (EM-052 path), verify that `git status --porcelain` in the project root is empty for files modified by the run-branch commit (i.e., the project working tree reflects HEAD). Refresh-failure test: inject a stub that makes `git reset --hard HEAD` fail; verify (a) `CloseBead` is still called (merge succeeded), (b) a `working_tree_refresh_failed` event is emitted, (c) `ReopenBead` is NOT called.
+- **EM-054 (working-tree refresh after successful merge).** Integration test: after a successful merge-to-main (EM-052 path), verify that `git status --porcelain` in the project root is empty for files modified by the run-branch commit (i.e., the project working tree reflects HEAD). **Scope test (hk-7qmpp):** seed an uncommitted edit on a tracked path the merged commit does NOT change; after the merge, verify the edit is still present — a tree-wide refresh fails this test, which is its purpose. **Overwrite-naming test (hk-7qmpp):** seed an uncommitted edit on a path the merged commit DOES change; verify (a) the merged content wins, (b) exactly one `working_tree_local_edits_overwritten` event is emitted naming that path, (c) the referenced recovery patch exists and is non-empty. Refresh-failure test: inject a stub that makes the refresh fail; verify (a) `CloseBead` is still called (merge succeeded), (b) a `working_tree_refresh_failed` event is emitted, (c) `ReopenBead` is NOT called.
 - **EM-055 — EM-059 (`dot`-mode binding §7.5).** The following test obligations apply to the `dot`-mode ingestion and dispatch path:
   - **Round-trip parse (EM-055).** Parse [specs/examples/review-loop.dot] through the §7.5.1 ingestion pipeline; verify the produced §6.1 `Workflow` record has `workflow_id`, `start_node_id`, and `terminal_node_ids` matching the DOT graph-level attributes. Verify that a `.dot` artifact with a missing `workflow_id` attribute fails ingestion before §7.4 starts.
   - **Restart-reparse equivalence (EM-055).** Simulate a daemon restart after `dot` ingestion completes: re-run steps 1–4; verify the produced `Workflow.workflow_id` and `workflow_version` match the pre-restart values. Mutate the artifact on disk between runs; verify the mismatch routes to reconciliation Cat 3 and does NOT silently proceed.
@@ -1855,6 +1908,7 @@ Default-if-unresolved: (resolved)
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-22 | 0.9.3 | agent (hk-7qmpp) | **EM-054 working-tree refresh becomes SCOPED to the merged commit's own paths, and an overwrite is never silent.** Replaces the tree-wide `git restore --staged .` + `git reset --hard HEAD` with `git restore --source=HEAD --staged --worktree -- <paths>` over `git diff --name-only <main_tip> <run_tip>`. **Root cause:** the tree-wide form destroyed uncommitted state on paths the merge never touched, silently, on every merge-to-main; it was invisible because the pre-merge escape check (`checkMainWorkingTreeDirty`) exempts `.harmonik/`/`.claude/` as expected churn, so the one region waved through was the one region the refresh deleted. **Uncommitted-changes policy REVERSED:** was "log a warning and reset anyway — preserving uncommitted changes is not a daemon responsibility"; is now (1) out-of-scope paths MUST be left untouched, (2) in-scope paths are overwritten (the merged commit owns them) but only after writing a recovery patch, warning to stderr, and emitting the new `working_tree_local_edits_overwritten` event naming the paths. Local edits MUST be detected against the pre-merge target tip, not HEAD (Phase A has already advanced the ref, so every merged path reads as modified against HEAD). **Records why `git update-ref` STAYS in Phase A** and why the obvious `git merge --ff-only` swap is REFUTED: RSM-016 needs the Phase-A ref advance to be losslessly reversible for the Phase-D CAS rollback, which a ref+tree merge breaks; the constraint is reversibility, not index locks (RSM-017 explicitly permits worktree mutation inside the domain). Also records that the churn allowlist MUST NOT be narrowed to compensate. §10.2 EM-054 obligations extended with a scope test (the mutation oracle) and an overwrite-naming test. New event type `working_tree_local_edits_overwritten` (durability class O). No requirement IDs added, renumbered, or retired; amendatory over v0.9.2. Refs: hk-7qmpp, hk-4goy3. |
 | 2026-07-14 | 0.9.2 | agent (agent-input-substrate / M2) | **EM-015d review-loop input delivery MIGRATES from tmux paste-inject to the AIS structured input port.** M2 agent-input-substrate makes tmux observation-only for daemon runs and moves ALL daemon-run input delivery to the new `specs/agent-input.md` (AIS) structured `InputPort`. Review-loop resume instructions ARE daemon-run input, so they migrate — they are NOT a preserved carve-out (only the session-keeper and the interactive CLI nudge survive on PL-021d). **EM-015d-RFD step 2** (retitled "Deliver the read instruction via the structured input port"): the implementer-resume read instruction is now delivered via [agent-input.md §4.1 AIS-001] `InputPort.SubmitInput` returning a real `Ack` (AIS-003/AIS-004, bounded-liveness AIS-INV-001) instead of the tmux `load-buffer` / `paste-buffer` paste-inject; the failure path keys off a non-positive ack / `agent_input_stale` rather than a tmux paste error; ordering invariant restated as **file exists → session is live → input delivered**. **EM-015d-RIA** intro + **step 3** (retitled "Deliver the start instruction via the structured input port"): the reviewer start instruction likewise moves to `SubmitInput` → `Ack`. A consolidated **input-delivery mechanism note** is added to EM-015d-RIA: the "PL-021b-PASTE" mechanism label is SUPERSEDED by AIS for the daemon-run input path (cross-ref the [process-lifecycle.md §4.3 PL-021d] demotion clause — PL-021d retained only for keeper (SK-002) + interactive CLI nudge); spawn verbs (`tmux new-window` at RIA step 2 / PL-021b) and `capture-pane` observation (AIS-011) remain, the input direction does not. Only the delivery MECHANISM changes: the WHAT delivered (read/start instruction, review-target, resume brief), the review-loop control flow, iteration semantics, and all non-input-delivery requirements are UNCHANGED. Front-matter version 0.9.0→0.9.2 (catching up past the un-front-matter'd 0.9.1 EM-068 row), last-updated → 2026-07-14. No EM IDs added, renumbered, or retired. Refs: agent-input-substrate M2 integration-sweep finding F2 (D5/D6/D10). |
 | 2026-06-13 | 0.9.1 | agent (hk-2j90) | **New EM-068 (§7.5.6) deny-side outcome-derivation gate (C1 work-product inspection + C2 validated marker; deny-side only; daemon authority EM-005c/HC-059; no reviewer-loop re-entry; mechanism-tagged zero-LLM per EM-039/AR-006). EM-027 (§4.6) Outcome-spine additive sentence. Refs: hk-2j90.** |
 | 2026-06-11 | 0.9.0 | agent (kerf work `standard-bead-dot` / epic hk-o7j) | **Tier-4 built-in workflow_mode default flips `single` → `dot` (with the embedded `standard-bead.dot` graph); adds the EM-012a-FLOOR review-floor guarantee.** Amended **§4.3.EM-012a** tier 4: the v1.0 built-in fallback is now `workflow_mode = dot`, resolving the embedded `standard-bead.dot` canonical exemplar (cross-ref [workflow-graph.md §12 WG-036 — canonical example workflows], the on-disk `specs/examples/standard-bead.dot`, and the build-embedded `internal/daemon/standard-bead.dot`). `single` is no longer the tier-4 fallback; it is reachable ONLY via an explicit tier-1 `workflow:single` per-bead label (audited via `review_bypassed`) and MUST NOT resolve at tier 3 or tier 4. New sub-requirement **EM-012a-FLOOR** (review-floor guarantee): on embedded-`standard-bead.dot` load failure (parse failure, missing artifact, or §7.5.3.EM-057 check-1 schema incompatibility) the daemon MUST fall back to `review-loop`, NEVER to `single` — a default-resolved bead is NEVER dispatched without a review gate; fallback ordering is `dot → review-loop`, not `dot → single`. Tiers 1–3 preserved verbatim. Added a NORMATIVE CROSS-REFERENCE note binding default-`dot` execution to the §7.5 `dot`-mode binding and to [sub-workflow-dispatch.md] (sub-workflow nodes within DOT workflows) for sub-workflow-node dispatch inside the exemplar. Restatement-sync (not new content): EM-012 Run-clause and §6.1 `RECORD Run.workflow_mode` comment updated from "defaults to `single`" to the v1.0 `dot` default + `review-loop` floor, matching the now-authoritative EM-012a. This makes NORMATIVE the dot-default intent that the landed engine already implements (`internal/daemon/moderesolve.go` tier-4 returns `WorkflowModeDot`; `internal/daemon/workloop.go` embedded-`standard-bead.dot` pre-load with the review-loop floor); prior dot-default intent recorded under kerf work `dot-default` / hk-30vlb. No prior requirement IDs renumbered or retired; new sub-clause EM-012a-FLOOR assigned under EM-012a. Refs: hk-o7j, hk-30vlb. |

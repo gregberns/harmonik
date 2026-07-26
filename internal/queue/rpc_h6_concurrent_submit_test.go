@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/queue" //nolint:depguard // external test package (queue_test) self-import; queue allow-list omits self (cf. eventbus/mergeq leaf pattern)
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // h6FakeLocker is a minimal QueueSetter+MutationLocker double: the daemon's real
@@ -71,7 +71,7 @@ func TestHandlerAdapter_ConcurrentSubmit_SameName_ExactlyOneWins(t *testing.T) {
 	for i := range params {
 		req := queue.QueueSubmitRequest{
 			SchemaVersion: 1,
-			Groups:        []queue.Group{rpcFixtureWaveGroup(0, beads[i])},
+			Groups:        []queue.Group{rpcFixtureWaveGroup(beads[i])},
 		}
 		raw, err := json.Marshal(req)
 		if err != nil {

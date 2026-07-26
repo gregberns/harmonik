@@ -65,10 +65,7 @@ func TestHK3edb1_EnsureGitignoreHygiene_RestoresOriginalBranch(t *testing.T) {
 	// (4) Required entries remain in the operator's working tree (uncommitted) so
 	// daemon control-plane state stays ignored despite the commit living only on
 	// the dedicated branch.
-	data, err := os.ReadFile(filepath.Join(repo, ".gitignore")) //nolint:gosec // G304: test-controlled path
-	if err != nil {
-		t.Fatalf("read .gitignore after hygiene: %v", err)
-	}
+	data := mustReadFile(t, filepath.Join(repo, ".gitignore"))
 	for _, entry := range RequiredGitignoreEntries {
 		if !gitignoreEntryPresent(string(data), entry) {
 			t.Errorf("working-tree .gitignore missing %q after HEAD restore", entry)
@@ -120,10 +117,7 @@ func TestHK3edb1_EnsureGitignoreHygiene_RestoresDetachedHead(t *testing.T) {
 	if subj := git("log", "-1", "--format=%s", GitignoreBranchName); !strings.Contains(subj, "WM-013e") {
 		t.Errorf("dedicated-branch tip subject = %q; want the WM-013e hygiene commit", subj)
 	}
-	data, err := os.ReadFile(filepath.Join(repo, ".gitignore")) //nolint:gosec // G304: test-controlled path
-	if err != nil {
-		t.Fatalf("read .gitignore after hygiene: %v", err)
-	}
+	data := mustReadFile(t, filepath.Join(repo, ".gitignore"))
 	for _, entry := range RequiredGitignoreEntries {
 		if !gitignoreEntryPresent(string(data), entry) {
 			t.Errorf("working-tree .gitignore missing %q after detached-HEAD restore", entry)

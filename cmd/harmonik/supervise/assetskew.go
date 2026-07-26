@@ -17,6 +17,7 @@ package supervisecmd
 // the apply when AutoApplyGateHook confirms the daemon is quiescent.
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -76,7 +77,7 @@ func execCommsSend(projectDir, body string) error {
 		return fmt.Errorf("supervisecmd: refusing comms send from test binary %q", exe)
 	}
 	//nolint:gosec // G204: exe is os.Executable(), projectDir operator-controlled.
-	cmd := exec.Command(exe,
+	cmd := exec.CommandContext(context.Background(), exe,
 		"comms", "send",
 		"--project", projectDir,
 		"--from", "supervisor",
@@ -102,19 +103,19 @@ func RunAssetSkewCheck(projectDir string, cfg Config, log *slog.Logger, stderr i
 	v, err := SkewCheckHook(projectDir)
 	if err != nil {
 		if log != nil {
-			log.Warn("asset-skew check failed", "err", err)
+			log.WarnContext(context.Background(), "asset-skew check failed", "err", err)
 		}
 		return
 	}
 	if !v.Skewed {
 		if log != nil {
-			log.Info("asset-skew: project assets up to date", "digest", v.BinaryDigest)
+			log.InfoContext(context.Background(), "asset-skew: project assets up to date", "digest", v.BinaryDigest)
 		}
 		return
 	}
 
 	if log != nil {
-		log.Info("asset-skew: project assets behind running binary",
+		log.InfoContext(context.Background(), "asset-skew: project assets behind running binary",
 			"changed", v.ChangedCount,
 			"conflicts", v.ConflictCount,
 			"auto_apply_candidates", v.AutoApplyCandidates,
@@ -146,12 +147,12 @@ func notifyCaptainSkew(projectDir string, v AssetSkewVerdict, log *slog.Logger, 
 
 	if err := CommsSendNotifier(projectDir, body); err != nil {
 		if log != nil {
-			log.Warn("asset-skew: comms notify failed (daemon down or no captain?)", "err", err)
+			log.WarnContext(context.Background(), "asset-skew: comms notify failed (daemon down or no captain?)", "err", err)
 		}
 		return
 	}
 	if log != nil {
-		log.Info("asset-skew: notified captain to run sync-assets", "changed", v.ChangedCount)
+		log.InfoContext(context.Background(), "asset-skew: notified captain to run sync-assets", "changed", v.ChangedCount)
 	}
 }
 
@@ -166,13 +167,13 @@ func notifyCaptainSkew(projectDir string, v AssetSkewVerdict, log *slog.Logger, 
 func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog.Logger, _ io.Writer) {
 	if !cfg.AssetSync.AutoApply {
 		if log != nil {
-			log.Debug("asset-skew: auto-apply disabled (default); notify-only")
+			log.DebugContext(context.Background(), "asset-skew: auto-apply disabled (default); notify-only")
 		}
 		return
 	}
 	if v.AutoApplyCandidates == 0 {
 		if log != nil {
-			log.Info("asset-skew: auto-apply enabled but no safe (Managed+FastForward) candidates")
+			log.InfoContext(context.Background(), "asset-skew: auto-apply enabled but no safe (Managed+FastForward) candidates")
 		}
 		return
 	}
@@ -182,13 +183,13 @@ func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog
 		dispatching, reason, err := AutoApplyGateHook(projectDir)
 		if err != nil {
 			if log != nil {
-				log.Warn("asset-skew: auto-apply lull-gate check failed; skipping apply", "err", err)
+				log.WarnContext(context.Background(), "asset-skew: auto-apply lull-gate check failed; skipping apply", "err", err)
 			}
 			return
 		}
 		if dispatching {
 			if log != nil {
-				log.Warn("asset-skew: auto-apply skipped — daemon is dispatching; notify-only",
+				log.WarnContext(context.Background(), "asset-skew: auto-apply skipped — daemon is dispatching; notify-only",
 					"reason", reason, "would_apply", v.AutoApplyCandidates)
 			}
 			return
@@ -197,7 +198,7 @@ func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog
 
 	if AutoApplyHook == nil {
 		if log != nil {
-			log.Warn("asset-skew: auto-apply enabled but AutoApplyHook not installed")
+			log.WarnContext(context.Background(), "asset-skew: auto-apply enabled but AutoApplyHook not installed")
 		}
 		return
 	}
@@ -205,7 +206,7 @@ func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog
 	applied, err := AutoApplyHook(projectDir)
 	if err != nil {
 		if log != nil {
-			log.Warn("asset-skew: auto-apply failed", "err", err,
+			log.WarnContext(context.Background(), "asset-skew: auto-apply failed", "err", err,
 				"conflicts_held_for_review", v.ConflictCount)
 		}
 		return
@@ -213,11 +214,11 @@ func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog
 	successBody := fmt.Sprintf("auto-applied %d managed skill fast-forward(s)", applied)
 	if notifyErr := CommsSendNotifier(projectDir, successBody); notifyErr != nil {
 		if log != nil {
-			log.Warn("asset-skew: auto-apply success notify failed", "err", notifyErr)
+			log.WarnContext(context.Background(), "asset-skew: auto-apply success notify failed", "err", notifyErr)
 		}
 	}
 	if log != nil {
-		log.Info("asset-skew: auto-apply complete",
+		log.InfoContext(context.Background(), "asset-skew: auto-apply complete",
 			"applied", applied,
 			"conflicts_held_for_review", v.ConflictCount)
 	}

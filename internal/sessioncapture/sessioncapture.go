@@ -38,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -50,8 +51,11 @@ const (
 	// at the sessions-root level (sibling to every ${session_id}/ dir).
 	captureLogFile = "CAPTURE-LOG.md"
 
-	// dirPerm / filePerm mirror the .harmonik dir conventions (brhistoryrotate).
-	dirPerm  = 0o755
+	// filePerm mirrors the .harmonik file conventions (brhistoryrotate). The
+	// DIRECTORY mode is core.HarmonikDirMode, not a constant private to this
+	// package: os.MkdirAll does not chmod a directory that already exists, so a
+	// private mode would make .harmonik/sessions/ end up with whichever mode the
+	// first package to create it happened to choose (internal/core/harmonikdirmode.go).
 	filePerm = 0o644
 
 	// defaultKeepN is the number of most-recent session dirs to retain when
@@ -110,7 +114,7 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 
 	root := filepath.Join(cfg.WorkspacePath, ".harmonik", "sessions")
 	dir := filepath.Join(root, cfg.SessionID)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return nil, fmt.Errorf("sessioncapture: mkdir corpus: %w", err)
 	}
 

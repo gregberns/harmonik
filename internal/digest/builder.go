@@ -395,7 +395,7 @@ func buildPendingDecisions(eventsPath, acksDir string) []DecisionRequiredSummary
 
 	// Filter events.jsonl source to unacknowledged decisions and build index.
 	seen := make(map[string]struct{}) // ack_token → already in out
-	var out []DecisionRequiredSummary
+	out := make([]DecisionRequiredSummary, 0, len(decisions))
 	for _, d := range decisions {
 		if _, acked := ackedTokens[d.payload.AckToken]; acked {
 			continue
@@ -415,7 +415,7 @@ func buildPendingDecisions(eventsPath, acksDir string) []DecisionRequiredSummary
 	// Supplement with any pending ack-state files not already in out (e.g.
 	// written before events.jsonl was created, or after log rotation).
 	// Acknowledged files (status != "pending") are skipped.
-	if entries, err := os.ReadDir(acksDir); err == nil { //nolint:gosec // G304: operator-controlled dir
+	if entries, err := os.ReadDir(acksDir); err == nil {
 		type ackRecord struct {
 			SchemaVersion int    `json:"schema_version"`
 			AckToken      string `json:"ack_token"`
@@ -495,15 +495,17 @@ func buildQueueSummary(ctx context.Context, projectDir string, lim Limits) (Queu
 				dispatched = append(dispatched, entry)
 			case queue.ItemStatusPending:
 				sum.PendingCount++
+			case queue.ItemStatusCompleted, queue.ItemStatusFailed, queue.ItemStatusDeferredForLedgerDep:
+				// Terminal and ledger-deferred items are neither active nor pending.
 			}
 		}
 	}
 
-	cap := lim.maxActiveRuns()
-	if cap > 0 && len(dispatched) > cap {
+	limit := lim.maxActiveRuns()
+	if limit > 0 && len(dispatched) > limit {
 		// DC-005: record the omission count so it can flow into out.Truncated.
-		sum.ActiveRunsOmitted = len(dispatched) - cap
-		sum.ActiveRuns = dispatched[:cap]
+		sum.ActiveRunsOmitted = len(dispatched) - limit
+		sum.ActiveRuns = dispatched[:limit]
 	} else {
 		sum.ActiveRuns = dispatched
 	}
@@ -512,7 +514,7 @@ func buildQueueSummary(ctx context.Context, projectDir string, lim Limits) (Queu
 
 // buildRecentEvents collects events via ScanAfter and applies truncation.
 func buildRecentEvents(eventsPath string, sinceID core.EventID, lim Limits) ([]EventSummary, *TruncationReport) {
-	var all []EventSummary
+	all := make([]EventSummary, 0)
 	for ev := range eventbus.ScanAfter(eventsPath, sinceID) {
 		s := EventSummary{
 			EventID: ev.EventID.String(),
@@ -524,11 +526,11 @@ func buildRecentEvents(eventsPath string, sinceID core.EventID, lim Limits) ([]E
 		all = append(all, s)
 	}
 
-	cap := lim.maxRecentEvents()
-	if cap > 0 && len(all) > cap {
-		omitted := len(all) - cap
+	limit := lim.maxRecentEvents()
+	if limit > 0 && len(all) > limit {
+		omitted := len(all) - limit
 		tr := &TruncationReport{RecentEventsOmitted: omitted}
-		return all[len(all)-cap:], tr
+		return all[len(all)-limit:], tr
 	}
 	return all, nil
 }
@@ -547,14 +549,14 @@ func applyNoteTruncation(notes []noteEntry, lim Limits, existing *TruncationRepo
 		})
 	}
 
-	cap := lim.maxOpenNotes()
-	if cap > 0 && len(summaries) > cap {
-		omitted := len(summaries) - cap
+	limit := lim.maxOpenNotes()
+	if limit > 0 && len(summaries) > limit {
+		omitted := len(summaries) - limit
 		if existing == nil {
 			existing = &TruncationReport{}
 		}
 		existing.OpenNotesOmitted = omitted
-		return summaries[:cap], existing
+		return summaries[:limit], existing
 	}
 	return summaries, existing
 }
@@ -569,7 +571,7 @@ func recentCommits(ctx context.Context, projectDir, gitPath string, n int) ([]Co
 	if err != nil {
 		return nil, err
 	}
-	var commits []CommitSummary
+	commits := make([]CommitSummary, 0)
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -627,7 +629,7 @@ func parseBrReadyJSON(data []byte, _ string) ([]BeadSummary, error) {
 }
 
 // brListByStatus runs `br list --status <status> --json` and returns BeadSummary.
-func brListByStatus(ctx context.Context, brPath, _ string, status string) ([]BeadSummary, error) {
+func brListByStatus(ctx context.Context, brPath, _, status string) ([]BeadSummary, error) {
 	out, err := runCmd(ctx, brPath, "list", "--status", status, "--json")
 	if err != nil {
 		return nil, err
@@ -744,7 +746,7 @@ func buildHasUndeployedTail(ctx context.Context, brPath, _ string, phase2Classes
 
 // runCmd executes a command and returns its stdout. Stderr is discarded.
 func runCmd(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: controlled inputs only
+	cmd := exec.CommandContext(ctx, name, args...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = nil

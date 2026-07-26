@@ -8,8 +8,9 @@ package daemon
 //	(B) a per-worker cold-start spawn semaphore (workLoopDeps.agentSpawnSem, cap 3)
 //	    bounds how many concurrent remote claude cold-starts overlap on one worker.
 //
-// Both are white-box tests (package daemon) because defaultAgentReadyTimeout is
-// unexported and agentSpawnSem is an unexported field. The semaphore test mirrors
+// Both are white-box tests (package daemon) because agentSpawnSem is an
+// unexported field; the timeout constant itself moved to
+// internal/runlaunch.DefaultAgentReadyTimeout (P2 E5 RT19b). The semaphore test mirrors
 // the peak-concurrency style of internal/workspace TestHK5QP7Z_...MutexSerializes.
 
 import (
@@ -17,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/runlaunch"
 )
 
 // TestHK5Z1F0_DefaultAgentReadyTimeoutIs150s pins Fix A: the HC-056 default is
@@ -24,8 +27,8 @@ import (
 // cold-start over the reverse tunnel under 6-concurrent remote load.
 func TestHK5Z1F0_DefaultAgentReadyTimeoutIs150s(t *testing.T) {
 	t.Parallel()
-	if got, want := defaultAgentReadyTimeout, 150*time.Second; got != want {
-		t.Fatalf("defaultAgentReadyTimeout = %v, want %v (hk-5z1f0)", got, want)
+	if got, want := runlaunch.DefaultAgentReadyTimeout, 150*time.Second; got != want {
+		t.Fatalf("runlaunch.DefaultAgentReadyTimeout = %v, want %v (hk-5z1f0)", got, want)
 	}
 }
 

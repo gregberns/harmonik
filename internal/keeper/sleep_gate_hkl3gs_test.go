@@ -7,6 +7,7 @@ package keeper_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -21,11 +22,11 @@ import (
 func writeSleepMarker(t *testing.T, projectDir, sessionID string) {
 	t.Helper()
 	dir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("MkdirAll harmonik dir: %v", err)
 	}
 	path := filepath.Join(dir, ".sleeping."+sessionID)
-	if err := os.WriteFile(path, []byte(`{"session_id":"`+sessionID+`"}`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"session_id":"`+sessionID+`"}`), 0o600); err != nil {
 		t.Fatalf("write sleep marker: %v", err)
 	}
 }
@@ -196,7 +197,9 @@ func TestWatcher_InjectDeliveredAfterWake(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx)
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Watcher.Run: %v", err)
+		}
 	}()
 
 	// Let a few ticks fire while sleeping — no inject should happen.
@@ -232,7 +235,7 @@ func TestCyclerMaybeRun_DeferredWhenSleeping(t *testing.T) {
 
 	// Managed marker required for Gate 1.
 	keeperDirPath := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDirPath, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDirPath, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	managedPath := filepath.Join(keeperDirPath, agent+".managed")
@@ -297,7 +300,7 @@ func TestCyclerMaybeRun_SleepingGateReachedWhenAwake(t *testing.T) {
 	sessionID := "sess-cycler-awake"
 
 	keeperDirPath := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDirPath, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDirPath, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	managedPath := filepath.Join(keeperDirPath, agent+".managed")
@@ -352,7 +355,9 @@ func TestCyclerMaybeRun_SleepingGateReachedWhenAwake(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
 
-	_ = cycler.MaybeRun(ctx, cf)
+	if err := cycler.MaybeRun(ctx, cf); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("MaybeRun with a pre-cancelled context: %v", err)
+	}
 
 	// SleepingCheckFn must have been called: Gate 5b was reached, which
 	// confirms the sleeping gate is on the hot path and not bypassed.

@@ -162,7 +162,7 @@ func TestBRServeBI003_ForbiddenInvocation(t *testing.T) {
 			// Skip unreadable files.
 			return nil
 		}
-		defer f.Close() //nolint:errcheck // read-only scan; close error immaterial
+		defer f.Close()
 
 		scanner := bufio.NewScanner(f)
 		lineNum := 0

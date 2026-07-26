@@ -37,8 +37,9 @@ func beadsMergeReadJSONL(t *testing.T, path string) []map[string]json.RawMessage
 		t.Fatalf("beadsMergeReadJSONL: %v", err)
 	}
 
-	var rows []map[string]json.RawMessage
-	for _, line := range splitLines(string(data)) {
+	lines := splitLines(string(data))
+	rows := make([]map[string]json.RawMessage, 0, len(lines))
+	for _, line := range lines {
 		if line == "" {
 			continue
 		}

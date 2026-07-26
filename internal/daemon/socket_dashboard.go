@@ -16,6 +16,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/gregberns/harmonik/internal/crewrun"
 )
 
 // DashboardHandler is the interface the daemon registers to handle "dashboard"
@@ -50,7 +52,7 @@ func (h *liveDashboardHandlerImpl) HandleDashboard(ctx context.Context) (json.Ra
 //
 // Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §2.
 // Bead ref: hk-2exz9.
-func RunSocketListenerWithDashboard(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, stateh StateHandler, dashh DashboardHandler, qh ...QueueHandler) error {
+func RunSocketListenerWithDashboard(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh crewrun.CrewHandler, sleepWakeh QuiesceOverrideHandler, stateh StateHandler, dashh DashboardHandler, qh ...QueueHandler) error {
 	return Serve(ctx, sockPath, SocketHandlers{
 		Request: h, HookRelay: hr, Queue: firstQueueHandler(qh), Subscribe: sub,
 		Operator: oh, Comms: ch, Crew: crewh, SleepWake: sleepWakeh, State: stateh, Dashboard: dashh,

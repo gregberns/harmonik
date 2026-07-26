@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // persistCounter makes concurrent in-process Persist calls for the same queue
@@ -125,10 +127,9 @@ func Persist(_ context.Context, projectDir string, q *Queue) error {
 	}
 
 	qDir := queuesDir(projectDir)
-	// Ensure .harmonik/queues/ exists. MkdirAll is idempotent; 0o755 matches
-	// existing .harmonik dir conventions per the workspace-model.
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(qDir, 0o755); err != nil {
+	// Ensure .harmonik/queues/ exists. MkdirAll is idempotent; the mode comes
+	// from core.HarmonikDirMode so it cannot diverge from the CLI-side creators.
+	if err := os.MkdirAll(qDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("%w: mkdir queues: %w", ErrPersistFailed, err)
 	}
 
@@ -143,27 +144,15 @@ func Persist(_ context.Context, projectDir string, q *Queue) error {
 		return fmt.Errorf("%w: create temp %q: %w", ErrPersistFailed, tmpPath, err)
 	}
 
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on write failure
-		return fmt.Errorf("%w: write temp %q: %w", ErrPersistFailed, tmpPath, err)
+	if writeErr := writeTempAndClose(f, data); writeErr != nil {
+		rmErr := os.Remove(tmpPath)
+		return fmt.Errorf("%w: write temp %q: %w", ErrPersistFailed, tmpPath, errors.Join(writeErr, rmErr))
 	}
 
-	// Step 3: fsync temp file so data is durable before rename.
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on sync failure
-		return fmt.Errorf("%w: fsync temp %q: %w", ErrPersistFailed, tmpPath, err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on close failure
-		return fmt.Errorf("%w: close temp %q: %w", ErrPersistFailed, tmpPath, err)
-	}
-
-	// Step 4: rename temp → target (atomic within same filesystem).
-	if err := os.Rename(tmpPath, target); err != nil {
-		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on rename failure
-		return fmt.Errorf("%w: rename %q → %q: %w", ErrPersistFailed, tmpPath, target, err)
+	// Step 3: rename temp → target (atomic within same filesystem).
+	if renameErr := os.Rename(tmpPath, target); renameErr != nil {
+		rmErr := os.Remove(tmpPath)
+		return fmt.Errorf("%w: rename %q → %q: %w", ErrPersistFailed, tmpPath, target, errors.Join(renameErr, rmErr))
 	}
 
 	// Step 5: fsync parent directory (.harmonik/queues/) so the rename is durable.
@@ -172,9 +161,8 @@ func Persist(_ context.Context, projectDir string, q *Queue) error {
 	if err != nil {
 		return fmt.Errorf("%w: open parent dir %q: %w", ErrPersistFailed, qDir, err)
 	}
-	if err := dir.Sync(); err != nil {
-		_ = dir.Close()
-		return fmt.Errorf("%w: fsync parent dir %q: %w", ErrPersistFailed, qDir, err)
+	if syncErr := dir.Sync(); syncErr != nil {
+		return fmt.Errorf("%w: fsync parent dir %q: %w", ErrPersistFailed, qDir, errors.Join(syncErr, dir.Close()))
 	}
 	if err := dir.Close(); err != nil {
 		return fmt.Errorf("%w: close parent dir %q: %w", ErrPersistFailed, qDir, err)
@@ -302,9 +290,8 @@ func CancelQueueOnShutdown(ctx context.Context, projectDir string, q *Queue) err
 	if err != nil {
 		return fmt.Errorf("queue: CancelQueueOnShutdown: open parent dir %q: %w", qDir, err)
 	}
-	if err := dir.Sync(); err != nil {
-		_ = dir.Close()
-		return fmt.Errorf("queue: CancelQueueOnShutdown: fsync parent dir %q: %w", qDir, err)
+	if syncErr := dir.Sync(); syncErr != nil {
+		return fmt.Errorf("queue: CancelQueueOnShutdown: fsync parent dir %q: %w", qDir, errors.Join(syncErr, dir.Close()))
 	}
 	if err := dir.Close(); err != nil {
 		return fmt.Errorf("queue: CancelQueueOnShutdown: close parent dir %q: %w", qDir, err)
@@ -346,9 +333,8 @@ func ArchiveFailedQueue(_ context.Context, projectDir, name string, t time.Time)
 	if err != nil {
 		return dst, fmt.Errorf("queue: ArchiveFailedQueue: open parent dir %q: %w", qDir, err)
 	}
-	if err := dir.Sync(); err != nil {
-		_ = dir.Close()
-		return dst, fmt.Errorf("queue: ArchiveFailedQueue: fsync parent dir %q: %w", qDir, err)
+	if syncErr := dir.Sync(); syncErr != nil {
+		return dst, fmt.Errorf("queue: ArchiveFailedQueue: fsync parent dir %q: %w", qDir, errors.Join(syncErr, dir.Close()))
 	}
 	if err := dir.Close(); err != nil {
 		return dst, fmt.Errorf("queue: ArchiveFailedQueue: close parent dir %q: %w", qDir, err)
@@ -382,9 +368,8 @@ func Unlink(_ context.Context, projectDir, name string) error {
 		}
 		return fmt.Errorf("queue: Unlink: open parent dir %q: %w", qDir, err)
 	}
-	if err := dir.Sync(); err != nil {
-		_ = dir.Close()
-		return fmt.Errorf("queue: Unlink: fsync parent dir %q: %w", qDir, err)
+	if syncErr := dir.Sync(); syncErr != nil {
+		return fmt.Errorf("queue: Unlink: fsync parent dir %q: %w", qDir, errors.Join(syncErr, dir.Close()))
 	}
 	if err := dir.Close(); err != nil {
 		return fmt.Errorf("queue: Unlink: close parent dir %q: %w", qDir, err)
@@ -421,8 +406,7 @@ func MigrateFromLegacy(_ context.Context, projectDir string) error {
 	}
 
 	qDir := queuesDir(projectDir)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(qDir, 0o755); err != nil {
+	if err := os.MkdirAll(qDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("queue: MigrateFromLegacy: mkdir queues: %w", err)
 	}
 
@@ -444,23 +428,13 @@ func MigrateFromLegacy(_ context.Context, projectDir string) error {
 	if err != nil {
 		return fmt.Errorf("queue: MigrateFromLegacy: create tmp %q: %w", tmpPath, err)
 	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath) //nolint:errcheck
-		return fmt.Errorf("queue: MigrateFromLegacy: write tmp: %w", err)
+	if writeErr := writeTempAndClose(f, data); writeErr != nil {
+		rmErr := os.Remove(tmpPath)
+		return fmt.Errorf("queue: MigrateFromLegacy: write tmp: %w", errors.Join(writeErr, rmErr))
 	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmpPath) //nolint:errcheck
-		return fmt.Errorf("queue: MigrateFromLegacy: fsync tmp: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmpPath) //nolint:errcheck
-		return fmt.Errorf("queue: MigrateFromLegacy: close tmp: %w", err)
-	}
-	if err := os.Rename(tmpPath, targetPath); err != nil {
-		_ = os.Remove(tmpPath) //nolint:errcheck
-		return fmt.Errorf("queue: MigrateFromLegacy: rename tmp → main.json: %w", err)
+	if renameErr := os.Rename(tmpPath, targetPath); renameErr != nil {
+		rmErr := os.Remove(tmpPath)
+		return fmt.Errorf("queue: MigrateFromLegacy: rename tmp → main.json: %w", errors.Join(renameErr, rmErr))
 	}
 
 	// Fsync queues/ so the new file is durable.
@@ -497,7 +471,7 @@ func EnumerateQueueNames(projectDir string) ([]string, error) {
 		return nil, fmt.Errorf("queue: EnumerateQueueNames: readdir %q: %w", qDir, err)
 	}
 
-	var names []string
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -518,6 +492,21 @@ func EnumerateQueueNames(projectDir string) ([]string, error) {
 	return names, nil
 }
 
+// writeTempAndClose writes data to f, fsyncs it so the bytes are durable
+// before any rename, and closes it. Every step's error is retained and joined:
+// a failed Close after a successful Write can still mean the data never
+// reached the disk, so it must not be dropped in favour of the earlier error.
+// f is always closed, including on the write and sync failure paths.
+func writeTempAndClose(f *os.File, data []byte) error {
+	if _, writeErr := f.Write(data); writeErr != nil {
+		return errors.Join(writeErr, f.Close())
+	}
+	if syncErr := f.Sync(); syncErr != nil {
+		return errors.Join(syncErr, f.Close())
+	}
+	return f.Close()
+}
+
 // fsyncDir opens dir and calls Sync on it. Returns an error if open or sync fails.
 func fsyncDir(dir string) error {
 	//nolint:gosec // G304: caller-verified daemon-internal path
@@ -525,9 +514,8 @@ func fsyncDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	if err := d.Sync(); err != nil {
-		_ = d.Close()
-		return err
+	if syncErr := d.Sync(); syncErr != nil {
+		return errors.Join(syncErr, d.Close())
 	}
 	return d.Close()
 }

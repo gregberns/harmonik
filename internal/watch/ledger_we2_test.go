@@ -30,17 +30,17 @@ import (
 
 // ledgerFixtureDir builds a temp project tree with .harmonik/events/ and
 // .harmonik/watch/ sub-dirs.  Returns (projectDir, harmonikDir, eventsPath).
-func ledgerFixtureDir(t *testing.T) (string, string, string) {
+func ledgerFixtureDir(t *testing.T) (projectDir, harmonikDir, eventsPath string) {
 	t.Helper()
-	root := t.TempDir()
-	harmonikDir := filepath.Join(root, ".harmonik")
+	projectDir = t.TempDir()
+	harmonikDir = filepath.Join(projectDir, ".harmonik")
 	eventsDir := filepath.Join(harmonikDir, "events")
 	for _, d := range []string{eventsDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o750); err != nil {
 			t.Fatalf("ledgerFixtureDir: mkdir %s: %v", d, err)
 		}
 	}
-	return root, harmonikDir, filepath.Join(eventsDir, "events.jsonl")
+	return projectDir, harmonikDir, filepath.Join(eventsDir, "events.jsonl")
 }
 
 // ledgerFixtureEvent builds a minimal valid core.Event with a fresh UUIDv7.
@@ -67,7 +67,11 @@ func ledgerFixtureAppend(t *testing.T, eventsPath string, events []core.Event) {
 	if err != nil {
 		t.Fatalf("ledgerFixtureAppend: OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Errorf("ledgerFixtureAppend: Close: %v", err)
+		}
+	}()
 	for i, ev := range events {
 		b, marshalErr := json.Marshal(ev)
 		if marshalErr != nil {

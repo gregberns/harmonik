@@ -53,6 +53,15 @@ import (
 	"time"
 )
 
+func silentHangFixtureString(t *testing.T, m map[string]any, key string) string {
+	t.Helper()
+	value, ok := m[key].(string)
+	if !ok {
+		t.Fatalf("%s = %v (type %T), want string", key, m[key], m[key])
+	}
+	return value
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // §7.1 state machine constants (normative from spec)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -172,7 +181,7 @@ var silentHangFixtureStateTable = []silentHangFixtureTransition{
 //
 // Downstream watcher test (hk-8i31.31) MUST verify that running this script
 // against the watcher does not fire agent_warning_silent_hang.
-func silentHangFixtureHeartbeatScript(heartbeatIntervalMs int, count int) *ScriptFile {
+func silentHangFixtureHeartbeatScript(heartbeatIntervalMs, count int) *ScriptFile {
 	msgs := make([]ScriptMessage, 0, count+2)
 
 	// Preamble: agent_started and agent_ready.
@@ -185,8 +194,7 @@ func silentHangFixtureHeartbeatScript(heartbeatIntervalMs int, count int) *Scrip
 			"agent_type": "claude-twin",
 			"started_at": time.Now().UTC().Format(time.RFC3339Nano),
 		},
-	})
-	msgs = append(msgs, ScriptMessage{
+	}, ScriptMessage{
 		Type: "agent_ready",
 		Payload: map[string]any{
 			"run_id":       "run-sh-hb-001",
@@ -813,13 +821,13 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 		if err := json.Unmarshal(bytes.TrimRight(buf.Bytes(), "\n"), &m); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if got := m["type"].(string); got != "agent_failed" {
+		if got := silentHangFixtureString(t, m, "type"); got != "agent_failed" {
 			t.Errorf("type = %q, want agent_failed", got)
 		}
-		if got := m["error_category"].(string); got != "structural" {
+		if got := silentHangFixtureString(t, m, "error_category"); got != "structural" {
 			t.Errorf("error_category = %q, want structural (§4.6.HC-026)", got)
 		}
-		if got := m["reason"].(string); got != "silent_hang" {
+		if got := silentHangFixtureString(t, m, "reason"); got != "silent_hang" {
 			t.Errorf("reason = %q, want silent_hang (§8.2)", got)
 		}
 		// sub_reason absent for empty string (omitempty).
@@ -841,7 +849,7 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 		if err := json.Unmarshal(bytes.TrimRight(buf.Bytes(), "\n"), &m); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if got := m["reason"].(string); got != "silent_hang_hard_kill" {
+		if got := silentHangFixtureString(t, m, "reason"); got != "silent_hang_hard_kill" {
 			t.Errorf("reason = %q, want silent_hang_hard_kill (§8.2 + §7.1 hard-kill path)", got)
 		}
 	})
@@ -859,7 +867,6 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 			heartbeatPhaseShuttingDown,
 		}
 		for _, phase := range phasesReset {
-			phase := phase
 			t.Run(string(phase), func(t *testing.T) {
 				t.Parallel()
 				var buf bytes.Buffer
@@ -871,12 +878,12 @@ func TestSilentHang_HC026_WatcherEmittedMessageShapes(t *testing.T) {
 				if err := json.Unmarshal(bytes.TrimRight(buf.Bytes(), "\n"), &m); err != nil {
 					t.Fatalf("unmarshal phase %q: %v", phase, err)
 				}
-				if got := m["type"].(string); got != "agent_heartbeat" {
+				if got := silentHangFixtureString(t, m, "type"); got != "agent_heartbeat" {
 					t.Errorf("phase %q: type = %q, want agent_heartbeat", phase, got)
 				}
 				// Per §4.6.HC-026: "emitting a heartbeat resets the silent-hang timer
 				// per §7.1" — ALL phases are valid timer-reset events.
-				if got := m["phase"].(string); got != string(phase) {
+				if got := silentHangFixtureString(t, m, "phase"); got != string(phase) {
 					t.Errorf("phase field = %q, want %q", got, phase)
 				}
 			})

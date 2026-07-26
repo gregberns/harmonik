@@ -91,6 +91,7 @@ func TestProp_Routing_WorkerTarget_MatchYieldsWorker(t *testing.T) {
 		w := r.SelectWorkerByName(name)
 		if w == nil {
 			rt.Fatalf("WorkerTarget exact match: expected non-nil, got nil")
+			return
 		}
 		if w.Name != name {
 			rt.Fatalf("WorkerTarget exact match: got name %q, want %q", w.Name, name)
@@ -105,7 +106,7 @@ func TestProp_Routing_WorkerTarget_MismatchFallsBackToLocal(t *testing.T) {
 		other := drawWorkerName(rt, "other")
 		// Ensure the two names differ so the mismatch is real.
 		if name == other {
-			other = other + "x"
+			other += "x"
 		}
 		r := workers.NewRegistry(makeWorkerCfg(name, true, 4))
 

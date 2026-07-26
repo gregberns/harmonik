@@ -84,14 +84,14 @@ func readyFixtureMakeBackoffProbe(
 		}{JSONRPC: "2.0", ID: i + 100, Method: "status"}
 		reqBytes, _ := json.Marshal(req) //nolint:errcheck,errchkjson // encoding a known-good struct
 		if _, writeErr := fmt.Fprintf(conn, "%s\n", reqBytes); writeErr != nil {
-			_ = conn.Close() //nolint:errcheck // cleanup error unactionable
+			_ = conn.Close()
 			finalStatus = "reconciling"
 			continue
 		}
 
 		buf := make([]byte, 4096)
 		n, readErr := conn.Read(buf)
-		_ = conn.Close() //nolint:errcheck // cleanup error unactionable
+		_ = conn.Close()
 		if readErr != nil || n == 0 {
 			finalStatus = "reconciling"
 			continue
@@ -131,7 +131,7 @@ func readyFixtureServeReadyAfterN(t *testing.T, ln net.Listener, reconcileCount 
 			isReady := count >= reconcileCount
 			count++
 			go func(c net.Conn, ready bool) {
-				defer func() { _ = c.Close() }() //nolint:errcheck // cleanup error unactionable
+				defer func() { _ = c.Close() }()
 				buf := make([]byte, 4096)
 				n, err := c.Read(buf)
 				if err != nil || n == 0 {
@@ -202,7 +202,7 @@ func TestPL009b_SocketProbeExponentialBackoff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009b probe-retry: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		// Serve reconciling for first 2 connections, then ready.
 		readyFixtureServeReadyAfterN(t, ln, 2)
@@ -226,7 +226,7 @@ func TestPL009b_SocketProbeExponentialBackoff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009b delays: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		// Serve reconciling for 3 connections, then ready.
 		readyFixtureServeReadyAfterN(t, ln, 3)
@@ -267,7 +267,7 @@ func TestPL009b_SocketProbeExponentialBackoff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009b immediate-ready: bindSocket: %v", err)
 		}
-		t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
+		t.Cleanup(func() { _ = ln.Close() })
 
 		// Serve ready immediately (0 reconciling connections).
 		readyFixtureServeReadyAfterN(t, ln, 0)
@@ -340,7 +340,7 @@ func TestPL009b_SystemdNotify(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PL-009b sd_notify: ListenPacket unixgram: %v", err)
 		}
-		defer func() { _ = pc.Close() }() //nolint:errcheck // cleanup error unactionable
+		defer func() { _ = pc.Close() }()
 
 		// Simulate the daemon detecting NOTIFY_SOCKET and sending READY=1.
 		// Real daemon: os.Getenv("NOTIFY_SOCKET") → sd_notify("READY=1").
@@ -359,7 +359,7 @@ func TestPL009b_SystemdNotify(t *testing.T) {
 				errCh <- fmt.Errorf("dial: %w", dialErr)
 				return
 			}
-			defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+			defer func() { _ = conn.Close() }()
 			if _, writeErr := conn.Write([]byte("READY=1\n")); writeErr != nil {
 				errCh <- fmt.Errorf("write: %w", writeErr)
 				return

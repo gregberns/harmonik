@@ -28,12 +28,12 @@ import (
 // file approach is replaced with a simpler "N-exit-then-success" pattern
 // driven by a temp directory: one file is created per call; when the file
 // count exceeds failCount the script exits 0.
-func dblockretryFixtureCountedBinary(t *testing.T, failExitCode int, failCount int) string {
+func dblockretryFixtureCountedBinary(t *testing.T, failExitCode, failCount int) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "br")
 	countDir := filepath.Join(dir, "calls")
-	if err := os.MkdirAll(countDir, 0o755); err != nil {
+	if err := os.MkdirAll(countDir, 0o700); err != nil {
 		t.Fatalf("dblockretryFixtureCountedBinary: mkdir: %v", err)
 	}
 	// The script creates a new file per call; counts existing files to decide exit.
@@ -46,7 +46,7 @@ fi
 exit 0
 `, countDir, countDir, failCount, failExitCode)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("dblockretryFixtureCountedBinary: write: %v", err)
 	}
 	return path
@@ -61,7 +61,7 @@ func dblockretryFixtureMockBinary(t *testing.T, exitCode int) string {
 	path := filepath.Join(dir, "br")
 	script := fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("dblockretryFixtureMockBinary: write: %v", err)
 	}
 	return path
@@ -80,7 +80,7 @@ func dblockretryFixtureMockBinary(t *testing.T, exitCode int) string {
 // For simplicity we use an atomic int64 in the test process and a fresh
 // binary per attempt — but since each RunWithDBLockedRetry call uses the
 // SAME binary path, we use the filesystem counter approach.
-func dblockretryFixtureCountedAdapter(t *testing.T, failExitCode int, failCount int) *brcli.Adapter {
+func dblockretryFixtureCountedAdapter(t *testing.T, failExitCode, failCount int) *brcli.Adapter {
 	t.Helper()
 	path := dblockretryFixtureCountedBinary(t, failExitCode, failCount)
 	a, err := brcli.New(path)
@@ -291,7 +291,7 @@ func dblockretryFixtureMockBinaryWithStderr(t *testing.T, exitCode int, stderrMs
 	path := filepath.Join(dir, "br")
 	script := fmt.Sprintf("#!/bin/sh\necho %q >&2\nexit %d\n", stderrMsg, exitCode)
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("dblockretryFixtureMockBinaryWithStderr: write: %v", err)
 	}
 	return path
@@ -366,7 +366,7 @@ func TestRunWithDBLockedRetryDiagnosticFieldsUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "br")
 	countDir := filepath.Join(dir, "calls")
-	if err := os.MkdirAll(countDir, 0o755); err != nil { //nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(countDir, 0o700); err != nil {
 		t.Fatalf("TestRunWithDBLockedRetryDiagnosticFieldsUnavailable: mkdir: %v", err)
 	}
 	// This binary sleeps on every call (failCount=999) and writes to stderr.
@@ -382,7 +382,7 @@ fi
 exit 0
 `, countDir, countDir, failCount, stderrMsg, sleepDuration.Seconds())
 	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("TestRunWithDBLockedRetryDiagnosticFieldsUnavailable: write: %v", err)
 	}
 

@@ -1,15 +1,19 @@
 package schedule
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // scheduleFileName is the durable store file under .harmonik/.
@@ -316,7 +320,7 @@ func (s *Store) Remove(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
 }
 
 // SetEnabled flips a job's Enabled flag under the cross-process flock, persists,
@@ -333,7 +337,7 @@ func (s *Store) SetEnabled(id string, enabled bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
 }
 
 // MarkFired overwrites a job's LastFire (RFC3339 UTC string) and LastPID under
@@ -362,7 +366,7 @@ func (s *Store) MarkFired(id, lastFireUTC string, pid int) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
 }
 
 // RequestRunNow sets the ForceNext flag on a job (the `schedule run-now`
@@ -382,7 +386,7 @@ func (s *Store) RequestRunNow(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
 }
 
 // sleepSuspendedFileName is the sidecar file under .harmonik/ that records
@@ -469,8 +473,7 @@ func (s *Store) writeSuspendedSet(ids []string) error {
 		return fmt.Errorf("marshal: %w", err)
 	}
 	dir := filepath.Join(s.projectDir, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(dir, core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("mkdir %q: %w", dir, mkErr)
 	}
 	path := s.suspendedSetPath()
@@ -519,7 +522,15 @@ func (s *Store) ClearForceNext(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return v.(bool), nil
+	return mutationBool(v)
+}
+
+func mutationBool(v any) (bool, error) {
+	changed, ok := v.(bool)
+	if !ok {
+		return false, fmt.Errorf("schedule: internal mutation result has type %T, want bool", v)
+	}
+	return changed, nil
 }
 
 // filePath returns the absolute path of the durable store file.
@@ -549,8 +560,7 @@ func (s *Store) statModtime() time.Time {
 // surfaces as a prompt error rather than an indefinite hang.
 func (s *Store) acquireFileLock() (*os.File, func(), error) {
 	dir := filepath.Join(s.projectDir, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return nil, nil, fmt.Errorf("schedule: lock: mkdir %q: %w", dir, err)
 	}
 	lockPath := s.lockPath()
@@ -560,12 +570,16 @@ func (s *Store) acquireFileLock() (*os.File, func(), error) {
 		return nil, nil, fmt.Errorf("schedule: lock: open %q: %w", lockPath, err)
 	}
 	if err := acquireExclusiveBounded(int(fd.Fd()), scheduleLockTimeout); err != nil {
-		_ = fd.Close() //nolint:errcheck // closing on acquire failure; error non-actionable
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "schedule: acquireFileLock: close lockfile fd after acquire failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, nil, err
 	}
 	release := func() {
 		_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN) //nolint:errcheck // unlock error non-actionable; close also drops the advisory lock
-		_ = fd.Close()                                   //nolint:errcheck // closing a lock fd; error non-actionable
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "schedule: acquireFileLock: close lockfile fd on release", "err", closeErr, "path", lockPath)
+		}
 	}
 	return fd, release, nil
 }
@@ -609,8 +623,7 @@ func (s *Store) persistJobs(jobsMap map[string]*ScheduledJob) (time.Time, error)
 	}
 
 	dir := filepath.Join(s.projectDir, ".harmonik")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return time.Time{}, fmt.Errorf("schedule: persist: mkdir %q: %w", dir, err)
 	}
 
@@ -622,12 +635,12 @@ func (s *Store) persistJobs(jobsMap map[string]*ScheduledJob) (time.Time, error)
 		return time.Time{}, fmt.Errorf("schedule: persist: create temp %q: %w", tmpPath, err)
 	}
 	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
+		err = errors.Join(err, f.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on write failure
 		return time.Time{}, fmt.Errorf("schedule: persist: write temp %q: %w", tmpPath, err)
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
+		err = errors.Join(err, f.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on sync failure
 		return time.Time{}, fmt.Errorf("schedule: persist: fsync temp %q: %w", tmpPath, err)
 	}
@@ -651,7 +664,7 @@ func (s *Store) persistJobs(jobsMap map[string]*ScheduledJob) (time.Time, error)
 		return mod, fmt.Errorf("schedule: persist: open parent dir %q: %w", dir, err)
 	}
 	if err := d.Sync(); err != nil {
-		_ = d.Close()
+		err = errors.Join(err, d.Close())
 		return mod, fmt.Errorf("schedule: persist: fsync parent dir %q: %w", dir, err)
 	}
 	if err := d.Close(); err != nil {

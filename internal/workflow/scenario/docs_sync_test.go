@@ -60,8 +60,8 @@ func dsRun(t *testing.T) *core.Run {
 	}
 }
 
-func dsOutcome(status core.OutcomeStatus, label string) core.Outcome {
-	o := core.Outcome{Status: status, Kind: core.OutcomeKindDefault}
+func dsOutcome(label string) core.Outcome {
+	o := core.Outcome{Status: core.OutcomeStatusSuccess, Kind: core.OutcomeKindDefault}
 	if label != "" {
 		o.PreferredLabel = &label
 	}
@@ -83,31 +83,31 @@ func TestDS_ApproveOnFirstPass(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// start → change_code
-	dec := workflow.DecideNextNode(graph, "start", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "change_code" {
 		t.Fatalf("start→change_code: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// change_code → update_docs
-	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "update_docs" {
 		t.Fatalf("change_code→update_docs: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// update_docs → review_sync
-	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review_sync" {
 		t.Fatalf("update_docs→review_sync: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// review_sync(APPROVE) → close
-	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("review_sync→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", dsOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -129,42 +129,44 @@ func TestDS_RequestChangesThenApprove(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Forward spine: start → change_code → update_docs → review_sync
-	dec := workflow.DecideNextNode(graph, "start", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "change_code" {
 		t.Fatalf("start→change_code: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "update_docs" {
 		t.Fatalf("change_code→update_docs: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review_sync" {
 		t.Fatalf("update_docs→review_sync: %+v", dec)
 	}
 
 	// Increment cycle counter for the review_sync→update_docs back-edge.
-	cycles.Increment(run.RunID, "review_sync", "update_docs", nil)
+	if _, err := cycles.Increment(run.RunID, "review_sync", "update_docs", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter review_sync\u2192update_docs: %v", err)
+	}
 
 	// review_sync(REQUEST_CHANGES) → update_docs
-	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "update_docs" {
 		t.Fatalf("review_sync→update_docs (RC): Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// update_docs → review_sync (second visit)
-	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review_sync" {
 		t.Fatalf("update_docs→review_sync (2nd): %+v", dec)
 	}
 
 	// review_sync(APPROVE) → close
-	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("review_sync→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", dsOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -186,46 +188,48 @@ func TestDS_CodeChangeThenApprove(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Forward spine: start → change_code → update_docs → review_sync
-	dec := workflow.DecideNextNode(graph, "start", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "change_code" {
 		t.Fatalf("start→change_code: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "update_docs" {
 		t.Fatalf("change_code→update_docs: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review_sync" {
 		t.Fatalf("update_docs→review_sync: %+v", dec)
 	}
 
 	// Increment cycle counter for the review_sync→change_code back-edge.
-	cycles.Increment(run.RunID, "review_sync", "change_code", nil)
+	if _, err := cycles.Increment(run.RunID, "review_sync", "change_code", nil); err != nil {
+		t.Fatalf("pre-fill cycle counter review_sync\u2192change_code: %v", err)
+	}
 
 	// review_sync(CODE_CHANGE) → change_code
-	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome(core.OutcomeStatusSuccess, "CODE_CHANGE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome("CODE_CHANGE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "change_code" {
 		t.Fatalf("review_sync→change_code: Advance=%v NextNodeID=%q", dec.Advance, dec.NextNodeID)
 	}
 
 	// Re-run the forward spine from change_code
-	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "update_docs" {
 		t.Fatalf("change_code→update_docs (2nd): %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review_sync" {
 		t.Fatalf("update_docs→review_sync (2nd): %+v", dec)
 	}
 
 	// review_sync(APPROVE) → close
-	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome(core.OutcomeStatusSuccess, "APPROVE"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome("APPROVE"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close" {
 		t.Fatalf("review_sync→close: Advance=%v NextNodeID=%q, want close", dec.Advance, dec.NextNodeID)
 	}
 
 	// close is terminal
-	dec = workflow.DecideNextNode(graph, "close", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close", dsOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -246,28 +250,28 @@ func TestDS_BlockOnFirst(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Forward spine
-	dec := workflow.DecideNextNode(graph, "start", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "change_code" {
 		t.Fatalf("start→change_code: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "update_docs" {
 		t.Fatalf("change_code→update_docs: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review_sync" {
 		t.Fatalf("update_docs→review_sync: %+v", dec)
 	}
 
 	// review_sync(BLOCK) → close-needs-attention
-	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome(core.OutcomeStatusSuccess, "BLOCK"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome("BLOCK"), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "close-needs-attention" {
 		t.Fatalf("review_sync→close-needs-attention: Advance=%v NextNodeID=%q",
 			dec.Advance, dec.NextNodeID)
 	}
 
 	// close-needs-attention is terminal
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", dsOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}
@@ -288,19 +292,21 @@ func TestDS_CapHitRequestChanges(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to review_sync via the forward spine.
-	workflow.DecideNextNode(graph, "start", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "change_code", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "update_docs", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", dsOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "change_code", dsOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "update_docs", dsOutcome(""), run, cycles)
 
 	// Pre-fill: simulate 3 prior traversals of review_sync→update_docs (cap=3 exhausted).
-	cap := 3
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "review_sync", "update_docs", &cap)
+	traversalCap := 3
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "review_sync", "update_docs", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter review_sync\u2192update_docs: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the REQUEST_CHANGES back-edge is suppressed;
 	// the cascade reports a cap-hit failure.
-	dec := workflow.DecideNextNode(graph, "review_sync", dsOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "review_sync", dsOutcome("REQUEST_CHANGES"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit (REQUEST_CHANGES), got: %+v", dec)
 	}
@@ -327,19 +333,21 @@ func TestDS_CapHitCodeChange(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Navigate to review_sync via the forward spine.
-	workflow.DecideNextNode(graph, "start", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "change_code", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
-	workflow.DecideNextNode(graph, "update_docs", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	workflow.DecideNextNode(graph, "start", dsOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "change_code", dsOutcome(""), run, cycles)
+	workflow.DecideNextNode(graph, "update_docs", dsOutcome(""), run, cycles)
 
 	// Pre-fill: simulate 2 prior traversals of review_sync→change_code (cap=2 exhausted).
-	cap := 2
-	for i := 0; i < cap; i++ {
-		cycles.Increment(run.RunID, "review_sync", "change_code", &cap)
+	traversalCap := 2
+	for i := 0; i < traversalCap; i++ {
+		if _, err := cycles.Increment(run.RunID, "review_sync", "change_code", &traversalCap); err != nil {
+			t.Fatalf("pre-fill cycle counter review_sync\u2192change_code: %v", err)
+		}
 	}
 
 	// With the traversal cap exhausted, the CODE_CHANGE back-edge is suppressed;
 	// the cascade reports a cap-hit failure.
-	dec := workflow.DecideNextNode(graph, "review_sync", dsOutcome(core.OutcomeStatusSuccess, "CODE_CHANGE"), run, cycles)
+	dec := workflow.DecideNextNode(graph, "review_sync", dsOutcome("CODE_CHANGE"), run, cycles)
 	if !dec.Failed {
 		t.Fatalf("expected Failed=true on cap-hit (CODE_CHANGE), got: %+v", dec)
 	}
@@ -367,21 +375,21 @@ func TestDS_UnrecognizedLabelFallback(t *testing.T) {
 	cycles := core.NewCycleCounter()
 
 	// Forward spine: start → change_code → update_docs → review_sync
-	dec := workflow.DecideNextNode(graph, "start", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec := workflow.DecideNextNode(graph, "start", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "change_code" {
 		t.Fatalf("start→change_code: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "change_code", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "update_docs" {
 		t.Fatalf("change_code→update_docs: %+v", dec)
 	}
-	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "update_docs", dsOutcome(""), run, cycles)
 	if !dec.Advance || dec.NextNodeID != "review_sync" {
 		t.Fatalf("update_docs→review_sync: %+v", dec)
 	}
 
 	// Unrecognized label: no conditional edge matches; unconditional fallback fires.
-	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome(core.OutcomeStatusSuccess, "UNKNOWN_LABEL"), run, cycles)
+	dec = workflow.DecideNextNode(graph, "review_sync", dsOutcome("UNKNOWN_LABEL"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("unrecognized-label fallback: Advance=%v Failed=%v FailureReason=%q",
 			dec.Advance, dec.Failed, dec.FailureReason)
@@ -392,7 +400,7 @@ func TestDS_UnrecognizedLabelFallback(t *testing.T) {
 	}
 
 	// close-needs-attention is terminal.
-	dec = workflow.DecideNextNode(graph, "close-needs-attention", dsOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
+	dec = workflow.DecideNextNode(graph, "close-needs-attention", dsOutcome(""), run, cycles)
 	if !dec.IsTerminal {
 		t.Fatalf("close-needs-attention: IsTerminal=%v, want true", dec.IsTerminal)
 	}

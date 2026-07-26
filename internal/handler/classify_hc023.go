@@ -114,6 +114,8 @@ func ClassifyExitState(s ExitState) error {
 		return fmt.Errorf("handler: classify: adapter deterministic: %w", ErrDeterministic)
 	case AdapterConditionStructural:
 		return fmt.Errorf("handler: classify: adapter structural: %w", ErrStructural)
+	case AdapterConditionNone:
+		// No adapter-detected condition — fall through to the exit-code rules.
 	}
 
 	// Priority 5–6: exit-code-based rules when adapter reports no condition.

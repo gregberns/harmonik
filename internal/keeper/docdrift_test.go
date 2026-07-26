@@ -78,7 +78,7 @@ var docTableRowRe = regexp.MustCompile(
 
 // leadingTokenRe pulls the first integer-ish literal out of a default cell, e.g.
 // "`200000` (`DefaultWarnAbsTokens`)" → "200000"; "`280k` ..." → "280k".
-var leadingTokenRe = regexp.MustCompile("`?([0-9][0-9_, ]*[kK]?)`?")
+var leadingTokenRe = regexp.MustCompile(`\x60?(\d[0-9_, ]*[kK]?)\x60?`)
 
 // TestKeeperDocDefaultsNoDrift parses docs/components/internal/keeper.md and asserts
 // every token-valued default in the configuration-surface table equals its Default*

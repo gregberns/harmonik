@@ -26,6 +26,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -156,7 +157,7 @@ func TestCrewStart_IndependentSession_hkmmlqt(t *testing.T) {
 	sub := &hkmmlqtCrewSessionSubstrate{}
 	h, dir := newTestCrewHandler(t, sub, nil)
 
-	result := mustCrewStart(t, h, CrewStartRequest{
+	result := mustCrewStart(t, h, crewrun.CrewStartRequest{
 		Name:  "chani",
 		Queue: "crew-chani",
 	})
@@ -195,8 +196,8 @@ func TestCrewStop_IndependentSession_hkmmlqt(t *testing.T) {
 	sub := &hkmmlqtCrewSessionSubstrate{}
 	h, _ := newTestCrewHandler(t, sub, nil)
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "stilgar", Queue: "crew-stilgar"})
-	mustCrewStop(t, h, CrewStopRequest{Name: "stilgar"})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "stilgar", Queue: "crew-stilgar"})
+	mustCrewStop(t, h, crewrun.CrewStopRequest{Name: "stilgar"})
 
 	if !sub.stopSessionCalled {
 		t.Error("StopCrewSession was not called; substrate's crewSessionStopper was not used")
@@ -216,7 +217,7 @@ func TestCrewStart_FallbackToSpawnWindow_hkmmlqt(t *testing.T) {
 	sub := &fakeSubstrate{}
 	h, _ := newTestCrewHandler(t, sub, nil)
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "duncan", Queue: "crew-duncan"})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "duncan", Queue: "crew-duncan"})
 
 	if !sub.spawnCalled {
 		t.Error("SpawnWindow was not called; expected fallback to SpawnWindow for non-crewSessionSpawner substrate")
@@ -229,8 +230,8 @@ func TestCrewStop_FallbackToStopWindowByHandle_hkmmlqt(t *testing.T) {
 	sub := &fakeSubstrate{}
 	h, _ := newTestCrewHandler(t, sub, nil)
 
-	mustCrewStart(t, h, CrewStartRequest{Name: "liet", Queue: "crew-liet"})
-	mustCrewStop(t, h, CrewStopRequest{Name: "liet"})
+	mustCrewStart(t, h, crewrun.CrewStartRequest{Name: "liet", Queue: "crew-liet"})
+	mustCrewStop(t, h, crewrun.CrewStopRequest{Name: "liet"})
 
 	if !sub.stopCalled {
 		t.Error("StopWindowByHandle was not called; expected fallback for non-crewSessionStopper substrate")

@@ -56,7 +56,6 @@ func TestRC020_VerdictVocabularyIsSevenValueEnum(t *testing.T) {
 	}
 
 	for _, tc := range verdicts {
-		tc := tc
 		t.Run(tc.str, func(t *testing.T) {
 			t.Parallel()
 
@@ -91,7 +90,6 @@ func TestRC020_UnknownVerdictIsInvalid(t *testing.T) {
 	}
 
 	for _, v := range unknownVerdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
@@ -123,7 +121,6 @@ func TestRC020_VerdictJSONRoundTrip(t *testing.T) {
 	}
 
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
@@ -343,7 +340,6 @@ func TestRC023_AllMalformationReasonsAreDeclared(t *testing.T) {
 	}
 
 	for _, tc := range reasons {
-		tc := tc
 		t.Run(tc.str, func(t *testing.T) {
 			t.Parallel()
 
@@ -380,7 +376,6 @@ func TestRC023_MalformedVerdictPayloadValidForEachReason(t *testing.T) {
 	}
 
 	for _, reason := range reasons {
-		reason := reason
 		t.Run(string(reason), func(t *testing.T) {
 			t.Parallel()
 
@@ -461,7 +456,6 @@ func TestRC024_StaleVerdictPayloadIsValidForBothReasons(t *testing.T) {
 	}
 
 	for _, reason := range reasons {
-		reason := reason
 		t.Run(string(reason), func(t *testing.T) {
 			t.Parallel()
 
@@ -546,7 +540,6 @@ func TestRC025_VerdictExecutedPayloadIsValidForAllVerdicts(t *testing.T) {
 	}
 
 	for _, v := range verdicts {
-		v := v
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
@@ -594,7 +587,6 @@ func TestRC025_VerdictExecutionIdempotencyIsDefinedPerVerdict(t *testing.T) {
 	}
 
 	for _, tc := range idempotencyMechanisms {
-		tc := tc
 		t.Run(string(tc.verdict), func(t *testing.T) {
 			t.Parallel()
 
@@ -824,7 +816,6 @@ func TestRC026a_DurableRetryCounterFileCanBeWrittenAtomically(t *testing.T) {
 
 	// Simulate the atomic temp+rename write pattern (WM-026).
 	tmpPath := counterPath + ".tmp"
-	//nolint:gosec // G306: 0600 is correct for a private state file
 	if err := os.WriteFile(tmpPath, []byte(`{"attempt":1}`), 0o600); err != nil {
 		t.Fatalf("RC-026a: WriteFile tmp: %v", err)
 	}
@@ -843,7 +834,6 @@ func TestRC026a_DurableRetryCounterFileCanBeWrittenAtomically(t *testing.T) {
 	}
 
 	// Increment to attempt 2 using the same atomic pattern.
-	//nolint:gosec // G306: 0600 is correct for a private state file
 	if err := os.WriteFile(tmpPath, []byte(`{"attempt":2}`), 0o600); err != nil {
 		t.Fatalf("RC-026a: WriteFile attempt 2: %v", err)
 	}
@@ -890,7 +880,6 @@ func TestRC027_OperatorVerdictOverrideAppliesToInvestigatorCategories(t *testing
 	}
 
 	for _, cat := range overrideCategories {
-		cat := cat
 		t.Run(string(cat), func(t *testing.T) {
 			t.Parallel()
 

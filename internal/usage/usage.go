@@ -13,9 +13,12 @@ package usage
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -276,7 +279,10 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	knownSessionIDs := map[string]bool{}
 
 	// Phase 2: orchestrator sessions — live transcript scan (not in session-data.jsonl).
-	orchSessions, _ := findOrchestratorSessions(cfg.ClaudeProjectsDir, cfg.Since, cfg.Until, knownSessionIDs)
+	orchSessions, orchErr := findOrchestratorSessions(cfg.ClaudeProjectsDir, cfg.Since, cfg.Until, knownSessionIDs)
+	if orchErr != nil {
+		return nil, fmt.Errorf("usage: find orchestrator sessions: %w", orchErr)
+	}
 
 	// Global rollups.
 	var productiveCost, orchCost float64
@@ -422,16 +428,18 @@ func findOrchestratorSessions(claudeProjectsDir, since, until string, knownSessi
 	user := os.Getenv("USER")
 	mainProjectDir := filepath.Join(claudeProjectsDir, fmt.Sprintf("-Users-%s-github-harmonik", user))
 	if _, err := os.Stat(mainProjectDir); err != nil {
-		return nil, nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
-	//nolint:gosec // G304: mainProjectDir derived from ClaudeProjectsDir (operator config) + USER env.
 	entries, err := os.ReadDir(mainProjectDir)
 	if err != nil {
 		return nil, err
 	}
 
-	var sessions []OrchestratorSession
+	sessions := make([]OrchestratorSession, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
@@ -525,7 +533,13 @@ func readTranscript(path, since, until string) ([]transcriptTurn, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close() //nolint:errcheck // read-only file.
+	// Read-only transcript scan runs after this defer, so keep the close deferred
+	// to function exit; the close error is immaterial for a read handle.
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "usage: close transcript", "err", closeErr, "path", path)
+		}
+	}()
 
 	var turns []transcriptTurn
 	sc := bufio.NewScanner(f)
@@ -614,8 +628,14 @@ func fmtTokens(n int64) string {
 }
 
 // PrintSummary writes a one-screen human-readable summary to w.
-func PrintSummary(r *AnalysisResult, w io.Writer) {
-	p := func(format string, args ...any) { fmt.Fprintf(w, format+"\n", args...) }
+func PrintSummary(r *AnalysisResult, w io.Writer) error {
+	var writeErr error
+	p := func(format string, args ...any) {
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(w, format+"\n", args...)
+	}
 	gu := r.GlobalUsage
 
 	p("======================================================================")
@@ -753,6 +773,7 @@ func PrintSummary(r *AnalysisResult, w io.Writer) {
 	}
 
 	p("======================================================================")
+	return writeErr
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

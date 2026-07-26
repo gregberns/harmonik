@@ -96,9 +96,11 @@ func TestSIGINTWedgedDaemonExit(t *testing.T) {
 			// Exit code 0 is unexpected: the subprocess should exit via os.Exit(1).
 			t.Errorf("subprocess exited 0; want non-zero (watchdog fires os.Exit(1))")
 		}
-		// Non-zero exit is expected — watchdog fired or signal default handler.
+	// Non-zero exit is expected — watchdog fired or signal default handler.
 	case <-time.After(deadline):
-		_ = cmd.Process.Kill()
+		if err := cmd.Process.Kill(); err != nil {
+			t.Errorf("kill wedged subprocess: %v", err)
+		}
 		t.Errorf("subprocess did not exit within %s after SIGINT (watchdog failed to fire)", deadline)
 	}
 }

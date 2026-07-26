@@ -1,0 +1,12 @@
+# cmd-coverage.baseline — ratified cmd/** package coverage
+# Format: <full-package-import-path> <statement-coverage-percent>
+# Update deliberately with: scripts/cmd-coverage-gate.sh --write-baseline
+# Package membership must exactly match production packages from go list ./cmd/....
+github.com/gregberns/harmonik/cmd/harmonik 58.3
+github.com/gregberns/harmonik/cmd/harmonik-twin-claude 67.2
+github.com/gregberns/harmonik/cmd/harmonik-twin-codex 85.0
+github.com/gregberns/harmonik/cmd/harmonik-twin-generic 83.7
+github.com/gregberns/harmonik/cmd/harmonik-twin-pi 0.0
+github.com/gregberns/harmonik/cmd/harmonik-twin-session 61.6
+github.com/gregberns/harmonik/cmd/harmonik/digest 82.5
+github.com/gregberns/harmonik/cmd/harmonik/supervise 47.9

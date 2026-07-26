@@ -9,7 +9,7 @@ package daemon
 //
 //   - resolveGateAgentType picks the AUTHORITATIVE harness identity for the
 //     gate. The originally-shipped gate (hk-6596l) keyed off
-//     artifactAgentType(artifacts). That is a defect for any harness whose
+//     shared.ArtifactAgentType(artifacts). That is a defect for any harness whose
 //     resolved identity is not reflected by the artifacts value read at the
 //     gate: a pi run could observe "claude-code" and silently skip the wrap.
 //     The resolved Harness (implHarnessWL, looked up via HarnessRegistry.ForAgent)
@@ -34,6 +34,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // resolveGateAgentType returns the harness identity the sandbox gate must match
@@ -53,7 +54,7 @@ func resolveGateAgentType(implHarness handlercontract.Harness, fromArtifacts cor
 //	AND agentType is listed in cfg.Harnesses. Returns nil (strict no-op)
 //	otherwise: any non-"srt" backend, a harness not in the list, or a REMOTE
 //	run (see the DaemonSockPath guard below).
-func sandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxProfileInput) *SrtSpawnConfig {
+func sandboxSpawnForRun(cfg projectconfig.SandboxConfig, agentType core.AgentType, in SandboxProfileInput) *SrtSpawnConfig {
 	if cfg.Backend != "srt" {
 		return nil
 	}
@@ -64,7 +65,7 @@ func sandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxP
 	// macOS sandbox; a remote run's agent executes on the WORKER's OS, outside
 	// box A entirely, so there is nothing local to sandbox. On a remote run
 	// DaemonSockPath is a reverse-tunnel TCP endpoint ("tcp://127.0.0.1:<port>",
-	// see resolveAgentDaemonSocket) rather than an absolute unix-socket path —
+	// see tunnel.ResolveAgentDaemonSocket) rather than an absolute unix-socket path —
 	// so wrapping is not just pointless but FATAL: GenerateSandboxProfile rejects
 	// the non-absolute DaemonSockPath ("must be an absolute path"), killing every
 	// remote run in ~2s. Gating here — the single source of truth for "should
@@ -74,7 +75,7 @@ func sandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxP
 	// LOCAL run still surfaces the "must be non-empty" error downstream, and a
 	// (never-observed) relative LOCAL path stays fail-CLOSED via that same
 	// downstream "must be an absolute path" check — we key ONLY on the tcp://
-	// prefix, the sole signal resolveAgentDaemonSocket emits for a remote run,
+	// prefix, the sole signal tunnel.ResolveAgentDaemonSocket emits for a remote run,
 	// so this guard never trades a local run's sandbox for a fail-open skip.
 	if strings.HasPrefix(in.DaemonSockPath, "tcp://") {
 		return nil
@@ -119,7 +120,7 @@ func srtWrapArgv(spawn *SrtSpawnConfig, agentArgv []string) ([]string, error) {
 	// (e.g. `go build`'s "creating work dir" step) fails immediately without
 	// this. Best-effort MkdirAll: a pre-existing directory (created by a prior
 	// run, any permissions) is not an error here — os.MkdirAll is idempotent.
-	if err := os.MkdirAll(srtClaudeTmpDir, 0o700); err != nil {
+	if err := os.MkdirAll(srtClaudeTmpDir, 0o700); err != nil { //dirmode:allow not a .harmonik state dir: srt's hardcoded /tmp/claude sandbox scratch TMPDIR, 0o700 by design
 		return nil, fmt.Errorf("create srt scratch TMPDIR %s: %w", srtClaudeTmpDir, err)
 	}
 
@@ -128,7 +129,6 @@ func srtWrapArgv(spawn *SrtSpawnConfig, agentArgv []string) ([]string, error) {
 		return nil, fmt.Errorf("generate srt profile: %w", err)
 	}
 	profilePath := filepath.Join(os.TempDir(), "harmonik-srt-"+spawn.ProfileInput.RunID+".json")
-	//nolint:gosec // G306: 0600 is correct — profile contains literal filesystem paths, readable only by daemon uid.
 	if err := os.WriteFile(profilePath, profileBytes, 0o600); err != nil {
 		return nil, fmt.Errorf("write srt profile to %s: %w", profilePath, err)
 	}
@@ -217,7 +217,6 @@ func verifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, canaryPath
 		return fmt.Errorf("verifySandboxEngaged: generate probe profile: %w", err)
 	}
 	profilePath := filepath.Join(os.TempDir(), "harmonik-srt-engagement-"+spawn.ProfileInput.RunID+".json")
-	//nolint:gosec // G306: 0600 is correct — profile contains literal filesystem paths, readable only by daemon uid.
 	if err := os.WriteFile(profilePath, profileBytes, 0o600); err != nil {
 		return fmt.Errorf("verifySandboxEngaged: write probe profile: %w", err)
 	}

@@ -1,12 +1,16 @@
 package lifecycle
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sync"
 	"syscall"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // reconciliationlock_rc002a.go — per-run reconciliation lock primitive.
@@ -129,8 +133,7 @@ func (l *ReconciliationLock) Release() error {
 // Spec ref: specs/reconciliation/spec.md §4.1 RC-002a.
 func AcquireReconciliationLock(projectDir, targetRunID string) (*ReconciliationLock, error) {
 	lockDir := ReconciliationLocksDir(projectDir)
-	//nolint:gosec // G301: 0755 matches .harmonik/ subdir conventions throughout lifecycle package
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, core.HarmonikDirMode); err != nil {
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: MkdirAll %q: %w", lockDir, err)
 	}
 
@@ -143,7 +146,9 @@ func AcquireReconciliationLock(projectDir, targetRunID string) (*ReconciliationL
 	}
 
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquireReconciliationLock: close lock fd after flock failure", "err", closeErr, "path", lockPath)
+		}
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, ErrReconciliationLockHeld
 		}
@@ -152,17 +157,23 @@ func AcquireReconciliationLock(projectDir, targetRunID string) (*ReconciliationL
 
 	// Write metadata after acquiring the lock (truncate-rewrite pattern per PL-002b discipline).
 	if err := fd.Truncate(0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquireReconciliationLock: close lock fd after truncate failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: truncate %q: %w", lockPath, err)
 	}
 	if _, err := fd.Seek(0, 0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquireReconciliationLock: close lock fd after seek failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: seek %q: %w", lockPath, err)
 	}
 
 	content := fmt.Sprintf("creator_pid=%d\nrun_id=%s\n", os.Getpid(), targetRunID)
 	if err := writeAll(fd, []byte(content)); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup error unactionable; primary error takes precedence
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "lifecycle: AcquireReconciliationLock: close lock fd after write failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, fmt.Errorf("lifecycle: AcquireReconciliationLock: write %q: %w", lockPath, err)
 	}
 

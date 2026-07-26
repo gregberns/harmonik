@@ -12,6 +12,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/gregberns/harmonik/internal/crewrun"
 )
 
 // StateHandler is the interface the daemon registers to handle "state" socket
@@ -46,7 +48,7 @@ func (h *liveStateHandlerImpl) HandleState(ctx context.Context) (json.RawMessage
 //
 // Spec ref: specs/system-state.md SS-001 / SS-INV-007 (read-only observation).
 // Bead ref: hk-gv04 (P2-a).
-func RunSocketListenerWithState(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, stateh StateHandler, qh ...QueueHandler) error {
+func RunSocketListenerWithState(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh crewrun.CrewHandler, sleepWakeh QuiesceOverrideHandler, stateh StateHandler, qh ...QueueHandler) error {
 	return Serve(ctx, sockPath, SocketHandlers{
 		Request: h, HookRelay: hr, Queue: firstQueueHandler(qh), Subscribe: sub,
 		Operator: oh, Comms: ch, Crew: crewh, SleepWake: sleepWakeh, State: stateh,

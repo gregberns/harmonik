@@ -250,5 +250,7 @@ func TestReapOrphanedDecisions_EmptyLog(t *testing.T) {
 	if res.Open != 0 || res.Reaped != 0 || len(em.calls) != 0 {
 		t.Errorf("empty-log reap = %+v, %d emits; want all zero", res, len(em.calls))
 	}
-	_ = os.Remove(path)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove empty log: %v", err)
+	}
 }

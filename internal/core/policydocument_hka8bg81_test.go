@@ -82,15 +82,15 @@ func policyDocFixtureMissingSectionYAML(t *testing.T, missSection string) []byte
 
 	// Remove the target section by stripping the key and its indented block.
 	// We use a simple line-filter approach suitable for fixtures.
-	import_ := missSection + ":"
+	sectionKey := missSection + ":"
 	var lines []string
 	skip := false
 	for _, line := range splitLines(full) {
-		if len(line) > 0 && !isIndented(line) && line != import_ {
+		if line != "" && !isIndented(line) && line != sectionKey {
 			// Top-level key that is not our target — stop skipping.
 			skip = false
 		}
-		if line == import_ {
+		if line == sectionKey {
 			skip = true
 			continue
 		}
@@ -131,7 +131,7 @@ func joinLines(lines []string) string {
 
 // isIndented reports whether line starts with whitespace (is a nested YAML value).
 func isIndented(line string) bool {
-	return len(line) > 0 && (line[0] == ' ' || line[0] == '\t')
+	return line != "" && (line[0] == ' ' || line[0] == '\t')
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +159,6 @@ func TestPolicyDocumentValidateSections_MissingSection(t *testing.T) {
 	t.Parallel()
 
 	for _, section := range requiredSections {
-		section := section
 		t.Run("missing_"+section, func(t *testing.T) {
 			t.Parallel()
 
@@ -327,7 +326,6 @@ func TestPolicyDocumentNMinusOneReadability(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

@@ -96,6 +96,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // egressStubModelServer starts a loopback HTTP server standing in for the local
@@ -130,11 +131,11 @@ func egressSandboxInput(t *testing.T, allowLocalBinding bool) daemon.SandboxProf
 
 // egressPiSandboxConfig is the config the live deployment uses:
 // backend=srt, harnesses:[pi], NO network block beyond the local-binding toggle.
-func egressPiSandboxConfig(allowLocalBinding bool) daemon.SandboxConfig {
-	return daemon.SandboxConfig{
+func egressPiSandboxConfig(allowLocalBinding bool) projectconfig.SandboxConfig {
+	return projectconfig.SandboxConfig{
 		Backend:   "srt",
 		Harnesses: []string{"pi"},
-		Network: daemon.SandboxNetworkConfig{
+		Network: projectconfig.SandboxNetworkConfig{
 			AllowLocalBinding: allowLocalBinding,
 		},
 	}

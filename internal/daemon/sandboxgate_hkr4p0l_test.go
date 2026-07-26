@@ -14,6 +14,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // TestResolveGateAgentType_PrefersResolvedHarness is the RED-before/GREEN-after
@@ -51,7 +52,7 @@ func TestSandboxSpawnForRun_GateInvariants(t *testing.T) {
 		RunID:          "run-1",
 		DaemonSockPath: "/repo/.harmonik/daemon.sock",
 	}
-	srtPiCfg := daemon.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
+	srtPiCfg := projectconfig.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
 
 	// (i) pi run + srt + harnesses:[pi] → wrapped.
 	if sb := daemon.ExportedSandboxSpawnForRun(srtPiCfg, core.AgentTypePi, in); sb == nil {
@@ -66,13 +67,13 @@ func TestSandboxSpawnForRun_GateInvariants(t *testing.T) {
 	}
 
 	// (iii) backend=none → strict no-op even when the harness is listed.
-	noneCfg := daemon.SandboxConfig{Backend: "none", Harnesses: []string{"pi"}}
+	noneCfg := projectconfig.SandboxConfig{Backend: "none", Harnesses: []string{"pi"}}
 	if sb := daemon.ExportedSandboxSpawnForRun(noneCfg, core.AgentTypePi, in); sb != nil {
 		t.Fatal("backend=none: want nil (strict no-op); got non-nil")
 	}
 
 	// (iv) backend="" (block absent) → strict no-op.
-	absentCfg := daemon.SandboxConfig{Backend: "", Harnesses: []string{"pi"}}
+	absentCfg := projectconfig.SandboxConfig{Backend: "", Harnesses: []string{"pi"}}
 	if sb := daemon.ExportedSandboxSpawnForRun(absentCfg, core.AgentTypePi, in); sb != nil {
 		t.Fatal("backend=\"\" (absent block): want nil (strict no-op); got non-nil")
 	}
@@ -87,7 +88,7 @@ func TestSandboxSpawnForRun_GateInvariants(t *testing.T) {
 func TestSandboxSpawnForRun_RemoteSocketSkipsWrap(t *testing.T) {
 	t.Parallel()
 
-	srtPiCfg := daemon.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
+	srtPiCfg := projectconfig.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
 
 	base := daemon.SandboxProfileInput{
 		WorktreePath: "/wt",

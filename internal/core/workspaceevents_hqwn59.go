@@ -236,10 +236,7 @@ func (p WorkspaceMergeStatusPayload) Valid() bool {
 			return false
 		}
 	}
-	if p.ChangedAt == "" {
-		return false
-	}
-	return true
+	return p.ChangedAt != ""
 }
 
 // WorkspaceDiscardedPayload is the typed event payload for the

@@ -28,7 +28,7 @@ func persistFixtureProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	queuesDir := filepath.Join(dir, ".harmonik", "queues")
-	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
 		t.Fatalf("persistFixtureProjectDir: mkdir .harmonik/queues: %v", err)
 	}
 	return dir
@@ -679,7 +679,7 @@ func TestMigrateFromLegacy_MigratesFile(t *testing.T) {
 
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -725,7 +725,7 @@ func TestMigrateFromLegacy_NoOpWhenAbsent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -745,7 +745,7 @@ func TestMigrateFromLegacy_IdempotentWhenMainExists(t *testing.T) {
 
 	dir := t.TempDir()
 	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+	if err := os.MkdirAll(harmonikDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -759,7 +759,10 @@ func TestMigrateFromLegacy_IdempotentWhenMainExists(t *testing.T) {
 	// Also plant a legacy queue.json (simulates crash after writing main.json
 	// but before removing the legacy file).
 	legacyPath := filepath.Join(harmonikDir, "queue.json")
-	data, _ := json.Marshal(q)
+	data, marshalErr := json.Marshal(q)
+	if marshalErr != nil {
+		t.Fatalf("marshal legacy queue.json: %v", marshalErr)
+	}
 	if err := os.WriteFile(legacyPath, data, 0o600); err != nil {
 		t.Fatalf("write legacy queue.json: %v", err)
 	}

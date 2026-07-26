@@ -69,6 +69,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // resolveGroupKind returns the queue.GroupKind that runBeadSubcommand would use
@@ -99,9 +100,7 @@ const signalGracePeriod = 5 * time.Second
 // runBeadSelfWrapExec is the exec function used when $TMUX is unset and
 // runBeadSubcommand self-wraps into a new tmux session. Replaced in tests so
 // the test process is not replaced by a real execve call.
-var runBeadSelfWrapExec = func(argv0 string, argv []string, envv []string) error {
-	return syscall.Exec(argv0, argv, envv)
-}
+var runBeadSelfWrapExec = syscall.Exec
 
 // runBeadSubcommand implements `harmonik run <bead-id> [flags]`.
 // subArgs is os.Args[2:] (everything after "run").
@@ -264,7 +263,9 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 
 		// --help / -h (hk-vudz0)
 		case arg == "--help" || arg == "-h":
-			runUsage(stdout)
+			if err := runUsage(stdout); err != nil {
+				return 1
+			}
 			return 0
 
 		case strings.HasPrefix(arg, "-"):
@@ -499,7 +500,9 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	// hk-cebjc: --dry-run / --plan-only prints the intended spawn plan and exits
 	// without persisting queue.json, touching the bead ledger, or launching claude.
 	if dryRun {
-		printDryRunPlan(stdout, beadRecords, itemWorkflowMode, itemWorkflowRef, maxConcurrent, resolveGroupKind(subArgs))
+		if err := printDryRunPlan(stdout, beadRecords, itemWorkflowMode, itemWorkflowRef, maxConcurrent, resolveGroupKind(subArgs)); err != nil {
+			return 1
+		}
 		return 0
 	}
 
@@ -567,8 +570,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		},
 	}
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot create .harmonik/: %v\n", mkErr)
 		return 1
 	}
@@ -628,17 +630,15 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 
 	// qs is created here so that run.go can inspect final queue status after
 	// daemon.Start returns (Fix 2: exit code reflects bead outcome, hk-8jh26).
-	qs := daemon.NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 
 	// --- Create .harmonik subdirectories and resolve tmux session ---
 
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot create .harmonik/events/: %v\n", mkErr)
 		return 1
 	}
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); mkErr != nil {
+	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot create .harmonik/beads-intents/: %v\n", mkErr)
 		return 1
 	}
@@ -702,26 +702,26 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 
 	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
 	// the live worker registry into the Codex runner (nil for the tmux path).
-	crewSubstrate, codexRegObserver, codexRequireBoundary := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions), daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir))), "") // fleet-portability T2
+	crewSubstrate, codexRegObserver, reviewerSubstrate := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions), daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir))), "") // fleet-portability T2
 
 	cfg := daemon.Config{
-		ProjectDir:                    projectDir,
-		BrPath:                        brPath,
-		JSONLLogPath:                  jsonlLogPath,
-		MaxConcurrent:                 maxConcurrent, // hk-w3cp1: user-controlled concurrency
-		Substrate:                     crewSubstrate,
-		WorkerRegistryObserver:        codexRegObserver,     // M4-C3: late-bind live registry into Codex runner
-		CodexRequireIsolationBoundary: codexRequireBoundary, // hk-5h759: fail-closed — refuse codex crew w/o bound worker/container boundary
-		DaemonBinaryPath:              daemonBinaryPath,
-		BinaryCommitHash:              commitHash,
-		CancelOnQueueDrain:            cancelStopDispatch,           // stop dispatch on success (hk-icecw, hk-2o2i9)
-		CancelOnQueueExit:             cancelStopDispatch,           // stop dispatch on failure (hk-8jh26, hk-2o2i9)
-		StopDispatchCtx:               stopDispatchCtx,              // dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)
-		QueueStore:                    qs,                           // retained for post-Start status inspection (hk-8jh26 Fix 2)
-		NotifyStream:                  notifyWriter,                 // hk-ibilr: per-bead completion lines
-		TargetBranch:                  targetBranchFlag,             // hk-mkxw1: merge target branch
-		ProtectBranches:               protectBranchesFlag,          // hk-mkxw1: branches protected from daemon merges
-		ForbidUnprotectedDefault:      forbidUnprotectedDefaultFlag, // hk-mkxw1: guard against unprotected default branch
+		ProjectDir:               projectDir,
+		BrPath:                   brPath,
+		JSONLLogPath:             jsonlLogPath,
+		MaxConcurrent:            maxConcurrent, // hk-w3cp1: user-controlled concurrency
+		Substrate:                crewSubstrate,
+		ReviewerSubstrate:        reviewerSubstrate,
+		WorkerRegistryObserver:   codexRegObserver, // M4-C3: late-bind live registry into Codex runner
+		DaemonBinaryPath:         daemonBinaryPath,
+		BinaryCommitHash:         commitHash,
+		CancelOnQueueDrain:       cancelStopDispatch,           // stop dispatch on success (hk-icecw, hk-2o2i9)
+		CancelOnQueueExit:        cancelStopDispatch,           // stop dispatch on failure (hk-8jh26, hk-2o2i9)
+		StopDispatchCtx:          stopDispatchCtx,              // dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)
+		QueueStore:               qs,                           // retained for post-Start status inspection (hk-8jh26 Fix 2)
+		NotifyStream:             notifyWriter,                 // hk-ibilr: per-bead completion lines
+		TargetBranch:             targetBranchFlag,             // hk-mkxw1: merge target branch
+		ProtectBranches:          protectBranchesFlag,          // hk-mkxw1: branches protected from daemon merges
+		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag, // hk-mkxw1: guard against unprotected default branch
 	}
 
 	// hk-qd3f4: hard-exit watchdog — independent of dispatch state.
@@ -763,7 +763,9 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	startErr := daemon.Start(runCtx, cfg)
 	close(daemonDone) // disarm watchdog
 	if notifyFile != nil {
-		_ = notifyFile.Close()
+		if closeErr := notifyFile.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik run: closing notify stream: %v\n", closeErr)
+		}
 	}
 	if startErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: %v\n", startErr)
@@ -825,13 +827,13 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 //	No changes written. Run without --dry-run to execute.
 //
 // Bead ref: hk-cebjc.
-func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode string, workflowRef string, maxConcurrent int, groupKind queue.GroupKind) {
+func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode, workflowRef string, maxConcurrent int, groupKind queue.GroupKind) error {
 	// reviewLoopMaxReviewers mirrors the unexported reviewLoopIterationCap = 3
 	// in internal/daemon/reviewloop.go (hk-cebjc).
 	const reviewLoopMaxReviewers = 3
 
 	n := len(beadRecords)
-	fmt.Fprintf(out, "harmonik run --dry-run: plan for %d bead(s) (max-concurrent=%d, queue=%s)\n\n",
+	plan := fmt.Sprintf("harmonik run --dry-run: plan for %d bead(s) (max-concurrent=%d, queue=%s)\n\n",
 		n, maxConcurrent, groupKind)
 
 	totalImplementers := 0
@@ -861,29 +863,31 @@ func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode 
 			totalImplementers++
 		}
 
-		fmt.Fprintf(out, "  %-12s  %-52s  workflow=%-12s  → %s\n",
+		plan += fmt.Sprintf("  %-12s  %-52s  workflow=%-12s  → %s\n",
 			string(rec.BeadID), fmt.Sprintf("%q", title), workflowMode, spawnDesc)
 	}
 
-	fmt.Fprintln(out)
+	plan += "\n"
 	switch core.WorkflowMode(workflowMode) {
 	case core.WorkflowModeReviewLoop:
-		fmt.Fprintf(out, "Total: %d implementer(s) + up to %d reviewer(s) across %d bead(s) (max-concurrent=%d)\n",
+		plan += fmt.Sprintf("Total: %d implementer(s) + up to %d reviewer(s) across %d bead(s) (max-concurrent=%d)\n",
 			totalImplementers, totalMaxReviewers, n, maxConcurrent)
 	case core.WorkflowModeDot:
-		fmt.Fprintf(out, "Total: %d+ agent(s) across %d bead(s) — exact count depends on graph (max-concurrent=%d)\n",
+		plan += fmt.Sprintf("Total: %d+ agent(s) across %d bead(s) — exact count depends on graph (max-concurrent=%d)\n",
 			totalImplementers, n, maxConcurrent)
 	default:
-		fmt.Fprintf(out, "Total: %d implementer(s) across %d bead(s) (max-concurrent=%d)\n",
+		plan += fmt.Sprintf("Total: %d implementer(s) across %d bead(s) (max-concurrent=%d)\n",
 			totalImplementers, n, maxConcurrent)
 	}
-	fmt.Fprintln(out, "No changes written. Run without --dry-run to execute.")
+	plan += "No changes written. Run without --dry-run to execute.\n"
+	_, err := io.WriteString(out, plan)
+	return err
 }
 
 // runUsage prints help for `harmonik run --help` to w. Output goes to
 // stdout so it can be captured by agents without stderr redirection (hk-vudz0).
-func runUsage(w io.Writer) {
-	fmt.Fprint(w, `harmonik run — legacy/solo-bootstrap bead execution
+func runUsage(w io.Writer) error {
+	_, err := io.WriteString(w, `harmonik run — legacy/solo-bootstrap bead execution
 
   Not the primary dispatcher. For ongoing work, start one persistent daemon
   (queue-only) and submit beads with 'harmonik queue submit'. 'harmonik run'
@@ -934,4 +938,5 @@ EXAMPLES
   harmonik run --beads hk-abc123,hk-def456 --dry-run
   harmonik run --beads hk-abc123,hk-def456 --plan-only --max-concurrent 4
 `)
+	return err
 }

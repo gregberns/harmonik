@@ -13,6 +13,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -75,30 +76,40 @@ func runEvalReport(args []string, stdout, stderr io.Writer, getwd func() (string
 	inputFile := fs.String("input", "", "Path to eval-results.jsonl")
 	format := fs.String("format", "table", "Output format: table or json")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
-			fmt.Fprint(stdout, evalReportHelp)
+		if errors.Is(err, flag.ErrHelp) {
+			if _, writeErr := fmt.Fprint(stdout, evalReportHelp); writeErr != nil {
+				return 1
+			}
 			return 0
 		}
-		fmt.Fprintf(stderr, "harmonik eval report: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval report: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if *format != "table" && *format != "json" {
-		fmt.Fprintf(stderr, "harmonik eval report: unknown --format %q (want table or json)\n", *format)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval report: unknown --format %q (want table or json)\n", *format); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
 	if *projectDir == "" {
 		wd, err := getwd()
 		if err != nil {
-			fmt.Fprintf(stderr, "harmonik eval report: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik eval report: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		*projectDir = wd
 	}
 	absProject, err := filepath.Abs(*projectDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval report: cannot resolve project path: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval report: cannot resolve project path: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -108,7 +119,9 @@ func runEvalReport(args []string, stdout, stderr io.Writer, getwd func() (string
 
 	records, err := evalReadReportRecords(*inputFile)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval report: reading input: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "harmonik eval report: reading input: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -118,18 +131,23 @@ func runEvalReport(args []string, stdout, stderr io.Writer, getwd func() (string
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(groups); err != nil {
-			fmt.Fprintf(stderr, "harmonik eval report: encoding output: %v\n", err)
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik eval report: encoding output: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		return 0
 	}
 
-	evalPrintReportTable(stdout, groups)
+	if err := evalPrintReportTable(stdout, groups); err != nil {
+		return 1
+	}
 	return 0
 }
 
 // evalReadReportRecords reads eval-results.jsonl, skipping malformed lines.
 func evalReadReportRecords(path string) ([]evalReportRecord, error) {
+	// #nosec G304 -- path is explicitly selected by the local CLI operator via --input.
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -137,7 +155,11 @@ func evalReadReportRecords(path string) ([]evalReportRecord, error) {
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik eval-report: close %s: %v\n", path, closeErr)
+		}
+	}()
 
 	var records []evalReportRecord
 	scanner := bufio.NewScanner(f)
@@ -218,19 +240,26 @@ func evalMedian(vals []float64) float64 {
 }
 
 // evalPrintReportTable renders the aggregation as a plain-text table.
-func evalPrintReportTable(w io.Writer, groups []evalReportGroup) {
+func evalPrintReportTable(w io.Writer, groups []evalReportGroup) error {
 	if len(groups) == 0 {
-		fmt.Fprintln(w, "harmonik eval report: no records found")
-		return
+		if _, err := fmt.Fprintln(w, "harmonik eval report: no records found"); err != nil {
+			return fmt.Errorf("print empty report: %w", err)
+		}
+		return nil
 	}
-	fmt.Fprintf(w, "%-30s %-12s %5s %10s %14s %10s\n",
-		"MODEL", "DIFFICULTY", "N", "PASS_RATE", "MEDIAN_WALL_S", "MEAN_GRADE")
+	if _, err := fmt.Fprintf(w, "%-30s %-12s %5s %10s %14s %10s\n",
+		"MODEL", "DIFFICULTY", "N", "PASS_RATE", "MEDIAN_WALL_S", "MEAN_GRADE"); err != nil {
+		return fmt.Errorf("print report header: %w", err)
+	}
 	for _, g := range groups {
 		gradeStr := "-"
 		if g.MeanJudgeGrade != nil {
 			gradeStr = fmt.Sprintf("%.2f", *g.MeanJudgeGrade)
 		}
-		fmt.Fprintf(w, "%-30s %-12s %5d %10.2f %14.1f %10s\n",
-			g.Model, g.Difficulty, g.N, g.PassRate, g.MedianWallTimeS, gradeStr)
+		if _, err := fmt.Fprintf(w, "%-30s %-12s %5d %10.2f %14.1f %10s\n",
+			g.Model, g.Difficulty, g.N, g.PassRate, g.MedianWallTimeS, gradeStr); err != nil {
+			return fmt.Errorf("print report row for %s/%s: %w", g.Model, g.Difficulty, err)
+		}
 	}
+	return nil
 }

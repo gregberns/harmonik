@@ -24,6 +24,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // newVetoTestArbiter returns a minimal QuiesceArbiter wired for veto-gate tests.
@@ -32,7 +33,7 @@ import (
 // wiring a DrainDetector via SetDrain before calling HandleDaemonSleep.
 func newVetoTestArbiter(t *testing.T) *QuiesceArbiter {
 	t.Helper()
-	arbiter, _, _ := newTestQuiesceArbiter(t, t.TempDir(), NewQueueStore(), 0, 0)
+	arbiter, _, _ := newTestQuiesceArbiter(t, t.TempDir(), queuewiring.NewQueueStore(), 0, 0)
 	return arbiter
 }
 
@@ -45,7 +46,7 @@ func buildDrainedDetector(t *testing.T) *DrainDetector {
 		drainedFullLister(),
 		drainedLedger(),
 		NewRunRegistry(),
-		NewQueueStore(),
+		queuewiring.NewQueueStore(),
 		emptyTestProjectDir(t),
 	)
 }
@@ -76,7 +77,7 @@ func TestHandleDaemonSleep_DrainedFleet_Allowed(t *testing.T) {
 func TestHandleDaemonSleep_ReadyBeads_Vetoed(t *testing.T) {
 	a := newVetoTestArbiter(t)
 	ready := &fakeReady{records: []core.BeadRecord{{BeadID: "hk-ready-1", Title: "work"}}}
-	det := NewDrainDetector(ready, drainedFullLister(), drainedLedger(), NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+	det := NewDrainDetector(ready, drainedFullLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 	a.SetDrain(det)
 
 	err := a.HandleDaemonSleep(context.Background(), false)
@@ -100,7 +101,7 @@ func TestHandleDaemonSleep_InProgressBeads_Vetoed(t *testing.T) {
 			minimalBead("hk-running", core.CoarseStatusInProgress, "task"),
 		},
 	}}
-	det := NewDrainDetector(drainedReady(), lister, drainedLedger(), NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+	det := NewDrainDetector(drainedReady(), lister, drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 	a.SetDrain(det)
 
 	err := a.HandleDaemonSleep(context.Background(), false)
@@ -121,7 +122,7 @@ func TestHandleDaemonSleep_InFlightRuns_Vetoed(t *testing.T) {
 		core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000abc")),
 		&RunHandle{BeadID: "hk-running"},
 	)
-	det := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), runs, NewQueueStore(), emptyTestProjectDir(t))
+	det := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), runs, queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 	a.SetDrain(det)
 
 	err := a.HandleDaemonSleep(context.Background(), false)
@@ -137,7 +138,7 @@ func TestHandleDaemonSleep_InFlightRuns_Vetoed(t *testing.T) {
 // trigger the veto.
 func TestHandleDaemonSleep_QueuedItems_Vetoed(t *testing.T) {
 	a := newVetoTestArbiter(t)
-	qs := NewQueueStore()
+	qs := queuewiring.NewQueueStore()
 	qs.SetQueue(buildActiveQueueWithPendingItem(t))
 	det := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), NewRunRegistry(), qs, emptyTestProjectDir(t))
 	a.SetDrain(det)
@@ -156,7 +157,7 @@ func TestHandleDaemonSleep_QueuedItems_Vetoed(t *testing.T) {
 func TestHandleDaemonSleep_GatherError_Vetoed(t *testing.T) {
 	a := newVetoTestArbiter(t)
 	sentinel := errors.New("br unavailable")
-	det := NewDrainDetector(&fakeReady{err: sentinel}, drainedFullLister(), drainedLedger(), NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+	det := NewDrainDetector(&fakeReady{err: sentinel}, drainedFullLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 	a.SetDrain(det)
 
 	err := a.HandleDaemonSleep(context.Background(), false)
@@ -173,7 +174,7 @@ func TestHandleDaemonSleep_GatherError_Vetoed(t *testing.T) {
 func TestHandleDaemonSleep_Unsure_Vetoed(t *testing.T) {
 	a := newVetoTestArbiter(t)
 	// Nil lister/ledger causes facts.Unsure = true.
-	det := NewDrainDetector(drainedReady(), nil, nil, NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+	det := NewDrainDetector(drainedReady(), nil, nil, NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 	a.SetDrain(det)
 
 	err := a.HandleDaemonSleep(context.Background(), false)
@@ -190,7 +191,7 @@ func TestHandleDaemonSleep_Unsure_Vetoed(t *testing.T) {
 func TestHandleDaemonSleep_Force_BypassesVeto(t *testing.T) {
 	a := newVetoTestArbiter(t)
 	ready := &fakeReady{records: []core.BeadRecord{{BeadID: "hk-ready-1"}}}
-	det := NewDrainDetector(ready, drainedFullLister(), drainedLedger(), NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+	det := NewDrainDetector(ready, drainedFullLister(), drainedLedger(), NewRunRegistry(), queuewiring.NewQueueStore(), emptyTestProjectDir(t))
 	a.SetDrain(det)
 
 	// force=true: veto gate skipped even with ready beads.

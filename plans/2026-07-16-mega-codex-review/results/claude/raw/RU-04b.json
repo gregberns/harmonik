@@ -1,0 +1,112 @@
+{
+  "chunk": "RU-04b",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "internal/workspace/leaselock.go",
+    "internal/workspace/mergedispatch_wm018a.go",
+    "internal/workspace/conflictresolution_wm024.go",
+    "internal/workspace/conflictresolution_wm022a.go",
+    "internal/workspace/conflictescalation_wm023.go",
+    "internal/workspace/orphansweep.go",
+    "internal/workspace/discoverworktrees.go",
+    "internal/workspace/interruptstate_wm040.go",
+    "internal/workspace/crashevidence.go",
+    "internal/workspace/wipcapture_rc019.go",
+    "internal/workspace/gitignorehygiene.go",
+    "internal/workspace/workspace.go"
+  ],
+  "status": "reviewed",
+  "status_note": "RU-04 files (remotematerialize.go, createworktree.go, reviewverdict.go, autostatusmarker.go, diffhash.go) excluded per scope. Reviewed the merge/conflict/lease/worktree lifecycle + startup-sweep prod files.",
+  "findings": [
+    {
+      "file": "internal/workspace/gitignorehygiene.go",
+      "line": 199,
+      "severity": "high",
+      "category": "correctness",
+      "title": "gitignoreCommit commits to the CURRENT branch, not the dedicated GitignoreBranchName — pollutes the operator's branch (e.g. main)",
+      "detail": "EnsureGitignoreHygiene's docstring (lines 48-50) and WM-013e both state the .gitignore fix is committed 'on a dedicated branch named GitignoreBranchName (harmonik/gitignore-init)'. But gitignoreCommit never creates or checks out that branch — it runs `git add` + `git commit --allow-empty` against whatever HEAD currently points at. The inline comment (lines 191-197) even admits this and hand-waves that HEAD 'MUST be' the dedicated branch, but nothing enforces it. At daemon startup the repo is on main / the operator's working branch, so this silently injects a harmonik commit onto the user's branch — exactly the 'leaking daemon state into user commits' outcome WM-013e exists to prevent. `--allow-empty` compounds it: an empty commit is force-created even when there is nothing meaningful to record, and the 'nothing to commit' idempotency branch (line 204) is dead code because --allow-empty never exits non-zero for an empty tree.",
+      "suggested_fix": "Create/checkout GitignoreBranchName inside gitignoreCommit (or have the caller guarantee+verify it and hard-fail if HEAD != GitignoreBranchName). Drop --allow-empty so a no-op stays a no-op."
+    },
+    {
+      "file": "internal/workspace/discoverworktrees.go",
+      "line": 161,
+      "severity": "high",
+      "category": "error-handling",
+      "title": "DiscoverWorktrees silently swallows lease-lock read/parse errors, downgrading a corrupt-but-present lock to 'not leased'",
+      "detail": "Step (c) does `if ll, err := readDiscoveredLeaseLock(...); err == nil { dw.LeaseLock = ll }`. readDiscoveredLeaseLock returns (nil, err) for a corrupt/unparseable/partially-written lease.lock (bad JSON, bad UUID, invalid Valid()). Here that error is discarded and dw.LeaseLock stays nil, which is indistinguishable from 'file absent'. Downstream, SweepStaleLeaseLocks (orphansweep.go:78-83) classifies a nil LeaseLock as NoLock, and RemoveAgedNoLockWorktrees will then force-`git worktree remove` that directory once it ages past maxAge. A live run whose lease.lock got truncated by a crash-mid-fsync (the exact WM-003a scenario this subsystem targets) can thus be garbage-collected out from under an active session — data loss. A read/parse error is materially different from absence and must not be conflated.",
+      "suggested_fix": "Distinguish 'absent' (nil,nil) from 'present-but-unreadable' (err). On a non-NotExist error, surface it on the DiscoveredWorktree (a ReadError field or a distinct classification) so the sweep treats it as leased/unknown, never as a removable no-lock orphan."
+    },
+    {
+      "file": "internal/workspace/mergedispatch_wm018a.go",
+      "line": 135,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "DetectSquashMergeConflict mutates the worktree/index as a side effect and never resets on conflict, leaving the tree dirty",
+      "detail": "Despite the name 'Detect', the function runs a real `git merge --squash --strategy=ort <branch>`, which stages the merge into the index and working tree. On conflict (non-zero exit, line 138) it returns immediately with no `git reset --hard` / cleanup. `git merge --squash` sets no MERGE_HEAD, so `git merge --abort` cannot recover it either — the worktree is left with conflict markers and a half-staged index. Consequences: (1) a subsequent DetectSquashMergeConflict call refuses to run ('cannot merge, dirty working tree' / unmerged files), so re-dispatch/retry paths get a spurious nonzero-exit conflict that masks the true state; (2) even on the success path the caller inherits an already-staged squash, so any later 'real' merge double-applies or diverges. Detection with irreversible side effects on shared worktree state is a lifecycle hazard for the conflict-resolving loop.",
+      "suggested_fix": "Either make detection non-mutating (`git merge-tree` / `--no-commit` into a throwaway index) or guarantee a `git reset --hard HEAD` + `git clean` on every exit path (defer). Document that the worktree is restored to pre-detection state."
+    },
+    {
+      "file": "internal/workspace/orphansweep.go",
+      "line": 206,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "RemoveAgedNoLockWorktrees uses directory mtime as an 'inactive' proxy and can force-remove an active worktree",
+      "detail": "The pass force-runs `git worktree remove --force --force` on any no-lock worktree whose directory mtime is older than maxAge. Directory mtime only changes when entries are added/removed in that directory — a long-running agent that writes into subdirectories (or edits existing files in place) does not bump the top-level worktree dir mtime, so an actively-in-use worktree can read as 'aged' and be destroyed (`--force --force` discards uncommitted work). The code comment (lines 202-204) concedes this is the 'C1-simplified' variant replacing the DiscoverActiveRuns survive-check (hk-qe736). Combined with the finding above (corrupt lock → NoLock), the blast radius for silent work loss on a busy daemon is real.",
+      "suggested_fix": "Gate removal on a positive liveness/activity check (DiscoverActiveRuns survive-check, or the lease registry), not directory mtime alone. At minimum, cross-check the run_id against active runs before force-removing."
+    },
+    {
+      "file": "internal/workspace/orphansweep.go",
+      "line": 238,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "isPIDDead is vulnerable to PID reuse — a stale lease-lock whose PID got recycled is treated as live forever",
+      "detail": "Staleness is decided purely by `syscall.Kill(pid, 0)`: EPERM or success => 'not stale'. After the original daemon dies, the OS can reuse its PID for an unrelated process; isPIDDead then returns false and SweepStaleLeaseLocks keeps the orphaned lease.lock indefinitely (Skipped, never Removed). The workspace stays wedged 'leased' to a dead run and is never reclaimed. IsLeaseLockStale's own doc (lines 114-124) acknowledges the argv-identity disambiguation is deferred 'post-MVH', but this is precisely the cross-process lease-liveness hazard the sweep exists to close, and PID reuse is common on long-lived hosts.",
+      "suggested_fix": "Add the argv/start-time probe the doc defers: confirm the live PID is actually a harmonik-daemon of the expected generation (e.g. compare process start-time or cmdline) before treating the lease as held; otherwise sweep it."
+    },
+    {
+      "file": "internal/workspace/leaselock.go",
+      "line": 47,
+      "severity": "medium",
+      "category": "concurrency",
+      "title": "WriteLeaseLockAtomic is an unconditional overwrite, not a test-and-set — no cross-process mutual exclusion on the lease",
+      "detail": "The doc frames the lease.lock's existence as 'the lease' and absence as 'released', implying mutual exclusion. But WriteLeaseLockAtomic writes a temp file and renames it onto `target` unconditionally (rename replaces any existing target). There is no O_EXCL on the destination and no read-check that the lock is currently unheld. Two processes concurrently leasing the same workspace_path both 'succeed' and last-writer-wins, each believing it holds the lease — the atomicity here only guarantees a non-torn file, not exclusive acquisition. Today this is masked because paths are run_id-derived and unique, but the primitive advertised as a lock provides no acquisition guarantee, so any future caller that leases by a shared/reused path (reviewer worktrees, retried run_ids) gets a silent double-lease.",
+      "suggested_fix": "If this is meant to be an exclusive lock, acquire via O_CREATE|O_EXCL on the target (or read-and-verify-unheld before rename) and return a distinct 'already leased' error. If it is only a marker, rename the type/doc so callers don't assume mutex semantics."
+    },
+    {
+      "file": "internal/workspace/leaselock.go",
+      "line": 209,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Lease-released / interrupt-state markers hand-build JSON with fmt %q, which is Go-quoting, not JSON-quoting",
+      "detail": "WriteLeaseReleasedMarker (line 209) and WriteInterruptStateChangedMarker (interruptstate_wm040.go:136) build JSONL lines via fmt.Sprintf with %q for each string field. %q produces a Go double-quoted string literal, which diverges from JSON for certain inputs (e.g. runes Go escapes as \\xNN or \\uNNNN forms JSON does not accept the same way, and invalid UTF-8 in a `reason`). Fields today are controlled (uuid run_id, ws-id, enum reason), so it is currently safe, but these files are declared 'the authoritative record for reconciliation's consumer pass' — a future free-text reason would silently emit a line the JSONL consumer rejects, corrupting the durability record.",
+      "suggested_fix": "Marshal these markers through encoding/json (a small struct, as marshalLeaseLock already does) instead of fmt %q string interpolation."
+    },
+    {
+      "file": "internal/workspace/wipcapture_rc019.go",
+      "line": 118,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Porcelain untracked-file parsing breaks on quoted/renamed paths and does not use -z",
+      "detail": "extractUntrackedFiles splits `git status --porcelain` on '\\n' and strips a literal '?? ' prefix. Git C-quotes paths containing special chars (spaces are fine, but non-ASCII/quotes/newlines produce `?? \"na\\303\\257ve\"` and can embed escaped newlines), so untracked files with such names are mis-captured or split across lines. Because WIP capture feeds reopen-bead reconciliation (RC-019), a mis-parsed untracked list means recoverable work is under-reported in the capture. The same non-`-z` fragility applies to porcelainLines/isConflictMarker in mergedispatch.",
+      "suggested_fix": "Use `git status --porcelain -z` and split on NUL, and unquote C-quoted paths (or use `--porcelain=v2 -z`)."
+    },
+    {
+      "file": "internal/workspace/mergedispatch_wm018a.go",
+      "line": 167,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Two independent hand-rolled git-porcelain parsers in one package",
+      "detail": "porcelainLines (mergedispatch_wm018a.go:167) and extractUntrackedFiles (wipcapture_rc019.go:118) each re-implement porcelain line splitting with subtly different rules (one trims trailing partials, the other strstrings.Split). Duplication invites divergence and both share the -z gap. Consolidate into one porcelain helper.",
+      "suggested_fix": "Extract a single porcelain-parsing helper used by both conflict detection and WIP capture."
+    },
+    {
+      "file": "internal/workspace/gitignorehygiene.go",
+      "line": 41,
+      "severity": "nit",
+      "category": "maintainability",
+      "title": "Docstrings say 'four required patterns' but RequiredGitignoreEntries has six",
+      "detail": "EnsureGitignoreHygiene's doc (lines 41-42) and the idempotency note (line 62) both say 'four required harmonik control-plane patterns', while RequiredGitignoreEntries (lines 28-35) declares six. Stale count from before review.json/review.iter-* were added; misleads readers about the contract.",
+      "suggested_fix": "Update the docstrings to 'six' (or say 'the entries in RequiredGitignoreEntries')."
+    }
+  ]
+}

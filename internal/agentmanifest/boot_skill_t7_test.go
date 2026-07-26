@@ -11,7 +11,7 @@ func TestBootSkillInBriefOutput(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
 	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
-	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -20,17 +20,17 @@ func TestBootSkillInBriefOutput(t *testing.T) {
 
 	// boot skill in _skills/
 	bootDir := filepath.Join(agentsDir, "_skills", "boot")
-	if err := os.MkdirAll(bootDir, 0o755); err != nil {
+	if err := os.MkdirAll(bootDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	bootContent := "Run `harmonik agent brief` — that IS your complete boot context; no other skill needed to orient.\n"
-	if err := os.WriteFile(filepath.Join(bootDir, "SKILL.md"), []byte(bootContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(bootDir, "SKILL.md"), []byte(bootContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	// crew type with boot as first context skill
 	crewDir := filepath.Join(agentsDir, "crew")
-	if err := os.MkdirAll(crewDir, 0o755); err != nil {
+	if err := os.MkdirAll(crewDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	manifest := `type: crew
@@ -53,13 +53,13 @@ lifecycle:
 markers:
   never_emits: []
 `
-	if err := os.WriteFile(filepath.Join(crewDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(crewDir, "manifest.yaml"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(crewDir, "soul.md"), []byte("I am crew — I work beads.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(crewDir, "soul.md"), []byte("I am crew — I work beads.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(crewDir, "operating.md"), []byte("## Loop\n1. Claim bead.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(crewDir, "operating.md"), []byte("## Loop\n1. Claim bead.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,7 +81,9 @@ markers:
 
 	// Verify the rendered markdown mentions harmonik agent brief
 	var buf strings.Builder
-	RenderMarkdown(doc, &buf)
+	if err := RenderMarkdown(doc, &buf); err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
 	out := buf.String()
 	if !strings.Contains(out, "harmonik agent brief") {
 		t.Errorf("brief output does not mention 'harmonik agent brief':\n%s", out)

@@ -40,7 +40,7 @@ func sh015TeardownTempDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("sh015TeardownTempDir: MkdirTemp: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	cleanupTempDir(t, dir)
 	return dir
 }
 

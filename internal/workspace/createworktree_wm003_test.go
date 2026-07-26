@@ -57,6 +57,7 @@ func TestWM003_CreateWorktree(t *testing.T) {
 		}
 
 		// Confirm the task branch tip equals parentCommit.
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		out, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", branch).Output()
 		if err != nil {
 			t.Fatalf("WM-003: rev-parse %q: %v", branch, err)
@@ -101,6 +102,7 @@ func TestWM003_CreateWorktree(t *testing.T) {
 			t.Fatalf("WM-003: CreateWorktree: %v", err)
 		}
 
+		// #nosec G204 -- git inspection arguments are constructed by this test fixture.
 		out, err := exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "list", "--porcelain").Output()
 		if err != nil {
 			t.Fatalf("WM-003: git worktree list: %v", err)

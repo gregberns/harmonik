@@ -76,7 +76,7 @@ type RunHandle struct {
 	// Cancel is the context cancel function for this run's goroutine. Calling
 	// it signals the handler to stop. May be nil if the run was registered
 	// before a cancel function was available.
-	Cancel context.CancelFunc //nolint:containedctx // CancelFunc is not a Context; stored for operator signal routing
+	Cancel context.CancelFunc
 
 	// OwningEpicID is the BeadID of the parent epic for this run's bead (hk-7evda).
 	// Empty when the bead has no parent epic. Set at run start by beadRunOne via
@@ -173,6 +173,34 @@ func (h *RunHandle) GetResolvedProvider() (string, bool) {
 		return *p, true
 	}
 	return "", false
+}
+
+// SetOwningEpic stamps the resolved parent-epic attribution onto the handle so
+// StaleWatcher / stategather can read it without their own br calls. These are
+// plain (non-atomic) field writes — byte-identical to the pre-port
+// `handle.OwningEpicID = …; handle.OwningEpicAssignee = …` assignment the run
+// path did inline. Lifted to a method so the run path reaches the write through
+// RunHandlePort rather than naming the daemon fields directly (LIFT crit 4).
+func (h *RunHandle) SetOwningEpic(id, assignee string) {
+	h.OwningEpicID = id
+	h.OwningEpicAssignee = assignee
+}
+
+// SetRemote records whether this run was routed to a remote worker. Maps to
+// Remote.Store(remote) — byte-identical to the pre-port `handle.Remote.Store(true)`
+// call site (hk-4tjt6). Lifted to a method so the run path reaches the atomic
+// through RunHandlePort rather than naming the exported Remote field (LIFT crit 4).
+func (h *RunHandle) SetRemote(remote bool) {
+	h.Remote.Store(remote)
+}
+
+// Aborted reports whether the never-spawned reaper (StaleWatcher) marked this run
+// aborted before cancelling its context (hk-0z5x). Maps to aborted.Load() — the
+// accessor that lifts the daemon-private `aborted` field across RunHandlePort so
+// the run path never names it. Without this method the run path's
+// `handle.aborted.Load()` could not compile outside package daemon (LIFT crit 4).
+func (h *RunHandle) Aborted() bool {
+	return h.aborted.Load()
 }
 
 // RunRegistry is a concurrency-safe map of run_id → *RunHandle.

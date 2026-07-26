@@ -4,12 +4,16 @@
 package keeper
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ErrLockHeld is returned by AcquireLock when another live keeper process holds
@@ -62,8 +66,7 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 	}
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, core.HarmonikDirMode); err != nil {
 		return nil, fmt.Errorf("keeper: create keeper dir: %w", err)
 	}
 
@@ -75,7 +78,9 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 	}
 
 	if err := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup fd; primary error takes precedence
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "keeper: AcquireLock: close lockfile fd after flock failure", "err", closeErr, "path", lockPath)
+		}
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, ErrLockHeld
 		}
@@ -84,15 +89,21 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 
 	// Truncate then write our PID after acquiring the lock.
 	if err := fd.Truncate(0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup fd; primary error takes precedence
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "keeper: AcquireLock: close lockfile fd after truncate failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, fmt.Errorf("keeper: truncate lockfile: %w", err)
 	}
 	if _, err := fd.Seek(0, 0); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup fd; primary error takes precedence
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "keeper: AcquireLock: close lockfile fd after seek failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, fmt.Errorf("keeper: seek lockfile: %w", err)
 	}
 	if _, err := fmt.Fprintf(fd, "%d\n", os.Getpid()); err != nil {
-		_ = fd.Close() //nolint:errcheck // cleanup fd; primary error takes precedence
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "keeper: AcquireLock: close lockfile fd after pid-write failure", "err", closeErr, "path", lockPath)
+		}
 		return nil, fmt.Errorf("keeper: write pid to lockfile: %w", err)
 	}
 
@@ -122,7 +133,11 @@ func LiveKeeperPresent(projectDir, agent string) bool {
 	if err != nil {
 		return false // missing lockfile (or unreadable) → no live keeper to find
 	}
-	defer func() { _ = fd.Close() }() //nolint:errcheck // probe-only fd
+	defer func() {
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(context.Background(), "keeper: LiveKeeperPresent: close probe fd", "err", closeErr, "path", lockPath)
+		}
+	}()
 	// Non-blocking SHARED lock: succeeds iff no exclusive lock is held. A live
 	// keeper holds LOCK_EX, so the shared attempt fails with EAGAIN/EWOULDBLOCK.
 	if flockErr := syscall.Flock(int(fd.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); flockErr != nil {
@@ -200,8 +215,7 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 		return err
 	}
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, core.HarmonikDirMode); err != nil {
 		return fmt.Errorf("keeper: create keeper dir: %w", err)
 	}
 	path := filepath.Join(keeperDir, agent+".managed")
@@ -212,7 +226,6 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 	// os.CreateTemp gives each concurrent writer a unique temp path so no two
 	// concurrent writes can publish each other's partial content. The retired
 	// keeper rebind surface was removed with hk-3391. Refs: hk-b5e2.
-	//nolint:gosec // G304: keeperDir derived from operator-controlled projectDir; pattern uses validated agent name
 	tmp, err := os.CreateTemp(keeperDir, agent+".managed.*.tmp")
 	if err != nil {
 		return fmt.Errorf("keeper: create managed session_id tmp: %w", err)
@@ -220,13 +233,13 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 	tmpPath := tmp.Name()
 
 	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
+		err = errors.Join(err, tmp.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: write managed session_id tmp %q: %w", tmpPath, err)
 	}
 	// fsync before rename to close the power-loss partial-write window.
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
+		err = errors.Join(err, tmp.Close())
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: fsync managed session_id tmp %q: %w", tmpPath, err)
 	}

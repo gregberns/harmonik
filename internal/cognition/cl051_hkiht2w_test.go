@@ -62,7 +62,6 @@ func cl051FixtureSetup(t *testing.T) string {
 
 	runGit := func(dir string, args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: args are constant strings in tests; not user-supplied.
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -71,13 +70,13 @@ func cl051FixtureSetup(t *testing.T) string {
 	}
 
 	// Create bare origin.
-	if err := os.MkdirAll(originDir, 0o755); err != nil {
+	if err := os.MkdirAll(originDir, 0o700); err != nil {
 		t.Fatalf("cl051Fixture: mkdir origin: %v", err)
 	}
 	runGit(originDir, "init", "--bare", "--initial-branch=main")
 
 	// Clone into working directory.
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
+	if err := os.MkdirAll(workDir, 0o700); err != nil {
 		t.Fatalf("cl051Fixture: mkdir work: %v", err)
 	}
 	runGit(base, "clone", originDir, "work")
@@ -88,7 +87,7 @@ func cl051FixtureSetup(t *testing.T) string {
 
 	// Initial commit.
 	readme := filepath.Join(workDir, "README")
-	if err := os.WriteFile(readme, []byte("cl051 test fixture\n"), 0o644); err != nil {
+	if err := os.WriteFile(readme, []byte("cl051 test fixture\n"), 0o600); err != nil {
 		t.Fatalf("cl051Fixture: write README: %v", err)
 	}
 	runGit(workDir, "add", "README")
@@ -106,7 +105,6 @@ func cl051FixtureCommitWithRefsTrailer(t *testing.T, workDir, beadID string) {
 
 	runGit := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: args are constant strings; workDir is t.TempDir()-based.
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = workDir
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -116,7 +114,7 @@ func cl051FixtureCommitWithRefsTrailer(t *testing.T, workDir, beadID string) {
 
 	// Write a file change so the commit is non-empty.
 	f := filepath.Join(workDir, "cl051-marker.txt")
-	if err := os.WriteFile(f, []byte("marker for "+beadID+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(f, []byte("marker for "+beadID+"\n"), 0o600); err != nil {
 		t.Fatalf("cl051FixtureCommit: write marker: %v", err)
 	}
 	runGit("add", "cl051-marker.txt")

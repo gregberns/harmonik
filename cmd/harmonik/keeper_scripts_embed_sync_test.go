@@ -10,6 +10,7 @@ package main
 // Bead ref: hk-ybmqp (portability — keeper hooks not embedded).
 
 import (
+	"bytes"
 	"os"
 	"testing"
 )
@@ -32,6 +33,7 @@ func TestKeeperScriptsEmbedInSync(t *testing.T) {
 		}
 
 		// Navigate two levels up from cmd/harmonik/ to reach the repo root.
+		//nolint:gosec // G304: name comes from the fixed keeperScriptNames test fixture.
 		canonical, err := os.ReadFile("../../scripts/" + name)
 		if err != nil {
 			t.Fatalf("read canonical scripts/%s: %v\n"+
@@ -39,7 +41,7 @@ func TestKeeperScriptsEmbedInSync(t *testing.T) {
 				name, err, name)
 		}
 
-		if string(embedded) != string(canonical) {
+		if !bytes.Equal(embedded, canonical) {
 			t.Errorf("embedded assets/scripts/%s is OUT OF SYNC with scripts/%s.\n"+
 				"Re-sync with:\n  cp scripts/%s cmd/harmonik/assets/scripts/%s",
 				name, name, name, name)

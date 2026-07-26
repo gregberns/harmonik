@@ -33,6 +33,7 @@ package brcli
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -137,25 +138,40 @@ func WriteIntentLogTmp(dir string, entry core.IntentLogEntry) (tmpPath string, e
 	}
 
 	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return "", fmt.Errorf("brcli.WriteIntentLogTmp: write temp file %q: %w", path, err)
+		return "", errors.Join(
+			fmt.Errorf("brcli.WriteIntentLogTmp: write temp file %q: %w", path, err),
+			closeAndRemoveIntentLogTmp(f, path),
+		)
 	}
 	// BI-030 step 2: fsync(temp_fd) — ensure data is durable before the
 	// caller proceeds to rename(2) in step 3.  A Sync failure means the data
 	// may not have reached stable storage; treat it the same as a write
 	// failure: remove the partial temp file and return an error.
 	if err := intentLogSyncFile(f); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return "", fmt.Errorf("brcli.WriteIntentLogTmp: fsync temp file %q: %w", path, err)
+		return "", errors.Join(
+			fmt.Errorf("brcli.WriteIntentLogTmp: fsync temp file %q: %w", path, err),
+			closeAndRemoveIntentLogTmp(f, path),
+		)
 	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("brcli.WriteIntentLogTmp: close temp file %q: %w", path, err)
+		return "", errors.Join(
+			fmt.Errorf("brcli.WriteIntentLogTmp: close temp file %q: %w", path, err),
+			removeIntentLogTmp(path),
+		)
 	}
 
 	return path, nil
+}
+
+func closeAndRemoveIntentLogTmp(f *os.File, path string) error {
+	return errors.Join(f.Close(), removeIntentLogTmp(path))
+}
+
+func removeIntentLogTmp(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove temp file %q: %w", path, err)
+	}
+	return nil
 }
 
 // intentLogRandHex returns n cryptographically random lowercase hex characters
@@ -177,7 +193,7 @@ func intentLogRandHex(n int) (string, error) {
 // intentLogRenameFile is the rename hook used by RenameIntentLogTmpToFinal
 // (BI-030 step 3). Tests may replace this with an injected stub to simulate
 // rename failures; production code always uses os.Rename.
-var intentLogRenameFile = func(oldpath, newpath string) error { return os.Rename(oldpath, newpath) }
+var intentLogRenameFile = os.Rename
 
 // intentLogSyncDir is the fsync hook called on the open directory fd in
 // FsyncIntentLogParentDir (BI-030 step 4). Tests may replace this with a
@@ -215,10 +231,17 @@ func FsyncIntentLogParentDir(dir string) error {
 	if err != nil {
 		return fmt.Errorf("brcli.FsyncIntentLogParentDir: open dir %q: %w", dir, err)
 	}
-	defer func() { _ = f.Close() }()
-
 	if err := intentLogSyncDir(f); err != nil {
+		if closeErr := f.Close(); closeErr != nil {
+			return errors.Join(
+				fmt.Errorf("brcli.FsyncIntentLogParentDir: fsync dir %q: %w", dir, err),
+				fmt.Errorf("brcli.FsyncIntentLogParentDir: close dir %q: %w", dir, closeErr),
+			)
+		}
 		return fmt.Errorf("brcli.FsyncIntentLogParentDir: fsync dir %q: %w", dir, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("brcli.FsyncIntentLogParentDir: close dir %q: %w", dir, err)
 	}
 	return nil
 }
@@ -254,7 +277,7 @@ func FsyncIntentLogParentDir(dir string) error {
 // error.
 //
 // Spec ref: specs/beads-integration.md §4.10 BI-030 step 3; §6.2 on-disk layout.
-func RenameIntentLogTmpToFinal(tmpPath string, dir string, idempotencyKey string) (finalPath string, err error) {
+func RenameIntentLogTmpToFinal(tmpPath, dir, idempotencyKey string) (finalPath string, err error) {
 	encodedKey := strings.ReplaceAll(idempotencyKey, ":", "_")
 	finalPath = filepath.Join(dir, encodedKey+".json")
 
@@ -267,7 +290,7 @@ func RenameIntentLogTmpToFinal(tmpPath string, dir string, idempotencyKey string
 // intentLogUnlinkFile is the unlink hook used by DeleteIntentLogAndSyncParent
 // (BI-030 step 6). Tests may replace this with an injected stub to simulate
 // unlink failures; production code always uses os.Remove.
-var intentLogUnlinkFile = func(path string) error { return os.Remove(path) }
+var intentLogUnlinkFile = os.Remove
 
 // DeleteIntentLogAndSyncParent unlinks the canonical intent-log file for
 // idempotencyKey in dir, then calls FsyncIntentLogParentDir to flush the

@@ -38,6 +38,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // ---------------------------------------------------------------------------
@@ -212,7 +213,7 @@ type DrainDetector struct {
 	lister     openBeadLister
 	ledger     queue.BeadLedger
 	runs       *RunRegistry
-	queues     *QueueStore
+	queues     *queuewiring.QueueStore
 	projectDir string
 }
 
@@ -231,7 +232,7 @@ func NewDrainDetector(
 	lister openBeadLister,
 	ledger queue.BeadLedger,
 	runs *RunRegistry,
-	queues *QueueStore,
+	queues *queuewiring.QueueStore,
 	projectDir string,
 ) *DrainDetector {
 	return &DrainDetector{

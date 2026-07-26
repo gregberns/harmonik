@@ -63,7 +63,6 @@ func workloopFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()

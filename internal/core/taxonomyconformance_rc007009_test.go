@@ -153,7 +153,6 @@ func TestRC007_ActionTableCoversAllCategories(t *testing.T) {
 		ReconciliationCategoryCat6b,
 	}
 	for _, cat := range allCats {
-		cat := cat
 		t.Run(string(cat), func(t *testing.T) {
 			t.Parallel()
 			row, ok := rc79LookupActionRow(cat)
@@ -194,7 +193,6 @@ func TestRC007_ActionTableConformance_InvestigatorColumn(t *testing.T) {
 		ReconciliationCategoryCat6b: false,
 	}
 	for cat, want := range wantInvestigator {
-		cat, want := cat, want
 		t.Run(string(cat), func(t *testing.T) {
 			t.Parallel()
 			row, ok := rc79LookupActionRow(cat)
@@ -243,7 +241,6 @@ func TestRC008_AutoResolverCategories(t *testing.T) {
 		ReconciliationCategoryCat6b: false, // operator intervention (N/A in §8.12)
 	}
 	for cat, want := range wantAutoResolver {
-		cat, want := cat, want
 		t.Run(string(cat), func(t *testing.T) {
 			t.Parallel()
 			row, ok := rc79LookupActionRow(cat)
@@ -271,7 +268,6 @@ func TestRC008_InvestigatorRequiredCatsHaveNoAutoResolver(t *testing.T) {
 		ReconciliationCategoryCat6a,
 	}
 	for _, cat := range investigatorCats {
-		cat := cat
 		t.Run(string(cat), func(t *testing.T) {
 			t.Parallel()
 			row, ok := rc79LookupActionRow(cat)
@@ -297,7 +293,6 @@ func TestRC007_TypicalVerdictNonEmptyForInvestigatorCats(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range rc79ActionTable {
-		row := row
 		t.Run(string(row.category), func(t *testing.T) {
 			t.Parallel()
 			if row.investigatorUsed && row.typicalVerdict == "" {
@@ -319,7 +314,6 @@ func TestRC007_AutoResolverAndInvestigatorAreExclusive(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range rc79ActionTable {
-		row := row
 		t.Run(string(row.category), func(t *testing.T) {
 			t.Parallel()
 			if row.investigatorUsed && row.autoResolver {
@@ -701,7 +695,6 @@ func TestRC007_DualTableSyncInvestigatorColumn(t *testing.T) {
 	}
 
 	for cat, schemasWant := range schemasInvestigator {
-		cat, schemasWant := cat, schemasWant
 		t.Run(string(cat), func(t *testing.T) {
 			t.Parallel()
 			row, ok := rc79LookupActionRow(cat)
@@ -741,7 +734,6 @@ func TestRC007_DualTableSyncAutoResolverColumn(t *testing.T) {
 	}
 
 	for cat, schemasWant := range schemasAutoResolver {
-		cat, schemasWant := cat, schemasWant
 		t.Run(string(cat), func(t *testing.T) {
 			t.Parallel()
 			row, ok := rc79LookupActionRow(cat)

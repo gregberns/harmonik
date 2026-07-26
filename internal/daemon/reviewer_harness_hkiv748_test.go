@@ -100,6 +100,14 @@ func hkiv748FindNode(t *testing.T, g *dot.Graph, id string) *dot.Node {
 // nodeDefault = implArtifacts.resolvedAgentType (instead of the shared deps.launchSpecBuilder
 // whose nodeDefault is empty). For an all-claude run the result is byte-identical to
 // pre-T14: reviewer = claude-code.
+//
+// SUPERSEDED IN PART by hk-pkxju: reviewloop.go no longer passes a SessionIDCaptured
+// implementer harness (codex, pi) straight through as the reviewer's tier-3 nodeDefault
+// — reviewerDefaultHarness swaps it for claude-code first, because no SessionIDCaptured
+// harness can review today. Case A below still holds as a statement about the
+// resolveHarness TIER-3 WALK (feed it codex, get codex), which hk-pkxju does not change;
+// it is no longer a statement about what the review loop feeds in. The hk-pkxju
+// behaviour is covered in reviewer_never_inherits_captured_hkpkxju_test.go.
 func TestReviewerHarnessDefaultSameAsImplementer(t *testing.T) {
 	t.Parallel()
 

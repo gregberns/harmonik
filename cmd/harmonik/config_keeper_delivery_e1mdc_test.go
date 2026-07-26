@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // e1mdcConfigBase is a COMPLETE keeper block (ResolveKeeperConfig refuses an
@@ -86,7 +86,7 @@ func writeE1mdcProject(t *testing.T, yaml string) string {
 func TestConfigE2E_DeliveryKeysReachWatcherConfig_e1mdc(t *testing.T) {
 	projectDir := writeE1mdcProject(t, e1mdcConfigWithKeys)
 
-	projCfg, err := daemon.LoadProjectConfig(projectDir)
+	projCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestConfigE2E_DeliveryKeysReachWatcherConfig_e1mdc(t *testing.T) {
 func TestConfigE2E_CrewDeferKeyDefaultsOff_e1mdc(t *testing.T) {
 	projectDir := writeE1mdcProject(t, e1mdcConfigNoCrewKey)
 
-	projCfg, err := daemon.LoadProjectConfig(projectDir)
+	projCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}

@@ -202,8 +202,8 @@ func TestT2_RemoteSubmitInput_DeliveredNeverSynthesized(t *testing.T) {
 	if c.paneTarget != "%4242" {
 		t.Errorf("T2: write paneTarget = %q, want the run's captured pane %%4242", c.paneTarget)
 	}
-	if c.bufferName != inputBufferName {
-		t.Errorf("T2: write bufferName = %q, want %q", c.bufferName, inputBufferName)
+	if want := prs.inputBufferName(); c.bufferName != want {
+		t.Errorf("T2: write bufferName = %q, want %q", c.bufferName, want)
 	}
 	if c.payload != "do the thing" {
 		t.Errorf("T2: write payload = %q, want the submitted payload", c.payload)

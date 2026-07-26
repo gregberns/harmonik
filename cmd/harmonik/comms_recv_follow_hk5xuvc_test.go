@@ -34,14 +34,17 @@ import (
 // returns its UUIDv7 event_id string.
 func followTestSeedMessage(t *testing.T, eventsPath, to, from, body string) string {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(eventsPath), 0o750); err != nil {
 		t.Fatalf("followTestSeedMessage: mkdir: %v", err)
 	}
 	mid, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("followTestSeedMessage: uuid: %v", err)
 	}
-	payload, _ := json.Marshal(map[string]any{"from": from, "to": to, "body": body})
+	payload, err := json.Marshal(map[string]any{"from": from, "to": to, "body": body})
+	if err != nil {
+		t.Fatalf("followTestSeedMessage: marshal payload: %v", err)
+	}
 	ev := core.Event{
 		EventID:         core.EventID(mid),
 		SchemaVersion:   1,
@@ -50,7 +53,7 @@ func followTestSeedMessage(t *testing.T, eventsPath, to, from, body string) stri
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(payload),
 	}
-	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("followTestSeedMessage: open: %v", err)
 	}
@@ -74,7 +77,9 @@ func followTestStartHub(t *testing.T, sockPath, eventsPath string) (cancel conte
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
-		_ = daemon.RunSocketListenerWithSubscribe(ctx, sockPath, nil, nil, hub)
+		if err := daemon.RunSocketListenerWithSubscribe(ctx, sockPath, nil, nil, hub); err != nil && ctx.Err() == nil {
+			t.Errorf("followTestStartHub: listener: %v", err)
+		}
 	}()
 	// Wait for socket to appear.
 	deadline := time.Now().Add(3 * time.Second)
@@ -126,8 +131,14 @@ func TestCommsFollowReconnect(t *testing.T) {
 	eventsPath := filepath.Join(dir, "events.jsonl")
 	// Short path to stay under the 104-byte macOS sun_path limit.
 	sockPath := "/tmp/hk5xuvc.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove socket: %v", err)
+		}
+	})
 
 	// Redirect os.Stdout to a temp file so output survives across os.Stdout
 	// reassignments in the cleanup/defer chain.
@@ -167,7 +178,9 @@ func TestCommsFollowReconnect(t *testing.T) {
 	// Shut down hub-1 (daemon restart simulation).
 	cancelHub1()
 	<-hub1Done
-	_ = os.Remove(sockPath)
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove stopped socket: %v", err)
+	}
 	time.Sleep(20 * time.Millisecond)
 
 	// Seed message B and start hub-2.
@@ -221,8 +234,14 @@ func TestCommsFollowReconnect(t *testing.T) {
 func TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := "/tmp/hku2ko5.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove socket: %v", err)
+		}
+	})
 
 	// A UUIDv7 that the heartbeat will report as last_event_id.
 	heartbeatID, err := uuid.NewV7()
@@ -235,7 +254,7 @@ func TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 	reconnectSinceID := make(chan string, 1)
 
 	// Raw Unix socket listener — gives us control over the exact JSON sent.
-	ln, lnErr := net.Listen("unix", sockPath)
+	ln, lnErr := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if lnErr != nil {
 		t.Fatalf("listen: %v", lnErr)
 	}
@@ -268,24 +287,40 @@ func TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 						"last_event_id": heartbeatLastEventID,
 						"active_runs":   []any{},
 					}
-					_ = json.NewEncoder(c).Encode(hb)
+					if err := json.NewEncoder(c).Encode(hb); err != nil {
+						t.Errorf("encode heartbeat: %v", err)
+					}
 					// c closed on return → triggers reconnect.
 
 				case 2:
 					// Second connection: capture since_event_id from the reconnect request.
-					sinceID, _ := req["since_event_id"].(string)
+					sinceID, ok := req["since_event_id"].(string)
+					if !ok {
+						t.Errorf("since_event_id = %v (type %T), want string", req["since_event_id"], req["since_event_id"])
+						return
+					}
 					reconnectSinceID <- sinceID
 
 					// Send one agent_message so the follow loop has output to write
 					// (avoids a silent-exit race before the test reads the channel).
-					mid, _ := uuid.NewV7()
-					payload, _ := json.Marshal(map[string]any{"from": "srv", "to": "alice", "body": "ok"})
+					mid, err := uuid.NewV7()
+					if err != nil {
+						t.Errorf("uuid: %v", err)
+						return
+					}
+					payload, err := json.Marshal(map[string]any{"from": "srv", "to": "alice", "body": "ok"})
+					if err != nil {
+						t.Errorf("marshal payload: %v", err)
+						return
+					}
 					ev := map[string]any{
 						"type":     "agent_message",
 						"event_id": mid.String(),
 						"payload":  json.RawMessage(payload),
 					}
-					_ = json.NewEncoder(c).Encode(ev)
+					if err := json.NewEncoder(c).Encode(ev); err != nil {
+						t.Errorf("encode event: %v", err)
+					}
 					// c closed on return; follow loop will retry — that's fine.
 				}
 			}(conn, n)
@@ -294,7 +329,10 @@ func TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 
 	// Capture follow-loop output in a temp file rather than redirecting os.Stdout
 	// (redirecting the global os.Stdout races with the goroutine reading it — hk-uh6x).
-	outFile, _ := os.CreateTemp(dir, "watermark-hb-*.txt")
+	outFile, err := os.CreateTemp(dir, "watermark-hb-*.txt")
+	if err != nil {
+		t.Fatalf("create watermark output: %v", err)
+	}
 	t.Cleanup(func() { _ = outFile.Close() })
 
 	// Run the follow loop; no initial since_event_id (cold start).
@@ -330,8 +368,14 @@ func TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 // WAKE (defined in the crew-launch and captain skill files).
 func TestCommsRecvFollow_ParkMessageExitsWithoutReconnect(t *testing.T) {
 	sockPath := "/tmp/hks8qi-park.sock"
-	_ = os.Remove(sockPath)
-	t.Cleanup(func() { _ = os.Remove(sockPath) })
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove stale socket: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove socket: %v", err)
+		}
+	})
 
 	// exitCode receives the return value of runCommsRecvFollowIO.
 	exitCode := make(chan int, 1)
@@ -339,7 +383,7 @@ func TestCommsRecvFollow_ParkMessageExitsWithoutReconnect(t *testing.T) {
 	// connCount lets the test detect reconnect attempts.
 	var connCount int32
 
-	ln, lnErr := net.Listen("unix", sockPath)
+	ln, lnErr := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if lnErr != nil {
 		t.Fatalf("listen: %v", lnErr)
 	}
@@ -364,13 +408,21 @@ func TestCommsRecvFollow_ParkMessageExitsWithoutReconnect(t *testing.T) {
 					return
 				}
 				// Send a park agent_message directed at "captain" from "daemon".
-				mid, _ := uuid.NewV7()
-				parkPayload, _ := json.Marshal(map[string]any{
+				mid, err := uuid.NewV7()
+				if err != nil {
+					t.Errorf("uuid: %v", err)
+					return
+				}
+				parkPayload, err := json.Marshal(map[string]any{
 					"from":  "daemon",
 					"to":    "captain",
 					"topic": "park",
 					"body":  `{"type":"park","reason":"drain_detected"}`,
 				})
+				if err != nil {
+					t.Errorf("marshal park payload: %v", err)
+					return
+				}
 				ev := map[string]any{
 					"type":             "agent_message",
 					"event_id":         mid.String(),
@@ -379,7 +431,10 @@ func TestCommsRecvFollow_ParkMessageExitsWithoutReconnect(t *testing.T) {
 					"source_subsystem": "quiesce-arbiter",
 					"payload":          json.RawMessage(parkPayload),
 				}
-				_ = json.NewEncoder(c).Encode(ev)
+				if err := json.NewEncoder(c).Encode(ev); err != nil {
+					t.Errorf("encode park event: %v", err)
+					return
+				}
 				// Leave connection open briefly so the client can read the event.
 				time.Sleep(200 * time.Millisecond)
 				// c closed on return — if follow loop were to reconnect it would
@@ -388,7 +443,10 @@ func TestCommsRecvFollow_ParkMessageExitsWithoutReconnect(t *testing.T) {
 		}
 	}()
 
-	outFile, _ := os.CreateTemp(t.TempDir(), "park-test-*.txt")
+	outFile, err := os.CreateTemp(t.TempDir(), "park-test-*.txt")
+	if err != nil {
+		t.Fatalf("create park output: %v", err)
+	}
 	t.Cleanup(func() { _ = outFile.Close() })
 
 	go func() {
@@ -412,8 +470,13 @@ func TestCommsRecvFollow_ParkMessageExitsWithoutReconnect(t *testing.T) {
 	}
 
 	// Verify the park message was delivered to the output.
-	_ = outFile.Sync()
-	raw, _ := os.ReadFile(outFile.Name())
+	if err := outFile.Sync(); err != nil {
+		t.Fatalf("sync park output: %v", err)
+	}
+	raw, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		t.Fatalf("read park output: %v", err)
+	}
 	if !strings.Contains(string(raw), `"topic":"park"`) {
 		t.Errorf("park message not found in follow output; got:\n%s", raw)
 	}

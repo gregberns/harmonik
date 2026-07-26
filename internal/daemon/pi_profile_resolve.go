@@ -27,6 +27,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // labelPrefixProfile is the label prefix for per-bead Pi provider-profile
@@ -60,15 +61,15 @@ func resolvePiProfile(
 	ctx context.Context,
 	beadLabels []string,
 	agentType core.AgentType,
-	piCfg PiHarnessConfig,
+	piCfg projectconfig.PiHarnessConfig,
 	bus handlercontract.EventEmitter,
 	beadID string,
-) (PiProfileConfig, error) {
+) (projectconfig.PiProfileConfig, error) {
 	// Harness gate (hk-pkugu): only the pi harness resolves a profile tuple.
 	// No lookup, no error, no event — quiet, matching the quiet handling of
 	// tier-1 mismatches elsewhere.
 	if agentType != core.AgentTypePi {
-		return PiProfileConfig{}, nil
+		return projectconfig.PiProfileConfig{}, nil
 	}
 
 	// Collect all labels with the profile: prefix.
@@ -82,14 +83,14 @@ func resolvePiProfile(
 	switch len(profileLabels) {
 	case 0:
 		// Absent: no event, zero tuple (⇒ C4 h.* fallback).
-		return PiProfileConfig{}, nil
+		return projectconfig.PiProfileConfig{}, nil
 	case 1:
 		name := strings.TrimPrefix(profileLabels[0], labelPrefixProfile)
 		profile, ok := piCfg.Profiles[name]
 		if !ok {
 			// Existence check (fail-loud): the C2→C3 contract. Name value
 			// itself is never re-validated (opacity) — only existence.
-			return PiProfileConfig{}, &PiProfileUnknownError{BeadID: beadID, Profile: name}
+			return projectconfig.PiProfileConfig{}, &PiProfileUnknownError{BeadID: beadID, Profile: name}
 		}
 		return profile, nil
 	default:
@@ -98,7 +99,7 @@ func resolvePiProfile(
 			core.BeadRecord{BeadID: core.BeadID(beadID), Labels: beadLabels},
 			profileLabels,
 			"tier-1 profile absent: multiple profile:<name> labels; zero tuple (C4 h.* fallback)")
-		return PiProfileConfig{}, nil
+		return projectconfig.PiProfileConfig{}, nil
 	}
 }
 

@@ -37,10 +37,10 @@ func autoStatusViaFixtureWrite(t *testing.T, data []byte) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := AutoStatusMarkerPath(dir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("write auto_status: %v", err)
 	}
 	return dir
@@ -81,8 +81,7 @@ func TestReadAutoStatusMarkerVia_RemoteRunner_ReadsViaRunner(t *testing.T) {
 	t.Parallel()
 	// "Worker-side" auto_status.json lives at an arbitrary path the stub cats.
 	workerFile := filepath.Join(t.TempDir(), "worker-auto-status.json")
-	//nolint:gosec // G306: test fixture
-	if err := os.WriteFile(workerFile, autoStatusViaFixtureJSON(), 0o644); err != nil {
+	if err := os.WriteFile(workerFile, autoStatusViaFixtureJSON(), 0o600); err != nil {
 		t.Fatalf("write worker file: %v", err)
 	}
 	// Box-A workspace has NO auto_status.json.

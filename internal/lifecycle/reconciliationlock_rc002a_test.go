@@ -21,8 +21,7 @@ func rc73LockFixtureLockPath(t *testing.T, projectDir, targetRunID string) strin
 	t.Helper()
 
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatalf("rc73LockFixtureLockPath: MkdirAll: %v", err)
 	}
 	return filepath.Join(lockDir, targetRunID+".lock")
@@ -44,11 +43,11 @@ func rc73LockFixtureAcquireEX(t *testing.T, lockPath string) (releaseFn func()) 
 		t.Fatalf("rc73LockFixtureAcquireEX: OpenFile %q: %v", lockPath, err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		_ = f.Close()
 		t.Fatalf("rc73LockFixtureAcquireEX: Flock LOCK_EX|LOCK_NB on %q: %v", lockPath, err)
 	}
 	return func() {
-		_ = f.Close() //nolint:errcheck // closing fd releases the flock; cleanup error unactionable
+		_ = f.Close()
 	}
 }
 
@@ -67,7 +66,7 @@ func rc73LockFixtureProbeWouldBlock(t *testing.T, lockPath string) bool {
 	if err != nil {
 		t.Fatalf("rc73LockFixtureProbeWouldBlock: OpenFile %q: %v", lockPath, err)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = f.Close() }()
 
 	flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr == nil {
@@ -225,7 +224,6 @@ func TestRC002b_StaleLockWithVerdictExecutedIsRemoved(t *testing.T) {
 	t.Parallel()
 
 	projectDir := plFixtureTempProjectDir(t)
-	const deadPID = 99999
 
 	// Seed a stale lock file with verdict-executed = true.
 	lockPath := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-rc002b-verdict-executed", deadPID, true)
@@ -247,7 +245,7 @@ func TestRC002b_StaleLockWithVerdictExecutedIsRemoved(t *testing.T) {
 	}
 
 	// Check staleness: flock acquirable AND creator PID dead.
-	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath, deadPID)
+	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath)
 	if !isStale {
 		t.Skipf("RC-002b: PID %d is live on this host; skipping stale-lock test", deadPID)
 	}
@@ -277,7 +275,6 @@ func TestRC002b_StaleLockWithoutVerdictExecutedRoutesCat3b(t *testing.T) {
 	t.Parallel()
 
 	projectDir := plFixtureTempProjectDir(t)
-	const deadPID = 99999
 
 	// Seed a stale lock file WITHOUT verdict-executed.
 	lockPath := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-rc002b-no-verdict", deadPID, false)
@@ -294,7 +291,7 @@ func TestRC002b_StaleLockWithoutVerdictExecutedRoutesCat3b(t *testing.T) {
 	}
 
 	// Check staleness.
-	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath, deadPID)
+	isStale := startupSweepFixtureIsStaleReconciliationLock(t, lockPath)
 	if !isStale {
 		t.Skipf("RC-002b: PID %d is live on this host; skipping stale-lock test", deadPID)
 	}
@@ -340,7 +337,6 @@ func TestRC002b_VerdictNonAtomicityDocumented(t *testing.T) {
 	t.Parallel()
 
 	projectDir := plFixtureTempProjectDir(t)
-	const deadPID = 99999
 
 	// A lock file with verdict-executed trailer — represents the "lock outlived
 	// its purpose" state: verdict was committed (git trailer), lock not yet

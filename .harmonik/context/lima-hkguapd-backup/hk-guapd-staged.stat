@@ -1,0 +1,7 @@
+ internal/daemon/dot_cascade.go                     |   1 -
+ internal/daemon/sandboxacceptance_hki0377_test.go  |  10 +-
+ internal/daemon/sandboxprofile_hkp7smp_test.go     |  19 +--
+ .../daemon/sandboxprofile_tmproot_hkguapd_test.go  | 166 +++++++++++++++++++++
+ internal/daemon/scenario_sandbox_pi_i0377_test.go  |  22 ++-
+ internal/daemon/workloop.go                        |  38 +++--
+ 6 files changed, 228 insertions(+), 28 deletions(-)

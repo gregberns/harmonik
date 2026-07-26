@@ -92,7 +92,7 @@ func TestWM025_CreateSessionLogDir(t *testing.T) {
 
 		workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 		// Ensure the worktree dir exists (no git worktree add needed for path tests).
-		if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		if err := os.MkdirAll(workspacePath, 0o700); err != nil {
 			t.Fatalf("MkdirAll worktree: %v", err)
 		}
 
@@ -119,7 +119,7 @@ func TestWM025_CreateSessionLogDir(t *testing.T) {
 		sessionID := "sess-0196a1b2-c3d4-7025-8a1b-000000002507"
 
 		workspacePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-		if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		if err := os.MkdirAll(workspacePath, 0o700); err != nil {
 			t.Fatalf("MkdirAll worktree: %v", err)
 		}
 

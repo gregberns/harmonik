@@ -20,7 +20,7 @@ package daemon_test
 //   - Resolution: tier-1 conflict (two model: labels) → event emitted + tier-2 used.
 //   - Resolution: tier-1 conflict (two effort: labels) → event emitted + tier-2 used.
 //   - Resolution: tier-1 unrecognised effort value → event emitted + tier-2 used.
-//   - Integration: beadRunOne claudeRunCtx gets resolved model+effort from project config.
+//   - Integration: beadRunOne shared.LaunchCtx gets resolved model+effort from project config.
 //
 // Helper prefix: projCfgFixture (implementer-protocol.md §Helper-prefix discipline).
 //
@@ -40,6 +40,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ agents:
     model: ""
     effort: ""
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -147,7 +148,7 @@ crews:
   alpha:
     harness: ""
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
@@ -167,7 +168,7 @@ func TestProjectConfig_FileAbsent(t *testing.T) {
 	t.Parallel()
 
 	root := projCfgFixtureDir(t, "") // no config.yaml written
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig absent: unexpected error: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestProjectConfig_EmptyFile(t *testing.T) {
 		t.Fatalf("WriteFile empty: %v", err)
 	}
 
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig empty file: unexpected error: %v", err)
 	}
@@ -201,11 +202,11 @@ func TestProjectConfig_MalformedYAML(t *testing.T) {
 	t.Parallel()
 
 	root := projCfgFixtureDir(t, "schema_version: 1\nagents: [not a map]")
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := projectconfig.LoadProjectConfig(root)
 	if err == nil {
 		t.Fatal("LoadProjectConfig malformed: expected error; got nil")
 	}
-	var mfe *daemon.ExportedErrMalformedConfigYAML
+	var mfe *projectconfig.ErrMalformedConfigYAML
 	if !errors.As(err, &mfe) {
 		t.Errorf("LoadProjectConfig malformed: error type = %T (%v); want *ErrMalformedConfigYAML", err, err)
 	}
@@ -215,11 +216,11 @@ func TestProjectConfig_UnsupportedSchemaVersion(t *testing.T) {
 	t.Parallel()
 
 	root := projCfgFixtureDir(t, "schema_version: 99\nagents:\n  claude-code:\n    model: opus\n")
-	_, err := daemon.ExportedLoadProjectConfig(root)
+	_, err := projectconfig.LoadProjectConfig(root)
 	if err == nil {
 		t.Fatal("LoadProjectConfig bad version: expected error; got nil")
 	}
-	var uve *daemon.ExportedErrUnsupportedConfigVersion
+	var uve *projectconfig.ErrUnsupportedConfigVersion
 	if !errors.As(err, &uve) {
 		t.Errorf("LoadProjectConfig bad version: error type = %T (%v); want *ErrUnsupportedConfigVersion", err, err)
 	}
@@ -238,7 +239,7 @@ agents:
     model: gpt5
     effort: max
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig with unknown agent: unexpected error: %v", err)
 	}
@@ -258,7 +259,7 @@ agents:
   claude-code:
     model: haiku
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig model-only: unexpected error: %v", err)
 	}
@@ -286,7 +287,7 @@ agents:
     model: sonnet
     effort: medium
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -318,7 +319,7 @@ agents:
     model: haiku
     effort: low
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -340,7 +341,7 @@ func TestResolveModelPreference_Tier3WhenTier1And2Absent(t *testing.T) {
 	t.Parallel()
 
 	bus := &projCfgFixtureBus{}
-	cfg := daemon.ExportedProjectConfig{} // zero-value = no project config
+	cfg := projectconfig.ProjectConfig{} // zero-value = no project config
 
 	// No model/effort labels; no project config.
 	model, effort := daemon.ExportedResolveModelPreference(
@@ -360,7 +361,7 @@ func TestResolveModelPreference_Tier4EmptyFallback(t *testing.T) {
 	t.Parallel()
 
 	bus := &projCfgFixtureBus{}
-	cfg := daemon.ExportedProjectConfig{} // zero-value
+	cfg := projectconfig.ProjectConfig{} // zero-value
 
 	// claude-twin has empty tier-3 defaults.
 	model, effort := daemon.ExportedResolveModelPreference(
@@ -386,7 +387,7 @@ agents:
   claude-code:
     effort: xhigh
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -418,7 +419,7 @@ agents:
     model: haiku
     effort: low
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -454,7 +455,7 @@ agents:
     model: haiku
     effort: low
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -488,7 +489,7 @@ agents:
   claude-code:
     effort: low
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -518,7 +519,7 @@ func TestResolveModelPreference_BeadLabelBeatsEnvVar(t *testing.T) {
 	t.Setenv(daemon.EnvEffortKey, "low")
 
 	bus := &projCfgFixtureBus{}
-	cfg := daemon.ExportedProjectConfig{} // no project config
+	cfg := projectconfig.ProjectConfig{} // no project config
 
 	// Tier-1 label supplies both model and effort — both must beat tier-2.5 env vars.
 	labels := []string{"model:opus", "effort:max"}
@@ -539,7 +540,7 @@ func TestResolveModelPreference_EnvVarModelDefault(t *testing.T) {
 	t.Setenv(daemon.EnvModelKey, "haiku")
 
 	bus := &projCfgFixtureBus{}
-	cfg := daemon.ExportedProjectConfig{} // no project config
+	cfg := projectconfig.ProjectConfig{} // no project config
 
 	model, effort := daemon.ExportedResolveModelPreference(
 		context.Background(), []string{}, core.AgentTypeClaudeCode, cfg, bus, "bead-env-model",
@@ -559,7 +560,7 @@ func TestResolveModelPreference_EnvVarEffortDefault(t *testing.T) {
 	t.Setenv(daemon.EnvEffortKey, "high")
 
 	bus := &projCfgFixtureBus{}
-	cfg := daemon.ExportedProjectConfig{} // no project config
+	cfg := projectconfig.ProjectConfig{} // no project config
 
 	model, effort := daemon.ExportedResolveModelPreference(
 		context.Background(), []string{}, core.AgentTypeClaudeCode, cfg, bus, "bead-env-effort",
@@ -587,7 +588,7 @@ agents:
     model: haiku
     effort: low
 `)
-	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	cfg, err := projectconfig.LoadProjectConfig(root)
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -610,7 +611,7 @@ func TestResolveModelPreference_EnvVarInvalidModelSkipped(t *testing.T) {
 	t.Setenv(daemon.EnvModelKey, "bad;model") // semicolon fails regex
 
 	bus := &projCfgFixtureBus{}
-	cfg := daemon.ExportedProjectConfig{}
+	cfg := projectconfig.ProjectConfig{}
 
 	model, _ := daemon.ExportedResolveModelPreference(
 		context.Background(), []string{}, core.AgentTypeClaudeCode, cfg, bus, "bead-env-invalid",
@@ -627,7 +628,7 @@ func TestResolveModelPreference_EnvVarInvalidEffortSkipped(t *testing.T) {
 	t.Setenv(daemon.EnvEffortKey, "turbo") // not in closed enum
 
 	bus := &projCfgFixtureBus{}
-	cfg := daemon.ExportedProjectConfig{}
+	cfg := projectconfig.ProjectConfig{}
 
 	_, effort := daemon.ExportedResolveModelPreference(
 		context.Background(), []string{}, core.AgentTypeClaudeCode, cfg, bus, "bead-env-invalid-effort",

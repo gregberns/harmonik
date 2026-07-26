@@ -80,7 +80,7 @@ func chb022FixtureSendEnvAndReadAck(t *testing.T, sockPath string, env map[strin
 	if err != nil {
 		t.Fatalf("chb022FixtureSendEnvAndReadAck: dial %q: %v", sockPath, err)
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+	defer func() { _ = conn.Close() }()
 
 	data, marshalErr := json.Marshal(env)
 	if marshalErr != nil {
@@ -186,7 +186,6 @@ func TestCHB022_DaemonHasNoTwinBranches(t *testing.T) {
 		}
 
 		srcPath := filepath.Join(daemonDir, name)
-		//nolint:gosec // G304: test-only static scan; path is constructed from ReadDir entries within a known package dir
 		f, parseErr := parser.ParseFile(fset, srcPath, nil, 0)
 		if parseErr != nil {
 			t.Errorf("CHB-022 static scan: parse %q: %v", name, parseErr)

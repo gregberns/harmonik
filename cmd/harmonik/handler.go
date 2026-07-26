@@ -46,6 +46,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -126,8 +127,8 @@ type handlerEntryJSON struct {
 // ---------------------------------------------------------------------------
 
 // handlerUsage prints the help text for `harmonik handler --help`.
-func handlerUsage(out io.Writer) {
-	fmt.Fprint(out, `harmonik handler — inspect or resume a paused handler
+func handlerUsage(out io.Writer) error {
+	if _, err := fmt.Fprint(out, `harmonik handler — inspect or resume a paused handler
 
 USAGE
   harmonik handler <verb> [flags]
@@ -151,12 +152,15 @@ EXAMPLES
   harmonik handler status
   harmonik handler status --type claude-code --format json
   harmonik handler resume --type claude-code
-`)
+`); err != nil {
+		return fmt.Errorf("print handler usage: %w", err)
+	}
+	return nil
 }
 
 // statusUsage prints per-verb help for `harmonik handler status --help`.
-func statusUsage(out io.Writer) {
-	fmt.Fprint(out, `harmonik handler status — show handler pause state
+func statusUsage(out io.Writer) error {
+	if _, err := fmt.Fprint(out, `harmonik handler status — show handler pause state
 
 USAGE
   harmonik handler status [flags]
@@ -176,12 +180,15 @@ EXAMPLES
   harmonik handler status
   harmonik handler status --type claude-code
   harmonik handler status --type claude-code --format json
-`)
+`); err != nil {
+		return fmt.Errorf("print handler status usage: %w", err)
+	}
+	return nil
 }
 
 // resumeUsage prints per-verb help for `harmonik handler resume --help`.
-func resumeUsage(out io.Writer) {
-	fmt.Fprint(out, `harmonik handler resume — resume a paused handler
+func resumeUsage(out io.Writer) error {
+	if _, err := fmt.Fprint(out, `harmonik handler resume — resume a paused handler
 
 USAGE
   harmonik handler resume --type AGENT-TYPE [flags]
@@ -200,7 +207,10 @@ EXIT CODES
 EXAMPLES
   harmonik handler resume --type claude-code
   harmonik handler resume --type claude-code --force
-`)
+`); err != nil {
+		return fmt.Errorf("print handler resume usage: %w", err)
+	}
+	return nil
 }
 
 // runHandlerSubcommand implements `harmonik handler <verb> [flags]`.
@@ -210,18 +220,28 @@ func runHandlerSubcommand(subArgs []string) int {
 }
 
 // runHandlerSubcommandIO is the testable variant that accepts explicit writers.
-func runHandlerSubcommandIO(subArgs []string, out io.Writer, errOut io.Writer) int {
+func runHandlerSubcommandIO(subArgs []string, out, errOut io.Writer) int {
 	if len(subArgs) == 0 {
-		fmt.Fprintln(errOut, "harmonik handler: missing verb")
-		fmt.Fprintln(errOut, "usage: harmonik handler <verb> [flags]")
-		fmt.Fprintln(errOut, "  status  [--type <agent-type>] [--format json|text] [--project DIR]")
-		fmt.Fprintln(errOut, "  resume  --type <agent-type> [--force] [--project DIR]")
+		if _, err := fmt.Fprintln(errOut, "harmonik handler: missing verb"); err != nil {
+			return 1
+		}
+		if _, err := fmt.Fprintln(errOut, "usage: harmonik handler <verb> [flags]"); err != nil {
+			return 1
+		}
+		if _, err := fmt.Fprintln(errOut, "  status  [--type <agent-type>] [--format json|text] [--project DIR]"); err != nil {
+			return 1
+		}
+		if _, err := fmt.Fprintln(errOut, "  resume  --type <agent-type> [--force] [--project DIR]"); err != nil {
+			return 1
+		}
 		return 1
 	}
 
 	// Intercept --help / -h before verb dispatch.
 	if subArgs[0] == "--help" || subArgs[0] == "-h" {
-		handlerUsage(out)
+		if err := handlerUsage(out); err != nil {
+			return 1
+		}
 		return 0
 	}
 
@@ -232,7 +252,9 @@ func runHandlerSubcommandIO(subArgs []string, out io.Writer, errOut io.Writer) i
 	case "resume":
 		return runHandlerResume(subArgs[1:], out, errOut)
 	default:
-		fmt.Fprintf(errOut, "harmonik handler: unrecognised verb %q; supported verbs: status, resume\n", verb)
+		if _, err := fmt.Fprintf(errOut, "harmonik handler: unrecognised verb %q; supported verbs: status, resume\n", verb); err != nil {
+			return 1
+		}
 		return 1
 	}
 }
@@ -280,7 +302,9 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 	for i := 0; i < len(subArgs); i++ {
 		switch {
 		case subArgs[i] == "--help" || subArgs[i] == "-h":
-			resumeUsage(out)
+			if err := resumeUsage(out); err != nil {
+				return 1
+			}
 			return 0
 
 		case subArgs[i] == "--type" && i+1 < len(subArgs):
@@ -299,16 +323,22 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 			forceFlag = true
 
 		case strings.HasPrefix(subArgs[i], "-"):
-			fmt.Fprintf(errOut, "harmonik handler resume: unknown flag %q\n", subArgs[i])
+			if _, err := fmt.Fprintf(errOut, "harmonik handler resume: unknown flag %q\n", subArgs[i]); err != nil {
+				return 1
+			}
 			return 1
 		default:
-			fmt.Fprintf(errOut, "harmonik handler resume: unexpected argument %q\n", subArgs[i])
+			if _, err := fmt.Fprintf(errOut, "harmonik handler resume: unexpected argument %q\n", subArgs[i]); err != nil {
+				return 1
+			}
 			return 1
 		}
 	}
 
 	if typeFlag == "" {
-		fmt.Fprintln(errOut, "harmonik handler resume: --type is required")
+		if _, err := fmt.Fprintln(errOut, "harmonik handler resume: --type is required"); err != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -317,14 +347,18 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 	if projectDirFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(errOut, "harmonik handler resume: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(errOut, "harmonik handler resume: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDirFlag = wd
 	}
 	projectDir, err := filepath.Abs(projectDirFlag)
 	if err != nil {
-		fmt.Fprintf(errOut, "harmonik handler resume: cannot resolve project path %q: %v\n", projectDirFlag, err)
+		if _, writeErr := fmt.Fprintf(errOut, "harmonik handler resume: cannot resolve project path %q: %v\n", projectDirFlag, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -351,7 +385,9 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 	if !known {
 		// Type not in file at all → there's no pause record; we can't resume
 		// something that was never paused. Exit 2 per bead spec.
-		fmt.Fprintf(errOut, "harmonik handler resume: handler type %q not found in handler-state.json (never paused)\n", typeFlag)
+		if _, err := fmt.Fprintf(errOut, "harmonik handler resume: handler type %q not found in handler-state.json (never paused)\n", typeFlag); err != nil {
+			return 1
+		}
 		return resumeExitUnknownType
 	}
 
@@ -364,10 +400,14 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 	if currentStatus != "paused" {
 		if forceFlag {
 			// --force: treat as no-op, print notice, exit 0.
-			fmt.Fprintf(out, "handler %q is already live (--force: no-op)\n", typeFlag)
+			if _, err := fmt.Fprintf(out, "handler %q is already live (--force: no-op)\n", typeFlag); err != nil {
+				return 1
+			}
 			return 0
 		}
-		fmt.Fprintf(errOut, "harmonik handler resume: handler %q is already live (status=%s); use --force to no-op\n", typeFlag, currentStatus)
+		if _, err := fmt.Fprintf(errOut, "harmonik handler resume: handler %q is already live (status=%s); use --force to no-op\n", typeFlag, currentStatus); err != nil {
+			return 1
+		}
 		return resumeExitAlreadyLive
 	}
 
@@ -387,8 +427,11 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 
 	// --- Atomic-write updated handler-state.json (WM-026: tmp → fsync → rename) ---
 
-	if writeErr := atomicWriteHandlerState(statePath, state, errOut); writeErr != 0 {
-		return writeErr
+	if writeErr := atomicWriteHandlerState(statePath, state); writeErr != nil {
+		if err := handlerWritef(errOut, "harmonik handler resume: %v\n", writeErr); err != nil {
+			return 1
+		}
+		return 1
 	}
 
 	// --- Emit handler_resumed event to events.jsonl (event-model §8.11.2) ---
@@ -397,69 +440,84 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 
 	eventsDir := filepath.Join(projectDir, ".harmonik", "events")
 	eventsPath := filepath.Join(eventsDir, "events.jsonl")
-	emitHandlerResumedEvent(eventsPath, typeFlag, priorCause, priorEpoch)
+	if emitErr := emitHandlerResumedEvent(eventsPath, typeFlag, priorCause, priorEpoch); emitErr != nil {
+		handlerBestEffortWarning(errOut, "harmonik handler resume: warning: handler_resumed event not recorded: %v\n", emitErr)
+	}
 
 	// --- Print confirmation ---
 
-	fmt.Fprintf(out, "handler %q resumed\n", typeFlag)
-	if priorCause != nil {
-		fmt.Fprintf(out, "  prior cause:\n")
-		fmt.Fprintf(out, "    failure_class: %s\n", priorCause.FailureClass)
-		fmt.Fprintf(out, "    sub_reason:    %s\n", priorCause.SubReason)
-		fmt.Fprintf(out, "    source_bead:   %s\n", priorCause.SourceBeadID)
-		fmt.Fprintf(out, "    source_run:    %s\n", priorCause.SourceRunID)
-		if t, parseErr := time.Parse(time.RFC3339Nano, priorCause.TrippedAt); parseErr == nil {
-			fmt.Fprintf(out, "    tripped_at:    %s\n", t.Format(time.RFC3339))
-		} else {
-			fmt.Fprintf(out, "    tripped_at:    %s\n", priorCause.TrippedAt)
-		}
+	if err := printHandlerResumeSuccess(out, typeFlag, priorCause, inFlightCount); err != nil {
+		return 1
 	}
-	fmt.Fprintf(out, "  in_flight_at_pause: %d\n", inFlightCount)
-	// Wiring site (hk-9hwbw / hk-m0k0a): once HandlerPauseController lands,
-	// query the dispatcher backlog via socket and print held count here.
-	fmt.Fprintf(out, "  dispatcher_backlog_held: (unavailable at MVH — HandlerPauseController not yet wired)\n")
 
 	return 0
+}
+
+func printHandlerResumeSuccess(out io.Writer, agentType string, priorCause *core.HandlerPauseCause, inFlightCount int) error {
+	if _, err := fmt.Fprintf(out, "handler %q resumed\n", agentType); err != nil {
+		return err
+	}
+	if priorCause != nil {
+		if _, err := fmt.Fprintln(out, "  prior cause:"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "    failure_class: %s\n", priorCause.FailureClass); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "    sub_reason:    %s\n", priorCause.SubReason); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "    source_bead:   %s\n", priorCause.SourceBeadID); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "    source_run:    %s\n", priorCause.SourceRunID); err != nil {
+			return err
+		}
+		trippedAt := priorCause.TrippedAt
+		if t, err := time.Parse(time.RFC3339Nano, priorCause.TrippedAt); err == nil {
+			trippedAt = t.Format(time.RFC3339)
+		}
+		if _, err := fmt.Fprintf(out, "    tripped_at:    %s\n", trippedAt); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(out, "  in_flight_at_pause: %d\n", inFlightCount); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out, "  dispatcher_backlog_held: (unavailable at MVH — HandlerPauseController not yet wired)"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // atomicWriteHandlerState writes state to statePath using WM-026 atomic discipline:
 // write to a temp file, fsync, rename over the target, fsync the parent directory.
 // Returns 0 on success, 1 on any I/O error.
-func atomicWriteHandlerState(statePath string, state *handlerStateDisk, errOut io.Writer) int {
+func atomicWriteHandlerState(statePath string, state *handlerStateDisk) error {
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		fmt.Fprintf(errOut, "harmonik handler resume: cannot serialise handler-state.json: %v\n", err)
-		return 1
+		return fmt.Errorf("serialise handler-state.json: %w", err)
 	}
 	data = append(data, '\n')
 
 	dir := filepath.Dir(statePath)
 	tmpFile, err := os.CreateTemp(dir, ".handler-state-tmp-")
 	if err != nil {
-		fmt.Fprintf(errOut, "harmonik handler resume: cannot create temp file in %s: %v\n", dir, err)
-		return 1
+		return fmt.Errorf("create temp file in %s: %w", dir, err)
 	}
 	tmpPath := tmpFile.Name()
 
 	// Write content.
 	if _, writeErr := tmpFile.Write(data); writeErr != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		fmt.Fprintf(errOut, "harmonik handler resume: cannot write temp file %s: %v\n", tmpPath, writeErr)
-		return 1
+		return fmt.Errorf("write temp file %s: %w", tmpPath, errors.Join(writeErr, cleanupHandlerStateTemp(tmpFile, tmpPath)))
 	}
 
 	// fsync the temp file before rename.
 	if syncErr := tmpFile.Sync(); syncErr != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		fmt.Fprintf(errOut, "harmonik handler resume: fsync %s: %v\n", tmpPath, syncErr)
-		return 1
+		return fmt.Errorf("fsync %s: %w", tmpPath, errors.Join(syncErr, cleanupHandlerStateTemp(tmpFile, tmpPath)))
 	}
 	if closeErr := tmpFile.Close(); closeErr != nil {
-		_ = os.Remove(tmpPath)
-		fmt.Fprintf(errOut, "harmonik handler resume: close %s: %v\n", tmpPath, closeErr)
-		return 1
+		return fmt.Errorf("close %s: %w", tmpPath, errors.Join(closeErr, cleanupHandlerStateTemp(nil, tmpPath)))
 	}
 
 	// Rename (atomic on POSIX). This is the other end of the TOCTOU window noted
@@ -468,30 +526,56 @@ func atomicWriteHandlerState(statePath string, state *handlerStateDisk, errOut i
 	// rename lands. Acceptable at MVH (single operator, no daemon writer). Resolved
 	// by hk-9hwbw daemon-socket delegation.
 	if renameErr := os.Rename(tmpPath, statePath); renameErr != nil {
-		_ = os.Remove(tmpPath)
-		fmt.Fprintf(errOut, "harmonik handler resume: rename %s → %s: %v\n", tmpPath, statePath, renameErr)
-		return 1
+		return fmt.Errorf("rename %s → %s: %w", tmpPath, statePath, errors.Join(renameErr, cleanupHandlerStateTemp(nil, tmpPath)))
 	}
 
 	// fsync the parent directory to flush the directory entry.
+	//nolint:gosec // G304: dir is the parent directory of the caller-supplied state path.
 	dirF, err := os.Open(dir)
-	if err == nil {
-		_ = dirF.Sync()
-		_ = dirF.Close()
+	if err != nil {
+		return fmt.Errorf("open %s for directory fsync: %w", dir, err)
+	}
+	syncErr := dirF.Sync()
+	closeErr := dirF.Close()
+	if syncErr != nil {
+		return fmt.Errorf("fsync directory %s: %w", dir, errors.Join(syncErr, closeErr))
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close directory %s: %w", dir, closeErr)
 	}
 
-	return 0
+	return nil
+}
+
+func cleanupHandlerStateTemp(tmpFile *os.File, tmpPath string) error {
+	var cleanupErr error
+	if tmpFile != nil {
+		cleanupErr = errors.Join(cleanupErr, tmpFile.Close())
+	}
+	return errors.Join(cleanupErr, os.Remove(tmpPath))
+}
+
+func handlerWritef(w io.Writer, format string, args ...any) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
+}
+
+func handlerBestEffortWarning(w io.Writer, format string, args ...any) {
+	if err := handlerWritef(w, format, args...); err != nil {
+		return
+	}
 }
 
 // emitHandlerResumedEvent appends a handler_resumed event line to eventsPath.
-// Best-effort: errors are silently discarded per §8.11 (state file is authoritative).
+// Best-effort: failures are reported as warnings by the caller but never roll back
+// the authoritative state-file update per §8.11.
 //
 // Before emitting, the function constructs a core.HandlerResumedPayload and calls
 // .Valid() on it (event-model §8.11.2 payload contract). If the payload is invalid
 // (e.g. PausedEpoch < 1 or cause fields empty), the emit is skipped and a warning
 // is printed to stderr. This prevents replay tooling from ingesting a malformed
 // handler_resumed event that would fail schema validation.
-func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.HandlerPauseCause, pausedEpoch int) {
+func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.HandlerPauseCause, pausedEpoch int) error {
 	// Build a typed HandlerResumedPayload and validate before emitting.
 	// priorCause is already core.HandlerPauseCause (no conversion needed — the disk
 	// struct now reuses the core type directly per hk-n8yyk dedupe).
@@ -509,11 +593,9 @@ func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.Hand
 		// The payload does not satisfy event-model §8.11.2 validation rules.
 		// Skip the emit rather than writing a malformed event that replay tooling
 		// would reject. The state file update already succeeded; this is observable
-		// from handler-state.json. A warning is written to stderr (best-effort).
-		_, _ = fmt.Fprintf(os.Stderr, //nolint:errcheck // best-effort
-			"harmonik handler resume: warning: skipping handler_resumed event emit — payload invalid (paused_epoch=%d agent_type=%q); state file updated successfully\n",
-			pausedEpoch, agentType)
-		return
+		// from handler-state.json. The caller reports the skipped event as a
+		// best-effort warning.
+		return fmt.Errorf("payload invalid (paused_epoch=%d agent_type=%q)", pausedEpoch, agentType)
 	}
 
 	evt := handlerResumedEvent{
@@ -526,19 +608,28 @@ func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.Hand
 	}
 	line, err := json.Marshal(evt)
 	if err != nil {
-		return
+		return fmt.Errorf("marshal handler_resumed event: %w", err)
 	}
 	line = append(line, '\n')
 
-	// Ensure the events directory exists (best-effort; daemon may not have run).
-	_ = os.MkdirAll(filepath.Dir(eventsPath), 0o755)
+	// Ensure the events directory exists (the daemon may not have run yet). A
+	// failure here guarantees the OpenFile below fails too, so bail out on the
+	// same terms: this whole emit path is observational and the state file has
+	// already been updated.
+	if mkErr := os.MkdirAll(filepath.Dir(eventsPath), core.HarmonikDirMode); mkErr != nil {
+		return fmt.Errorf("create events directory: %w", mkErr)
+	}
 
 	f, err := os.OpenFile(eventsPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644) //nolint:gosec // G304: operator-controlled project dir
 	if err != nil {
-		return
+		return fmt.Errorf("open events file: %w", err)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // best-effort
-	_, _ = f.Write(line)             //nolint:errcheck // best-effort
+	_, writeErr := f.Write(line)
+	closeErr := f.Close()
+	if writeErr != nil || closeErr != nil {
+		return fmt.Errorf("append handler_resumed event: %w", errors.Join(writeErr, closeErr))
+	}
+	return nil
 }
 
 // runHandlerStatus implements `harmonik handler status`.
@@ -552,7 +643,9 @@ func runHandlerStatus(subArgs []string, out io.Writer, errOut io.Writer) int {
 	for i := 0; i < len(subArgs); i++ {
 		switch {
 		case subArgs[i] == "--help" || subArgs[i] == "-h":
-			statusUsage(out)
+			if err := statusUsage(out); err != nil {
+				return 1
+			}
 			return 0
 
 		case subArgs[i] == "--type" && i+1 < len(subArgs):
@@ -578,16 +671,22 @@ func runHandlerStatus(subArgs []string, out io.Writer, errOut io.Writer) int {
 			projectDirFlag = strings.TrimPrefix(subArgs[i], "--project=")
 
 		case strings.HasPrefix(subArgs[i], "-"):
-			fmt.Fprintf(errOut, "harmonik handler status: unknown flag %q\n", subArgs[i])
+			if _, err := fmt.Fprintf(errOut, "harmonik handler status: unknown flag %q\n", subArgs[i]); err != nil {
+				return 1
+			}
 			return 1
 		default:
-			fmt.Fprintf(errOut, "harmonik handler status: unexpected argument %q\n", subArgs[i])
+			if _, err := fmt.Fprintf(errOut, "harmonik handler status: unexpected argument %q\n", subArgs[i]); err != nil {
+				return 1
+			}
 			return 1
 		}
 	}
 
 	if formatFlag != "json" && formatFlag != "text" {
-		fmt.Fprintf(errOut, "harmonik handler status: --format must be json or text (got %q)\n", formatFlag)
+		if _, err := fmt.Fprintf(errOut, "harmonik handler status: --format must be json or text (got %q)\n", formatFlag); err != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -596,14 +695,18 @@ func runHandlerStatus(subArgs []string, out io.Writer, errOut io.Writer) int {
 	if projectDirFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(errOut, "harmonik handler status: cannot determine working directory: %v\n", err)
+			if _, writeErr := fmt.Fprintf(errOut, "harmonik handler status: cannot determine working directory: %v\n", err); writeErr != nil {
+				return 1
+			}
 			return 1
 		}
 		projectDirFlag = wd
 	}
 	projectDir, err := filepath.Abs(projectDirFlag)
 	if err != nil {
-		fmt.Fprintf(errOut, "harmonik handler status: cannot resolve project path %q: %v\n", projectDirFlag, err)
+		if _, writeErr := fmt.Fprintf(errOut, "harmonik handler status: cannot resolve project path %q: %v\n", projectDirFlag, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -642,7 +745,7 @@ func runHandlerStatus(subArgs []string, out io.Writer, errOut io.Writer) int {
 // loadHandlerState reads and parses handler-state.json.
 // Returns a synthesised empty state (all live) when the file is absent.
 // Returns (nil, 1) on parse error and (nil, 2) on forward-incompatible schema.
-func loadHandlerState(statePath string, errOut io.Writer) (*handlerStateDisk, int) {
+func loadHandlerState(statePath string, errOut io.Writer) (result *handlerStateDisk, exitCode int) {
 	data, err := os.ReadFile(statePath) //nolint:gosec // G304: operator-controlled project dir
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -652,21 +755,27 @@ func loadHandlerState(statePath string, errOut io.Writer) (*handlerStateDisk, in
 				Handlers:      map[string]handlerEntryDisk{},
 			}, 0
 		}
-		fmt.Fprintf(errOut, "harmonik handler status: cannot read %s: %v\n", statePath, err)
+		if writeErr := handlerWritef(errOut, "harmonik handler status: cannot read %s: %v\n", statePath, err); writeErr != nil {
+			return nil, 1
+		}
 		return nil, 1
 	}
 
 	var state handlerStateDisk
 	if jsonErr := json.Unmarshal(data, &state); jsonErr != nil {
-		fmt.Fprintf(errOut, "harmonik handler status: cannot parse %s: %v\n", statePath, jsonErr)
+		if writeErr := handlerWritef(errOut, "harmonik handler status: cannot parse %s: %v\n", statePath, jsonErr); writeErr != nil {
+			return nil, 1
+		}
 		return nil, 1
 	}
 
 	// Schema-version guard: mirrors QM-002 forward-incompatible handling.
 	if state.SchemaVersion > handlerStateSchemaVersion {
-		fmt.Fprintf(errOut,
+		if writeErr := handlerWritef(errOut,
 			"harmonik handler status: %s schema_version %d is newer than this binary supports (%d); upgrade harmonik\n",
-			statePath, state.SchemaVersion, handlerStateSchemaVersion)
+			statePath, state.SchemaVersion, handlerStateSchemaVersion); writeErr != nil {
+			return nil, 1
+		}
 		return nil, 2
 	}
 	if state.Handlers == nil {
@@ -681,7 +790,7 @@ func loadHandlerState(statePath string, errOut io.Writer) (*handlerStateDisk, in
 // ---------------------------------------------------------------------------
 
 // renderJSON writes the JSON status output to out.
-func renderJSON(state *handlerStateDisk, out io.Writer, errOut io.Writer) int {
+func renderJSON(state *handlerStateDisk, out, errOut io.Writer) int {
 	result := handlerStatusJSONOutput{
 		SchemaVersion: handlerStateSchemaVersion,
 		Handlers:      make(map[string]handlerEntryJSON, len(state.Handlers)),
@@ -703,7 +812,9 @@ func renderJSON(state *handlerStateDisk, out io.Writer, errOut io.Writer) int {
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(result); err != nil {
-		fmt.Fprintf(errOut, "harmonik handler status: cannot encode JSON: %v\n", err)
+		if writeErr := handlerWritef(errOut, "harmonik handler status: cannot encode JSON: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0
@@ -713,9 +824,13 @@ func renderJSON(state *handlerStateDisk, out io.Writer, errOut io.Writer) int {
 func renderText(state *handlerStateDisk, typeFilter string, out io.Writer) int {
 	if len(state.Handlers) == 0 {
 		if typeFilter != "" {
-			fmt.Fprintf(out, "handler %q: live (no pause record)\n", typeFilter)
+			if _, err := fmt.Fprintf(out, "handler %q: live (no pause record)\n", typeFilter); err != nil {
+				return 1
+			}
 		} else {
-			fmt.Fprintln(out, "no handler-pause records (all handlers live)")
+			if _, err := fmt.Fprintln(out, "no handler-pause records (all handlers live)"); err != nil {
+				return 1
+			}
 		}
 		return 0
 	}
@@ -729,42 +844,69 @@ func renderText(state *handlerStateDisk, typeFilter string, out io.Writer) int {
 
 	for _, agentType := range types {
 		entry := state.Handlers[agentType]
-		printHandlerTextEntry(out, agentType, entry)
+		if err := printHandlerTextEntry(out, agentType, entry); err != nil {
+			return 1
+		}
 	}
 	return 0
 }
 
 // printHandlerTextEntry renders one handler entry in human-readable form.
-func printHandlerTextEntry(out io.Writer, agentType string, entry handlerEntryDisk) {
+func printHandlerTextEntry(out io.Writer, agentType string, entry handlerEntryDisk) error {
 	status := entry.Status
 	if status == "" {
 		status = "live"
 	}
 
-	fmt.Fprintf(out, "handler: %s\n", agentType)
-	fmt.Fprintf(out, "  status: %s\n", status)
+	if _, err := fmt.Fprintf(out, "handler: %s\n", agentType); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "  status: %s\n", status); err != nil {
+		return err
+	}
 
 	if status == "paused" && entry.Cause != nil {
 		c := entry.Cause
-		fmt.Fprintf(out, "  cause:\n")
-		fmt.Fprintf(out, "    failure_class: %s\n", c.FailureClass)
-		fmt.Fprintf(out, "    sub_reason:    %s\n", c.SubReason)
-		fmt.Fprintf(out, "    source_bead:   %s\n", c.SourceBeadID)
-		fmt.Fprintf(out, "    source_run:    %s\n", c.SourceRunID)
-		if t, err := time.Parse(time.RFC3339Nano, c.TrippedAt); err == nil {
-			fmt.Fprintf(out, "    tripped_at:    %s\n", t.Format(time.RFC3339))
-		} else {
-			fmt.Fprintf(out, "    tripped_at:    %s\n", c.TrippedAt)
+		if _, err := fmt.Fprintln(out, "  cause:"); err != nil {
+			return err
 		}
-		fmt.Fprintf(out, "  paused_epoch: %d\n", entry.PausedEpoch)
+		if _, err := fmt.Fprintf(out, "    failure_class: %s\n", c.FailureClass); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "    sub_reason:    %s\n", c.SubReason); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "    source_bead:   %s\n", c.SourceBeadID); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "    source_run:    %s\n", c.SourceRunID); err != nil {
+			return err
+		}
+		trippedAt := c.TrippedAt
+		if t, err := time.Parse(time.RFC3339Nano, c.TrippedAt); err == nil {
+			trippedAt = t.Format(time.RFC3339)
+		}
+		if _, err := fmt.Fprintf(out, "    tripped_at:    %s\n", trippedAt); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "  paused_epoch: %d\n", entry.PausedEpoch); err != nil {
+			return err
+		}
 
 		if len(entry.InFlightAtPause) > 0 {
-			fmt.Fprintf(out, "  in_flight_at_pause (%d):\n", len(entry.InFlightAtPause))
+			if _, err := fmt.Fprintf(out, "  in_flight_at_pause (%d):\n", len(entry.InFlightAtPause)); err != nil {
+				return err
+			}
 			for _, r := range entry.InFlightAtPause {
-				fmt.Fprintf(out, "    - bead %s (run %s)\n", r.BeadID, r.RunID)
+				if _, err := fmt.Fprintf(out, "    - bead %s (run %s)\n", r.BeadID, r.RunID); err != nil {
+					return err
+				}
 			}
 		} else {
-			fmt.Fprintf(out, "  in_flight_at_pause: (none)\n")
+			if _, err := fmt.Fprintln(out, "  in_flight_at_pause: (none)"); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }

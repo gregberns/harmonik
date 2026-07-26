@@ -43,7 +43,6 @@ type bi012FixtureGoListPackage struct {
 // parsed package list. The test helper fails the test on any exec or parse error.
 func bi012FixtureListHarmonikPackages(t *testing.T) []bi012FixtureGoListPackage {
 	t.Helper()
-	//nolint:gosec // G204: "go" is resolved from PATH; args are static strings, not user input.
 	cmd := exec.CommandContext(t.Context(), "go", "list", "-json", "./...")
 	out, err := cmd.Output()
 	if err != nil {
@@ -91,7 +90,7 @@ func bi012FileContainsPattern(path string, patterns []string) (matchedLine strin
 	if err != nil {
 		return "", 0, err
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // cleanup on read path
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	lineno := 0

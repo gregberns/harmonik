@@ -46,8 +46,7 @@ func startupSweepFixtureSeedStaleLock(t *testing.T, projectDir, worktreeID strin
 	t.Helper()
 
 	lockDir := filepath.Join(projectDir, ".harmonik", "worktrees", worktreeID)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o750); err != nil {
 		t.Fatalf("startupSweepFixtureSeedStaleLock: MkdirAll: %v", err)
 	}
 
@@ -71,8 +70,7 @@ func startupSweepFixtureSeedStaleIntent(t *testing.T, projectDir, intentID strin
 	t.Helper()
 
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(intentsDir, 0o755); err != nil {
+	if err := os.MkdirAll(intentsDir, 0o750); err != nil {
 		t.Fatalf("startupSweepFixtureSeedStaleIntent: MkdirAll: %v", err)
 	}
 

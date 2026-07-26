@@ -9,6 +9,7 @@ package main
 // Bead ref: hk-gh1m (assets.lock + 3-way reconcile engine).
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -297,15 +298,17 @@ func TestWriteLockDeterministic(t *testing.T) {
 		t.Fatalf("WriteLock d2: %v", err)
 	}
 
+	//nolint:gosec // G304: path is constructed under this test's t.TempDir fixture.
 	b1, err := os.ReadFile(filepath.Join(d1, lockRelPath))
 	if err != nil {
 		t.Fatalf("read d1: %v", err)
 	}
+	//nolint:gosec // G304: path is constructed under this test's t.TempDir fixture.
 	b2, err := os.ReadFile(filepath.Join(d2, lockRelPath))
 	if err != nil {
 		t.Fatalf("read d2: %v", err)
 	}
-	if string(b1) != string(b2) {
+	if !bytes.Equal(b1, b2) {
 		t.Errorf("lock JSON not deterministic:\n--- d1 ---\n%s\n--- d2 ---\n%s", b1, b2)
 	}
 }

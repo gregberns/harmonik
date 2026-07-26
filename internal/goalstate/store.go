@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ErrNotFound is returned by Read when goal-state.json does not exist yet.
@@ -41,8 +43,7 @@ func Write(projectDir string, gs *GoalState) error {
 	data = append(data, '\n')
 
 	dir := filepath.Join(projectDir, ".harmonik", "intent")
-	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, core.HarmonikDirMode); err != nil {
 		return err
 	}
 

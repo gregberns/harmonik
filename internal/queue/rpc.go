@@ -496,8 +496,8 @@ func HandleQueueAppendOnQueue(
 
 	mutated, events, appendErr := AppendItems(ctx, q, req.GroupIndex, beadIDStrs, ledger, otherQueues...)
 	if appendErr != nil {
-		if IsValidationError(appendErr) {
-			ve := appendErr.(*ValidationError)
+		var ve *ValidationError
+		if errors.As(appendErr, &ve) {
 			return QueueAppendResponse{}, nil, nil, rpcErrorFromValidation(*ve)
 		}
 		return QueueAppendResponse{}, nil, nil, &RPCError{
@@ -707,7 +707,7 @@ func HandleQueueDryRun(
 	}
 
 	// Build LedgerDepNotices from LedgerDepPairs.
-	var notices []LedgerDepNotice
+	notices := make([]LedgerDepNotice, 0, len(deferredPairs))
 	for _, p := range deferredPairs {
 		notices = append(notices, LedgerDepNotice{
 			BeadID:        p.BeadID,
@@ -879,6 +879,17 @@ type HandlerAdapter struct {
 	// not wire a worker registry (no .harmonik/workers.yaml); HandleWorkerSetEnabled
 	// returns -32099 in that case.
 	workerToggle func(name string, enabled bool) (string, error)
+}
+
+// emitOrLog publishes evt on the adapter's bus and LOGS a publish failure
+// rather than dropping it. A dropped queue event is invisible to every
+// downstream consumer (the workloop, the dashboard, replay), so the failure
+// has to leave a trace even though the RPC itself has already succeeded and
+// cannot be rolled back on it. where names the calling handler.
+func (a *HandlerAdapter) emitOrLog(ctx context.Context, where string, t core.EventType, raw []byte) {
+	if err := a.bus.Emit(ctx, t, raw); err != nil {
+		log.Printf("queue: %s: emit %s: %v", where, t, err)
+	}
 }
 
 // SetGlobalMaxConcurrent records the daemon-wide --max-concurrent ceiling so
@@ -1066,7 +1077,7 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 			QueueSchemaVersion: q.SchemaVersion,
 		}
 		if raw, err := json.Marshal(payload); err == nil {
-			_ = a.bus.Emit(ctx, core.EventTypeQueueSubmitted, raw)
+			a.emitOrLog(ctx, "HandleQueueSubmit", core.EventTypeQueueSubmitted, raw)
 		}
 
 		// Emit queue_item_deferred_for_ledger_dep for QM-025 deferred items.
@@ -1080,7 +1091,7 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 				DetectedAt:    detectedAt,
 			}
 			if raw, err := json.Marshal(deferPayload); err == nil {
-				_ = a.bus.Emit(ctx, core.EventTypeQueueItemDeferredForLedgerDep, raw)
+				a.emitOrLog(ctx, "HandleQueueSubmit", core.EventTypeQueueItemDeferredForLedgerDep, raw)
 			}
 		}
 	}
@@ -1276,7 +1287,7 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 				log.Printf("queue: HandleQueueAppend: marshal %s payload: %v (emitting raw payload)", evt.Type, err)
 				raw = evt.Payload
 			}
-			_ = a.bus.Emit(ctx, core.EventType(evt.Type), raw)
+			a.emitOrLog(ctx, "HandleQueueAppend", core.EventType(evt.Type), raw)
 		}
 	}
 
@@ -1619,7 +1630,7 @@ func loadOtherQueues(ctx context.Context, projectDir, excludeName string) ([]*Qu
 	if err != nil {
 		return nil, fmt.Errorf("loadOtherQueues: enumerate: %w", err)
 	}
-	var others []*Queue
+	others := make([]*Queue, 0, len(names))
 	for _, name := range names {
 		if name == excludeName {
 			continue

@@ -24,7 +24,10 @@ import (
 
 // presenceTestEvent builds a JSONL event line for the given type with the given payload.
 func presenceTestEvent(eventID, ts, evType string, payload map[string]any) string {
-	payloadBytes, _ := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf("marshal %s payload: %v", evType, err)
+	}
 	ev := map[string]any{
 		"event_id":         eventID,
 		"schema_version":   1,
@@ -33,16 +36,22 @@ func presenceTestEvent(eventID, ts, evType string, payload map[string]any) strin
 		"source_subsystem": "daemon.comms",
 		"payload":          json.RawMessage(payloadBytes),
 	}
-	line, _ := json.Marshal(ev)
+	line, err := json.Marshal(ev)
+	if err != nil {
+		return fmt.Sprintf("marshal %s event: %v", evType, err)
+	}
 	return string(line)
 }
 
 // presenceJoinEvent emits an agent_presence join/online event.
-func presenceJoinEvent(eventID, ts, agent string) string {
-	return presenceTestEvent(eventID, ts, "agent_presence", map[string]any{
-		"agent":     agent,
+func presenceJoinEvent(args ...string) string {
+	if len(args) != 3 {
+		return fmt.Sprintf("presenceJoinEvent: got %d arguments, want eventID, timestamp, agent", len(args))
+	}
+	return presenceTestEvent(args[0], args[1], "agent_presence", map[string]any{
+		"agent":     args[2],
 		"status":    "online",
-		"last_seen": ts,
+		"last_seen": args[1],
 		"reason":    "join",
 	})
 }
@@ -81,14 +90,19 @@ func buildEventsFile(t *testing.T, lines []string) string {
 	t.Helper()
 	dir := t.TempDir()
 	eventsDir := filepath.Join(dir, ".harmonik", "events")
-	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
 		t.Fatalf("buildEventsFile: mkdir: %v", err)
 	}
+	//nolint:gosec // G304: events path is created beneath this test's t.TempDir fixture.
 	f, err := os.Create(filepath.Join(eventsDir, "events.jsonl"))
 	if err != nil {
 		t.Fatalf("buildEventsFile: create: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("buildEventsFile: close: %v", err)
+		}
+	}()
 	for _, line := range lines {
 		if _, writeErr := fmt.Fprintln(f, line); writeErr != nil {
 			t.Fatalf("buildEventsFile: write: %v", writeErr)
@@ -98,7 +112,7 @@ func buildEventsFile(t *testing.T, lines []string) string {
 }
 
 // captureCommsWho runs runCommsWhoSubcommand and captures stdout.
-func captureCommsWho(t *testing.T, projectDir string, jsonOut bool) (string, int) {
+func captureCommsWho(t *testing.T, projectDir string, jsonOut bool) (stdout string, code int) {
 	t.Helper()
 	args := []string{"--project", projectDir}
 	if jsonOut {
@@ -112,8 +126,10 @@ func captureCommsWho(t *testing.T, projectDir string, jsonOut bool) (string, int
 		t.Fatalf("captureCommsWho: pipe: %v", err)
 	}
 	os.Stdout = w
-	code := runCommsWhoSubcommand(args)
-	_ = w.Close()
+	code = runCommsWhoSubcommand(args)
+	if err := w.Close(); err != nil {
+		t.Fatalf("captureCommsWho: close stdout writer: %v", err)
+	}
 	os.Stdout = oldStdout
 	var buf strings.Builder
 	b := make([]byte, 4096)
@@ -126,7 +142,9 @@ func captureCommsWho(t *testing.T, projectDir string, jsonOut bool) (string, int
 			break
 		}
 	}
-	_ = r.Close()
+	if err := r.Close(); err != nil {
+		t.Fatalf("captureCommsWho: close stdout reader: %v", err)
+	}
 	return buf.String(), code
 }
 
@@ -142,7 +160,7 @@ func extractProjectDir(eventsPath string) string {
 // ---------------------------------------------------------------------------
 
 // TestPresenceWho_ActivityDerivedLiveness verifies fix #1: an agent whose latest
-// presence beat is 200s old (beyond presenceTTL=120s) but who sent a message
+// presence beat is 200s old (beyond presence.TTL=120s) but who sent a message
 // 30s ago is reported as online by ComputePresenceRegistry.
 func TestPresenceWho_ActivityDerivedLiveness(t *testing.T) {
 	beatTS := time.Now().Add(-200 * time.Second).UTC().Format(time.RFC3339)
@@ -170,7 +188,7 @@ func TestPresenceWho_ActivityDerivedLiveness(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPresenceWho_RefreshBeatKeepsOnline verifies that a refresh beat emitted
-// within the presenceTTL window (e.g., by a comms-recv handler — fix #2) keeps
+// within the presence.TTL window (e.g., by a comms-recv handler — fix #2) keeps
 // a receive-only agent visible as online.
 func TestPresenceWho_RefreshBeatKeepsOnline(t *testing.T) {
 	// Agent never sent a message but received a refresh beat 30s ago.
@@ -196,7 +214,7 @@ func TestPresenceWho_RefreshBeatKeepsOnline(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPresenceWho_StaleAgent verifies that an agent last seen 5 minutes ago
-// (beyond presenceTTL=120s but within presenceStaleCutoff=10m) is in state
+// (beyond presence.TTL=120s but within presence.StaleCutoff=10m) is in state
 // PresenceStateStale — not offline or absent — and appears in "comms who" output.
 func TestPresenceWho_StaleAgent(t *testing.T) {
 	beatTS := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)

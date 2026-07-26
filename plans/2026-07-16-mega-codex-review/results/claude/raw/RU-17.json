@@ -1,0 +1,67 @@
+{
+  "chunk": "RU-17",
+  "reviewer": "claude",
+  "scope_reviewed": [
+    "cmd/harmonik/supervise_cmd.go",
+    "cmd/harmonik/workers_boot.go",
+    "cmd/harmonik/promote_cmd.go",
+    "cmd/harmonik/remote_control_prefix_cmd.go"
+  ],
+  "status": "reviewed",
+  "findings": [
+    {
+      "file": "cmd/harmonik/workers_boot.go",
+      "line": 23,
+      "severity": "medium",
+      "category": "correctness",
+      "title": "Worker overrides only ever applied to Workers[0]",
+      "detail": "applyWorkerOverrides unconditionally writes hostFlag/enabledFlag into out.Workers[0] regardless of how many workers exist in the config. If a config declares more than one worker, the --worker-host / --worker-enabled CLI overrides silently apply to only the first worker entry and leave all others untouched. There is no worker-selection flag and no error/warning, so an operator passing --worker-host to point a multi-worker deployment at a new box gets a partial, silent misconfiguration. It is also index-fragile: the semantics depend entirely on config ordering.",
+      "suggested_fix": "Either document/enforce a single-worker invariant (error if len(Workers)>1 and an override is passed), or add a --worker-name selector and apply overrides to the matched entry."
+    },
+    {
+      "file": "cmd/harmonik/promote_cmd.go",
+      "line": 370,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Build gate re-runs on every push retry even when the tree is unchanged on the first attempt",
+      "detail": "The go build + go vet gate is inside the attempt loop. On attempt 1 the gate runs against the freshly cherry-picked tree; if the push then fails non-ff, the loop rebases and re-runs the gate. This is correct after a rebase (tree changed) but means the (potentially minutes-long) gate is paid again on every retry. More importantly, a rebase that drops all cherry-picked commits (e.g. they already landed on target) produces an empty result that still passes the gate and pushes a no-op, returning exit 0 as if promotion succeeded — masking that nothing was actually promoted.",
+      "suggested_fix": "Detect an empty/no-op rebase result (compare HEAD vs origin/target) and report it distinctly rather than reporting a successful promote; optionally only re-run the gate when the tree actually changed."
+    },
+    {
+      "file": "cmd/harmonik/promote_cmd.go",
+      "line": 306,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "Temp worktree cleanup swallows all errors, can leak registered worktrees",
+      "detail": "The deferred cleanup runs `git worktree remove --force` then os.RemoveAll, discarding both errors. If the cherry-pick/rebase left the worktree in a state git refuses to remove even with --force (e.g. lingering rebase-merge state), os.RemoveAll deletes the directory but the worktree stays registered in the main repo's .git/worktrees, accumulating stale administrative entries across repeated failed promotes. Nothing prunes these.",
+      "suggested_fix": "On cleanup failure, run `git worktree prune` as a fallback, or at least warn on stderr so the operator can prune manually."
+    },
+    {
+      "file": "cmd/harmonik/supervise_cmd.go",
+      "line": 68,
+      "severity": "low",
+      "category": "maintainability",
+      "title": "Unrecognised-verb error message omits valid verbs (reap, _shim)",
+      "detail": "The default-case error lists verbs 'start, stop, status, ps, attach, restart, logs, pause, resume' but omits 'reap', which is a real, dispatchable verb (case at line 61) and is advertised in superviseTopUsage. An operator who mistypes near reap gets a hint list that wrongly implies reap is not a verb. This is a hand-maintained duplicate of the switch that has already drifted.",
+      "suggested_fix": "Derive the verb list from a single source (a slice of verbs used both by the switch and the error message), or at minimum add 'reap'."
+    },
+    {
+      "file": "cmd/harmonik/remote_control_prefix_cmd.go",
+      "line": 40,
+      "severity": "low",
+      "category": "correctness",
+      "title": "Bare '--project=' (empty value) is not parsed and falls through to cwd silently",
+      "detail": "The `--project=` form is matched with `len(args[i]) > 10`, so an exactly-10-char arg '--project=' (empty value) fails the guard, is not recognized as a flag, and is silently ignored — the command then defaults to the working directory. A caller intending to force an empty/explicit project would instead get cwd config with no diagnostic. The hand-rolled slice-index parsing here also diverges from the flag-parsing style used elsewhere (promote uses strings.HasPrefix).",
+      "suggested_fix": "Use strings.HasPrefix(arg, \"--project=\") + strings.TrimPrefix like promote_cmd.go, and decide explicitly whether empty value is an error or means cwd."
+    },
+    {
+      "file": "cmd/harmonik/promote_cmd.go",
+      "line": 349,
+      "severity": "low",
+      "category": "error-handling",
+      "title": "Bead-ID auto-detection error is fully swallowed, no diagnostic",
+      "detail": "When --bead is absent, the code runs `git log -1 --format=%s <sha>` to auto-detect a (hk-xxx) parenthetical; if subjectErr != nil the error is discarded and beadID stays \"\", so the Harmonik-Bead-ID trailer is silently not stamped and reconcile can never auto-close the bead (the exact stranded-in_progress failure the trailer exists to prevent, per the hk-53p3 comment). The operator gets no signal that auto-detection failed vs. genuinely found no bead.",
+      "suggested_fix": "On subjectErr, emit a stderr warning distinguishing 'could not read commit subject' from 'no bead ID present' so the operator can pass --bead explicitly."
+    }
+  ]
+}

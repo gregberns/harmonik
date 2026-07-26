@@ -2,6 +2,7 @@ package scenario
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -69,14 +70,18 @@ func ParseScenarioFile(path string) (ScenarioFile, error) {
 	if err != nil {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: open %q: %w", path, err)
 	}
-	defer func() { _ = f.Close() }()
-
 	// Read at most scenarioFileSizeLimitBytes + 1 so we can detect over-size
 	// files without slurping an unbounded stream into memory.
 	limited := io.LimitReader(f, int64(scenarioFileSizeLimitBytes)+1)
 	raw, err := io.ReadAll(limited)
 	if err != nil {
+		if closeErr := f.Close(); closeErr != nil {
+			return ScenarioFile{}, fmt.Errorf("scenario-load-failure: read and close %q: %w", path, errors.Join(err, closeErr))
+		}
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: read %q: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: close %q: %w", path, err)
 	}
 	if len(raw) > scenarioFileSizeLimitBytes {
 		return ScenarioFile{}, fmt.Errorf("scenario-load-failure: file %q exceeds 1 MiB size ceiling (SH-003)", path)

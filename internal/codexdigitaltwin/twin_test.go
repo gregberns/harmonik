@@ -51,7 +51,11 @@ func openCorpus(t *testing.T) *os.File {
 	if err != nil {
 		t.Fatalf("open corpus: %v", err)
 	}
-	t.Cleanup(func() { f.Close() })
+	t.Cleanup(func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close corpus: %v", closeErr)
+		}
+	})
 	return f
 }
 

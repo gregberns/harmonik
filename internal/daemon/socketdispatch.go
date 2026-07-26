@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	socketrouter "github.com/gregberns/harmonik/internal/daemon/router"
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -33,7 +34,7 @@ type socketDispatch struct {
 	qh         QueueHandler
 	oh         OperatorControlHandler
 	ch         CommsSendHandler // comma-ok asserted for presence/recv/decisions
-	crewh      CrewHandler
+	crewh      crewrun.CrewHandler
 	sleepWakeh QuiesceOverrideHandler
 	stateh     StateHandler
 	dashh      DashboardHandler
@@ -310,7 +311,7 @@ func (d *socketDispatch) verdictOverride(ctx context.Context, raw json.RawMessag
 	return socketrouter.Result{OK: true}
 }
 
-// --- CrewHandler ops ---------------------------------------------------------
+// --- crewrun.CrewHandler ops -------------------------------------------------
 
 func (d *socketDispatch) crewStart(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	if d.crewh == nil {

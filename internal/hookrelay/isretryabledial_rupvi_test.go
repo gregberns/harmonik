@@ -61,7 +61,7 @@ func TestIsRetryableDialErr_RetryableCases_rupvi(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)
 	}
-	defer func() { _ = ln.Close() }() //nolint:errcheck // test cleanup, unactionable
+	defer func() { _ = ln.Close() }()
 	if fi, statErr := os.Stat(sockPath); statErr != nil || fi.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("fixture: %q is not a socket (stat err=%v)", sockPath, statErr)
 	}

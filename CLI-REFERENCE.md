@@ -66,16 +66,50 @@ harmonik --project /path/to/project --no-auto-pull --max-concurrent 4
 
 ## `harmonik version`
 
-**Purpose:** print semver + commit hash and exit (also `--version`).
+**Purpose:** print semver + commit hash and exit (also `--version`); with `--binary`, read a binary's embedded build provenance and test commit containment.
 
-**Usage:** `harmonik version`
+**Usage**
+```
+harmonik version
+harmonik version --binary PATH [--contains COMMIT] [--repo DIR] [--json]
+```
 
 A release build prints its embedded semantic version and short commit hash (e.g. `harmonik v0.2.0 (commit: a1b2c3d)`). A locally-built or `go install`-ed binary that wasn't stamped at build time prints the placeholder `dev (commit: unknown)` — that is a build-info artifact, **not** a real version number.
 
-**Example**
+**Flags** (positional `version` form only — `--version` / `-version` always print the single version line, per `specs/release-pipeline.md §2.3`)
+
+| Flag | Meaning |
+|---|---|
+| `--binary PATH` | Binary to inspect (default: the running harmonik executable) |
+| `--contains COMMIT` | Test whether COMMIT is an ancestor of the binary's `vcs.revision` |
+| `--repo DIR` | Repository whose commit graph decides ancestry (default: cwd) |
+| `--json` | Emit **every** outcome, including usage errors, as one JSON object on stdout |
+
+**Status tokens / exit codes**
+
+| status | exit | means |
+|---|---|---|
+| `contains` | 0 | target commit is an ancestor **and** the tree was clean — the only ship-safe result |
+| `revision` | 0 | no `--contains` asked; revision reported |
+| `missing` | 1 | target commit is NOT an ancestor — the binary predates it |
+| `usage-error` | 2 | bad flags, unreadable binary, unusable repo, or a `--contains` commit this repo does not have |
+| `contains-dirty` | 3 | ancestor, but `vcs.modified=true` — necessary, **not sufficient** |
+| `no-build-info` | 4 | not a Go binary, or build info stripped |
+| `no-vcs-stamp` | 4 | built with `-buildvcs=false` / outside a worktree |
+| `unknown-revision` | 4 | the binary's revision is not in this repo (shallow clone / rebased away) |
+
+Exit 0 alone is not the ship-safe answer — `--help` and status `revision` also exit 0. Gate on the status token too; `docs/daemon-redeploy.md` §"Which fix is in this binary?" carries the copy-pasteable gate.
+
+**Examples**
 ```bash
 $ harmonik version
 harmonik dev (commit: unknown)    # locally-built binary; a release shows a real semver + commit
+
+$ harmonik version --binary /Users/me/go/bin/harmonik --contains 2b921fdef
+binary:   /Users/me/go/bin/harmonik
+revision: 392ba0833b03f379c2fd8d94c7b161b0128b74b1 (vcs.modified=false)
+status:   contains
+detail:   2b921fdef is an ancestor of 392ba0833…, built from a clean tree
 ```
 
 ---

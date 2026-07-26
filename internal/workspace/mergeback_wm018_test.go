@@ -27,7 +27,7 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	taskBranch := "run/" + runID
 	taskPath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
-	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -53,6 +53,7 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	gitCmd(taskPath, "commit", "-m", "checkpoint: node B work")
 
 	// Assert the task branch now has 2 additional commits beyond the initial.
+	//nolint:gosec // G204: git command and task worktree path are controlled by this test fixture.
 	out, err := exec.CommandContext(t.Context(), "git", "-C", taskPath, "rev-list", "--count", "HEAD", "^"+sha).Output()
 	if err != nil {
 		t.Fatalf("rev-list --count: %v", err)
@@ -66,7 +67,7 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	// Create integration branch from main (sha), merge from the task worktree.
 	integBranch := "harmonik/integration"
 	integPath := filepath.Join(repo, ".harmonik", "worktrees", "integ-"+runID)
-	if err := os.MkdirAll(filepath.Dir(integPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(integPath), 0o700); err != nil {
 		t.Fatalf("MkdirAll integ: %v", err)
 	}
 	gitCmd(repo, "worktree", "add", "-b", integBranch, integPath, sha)
@@ -87,6 +88,7 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	}
 
 	// Assert: integration branch has exactly ONE new commit relative to sha.
+	//nolint:gosec // G204: git command and integration worktree path are controlled by this test fixture.
 	out2, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "rev-list", "--count", "HEAD", "^"+sha).Output()
 	if err != nil {
 		t.Fatalf("WM-018: rev-list integration: %v", err)
@@ -97,10 +99,12 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	}
 
 	// Assert: task branch tip is UNCHANGED (squash does not advance it).
+	//nolint:gosec // G204: git command, repository path, and task branch are controlled by this test fixture.
 	taskTip, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", taskBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-018: rev-parse task branch: %v", err)
 	}
+	//nolint:gosec // G204: git command, repository path, and integration branch are controlled by this test fixture.
 	integTip, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", integBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-018: rev-parse integration branch: %v", err)
@@ -116,7 +120,7 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 // post-merge `redeclared in this block` collisions with sibling implementers.
 func mergeBackFixtureWriteFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile %s: %v", name, err)
 	}
 }

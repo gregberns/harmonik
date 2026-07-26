@@ -123,12 +123,19 @@ tasks:
     card: tasks/CQ-DEF-01.md
     group: CQ
     priority: P0
-    phase: ready
+    phase: implement
     disposition: open
     routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: []
     conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2]
     lease_family: dispatch_spine
+    claim:
+      owner: sol-cq-def-01
+      base_sha: ecbb5e6292cb190cd562796fa4c8f65e7a59a605
+      branch: work/cq-def-01
+      worktree: /Users/gb/github/harmonik-wt/cq-def-01
+      bead_id: null
+      claimed_at: 2026-07-26T17:17:11Z
     card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
     required_proof: [targeted, composition, race, delta_lint, ubs, check_fast]
 
@@ -137,12 +144,22 @@ tasks:
     card: tasks/CQ-00A.md
     group: CQ
     priority: P0
-    phase: ready
+    phase: implement
     disposition: open
     routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
     hard_requires: []
     conflicts_with: []
     lease_family: evidence_CQ_00A
+    claim:
+      owner: terra-cq-00a
+      base_sha: ecbb5e6292cb190cd562796fa4c8f65e7a59a605
+      branch: work/cq-00a
+      worktree: /Users/gb/github/harmonik-wt/cq-00a
+      bead_id: null
+      claimed_at: 2026-07-26T17:17:11Z
+      routing_override:
+        profile: terra_high
+        reason: "Configured local dgx-local endpoint was unreachable at claim time."
     card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
     required_proof: [yaml_parse, frontier_sample_review]
 
@@ -151,12 +168,22 @@ tasks:
     card: tasks/CQ-00B.md
     group: CQ
     priority: P0
-    phase: ready
+    phase: implement
     disposition: open
     routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
     hard_requires: []
     conflicts_with: []
     lease_family: evidence_CQ_00B
+    claim:
+      owner: terra-cq-00b
+      base_sha: ecbb5e6292cb190cd562796fa4c8f65e7a59a605
+      branch: work/cq-00b
+      worktree: /Users/gb/github/harmonik-wt/cq-00b
+      bead_id: null
+      claimed_at: 2026-07-26T17:17:11Z
+      routing_override:
+        profile: terra_high
+        reason: "Configured local dgx-local endpoint was unreachable at claim time."
     card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
     required_proof: [yaml_parse, frontier_sample_review]
 

@@ -1,7 +1,9 @@
 # Integrated code-health execution plan
 
-**Status:** L0 committed; independent takeover verification and integration pending  
-**Takeover authority:** `HANDOFF-alpha.md` after L0 completes  
+**Status (historical; superseded for execution priority on 2026-07-25):** L0-era integration record.
+**Current planning authority:** [`TASK-INDEX.yaml`](TASK-INDEX.yaml) and
+[`CORE-QUEUE-PI-PLAN.md`](CORE-QUEUE-PI-PLAN.md) prioritize the local queue → job/run → Pi lifecycle;
+[`DEFERRED-WORK-GROUPS.md`](DEFERRED-WORK-GROUPS.md) records deferred groups.
 **Inputs:** this folder's `_plan.md`, `plans/2026-07-21-p2-extraction/DAEMON-PARALLEL-ROADMAP.md`,
 `E5-CHUNK-CATALOGUE.md`, and `E5-dot-runloop.md`
 
@@ -27,7 +29,9 @@ reconciliation, and merged-tree verification remain outstanding; this checkpoint
 5. The primary daemon remains down. Mechanical, unit, scenario, race, fault, and isolated real-process
    tests are available; a primary-daemon runtime proof is deferred and must never be claimed.
 6. LIFT.12/LIFT.13 require explicit operator approval and a fresh fleet-quiesce check.
-7. E2b remains blocked on E2-P plus explicit operator waiver for the new `crewSpawner` seam.
+7. E2b is deferred by the 2026-07-22 operator Option A decision; no waiver is pending. Re-evaluate only
+   after runloop/substrate ports mature, then seek a new decision only if evidence still requires a new
+   `crewSpawner` seam.
 8. Numeric disk headroom is oscillating around the 10 GiB builder threshold; every builder acquisition
    must re-measure it. Broad/race/differential/SSH gates require stable headroom, not one transient pass.
 

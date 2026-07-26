@@ -349,7 +349,7 @@ func TestBeadRunOne_RoutingGate_N5md3(t *testing.T) {
 			// (the pre-selection block in the outer dispatch loop is not used
 			// when calling beadRunOne directly from a test).
 			runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "",
-				nil, tc.itemLocalOnly, tc.workerTarget), "", nil, false)
+				nil, tc.itemLocalOnly, tc.workerTarget, core.AgentType("")), "", nil, false)
 
 			gotWorker, sawTunnelFailed := collector.tunnelFailedWorkerName(t)
 

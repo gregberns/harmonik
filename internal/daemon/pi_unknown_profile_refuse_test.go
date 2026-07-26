@@ -163,7 +163,7 @@ func TestPi_UnknownProfile_WorkloopRefusesLaunch(t *testing.T) {
 	// Drive beadRunOne DIRECTLY — the smallest seam that reaches the
 	// resolvePiProfile refuse gate at workloop.go:3099-3109, bypassing the
 	// whole work loop (mirrors workloop_gate_n5md3_test.go).
-	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
+	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, "", core.AgentType("")),
 		"", nil, false)
 
 	calls := ledger.calls()

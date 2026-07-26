@@ -285,6 +285,7 @@ func (deps *workLoopDeps) runEnv(
 	itemTemplateParams map[string]string,
 	itemLocalOnly bool,
 	itemWorkerTarget string,
+	queueDefaultHarness core.AgentType,
 ) runloop.RunEnv {
 	return runloop.RunEnv{
 		ProjectDir:   deps.projectDir,
@@ -295,6 +296,7 @@ func (deps *workLoopDeps) runEnv(
 		AllowedRepos:    deps.allowedRepos,
 
 		WorkflowModeDefault: deps.workflowModeDefault,
+		QueueDefaultHarness: queueDefaultHarness,
 		DefaultHarness:      deps.defaultHarness,
 		ProjectCfg:          deps.projectCfg,
 

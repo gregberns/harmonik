@@ -297,6 +297,7 @@ func TestReviewerNeverInheritsCapturedHarness_Dot_hkpkxju(t *testing.T) {
 				tc.reviewerOverride,
 				tc.nodeHarness,
 				tc.bead,
+				core.AgentType(""),
 				tc.globalDefault,
 				string(tc.bead.BeadID),
 			)
@@ -328,7 +329,7 @@ func TestReviewerNeverInheritsCapturedHarness_DispatchWiring_hkpkxju(t *testing.
 			},
 		},
 		{
-			file: "../daemon/dot_cascade.go",
+			file: "../daemon/dot_cascade_core.go",
 			want: []string{
 				"reviewerInheritedHarness := runloop.DotReviewerInheritedHarnessOverride(",
 				"effectiveNodeHarness = reviewerInheritedHarness",

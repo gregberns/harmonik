@@ -1239,6 +1239,7 @@ func dispatchDotAgenticNode(
 		reviewerHarnessOverride,
 		core.AgentType(node.Harness),
 		beadRecord,
+		env.QueueDefaultHarness,
 		env.DefaultHarness,
 		string(beadID),
 	)
@@ -1252,7 +1253,7 @@ func dispatchDotAgenticNode(
 		} else {
 			nodeModelHarness = resolveHarnessAgentTypeQuiet(
 				beadRecord,
-				core.AgentType(""), // queue default (hk-4x3rg not landed)
+				env.QueueDefaultHarness,
 				core.AgentType(""), // node default (already folded into node.Harness above)
 				env.DefaultHarness,
 			)

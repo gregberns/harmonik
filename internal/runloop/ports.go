@@ -248,6 +248,9 @@ type RunEnv struct {
 	AllowedRepos    []string
 
 	WorkflowModeDefault core.WorkflowMode
+	// QueueDefaultHarness is the selected queue's immutable tier-2 harness
+	// default. DefaultHarness remains the daemon-global tier-4 default.
+	QueueDefaultHarness core.AgentType
 	DefaultHarness      core.AgentType
 	ProjectCfg          projectconfig.ProjectConfig
 

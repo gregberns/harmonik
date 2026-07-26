@@ -5,7 +5,7 @@ package daemon
 // Implements the harness-selection chain for the daemon claim path:
 //
 //   Tier 1 — per-bead harness:<agent-type> label
-//   Tier 2 — per-queue harness default (stub: always absent until hk-4x3rg lands)
+//   Tier 2 — persisted Queue.DefaultHarness
 //   Tier 3 — DOT node harness attribute (stub: always absent until hk-u67of lands)
 //   Tier 4 — global Config.DefaultHarness, falling back to core.AgentTypeClaudeCode
 //
@@ -88,9 +88,6 @@ func resolveHarness(
 
 	// ── Tier 2: per-queue harness default ─────────────────────────────────────
 	//
-	// Stub: hk-4x3rg (per-queue harness field) is not yet landed.
-	// When it lands, the caller passes the queue's harness field here.
-	// Until then, queueDefault is always empty and falls through.
 	if queueDefault.Valid() {
 		emitHarnessSelected(ctx, bus, bead, queueDefault, 2)
 		return queueDefault

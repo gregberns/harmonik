@@ -116,6 +116,7 @@ func ExportedExecuteCognitionGate(
 	node *dot.Node,
 	beadID core.BeadID,
 	beadRecord core.BeadRecord,
+	queueDefault core.AgentType,
 ) error {
 	dp := cp.Evaluator.DelegationPath
 	if dp == nil {
@@ -126,7 +127,8 @@ func ExportedExecuteCognitionGate(
 		WorkflowMode: core.WorkflowModeDot,
 		Context:      map[string]any{},
 	}
-	env, rp, handles := runBundlesFromDeps(deps, runID)
+	env := deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, "", queueDefault)
+	rp, handles := deps.buildRunBundles(env)
 	_, err := executeCognitionGate(
 		ctx, env, rp, handles, runID, run, cp, *dp, wtPath, "",
 		node, 1, "", "",

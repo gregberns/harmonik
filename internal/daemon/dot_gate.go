@@ -337,7 +337,7 @@ func executeCognitionGate(
 	//
 	// Reuse of dotReviewerInheritedHarnessOverride (the DOT-cascade adapter) rather
 	// than raw reviewerDefaultHarness: the correction needs the harness the gate
-	// WOULD have inherited, which is the same quiet tier-1/tier-4 walk the adapter
+	// WOULD have inherited, which is the same quiet tier-1/tier-2/tier-4 walk the adapter
 	// already performs; calling reviewerDefaultHarness directly would mean
 	// duplicating that walk here. Both pin arguments are deliberately empty:
 	//   - reviewer_harness= is an attribute of an IMPLEMENTER node naming its
@@ -360,6 +360,7 @@ func executeCognitionGate(
 		core.AgentType(""), // reviewer_harness=: never applies to a gate node
 		core.AgentType(""), // node.Harness: not a gate-path mechanism (see above)
 		beadRecord,
+		env.QueueDefaultHarness,
 		env.DefaultHarness,
 		string(beadID),
 	)

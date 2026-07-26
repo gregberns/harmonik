@@ -191,7 +191,7 @@ func TestHK3hozm_RefuseBeforeLaunchReleasesWorkerSlot(t *testing.T) {
 	// Drive beadRunOne DIRECTLY with the pre-reserved worker (preSelectedWorker)
 	// and localSlotHeld=false. This reaches the resolvePiProfile refuse gate and
 	// returns — exercising exactly the early-return path that used to leak.
-	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, ""),
+	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, "", core.AgentType("")),
 		"", preSelectedWorker, false)
 
 	// The refuse must actually have fired (guards against the bead sneaking past

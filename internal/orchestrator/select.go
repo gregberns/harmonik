@@ -56,6 +56,9 @@ type QueueSnapshot struct {
 	WorkerCap     int    // queue.DefaultWorkers(q.Workers, globalCap) — precomputed
 	LocalOnly     bool   // mirrors Queue.LocalOnly
 	WorkerTarget  string // mirrors Queue.WorkerTarget
+	// DefaultHarness is the persisted queue-owned tier-2 harness default. The
+	// selector carries it opaquely; harness precedence is resolved downstream.
+	DefaultHarness core.AgentType
 	// ActiveGroup is the FIRST active group (nil when none). It carries the
 	// eligible-item head; a nil or empty-eligible group makes the queue a
 	// non-candidate this tick (but does not block siblings).
@@ -78,6 +81,8 @@ type Selection struct {
 	Item         ItemSnapshot
 	LocalOnly    bool
 	WorkerTarget string
+	// DefaultHarness is the selected queue's immutable tier-2 harness default.
+	DefaultHarness core.AgentType
 	// SawNonContributing mirrors the daemon's anyPausedOrEmpty flag: at least
 	// one queue existed but contributed nothing this tick. Only meaningful on
 	// the (Selection{}, false) return; false on a successful pick.
@@ -155,11 +160,12 @@ func SelectNextQueue(f FleetSnapshot) (Selection, bool) {
 	}
 	head := g.Eligible[0]
 	return Selection{
-		QueueName:    chosen.Name,
-		QueueID:      chosen.QueueID,
-		GroupIndex:   g.GroupIndex,
-		Item:         head,
-		LocalOnly:    chosen.LocalOnly,
-		WorkerTarget: chosen.WorkerTarget,
+		QueueName:      chosen.Name,
+		QueueID:        chosen.QueueID,
+		GroupIndex:     g.GroupIndex,
+		Item:           head,
+		LocalOnly:      chosen.LocalOnly,
+		WorkerTarget:   chosen.WorkerTarget,
+		DefaultHarness: chosen.DefaultHarness,
 	}, true
 }

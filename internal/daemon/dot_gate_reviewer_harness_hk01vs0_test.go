@@ -49,8 +49,8 @@ package daemon_test
 //     behaviour — the gate keeps deps.launchSpecBuilder, which IS consulted, and
 //     the selected harness is still claude-code. A regression that pinned the
 //     gate unconditionally would fail here.
-//   - The production wiring is pinned by source text so that deleting the
-//     dot_gate.go call while keeping the helper cannot leave this file green.
+//   - A tier-2 queue Pi default paired with a distinguishable global Claude
+//     default proves the production gate passes both tiers in the right order.
 //
 // Helper prefix: vs0 (per implementer-protocol.md helper-prefix discipline).
 //
@@ -232,14 +232,14 @@ type vs0Result struct {
 
 // vs0RunGate drives the PRODUCTION executeCognitionGate with a deps set wired
 // exactly as beadRunOne wires it: deps.launchSpecBuilder is the real
-// routedLaunchSpecBuilder bound to this beadRecord and this global default, and
-// deps.harnessRegistry is the production registry.
+// routedLaunchSpecBuilder bound to this beadRecord and the distinct queue/global
+// defaults, and deps.harnessRegistry is the production registry.
 //
 // The dispatch is expected to fail after the launch-spec build (handlerBinary is
 // a path that does not exist, so handler.Launch cannot start a process). That is
 // deliberate: it keeps the fixture free of tmux and of a real agent while still
 // executing every line of dot_gate.go up to and including the harness decision.
-func vs0RunGate(t *testing.T, bead core.BeadRecord, globalDefault core.AgentType) vs0Result {
+func vs0RunGate(t *testing.T, bead core.BeadRecord, queueDefault, globalDefault core.AgentType) vs0Result {
 	t.Helper()
 
 	// buildClaudeLaunchSpec upserts worktree trust + theme into ~/.claude.json;
@@ -253,7 +253,7 @@ func vs0RunGate(t *testing.T, bead core.BeadRecord, globalDefault core.AgentType
 	var mu sync.Mutex
 	inheritedCalls := 0
 	inherited := daemon.ExportedObservedRoutedLaunchSpecBuilder(
-		reg, bead, globalDefault, bus,
+		reg, bead, queueDefault, globalDefault, bus,
 		func() {
 			mu.Lock()
 			inheritedCalls++
@@ -290,7 +290,7 @@ func vs0RunGate(t *testing.T, bead core.BeadRecord, globalDefault core.AgentType
 	// Error is expected (the launch cannot start); the harness decision is the
 	// observable and it is already on the bus by then. Kept for failure messages.
 	dispatchErr := daemon.ExportedExecuteCognitionGate(
-		ctx, deps, implReadyFixtureRunID(t), cp, wtPath, node, bead.BeadID, bead,
+		ctx, deps, implReadyFixtureRunID(t), cp, wtPath, node, bead.BeadID, bead, queueDefault,
 	)
 
 	mu.Lock()
@@ -321,8 +321,15 @@ func TestCognitionGateNeverInheritsCapturedHarness_hk01vs0(t *testing.T) {
 	tests := []struct {
 		name          string
 		bead          core.BeadRecord
+		queueDefault  core.AgentType
 		globalDefault core.AgentType
 	}{
+		{
+			name:          "tier-2 queue pi default with global claude default",
+			bead:          vs0Bead("hk01vs0-gate-queue-pi"),
+			queueDefault:  core.AgentTypePi,
+			globalDefault: core.AgentTypeClaudeCode,
+		},
 		{
 			// THE case that matters for the harness ramp: a per-bead tier-1 label.
 			// resolveHarness returns it immediately at tier 1, ahead of everything.
@@ -352,7 +359,7 @@ func TestCognitionGateNeverInheritsCapturedHarness_hk01vs0(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := vs0RunGate(t, tc.bead, tc.globalDefault)
+			got := vs0RunGate(t, tc.bead, tc.queueDefault, tc.globalDefault)
 
 			if len(got.selected) != 1 {
 				t.Fatalf("cognition gate emitted %d harness_selected events; want exactly 1 "+
@@ -428,7 +435,7 @@ func TestCognitionGateAllClaudeUnchanged_hk01vs0(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := vs0RunGate(t, tc.bead, tc.globalDefault)
+			got := vs0RunGate(t, tc.bead, core.AgentType(""), tc.globalDefault)
 
 			if got.inheritedCalls != 1 {
 				t.Fatalf("all-claude cognition gate invoked the inherited launch-spec builder "+

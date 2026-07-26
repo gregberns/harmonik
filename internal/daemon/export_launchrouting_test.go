@@ -131,11 +131,12 @@ func ExportedRoutedLaunchSpecBuilder(
 func ExportedObservedRoutedLaunchSpecBuilder(
 	reg *handlercontract.HarnessRegistry,
 	bead core.BeadRecord,
+	queueDefault core.AgentType,
 	globalDefault core.AgentType,
 	bus handlercontract.EventEmitter,
 	onCall func(),
 ) func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
-	builder := routedLaunchSpecBuilder(reg, bead, core.AgentType(""), core.AgentType(""), globalDefault, bus)
+	builder := routedLaunchSpecBuilder(reg, bead, queueDefault, core.AgentType(""), globalDefault, bus)
 	return func(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
 		if onCall != nil {
 			onCall()

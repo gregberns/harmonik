@@ -2,25 +2,27 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
-	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
-type cqDef01Emitter struct{}
+type cqDef01OpenLedger struct{ n5md3Ledger }
 
-func (cqDef01Emitter) Emit(context.Context, core.EventType, []byte) error { return nil }
-func (cqDef01Emitter) EmitWithRunID(context.Context, core.RunID, core.EventType, []byte) error {
-	return nil
+func (cqDef01OpenLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
 }
 
 func cqDef01Queue(defaultHarness core.AgentType, labels []string) (*queuewiring.QueueStore, core.BeadRecord) {
@@ -129,55 +131,95 @@ func TestSelectQueueDefaultHarness(t *testing.T) {
 	}
 }
 
-// TestQueueDefaultHarnessProductionPath starts at persisted queue state and
-// follows the actual selection → RunEnv → buildRunBundles production spine.
+// TestQueueDefaultHarnessProductionPath drives runWorkLoop itself so the queue
+// default must survive selection, capture into the goroutine parameter, RunEnv
+// construction, and beadRunOne's quiet harness resolution.
 func TestQueueDefaultHarnessProductionPath(t *testing.T) {
-	t.Parallel()
-
-	qs, bead := cqDef01Queue(core.AgentTypePi, nil)
-	lq := qs.LockForMutation()
-	sel, ok := selectNextQueue(lq, NewRunRegistry(), 1, 0, nil)
-	lq.Done()
-	if !ok {
-		t.Fatal("selectNextQueue returned no selection")
+	qs, _ := cqDef01Queue(core.AgentTypePi, nil)
+	projectDir := n5md3RepoWithCommit(t)
+	configDir := filepath.Join(projectDir, ".harmonik")
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
+		t.Fatalf("mkdir .harmonik: %v", err)
 	}
-
-	deps := workLoopDeps{
-		defaultHarness:  core.AgentTypeCodex,
-		harnessRegistry: cqDef01PiRegistry(t),
-		bus:             cqDef01Emitter{},
+	if err := os.MkdirAll(filepath.Join(configDir, "queues"), 0o750); err != nil {
+		t.Fatalf("mkdir queues: %v", err)
 	}
-	env := deps.runEnv(
-		core.RunID{}, bead, sel.queueName, &sel.queueID, &sel.groupIndex, sel.itemIdx,
-		sel.itemWFMode, sel.itemWFRef, sel.itemTemplateMap,
-		sel.queueLocalOnly, sel.queueWorkerTarget, sel.queueDefaultHarness,
-	)
-	if env.QueueDefaultHarness != core.AgentTypePi {
-		t.Fatalf("RunEnv.QueueDefaultHarness = %q; want pi", env.QueueDefaultHarness)
+	configBody := []byte(`schema_version: 1
+agents:
+  claude-code:
+    model: cq-def-global-claude
+  pi:
+    model: cq-def-queue-pi
+`)
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), configBody, 0o600); err != nil {
+		t.Fatalf("write project config: %v", err)
 	}
-	if env.DefaultHarness != core.AgentTypeCodex {
-		t.Fatalf("RunEnv.DefaultHarness = %q; want global codex unchanged", env.DefaultHarness)
-	}
-	if got := resolveHarnessAgentTypeQuiet(
-		bead, env.QueueDefaultHarness, core.AgentType(""), env.DefaultHarness,
-	); got != core.AgentTypePi {
-		t.Fatalf("quiet harness resolution = %q; want pi", got)
-	}
-
-	ports, _ := deps.buildRunBundles(env)
-	if ports.LaunchBuilder == nil {
-		t.Fatal("buildRunBundles left LaunchBuilder nil")
-	}
-	_, artifacts, err := ports.LaunchBuilder(context.Background(), shared.LaunchCtx{
-		RunID:         core.RunID{},
-		BeadID:        string(bead.BeadID),
-		WorkspacePath: t.TempDir(),
-	})
+	projectCfg, err := projectconfig.LoadProjectConfig(projectDir)
 	if err != nil {
-		t.Fatalf("production launch builder: %v", err)
+		t.Fatalf("LoadProjectConfig: %v", err)
 	}
-	if artifacts.ResolvedAgentType != core.AgentTypePi {
-		t.Fatalf("launch builder resolved harness = %q; want pi", artifacts.ResolvedAgentType)
+	t.Setenv(EnvModelKey, "")
+	t.Setenv(EnvEffortKey, "")
+
+	errStopAfterQuietResolution := errors.New("cq-def-01: stop after quiet resolution")
+	modelC := make(chan string, 1)
+	launchBuilder := func(_ context.Context, rc shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error) {
+		modelC <- rc.Model
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, errStopAfterQuietResolution
+	}
+	wtPath := t.TempDir()
+	worktreeFactory := func(context.Context, string, string, string) (string, func(), error) {
+		return wtPath, func() {}, nil
+	}
+
+	bus := &n5md3Collector{}
+	deps := ExportedWorkLoopDeps(WorkLoopDepsParams{
+		BrAdapter:           cqDef01OpenLedger{},
+		Bus:                 bus,
+		ProjectDir:          projectDir,
+		IntentLogDir:        filepath.Join(configDir, "beads-intents"),
+		WorkflowModeDefault: core.WorkflowModeSingle,
+		AdapterRegistry2:    n5md3SealedAdapterRegistry(t),
+		HarnessRegistry:     cqDef01PiRegistry(t),
+		ProjectCfg:          projectCfg,
+		LaunchSpecBuilder:   launchBuilder,
+		WorktreeFactory:     worktreeFactory,
+		QueueStore:          qs,
+		NoAutoPull:          true,
+		DefaultHarness:      core.AgentTypeClaudeCode,
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- runWorkLoop(ctx, deps)
+	}()
+
+	select {
+	case got := <-modelC:
+		if got != "cq-def-queue-pi" {
+			t.Fatalf("beadRunOne resolved model = %q; want queue Pi model %q (global Claude model is %q)",
+				got, "cq-def-queue-pi", "cq-def-global-claude")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runWorkLoop did not reach beadRunOne launch builder")
+	}
+	runDoneDeadline := time.Now().Add(5 * time.Second)
+	for deps.runRegistry.Len() != 0 && time.Now().Before(runDoneDeadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if deps.runRegistry.Len() != 0 {
+		t.Fatal("beadRunOne goroutine did not finish after launch-builder stop")
+	}
+	cancel()
+	select {
+	case loopErr := <-done:
+		if loopErr != nil {
+			t.Fatalf("runWorkLoop: %v", loopErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runWorkLoop did not stop after cancellation")
 	}
 }
 
@@ -185,41 +227,73 @@ func TestQueueDefaultHarnessProductionPath(t *testing.T) {
 // tier remains separate from the global tier and that DOT reviewer-class paths
 // correct an inherited Pi implementer harness to the supported Claude harness.
 func TestQueueDefaultHarnessDoesNotOverrideGlobalReviewerDefault(t *testing.T) {
-	t.Parallel()
-
+	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(t.TempDir(), "claude.json"))
 	reg := cqDef01PiRegistry(t)
 	bead := core.BeadRecord{BeadID: core.BeadID("cq-def-01-reviewer")}
-	got := runloop.DotReviewerInheritedHarnessOverride(
-		reg,
-		resolveHarnessAgentTypeQuiet,
-		true,
-		core.AgentType(""),
-		core.AgentType(""),
-		bead,
-		core.AgentTypePi,
-		core.AgentTypeCodex,
-		string(bead.BeadID),
+	wtPath := n5md3RepoWithCommit(t)
+	parentSHA, err := resolveHEAD(t.Context(), wtPath)
+	if err != nil {
+		t.Fatalf("resolveHEAD: %v", err)
+	}
+	bus := &n5md3Collector{}
+	deps := ExportedWorkLoopDeps(WorkLoopDepsParams{
+		BrAdapter:           n5md3Ledger{},
+		Bus:                 bus,
+		ProjectDir:          wtPath,
+		HandlerBinary:       filepath.Join(wtPath, "no-such-agent-cq-def-01"),
+		IntentLogDir:        filepath.Join(wtPath, ".harmonik", "beads-intents"),
+		WorkflowModeDefault: core.WorkflowModeDot,
+		AdapterRegistry2:    n5md3SealedAdapterRegistry(t),
+		HarnessRegistry:     reg,
+		DefaultHarness:      core.AgentTypeClaudeCode,
+	})
+	env := deps.runEnv(
+		core.RunID{}, bead, "", nil, nil, -1, "", "", nil, false, "", core.AgentTypePi,
 	)
-	if got != core.AgentTypeClaudeCode {
-		t.Fatalf("DOT inherited reviewer harness = %q; want claude-code", got)
+	ports, handles := deps.buildRunBundles(env)
+	node := &dot.Node{
+		ID:         "cq_def_01_reviewer",
+		Type:       core.NodeTypeAgentic,
+		AgentType:  "reviewer",
+		HandlerRef: "claude-reviewer",
 	}
+	claudeSessionID := ""
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, dispatchErr := dispatchDotAgenticNode(
+		ctx, env, ports, handles, core.RunID{}, bead.BeadID, bead,
+		"reviewer fixture", "reviewer fixture body", wtPath, parentSHA, "",
+		node, true, 1, &claudeSessionID, "", "", "", "main",
+		core.AgentType(""), nil, "", "", "", false,
+	)
 
-	gateBody, err := os.ReadFile("dot_gate.go")
-	if err != nil {
-		t.Fatalf("read dot_gate.go: %v", err)
+	selected := cqDef01HarnessSelected(t, bus)
+	if len(selected) != 1 {
+		t.Fatalf("DOT cascade emitted %d harness_selected events; want 1 (dispatch error: %v)",
+			len(selected), dispatchErr)
 	}
-	cascadeBody, err := os.ReadFile("dot_cascade_core.go")
-	if err != nil {
-		t.Fatalf("read dot_cascade_core.go: %v", err)
+	if got := core.AgentType(selected[0].AgentType); got != core.AgentTypeClaudeCode {
+		t.Fatalf("DOT cascade reviewer harness = %q; want claude-code", got)
 	}
-	for path, src := range map[string]string{
-		"dot_gate.go":         string(gateBody),
-		"dot_cascade_core.go": string(cascadeBody),
-	} {
-		for _, want := range []string{"env.QueueDefaultHarness,", "env.DefaultHarness,"} {
-			if !strings.Contains(src, want) {
-				t.Errorf("%s production call site missing %q", path, want)
-			}
+	if selected[0].Tier != 3 {
+		t.Fatalf("DOT cascade reviewer tier = %d; want pinned reviewer tier 3", selected[0].Tier)
+	}
+}
+
+func cqDef01HarnessSelected(t *testing.T, bus *n5md3Collector) []core.HarnessSelectedPayload {
+	t.Helper()
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	selected := make([]core.HarnessSelectedPayload, 0, len(bus.events))
+	for _, event := range bus.events {
+		if event.typ != core.EventTypeHarnessSelected {
+			continue
 		}
+		var payload core.HarnessSelectedPayload
+		if err := json.Unmarshal(event.payload, &payload); err != nil {
+			t.Fatalf("decode harness_selected: %v", err)
+		}
+		selected = append(selected, payload)
 	}
+	return selected
 }

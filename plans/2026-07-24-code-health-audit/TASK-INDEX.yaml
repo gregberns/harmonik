@@ -123,8 +123,8 @@ tasks:
     card: tasks/CQ-DEF-01.md
     group: CQ
     priority: P0
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: []
     conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-F2D, PI-R2]
@@ -137,6 +137,24 @@ tasks:
       bead_id: null
       claimed_at: 2026-07-26T17:17:11Z
     card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
+    review: {state: approved, reviewer: cq_def_01_review, artifact: tasks/evidence/CQ-DEF-01-REVIEW.md, verdict: APPROVE}
+    integration: {state: integrated, commit: 6b7b78c312cd6a33a3409f5b8cd5ba2ded20fda4, integrated_sha: 8478de9fa104a69af4df569d5804c5730b56ad22}
+    proof: green
+    required_proof_status:
+      targeted: green
+      composition: green
+      race: green
+      delta_lint: green
+      ubs: green_with_reviewed_false_positives
+      check_fast: deferred
+    deferred_proofs:
+      - proof: check_fast
+        blocking: false
+        reason: >-
+          The integration candidate's pre-existing readywait-freeze-gate pins
+          files already absent at the claim base. Fmt, vet, build, tagged vet,
+          delta lint, and all preceding architecture gates pass before that
+          unrelated gate fails.
     required_proof: [targeted, composition, race, delta_lint, ubs, check_fast]
 
   CQ-00A:
@@ -198,13 +216,23 @@ tasks:
     card: tasks/CQ-00.md
     group: CQ
     priority: P0
-    phase: ready
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-00A, CQ-00B]
     conflicts_with: []
     lease_family: evidence_CQ_00
+    claim:
+      owner: terra-cq-00
+      base_sha: 44b328123cb19cfe8067434fcda1ec775e684cf3
+      branch: work/cq-00
+      worktree: /Users/gb/github/harmonik-wt/cq-00
+      bead_id: null
+      claimed_at: 2026-07-26T17:39:01Z
     card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/CQ-00-CARD-REVIEW.md, verdict: APPROVE}
+    review: {state: approved, reviewer: cq_00_review, artifact: tasks/evidence/CQ-00-REVIEW.md, verdict: APPROVE}
+    integration: {state: integrated, commit: cd7446c95d4bbf2f48a34f6d08261a04cfbed8ba, integrated_sha: d94aaf4e6b0f82da384bf06ddc50609b5348201c}
+    proof: green
     required_proof: [yaml_parse, cross_group_review]
 
   CQ-MIG-01:
@@ -212,12 +240,20 @@ tasks:
     card: tasks/CQ-MIG-01.md
     group: CQ
     priority: P0
-    phase: triage
+    phase: implement
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-00B]
     conflicts_with: [CQ-02I]
     lease_family: queue_persistence
+    claim:
+      owner: terra-cq-mig-01
+      base_sha: 8478de9fa104a69af4df569d5804c5730b56ad22
+      branch: work/cq-mig-01
+      worktree: /Users/gb/github/harmonik-wt/cq-mig-01
+      bead_id: null
+      claimed_at: 2026-07-26T18:16:40Z
+    card_review: {state: approved, reviewer: queue_run_audit, artifact: tasks/evidence/CQ-MIG-01-CARD-REVIEW.md, verdict: APPROVE}
     required_proof: [targeted, fault, delta_lint, ubs, check_fast]
 
   CQ-02:

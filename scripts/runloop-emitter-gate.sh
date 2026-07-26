@@ -8,15 +8,16 @@ set -euo pipefail
 # The DOT run path reaches its event bus through EmitterPort — the type alias
 # that (as of P2 LIFT L0) lives in internal/runloop/ports.go, structurally reached
 # in internal/daemon via the (*workLoopDeps).emitterPort() constructor — not
-# through the workLoopDeps bus field. RT16
-# converted 108 direct field reads on the six MOVER files to 8 port reads, so
-# RT18's re-signature of beadRunOne / runReviewLoop / driveDotWorkflow /
-# dispatchDotAgenticNode / executeCognitionGate is an 8-line change instead of a
-# 108-line one. A new field read on a mover un-does that.
+# through the workLoopDeps bus field. RT16 converted 108 direct field reads on
+# the six MOVER files to port reads. RT18 then re-signed the consumers around
+# RunPorts, P2 split dot_cascade.go into core/helpers, and LIFT L6 moved
+# runbridge.go into internal/runloop. The ownership table below pins those
+# current files and their measured code sites. A new field read on a mover, or a
+# consumer leaving the port, un-does that.
 #
 # depguard cannot express "reach this dependency through its port", so this grep
 # ratchet is the only thing holding the line. workloop.go takes ~3.7 commits/day;
-# without a gate the count silently regrows before RT17/RT18 land.
+# without a gate the count silently regrows during the continuing extraction.
 #
 # Exit 0: clean. Exit 1: the port was bypassed.
 
@@ -30,35 +31,83 @@ HITS=0
 # worse than one that occasionally objects to prose — so in these files, describe
 # the field without writing its literal spelling ("the run emitter", not the
 # field access). RT16 reworded the two hk-sj6a / hk-e7n76 prose lines in
-# dot_cascade.go for exactly that reason. Test files are out of scope (two
+# today's dot_cascade_core.go/helpers.go split for exactly that reason. Test files
+# are out of scope (two
 # historical-fix comments in pasteinject_hk*_test.go name the old idiom and are
 # documentation, not code).
 #
 # KNOWN LIMITATION, stated so the next maintainer knows it was a choice: this
 # matches the RECEIVER NAME, so a read through a differently-named receiver —
 # `func (d *workLoopDeps) f() { _ = d.bus }` — is invisible to it. That is a
-# convention dependency, not a live hole: all nine current workLoopDeps methods
-# name their receiver `deps`, and all five movers take `deps` as a value
-# parameter. Matching `\.bus\b` instead would fire on bootstate.go's unrelated
-# `bs.bus` field and make the gate red on arrival. If the receiver convention
-# ever breaks, widen this and re-measure the budgets rather than loosening them.
+# convention dependency, not a live hole: all 11 current workLoopDeps methods
+# and every current function parameter of that type use the name `deps`.
+# Matching `\.bus\b` instead would fire on bootstate.go's unrelated `bs.bus`
+# field and make the gate red on arrival. If the receiver convention ever
+# breaks, widen this and re-measure the budgets rather than loosening them.
 FIELD_RE='deps\.bus'
 
 # count_matches counts OCCURRENCES, not lines. `grep -c` counts matching LINES,
 # and a run-path line can legitimately carry two reads — the same trap this
 # slice's own recipe corrections flagged. Measured: rewriting one already-counted
-# runWorkLoop line to hold two reads takes workloop.go from 10 occurrences to 11
-# while `grep -c` still reports 10, and the exact-10 assertion below — the whole
+# runWorkLoop line to hold two reads takes workloop.go from 9 occurrences to 10
+# while `grep -c` still reports 9, and the exact-9 assertion below — the whole
 # point of the ratchet — sails straight through. The `|| true` is required
 # because this script runs under `set -o pipefail` and grep exits 1 on no match.
 #
-# -E is load-bearing: PORT_RE below is an alternation, and counting it under
-# basic regex would match the literal string "|" and silently report 0 — which,
-# for a check whose failure condition is "fewer than expected", would turn the
-# call-site pin permanently RED rather than silently green. Both callers pass an
-# ERE, so the flag is set here once rather than per call.
+# -E is load-bearing in both counting helpers: PORT_RE below is an alternation,
+# and counting it under basic regex would match the literal string "|" and
+# silently report 0.
 count_matches() {
     { grep -oE "$2" "$1" || true; } | wc -l | tr -d ' '
+}
+
+# strip_go_comments excludes line and block comments. It intentionally serves
+# only the narrow, measured port spellings below; FIELD_RE retains its stricter
+# comments-count behavior above.
+strip_go_comments() {
+    awk '
+        BEGIN { in_block = 0 }
+        {
+            line = $0
+            code = ""
+            while (length(line) > 0) {
+                if (in_block) {
+                    end = index(line, "*/")
+                    if (end == 0) {
+                        line = ""
+                        continue
+                    }
+                    line = substr(line, end + 2)
+                    in_block = 0
+                    continue
+                }
+
+                block = index(line, "/*")
+                slash = index(line, "//")
+                if (slash > 0 && (block == 0 || slash < block)) {
+                    code = code substr(line, 1, slash - 1)
+                    line = ""
+                    continue
+                }
+                if (block > 0) {
+                    code = code substr(line, 1, block - 1)
+                    line = substr(line, block + 2)
+                    in_block = 1
+                    continue
+                }
+                code = code line
+                line = ""
+            }
+            print code
+        }
+    ' "$@"
+}
+
+# Call-site pins must count executable spellings: otherwise a removed
+# ports.Emitter access plus a comment containing that text can leave the ratchet
+# falsely green.
+count_code_matches() {
+    strip_go_comments "$1" | { grep -oE "$2" || true; } | wc -l | tr -d ' '
 }
 
 # ---------------------------------------------------------------------------
@@ -93,9 +142,9 @@ count_matches() {
 declare -a EXACT_FILES=(
     "internal/daemon/workloop.go             9"
     "internal/daemon/reviewloop.go           0"
-    "internal/daemon/dot_cascade.go          0"
+    "internal/daemon/dot_cascade_core.go     0"
+    "internal/daemon/dot_cascade_helpers.go  0"
     "internal/daemon/dot_gate.go             0"
-    "internal/daemon/runbridge.go            0"
     "internal/daemon/sub_workflow_runner.go  0"
 )
 declare -a CEILING_FILES=(
@@ -106,14 +155,14 @@ declare -a CEILING_FILES=(
 )
 
 budget_for() { # path -> "exact <n>" | "ceiling <n>" | "exact 0"
-    local p="$1" row
+    local p="$1" row path limit
     for row in "${EXACT_FILES[@]}"; do
-        set -- $row
-        [ "$1" = "$p" ] && { echo "exact $2"; return; }
+        read -r path limit <<<"$row"
+        [ "$path" = "$p" ] && { echo "exact $limit"; return; }
     done
     for row in "${CEILING_FILES[@]}"; do
-        set -- $row
-        [ "$1" = "$p" ] && { echo "ceiling $2"; return; }
+        read -r path limit <<<"$row"
+        [ "$path" = "$p" ] && { echo "ceiling $limit"; return; }
     done
     echo "exact 0"
 }
@@ -139,9 +188,9 @@ done < <(find internal/daemon -type f -name '*.go' ! -name '*_test.go' | sort)
 # whole per-file table meaningless without ever failing check (1), because the
 # find loop simply never visits it.
 for row in "${EXACT_FILES[@]}" "${CEILING_FILES[@]}"; do
-    set -- $row
-    if [ ! -f "$1" ]; then
-        echo "runloop-emitter-gate: budgeted file $1 is gone — re-derive this gate" >&2
+    read -r f _ <<<"$row"
+    if [ ! -f "$f" ]; then
+        echo "runloop-emitter-gate: budgeted file $f is gone — re-derive this gate" >&2
         HITS=$((HITS + 1))
     fi
 done
@@ -175,31 +224,88 @@ fi
 # ---------------------------------------------------------------------------
 # (3) Pin the CALL SITES, not just the seam. "The seam still exists" passes even
 #     if every site quietly abandoned it — the hole RT14's gate had to close
-#     (PROGRESS.md §RT14, deviation 2). Each mover must still reach the emitter
-#     through the port at least as many times as RT16 left it doing.
+#     (PROGRESS.md §RT14, deviation 2). Each current owner must still reach the
+#     emitter through the port at exactly the measured number of code sites.
 #
-#     PORT_RE is the MEASURED set of spellings, not an anticipated one. RT18
-#     re-signs these functions to take a ports bundle; each re-signed reader
-#     spells the emitter `ports.Emitter`, so RT18-S added `\bports\.Emitter\b`
-#     here as the first re-sign landed (runReviewLoop). The per-file PORT_SITES
-#     counts are a 1-for-1 spelling swap and stay satisfied — do not lower them.
-PORT_RE='emitterPort\(\)|\brp\.Emitter\b|runPorts\(\)\.Emitter|\bports\.Emitter\b'
+#     PORT_RE is the MEASURED post-RT18/LIFT set of spellings, not an anticipated
+#     one. count_code_matches excludes comments, exact counts reject stale/dummy
+#     accesses, and every listed path is fail-closed on rename or deletion.
+PORT_RE='\brp\.Emitter\b|\bports\.Emitter\b'
 declare -a PORT_SITES=(
-    "internal/daemon/workloop.go            2"  # beadRunOne binds; emitBeadClosedAndMaybeEpic reads the bundle
+    "internal/daemon/workloop.go            4"  # beadRunOne x2; close + epic helpers x2
     "internal/daemon/reviewloop.go          1"  # runReviewLoop binds
-    "internal/daemon/dot_cascade.go         2"  # driveDotWorkflow + dispatchDotAgenticNode bind
+    "internal/daemon/dot_cascade_core.go    2"  # driveDotWorkflow + dispatchDotAgenticNode bind
     "internal/daemon/dot_gate.go            2"  # executeCognitionGate binds; dispatchDotGateNode reads inline
-    "internal/daemon/runbridge.go           3"  # three inline b.rp.Emitter reads, no local
-    "internal/daemon/sub_workflow_runner.go 2"  # two inline r.deps.emitterPort() reads, no local
+    "internal/runloop/runbridge.go           3"  # three inline b.rp.Emitter reads, no local
+    "internal/daemon/sub_workflow_runner.go 2"  # two inline r.ports.Emitter reads, no local
 )
 for row in "${PORT_SITES[@]}"; do
-    set -- $row
-    f="$1"; want="$2"
-    [ -f "$f" ] || continue   # the missing-file guard above already counted it
-    got="$(count_matches "$f" "$PORT_RE")"
-    if [ "$got" -lt "$want" ]; then
-        echo "runloop-emitter-gate: $f reaches the emitter through the port only $got time(s), expected >= $want" >&2
-        echo "  — a run-path site left the seam. Bind 'emit' from the port, or update this budget if RT18 re-signed it." >&2
+    read -r f want <<<"$row"
+    if [ ! -f "$f" ]; then
+        echo "runloop-emitter-gate: port consumer $f is gone — re-derive this gate" >&2
+        HITS=$((HITS + 1))
+        continue
+    fi
+    got="$(count_code_matches "$f" "$PORT_RE")"
+    if [ "$got" -ne "$want" ]; then
+        echo "runloop-emitter-gate: $f reaches the emitter through the port at $got code site(s), expected exactly $want" >&2
+        echo "  — a run-path site left/bypassed the seam, or a stale/dummy access was added." >&2
+        echo "  Bind the real site from RunPorts.Emitter; comments do not satisfy this count." >&2
+        HITS=$((HITS + 1))
+    fi
+done
+
+# Pin the owning SYMBOLS as well as aggregate per-file counts. This prevents a
+# surviving or dummy access elsewhere in the same file from masking one owner
+# that bypassed the port.
+declare -a PORT_SYMBOL_SITES=(
+    "internal/daemon/workloop.go|^func \\(deps \\*workLoopDeps\\) buildRunBundles\\(|buildRunBundles|1"
+    "internal/daemon/workloop.go|^func beadRunOne\\(|beadRunOne|1"
+    "internal/daemon/workloop.go|^func emitBeadClosedAndMaybeEpic\\(|emitBeadClosedAndMaybeEpic|1"
+    "internal/daemon/workloop.go|^func maybeEmitEpicCompleted\\(|maybeEmitEpicCompleted|1"
+    "internal/daemon/reviewloop.go|^func runReviewLoop\\(|runReviewLoop|1"
+    "internal/daemon/dot_cascade_core.go|^func driveDotWorkflow\\(|driveDotWorkflow|1"
+    "internal/daemon/dot_cascade_core.go|^func dispatchDotAgenticNode\\(|dispatchDotAgenticNode|1"
+    "internal/daemon/dot_gate.go|^func dispatchDotGateNode\\(|dispatchDotGateNode|1"
+    "internal/daemon/dot_gate.go|^func executeCognitionGate\\(|executeCognitionGate|1"
+    "internal/runloop/runbridge.go|^func \\(b \\*RunBridge\\) emit\\(|RunBridge.emit|1"
+    "internal/runloop/runbridge.go|^func \\(b \\*RunBridge\\) mergeHook\\(|RunBridge.mergeHook|1"
+    "internal/runloop/runbridge.go|^func \\(b \\*RunBridge\\) drainMergeHook\\(|RunBridge.drainMergeHook|1"
+    "internal/daemon/sub_workflow_runner.go|^func \\(r \\*dotSubWorkflowRunner\\) Run\\(|dotSubWorkflowRunner.Run|1"
+    "internal/daemon/sub_workflow_runner.go|^func dispatchSubWorkflowExpandedNode\\(|dispatchSubWorkflowExpandedNode|1"
+)
+for row in "${PORT_SYMBOL_SITES[@]}"; do
+    IFS='|' read -r f signature symbol want <<<"$row"
+    [ -f "$f" ] || continue # PORT_SITES already reports the stale owner path.
+
+    declarations="$(grep -nE "$signature" "$f" || true)"
+    declaration_count="$(printf '%s\n' "$declarations" | awk 'NF { n++ } END { print n + 0 }')"
+    if [ "$declaration_count" -ne 1 ]; then
+        echo "runloop-emitter-gate: could not uniquely locate $symbol in $f — re-derive this gate" >&2
+        HITS=$((HITS + 1))
+        continue
+    fi
+
+    start="${declarations%%:*}"
+    end="$(awk -v start="$start" '
+        NR > start && /^func / {
+            print NR - 1
+            found = 1
+            exit
+        }
+        END {
+            if (!found) {
+                print NR
+            }
+        }
+    ' "$f")"
+    got="$(sed -n "${start},${end}p" "$f" \
+        | strip_go_comments \
+        | { grep -oE "$PORT_RE" || true; } \
+        | wc -l \
+        | tr -d ' ')"
+    if [ "$got" -ne "$want" ]; then
+        echo "runloop-emitter-gate: $f $symbol reaches the emitter through the port at $got code site(s), expected exactly $want" >&2
         HITS=$((HITS + 1))
     fi
 done
@@ -207,8 +313,9 @@ done
 if [ "$HITS" -ne 0 ]; then
     echo "" >&2
     echo "runloop-emitter-gate: FAIL — the run path reaches its bus through EmitterPort (P2 E5 RT16)." >&2
-    echo "In a function that already binds it, use 'emit'. Otherwise use deps.emitterPort(), rp.Emitter" >&2
-    echo "or b.rp.Emitter. If a read genuinely belongs to the OUTER queue-claim loop (runWorkLoop and" >&2
+    echo "In a function that already binds it, use 'emit'. Otherwise use RunPorts.Emitter (for example" >&2
+    echo "rp.Emitter, ports.Emitter, or b.rp.Emitter). If a read genuinely belongs to the OUTER" >&2
+    echo "queue-claim loop (runWorkLoop and" >&2
     echo "friends, which never leave internal/daemon), raise workloop.go's budget here and say why in" >&2
     echo "the commit body." >&2
     exit 1

@@ -8,13 +8,17 @@ package core
 //
 // # Reserved keys
 //
-// Three keys are reserved by the spec:
+// Five keys are reserved by the spec:
 //   - EvidenceKeySubWorkflowPin (§4.8.EM-034c): sub-workflow expansion pin.
 //   - EvidenceKeySynthesizedOutcome (§4.5.EM-023a): set to true for
 //     daemon/reconciliation synthesized outcomes.
 //   - EvidenceKeyPartialSuccess (§4.5.EM-023a): set to true when outcome
 //     status is PARTIAL_SUCCESS, so downstream consumers distinguish partial
 //     from full success.
+//   - EvidenceKeyContextCheckpoint (§4.5.EM-023a): set to true for a
+//     context-checkpoint transition.
+//   - EvidenceKeyCheckpointPurpose (§4.5.EM-023a): non-empty discriminator for
+//     the context-only update; EM-015d-CONT uses "session_continuity".
 //
 // # EM-021 externalization
 //
@@ -69,6 +73,19 @@ const (
 	// carry a partial_success=true evidence flag so downstream consumers can
 	// distinguish partial from full success."
 	EvidenceKeyPartialSuccess = "partial_success"
+
+	// EvidenceKeyContextCheckpoint marks a context-only durability boundary per
+	// execution-model.md §4.5.EM-023a. Its value MUST be true on every
+	// context-checkpoint Transition.
+	EvidenceKeyContextCheckpoint = "context_checkpoint"
+
+	// EvidenceKeyCheckpointPurpose names the purpose of a context-checkpoint.
+	// EM-015d-CONT uses ContextCheckpointPurposeSessionContinuity.
+	EvidenceKeyCheckpointPurpose = "checkpoint_purpose"
+
+	// ContextCheckpointPurposeSessionContinuity is the EM-015d-CONT
+	// checkpoint-purpose discriminator.
+	ContextCheckpointPurposeSessionContinuity = "session_continuity"
 )
 
 // Valid reports whether the Evidence map is structurally valid.

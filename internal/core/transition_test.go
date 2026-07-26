@@ -34,6 +34,22 @@ func b3f77StateID(t *testing.T) *StateID {
 	return &id
 }
 
+func b3f77ValidContextCheckpointTransition(t *testing.T) Transition {
+	t.Helper()
+	tr := b3f77ValidTransition(t)
+	tr.ToState = tr.FromState
+	tr.ActorRole = ActorRoleDaemon
+	tr.OutcomeStatus = OutcomeStatusSuccess
+	tr.TransitionKind = TransitionKindContextCheckpoint
+	tr.RollbackToStateID = nil
+	tr.Evidence = Evidence{
+		EvidenceKeySynthesizedOutcome: true,
+		EvidenceKeyContextCheckpoint:  true,
+		EvidenceKeyCheckpointPurpose:  ContextCheckpointPurposeSessionContinuity,
+	}
+	return tr
+}
+
 // b3f77ValidTransition returns a fully-populated forward Transition with all
 // required fields set to valid values.
 func b3f77ValidTransition(t *testing.T) Transition {
@@ -336,6 +352,19 @@ func TestTransitionValid_ContextRestoreMustOmitRollbackStateID(t *testing.T) {
 	}
 }
 
+// TestTransitionValid_ContextCheckpointMustOmitRollbackStateID verifies that
+// context-checkpoint MUST NOT set RollbackToStateID (EM-044).
+func TestTransitionValid_ContextCheckpointMustOmitRollbackStateID(t *testing.T) {
+	t.Parallel()
+
+	tr := b3f77ValidTransition(t)
+	tr.TransitionKind = TransitionKindContextCheckpoint
+	tr.RollbackToStateID = b3f77StateID(t)
+	if tr.Valid() {
+		t.Error("Valid() = true for context-checkpoint with non-nil RollbackToStateID, want false")
+	}
+}
+
 // TestTransitionValid_LocalPatchbackOmitsRollbackStateID verifies that
 // local-patchback with nil RollbackToStateID is valid (EM-044).
 func TestTransitionValid_LocalPatchbackOmitsRollbackStateID(t *testing.T) {
@@ -359,6 +388,101 @@ func TestTransitionValid_ContextRestoreOmitsRollbackStateID(t *testing.T) {
 	tr.RollbackToStateID = nil
 	if !tr.Valid() {
 		t.Error("Valid() = false for context-restore with nil RollbackToStateID, want true")
+	}
+}
+
+// TestTransitionValid_ContextCheckpointOmitsRollbackStateID verifies that
+// context-checkpoint with nil RollbackToStateID is valid (EM-044).
+func TestTransitionValid_ContextCheckpointOmitsRollbackStateID(t *testing.T) {
+	t.Parallel()
+
+	tr := b3f77ValidContextCheckpointTransition(t)
+	if !tr.Valid() {
+		t.Error("Valid() = false for context-checkpoint with nil RollbackToStateID, want true")
+	}
+}
+
+func TestTransitionValid_ContextCheckpointRequiresSameGraphState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*Transition)
+	}{
+		{
+			name: "different state ID",
+			mutate: func(tr *Transition) {
+				tr.ToState.StateID = StateID(uuid.Must(uuid.NewV7()))
+			},
+		},
+		{
+			name: "different node ID",
+			mutate: func(tr *Transition) {
+				tr.ToState.NodeID = NodeID("different-node")
+			},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tr := b3f77ValidContextCheckpointTransition(t)
+			tt.mutate(&tr)
+			if tr.Valid() {
+				t.Error("Valid() = true for graph-moving context-checkpoint, want false")
+			}
+		})
+	}
+}
+
+func TestTransitionValid_ContextCheckpointRequiresSynthesizedSuccessEvidence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*Transition)
+	}{
+		{
+			name: "partial success",
+			mutate: func(tr *Transition) {
+				tr.OutcomeStatus = OutcomeStatusPartialSuccess
+			},
+		},
+		{
+			name: "handler actor",
+			mutate: func(tr *Transition) {
+				tr.ActorRole = ActorRoleBuilder
+			},
+		},
+		{
+			name: "missing synthesized outcome",
+			mutate: func(tr *Transition) {
+				delete(tr.Evidence, EvidenceKeySynthesizedOutcome)
+			},
+		},
+		{
+			name: "missing context checkpoint marker",
+			mutate: func(tr *Transition) {
+				delete(tr.Evidence, EvidenceKeyContextCheckpoint)
+			},
+		},
+		{
+			name: "missing checkpoint purpose",
+			mutate: func(tr *Transition) {
+				delete(tr.Evidence, EvidenceKeyCheckpointPurpose)
+			},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tr := b3f77ValidContextCheckpointTransition(t)
+			tt.mutate(&tr)
+			if tr.Valid() {
+				t.Error("Valid() = true for malformed context-checkpoint, want false")
+			}
+		})
 	}
 }
 

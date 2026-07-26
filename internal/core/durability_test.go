@@ -3,7 +3,7 @@
 //
 // Tests verify execution-model.md §4.5.EM-023a: a transition is durable iff
 // transition_kind ∈ {forward, local-patchback, architectural-rollback,
-// policy-rollback, context-restore} AND outcome.status ∈ {SUCCESS,
+// policy-rollback, context-restore, context-checkpoint} AND outcome.status ∈ {SUCCESS,
 // PARTIAL_SUCCESS}. All other (kind, status) combinations are non-durable.
 package core
 
@@ -18,6 +18,7 @@ func durabilityFixtureAllKinds() []TransitionKind {
 		TransitionKindArchitecturalRollback,
 		TransitionKindPolicyRollback,
 		TransitionKindContextRestore,
+		TransitionKindContextCheckpoint,
 	}
 }
 
@@ -47,7 +48,7 @@ func TestIsDurable_EM023a_TruthTable(t *testing.T) {
 
 	for _, kind := range durabilityFixtureAllKinds() {
 		for _, status := range durabilityFixtureAllStatuses() {
-			want := durableStatuses[status] // all five kinds are durable when status is durable
+			want := durableStatuses[status] // all six kinds are durable when status is durable
 			t.Run(string(kind)+"/"+string(status), func(t *testing.T) {
 				t.Parallel()
 				got := IsDurable(kind, status)
@@ -68,7 +69,7 @@ func TestIsDurable_EM023a_DurableKindsWithSuccess(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			if !IsDurable(kind, OutcomeStatusSuccess) {
-				t.Errorf("IsDurable(%q, SUCCESS) = false, want true (EM-023a: all five kinds are durable with SUCCESS)", kind)
+				t.Errorf("IsDurable(%q, SUCCESS) = false, want true (EM-023a: all six kinds are durable with SUCCESS)", kind)
 			}
 		})
 	}

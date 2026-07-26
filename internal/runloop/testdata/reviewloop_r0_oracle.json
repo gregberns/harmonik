@@ -1,0 +1,52 @@
+{
+  "decisions": [
+    {
+      "name": "approve",
+      "success": true,
+      "completion_reason": "approved",
+      "needs_attention": false,
+      "ordered_cycle_events": ["reviewer_verdict", "review_loop_cycle_complete"],
+      "local_archive_iterations": [1]
+    },
+    {
+      "name": "flagless-request-changes",
+      "success": true,
+      "completion_reason": "approved",
+      "needs_attention": false,
+      "ordered_cycle_events": ["reviewer_verdict", "review_loop_cycle_complete"],
+      "local_archive_iterations": [1]
+    },
+    {
+      "name": "block",
+      "success": false,
+      "completion_reason": "blocked",
+      "needs_attention": true,
+      "ordered_cycle_events": ["reviewer_verdict", "review_loop_cycle_complete"],
+      "local_archive_iterations": [1]
+    },
+    {
+      "name": "actionable-request-changes-at-cap",
+      "success": false,
+      "completion_reason": "cap_hit",
+      "needs_attention": true,
+      "ordered_cycle_events": ["reviewer_verdict", "iteration_cap_hit", "review_loop_cycle_complete"],
+      "local_archive_iterations": [1, 2, 3]
+    },
+    {
+      "name": "unchanged-head-after-request-changes",
+      "success": false,
+      "completion_reason": "fixup_stalled",
+      "needs_attention": true,
+      "ordered_cycle_events": ["review_fixup_stalled", "review_loop_cycle_complete"],
+      "local_archive_iterations": [1]
+    },
+    {
+      "name": "typed-phase-error",
+      "success": false,
+      "completion_reason": "error",
+      "needs_attention": true,
+      "ordered_cycle_events": ["review_loop_cycle_complete"],
+      "local_archive_iterations": []
+    }
+  ]
+}

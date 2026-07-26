@@ -8,10 +8,10 @@ requirement-prefix: RSM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.2.0
+version: 0.2.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-14
+last-updated: 2026-07-24
 depends-on:
   - replay-substrate
   - event-model
@@ -235,10 +235,21 @@ and its external readers; the Run machine MUST NOT require it.
 ## 8. Bounded liveness (the resume-hang invariant)
 
 **RSM-INV-001 (resume liveness).** For every run `r` that emits `implementer_resumed(r, i)`,
-exactly one run-correlated terminal event (`review_loop_cycle_complete(r)` with outcome,
-`run_completed(r)`, or `run_failed(r)`) or failure-class event (`agent_ready_timeout(r)`,
-`agent_input_stale(r)`, or `run_stale(r)`) MUST follow within the bounded window (RSM-024). A run
-that produces neither is a conformance failure. **Silence is forbidden.**
+at least one run-correlated liveness witness — a later cycle decision, run terminal, or
+failure-class event — MUST follow within the bounded window (RSM-024). Failure-class witnesses
+include `agent_ready_timeout(r)`, `agent_input_stale(r)`, and `run_stale(r)`. A witness is not
+permission to stop terminalization: after a review-loop cycle has been entered, every terminal
+path, including launch, input, phase, verdict, allowance, and cancellation errors, MUST
+successfully persist exactly one `review_loop_cycle_complete(r){completion_reason=error}` before
+exactly one `run_failed(r)`. Successful and needs-attention cycle decisions likewise MUST persist
+exactly one `review_loop_cycle_complete(r)` before exactly one `run_completed(r)` or
+`run_failed(r)` as selected by [execution-model.md §4.3 EM-015e]. Thus
+`review_loop_cycle_complete` is a cycle decision, not an alternative run terminal. A run that
+produces no bounded witness, or produces a cycle-complete event without its following run
+terminal, is a conformance failure. If persistence of `review_loop_cycle_complete` itself fails,
+the shell MUST enter the Event Model durability-failure/escalation path and MUST NOT emit a run
+terminal or apply a Beads effect as though the cycle decision existed; recovery must retry or
+reconcile the missing decision before terminalization. **Silence is forbidden.**
 
 **RSM-INV-002 (structural non-wedge).** Every timer-fired transition in the Dispatch machine MUST
 land in a state with an outgoing action. No reachable `(state, timer-fired)` pair MUST be a
@@ -247,8 +258,10 @@ silent no-op.
 **RSM-024 (the bound).** The resume window MUST be bounded by the composed timer stack, all
 ClockPort-timed:
 - the agent-input output-or-stale bound on the resume seed (§9), which resolves the seed
-  submission to an `Ack` or an `agent_input_stale` terminal within the agent-input bounded
-  window ([agent-input.md] AIS-INV-001; the window value is owned by the agent-input seam);
+  submission to synchronous `Ack{Outcome=Rejected}` or, after
+  `Ack{Outcome=Delivered}`, an `agent_input_acked` / `agent_input_stale` terminal within the
+  agent-input bounded window ([agent-input.md] AIS-003, AIS-004, AIS-INV-001; the window value is
+  owned by the agent-input seam);
 - the ready sub-bound: resume to ready-or-fail MUST NOT exceed the effective agent-ready timeout
   (the tight headline guarantee that replaces the former fixed 2-second resume grace);
 - the post-agent-ready progress bound (`post_ready_hang`); and
@@ -256,9 +269,16 @@ ClockPort-timed:
 The former fixed resume grace MUST be removed; the resume-ready decision MUST dissolve into the
 ready-timer edge.
 
-**RSM-025 (fail-closed).** On a liveness-timeout edge the run MUST kill the agent and reopen the
-bead, riding the existing review-loop-failure budget for anti-thrash. The run MUST NOT silently
-proceed past an unconfirmed resume.
+**RSM-025 (fail-closed).** On a liveness-timeout edge the run MUST kill the agent. A single-mode
+or DOT run follows its existing reopen policy, riding the existing failure budget for
+anti-thrash. The run MUST NOT silently proceed past an unconfirmed resume. After review-loop
+cycle entry, a rejected input, stale input,
+ready timeout, post-ready hang, absolute-watchdog expiry, launch failure, phase error, malformed or
+missing verdict, reviewer-allowance exhaustion, or cancellation is a normalized cycle `error`;
+the shell MUST complete the ordered `review_loop_cycle_complete{completion_reason=error}` then
+`run_failed` sequence of RSM-INV-001 before finalizing the attention-close Beads effect of
+[beads-integration.md §4.4 BI-010a]. A failure to persist cycle-complete follows RSM-INV-001's
+durability exception and authorizes no Beads write.
 
 **RSM-026 (`run_stale`).** The `run_stale` event is a run-lifecycle failure-class event owned by
 this spec. It MUST be emitted, run-attributed, when a run's liveness bound (RSM-024) elapses with
@@ -273,22 +293,24 @@ type, stale terminal, or input-ack timer. Specifically:
 - The reactor MUST request input via submit actions (a resume-seed submit and a brief submit),
   each carrying an `InputRequest`; the shell effector MUST call the agent-input port
   `InputPort.SubmitInput(ctx, InputRequest) (Ack, error)` ([agent-input.md] AIS-001).
-- The reactor MUST honour the three-valued acceptance class of `Ack` ([agent-input.md]
-  AIS-003): `Accepted` (positively confirmed) MUST advance the dispatch; `Rejected`
-  (protocol refusal) MUST route to the fail-closed liveness edge (RSM-025); `Degraded`
-  (written but not positively confirmed — the interim tmux/paste case) MUST NOT be treated as
-  confirmation — the reactor MUST continue to require an agent-derived readiness or progress
-  signal and MUST rely on the liveness bound (RSM-024) to terminate a Degraded submission that
-  never confirms.
-- The shell MUST convert `SubmitInput`'s synchronous `Ack` and the dual-delivered durable
+- The reactor MUST honour the two delivery outcomes of `Ack` ([agent-input.md] AIS-003).
+  `Delivered` means only that the input was handed to the driver; it is NOT positive acceptance
+  and MUST NOT advance work by itself. A Delivered submission advances only after the matching
+  asynchronous `agent_input_acked`. `Rejected` is a synchronous protocol-refusal terminal,
+  produces no positive ack event, and MUST route immediately to the fail-closed error edge
+  (RSM-025) without waiting for `agent_input_stale`. The stale three-valued vocabulary
+  `Accepted` / `Rejected` / `Degraded` MUST NOT appear in the reactor contract.
+- The shell MUST convert the synchronous `Ack` return plus the asynchronous
   `agent_input_acked` / `agent_input_stale` events ([agent-input.md] AIS-004) into reactor
-  events; correlation MUST use the `Ack`'s driver-internal monotonic input-sequence id, and a
-  duplicate for an already-correlated submission MUST be dropped by `Step`.
+  events. Correlation MUST use the `Ack`'s driver-internal monotonic input-sequence id. For a
+  Delivered submission, exactly one of the matching async terminals may advance the reactor and
+  any duplicate MUST be dropped by `Step`; a Rejected submission is already terminal and a
+  later async signal for that sequence MUST be ignored.
 - The bounded output-or-stale window and the acceptance definition belong to the agent-input
   seam ([agent-input.md] AIS-INV-001); the reactor MUST NOT re-implement them.
-- The per-submission output-or-stale guarantee ([agent-input.md] AIS-INV-001) composes into
-  RSM-INV-001: a stale (or `Rejected`, or never-confirmed `Degraded`) resume seed MUST feed the
-  run's fail-closed liveness edge (RSM-025), never silence.
+- The per-submission terminal guarantee ([agent-input.md] AIS-INV-001) composes into
+  RSM-INV-001: a Rejected resume seed, or a Delivered seed that reaches
+  `agent_input_stale`, MUST feed the run's fail-closed liveness edge (RSM-025), never silence.
 
 ## 10. Enforcement
 
@@ -308,7 +330,10 @@ absence of a transient ref advance during a build failure.
 **RSM-030 (tests).** Conformance MUST be demonstrated by: pure per-transition tests of both
 reactors (every row, including no-ops) and the structural properties (terminal exclusivity;
 RSM-INV-002); a finalizing replay checker, keyed per run, that flags any `implementer_resumed`
-with no terminal or failure-class event (RSM-INV-001) and any terminal-exclusivity breach; a
+with no bounded liveness witness, any entered review-loop cycle lacking the ordered
+`review_loop_cycle_complete` then `run_completed` / `run_failed` pair, and any
+terminal-exclusivity breach; Ack tests covering Delivered→acked, Delivered→stale, Rejected with
+no positive event, and duplicate/late async terminals; a
 fake-clock fault-injection test that stalls the agent on relaunch and asserts a terminal or
 failure-class signal within the virtual-time bound, never silence; the existing incident-pinned
 regression suite green per commit; and an out-of-band oracle (N=10 clean relaunch cycles plus a
@@ -398,3 +423,9 @@ subsumed path, which passes no flag).
 - [handler-contract.md] — the session-lifecycle machine (HC-065) driven as a projection (RSM-023).
 - [queue-model.md] — the bead-queue store, kept out of the run ports (RSM-011).
 - [beads-integration.md] — the daemon owns terminal bead transitions (§2.2).
+
+## 14. Revision history
+
+| Date | Version | Author | Summary |
+|---|---|---|---|
+| 2026-07-24 | 0.2.1 | agent (kerf `reviewloop-decoupling`) | **Review-loop terminal sequencing and Agent Input reconciliation.** RSM-INV-001 now treats failure-class events as bounded liveness witnesses rather than alternative terminals and requires every entered review-loop cycle to persist exactly one `review_loop_cycle_complete` before exactly one run terminal. RSM-025 normalizes review-loop launch/input/phase/verdict/allowance/cancellation failures to `completion_reason=error`. RSM-024/RSM-027 adopt AIS-003's two-outcome synchronous Ack plus asynchronous acked/stale model and remove the stale Accepted/Rejected/Degraded vocabulary. RSM-030 adds ordering and rejection/ack tests. No requirement IDs were added, retired, or renumbered. |

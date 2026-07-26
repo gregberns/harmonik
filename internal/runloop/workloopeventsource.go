@@ -72,19 +72,67 @@ type PerRunEventTap struct {
 	// runID is the run identifier stamped onto synthetic envelopes.
 	runID core.RunID
 
-	// mu guards subs. Subscribe is called only at run-setup time (before the
-	// producer is hot), but Emit may race with a late Subscribe, so the slice
-	// is mutex-guarded for safety under -race.
+	// mu guards subs and serializes fan-out with unsubscription. Fan-out holds
+	// the lock only across non-blocking channel sends, so Unsubscribe can wait
+	// for any in-flight send and guarantee that none occurs after it returns.
 	mu sync.Mutex
-	// subs holds every subscriber channel. Each receives a copy of every
-	// emitted synthetic envelope (non-blocking, drop-if-full per channel).
-	subs []chan core.EventEnvelope
+	// subs holds every live owned subscription. Each receives a copy of every
+	// emitted synthetic envelope (non-blocking, drop-if-full per handle).
+	subs map[*EventSubscription]struct{}
 }
 
 // perRunEventTapBufSize is the capacity of each per-run subscriber channel.
 // Large enough to absorb a burst of rapid watcher events without blocking
 // the watcher goroutine; consumers drain lazily.
 const perRunEventTapBufSize = 64
+
+// EventSubscription owns one PerRunEventTap subscription.
+//
+// Callers receive events through Events and MUST call Unsubscribe when their
+// consumer lifetime ends. Unsubscribe is synchronous and idempotent: after it
+// returns, the tap cannot send another event to this subscription. Done closes
+// when unsubscription has completed. Events is also closed; events buffered
+// before unsubscription remain available to receive before channel closure is
+// observed.
+//
+// The concrete handle intentionally exposes no channel-send capability.
+type EventSubscription struct {
+	tap    *PerRunEventTap
+	events chan core.EventEnvelope
+	done   chan struct{}
+	once   sync.Once
+}
+
+// Events returns the subscription's receive-only event channel.
+func (s *EventSubscription) Events() <-chan core.EventEnvelope {
+	return s.events
+}
+
+// Done returns a channel that closes after the subscription has been removed
+// from its tap and no further event can be sent to it.
+func (s *EventSubscription) Done() <-chan struct{} {
+	return s.done
+}
+
+// Unsubscribe synchronously removes this subscription from its tap.
+//
+// Removal is deliberately not canceled by ctx: retaining a dead subscriber
+// because its owner is already canceling would leak the handle for the rest of
+// the tap's lifetime. The context parameter keeps the lifecycle API compatible
+// with PhaseScope-style teardown and error aggregation. This synchronous
+// in-memory implementation cannot currently fail and always returns nil.
+func (s *EventSubscription) Unsubscribe(_ context.Context) error {
+	s.once.Do(func() {
+		tap := s.tap
+		tap.mu.Lock()
+		defer tap.mu.Unlock()
+		delete(tap.subs, s)
+		s.tap = nil
+		close(s.events)
+		close(s.done)
+	})
+	return nil
+}
 
 // NewPerRunEventTap constructs a PerRunEventTap that wraps underlying and
 // registers an initial subscriber. Returns the tap and that subscriber's
@@ -96,9 +144,29 @@ func NewPerRunEventTap(underlying handlercontract.EventEmitter, runID core.RunID
 	tap = &PerRunEventTap{
 		underlying: underlying,
 		runID:      runID,
+		subs:       make(map[*EventSubscription]struct{}),
 	}
 	events = tap.Subscribe()
 	return tap, events
+}
+
+// SubscribeOwned registers and returns a new independently owned subscription.
+// Every subsequent Emit/EmitWithRunID delivers a copy of the synthetic envelope
+// to Events (non-blocking, drop-if-full), independently of every other
+// subscription. The owner must call Unsubscribe when its consumer exits.
+func (t *PerRunEventTap) SubscribeOwned() *EventSubscription {
+	sub := &EventSubscription{
+		tap:    t,
+		events: make(chan core.EventEnvelope, perRunEventTapBufSize),
+		done:   make(chan struct{}),
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.subs == nil {
+		t.subs = make(map[*EventSubscription]struct{})
+	}
+	t.subs[sub] = struct{}{}
+	return sub
 }
 
 // Subscribe registers and returns a new independent subscriber channel. Every
@@ -110,12 +178,12 @@ func NewPerRunEventTap(underlying handlercontract.EventEmitter, runID core.RunID
 //
 // Subscribe is intended to be called at run-setup time, before the producing
 // watcher goroutine becomes hot. It is safe to call concurrently with Emit.
+//
+// Deprecated: use SubscribeOwned and call Unsubscribe when the consumer exits.
+// This compatibility wrapper retains its subscription until the tap itself is
+// released because the returned channel has no ownership handle.
 func (t *PerRunEventTap) Subscribe() <-chan core.EventEnvelope {
-	ch := make(chan core.EventEnvelope, perRunEventTapBufSize)
-	t.mu.Lock()
-	t.subs = append(t.subs, ch)
-	t.mu.Unlock()
-	return ch
+	return t.SubscribeOwned().Events()
 }
 
 // fanOut delivers env to every registered subscriber channel. Each send is
@@ -123,12 +191,11 @@ func (t *PerRunEventTap) Subscribe() <-chan core.EventEnvelope {
 // subscriber only, never blocking the producer or starving other subscribers.
 func (t *PerRunEventTap) fanOut(env core.EventEnvelope) {
 	t.mu.Lock()
-	subs := t.subs
-	t.mu.Unlock()
-	for _, ch := range subs {
+	defer t.mu.Unlock()
+	for sub := range t.subs {
 		// Non-blocking send: discard for this subscriber if its buffer is full.
 		select {
-		case ch <- env:
+		case sub.events <- env:
 		default:
 		}
 	}

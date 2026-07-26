@@ -8,10 +8,10 @@ requirement-prefix: HC
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.8.0
+version: 0.9.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-14
+last-updated: 2026-07-24
 depends-on:
   - architecture
   - execution-model
@@ -33,7 +33,7 @@ It is normative for every subsystem that launches, monitors, or interprets the o
 - Go `Handler` and `Session` interfaces.
 - Wire protocol for the daemon-to-handler-subprocess boundary (LaunchSpec delivery on the daemon Unix socket, NDJSON-framed progress-event stream, outcome delivery, capability negotiation, `ErrProtocolMismatch`).
 - `LaunchSpec` record shape, including `snapshot_token` for reconciliation investigator handlers and `provisioning_timeout` for skill installation.
-- Goroutine ownership split: daemon-owned watcher + S04-owned adapter. The watcher is authoritative for every bus-emitted handler-lifecycle event; handler-subprocess progress-stream messages are translated into events by the watcher (see §4.2.HC-007, §4.2.HC-010).
+- Session-observer ownership split: daemon-owned authoritative watcher + S04-owned adapter. The watcher is substrate-neutral and authoritative for lifecycle ordering, deduplication, redaction, and publication, subject only to the HC-070 input-ack and HC-057 daemon-heartbeat carve-outs (see §4.2.HC-007, §4.3.HC-011).
 - Session lifecycle event emission obligations (`agent_started`, `agent_ready`, `agent_output_chunk`, `agent_completed`, `agent_failed`, `agent_rate_limited`, `agent_rate_limit_cleared`, `agent_heartbeat`, `skills_provisioned`, `session_log_location`).
 - `context.Context` propagation rules (cancellation, deadlines, value scoping).
 - Typed error taxonomy: five primary sentinel classes (`ErrTransient`, `ErrStructural`, `ErrDeterministic`, `ErrCanceled`, `ErrBudget`) plus two structural sub-sentinels (`ErrProtocolMismatch`, `ErrSkillProvisioningFailed`).
@@ -62,7 +62,7 @@ It is normative for every subsystem that launches, monitors, or interprets the o
 - **handler** — a Go type implementing the `Handler` interface that is responsible for launching, monitoring, and cleaning up an agent subprocess of a specific `agent_type`. (see §4.1)
 - **session** — a single instantiation of an agent subprocess produced by a `Handler.Launch` call; represented by the `Session` interface. (see §4.1)
 - **adapter** — a per-agent-type callback object owned by S04, invoked synchronously by the daemon's watcher goroutine on specific lifecycle events. Not a goroutine; not per-session state. (see §4.3)
-- **watcher** — the single goroutine per active session owned by S01 that reads the handler's progress stream and publishes events. (see §4.3)
+- **authoritative lifecycle observer (watcher)** — the single session-scoped observer owned by S01 that consumes the substrate's authoritative lifecycle source and enforces lifecycle ordering, deduplication, redaction, and publication. A watcher may consume a conventional progress stream or a substrate-specific source such as the Claude hook bridge. Auxiliary input-delivery, commit, verdict, artifact, budget, and heartbeat observers are not lifecycle watchers. (see §4.3)
 - **LaunchSpec** — the record the daemon hands to `Handler.Launch`, carrying everything the handler needs to start an agent subprocess. (see §4.2, §6.1)
 - **wire protocol** — the process-boundary contract: how the daemon and the handler subprocess exchange LaunchSpec, progress events, and outcomes. (see §4.2, §7.2)
 - **ready-state** — the moment a handler subprocess has signalled it is able to accept work, indicated by the `agent_ready` event. (see §4.9)
@@ -83,7 +83,7 @@ Tags: mechanism
 
 #### HC-002 — Session is the Go interface defined in §6.1
 
-Every `Handler.Launch` success MUST return a `Session` satisfying the interface defined in §6.1. The session object's lifetime begins with `Launch` return and ends when `Wait` returns. All session methods MUST be safe to call from any goroutine.
+Every `Handler.Launch` success MUST return a `Session` satisfying the interface defined in §6.1. A successful launch MUST install the session's authoritative watcher before making the session available to the caller. The session object's caller-visible lifetime begins with `Launch` return. Session ownership MUST NOT be released until both `Wait` and the watcher's observable completion have returned. All session methods MUST be safe to call from any goroutine.
 
 Tags: mechanism
 
@@ -95,7 +95,7 @@ Tags: mechanism
 
 #### HC-003a — Workflow-mode is dispatch-level, not handler-selector
 
-`LaunchSpec.workflow_mode` (per §4.2.HC-006) MUST NOT be used to pick among registered handlers. Handler selection remains the config-level binding from `agent_type` to a registered handler per §4.1.HC-003. The resolved workflow mode determines (a) which phase the daemon launches next within a multi-phase mode and (b) the LaunchSpec's `phase`, `iteration_count`, and `claude_session_id` fields per §4.2.HC-006. The same registered handler MUST be used across every phase of a multi-phase mode (e.g., both `implementer-initial` and `reviewer` phases of `review-loop` resolve to the same `agent_type` binding); the phases are distinguished by LaunchSpec content (prompt, `required_skills[]`, `freedom_profile_ref`), NOT by handler binding. The adapter surface (§4.3.HC-013) MUST NOT expand to accommodate workflow-mode dispatch; watcher behavior (§4.3.HC-011) MUST remain mode-agnostic.
+`LaunchSpec.workflow_mode` (per §4.2.HC-006) MUST NOT itself pick among registered handlers. Handler selection remains the config-level binding from `agent_type` to a registered handler per §4.1.HC-003. Implementer phases use the same registered handler; the reviewer uses that handler by default, with the sole explicit `reviewer_harness` override defined by [harness-contract.md HN-015]. An override still resolves through the same registry seam. The adapter surface (§4.3.HC-013) MUST NOT expand to accommodate workflow-mode dispatch; watcher behavior (§4.3.HC-011) MUST remain mode-agnostic.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -209,7 +209,7 @@ The delivered LaunchSpec MUST conform to the record shape in §6.1. Required fie
 
 **`iteration_count`** (integer, optional, 1..3). Present iff the dispatched run is in a multi-phase mode that iterates. For `review-loop`, the value is bounded by the hardcoded iteration cap of 3 declared in [operator-nfr.md §4.1 ON-004]. For `workflow_mode = single`, the field MUST be omitted.
 
-**`claude_session_id`** (string, optional). Present iff `phase = implementer-resume` for a `review-loop` dispatch; carries the Claude Code session identifier used to drive `claude --resume <id>` and is distinct from harmonik's own `session_id` per §6.1. The `reviewer` phase MUST omit `claude_session_id`; each reviewer launch is a fresh Claude session. The `implementer-initial` phase MUST omit `claude_session_id` (no prior session exists to resume). Handlers that do not implement Claude Code's session-resume capability MAY ignore the field; handlers that do MUST honor it when present. The handler-side minting and propagation discipline for `claude_session_id` is normative per §4.10.HC-045c; the LaunchSpec field is populated by the daemon per HC-006 (this requirement) for the resume case only, and the daemon's durability obligation for the persisted value is per [claude-hook-bridge.md §4.6 CHB-023].
+**`claude_session_id`** (string, optional). Carries the caller-owned Minted continuity identity for a Claude launch or the prior durable identity on resume and is distinct from harmonik's per-launch `session_id` per §6.1. For Minted initial/reviewer launches the caller populates the concrete launch artifact before `Handler.Launch`; for resume it supplies the durable prior implementer identity. The handler MUST reuse/report the supplied value and MUST NOT replace it. Captured harness behavior is owned by [harness-contract.md HN-008]. Durability is per [claude-hook-bridge.md §4.6 CHB-023].
 
 > INFORMATIVE: The `phase = reviewer` launch typically carries an `agent-reviewer` skill in `required_skills[]` per the [CLAUDE.md] skill registry; `phase = implementer-*` launches carry the implementer skill set. Selection of `required_skills[]` is the daemon's claim-path responsibility per §4.11.HC-050, not the handler's. The reviewer phase's `outcome_emitted` corresponds to the reviewer writing a verdict file at `.harmonik/review.json` (archived to `.harmonik/review.iter-<N>.json` between iterations) per [workspace-model.md §4.7].
 
@@ -227,18 +227,18 @@ The implementation in `internal/daemon/claudelaunchspec.go` (`buildClaudeLaunchS
 
 | Field / group | `implementer-initial` | `implementer-resume` | `reviewer` | Primary spec ref |
 |---|---|---|---|---|
-| **`argv[0]`** (`--session-id` vs `--resume`) | `--session-id <fresh-UUIDv7>` — handler mints a new UUID | `--resume <claude_session_id>` — reuses the UUID from `LaunchSpec.claude_session_id` (carried from prior iteration) | `--session-id <fresh-UUIDv7>` — handler mints a new UUID; MUST NOT reuse a prior reviewer ID across iterations | §4.10.HC-045c; [claude-hook-bridge.md §4.3 CHB-008] |
+| **`argv[0]`** (`--session-id` vs `--resume`) | `--session-id <fresh-UUIDv7>` — caller mints and supplies the launch artifact | `--resume <claude_session_id>` — reuses the durable prior implementer identity | `--session-id <fresh-UUIDv7>` — caller mints a fresh reviewer identity; MUST NOT reuse a prior reviewer ID | §4.10.HC-045c; [claude-hook-bridge.md §4.3 CHB-008] |
 | **`argv` — `--model` / `--effort`** | Present iff `LaunchSpec.model_preference.{model,effort}` is non-empty; omitted otherwise | Same rule as `implementer-initial` (shared `model_preference` descriptor) | Same rule as `implementer-initial`; reviewer MAY carry a different profile if the operator resolves it differently | §4.10.HC-055a; §4.10.HC-055 |
 | **`argv` — `--dangerously-skip-permissions`** | Present iff `workspace_path` canonicalizes under the harmonik worktrees root | Same rule | Same rule | §4.10.HC-055b |
 | **`env` — `HARMONIK_PHASE`** | `"implementer-initial"` | `"implementer-resume"` | `"reviewer"` | [claude-hook-bridge.md §4.2 CHB-006] |
 | **`env` — `HARMONIK_ITERATION_COUNT`** | `"1"` (first cycle iteration) | `"2"` or `"3"` (subsequent iterations, capped at 3 per ON-004) | Same value as the co-iterating implementer phase; set by daemon on construction | §4.2.HC-006 (`iteration_count` field); [operator-nfr.md §4.1 ON-004] |
-| **`env` — `HARMONIK_CLAUDE_SESSION_ID`** | Fresh UUIDv7 minted by handler | Reused from prior implementer-initial launch (same value as `LaunchSpec.claude_session_id`) | Fresh UUIDv7 minted by handler; distinct from any implementer session | [claude-hook-bridge.md §4.2 CHB-006]; §4.10.HC-045c |
+| **`env` — `HARMONIK_CLAUDE_SESSION_ID`** | Caller-supplied fresh UUIDv7 | Reused durable prior implementer identity | Caller-supplied fresh reviewer UUIDv7, distinct from implementer continuity | [claude-hook-bridge.md §4.2 CHB-006]; §4.10.HC-045c |
 | **`env` — `HARMONIK_WORKFLOW_MODE`** | `"review-loop"` | `"review-loop"` | `"review-loop"` | [claude-hook-bridge.md §4.2 CHB-006] (shared across all phases) |
-| **`env` — `HARMONIK_RUN_ID` / `HARMONIK_WORKSPACE_PATH` / `HARMONIK_DAEMON_SOCKET`** | Set from `claudeRunCtx.runID` / `workspacePath` / `daemonSocket` | Same values as `implementer-initial` (same run, same worktree, same socket) | Same `runID` and `daemonSocket`; `workspacePath` MAY be the same worktree or a review-staging path (see `working_dir` row below) | [claude-hook-bridge.md §4.2 CHB-006] |
-| **`working_dir` (`LaunchSpec.WorkDir`)** | Bead-assigned worktree path (e.g. `.harmonik/worktrees/<run_id>/`) | Same worktree as `implementer-initial` (resume writes to the same tree) | Same worktree as the implementer phases at MVH; a separate review-staging path is a post-MVH option | §4.2.HC-006 (`workspace_path` field); [workspace-model.md §4.1] |
-| **`LaunchSpec.claude_session_id` (wire-protocol field)** | **ABSENT** — no prior session exists | **PRESENT** — carries the Claude session ID minted by the `implementer-initial` launch; durability obligation per [claude-hook-bridge.md §4.6 CHB-023] | **ABSENT** — each reviewer launch is a fresh session; MUST NOT inherit any prior reviewer or implementer `claude_session_id` | §4.2.HC-006; §4.10.HC-045c |
+| **`env` — `HARMONIK_RUN_ID` / `HARMONIK_WORKSPACE_PATH` / `HARMONIK_DAEMON_SOCKET`** | Set from `claudeRunCtx.runID` / run-workspace path / `daemonSocket` | Same values as `implementer-initial` (same run workspace and socket) | Same `runID` and `daemonSocket`; `HARMONIK_WORKSPACE_PATH` is the mandatory box-A reviewer-projection path for this iteration per WM-027a, not the implementer run workspace | [claude-hook-bridge.md §4.2 CHB-006]; [workspace-model.md §4.7 WM-027a] |
+| **`working_dir` (`LaunchSpec.WorkDir`)** | Bead-assigned run-workspace path (e.g. `.harmonik/worktrees/<run_id>/`) | Same run workspace as `implementer-initial` | The short-lived, unleased box-A reviewer projection at the verified implementer SHA; same-worktree reviewer execution is non-conforming | §4.2.HC-006 (`workspace_path` field); [workspace-model.md §4.7 WM-027a] |
+| **`LaunchSpec.claude_session_id` (wire-protocol field)** | **PRESENT** for Minted Claude — caller-supplied fresh identity | **PRESENT** — durable prior implementer identity | **PRESENT** for Minted Claude — caller-supplied fresh reviewer identity; never inherited | §4.2.HC-006; §4.10.HC-045c |
 | **`session_id` source (harmonik-side `handlerSessionID`)** | Fresh UUIDv7 minted by `buildClaudeLaunchSpec` at call time | Fresh UUIDv7 minted at each `buildClaudeLaunchSpec` call (distinct from the Claude session ID being reused) | Fresh UUIDv7 minted at each `buildClaudeLaunchSpec` call | §4.2.HC-006; [event-model.md §4.1] |
-| **`agent-task.md` path and content** | `<workspace_path>/agent-task.md` — contains bead body, no prior-verdict section | Same path; `AgentTaskPayload.PriorVerdictFile` + `PriorVerdictSummary` are set (prior-iteration context section rendered) | Same path; `AgentTaskPayload.ReviewBaseSHA` + `ReviewHeadSHA` are set (diff under review section rendered) | [claude-hook-bridge.md §4.x CHB-028]; `internal/workspace/agenttask_chb028.go` |
+| **`agent-task.md` path and content** | `<run_workspace_path>/.harmonik/agent-task.md` — contains bead body, no prior-verdict section | Same path; `AgentTaskPayload.PriorVerdictFile` + `PriorVerdictSummary` are set (prior-iteration context section rendered) | `<reviewer_projection_path>/.harmonik/agent-task.md`; `AgentTaskPayload.ReviewBaseSHA` + `ReviewHeadSHA` are set (diff under review section rendered) | [claude-hook-bridge.md §4.11 CHB-028]; [workspace-model.md §4.7 WM-027a]; `internal/workspace/agenttask_chb028.go` |
 | **`LaunchSpec.phase` wire-protocol field** | `"implementer-initial"` | `"implementer-resume"` | `"reviewer"` | §4.2.HC-006 (`phase` field definition) |
 | **`LaunchSpec.iteration_count` wire-protocol field** | `1` | `2` or `3` (bounded by ON-004 cap) | Same value as co-iterating implementer (daemon sets from loop counter) | §4.2.HC-006 (`iteration_count` field definition) |
 
@@ -387,16 +387,20 @@ Tags: mechanism
 
 ### 4.3 Concurrency model
 
-#### HC-011 — Daemon owns exactly one watcher goroutine per active session
+#### HC-011 — Daemon owns exactly one authoritative lifecycle observer per active session
 
-The daemon (S01 Orchestrator Core) MUST spawn exactly ONE watcher goroutine per active handler session. The watcher owns (a) the read-loop on the handler's progress stream, (b) publication of handler-emitted events to the in-process event bus per [event-model.md §4.3], and (c) cleanup at session end. N active sessions produce N watcher goroutines. Watchers MUST NOT share state across sessions.
+The daemon (S01 Orchestrator Core) MUST own exactly ONE authoritative lifecycle observer, called the watcher, per active handler session. Its authoritative source is substrate-dependent: a conventional handler uses its progress stream; an interactive handler MAY use a substrate-specific lifecycle source such as the Claude hook bridge. The source substitution does not change the cardinality or authority boundary.
+
+The watcher owns (a) consumption of the session's authoritative lifecycle source, (b) ordering and deduplication of lifecycle facts, (c) application of the redaction rules of §4.7, and (d) publication of handler-lifecycle events to the in-process event bus per [event-model.md §4.3]. Commit, verdict, artifact, budget, heartbeat, and input-delivery observers are auxiliary observers and MUST NOT count as lifecycle watchers or publish competing authoritative terminal events.
+
+The watcher MUST expose to its lifecycle owner an idempotent cancellation request and observable completion through the `WatcherLifetime` surface of §6.1. Completion means the authoritative source is closed, final terminal publication has been resolved, and no later handler-lifecycle event can be published for the session. N active sessions produce N independent watchers. Watchers MUST NOT share mutable state across sessions. Process wait and reap are separate responsibilities owned by [process-lifecycle.md §4.5 PL-014/PL-016]; the watcher is not required to own `cmd.Wait`.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### HC-011a — Watcher liveness and panic recovery
 
-The watcher goroutine body MUST install a `recover()` barrier: a panic within the watcher MUST be converted to `agent_failed` with class `ErrStructural`, sub-reason `watcher_panic`, and MUST NOT bring down the daemon. The same `recover()` discipline applies to subscriber goroutines: a subscriber panic MUST be isolated per-subscriber (routed through the dead-letter of §4.6.HC-027) and MUST NOT wedge the watcher's publish path. The daemon MUST maintain a per-watcher `last_read_event_at` timestamp updated on every successful socket read return (distinct from the `last_progress_event_at` of §7.1, which updates on successful message decode). A daemon-level supervisor MUST check, at cadence ≤ `T/4`, that every active watcher has advanced `last_read_event_at` within `T/2`; a watcher that has NOT (despite the subprocess being required to heartbeat at ≤ T/2 per §4.6.HC-026a) MUST be classified as a **daemon defect**, the session terminated, and `agent_failed` emitted with class `ErrStructural`, sub-reason `watcher_wedged`. This distinguishes watcher failure from agent silent-hang in the event record and prevents a wedged subscriber from being misattributed to the agent. The watcher-to-event-bus publish channel MUST have a small bounded buffer (implementation SHOULD default to 8 events); on buffer-full, the watcher MUST route to the dead-letter per §4.6.HC-027 rather than block indefinitely.
+The watcher execution body MUST install a `recover()` barrier: a panic within the watcher MUST be converted to `agent_failed` with class `ErrStructural`, sub-reason `watcher_panic`, and MUST NOT bring down the daemon. The same `recover()` discipline applies to subscriber goroutines: a subscriber panic MUST be isolated per-subscriber (routed through the dead-letter of §4.6.HC-027) and MUST NOT wedge the watcher's publish path. Watcher-health supervision MUST be source-independent and MUST branch only at the harness-declared completion seam of [harness-contract.md HN-007/HN-016/HN-017]. For a progress-stream/heartbeat source, the daemon maintains `last_read_event_at` and applies the existing `T/2` wedged-source check. For `Completion()==ProcessExit`, it MUST NOT invent heartbeat-staleness machinery; health is bounded by process-wait ownership, cancellation, and observable watcher completion. A wedged watcher is a daemon defect and emits `agent_failed{sub_reason=watcher_wedged}` without being misclassified as agent silent hang. The watcher-to-event-bus publish channel MUST have a small bounded buffer (implementation SHOULD default to 8 events); on buffer-full, the watcher MUST route to the dead-letter per §4.6.HC-027 rather than block indefinitely.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
@@ -722,7 +726,9 @@ Tags: mechanism
 
 #### HC-039 — Ready-state is signaled by agent_ready event
 
-Every handler subprocess MUST emit a single `agent_ready` event on process startup to signal it can accept work. The event payload MUST include `session_id` and `capabilities[]` at minimum; the full payload schema is declared in [event-model.md §6.3]. The daemon MUST NOT dispatch work to a session before observing `agent_ready` for that session.
+Every successfully launched handler session MUST produce exactly one genuine, session-specific `agent_ready` event to signal that it can accept work. For a conventional subprocess, the authoritative progress stream supplies the ready fact. For the interactive tmux substrate, the Claude hook bridge supplies the relay-backed ready fact per [claude-hook-bridge.md §4.5 CHB-013]. The watcher MUST deduplicate repeated source notifications and publish exactly one `agent_ready`.
+
+The event payload MUST include `session_id` and `capabilities[]` at minimum; the full payload schema is declared in [event-model.md §6.3]. Pane existence, successful spawn, `Launch` return, `launch_initiated`, first output, heartbeat, and input acknowledgement MUST NOT synthesize or substitute for genuine ready. The daemon MUST NOT dispatch work to a session before observing the authoritative `agent_ready` for that session.
 
 Tags: mechanism
 
@@ -734,7 +740,7 @@ Tags: mechanism
 
 #### HC-041 — Adapter-level ready detection
 
-The adapter's `DetectReady` callback (per §4.3.HC-013) MUST return `true` exactly when it has observed an `agent_ready` event for the session in question. Adapters MUST NOT synthesize ready-state from other signals (e.g., first output chunk).
+The adapter's `DetectReady` callback (per §4.3.HC-013) MUST return `true` exactly when it has observed the authoritative source's `agent_ready` fact for the session in question. Adapters MUST NOT synthesize ready-state from other signals, including first output, pane existence, successful launch, heartbeat, or input acknowledgement.
 
 Tags: mechanism
 
@@ -760,6 +766,8 @@ The 30 s default is informed by claude's observed cold-start latency (≤ 5 s ty
 
 The timeout MUST fire from the same goroutine that owns the session's lifecycle to ensure ordered Kill/Wait. Concurrent `agent_ready` arrival and timeout-expiry race is resolved in favour of `agent_ready` (last-second arrival wins).
 
+Repeated ready notifications from the authoritative source do not reset the timeout and MUST NOT produce more than one bus event. The watcher deduplication obligation of HC-039 applies before resolving the ready-versus-timeout race.
+
 **Front-stop composition (HC-070).** The per-input synchronous input ack of §4.1a HC-070 composes in front of this timeout as an earlier, positive, per-input acceptance signal; it does NOT replace or satisfy the `agent_ready` gate — first-work dispatch still requires `agent_ready` per HC-INV-004, and this `agent_ready` timeout remains the process-liveness guard for ready-state.
 
 Cross-refs: HC-039 (emitter identity), HC-041 (DetectReady), HC-070 (per-input ack, front-stop composition), [claude-hook-bridge.md §4.5 CHB-013] (SessionStart → agent_ready mapping), [claude-hook-bridge.md §4.7 CHB-018] (launch_initiated precursor, agent_ready gating), [claude-hook-bridge.md §4.7 CHB-020] (terminal-event mapping). Closes follow-up bead `hk-do7te`.
@@ -771,13 +779,13 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 For `agent_type == "claude-code"`, the daemon MAY emit `agent_heartbeat{phase:"reasoning"}` events on the handler-process's behalf at the [claude-hook-bridge.md §4.7 CHB-019] cadence (300 s). This is a permissive carve-out from CHB-019's "handler-process emits" language, justified by the absence of a distinct claude-handler wrapper binary at MVH. Subscribers MUST treat daemon-emitted heartbeats as semantically equivalent to handler-emitted heartbeats; no payload distinction is required.
 
-**Operational contract — daemon-side keep-alive goroutine.** The daemon implements HC-057 emission via a single background goroutine (`handler.RunHeartbeatLoop`) wired by the work-loop (implementation: `internal/daemon/claudeheartbeat.go` + `internal/daemon/workloop.go`). The following normative properties govern its behaviour:
+**Operational contract — daemon-side keep-alive task.** The daemon implements HC-057 emission via a single session-scoped background task. The following normative properties govern its behaviour:
 
 - **Tick interval.** The goroutine fires every `handler.HeartbeatInterval` = 300 s, satisfying the HC-026a obligation of ≤ T/2 (T = 600 s default). The interval is a constant, not configurable at MVH.
 
-- **Exit conditions.** The goroutine terminates on whichever fires first: (a) the run context (`ctx`) is cancelled, or (b) the `done` channel is closed. The work-loop closes `done` via `defer close(hbDone)` immediately after the Claude subprocess exits (`cmd.Wait` returns). The goroutine MUST NOT block the work-loop exit path; close of `done` is the authoritative signal and is guaranteed to fire even on error paths.
+- **Exit conditions and completion.** The task terminates on whichever fires first: (a) its enclosing phase or run context is cancelled, or (b) its explicit stop signal is closed after the session reaches a terminal outcome. The producer MUST expose observable completion to the phase owner. Stop is idempotent and MUST be signalled on every success, error, timeout, and cancellation path. Phase-level cancellation and join are owned by [process-lifecycle.md §4.5 PL-014b].
 
-- **Interaction with the silent-hang FSM (§7.1 / HC-026a).** Each daemon-emitted heartbeat is published on the event bus as `agent_heartbeat` and observed by the watcher, which updates `last_progress_event_at`. This resets the §7.1 state machine from `warning → active` or extends the `active` timeout, preventing false-positive silent-hang terminations during extended reasoning. Daemon-emitted heartbeats are semantically indistinguishable from subprocess-emitted heartbeats for FSM purposes.
+- **Interaction with the silent-hang FSM (§7.1 / HC-026a).** A daemon-emitted heartbeat need not traverse the authoritative watcher before publication. It MUST pass through the same redaction and event-durability boundary and MUST update the session's `last_progress_event_at` exactly as a handler-emitted heartbeat would. This resets the §7.1 state machine from `warning → active` or extends the `active` timeout, preventing false-positive silent-hang terminations during extended reasoning. Daemon-emitted heartbeats are semantically indistinguishable from handler-emitted heartbeats for session-liveness purposes. Heartbeat is not evidence of reviewer work activity; reviewer allowance semantics are owned by [execution-model.md §4.3 EM-015d].
 
 - **Back-pressure behaviour.** The emit callback (`bus.EmitWithRunID`) may return an error if the underlying bus publish path is unavailable or the per-run tap channel is full (bounded at 8 events per §4.6 and §6.3 dead-letter routing). Such errors are **non-fatal**: the goroutine logs the error to stderr and continues. The daemon's silent-hang FSM is the authoritative liveness guard; a single missed heartbeat does not trigger termination, and normal cadence resumes on the next tick.
 
@@ -877,17 +885,17 @@ Per-connection lifetime requirements: dial timeout ≤ 5 s, single message ≤ 1
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
-#### HC-045c — Handler-side claude_session_id minting and resume
+#### HC-045c — Caller-owned claude_session_id launch and resume
 
-For `agent_type = "claude-code"`, the handler subprocess MUST observe the following session-id lifecycle:
+For `agent_type = "claude-code"`, the caller owns Minted identity and the handler MUST observe:
 
-(a) For `phase ∈ {single, implementer-initial, reviewer}`: the handler MUST mint a fresh UUIDv7 as `claude_session_id`, pass it to Claude via `--session-id <claude_session_id>`, AND include `claude_session_id` in the payload of the `handler_capabilities` progress-stream message per §4.2.HC-009.
+(a) For `phase ∈ {single, implementer-initial, reviewer}`: the caller MUST mint a fresh UUIDv7 before `Handler.Launch` and place it in the concrete launch artifact. The handler MUST pass that exact value via `--session-id` and report it in `handler_capabilities`; it MUST NOT mint a replacement.
 
 (b) For `phase = implementer-resume`: the handler MUST reuse `LaunchSpec.claude_session_id` (carried from the prior iteration, populated by the daemon per §4.2.HC-006), pass it to Claude via `--resume <claude_session_id>` (NOT `--session-id`), and include the same value in `handler_capabilities`.
 
 (c) The handler MUST NOT pass `--fork-session`, `--bare`, or `--no-session-persistence` flags to Claude, and MUST NOT set the env var `CLAUDE_CODE_SKIP_PROMPT_HISTORY`; these flags / vars conflict with bridge invariants per [claude-hook-bridge.md §4.2 CHB-007].
 
-(d) Each reviewer phase MUST mint a fresh `claude_session_id`; the handler MUST NOT inherit reviewer claude_session_id across iterations.
+(d) The caller MUST supply a fresh reviewer identity each iteration; the handler MUST NOT inherit or replace it.
 
 (e) Orphan-reconnect lookups (per §4.3 HC-016a) MUST resolve `claude_session_id` from `Run.context.claude_session_id` reconstructed per [execution-model.md §4.7 EM-031] from the git checkpoint trail; JSONL-tail reads MUST NOT be used as the source of truth for `claude_session_id`.
 
@@ -1093,9 +1101,9 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 ## 5. Invariants
 
-#### HC-INV-001 — Exactly one watcher goroutine per active session
+#### HC-INV-001 — Exactly one authoritative lifecycle observer per active session
 
-For every active handler session tracked by the daemon, there MUST exist exactly one live watcher goroutine owned by S01. Zero watchers with an active session is a daemon defect; more than one watcher per session is a daemon defect. This invariant is observable via the daemon's health-check surface per [operator-nfr.md §4.9].
+For every active handler session tracked by the daemon, there MUST exist exactly one live authoritative watcher owned by S01, independent of whether its source is a conventional progress stream or a substrate-specific lifecycle source. Zero watchers with an active session is a daemon defect; more than one watcher per session is a daemon defect. Auxiliary observers do not satisfy this invariant. This invariant is observable via the daemon's health-check surface per [operator-nfr.md §4.9].
 
 Tags: mechanism
 
@@ -1113,7 +1121,7 @@ Tags: mechanism
 
 #### HC-INV-004 — agent_ready precedes work dispatch
 
-For every session, the sequence `handler_capabilities` → `session_log_location` → `skills_provisioned` → `agent_ready` → `Launch returns` → (first work dispatch) MUST hold. The watcher MUST NOT publish `agent_ready` to subscribers before it has delivered `handler_capabilities`, `session_log_location`, and `skills_provisioned` to subscribers in that order; the daemon MUST NOT dispatch work to a session before that session's `agent_ready` bus event has been published.
+For every session, the sequence `successful spawn / Launch return` → `launch_initiated` → `agent_ready` → (first work dispatch) MUST hold. Independently, the watcher MUST NOT publish `agent_ready` to subscribers before it has delivered `handler_capabilities`, `session_log_location`, and `skills_provisioned` to subscribers in that order. The daemon MUST NOT dispatch work to a session before that session's genuine, authoritative `agent_ready` bus event has been published. Input acknowledgement composes after this first-work ready gate and does not satisfy it.
 
 Tags: mechanism
 
@@ -1134,6 +1142,8 @@ Tags: mechanism
 For every handler-lifecycle event type enumerated in §6.4 and §4.2.HC-007, the session watcher (§4.3.HC-011) MUST be the SOLE publisher to the in-process event bus. No other component — including in-process `Handler` fakes per the §4.8.HC-035 carve-out — MAY publish a handler-lifecycle event directly. In-process fakes per HC-035 MUST route their emissions through the same watcher and redaction middleware (§4.7) that a real-subprocess-backed session uses; a fake that bypasses the watcher bypasses HC-INV-003 (redaction) and HC-INV-004 (ordering) by construction. This invariant makes the watcher's position as the redaction and ordering enforcement point normative rather than descriptive.
 
 **Input-ack events carve-out (HC-070).** The `agent_input_acked` / `agent_input_stale` events indexed under §6.4 "Input-ack events" are **driver-emitted** (per HC-070): the structured input driver publishes them at the moment it observes protocol-level acceptance or the bounded-liveness timeout (AIS-INV-001), which is a distinct emission point from the session watcher's lifecycle-event stream. These two event types are therefore **EXCLUDED** from this invariant's "sole publisher" scope — the watcher is NOT their publisher. They remain subject to the redaction middleware (§4.7) and to event-model registration ([event-model.md §8], EV-027); their ordering guarantee is the per-submission bounded-liveness terminal of HC-INV-008 / AIS-INV-001, not the watcher's lifecycle ordering (HC-INV-004). This carve-out is scoped to exactly these two driver-emitted input-ack types; every other §6.4 handler-lifecycle event remains watcher-published.
+
+**Daemon-heartbeat carve-out (HC-057).** A daemon-emitted `agent_heartbeat` MAY publish through the common redaction and event-durability boundary without first traversing the watcher. This is the sole liveness-emission carve-out. It does not create a second watcher, cannot publish a terminal lifecycle event, and is semantically equivalent to handler-emitted heartbeat only for session liveness and silent-hang timing.
 
 Tags: mechanism
 
@@ -1159,7 +1169,7 @@ A handler emitting `Outcome.context_updates` containing a key NOT in the active 
 
 The warn-and-drop posture (rather than reject-as-structural) is deliberate: handler authors should NOT be obligated to know the workflow author's edge-LHS surface. The registered-key list is a routability registry, not an emission-legality registry. A handler that emits a key the workflow does not consume is harmless; the warning surfaces drift so workflow authors can either extend the registry or remove the emission.
 
-Registered keys MUST conform to the identifier grammar declared by [workflow-graph.md §10 WG-031] (a subset of the policy-expression grammar of [control-points.md §6.4]); the validator rejects malformed registered-key declarations at workflow ingest. Reserved keys per [execution-model.md §4.3 EM-012] (`iteration_count`, `last_verdict`, `claude_session_id`, `last_diff_hash` under `workflow_mode = review-loop`) are implicitly registered for review-loop workflows and MUST NOT be re-declared in the workflow's `context_keys` attribute (re-declaration is a validator error).
+Registered keys MUST conform to the identifier grammar declared by [workflow-graph.md §10 WG-031] (a subset of the policy-expression grammar of [control-points.md §6.4]); the validator rejects malformed registered-key declarations at workflow ingest. Reserved keys per [execution-model.md §4.3 EM-012] (`iteration_count`, `last_verdict`, `claude_session_id`, `last_diff_hash`, `last_iteration_head_sha` under `workflow_mode = review-loop`) are implicitly registered for review-loop workflows and MUST NOT be re-declared in the workflow's `context_keys` attribute (re-declaration is a validator error).
 
 Tags: mechanism
 
@@ -1181,6 +1191,13 @@ INTERFACE Session:
     Kill(ctx) -> error                             -- signals the subprocess to exit; safe to call multiple times
     Wait(ctx) -> (Outcome, error)                  -- blocks until the subprocess terminates; safe to call multiple times; returns the Outcome from the final outcome_emitted event, or a typed sentinel on crash
     LogLocation() -> String                        -- returns the absolute session-log path emitted in session_log_location
+```
+
+```
+INTERFACE WatcherLifetime:                             -- session-private ownership surface exposed to the phase owner; not a handler adapter
+    Cancel(ctx) -> error                               -- idempotently seals the authoritative lifecycle source against new admission
+    Done() -> ReceiveOnlySignal                        -- closes exactly once after source close, final terminal publication resolution, and prevention of later lifecycle publication
+    Err() -> error | None                              -- stable completion error after Done; None on clean completion
 ```
 
 ```
@@ -1215,7 +1232,7 @@ RECORD LaunchSpec:
     workflow_id           : UUID                    -- [execution-model.md §4.1 Workflow]
     node_id               : String                  -- node_id within workflow
     agent_type            : String                  -- [architecture.md §6.1 Agent type identifier]
-    workspace_path        : String                  -- absolute path to the run's worktree per [workspace-model.md §4.1]
+    workspace_path        : String                  -- absolute phase workspace: run workspace for implementers, mandatory reviewer projection for review-loop reviewers per [workspace-model.md §4.7 WM-027a]
     required_skills       : List<String>            -- resolved skill names per [control-points.md §4.11]
     skill_search_paths    : List<String>            -- ordered list of absolute paths to search for skill packages
     egress_whitelist      : List<String> | None     -- domain patterns from role's permission_schema per [control-points.md §4.11.CP-059]; None = unrestricted; [] = deny all
@@ -1228,7 +1245,7 @@ RECORD LaunchSpec:
     workflow_mode         : Enum | None             -- {single, review-loop, dot}; present iff non-default mode resolved per §4.2.HC-006; observational only per §4.1.HC-003a
     phase                 : Enum | None             -- multi-phase modes only; for review-loop: {implementer-initial, implementer-resume, reviewer}; omitted for single
     iteration_count       : Integer | None          -- present iff phase present and mode iterates; 1..3 for review-loop per [operator-nfr.md §4.1 ON-004]
-    claude_session_id     : String | None           -- present iff phase=implementer-resume; Claude Code session ID for `claude --resume <id>`; distinct from SessionID
+    claude_session_id     : String | None           -- present for every Minted Claude launch: fresh caller-supplied identity for single/initial/reviewer, durable prior implementer identity for resume; distinct from SessionID; Captured policy may omit until native observation
     model_preference      : ModelPreference | None  -- resolved at claim per [execution-model.md §4.3.EM-012b]; shape-validated per §4.10.HC-055a; absent or {model:"",effort:""} ⟹ tool default
     schema_version        : Integer                 -- N-1 readable per [operator-nfr.md §4.5]
 ```
@@ -1486,14 +1503,14 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 
 - **HC-001 — HC-004 (interfaces).** Interface-conformance unit tests (every registered handler implements `Handler`; every `Launch` return value implements `Session`). Idempotency test: double-launch on the same `(run_id, node_id)` returns the existing session.
 - **HC-005 — HC-010 (wire protocol).** Wire-protocol integration tests with the twin handler: LaunchSpec round-trip under both delivery modes (stdin and file-path), handshake sequence verification, NDJSON-framing conformance test (`HC-007a`) with embedded-newline rejection and 1-MiB-line-cap rejection, message-boundary durability test (`HC-007b`) forcing socket EOF mid-JSON-object, version-negotiation negative test (`ErrProtocolMismatch`), post-outcome shutdown timeout scenario (`HC-008a`), dirty-exit-inside-shutdown-window scenario asserting one-terminal-event invariant.
-- **HC-011 — HC-016 (concurrency).** Race-detector scenario tests covering N concurrent sessions; invariant test asserting exactly-one watcher per session via daemon introspection; adapter-no-goroutine-spawn test via goroutine-count assertions; watcher-panic-recovery test (`HC-011a`) asserting panic is converted to `agent_failed`; watcher-wedge test (`HC-011a`) forcing a blocked subscriber and asserting `watcher_wedged` sub-reason fires at `T/2` without misattribution to silent-hang.
+- **HC-011 — HC-016 (concurrency).** Race-detector scenario tests covering N concurrent sessions on both conventional and interactive substrates; invariant test asserting exactly one authoritative watcher per active session via daemon introspection; assertion that auxiliary observers do not count as watchers; adapter-no-goroutine-spawn test via goroutine-count assertions; watcher-panic-recovery test (`HC-011a`) asserting panic is converted to `agent_failed`; watcher-wedge test (`HC-011a`) forcing a blocked subscriber and asserting `watcher_wedged` sub-reason fires at `T/2` without misattribution to silent-hang; blocked-source cancellation test asserting `Done` closes and `Err` stabilizes; repeated/concurrent cancel test asserting idempotency; and ownership-release test asserting neither the session nor its phase is released before watcher completion.
 - **HC-017 — HC-019 (context).** Cancellation test suite: `ctx` cancel at every phase of launch and session lifetime; deadline-propagation test asserting subprocess receives the deadline; context-value lint asserting no business data is carried via ctx values.
 - **HC-020 — HC-023 (error taxonomy).** Error-wrapping tests: every boundary-return error satisfies `errors.Is` for exactly one of the five primary sentinels; `ErrProtocolMismatch` and `ErrSkillProvisioningFailed` satisfy both their own sentinel and `ErrStructural`; narrowest-first dispatch order test.
 - **HC-024 — HC-027 (async error propagation).** Subprocess-crash scenario test with twin forcing each failure class; rate-limit scenario test covering `agent_rate_limited` → `agent_rate_limit_cleared`; dead-letter test for undeliverable events.
-- **HC-026 + HC-026a + §7.1 (silent-hang + heartbeat).** State-machine unit tests covering every transition in the §7.1 table; timing-based scenario test with twin-forced silence confirming warning → soft-terminate → hard-terminate sequence; false-positive resilience test: twin emitting heartbeats during long reasoning MUST NOT trigger silent-hang; false-negative detection test: twin emitting no messages (no heartbeats) MUST trigger silent-hang within `T` + tick-jitter.
+- **HC-026 + HC-026a + HC-057 + §7.1 (silent-hang + heartbeat).** State-machine unit tests covering every transition in the §7.1 table; timing-based scenario test with twin-forced silence confirming warning → soft-terminate → hard-terminate sequence; false-positive resilience test: twin emitting heartbeats during long reasoning MUST NOT trigger silent-hang; false-negative detection test: twin emitting no messages (no heartbeats) MUST trigger silent-hang within `T` + tick-jitter; handler- and daemon-emitted heartbeat equivalence test for liveness; assertion that daemon heartbeat does not create a second watcher and need not loop through the watcher; and cancellation/completion test asserting the heartbeat task joins on every phase terminal path.
 - **HC-028 — HC-034 (secrets).** Redaction-middleware unit tests for the common-prefix regex; per-handler-pattern registration tests; compile-time schema-check test verifying a registered event type with a secret-shaped field name is rejected at startup; end-to-end test asserting no secret appears in event log or session log.
 - **HC-035 — HC-038 (twin parity, including HC-036a).** Interface-equivalence test suite: every twin handler (the canonical subprocess) and its real counterpart pass the same interface-conformance tests; daemon-codebase lint asserting zero `if isTwin` branches. Separately: in-process-fake carve-out test confirming unit-test fakes of `Handler`/`Session` are NOT required to honor the wire protocol. HC-036a script-file format tests: load-time rejection of unknown `heartbeat_mode` values; rejection of missing or empty `type` in any ScriptMessage; `wall_clock` default applied when `heartbeat_mode` is absent; `relative_timestamp_ms` ignored in `wall_clock` mode and honoured in `scripted` mode; `type` key in `payload` silently overwritten.
-- **HC-039 — HC-041 (ready-state).** Ready-state scenario test: work dispatch before `agent_ready` is rejected; twin emits `agent_ready` identically to real handler.
+- **HC-039 — HC-041 + HC-056 (ready-state).** Ready-state scenarios for conventional and interactive substrates: work dispatch before genuine `agent_ready` is rejected; pane existence, successful launch, first output, heartbeat, and input acknowledgement do not synthesize ready; twin emits `agent_ready` identically to the real handler; repeated source notifications publish exactly one ready; launch/ready/first-input order satisfies HC-INV-004; and a ready notification concurrent with timeout wins without producing duplicate ready or terminal events.
 - **HC-042 — HC-045 (trust).** Launch-path negative test: missing binary, mismatched commit hash. System-handler path (via `system_handler=true` declaration) exercised via Claude Code fixture.
 - **HC-046 — HC-050 (skill injection).** Skill-injection scenario tests: (a) `required_skills` not resolvable triggers `ErrSkillProvisioningFailed` at launch per `HC-048`; (b) resolved-but-provisioning-fails-transiently path retries per `HC-048a` and eventually succeeds within `provisioning_timeout`; (c) resolved-but-provisioning-fails-after-backoff path reclassifies to `ErrStructural` on attempt-cap exhaustion; `skills_provisioned` event carries the installed set; end-to-end Beads-CLI skill provisioning test. **HC-048b egress and workspace-escape tests:** (d) skill manifest declaring an egress domain present in `LaunchSpec.egress_whitelist[]` provisions successfully; (e) skill manifest declaring an egress domain NOT in `egress_whitelist[]` fails with `ErrSkillProvisioningFailed` and `skills_provisioned` lists only prior successfully-installed skills; (f) skill manifest declaring no `egress_domains[]` is unaffected by a non-`None` `egress_whitelist`; (g) `egress_whitelist = None` is a no-op for all skills; (h) skill whose provisioning file path escapes `workspace_path` (via `../` traversal) fails with `ErrSkillProvisioningFailed`; (i) `rejected_skills[]` in `skills_provisioned` event names the failing skill and `reject_reason`. **Agent-comms skill (N3 — at-least-once / dedupe-by-`event_id`):** end-to-end agent-comms skill provisioning test; the agent-comms skill carries the normative N3 requirement (at-least-once delivery, recipient MUST dedupe by `event_id`, re-delivered `event_id` MUST be a no-op) per the FINALIZED agent-comms spec (peer sign-off 2026-06-01); skill content verified against `~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §FINALIZED §N3`; skill file at `.claude/skills/agent-comms/SKILL.md`.
 - **HC-051 — HC-053 (modularity).** Boundary-enforcement static-analysis rule: daemon packages MUST NOT import ntm-specific types. Changeable-adapter test: swapping the claude-code adapter for a mock adapter does not alter daemon behavior.
@@ -1596,6 +1613,7 @@ Default-if-unresolved: Log-only. Promote to Cat 6 escalation if observed disagre
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-24 | 0.9.0 | agent (reviewloop-decoupling C2) | **Handler lifecycle observer made substrate-neutral and joinable.** HC-011/HC-011a and HC-INV-001 now require exactly one authoritative lifecycle observer per active session whether its source is a conventional progress stream or a substrate-specific hook source; auxiliary delivery, commit, verdict, artifact, budget, and heartbeat observers do not satisfy watcher cardinality. Added the session-private `WatcherLifetime` cancellation/completion surface and made ownership release wait for watcher completion without assigning process `Wait`/reap to the watcher. HC-039/041/056 and HC-INV-004 now require successful spawn/Launch return → `launch_initiated` → genuine, deduplicated `agent_ready` → first input, while retaining capability/session-log/skill ordering before ready and the existing ready-timeout race rule. HC-057 and HC-INV-007 now explicitly permit daemon heartbeat to bypass the watcher while retaining equivalent session-liveness semantics, common redaction/durability, bounded stop/completion, and no reviewer-work-activity meaning. Conformance now covers both substrates, exactly-one watcher/ready/terminal behavior, blocked-source cancellation, heartbeat join, and ready races. No event type, heartbeat discriminator, ACK rule, process provenance, or kill policy changed. |
 | 2026-07-22 | 0.8.0 | agent (process-group-provenance / hk-n93gq, hk-o7x4w) | **Parentage, process group, and provenance separated (HC-044); cleanup bound made group-scoped (HC-018); the HC-044a `.lock` mechanism retired.** HC-044 restated: parentage is per spawn regime (the previous "every handler subprocess is a direct child of the daemon" was false for the substrate regime and contradicted PL-021b, which mandates it); direct-exec subprocesses now lead their own process group and are killed group-wise — presented as a NEW obligation, since the prior text imposed no group rule at all; a process group is declared a kill handle carrying no provenance meaning; the marker obligation is cross-referenced to the new PL-006e; and the group's kill reach is stated at its true width — a `setsid` descendant escapes the group kill, is reached by the PL-006 orphan sweep once orphaned to init, and is reached by nothing only while its root is alive. HC-018's 5-second cleanup bound now bounds the whole group with no per-descendant clock restart. HC-044a keeps its fail-fast obligation unchanged and replaces its detection mechanism: the never-implemented per-run `.lock` pidfile, its liveness probe, and its argv-check recycling discriminator are retired in favour of the PL-006e marker plus generation nonce — the argv check was forbidden by PL-006f(2) landing in the same revision. The two fail-closed polarities (unreadable ⇒ do not kill, for reapers; unreadable ⇒ treat as held, for launch) are stated side by side with the shared principle named, so a later harmonisation cannot invert one. |
 | 2026-07-14 | 0.7.0 | agent (M2 agent-input-substrate) | **Seam gains a first-class typed input verb + ack (new §4.1a; HC-069/070/071 + HC-INV-008).** New **§4.1a Session input port**: **HC-069** — narrow consumer-declared `InputPort` (`SubmitInput(ctx, InputRequest) -> (Ack, error)` blocking until acked-or-stale + `CloseInput`), separately asserted (NOT a `Session` method); retires the six type-asserted input side-interfaces and the no-op `SendInput`/`CloseStdin` (a non-satisfying session returns `ErrDeterministic("input unsupported")`); interim tmux/paste impl satisfies it by returning `Delivered`; `StdinDevNull` disposition split — the structured driver owns stdin, `/dev/null` stays codex / interim-tmux only. **HC-070** — `Ack` carries delivery outcome `{Delivered, Rejected}` (binary; NO acceptance class/tier — the two input methods are peers) + monotonic `input_seq` + protocol acceptance token; positive acceptance is the async `agent_input_acked` event (its existence IS the ack), sourced on the tmux/Claude path from the Claude-hook-bridge (`outcome_emitted` / `agent_ready` per CHB-013/CHB-018), on the structured driver from the wire input-ack — never a `capture-pane` scrape; `agent_input_stale` on the bounded-liveness timeout; front-stop composition (NOT replacement) of HC-056/HC-057. **HC-071** — machine-enforced seam inversion: a REAL `depguard` deny (`internal/handler` MUST NOT import `internal/lifecycle/tmux`) landed with the port. New invariant **HC-INV-008** — bounded input liveness (output-or-stale within a `ClockPort`-measured window; silence forbidden; every timer edge emits); machine-checked home is AIS-INV-001 in [agent-input.md]. Amended: HC-054 (observation peer of the input port, one line), HC-056 + HC-057 (one front-stop cross-ref clause each), §6.1 (removed no-op `SendInput` from `Session`; added `InputPort` interface + `InputRequest` / `Ack` records), §6.4 (registered `agent_input_acked` / `agent_input_stale`), §10.1 (invariant range → HC-INV-008; bridge-amendment note), §10.2 (ack-class matrix + bounded-liveness fault + depguard-deny test bullet), §9.3 (AIS co-reference). Cross-ref [agent-input.md] (AIS) as the home of wire/driver/capture detail. **ID note:** the design brief named these HC-058/059/060, but those IDs are already live in §4.2a (Outcome surface) through HC-068 — per the HC ID FREEZE / additive-gap-filler rule they land as HC-069/070/071. NO existing HC IDs renumbered. Status remains `reviewed`. |
 | 2026-06-13 | 0.5.5 | agent (hk-2j90) | **New HC-068 (§4.2a) — `.harmonik/auto_status.json` daemon-validated deny-side INPUT mirroring review.json/ReadReviewVerdict; status must be FAIL, failure_class ∈ the six, compilation_loop→structural per HC-059; daemon retains authority; gitignored; no mid-loop archival; C3 deferred. Refs: hk-2j90.** |

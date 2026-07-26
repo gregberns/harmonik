@@ -108,7 +108,8 @@ type Transition struct {
 	// RollbackToStateID is the target earlier StateID for architectural-rollback
 	// and policy-rollback transitions (EM-044). MUST be non-nil iff
 	// TransitionKind ∈ {architectural-rollback, policy-rollback}. MUST be nil
-	// for forward, local-patchback, and context-restore kinds.
+	// for forward, local-patchback, context-restore, and context-checkpoint
+	// kinds.
 	//
 	// EM-045: a rollback MUST be represented as a new transition (new
 	// TransitionID, new checkpoint commit); the earlier state's checkpoint commit
@@ -137,9 +138,14 @@ type Transition struct {
 //   - OutcomeStatus is a declared OutcomeStatus constant
 //   - TransitionKind is a declared TransitionKind constant
 //   - RollbackToStateID is non-nil iff TransitionKind ∈ {architectural-rollback,
-//     policy-rollback}; nil for forward, local-patchback, context-restore (EM-044)
-//   - context-restore MUST NOT carry RollbackToStateID (EM-046: context-restore
-//     does not relocate the run's graph position)
+//     policy-rollback}; nil for forward, local-patchback, context-restore, and
+//     context-checkpoint (EM-044)
+//   - context-restore and context-checkpoint MUST NOT carry RollbackToStateID
+//     because neither relocates the run's graph position
+//   - context-checkpoint MUST preserve StateID and NodeID, carry a synthesized
+//     SUCCESS outcome from daemon/reconciliation, and carry
+//     synthesized_outcome=true, context_checkpoint=true, and a non-empty
+//     checkpoint_purpose in Evidence (EM-023a, EM-046)
 //   - SchemaVersion > 0
 func (tr Transition) Valid() bool {
 	if uuid.UUID(tr.TransitionID) == uuid.Nil {
@@ -171,7 +177,7 @@ func (tr Transition) Valid() bool {
 	}
 	// EM-044/EM-046: rollback_to_state_id is required for architectural-rollback
 	// and policy-rollback; must be absent for all other kinds, including
-	// context-restore (EM-046: context-restore does not relocate graph position).
+	// context-restore and context-checkpoint (neither relocates graph position).
 	needsRollback := tr.TransitionKind == TransitionKindArchitecturalRollback ||
 		tr.TransitionKind == TransitionKindPolicyRollback
 	if needsRollback && tr.RollbackToStateID == nil {
@@ -179,6 +185,32 @@ func (tr Transition) Valid() bool {
 	}
 	if !needsRollback && tr.RollbackToStateID != nil {
 		return false
+	}
+	if tr.TransitionKind == TransitionKindContextCheckpoint {
+		// EM-046: a context-checkpoint does not move graph position and uses a
+		// daemon/reconciliation-synthesized SUCCESS outcome with explicit
+		// context-checkpoint evidence.
+		if tr.FromState.StateID != tr.ToState.StateID ||
+			tr.FromState.NodeID != tr.ToState.NodeID {
+			return false
+		}
+		if tr.OutcomeStatus != OutcomeStatusSuccess {
+			return false
+		}
+		if tr.ActorRole != ActorRoleDaemon &&
+			tr.ActorRole != ActorRoleReconciliation {
+			return false
+		}
+		if synthesized, ok := tr.Evidence[EvidenceKeySynthesizedOutcome].(bool); !ok || !synthesized {
+			return false
+		}
+		if checkpoint, ok := tr.Evidence[EvidenceKeyContextCheckpoint].(bool); !ok || !checkpoint {
+			return false
+		}
+		purpose, ok := tr.Evidence[EvidenceKeyCheckpointPurpose].(string)
+		if !ok || purpose == "" {
+			return false
+		}
 	}
 	if tr.SchemaVersion <= 0 {
 		return false

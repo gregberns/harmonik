@@ -8,10 +8,10 @@ requirement-prefix: CHB
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.9
+version: 1.3
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-13
+last-updated: 2026-07-24
 depends-on:
   - handler-contract
   - workspace-model
@@ -28,9 +28,9 @@ This spec defines the deterministic translation layer between the Claude Code CL
 
 The bridge has three load-bearing parts:
 
-1. A `.claude/settings.json` file materialized in the workspace at workspace creation, declaring command-type hooks that invoke `harmonik hook-relay`.
+1. A `.claude/settings.json` file materialized in the phase workspace before launch, declaring command-type hooks that invoke `harmonik hook-relay`.
 2. A `harmonik hook-relay <event-kind>` subcommand of the main harmonik binary that translates Claude's per-hook JSON-on-stdin into harmonik progress-stream NDJSON messages on the daemon's Unix domain socket.
-3. A pre-generated `claude_session_id` flow: the handler subprocess mints the UUID, passes it to Claude via `--session-id <uuid>`, reports it to the daemon via `handler_capabilities`, and uses `--resume <claude_session_id>` for `phase = implementer-resume`.
+3. A pre-generated `claude_session_id` flow: the shared launch caller mints the UUID for the `Minted` Claude harness, passes it through the launch artifacts to Claude via `--session-id <uuid>`, receives the same value back in `handler_capabilities`, and uses `--resume <claude_session_id>` for `phase = implementer-resume`.
 
 This spec is normative for the claude-code agent type only. Other agent types may re-realize the bridge surface per their own per-agent-type bridge specs post-MVH.
 
@@ -38,7 +38,7 @@ This spec is normative for the claude-code agent type only. Other agent types ma
 
 ### 2.1 In scope
 
-- `.claude/settings.json` file content materialized in a harmonik-managed workspace.
+- `.claude/settings.json` file content materialized in the phase workspace: the leased run workspace for implementers and the mandatory box-A reviewer projection for reviewers.
 - The env-var schema inherited by the handler subprocess, by Claude Code, and by relay subprocesses.
 - The `harmonik hook-relay <event-kind>` subcommand contract: stdin payload, env-var consumption, daemon-socket message construction and send, exit-code semantics.
 - The mapping from Claude hook events (`SessionStart`, `Stop`, `SessionEnd`, `StopFailure`, `Notification`) to harmonik progress-stream messages (`agent_ready`, `outcome_emitted`, `agent_completed`, `agent_failed`, `agent_rate_limited`, `agent_heartbeat`).
@@ -47,7 +47,8 @@ This spec is normative for the claude-code agent type only. Other agent types ma
 - The handler-process responsibility for emitting timer-driven `agent_heartbeat` while Claude is alive.
 - Failure-mode classification: relay-can't-dial-socket, daemon-not-ready-retry-exhausted, malformed hook payload, missing `.harmonik/review.json` at Stop in reviewer phase.
 - Twin-parity rules: `harmonik-twin-claude` emits the same wire-format NDJSON sequence the bridge would synthesize from Claude, WITHOUT going through the relay subcommand.
-- The per-launch task-delivery artifact `${workspace_path}/.harmonik/agent-task.md`: atomic-write discipline, reserved name, content shape by phase, gitignore hygiene, and re-attach semantics.
+- The per-launch task-delivery artifact `${phase_workspace_path}/.harmonik/agent-task.md`: atomic-write discipline, reserved name, content shape by phase, gitignore hygiene, and re-attach semantics.
+- Retention of reviewer session logs and metadata in the run-workspace archive before the disposable reviewer projection is removed.
 
 ### 2.2 Out of scope
 
@@ -65,6 +66,8 @@ This spec is normative for the claude-code agent type only. Other agent types ma
 - **claude_session_id** — the Claude Code session identifier, a UUID. Same value passed via `--session-id <uuid>` (or carried on `--resume <claude_session_id>`) and echoed back in every hook payload's `session_id` field. Distinct from harmonik's handler-side `session_id` (per [handler-contract.md §4.1]) which is the UUIDv7 minted by the handler.
 - **harmonik handler-process** — the long-lived OS process produced by `Handler.Launch` for `agent_type = claude-code`; parent of Claude Code; owner of the long-lived bidirectional progress-stream socket connection to the daemon.
 - **two-contributor model** — the architectural pattern in which both the harmonik handler-process AND hook-relay subprocesses write NDJSON progress-stream messages to the daemon socket, both keyed by `(run_id, claude_session_id)`, both routed by the daemon's watcher to the same per-session bus event flow.
+- **phase workspace** — the absolute `LaunchSpec.workspace_path`: the authoritative run workspace for implementer phases and the short-lived box-A reviewer projection for reviewer phases.
+- **run workspace** — the authoritative leased workspace and durable review/session archive for the run; it remains distinct from a reviewer projection.
 
 ## 4. Normative requirements
 
@@ -78,7 +81,7 @@ Envelope for the claude-hook-bridge subsystem per [/Users/gb/github/harmonik/spe
   - `handler_capabilities` — handler-process; emission rule §4.7 CHB-018 step 1 (carries `claude_session_id`); schema in [/Users/gb/github/harmonik/specs/handler-contract.md §4.2 HC-009].
   - `session_log_location` — handler-process; emission rule §4.7 CHB-018 step 2; schema in [/Users/gb/github/harmonik/specs/event-model.md §8.3.7].
   - `skills_provisioned` — handler-process; emission rule §4.7 CHB-018 step 3; schema in [/Users/gb/github/harmonik/specs/handler-contract.md §4.11].
-  - `agent_ready` — handler-process; emission rule §4.7 CHB-018 step 4; schema in [/Users/gb/github/harmonik/specs/event-model.md §8.1].
+  - `agent_ready` — hook-relay subprocess on the first valid `SessionStart` for the concrete launch; emission rule §4.5 CHB-013; schema in [/Users/gb/github/harmonik/specs/event-model.md §8.3].
   - `agent_heartbeat` — handler-process timer (§4.7 CHB-019, every 300 s) AND relay subprocess (§4.5 CHB-013, on Notification hooks); schema in [/Users/gb/github/harmonik/specs/event-model.md §8.3].
   - `outcome_emitted` — relay subprocess; emission rule §4.5 CHB-013 (Stop, StopFailure non-rate-limit), §4.10 CHB-025 (daemon last-received-wins dedup); schema in [/Users/gb/github/harmonik/specs/event-model.md §8.1a].
   - `agent_rate_limited` — relay subprocess; emission rule §4.5 CHB-013 (StopFailure rate_limit); schema in [/Users/gb/github/harmonik/specs/event-model.md §8.3].
@@ -95,7 +98,7 @@ Envelope for the claude-hook-bridge subsystem per [/Users/gb/github/harmonik/spe
   | Type | `Tags:` | `Axes:` (if non-baseline) |
   |---|---|---|
   | `.claude/settings.json` hooks block (§4.1 CHB-003) | mechanism | `io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` (on-disk artifact) |
-  | `${workspace_path}/.harmonik/agent-task.md` (§4.11 CHB-028) | mechanism | `io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` (on-disk artifact) |
+  | `${phase_workspace_path}/.harmonik/agent-task.md` (§4.11 CHB-028) | mechanism | `io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` (on-disk artifact) |
   | `HARMONIK_*` env-var schema (§4.2 CHB-006) | mechanism | baseline |
   | `claude_session_id` (UUIDv7; cross-subsystem identifier carried on `handler_capabilities`, on `Run.context.claude_session_id` per CHB-023, and on the per-message envelope) | mechanism | baseline |
   | `bridge_*` stderr error codes (`bridge_session_id_mismatch`, `bridge_event_kind_mismatch`, `bridge_daemon_startup_window_exceeded`, `bridge_partial_write`, `bridge_settings_shadowed`) | mechanism | baseline |
@@ -105,8 +108,9 @@ Envelope for the claude-hook-bridge subsystem per [/Users/gb/github/harmonik/spe
 (d) Handlers implemented: none. The bridge is not a handler-contract handler; it is the wire-protocol translation layer that the `claude-code` handler-process uses internally to translate Claude's native hook lifecycle into the handler-contract progress-stream. The `claude-code` handler itself is declared in [/Users/gb/github/harmonik/specs/handler-contract.md]; this spec is normative for that handler's internal bridge surface only.
 
 (e) State owned:
-  - `${workspace_path}/.claude/settings.json` (§4.1) — materialized per workspace; daemon owns writes.
-  - `${workspace_path}/.harmonik/agent-task.md` (§4.11 CHB-028) — materialized per launch; daemon owns writes; reserved name.
+  - `${phase_workspace_path}/.claude/settings.json` (§4.1) — materialized per phase workspace; daemon owns writes.
+  - `${phase_workspace_path}/.harmonik/agent-task.md` (§4.11 CHB-028) — materialized per launch; daemon owns writes; reserved name.
+  - Reviewer session logs and metadata are staging artifacts while they remain projection-local; the run-workspace session archive is their retained authority after transfer.
   - In-process per-session `latestOutcome` field on the daemon's per-session watcher (§4.10 CHB-025) — bounded to the open session window from first `outcome_emitted` until `cmd.Wait()` returns.
   - `Run.context.claude_session_id` durability is consumed but NOT owned here ([/Users/gb/github/harmonik/specs/execution-model.md §4.3 EM-012, EM-015d]); CHB-023 names the persistence-ordering rule, not the storage home.
   - Beyond these on-disk artifacts and the watcher field, the bridge owns no persistent state; it is a stateless translation surface.
@@ -145,21 +149,21 @@ Tags: mechanism
 
 #### CHB-001 — `.claude/settings.json` path and ownership
 
-For every workspace that will host a `claude-code` agent session, the workspace manager MUST materialize a file at `${workspace_path}/.claude/settings.json`. The file's content is owned by this spec; the workspace manager MUST NOT add, remove, or modify the bridge-required entries.
+For every phase workspace that will host a `claude-code` agent session, the workspace manager MUST materialize a file at `${phase_workspace_path}/.claude/settings.json`. `phase_workspace_path` is the run workspace for implementer phases and the mandatory reviewer projection of [workspace-model.md §4.7 WM-027a] for reviewer phases. The file's content is owned by this spec; the workspace manager MUST NOT add, remove, or modify the bridge-required entries.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 #### CHB-002 — Materialization ordering and atomic write
 
-The `${workspace_path}/.claude/settings.json` file MUST be written between [workspace-model.md §4.1 WM-003] (worktree creation) and [workspace-model.md §4.4 WM-016] (`workspace_leased` emission), folded into the same fsync gate. The write MUST follow the atomic-write discipline of [workspace-model.md §4.7 WM-026]: write to a sibling temp file, fsync the temp file, rename to the canonical name, fsync the parent directory. The parent-directory fsync MUST complete BEFORE `workspace_leased` emits.
+For an implementer run workspace, `${phase_workspace_path}/.claude/settings.json` MUST be written between [workspace-model.md §4.1 WM-003] (worktree creation) and [workspace-model.md §4.4 WM-016] (`workspace_leased` emission), folded into the same fsync gate. For an unleased reviewer projection, it MUST be written after the exact-SHA projection and its identity manifest exist and before reviewer `Handler.Launch`; no `workspace_leased` event exists or is implied for that projection. Both paths MUST follow the atomic-write discipline of [workspace-model.md §4.7 WM-026]: write to a sibling temp file, fsync the temp file, rename to the canonical name, fsync the parent directory.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 #### CHB-003 — Required hook entries
 
-The materialized `${workspace_path}/.claude/settings.json` MUST contain at least the following `hooks` entries (using `type: command` with `args` form for shell-injection safety; `command: "harmonik"`):
+The materialized `${phase_workspace_path}/.claude/settings.json` MUST contain at least the following `hooks` entries (using `type: command` with `args` form for shell-injection safety; `command: "harmonik"`):
 
 ```
 {
@@ -179,7 +183,7 @@ Tags: mechanism
 
 #### CHB-004 — User-settings merge
 
-If a `${workspace_path}/.claude/settings.json` file already exists at the materialization time (inherited from the cloned repo state per [workspace-model.md §4.1 WM-003]), the workspace manager MUST attempt a merge: for each event-type key under `hooks`, the bridge-required matcher group is APPENDED to the existing array. User-declared hooks for the same event continue to fire alongside the bridge's hooks.
+If a `${phase_workspace_path}/.claude/settings.json` file already exists at materialization time (inherited from the exact source tree used to create the run workspace or reviewer projection), the workspace manager MUST attempt a merge: for each event-type key under `hooks`, the bridge-required matcher group is APPENDED to the existing array. User-declared hooks for the same event continue to fire alongside the bridge's hooks.
 
 If the existing file is malformed JSON, the workspace manager MUST OVERWRITE with the bridge-required content AND log a warning line to the session log noting the displacement. No new bus event is emitted at MVH (the bridge introduces zero new event types per §4); post-MVH operators MAY route this through an existing observability surface.
 
@@ -190,7 +194,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### CHB-005 — Gitignore hygiene
 
-`${workspace_path}/.claude/settings.json` MUST be present in the worktree's `.gitignore` set per [workspace-model.md §4.3 WM-013e] at materialization time. The workspace manager MUST add the line if absent.
+`${phase_workspace_path}/.claude/settings.json` MUST be present in the phase worktree's `.gitignore` set per [workspace-model.md §4.3 WM-013e] at materialization time. The workspace manager MUST add the line if absent.
 
 Tags: mechanism
 
@@ -237,9 +241,9 @@ Tags: mechanism
 
 #### CHB-008 — Session ID minting and propagation
 
-For `agent_type = "claude-code"`, the harmonik handler-process MUST (this duplicates the cross-handler discipline at [handler-contract.md §4.10 HC-045c]):
+For `agent_type = "claude-code"`, whose harness `SessionIDPolicy()` is `Minted` per [harness-contract.md §4.2 HN-008], the shared launch caller and harmonik handler-process MUST apply this split:
 
-- For `phase ∈ {single, implementer-initial, reviewer}`: mint a fresh UUIDv7 as `claude_session_id`, pass it to Claude via `--session-id <claude_session_id>`, set `HARMONIK_CLAUDE_SESSION_ID = claude_session_id`, AND include `claude_session_id` in the payload of the `handler_capabilities` progress-stream message (per [handler-contract.md §4.2 HC-009] and [handler-contract.md §4.10 HC-045c]).
+- For `phase ∈ {single, implementer-initial, reviewer}`: the shared launch caller MUST mint a fresh UUIDv7 as `claude_session_id` before `Handler.Launch` and place it in the concrete launch artifacts. The handler MUST pass it to Claude via `--session-id <claude_session_id>`, set `HARMONIK_CLAUDE_SESSION_ID = claude_session_id`, AND echo the identical value in the `handler_capabilities` progress-stream message (per [handler-contract.md §4.2 HC-009]). The handler MUST NOT replace it with a second minted value.
 - For `phase = implementer-resume`: reuse `LaunchSpec.claude_session_id` (carried from the prior iteration; populated by the daemon per [handler-contract.md §4.2 HC-006]), pass it to Claude via `--resume <claude_session_id>` (NOT `--session-id`), set `HARMONIK_CLAUDE_SESSION_ID = LaunchSpec.claude_session_id`.
 
 Tags: mechanism
@@ -247,7 +251,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### CHB-009 — Reviewer launches always mint fresh
 
-For `phase = reviewer`, the handler MUST NOT inherit `claude_session_id` from a prior reviewer launch. Each reviewer phase mints a new UUIDv7. This preserves the per-iteration reviewer-launch independence implicit in [event-model.md §8.1a].
+For `phase = reviewer`, the shared launch caller MUST NOT inherit `claude_session_id` from a prior reviewer launch. Each reviewer phase receives a newly minted UUIDv7 in its launch artifacts. This preserves the per-iteration reviewer-launch independence implicit in [event-model.md §8.1a].
 
 Tags: mechanism
 
@@ -287,8 +291,8 @@ Tags: mechanism
 
 | Claude hook event | Translates to progress-stream message | Derivation rules |
 |---|---|---|
-| `SessionStart {source: startup}` | (no-op at MVH; ready-state is handler-emitted per §4.7) | — |
-| `SessionStart {source: resume}` | (no-op at MVH; ready-state is handler-emitted per §4.7) | — |
+| `SessionStart {source: startup}` | `agent_ready` | On the first valid callback for the concrete launch, copy `run_id` and handler `session_id` from that launch's artifacts, set `provenance = "claude_session_start"`, and publish through the authoritative watcher. A cached, zero, omitted, or prior-phase identity is invalid. Repeated SessionStart callbacks are deduplicated and MUST NOT publish a second ready event. |
+| `SessionStart {source: resume}` | `agent_ready` | Same derivation and deduplication rule as `startup`. This is the genuine post-resume ready fact; pane existence, successful spawn, `launch_initiated`, heartbeat, and input acknowledgment do not substitute for it. |
 | `Stop` | `outcome_emitted` | `kind = WORK_COMPLETE` if phase ∈ {single, implementer-initial, implementer-resume}; `kind = REVIEWER_VERDICT` if phase = reviewer. For reviewer, payload is read from `${HARMONIK_WORKSPACE_PATH}/.harmonik/review.json` per §4.5.CHB-014. For implementer, payload is `{summary: <Claude's final assistant message text, truncated to 4 KiB>}`. The relay emits `outcome_emitted` on EVERY Stop invocation without filtering; in a multi-turn session multiple `outcome_emitted` messages are delivered. The daemon watcher applies last-received-wins dedup per §4.10 CHB-025. |
 | `SessionEnd` | (no-op; the handler emits `agent_completed` on Wait-return per §4.7) | — |
 | `StopFailure {error_type: rate_limit}` | `agent_rate_limited` | `retry_after_seconds = 60` (synthesized constant at MVH; no Claude-provided retry-after available). `agent_rate_limited` is non-terminal per [event-model.md §8.3]. |
@@ -301,7 +305,9 @@ Tags: mechanism
 
 #### CHB-014 — Reviewer verdict file read
 
-For `phase = reviewer` Stop hook, the relay MUST read `${HARMONIK_WORKSPACE_PATH}/.harmonik/review.json`. The file MUST conform to the agent-reviewer JSON verdict schema v1 per [workspace-model.md §4.7 WM-027a] and [event-model.md §8.1a]. The relay MUST validate `schema_version = 1`, `verdict ∈ {APPROVE, REQUEST_CHANGES, BLOCK}`, `flags` is a string array, `notes` is a string. On validation success, the relay packages the four fields into the `outcome_emitted` payload's `verdict` sub-field. On validation failure or file-absent, the relay packages `{error: "missing_review_file" | "malformed_review_file"}` into the payload's `error` sub-field; the daemon's review-loop dispatcher routes the run to `review_loop_cycle_complete{completion_reason=error}` per the existing event-model rule.
+For `phase = reviewer`, `HARMONIK_WORKSPACE_PATH` MUST be the mandatory box-A reviewer projection. On the Stop hook, the relay MUST read `${HARMONIK_WORKSPACE_PATH}/.harmonik/review.json` from that projection. The file MUST conform to the agent-reviewer JSON verdict schema v1 per [workspace-model.md §4.7 WM-027a] and [event-model.md §8.1a]. The relay MUST validate `schema_version = 1`, `verdict ∈ {APPROVE, REQUEST_CHANGES, BLOCK}`, `flags` is a string array, `notes` is a string. On validation success, the relay packages the four raw fields unchanged into the `outcome_emitted` payload's `verdict` sub-field. On validation failure or file-absent, the relay packages `{error: "missing_review_file" | "malformed_review_file"}` into the payload's `error` sub-field.
+
+The bridge does not make cycle-routing decisions. Flagless `REQUEST_CHANGES` normalization, actionable-request detection, pre-review `fixup_stalled`, and terminal `cap_hit` routing are delegated to [execution-model.md §4.3 EM-015d, EM-015e]. The daemon MUST validate and transfer a successful projection verdict to the run-workspace archive before publishing `reviewer_verdict`; transfer or validation failure routes through `review_loop_cycle_complete{completion_reason=error}`. The bridge MUST NOT rewrite the raw verdict, emit `iteration_cap_hit`, or choose a completion reason.
 
 Tags: mechanism
 
@@ -335,7 +341,11 @@ Tags: mechanism
 
 #### CHB-023 — Daemon-side `claude_session_id` durability before Claude exec
 
-The daemon MUST persist `claude_session_id` into `Run.context.claude_session_id` (per [execution-model.md §4.3 EM-012, EM-015d]) on receipt of the handler's `handler_capabilities` progress-stream message, BEFORE returning the connection-accept ACK that gates the handler's `claude --session-id <uuid>` exec. The persistence MUST be backed by a checkpoint-commit-class durability boundary: the daemon MUST land a `transition_event` with the updated `context.claude_session_id` to git (per [execution-model.md §4.5 EM-023a]) before the handler is permitted to exec Claude. A mid-launch crash MUST therefore find either (a) no session_id persisted (handler had not yet emitted `handler_capabilities` — safe to re-launch under a fresh UUIDv7) or (b) session_id durably committed (safe to `--resume`). Storage in JSONL, on the bead, or in-memory only is forbidden; `Run.context` (git-backed) is the sole durable home.
+For the initial implementer launch, the handler MUST emit `handler_capabilities` carrying both its supported wire-protocol versions and the caller-minted `claude_session_id`, then wait for the Handler Contract control message `version_selected{selected_version}` before exec'ing Claude. On receipt, the daemon MUST verify the reported identity equals the concrete launch artifact, negotiate the selected version, and persist `claude_session_id` into `Run.context.claude_session_id` through the [execution-model.md §4.5 EM-023a] `context-checkpoint` transaction. Only after that checkpoint succeeds may the daemon send `version_selected`; the control message MUST carry the same selected version used as the transaction input. The handler MUST NOT exec `claude --session-id` before receiving it.
+
+`version_selected` is the launch-handshake control message of [handler-contract.md §4.2 HC-009, §6.4]; it is not the hook-relay `HookRelayAck` of §6.2 and not the agent-input `Ack` of [agent-input.md §4.2]. A checkpoint failure MUST withhold `version_selected` and first work. A send/finalization failure after checkpoint is a terminal launch-handshake failure; an identical committed mapping may be reused on retry, while a conflicting mapping MUST fail closed. A mid-launch crash therefore finds either no committed mapping or the exact mapping required for safe `--resume`. Storage in JSONL, on the bead, or in-memory only is forbidden; `Run.context` (git-backed) is the sole durable home.
+
+Reviewer launches still negotiate `version_selected`, but their fresh identity is reviewer-phase identity rather than implementer continuity state and MUST NOT overwrite `Run.context.claude_session_id`. Implementer-resume MUST use the identical committed implementer identity.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
@@ -382,14 +392,17 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### CHB-018 — Pre-Claude-exec emission ordering
 
-The harmonik handler-process MUST emit the following progress-stream messages to the daemon, in this order, BEFORE invoking `claude --session-id <uuid>` or `claude --resume <uuid>`, satisfying [handler-contract.md §5 HC-INV-004]:
+After successful handler spawn, the harmonik handler-process MUST emit the following progress-stream messages to the daemon, in this order, BEFORE invoking `claude --session-id <uuid>` or `claude --resume <uuid>`, satisfying [handler-contract.md §5 HC-INV-004]:
 
-1. `handler_capabilities` carrying wire-protocol version 1 AND `claude_session_id` payload field.
-2. `session_log_location` carrying `log_path = ~/.claude/projects/<slug>/<claude_session_id>.jsonl` (or platform equivalent — derivation rule deferred to impl, but path MUST be the Claude transcript path).
-3. `skills_provisioned` after the handler has provisioned required skills per [handler-contract.md §4.11].
-4. `agent_ready` carrying `session_id = HARMONIK_HANDLER_SESSION_ID` and `capabilities[]`.
+1. `handler_capabilities` carrying supported wire-protocol versions AND the `claude_session_id` from the concrete launch artifacts.
+2. Wait for `version_selected{selected_version}` under CHB-023. For the initial implementer, the daemon sends it only after the continuity checkpoint succeeds.
+3. `session_log_location` carrying `log_path = ~/.claude/projects/<slug>/<claude_session_id>.jsonl` (or platform equivalent — derivation rule deferred to impl, but path MUST be the Claude transcript path).
+4. `skills_provisioned` after the handler has provisioned required skills per [handler-contract.md §4.11].
+5. `launch_initiated` carrying the concrete `run_id` and handler `session_id`, immediately before Claude exec.
 
-The handler-process is the SOLE emitter of these four messages for a claude-code session; the relay MUST NEVER emit any of them.
+The handler-process is the sole emitter of the four progress messages in steps 1, 3, 4, and 5. It MUST NOT emit `agent_ready`. After Claude exec, the first valid `SessionStart` callback is translated by the relay and authoritative watcher into the genuine, deduplicated `agent_ready` per CHB-013. Thus the public order is successful handler spawn → `launch_initiated` → Claude `SessionStart` → `agent_ready`; neither assembly success nor pane existence is ready.
+
+**Reviewer log retention.** A reviewer runs in a disposable projection, but its session evidence is not disposable. The handler's transcript path MAY remain at Claude's retained platform path outside the projection. Any session metadata, captured stream, or handler log written beneath `${reviewer_projection_path}/.harmonik/sessions/` MUST instead be written directly to, or atomically transferred before projection cleanup into, `${run_workspace_path}/.harmonik/sessions/${HARMONIK_HANDLER_SESSION_ID}/`. The retained archive MUST preserve the launch tuple `{run_id, handler_session_id, claude_session_id, phase, iteration}`. Transfer failure is a phase error and the projection MUST be retained; the daemon MUST NOT remove it while session evidence exists only there.
 
 Tags: mechanism
 
@@ -466,21 +479,21 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 Tags: mechanism
 
-**Purpose.** The daemon MUST materialize a task artifact at `${workspace_path}/.harmonik/agent-task.md` before launching any `claude-code` session. This file is the normative daemon→claude task-delivery channel under the tmux substrate (per [process-lifecycle.md §4.7 PL-021b]). It is the mechanism by which harmonik hands an implementer or reviewer a concrete unit of work before exec'ing Claude.
+**Purpose.** The daemon MUST materialize a task artifact at `${phase_workspace_path}/.harmonik/agent-task.md` before launching any `claude-code` session. The phase workspace is the run workspace for implementers and the mandatory reviewer projection for reviewers. This file is the normative daemon→claude task-delivery artifact; the first-work instruction to read it is delivered through [agent-input.md §4.1 AIS-001].
 
-**Reserved name.** The filename `agent-task.md` under `${workspace_path}/.harmonik/` is reserved for harmonik's exclusive use. No user-authored file, no operator-side config, and no agent-written output MAY occupy this path. The daemon owns writes to the path. Each launch overwrites the file with content for the caller's `(run_id, phase, iteration)` tuple; review-loop phase transitions (impl → reviewer → impl-resume) reuse the same worktree and each is its own logical launch — overwrite is the expected behavior, not an error. (Amended 2026-05-13: original CHB-028 treated a pre-existing file as `task_file_collision` `ErrStructural`; that semantic was a spec-author oversight that did not accommodate review-loop phase transitions and is hereby retracted. See §10 revision history.)
+**Reserved name.** The filename `agent-task.md` under `${phase_workspace_path}/.harmonik/` is reserved for harmonik's exclusive use. No user-authored file, no operator-side config, and no agent-written output MAY occupy this path. The daemon owns writes to the path. Implementer launches overwrite the run-workspace file with content for the caller's `(run_id, phase, iteration)` tuple. Each reviewer launch writes a fresh file in that iteration's projection; it does not overwrite the implementer file or imply same-worktree execution.
 
 **NOT `.claude/CLAUDE.md` or `CLAUDE.md`.** The task artifact MUST NOT be written to `CLAUDE.md`, `.claude/CLAUDE.md`, or any path that Claude Code's settings-hierarchy auto-discovery would treat as a global system prompt. The operator's existing `CLAUDE.md` in the worktree MUST remain unmodified. `agent-task.md` is a per-launch sidecar; Claude is expected to read it as an ordinary file, directed by a pane-paste kick-off message (per the mechanism defined in the forthcoming B2 + B8 spec amendments).
 
-**Materialization timing.** The daemon MUST write `agent-task.md` AFTER [workspace-model.md §4.1 WM-003] (worktree creation) and BEFORE exec'ing Claude via the tmux substrate. The write ordering relative to `.claude/settings.json` materialization (CHB-002) is: both MUST be complete and fsynced before the tmux substrate receives the `SubstrateSpawn` call. The parent directory `${workspace_path}/.harmonik/` is created (if absent) as part of the workspace-creation step; `agent-task.md` does not introduce a new directory.
+**Materialization timing.** For implementers, the daemon MUST write `agent-task.md` after [workspace-model.md §4.1 WM-003] creates the run workspace. For reviewers, it MUST write the file only after WM-027a creates and verifies the exact-SHA projection and its manifest. In both cases it MUST complete before `Handler.Launch`. The write ordering relative to `.claude/settings.json` materialization (CHB-002) is: both MUST be complete and fsynced before the substrate receives the spawn request. The parent directory `${phase_workspace_path}/.harmonik/` is created if absent.
 
 **Atomic-write discipline.** The write MUST follow the same atomic discipline as [workspace-model.md §4.7 WM-026]:
 
 1. Construct the full file content in memory.
-2. Write to a sibling temp file at `${workspace_path}/.harmonik/agent-task.tmp-<pid>`.
+2. Write to a sibling temp file at `${phase_workspace_path}/.harmonik/agent-task.tmp-<pid>`.
 3. `fsync(2)` the temp file.
-4. `rename(2)` the temp file to `${workspace_path}/.harmonik/agent-task.md` (POSIX rename is atomic).
-5. `fsync(2)` the parent directory `${workspace_path}/.harmonik/` to durably record the rename.
+4. `rename(2)` the temp file to `${phase_workspace_path}/.harmonik/agent-task.md` (POSIX rename is atomic).
+5. `fsync(2)` the parent directory `${phase_workspace_path}/.harmonik/` to durably record the rename.
 
 A power loss after step 4 without step 5 MUST NOT leave a partial or missing task file visible to Claude. The fsync-parent step is required on all supported platforms (Darwin, Linux).
 
@@ -494,7 +507,7 @@ title: <bead title, or run_id if not bead-tied>
 phase: <one of: implementer-initial | implementer-resume | reviewer>
 iteration: <integer; 1-based; LaunchSpec.iteration_count>
 run_id: <HARMONIK_RUN_ID>
-workspace_path: <absolute path to workspace root>
+workspace_path: <absolute phase-workspace path>
 
 ## Task Description
 
@@ -505,17 +518,17 @@ workspace_path: <absolute path to workspace root>
 <present only when phase = implementer-resume or phase = reviewer; omitted entirely when phase = implementer-initial>
 ```
 
-For `phase = implementer-resume`: the Prior-Iteration Context section MUST include the path to the reviewer's verdict file from the immediately preceding iteration: `reviewer-feedback: ${workspace_path}/.harmonik/review.iter-<N-1>.json` where `<N-1>` is the previous iteration ordinal (1-indexed, matching WM-027a archival naming). It SHOULD also include a human-readable summary of the prior verdict's `verdict` field and `notes` string so that Claude does not need to parse JSON to understand its immediate next action.
+For `phase = implementer-resume`: the Prior-Iteration Context section MUST include the authoritative run-workspace paths from the immediately preceding iteration: `reviewer-verdict: ${run_workspace_path}/.harmonik/review.iter-<N-1>.json` and `reviewer-feedback: ${run_workspace_path}/.harmonik/reviewer-feedback.iter-<N-1>.md`. It SHOULD also include a human-readable summary of the prior verdict's `verdict` field and `notes` string so that Claude does not need to parse JSON to understand its immediate next action.
 
 For `phase = reviewer`: the Prior-Iteration Context section MUST include the base and head commit SHAs for the diff under review: `review_base_sha: <sha>` and `review_head_sha: <sha>`. The daemon derives these from the task-branch tip at reviewer-launch time (HEAD of the task branch after the implementer's last commit) relative to the task-branch fork point (the `parent_commit` field on the Workspace record per WM-026).
 
-**Gitignore hygiene.** `${workspace_path}/.harmonik/agent-task.md` MUST be excluded from checkpoint commits per [workspace-model.md §4.3 WM-013e]. The daemon MUST add the line `.harmonik/agent-task.md` (or the glob `.harmonik/agent-task*`) to the worktree's `.gitignore` set at materialization time, in the same atomic-write pass as the file itself. The task artifact is workflow-control state, not work product; it MUST NOT appear in squash-merge commits per WM-019.
+**Gitignore hygiene.** `${phase_workspace_path}/.harmonik/agent-task.md` MUST be excluded from checkpoint commits per [workspace-model.md §4.3 WM-013e]. The daemon MUST add the line `.harmonik/agent-task.md` (or the glob `.harmonik/agent-task*`) to the phase worktree's `.gitignore` set at materialization time, in the same atomic-write pass as the file itself. The task artifact is workflow-control state, not work product; it MUST NOT appear in squash-merge commits per WM-019.
 
-**Re-launch (re-attach) semantics.** If the daemon restarts mid-session and finds an existing `agent-task.md` in the worktree for the same `(run_id, phase, iteration)` tuple it is about to launch, the file is idempotent — the daemon SHOULD return early without re-writing. The re-attach path is identified by the daemon having already persisted `claude_session_id` (CHB-023) and the workspace being in `leased` state with an active session. (Normal review-loop phase transitions are NOT re-attach — they overwrite per the Reserved name clause above.)
+**Re-launch (re-attach) semantics.** If the daemon restarts mid-session and finds an existing `agent-task.md` in the phase workspace for the same `(run_id, phase, iteration)` tuple it is about to launch, the file is idempotent — the daemon SHOULD return early without re-writing. Implementer re-attach additionally requires the run workspace to remain leased and the committed continuity identity to match CHB-023. Reviewer recovery additionally requires the projection manifest/path/SHA identity proof of WM-027a; path shape alone is insufficient.
 
-**Invariant.** The presence of a durable `agent-task.md` at `${workspace_path}/.harmonik/agent-task.md` is a prerequisite for any Claude exec under the tmux substrate. The daemon MUST assert this file exists and is non-empty after the atomic write and before issuing the `SubstrateSpawn` call. An empty or absent file after the write step is a fatal structural error.
+**Invariant.** The presence of a durable `agent-task.md` at `${phase_workspace_path}/.harmonik/agent-task.md` is a prerequisite for any Claude exec. The daemon MUST assert this file exists and is non-empty after the atomic write and before issuing the spawn request. An empty or absent file after the write step is a fatal structural error.
 
-**Session-completion instruction (hk-cmybm).** Every `agent-task.md` MUST include a `## Session Completion` section at the end of the file instructing Claude to run `/quit` after completing and committing the work. This section is non-negotiable for all phases (implementer-initial, implementer-resume, reviewer).
+**Session-completion instruction (hk-cmybm).** Every `agent-task.md` MUST include a `## Session Completion` section at the end of the file instructing Claude to run `/quit` after producing the phase artifact. Implementer phases must complete and commit their work first; reviewer phases must write the projection-staging `.harmonik/review.json` and MUST NOT create a work-product commit. This section is non-negotiable for all phases.
 
 Rationale: in interactive TUI mode, Claude Code's `Stop` hook fires on session exit (`/quit`, Ctrl-C) — NOT after each assistant response. Without `/quit`, the claude process remains alive at the REPL after completing the bead, the Stop hook never fires, `outcome_emitted` is never delivered to the daemon socket, and the workloop's `sess.Wait()` call (tmuxSubstrateSession.runWait polling loop) blocks indefinitely. The daemon's capacity gate jams after the first bead.
 
@@ -641,7 +654,7 @@ Bridge-specific failure modes route through `agent_failed{class, sub_reason}` pe
 - [handler-contract.md §5 HC-INV-002, HC-INV-004, HC-INV-006, HC-INV-007] — twin parity, pre-work-dispatch ordering, exactly-one terminal event, watcher as sole publisher.
 - [handler-contract.md §4.10 HC-045a] — pointer to this spec for claude-code agent type (new in this kerf).
 - [handler-contract.md §4.10 HC-045b] — hook-bridge connection regime (new in this kerf).
-- [handler-contract.md §4.10 HC-045c] — handler-side claude_session_id minting/resume discipline (new in this kerf).
+- [handler-contract.md §4.10 HC-045c] — claude_session_id launch/resume discipline; this draft refines the `Minted` caller/handler split.
 - [workspace-model.md §4.1 WM-003] — worktree creation gate.
 - [workspace-model.md §4.3 WM-013e] — gitignore hygiene.
 - [workspace-model.md §4.4 WM-016] — workspace_leased event ordering.
@@ -666,7 +679,7 @@ A handler implementation claiming `claude-code` conformance MUST satisfy:
 - CHB-010..017 (relay subcommand contract).
 - CHB-018..020 (handler-process emission obligations).
 - CHB-021..022 (twin parity).
-- CHB-023 (daemon-side claude_session_id durability before Claude exec).
+- CHB-023 (`handler_capabilities` → continuity checkpoint → `version_selected` → Claude exec).
 - CHB-024 (startup verification that bridge hooks are not shadowed by settings.local.json).
 - CHB-025 (daemon last-received-wins dedup for `outcome_emitted` across multi-turn Stop firings).
 - CHB-028 (per-launch task artifact: `agent-task.md` materialized atomically before Claude exec).
@@ -675,7 +688,9 @@ A handler implementation claiming `claude-code` conformance MUST satisfy:
 Scenario tests MUST cover:
 
 - A `single` workflow-mode run against real Claude and against twin: both produce identical progress-stream byte sequences (modulo timestamp fields and Claude's transcript-text payload contents).
-- A 3-iteration `review-loop` run: 7 sessions per workspace (initial implementer + per-iteration implementer + per-iteration reviewer); verifies claude_session_id stability across implementer-resume launches and freshness across reviewer launches.
+- A 3-iteration `review-loop` run: implementer sessions use the run workspace and each reviewer uses a distinct exact-SHA box-A projection; verifies implementer claude_session_id stability, fresh reviewer identities, projection-local verdict creation, retained run-workspace session evidence, and no projection cleanup before required transfers and observer completion.
+- Ready-order scenarios: handler spawn and `launch_initiated` precede Claude exec; the first valid `SessionStart` produces exactly one `agent_ready`; repeated callbacks, pane existence, heartbeat, and input acknowledgement produce no substitute or duplicate ready.
+- Minted crash cuts: before context checkpoint, after checkpoint/before `version_selected`, and after `version_selected` send failure; only an identical committed mapping may be reused.
 - A relay-can't-dial scenario: daemon socket file deleted mid-session; relay emits `bridge_dial_failed`; handler's Wait-return emits the terminal event.
 - A daemon-not-ready scenario: relay invoked during daemon startup window; retries succeed within the 25 s budget.
 
@@ -701,6 +716,7 @@ Post-MVH evolution to stream-json + `--include-hook-events` is possible without 
 
 | Date | Version | Author | Change |
 |---|---|---|---|
+| 2026-07-24 | 1.3 | agent (codename:reviewloop-decoupling) | **Ready truth, Minted handshake, and reviewer phase-workspace reconciliation.** CHB-013 now derives genuine, deduplicated `agent_ready` from the concrete launch's first valid `SessionStart`; CHB-018 replaces pre-exec ready with `launch_initiated`. CHB-008/CHB-023 align Claude's `Minted` identity with caller minting and order initial continuity as `handler_capabilities` → EM-023a context checkpoint → `version_selected` → Claude exec, explicitly distinguishing handler negotiation, relay ACK, and agent-input Ack. CHB-001..005 and CHB-028 make `${workspace_path}` phase-specific and require the exact-SHA reviewer projection without a lease. CHB-014 passes raw verdicts unchanged and delegates flagless normalization, fix-up stall, and `cap_hit` to Execution Model. Reviewer session evidence must reach the run-workspace archive before projection cleanup. No CHB requirement IDs were added, renumbered, or retired. |
 | 2026-05-12 | 0.1 | foundation-author | Initial draft from kerf `claude-hook-bridge`. |
 | 2026-05-13 | 0.2 | agent (hk-w5vra.8) | CHB-025: Stop-hook dedup gate — daemon last-received-wins for `outcome_emitted`; relay-side gate (option a) rejected; §4.5 CHB-013 Stop row updated to reference CHB-025; §4.10 added; conformance updated. |
 | 2026-05-13 | 0.3 | agent (hk-w5vra.10) | CHB-026: concurrent-connection serialization rule — per-connection FIFO, across-connection unordered (Rule C). Matches current `RunSocketListener` topology; no code change required. Twin-parity implication added. |

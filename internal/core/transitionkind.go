@@ -3,7 +3,8 @@ package core
 import "fmt"
 
 // TransitionKind is the kind of a workflow transition (execution-model.md §6.1, EM-044).
-// One of: forward, local-patchback, architectural-rollback, policy-rollback, context-restore.
+// One of: forward, local-patchback, architectural-rollback, policy-rollback,
+// context-restore, context-checkpoint.
 // Durable values per EM-023a; rollback_to_state_id constraints per EM-044.
 type TransitionKind string
 
@@ -28,15 +29,21 @@ const (
 	// NOT be altered. RollbackToStateID MUST be non-nil per EM-044.
 	TransitionKindPolicyRollback TransitionKind = "policy-rollback"
 	TransitionKindContextRestore TransitionKind = "context-restore"
+
+	// TransitionKindContextCheckpoint durably records a context-only update
+	// without moving the run's graph position (EM-044). RollbackToStateID MUST
+	// be nil because this kind is neither a restore nor a rollback.
+	TransitionKindContextCheckpoint TransitionKind = "context-checkpoint"
 )
 
-// Valid reports whether k is one of the five declared TransitionKind constants.
+// Valid reports whether k is one of the six declared TransitionKind constants.
 // This is the predicate hook for EM-044: validators call Valid on every
 // transition's kind field and reject records that contain unknown values.
 func (k TransitionKind) Valid() bool {
 	switch k {
 	case TransitionKindForward, TransitionKindLocalPatchback, TransitionKindArchitecturalRollback,
-		TransitionKindPolicyRollback, TransitionKindContextRestore:
+		TransitionKindPolicyRollback, TransitionKindContextRestore,
+		TransitionKindContextCheckpoint:
 		return true
 	default:
 		return false
@@ -53,12 +60,12 @@ func (k TransitionKind) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
-// It rejects any value that is not one of the five declared constants,
+// It rejects any value that is not one of the six declared constants,
 // satisfying the EM-044 requirement that unknown kinds are rejected.
 func (k *TransitionKind) UnmarshalText(text []byte) error {
 	v := TransitionKind(text)
 	if !v.Valid() {
-		return fmt.Errorf("transitionkind: unknown value %q; must be one of forward, local-patchback, architectural-rollback, policy-rollback, context-restore", string(text))
+		return fmt.Errorf("transitionkind: unknown value %q; must be one of forward, local-patchback, architectural-rollback, policy-rollback, context-restore, context-checkpoint", string(text))
 	}
 	*k = v
 	return nil

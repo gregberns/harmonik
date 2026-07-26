@@ -8,10 +8,10 @@ requirement-prefix: CLS
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.1
+version: 0.2.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-19
+last-updated: 2026-07-24
 depends-on:
   - handler-contract
   - claude-hook-bridge
@@ -40,7 +40,7 @@ This spec does **not** re-state those rules. It consolidates three things those 
 ### 2.1 In scope
 
 - The `claudeRunCtx` input struct: field semantics, phase-conditional presence rules, and shape constraints.
-- The `claudeRunArtifacts` output struct: field semantics and caller obligations.
+- The `claudeRunArtifacts` output struct: launch identity, phase-workspace, retained-session-log, and handler-bootstrap field semantics and caller obligations.
 - The 9-step `buildClaudeLaunchSpec` assembly sequence and its ordering invariants.
 - The review-loop phase lifecycle: state machine, phase transition table, per-phase input rules.
 - Input validation: `ModelPreference` shape constraints (model, effort); the worktree path-check for `--dangerously-skip-permissions`.
@@ -52,20 +52,22 @@ This spec does **not** re-state those rules. It consolidates three things those 
 - The env-var schema produced by `ClaudeEnvVars` — [claude-hook-bridge.md §4.2 CHB-006].
 - The session-ID minting and `--session-id` / `--resume` semantics — [claude-hook-bridge.md §4.3 CHB-008, CHB-009].
 - The forbidden-flag deny-list — [claude-hook-bridge.md §4.2 CHB-007].
-- The pre-exec progress message schema — [claude-hook-bridge.md §4.7 CHB-018].
+- The handler-bootstrap progress message schema and genuine SessionStart-ready mapping — [claude-hook-bridge.md §4.5 CHB-013, §4.7 CHB-018].
 - The settings-shadow verification logic — [claude-hook-bridge.md §4.9 CHB-024].
 - The agent-task.md content shape by phase — [claude-hook-bridge.md §4.11 CHB-028].
 - The worktree trust pre-seed — [claude-hook-bridge.md §4.12 CHB-029].
 - The LaunchSpec wire-protocol record shape — [handler-contract.md §6.1].
-- The review-loop dispatcher state machine (what the daemon does with outcomes) — [process-lifecycle.md].
+- The review-loop dispatcher state machine, including flagless normalization, fix-up stall, and cap-hit routing — [execution-model.md §4.3 EM-015d, EM-015e].
 
 ## 3. Glossary
 
 - **assembly function** — `buildClaudeLaunchSpec`; the single Go function in `internal/daemon/claudelaunchspec.go` that produces a `handler.LaunchSpec` and `claudeRunArtifacts` from a `claudeRunCtx`.
 - **claudeRunCtx** — the read-only per-launch input struct assembled by the daemon's claim/dispatch path before calling `buildClaudeLaunchSpec`.
-- **claudeRunArtifacts** — the output struct carrying the Claude session ID, session log path, handler session ID, and pre-exec message payloads produced by the assembly function.
+- **claudeRunArtifacts** — the output struct carrying the Claude session ID, retained session-log destination, handler session ID, phase-workspace identity, and handler-bootstrap message payloads produced by the assembly function.
 - **phase** — a string discriminant from the closed enum `{implementer-initial, implementer-resume, reviewer, ""}`. Empty string means `workflow_mode = single` (no review loop).
 - **review-loop cycle** — one iteration of the sequence `(implementer-* phase, reviewer phase)` within a `workflow_mode = review-loop` run. The first cycle uses `implementer-initial`; subsequent cycles (after a `REQUEST_CHANGES` verdict) use `implementer-resume`.
+- **phase workspace** — `claudeRunCtx.workspacePath` and `LaunchSpec.WorkDir`: the run workspace for implementer phases and the mandatory box-A reviewer projection for reviewer phases.
+- **run workspace** — `claudeRunCtx.runWorkspacePath`: the authoritative leased workspace and durable review/session archive for the run.
 
 ## 4. Normative requirements
 
@@ -73,9 +75,9 @@ This spec does **not** re-state those rules. It consolidates three things those 
 
 #### CLS-ENV-001 — Envelope declaration
 
-Envelope for the claude-launchspec subsystem per [architecture.md §4.0 AR-053]. This subsystem is the `buildClaudeLaunchSpec` assembly function (`internal/daemon/claudelaunchspec.go`) that bridges the daemon's run-dispatch layer to the Claude Code (or twin) subprocess launch. It is a pure assembly seam: it transforms a read-only `claudeRunCtx` into a `handler.LaunchSpec` plus `claudeRunArtifacts`; it neither emits bus events itself nor persists state — those obligations are the daemon caller's (CLS-030, CLS-031).
+Envelope for the claude-launchspec subsystem per [architecture.md §4.0 AR-053]. This subsystem is the `buildClaudeLaunchSpec` assembly function (`internal/daemon/claudelaunchspec.go`) that bridges the daemon's run-dispatch layer to the Claude Code (or twin) subprocess launch. It is an assembly seam: it transforms a read-only `claudeRunCtx` into a `handler.LaunchSpec` plus `claudeRunArtifacts`; it neither emits bus events itself nor persists run state. Handler bootstrap emission and Minted continuity completion are caller/handler obligations (CLS-030, CLS-031).
 
-(a) Events produced: none directly. The function returns `claudeRunArtifacts.preExecMsgs` — 4 ordered NDJSON pre-exec messages per [claude-hook-bridge.md §4.7 CHB-018]; the daemon caller MUST emit them on the bus before `handler.Launch` per §4.4 CLS-030. Emission ownership is the caller's, not this subsystem's.
+(a) Events produced: none directly. The function returns four ordered handler-bootstrap message payloads per [claude-hook-bridge.md §4.7 CHB-018]. The successfully spawned handler emits them around the version-negotiation handshake; the caller MUST NOT self-emit `agent_ready`.
 
 (b) Events consumed: none. The assembly function performs no bus reads; all inputs arrive via the `claudeRunCtx` struct (§4.1).
 
@@ -94,7 +96,7 @@ Envelope for the claude-launchspec subsystem per [architecture.md §4.0 AR-053].
 
 (g) NFRs inherited / overridden:
   - Inherited: credential-isolation `CI-002`/`CI-003` — the env deny-list strip of §4.1 enforces the credential-holder discipline at the launch boundary.
-  - Inherited: `HC-INV-004` pre-exec-before-launch ordering — surfaced as the CLS-030 caller obligation.
+  - Inherited: `HC-INV-004` successful-spawn → `launch_initiated` → genuine `agent_ready` → first-input ordering — surfaced as the CLS-030 caller/handler obligation.
   - Overridden: none.
 
 (h) Boundary classification per operation:
@@ -117,7 +119,8 @@ Every `claudeRunCtx` MUST supply:
 
 - `runID` — non-zero `core.RunID` (UUIDv7).
 - `beadID` — non-empty string.
-- `workspacePath` — non-empty absolute path; the directory MUST exist before `buildClaudeLaunchSpec` is called.
+- `workspacePath` — non-empty absolute phase-workspace path; the directory MUST exist before `buildClaudeLaunchSpec` is called. It equals `runWorkspacePath` for implementer phases and MUST equal the manifest-validated box-A reviewer projection for `phase = reviewer`.
+- `runWorkspacePath` — non-empty absolute path to the authoritative leased run workspace. For `workflow_mode = review-loop` it is the durable destination for reviewer verdict, feedback, budget diagnostics, and retained session evidence. It MUST NOT be replaced by the reviewer projection path.
 - `daemonSocket` — non-empty path; the daemon MUST be listening on this socket before the assembled `LaunchSpec` is passed to `handler.Launch`.
 - `handlerBinary` — non-empty string; the binary name or absolute path for `LaunchSpec.Binary`.
 - `daemonBinaryPath` — non-empty absolute path; set from `os.Executable()` at daemon startup per PL-006a.
@@ -169,6 +172,8 @@ The following `claudeRunCtx` fields are only valid for specific phases; supplyin
 | `reviewHeadSHA` | `phase = reviewer` — head commit SHA for the diff under review | All other phases — empty |
 | `iterationCount` | `phase ∈ {implementer-initial, implementer-resume, reviewer}` — 1-based iteration index, bounded by ON-004 cap (3) | `phase = ""` (single-mode) — MUST be 0 or negative |
 
+For `phase = reviewer`, the caller MUST validate before assembly that `workspacePath` equals `<repo>/.harmonik/worktrees/<runID>-reviewer-<iterationCount>/`, the projection manifest tuple agrees with `(runID, iterationCount, reviewHeadSHA, location="box-a")`, and detached HEAD resolves to `reviewHeadSHA`. Same-run-workspace reviewer execution is a structural error. For implementer phases, `workspacePath` MUST equal `runWorkspacePath`.
+
 Cross-ref: [handler-contract.md §4.2 HC-006a] (per-phase LaunchSpec field table, which cites `buildClaudeLaunchSpec` as implementation evidence).
 
 #### CLS-004 — ModelPreference validation
@@ -187,11 +192,11 @@ Tags: mechanism
 
 `buildClaudeLaunchSpec` MUST execute the following steps in order. No step may be skipped; no step may reorder relative to its predecessor unless explicitly noted. The numbering matches the step comments in `internal/daemon/claudelaunchspec.go`.
 
-1. **MintClaudeSessionID** — per [claude-hook-bridge.md §4.3 CHB-008/CHB-009]: mint a fresh UUIDv7 for `phase ∈ {single, implementer-initial, reviewer}`; reuse `priorClaudeSessID` for `phase = implementer-resume`. Returns `mintResult.ResumeMode`.
+1. **MintClaudeSessionID** — Claude's harness policy is `Minted` per [harness-contract.md §4.2 HN-008]. The shared caller mints a fresh UUIDv7 for `phase ∈ {single, implementer-initial, reviewer}`; `phase = implementer-resume` reuses `priorClaudeSessID`. The returned identity is the concrete launch artifact and MUST NOT be replaced by the handler. Returns `mintResult.ResumeMode`.
 
-2. **DeriveCIaudeTranscriptPath** — per [claude-hook-bridge.md §4.7 CHB-018 step 2]: derive the absolute session-log path from `workspacePath` and the minted session ID. No I/O.
+2. **DeriveClaudeTranscriptPath and retained log destination** — per [claude-hook-bridge.md §4.7 CHB-018]: derive the absolute Claude transcript path and the retained harmonik session-archive destination from the minted session ID. For reviewers, any path beneath `workspacePath` is staging only; the retained destination MUST be beneath `runWorkspacePath`, or the artifacts MUST carry an explicit transfer from the former to the latter before projection cleanup. No I/O.
 
-3. **MaterializeClaudeSettings** — per [claude-hook-bridge.md §4.1 CHB-001..CHB-005]: atomically write `.claude/settings.json` into the workspace. MUST use `daemonBinaryPath` (not the bare binary name) for the hook `command` field.
+3. **MaterializeClaudeSettings** — per [claude-hook-bridge.md §4.1 CHB-001..CHB-005]: atomically write `.claude/settings.json` into the phase workspace. For a reviewer this is the manifest-validated projection and no workspace lease is implied. MUST use `daemonBinaryPath` (not the bare binary name) for the hook `command` field.
 
    3a. **EnsureWorktreeTrust** — per [claude-hook-bridge.md §4.12 CHB-029] and [workspace-model.md §4.7b WM-040b]: pre-seed `~/.claude.json` with `hasTrustDialogAccepted: true` for the workspace path. MUST run AFTER step 3 and BEFORE step 8.
 
@@ -205,9 +210,9 @@ Tags: mechanism
 
 7. **CheckForbiddenFlags** — per [claude-hook-bridge.md §4.2 CHB-007]: reject any forbidden flags in the constructed argv or env. Returns `ErrStructural` on violation.
 
-8. **PreExecMessages** — per [claude-hook-bridge.md §4.7 CHB-018]: render the 4 ordered pre-exec progress messages (`handler_capabilities`, `session_log_location`, `skills_provisioned`, `agent_ready`). The caller MUST emit these on the event bus BEFORE calling `handler.Launch`.
+8. **HandlerBootstrapMessages** — per [claude-hook-bridge.md §4.7 CHB-018]: render the four ordered handler-bootstrap progress messages (`handler_capabilities`, `session_log_location`, `skills_provisioned`, `launch_initiated`). They are supplied to the handler and emitted only after successful handler spawn under CLS-030. `agent_ready` is absent; it is synthesized only from the concrete Claude `SessionStart` callback per CHB-013.
 
-9. **Assemble and return** — construct `handler.LaunchSpec` (Binary from `rc.handlerBinary`; Args, Env, WorkDir, Role from prior steps) and `claudeRunArtifacts` (claudeSessionID, sessionLogPath, handlerSessionID, preExecMsgs).
+9. **Assemble and return** — construct `handler.LaunchSpec` (Binary from `rc.handlerBinary`; Args, Env, `WorkDir = workspacePath`, Role from prior steps) and `claudeRunArtifacts` (claudeSessionID, transcript path, retained session-log destination or transfer descriptor, handlerSessionID, phase-workspace identity, handlerBootstrapMsgs).
 
 #### CLS-011 — On-error invariant
 
@@ -239,7 +244,7 @@ This section owns the normative lifecycle for the review-loop `phase` field. The
                          └──────────────┬──────────────┘
                                         │
                ┌────────────────────────┼────────────────────────┐
-               │ verdict=APPROVE        │ verdict=REQUEST_CHANGES  │ verdict=BLOCK
+               │ APPROVE or flagless    │ actionable REQUEST_CHANGES│ verdict=BLOCK
                ▼                        ▼                          ▼
          [cycle_complete:         ┌────────────────────┐    [cycle_complete:
           approved]               │ implementer-resume  │     blocked]
@@ -258,7 +263,7 @@ This section owns the normative lifecycle for the review-loop `phase` field. The
                           (repeat until APPROVE, BLOCK, or cap)
                                            │
                                            ▼
-                              [cycle_complete: cap_reached]
+                              [cycle_complete: cap_hit]
 ```
 
 #### CLS-021 — Phase transition rules (normative table)
@@ -269,14 +274,18 @@ Tags: mechanism
 |---|---|---|---|
 | `—` (pre-launch) | dispatch, `workflow_mode = review-loop` | `implementer-initial` | `iteration = 1`; `priorClaudeSessID = nil` |
 | `implementer-initial` | `outcome_emitted` received | `reviewer` | `iteration = 1`; reviewer mints fresh session (CHB-009) |
-| `reviewer` (iteration ≤ cap–1) | `verdict = REQUEST_CHANGES` | `implementer-resume` | `iteration += 1`; carries `claude_session_id` from `implementer-initial` |
+| `reviewer` (iteration ≤ cap–1) | `verdict = REQUEST_CHANGES` and `flags` non-empty | `implementer-resume` | Actionable request; `iteration += 1`; carries `claude_session_id` from `implementer-initial` |
 | `reviewer` (any iteration) | `verdict = APPROVE` | — (cycle complete) | `completion_reason = approved` |
+| `reviewer` (any iteration) | `verdict = REQUEST_CHANGES` and `flags` empty | — (cycle complete) | Preserve the raw verdict; Execution Model normalizes routing to `completion_reason = approved` |
 | `reviewer` (any iteration) | `verdict = BLOCK` | — (cycle complete) | `completion_reason = blocked` |
-| `reviewer` (iteration = cap) | `verdict = REQUEST_CHANGES` | — (cycle complete) | `completion_reason = cap_reached`; per [operator-nfr.md §4.1 ON-004] |
+| `reviewer` (iteration = cap) | `verdict = REQUEST_CHANGES` and `flags` non-empty | — (cycle complete) | `completion_reason = cap_hit`; per [execution-model.md §4.3 EM-015e] |
+| `implementer-resume` | HEAD unchanged from prior iteration after actionable request | — (cycle complete before reviewer launch) | `completion_reason = fixup_stalled`; no reviewer phase is assembled |
 | `implementer-resume` | `outcome_emitted` received | `reviewer` | `iteration` unchanged; reviewer mints fresh session |
 | `—` (pre-launch) | dispatch, `workflow_mode = single` | — (single-mode) | `phase = ""`; no review loop; no `iteration` |
 
 Cross-ref: [handler-contract.md §4.2 HC-006a] (per-phase LaunchSpec field table, authoritative for which fields differ across phases).
+
+This table records the phase names consumed by assembly; [execution-model.md §4.3 EM-015d, EM-015e] remains authoritative for verdict normalization, HEAD-based fix-up-stall detection, iteration-cap evaluation, event emission, and terminal routing. `buildClaudeLaunchSpec` MUST NOT reinterpret the raw verdict or emit `fixup_stalled`/`cap_hit`.
 
 #### CLS-022 — claudeSessionID durability across implementer-resume
 
@@ -290,19 +299,21 @@ Tags: mechanism
 
 Each reviewer phase MUST receive a freshly minted Claude session ID. The assembly function MUST pass `nil` for `priorClaudeSessID` on reviewer launches. The `mintResult.ResumeMode` field MUST be `false` for reviewer launches; violation is caught by the MintClaudeSessionID implementation per CHB-009.
 
+Each reviewer phase MUST also use the manifest-validated box-A projection as `workspacePath`/`LaunchSpec.WorkDir`; the run workspace remains the retained archive destination. Any projection-local session evidence MUST transfer to that archive before projection cleanup.
+
 ### 4.4 claudeRunArtifacts caller obligations
 
-#### CLS-030 — Pre-exec message emission MUST precede handler.Launch
+#### CLS-030 — Handler bootstrap follows successful spawn; ready follows SessionStart
 
 Tags: mechanism
 
-The `claudeRunArtifacts.preExecMsgs` slice returned by `buildClaudeLaunchSpec` contains 4 ordered NDJSON messages (per CHB-018). The caller MUST emit all 4 messages on the event bus **before** calling `handler.Launch`. Emitting after launch creates a race between the relay's first hook emission and the handler's first message read, violating HC-INV-004.
+The caller MUST commit logical dispatch intent, including `reviewer_launched` when applicable, before `handler.Launch`. After successful handler spawn, the handler emits `handler_capabilities`, waits for `version_selected`, then emits `session_log_location`, `skills_provisioned`, and `launch_initiated` before Claude exec per CHB-018. The caller MUST NOT self-emit those handler messages and MUST NOT emit `agent_ready`. The authoritative watcher publishes exactly one ready only after the concrete launch's valid `SessionStart`.
 
 #### CLS-031 — claudeSessionID storage for implementer-resume
 
 Tags: mechanism
 
-The caller MUST persist `claudeRunArtifacts.claudeSessionID` into the Run record after a successful `implementer-initial` launch so it can be passed as `priorClaudeSessID` on the next `implementer-resume` launch. Durability of this value is the daemon's responsibility (CHB-023).
+For `implementer-initial`, the caller MUST verify the `handler_capabilities` identity equals `claudeRunArtifacts.claudeSessionID`, persist that identity through the EM-023a continuity checkpoint, and only then send `version_selected` carrying the negotiated version. This must complete before Claude exec and first work. The committed identity is passed as `priorClaudeSessID` on every `implementer-resume`; a conflicting identity fails closed. Reviewer identities are fresh launch identities and MUST NOT overwrite implementer continuity state.
 
 ### 4.5 Worktree path-check
 
@@ -327,7 +338,9 @@ Cross-ref: [handler-contract.md §4.10 HC-055b].
 | `task_file_empty` | ErrStructural (wrapped) | `WriteAgentTask` error (step 5) |
 | `bridge_settings_shadowed` | ErrStructural (wrapped) | `CheckSettingsLocalJSON` detects shadow (step 6) |
 | `forbidden_flag` | ErrStructural (wrapped) | `CheckForbiddenFlags` denial (step 9) |
-| `pre_exec_messages_failed` | ErrStructural (wrapped) | `PreExecMessages` error (step 10) |
+| `handler_bootstrap_messages_failed` | ErrStructural (wrapped) | `HandlerBootstrapMessages` error (step 8) |
+| `reviewer_projection_invalid` | ErrStructural | Reviewer phase workspace path, manifest tuple, or detached HEAD does not match the launch inputs |
+| `reviewer_session_archive_failed` | ErrStructural (wrapped) | Projection-local reviewer session evidence cannot be durably transferred before cleanup |
 
 Cross-ref: [claude-hook-bridge.md §8] for the sub-reason strings owned by CHB steps.
 
@@ -362,7 +375,9 @@ Tags: mechanism
 A dedicated test `TestCLS_PerPhaseLaunchSpecInvariants` in `internal/daemon/` SHOULD exercise all three review-loop phases through `buildClaudeLaunchSpec` and assert:
 - `implementer-initial`: `--session-id` in argv, `priorClaudeSessID = nil` accepted, `phase` field in LaunchSpec = `"implementer-initial"`.
 - `implementer-resume`: `--resume` in argv, `priorClaudeSessID` non-nil required, reused session ID matches input.
-- `reviewer`: `--session-id` in argv, fresh session ID minted (not equal to any implementer session ID).
+- `reviewer`: `--session-id` in argv, fresh session ID minted (not equal to any implementer session ID), WorkDir equals the exact-SHA reviewer projection, and retained session evidence targets or transfers to the run workspace.
+- Bootstrap/ready: returned bootstrap messages exclude `agent_ready`; after spawn the handler waits for `version_selected`, emits `launch_initiated`, and only a matching `SessionStart` satisfies ready.
+- Routing delegation: flagless REQUEST_CHANGES, `fixup_stalled`, and `cap_hit` are accepted only as Execution Model decisions and do not create assembly-side verdict rewriting.
 
 Cross-ref: [handler-contract.md §4.2 HC-006a] test-hookpoint sensor note naming `TestHC006a_PerPhaseLaunchSpecInvariants` as the target file.
 
@@ -374,5 +389,6 @@ The authoritative implementation is `internal/daemon/claudelaunchspec.go` (`buil
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-24 | 0.2.0 | agent (codename:reviewloop-decoupling) | **Launch assembly reconciled with genuine ready, Minted continuity, and reviewer projection placement.** `workspacePath` is now the phase workspace and `runWorkspacePath` the authoritative archive; reviewers require a manifest-validated exact-SHA box-A projection and retained session-log destination/transfer. Bootstrap payloads replace pre-emitted ready: handler spawn → capabilities → continuity checkpoint where applicable → `version_selected` → session-log/skills/`launch_initiated` → Claude `SessionStart` → genuine ready. CLS-021 delegates flagless normalization, fix-up stall, and `cap_hit` to Execution Model. No CLS requirement IDs were added or renumbered. |
 | 2026-05-31 | 0.1.1 | agent (kerf `credfence` work) | Additive credential-scrub notes. §4 `baseEnv` row and the env-assembly step (step 5) now record that env assembly removes the credential env deny-list keys (`{ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH*}`) per [credential-isolation.md CI-002/CI-003], symmetric with the `HARMONIK_SECRET_*` strip, distinct from the CHB-007 forbidden-flag deny-list; the §6 Cross-references table gains a credential-env-deny-list row. No existing requirement changed. Source: kerf `credfence` change design. |
 | 2026-05-19 | 0.1 | agent (hk-xpnfy) | Initial spec. Consolidates the assembly sequence, review-loop phase lifecycle state machine, and claudeRunCtx field contract from fragmented coverage across handler-contract.md §4.2 HC-005/006/006a and claude-hook-bridge.md §4.2–4.9 CHB-006..024. No new normative rules added beyond what the code already implements. |

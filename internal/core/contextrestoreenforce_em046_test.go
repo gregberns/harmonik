@@ -118,6 +118,7 @@ func TestContextRestoreEnforce_ValidateNonContextRestoreKindsUnrestricted(t *tes
 		TransitionKindLocalPatchback,
 		TransitionKindArchitecturalRollback,
 		TransitionKindPolicyRollback,
+		TransitionKindContextCheckpoint,
 	}
 	for _, kind := range nonRestoreKinds {
 		// Even a handler role is fine for non-context-restore kinds.

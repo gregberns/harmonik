@@ -69,6 +69,7 @@ func (h hkpkxjuHarness) SessionIDPolicy() handlercontract.SessionIDPolicy { retu
 func (h hkpkxjuHarness) Completion() handlercontract.CompletionMode {
 	return handlercontract.CompletionEventStreamThenQuit
 }
+
 func (h hkpkxjuHarness) NewSessionIDInterceptor(
 	inner io.Reader, _ func(string), _ func(),
 ) io.Reader {
@@ -163,7 +164,6 @@ func TestReviewerNeverInheritsCapturedHarness_ReviewLoop_hkpkxju(t *testing.T) {
 				t.Fatalf("reviewer tier-3 default for implementer %q = %q; want %q",
 					tc.implementer, got, tc.want)
 			}
-
 		})
 	}
 }

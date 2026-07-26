@@ -144,8 +144,8 @@ tasks:
     card: tasks/CQ-00A.md
     group: CQ
     priority: P0
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
     hard_requires: []
     conflicts_with: []
@@ -161,6 +161,9 @@ tasks:
         profile: terra_high
         reason: "Configured local dgx-local endpoint was unreachable at claim time."
     card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
+    review: {state: approved, reviewer: cq_00a_review, artifact: tasks/evidence/CQ-00A-REVIEW.md, verdict: APPROVE}
+    integration: {state: integrated, commit: 584e6c965162732d0c15cf086b321c6193acc0ed, integrated_sha: 034d7fb4280712bebf4d4336eb679ccae36870c2}
+    proof: green
     required_proof: [yaml_parse, frontier_sample_review]
 
   CQ-00B:
@@ -168,8 +171,8 @@ tasks:
     card: tasks/CQ-00B.md
     group: CQ
     priority: P0
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
     hard_requires: []
     conflicts_with: []
@@ -185,6 +188,9 @@ tasks:
         profile: terra_high
         reason: "Configured local dgx-local endpoint was unreachable at claim time."
     card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
+    review: {state: approved, reviewer: queue_run_audit, artifact: tasks/evidence/CQ-00B-REVIEW.md, verdict: APPROVE}
+    integration: {state: integrated, commit: 35c0b6c1cdab4fea55551abbdeb1437211d502e0, integrated_sha: eacf8f2f3957d9e2bf5511659ed7ca9f263b6eab}
+    proof: green
     required_proof: [yaml_parse, frontier_sample_review]
 
   CQ-00:
@@ -192,12 +198,13 @@ tasks:
     card: tasks/CQ-00.md
     group: CQ
     priority: P0
-    phase: triage
+    phase: ready
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-00A, CQ-00B]
     conflicts_with: []
     lease_family: evidence_CQ_00
+    card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/CQ-00-CARD-REVIEW.md, verdict: APPROVE}
     required_proof: [yaml_parse, cross_group_review]
 
   CQ-MIG-01:

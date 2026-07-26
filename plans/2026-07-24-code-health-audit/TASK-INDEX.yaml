@@ -198,8 +198,8 @@ tasks:
     card: tasks/CQ-00.md
     group: CQ
     priority: P0
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-00A, CQ-00B]
     conflicts_with: []
@@ -212,6 +212,9 @@ tasks:
       bead_id: null
       claimed_at: 2026-07-26T17:39:01Z
     card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/CQ-00-CARD-REVIEW.md, verdict: APPROVE}
+    review: {state: approved, reviewer: cq_00_review, artifact: tasks/evidence/CQ-00-REVIEW.md, verdict: APPROVE}
+    integration: {state: integrated, commit: cd7446c95d4bbf2f48a34f6d08261a04cfbed8ba, integrated_sha: d94aaf4e6b0f82da384bf06ddc50609b5348201c}
+    proof: green
     required_proof: [yaml_parse, cross_group_review]
 
   CQ-MIG-01:
@@ -219,12 +222,13 @@ tasks:
     card: tasks/CQ-MIG-01.md
     group: CQ
     priority: P0
-    phase: triage
+    phase: ready
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-00B]
     conflicts_with: [CQ-02I]
     lease_family: queue_persistence
+    card_review: {state: approved, reviewer: queue_run_audit, artifact: tasks/evidence/CQ-MIG-01-CARD-REVIEW.md, verdict: APPROVE}
     required_proof: [targeted, fault, delta_lint, ubs, check_fast]
 
   CQ-02:

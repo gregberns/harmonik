@@ -63,5 +63,29 @@ queue-default propagation. Its DAG is `{PI-A1,PI-A2,PI-L1,PI-F0,PI-Q1} →
 3. After independent review and integration checks, record commit/test evidence in the YAML index and
    unblock dependents. The next worker uses the documented contract and scenario fixtures, not oral context.
 
+## Review gates
+
+Every planned section and every completed implementation task gets a review from a different agent before it
+is accepted. The reviewer checks missing cases, task boundaries, dependency direction, acceptance tests, and
+whether the lease is actually exclusive. Before a group begins consuming another group—or is declared
+complete—a separate cross-group reviewer checks contract compatibility, duplicate ownership, durable-state
+and recovery consistency, error propagation, scenario coverage, and DAG ordering. Findings change the index;
+they are not merely advisory comments.
+
+## Two Pi Ralph workers and frontier routing
+
+Operate two Pi workers continuously only on `model:pi-ralph` cards: low-complexity deterministic tasks with
+an explicit contract, exclusive small lease, bounded checks, and a defined escalation point. Good Pi work is
+fixture/test expansion, evidence inventory, a narrow pure function, an isolated adapter, or a proven
+mechanical defect. Pi must not decide security policy, create a cross-subsystem contract, refactor shared
+spines, or integrate broad changes.
+
+Operate two Codex workers (and later Claude when available) on `model:frontier` cards: high-ambiguity
+ownership, concurrency/recovery, security, shared-spine integration, cross-group review, and Pi escalation.
+One frontier overseer continuously reviews Pi checkpoints, turns ambiguous findings into bounded cards,
+handles failing tests that escape the card, and keeps the Pi queue replenished. Use labels
+`complexity:low|medium|high` plus `model:pi-ralph|frontier`; route by ambiguity and blast radius rather than
+subsystem name. Medium tasks require a frontier-written/reviewed task card before Pi starts.
+
 `E2E-04` is the first-wave completion bar: bounded local admission, claim, Run, Pi, recovery, race, and
 fault proof. It does not claim SSH or primary-daemon proof.

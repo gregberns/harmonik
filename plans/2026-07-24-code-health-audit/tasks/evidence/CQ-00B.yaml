@@ -1,0 +1,300 @@
+task_id: CQ-00B
+base_sha: ecbb5e6292cb190cd562796fa4c8f65e7a59a605
+scope:
+  worktree: /Users/gb/github/harmonik-wt/cq-00b
+  branch: work/cq-00b
+  lease: plans/2026-07-24-code-health-audit/tasks/evidence/CQ-00B.yaml
+  production_changes: false
+searches:
+  - command: "rg -n 'scenario_queue_submit_dispatch|scenario_restart_recovery|scenario_dispatch_tracker_orphan' internal/daemon"
+    result: "3 scenario test files found: submit/dispatch, restart recovery, and dispatch-tracker orphan recovery."
+  - command: "rg -n '\\b(fault|restart|crash|persist|migrat|recover|unlink|claim)\\b' internal/queue --glob '*_test.go'"
+    result: "Persistence, migration, unlink, append-persist rollback, concurrent submit, and validation test families found."
+  - command: "rg -n '^func Test' internal/queue --glob '*_test.go'"
+    result: "Mapped queue unit tests to validation, submit/append, persistence, migration, group state, and recovery cuts."
+  - command: "rg -n '\\b(claim|reserve|dispatched|queue_item_claimed|dispatch)\\b' internal/daemon --glob '*_test.go'"
+    result: "Mapped workloop claim/retry, pending-group bootstrap, shutdown-drain, and full daemon restart scenarios."
+  - command: "rg -n '^func Test|Persist|recover|reconcil|corrupt|schema' internal/lifecycle/startup_pl005_qm002_test.go"
+    result: "Mapped startup LoadQueueAtStartup clean/absent/corrupt/schema and QM-002a/QM-002b reconciliation coverage."
+  - command: "rg -n '^func Test|Persist|Load|CompleteAndUnlink|SetQueue|Append' internal/scenario/queue_crash_recovery_test.go internal/scenario/queue_lifecycle_test.go internal/scenario/queue_setqueue_wiring_test.go"
+    result: "Mapped scenario-package crash-shaped load, state-machine lifecycle, and direct HandlerAdapter-to-QueueStore wiring tests."
+lifecycle_cuts:
+  - id: validation_before_submit_persist
+    transition: "queue submit validation -> durable active queue"
+    durable_before: "No queue file for the requested queue name; rejected input must leave no durable queue mutation."
+    durable_after: "On acceptance, .harmonik/queues/<name>.json contains the active queue with pending/deferred items."
+    coverage:
+      tests:
+        - internal/queue/validation_test.go TestValidateQM020BeadExistence
+        - internal/queue/validation_test.go TestValidateQM027SingleActiveQueue
+        - internal/queue/rpc_test.go TestHandleQueueSubmit_HappyPath
+        - internal/queue/rpc_template_param_validation_test.go TestHandleQueueSubmit_RejectsControlCharParamValue
+      composition: "HandleQueueSubmit/HandlerAdapter paths; no dedicated power-loss injection before Persist."
+    verdict: covered_at_validation_boundary
+  - id: submit_after_durable_write_before_memory_install
+    transition: "HandleQueueSubmit Persist -> QueueStore SetQueue/Wake"
+    durable_before: "Validated request has no durable queue file."
+    durable_after: "A complete active queue file is durable, but a live QueueStore install and wake have not yet occurred."
+    coverage:
+      tests:
+        - internal/queue/persistence_test.go TestPersistRoundTrip
+        - internal/queue/rpc_test.go TestHandleQueueSubmit_HappyPath
+        - internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go TestScenario_QueueSubmit_IdleWake_hk24xn1
+      composition: "The scenario reaches submit, QueueStore wake, dispatch, and close, but does not interrupt exactly between Persist and SetQueue."
+    verdict: named_gap
+  - id: append_before_durable_write
+    transition: "append clone mutation -> Persist"
+    durable_before: "Live QueueStore and queue file contain only the pre-append item set."
+    durable_after: "On failed Persist, both live QueueStore and durable file remain at the pre-append state."
+    coverage:
+      tests:
+        - internal/queue/rpc_hk3hh9w_append_rollback_test.go TestHandlerAdapter_AppendPersistFailure_LeavesStoreUnmutated
+      composition: "HandlerAdapter mutation-lock path with fake QueueStore and a permission-induced persistence fault."
+    verdict: covered_fault_oracle
+  - id: append_after_durable_write_before_memory_install
+    transition: "append Persist -> LockedSetQueueByName"
+    durable_before: "The queue file and live store contain the pre-append item set."
+    durable_after: "The queue file contains the appended item set; the live store may still hold the old snapshot until install."
+    coverage:
+      tests:
+        - internal/queue/rpc_hk3hh9w_append_rollback_test.go TestHandlerAdapter_AppendPersistSuccess_InstallsMutatedQueue
+        - internal/queue/rpc_test.go TestHandleQueueAppend_HappyPath
+      composition: "Success test observes both persisted file and later in-memory install, but has no interrupt/restart point between them."
+    verdict: named_gap
+  - id: append_after_memory_install_before_event_emit
+    transition: "LockedSetQueueByName -> queue_appended event emission"
+    durable_before: "Appended queue snapshot is durable and installed in the live store."
+    durable_after: "queue_appended and any deferred-item events are externally observable."
+    coverage:
+      tests:
+        - internal/queue/append_test.go TestAppendItemsQM042EventEmitted
+        - internal/queue/rpc_hk3hh9w_append_rollback_test.go TestHandlerAdapter_AppendPersistSuccess_InstallsMutatedQueue
+      composition: "Event shape/order is unit-tested; no composition test crashes after install before event emission."
+    verdict: named_gap
+  - id: migration_after_new_file_before_legacy_remove
+    transition: "MigrateFromLegacy writes queues/main.json -> removes legacy queue.json"
+    durable_before: "Legacy .harmonik/queue.json is the durable queue source."
+    durable_after: "Canonical queues/main.json contains the queue and the legacy file is absent."
+    coverage:
+      tests:
+        - internal/queue/persistence_test.go TestMigrateFromLegacy_MigratesFile
+        - internal/queue/persistence_test.go TestMigrateFromLegacy_IdempotentWhenMainExists
+      composition: "Helper tests cover a valid legacy file, absent legacy file, and the both-files-present restart shape. Existing main.json is trusted without validating identity or contents."
+    verdict: narrowly_covered_valid_input_only
+  - id: group_advance_before_persist
+    transition: "activateFirstPendingGroup AdvanceGroup mutates live queue -> Persist -> QueueStore write-back"
+    durable_before: "Queue file records the previous pending/active group and item statuses."
+    durable_after: "On success the queue file records the new active group before group events. On Persist failure, production still installs the advanced live-memory queue and suppresses events, leaving memory ahead of disk."
+    coverage:
+      tests:
+        - internal/queue/state_test.go TestAdvanceGroup_PendingToActive_QueueActive
+        - internal/queue/state_test.go TestAdvanceGroup_ActiveToCompleteSuccess
+        - internal/daemon/workloop_submit_pending_group_hkveoht_test.go TestWorkLoop_SubmittedPendingGroupBootstrapsToActive
+      composition: "Workloop test exercises bootstrap plus claim through ExportedRunWorkLoop with stubbed ledger/bus, but does not force activateFirstPendingGroup Persist failure."
+    verdict: named_live_memory_before_persist_gap
+  - id: dispatch_stamp_first_write_before_runid_patch
+    transition: "pending item -> Persist dispatched with empty RunID placeholder -> Persist RunID patch"
+    durable_before: "Queue item is pending, has no RunID, and the bead is open."
+    durable_after: "The first durable write says dispatched with an empty-string RunID; a separate second write later patches the minted RunID, both before ClaimBead."
+    coverage:
+      tests:
+        - internal/daemon/workloop_bounded_retry_hk6pspu_test.go TestWorkLoop_ClaimRetryBoundedCount
+        - internal/daemon/workloop_submit_pending_group_hkveoht_test.go TestWorkLoop_SubmittedPendingGroupBootstrapsToActive
+      composition: "Workloop tests traverse both writes but do not stop after either write or assert the empty-RunID restart state."
+    verdict: named_two_write_gap
+  - id: durable_dispatch_before_claim
+    transition: "RunID-patched durable dispatched item -> Beads ClaimBead"
+    durable_before: "Queue file says dispatched with the minted RunID while the bead remains open."
+    durable_after: "A successful claim makes the bead in_progress; run_started has not yet been emitted."
+    coverage:
+      tests:
+        - internal/scenario/queue_crash_recovery_test.go TestQueueCrashRecovery_QM002_LoadsActiveQueueAfterRestart
+        - internal/lifecycle/startup_pl005_qm002_test.go TestLoadQueueAtStartup_QM002aBeadsCrossCheck
+        - internal/daemon/workloop_bounded_retry_hk6pspu_test.go TestWorkLoop_ClaimRetryBoundedCount
+      composition: "Crash-recovery and lifecycle tests cover durable dispatched load/revert with test seams; no injected process death exactly before ClaimBead."
+    verdict: named_gap
+  - id: successful_claim_before_run_started
+    transition: "successful Beads ClaimBead -> run_started event"
+    durable_before: "Queue item is dispatched with RunID and the bead is open."
+    durable_after: "Bead is in_progress while events.jsonl can still lack run_started and no independent-session record need exist."
+    coverage:
+      tests:
+        - internal/daemon/scenario_dispatch_tracker_orphan_hkiwu8a_test.go TestScenario_DispatchTrackerOrphan_ClearsWedgedDispatchLock
+      composition: "Full daemon.Start recovery pre-seeds dispatched queue plus in_progress bead with empty events.jsonl and no runs record, then proves Bead reset and queue reconciliation."
+    verdict: covered_restart_scenario
+  - id: run_started_before_optional_independent_session_record
+    transition: "emitRunStarted -> optional runpkg.Write for an independent local tmux session"
+    durable_before: "Successful claim exists and queue dispatch state is durable; run_started is not yet in the event log."
+    durable_after: "run_started is emitted first. Only later, and only when a local substrate supports independent session creation, runpkg.Write may add a .harmonik/runs record."
+    coverage:
+      tests:
+        - internal/daemon/scenario_dispatch_tracker_orphan_hkiwu8a_test.go TestScenario_DispatchTrackerOrphan_ClearsWedgedDispatchLock
+        - internal/daemon/runinflightreconcile_hkr73qr_test.go TestReconcileOrphanedRunsOnResume_ResetsBeadAndThreadsQueue
+      composition: "Recovery can use run_started independently. A run record is not universal for remote runs, shared-session fallback, or test substrates."
+    verdict: named_gap_for_event_before_optional_record
+  - id: completion_before_unlink
+    transition: "all groups complete-success -> Persist completed queue -> Unlink canonical queue file"
+    durable_before: "Active queue file contains terminal-success groups but remains present."
+    durable_after: "Completed state is persisted before unlink on success. evaluateGroupAdvanceWithOutcome clears the QueueStore slot even when CompleteAndUnlink returns a Persist or Unlink error."
+    coverage:
+      tests:
+        - internal/queue/persistence_test.go TestCompleteAndUnlink
+        - internal/queue/persistence_test.go TestCompleteAndUnlinkStatusOrdering
+        - internal/queue/persistence_test.go TestCompleteAndUnlinkIdempotent
+      composition: "Persistence helper tests prove success ordering and retry idempotence; no production-wiring test forces CompleteAndUnlink failure and observes the unconditional store clear."
+    verdict: covered_helper_with_store_clear_failure_gap
+  - id: restart_reconcile_dispatched_closed
+    transition: "restart sees dispatched queue item plus closed bead -> persisted item completion"
+    durable_before: "queue file has a dispatched item and a failed sibling; ledger has the dispatched bead closed."
+    durable_after: "Corrected queue file has completed/failed terminal items before reconciliation event emission."
+    coverage:
+      tests:
+        - internal/daemon/scenario_restart_recovery_ivzsl_test.go TestScenario_RestartRecovery_QM002bDeadlock
+      composition: "Full daemon.Start composition with real br database, filesystem queue, event log, and shutdown drain."
+    verdict: covered_restart_scenario
+  - id: shutdown_after_cancel_persist_before_archive_rename
+    transition: "CancelQueueOnShutdown Persist cancelled state -> rename canonical queue file to cancelled archive"
+    durable_before: "Canonical queue file is active and blocks a future same-name submit."
+    durable_after: "CancelQueueOnShutdown first mutates the live object to cancelled, then persists and renames. There is no rollback if Persist/rename/fsync fails; drainCancelledQueue clears the store slot after any returned error."
+    coverage:
+      tests:
+        - internal/daemon/workloop_qcancel_ppt32_test.go TestQueueCancel_TransitionsToCancelled
+        - internal/daemon/workloop_qcancel_ppt32_test.go TestQueueCancel_NamedQueue_ArchivedOnShutdown
+        - internal/daemon/scenario_restart_recovery_ivzsl_test.go TestScenario_RestartRecovery_QM002bDeadlock
+      composition: "Workloop composition uses test doubles; restart scenario uses daemon.Start. Neither injects a Persist/rename/fsync failure or asserts the live-status mutation and unconditional store clear on failure."
+    verdict: named_status_mutation_without_rollback_gap
+existing_tests:
+  validation:
+    - internal/queue/validation_test.go TestValidateQM020BeadExistence
+    - internal/queue/validation_test.go TestValidateQM022NoDoubleDispatch
+    - internal/queue/validation_test.go TestValidateQM025ParallelismNarrowed
+    - internal/queue/validation_test.go TestValidateQM027SingleActiveQueue
+    - internal/queue/rpc_template_param_validation_test.go TestHandleQueueSubmit_RejectsControlCharParamValue
+  submit_and_append_persistence:
+    - internal/queue/rpc_test.go TestHandleQueueSubmit_HappyPath
+    - internal/queue/rpc_test.go TestHandleQueueAppend_HappyPath
+    - internal/queue/rpc_h6_concurrent_submit_test.go TestHandlerAdapter_ConcurrentSubmit_SameName_ExactlyOneWins
+    - internal/queue/rpc_hk3hh9w_append_rollback_test.go TestHandlerAdapter_AppendPersistFailure_LeavesStoreUnmutated
+    - internal/queue/rpc_hk3hh9w_append_rollback_test.go TestHandlerAdapter_AppendPersistSuccess_InstallsMutatedQueue
+    - internal/scenario/queue_setqueue_wiring_test.go TestQueueSetQueueWiring_SubmitUpdatesQueueStore
+    - internal/scenario/queue_setqueue_wiring_test.go TestQueueSetQueueWiring_AppendUpdatesQueueStore
+  persistence_and_migration:
+    - internal/queue/persistence_test.go TestPersistRoundTrip
+    - internal/queue/persistence_test.go TestPersistAtomicCrashSafety
+    - internal/queue/persistence_test.go TestMigrateFromLegacy_MigratesFile
+    - internal/queue/persistence_test.go TestMigrateFromLegacy_IdempotentWhenMainExists
+    - internal/queue/persistence_test.go TestCompleteAndUnlink
+    - internal/queue/persistence_test.go TestCompleteAndUnlinkIdempotent
+    - internal/scenario/queue_crash_recovery_test.go TestQueueCrashRecovery_QM002_LoadsActiveQueueAfterRestart
+    - internal/scenario/queue_crash_recovery_test.go TestQueueCrashRecovery_QM002_CorruptFileWarnAndProceed
+    - internal/scenario/queue_lifecycle_test.go TestQueueLifecycle_EmissionOrdering_QM065
+    - internal/scenario/queue_lifecycle_test.go TestQueueLifecycle_QueueJSON_UnlinkedOnCompletion
+    - internal/scenario/queue_lifecycle_test.go TestQueueLifecycle_FullStateSequence
+  reservation_claim_and_group_advance:
+    - internal/queue/state_test.go TestAdvanceGroup_PendingToActive_QueueActive
+    - internal/queue/state_test.go TestAdvanceGroup_ActiveToCompleteSuccess
+    - internal/queue/state_test.go TestEligibleItems_Wave_NoneEligibleWhenAllDispatched
+    - internal/daemon/workloop_submit_pending_group_hkveoht_test.go TestWorkLoop_SubmittedPendingGroupBootstrapsToActive
+    - internal/daemon/workloop_bounded_retry_hk6pspu_test.go TestWorkLoop_ClaimRetryBoundedCount
+  completion_shutdown_and_restart:
+    - internal/daemon/workloop_qcancel_ppt32_test.go TestQueueCancel_TransitionsToCancelled
+    - internal/daemon/workloop_qcancel_ppt32_test.go TestQueueCancel_NamedQueue_ArchivedOnShutdown
+    - internal/lifecycle/startup_pl005_qm002_test.go TestLoadQueueAtStartup_CleanLoad
+    - internal/lifecycle/startup_pl005_qm002_test.go TestLoadQueueAtStartup_CorruptFile
+    - internal/lifecycle/startup_pl005_qm002_test.go TestLoadQueueAtStartup_QM002aBeadsCrossCheck
+    - internal/lifecycle/startup_pl005_qm002_test.go TestLoadQueueAtStartup_QM002b_ClassAPrime_DispatchedBeadClosed
+    - internal/daemon/scenario_restart_recovery_ivzsl_test.go TestScenario_RestartRecovery_QM002bDeadlock
+    - internal/daemon/scenario_dispatch_tracker_orphan_hkiwu8a_test.go TestScenario_DispatchTrackerOrphan_ClearsWedgedDispatchLock
+production_composition_tests:
+  full_daemon_start:
+    - test: internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go TestScenario_QueueSubmit_IdleWake_hk24xn1
+      covers: "Idle daemon -> submit RPC -> QueueStore wake -> dispatch -> run completion -> bead close."
+      admission_boundary: "Direct in-process HandlerAdapter.HandleQueueSubmit call against the daemon's QueueStore; full daemon runtime after admission, but not socket JSON-RPC or CLI composition."
+    - test: internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go TestScenario_QueueSubmit_DeferredUndefer_hknbjht
+      covers: "Submit stream with dependency deferral -> blocker completes -> deferred item wakes and closes."
+      admission_boundary: "Direct in-process HandlerAdapter admission, not socket/CLI composition."
+    - test: internal/daemon/scenario_restart_recovery_ivzsl_test.go TestScenario_RestartRecovery_QM002bDeadlock
+      covers: "Startup load/reconcile, persistence-before-event, cancellation archive, and fresh-submit recovery."
+    - test: internal/daemon/scenario_dispatch_tracker_orphan_hkiwu8a_test.go TestScenario_DispatchTrackerOrphan_ClearsWedgedDispatchLock
+      covers: "Startup orphan sweep sourced from durable dispatched queue state."
+  workloop_composition_with_test_seams:
+    - internal/daemon/workloop_submit_pending_group_hkveoht_test.go TestWorkLoop_SubmittedPendingGroupBootstrapsToActive
+    - internal/daemon/workloop_bounded_retry_hk6pspu_test.go TestWorkLoop_ClaimRetryBoundedCount
+    - internal/daemon/workloop_qcancel_ppt32_test.go TestQueueCancel_TransitionsToCancelled
+  direct_adapter_or_helper_composition:
+    - test: internal/scenario/queue_setqueue_wiring_test.go TestQueueSetQueueWiring_SubmitUpdatesQueueStore
+      classification: "Direct HandlerAdapter plus fake QueueSetter/event collector; no daemon, socket, or CLI."
+    - test: internal/scenario/queue_setqueue_wiring_test.go TestQueueSetQueueWiring_AppendUpdatesQueueStore
+      classification: "Direct HandlerAdapter plus fake QueueSetter/event collector; no daemon, socket, or CLI."
+    - test: internal/scenario/queue_lifecycle_test.go TestQueueLifecycle_FullStateSequence
+      classification: "Scenario-harness fixture plus queue state/persistence helpers; not the production daemon runtime."
+    - test: internal/lifecycle/startup_pl005_qm002_test.go TestLoadQueueAtStartup_QM002aBeadsCrossCheck
+      classification: "Production startup lifecycle function with fake ledger/emitter; not daemon.Start."
+restart_tests:
+  - test: internal/queue/persistence_test.go TestPersistAtomicCrashSafety
+    recovery: "Helper-level, crash-shaped Load test only: manually plants an orphan temp file beside a prior canonical queue and proves Load ignores it. It does not interrupt Persist or cover rename/fsync results."
+  - test: internal/scenario/queue_crash_recovery_test.go TestQueueCrashRecovery_QM002_LoadsActiveQueueAfterRestart
+    recovery: "Scenario-package helper composition persists then loads an active queue; simulated crash is a no-op between calls, not daemon restart."
+  - test: internal/lifecycle/startup_pl005_qm002_test.go TestLoadQueueAtStartup_QM002aBeadsCrossCheck
+    recovery: "LoadQueueAtStartup reverts dispatched to pending when the fake ledger reports open and persists before emitting reconciliation."
+  - test: internal/lifecycle/startup_pl005_qm002_test.go TestLoadQueueAtStartup_QM002b_ClassAPrime_DispatchedBeadClosed
+    recovery: "LoadQueueAtStartup advances dispatched/closed to completed with fake lifecycle collaborators."
+  - test: internal/queue/persistence_test.go TestMigrateFromLegacy_IdempotentWhenMainExists
+    recovery: "Completes legacy cleanup when canonical main.json already exists."
+  - test: internal/queue/persistence_test.go TestCompleteAndUnlinkIdempotent
+    recovery: "Retry after an already-unlinked completion returns cleanly."
+  - test: internal/daemon/scenario_restart_recovery_ivzsl_test.go TestScenario_RestartRecovery_QM002bDeadlock
+    recovery: "Reconciles dispatched/closed mismatch, preserves failed sibling, and removes shutdown wedge."
+  - test: internal/daemon/scenario_dispatch_tracker_orphan_hkiwu8a_test.go TestScenario_DispatchTrackerOrphan_ClearsWedgedDispatchLock
+    recovery: "Repairs dispatch-tracker orphan lacking run_started and run record evidence."
+uncovered_cuts:
+  - "No injected crash/restart precisely after successful submit Persist and before QueueStore SetQueue/Wake."
+  - "No injected crash/restart precisely after successful append Persist and before LockedSetQueueByName."
+  - "No injected crash/restart after an append/group transition is installed but before its lifecycle event is emitted."
+  - "activateFirstPendingGroup mutates the live queue before Persist; no fault test proves the resulting memory-active/disk-pending state or restart behavior when Persist fails."
+  - "Dispatch uses two queue writes before ClaimBead: first dispatched with an empty RunID placeholder, then a RunID patch. No restart fixture targets the empty-RunID state or either write's failure."
+  - "No injected crash after durable dispatched+RunID and before ClaimBead; existing lifecycle tests cover load/revert through fakes."
+  - "No direct crash injection after successful ClaimBead and before run_started; DispatchTrackerOrphan covers the equivalent recovered state through daemon.Start."
+  - "run_started is emitted before optional independent-session runpkg.Write. No test interrupts there, and .harmonik/runs records are non-universal by design."
+  - "On claim failure, production mutates the live item back to pending and clears RunID before a non-fatal Persist; no fault oracle covers memory-pending/disk-dispatched divergence."
+  - "No injected crash between completed-status Persist and Unlink. CompleteAndUnlink success retry is unit-covered, but no test forces Persist/Unlink failure and observes that the QueueStore slot is still cleared."
+  - "CancelQueueOnShutdown mutates live status to cancelled before Persist and does not roll back. No test forces Persist/rename/fsync failure or observes drainCancelledQueue clearing the slot despite error."
+  - "MigrateFromLegacy does not validate an already-existing destination before removing legacy; corrupt, empty, or conflicting main.json destination cases are untested and potentially destructive."
+  - "MigrateFromLegacy has no injected failures for destination-directory fsync, legacy removal, or .harmonik directory fsync, so post-error durable ownership is unproven."
+  - "Persist has no rename or parent-directory-fsync fault injection. A rename followed by fsync/open/close failure can return ErrPersistFailed after the target changed, creating an ambiguous-success result."
+timing_or_mock_oracles:
+  - test: internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go TestScenario_QueueSubmit_IdleWake_hk24xn1
+    flags: [timing_sleep, polling, external_binary, direct_adapter_admission]
+    detail: "Uses a 200 ms startup sleep and polling budgets; requires br and harmonik-twin-claude. Runtime is daemon.Start, but admission calls HandlerAdapter directly rather than socket/CLI."
+  - test: internal/daemon/scenario_queue_submit_dispatch_hksk00a_test.go TestScenario_QueueSubmit_DeferredUndefer_hknbjht
+    flags: [timing_sleep, polling, external_binary]
+    detail: "Uses startup/polling sleeps and external br/twin binaries."
+  - test: internal/daemon/scenario_restart_recovery_ivzsl_test.go TestScenario_RestartRecovery_QM002bDeadlock
+    flags: [polling, external_binary]
+    detail: "Uses MustCompleteWithin/WaitForEvent budgets and a real br executable."
+  - test: internal/daemon/scenario_dispatch_tracker_orphan_hkiwu8a_test.go TestScenario_DispatchTrackerOrphan_ClearsWedgedDispatchLock
+    flags: [polling, external_binary]
+    detail: "Uses event polling budget and a real br executable."
+  - test: internal/queue/rpc_hk3hh9w_append_rollback_test.go TestHandlerAdapter_AppendPersistFailure_LeavesStoreUnmutated
+    flags: [mock_store, fault_injection, privilege_sensitive]
+    detail: "Uses a fake locked QueueStore and chmod fault; skips when running as root."
+  - test: internal/queue/rpc_h6_concurrent_submit_test.go TestHandlerAdapter_ConcurrentSubmit_SameName_ExactlyOneWins
+    flags: [mock_store, concurrency]
+    detail: "Uses a fake MutationLocker and goroutine barrier; source comments recommend -race, but this inventory did not run it."
+  - test: internal/daemon/workloop_qcancel_ppt32_test.go TestQueueCancel_TransitionsToCancelled
+    flags: [mock_ledger, mock_bus, timeout]
+    detail: "Runs ExportedRunWorkLoop with test seams and a five-second completion timeout."
+  - test: internal/scenario/queue_crash_recovery_test.go TestQueueCrashRecovery_QM002_LoadsActiveQueueAfterRestart
+    flags: [helper_level, simulated_crash_noop]
+    detail: "Calls Persist then Load; the simulated SIGKILL is only a conceptual no-op between helper calls."
+  - test: internal/queue/persistence_test.go TestPersistAtomicCrashSafety
+    flags: [helper_level, manually_planted_temp]
+    detail: "Plants a sibling temp file manually and calls Load; it does not crash or fault Persist, Rename, or directory fsync."
+  - test: internal/lifecycle/startup_pl005_qm002_test.go TestLoadQueueAtStartup_QM002aBeadsCrossCheck
+    flags: [mock_ledger, mock_emitter, direct_lifecycle_call]
+    detail: "Exercises the production lifecycle function with fake ledger/emitter, outside daemon.Start."
+verification:
+  source_searches: passed
+  tests_run: "not run; no builder token was requested because the map was resolvable from source inspection."
+  yaml_parse: "passed: ruby -ryaml -e 'YAML.load_file(ARGV.fetch(0)); puts \"valid\"' plans/2026-07-24-code-health-audit/tasks/evidence/CQ-00B.yaml"
+  lease_diff: "passed: git diff --exit-code -- . ':(exclude)plans/2026-07-24-code-health-audit/tasks/evidence/CQ-00B.yaml'"

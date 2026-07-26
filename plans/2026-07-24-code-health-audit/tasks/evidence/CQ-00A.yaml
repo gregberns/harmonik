@@ -1,0 +1,541 @@
+task_id: CQ-00A
+base_sha: ecbb5e6292cb190cd562796fa4c8f65e7a59a605
+searches:
+  - command: "rg -n '\\b(Persist|Load|MigrateFromLegacy|CompleteAndUnlink|Cancel)\\b' internal/queue internal/daemon internal/lifecycle"
+    result_count: 870
+    scope: "includes production and _test.go matches"
+  - command: "rg -n '\\b(Submit|Append|Wake|queue submit|queue append)\\b' internal/queue internal/daemon cmd"
+    result_count: 180
+    scope: "includes production and _test.go matches"
+  - command: "rg -n --glob '*.go' --glob '!**/*_test.go' '\\b(?:queue\\.)?Persist\\(' ."
+    result_count: 29
+    scope: "all non-test Go callers; includes internal/daemon/scenariotest test support"
+  - command: "rg -n --glob '*.go' --glob '!**/*_test.go' '\\bqueue\\.Load\\(' ."
+    result_count: 13
+    scope: "all non-test Go callers qualified as queue.Load"
+
+ingress:
+  - path: internal/queue/cli/submit.go
+    symbol: RunQueueSubmit
+    production_reachable: true
+    lock_owner: "daemon HandlerAdapter / QueueStore mutation lock"
+    ordering: "CLI builds queue-submit socket envelope; daemon HandleQueueSubmit persists; adapter installs queue, wakes, then emits queue_submitted/deferred events."
+  - path: internal/queue/cli/append.go
+    symbol: RunQueueAppend
+    production_reachable: true
+    lock_owner: "daemon HandlerAdapter / QueueStore mutation lock"
+    ordering: "CLI builds queue-append socket envelope; adapter persists clone under lock, installs it, wakes, then emits append events."
+  - path: internal/queue/cli/cancel.go
+    symbol: RunQueueCancel
+    production_reachable: true
+    lock_owner: "daemon QueueStore for live socket route; none for daemon-absent disk fallback"
+    ordering: "Loads target; uses queue-cancel socket when reachable, otherwise ArchiveFailedQueue directly; journalCancel follows either successful archive path."
+  - path: internal/queue/cli/pause.go
+    symbol: RunQueuePause
+    production_reachable: true
+    lock_owner: "QueueOperatorEventConsumer QueueStore mutation lock"
+    ordering: "CLI sends operator-pause; controller emits operator_pause_status; consumer persists paused-by-drain before queue_paused event."
+  - path: internal/queue/cli/resume.go
+    symbol: RunQueueResume
+    production_reachable: true
+    lock_owner: "QueueOperatorEventConsumer QueueStore mutation lock"
+    ordering: "CLI sends operator-resume; controller emits operator_resuming; consumer persists active state, releases lock, then wakes."
+  - path: internal/queue/cli/setconcurrency.go
+    symbol: RunQueueSetConcurrency
+    production_reachable: true
+    lock_owner: "ConcurrencyController; no queue persistence mutation"
+    ordering: "CLI sends queue-set-concurrency socket request; HandlerAdapter calls wired live concurrency setter."
+  - path: internal/queue/cli/status.go
+    symbol: RunQueueStatus
+    production_reachable: true
+    lock_owner: "daemon HandlerAdapter; read-only disk Load in the pure handler"
+    ordering: "CLI sends queue-status socket request -> socketDispatch.queueStatus -> HandlerAdapter.HandleQueueStatus -> HandleQueueStatus; no install, Wake, persist, or event."
+  - path: internal/queue/cli/dryrun.go
+    symbol: RunQueueDryRun
+    production_reachable: true
+    lock_owner: "daemon HandlerAdapter; validation-only disk reads"
+    ordering: "CLI sends queue-dry-run socket request -> socketDispatch.queueDryRun -> HandlerAdapter.HandleQueueDryRun -> HandleQueueDryRun; Load/validate only, with no persist, install, Wake, or event."
+  - path: internal/queue/cli/list.go
+    symbol: RunQueueList
+    production_reachable: true
+    lock_owner: "daemon HandlerAdapter; read-only queue enumeration and disk Load"
+    ordering: "CLI sends queue-list socket request -> socketDispatch.queueList -> HandlerAdapter.HandleQueueList -> HandleQueueList; no mutation, Wake, persist, or event."
+  - path: cmd/harmonik/supervise/pause.go
+    symbol: RunPause
+    production_reachable: true
+    lock_owner: "QueueOperatorEventConsumer QueueStore mutation lock downstream"
+    ordering: "supervise CLI sends operator-pause -> socketDispatch.operatorPause -> OperatorPauseController emits operator_pause_status -> consumer persists paused-by-drain and emits queue_paused."
+  - path: cmd/harmonik/supervise/resume.go
+    symbol: RunResume
+    production_reachable: true
+    lock_owner: "QueueOperatorEventConsumer QueueStore mutation lock downstream"
+    ordering: "supervise CLI sends operator-resume -> socketDispatch.operatorResume -> OperatorPauseController emits operator_resuming -> consumer persists active state, unlocks, then wakes."
+  - path: cmd/harmonik/run_via_daemon.go
+    symbol: viaSubmitOrAppend
+    production_reachable: true
+    lock_owner: "daemon HandlerAdapter / QueueStore mutation lock"
+    ordering: "harmonik run with a live daemon submits via queue-submit, with queue-append fallback; the corresponding adapter path persists, installs, wakes, then emits."
+  - path: cmd/harmonik/run.go
+    symbol: runBeadSubcommandIO
+    production_reachable: true
+    lock_owner: "no QueueStore lock before inline daemon startup"
+    ordering: "legacy/solo bootstrap reads main queue, may archive stale state, persists a new main queue, then starts the inline daemon."
+  - path: internal/daemon/socketdispatch.go
+    symbol: buildSocketRouter
+    production_reachable: true
+    lock_owner: "delegated to QueueHandler or OperatorPauseController"
+    ordering: "Registers queue-submit, queue-append, queue-status, queue-dry-run, queue-list, queue-cancel, queue-set-concurrency, operator-pause, and operator-resume socket operations."
+  - path: internal/daemon/socketdispatch.go
+    symbol: socketDispatch.queueStatus
+    production_reachable: true
+    lock_owner: "delegated read-only QueueHandler call"
+    ordering: "queue-status route -> HandlerAdapter.HandleQueueStatus; no mutation."
+  - path: internal/daemon/socketdispatch.go
+    symbol: socketDispatch.queueDryRun
+    production_reachable: true
+    lock_owner: "delegated validation-only QueueHandler call"
+    ordering: "queue-dry-run route -> HandlerAdapter.HandleQueueDryRun; no mutation."
+  - path: internal/daemon/socketdispatch.go
+    symbol: socketDispatch.queueList
+    production_reachable: true
+    lock_owner: "delegated read-only QueueHandler call"
+    ordering: "queue-list route -> HandlerAdapter.HandleQueueList; no mutation."
+  - path: internal/daemon/bootsocket.go
+    symbol: buildQueueHandler
+    production_reachable: true
+    lock_owner: "QueueStore supplied as HandlerAdapter QueueSetter"
+    ordering: "Constructs queue.NewHandlerAdapter with BR ledger, project directory, QueueStore, and event bus before listener wiring."
+  - path: internal/daemon/bootsocket.go
+    symbol: startSocketListener
+    production_reachable: true
+    lock_owner: "socket listener delegates queue operations to installed QueueHandler"
+    ordering: "Passes the constructed handler into Serve as SocketHandlers.Queue."
+
+composition_root:
+  - path: cmd/harmonik/main.go
+    symbol: run
+    production_reachable: true
+    lock_owner: "composition-root ownership"
+    ordering: "normal persistent-daemon CLI construction resolves Config and calls daemon.Start."
+  - path: internal/daemon/daemon.go
+    symbol: Start
+    production_reachable: true
+    lock_owner: "composition-root ownership"
+    ordering: "production Start delegates to startWithHooks with zero-value daemonTestHooks."
+  - path: internal/daemon/daemon.go
+    symbol: startWithHooks
+    production_reachable: true
+    lock_owner: "bootState owns shared singleton wiring"
+    ordering: "constructs bootState -> constructBusAndRegistries -> subscriber wiring -> socket startup; the same bootState carries QueueStore into buildQueueHandler."
+  - path: internal/daemon/bootstate.go
+    symbol: bootState.constructBusAndRegistries
+    production_reachable: true
+    lock_owner: "bootState.qs"
+    ordering: "uses cfg.QueueStore when non-nil, otherwise queuewiring.NewQueueStore; assigns the selected instance to bootState.qs before consumers and socket wiring."
+  - path: internal/daemon/bootsocket.go
+    symbol: bootState.buildQueueHandler
+    production_reachable: true
+    lock_owner: "bootState.qs supplied to HandlerAdapter as QueueSetter/MutationLocker"
+    ordering: "constructs queue.NewHandlerAdapter with BR ledger, cfg.ProjectDir, bootState.qs, and bus, then supplies it to Serve."
+
+inline_vs_daemon_routing:
+  - path: cmd/harmonik/run.go
+    symbol: runBeadSubcommandIO
+    production_reachable: true
+    lock_owner: "routing owner before either persistence path"
+    ordering: "after validation and dry-run handling, calls isDaemonUp; true routes to runBeadSubcommandViaDaemon, false builds and persists an inline queue then calls daemon.Start."
+  - path: cmd/harmonik/run_via_daemon.go
+    symbol: isDaemonUp
+    production_reachable: true
+    lock_owner: "none; Unix socket reachability probe"
+    ordering: "dial daemon socket with a two-second timeout and close it; success selects the existing-daemon route."
+  - path: cmd/harmonik/run_via_daemon.go
+    symbol: runBeadSubcommandViaDaemon
+    production_reachable: true
+    lock_owner: "existing daemon's HandlerAdapter / QueueStore mutation lock"
+    ordering: "opens subscribe connection -> queue-submit via viaSubmitOrAppend -> queue-append fallback on queue_already_active -> waits for terminal events."
+
+mutators:
+  - path: internal/queue/rpc.go
+    symbol: HandlerAdapter.HandleQueueSubmit
+    production_reachable: true
+    lock_owner: "QueueStore MutationLocker when provided; nil/plain QueueSetter compatibility path is unlocked"
+    ordering: "lock -> HandleQueueSubmit (Load/validate/Persist) -> locked install -> Wake -> unlock -> emit queue_submitted and deferred events."
+  - path: internal/queue/rpc.go
+    symbol: HandlerAdapter.appendUnderLock
+    production_reachable: true
+    lock_owner: "QueueStore MutationLocker"
+    ordering: "lock -> resolve live queue or disk fallback -> clone/append -> Persist clone -> locked install -> Wake -> unlock; caller emits events after return."
+  - path: internal/queue/rpc.go
+    symbol: HandlerAdapter.HandleQueueAppend
+    production_reachable: true
+    lock_owner: "QueueStore MutationLocker when provided; legacy compatibility path otherwise"
+    ordering: "uses appendUnderLock when available; otherwise append -> Persist -> SetQueue; then emits append events."
+  - path: internal/queue/rpc.go
+    symbol: HandlerAdapter.HandleQueueCancel
+    production_reachable: true
+    lock_owner: "QueueStore through ClearQueueByName after archive; no explicit MutationLocker at this caller"
+    ordering: "Load target -> ArchiveFailedQueue -> ClearQueueByName -> response; no Wake call in this path."
+  - path: internal/queuewiring/operatorevents.go
+    symbol: QueueOperatorEventConsumer.transitionToPausedByDrain
+    production_reachable: true
+    lock_owner: "QueueStore MutationLocker"
+    ordering: "lock -> set paused-by-drain -> Persist -> emit queue_paused while lock remains held -> unlock."
+  - path: internal/queuewiring/operatorevents.go
+    symbol: QueueOperatorEventConsumer.transitionToActive
+    production_reachable: true
+    lock_owner: "QueueStore MutationLocker"
+    ordering: "lock -> set active -> Persist -> unlock -> Wake when any queue transitioned."
+  - path: internal/daemon/workloop.go
+    symbol: activateFirstPendingGroup
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "lock -> advance pending group -> Persist -> SetQueue -> unlock -> emit queue_group_started."
+  - path: internal/daemon/workloop.go
+    symbol: activateFirstPendingGroupLocked
+    production_reachable: true
+    lock_owner: "caller-held LockedQueueStore mutation lock"
+    ordering: "advance pending group -> Persist -> locked install; caller releases lock and emits returned events."
+  - path: internal/daemon/workloop.go
+    symbol: evaluateGroupAdvanceWithOutcome
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "advance item/group -> CompleteAndUnlink on all-success or Persist otherwise -> update/clear store -> Wake for nonterminal state -> unlock -> emit events."
+  - path: internal/daemon/workloop.go
+    symbol: drainCancelledQueue
+    production_reachable: true
+    lock_owner: "no lock held during persistence; all queues are snapshotted after work-loop wait"
+    ordering: "snapshot active queues -> CancelQueueOnShutdown (Persist then archive) -> ClearQueueByName."
+  - path: internal/daemon/perqueuespendmeter_tigaf11.go
+    symbol: PerQueueSpendMeter.pauseQueueByBudget
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "lock -> set paused-by-budget -> Persist -> unlock."
+  - path: internal/daemon/perqueuespendmeter_tigaf11.go
+    symbol: PerQueueSpendMeter.unpauseBudgetPausedQueues
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "lock -> set active for each budget-paused queue -> Persist each -> unlock -> Wake if any resumed."
+  - path: internal/daemon/eagerfill_em063.go
+    symbol: eagerRefillEval
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "lock -> AppendItems -> Persist -> locked install -> unlock -> Wake -> emit append events."
+  - path: internal/daemon/runports.go
+    symbol: daemonBudget.ChargeReviewLoopFailure
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "lock -> increment review-loop failure state -> Persist -> unlock."
+  - path: internal/daemon/crewstart.go
+    symbol: crewHandlerImpl.ensureQueue
+    production_reachable: true
+    lock_owner: "none; invoked before a QueueStore entry is installed"
+    ordering: "Load named queue -> Persist minimal completed queue if absent; no Wake or event at this call site."
+  - path: internal/lifecycle/startup_pl005_qm002.go
+    symbol: LoadQueueAtStartup
+    production_reachable: true
+    lock_owner: "startup path before queue installation"
+    ordering: "MigrateFromLegacy -> enumerate -> Load each queue -> reconciliation; daemon loadStartupQueues installs loaded queues and wakes afterwards."
+  - path: internal/lifecycle/startup_pl005_qm002.go
+    symbol: reconcileDispatchedItems
+    production_reachable: true
+    lock_owner: "startup reconciliation; no QueueStore lock before installation"
+    ordering: "scan/revert -> Persist corrected queue -> emit queue_item_reconciled events."
+  - path: internal/lifecycle/startup_pl005_qm002.go
+    symbol: reconcileThreeWay
+    production_reachable: true
+    lock_owner: "startup reconciliation; no QueueStore lock before installation"
+    ordering: "apply Class-A corrections -> Persist if changed -> continue Class-B handling and deferred event emission."
+  - path: internal/lifecycle/startup_pl005_qm002.go
+    symbol: reconcileQueueTerminalState
+    production_reachable: true
+    lock_owner: "startup reconciliation; no QueueStore lock before installation"
+    ordering: "derive terminal state -> CompleteAndUnlink for all-success, otherwise Persist paused-by-failure; completed queues are not installed."
+  - path: internal/daemon/workloop.go
+    symbol: adoptLiveRunSession
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "lock -> revert dispatched item to pending -> Persist -> Wake on successful persist -> unlock."
+
+persistence_callers:
+  - path: internal/queue/persistence.go
+    symbol: Persist
+    production_reachable: true
+    lock_owner: "caller-defined"
+    ordering: "marshal -> create/write/fsync temp -> rename -> fsync queue directory."
+  - path: internal/queue/persistence.go
+    symbol: CompleteAndUnlink
+    production_reachable: true
+    lock_owner: "caller-defined"
+    ordering: "set completed -> Persist -> Unlink -> fsync queue directory."
+  - path: internal/queue/persistence.go
+    symbol: CancelQueueOnShutdown
+    production_reachable: true
+    lock_owner: "caller-defined"
+    ordering: "set cancelled -> Persist -> rename to cancelled archive -> fsync queue directory."
+  - path: internal/queue/rpc.go
+    symbol: HandleQueueSubmit
+    production_reachable: true
+    lock_owner: "HandlerAdapter mutation lock when invoked through production adapter"
+    ordering: "Load/validate -> build queue -> Persist; adapter subsequently installs, wakes, and emits."
+  - path: internal/queue/rpc.go
+    symbol: HandlerAdapter.appendUnderLock
+    production_reachable: true
+    lock_owner: "QueueStore MutationLocker"
+    ordering: "clone -> append -> Persist -> locked install -> Wake; outer handler emits after return."
+  - path: internal/queue/rpc.go
+    symbol: HandlerAdapter.HandleQueueAppend
+    production_reachable: true
+    lock_owner: "legacy non-MutationLocker compatibility path"
+    ordering: "append -> Persist -> SetQueue; then emit append events."
+  - path: internal/queuewiring/operatorevents.go
+    symbol: QueueOperatorEventConsumer.transitionToPausedByDrain
+    production_reachable: true
+    lock_owner: "QueueStore MutationLocker"
+    ordering: "set paused-by-drain -> Persist -> emit queue_paused."
+  - path: internal/queuewiring/operatorevents.go
+    symbol: QueueOperatorEventConsumer.transitionToActive
+    production_reachable: true
+    lock_owner: "QueueStore MutationLocker"
+    ordering: "set active -> Persist -> unlock -> Wake."
+  - path: cmd/harmonik/run.go
+    symbol: runBeadSubcommandIO
+    production_reachable: true
+    lock_owner: "none before inline daemon QueueStore construction"
+    ordering: "Load/archive guard -> Persist initial main queue -> create QueueStore/start inline daemon."
+  - path: internal/daemon/crewstart.go
+    symbol: crewHandlerImpl.ensureQueue
+    production_reachable: true
+    lock_owner: "none"
+    ordering: "Load named queue -> Persist minimal completed placeholder when absent."
+  - path: internal/daemon/eagerfill_em063.go
+    symbol: eagerRefillEval
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "AppendItems -> Persist -> install -> unlock -> Wake -> emit."
+  - path: internal/daemon/perqueuespendmeter_tigaf11.go
+    symbol: PerQueueSpendMeter.pauseQueueByBudget
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "set paused-by-budget -> Persist -> unlock."
+  - path: internal/daemon/perqueuespendmeter_tigaf11.go
+    symbol: PerQueueSpendMeter.unpauseBudgetPausedQueues
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "set active -> Persist each -> unlock -> Wake."
+  - path: internal/daemon/runports.go
+    symbol: daemonBudget.ChargeReviewLoopFailure
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "mutate failure count -> Persist -> unlock."
+  - path: internal/daemon/workloop.go
+    symbol: runWorkLoop (deferred-item reevaluation)
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "reevaluate deferred items -> Persist changed queue while lock remains held."
+  - path: internal/daemon/workloop.go
+    symbol: runWorkLoop (claim skipped)
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "mark deferred-for-ledger-dep -> locked install -> Persist -> unlock."
+  - path: internal/daemon/workloop.go
+    symbol: runWorkLoop (cross-queue duplicate)
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "mark failed -> locked install -> Persist -> unlock -> evaluate group outcome."
+  - path: internal/daemon/workloop.go
+    symbol: runWorkLoop (max attempts)
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "mark failed -> locked install -> Persist -> unlock -> evaluate group outcome."
+  - path: internal/daemon/workloop.go
+    symbol: runWorkLoop (dispatch stamp)
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "mark dispatched placeholder -> locked install -> Persist -> unlock."
+  - path: internal/daemon/workloop.go
+    symbol: runWorkLoop (RunID patch)
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "write RunID -> locked install -> Persist -> unlock."
+  - path: internal/daemon/workloop.go
+    symbol: runWorkLoop (claim revert)
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "restore pending/clear RunID -> locked install -> Persist -> unlock."
+  - path: internal/daemon/workloop.go
+    symbol: activateFirstPendingGroup
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "advance group -> Persist -> SetQueue -> unlock -> emit."
+  - path: internal/daemon/workloop.go
+    symbol: activateFirstPendingGroupLocked
+    production_reachable: true
+    lock_owner: "caller-held QueueStore mutation lock"
+    ordering: "advance group -> Persist -> locked install; caller emits after unlock."
+  - path: internal/daemon/workloop.go
+    symbol: evaluateGroupAdvanceWithOutcome
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "nonterminal item/group update -> Persist -> install -> Wake -> unlock -> emit."
+  - path: internal/daemon/workloop.go
+    symbol: adoptLiveRunSession
+    production_reachable: true
+    lock_owner: "QueueStore mutation lock"
+    ordering: "revert dispatched item -> Persist -> Wake on success -> unlock."
+  - path: internal/lifecycle/startup_pl005_qm002.go
+    symbol: reconcileDispatchedItems
+    production_reachable: true
+    lock_owner: "startup reconciliation before QueueStore installation"
+    ordering: "collect reverts -> Persist -> emit reconciliation events."
+  - path: internal/lifecycle/startup_pl005_qm002.go
+    symbol: reconcileThreeWay
+    production_reachable: true
+    lock_owner: "startup reconciliation before QueueStore installation"
+    ordering: "apply Class-A corrections -> Persist -> continue event handling."
+  - path: internal/lifecycle/startup_pl005_qm002.go
+    symbol: reconcileQueueTerminalState
+    production_reachable: true
+    lock_owner: "startup reconciliation before QueueStore installation"
+    ordering: "all-success uses CompleteAndUnlink; all-terminal-failure uses Persist paused-by-failure."
+  - path: internal/daemon/scenariotest/concurrent_merge.go
+    symbol: RunConcurrentMerge
+    production_reachable: false
+    lock_owner: "test scenario owns setup state"
+    ordering: "test scenario persists fixture queue before concurrent merge exercise."
+
+load_callers:
+  - path: cmd/harmonik/sync_assets_cmd.go
+    symbol: daemonDispatchGate
+    production_reachable: true
+    lock_owner: "none; read-only CLI gate"
+    ordering: "after confirming the daemon socket is up, enumerate queue names -> queue.Load each -> derive whether dispatch is active."
+  - path: cmd/harmonik/reconcile.go
+    symbol: filterBeadsByRunID
+    production_reachable: true
+    lock_owner: "none; read-only reconciliation CLI filter"
+    ordering: "queue.Load main -> scan RunID ownership -> filter the supplied bead records; load failure returns the original unscoped input."
+  - path: cmd/harmonik/run.go
+    symbol: runBeadSubcommandIO
+    production_reachable: true
+    lock_owner: "none before inline daemon QueueStore construction"
+    ordering: "only on the isDaemonUp=false route: queue.Load main -> apply existing-queue/archive guard -> Persist initial inline queue."
+  - path: internal/daemon/bootreconcile.go
+    symbol: bootState.loadQueueProvenance
+    production_reachable: true
+    lock_owner: "startup phase before LoadQueueAtStartup installs queues"
+    ordering: "enumerate named queues -> queue.Load each -> collect queue-owned and dispatched provenance for orphan sweep."
+  - path: internal/daemon/crewstart.go
+    symbol: crewHandlerImpl.ensureQueue
+    production_reachable: true
+    lock_owner: "none; placeholder existence check"
+    ordering: "queue.Load named crew queue -> return if present, otherwise Persist a minimal completed placeholder."
+  - path: internal/daemon/reconciliationcadence_rc020a.go
+    symbol: runScheduledClassBRepair
+    production_reachable: true
+    lock_owner: "none; scheduled read-only queue scan"
+    ordering: "enumerate queue names -> queue.Load each -> build in-queue/dispatched sets before Class-B repair decisions."
+  - path: internal/daemon/statedisk.go
+    symbol: diskQueues
+    production_reachable: true
+    lock_owner: "none; daemon-absent/refused disk snapshot"
+    ordering: "enumerate queue names -> queue.Load each -> map persisted queues into StateQueue records."
+  - path: internal/digest/builder.go
+    symbol: buildPausedQueues
+    production_reachable: true
+    lock_owner: "none; read-only digest construction"
+    ordering: "enumerate queue names -> queue.Load each -> retain paused queue summaries."
+  - path: internal/digest/builder.go
+    symbol: buildQueueSummary
+    production_reachable: true
+    lock_owner: "none; read-only digest construction"
+    ordering: "queue.Load main -> derive queue summary within digest limits."
+  - path: internal/lifecycle/startup_pl005_qm002.go
+    symbol: loadOneQueueAtStartup
+    production_reachable: true
+    lock_owner: "startup phase before QueueStore installation"
+    ordering: "queue.Load named queue -> reconcile dispatched/three-way/terminal state -> return queue for later installation or omit it."
+  - path: internal/queue/cli/cancel.go
+    symbol: RunQueueCancel
+    production_reachable: true
+    lock_owner: "none for direct disk resolution"
+    ordering: "name/default target path calls queue.Load before trying live-daemon cancel or disk archive fallback."
+  - path: internal/queue/cli/cancel.go
+    symbol: cancelFindByID
+    production_reachable: true
+    lock_owner: "none for direct disk resolution"
+    ordering: "enumerate queue names -> queue.Load each until queue_id matches."
+  - path: internal/queue/rpc.go
+    symbol: HandleQueueSubmit
+    production_reachable: true
+    lock_owner: "production HandlerAdapter holds QueueStore MutationLocker"
+    ordering: "Load requested queue for the per-name guard -> loadOtherQueues -> validate -> Persist new queue."
+  - path: internal/queue/rpc.go
+    symbol: resolveAppendTargetFromDisk
+    production_reachable: true
+    lock_owner: "caller-defined; production append calls this only under MutationLocker disk fallback"
+    ordering: "Load by requested name or main fallback; queue-id resolution delegates to findQueueByID."
+  - path: internal/queue/rpc.go
+    symbol: HandleQueueStatus
+    production_reachable: true
+    lock_owner: "none; read-only socket handler"
+    ordering: "resolve by queue_id through findQueueByID, otherwise Load requested name or main -> return snapshot."
+  - path: internal/queue/rpc.go
+    symbol: HandleQueueDryRun
+    production_reachable: true
+    lock_owner: "none; validation-only socket handler"
+    ordering: "Load target queue -> loadOtherQueues -> validate request; no Persist, install, Wake, or event."
+  - path: internal/queue/rpc.go
+    symbol: findQueueByID
+    production_reachable: true
+    lock_owner: "none; read-only helper"
+    ordering: "enumerate queue names -> Load each until queue_id matches."
+  - path: internal/queue/rpc.go
+    symbol: HandleQueueList
+    production_reachable: true
+    lock_owner: "none; read-only socket handler"
+    ordering: "enumerate queue names -> Load each -> return summary list."
+  - path: internal/queue/rpc.go
+    symbol: HandlerAdapter.HandleQueueCancel
+    production_reachable: true
+    lock_owner: "no explicit MutationLocker for Load/archive; ClearQueueByName owns its store lock"
+    ordering: "Load requested queue -> ArchiveFailedQueue -> ClearQueueByName -> return response."
+  - path: internal/queue/rpc.go
+    symbol: loadOtherQueues
+    production_reachable: true
+    lock_owner: "caller-defined; called during submit/dry-run validation"
+    ordering: "enumerate queue names excluding target -> Load each parseable queue -> return cross-queue validation input."
+
+migration:
+  - path: internal/queue/persistence.go
+    symbol: MigrateFromLegacy
+    production_reachable: true
+    lock_owner: "startup caller; no QueueStore entry exists yet"
+    ordering: "read legacy singleton -> write main queue temp/rename -> fsync queues -> remove legacy -> fsync parent."
+  - path: internal/lifecycle/startup_pl005_qm002.go
+    symbol: LoadQueueAtStartup
+    production_reachable: true
+    lock_owner: "startup caller; no QueueStore entry exists yet"
+    ordering: "calls MigrateFromLegacy before queue enumeration and Load; daemon later installs queues and wakes."
+
+shutdown:
+  - path: internal/queue/persistence.go
+    symbol: CancelQueueOnShutdown
+    production_reachable: true
+    lock_owner: "caller-defined"
+    ordering: "active queue -> cancelled -> Persist -> cancelled archive rename -> directory fsync."
+  - path: internal/daemon/workloop.go
+    symbol: drainCancelledQueue
+    production_reachable: true
+    lock_owner: "no write lock held; called after in-flight work-loop goroutines finish"
+    ordering: "snapshot active queues -> CancelQueueOnShutdown -> ClearQueueByName for each."
+  - path: internal/daemon/stalewatch.go
+    symbol: StaleWatcher cancellation paths
+    production_reachable: true
+    lock_owner: "RunHandle cancellation ownership"
+    ordering: "handle.Cancel is issued for stale/reap paths; no direct queue persistence call was found at these cancellation sites."
+
+unresolved_reachability:
+  - "The no-daemon queue-cancel fallback directly archives disk state without a QueueStore lock; runtime reachability depends on socket transport failure or daemon absence."
+  - "HandlerAdapter submit/append retain nil/plain QueueSetter compatibility paths that do not take MutationLocker; production construction supplies QueueStore, while test/legacy callers can differ."
+  - "internal/daemon/scenariotest/concurrent_merge.go is non-_test.go test support and is marked test-only; build-tag/package reachability was not evaluated."

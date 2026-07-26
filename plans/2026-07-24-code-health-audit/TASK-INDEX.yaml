@@ -1,93 +1,761 @@
-# Authoritative, machine-readable work inventory. Update status and evidence after every integration.
-schema_version: 1
+# Coordinator-owned source of truth. Workers read this file but never edit it.
+schema_version: 2
 updated: 2026-07-25
-planning_base:
-  before_main_pr_merge: origin/integration/phase-reviewloop-20260725
-  after_main_pr_merge: origin/main
-status_model:
-  phase: [triage, spec, ready, implement, review, integrate, verify, complete]
+objective: >-
+  Restore a reliable local queue -> durable reservation -> Bead claim -> Run ->
+  local Pi process -> terminal/release/recovery path, then package bounded
+  end-to-end proof before primary-daemon deployment.
+
+authority:
+  task_cards: tasks/
+  operating_protocol: tasks/README.md
+  historical_inputs:
+    - _plan.md
+    - INTEGRATED-EXECUTION-PLAN.md
+    - WORKTREE-RUNBOOK.md
+  base_policy:
+    before_integration_pr_merge: origin/integration/phase-reviewloop-20260725
+    after_integration_pr_merge: origin/main
+    claim_rule: >-
+      The coordinator resolves the current allowed ref to an exact base_sha at
+      claim time. A mutable ref is never a worker base.
+
+state_model:
+  phase: [triage, design, ready, implement, review, integrate, verify, complete]
   disposition: [open, deferred, blocked, superseded, dropped, closed]
-  verification: [pending, green, red, deferred, na]
-worker_protocol:
-  - Verify a ready task's dependencies, base, acceptance criteria, and exclusive file lease.
-  - Create or claim its bead only after that check; one worktree and one atomic outcome per worker.
-  - Characterize real boundaries before refactoring; keep logic pure and I/O behind consumer-shaped ports.
-  - Record independent review and test evidence before completing/unblocking a task.
-review_protocol:
-  section_review:
-    rule: "Every completed planning section and every implementation task is reviewed by a different agent before it is marked complete."
-    reviewer_checks: [dependency correctness, missing cases, acceptance-test strength, lease overlap, simpler decomposition]
-    evidence: "Record reviewer identity, verdict, findings, and disposition in the task/bead evidence before integration."
-  group_review:
-    rule: "Before starting a dependent group and before declaring a group complete, an independent cross-group review is required."
-    reviewer_checks: [contract compatibility, duplicate ownership, ordering, durable-state consistency, error/recovery propagation, scenario coverage]
-    evidence: "Update group-edge evidence and add/split tasks for every substantive finding."
-execution_routing:
-  capacity: {codex: 2, pi: 2, overseer: 1, future_claude: "same role as Codex when token budget permits"}
-  rule: "Route by ambiguity and blast radius, not by repository area or perceived model prestige."
-  lanes:
-    pi_ralph:
-      suitable: [mechanical test expansion, fixture work, characterization inventories, narrow pure functions, isolated adapters, deterministic bug fixes]
-      requirements: [explicit task card, exclusive lease, bounded acceptance tests, short checkpoint cadence, no unresolved design decision]
-      prohibited: [new cross-subsystem contract, security policy choice, shared-spine refactor, broad integration merge, operator decision]
-    frontier:
-      suitable: [contract/spec design, concurrency/recovery ownership, security boundaries, shared-spine changes, review, integration, complex failing-Pi recovery]
-      responsibilities: [prepare Pi task cards, review every Pi completion, resolve escalations, own cross-group reviews]
-  task_labels:
-    - "complexity:low — deterministic, one file/adapter/test area; Pi preferred."
-    - "complexity:medium — bounded multi-file behavior with an existing contract; Pi may implement after frontier task-card review."
-    - "complexity:high — ambiguous ownership, concurrency, recovery, security, or cross-group change; frontier only."
-    - "model:pi-ralph or model:frontier — execution assignment; reassess when evidence changes."
-  ralph_loop: "Pi workers repeatedly claim only ready model:pi-ralph tasks, stop at acceptance or escalation, and never self-expand their lease. An overseer drains checkpoints, validates evidence, repairs/splits work, and keeps Pi workers supplied."
+  proof: [pending, green, red, deferred, not_required]
+  ready_definition:
+    - disposition is open
+    - every hard dependency is complete
+    - task card exists and has an independent approved card review
+    - base-ref policy is resolvable and the exclusive lease is conflict-free
+    - routing and required verification are defined
+  claim_definition:
+    - coordinator resolves the allowed base ref to an exact base_sha
+    - owner, branch, worktree, and claimed_at are recorded before launch
+    - claimed task is the only active writer in its lease family
+  complete_definition:
+    - implementation or evidence is integrated
+    - every required proof is green
+    - independent review is approved and findings are disposed
+    - deferred proofs are explicitly non-blocking for this task
+
+coordination:
+  total_agent_slots: 4
+  topology: "one coordinator/overseer plus three workers"
+  index_owner: coordinator
+  workers_must_not:
+    - edit TASK-INDEX.yaml
+    - expand a lease
+    - create, close, or reassign Beads
+    - create, remove, or rebase worktrees
+  durable_return:
+    - clean task worktree
+    - one commit or one task evidence artifact
+    - exact commands/results and deferred proofs
+  build_limit: 2
+  builder_tokens:
+    count: 2
+    rule: >-
+      Every worker must acquire a coordinator-issued token before any test,
+      build, vet, lint, UBS, or check command and release it immediately after
+      the command finishes. Evidence-only source searches do not use a token.
+  shared_lease_families:
+    dispatch_spine: "internal/daemon/workloop.go claim/dispatch/terminal regions; one writer"
+    reviewloop_spine: "internal/daemon/reviewloop.go; one writer"
+    dot_spine: "internal/daemon/dot_cascade_core.go and dot gate; one writer"
+    pi_launchspec: "internal/harness/pi/launchspec.go; one writer"
+    queue_rpc: "internal/queue/rpc.go; one writer"
+
+routing_profiles:
+  sol_xhigh:
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    use_for: [security, concurrency, durable_recovery, shared_spine, cross_group_review]
+  sol_high:
+    model: gpt-5.6-sol
+    reasoning_effort: high
+    use_for: [reviewed_shared_wiring, bounded_security_implementation]
+  terra_high:
+    model: gpt-5.6-terra
+    reasoning_effort: high
+    use_for: [bounded_multi_file_implementation, characterization_synthesis, scenarios]
+  pi_ralph:
+    model: local-nemotron-via-pi
+    reasoning_effort: high
+    use_for: [inventories, fixtures, pure_tables, narrow_mechanical_fixes]
+    hard_stop: "no policy, security choice, shared spine, lease expansion, or broad integration"
+
+waves:
+  W0:
+    goal: "repair tier-2 routing while two Pi workers inventory queue truth"
+    coordinator_profile: sol_xhigh
+    workers:
+      - {task: CQ-DEF-01, profile: sol_high}
+      - {task: CQ-00A, profile: pi_ralph}
+      - {task: CQ-00B, profile: pi_ralph}
+    next_candidates_after_review: [JR-00, PI-00]
+  W1_rule: >-
+    Integrate and review W0 before selecting from newly-ready tasks. Never run
+    two tasks sharing a lease_family. Keep one frontier slot for review.
+
 groups:
-  CQ: {name: Core queue, priority: 1, disposition: open}
-  JR: {name: Job and run orchestration, priority: 2, disposition: open}
-  PI: {name: Pi coding-agent lifecycle, priority: 3, disposition: open}
-  E2E: {name: End-to-end local job-flow evidence, priority: 4, disposition: open}
-  LIFT: {name: Remaining structural extraction, priority: 5, disposition: open}
-  CREW: {name: Crew launch and ownership, priority: 6, disposition: deferred}
-  REMOTE: {name: Remote process execution, priority: 7, disposition: deferred}
-  SCHED: {name: Scheduling, priority: 8, disposition: deferred}
+  CQ: {name: Core queue and durable reservation, priority: 1}
+  JR: {name: Claim, Run, terminalization, and recovery, priority: 2}
+  PI: {name: Local Pi security and lifecycle, priority: 3}
+  E2E: {name: Bounded local end-to-end proof, priority: 4}
+  DEFERRED: {name: Non-local or post-recovery work, priority: 5}
+
+task_defaults:
+  consumer_rule: >-
+    Consumers overlay these fields onto every task record in memory; the
+    defaults are not YAML merge keys and do not assert that a task is claimed,
+    reviewed, integrated, or proven.
+  claim: {owner: null, base_sha: null, branch: null, worktree: null, bead_id: null, claimed_at: null}
+  card_review: {state: pending, reviewer: null, artifact: null, verdict: null}
+  review: {state: pending, reviewer: null, artifact: null, verdict: null}
+  integration: {state: pending, commit: null, integrated_sha: null}
+  proof: pending
+
 tasks:
-  - {id: CQ-DEF-01, group: CQ, kind: bug_contract, priority: P0, phase: ready, disposition: open, requires: [], unlocks: [PI-Q2], lease: "exclusive priority spine window: Queue.DefaultHarness → snapshotFleet → queueSelection → RunEnv → buildRunBundles → quiet/model resolution → routed single/review/DOT launch, plus focused tests", acceptance: "Tier-2 Queue.DefaultHarness=pi reaches production dispatch for unlabeled work; tier-1 bead label wins; absent field preserves golden behavior. This is the sole owner of default-harness propagation and must use a production-call-site test.", evidence: "HEAD 5b95628e1 drops persisted queue default before dispatch; historical fixes 5ab18fc4b and bdab1adb6 are not ancestors. This P0 supersedes normal spine reservation for its exclusive window.", verification: {targeted: pending, scenario: pending, primary_runtime: deferred}}
-  - {id: CQ-00, group: CQ, kind: characterization, priority: P0, phase: ready, disposition: open, requires: [], unlocks: [CQ-01, CQ-02, CQ-03, JR-00], lease: "read-only queue evidence", acceptance: "Map supported CLI/socket admission through durable terminal/recovery paths; exclude unsupported paths explicitly.", verification: {targeted: green, fault: pending, scenario: pending, primary_runtime: deferred}}
-  - {id: CQ-01, group: CQ, kind: contract, priority: P0, phase: triage, disposition: open, requires: [CQ-00], unlocks: [CQ-03, CQ-05], lease: "queue admission handlers and focused tests", acceptance: "Real-boundary tests prove validation, idempotency, persistence-before-dispatch, and rejection leaves no runnable item.", verification: {targeted: pending, fault: pending, primary_runtime: deferred}}
-  - {id: CQ-02, group: CQ, kind: contract, priority: P0, phase: triage, disposition: open, requires: [CQ-00], unlocks: [CQ-03, CQ-04, CQ-06], lease: "queue persistence adapter and tests", acceptance: "Atomic write/readback, malformed state, legacy migration, and crash cuts are explicit. Test clone → mutate → persist → install ordering; persistence failure must not advance caller-visible memory or delete the only valid legacy copy.", verification: {targeted: pending, fault: pending, primary_runtime: deferred}}
-  - {id: CQ-03, group: CQ, kind: contract, priority: P0, phase: triage, disposition: open, requires: [CQ-01, CQ-02], unlocks: [CQ-04, CQ-05, CQ-07], lease: "claim/ownership boundary and tests", acceptance: "Exactly one claimant wins; cancel/retry/reclaim outcomes are durable and observable. Define mutation owner, persisted generation/CAS, completion/shutdown durable-failure behavior, and eliminate unlocked adapter fallback/direct persistence callers.", verification: {targeted: pending, race: pending, fault: pending, primary_runtime: deferred}}
-  - {id: CQ-04, group: CQ, kind: pure_kernel, priority: P0, phase: triage, disposition: open, requires: [CQ-02, CQ-03], unlocks: [CQ-07, JR-04], lease: "pure recovery classifier plus adapter", acceptance: "State plus evidence maps to one recovery decision; only the adapter performs I/O.", verification: {targeted: pending, fault: pending, primary_runtime: deferred}}
-  - {id: CQ-05, group: CQ, kind: pure_kernel, priority: P1, phase: triage, disposition: open, requires: [CQ-01, CQ-03], unlocks: [CQ-06], lease: "isolated queue-domain kernel", acceptance: "Eligibility/transition rules accept immutable values and return reasoned decisions with exhaustive tables/properties.", verification: {targeted: pending}}
-  - {id: CQ-06, group: CQ, kind: ports_adapters, priority: P1, phase: triage, disposition: open, requires: [CQ-02, CQ-05], unlocks: [CQ-07], lease: "queue composition root and narrow ports", acceptance: "Domain logic has consumer-shaped ports; filesystem/ledger/event I/O stays in adapters.", verification: {targeted: pending, race: pending, fault: pending}}
-  - {id: CQ-07, group: CQ, kind: scenario, priority: P0, phase: triage, disposition: open, requires: [CQ-03, CQ-04, CQ-06], unlocks: [JR-05, E2E-01], lease: "queue scenario harness", acceptance: "A supported submission survives controlled restart and is claimed once or classified safely.", verification: {scenario: pending, race: pending, fault: pending}}
-  - {id: JR-00, group: JR, kind: characterization, priority: P0, phase: ready, disposition: open, requires: [], unlocks: [JR-01, JR-02, JR-03], lease: "read-only run lifecycle evidence", acceptance: "Map claim, Run creation/context, dispatch, terminalization, release, and durable owners.", verification: {targeted: green, primary_runtime: deferred}}
-  - {id: JR-01, group: JR, kind: contract, priority: P0, phase: triage, disposition: open, requires: [JR-00, CQ-03], unlocks: [JR-03, JR-05], lease: "claim-to-Run creation boundary", acceptance: "Retries/crashes cannot create zero or multiple ambiguous runs for one claim.", verification: {targeted: pending, race: pending, fault: pending}}
-  - {id: JR-02, group: JR, kind: pure_kernel, priority: P1, phase: triage, disposition: open, requires: [JR-00], unlocks: [JR-03], lease: "isolated terminal-outcome mapper", acceptance: "Dispatch observations map deterministically to retry, release, or terminal decisions.", verification: {targeted: pending, fault: pending}}
-  - {id: JR-03, group: JR, kind: contract, priority: P0, phase: triage, disposition: open, requires: [JR-01, JR-02], unlocks: [JR-04, JR-05], lease: "terminalization/release boundary", acceptance: "No crash cut leaves terminal state and claim release silently inconsistent.", verification: {targeted: pending, race: pending, fault: pending}}
-  - {id: JR-04, group: JR, kind: recovery, priority: P0, phase: triage, disposition: open, requires: [CQ-04, JR-03], unlocks: [JR-05, E2E-02], lease: "run/claim recovery adapter", acceptance: "Repeated recovery reaches a fixed point with no duplicate execution or leaked ownership.", verification: {targeted: pending, race: pending, fault: pending}}
-  - {id: JR-05, group: JR, kind: scenario, priority: P0, phase: triage, disposition: open, requires: [CQ-07, JR-01, JR-03, JR-04], unlocks: [PI-06, E2E-01], lease: "queue-to-terminal scenario", acceptance: "One item has one traceable run and one safe terminal/release outcome.", verification: {scenario: pending, race: pending, fault: pending}}
-  - {id: PI-00, group: PI, kind: characterization, priority: P0, phase: complete, disposition: closed, requires: [], unlocks: [PI-A1, PI-A2, PI-L1, PI-F0], lease: "none", acceptance: "Map selection, LaunchSpec, process, identity/spawn proof/readiness, input, exit, cleanup, and all owners.", evidence: "2026-07-25 independent handler/lifecycle research", verification: {targeted: green, real_process: pending, primary_runtime: deferred}}
-  - {id: PI-01, group: PI, kind: legacy_outline, priority: P0, phase: complete, disposition: superseded, requires: [], unlocks: [], lease: "none", acceptance: "Superseded by PI-A1/A2/R1; do not dispatch."}
-  - {id: PI-02, group: PI, kind: legacy_outline, priority: P0, phase: complete, disposition: superseded, requires: [], unlocks: [], lease: "none", acceptance: "Superseded by PI-L1 and PI-E1; do not dispatch."}
-  - {id: PI-03, group: PI, kind: legacy_outline, priority: P0, phase: complete, disposition: superseded, requires: [], unlocks: [], lease: "none", acceptance: "Superseded by PI-L1/PI-E1; distinguish spawn proof, identity capture, and readiness."}
-  - {id: PI-04, group: PI, kind: legacy_outline, priority: P1, phase: complete, disposition: superseded, requires: [], unlocks: [], lease: "none", acceptance: "Superseded by PI-R1/PI-E1; do not dispatch."}
-  - {id: PI-05, group: PI, kind: legacy_outline, priority: P0, phase: complete, disposition: superseded, requires: [], unlocks: [], lease: "none", acceptance: "Superseded by PI-L1/PI-E1; do not dispatch."}
-  - {id: PI-06, group: PI, kind: legacy_outline, priority: P0, phase: complete, disposition: superseded, requires: [], unlocks: [], lease: "none", acceptance: "Superseded by PI-E1; do not dispatch."}
-  - {id: PI-A1, group: PI, kind: security_contract, priority: P0, phase: ready, disposition: open, requires: [], unlocks: [PI-R1, PI-R2], lease: "Pi models/key resolution and focused tests", acceptance: "models.json holds an env-variable reference, never a raw key; unreadable/empty configured key files fail loud without ambient fallback.", verification: {targeted: pending, worktree_secret_scan: pending}}
-  - {id: PI-A2, group: PI, kind: security_contract, priority: P0, phase: ready, disposition: open, requires: [], unlocks: [], lease: "Pi disk credential guard and conformance tests", acceptance: "Current agent-dir and provider-keyed Pi auth formats deny launch before process start, including custom PI_CODING_AGENT_DIR.", verification: {targeted: pending}}
-  - {id: PI-L1, group: PI, kind: lifecycle, priority: P0, phase: ready, disposition: open, requires: [], unlocks: [PI-E1], lease: "handler terminal callback/session kill ownership and tests", acceptance: "Immediate agent_end cannot race an unassigned session; TERM-ignoring child escalates/reaps within bounded time and callbacks do not block parser locks.", verification: {targeted: pending, race: pending, real_process: pending}}
-  - {id: PI-F0, group: PI, kind: pure_seam, priority: P0, phase: ready, disposition: open, requires: [], unlocks: [PI-F1, PI-F2], lease: "ProcessExit finalizer seam and unit tests", acceptance: "Harness-aware finalizer selects Pi/Codex behavior, returns outcome/new HEAD, and fails loud for unknown harness.", verification: {targeted: pending}}
-  - {id: PI-Q1, group: PI, kind: legacy_outline, priority: P0, phase: complete, disposition: superseded, requires: [], unlocks: [], lease: "none", acceptance: "Superseded by CQ-DEF-01, the sole queue-default propagation owner; do not dispatch."}
-  - {id: PI-R1, group: PI, kind: contract, priority: P0, phase: triage, disposition: open, requires: [PI-A1], unlocks: [PI-E1], lease: "Pi resume LaunchSpec/session-dir wiring", acceptance: "Initial and resume use the same agent/session directory without recreating config or falling back to global Pi state.", verification: {targeted: pending, real_process: pending}}
-  - {id: PI-F1, group: PI, kind: integration, priority: P0, phase: triage, disposition: open, requires: [PI-F0], unlocks: [PI-E1], lease: "review-loop ProcessExit finalization caller", acceptance: "Finalization runs before no-commit/reviewer handling for edit-only Pi/Codex turns.", verification: {targeted: pending, scenario: pending}}
-  - {id: PI-F2, group: PI, kind: integration, priority: P0, phase: triage, disposition: open, requires: [PI-F0], unlocks: [PI-E1], lease: "single/DOT ProcessExit finalization callers", acceptance: "phase_complete is emitted after finalization and reports fallback-created commit truth; Pi avoids Codex messaging.", verification: {targeted: pending, scenario: pending}}
-  - {id: PI-Q2, group: PI, kind: admission_contract, priority: P0, phase: triage, disposition: open, requires: [CQ-DEF-01], unlocks: [PI-O1, PI-E1], lease: "Pi queue effective-harness validation", acceptance: "Label or append cannot route Pi into uncapped/main queue; named capped queue dispatches.", verification: {targeted: pending, scenario: pending}}
-  - {id: PI-R2, group: PI, kind: security_contract, priority: P0, phase: triage, disposition: open, requires: [PI-A1, PI-R1], unlocks: [PI-E1], lease: "remote Pi policy/transport", acceptance: "Remote Pi fails closed until a secure worker-side secret/session materialization channel exists; secret is absent from SSH argv.", verification: {targeted: pending, real_ssh: deferred}}
-  - {id: PI-O1, group: PI, kind: resilience_contract, priority: P1, phase: triage, disposition: open, requires: [PI-Q2], unlocks: [PI-E1], lease: "Pi rate-limit classifier/backoff", acceptance: "Real Pi error fixtures drive per-queue retry/escalation; Pi never calls global tuner.", verification: {targeted: pending, fault: pending}}
-  - {id: PI-E1, group: PI, kind: scenario, priority: P0, phase: triage, disposition: open, requires: [PI-A2, PI-L1, PI-R1, PI-R2, PI-F1, PI-F2, PI-Q2, PI-O1], unlocks: [E2E-01], lease: "local Pi lifecycle matrix fixtures", acceptance: "Local matrix covers modes, initial/resume, outcomes, cancellation, spawn proof versus captured identity versus genuine readiness, event truth, queue selection, and secret boundaries. Remote requirement is only a recorded remote-refusal/secret-argv proof; functional SSH lifecycle belongs to REMOTE-00.", verification: {scenario: pending, race: pending, real_process: pending, real_ssh: deferred}}
-  - {id: E2E-01, group: E2E, kind: harness, priority: P0, phase: triage, disposition: open, requires: [CQ-07, JR-05, PI-E1], unlocks: [E2E-02, E2E-03, E2E-04], lease: "hermetic scenario harness", acceptance: "Runs locally without primary daemon/remote and exposes durable state.", verification: {scenario: pending, real_process: pending}}
-  - {id: E2E-02, group: E2E, kind: fault_testing, priority: P0, phase: triage, disposition: open, requires: [E2E-01, JR-04, PI-05], unlocks: [E2E-04], lease: "fault harness", acceptance: "Admission, claim, launch, ready, terminal-persistence cuts each have a safe recovery oracle.", verification: {fault: pending, race: pending, real_process: pending}}
-  - {id: E2E-03, group: E2E, kind: fault_testing, priority: P1, phase: triage, disposition: open, requires: [E2E-01], unlocks: [E2E-04], lease: "stress/recovery harness", acceptance: "Concurrent repeats preserve ownership/terminal invariants without timing sleeps.", verification: {race: pending, scenario: pending}}
-  - {id: E2E-04, group: E2E, kind: verification, priority: P1, phase: triage, disposition: open, requires: [E2E-02, E2E-03], unlocks: [], lease: "test scripts and runbook", acceptance: "Bounded local gate documents primary-daemon proof as deferred.", verification: {targeted: pending, race: pending, fault: pending, real_process: pending, primary_runtime: deferred}}
-  - {id: LIFT-POST, group: LIFT, kind: deferred_epic, priority: P2, phase: spec, disposition: open, requires: [], unlocks: [CREW-00, REMOTE-00], lease: "behavior-neutral extraction atoms", acceptance: "Re-measure ownership after released file leases; semantic work remains spec-first."}
-  - {id: CREW-00, group: CREW, kind: deferred_epic, priority: P2, phase: spec, disposition: deferred, requires: [LIFT-POST], decision: [operator_if_new_seam_is_evidenced], lease: "none", acceptance: "Re-evaluate E2b after ports mature; Option A deferred it, no waiver is pending.", deferral: "2026-07-22 operator Option A"}
-  - {id: REMOTE-00, group: REMOTE, kind: deferred_epic, priority: P2, phase: spec, disposition: deferred, requires: [PI-A1, PI-R1, PI-L1, PI-R2, LIFT-POST], lease: "none", acceptance: "Local process ownership → SSH proof → released-call-site integration → evidence-gated scale."}
-  - {id: SCHED-00, group: SCHED, kind: deferred_epic, priority: P3, phase: spec, disposition: deferred, requires: [], lease: "none", acceptance: "Sleep/wake waits on durable writes; capacity placement waits on validated signals and N-worker model."}
+  CQ-DEF-01:
+    title: Preserve a queue default harness through production dispatch
+    card: tasks/CQ-DEF-01.md
+    group: CQ
+    priority: P0
+    phase: implement
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: []
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-F2D, PI-R2]
+    lease_family: dispatch_spine
+    claim:
+      owner: sol-cq-def-01
+      base_sha: ecbb5e6292cb190cd562796fa4c8f65e7a59a605
+      branch: work/cq-def-01
+      worktree: /Users/gb/github/harmonik-wt/cq-def-01
+      bead_id: null
+      claimed_at: 2026-07-26T17:17:11Z
+    card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
+    required_proof: [targeted, composition, race, delta_lint, ubs, check_fast]
+
+  CQ-00A:
+    title: Inventory supported queue ingress and mutation callers
+    card: tasks/CQ-00A.md
+    group: CQ
+    priority: P0
+    phase: complete
+    disposition: closed
+    routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
+    hard_requires: []
+    conflicts_with: []
+    lease_family: evidence_CQ_00A
+    claim:
+      owner: terra-cq-00a
+      base_sha: ecbb5e6292cb190cd562796fa4c8f65e7a59a605
+      branch: work/cq-00a
+      worktree: /Users/gb/github/harmonik-wt/cq-00a
+      bead_id: null
+      claimed_at: 2026-07-26T17:17:11Z
+      routing_override:
+        profile: terra_high
+        reason: "Configured local dgx-local endpoint was unreachable at claim time."
+    card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
+    review: {state: approved, reviewer: cq_00a_review, artifact: tasks/evidence/CQ-00A-REVIEW.md, verdict: APPROVE}
+    integration: {state: integrated, commit: 584e6c965162732d0c15cf086b321c6193acc0ed, integrated_sha: 034d7fb4280712bebf4d4336eb679ccae36870c2}
+    proof: green
+    required_proof: [yaml_parse, frontier_sample_review]
+
+  CQ-00B:
+    title: Inventory queue crash cuts and existing proof
+    card: tasks/CQ-00B.md
+    group: CQ
+    priority: P0
+    phase: complete
+    disposition: closed
+    routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
+    hard_requires: []
+    conflicts_with: []
+    lease_family: evidence_CQ_00B
+    claim:
+      owner: terra-cq-00b
+      base_sha: ecbb5e6292cb190cd562796fa4c8f65e7a59a605
+      branch: work/cq-00b
+      worktree: /Users/gb/github/harmonik-wt/cq-00b
+      bead_id: null
+      claimed_at: 2026-07-26T17:17:11Z
+      routing_override:
+        profile: terra_high
+        reason: "Configured local dgx-local endpoint was unreachable at claim time."
+    card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
+    review: {state: approved, reviewer: queue_run_audit, artifact: tasks/evidence/CQ-00B-REVIEW.md, verdict: APPROVE}
+    integration: {state: integrated, commit: 35c0b6c1cdab4fea55551abbdeb1437211d502e0, integrated_sha: eacf8f2f3957d9e2bf5511659ed7ca9f263b6eab}
+    proof: green
+    required_proof: [yaml_parse, frontier_sample_review]
+
+  CQ-00:
+    title: Synthesize the supported queue lifecycle
+    card: tasks/CQ-00.md
+    group: CQ
+    priority: P0
+    phase: ready
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-00A, CQ-00B]
+    conflicts_with: []
+    lease_family: evidence_CQ_00
+    card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/CQ-00-CARD-REVIEW.md, verdict: APPROVE}
+    required_proof: [yaml_parse, cross_group_review]
+
+  CQ-MIG-01:
+    title: Preserve the valid legacy queue during migration
+    card: tasks/CQ-MIG-01.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-00B]
+    conflicts_with: [CQ-02I]
+    lease_family: queue_persistence
+    required_proof: [targeted, fault, delta_lint, ubs, check_fast]
+
+  CQ-02:
+    title: Settle the queue transaction and durability contract
+    card: tasks/CQ-02.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-00]
+    conflicts_with: []
+    lease_family: queue_contract
+    required_proof: [kerf, spec_validation, config_review]
+
+  CQ-02I:
+    title: Implement the reviewed queue transaction primitive
+    card: tasks/CQ-02I.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02, CQ-MIG-01]
+    conflicts_with: [CQ-MIG-01]
+    lease_family: queue_persistence
+    required_proof: [targeted, fault, race, delta_lint, ubs, check_fast]
+
+  CQ-01:
+    title: Enforce the queue admission transaction
+    card: tasks/CQ-01.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-00, CQ-02I]
+    conflicts_with: [PI-Q2B]
+    lease_family: queue_rpc
+    required_proof: [targeted, race, fault, composition, delta_lint, ubs, check_fast]
+
+  CQ-03:
+    title: Own one durable dispatch reservation
+    card: tasks/CQ-03.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-01, CQ-02I]
+    conflicts_with: [CQ-DEF-01, JR-01, JR-03, PI-F2S, PI-R2]
+    lease_family: dispatch_spine
+    required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
+
+  CQ-05:
+    title: Close gaps in existing queue decision kernels
+    card: tasks/CQ-05.md
+    group: CQ
+    priority: P1
+    phase: triage
+    disposition: open
+    routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
+    hard_requires: [CQ-01, CQ-03]
+    conflicts_with: []
+    lease_family: queue_pure_kernels
+    required_proof: [targeted, property, frontier_review]
+
+  CQ-04:
+    title: Make queue recovery a pure idempotent decision
+    card: tasks/CQ-04.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02I, CQ-03]
+    conflicts_with: [JR-04]
+    lease_family: queue_startup_recovery
+    required_proof: [targeted, property, fault, delta_lint, ubs, check_fast]
+
+  CQ-06:
+    title: Keep queue logic behind narrow composition ports
+    card: tasks/CQ-06.md
+    group: CQ
+    priority: P1
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02I, CQ-05]
+    conflicts_with: []
+    lease_family: queue_ports
+    required_proof: [targeted, composition, depguard, delta_lint, ubs, check_fast]
+
+  CQ-07:
+    title: Prove one queue item survives restart safely
+    card: tasks/CQ-07.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-03, CQ-04, CQ-06]
+    conflicts_with: []
+    lease_family: queue_scenarios
+    required_proof: [scenario, race, fault, repeat, check_fast]
+
+  JR-00:
+    title: Characterize claim-to-terminal Run ownership
+    card: tasks/JR-00.md
+    group: JR
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: []
+    conflicts_with: []
+    lease_family: evidence_JR_00
+    required_proof: [yaml_parse, cross_group_review]
+
+  JR-01:
+    title: Make claim-to-Run creation unambiguous
+    card: tasks/JR-01.md
+    group: JR
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [JR-00, CQ-03]
+    conflicts_with: [CQ-DEF-01, CQ-03, JR-03, PI-F2S, PI-R2]
+    lease_family: dispatch_spine
+    required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
+
+  JR-02:
+    title: Close gaps in existing terminal decision machines
+    card: tasks/JR-02.md
+    group: JR
+    priority: P1
+    phase: triage
+    disposition: open
+    routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
+    hard_requires: [JR-00]
+    conflicts_with: []
+    lease_family: run_pure_kernels
+    required_proof: [targeted, property, frontier_review]
+
+  JR-03:
+    title: Keep terminal state and claim release consistent
+    card: tasks/JR-03.md
+    group: JR
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [JR-01, JR-02]
+    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, PI-F2S, PI-R2]
+    lease_family: dispatch_spine
+    required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
+
+  JR-04:
+    title: Reconcile orphaned Run and claim state to a fixed point
+    card: tasks/JR-04.md
+    group: JR
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-04, JR-03]
+    conflicts_with: [CQ-04]
+    lease_family: run_recovery
+    required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
+
+  JR-05:
+    title: Prove queue-to-terminal trace identity
+    card: tasks/JR-05.md
+    group: JR
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-07, JR-01, JR-03, JR-04]
+    conflicts_with: []
+    lease_family: run_scenarios
+    required_proof: [scenario, race, fault, repeat, check_fast]
+
+  PI-00:
+    title: Re-validate the local Pi lifecycle map
+    card: tasks/PI-00.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: terra_high}
+    hard_requires: []
+    conflicts_with: []
+    lease_family: evidence_PI_00
+    required_proof: [yaml_parse, focused_nonsecret_tests, cross_group_review]
+
+  PI-SPEC-01:
+    title: Reconcile Pi credential and agent-state policy
+    card: tasks/PI-SPEC-01.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-00]
+    conflicts_with: []
+    lease_family: pi_specs
+    required_proof: [kerf, spec_validation, config_review]
+
+  PI-A1:
+    title: Fail closed on configured key files and safe models config
+    card: tasks/PI-A1.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-SPEC-01]
+    conflicts_with: [PI-A2B, PI-R1]
+    lease_family: pi_launchspec
+    required_proof: [targeted, secret_scan, delta_lint, ubs, check_fast]
+
+  PI-A2A:
+    title: Parse supported Pi persisted-auth fixtures
+    card: tasks/PI-A2A.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: low, profile: pi_ralph, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-SPEC-01]
+    conflicts_with: []
+    lease_family: pi_auth_parser
+    required_proof: [targeted, fuzz, secret_scan, frontier_review]
+
+  PI-A2B:
+    title: Guard the effective Pi agent directory before launch
+    card: tasks/PI-A2B.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-A1, PI-A2A]
+    conflicts_with: [PI-A1, PI-R1]
+    lease_family: pi_launchspec
+    required_proof: [targeted, no_process_start, secret_scan, delta_lint, ubs, check_fast]
+
+  PI-L1A:
+    title: Fire Pi NDJSON callbacks outside parser locks
+    card: tasks/PI-L1A.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
+    hard_requires: [PI-00]
+    conflicts_with: []
+    lease_family: pi_parser
+    required_proof: [targeted, race, repeat, frontier_review]
+
+  PI-L1B:
+    title: Latch terminal signals until a session is bound
+    card: tasks/PI-L1B.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-00]
+    conflicts_with: []
+    lease_family: runlaunch_latch
+    required_proof: [targeted, race, repeat, delta_lint, ubs, check_fast]
+
+  PI-L1C:
+    title: Bound TERM KILL wait and reap
+    card: tasks/PI-L1C.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-00]
+    conflicts_with: []
+    lease_family: handler_process
+    required_proof: [targeted, real_process, race, leak, delta_lint, ubs, check_fast]
+
+  PI-F0:
+    title: Define a harness-aware ProcessExit finalizer
+    card: tasks/PI-F0.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-00]
+    conflicts_with: []
+    lease_family: process_exit_finalizer
+    required_proof: [targeted, conformance, delta_lint, ubs, check_fast]
+
+  PI-F1:
+    title: Adopt latch and finalization in review-loop
+    card: tasks/PI-F1.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0]
+    conflicts_with: []
+    lease_family: reviewloop_spine
+    required_proof: [targeted, scenario, race, delta_lint, ubs, check_fast]
+
+  PI-F2S:
+    title: Adopt latch and finalization in single mode
+    card: tasks/PI-F2S.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0]
+    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, JR-03, PI-R2]
+    lease_family: dispatch_spine
+    required_proof: [targeted, scenario, race, delta_lint, ubs, check_fast]
+
+  PI-F2D:
+    title: Adopt latch and finalization in DOT mode
+    card: tasks/PI-F2D.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0]
+    conflicts_with: [CQ-DEF-01]
+    lease_family: dot_spine
+    required_proof: [targeted, scenario, race, delta_lint, ubs, check_fast]
+
+  PI-R1:
+    title: Keep initial and resume turns in one Pi agent directory
+    card: tasks/PI-R1.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-A1, PI-A2B]
+    conflicts_with: [PI-A1, PI-A2B]
+    lease_family: pi_launchspec
+    required_proof: [targeted, real_process, secret_scan, delta_lint, ubs, check_fast]
+
+  PI-R2:
+    title: Fail closed before any remote Pi placement
+    card: tasks/PI-R2.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-DEF-01, PI-SPEC-01]
+    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, JR-03, PI-F2S]
+    lease_family: dispatch_spine
+    required_proof: [targeted, scenario, race, secret_scan, delta_lint, ubs, check_fast]
+
+  PI-Q2A:
+    title: Define effective-Pi queue admission
+    card: tasks/PI-Q2A.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-DEF-01, CQ-00]
+    conflicts_with: []
+    lease_family: pi_queue_contract
+    required_proof: [kerf, spec_validation, cross_group_review]
+
+  PI-Q2B:
+    title: Enforce effective-Pi rules on submit and append
+    card: tasks/PI-Q2B.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-Q2A, CQ-01]
+    conflicts_with: [CQ-01]
+    lease_family: queue_rpc
+    required_proof: [targeted, race, composition, delta_lint, ubs, check_fast]
+
+  PI-Q2D:
+    title: Prove Pi queue admission and dispatch routing
+    card: tasks/PI-Q2D.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-Q2B, CQ-DEF-01]
+    conflicts_with: []
+    lease_family: pi_queue_scenario
+    required_proof: [scenario, race, repeat, check_fast]
+
+  PI-E1:
+    title: Prove the local Pi lifecycle matrix
+    card: tasks/PI-E1.md
+    group: PI
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-A2B, PI-R1, PI-F1, PI-F2S, PI-F2D, PI-Q2D, PI-R2]
+    conflicts_with: []
+    lease_family: pi_lifecycle_scenario
+    required_proof: [scenario, real_process, race, repeat, secret_scan, check_fast]
+
+  PI-O0:
+    title: Capture redacted Pi failure-event fixtures
+    card: tasks/PI-O0.md
+    group: DEFERRED
+    priority: P1
+    phase: triage
+    disposition: deferred
+    routing: {complexity: low, profile: pi_ralph, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-SPEC-01]
+    conflicts_with: []
+    lease_family: pi_failure_fixtures
+    required_proof: [fixture_provenance, secret_scan, frontier_review]
+
+  PI-O1:
+    title: Classify Pi retry signals without global tuning
+    card: tasks/PI-O1.md
+    group: DEFERRED
+    priority: P1
+    phase: triage
+    disposition: deferred
+    routing: {complexity: low, profile: pi_ralph, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PI-O0, JR-04]
+    conflicts_with: []
+    lease_family: pi_retry_classifier
+    required_proof: [targeted, fuzz, global_tuner_isolation, frontier_review]
+
+  E2E-BASE:
+    title: Prove the core queue without Pi
+    card: tasks/E2E-BASE.md
+    group: E2E
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-07, JR-05]
+    conflicts_with: []
+    lease_family: e2e_base
+    required_proof: [scenario, race, repeat, mutation, check_fast]
+
+  E2E-PI:
+    title: Prove queue-to-local-Pi completion
+    card: tasks/E2E-PI.md
+    group: E2E
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [E2E-BASE, PI-E1]
+    conflicts_with: []
+    lease_family: e2e_pi
+    required_proof: [scenario, real_process, race, repeat, secret_scan, check_fast]
+
+  E2E-FAULT:
+    title: Cut every durable queue/run boundary
+    card: tasks/E2E-FAULT.md
+    group: E2E
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [E2E-BASE, JR-04]
+    conflicts_with: []
+    lease_family: e2e_fault
+    required_proof: [fault, race, repeat, check_fast]
+
+  E2E-STRESS:
+    title: Repeat ownership invariants under concurrency
+    card: tasks/E2E-STRESS.md
+    group: E2E
+    priority: P1
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [E2E-BASE]
+    conflicts_with: []
+    lease_family: e2e_stress
+    required_proof: [race, stress, leak, repeat, check_fast]
+
+  E2E-GATE:
+    title: Package the bounded local recovery gate
+    card: tasks/E2E-GATE.md
+    group: E2E
+    priority: P1
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [E2E-BASE, E2E-PI, E2E-FAULT, E2E-STRESS]
+    conflicts_with: []
+    lease_family: e2e_gate
+    required_proof: [local_gate, check_short]
+
+deferred_epics:
+  LIFT-POST:
+    disposition: deferred
+    reason: "Re-measure after queue recovery releases shared run-path leases."
+  CREW-00:
+    disposition: deferred
+    reason: "2026-07-22 Option A; revisit after runloop/substrate ports mature."
+  REMOTE-00:
+    disposition: deferred
+    hard_requires: [PI-R2, PI-L1C, PI-E1]
+    reason: "Local ownership and refusal first; functional SSH needs secure worker-side materialization."
+  SCHED-00:
+    disposition: deferred
+    reason: "Durable writes and validated capacity signals are prerequisites."
+
+archived_task_ids:
+  superseded:
+    - PI-01
+    - PI-02
+    - PI-03
+    - PI-04
+    - PI-05
+    - PI-06
+    - PI-Q1
+    - PI-A2
+    - PI-L1
+    - PI-F2
+    - PI-Q2
+    - E2E-01
+    - E2E-02
+    - E2E-03
+    - E2E-04

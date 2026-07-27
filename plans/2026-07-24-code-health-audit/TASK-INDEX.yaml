@@ -174,12 +174,19 @@ tasks:
     card: tasks/INPUT-ACK-CONTRACT-01.md
     group: ARCH
     priority: P0
-    phase: design
+    phase: implement
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: []
     conflicts_with: [ARCH-01]
     lease_family: input_ack_contract
+    claim:
+      owner: sol-input-ack
+      base_sha: 8bf076deb5b7d8fb9608a62d40a82ed10500186c
+      branch: work/input-ack-contract
+      worktree: /Users/gb/github/harmonik-wt/input-ack-contract
+      bead_id: null
+      claimed_at: 2026-07-27T16:14:01Z
     card_review: {state: approved, reviewer: /root/cq02_spec_draft_review, artifact: tasks/INPUT-ACK-CONTRACT-01.md, verdict: APPROVE}
     required_proof: [kerf, spec_validation, cross_group_review, check_fast]
 

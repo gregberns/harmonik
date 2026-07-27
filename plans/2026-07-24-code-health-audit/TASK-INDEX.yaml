@@ -420,8 +420,8 @@ tasks:
     card: tasks/RL-01.md
     group: ARCH
     priority: P0
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [ARCH-00]
     conflicts_with: []
@@ -438,6 +438,16 @@ tasks:
       reviewer: /root/arch00_review
       artifact: tasks/evidence/RL-01-CARD-REVIEW.md
       verdict: APPROVE
+    review:
+      state: approved
+      reviewer: /root/rl01_final_review
+      artifact: tasks/evidence/RL-01.yaml
+      verdict: APPROVE
+    integration:
+      state: integrated
+      commit: bc399291d0e96d801c5b2f4ce0f68485691375d9
+      integrated_sha: 881db078f6431ae1398d7a7f6480c1c8e6a7ae19
+    proof: green
     required_proof: [git_ancestry, kerf_reconciliation, frontier_review]
 
   RL-02A:

@@ -971,8 +971,8 @@ tasks:
     card: tasks/JR-02.md
     group: JR
     priority: P1
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
     hard_requires: [JR-00]
     conflicts_with: []
@@ -989,6 +989,16 @@ tasks:
       reviewer: core_graph_analysis
       artifact: tasks/evidence/JR-02-CARD-REVIEW.md
       verdict: APPROVE
+    review:
+      state: approved
+      reviewer: /root/bravo_jr_00/jr02_terra_review
+      artifact: tasks/evidence/JR-02.yaml
+      verdict: APPROVE
+    integration:
+      state: integrated
+      commit: 9adf1a0f6d2d61b58e048c1931d6e0d9048fc3d2
+      integrated_sha: 3df091b5ea645132db89b0a1f44981b553549667
+    proof: green
     required_proof: [yaml_parse, targeted, property, race, repeat, frontier_review]
 
   JR-03:

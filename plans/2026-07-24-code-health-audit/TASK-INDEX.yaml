@@ -143,13 +143,30 @@ tasks:
     card: tasks/ARCH-00.md
     group: ARCH
     priority: P0
-    phase: ready
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: []
     conflicts_with: []
     lease_family: evidence_ARCH_00
+    claim:
+      owner: alpha-arch-00
+      base_sha: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+      branch: work/arch-00-alpha
+      worktree: /Users/gb/github/harmonik-wt/arch-00-alpha
+      bead_id: null
+      claimed_at: 2026-07-27T04:59:15Z
     card_review: {state: approved, reviewer: task_pack_arch_audit, artifact: tasks/evidence/ARCH-TASK-PACK-REVIEW.md, verdict: APPROVE}
+    review:
+      state: approved
+      reviewer: /root/arch00_review
+      artifact: tasks/evidence/ARCH-00.yaml
+      verdict: APPROVE
+    integration:
+      state: integrated
+      commit: 3003d71ac5c32a8c38d3b098ed2219b3cc101618
+      integrated_sha: 24dcd3341c2931d3742b2ce02adf027ac1b6a0c4
+    proof: green
     required_proof: [graph_reproducibility, git_ancestry, production_symbol_review, frontier_review]
 
   ARCH-01:
@@ -954,12 +971,19 @@ tasks:
     card: tasks/JR-02.md
     group: JR
     priority: P1
-    phase: ready
+    phase: implement
     disposition: open
     routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
     hard_requires: [JR-00]
     conflicts_with: []
     lease_family: run_pure_kernels
+    claim:
+      owner: bravo-jr-02
+      base_sha: cbaae2b9628fb4fdc24b8967f1b58c6c672b9340
+      branch: work/jr-02-bravo
+      worktree: /Users/gb/github/harmonik-wt/jr-02-bravo
+      bead_id: null
+      claimed_at: 2026-07-27T05:54:54Z
     card_review:
       state: approved
       reviewer: core_graph_analysis

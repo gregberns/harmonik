@@ -408,12 +408,19 @@ tasks:
     card: tasks/RL-01.md
     group: ARCH
     priority: P0
-    phase: ready
+    phase: implement
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [ARCH-00]
     conflicts_with: []
     lease_family: reviewloop_reconciliation
+    claim:
+      owner: alpha-rl-01
+      base_sha: 03b09dad6841ce28a1ff149051d7c78d4296d08e
+      branch: work/rl-01-alpha
+      worktree: /Users/gb/github/harmonik-wt/rl-01-alpha
+      bead_id: null
+      claimed_at: 2026-07-27T06:23:27Z
     card_review:
       state: approved
       reviewer: /root/arch00_review

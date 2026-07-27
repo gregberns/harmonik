@@ -4,6 +4,30 @@ This directory turns [`TASK-INDEX.yaml`](../TASK-INDEX.yaml) into executable
 handoffs. The index is the coordinator-owned state machine; each file here is
 the immutable brief for one bounded worker outcome.
 
+## Program correction: architecture is the bootstrap
+
+The queue is not restored by accumulating fixes in the existing giant state
+machines. The P0 program is now:
+
+```text
+measure and freeze the real production graph
+  → settle immutable ownership and construction contracts
+  → decompose runWorkLoop, beadRunOne, reviewloop, and DOT
+  → replace temporal workLoopDeps assembly
+  → prove the real production composition
+  → finish queue/Run/Pi correctness and end-to-end recovery
+```
+
+Queue durability and pure state-machine contracts may proceed off-spine because
+they make the decomposition safe. Semantic work in `workloop.go`,
+`reviewloop.go`, or the DOT core must consume an extracted owner or create the
+fidelity proof needed for that extraction. A package move, interface wrapper,
+or new suppression does not count as structural decomposition.
+
+The architecture cards deliberately reconcile the existing P2/RT/LIFT and
+`reviewloop-decoupling` work. They do not authorize a competing extraction
+program or a move of the remaining giant functions intact.
+
 ## Operating without agent-to-agent communications
 
 One coordinator is the hub. Workers do not need to communicate with each other.
@@ -51,7 +75,7 @@ With four total agents, use one coordinator/overseer plus three workers:
   integration. If both Pi slots are not safely feedable, use one Terra worker
   for characterization instead of inventing low-value Pi work.
 
-The first recovery wave is:
+The completed historical recovery wave was:
 
 | Slot | Task | Profile | Why |
 |---|---|---|---|
@@ -59,6 +83,29 @@ The first recovery wave is:
 | bounded worker | `CQ-00A` | Pi/Nemotron Ralph | deterministic ingress/caller inventory |
 | bounded worker | `CQ-00B` | Pi/Nemotron Ralph | deterministic test/crash-cut inventory |
 | coordinator/overseer | review and integration | GPT-5.6 Sol, `xhigh` | contracts, security, recovery, and next-card review |
+
+The architecture-foundation wave is:
+
+| Slot | Task | Profile | Why |
+|---|---|---|---|
+| architecture evidence | `ARCH-00` | GPT-5.6 Terra, `high` | reconcile the live graph and two weeks of refactors |
+| queue contract | `CQ-02` | GPT-5.6 Sol, `xhigh` | establish safe durable-write ownership off-spine |
+| Run evidence | `JR-00` | GPT-5.6 Terra, `high` | map claim-to-terminal ownership before phase extraction |
+| coordinator/overseer | review, leases, integration | GPT-5.6 Sol, `xhigh` | approve architecture and keep one shared-spine writer |
+
+After the factual foundation, use Sol `xhigh` for `ARCH-01`, then a bounded
+Terra worker for `ARCH-GATE`. Once `ARCH-01`, `ARCH-GATE`, and `PS-01` are
+approved, the steady four-slot shape is:
+
+- one `dispatch_spine` writer;
+- one reviewloop **or** DOT writer with frozen lifecycle/interface contracts;
+- one file-disjoint queue, process-adapter, pure-kernel, or proof worker;
+- the Sol `xhigh` coordinator/reviewer.
+
+Reviewloop and DOT may run beside a dispatch-spine task only when their leases
+exclude shared lifecycle/interface files and the coordinator-owned architecture
+baseline. If a mode task needs to change `PS-01` or `ARCH-01`, it stops for a
+contract amendment.
 
 If Pi cannot complete an inventory card after one corrected retry, reassign it
 to GPT-5.6 Terra at `high`; do not let Pi broaden the lease.
@@ -79,10 +126,11 @@ to GPT-5.6 Terra at `high`; do not let Pi broaden the lease.
 - `sol_xhigh`: a fresh GPT-5.6 Sol context at `xhigh` for security,
   recovery, concurrency, shared-spine, and cross-group verdicts.
 
-Sol is the default frontier choice for restoring the queue because the current
-failures cross persistence, selection, Run ownership, process lifecycle, and
-terminalization. Terra is preferred once a Sol-reviewed card has reduced the
-task to a bounded implementation; it is faster and sufficient for that shape.
+Sol is the default frontier choice for the architectural spine because the
+current failures cross persistence, selection, Run ownership, process
+lifecycle, terminalization, and construction. Terra is preferred once a
+Sol-reviewed card has reduced the task to a bounded extraction, caller
+migration, or proof; it is faster and sufficient for that shape.
 For `CQ-DEF-01`, `high` is the builder setting once the card is approved;
 escalate to `xhigh` if production wiring diverges from the recorded path.
 
@@ -98,6 +146,8 @@ triage → design → ready → implement → review → integrate → verify �
 - the task card has been independently reviewed;
 - the base strategy and exclusive lease are viable;
 - acceptance tests and the escalation boundary are explicit;
+- each structural card has exact coordinator-approved
+  complexity/span/reach/import targets from `ARCH-01`/`ARCH-GATE`;
 - the assigned model profile is allowed for the task.
 
 Read-only characterization tasks finish by adding a tracked YAML evidence file

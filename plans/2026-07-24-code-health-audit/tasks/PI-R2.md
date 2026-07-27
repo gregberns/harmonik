@@ -5,20 +5,22 @@
 - Group / priority: Pi lifecycle / P0
 - Execution profile: `sol_xhigh`
 - Reviewer profile: `sol_xhigh`
-- Depends on: `CQ-DEF-01`, `PI-SPEC-01`
+- Depends on: `CQ-DEF-01`, `PI-SPEC-01`, `BR-02A`
 - Work type: remote placement safety fence
 
 ## Objective
 
-Effective Pi work remains local. It must not select/reserve a remote worker,
+Migrate the effective-Pi placement fence into the generic placement owner from
+`BR-02A`. Effective Pi work remains local: it must not select/reserve a remote worker,
 read/materialize a key for remote transport, call a runner, or place a secret in
 SSH argv/env. Functional remote Pi remains deferred.
 
 ## Exclusive lease
 
-Effective-harness/worker-selection region of `internal/daemon/workloop.go`,
-routed remote launch refusal, and replacement conformance tests. Conflicts with
-other workloop tasks and must be serialized.
+The Pi policy adapter at the extracted placement owner, only the old
+effective-harness/worker-selection region needed to delete the superseded
+fence, routed refusal, and conformance tests. Conflicts with other workloop
+tasks and must be serialized.
 
 ## Acceptance
 
@@ -39,4 +41,3 @@ to `REMOTE-00`.
 ## Return
 
 Use the directory return contract. **COMMIT EXPLICITLY.**
-

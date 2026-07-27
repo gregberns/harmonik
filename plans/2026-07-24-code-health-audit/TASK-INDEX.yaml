@@ -1,10 +1,11 @@
 # Coordinator-owned source of truth. Workers read this file but never edit it.
 schema_version: 2
-updated: 2026-07-25
+updated: 2026-07-26
 objective: >-
-  Restore a reliable local queue -> durable reservation -> Bead claim -> Run ->
-  local Pi process -> terminal/release/recovery path, then package bounded
-  end-to-end proof before primary-daemon deployment.
+  Decompose the queue/run execution core into constructor-complete, independently
+  testable owners; then restore and prove a reliable local queue -> durable
+  reservation -> Bead claim -> Run -> local Pi process ->
+  terminal/release/recovery path before primary-daemon deployment.
 
 authority:
   task_cards: tasks/
@@ -62,8 +63,15 @@ coordination:
       the command finishes. Evidence-only source searches do not use a token.
   shared_lease_families:
     dispatch_spine: "internal/daemon/workloop.go claim/dispatch/terminal regions; one writer"
+    workloop_recovery_spine: >-
+      internal/daemon/workloop.go recovery/adoption call sites; claimed only
+      after all prerequisite dispatch-spine tasks complete and mutually
+      excluded from remaining Pi workloop integrations
     reviewloop_spine: "internal/daemon/reviewloop.go; one writer"
     dot_spine: "internal/daemon/dot_cascade_core.go and dot gate; one writer"
+    composition_spine: >-
+      daemon boot/workloop production-graph construction; serial only after all
+      dispatch and mode integrations named by CG-01 are complete
     pi_launchspec: "internal/harness/pi/launchspec.go; one writer"
     queue_rpc: "internal/queue/rpc.go; one writer"
 
@@ -98,8 +106,20 @@ waves:
   W1_rule: >-
     Integrate and review W0 before selecting from newly-ready tasks. Never run
     two tasks sharing a lease_family. Keep one frontier slot for review.
+  ARCH_FOUNDATION:
+    goal: "make architecture remediation, not patch accumulation, the P0 program"
+    coordinator_profile: sol_xhigh
+    workers:
+      - {task: ARCH-00, profile: terra_high}
+      - {task: JR-00, profile: terra_high}
+      - {task: CQ-02, profile: sol_xhigh}
+    rule: >-
+      CQ-MIG-01 and CQ-02 contract work may proceed off-spine. No new semantic
+      patch enters workloop/reviewloop/DOT unless its task consumes an extracted
+      owner or is a failing-first proof required to create that owner.
 
 groups:
+  ARCH: {name: Run graph and state-machine architecture, priority: 0}
   CQ: {name: Core queue and durable reservation, priority: 1}
   JR: {name: Claim, Run, terminalization, and recovery, priority: 2}
   PI: {name: Local Pi security and lifecycle, priority: 3}
@@ -118,6 +138,527 @@ task_defaults:
   proof: pending
 
 tasks:
+  ARCH-00:
+    title: Reconcile the live run-architecture graph
+    card: tasks/ARCH-00.md
+    group: ARCH
+    priority: P0
+    phase: ready
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: []
+    conflicts_with: []
+    lease_family: evidence_ARCH_00
+    card_review: {state: approved, reviewer: task_pack_arch_audit, artifact: tasks/evidence/ARCH-TASK-PACK-REVIEW.md, verdict: APPROVE}
+    required_proof: [graph_reproducibility, git_ancestry, production_symbol_review, frontier_review]
+
+  ARCH-01:
+    title: Settle the immutable run-architecture contract
+    card: tasks/ARCH-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-00, RL-01, CQ-00, JR-00]
+    conflicts_with: []
+    lease_family: run_architecture_contract
+    required_proof: [kerf, spec_validation, cross_group_review]
+
+  ARCH-GATE:
+    title: Ratchet structural complexity and ownership
+    card: tasks/ARCH-GATE.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-00, ARCH-01]
+    conflicts_with: []
+    lease_family: run_architecture_gate
+    required_proof: [gate, mutation, check_fast]
+
+  WL-01:
+    title: Freeze outer work-loop behavior
+    card: tasks/WL-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-00]
+    conflicts_with: []
+    lease_family: workloop_fidelity
+    required_proof: [targeted, race, repeat, mutation, frontier_review]
+
+  WL-02A:
+    title: Extract periodic maintenance from runWorkLoop
+    card: tasks/WL-02A.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, ARCH-GATE, WL-01, CQ-CALLER-EAGER]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [fidelity, targeted, race, architecture_gate, delta_lint, ubs, check_fast]
+
+  WL-02B:
+    title: Extract the dispatch-permission decision
+    card: tasks/WL-02B.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, ARCH-GATE, WL-01, WL-02A]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [property, mutation, composition, race, architecture_gate, check_fast]
+
+  WL-MUT-01:
+    title: Own non-reservation queue mutations
+    card: tasks/WL-MUT-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, ARCH-GATE, CQ-02I, WL-01, WL-02B]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [fault, property, race, restart, architecture_gate, check_fast]
+
+  WL-03:
+    title: Extract dispatch-source selection
+    card: tasks/WL-03.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, ARCH-GATE, WL-01, WL-02A, WL-02B, WL-MUT-01]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [property, mutation, composition, race, architecture_gate, check_fast]
+
+  WL-04:
+    title: Extract run-spawn and completion ownership
+    card: tasks/WL-04.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [WL-03, CQ-03, BR-04, WL-REC-01]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [fault, race, stress, leak, architecture_gate, check_fast]
+
+  WL-REC-01:
+    title: Route workloop recovery through the adoption owner
+    card: tasks/WL-REC-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-GATE, JR-04, BR-04, CQ-03, WL-03]
+    conflicts_with: [PI-F2S, PI-R2]
+    lease_family: workloop_recovery_spine
+    required_proof: [mutation, fault, restart, race, architecture_gate, check_fast]
+
+  BR-00:
+    title: Settle the per-run phase contract
+    card: tasks/BR-00.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, JR-00, JR-02]
+    conflicts_with: []
+    lease_family: per_run_phase_contract
+    required_proof: [kerf, spec_validation, crash_cut_review, cross_group_review]
+
+  BR-01:
+    title: Extract immutable RunPlan resolution
+    card: tasks/BR-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-GATE, BR-00]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [property, mutation, composition, architecture_gate, check_fast]
+
+  BR-02A:
+    title: Extract placement and worker acquisition
+    card: tasks/BR-02A.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [BR-01]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02B, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [property, fault, race, architecture_gate, check_fast]
+
+  BR-02B:
+    title: Extract tunnel and worktree acquisition
+    card: tasks/BR-02B.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [BR-02A]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [fault, local_git, race, architecture_gate, check_fast]
+
+  BR-02C:
+    title: Compose the prepared-run resource scope
+    card: tasks/BR-02C.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [BR-02B]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [constructor_negative, fault, race, architecture_gate, check_fast]
+
+  BR-03:
+    title: Extract mode execution behind one result contract
+    card: tasks/BR-03.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [BR-02C, PS-02, RL-03, DOT-03]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [conformance, real_process, race, architecture_gate, check_fast]
+
+  BR-04:
+    title: Thin beadRunOne to a phase coordinator
+    card: tasks/BR-04.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [BR-03, JR-01, JR-03, ARCH-GATE]
+    conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03]
+    lease_family: dispatch_spine
+    required_proof: [fidelity, fault, race, stress, real_process, architecture_gate, production_composition, check_short]
+
+  PS-01:
+    title: Own one process and session phase scope
+    card: tasks/PS-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, PI-L1B, PI-L1C, PI-F0]
+    conflicts_with: []
+    lease_family: process_phase_scope
+    required_proof: [state_machine, property, mutation, race, depguard, check_fast]
+
+  PS-02:
+    title: Bind local process/session adapters to the phase owner
+    card: tasks/PS-02.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [PS-01]
+    conflicts_with: []
+    lease_family: process_phase_adapter
+    required_proof: [real_process, state_conformance, fault, race, leak, check_fast]
+
+  RL-01:
+    title: Reconcile the existing reviewloop decomposition
+    card: tasks/RL-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-00]
+    conflicts_with: []
+    lease_family: reviewloop_reconciliation
+    required_proof: [git_ancestry, kerf_reconciliation, frontier_review]
+
+  RL-02A:
+    title: Integrate review continuity
+    card: tasks/RL-02A.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, ARCH-GATE, RL-01]
+    conflicts_with: [PI-F1, RL-02B, RL-02C, RL-03]
+    lease_family: reviewloop_spine
+    required_proof: [fault, restart, mutation, race, architecture_gate, check_fast]
+
+  RL-02B:
+    title: Integrate owned review sessions and subscriptions
+    card: tasks/RL-02B.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [RL-02A, PS-02]
+    conflicts_with: [PI-F1, RL-02A, RL-02C, RL-03]
+    lease_family: reviewloop_spine
+    required_proof: [composition, mutation, real_process, race, leak, architecture_gate, check_fast]
+
+  RL-02C:
+    title: Integrate reviewcycle decisions
+    card: tasks/RL-02C.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [RL-02B]
+    conflicts_with: [PI-F1, RL-02A, RL-02B, RL-03]
+    lease_family: reviewloop_spine
+    required_proof: [property, mutation, scenario, race, architecture_gate, check_fast]
+
+  RL-03:
+    title: Split reviewloop into phase shells
+    card: tasks/RL-03.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [RL-02C, BR-00]
+    conflicts_with: [PI-F1, RL-02A, RL-02B, RL-02C]
+    lease_family: reviewloop_spine
+    required_proof: [scenario, real_process, race, architecture_gate, check_short]
+
+  DOT-01:
+    title: Define and implement pure DOT progression
+    card: tasks/DOT-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, ARCH-GATE]
+    conflicts_with: []
+    lease_family: dot_progression_kernel
+    required_proof: [property, fuzz, mutation, depguard, check_fast]
+
+  DOT-02:
+    title: Extract agentic DOT node execution
+    card: tasks/DOT-02.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [DOT-01, PS-02, BR-00]
+    conflicts_with: [PI-F2D, DOT-GATE-01, DOT-03]
+    lease_family: dot_spine
+    required_proof: [scenario, real_process, fault, race, architecture_gate, check_fast]
+
+  DOT-GATE-01:
+    title: Decompose cognition-gate execution
+    card: tasks/DOT-GATE-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, ARCH-GATE, PS-02, DOT-02]
+    conflicts_with: [PI-F2D, DOT-02, DOT-03]
+    lease_family: dot_spine
+    required_proof: [property, real_process, fault, race, architecture_gate, compile_probe, check_fast]
+
+  DOT-03:
+    title: Thin the DOT coordinator and break the sub-workflow cycle
+    card: tasks/DOT-03.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [DOT-01, DOT-02, DOT-GATE-01, ARCH-GATE]
+    conflicts_with: [PI-F2D, DOT-02, DOT-GATE-01]
+    lease_family: dot_spine
+    required_proof: [scenario, fault, restart, property, architecture_gate, compile_probe, check_short]
+
+  CG-01:
+    title: Assemble one immutable production run graph
+    card: tasks/CG-01.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [ARCH-01, WL-04, BR-04, RL-03, DOT-03, CQ-06, JR-04, PI-F1, PI-F2S, PI-F2D, PI-R2]
+    conflicts_with: []
+    lease_family: production_graph_constructors
+    required_proof: [constructor_negative, coexistence, depguard, architecture_gate, check_fast]
+
+  CG-02A:
+    title: Cut over outer-loop service construction
+    card: tasks/CG-02A.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CG-01]
+    conflicts_with: [CG-02B, CG-02C, CG-02D]
+    lease_family: composition_spine
+    required_proof: [constructor_negative, composition, mutation, depguard, architecture_gate, race, check_fast]
+
+  CG-02B:
+    title: Cut over per-run factory construction
+    card: tasks/CG-02B.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CG-02A]
+    conflicts_with: [CG-02A, CG-02C, CG-02D]
+    lease_family: composition_spine
+    required_proof: [constructor_negative, composition, mutation, depguard, architecture_gate, race, check_fast]
+
+  CG-02C:
+    title: Cut over terminal and mode integrations
+    card: tasks/CG-02C.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CG-02B]
+    conflicts_with: [CG-02A, CG-02B, CG-02D]
+    lease_family: composition_spine
+    required_proof: [composition, mutation, cross_mode, pi, depguard, architecture_gate, race, check_fast]
+
+  CG-02D:
+    title: Delete temporal graph construction
+    card: tasks/CG-02D.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CG-02C]
+    conflicts_with: [CG-02A, CG-02B, CG-02C]
+    lease_family: composition_spine
+    required_proof: [zero_reader, mutation, composition, depguard, architecture_gate, race, check_short]
+
+  CG-03:
+    title: Prove the real production composition
+    card: tasks/CG-03.md
+    group: ARCH
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CG-02D]
+    conflicts_with: []
+    lease_family: production_graph_proof
+    required_proof: [composition, mutation, scenario, race, repeat, check_short]
+
+  CQ-CALLER-EAGER:
+    title: Migrate eager refill to the queue transaction
+    card: tasks/CQ-CALLER-EAGER.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02I]
+    conflicts_with: []
+    lease_family: queue_eager_refill
+    required_proof: [fault, property, race, repeat, delta_lint, ubs, check_fast]
+
+  CQ-CALLER-OPERATOR:
+    title: Migrate operator pause and resume
+    card: tasks/CQ-CALLER-OPERATOR.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02I]
+    conflicts_with: []
+    lease_family: queue_operator_events
+    required_proof: [fault, property, race, repeat, delta_lint, ubs, check_fast]
+
+  CQ-CALLER-BUDGET:
+    title: Migrate budget pause and unpause
+    card: tasks/CQ-CALLER-BUDGET.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02I]
+    conflicts_with: []
+    lease_family: queue_budget_meter
+    required_proof: [fault, property, race, repeat, delta_lint, ubs, check_fast]
+
+  CQ-CALLER-REVIEW:
+    title: Migrate review-failure charging
+    card: tasks/CQ-CALLER-REVIEW.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02I, JR-02]
+    conflicts_with: []
+    lease_family: queue_review_charge
+    required_proof: [fault, property, port_conformance, race, repeat, delta_lint, ubs, check_fast]
+
+  CQ-CALLER-BOOTSTRAP:
+    title: Migrate inline queue bootstrap
+    card: tasks/CQ-CALLER-BOOTSTRAP.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02I, CQ-01]
+    conflicts_with: []
+    lease_family: queue_cli_bootstrap
+    required_proof: [fault, composition, repeat, delta_lint, ubs, check_fast]
+
+  CQ-CALLER-CREW:
+    title: Migrate crew queue placeholder creation
+    card: tasks/CQ-CALLER-CREW.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02I]
+    conflicts_with: []
+    lease_family: queue_crew_placeholder
+    required_proof: [fault, race, repeat, delta_lint, ubs, check_fast]
+
   CQ-DEF-01:
     title: Preserve a queue default harness through production dispatch
     card: tasks/CQ-DEF-01.md
@@ -303,8 +844,8 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [CQ-01, CQ-02I]
-    conflicts_with: [CQ-DEF-01, JR-01, JR-03, PI-F2S, PI-R2]
+    hard_requires: [CQ-01, CQ-02I, WL-03]
+    conflicts_with: [CQ-DEF-01, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
     required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
 
@@ -342,7 +883,7 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [CQ-02I, CQ-05]
+    hard_requires: [CQ-02I, ARCH-01]
     conflicts_with: []
     lease_family: queue_ports
     required_proof: [targeted, composition, depguard, delta_lint, ubs, check_fast]
@@ -355,7 +896,7 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [CQ-03, CQ-04, CQ-06]
+    hard_requires: [CQ-03, CQ-04, CQ-06, CQ-CALLER-EAGER, CQ-CALLER-OPERATOR, CQ-CALLER-BUDGET, CQ-CALLER-REVIEW, CQ-CALLER-BOOTSTRAP, CQ-CALLER-CREW]
     conflicts_with: []
     lease_family: queue_scenarios
     required_proof: [scenario, race, fault, repeat, check_fast]
@@ -381,8 +922,8 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [JR-00, CQ-03]
-    conflicts_with: [CQ-DEF-01, CQ-03, JR-03, PI-F2S, PI-R2]
+    hard_requires: [JR-00, CQ-03, BR-00]
+    conflicts_with: [CQ-DEF-01, CQ-03, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
     required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
 
@@ -407,8 +948,8 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [JR-01, JR-02]
-    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, PI-F2S, PI-R2]
+    hard_requires: [JR-01, JR-02, BR-03]
+    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
     required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
 
@@ -563,8 +1104,8 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0]
-    conflicts_with: []
+    hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0, PS-02, RL-03]
+    conflicts_with: [RL-02A, RL-02B, RL-02C, RL-03]
     lease_family: reviewloop_spine
     required_proof: [targeted, scenario, race, delta_lint, ubs, check_fast]
 
@@ -576,8 +1117,8 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0]
-    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, JR-03, PI-R2]
+    hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0, PS-02, BR-03]
+    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, JR-03, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, WL-REC-01, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
     required_proof: [targeted, scenario, race, delta_lint, ubs, check_fast]
 
@@ -589,8 +1130,8 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0]
-    conflicts_with: [CQ-DEF-01]
+    hard_requires: [PI-L1A, PI-L1B, PI-L1C, PI-F0, PS-02, DOT-03]
+    conflicts_with: [CQ-DEF-01, DOT-02, DOT-GATE-01, DOT-03]
     lease_family: dot_spine
     required_proof: [targeted, scenario, race, delta_lint, ubs, check_fast]
 
@@ -615,8 +1156,8 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [CQ-DEF-01, PI-SPEC-01]
-    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, JR-03, PI-F2S]
+    hard_requires: [CQ-DEF-01, PI-SPEC-01, BR-02A]
+    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, JR-03, PI-F2S, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, WL-REC-01, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
     required_proof: [targeted, scenario, race, secret_scan, delta_lint, ubs, check_fast]
 
@@ -706,7 +1247,7 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [CQ-07, JR-05]
+    hard_requires: [CQ-07, JR-05, CG-03]
     conflicts_with: []
     lease_family: e2e_base
     required_proof: [scenario, race, repeat, mutation, check_fast]
@@ -764,9 +1305,6 @@ tasks:
     required_proof: [local_gate, check_short]
 
 deferred_epics:
-  LIFT-POST:
-    disposition: deferred
-    reason: "Re-measure after queue recovery releases shared run-path leases."
   CREW-00:
     disposition: deferred
     reason: "2026-07-22 Option A; revisit after runloop/substrate ports mature."

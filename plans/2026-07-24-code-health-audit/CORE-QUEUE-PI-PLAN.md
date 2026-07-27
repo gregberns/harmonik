@@ -1,12 +1,17 @@
 # Core queue, Run, and local Pi recovery plan
 
-**Priority:** first.
+**Priority:** bootstrap acceptance path after the P0 run-architecture program.
 **Machine authority:** [`TASK-INDEX.yaml`](TASK-INDEX.yaml).
 **Worker handoffs:** [`tasks/`](tasks/README.md).
 
-The completion bar is a reliable local path:
+The completion bar is a maintainable architecture plus a reliable local path:
 
 ```text
+immutable production run graph
+  → decomposed outer loop and per-run phase owners
+  → decomposed review and DOT mode coordinators
+  → production-composition fidelity
+  →
 supported admission
   → durable queue record
   → one durable reservation carrying Run ID
@@ -20,6 +25,19 @@ The primary daemon remains down. Acceptance uses hermetic scenarios, real local
 git/Beads fixtures, twin processes, and controlled local Pi subprocesses.
 Functional SSH, crew launch, scheduling, and primary-daemon deployment are
 deferred.
+
+## Architecture-first correction
+
+The queue objective does not authorize adding more semantic branches to
+`runWorkLoop`, `beadRunOne`, `runReviewLoop`, or the DOT core. The code-health
+audit ranks this run graph 105/105 P0, and the first task-pack revision contained
+no structural-decomposition tasks. `TASK-INDEX.yaml` now promotes the `ARCH`,
+`WL`, `BR`, `RL`, `DOT`, and `CG` task sequences ahead of end-to-end recovery.
+
+Queue transaction, persistence, and pure decision work may run in parallel
+where file leases are disjoint. Workloop/reviewloop/DOT integrations wait for
+their extracted owner, and the final queue scenarios prove the resulting
+production graph rather than blessing the old monolith.
 
 ## Why the original index was unsafe
 
@@ -43,10 +61,49 @@ Schema v2 removes stale `unlocks`, uses only `hard_requires`, adds exact model a
 lease families, splits those ownership boundaries, and keeps workers from
 editing the coordinator-owned index.
 
-## Critical DAG
+## Architecture critical DAG
 
 ```text
-FIRST WAVE (four total agents)
+{ARCH-00, RL-01, JR-00, CQ-02}
+  → ARCH-01 + ARCH-GATE
+
+OUTER LOOP, serial dispatch spine
+  CQ-CALLER-EAGER → WL-02A
+  WL-01 + WL-02A → WL-02B → WL-MUT-01 → WL-03
+  CQ-02 → CQ-02I → CQ-01
+  WL-03 + CQ-02I + CQ-01 → CQ-03
+
+PER-RUN, serial dispatch spine
+  BR-00 → BR-01 → BR-02A → BR-02B → BR-02C
+
+SHARED PHASE LIFECYCLE, file-disjoint
+  {PI-L1B, PI-L1C, PI-F0} → PS-01 → PS-02
+
+REVIEWLOOP, serial within its lease
+  RL-01 → RL-02A → RL-02B → RL-02C → RL-03
+
+DOT, serial within its lease
+  DOT-01 + PS-02 → DOT-02 → DOT-GATE-01 → DOT-03
+
+THIN COORDINATORS AND OUTER SPAWN
+  {BR-02C, PS-02, RL-03, DOT-03} → BR-03
+  {BR-03, JR-01, JR-03} → BR-04
+  {JR-04, BR-04, CQ-03, WL-03} → WL-REC-01 → WL-04
+
+IMMUTABLE PRODUCTION GRAPH
+  {WL-04, BR-04, RL-03, DOT-03, CQ-06, JR-04,
+   PI-F1, PI-F2S, PI-F2D, PI-R2}
+    → CG-01 → CG-02A → CG-02B → CG-02C → CG-02D → CG-03
+```
+
+The architecture baseline and target updates are coordinator-owned. Reviewloop
+or DOT can run beside one dispatch-spine writer only after `ARCH-01` and
+`PS-01` are frozen and their leases exclude shared contract files.
+
+## Correctness and acceptance DAG
+
+```text
+HISTORICAL FIRST WAVE (complete)
   coordinator/overseer: Sol xhigh
   ├─ CQ-DEF-01: Sol high, exclusive dispatch spine
   ├─ CQ-00A: Pi/Nemotron inventory
@@ -56,8 +113,10 @@ QUEUE
   CQ-00A + CQ-00B → CQ-00
   CQ-00B → CQ-MIG-01 ─────────────┐
   CQ-00 → CQ-02 contract → CQ-02I ├→ CQ-01 admission → CQ-03 reservation
+                                  ├→ bounded direct-caller migrations
                                    └───────────────────────────────────────┐
   CQ-03 → CQ-04 recovery ─┬→ CQ-07 restart scenario                     │
+  all direct callers ─────┘                                              │
   CQ-03 → CQ-05 closure → CQ-06 ports ────────────────────────────────────┘
 
 RUN

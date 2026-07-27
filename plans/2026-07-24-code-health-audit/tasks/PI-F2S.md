@@ -5,18 +5,20 @@
 - Group / priority: Pi lifecycle / P0
 - Execution profile: `terra_high`
 - Reviewer profile: `sol_xhigh`
-- Depends on: `PI-L1A`, `PI-L1B`, `PI-L1C`, `PI-F0`
+- Depends on: `PI-L1A`, `PI-L1B`, `PI-L1C`, `PI-F0`, `PS-02`, `BR-03`
 - Work type: serial workloop integration
 
 ## Objective
 
-In `beadRunOne`, bind terminal delivery and run harness-aware finalization before
-phase-complete and no-commit/terminal handling.
+In the extracted single-mode executor, bind terminal delivery through the
+shared phase scope and run harness-aware finalization before phase-complete and
+no-commit/terminal handling.
 
 ## Exclusive lease
 
-Single-mode region of `internal/daemon/workloop.go` and focused tests. Conflicts
-with `CQ-DEF-01`, `CQ-03`, `JR-01`, and `JR-03`; coordinator serializes them.
+The extracted single-mode executor and focused tests. Only the old single-mode
+region of `workloop.go` required to delete a superseded path may be edited.
+Conflicts with other workloop tasks; the coordinator serializes them.
 
 ## Acceptance
 
@@ -34,4 +36,3 @@ Stop on terminalization-policy changes owned by `JR-03`.
 ## Return
 
 Use the directory return contract. **COMMIT EXPLICITLY.**
-

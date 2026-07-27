@@ -1,0 +1,178 @@
+schema_version: 1
+task_id: WL-01
+pinned_base_sha: b60d734515a77ceee911cd755dfab7078b1c7c55
+arch_00_integration: 24dcd3341c2931d3742b2ce02adf027ac1b6a0c4
+sources_reviewed:
+  - internal/daemon/workloop.go runWorkLoop
+  - internal/daemon/workloop.go workloopSleep
+  - internal/daemon/workloop.go selectNextQueue
+  - internal/daemon/workloop.go drainCancelledQueue
+  - internal/daemon/workloop.go adoptLiveRunSession
+  - internal/daemon/bootworkloop.go bootState.launchWorkLoop
+  - internal/daemon/bootworkloop.go bootState.buildWorkLoopDeps
+construction:
+  production_entry: daemon.ExportedRunWorkLoop
+  controlled_adapter: wl01Ledger records only Ready, ShowBead, ClaimBead, CloseBead, and ReopenBead boundaries; its retry ShowBead barriers observe state after production failure handling and return caller cancellation when released, bounding each trace to one attempt.
+  overrides:
+    - BrAdapter: wl01Ledger; isolates ledger effects, validates the claim boundary, and supplies deterministic observation barriers only.
+    - Bus: wl01EventEmitter; maps real RunStarted, QueueItemHeldForHandlerPause, and DiskLow production events to semantic trace observations.
+    - ProjectDir: per-test temporary git fixture; preserves production queue and worktree behavior without persistent artifacts.
+    - HandlerBinary: /usr/bin/true; deterministic terminal process for production terminal-path checks.
+    - IntentLogDir: test temporary directory; avoids persistent intent artifacts.
+    - AdapterRegistry2: sealed empty test registry; satisfies the existing production precondition.
+    - RunRegistry: per-test production registry where registration and cleanup are observed.
+    - QueueStore: production queue store for queue-success, claim-failure, and handler-pause scenarios; default nil store for br-ready and disk-low scenarios.
+    - WorktreeFactory: emptyCommitWorktreeFactory wraps the production worktree factory for successful terminal-path scenarios.
+    - CancelOnQueueDrain: queue-success-only completion hook that ends the loop after production terminal advancement.
+    - HandlerPauseController: production controller paused for the handler gate scenario.
+    - DiskFreeBytesFunc and GoCacheCleanFunc: disk-low-only maintenance inputs; the asserted hold is the real DiskLow event.
+    - all other ExportedWorkLoopDeps parameters: production test-seam defaults.
+oracle_vocabulary:
+  - maintenance.<kind>
+  - gate.<kind>.hold
+  - source.queue.select
+  - source.br_ready.ready
+  - source.br_ready.show
+  - queue.reservation.durable
+  - ledger.claim
+  - registry.register
+  - executor.started
+  - executor.terminal.<success|failure|cancelled>
+  - queue.item_terminal.<success|failure>
+  - queue.revert_pending
+  - ledger.close
+  - ledger.reopen
+  - registry.unregister
+  - shutdown.begin
+  - shutdown.queue_cancel
+  - shutdown.return
+  - restart.spawn_gate_wait
+  - restart.adopt_session
+scenario_matrix:
+  - id: queue_success
+    preconditions: [active queue item, claimable bead]
+    required_trace: [source.queue.select, queue.reservation.durable, ledger.claim, registry.register, executor.started, executor.terminal.success, queue.item_terminal.success, registry.unregister]
+    forbidden_effects: [source.br_ready.ready]
+    classification: invariant
+    proof: [TestWL01_QueueSuccessProductionTrace, TestWL01_OracleRejectsReorderedReservation, TestWL01_OracleRejectsDuplicateClaimCompensation]
+  - id: br_ready_success
+    preconditions: [no loaded queue, ready open bead]
+    required_trace: [source.br_ready.ready, source.br_ready.show, ledger.claim, registry.register, executor.started, executor.terminal.success, ledger.close, registry.unregister]
+    forbidden_effects: [source.queue.select, queue.reservation.durable]
+    classification: invariant
+    proof: [TestWL01_BRReadySuccessProductionTrace]
+  - id: loaded_queue_suppresses_br_ready
+    preconditions: [loaded queue has no eligible item]
+    required_trace: [maintenance.queue_loaded, gate.queue_loaded.hold]
+    forbidden_effects: [source.br_ready.ready]
+    classification: gap
+    proof: []
+  - id: idle_submit_wake
+    preconditions: [idle queue-store wake barrier]
+    required_trace: [maintenance.idle, source.queue.select]
+    forbidden_effects: []
+    classification: gap
+    proof: []
+  - id: handler_pause_queue
+    preconditions: [selected queue item, handler paused]
+    required_trace: [source.queue.select, gate.handler_pause.hold]
+    forbidden_effects: [queue.reservation.durable, ledger.claim, registry.register, executor.started]
+    classification: invariant
+    proof: [TestWL01_HandlerPauseQueueProductionTrace]
+  - id: operator_pause_br_ready
+    preconditions: [operator pause active, no loaded queue]
+    required_trace: [gate.operator_pause.hold]
+    forbidden_effects: [source.br_ready.ready, ledger.claim, registry.register, executor.started]
+    classification: gap
+    proof: []
+  - id: disk_low_gate
+    preconditions: [disk gate refuses dispatch]
+    required_trace: [maintenance.disk, gate.disk_low.hold]
+    forbidden_effects: [source.queue.select, source.br_ready.ready, ledger.claim, executor.started]
+    classification: invariant
+    proof: [TestWL01_DiskLowGateProductionTrace]
+  - id: capacity_gate
+    preconditions: [all run slots occupied]
+    required_trace: [maintenance.capacity, gate.capacity.hold]
+    forbidden_effects: [source.queue.select, source.br_ready.ready, ledger.claim, executor.started]
+    classification: gap
+    proof: []
+  - id: reservation_persist_failure
+    preconditions: [queue stamp persistence reports failure]
+    required_trace: [source.queue.select, ledger.claim]
+    forbidden_effects: [queue.reservation.durable, registry.register, executor.started]
+    classification: observed_debt
+    proof: [TestWL01_ReservationPersistFailureObservedDebt]
+  - id: queue_claim_failure
+    preconditions: [durably reserved queue item, claim returns error]
+    required_trace: [source.queue.select, queue.reservation.durable, ledger.claim, queue.revert_pending]
+    forbidden_effects: [registry.register, executor.started]
+    classification: invariant
+    proof: [TestWL01_QueueClaimFailureProductionTrace]
+  - id: spawn_completion
+    preconditions: [claimed run reaches success]
+    required_trace: [registry.register, executor.started, executor.terminal.success, queue.item_terminal.success, registry.unregister]
+    forbidden_effects: []
+    classification: invariant
+    proof: [TestWL01_QueueSuccessProductionTrace]
+  - id: shutdown_inflight
+    preconditions: [run active when shutdown begins]
+    required_trace: [shutdown.begin, executor.terminal.cancelled, shutdown.queue_cancel, shutdown.return]
+    forbidden_effects: [queue.item_terminal.failure]
+    classification: gap
+    proof: []
+  - id: restart_spawn_gate
+    preconditions: [spawn substrate readiness barrier is initially closed]
+    required_trace: [restart.spawn_gate_wait, source.queue.select]
+    forbidden_effects: []
+    classification: gap
+    proof: []
+  - id: restart_live_session
+    preconditions: [persisted live run session disappears]
+    required_trace: [restart.adopt_session, ledger.reopen, queue.revert_pending, registry.unregister]
+    forbidden_effects: []
+    classification: gap
+    proof: []
+existing_coverage:
+  - internal/daemon/workloop_hk45ude_test.go queue dispatch and terminal advancement
+  - internal/daemon/workloop_handlerpause_kac8g_test.go handler pause holds
+  - internal/daemon/workloop_operatorpause_ry8q1_test.go operator pause holds
+  - internal/daemon/boot_redispatch_gate_bk33_test.go restart gate
+  - internal/daemon/run_session_adoption_hk78tji_test.go adopted live session recovery
+tests_added:
+  - internal/daemon/workloop_fidelity_wl01_test.go
+  - internal/daemon/workloop_fidelity_fixture_wl01_test.go
+mutation_proof:
+  tests: [TestWL01_OracleRejectsReorderedReservation, TestWL01_OracleRejectsDuplicateClaimCompensation]
+  mutants:
+    - ledger.claim moved before queue.reservation.durable
+    - ledger.claim before durability plus a compensating second ledger.claim after durability
+  result: both rejected by the ordered, single-owner trace oracle without production mutation
+verification:
+  - targeted: green (go test ./internal/daemon -run '^TestWL01_' -count=1; production-boundary traces included)
+  - race: green (go test -race ./internal/daemon -run '^TestWL01_' -count=1)
+  - repeat: green (go test ./internal/daemon -run '^TestWL01_' -count=20)
+  - mutation: green (go test ./internal/daemon -run '^TestWL01_OracleRejects' -count=1; reordered reservation and compensating duplicate-claim mutants rejected)
+  - ubs: exit 0 (two changed WL-01 test files; shadow workspace reports no go.mod, a scanner fixture warning rather than a finding in the repository files)
+  - check_fast: blocked only by baseline formatter drift in internal/runloop/reviewer_never_inherits_captured_hkpkxju_test.go; WL-01 files are formatter-clean and no test or analyzer phase ran after fmt-check stopped.
+lease_compliance:
+  allowed_files_only: true
+  production_files_changed: false
+  existing_tests_changed: false
+  builder_cache: /Users/gb/github/harmonik-wt-cache/w0-terra-wl-01/go-build
+gaps:
+  - loaded_queue_suppresses_br_ready: ExportedRunWorkLoop exposes no reached-idle rendezvous; a wake can be consumed before the loaded-queue idle branch, so a no-Ready observation would be scheduler-dependent. Downstream closure owner is WL-03.
+  - idle_submit_wake: QueueStore exposes a wake channel but the production idle branch has no entered-wait acknowledgment; the existing seam cannot prove blocked-then-woken ordering without a timing assertion. Downstream closure owner is WL-03.
+  - operator_pause_br_ready: OperatorPauseController similarly has no gate-entered acknowledgment through ExportedRunWorkLoop; a pre-cancel no-Ready check can race before the loop evaluates pause. Downstream closure owner is WL-02B.
+  - capacity_gate: RunRegistry capacity has no reached-capacity-gate acknowledgment, so no-source assertions would freeze scheduler timing. Downstream closure owner is WL-02B.
+  - shutdown_inflight: the existing exported work-loop construction seam has no deterministic executor-start barrier that also distinguishes cancelled terminalization from the normal terminal event. Downstream closure owner is WL-04.
+  - restart_spawn_gate: SpawnSubstrateReadyCh blocks the loop but supplies no production-side entered-wait acknowledgment; closing it immediately cannot prove the goroutine reached the gate first. Downstream closure owner is WL-REC-01.
+  - restart_live_session: live-session adoption requires an unexported substrate adapter extraction path and a fixed ticker; no allowed exported construction seam exposes a deterministic monitor tick barrier. Downstream closure owner is WL-REC-01.
+  - reservation_persist_failure is observed debt: production logs persistence failure and still reaches ClaimBead; the trace intentionally forbids queue.reservation.durable and makes no normative continuation claim.
+review:
+  required_profile: sol_xhigh
+  state: approved
+  reviewer: /root
+  verdict: APPROVE
+  disposition: escalated_gap_return
+  acceptance: Original every-responsibility stable-oracle criterion remains unmet pending downstream closure of loaded_queue_suppresses_br_ready, idle_submit_wake, operator_pause_br_ready, capacity_gate, shutdown_inflight, restart_spawn_gate, and restart_live_session.

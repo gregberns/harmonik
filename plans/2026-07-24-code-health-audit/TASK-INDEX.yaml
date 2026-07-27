@@ -906,12 +906,24 @@ tasks:
     card: tasks/JR-00.md
     group: JR
     priority: P0
-    phase: triage
+    phase: implement
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: []
     conflicts_with: []
     lease_family: evidence_JR_00
+    claim:
+      owner: bravo-jr-00
+      base_sha: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+      branch: work/jr-00-bravo
+      worktree: /Users/gb/github/harmonik-wt/jr-00-bravo
+      bead_id: null
+      claimed_at: 2026-07-27T05:28:10Z
+    card_review:
+      state: approved
+      reviewer: task_pack_arch_audit
+      artifact: tasks/evidence/ARCH-TASK-PACK-REVIEW.md
+      verdict: APPROVE
     required_proof: [yaml_parse, cross_group_review]
 
   JR-01:

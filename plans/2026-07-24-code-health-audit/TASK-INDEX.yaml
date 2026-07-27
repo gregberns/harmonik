@@ -201,8 +201,8 @@ tasks:
     card: tasks/WL-01.md
     group: ARCH
     priority: P0
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [ARCH-00]
     conflicts_with: []
@@ -219,6 +219,21 @@ tasks:
       reviewer: /root/task_pack_arch_audit
       artifact: tasks/evidence/WL-01-CARD-REVIEW.md
       verdict: APPROVE
+    review:
+      state: approved
+      reviewer: /root
+      artifact: tasks/evidence/WL-01.yaml
+      verdict: APPROVE
+      disposition: escalated_gap_return
+      note: >-
+        Completion certifies reviewed characterization and explicit downstream
+        ownership of all seven deterministic-oracle gaps; it does not claim
+        those downstream behaviors are already closed.
+    integration:
+      state: integrated
+      commit: f348696b2c27169fc991d51497350c60617d8d8a
+      integrated_sha: abffd15bfc37af52f2a44f09282008466fe03044
+    proof: green
     required_proof: [targeted, race, repeat, mutation, frontier_review, gap_routing_review]
 
   WL-02A:

@@ -1,4 +1,4 @@
-# WL-REC-01 — Route workloop recovery through the adoption owner
+# WL-REC-01 — Extract the restart gate and route recovery through adoption
 
 ## Dispatch metadata
 
@@ -10,40 +10,59 @@
 
 ## Objective
 
-Replace inline `runWorkLoop` live-session adoption/recovery policy with the
-typed, idempotent owner completed by `JR-04`. Preserve only control-loop
-scheduling and effect application.
+Extract the restart-only pre-dispatch readiness gate, then replace inline
+`runWorkLoop` live-session adoption/recovery policy with the typed, idempotent
+owner completed by `JR-04`. Preserve only control-loop scheduling and effect
+application.
 
 ## Evidence to verify first
 
 Use `WL-01`, `JR-04` recovery/adoption tests, `adoptLiveRunSession`, current
-startup/in-loop recovery branches, and exact `ARCH-01` metric targets.
+startup/in-loop recovery branches, the `restart_spawn_gate` and
+`restart_live_session` gap returns, and exact `ARCH-01` metric targets.
 
 ## Exclusive lease
 
-Only the recovery/adoption call sites in `workloop.go`, narrow adapter wiring,
-and focused tests. Sole `workloop_recovery_spine` writer; `JR-04`
-implementation files are read-only.
+Only the initial `spawnSubstrateReadyCh` gate and recovery/adoption call sites
+in `workloop.go`, narrow adapter wiring, and focused tests. Sole
+`workloop_recovery_spine` writer; broad boot wiring and `JR-04` implementation
+files are read-only.
 
 ## Required work
 
-1. Add a production-call-site mutation test.
-2. Translate current facts into the typed recovery input.
-3. Apply returned effects through the reviewed owner.
-4. Delete inline adoption/recovery policy.
-5. Meet the exact approved `runWorkLoop` target.
+1. Add production-call-site mutation tests for the restart gate and adoption
+   owner.
+2. Close `restart_spawn_gate` with a deterministic entered-wait
+   acknowledgement before readiness is released. Prove that no source effect
+   occurs before release and that selection may proceed afterward.
+3. Translate current adoption facts into the typed recovery input.
+4. Provide an injected or otherwise controllable monitor-tick trigger for live
+   adoption. Close `restart_live_session` with a deterministic trace proving
+   disappearance → ledger reopen → durable dispatched-to-pending persistence
+   and wake → registry removal.
+5. Apply returned effects through the reviewed owner.
+6. Add mutations that bypass the readiness gate or allow duplicate
+   adoption/retry; prove that the corresponding oracle rejects them.
+7. Delete inline readiness and adoption/recovery policy.
+8. Meet the exact approved `runWorkLoop` target.
 
 ## Acceptance
 
+- No dispatch source is consulted before the restart readiness gate is known to
+  have been entered and then released.
 - Recovery/adoption policy exists only in the `JR-04` owner.
 - Repeated loop iterations cannot adopt and retry the same Run.
 - Ambiguous session/provenance fails closed.
+- Live-session disappearance deterministically reopens the ledger, durably
+  reverts and wakes the queue, and removes the registry record in that order.
 - `runWorkLoop` retains no direct adoption policy.
 
 ## Verification
 
-Mutation, fault/restart/race/repeat tests, architecture gate, delta lint, UBS,
-and `make check-fast`.
+Named `restart_spawn_gate` and `restart_live_session`
+production-composition traces, gate-bypass and duplicate-adoption mutations,
+fault/restart/race/repeat tests, architecture gate, delta lint, UBS, and
+`make check-fast`.
 
 ## Escalate when
 

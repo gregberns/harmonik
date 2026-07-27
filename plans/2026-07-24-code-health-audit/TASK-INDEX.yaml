@@ -64,9 +64,9 @@ coordination:
   shared_lease_families:
     dispatch_spine: "internal/daemon/workloop.go claim/dispatch/terminal regions; one writer"
     workloop_recovery_spine: >-
-      internal/daemon/workloop.go recovery/adoption call sites; claimed only
-      after all prerequisite dispatch-spine tasks complete and mutually
-      excluded from remaining Pi workloop integrations
+      internal/daemon/workloop.go restart-readiness gate and recovery/adoption
+      call sites; claimed only after all prerequisite dispatch-spine tasks
+      complete and mutually excluded from remaining Pi workloop integrations
     reviewloop_spine: "internal/daemon/reviewloop.go; one writer"
     dot_spine: "internal/daemon/dot_cascade_core.go and dot gate; one writer"
     composition_spine: >-
@@ -219,7 +219,7 @@ tasks:
       reviewer: /root/task_pack_arch_audit
       artifact: tasks/evidence/WL-01-CARD-REVIEW.md
       verdict: APPROVE
-    required_proof: [targeted, race, repeat, mutation, frontier_review]
+    required_proof: [targeted, race, repeat, mutation, frontier_review, gap_routing_review]
 
   WL-02A:
     title: Extract periodic maintenance from runWorkLoop
@@ -245,7 +245,7 @@ tasks:
     hard_requires: [ARCH-01, ARCH-GATE, WL-01, WL-02A]
     conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
-    required_proof: [property, mutation, composition, race, architecture_gate, check_fast]
+    required_proof: [property, mutation, composition, race, architecture_gate, operator_pause_gap_closure, capacity_gap_closure, check_fast]
 
   WL-MUT-01:
     title: Own non-reservation queue mutations
@@ -271,7 +271,7 @@ tasks:
     hard_requires: [ARCH-01, ARCH-GATE, WL-01, WL-02A, WL-02B, WL-MUT-01]
     conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
-    required_proof: [property, mutation, composition, race, architecture_gate, check_fast]
+    required_proof: [property, mutation, composition, race, architecture_gate, loaded_queue_suppression_gap_closure, idle_submit_wake_gap_closure, check_fast]
 
   WL-04:
     title: Extract run-spawn and completion ownership
@@ -284,10 +284,10 @@ tasks:
     hard_requires: [WL-03, CQ-03, BR-04, WL-REC-01]
     conflicts_with: [CQ-03, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
-    required_proof: [fault, race, stress, leak, architecture_gate, check_fast]
+    required_proof: [fault, race, stress, leak, architecture_gate, shutdown_inflight_gap_closure, check_fast]
 
   WL-REC-01:
-    title: Route workloop recovery through the adoption owner
+    title: Extract the restart gate and route recovery through adoption
     card: tasks/WL-REC-01.md
     group: ARCH
     priority: P0
@@ -297,7 +297,7 @@ tasks:
     hard_requires: [ARCH-GATE, JR-04, BR-04, CQ-03, WL-03]
     conflicts_with: [PI-F2S, PI-R2]
     lease_family: workloop_recovery_spine
-    required_proof: [mutation, fault, restart, race, architecture_gate, check_fast]
+    required_proof: [mutation, fault, restart, race, architecture_gate, restart_spawn_gate_gap_closure, restart_live_session_gap_closure, check_fast]
 
   BR-00:
     title: Settle the per-run phase contract

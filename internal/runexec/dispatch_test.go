@@ -284,19 +284,37 @@ var allDispatchPhases = []DispatchPhase{
 	DispatchStalled, DispatchFailed, DispatchAborted,
 }
 
-var allDispatchEventKinds = []EventKind{
+// allDeclaredEventKinds enumerates the complete shared vocabulary in vocab.go.
+// Both machines must remain total over the shared union, including events owned
+// by the other machine (RSM-003).
+var allDeclaredEventKinds = []EventKind{
 	EvStartDispatch, EvLaunched, EvLaunchFailed, EvAgentReady, EvInputAck,
 	EvInputRejected, EvHeartbeat, EvCommitObserved, EvOutcomeReceived,
-	EvAgentExited, EvNoChangeTimeout, EvHeartbeatStale, EvAborted, EvTimerFired,
+	EvAgentExited, EvNoChangeTimeout, EvHeartbeatStale, EvAborted,
+	EvStartRun, EvProvisioned, EvProvisionFailed, EvModeOutcome, EvAgentCompleted,
+	EvCleanExit, EvEscapeDetected, EvNoCommitGuardReopen, EvGuardsPassed,
+	EvGatePassed, EvGateFailed, EvMergeResult, EvCloseResult, EvShutdownDrain,
+	EvTimerFired,
 }
 
 var allTimerKinds = []TimerKind{TimerAgentReady, TimerInputAck, TimerReadyKillReap}
+
+var dispatchNonTerminalPhases = []DispatchPhase{
+	DispatchIdle, DispatchLaunching, DispatchAwaitingReady, DispatchBriefing,
+	DispatchWorking, DispatchReadyTimeout,
+}
+
+var runOwnedEventKinds = []EventKind{
+	EvStartRun, EvProvisioned, EvProvisionFailed, EvModeOutcome, EvAgentCompleted,
+	EvCleanExit, EvEscapeDetected, EvNoCommitGuardReopen, EvGuardsPassed,
+	EvGatePassed, EvGateFailed, EvMergeResult, EvCloseResult, EvShutdownDrain,
+}
 
 // TestDispatch_TotalityNoPanic: Step is total — every (phase, event) pair is
 // defined (RSM-003). Driven over synthetic states with all timer kinds.
 func TestDispatch_TotalityNoPanic(t *testing.T) {
 	for _, ph := range allDispatchPhases {
-		for _, ek := range allDispatchEventKinds {
+		for _, ek := range allDeclaredEventKinds {
 			for _, tk := range allTimerKinds {
 				m := &Dispatch{cfg: stdDispatchCfg(), state: DispatchState{Phase: ph, Session: "s1", Attempt: 1}}
 				_ = m.Step(Event{Kind: ek, Timer: tk, At: at(1)})
@@ -309,14 +327,44 @@ func TestDispatch_TotalityNoPanic(t *testing.T) {
 // every event leaves state unchanged and emits nothing (RSM-003).
 func TestDispatch_TerminalExclusivity(t *testing.T) {
 	for term := range dispatchTerminals {
-		for _, ek := range allDispatchEventKinds {
-			m := &Dispatch{cfg: stdDispatchCfg(), state: DispatchState{Phase: term}}
+		for _, ek := range allDeclaredEventKinds {
+			before := DispatchState{
+				Phase: term, Session: "s1", ReadyAt: at(1), LastProgressAt: at(2),
+				Attempt: 2, BriefInput: "i2", LastAckedInput: "i1",
+				Outcome: "complete", ExitCode: 7, Reason: "terminal",
+			}
+			m := &Dispatch{cfg: stdDispatchCfg(), state: before}
 			got := m.Step(Event{Kind: ek, At: at(1)})
 			if len(got) != 0 {
 				t.Fatalf("terminal %s emitted actions on %s: %v", term, ek, kinds(got))
 			}
-			if m.State().Phase != term {
-				t.Fatalf("terminal %s changed phase on %s -> %s", term, ek, m.State().Phase)
+			switch gotState := m.State(); gotState {
+			case before:
+			default:
+				t.Fatalf("terminal %s changed state on %s:\n got=%+v\nwant=%+v", term, ek, gotState, before)
+			}
+		}
+	}
+}
+
+// TestDispatch_RunEventsAreExplicitNoOps records the shared-vocabulary rule:
+// every Run-owned event is irrelevant to every nonterminal Dispatch phase.
+func TestDispatch_RunEventsAreExplicitNoOps(t *testing.T) {
+	for _, ph := range dispatchNonTerminalPhases {
+		for _, ek := range runOwnedEventKinds {
+			before := DispatchState{
+				Phase: ph, Session: "s1", ReadyAt: at(1), LastProgressAt: at(2),
+				Attempt: 2, BriefInput: "i2", LastAckedInput: "i1",
+			}
+			m := &Dispatch{cfg: stdDispatchCfg(), state: before}
+			got := m.Step(Event{Kind: ek, At: at(3)})
+			if len(got) != 0 {
+				t.Fatalf("nonterminal %s emitted actions on Run event %s: %v", ph, ek, kinds(got))
+			}
+			switch gotState := m.State(); gotState {
+			case before:
+			default:
+				t.Fatalf("nonterminal %s changed state on Run event %s:\n got=%+v\nwant=%+v", ph, ek, gotState, before)
 			}
 		}
 	}

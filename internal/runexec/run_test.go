@@ -295,17 +295,17 @@ var allRunPhases = []RunPhase{
 	RunMerging, RunFinalizing, RunDone,
 }
 
-var allRunEventKinds = []EventKind{
-	EvStartRun, EvProvisioned, EvProvisionFailed, EvModeOutcome, EvAgentCompleted,
-	EvCleanExit, EvEscapeDetected, EvNoCommitGuardReopen, EvGuardsPassed,
-	EvGatePassed, EvGateFailed, EvMergeResult, EvCloseResult, EvShutdownDrain,
+var dispatchOwnedAndSharedEventKinds = []EventKind{
+	EvStartDispatch, EvLaunched, EvLaunchFailed, EvAgentReady, EvInputAck,
+	EvInputRejected, EvHeartbeat, EvCommitObserved, EvOutcomeReceived,
+	EvAgentExited, EvNoChangeTimeout, EvHeartbeatStale, EvAborted,
 	EvTimerFired,
 }
 
 // TestRun_TotalityNoPanic: Step is total over all (phase, event) pairs (RSM-003).
 func TestRun_TotalityNoPanic(t *testing.T) {
 	for _, ph := range allRunPhases {
-		for _, ek := range allRunEventKinds {
+		for _, ek := range allDeclaredEventKinds {
 			m := &Run{cfg: stdRunCfg(), state: RunState{Phase: ph}}
 			_ = m.Step(Event{Kind: ek, At: at(1)})
 		}
@@ -315,14 +315,54 @@ func TestRun_TotalityNoPanic(t *testing.T) {
 // TestRun_DoneTerminalNoOutgoing: Done has no outgoing edges (RSM-003; the four
 // terminal-entry events all converge on Done and it is absorbing).
 func TestRun_DoneTerminalNoOutgoing(t *testing.T) {
-	for _, ek := range allRunEventKinds {
-		m := &Run{cfg: stdRunCfg(), state: RunState{Phase: RunDone, DoneOutcome: "closed", Success: true}}
-		got := m.Step(Event{Kind: ek, At: at(1)})
-		if len(got) != 0 {
-			t.Fatalf("Done emitted actions on %s: %v", ek, kinds(got))
+	for _, terminal := range []RunState{
+		{
+			Phase: RunDone, Mode: "single", MergeAttempt: 2, PathLabel: "agent_completed",
+			PathCloseSummary: "closed summary", SingleShotLabel: true,
+			TransientSummary: "transient", FinalizeMode: FinalizeClose,
+			DoneOutcome: "closed", Success: true,
+		},
+		{
+			Phase: RunDone, Mode: "review_loop", MergeAttempt: 1, PathLabel: "review-loop",
+			PathCloseSummary: "failed summary", AttentionClose: true,
+			FinalizeMode: FinalizeReopen, DoneOutcome: "reopened", Draining: true,
+		},
+	} {
+		for _, ek := range allDeclaredEventKinds {
+			m := &Run{cfg: stdRunCfg(), state: terminal}
+			got := m.Step(Event{Kind: ek, At: at(1)})
+			if len(got) != 0 {
+				t.Fatalf("Done{%s} emitted actions on %s: %v", terminal.DoneOutcome, ek, kinds(got))
+			}
+			switch gotState := m.State(); gotState {
+			case terminal:
+			default:
+				t.Fatalf("Done{%s} changed state on %s:\n got=%+v\nwant=%+v", terminal.DoneOutcome, ek, gotState, terminal)
+			}
 		}
-		if m.State().Phase != RunDone {
-			t.Fatalf("Done changed phase on %s -> %s", ek, m.State().Phase)
+	}
+}
+
+// TestRun_DispatchEventsAreExplicitNoOps records the shared-vocabulary rule:
+// Dispatch-owned and shared timer events are irrelevant to every nonterminal
+// Run phase.
+func TestRun_DispatchEventsAreExplicitNoOps(t *testing.T) {
+	for _, ph := range allRunPhases[:len(allRunPhases)-1] {
+		for _, ek := range dispatchOwnedAndSharedEventKinds {
+			before := RunState{
+				Phase: ph, Mode: "single", MergeAttempt: 1, PathLabel: "latched",
+				PathCloseSummary: "summary", TransientSummary: "transient",
+			}
+			m := &Run{cfg: stdRunCfg(), state: before}
+			got := m.Step(Event{Kind: ek, At: at(1)})
+			if len(got) != 0 {
+				t.Fatalf("nonterminal %s emitted actions on Dispatch/shared event %s: %v", ph, ek, kinds(got))
+			}
+			switch gotState := m.State(); gotState {
+			case before:
+			default:
+				t.Fatalf("nonterminal %s changed state on Dispatch/shared event %s:\n got=%+v\nwant=%+v", ph, ek, gotState, before)
+			}
 		}
 	}
 }

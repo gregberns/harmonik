@@ -1,0 +1,273 @@
+schema_version: 1
+task_id: JR-02
+pinned_base_sha: cbaae2b9628fb4fdc24b8967f1b58c6c672b9340
+dependency_evidence:
+  JR-00:
+    state: complete
+    disposition: closed
+    artifact: plans/2026-07-24-code-health-audit/tasks/evidence/JR-00.yaml
+    task_commit: e2f49ef631abfeb637427700de34be7d3f62faa4
+    integrated_sha: c4bcbfa165ee2c67d279854ca443a7ba222e5852
+    proof: green
+sources_reviewed:
+  normative:
+    - "specs/run-state-machine.md RSM-003: total transitions, explicit no-ops, exactly one terminal, and no terminal outgoing transitions"
+    - "specs/claude-hook-bridge.md CHB-020: Wait-return terminal mapping"
+  production_read_only:
+    - "internal/runexec/vocab.go: shared EventKind vocabulary"
+    - "internal/runexec/run.go: Run phases, terminal state, and stepRun"
+    - "internal/runexec/dispatch.go: Dispatch phases, dispatchTerminals, and stepDispatch"
+    - "internal/handler/claudehandler_chb006_024.go: MapWaitReturnToTerminalEvent"
+  preexisting_tests:
+    - internal/runexec/run_test.go
+    - internal/runexec/dispatch_test.go
+    - internal/handler/claudehandler_chb006_024_test.go
+run_matrix:
+  phases:
+    nonterminal:
+      - resolving
+      - provisioning
+      - dispatching
+      - guarding
+      - gating
+      - merging
+      - finalizing
+    terminal:
+      - "done{closed, success=true}"
+      - "done{reopened, success=false}"
+  declared_event_kinds: &declared_event_kinds
+    - start_dispatch
+    - launched
+    - launch_failed
+    - agent_ready
+    - input_ack
+    - input_rejected
+    - heartbeat
+    - commit_observed
+    - outcome_received
+    - agent_exited
+    - no_change_timeout
+    - heartbeat_stale
+    - aborted
+    - start_run
+    - provisioned
+    - provision_failed
+    - mode_outcome
+    - agent_completed
+    - clean_exit
+    - escape_detected
+    - no_commit_guard_reopen
+    - guards_passed
+    - gate_passed
+    - gate_failed
+    - merge_result
+    - close_result
+    - shutdown_drain
+    - timer_fired
+  terminal_property:
+    rows: 56
+    result: "Both Done outcome variants x all 28 declared events preserve the complete RunState and emit zero actions."
+    proof: TestRun_DoneTerminalNoOutgoing
+  totality_property:
+    rows: 224
+    result: "All 8 phases x all 28 declared events have a defined transition and do not panic."
+    proof: TestRun_TotalityNoPanic
+  nonterminal_irrelevant_events:
+    phases: 7
+    event_kinds:
+      - start_dispatch
+      - launched
+      - launch_failed
+      - agent_ready
+      - input_ack
+      - input_rejected
+      - heartbeat
+      - commit_observed
+      - outcome_received
+      - agent_exited
+      - no_change_timeout
+      - heartbeat_stale
+      - aborted
+      - timer_fired
+    rows: 98
+    result: "Every Dispatch-owned event and the shared timer event is an explicit Run no-op: full state unchanged, zero actions."
+    proof: TestRun_DispatchEventsAreExplicitNoOps
+dispatch_matrix:
+  phases:
+    nonterminal:
+      - idle
+      - launching
+      - awaiting_ready
+      - briefing
+      - working
+      - ready_timeout
+    terminal:
+      - completed
+      - exited
+      - stalled
+      - failed
+      - aborted
+  declared_event_kinds: *declared_event_kinds
+  terminal_property:
+    rows: 140
+    result: "All 5 terminal phases x all 28 declared events preserve the complete DispatchState and emit zero actions."
+    proof: TestDispatch_TerminalExclusivity
+  totality_property:
+    rows: 924
+    calculation: "11 phases x 28 declared events x 3 declared timer payload kinds"
+    result: "Every synthetic phase/event/timer row has a defined transition and does not panic."
+    proof: TestDispatch_TotalityNoPanic
+  nonterminal_irrelevant_events:
+    phases: 6
+    event_kinds:
+      - start_run
+      - provisioned
+      - provision_failed
+      - mode_outcome
+      - agent_completed
+      - clean_exit
+      - escape_detected
+      - no_commit_guard_reopen
+      - guards_passed
+      - gate_passed
+      - gate_failed
+      - merge_result
+      - close_result
+      - shutdown_drain
+    rows: 84
+    result: "Every Run-owned event is an explicit Dispatch no-op: full state unchanged, zero actions."
+    proof: TestDispatch_RunEventsAreExplicitNoOps
+handler_matrix:
+  - input: "Outcome.Kind=WORK_COMPLETE"
+    terminal_type: agent_completed
+    status: preexisting_covered
+    proof: TestMapWaitReturn_WorkComplete_AgentCompleted
+  - input: "Outcome.Kind=REVIEWER_VERDICT"
+    terminal_type: agent_completed
+    status: preexisting_covered
+    proof: TestMapWaitReturn_ReviewerVerdict_AgentCompleted
+  - input: "Outcome.Kind=FAILURE_SIGNAL, class=transient, sub_reason=claude_server_error"
+    terminal_type: agent_failed
+    class: transient
+    sub_reason: claude_server_error
+    status: preexisting_covered
+    proof: TestMapWaitReturn_FailureSignal_AgentFailed
+  - input: "Outcome.Kind=FAILURE_SIGNAL, class empty, sub_reason empty"
+    terminal_type: agent_failed
+    class: structural
+    sub_reason: claude_failure
+    status: characterization_added
+    proof: TestMapWaitReturn_FailureSignal_EmptyFieldsUseStructuralDefaults
+  - input: "nil outcome, exit=0, waitErr=nil"
+    terminal_type: agent_failed
+    class: structural
+    sub_reason: claude_exit_without_outcome
+    status: preexisting_covered
+    proof: TestMapWaitReturn_NoOutcome_CleanExit_ExitWithoutOutcome
+  - input: "nil outcome, exit=1, waitErr non-nil"
+    terminal_type: agent_failed
+    class: structural
+    sub_reason: claude_crashed
+    status: preexisting_covered
+    proof: TestMapWaitReturn_NoOutcome_NonZeroExit_Crashed
+  - input: "unknown nonempty Outcome.Kind, exit=0, waitErr=nil"
+    terminal_type: agent_failed
+    class: structural
+    sub_reason: claude_exit_without_outcome
+    status: current_fallthrough_characterized_not_policy
+    proof: TestMapWaitReturn_UnknownOutcomeKind_UsesNoRecognizedOutcomeFallback
+existing_coverage:
+  run:
+    - "Per-transition and terminal-spine examples already covered normal close/reopen behavior."
+    - "Totality existed only over Run-owned plus timer events."
+    - "Done absorption covered only closed/success and asserted phase rather than the complete state."
+  dispatch:
+    - "Per-transition tests covered the declared Dispatch behavior and timer liveness."
+    - "Totality and terminal exclusivity existed only over Dispatch-owned plus timer events."
+    - "Terminal exclusivity asserted phase rather than the complete state."
+  handler:
+    - "WORK_COMPLETE, REVIEWER_VERDICT, populated FAILURE_SIGNAL, and both nil-outcome exit rows already existed."
+    - "Empty FAILURE_SIGNAL fields and unknown Outcome.Kind had no direct characterization."
+tests_added:
+  strengthened:
+    - "TestRun_TotalityNoPanic: full 28-kind shared vocabulary"
+    - "TestRun_DoneTerminalNoOutgoing: both outcomes and full-state equality"
+    - "TestDispatch_TotalityNoPanic: full 28-kind shared vocabulary"
+    - "TestDispatch_TerminalExclusivity: all terminals and full-state equality"
+  new:
+    - TestRun_DispatchEventsAreExplicitNoOps
+    - TestDispatch_RunEventsAreExplicitNoOps
+    - TestMapWaitReturn_FailureSignal_EmptyFieldsUseStructuralDefaults
+    - TestMapWaitReturn_UnknownOutcomeKind_UsesNoRecognizedOutcomeFallback
+gaps:
+  - id: JR-02-G1
+    severity: policy_deferred
+    finding: "CHB-020 names WORK_COMPLETE, REVIEWER_VERDICT, FAILURE_SIGNAL, and the absence of an outcome, but does not define an unknown nonempty Outcome.Kind."
+    current_behavior: "An unknown kind falls through to the same structural failure mapping used when no recognized outcome exists; the exact sub_reason still depends on exit/wait data."
+    action: "No production change and no new policy. A policy decision requires a separately reviewed task if desired."
+  - id: JR-02-G2
+    severity: none
+    finding: "No contradiction was found between current terminal absorption behavior and RSM-003, or between the six specified CHB-020 rows and current mapper behavior."
+    action: "No escalation required."
+verification:
+  builder_token:
+    token: "1 of 2"
+    granted_by: coordinator
+    cache: /Users/gb/github/harmonik-wt-cache/w0-bravo-jr-02
+    available_kib_before_builds: 27572564
+    watermark_result: pass
+  commands:
+    - command: "go test ./internal/runexec -count=1"
+      result: "PASS: ok github.com/gregberns/harmonik/internal/runexec 0.580s"
+    - command: "go test ./internal/handler -run '^TestMapWaitReturn_' -count=1"
+      result: "PASS: ok github.com/gregberns/harmonik/internal/handler 0.358s"
+    - command: "go test -race ./internal/runexec -count=1"
+      result: "PASS: ok github.com/gregberns/harmonik/internal/runexec 1.397s"
+    - command: "go test -race ./internal/handler -run '^TestMapWaitReturn_' -count=1"
+      result: "PASS: ok github.com/gregberns/harmonik/internal/handler 1.401s"
+    - command: "go test ./internal/runexec -count=20"
+      result: "PASS: ok github.com/gregberns/harmonik/internal/runexec 0.313s"
+    - command: "go test ./internal/handler -run '^TestMapWaitReturn_' -count=20"
+      result: "PASS: ok github.com/gregberns/harmonik/internal/handler 0.304s"
+    - command: "ubs internal/runexec/run_test.go internal/runexec/dispatch_test.go internal/handler/claudehandler_chb006_024_test.go"
+      result: >-
+        REVIEWED NONZERO: macOS /usr/bin/bash 3.2 cannot launch UBS, so the
+        prescribed file set was run through /opt/homebrew/bin/bash. UBS 7.1.4
+        reported 40 critical, 7 warning, 31 info, all from pre-existing content
+        in these large test files. A pinned-HEAD baseline of the same three
+        files reported 41 critical, 7 warning, 31 info. Per-file current versus
+        pinned-base critical/warning counts were run 0/0 versus 0/0, dispatch
+        22/0 versus 23/0, and handler 18/6 versus 18/6. Manual changed-hunk
+        inspection found no new UBS issue; the diff reduces rather than adds
+        scanner findings.
+    - command: "ruby -e 'require \"yaml\"; YAML.load_file(ARGV[0])' plans/2026-07-24-code-health-audit/tasks/evidence/JR-02.yaml"
+      result: "PASS: YAML parsed; exact 14 required top-level keys and both 28-kind matrices validated."
+    - command: "make check-fast"
+      required_by_task: false
+      result: >-
+        EXTERNALLY BLOCKED before vet/build: fmt-check reports pre-existing
+        gofumpt drift in
+        internal/runloop/reviewer_never_inherits_captured_hkpkxju_test.go.
+        `git diff --exit-code HEAD~1 HEAD --` for that path is clean, proving
+        JR-02 did not introduce the out-of-lease failure. The coordinator
+        authorized push because JR-02's complete required proof set is green.
+lease_compliance:
+  allowed_files_changed:
+    - plans/2026-07-24-code-health-audit/tasks/evidence/JR-02.yaml
+    - internal/runexec/run_test.go
+    - internal/runexec/dispatch_test.go
+    - internal/handler/claudehandler_chb006_024_test.go
+  production_files_changed: []
+  task_index_changed: false
+  worktree_or_branch_changed: false
+  second_classifier_added: false
+  compliance: pass
+review:
+  profile: terra_high
+  reviewer: /root/bravo_jr_00/jr02_terra_review
+  initial_verdict: REQUEST_CHANGES
+  findings:
+    - severity: P1
+      finding: "The draft evidence still carried pending review metadata."
+      resolution: "Recorded the independent Terra-high reviewer and review disposition in this artifact."
+  verdict: APPROVE

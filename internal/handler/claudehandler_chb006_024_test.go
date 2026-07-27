@@ -1008,6 +1008,53 @@ func TestMapWaitReturn_FailureSignal_AgentFailed(t *testing.T) {
 	}
 }
 
+// TestMapWaitReturn_FailureSignal_EmptyFieldsUseStructuralDefaults verifies
+// CHB-020's defaults for a FAILURE_SIGNAL without class or sub_reason.
+func TestMapWaitReturn_FailureSignal_EmptyFieldsUseStructuralDefaults(t *testing.T) {
+	t.Parallel()
+	outcome := claudeHandlerFixtureOutcome(t, "FAILURE_SIGNAL", "", "")
+	result := handler.MapWaitReturnToTerminalEvent("sess-001", 1, fmt.Errorf("exit 1"), outcome)
+	switch result.Type {
+	case handlercontract.ProgressMsgTypeAgentFailed:
+	default:
+		t.Errorf("Type = %q; want %q", result.Type, handlercontract.ProgressMsgTypeAgentFailed)
+	}
+	switch result.SubReason {
+	case "claude_failure":
+	default:
+		t.Errorf("SubReason = %q; want %q", result.SubReason, "claude_failure")
+	}
+	switch result.Class {
+	case "structural":
+	default:
+		t.Errorf("Class = %q; want %q", result.Class, "structural")
+	}
+}
+
+// TestMapWaitReturn_UnknownOutcomeKind_UsesNoRecognizedOutcomeFallback
+// characterizes the current fallthrough for an outcome kind not named by
+// CHB-020. It deliberately does not establish a new unknown-kind policy.
+func TestMapWaitReturn_UnknownOutcomeKind_UsesNoRecognizedOutcomeFallback(t *testing.T) {
+	t.Parallel()
+	outcome := claudeHandlerFixtureOutcome(t, "UNKNOWN_KIND", "", "")
+	result := handler.MapWaitReturnToTerminalEvent("sess-001", 0, nil, outcome)
+	switch result.Type {
+	case handlercontract.ProgressMsgTypeAgentFailed:
+	default:
+		t.Errorf("Type = %q; want %q", result.Type, handlercontract.ProgressMsgTypeAgentFailed)
+	}
+	switch result.SubReason {
+	case "claude_exit_without_outcome":
+	default:
+		t.Errorf("SubReason = %q; want %q", result.SubReason, "claude_exit_without_outcome")
+	}
+	switch result.Class {
+	case "structural":
+	default:
+		t.Errorf("Class = %q; want %q", result.Class, "structural")
+	}
+}
+
 // TestMapWaitReturn_NoOutcome_CleanExit_ExitWithoutOutcome verifies branch 3:
 // no outcome + exit 0 → agent_failed{sub_reason=claude_exit_without_outcome} per CHB-020.
 func TestMapWaitReturn_NoOutcome_CleanExit_ExitWithoutOutcome(t *testing.T) {

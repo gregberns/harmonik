@@ -1,0 +1,457 @@
+task_id: JR-00
+base_sha: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+remote_head_observed: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+generated_at: "2026-07-26T00:00:00-07:00"
+scope:
+  statement: "Source-backed characterization only: queue dispatch stamp through Bead claim, Run ownership, terminalization, queue release, and restart recovery at the pinned base. No behavior is changed."
+  excluded: [production code, tests, specs, task cards, TASK-INDEX.yaml, Beads, primary daemon]
+inputs:
+  pinned_base_commit:
+    sha: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+    evidence: "git show --stat --oneline confirms docs(queue): make architecture remediation the bootstrap."
+  remote_branch: origin/phase1-session-restart-substrate
+  task_contracts:
+    - plans/2026-07-24-code-health-audit/tasks/README.md
+    - plans/2026-07-24-code-health-audit/tasks/JR-00.md
+    - plans/2026-07-24-code-health-audit/TASK-INDEX.yaml
+  normative_sources:
+    - "specs/queue-model.md: QM-001, QM-002a/b, QM-011/012, QM-053, QM-063"
+    - "specs/beads-integration.md: BI-010, BI-010b/d, BI-030, BI-INV-001"
+    - "specs/execution-model.md: EM-015b/f, EM-049/050"
+    - "specs/run-state-machine.md: RSM-007, RSM-015, RSM-020/021/022, RSM-031/032"
+    - "specs/process-lifecycle.md: PL-005 step 8a and PL-006"
+searches:
+  commands:
+    - command: "rg -n '\\b(runWorkLoop|beadRunOne|RunID|dispatch stamp|DispatchStamp)\\b' internal cmd specs"
+      result_lines: 3634
+      purpose: "Locate dispatcher, run identity, specifications, and test reachability."
+    - command: "rg -n '\\b(claim|Claim|release|Release|reopen|Reopen|close|Close)\\b' internal/daemon internal/runloop internal/runexec internal/queue"
+      result_lines: 2008
+      purpose: "Locate Beads and queue terminal/release mutations."
+    - command: "rg -n '\\b(Register|Unregister|run registry|RunRegistry|run record)\\b' internal/daemon internal/runloop internal/runexec"
+      result_lines: 355
+      purpose: "Locate in-memory and on-disk Run registration."
+    - command: "rg -n '\\b(reconcile|recover|adopt|restart|orphan)\\b' internal/daemon internal/runloop internal/runexec internal/queue --glob '*.go'"
+      result_lines: 632
+      purpose: "Locate startup, orphan, and live-session recovery."
+    - command: "rg -n '\\b(Persist|Load|CompleteAndUnlink|CancelQueueOnShutdown)\\b' internal/queue internal/daemon internal/lifecycle cmd"
+      result_lines: 748
+      purpose: "Locate queue durability boundaries."
+    - command: "rg -n '\\b(claim|terminal|restart|reconcile|recover|orphan|RunID)\\b' internal --glob '*_test.go'"
+      result_lines: 4733
+      purpose: "Inventory production-composition, recovery, scenario, and unit proof."
+  production_symbols_traced:
+    - "internal/daemon/workloop.go: runWorkLoop, beadRunOne, evaluateGroupAdvanceWithOutcome, adoptLiveRunSession"
+    - "internal/daemon/runregistry.go: RunRegistry.Register, Unregister, Get, HasBeadRun"
+    - "internal/runloop/runbridge.go: NewRunBridge, reopenBead, closeHook, WireSpine"
+    - "internal/runexec/run.go: Run reactor terminal transitions"
+    - "internal/lifecycle/startup_pl005_qm002.go: LoadQueueAtStartup, reconcileDispatchedItems, reconcileThreeWay"
+    - "internal/daemon/run_session_adoption.go: adoptDeadRunSessions"
+    - "internal/daemon/runinflightreconcile_hkr73qr.go: reconcileOrphanedRunsOnResume"
+    - "internal/queue/persistence.go: Persist, CompleteAndUnlink, CancelQueueOnShutdown"
+production_entrypoints:
+  - entrypoint: "daemon.Start -> boot reconciliation -> loadStartupQueues -> runWorkLoop"
+    construction_root: "cmd/harmonik/main.go run (persistent daemon) or cmd/harmonik/run.go legacy inline run -> daemon.Start -> internal/daemon/daemon.go startWithHooks -> startup reconciliation/socket loading -> launchWorkLoop -> internal/daemon/workloop.go runWorkLoop"
+    reachability: production
+    notes: "loadStartupQueues constructs *brcli.Adapter, settles it with SyncFlushOnly, calls lifecycle.LoadQueueAtStartup, installs queues in queuewiring.QueueStore, and wakes the loop."
+  - entrypoint: "runWorkLoop queue path"
+    construction_root: "internal/daemon/workloop.go runWorkLoop selected queue-item Phase 3"
+    reachability: production
+    notes: "The loop serializes the dispatch stamp under QueueStore.LockForMutation, persists it, then mints RunID and claims via the Beads adapter."
+  - entrypoint: "beadRunOne terminal spine"
+    construction_root: "internal/daemon/workloop.go goroutine wrapper calls beadRunOne; internal/runloop/runbridge.go binds runexec.Run effects"
+    reachability: production
+    notes: "The Run reactor decides close versus reopen; RunBridge performs ledger and event effects; the goroutine wrapper advances the queue after beadRunOne returns."
+  - entrypoint: "restart recovery"
+    construction_root: "internal/daemon/bootreconcile.go runStartupReconciliation and reconcileInFlightRuns; internal/lifecycle/startup_pl005_qm002.go LoadQueueAtStartup"
+    reachability: production
+    notes: "Recovery combines .harmonik/runs records, JSONL run events, raw dispatched queue tracking, current Beads status, and loaded queues."
+identifier_lineage:
+  - identifier: queue_name
+    created: "queue submit / QueueStore installation; normalized by queue.NormaliseQueueName"
+    persisted: ".harmonik/queues/<name>.json Queue.Name"
+    copied_or_reconstructed: "capturedQueueName in runWorkLoop; RunHandle.QueueName; runpkg.Record.QueueName for independent sessions"
+    lost_or_ambiguous: "Not included in run_started/run_completed payloads; events carry queue_id and group index instead."
+  - identifier: queue_id
+    created: "queue submit acceptance"
+    persisted: "Queue.QueueID in queue JSON"
+    copied_or_reconstructed: "captured queue pointer -> RunHandle.QueueID -> runpkg.Record.QueueID -> run event payload queue_id"
+    lost_or_ambiguous: "Queue terminal events do not themselves establish a transaction with the Bead terminal write."
+  - identifier: group_index_and_item_index
+    created: "queue group/item construction and selection"
+    persisted: "group index and item position in queue JSON; ItemIndex only additionally persisted in runpkg.Record"
+    copied_or_reconstructed: "captured by goroutine; group index is in run events; RunHandle stores item position; independent-session record stores both"
+    lost_or_ambiguous: "run event payload has group index but not item index, so event-log-only recovery needs bead identity or dispatch tracker."
+  - identifier: bead_id
+    created: "Beads ledger before queue submission"
+    persisted: "Item.BeadID, Beads ledger, runpkg.Record.BeadID, run_started/run_completed payloads"
+    copied_or_reconstructed: "RunHandle.BeadID and core.BeadRecord flow into RunBridge and reconciliation"
+    lost_or_ambiguous: "No loss on normal paths; historical event-to-current-dispatch correlation is bead-based and can conflate separate attempts."
+  - identifier: run_id
+    created: "uuid.NewV7 in runWorkLoop after queue item is stamped dispatched"
+    persisted: "Item.RunID patched by a second queue.Persist; independently, runpkg.Record only for eligible independent tmux sessions; JSONL events include envelope run_id"
+    copied_or_reconstructed: "RunHandle map key; run event payload; RunBridge; independent session record; parsed during adoption"
+    lost_or_ambiguous: "A crash after dispatch stamp/claim and before RunID patch, run_started, or runpkg.Write leaves only an empty RunID placeholder or no durable Run record; dispatch-tracker recovery is then bead-based."
+  - identifier: transition_id
+    created: "shared core.TransitionIDGenerator in runWorkLoop / RunBridge"
+    persisted: "Beads intent-log protocol owned by brcli adapter for claim/close/reopen/reset"
+    copied_or_reconstructed: "Passed to ClaimBead, CloseBead, ReopenBead"
+    lost_or_ambiguous: "Not carried by queue items or run event payloads."
+  - identifier: process_or_session_identity
+    created: "handler substrate launch; independent local tmux session is named from RunID"
+    persisted: "runpkg.Record.SessionName only when independent-session setup and runpkg.Write succeed"
+    copied_or_reconstructed: "adoptDeadRunSessions/adoptLiveRunSession query tmux using runpkg.Record"
+    lost_or_ambiguous: "Shared-session launches have no equivalent durable process record. The independent record uses rename/delete without file or parent-directory fsync."
+transition_table:
+  - transition: "eligible queue item -> dispatched stamp"
+    production_symbol: "internal/daemon/workloop.go runWorkLoop Phase 3"
+    queue_before_after: "active group item pending -> dispatched with empty RunID placeholder, attempts incremented"
+    bead_before_after: "open -> open"
+    run_record_before_after: "none -> none"
+    registry_before_after: "absent -> absent"
+    events_before_after: "no run event; later run_started is separate"
+    mutation_owners: "QueueStore locked mutation then queue.Persist; no Beads owner at this step"
+    required_ordering: "pre-claim read/gates -> in-memory stamp under QueueStore lock -> Persist; only afterward is RunID minted and ClaimBead attempted"
+    failure_result: "persist failure is logged non-fatally; process can continue with an in-memory stamp, leaving recovery to reload durable state"
+    retry_or_recovery_owner: "runWorkLoop retries normal selection; startup dispatch-tracker/QM-002a reconciliation handles persistent mismatches"
+    proof: "internal/daemon/l5saf_localonly_strand_test.go; workloop queue dispatch tests; controlled adapter coverage"
+  - transition: "dispatch stamp -> RunID patch -> Bead claimed"
+    production_symbol: "internal/daemon/workloop.go runWorkLoop uuid.NewV7, queue RunID patch, ClaimBead"
+    queue_before_after: "dispatched empty RunID -> dispatched RunID UUID string"
+    bead_before_after: "open -> in_progress through brcli Adapter.ClaimBead"
+    run_record_before_after: "none -> none unless later independent-session registry write succeeds"
+    registry_before_after: "absent -> absent until after successful claim"
+    events_before_after: "no run event"
+    mutation_owners: "QueueStore+queue.Persist for patch; ClaimBead adapter owns Beads+intent log; claimSem bounds claim admission to effectiveMax, while *brcli.Adapter.terminalMu serializes terminal Beads writes"
+    required_ordering: "queue stamp persists before mint/patch; claim semaphore acquired before ClaimBead and released immediately after it; registry registration follows only success"
+    failure_result: "claim failure reverts queue item to pending and clears RunID, persists best effort; blocked claim may instead terminal-fail queue item"
+    retry_or_recovery_owner: "runWorkLoop retry, bounded attempts; startup QM-002a after crash"
+    proof: "internal/daemon/workloop_test.go claim and concurrency cases; workloop_claim_timeout_hkxorlb_test.go; workloop_bounded_retry_hk6pspu_test.go"
+  - transition: "claimed -> in-memory Run registered and goroutine launched"
+    production_symbol: "internal/daemon/workloop.go RunRegistry.Register and goroutine wrapper"
+    queue_before_after: "dispatched with RunID -> unchanged"
+    bead_before_after: "in_progress -> in_progress"
+    run_record_before_after: "none -> none at wrapper registration"
+    registry_before_after: "RunRegistry absent -> RunHandle present with BeadID, queue coordinates, StartedAt, Cancel"
+    events_before_after: "no event until beadRunOne emits run_started after worktree provisioning"
+    mutation_owners: "runWorkLoop owns registry registration; RunRegistry.mu serializes map mutation; wrapper defer owns Unregister"
+    required_ordering: "ClaimBead success -> context/RunHandle construction -> Register -> spawn goroutine; Register precedes beadRunOne and terminal work"
+    failure_result: "crash or panic before goroutine progresses leaves no durable registry (registry is memory-only); Bead/queue remain durable"
+    retry_or_recovery_owner: "startup reconcileOrphanedRunsOnResume dispatch-tracker branch and QM-002a"
+    proof: "internal/daemon/workloop_test.go; internal/daemon/runregistry.go unit coverage is helper/unit only"
+  - transition: "registered Run -> independent durable session record (conditional)"
+    production_symbol: "internal/daemon/workloop.go beadRunOne runpkg.Write"
+    queue_before_after: "dispatched -> dispatched"
+    bead_before_after: "in_progress -> in_progress"
+    run_record_before_after: "none -> .harmonik/runs/<RunID> record containing bead, queue coordinates, session name, start time"
+    registry_before_after: "registered -> registered"
+    events_before_after: "run_started is emitted before this conditional registry write"
+    mutation_owners: "beadRunOne; internal/run Write persistence; only local independent tmux-capable substrate path"
+    required_ordering: "worktree and launch spec setup -> optional runpkg.Write; failed write falls back to shared session"
+    failure_result: "write failure intentionally disables independent-session survival; normal run continues"
+    retry_or_recovery_owner: "none for missing record; event-log and queue dispatch tracker are fallback sources"
+    proof: "internal/daemon/run_session_adoption_hk78tji_test.go; controlled substrate coverage"
+  - transition: "Run creation/provisioning -> launch"
+    production_symbol: "internal/daemon/workloop.go beadRunOne; internal/runloop/runbridge.go Start/Fail; internal/runexec/run.go"
+    queue_before_after: "dispatched -> dispatched"
+    bead_before_after: "in_progress -> in_progress unless provisioning error enters reopen spine"
+    run_record_before_after: "optional independent record remains nonterminal"
+    registry_before_after: "registered -> registered"
+    events_before_after: "run_started after worktree provisioning; launch-related events emitted by launch/substrate"
+    mutation_owners: "beadRunOne composes ports; RunBridge delegates normal Run-machine terminal decisions to pure runexec.Run; launcher/substrate owns process/session side effects. Several refusal/provisioning guards directly call BrAdapter.ReopenBead outside RunBridge."
+    required_ordering: "resolve inputs -> create worktree -> emit run_started -> build launch spec -> optional session record -> Launch; only selected provisioning failures feed RunBridge.Fail"
+    failure_result: "worktree and launch-spec failures use the RunBridge reopen spine; profile, cross-repo, start-ref, protected-target, remote-tunnel, and worker-base-sync refusal paths directly call BrAdapter.ReopenBead and may produce no terminal Run event"
+    retry_or_recovery_owner: "normal queue wrapper marks item failed when beadRunOne returns false; later operator/queue recovery chooses retry"
+    proof: "internal/runexec/run_test.go TestRun_PreLaunchFailureReopenSpine; internal/runloop/runshell_test.go; daemon workloop tests"
+  - transition: "active Run -> terminal close or reopen"
+    production_symbol: "internal/runloop/runbridge.go closeHook/reopenBead; internal/runexec/run.go finalizers"
+    queue_before_after: "still dispatched while terminal decision is made"
+    bead_before_after: "in_progress -> closed on closeHook, or in_progress -> open on reopenBead"
+    run_record_before_after: "independent record removed by beadRunOne defer on normal process completion; retained across daemon cancellation for live adoption"
+    registry_before_after: "registered -> still registered until outer goroutine defer"
+    events_before_after: "RunBridge emits outcome and run_completed/run_failed; bead_closed emission follows successful close"
+    mutation_owners: "pure runexec machine owns decision; RunBridge owns brcli CloseBead/ReopenBead and terminal event effect; brcli adapter owns ledger/intent persistence"
+    required_ordering: "terminal classification -> Run machine actions; close ladder does CloseBead then bead_closed emission; reopen hook calls ReopenBead and final terminal emission remains machine-driven"
+    failure_result: "hard close error feeds error class and may reopen; BrUnavailable permits success-transient in close ladder; reopen failure is logged and leaves in_progress"
+    retry_or_recovery_owner: "startup orphan/reset paths for stuck claims; no atomic queue/Bead terminal transaction"
+    proof: "internal/runexec/run_test.go happy close, prelaunch reopen, merge retry; internal/daemon/workloop_test.go close error; controlled adapter proof"
+  - transition: "terminal Run -> queue item/group/queue release"
+    production_symbol: "internal/daemon/workloop.go goroutine wrapper then evaluateGroupAdvanceWithOutcome"
+    queue_before_after: "dispatched -> completed on success or failed on false; group/queue advance or failure pause; full success persists completed then unlinks"
+    bead_before_after: "already closed/open according to terminal spine"
+    run_record_before_after: "normal independent record removal occurs in beadRunOne defer"
+    registry_before_after: "registered -> absent via wrapper defer after evaluation"
+    events_before_after: "run terminal already emitted before wrapper queue update; queue events are returned by queue.AdvanceGroup"
+    mutation_owners: "goroutine wrapper owns invocation; QueueStore lock serializes status and queue.AdvanceGroup; queue.Persist/CompleteAndUnlink own durable boundary"
+    required_ordering: "beadRunOne returns terminal bool -> wrapper evaluates queue; item status is set before group advance. Current implementation calls CompleteAndUnlink (persist completed then unlink) before emitting queue.AdvanceGroup events, contradicting QM-051/QM-053 final-landmark ordering."
+    failure_result: "queue persistence failure logged; in-memory state may diverge and process continues; queue ID mismatch skips stale completion"
+    retry_or_recovery_owner: "LoadQueueAtStartup QM-002b and terminal-state reconciliation; reconcileOrphanedRunsOnResume for terminated-but-locked Beads"
+    proof: "internal/daemon/workloop_hk45ude_test.go; workloop_perqueue_completion_hktigaf4_test.go; internal/queue persistence tests"
+  - transition: "daemon cancellation while Run active"
+    production_symbol: "internal/daemon/workloop.go beadRunOne shutdown branch; runexec EvShutdownDrain; exitClean/drainCancelledQueue"
+    queue_before_after: "normally remains dispatched during per-run shutdown; clean exit later cancels/archives remaining active queues"
+    bead_before_after: "no commit: reopen attempt; committed work: drain merge/close; independent live session: remains in_progress"
+    run_record_before_after: "independent live record retained when context is cancelled; otherwise normal cleanup removes it"
+    registry_before_after: "registered -> removed by wrapper defer when goroutine exits"
+    events_before_after: "drain merge path emits terminal; no-commit requeue path intentionally emits no terminal"
+    mutation_owners: "RunBridge Drain; runWorkLoop exitClean/drainCancelledQueue"
+    required_ordering: "on context cancellation, independent-session guard takes priority; otherwise probe commit then drain machine; queue cancellation is after wait for goroutines"
+    failure_result: "shutdown drain timeout can leave in_progress claims; comments identify next startup reset/QM-002a path"
+    retry_or_recovery_owner: "adoptDeadRunSessions, reconcileOrphanedRunsOnResume, LoadQueueAtStartup"
+    proof: "internal/daemon/workloop_shutdown_drain_committed_hkdnrg_test.go; workloop_qcancel_ppt32_test.go; runexec shutdown tests"
+mutation_owners:
+  - fact: "queue item status, attempts, failure reason, RunID"
+    writers: ["runWorkLoop Phase 3 stamp/revert", "evaluateGroupAdvanceWithOutcome", "lifecycle.LoadQueueAtStartup reconciliation", "adoptLiveRunSession"]
+    serialization: "QueueStore.LockForMutation; persistence occurs while caller holds mutation lock in normal loop paths"
+    persistence_boundary: "queue.Persist atomic temp-write/rename/parent fsync; CompleteAndUnlink additionally unlinks"
+    ownership: split
+    note: "Multiple writers are deliberate but cross-path coordination is by queue ID/name/status guards, not one transaction."
+  - fact: "Bead status claim/close/reopen/reset"
+    writers: ["brcli.Adapter ClaimBead", "RunBridge closeHook/reopenBead via adapter", "beadRunOne direct BrAdapter.ReopenBead refusal/provisioning paths", "startup reset/adoption/reconciliation via adapter", "SweepCloseBead reconciliation path"]
+    serialization: "claimSem bounds queue-path claim admission at effectiveMax but does not serialize calls; *brcli.Adapter.terminalMu serializes ClaimBead, CloseBead, ReopenBead, ResetBead, and SweepCloseBead terminal writes"
+    persistence_boundary: "Beads CLI + BI-030 intent log"
+    ownership: split
+    note: "Run machine decides normal close/reopen but recovery owns reset; no single writer spans normal and recovery."
+  - fact: "in-memory active Run registry"
+    writers: ["runWorkLoop Register", "goroutine defer Unregister"]
+    serialization: "RunRegistry.mu"
+    persistence_boundary: none
+    ownership: single
+    note: "Not restart durable; only capacity/liveness bookkeeping."
+  - fact: "independent run session record"
+    writers: ["beadRunOne runpkg.Write", "beadRunOne/adoptLiveRunSession/adoptDeadRunSessions runpkg.Remove"]
+    serialization: "file-per-run operations; no shared transaction with queue/Beads"
+    persistence_boundary: ".harmonik/runs record"
+    ownership: split
+    note: "Exists only for an eligible local independent tmux session; shared/remote launches rely on other evidence. Write/Remove use rename/delete without file or parent-directory fsync, so this is recovery metadata rather than a fully fsync-durable transaction participant."
+  - fact: "run_started/run_completed/run_failed event evidence"
+    writers: ["beadRunOne emitRunStarted", "RunBridge terminal emitter", "reconcileOrphanedRunsOnResume"]
+    serialization: "eventbus JSONL append"
+    persistence_boundary: ".harmonik/events/events.jsonl"
+    ownership: split
+    note: "Terminal event can precede queue terminal persistence, so it is evidence rather than a committed cross-domain transaction."
+crash_windows:
+  - cut: "after queue dispatched stamp persists, before RunID patch"
+    durable_before_cut: "queue item dispatched with empty-string RunID placeholder; Bead still open"
+    memory_only: "selected coordinates"
+    restart_observation: "QM-002a sees Bead open and reverts item to pending, clearing RunID"
+    outcomes: [zero-run, terminal-disagreement]
+    recovery_owner: "lifecycle.reconcileDispatchedItems"
+    proof: "startup_pl005_qm002_test.go QM-002a scenarios; dispatch code establishes ordering"
+  - cut: "after RunID patch and before ClaimBead succeeds"
+    durable_before_cut: "queue dispatched with RunID; Bead open"
+    memory_only: "RunID value also exists in local variables only"
+    restart_observation: "QM-002a reverts when ShowBead reports open"
+    outcomes: [zero-run]
+    recovery_owner: "lifecycle.reconcileDispatchedItems"
+    proof: "QM-002a unit/scenario coverage"
+  - cut: "after ClaimBead succeeds, before RunRegistry.Register/run_started/runpkg.Write"
+    durable_before_cut: "queue dispatched with RunID; Bead in_progress; intent-log claim"
+    memory_only: "no registry; no launched process"
+    restart_observation: "raw startup dispatch tracker identifies dispatched bead absent from orphaned run_started and live run record; guarded reset then QM-002a returns item pending"
+    outcomes: [zero-run, leaked-claim]
+    recovery_owner: "reconcileOrphanedRunsOnResume dispatch-tracker pass, then QM-002a"
+    proof: "internal/daemon/scenario_dispatch_tracker_orphan_hkiwu8a_test.go; runinflightreconcile_hkr73qr_test.go"
+  - cut: "after Register, before run_started"
+    durable_before_cut: "queue dispatched; Bead in_progress; no durable Run registry unless independent record happened later"
+    memory_only: "RunRegistry handle and goroutine"
+    restart_observation: "same dispatch-tracker recovery unless a durable session record exists"
+    outcomes: [zero-run, leaked-claim]
+    recovery_owner: "startup reconciliation"
+    proof: "source ordering; no direct crash-cut test located that injects precisely between Register and run_started"
+  - cut: "after run_started, before terminal event"
+    durable_before_cut: "event-log nonterminal Run; queue dispatched; Bead normally in_progress"
+    memory_only: "registry/goroutine/process unless independent session record"
+    restart_observation: "reconcileOrphanedRunsOnResume emits failed terminal and guarded-resets; QM-002a then releases queue item"
+    outcomes: [leaked-claim, terminal-disagreement]
+    recovery_owner: "reconcileOrphanedRunsOnResume + LoadQueueAtStartup"
+    proof: "internal/daemon/runinflightreconcile_hkr73qr_test.go; scenario_restart_recovery_ivzsl_test.go"
+  - cut: "after run_started and independent runpkg.Write while session is alive"
+    durable_before_cut: "queue dispatched, Bead in_progress, run record and possibly session alive"
+    memory_only: "old daemon RunRegistry"
+    restart_observation: "adoptDeadRunSessions preserves a live record, but reconcileOrphanedRunsOnResume first scans run_started minus terminal without excluding liveRunBeadIDs; it can emit run_failed and guarded-reset the Bead. QM-002a can then make the item pending while the old session remains alive. liveRunBeadIDs excludes only later dispatch-tracker and terminated-but-locked passes."
+    outcomes: [duplicate-run, leaked-claim, terminal-disagreement]
+    recovery_owner: "conflicting startup paths: reconcileOrphanedRunsOnResume versus adoptLiveRunSession/adoptDeadRunSessions"
+    proof: "source ordering in boot reconciliation and runinflight reconciler; no combined live-session-plus-prior-run_started restart test located"
+  - cut: "after Bead close/reopen terminal effect but before queue terminal update"
+    durable_before_cut: "Bead closed or open; run terminal event may be durable; queue remains dispatched"
+    memory_only: "wrapper return and group advancement"
+    restart_observation: "closed Bead with dispatched item is not directly converted by QM-002a; terminal/locked reconciliation and QM-002b observations handle subsets, but coverage is not a single atomic repair proof"
+    outcomes: [terminal-disagreement, leaked-claim]
+    recovery_owner: "reconcileOrphanedRunsOnResume terminated-but-locked pass and startup three-way reconciliation, depending on durable evidence"
+    proof: "scenario_terminated_locked_hjvl4_test.go; QM-002b Class C tests; explicit cross-domain atomicity absent"
+  - cut: "after queue item terminal/group mutation in memory but before Persist/CompleteAndUnlink"
+    durable_before_cut: "Bead terminal and run event may be durable; queue file may still show dispatched"
+    memory_only: "QueueStore state and group advance"
+    restart_observation: "recovery reads stale queue and current Bead/event state; may need terminal/locked reset path rather than replaying an atomic terminal record"
+    outcomes: [terminal-disagreement]
+    recovery_owner: "startup reconciliation; behavior depends on observed Bead status and event history"
+    proof: "queue persistence tests prove atomic file write, not an injected cross-domain crash cut"
+  - cut: "after CompleteAndUnlink unlinks final queue file, before queued queue_group_completed event emission"
+    durable_before_cut: "queue completed status was persisted then queue file unlinked; Bead and Run terminal effects may already be durable; final group event remains un-emitted"
+    memory_only: "queue.AdvanceGroup event slice waiting until evaluateGroupAdvanceWithOutcome releases lock"
+    restart_observation: "no queue file remains to reconstruct completion, and the specified final durable landmark can be absent from JSONL"
+    outcomes: [terminal-disagreement]
+    recovery_owner: unknown
+    proof: "internal/daemon/workloop.go evaluateGroupAdvanceWithOutcome ordering contradicts specs/queue-model.md QM-051/QM-053 and internal/queue/persistence.go CompleteAndUnlink caller contract; no crash-injection proof located"
+recovery_paths:
+  - path: "claim write lost / queue stamp only"
+    owner: "lifecycle.reconcileDispatchedItems"
+    mechanism: "ShowBead open -> item dispatched to pending, RunID nil -> queue.Persist -> queue_item_reconciled event"
+  - path: "nonterminal JSONL run"
+    owner: "daemon.reconcileOrphanedRunsOnResume"
+    mechanism: "scan run_started minus run terminal -> emit failed terminal -> guarded ResetBead; subsequent QM-002a releases queue item"
+  - path: "dispatch tracker orphan with no run_started or run record"
+    owner: "daemon.reconcileOrphanedRunsOnResume"
+    mechanism: "raw dispatched queue tracker minus current orphan starts and live records -> guarded ResetBead; QM-002a later resets queue"
+  - path: "durable independent run record, dead session"
+    owner: "daemon.adoptDeadRunSessions"
+    mechanism: "ResetBead and remove record before queue load; QM-002a observes open and returns queue pending"
+  - path: "durable independent record, session survives"
+    owner: "conflicting: startup reconcileOrphanedRunsOnResume and later runWorkLoop adoptLiveRunSession"
+    mechanism: "adoptLiveRunSession monitors a live session and on disappearance reopens Bead, sets queue dispatched to pending, clears RunID, persists, wakes, and removes record. However the preceding run_started-minus-terminal reconciliation does not exclude live records and can reset/release a live session first."
+  - path: "terminal event but dispatch lock survives"
+    owner: "reconcileOrphanedRunsOnResume terminated-but-locked pass"
+    mechanism: "derive terminal bead IDs from JSONL, skip live/dispatched duplicates, guarded ResetBead"
+test_coverage:
+  - area: "normal claim-to-close and failure reopen spine"
+    class: controlled-adapter coverage
+    tests: ["internal/daemon/workloop_test.go TestWorkLoop_DispatchClosesBead", "internal/daemon/workloop_test.go TestWorkLoop_FailedHandlerReopensBead", "internal/runexec/run_test.go TestRun_HappyCloseSpine", "internal/runexec/run_test.go TestRun_PreLaunchFailureReopenSpine"]
+    limits: "Ledger/substrate are fakes; proves calls and Run-machine decisions, not a full primary-daemon process."
+  - area: "Run reactor terminal decision matrix"
+    class: helper-only/unit coverage
+    tests: ["internal/runexec/run_test.go", "internal/runexec/run_a1_test.go", "internal/runloop/runshell_test.go"]
+    limits: "Pure machine and shell tests; they do not prove daemon composition or durable persistence ordering."
+  - area: "queue dispatch, claim retries, item/group terminalization"
+    class: controlled-adapter coverage
+    tests: ["internal/daemon/workloop_hk45ude_test.go", "internal/daemon/workloop_perqueue_completion_hktigaf4_test.go", "internal/daemon/workloop_claim_timeout_hkxorlb_test.go", "internal/daemon/workloop_bounded_retry_hk6pspu_test.go"]
+    limits: "Exercises workloop with controlled ledger/store and verifies terminal statuses."
+  - area: "queue persistence semantics"
+    class: helper-only/unit coverage
+    tests: ["internal/queue/persistence_writetempandclose_hk9z2yl_test.go", "internal/queue/w4_regression_test.go", "internal/queue/validation_test.go"]
+    limits: "Atomic file writer mechanics, not end-to-end Beads/Run atomicity."
+  - area: "startup queue reconciliation"
+    class: controlled-adapter coverage
+    tests: ["internal/lifecycle/startup_pl005_qm002_test.go"]
+    limits: "Extensive fake-ledger scenarios for QM-002a/b and terminal state; no primary daemon required."
+  - area: "restart and orphan paths through daemon Start"
+    class: production-composition coverage
+    tests: ["internal/daemon/scenario_restart_recovery_ivzsl_test.go", "internal/daemon/scenario_dispatch_tracker_orphan_hkiwu8a_test.go", "internal/daemon/scenario_terminated_locked_hjvl4_test.go"]
+    limits: "These scenarios call daemon.Start with test fixtures; timing and real tmux process liveness remain adapter-controlled."
+  - area: "independent-session adoption and event-log orphan helper"
+    class: helper-only/unit coverage
+    tests: ["internal/daemon/run_session_adoption_hk78tji_test.go", "internal/daemon/runinflightreconcile_hkr73qr_test.go"]
+    limits: "Direct helper tests with fake tmux/ledger/event dependencies; they do not prove the combined startup ordering for a live recorded session that already emitted run_started."
+  - area: "precise cuts after queue persist/claim/register/event/ledger terminal"
+    class: absent coverage
+    tests: []
+    limits: "No single crash-injection suite found that proves every cross-domain ordering cut; recovery is assembled from separate scenario/unit tests."
+local_vs_primary_proof:
+  deterministic_without_primary_daemon:
+    - "YAML source trace, pure runexec transitions, QueueStore locking, queue atomic persistence implementation, and adapter call ordering."
+    - "Controlled startup reconciliation and independent-session adoption scenarios using temporary project state and fakes."
+    - "Targeted Go tests can validate selected disputed paths without launching the primary daemon."
+  runtime_proof_remaining:
+    - "Actual primary-daemon crash timing across Beads CLI, JSONL fsync/append, queue rename/fsync, tmux session creation, and process launch cannot be proven by source alone."
+    - "This is deferred runtime proof, not a failed local assertion; the mission forbids starting or restarting the primary daemon."
+contradictions:
+  - source: "specs/queue-model.md describes ItemStatusDispatched as having populated run_id"
+    implementation: "runWorkLoop persists dispatched with an empty-string RunID placeholder, then separately patches the real UUID and persists again."
+    impact: "There is a durable intermediate state that is not a fully populated dispatch identity; restart recovery must treat queue state and Bead state as authoritative rather than relying on Item.RunID."
+  - source: "specs/queue-model.md QM-002a prose says queue dispatched can coexist with failed claim write"
+    implementation: "runWorkLoop stamps queue before ClaimBead, so the observed recoverable mismatch is queue dispatched plus Bead open when claim never landed or was reset; source comments call it claim-write-lost."
+    impact: "The factual current behavior is still describable, but the prose's causal wording does not match the production ordering."
+  - source: "specs/queue-model.md QM-051/QM-053 require final queue_group_completed before final queue unlink; internal/queue/persistence.go also states its caller must already have emitted the event"
+    implementation: "internal/daemon/workloop.go evaluateGroupAdvanceWithOutcome calls queue.CompleteAndUnlink before emitting the events returned by queue.AdvanceGroup."
+    impact: "A crash after unlink and before the later emit can lose the specified final durable completion landmark."
+ownership_gaps:
+  - "No atomic transaction spans queue item terminal persistence, Bead close/reopen, JSONL terminal event, and run-record deletion. Recovery reconciles evidence after a crash."
+  - "RunRegistry is the capacity owner but is memory-only; it cannot establish a restarted Run's ownership."
+  - "run_started lacks item_index and queue_name; event-only repair must infer the specific queue item through other state."
+  - "A failed queue.Persist after dispatch stamp, RunID patch, claim revert, or terminal advance is logged and allowed to continue; no immediate fail-closed owner was found."
+  - "Shared-session and remote runs have no mandatory durable process/session record comparable to independent local tmux records."
+  - "The startup event-log orphan pass does not exclude live independent-session records before it resets an orphaned run_started; this can release a queue/Bead while the old tmux session continues."
+  - "Run session registry writes/removals are rename/delete only and omit file/parent-directory fsync."
+downstream_task_impacts:
+  - task: JR-01
+    finding: "Extracting claim/Run preparation must preserve the explicit stamp -> RunID patch -> ClaimBead -> Register ordering and document the empty RunID placeholder crash cut."
+    recommended_clarification: "Acceptance should require a fault-injected proof for each pre-launch cut and name dispatch-tracker recovery as the owner for claim-success/no-run cases."
+  - task: JR-02
+    finding: "Run terminal decision is in runexec/RunBridge while queue release is in the outer goroutine; terminal effects are split across ledger, event bus, queue, and run-record cleanup."
+    recommended_clarification: "Acceptance should preserve the current Run-machine-versus-adapter boundary and explicitly test queue-terminal persistence after each close/reopen outcome."
+  - task: JR-03
+    finding: "Restart recovery has three sources (runs record, JSONL, raw dispatch tracker), but the JSONL run_started-minus-terminal pass can reset a Bead for a still-live independent session before the live-record monitor adopts it."
+    recommended_clarification: "Lease should include recovery source precedence, a live-record exclusion before event-log reset, and a combined-path proof; do not replace it with a single inferred Run record contract without a migration."
+  - task: JR-04
+    finding: "Terminal disagreement remains possible after Bead terminal effect and before queue persistence; current repair is evidence-driven rather than transactional."
+    recommended_clarification: "Acceptance should define which durable fact is authoritative at each terminal crash cut and require replay/idempotency proof."
+  - task: ARCH-01
+    finding: "Final queue completion currently unlinks before emitting the spec-designated final queue_group_completed landmark."
+    recommended_clarification: "Contract must settle persist/emit/unlink ordering and recovery semantics; the evidence identifies a current source/spec contradiction, not a proposed architecture."
+  - task: BR-00
+    finding: "Run identity is created before claim but only conditionally durable as a run record; launch plan extraction must not assume all runs possess a durable Run record."
+    recommended_clarification: "Model the independent-session record as optional recovery metadata, distinct from queue Item.RunID and JSONL evidence."
+  - task: ARCH-01
+    finding: "Current ownership is intentionally split across workloop, RunBridge/runexec, queue persistence, and startup reconcilers."
+    recommended_clarification: "Architecture contract should distinguish decision owner, side-effect owner, serialization owner, and recovery owner rather than claiming one Run owner."
+verification:
+  commands:
+    - command: "git fetch origin --prune; git status --short --branch; git worktree list --porcelain; git rev-parse origin/phase1-session-restart-substrate; git show --stat --oneline 4e223b6d15100b64b7f06d6a7fb1df6a98a01324"
+      result: "pass; remote head equaled pinned base; named worktree was absent and safely created"
+    - command: "df -Pk /Users/gb/github/harmonik"
+      result: "not run before source-only work; no test/build command was run"
+    - command: "ruby -ryaml -e '<required-key validation from HANDOFF-bravo.md>' plans/2026-07-24-code-health-audit/tasks/evidence/JR-00.yaml"
+      result: "pass: all required top-level keys present; task_id JR-00 and pinned base match"
+    - command: "git -C /Users/gb/github/harmonik-wt/jr-00-bravo diff --check"
+      result: pass
+    - command: "git -C /Users/gb/github/harmonik-wt/jr-00-bravo diff --exit-code 4e223b6d15100b64b7f06d6a7fb1df6a98a01324 -- . ':(exclude)plans/2026-07-24-code-health-audit/tasks/evidence/JR-00.yaml'"
+      result: "pass: no out-of-lease content changes"
+  tests: "No Go tests run: the source and existing named test evidence resolved the trace, and the handoff directs narrow tests only for disputed transitions."
+  ubs: "not applicable: UBS does not meaningfully scan a YAML evidence artifact."
+review:
+  preflight_card_review:
+    reviewer: /root/bravo_jr_00/jr00_preflight_review
+    profile: "GPT-5.6 Sol xhigh"
+    reviewed_base: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+    verdict: APPROVE
+    commands:
+      - "ruby effective JR-00 claim and card_review extraction from TASK-INDEX.yaml"
+      - "git worktree list --porcelain"
+      - "git -C /Users/gb/github/harmonik-wt/jr-00-bravo status --short --branch"
+      - "git -C /Users/gb/github/harmonik-wt/jr-00-bravo rev-parse HEAD"
+      - "rg coordinator lease and worktree-replacement directives in TASK-INDEX.yaml and HANDOFF-bravo.md"
+    findings:
+      - id: preflight-01
+        original_verdict: REQUEST_CHANGES
+        disposition: "resolved by coordinator: phase=implement and approved card_review recorded"
+      - id: preflight-02
+        original_verdict: REQUEST_CHANGES
+        disposition: "resolved by coordinator: exact owner/base/branch/worktree/claimed_at recorded"
+      - id: preflight-03
+        original_verdict: REQUEST_CHANGES
+        disposition: "resolved by coordinator: unsafe worktree reuse now escalates; workers do not create/rewrite worktrees"
+  final_artifact_review:
+    reviewer: /root/bravo_jr_00/jr00_final_artifact_review
+    profile: "GPT-5.6 Sol xhigh"
+    reviewed_base: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+    verdict: APPROVE
+    commands:
+      - "rg production daemon roots in cmd/harmonik and internal/daemon"
+      - "sed runWorkLoop queue stamp/claim/register region and beadRunOne RunBridge/runpkg regions"
+      - "sed internal/daemon/runinflightreconcile_hkr73qr.go and run_session_adoption.go"
+      - "rg production BrAdapter terminal mutation callers and sed internal/brcli/terminaltransition_bi010.go"
+      - "rg/sed QM-051/QM-053 queue_group_completed and CompleteAndUnlink ordering"
+      - "sed internal/run/registry.go"
+    findings:
+      - id: final-01
+        disposition: "verified corrected: live session is not excluded from initial event-log orphan reset"
+      - id: final-02
+        disposition: "verified corrected: direct beadRunOne ReopenBead paths are listed"
+      - id: final-03
+        disposition: "verified corrected: terminalMu, not claimSem, is listed as Beads serialization owner"
+      - id: final-04
+        disposition: "verified corrected: final queue event/unlink contradiction and crash window added"
+      - id: final-05
+        disposition: "verified corrected: helper tests separated from Start scenarios"
+      - id: final-06
+        disposition: "verified corrected: non-fsync run record limitation added"

@@ -1,0 +1,990 @@
+task_id: ARCH-00
+base_sha: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+generated_at: 2026-07-27T05:35:00Z
+scope:
+  objective: >-
+    Reconcile the production run graph, current ownership, landed P2/RT/LIFT
+    boundaries, staged reviewloop work, and extraction constraints before a
+    target architecture is selected.
+  production_code_changed: false
+  primary_daemon_used: false
+  interpretation: >-
+    The pinned base is the branch containing the reviewed task pack. Branch and
+    integration refs are classified separately; their presence is not treated
+    as production reachability on the pinned base.
+
+refs:
+  pinned_task_pack:
+    ref: work/arch-00-alpha
+    sha: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+    classification: inspected_base
+  phase_branch:
+    ref: origin/phase1-session-restart-substrate
+    observed_sha: 7075e6518a0189d8721add92504eb23fbcaf4f86
+    classification: task_pack_source
+    note: >-
+      The remote advanced after the pinned task branch was created. The
+      observed ref is recorded separately and is not substituted for base_sha.
+  integration_candidate:
+    ref: origin/integration/phase-reviewloop-20260725
+    observed_sha: 30d4e08764dbb1f1798a6ddeed6acaa6d2474226
+    classification: staged_integration_not_ancestor_of_base
+  reviewloop_branch:
+    ref: origin/reviewloop-decoupling
+    observed_sha: c9b957a5cbb524e1cf75fb04fcd046489e6356a4
+    classification: staged_branch_not_ancestor_of_base
+  preserved_l8_worktree:
+    path: /Users/gb/github/harmonik-wt/lift-l8-reviewloop
+    branch: refactor/lift-l8-reviewloop
+    head: 44266076ef31657f24c5ebe26dd9241a5d6c820b
+    state: >-
+      Uncommitted rename of daemon reviewloop source/tests into internal/runloop
+      with additional edits; not production, not mechanically integrable, and
+      not evidence that L8 landed.
+
+searches:
+  - id: symbol_complexity
+    command: >-
+      gocognit -test internal/daemon | rg
+      ' (runWorkLoop|beadRunOne|runReviewLoop|driveDotWorkflow|dispatchDotAgenticNode|executeCognitionGate) '
+    result: >-
+      runWorkLoop=888; beadRunOne=396; runReviewLoop=331;
+      driveDotWorkflow=195; dispatchDotAgenticNode=185;
+      executeCognitionGate=46.
+  - id: file_size
+    command: >-
+      wc -l internal/daemon/workloop.go internal/daemon/reviewloop.go
+      internal/daemon/dot_cascade_core.go internal/daemon/dot_gate.go
+      internal/daemon/tmuxsubstrate.go
+    result: "6650, 2194, 1988, 887, and 3023 lines respectively"
+  - id: function_boundaries
+    command: >-
+      rg -n '^func ' internal/daemon/workloop.go
+      internal/daemon/reviewloop.go internal/daemon/dot_cascade_core.go
+      internal/daemon/dot_gate.go
+    result: "Top-level declaration boundaries recorded in hotspots."
+  - id: production_callers
+    command: >-
+      for s in runWorkLoop beadRunOne runReviewLoop driveDotWorkflow
+      dispatchDotAgenticNode executeCognitionGate newWorkLoopDeps
+      injectWorkLoopDeps buildRunBundles; do
+      rg -n "\\b${s}\\(" internal cmd --glob '*.go' --glob '!*_test.go'; done
+    result: "Production caller edges recorded in production_graph."
+  - id: field_count
+    command: >-
+      sed -n '189,931p' internal/daemon/workloop.go |
+      awk 'NR>1 && /^\t[A-Za-z_][A-Za-z0-9_]*(, [A-Za-z_][A-Za-z0-9_]*)*[[:space:]]+/ {n++}
+      END{print n}'
+    result: "81 workLoopDeps field declarations"
+  - id: direct_daemon_fanout
+    command: >-
+      go list -f '{{range .Imports}}{{println .}}{{end}}' ./internal/daemon |
+      rg '^github.com/gregberns/harmonik/internal/' | sort -u | wc -l
+    result: "47 direct internal package imports"
+  - id: import_specs
+    command: >-
+      For each hotspot file, count quoted import specifications between
+      'import (' and the closing ')', including aliased imports.
+    result: >-
+      workloop=49 total/34 project; reviewloop=25/15;
+      dot_cascade_core=25/15; dot_gate=20/14; tmuxsubstrate=16/5.
+  - id: churn
+    command: >-
+      git log --since=2026-04-25 --until='2026-07-25 23:59:59'
+      --numstat --format='' -- PATH, aggregated by numeric numstat rows
+    result: >-
+      workloop 363 rows, +13775/-7123, 369 touching commits;
+      reviewloop 114 rows, +3551/-1357, 116 touching commits;
+      dot_cascade_core 1 row, +1988/-0 after the split;
+      dot_gate 36 rows, +1254/-367, 37 touching commits;
+      tmuxsubstrate 67 rows, +3639/-616, 67 touching commits.
+  - id: ancestry
+    command: >-
+      git merge-base --is-ancestor SHA
+      4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+    result: "Per-artifact results recorded in landed_work."
+  - id: package_direction
+    command: >-
+      go list -f '{{.ImportPath}} -> {{join .Imports " "}}'
+      ./internal/runloop ./internal/daemon
+    result: >-
+      daemon imports runloop; runloop does not import daemon; no literal Go
+      import cycle exists on the pinned base.
+
+hotspots:
+  - symbol: runWorkLoop
+    path: internal/daemon/workloop.go
+    declaration_start: 1399
+    declaration_end: 3065
+    span_lines: 1667
+    cognitive_complexity: 888
+    file_lines: 6650
+    file_import_specs: 49
+    production_callers:
+      - path: internal/daemon/bootworkloop.go
+        symbol: bootState.launchWorkLoop
+    responsibilities:
+      - queue and br-ready source selection
+      - maintenance and wake cadence
+      - capacity and pause gates
+      - durable reservation and Bead claim
+      - per-run bundle construction
+      - goroutine and completion ownership
+      - queue group advancement
+      - shutdown drain and live-session adoption
+    extraction_constraint: >-
+      The only outer-loop production caller is narrow, but the function owns
+      policies and mutations from multiple subsystems. It is the sole
+      dispatch_spine writer region.
+  - symbol: beadRunOne
+    path: internal/daemon/workloop.go
+    declaration_start: 3114
+    declaration_end: 5411
+    span_lines: 2298
+    cognitive_complexity: 396
+    file_lines: 6650
+    file_import_specs: 49
+    production_callers:
+      - path: internal/daemon/workloop.go
+        symbol: runWorkLoop
+    responsibilities:
+      - run-plan resolution
+      - worker, tunnel, worktree, and session acquisition
+      - launch and readiness
+      - single, review, and DOT mode dispatch
+      - merge, gate, budget, terminal, and cleanup effects
+    extraction_constraint: >-
+      RT18 removed direct workLoopDeps passage, but RunEnv, RunPorts, and
+      SharedHandles still expose a broad, partially late-built graph. Moving
+      the 2,298-line function intact would relocate rather than decompose debt.
+  - symbol: runReviewLoop
+    path: internal/daemon/reviewloop.go
+    declaration_start: 187
+    declaration_end: 1772
+    span_lines: 1586
+    cognitive_complexity: 331
+    file_lines: 2194
+    file_import_specs: 25
+    production_callers:
+      - path: internal/daemon/workloop.go
+        symbol: beadRunOne
+    responsibilities:
+      - implementer and reviewer phase lifecycle
+      - checkpoints and continuity
+      - subscriptions and session handling
+      - review verdict, retries, no-progress, and budget
+    extraction_constraint: >-
+      Reviewed reviewcycle/continuity/subscription work exists only on the
+      reviewloop branch and integration candidate at this base. It must be
+      reconciled before editing the giant function.
+  - symbol: driveDotWorkflow
+    path: internal/daemon/dot_cascade_core.go
+    declaration_start: 105
+    declaration_end: 1106
+    span_lines: 1002
+    cognitive_complexity: 195
+    file_lines: 1988
+    file_import_specs: 25
+    production_callers:
+      - path: internal/daemon/workloop.go
+        symbol: beadRunOne
+    extraction_constraint: >-
+      The helper/core file split landed, but the core file still contains only
+      two giant functions and retains reviewloop-owned helper dependencies.
+  - symbol: dispatchDotAgenticNode
+    path: internal/daemon/dot_cascade_core.go
+    declaration_start: 1107
+    declaration_end: 1988
+    span_lines: 882
+    cognitive_complexity: 185
+    file_lines: 1988
+    file_import_specs: 25
+    production_callers:
+      - path: internal/daemon/dot_cascade_core.go
+        symbol: driveDotWorkflow
+      - path: internal/daemon/sub_workflow_runner.go
+        symbol: dotSubWorkflowRunner.Run
+    extraction_constraint: >-
+      Mutual same-package control flow with sub-workflow dispatch prevents a
+      simple package move and duplicates phase/session lifecycle.
+  - symbol: executeCognitionGate
+    path: internal/daemon/dot_gate.go
+    declaration_start: 242
+    declaration_end: 611
+    span_lines: 370
+    cognitive_complexity: 46
+    file_lines: 887
+    file_import_specs: 20
+    production_callers:
+      - path: internal/daemon/dot_gate.go
+        symbol: buildCognitionGateEval
+    extraction_constraint: >-
+      It repeats agentic phase/session mechanics and remains in daemon; L9 did
+      not land.
+  - symbol: workLoopDeps
+    path: internal/daemon/workloop.go
+    declaration_start: 189
+    declaration_end: 931
+    span_lines: 743
+    field_count: 81
+    direct_type_use_files:
+      - internal/daemon/workloop.go
+      - internal/daemon/bootworkloop.go
+      - internal/daemon/runports.go
+      - internal/daemon/eagerfill_em063.go
+      - internal/daemon/scheduletick.go
+      - internal/daemon/diskcheck_hksxlb.go
+      - internal/daemon/workloop_handlerpause_kac8g.go
+    extraction_constraint: >-
+      newWorkLoopDeps creates an incomplete value; bootState injects additional
+      owners and controls; runWorkLoop later creates per-run bundles. Validity
+      is temporal rather than constructor-enforced.
+
+bundle_state:
+  RunPorts:
+    path: internal/runloop/ports.go
+    field_count: 8
+    production_constructor: internal/daemon/runports.go workLoopDeps.runPorts
+    state: active_partial_construction
+    evidence: >-
+      runPorts leaves Worktree, Launch, and LaunchBuilder for later resolution;
+      buildRunBundles and beadRunOne finish the graph.
+  RunEnv:
+    path: internal/runloop/ports.go
+    field_count: 30
+    production_constructor: internal/daemon/runports.go workLoopDeps.runEnv
+    state: active_broad_value_bundle
+    evidence: >-
+      It mixes daemon configuration, launch configuration, durable identity,
+      queue coordinates, and per-item mode/placement overrides.
+  SharedHandles:
+    path: internal/runloop/ports.go
+    field_count: 17
+    production_constructor: internal/daemon/runports.go workLoopDeps.sharedHandles
+    state: active_broad_handle_bundle
+    evidence: >-
+      It combines registries, process substrates, hook state, synchronization,
+      ledger access, factories, and terminal dedupe state.
+
+production_graph:
+  entrypoints:
+    - from: cmd/harmonik/main.go main.run
+      to: daemon.Start
+      classification: production
+    - from: cmd/harmonik/run.go runBeadSubcommandIO
+      to: daemon.Start
+      classification: production_inline_bootstrap
+    - from: cmd/harmonik/harness.go main.runHarnessWithSigs
+      to: scenario.DriveOrchestration -> daemon.Start
+      classification: production_scenario_driver
+  queue_admission:
+    - from: internal/queue/cli.RunQueueSubmit
+      to: buildSocketRouter -> socketDispatch.queueSubmit -> HandlerAdapter.HandleQueueSubmit
+      classification: production_socket_admission
+    - from: HandlerAdapter.HandleQueueSubmit
+      to: queue.HandleQueueSubmit -> queue.Persist
+      classification: validate_mint_and_persist
+    - from: HandlerAdapter.HandleQueueSubmit
+      to: LockedQueueStore.LockedSetQueueByName -> QueueStore.Wake -> HandlerAdapter.emitOrLog
+      classification: post_persist_visibility
+    - from: cmd/harmonik/run.go runBeadSubcommandIO
+      to: queue.Persist -> queuewiring.NewQueueStore -> daemon.Start
+      classification: production_inline_bootstrap_admission
+  boot_edges:
+    - from: daemon.Start
+      to: startWithHooks
+      owner: daemon
+    - from: startWithHooks
+      to: constructBusAndRegistries
+      owner: bootState
+    - from: startWithHooks
+      to: wireSpendAndQueueConsumers
+      owner: bootState
+    - from: startWithHooks
+      to: bootState.wireSocketListener -> bootState.loadStartupState -> loadStartupQueues
+      owner: bootState
+    - from: startWithHooks
+      to: bootState.launchWorkLoop
+      owner: bootState
+    - from: bootState.launchWorkLoop
+      to: buildWorkLoopDeps -> newWorkLoopDeps
+      owner: bootState
+    - from: bootState.launchWorkLoop
+      to: injectWorkLoopDeps
+      owner: bootState
+    - from: bootState.launchWorkLoop
+      to: bootState.startBackgroundLoops -> bootState.wireStaleWatcherReapSeams
+      owner: bootState
+    - from: bootState.launchWorkLoop
+      to: runWorkLoop
+      owner: workloop
+  per_run_edges:
+    - from: runWorkLoop -> snapshotFleet
+      to: runWorkLoop -> queue.Persist
+      classification: durable_dispatch_stamp
+      detail: "runWorkLoop writes ItemStatusDispatched with a placeholder RunID."
+    - from: runWorkLoop
+      to: uuid.NewV7 -> queue.Persist
+      classification: durable_identity_patch
+      detail: "runWorkLoop patches the queue item with the minted RunID."
+    - from: runWorkLoop
+      to: beadLedger.ClaimBead
+      classification: ledger_claim_after_two_queue_writes
+    - from: runWorkLoop
+      to: RunRegistry.Register -> beadRunOne -> RunRegistry.Unregister
+      classification: in_memory_run_ownership
+    - from: runWorkLoop
+      to: workLoopDeps.runEnv
+      classification: immutable_values_but_broad
+    - from: runWorkLoop
+      to: workLoopDeps.buildRunBundles
+      classification: late_port_and_handle_assembly
+    - from: workLoopDeps.buildRunBundles
+      to: workLoopDeps.runPorts and workLoopDeps.sharedHandles
+      classification: partially_complete_graph
+    - from: runWorkLoop
+      to: beadRunOne
+      classification: per_run_goroutine
+    - from: beadRunOne
+      to: runloop.WorktreePort.Create
+      classification: worktree_acquisition
+      detail: >-
+        Local production binds productionWorktreeFactory; remote production
+        binds the SSH-backed workspace.CreateWorktree closure assembled inside
+        beadRunOne.
+    - from: beadRunOne
+      to: beadRunOne local wtCleanup closure
+      classification: conditional_worktree_release
+      detail: >-
+        wtCleanup is returned through runloop.WorktreePort.Create by either
+        productionWorktreeFactory or the inline remote SSH-backed factory.
+        beadRunOne invokes it on normal outcomes and intentionally skips it on
+        named abnormal outcomes.
+    - from: beadRunOne
+      to: runReviewLoop or driveDotWorkflow or runloop.DispatchSegment.Run
+      classification: mode_branch
+    - from: driveDotWorkflow
+      to: dispatchDotAgenticNode or dispatchDotGateNode or dotSubWorkflowRunner.Run
+      classification: dot_node_branch
+  terminal_edges:
+    - from: runReviewLoop or driveDotWorkflow or runloop.DispatchSegment.Run
+      to: runloop.RunBridge.Feed
+      classification: terminal_decision
+    - from: beadRunOne
+      to: runloop.RunBridge.Drain
+      classification: shutdown_drain_decision
+      detail: "Called only when beadRunOne classifies the outcome as shutdown drain."
+    - from: runloop.RunBridge.WireSpine or beadRunOne
+      to: runloop.LedgerPort.CloseBead or runloop.LedgerPort.ReopenBead
+      classification: ledger_terminal_effect
+    - from: runWorkLoop
+      to: evaluateGroupAdvanceWithOutcome
+      classification: queue_item_and_group_terminal_effect
+    - from: evaluateGroupAdvanceWithOutcome
+      to: queue.Persist or queue.CompleteAndUnlink -> QueueStore.ClearQueueByName -> handlercontract.EventEmitter.Emit
+      classification: durable_queue_terminal_effect
+  recovery_edges:
+    - from: loadStartupQueues
+      to: lifecycle.LoadQueueAtStartup
+      classification: durable_queue_recovery
+    - from: lifecycle.LoadQueueAtStartup
+      to: reconcileDispatchedItems -> reconcileThreeWay -> reconcileQueueTerminalState
+      classification: queue_bead_worktree_reconciliation
+    - from: bootState.runOrphanSweepAndAdopt -> bootState.reconcileInFlightRuns
+      to: reconcileOrphanedRunsOnResume
+      classification: event_and_ledger_orphan_recovery
+    - from: runWorkLoop -> run.List
+      to: adoptLiveRunSession
+      classification: durable_run_record_and_live_session_adoption
+    - from: adoptLiveRunSession
+      to: beadLedger.ReopenBead -> queue.Persist -> run.Remove
+      classification: adopted_session_release
+  test_construction_graph:
+    entry: internal/daemon StartForTesting -> startWithHooks
+    differences_from_production:
+      - >-
+        Empty WorkflowModeDefault is replaced with review-loop; production
+        Start fails closed on the same empty value.
+      - >-
+        WithWorktreeFactory replaces the production worktree factory after
+        newWorkLoopDeps.
+      - >-
+        WithMergeQueue replaces the production-owned merge exclusion queue.
+      - >-
+        WithBrAdapterFactory replaces the Beads adapter constructor.
+      - "WithBusObserver exposes the constructed bus before execution."
+      - "WithSpendMeterObserver exposes the constructed spend meter."
+      - >-
+        BrPath empty skips launchWorkLoop entirely, so many StartForTesting
+        callers prove only boot wiring rather than the production run graph.
+    implication: >-
+      Test construction is useful but not graph-equivalent unless the fixture
+      retains production defaults and reaches launchWorkLoop.
+
+ownership_graph:
+  - resource: durable queue files and in-memory queue
+    current_owners:
+      - internal/queue persistence functions
+      - internal/queuewiring LockedQueueStore
+      - direct mutation callers in daemon and RPC paths
+    state: split
+    note: >-
+      CQ-00A/CQ-00B inventories are present. The synthesized CQ-00 artifact is
+      absent from the pinned phase branch even though TASK-INDEX marks it
+      complete; the artifact exists on the integration lineage and must be
+      reconciled before ARCH-01 trusts the completion record.
+  - resource: queue selection and dispatch reservation
+    current_owners:
+      - runWorkLoop
+      - queue decision helpers
+      - queue persistence callers
+    state: split_between_decision_and_effect
+  - resource: Bead claim and release
+    current_owners:
+      - runWorkLoop claim path
+      - beadRunOne terminal/reopen paths
+      - beadLedger adapter
+    state: split
+    note: "JR-00 owns the detailed transition trace."
+  - resource: Run identity, record, and in-memory registry
+    current_owners:
+      - runWorkLoop
+      - beadRunOne
+      - RunRegistry
+      - startup and in-flight reconciliation
+    state: split
+    note: "JR-00 owns the detailed transition trace."
+  - resource: process and session lifecycle
+    current_owners:
+      - single-mode sections of beadRunOne
+      - runReviewLoop
+      - dispatchDotAgenticNode
+      - executeCognitionGate
+      - runloop.WaitWithSocketGrace
+      - runlaunch.ForceTeardownSession
+      - tmuxSubstrate session adapters
+    state: fragmented
+    consequence: >-
+      Wait, signal, terminal latching, and teardown decisions are repeated
+      across modes; tmux is both a capability adapter and part of current
+      lifecycle behavior.
+  - resource: worktree creation, preservation, and cleanup
+    current_owners:
+      - internal/daemon productionWorktreeFactory
+      - runloop WorktreePort adapter
+      - beadRunOne acquisition and deferred cleanup
+      - startup lifecycle stale-worktree reconciliation
+      - run-record/live-session adoption paths
+    state: split_and_outcome_dependent
+    consequence: >-
+      Normal completion cleans through beadRunOne; selected abnormal outcomes
+      preserve artifacts for recovery; startup reconciliation may remove stale
+      worktrees. The ownership transfer is implicit rather than represented by
+      one resource scope.
+  - resource: durable terminal effects
+    current_owners:
+      - runexec Run decision machine
+      - runloop RunBridge
+      - beadRunOne effect hooks
+      - queue group advancement helpers
+      - Bead adapter
+    state: decision_effect_split_with_broad_bridge
+
+symbol_knots:
+  - id: dot_subworkflow_recursive_dispatch_knot
+    edges:
+      - driveDotWorkflow -> newDotSubWorkflowRunner
+      - dotSubWorkflowRunner.Run -> dispatchDotAgenticNode
+      - dotSubWorkflowRunner.Run -> dispatchDotGateNode
+      - dotSubWorkflowRunner.Run -> dispatchDotToolNode
+      - dotSubWorkflowRunner.Run -> nested dotSubWorkflowRunner.Run
+    type: same_package_dependency_knot_with_recursive_runner
+    consequence: >-
+      No edge returns to driveDotWorkflow, so this is not a mutual symbol cycle.
+      The runner recursively dispatches nested sub-workflows and calls the
+      daemon-private node dispatchers; moving either side alone would require a
+      callback/dispatcher contract or reverse the package direction.
+  - id: dot_review_helpers
+    edges:
+      - dot_cascade_core -> rlComputeDiffHashVia
+      - dot_cascade_core -> rlTruncateUTF8
+      - dot_cascade_core -> emitReviewFixupStalled
+      - dot_cascade_core -> emitReviewerBudgetExceeded
+    type: same_package_cross_mode_dependency
+    consequence: >-
+      Review-specific helpers must become owned contracts before DOT can leave
+      daemon or be decomposed independently.
+  - id: daemon_runloop_direction
+    edges:
+      - internal/daemon -> internal/runloop
+      - internal/runloop -/-> internal/daemon
+    type: import_direction_constraint
+    consequence: >-
+      Any moved function that still consumes daemon-private symbols would
+      reverse the established dependency direction and create a Go import
+      cycle. The contract must move or invert dependencies first.
+  - id: temporal_construction
+    edges:
+      - newWorkLoopDeps -> incomplete workLoopDeps
+      - bootState.injectWorkLoopDeps -> mutable completion
+      - runWorkLoop -> per-run construction
+      - beadRunOne -> late Launch/Worktree/LaunchBuilder completion
+    type: lifecycle_cycle
+    consequence: >-
+      Construction completeness cannot be checked at compile time and tests can
+      exercise bundle combinations production never constructs.
+
+landed_work:
+  - id: P2_E1_E4_leaf_extractions
+    commits:
+      - 805a9d76c
+      - 20cbd18d8
+      - 222ff36f0
+      - bfb87bfd4
+      - 12663fac6
+      - 9b682ae20
+      - 5f7762c35
+      - c3fff27dd
+      - db2f4752f
+      - 66e0041d4
+      - 379fca715
+      - 646748f3c
+      - 1b5b5e9b1
+    ancestor_of_base: true
+    classification: active_production_leaf_extractions
+    value: >-
+      Established daemon-free owners for git probing, shared harness behavior,
+      tunnel/code-sync transport, queue wiring, crew launch contracts, harness
+      implementations, run merge, worker registry construction, and project
+      configuration.
+    residual: >-
+      These are useful dependency leaves. They do not assign outer-loop,
+      per-run phase, or cross-mode lifecycle ownership.
+  - id: P2_RT1_RT9_runtime_substrate
+    commits:
+      - 4b87bf806
+      - d6369a6e3
+      - 9eceafc07
+      - 8b9cb2bb1
+      - c22ccc11d
+      - a70082bc3
+      - 9df61a32e
+      - c23ffba53
+      - ba42e2e17
+      - 62b5cd922
+      - a91210a7b
+      - 38668b8cb
+      - 83c92a7b9
+      - 251ea82b2
+      - 6e69769f5
+      - a6d5d994f
+      - 4742c65c8
+      - 309d925a3
+      - 53c524b41
+      - ef2344332
+      - 9a8ed4721
+      - ee2cc0d0c
+    ancestor_of_base: true
+    classification: active_production_state_machines_ports_and_wiring
+    value: >-
+      Added Clock/Ledger/Emitter/Merge/Run bundle seams, Dispatch and Run
+      machines, terminal vocabulary, RunBridge wiring, and converted single and
+      review dispatch segments onto those owners.
+    residual: >-
+      The machines own decisions but effect selection, acquisition, mode
+      control, and final durable mutation remain in the giant daemon functions.
+  - id: RT13_RT14
+    commits:
+      - 379fca715
+      - 229e6e914
+      - cb89e35e2
+      - 7d448afb0
+    ancestor_of_base: true
+    classification: active_production_extraction_and_dispatch_conversion
+    value: >-
+      RT13 carved the merge path into runmerge. RT14 converted single and
+      cognition-gate launch paths to DispatchSegment and retired the earlier
+      ready-wait path.
+    residual: >-
+      Mode coordinators still own phase/session lifecycle and the central
+      functions remain large.
+  - id: RT15
+    commits:
+      - f33af3a53
+      - 7f32b420a
+      - d04c04387
+      - 4a70d2be4
+      - e3d014a56
+      - 7794ab536
+      - 3ea214fb7
+    ancestor_of_base: true
+    classification: active_production_bundle_rewire
+    value: >-
+      Added and populated RunEnv and SharedHandles, then rewired beadRunOne and
+      registry/config readers onto them.
+    residual: >-
+      The bundles are broad and do not make the whole production graph
+      constructor-complete.
+  - id: RT16_RT17
+    commits:
+      - 4cd9179d6
+      - d71e79749
+    ancestor_of_base: true
+    classification: active_production_port_and_accessor_rewire
+    value: >-
+      Routed event emission through EmitterPort and bound launch-spec builder
+      reads to an accessor.
+    residual: "These changed access paths, not state-machine ownership."
+  - id: RT18
+    commits:
+      - 5908ffacc
+      - 6a0585449
+      - a1106e900
+      - cb3155423
+      - 36a9a7a8c
+      - acc5edd3e
+      - b7fa1ecfa
+      - a6d5d5f0c
+      - f44810724
+      - 8599a7ae9
+      - 621220448
+    ancestor_of_base: true
+    classification: active_production_boundary_rewire
+    value: >-
+      Eliminated clock copy-mutation, widened the value/handle bundles, dropped
+      workLoopDeps from reviewloop, DOT, RunBridge, and beadRunOne signatures,
+      and removed the launch-builder smuggle.
+    residual: >-
+      The giant functions remain and the replacement bundles are broad or
+      completed late; this is enabling progress, not completed decomposition.
+  - id: RT19_and_RT19b
+    commits:
+      - e82311b9a
+      - efeeb0479
+      - fd608c01e
+      - f839121ff
+      - 4082056ad
+      - 47ccaa24a
+      - 65a9b512a
+      - 5191e1f67
+      - a7f6ad6d5
+      - 559352c12
+      - de02c7e21
+      - 214b86a6a
+      - a9edfd0fa
+      - d0508789a
+      - ced529b51
+      - 1eeca24ab
+      - eda0e253d
+      - 0bda38f48
+      - 7482b3ef1
+      - 68007f1b7
+      - 2e8ba6959
+      - 54c1390a8
+      - 75ae2f89f
+      - 839e3f0da
+      - 823c74181
+      - 18380485c
+      - 0d697de44
+    ancestor_of_base: true
+    classification: active_production_leaf_moves_and_test_seam_split
+    value: >-
+      Moved clock, harness, launch, and watchdog effects to leaf packages and
+      split several exported test shims.
+    residual: >-
+      This reduced daemon-private surface and test coupling but did not
+      decompose the main control functions.
+  - id: LIFT_L0_L7
+    commits:
+      - b2a7683bd
+      - 64b153356
+      - 617ffdc4e
+      - e0b0213ff
+      - bb89698a8
+      - 27d569e56
+      - ade717b76
+      - 44266076e
+    ancestor_of_base: true
+    classification: active_production_leaf_and_boundary_moves
+    value: >-
+      Established internal/runloop ports and moved event tap, post-ready hang,
+      socket grace, run shell, dispatch segment, scenario gate, RunBridge, and
+      reviewer-harness leaves behind a daemon-free dependency direction.
+    residual: >-
+      These moves reduce package entanglement but do not shrink runWorkLoop,
+      beadRunOne, runReviewLoop, or the DOT core.
+  - id: runexec_and_runlaunch
+    ancestor_of_base: true
+    classification: active_production_kernels
+    value: >-
+      Dispatch and Run machines, RunShell/RunBridge, launch deadlines/events,
+      and teardown helpers are real production dependencies with focused tests.
+    residual: >-
+      Mode functions still select effects, own sessions, and translate
+      outcomes; the kernels do not yet own the full lifecycle.
+  - id: dot_core_helper_split
+    commit: b4b023e532c4fc1abd08007f5c4061cfc8dd29b2
+    ancestor_of_base: true
+    classification: boundary_only_split
+    value: "Separated helpers from the DOT core without behavior change."
+    residual: >-
+      dot_cascade_core.go is 1,988 lines containing only driveDotWorkflow and
+      dispatchDotAgenticNode.
+  - id: reviewloop_R0_characterization
+    commit: f03ff7c1b
+    ancestor_of_base: false
+    ancestor_of_integration_candidate: true
+    classification: staged_test_only_characterization
+    value: >-
+      Adds reviewloop behavior/oracle tests; no production source is changed.
+    residual: "Useful fidelity evidence, not a production decomposition."
+  - id: reviewloop_R1_reviewcycle
+    commit: 3f02f2f9a
+    ancestor_of_base: false
+    ancestor_of_integration_candidate: true
+    classification: staged_unused_pure_kernel
+    value: "Adds the reviewed reviewcycle package and its tests."
+    residual: >-
+      No non-test production caller exists on the integration candidate.
+      RL-01 must determine how or whether it is consumed.
+  - id: reviewloop_R2_continuity
+    commits:
+      - b62f75b9f
+      - c9b957a5c
+    ancestor_of_base: false
+    ancestor_of_integration_candidate: true
+    classification: staged_unused_kernel_with_core_vocabulary_changes
+    value: >-
+      Adds the continuity contract, core transition vocabulary, and a
+      provenance correction.
+    residual: >-
+      No non-test production caller exists on the integration candidate.
+      Core vocabulary changes are staged, but runReviewLoop does not consume the
+      continuity package.
+  - id: reviewloop_R3_owned_subscriptions
+    commit: 89cc3aa02
+    ancestor_of_base: false
+    ancestor_of_integration_candidate: true
+    classification: staged_active_boundary_change_with_unused_owned_API
+    value: >-
+      Changes PerRunEventTap.Subscribe to use the new owned-subscription
+      implementation through a compatibility wrapper.
+    residual: >-
+      SubscribeOwned has no direct non-test production caller; existing
+      Subscribe callers receive the changed implementation indirectly.
+  - id: LIFT_L8
+    ancestor_of_base: false
+    classification: uncommitted_blocked_move
+    value: "Preserved worktree records an attempted reviewloop package move."
+    residual: >-
+      The rename still depends on daemon-private symbols and creates a mixed
+      ownership/package state. It is blocked under current dependencies;
+      RL-01 and ARCH-01 own its future disposition.
+  - id: LIFT_L9_L12_L13
+    ancestor_of_base: false
+    classification: planned_unlanded_moves_blocked_by_current_dependencies
+    value: "No production artifact landed for the remaining giant moves."
+    residual: >-
+      The current graph does not support these moves as written. ARCH-01,
+      RL-01, and the DOT/BR cards decide whether to amend, supersede, or resume
+      them.
+
+safe_leaf_contracts:
+  - owner: internal/runexec Dispatch
+    evidence: "Pure dispatch state machine, active through runloop segments."
+    safe_use: "Retain and compose; do not duplicate mode-specific machines."
+  - owner: internal/runexec Run
+    evidence: "Pure Run/terminal decision machine, active through RunBridge."
+    safe_use: "Retain; tighten effect ownership around it."
+  - owner: internal/runloop PerRunEventTap
+    evidence: "LIFT L1 landed with production callers."
+    safe_use: "Event fan-out boundary."
+  - owner: internal/runloop WaitPostAgentReadyProgress
+    evidence: "LIFT L2 landed with focused tests."
+    safe_use: "Post-ready observation, not phase ownership."
+  - owner: internal/runloop WaitWithSocketGrace
+    evidence: "LIFT L3 landed with production callers."
+    safe_use: "Observation helper beneath a single future lifecycle owner."
+  - owner: internal/runloop RunShell and DispatchSegment
+    evidence: "LIFT L4 landed and use runexec machines."
+    safe_use: "Effect execution for a bounded dispatch segment."
+  - owner: internal/runloop scenario gate
+    evidence: "LIFT L5 landed with deterministic classification tests."
+    safe_use: "Gate leaf, not workflow coordination."
+  - owner: internal/runloop RunBridge
+    evidence: "LIFT L6 landed and production-wired."
+    safe_use: >-
+      Transitional adapter to retain while ownership is narrowed; do not grow
+      SpineArgs or add another broad bridge.
+  - owner: internal/runloop reviewer harness resolution
+    evidence: "LIFT L7 landed and production-wired."
+    safe_use: "Pure harness-resolution policy."
+  - owner: internal/runlaunch
+    evidence: "Active deadline/event/teardown helpers."
+    safe_use: "Launch capability leaves beneath a future phase owner."
+
+shared_spine_collision_zones:
+  - lease_family: dispatch_spine
+    paths:
+      - internal/daemon/workloop.go
+      - internal/daemon/runports.go
+    rule: >-
+      Exactly one semantic writer. WL, BR, CQ reservation, JR terminal, and Pi
+      single-mode integration cards cannot overlap here.
+  - lease_family: workloop_recovery_spine
+    paths:
+      - internal/daemon/workloop.go adoptLiveRunSession call sites
+      - startup and in-flight adoption wiring
+    rule: >-
+      Recovery/adoption integration follows the prerequisite dispatch-spine
+      changes and excludes remaining Pi workloop integrations.
+  - lease_family: reviewloop_spine
+    paths:
+      - internal/daemon/reviewloop.go
+      - reviewloop-owned production call sites
+    rule: >-
+      Reconcile the integration branch first; then serialize RL-02A/B/C and
+      RL-03.
+  - lease_family: dot_spine
+    paths:
+      - internal/daemon/dot_cascade_core.go
+      - internal/daemon/dot_gate.go
+      - internal/daemon/sub_workflow_runner.go
+    rule: >-
+      DOT progression may be pure/file-disjoint, but agentic node, gate, and
+      coordinator rewiring are serialized.
+  - lease_family: process_phase_scope
+    paths:
+      - internal/runloop
+      - internal/runlaunch
+      - internal/daemon/tmuxsubstrate.go
+      - mode-specific session call sites
+    rule: >-
+      The pure lifecycle contract precedes adapter and mode integration. One
+      owner must settle Wait/kill/reap/close semantics.
+  - lease_family: queue_rpc
+    paths:
+      - internal/queue/rpc.go
+      - production HandlerAdapter construction
+    rule: >-
+      One writer for submit/append transaction and admission semantics; caller
+      migrations outside RPC remain file-disjoint.
+  - lease_family: pi_launchspec
+    paths:
+      - internal/harness/pi/launchspec.go
+      - direct launch-spec tests
+    rule: >-
+      Pi security/credential and launch-spec tasks serialize here and cannot
+      broaden into the dispatch spine.
+  - lease_family: composition_spine
+    paths:
+      - internal/daemon/bootworkloop.go
+      - internal/daemon/bootstate.go
+      - internal/daemon/daemon.go
+      - cmd/harmonik production Start callers
+    rule: >-
+      Serial cutover only after extracted owners and mode integrations are
+      complete.
+
+test_and_proof_state:
+  strengths:
+    - runexec pure machines have table/property-style unit coverage
+    - LIFT leaves have focused package tests and dependency guards
+    - workloop has many queue, liveness, cancellation, and scenario regressions
+    - reviewloop branch adds a behavior freeze and pure kernels
+  gaps:
+    - no single deterministic trace freezes every outer-loop effect ordering
+    - StartForTesting permits injection combinations different from production
+    - no single immutable production graph can be inspected or constructed
+    - primary daemon runtime proof is intentionally absent
+    - process/session ownership is tested by mode rather than one lifecycle contract
+    - CQ-00 completion is inconsistent between the phase and integration refs
+  implication: >-
+    WL-01, JR-00, RL-01, and the architecture contract are prerequisites, not
+    optional analysis. Existing regression volume does not make extraction safe
+    without fidelity traces and constructor completeness.
+
+conclusions:
+  dominant_hotspot: >-
+    workloop.go is the dominant structural hotspot: 6,650 lines, two functions
+    totaling 3,965 lines, cognitive scores 888 and 396, 81-field workLoopDeps,
+    49 imports, and 369 touching commits in the measured window.
+  secondary_hotspots:
+    - "reviewloop is the largest mode-specific state machine."
+    - "DOT is the most concentrated production mode core."
+    - "tmux/process lifecycle is a cross-mode ownership boundary, not merely a large file."
+  progress_assessment: >-
+    Two weeks of refactoring produced real leaf packages, pure machines, ports,
+    and dependency direction. It reduced some direct coupling but did not
+    materially reduce the central state-machine spans or eliminate temporal
+    construction.
+  required_direction: >-
+    The current graph proves that the remaining move-first instructions cannot
+    execute unchanged: they retain daemon-private dependencies, broad late
+    construction, or unresolved lifecycle ownership. ARCH-01 owns the target
+    ownership/construction decision; RL-01 owns reconciliation of the staged
+    reviewloop work. This artifact selects neither final packages nor permanent
+    task disposition.
+
+downstream_impacts:
+  - task_id: ARCH-01
+    finding: >-
+      Must replace late workLoopDeps/bundle completion with constructor-complete
+      outer-loop services, immutable RunPlan, phase/session lifecycle, mode
+      executor result, and terminal-effect ownership.
+  - task_id: ARCH-GATE
+    finding: >-
+      Pin the measured spans/complexity, workLoopDeps field count, broad bundle
+      reach, import fanout, and forbidden daemon back-edge.
+  - task_id: WL-01
+    finding: >-
+      Freeze maintenance, gate, selection, reservation, spawn, completion,
+      shutdown, and recovery effect ordering before runWorkLoop extraction.
+  - task_id: RL-01
+    finding: >-
+      Reconcile the five reviewloop commits on the integration candidate and
+      classify actual production wiring before any reviewloop edit.
+  - task_id: BR-00
+    finding: >-
+      Treat beadRunOne as Resolve -> Prepare -> Launch/Execute -> Finalize ->
+      Terminal; a package move is not an acceptable decomposition.
+  - task_id: PS-01
+    finding: >-
+      One phase owner must own terminal latching, signal, Wait, bounded
+      kill/reap, and idempotent close across all agentic modes.
+  - task_id: DOT-01
+    finding: >-
+      Pure progression should break policy from the DOT/sub-workflow dispatch
+      recursion before agentic node integration.
+  - task_id: coordinator
+    finding: >-
+      Reconcile the absent CQ-00 artifact and merge the current task pack into
+      the integration candidate before treating branch-local completion records
+      as one production baseline.
+
+review:
+  reviewer: /root/arch00_review
+  profile: GPT-5.6 Sol xhigh
+  verdict: APPROVE
+  reviewed_base: 4e223b6d15100b64b7f06d6a7fb1df6a98a01324
+  finding_disposition:
+    - >-
+      Added the complete queue-admission through terminal/recovery graph,
+      separate StartForTesting construction graph, and worktree ownership.
+    - >-
+      Expanded and split every P2/RT/LIFT/reviewloop classification, including
+      unused staged kernels and the full RT19 sequence.
+    - "Corrected the observed phase ref and removed premature architecture choices."
+    - "Corrected the DOT dependency knot classification and every shared collision family."
+    - >-
+      Replaced prose or false graph edges with exact production symbols,
+      including socket submission, queue wake, WorktreePort local/remote
+      construction, RunBridge Feed/Drain, and wtCleanup.
+
+verification:
+  yaml_parse: complete
+  graph_reproducibility: complete
+  git_ancestry: complete
+  production_symbol_review: complete
+  source_diff: complete
+  independent_frontier_review: complete

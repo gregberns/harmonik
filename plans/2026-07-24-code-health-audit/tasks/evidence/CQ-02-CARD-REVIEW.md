@@ -415,3 +415,75 @@ and root-single-writer handoff remain intact. The amendment worktree changes
 only the card and this review artifact, and `git diff --check` is clean.
 
 No card text was edited by this reviewer.
+
+## Writer note — exact fallback-owner lease expansion (2026-07-27)
+
+This writer note does not change or reuse any historical review verdict and is
+not a review verdict.
+
+The focused Round-4 composition review found that the newly corrected §7.4
+named-fleet algorithm was not yet composed with the clauses that own fallback
+gating and conformance. EM-066 and EM-067 still named the removed singleton
+``queue IS None`` branch, and the §10.2 pause fixture enabled fallback with the
+opt-in `--auto-pull` flag unset.
+
+The CQ-02 card now authorizes only four exact execution-model edits beyond its
+previously approved eleven regions:
+
+- replace EM-066's stale branch reference with
+  ``fleet.named_queues IS EMPTY``;
+- make the same exact replacement in EM-067's pause-order explanation;
+- require `--auto-pull` to be set in the §10.2 pause fixture; and
+- insert one adjacent §10.2 fixture proving that a non-empty but wholly
+  ineligible named fleet never consults `br ready` or fallback-dispatches.
+
+The semantic checker models these as literal source-to-draft replacements,
+not whole-clause normalization. It therefore preserves every other byte in
+EM-066, EM-067, and §10.2 while continuing to preserve all content outside the
+previously authorized regions, frontmatter version/date, and one qualified
+history row. The evidence schema, validator, acceptance criteria, and
+composition-review lens require the same four semantics and forbid any wider
+fallback, flag/default, pause, Run, workflow, checkpoint, failure, event, or
+non-queue execution amendment.
+
+Fresh independent review of this exact card amendment is still required.
+
+## Independent exact fallback-clause review (2026-07-27)
+
+- Reviewer: `/root/cq02_round6_design_review`
+- Scope: focused EM-066/EM-067 and §10.2 lease expansion
+- Verdict: `APPROVE`
+
+The amendment adds exactly four required execution-model edits beyond the
+previously approved eleven regions:
+
+- EM-066 replaces only `The §7.4 queue IS None branch` with the complete
+  `fleet.named_queues IS EMPTY` branch reference.
+- EM-067 makes the same literal branch replacement in its pause-order
+  explanation.
+- The §10.2 pause fixture replaces only `flag unset` with
+  ``--auto-pull` set`.
+- The adjacent EM-066 historical-topology fixture is extended with exactly one
+  nonempty-ineligible-fleet case that forbids consulting `br ready` or
+  fallback dispatch.
+
+The replacements do not authorize the remainder of EM-066, EM-067, or §10.2.
+Flag/default behavior, the primary and defense-in-depth pause gates, sealing,
+single-source-of-truth behavior, and every unrelated test obligation remain
+byte-sensitive.
+
+The executable proof is sound for this boundary. Each source token occurs
+exactly once, each draft token must occur exactly once, and source and draft
+normalize their respective literal token only. In an independent combined
+fixture, all prior authorized regions plus the four replacements normalized
+successfully. Deliberate extra edits to EM-066's sealed-value sentence and the
+adjacent §10.2 sealing fixture remained visible and were rejected.
+
+The previous glossary/EM-015f/EM-062–065/§6.5/§7.4/§9.3/§10.1 lease,
+frontmatter restriction, one-history-row rule, semantic claim SHA, dynamic
+execution baseline, worker lease, packaging boundary, historical-review
+preservation, and independent final-review gate are unchanged. The existing
+§9.3 region remains authorized for the separate QM-062 citation correction.
+`git diff --check` is clean.
+
+No card text was edited by this reviewer.

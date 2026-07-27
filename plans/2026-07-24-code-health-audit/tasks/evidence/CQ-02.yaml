@@ -206,7 +206,7 @@ replace_intent:
     - definite intent-unlink failure retains refusal; unlink or parent-sync ambiguity reloads exact intent and syncs before release
   generation_rule: volatile process-local guard only and never restart identity
   cancellation_handoff:
-    allocation_order: before cancelled candidate temp and predecessor replace-intent durability
+    allocation_order: preallocate predecessor transaction ID and successor archive-intent ID before constructing either record's canonical bytes; finish exact successor bytes/digest before predecessor replace-intent durability
     archive_origin: stable enum distinguishing operator-cancel graceful-shutdown inline-failure and recovery-corrupt
     archive_kind: cancelled failed or corrupt
     source_identity: exact queue ID or corrupt-source identity plus exact candidate/source digest
@@ -216,10 +216,12 @@ replace_intent:
     classifier: replace-only creates exact bound successor; exact linked pair continues; archive-only continues only after exact predecessor deletion; mismatch or originless cancelled canonical quarantines
     main_legacy_rule: successor archive intent remains until legacy absence is durable through .harmonik parent fsync
     successor_path: .harmonik/queues/<normalized-name>.archive-intent
-    successor_v1_fields: [schema_version, archive_intent_id, predecessor_transaction_id, predecessor_intent_sha256, archive_origin, archive_kind, normalized_name, source_identity, source_sha256, destination_basename]
+    successor_v1_fields: [schema_version, archive_intent_id, predecessor_transaction_id, archive_origin, archive_kind, normalized_name, source_identity, source_sha256, destination_basename]
+    successor_digest_domain: no digest of the final predecessor record appears in the successor; the predecessor binds exact successor bytes and SHA-256
+    linked_pair_validation: exact successor bytes and digest plus archive-intent ID predecessor transaction ID and every duplicated origin/kind/name/source/destination fact must agree
     install_rule: unique temp create/write/fsync/close then no-replace exact path and queue-parent fsync; exact bytes idempotent; mismatch preserved
     source_rule: parseable source uses exact canonical path plus queue ID and digest; corrupt source uses exact bound pathname and digest without parsing
-    cleanup_classifier: predecessor-only creates prebound successor; exact pair syncs successor then unlinks/syncs predecessor; successor-only continues selected archive; archive and legacy durability precede successor unlink/root-sync; every rename/unlink/root-sync ambiguity reloads exact paths; release requires both intents durably absent
+    cleanup_classifier: predecessor-only creates prebound successor; exact pair syncs successor then unlinks/syncs predecessor; successor-only continues only after complete schema and exact normalized path/source identity/source digest/destination namespace validation; archive and legacy durability precede successor unlink/root-sync; every rename/unlink/root-sync ambiguity reloads exact paths; release requires both intents durably absent
   final_completion_binding:
     required_status: complete-success
     allocation_order: preallocate receipt_id and exact canonical receipt bytes before completed canonical install and before durable replace intent

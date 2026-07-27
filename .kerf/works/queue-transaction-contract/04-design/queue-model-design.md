@@ -180,9 +180,10 @@ queue-parent fsync.
 
 The exact successor path is
 `.harmonik/queues/<normalized-name>.archive-intent`. Its v1 schema binds
-archive intent ID, predecessor transaction ID and digest, origin, kind,
-normalized name, parseable queue ID or exact corrupt-source identity, source
-digest, and destination basename. Installation and destination archive are
+archive intent ID, predecessor transaction ID, origin, kind, normalized name,
+parseable queue ID or exact corrupt-source identity, source digest, and
+destination basename. It does not contain a digest of the final predecessor
+record. Installation and destination archive are
 no-replace/exact-byte-idempotent. Recovery covers predecessor-only, exact pair,
 successor-only, changed source/destination, definite failures, and ambiguous
 rename/unlink/parent-sync. It removes/syncs the predecessor only after
@@ -493,9 +494,14 @@ preselect origin/kind/source digest/destination/exact successor intent
 -> RPC success
 ```
 
-The archive intent binds its predecessor transaction/intent identity, origin,
-kind, name, queue ID or corrupt identity evidence, exact source/candidate
-digest, and selected non-overwriting archive basename.
+The archive intent binds its predecessor transaction ID, origin, kind, name,
+queue ID or corrupt identity evidence, exact source/candidate digest, and
+selected non-overwriting archive basename. Both IDs are preallocated before
+canonical bytes are built. The predecessor binds the exact successor bytes
+and their digest; pair validation cross-checks both IDs and every duplicated
+handoff fact. Successor-only recovery validates the complete schema plus exact
+source and destination namespace facts rather than accepting schema version
+alone.
 
 Handoff classifier:
 

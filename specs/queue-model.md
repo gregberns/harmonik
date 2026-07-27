@@ -573,11 +573,12 @@ Tags: mechanism
 The deterministic successor path is
 `.harmonik/queues/<normalized-name>.archive-intent`. Its canonical v1 record
 contains exactly `schema_version`, `archive_intent_id`,
-`predecessor_transaction_id`, `predecessor_intent_sha256`, `archive_origin`,
-`archive_kind`, `normalized_name`, `source_identity`, `source_sha256`, and
+`predecessor_transaction_id`, `archive_origin`, `archive_kind`,
+`normalized_name`, `source_identity`, `source_sha256`, and
 `destination_basename`. `source_identity` is either the parseable queue ID or
 the exact corrupt-source pathname/digest evidence. The predecessor binds the
-exact successor ID, canonical bytes, and digest.
+exact successor ID, canonical bytes, and SHA-256 digest. No digest of the
+final predecessor record appears in the successor digest domain.
 
 Before a cancelled canonical replacement becomes durable, its replace intent
 MUST bind archive origin (`operator-cancel`, `graceful-shutdown`,
@@ -587,15 +588,25 @@ successor archive-intent ID/bytes/digest. The predecessor remains until that
 successor completes create/write/fsync/close, no-replace rename, and
 queue-parent fsync.
 
+The predecessor transaction ID and successor archive-intent ID MUST be
+preallocated before either record's canonical bytes are constructed. A linked
+pair validates only when the successor bytes equal the predecessor-bound
+bytes, SHA-256 of those bytes equals the predecessor-bound digest,
+`archive_intent_id` and `predecessor_transaction_id` equal the predecessor's
+bound successor ID and transaction ID, and every duplicated
+origin/kind/name/source/destination fact agrees.
+
 Successor installation uses a unique sibling temp create/write/fsync/close,
 no-replace rename to the exact archive-intent path, and queue-parent fsync.
 Exact existing bytes are idempotent; any different/corrupt/unsupported record
 refuses without replacement. Recovery exhaustively classifies:
 predecessor-only creates only its prebound successor; exact linked pair first
 establishes successor parent durability then unlinks/syncs the predecessor;
-exact successor-only continues the selected archive; any missing binding,
-changed predecessor, mismatched pair, third destination, or originless
-cancelled canonical preserves every fact and refuses the name.
+exact successor-only continues only after validating its complete schema and
+the exact normalized path, source identity/digest, and selected destination
+namespace facts; any missing binding, changed predecessor, mismatched pair,
+third destination, or originless cancelled canonical preserves every fact and
+refuses the name.
 
 For a parseable source, archive selection is by exact canonical path, queue ID,
 and source digest. For a corrupt recovery source, selection is by the exact

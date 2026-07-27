@@ -324,3 +324,94 @@ durability, CAS cleanup, retention/GC, conditional
 internally consistent and executable.
 
 No card text was edited by this reviewer.
+
+## Writer note — named QueueStore execution-consumer scope (2026-07-27)
+
+This writer note does not change or reuse any historical review verdict and is
+not a review verdict.
+
+The card's execution-model lease was widened after final-draft review found
+that the EM glossary, EM-062 through EM-065, §7.4 main loop, dependency map,
+and conformance language still prescribed a project-wide singleton queue.
+That stale consumer algorithm contradicts queue-model's named QueueStore,
+QM-027 per-name admission, QM-062/QM-066 two-level capacity, and QM-067
+cross-queue arbitration. Queue-model cannot resolve the contradiction alone
+because it explicitly assigns dispatch-loop and capacity consumption to
+execution-model.
+
+The amended card now authorizes only a bounded named-QueueStore
+dispatch-consumption correction: the two queue glossary entries, EM-015f,
+EM-062 through EM-065, §6.5 queue-lifecycle wording, §7.4, queue-model entries
+in §9.3, queue-dispatch wording in §10.1, version/date, and one new history
+row. It requires:
+
+- duplicate pre-screen across every loaded named queue;
+- per-normalized-name submit/append semantics and the matching QM-061
+  correction;
+- `br ready` fallback only when the QueueStore named set is empty;
+- selection only from eligible active queues, without an ineligible sibling
+  blocking progress;
+- the global `--max-concurrent` gate plus the selected queue's `workers` gate;
+- QM-067 round-robin cursor advancement on every queue selection; and
+- deterministic named-fleet eager-refill targeting.
+
+The evidence schema, dispositions, validator, full-file semantic-diff proof,
+acceptance criteria, non-negotiable boundaries, and composition-review lens
+now enforce that exact region set and those semantics. All Run, workflow,
+checkpoint, failure, event payload, event-log, architecture, lease,
+semantic-base, execution-baseline, and historical-review rules remain
+unchanged.
+
+Fresh independent review of this card amendment is still required.
+
+## Independent named-QueueStore lease review (2026-07-27)
+
+- Reviewer: `/root/cq02_round6_design_review`
+- Scope: uncommitted CQ-02 card amendment in `cq02-lease-expansion`
+- Verdict: `APPROVE`
+
+The execution-model expansion is necessary and bounded to the actual named
+QueueStore contradictions. It authorizes exactly the two queue glossary
+entries, EM-015f, EM-062 through EM-065, the queue-lifecycle bullet in §6.5,
+the steady-state queue-selection/capacity block in §7.4, the queue-model
+dependency entries in §9.3, the queue-dispatch sentences in §10.1,
+frontmatter `version`/`last-updated`, and one new revision-history row. Run
+records, workflows, checkpoints, failures, event payloads, event-log
+mechanics, and non-queue execution semantics remain read-only.
+
+The amended contract requires the complete behavior needed to remove the
+singleton consumer:
+
+- EM-063 and EM-064 scan every loaded named queue for duplicate beads;
+- EM-065 admits a new submission when its normalized name is free and
+  confines append/rejection to an occupied target name;
+- `br ready` fallback is reachable only when the named set is empty; a
+  non-empty but temporarily ineligible fleet idles;
+- queue selection excludes paused, completed, full, or otherwise ineligible
+  queues without allowing one to block an eligible sibling;
+- the daemon-wide `--max-concurrent` ceiling and selected queue's `workers`
+  ceiling both apply;
+- QM-067 name-ordered round-robin advances its persistent cursor on every
+  selection; and
+- EM-062 chooses its eager-refill target deterministically from the named
+  fleet.
+
+QM-061 is explicitly corrected to single-orchestrator serialization through
+QueueStore with QM-027 scoped per normalized name, not a project-wide queue
+singleton.
+
+The full-file scope checker is executable and does not hide out-of-region
+drift. Against the pinned execution-model source, all eleven region patterns
+matched exactly once and were pairwise disjoint. An independently constructed
+fixture changing every authorized region, version/date, and one qualifying
+history row normalized successfully; adding an unrelated §1 edit remained
+visible and was rejected. The checker also preserves the literal document
+preamble and all non-version frontmatter.
+
+The semantic claim SHA, dynamically resolved execution baseline, minimum
+ancestor, unchanged task-index claim, worker Kerf/evidence lease, coordinator
+packaging boundary, historical-review preservation, independent-review gate,
+and root-single-writer handoff remain intact. The amendment worktree changes
+only the card and this review artifact, and `git diff --check` is clean.
+
+No card text was edited by this reviewer.

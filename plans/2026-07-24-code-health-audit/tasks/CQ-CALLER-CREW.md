@@ -39,6 +39,10 @@ workloop, registry, or launch edits.
 - Existing queue is never overwritten.
 - Crew remains otherwise deferred.
 
+Accepted intermediate: only placeholder persistence is migrated; no crew
+lifecycle is reactivated. Roll back only `crewHandlerImpl.ensureQueue`'s
+direct-persist region/tests.
+
 ## Verification
 
 Focused fault/race/repeat tests, daemon/queue suites, lint/UBS, and

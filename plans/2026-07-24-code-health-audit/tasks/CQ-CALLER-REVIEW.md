@@ -10,7 +10,8 @@
 
 ## Objective
 
-Migrate `daemonBudget.ChargeReviewLoopFailure` to the reviewed queue
+Migrate `internal/daemon/runports.go` `ChargeReviewLoopFailure` and its narrow
+port to the reviewed queue
 transaction so the failure count and any resulting budget state become durable
 before visibility. Preserve the existing `BudgetPort` consumer contract unless
 truthful error propagation requires a reviewed amendment.
@@ -37,6 +38,9 @@ required, and focused tests. No `workloop.go` mode/terminal edits.
 - Failed persistence does not increment installed state.
 - Retry charges once and returns the correct budget decision.
 - Production caller cannot mistake failure for exhaustion or success.
+
+Accepted intermediate: review charging is durable; terminal policy remains
+`JR-03`. Roll back only the named port/region/tests.
 
 ## Verification
 

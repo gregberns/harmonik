@@ -37,6 +37,10 @@ RPC, budget, reservation, or terminal edits.
 - Retry applies the transition exactly once.
 - Named and all-queue behavior remain equivalent.
 
+Accepted intermediate: pause/resume is transaction-backed while cancellation
+and terminal paths remain downstream. Roll back only
+`transitionToPausedByDrain`, `transitionToActive`, and focused tests.
+
 ## Verification
 
 Fault/property/race/repeat tests, queuewiring suite, delta lint, UBS, and

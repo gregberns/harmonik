@@ -10,10 +10,9 @@
 
 ## Objective
 
-Replace eager refill's live-pointer `AppendItems` → `Persist` path with the
-reviewed clone → mutate → persist → install transaction. Failed persistence
-must produce no install, wake, or event. Cadence/trigger ownership remains
-`WL-02A`.
+Replace eager refill's live-pointer path with a complete immutable named-fleet
+snapshot, all-name duplicate pre-screen, deterministic normalized-name refill
+target, and reviewed transaction. Cadence/trigger ownership remains `WL-02A`.
 
 ## Evidence to verify first
 
@@ -32,6 +31,9 @@ and focused tests. No `workloop.go`, reservation, claim, or terminal edits.
 3. Mutate and persist the candidate before install.
 4. Wake/emit only after durable install.
 5. Remove live-pointer mutation and nonfatal persistence behavior.
+6. Scan every named queue for a candidate duplicate; choose the first eligible
+   active stream target in normalized-name order after global and per-queue
+   capacity gates. Paused/full siblings do not block.
 
 ## Acceptance
 
@@ -39,6 +41,10 @@ and focused tests. No `workloop.go`, reservation, claim, or terminal edits.
 - Retry appends the intended items exactly once.
 - No mutable queue pointer escapes the transaction.
 - `WL-02A` can call eager refill as a typed maintenance effect.
+- A bead present under any sibling name is excluded.
+
+Accepted intermediate: named eager refill consumes the transaction and owns no
+receipt. Roll back only `eagerRefillEval`'s fleet selection/mutation/tests.
 
 ## Verification
 

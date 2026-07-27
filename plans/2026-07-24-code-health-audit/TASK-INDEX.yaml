@@ -1,6 +1,6 @@
 # Coordinator-owned source of truth. Workers read this file but never edit it.
 schema_version: 2
-updated: 2026-07-26
+updated: 2026-07-27
 objective: >-
   Decompose the queue/run execution core into constructor-complete, independently
   testable owners; then restore and prove a reliable local queue -> durable
@@ -310,7 +310,7 @@ tasks:
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [ARCH-GATE, JR-04, BR-04, CQ-03, WL-03]
-    conflicts_with: [PI-F2S, PI-R2]
+    conflicts_with: [CQ-CALLER-GROUP-ACTIVATION, CQ-CALLER-WORKLOOP-MAINTENANCE, JR-03, PI-F2S, PI-R2]
     lease_family: workloop_recovery_spine
     required_proof: [mutation, fault, restart, race, architecture_gate, restart_spawn_gate_gap_closure, restart_live_session_gap_closure, check_fast]
 
@@ -709,7 +709,7 @@ tasks:
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-02I, CQ-01]
-    conflicts_with: []
+    conflicts_with: [CQ-CALLER-INLINE-EXIT]
     lease_family: queue_cli_bootstrap
     required_proof: [fault, composition, repeat, delta_lint, ubs, check_fast]
 
@@ -725,6 +725,58 @@ tasks:
     conflicts_with: []
     lease_family: queue_crew_placeholder
     required_proof: [fault, race, repeat, delta_lint, ubs, check_fast]
+
+  CQ-CALLER-GROUP-ACTIVATION:
+    title: Remove standalone normal activation
+    card: tasks/CQ-CALLER-GROUP-ACTIVATION.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-03]
+    conflicts_with: [CQ-03, JR-01, JR-03, CQ-CALLER-WORKLOOP-MAINTENANCE, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [targeted, mutation, race, restart, delta_lint, ubs, check_fast]
+
+  CQ-CALLER-WORKLOOP-MAINTENANCE:
+    title: Migrate residual workloop mutations
+    card: tasks/CQ-CALLER-WORKLOOP-MAINTENANCE.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-03, JR-03]
+    conflicts_with: [CQ-03, CQ-CALLER-GROUP-ACTIVATION, JR-01, JR-03, WL-REC-01, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    lease_family: dispatch_spine
+    required_proof: [targeted, fault, mutation, race, repeat, architecture_gate, delta_lint, ubs, check_fast]
+
+  CQ-CALLER-INLINE-EXIT:
+    title: Migrate post-daemon inline exit archive
+    card: tasks/CQ-CALLER-INLINE-EXIT.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-CALLER-BOOTSTRAP, JR-03]
+    conflicts_with: [CQ-CALLER-BOOTSTRAP]
+    lease_family: queue_inline_exit
+    required_proof: [targeted, fault, composition, mutation, repeat, delta_lint, ubs, check_fast]
+
+  CQ-EXPLORE-CANCEL:
+    title: Explore cancellation and capability fault surfaces
+    card: tasks/CQ-EXPLORE-CANCEL.md
+    group: CQ
+    priority: P1
+    phase: triage
+    disposition: open
+    routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-CALLER-CANCEL, CQ-04]
+    conflicts_with: []
+    lease_family: queue_cancel_exploratory
+    required_proof: [exploratory, fault_matrix, zero_write, capability_refusal, review]
 
   CQ-DEF-01:
     title: Preserve a queue default harness through production dispatch
@@ -869,8 +921,8 @@ tasks:
     card: tasks/CQ-02.md
     group: CQ
     priority: P0
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-00]
     conflicts_with: []
@@ -882,7 +934,24 @@ tasks:
       worktree: /Users/gb/github/harmonik
       bead_id: null
       claimed_at: 2026-07-27T07:21:58Z
-    card_review: {state: approved, reviewer: /root/rl01_final_review, artifact: tasks/evidence/CQ-02-CARD-REVIEW.md, verdict: APPROVE}
+    card_review: {state: approved, reviewer: /root/cq02_round6_design_review, artifact: tasks/evidence/CQ-02-CARD-REVIEW.md, verdict: APPROVE}
+    review:
+      state: approved
+      reviewer: "/root/cq02_round6_design_review + /root/cq02_spec_draft_review"
+      artifact: tasks/evidence/CQ-02.yaml
+      verdict: APPROVE
+      note: >-
+        Planning/spec package approval only. Implementation is decomposed into
+        downstream cards and is not claimed complete.
+    integration:
+      state: integrated
+      commit: 77d0a2257c8a9b2b80737cedf26b1fd70f3d9c5c
+      integrated_sha: 1de304975a5a7d28bf3f40e68c38d81b059aa241
+    proof: green
+    required_proof_status:
+      kerf: green
+      spec_validation: green
+      cross_group_review: green
     required_proof: [kerf, spec_validation, cross_group_review]
 
   CQ-02I:
@@ -898,6 +967,45 @@ tasks:
     lease_family: queue_persistence
     required_proof: [targeted, fault, race, delta_lint, ubs, check_fast]
 
+  CQ-RECEIPT:
+    title: Add authoritative queue completion receipts
+    card: tasks/CQ-RECEIPT.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-02I, CQ-01]
+    conflicts_with: [CQ-01, CQ-CALLER-CANCEL]
+    lease_family: queue_receipt
+    required_proof: [targeted, property, fault, race, restart, compatibility, mutation, delta_lint, ubs, check_fast]
+
+  CQ-RUN-WAIT:
+    title: Wait on authoritative queue state
+    card: tasks/CQ-RUN-WAIT.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_high}
+    hard_requires: [CQ-RECEIPT]
+    conflicts_with: []
+    lease_family: run_via_daemon_waiter
+    required_proof: [targeted, fault, mutation, shared_append, same_name_reuse, delta_lint, ubs, check_fast]
+
+  CQ-CALLER-CANCEL:
+    title: Migrate live and CLI cancellation
+    card: tasks/CQ-CALLER-CANCEL.md
+    group: CQ
+    priority: P0
+    phase: triage
+    disposition: open
+    routing: {complexity: high, profile: sol_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
+    hard_requires: [CQ-RECEIPT]
+    conflicts_with: [CQ-RECEIPT]
+    lease_family: queue_cancel_rpc
+    required_proof: [targeted, fault, restart, compatibility, mutation, delta_lint, ubs, check_fast]
+
   CQ-01:
     title: Enforce the queue admission transaction
     card: tasks/CQ-01.md
@@ -906,8 +1014,8 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [CQ-00, CQ-02I]
-    conflicts_with: [PI-Q2B]
+    hard_requires: [CQ-02I]
+    conflicts_with: [PI-Q2B, CQ-RECEIPT]
     lease_family: queue_rpc
     required_proof: [targeted, race, fault, composition, delta_lint, ubs, check_fast]
 
@@ -920,7 +1028,7 @@ tasks:
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-01, CQ-02I, WL-03]
-    conflicts_with: [CQ-DEF-01, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    conflicts_with: [CQ-DEF-01, CQ-CALLER-GROUP-ACTIVATION, CQ-CALLER-WORKLOOP-MAINTENANCE, JR-01, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
     required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
 
@@ -945,7 +1053,7 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [CQ-02I, CQ-03]
+    hard_requires: [CQ-RECEIPT, JR-01]
     conflicts_with: [CQ-MIG-01, JR-04]
     lease_family: queue_startup_recovery
     required_proof: [targeted, property, fault, delta_lint, ubs, check_fast]
@@ -971,7 +1079,7 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [CQ-03, CQ-04, CQ-06, CQ-CALLER-EAGER, CQ-CALLER-OPERATOR, CQ-CALLER-BUDGET, CQ-CALLER-REVIEW, CQ-CALLER-BOOTSTRAP, CQ-CALLER-CREW]
+    hard_requires: [CQ-03, CQ-04, CQ-06, CQ-RECEIPT, CQ-RUN-WAIT, JR-03, CQ-CALLER-EAGER, CQ-CALLER-OPERATOR, CQ-CALLER-BUDGET, CQ-CALLER-REVIEW, CQ-CALLER-BOOTSTRAP, CQ-CALLER-CREW]
     conflicts_with: []
     lease_family: queue_scenarios
     required_proof: [scenario, race, fault, repeat, check_fast]
@@ -1020,7 +1128,7 @@ tasks:
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [JR-00, CQ-03, BR-00]
-    conflicts_with: [CQ-DEF-01, CQ-03, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    conflicts_with: [CQ-DEF-01, CQ-03, CQ-CALLER-GROUP-ACTIVATION, CQ-CALLER-WORKLOOP-MAINTENANCE, JR-03, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
     required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
 
@@ -1067,8 +1175,8 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [JR-01, JR-02, BR-03]
-    conflicts_with: [CQ-DEF-01, CQ-03, JR-01, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
+    hard_requires: [CQ-RUN-WAIT, CQ-04, JR-01, JR-02, BR-03, CQ-CALLER-GROUP-ACTIVATION]
+    conflicts_with: [CQ-DEF-01, CQ-03, CQ-CALLER-GROUP-ACTIVATION, CQ-CALLER-WORKLOOP-MAINTENANCE, JR-01, PI-F2S, PI-R2, WL-02A, WL-02B, WL-MUT-01, WL-03, WL-04, BR-01, BR-02A, BR-02B, BR-02C, BR-03, BR-04]
     lease_family: dispatch_spine
     required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
 
@@ -1082,7 +1190,7 @@ tasks:
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-04, JR-03]
     conflicts_with: [CQ-04]
-    lease_family: run_recovery
+    lease_family: run_session_adoption
     required_proof: [targeted, race, fault, restart, delta_lint, ubs, check_fast]
 
   JR-05:

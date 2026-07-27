@@ -6,6 +6,8 @@
 - Execution profile: `terra_high`
 - Reviewer profile: `sol_xhigh`
 - Depends on: `ARCH-GATE`, `JR-04`, `BR-04`, `CQ-03`, `WL-03`
+- Conflicts with: `CQ-CALLER-WORKLOOP-MAINTENANCE` and the other active
+  `workloop.go` writers named by `TASK-INDEX.yaml`
 - Work type: serial workloop caller migration
 
 ## Objective
@@ -56,6 +58,11 @@ files are read-only.
 - Live-session disappearance deterministically reopens the ledger, durably
   reverts and wakes the queue, and removes the registry record in that order.
 - `runWorkLoop` retains no direct adoption policy.
+
+`JR-04` production files and CQ-04 startup files are read-only. Accepted
+intermediate: recovery policy exists only in JR-04 and workloop retains
+scheduling/effect application. Roll back only restart gate/adoption call-site
+migration and narrow adapter wiring.
 
 ## Verification
 

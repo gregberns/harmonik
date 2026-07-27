@@ -10,7 +10,8 @@
 
 ## Objective
 
-Migrate `PerQueueSpendMeter.pauseQueueByBudget` and
+Migrate `internal/daemon/perqueuespendmeter_tigaf11.go`
+`pauseQueueByBudget` and
 `unpauseBudgetPausedQueues` to the queue transaction. Failed persistence must
 not expose a paused/active state, wake dispatch, or emit success.
 
@@ -36,6 +37,9 @@ operator-event, reservation, or terminal edits.
 - Memory and disk agree after every cut.
 - Day rollover retries converge without skipping or duplicating a queue.
 - Budget status never clears another pause reason.
+
+Accepted intermediate: budget mutations are transaction-backed and other
+callers remain unchanged. Roll back only the two named symbols/tests.
 
 ## Verification
 

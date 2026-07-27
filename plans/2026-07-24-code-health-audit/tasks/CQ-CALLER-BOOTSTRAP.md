@@ -10,9 +10,10 @@
 
 ## Objective
 
-Replace the inline queue bootstrap in `cmd/harmonik.runBeadSubcommandIO` with
-the reviewed queue admission/transaction API. The CLI must not create a second
-persistence implementation.
+Replace `cmd/harmonik/run.go` `runBeadSubcommandIO` initial persistence,
+pre-daemon paused/cancelled/proven-orphan archive fallbacks, and QueueStore
+adoption with the reviewed owner. The CLI must not create a second persistence
+implementation.
 
 ## Evidence to verify first
 
@@ -36,6 +37,12 @@ implementation, workloop, or unrelated CLI router edits.
 - CLI bootstrap uses the same durable transaction as supported admission.
 - Failure creates no partial queue or false success.
 - Existing queue behavior remains idempotent.
+- Adoption occurs only after durable classification; no local archive writer
+  survives.
+
+Accepted intermediate: bootstrap/adoption is migrated; post-daemon exit remains
+for `CQ-CALLER-INLINE-EXIT`. Roll back only bootstrap/adoption/tests and
+serialize that downstream card on `cmd/harmonik/run.go`.
 
 ## Verification
 

@@ -200,12 +200,19 @@ tasks:
     card: tasks/WL-01.md
     group: ARCH
     priority: P0
-    phase: ready
+    phase: implement
     disposition: open
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [ARCH-00]
     conflicts_with: []
     lease_family: workloop_fidelity
+    claim:
+      owner: terra-wl-01
+      base_sha: b60d734515a77ceee911cd755dfab7078b1c7c55
+      branch: work/wl-01-terra
+      worktree: /Users/gb/github/harmonik-wt/wl-01-terra
+      bead_id: null
+      claimed_at: 2026-07-27T06:55:10Z
     card_review:
       state: approved
       reviewer: /root/task_pack_arch_audit

@@ -64,18 +64,6 @@ const (
 	OperationCancellation    OperationKind = "cancellation"
 )
 
-// DigestState binds the exact prior canonical state.
-type DigestState struct {
-	State  string `json:"state"`
-	SHA256 string `json:"sha256,omitempty"`
-}
-
-// CandidateBinding binds the already-durable selected candidate temp.
-type CandidateBinding struct {
-	SHA256       string `json:"sha256"`
-	TempBasename string `json:"temp_basename"`
-}
-
 // ArchiveHandoff prebinds a cancelled replacement to one exact successor
 // archive intent. CQ-02I stores the facts; cancellation callers are downstream.
 type ArchiveHandoff struct {
@@ -92,17 +80,18 @@ type ArchiveHandoff struct {
 // ReplaceIntentV1 is the event-free universal replacement record. Completion
 // receipt binding is intentionally fixed to null by CQ-02I.
 type ReplaceIntentV1 struct {
-	SchemaVersion     int              `json:"schema_version"`
-	TransactionID     string           `json:"transaction_id"`
-	OperationKind     OperationKind    `json:"operation_kind"`
-	NormalizedName    string           `json:"normalized_name"`
-	QueueID           string           `json:"queue_id"`
-	CanonicalBasename string           `json:"canonical_basename"`
-	Prior             DigestState      `json:"prior"`
-	Candidate         CandidateBinding `json:"candidate"`
-	WakeRequired      bool             `json:"wake_required"`
-	CompletionReceipt any              `json:"completion_receipt"`
-	ArchiveHandoff    *ArchiveHandoff  `json:"archive_handoff"`
+	SchemaVersion            int             `json:"schema_version"`
+	TransactionID            string          `json:"transaction_id"`
+	OperationKind            OperationKind   `json:"operation_kind"`
+	NormalizedName           string          `json:"normalized_name"`
+	QueueID                  string          `json:"queue_id"`
+	CanonicalBasename        string          `json:"canonical_basename"`
+	PriorState               string          `json:"prior_state"`
+	CandidateSHA256          string          `json:"candidate_sha256"`
+	CandidateTempBasename    string          `json:"candidate_temp_basename"`
+	WakeRequired             bool            `json:"wake_required"`
+	CompletionReceiptBinding any             `json:"completion_receipt_binding,omitempty"`
+	ArchiveHandoffBinding    *ArchiveHandoff `json:"archive_handoff_binding,omitempty"`
 }
 
 // ArchiveIntentV1 is the exact successor record for linked archive handoff.
@@ -195,6 +184,20 @@ type namespaceOps struct {
 	closeDir  func(*os.File) error
 }
 
+type noReplaceState string
+
+const (
+	noReplaceInstalled     noReplaceState = "installed"
+	noReplaceNotInstalled  noReplaceState = "not_installed"
+	noReplaceRefused       noReplaceState = "refused"
+	noReplaceIndeterminate noReplaceState = "indeterminate"
+)
+
+type noReplaceResult struct {
+	State noReplaceState
+	Err   error
+}
+
 func osNamespaceOps() namespaceOps {
 	return namespaceOps{
 		mkdirAll: os.MkdirAll,
@@ -241,19 +244,31 @@ func writeReplacement(ctx context.Context, plan ReplacementPlan, ops namespaceOp
 	if err := ops.mkdirAll(qDir, 0o700); err != nil {
 		return replacementFailure(intent, OutcomeNotCommitted, fmt.Errorf("mkdir queue directory: %w", err))
 	}
-	candidatePath := filepath.Join(qDir, intent.Candidate.TempBasename)
+	candidatePath := filepath.Join(qDir, intent.CandidateTempBasename)
 	if err := durableFile(candidatePath, plan.CandidateBytes, ops); err != nil {
 		return replacementFailure(intent, OutcomeNotCommitted, fmt.Errorf("candidate: %w", err))
 	}
 
 	intentPath := replaceIntentPath(plan.ProjectDir, plan.NormalizedName)
-	if err := durableNoReplace(intentPath, intentBytes, ops); err != nil {
+	install := durableNoReplace(intentPath, intentBytes, ops)
+	switch install.State {
+	case noReplaceNotInstalled:
 		cleanupErr := ops.remove(candidatePath)
 		return replacementFailure(
 			intent,
 			OutcomeNotCommitted,
-			fmt.Errorf("replace intent: %w", errors.Join(err, cleanupErr)),
+			fmt.Errorf("replace intent: %w", errors.Join(install.Err, cleanupErr)),
 		)
+	case noReplaceRefused, noReplaceIndeterminate:
+		return replacementFailure(
+			intent,
+			OutcomeCommitIndeterminate,
+			fmt.Errorf("replace intent refused: %w", install.Err),
+		)
+	case noReplaceInstalled:
+		// Continue only after the exact predecessor entry is selected.
+	default:
+		return replacementFailure(intent, OutcomeCommitIndeterminate, errors.New("unknown no-replace result"))
 	}
 	if err := syncDirectory(qDir, ops); err != nil {
 		return replacementFailure(intent, OutcomeCommitIndeterminate, fmt.Errorf("sync replace intent: %w", err))
@@ -273,6 +288,9 @@ func writeReplacement(ctx context.Context, plan ReplacementPlan, ops namespaceOp
 }
 
 func prepareReplacement(plan ReplacementPlan) (ReplaceIntentV1, []byte, error) {
+	if err := validateArchiveOperationCoupling(plan.OperationKind, plan.ArchiveHandoff); err != nil {
+		return ReplaceIntentV1{}, nil, err
+	}
 	transactionID, err := newUUIDv7()
 	if err != nil {
 		return ReplaceIntentV1{}, nil, fmt.Errorf("transaction id: %w", err)
@@ -291,6 +309,9 @@ func prepareReplacement(plan ReplacementPlan) (ReplaceIntentV1, []byte, error) {
 // explicit and gives tests a deterministic seam. Production callers use
 // prepareReplacement, which allocates canonical UUIDv7 values first.
 func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID string) (ReplaceIntentV1, []byte, error) {
+	if err := validateArchiveOperationCoupling(plan.OperationKind, plan.ArchiveHandoff); err != nil {
+		return ReplaceIntentV1{}, nil, err
+	}
 	name := NormaliseQueueName(plan.NormalizedName)
 	if ok, detail := ValidateQueueName(name); !ok {
 		return ReplaceIntentV1{}, nil, fmt.Errorf("invalid normalized name: %s", detail)
@@ -311,7 +332,7 @@ func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID 
 	if NormaliseQueueName(candidate.Name) != name || candidate.QueueID != plan.QueueID {
 		return ReplaceIntentV1{}, nil, errors.New("candidate identity does not match plan")
 	}
-	prior := DigestState{State: "absent"}
+	prior := "absent"
 	if plan.PriorBytes != nil {
 		parsedPrior, parseErr := UnmarshalQueue(plan.PriorBytes)
 		if parseErr != nil {
@@ -320,7 +341,7 @@ func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID 
 		if NormaliseQueueName(parsedPrior.Name) != name {
 			return ReplaceIntentV1{}, nil, errors.New("prior name does not match plan")
 		}
-		prior = DigestState{State: "present", SHA256: digestHex(plan.PriorBytes)}
+		prior = digestHex(plan.PriorBytes)
 	}
 	candidateDigest := digestHex(plan.CandidateBytes)
 	candidateBase := fmt.Sprintf("%s.candidate-%s", name, transactionID)
@@ -335,20 +356,17 @@ func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID 
 		return ReplaceIntentV1{}, nil, err
 	}
 	intent := ReplaceIntentV1{
-		SchemaVersion:     1,
-		TransactionID:     transactionID,
-		OperationKind:     plan.OperationKind,
-		NormalizedName:    name,
-		QueueID:           plan.QueueID,
-		CanonicalBasename: name + ".json",
-		Prior:             prior,
-		Candidate: CandidateBinding{
-			SHA256:       candidateDigest,
-			TempBasename: candidateBase,
-		},
-		WakeRequired:      plan.WakeRequired,
-		CompletionReceipt: nil,
-		ArchiveHandoff:    handoff,
+		SchemaVersion:         1,
+		TransactionID:         transactionID,
+		OperationKind:         plan.OperationKind,
+		NormalizedName:        name,
+		QueueID:               plan.QueueID,
+		CanonicalBasename:     name + ".json",
+		PriorState:            prior,
+		CandidateSHA256:       candidateDigest,
+		CandidateTempBasename: candidateBase,
+		WakeRequired:          plan.WakeRequired,
+		ArchiveHandoffBinding: handoff,
 	}
 	if err := validateReplaceIntent(intent); err != nil {
 		return ReplaceIntentV1{}, nil, err
@@ -358,6 +376,16 @@ func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID 
 		return ReplaceIntentV1{}, nil, fmt.Errorf("marshal replace intent: %w", err)
 	}
 	return intent, intentBytes, nil
+}
+
+func validateArchiveOperationCoupling(kind OperationKind, handoff *ArchiveHandoffPlan) error {
+	if kind == OperationCancellation && handoff == nil {
+		return errors.New("cancellation requires archive handoff")
+	}
+	if kind != OperationCancellation && handoff != nil {
+		return errors.New("archive handoff requires cancellation operation")
+	}
+	return nil
 }
 
 func prepareArchiveHandoff(
@@ -481,10 +509,29 @@ func archiveSuccessorMatchesHandoff(
 		successor.DestinationBasename == h.DestinationBasename
 }
 
-// ClassifyReplaceIntent classifies only the exact paths and digests bound by
-// intent. Corrupt or third state is preserved and refused.
-func ClassifyReplaceIntent(projectDir string, intent ReplaceIntentV1) (ReplaceRecoveryAction, error) {
+// ClassifyReplaceIntent strictly decodes canonical predecessor bytes before
+// consulting only the exact paths and digests they bind.
+func ClassifyReplaceIntent(projectDir string, intentBytes []byte) (ReplaceRecoveryAction, error) {
+	intent, err := decodeReplaceIntent(intentBytes)
+	if err != nil {
+		return ReplaceRefuse, err
+	}
 	return classifyReplaceIntent(projectDir, intent, osNamespaceOps())
+}
+
+func decodeReplaceIntent(intentBytes []byte) (ReplaceIntentV1, error) {
+	var intent ReplaceIntentV1
+	if err := strictJSON(intentBytes, &intent); err != nil {
+		return ReplaceIntentV1{}, fmt.Errorf("replace intent: %w", err)
+	}
+	if err := validateReplaceIntent(intent); err != nil {
+		return ReplaceIntentV1{}, err
+	}
+	canonical, err := json.Marshal(intent)
+	if err != nil || !bytes.Equal(canonical, intentBytes) {
+		return ReplaceIntentV1{}, errors.New("replace intent bytes are not canonical")
+	}
+	return intent, nil
 }
 
 func classifyReplaceIntent(projectDir string, intent ReplaceIntentV1, ops namespaceOps) (ReplaceRecoveryAction, error) {
@@ -496,19 +543,19 @@ func classifyReplaceIntent(projectDir string, intent ReplaceIntentV1, ops namesp
 	if err != nil {
 		return ReplaceRefuse, err
 	}
-	candidate, candidatePresent, err := readOptional(filepath.Join(qDir, intent.Candidate.TempBasename), ops)
+	candidate, candidatePresent, err := readOptional(filepath.Join(qDir, intent.CandidateTempBasename), ops)
 	if err != nil {
 		return ReplaceRefuse, err
 	}
 	canonicalDigest := digestHex(canonical)
 	candidateDigest := digestHex(candidate)
 	switch {
-	case canonicalPresent && canonicalDigest == intent.Candidate.SHA256:
+	case canonicalPresent && canonicalDigest == intent.CandidateSHA256 && !candidatePresent:
 		return ReplacePromoteCanonical, nil
-	case candidatePresent && candidateDigest == intent.Candidate.SHA256 &&
-		priorMatches(intent.Prior, canonical, canonicalPresent):
+	case candidatePresent && candidateDigest == intent.CandidateSHA256 &&
+		priorMatches(intent.PriorState, canonical, canonicalPresent):
 		return ReplaceRetryRename, nil
-	case !candidatePresent && priorMatches(intent.Prior, canonical, canonicalPresent):
+	case !candidatePresent && priorMatches(intent.PriorState, canonical, canonicalPresent):
 		return ReplaceNotCommitted, nil
 	default:
 		return ReplaceRefuse, errors.New("replace intent facts are corrupt, mismatched, or third-state")
@@ -556,7 +603,7 @@ func installBoundArchiveIntent(
 	if err := validateReplaceIntent(predecessor); err != nil {
 		return NamespaceResult{Outcome: OutcomeRejected, Err: err}
 	}
-	h := predecessor.ArchiveHandoff
+	h := predecessor.ArchiveHandoffBinding
 	if h == nil {
 		return NamespaceResult{Outcome: OutcomeRejected, Err: errors.New("predecessor has no archive handoff")}
 	}
@@ -568,8 +615,16 @@ func installBoundArchiveIntent(
 	if err := ops.mkdirAll(qDir, 0o700); err != nil {
 		return NamespaceResult{Outcome: OutcomeNotCommitted, Err: err}
 	}
-	if err := durableNoReplace(archiveIntentPath(projectDir, predecessor.NormalizedName), data, ops); err != nil {
-		return NamespaceResult{Outcome: OutcomeNotCommitted, Err: err}
+	install := durableNoReplace(archiveIntentPath(projectDir, predecessor.NormalizedName), data, ops)
+	switch install.State {
+	case noReplaceNotInstalled:
+		return NamespaceResult{Outcome: OutcomeNotCommitted, Err: install.Err}
+	case noReplaceRefused, noReplaceIndeterminate:
+		return NamespaceResult{Outcome: OutcomeCommitIndeterminate, Err: install.Err}
+	case noReplaceInstalled:
+		// Continue to establish parent durability.
+	default:
+		return NamespaceResult{Outcome: OutcomeCommitIndeterminate, Err: errors.New("unknown no-replace result")}
 	}
 	if err := syncDirectory(qDir, ops); err != nil {
 		return NamespaceResult{Outcome: OutcomeCommitIndeterminate, Err: err}
@@ -623,7 +678,7 @@ func classifyLinkedPair(
 	if err := validateReplaceIntent(predecessor); err != nil {
 		return LinkedRefuse, err
 	}
-	h := predecessor.ArchiveHandoff
+	h := predecessor.ArchiveHandoffBinding
 	if h == nil {
 		return LinkedRefuse, errors.New("predecessor has no archive handoff")
 	}
@@ -663,22 +718,19 @@ func validateReplaceIntent(intent ReplaceIntentV1) error {
 	if !validReplaceIntentEnvelope(intent) {
 		return errors.New("invalid or unsupported replace intent")
 	}
+	if (intent.OperationKind == OperationCancellation) != (intent.ArchiveHandoffBinding != nil) {
+		return errors.New("invalid cancellation/archive handoff coupling")
+	}
 	if ok, _ := ValidateQueueName(intent.NormalizedName); !ok ||
 		NormaliseQueueName(intent.NormalizedName) != intent.NormalizedName {
 		return errors.New("invalid or non-normalized replace intent name")
 	}
-	if intent.Prior.State != "absent" && intent.Prior.State != "present" {
-		return errors.New("invalid prior state")
-	}
-	if intent.Prior.State == "present" && !validSHA256(intent.Prior.SHA256) {
-		return errors.New("present prior missing digest")
-	}
-	if intent.Prior.State == "absent" && intent.Prior.SHA256 != "" {
-		return errors.New("absent prior contains digest")
+	if intent.PriorState != "absent" && !validSHA256(intent.PriorState) {
+		return errors.New("prior state must be absent or an exact digest")
 	}
 	return validateArchiveHandoff(
-		intent.ArchiveHandoff,
-		intent.Candidate.SHA256,
+		intent.ArchiveHandoffBinding,
+		intent.CandidateSHA256,
 		intent.TransactionID,
 		intent.NormalizedName,
 	)
@@ -691,9 +743,9 @@ func validReplaceIntentEnvelope(intent ReplaceIntentV1) bool {
 		intent.NormalizedName != "" &&
 		validateUUIDv7(intent.QueueID) == nil &&
 		intent.CanonicalBasename == intent.NormalizedName+".json" &&
-		validSHA256(intent.Candidate.SHA256) &&
-		intent.Candidate.TempBasename == intent.NormalizedName+".candidate-"+intent.TransactionID &&
-		intent.CompletionReceipt == nil
+		validSHA256(intent.CandidateSHA256) &&
+		intent.CandidateTempBasename == intent.NormalizedName+".candidate-"+intent.TransactionID &&
+		intent.CompletionReceiptBinding == nil
 }
 
 func validOperationKind(kind OperationKind) bool {
@@ -822,32 +874,62 @@ func durableFile(path string, data []byte, ops namespaceOps) error {
 	return nil
 }
 
-func durableNoReplace(path string, data []byte, ops namespaceOps) error {
+func durableNoReplace(path string, data []byte, ops namespaceOps) noReplaceResult {
 	existing, present, err := readOptional(path, ops)
 	if err != nil {
-		return err
+		return noReplaceResult{State: noReplaceRefused, Err: err}
 	}
 	if present {
 		if bytes.Equal(existing, data) {
-			return nil
+			return noReplaceResult{State: noReplaceInstalled}
 		}
-		return errors.New("existing record differs")
+		return noReplaceResult{State: noReplaceRefused, Err: errors.New("existing record differs")}
 	}
 	tmp := path + ".tmp-" + uniqueTmpSuffix()
 	if err := durableFile(tmp, data, ops); err != nil {
-		return err
+		return noReplaceResult{State: noReplaceNotInstalled, Err: err}
 	}
 	if err := ops.link(tmp, path); err != nil {
 		existing, present, readErr := readOptional(path, ops)
 		if readErr == nil && present && bytes.Equal(existing, data) {
-			// The exact target is already installed. A leaked unique temp is
-			// non-authoritative cleanup evidence and cannot change that fact.
-			_ = ops.remove(tmp) //nolint:errcheck // exact no-replace target is already selected
-			return nil
+			if cleanupErr := ops.remove(tmp); cleanupErr != nil {
+				return noReplaceResult{
+					State: noReplaceIndeterminate,
+					Err:   errors.Join(err, cleanupErr),
+				}
+			}
+			return noReplaceResult{State: noReplaceInstalled}
 		}
-		return errors.Join(err, readErr, ops.remove(tmp))
+		if readErr != nil {
+			return noReplaceResult{State: noReplaceIndeterminate, Err: errors.Join(err, readErr)}
+		}
+		if present {
+			return noReplaceResult{State: noReplaceRefused, Err: errors.New("conflicting record appeared during install")}
+		}
+		return noReplaceResult{State: noReplaceNotInstalled, Err: errors.Join(err, ops.remove(tmp))}
 	}
-	return ops.remove(tmp)
+	if err := ops.remove(tmp); err != nil {
+		return classifyNoReplaceCleanupFailure(path, tmp, data, err, ops)
+	}
+	return noReplaceResult{State: noReplaceInstalled}
+}
+
+func classifyNoReplaceCleanupFailure(
+	path, tmp string,
+	data []byte,
+	cause error,
+	ops namespaceOps,
+) noReplaceResult {
+	target, targetPresent, targetErr := readOptional(path, ops)
+	temp, tempPresent, tempErr := readOptional(tmp, ops)
+	factsErr := errors.Join(targetErr, tempErr)
+	if targetErr == nil && (!targetPresent || !bytes.Equal(target, data)) {
+		factsErr = errors.Join(factsErr, errors.New("installed record missing or differs after temp cleanup failure"))
+	}
+	if tempErr == nil && tempPresent && !bytes.Equal(temp, data) {
+		factsErr = errors.Join(factsErr, errors.New("install temp differs after cleanup failure"))
+	}
+	return noReplaceResult{State: noReplaceIndeterminate, Err: errors.Join(cause, factsErr)}
 }
 
 func syncDirectory(path string, ops namespaceOps) error {
@@ -874,11 +956,11 @@ func readOptional(path string, ops namespaceOps) (data []byte, present bool, err
 	return data, true, nil
 }
 
-func priorMatches(prior DigestState, canonical []byte, present bool) bool {
-	if prior.State == "absent" {
+func priorMatches(prior string, canonical []byte, present bool) bool {
+	if prior == "absent" {
 		return !present
 	}
-	return present && digestHex(canonical) == prior.SHA256
+	return present && digestHex(canonical) == prior
 }
 
 func digestHex(data []byte) string {

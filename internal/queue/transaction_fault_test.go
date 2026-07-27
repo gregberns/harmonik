@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -280,6 +281,45 @@ func TestWriteReplacementFaultCuts(t *testing.T) {
 	}
 }
 
+func TestWriteReplacementIntentTempUnlinkAfterInstallIsIndeterminate(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	plan := transactionFixturePlan(t, projectDir)
+	transactionSeedPrior(t, plan)
+	ops := osNamespaceOps()
+	remove := ops.remove
+	ops.remove = func(path string) error {
+		if strings.Contains(filepath.Base(path), ".replace-intent.tmp-") {
+			return errors.New("cut intent temp unlink")
+		}
+		return remove(path)
+	}
+
+	got := writeReplacement(context.Background(), plan, ops)
+	if got.Outcome != OutcomeCommitIndeterminate || got.Err == nil {
+		t.Fatalf("outcome = (%q, %v), want commit indeterminate", got.Outcome, got.Err)
+	}
+	if canonical := transactionReadCanonical(t, plan); !bytes.Equal(canonical, plan.PriorBytes) {
+		t.Fatal("canonical changed after indeterminate intent installation")
+	}
+	intentBytes, err := os.ReadFile(replaceIntentPath(projectDir, QueueNameMain))
+	if err != nil {
+		t.Fatalf("installed intent evidence missing: %v", err)
+	}
+	candidatePath := filepath.Join(queuesDir(projectDir), got.Intent.CandidateTempBasename)
+	candidate, err := os.ReadFile(candidatePath) //nolint:gosec // path is test-owned t.TempDir data
+	if err != nil {
+		t.Fatalf("candidate evidence missing: %v", err)
+	}
+	if !bytes.Equal(candidate, plan.CandidateBytes) {
+		t.Fatal("candidate evidence differs from selected bytes")
+	}
+	action, err := ClassifyReplaceIntent(projectDir, intentBytes)
+	if err != nil || action != ReplaceRetryRename {
+		t.Fatalf("restart action = (%q, %v), want retry rename", action, err)
+	}
+}
+
 func TestClassifyReplaceIntentExactFacts(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -290,6 +330,8 @@ func TestClassifyReplaceIntentExactFacts(t *testing.T) {
 		want      ReplaceRecoveryAction
 	}{
 		{name: "candidate-canonical", canonical: "candidate", want: ReplacePromoteCanonical},
+		{name: "candidate-canonical-with-unexpected-temp", canonical: "candidate", candidate: true, want: ReplaceRefuse},
+		{name: "candidate-canonical-with-wrong-temp", canonical: "candidate", candidate: true, corrupt: true, want: ReplaceRefuse},
 		{name: "selected-temp-plus-prior", canonical: "prior", candidate: true, want: ReplaceRetryRename},
 		{name: "prior-no-temp", canonical: "prior", want: ReplaceNotCommitted},
 		{name: "third-canonical", canonical: "third", want: ReplaceRefuse},
@@ -300,7 +342,7 @@ func TestClassifyReplaceIntentExactFacts(t *testing.T) {
 			t.Parallel()
 			projectDir := t.TempDir()
 			plan := transactionFixturePlan(t, projectDir)
-			intent, _, err := prepareReplacement(plan)
+			intent, intentBytes, err := prepareReplacement(plan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -325,15 +367,84 @@ func TestClassifyReplaceIntentExactFacts(t *testing.T) {
 				if tc.corrupt {
 					selected = []byte("third bytes")
 				}
-				if err := os.WriteFile(filepath.Join(qDir, intent.Candidate.TempBasename), selected, 0o600); err != nil {
+				if err := os.WriteFile(filepath.Join(qDir, intent.CandidateTempBasename), selected, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			got, classifyErr := ClassifyReplaceIntent(projectDir, intent)
+			got, classifyErr := ClassifyReplaceIntent(projectDir, intentBytes)
 			if got != tc.want {
 				t.Fatalf("action = %q, want %q (err=%v)", got, tc.want, classifyErr)
 			}
 		})
+	}
+}
+
+func TestReplaceIntentExactFlatSchemaAndStrictDecode(t *testing.T) {
+	t.Parallel()
+	plan := transactionFixturePlan(t, t.TempDir())
+	_, intentBytes, err := prepareReplacementWithIDs(plan, transactionFixtureID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(intentBytes, &fields); err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{
+		"schema_version",
+		"transaction_id",
+		"operation_kind",
+		"normalized_name",
+		"queue_id",
+		"canonical_basename",
+		"prior_state",
+		"candidate_sha256",
+		"candidate_temp_basename",
+		"wake_required",
+	}
+	if len(fields) != len(expected) {
+		t.Fatalf("ordinary replace field count = %d, want %d: %v", len(fields), len(expected), fields)
+	}
+	for _, key := range expected {
+		if _, ok := fields[key]; !ok {
+			t.Fatalf("ordinary replace intent missing %q", key)
+		}
+	}
+	for _, absent := range []string{"prior", "candidate", "completion_receipt_binding", "archive_handoff_binding"} {
+		if _, ok := fields[absent]; ok {
+			t.Fatalf("ordinary replace intent unexpectedly contains %q", absent)
+		}
+	}
+	var priorState string
+	if err := json.Unmarshal(fields["prior_state"], &priorState); err != nil || !validSHA256(priorState) {
+		t.Fatalf("prior_state is not a flat exact digest: (%q, %v)", priorState, err)
+	}
+	if _, err := decodeReplaceIntent(intentBytes); err != nil {
+		t.Fatalf("canonical replace intent rejected: %v", err)
+	}
+
+	withUnknown := append(append([]byte(nil), intentBytes[:len(intentBytes)-1]...), []byte(`,"unknown":true}`)...)
+	if _, err := decodeReplaceIntent(withUnknown); err == nil {
+		t.Fatal("replace intent with unknown field accepted")
+	}
+	delete(fields, "candidate_sha256")
+	missing, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeReplaceIntent(missing); err == nil {
+		t.Fatal("replace intent with missing field accepted")
+	}
+	if _, err := decodeReplaceIntent(append([]byte(" "), intentBytes...)); err == nil {
+		t.Fatal("non-canonical replace intent bytes accepted")
+	}
+
+	absentProject := filepath.Join(t.TempDir(), "must-remain-absent")
+	if action, err := ClassifyReplaceIntent(absentProject, withUnknown); action != ReplaceRefuse || err == nil {
+		t.Fatalf("public classifier accepted malformed raw predecessor: (%q, %v)", action, err)
+	}
+	if _, err := os.Stat(absentProject); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("malformed predecessor reached filesystem: %v", err)
 	}
 }
 
@@ -353,6 +464,7 @@ func transactionLinkedFixture(
 ) {
 	t.Helper()
 	plan := transactionFixturePlan(t, projectDir)
+	plan.OperationKind = OperationCancellation
 	plan.ArchiveHandoff = &ArchiveHandoffPlan{
 		ArchiveOrigin:       "operator-cancel",
 		ArchiveKind:         "cancelled",
@@ -367,7 +479,7 @@ func transactionLinkedFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
-	successorBytes, err = base64Decode(predecessor.ArchiveHandoff.SuccessorArchiveIntentBytesBase64)
+	successorBytes, err = base64Decode(predecessor.ArchiveHandoffBinding.SuccessorArchiveIntentBytesBase64)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,6 +512,16 @@ func TestLinkedArchiveHandoffExactPair(t *testing.T) {
 	}
 	if !bytes.Contains(predecessorBytes, []byte(successorFixtureID)) {
 		t.Fatal("predecessor bytes do not bind preallocated successor ID")
+	}
+	var predecessorFields map[string]json.RawMessage
+	if err := json.Unmarshal(predecessorBytes, &predecessorFields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := predecessorFields["archive_handoff_binding"]; !ok {
+		t.Fatal("cancellation predecessor omits archive_handoff_binding")
+	}
+	if _, ok := predecessorFields["completion_receipt_binding"]; ok {
+		t.Fatal("cancellation predecessor unexpectedly contains completion_receipt_binding")
 	}
 
 	if action, err := ClassifyLinkedHandoff(&predecessor, successorBytes, facts); action != LinkedContinuePair || err != nil {
@@ -509,8 +631,8 @@ func TestInstallBoundArchiveIntentConsumesExactBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = InstallBoundArchiveIntent(projectDir, predecessor)
-	if got.Outcome != OutcomeNotCommitted || got.Err == nil {
-		t.Fatalf("changed existing outcome = (%q, %v), want not committed", got.Outcome, got.Err)
+	if got.Outcome != OutcomeCommitIndeterminate || got.Err == nil {
+		t.Fatalf("changed existing outcome = (%q, %v), want commit indeterminate", got.Outcome, got.Err)
 	}
 	unchanged, err := os.ReadFile(path) //nolint:gosec // path is test-owned t.TempDir data
 	if err != nil {
@@ -528,6 +650,7 @@ func TestInstallBoundArchiveIntentFaultCuts(t *testing.T) {
 		cut         func(*namespaceOps)
 		want        NamespaceOutcome
 		wantPresent bool
+		wantTemp    bool
 	}{
 		{
 			name: "queue-directory-create",
@@ -574,6 +697,21 @@ func TestInstallBoundArchiveIntentFaultCuts(t *testing.T) {
 			want: OutcomeNotCommitted,
 		},
 		{
+			name: "successor-temp-unlink-after-install",
+			cut: func(ops *namespaceOps) {
+				remove := ops.remove
+				ops.remove = func(path string) error {
+					if strings.Contains(filepath.Base(path), ".archive-intent.tmp-") {
+						return errors.New("cut successor temp unlink")
+					}
+					return remove(path)
+				}
+			},
+			want:        OutcomeCommitIndeterminate,
+			wantPresent: true,
+			wantTemp:    true,
+		},
+		{
 			name: "successor-parent-sync",
 			cut: func(ops *namespaceOps) {
 				ops.syncDir = func(*os.File) error { return errors.New("cut parent sync") }
@@ -601,6 +739,60 @@ func TestInstallBoundArchiveIntentFaultCuts(t *testing.T) {
 			}
 			if present && !bytes.Equal(data, successorBytes) {
 				t.Fatal("fault cut left successor bytes other than exact predecessor binding")
+			}
+			entries, err := os.ReadDir(queuesDir(projectDir))
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			tempPresent := false
+			for _, entry := range entries {
+				if strings.Contains(entry.Name(), ".archive-intent.tmp-") {
+					tempPresent = true
+				}
+			}
+			if tempPresent != tc.wantTemp {
+				t.Fatalf("successor temp presence = %v, want %v", tempPresent, tc.wantTemp)
+			}
+			if tc.wantTemp {
+				retry := installBoundArchiveIntent(projectDir, predecessor, osNamespaceOps())
+				if retry.Outcome != OutcomeCommittedDurable || retry.Err != nil {
+					t.Fatalf("exact archive retry = (%q, %v), want committed durable", retry.Outcome, retry.Err)
+				}
+			}
+		})
+	}
+}
+
+func TestArchiveOperationCouplingRejectsBeforeIO(t *testing.T) {
+	t.Parallel()
+	validHandoff := &ArchiveHandoffPlan{
+		ArchiveOrigin:       "operator-cancel",
+		ArchiveKind:         "cancelled",
+		SourceIdentity:      "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0001",
+		DestinationBasename: "main.json.cancelled-fixed",
+	}
+	tests := []struct {
+		name      string
+		operation OperationKind
+		handoff   *ArchiveHandoffPlan
+	}{
+		{name: "cancellation-without-handoff", operation: OperationCancellation},
+		{name: "handoff-without-cancellation", operation: OperationPause, handoff: validHandoff},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			projectDir := filepath.Join(t.TempDir(), "must-remain-absent")
+			plan := transactionFixturePlan(t, projectDir)
+			plan.OperationKind = tc.operation
+			plan.ArchiveHandoff = tc.handoff
+
+			got := WriteReplacement(context.Background(), plan)
+			if got.Outcome != OutcomeRejected || got.Err == nil {
+				t.Fatalf("outcome = (%q, %v), want rejected", got.Outcome, got.Err)
+			}
+			if _, err := os.Stat(projectDir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("invalid archive coupling performed namespace I/O: %v", err)
 			}
 		})
 	}

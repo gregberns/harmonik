@@ -517,6 +517,10 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		}}
 	}
 	if bytes.Equal(priorBytes, candidateBytes) {
+		if req.OperationKind == queue.OperationCancellation || req.ArchiveHandoff != nil {
+			s.queueMu.Unlock()
+			return rejectedTransaction(errors.New("archive-bearing transaction cannot collapse as no-op"))
+		}
 		resultSnapshot := Snapshot{
 			Name:       name,
 			Queue:      cloneQueue(current),
@@ -559,7 +563,7 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		s.Wake()
 	}
 	var cleanupErr error
-	if commit.Intent.ArchiveHandoff == nil {
+	if commit.Intent.ArchiveHandoffBinding == nil {
 		cleanupErr = queue.CleanupReplaceIntent(req.ProjectDir, name)
 		if cleanupErr != nil {
 			s.quarantined[name] = cleanupErr

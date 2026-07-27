@@ -1,11 +1,13 @@
 package queuewiring
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 
@@ -223,6 +225,110 @@ func TestQueueStoreTransactNoOpCollapsesBeforeNamespaceIO(t *testing.T) {
 	if len(entries) != 1 || entries[0].Name() != "main.json" {
 		t.Fatalf("no-op transaction created namespace artifacts: %v", entries)
 	}
+}
+
+func TestQueueStoreRejectsArchiveBearingNoOpBeforeNamespaceIO(t *testing.T) {
+	t.Parallel()
+	store, _, projectDir := transactionStoreFixture(t)
+	snapshot := store.Snapshot(queue.QueueNameMain)
+	qDir := filepath.Join(projectDir, ".harmonik", "queues")
+	before, err := os.ReadDir(qDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := store.Transact(context.Background(), TransactionRequest{
+		Snapshot:      snapshot,
+		ProjectDir:    projectDir,
+		OperationKind: queue.OperationCancellation,
+		ArchiveHandoff: &queue.ArchiveHandoffPlan{
+			ArchiveOrigin:       "operator-cancel",
+			ArchiveKind:         "cancelled",
+			SourceIdentity:      snapshot.Queue.QueueID,
+			DestinationBasename: "main.json.cancelled-fixed",
+		},
+		Mutate: func(*queue.Queue) error { return nil },
+	})
+	if got.Outcome != queue.OutcomeRejected || got.Err == nil {
+		t.Fatalf("archive-bearing no-op = (%q, %v), want rejected", got.Outcome, got.Err)
+	}
+	if store.Snapshot(queue.QueueNameMain).Generation != snapshot.Generation {
+		t.Fatal("archive-bearing no-op advanced generation")
+	}
+	after, err := os.ReadDir(qDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(entryNames(before), entryNames(after)) {
+		t.Fatalf("archive-bearing no-op changed namespace: before=%v after=%v", before, after)
+	}
+}
+
+func TestQueueStoreConflictingIntentQuarantinesAndRetryDoesNoIO(t *testing.T) {
+	t.Parallel()
+	store, _, projectDir := transactionStoreFixture(t)
+	snapshot := store.Snapshot(queue.QueueNameMain)
+	qDir := filepath.Join(projectDir, ".harmonik", "queues")
+	intentPath := filepath.Join(qDir, "main.replace-intent")
+	conflict := []byte(`{"schema_version":999}`)
+	if err := os.WriteFile(intentPath, conflict, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := TransactionRequest{
+		Snapshot:      snapshot,
+		ProjectDir:    projectDir,
+		OperationKind: queue.OperationPause,
+		Mutate: func(q *queue.Queue) error {
+			q.Status = queue.QueueStatusPausedByDrain
+			return nil
+		},
+	}
+
+	first := store.Transact(context.Background(), request)
+	if first.Outcome != queue.OutcomeCommitIndeterminate || first.Err == nil {
+		t.Fatalf("conflicting intent outcome = (%q, %v), want commit indeterminate", first.Outcome, first.Err)
+	}
+	if store.Snapshot(queue.QueueNameMain).Generation != snapshot.Generation {
+		t.Fatal("conflicting intent advanced in-memory generation")
+	}
+	installed, err := os.ReadFile(intentPath) //nolint:gosec // path is test-owned t.TempDir data
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(installed, conflict) {
+		t.Fatal("conflicting intent was overwritten")
+	}
+	afterFirst, err := os.ReadDir(qDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := store.Transact(context.Background(), request)
+	if second.Outcome != queue.OutcomeRejected || second.Err == nil {
+		t.Fatalf("quarantined retry outcome = (%q, %v), want rejected", second.Outcome, second.Err)
+	}
+	afterSecond, err := os.ReadDir(qDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(entryNames(afterFirst), entryNames(afterSecond)) {
+		t.Fatalf("quarantined retry performed namespace I/O: before=%v after=%v", afterFirst, afterSecond)
+	}
+	installed, err = os.ReadFile(intentPath) //nolint:gosec // path is test-owned t.TempDir data
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(installed, conflict) {
+		t.Fatal("quarantined retry changed conflicting intent")
+	}
+}
+
+func entryNames(entries []os.DirEntry) []string {
+	names := make([]string, len(entries))
+	for i, entry := range entries {
+		names[i] = entry.Name()
+	}
+	return names
 }
 
 func TestQueueStoreTransactLinkedHandoffRetainsPredecessor(t *testing.T) {

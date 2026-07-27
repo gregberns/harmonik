@@ -906,8 +906,8 @@ tasks:
     card: tasks/JR-00.md
     group: JR
     priority: P0
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: medium, profile: terra_high, escalation: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: []
     conflicts_with: []
@@ -924,6 +924,16 @@ tasks:
       reviewer: task_pack_arch_audit
       artifact: tasks/evidence/ARCH-TASK-PACK-REVIEW.md
       verdict: APPROVE
+    review:
+      state: approved
+      reviewer: /root/bravo_jr_00/jr00_final_artifact_review
+      artifact: tasks/evidence/JR-00.yaml
+      verdict: APPROVE
+    integration:
+      state: integrated
+      commit: e2f49ef631abfeb637427700de34be7d3f62faa4
+      integrated_sha: c4bcbfa165ee2c67d279854ca443a7ba222e5852
+    proof: green
     required_proof: [yaml_parse, cross_group_review]
 
   JR-01:

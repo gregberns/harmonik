@@ -1,0 +1,30 @@
+codename: queue-transaction-contract
+title: Queue transaction and durability contract
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-27T07:23:57Z
+updated: 2026-07-27T13:40:21Z
+sessions:
+    - id: null
+      started: 2026-07-27T07:23:57Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

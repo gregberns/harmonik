@@ -1,0 +1,758 @@
+schema_version: 1
+task_id: CQ-02
+base_sha: 4f750c11ab30afd9371405d5d591ae91e153c5c6
+execution_baseline: 82212d4ce569c57298f37a66bb3752870d9896c5
+execution_topology:
+  minimum_ancestor: 6a7d1e77cf1fa22b9d1d8cbb030942e4abecfb06
+  card_path: plans/2026-07-24-code-health-audit/tasks/CQ-02.md
+  card_blob_sha: c598a3223df61b63701bb6b752aac1bff1d2d80b
+  card_review_artifact: plans/2026-07-24-code-health-audit/tasks/evidence/CQ-02-CARD-REVIEW.md
+  card_reviewer: /root/cq02_round6_design_review
+  root_single_writer: true
+  task_index_claim_rewritten: false
+inputs:
+  - {path: plans/2026-07-24-code-health-audit/tasks/CQ-02.md, blob_sha: c598a3223df61b63701bb6b752aac1bff1d2d80b, review_state: approved}
+  - {path: plans/2026-07-24-code-health-audit/tasks/evidence/CQ-02-CARD-REVIEW.md, blob_sha: e44830fb9775b2568e1c86ba53fda289d95e3ac7, review_state: approved}
+  - {path: plans/2026-07-24-code-health-audit/tasks/evidence/CQ-00.yaml, blob_sha: 2b778141177f6be80ad1c7f80ebedb3dc1453f8d, review_state: approved}
+  - {path: plans/2026-07-24-code-health-audit/TASK-INDEX.yaml, blob_sha: 47730b320229db225f7875b69ecacb1cee72fd78, review_state: approved}
+  - {path: specs/queue-model.md, blob_sha: 7d3c7f9dd63793189328d511265e3a0d499daa38, review_state: approved}
+  - {path: specs/process-lifecycle.md, blob_sha: 31b50ad2c093a4cf14fb4d5430f094cb82c31237, review_state: approved}
+  - {path: specs/event-model.md, blob_sha: d504e8ea5f94c5caa01c87585029adbfbc869108, review_state: approved}
+  - {path: specs/execution-model.md, blob_sha: e8926ca2d93e62a4a661951ccc073be5492451b5, review_state: approved}
+  - {path: specs/beads-integration.md, blob_sha: 8170c43c2300a6b045ad1a06775b93c77ca49136, review_state: approved}
+  - {path: internal/queue/persistence.go, blob_sha: 9f370c27360c3eb732300b6a898897dd0f6f5d4d, review_state: approved}
+  - {path: internal/queue/rpc.go, blob_sha: 5f5c5f6b7ad547a19321009d6d4cbcb94a2aed24, review_state: approved}
+  - {path: internal/queuewiring/store.go, blob_sha: 64c3e2d63df18108a6c39186c848e87fa36c088a, review_state: approved}
+  - {path: cmd/harmonik/run_via_daemon.go, blob_sha: 9dd621ebadb77928aa4d869d2867d2d7b9154c63, review_state: approved}
+  - {path: internal/lifecycle/startup_pl005_qm002.go, blob_sha: 02da5d8e7c1f5da864b836927892358b69e42b66, review_state: approved}
+  - {path: internal/daemon/workloop.go, blob_sha: b5fbcd99400ebee1a54095aa854287ef85a8b825, review_state: approved}
+  - {path: .kerf/works/durable-state-contract/01-problem-space.md, blob_sha: 521713f4a3637d0d36b81181a4b086de30421b12, review_state: approved}
+  - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-1.md, blob_sha: c56109cadc2ad655e306bccd0bc8aa91483ea024, sha256: 1be5023e58927cdc87a6297f0799856f64492a23ac3f486db6e51dae4c5dba26, review_state: approved}
+  - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-5.md, blob_sha: 8f7e8710a8628d6513ed7e561a06a47436a5c17d, sha256: 1f60ef063e08cd7b8e41e9e7ffd37a7d424ef6ec178983727199fbc7e1968bec, review_state: approved}
+normative_targets:
+  - spec: specs/queue-model.md
+    draft: .kerf/works/queue-transaction-contract/05-spec-drafts/queue-model.md
+    normative_copy: byte-identical coordinator copy after both final reviews
+    allowed_delta: queue topology, owner, transaction/results, replace/archive intents, completion receipt, QM-053 cleanup, exact-ID status, tasks
+  - spec: specs/process-lifecycle.md
+    draft: .kerf/works/queue-transaction-contract/05-spec-drafts/process-lifecycle.md
+    normative_copy: byte-identical coordinator copy after both final reviews
+    allowed_delta: queue cancel transport, startup receipt root, complete capability negotiation, upgrade/downgrade/rollback refusal
+  - spec: specs/event-model.md
+    draft: .kerf/works/queue-transaction-contract/05-spec-drafts/event-model.md
+    normative_copy: byte-identical coordinator copy after both final reviews
+    allowed_delta: optional final-only completion_receipt_id and typed best-effort queue_cancelled_operator; existing log mechanics unchanged
+  - spec: specs/execution-model.md
+    draft: .kerf/works/queue-transaction-contract/05-spec-drafts/execution-model.md
+    normative_copy: byte-identical coordinator copy after both final reviews
+    allowed_delta: EM-015f normal-path producer clarification with no crash-surviving delivery; EM-062 through EM-065 complete QueueStore all named queues scan, named set is empty br-ready fallback, per-name submit, --max-concurrent plus workers gates, QM-067 round-robin cursor; EM-066 and EM-067 exact named-set-empty references; --auto-pull pause fixture and nonempty-ineligible no-fallback fixture; version/date and one revision row
+execution_model_scope_proof:
+  preamble_literal: true
+  allowed_frontmatter_keys: [last-updated, version]
+  allowed_normative_regions:
+    - glossary.active-queue
+    - glossary.queue-group
+    - EM-015f
+    - EM-062
+    - EM-063
+    - EM-064
+    - EM-065
+    - section-6.5.queue-lifecycle
+    - section-7.4.queue-selection-capacity
+    - section-9.3.queue-model-dependencies
+    - section-10.1.queue-dispatch-conformance
+    - EM-066.named-set-empty-branch-reference
+    - EM-067.named-set-empty-pause-order-reference
+    - section-10.2.em067-auto-pull-pause-fixture
+    - section-10.2.em066-nonempty-ineligible-fixture
+  allowed_revision_rows: 1
+  required_revision_terms: [EM-015f, EM-062, EM-065, QueueStore, QM-067, queue_group_completed, EM-066, EM-067, --auto-pull, nonempty-ineligible]
+  required_named_queue_semantics:
+    complete_queue_store_scan: true
+    br_ready_only_when_named_set_empty: true
+    eligible_active_queue_selection: true
+    global_capacity_gate: true
+    per_queue_workers_gate: true
+    qm067_cursor_advance: true
+    all_queue_duplicate_prescreen: true
+    per_name_submit_semantics: true
+    qm061_per_name_correction: true
+    em066_named_set_empty_branch: true
+    em067_named_set_empty_pause_order: true
+    auto_pull_pause_fixture: true
+    nonempty_ineligible_suppresses_fallback: true
+normative_dispositions:
+  - {clause: QM-001, disposition: amend, reason: typed results and durable replace intent classify every namespace cut}
+  - {clause: QM-002, disposition: amend, reason: classify queue-owned intents and receipts before canonical load/readiness}
+  - {clause: QM-002c, disposition: amend, reason: preserve one valid copy through destination and legacy parent-sync cuts}
+  - {clause: QM-003, disposition: supersede, reason: receipt durability and queue-ID plus digest CAS cleanup replace event-landmark unlink}
+  - {clause: QM-033, disposition: amend, reason: final group event is derived observation; completion receipt is authoritative}
+  - {clause: QM-050, disposition: amend, reason: submit and group-zero activation are one replacement transaction}
+  - {clause: QM-051, disposition: amend, reason: owns state transition but not QM-053 receipt cleanup or final event authority}
+  - {clause: QM-052, disposition: amend, reason: failed group terminal and queue paused-by-failure commit in one candidate transaction}
+  - {clause: QM-053, disposition: amend, reason: sole owner of receipt creation, optional observation attempt, CAS unlink, and release}
+  - {clause: QM-057, disposition: amend, reason: exact-ID live lookup falls back to exactly one identity-consistent retained receipt}
+  - {clause: QM-058, disposition: amend, reason: cancellation uses replacement then archive intent and never creates a receipt}
+  - {clause: QM-060, disposition: supersede, reason: QueueStore transaction domain is the sole mutation owner}
+  - {clause: QM-061, disposition: amend, reason: submission serializes through QueueStore while QM-027 occupancy is per normalized name rather than project-wide}
+  - {clause: QM-063, disposition: amend, reason: queue-owned durability precedes observations and observation failure never rolls back or refuses}
+  - {clause: PL-005, disposition: amend, reason: receipt root and complete capability recovery precede readiness}
+  - {clause: PL-004, disposition: amend, reason: inventory canonical named queue records and retire legacy singleton live writes}
+  - {clause: PL-013, disposition: amend, reason: idle input is the QueueStore named set not legacy queue.json}
+  - {clause: PL-027, disposition: amend, reason: upgrade downgrade and rollback require the whole queue intent/receipt capability}
+  - {clause: PL-028c, disposition: amend, reason: daemon-unreachable cancellation exits 17 and writes nothing}
+  - {clause: EV-021, disposition: preserve, reason: observational replay never reconstructs queue state}
+  - {clause: EV-022, disposition: preserve, reason: queue recovery never walks JSONL}
+  - {clause: EM-015f, disposition: amend, reason: MUST emit is a normal-path post-commit attempt, not crash-surviving delivery}
+  - {clause: EM-glossary-queue, disposition: amend, reason: active queue and queue group are per named QueueStore member rather than project-wide singleton terms}
+  - {clause: EM-062, disposition: amend, reason: eager refill selects one deterministic eligible active stream target from a complete named-fleet snapshot}
+  - {clause: EM-063, disposition: amend, reason: daemon duplicate pre-screen scans all named queues in one immutable QueueStore generation}
+  - {clause: EM-064, disposition: amend, reason: orchestrator tier-one pre-screen scans the complete QueueStore named set before other authorities}
+  - {clause: EM-065, disposition: amend, reason: submit and append occupancy semantics are per normalized target name after the all-queue duplicate screen}
+  - {clause: EM-§6.5-queue-lifecycle, disposition: amend, reason: lifecycle observations identify the affected named queue and never imply a singleton}
+  - {clause: EM-§7.4, disposition: amend, reason: steady-state selection consumes complete fleet snapshots with empty-set-only fallback both capacity gates and QM-067 cursor advance}
+  - {clause: EM-§9.3-queue-dependencies, disposition: amend, reason: dependency map assigns identity lifecycle QueueStore workers and arbitration ownership to queue-model}
+  - {clause: EM-§10.1-queue-dispatch, disposition: amend, reason: conformance requires eligible named selection empty-set-only fallback all-queue pre-screen and per-name submit}
+  - {clause: EM-066, disposition: amend, reason: exact branch reference now names complete fleet.named_queues IS EMPTY while all other flag and default semantics remain unchanged}
+  - {clause: EM-067, disposition: amend, reason: exact pause-order reference now names the complete named-set-empty branch while preserving both pause gates}
+  - {clause: EM-§10.2-auto-pull-pause-fixture, disposition: amend, reason: fallback pause fixture enables the opt-in with --auto-pull set}
+  - {clause: EM-§10.2-nonempty-ineligible-fixture, disposition: amend, reason: adjacent fixture proves nonempty wholly ineligible named fleet suppresses br ready fallback}
+topology:
+  canonical_write_layout: .harmonik/queues/<normalized-name>.json; only the daemon/project QueueStore or its bounded same-process startup adapter writes
+  readable_legacy_layouts:
+    - .harmonik/queue.json is migration-only main input and never a new-write target
+    - schema-version-1 .harmonik/queues/<normalized-name>.json canonical envelopes
+    - supported replace/archive intents and flat completion receipts are protocol records, never live queues
+  collision_rule: canonical, unresolved intent, quarantine, or identity-integrity error owns/refuses the normalized name; old retained receipts alone do not block reuse
+transaction_owner:
+  owner: single daemon/project QueueStore with a bounded same-process pre-install startup adapter
+  serialization: one transaction domain per normalized name; lexical ordering for multi-name operations; same-file implementation cards serialize by dependency or exact disjoint symbol lease
+  generation_rule: detached snapshots carry a volatile process-local generation rejected before I/O; advance once after durable install; never persisted or used after restart
+  forbidden_direct_writers:
+    - daemon-unreachable queue CLI
+    - inline pre-owner fallback
+    - RPC workloop lifecycle eager budget review crew or operator caller mutating a live pointer or filesystem
+    - caller-side canonical replace unlink archive legacy removal receipt or GC outside QueueStore/startup primitives
+  wire_compatibility:
+    submit:
+      request_fields: [groups, schema_version, name, workers, spend_cap_usd, default_harness]
+      response_fields: [queue_id, status, group_count]
+    append:
+      request_fields: [queue_id, name, group_index, bead_ids]
+      selector_precedence: queue_id_then_name_then_main
+      response_fields: [appended_count, new_tail_indices]
+    status:
+      request_fields: [name, queue_id, watched_group_index]
+      selector_precedence: name_then_queue_id_then_main
+      response_preserved_fields: [queue, max_concurrent]
+      response_added_fields: [completed, final_status, final_group_index, success_count, fail_count, completed_at, completion_receipt_id]
+      cli_owner: internal/queue/cli/status.go RunQueueStatus
+      renderer_owner: internal/queue/cli/client.go renderQueueStatusText
+    cancel:
+      request_fields: [queue, force, queue_id]
+      selector_precedence: queue_only_or_queue_id_only; both_must_resolve_same_identity; neither_is_invalid
+      n_minus_1_rule: shipped JSON queue plus force decodes unchanged; queue is not renamed to name
+      response_fields: [queue_id, prior_status]
+transaction_protocol:
+  - {step: 1, owner: QueueStore, input_state: normalized name and request, success_state: transaction domain acquired, failure_state: rejected before I/O, externally_visible: false}
+  - {step: 2, owner: QueueStore, input_state: detached snapshot and expected generation, success_state: generation matches, failure_state: rejected stale generation, externally_visible: false}
+  - {step: 3, owner: QueueStore, input_state: immutable stored snapshot or absence, success_state: private deep clone/create candidate, failure_state: rejected with prior untouched, externally_visible: false}
+  - {step: 4, owner: QueueStore, input_state: private candidate, success_state: mutation/request validation complete, failure_state: rejected before namespace I/O, externally_visible: false}
+  - {step: 5, owner: QueueStore, input_state: validated candidate, success_state: exact canonical bytes and applicable normal-path event payload fixed, failure_state: not_committed before intent, externally_visible: false}
+  - {step: 6, owner: QueueStore, input_state: exact bytes, success_state: candidate temp write/fsync/close durable, failure_state: not_committed with canonical untouched, externally_visible: false}
+  - {step: 7, owner: QueueStore, input_state: durable candidate temp, success_state: exact replace intent directory-durable, failure_state: not_committed or exact intent classifier, externally_visible: false}
+  - {step: 8, owner: QueueStore, input_state: durable intent, success_state: canonical rename and queue-parent durability classified, failure_state: commit_indeterminate and name quarantined pending exact reconciliation, externally_visible: false}
+  - {step: 9, owner: QueueStore, input_state: committed_durable canonical, success_state: install candidate and advance generation once, failure_state: no install until classification, externally_visible: true}
+  - {step: 10, owner: QueueStore, input_state: installed ordinary mutation, success_state: repeatable Wake and applicable normal-path observation attempt, failure_state: observation failure diagnostic only and never a state/admission gate, externally_visible: true}
+  - {step: 11, owner: QM-053, input_state: installed final complete-success with receipt binding, success_state: receipt durable then optional observation then CAS cleanup intent cleanup ownership release and immutable release-marker install, failure_state: queue-owned receipt/canonical/marker classifier continues without event recovery and missing marker disables GC only, externally_visible: true}
+result_taxonomy:
+  - {result: rejected, disk_guarantee: no namespace I/O, memory_action: retain prior snapshot/generation, retry_rule: correct request or resnapshot, degraded_rule: no health transition or success observation}
+  - {result: not_committed, disk_guarantee: intended namespace mutation definitely absent, memory_action: retain prior install/generation, retry_rule: bounded exact owner retry or reconcile before mutation, degraded_rule: infrastructure diagnostic; no success observation}
+  - {result: committed_durable, disk_guarantee: selected namespace state parent-synced, memory_action: install selected state or release only at its higher-level durable cleanup landmark, retry_rule: continue only remaining queue-owned protocol, degraded_rule: event failure is diagnostic and does not refuse the name}
+  - {result: commit_indeterminate, disk_guarantee: namespace mutation occurred but parent durability unresolved, memory_action: retain prior install and quarantine name, retry_rule: exact intent/canonical/temp/receipt reload-compare-sync only, degraded_rule: operator-visible infrastructure state until queue facts resolve}
+cancel_wire_inventory:
+  - {path: cmd/harmonik/main.go, symbol: queue cancel dispatch to queuecli.RunQueueCancel, transport: CLI to daemon queue-cancel RPC, daemon_state: reachable routes to target daemon, capability_behavior: unreachable returns exit 17 with no canonical/temp/archive/intent/legacy/receipt/event write}
+  - {path: internal/queue/cli/cancel.go, symbol: RunQueueCancel tryDaemonQueueCancel cancelFindByID journalCancel emitQueueCancelEvent, transport: daemon socket client only after migration, daemon_state: unreachable fails closed, capability_behavior: preserve N-1 queue/force request; optional queue_id; remove local archive and event fallback}
+  - {path: internal/daemon/socketdispatch.go, symbol: queue-cancel registration/dispatch, transport: target daemon RPC, daemon_state: live daemon required, capability_behavior: invokes only capability-owning HandlerAdapter}
+  - {path: internal/queue/rpc.go, symbol: HandlerAdapter.HandleQueueCancel, transport: live QueueStore transaction, daemon_state: reachable owner process, capability_behavior: decode shipped queue/force plus optional queue_id; dual selectors must agree and neither is invalid; cancelled replacement plus archive intent then release and best-effort typed audit}
+  - {path: internal/queue/persistence.go, symbol: CancelQueueOnShutdown, transport: graceful shutdown internal call, daemon_state: owner process shutting down, capability_behavior: durable cancel/archive protocol with no operator audit}
+replace_intent:
+  path_template: .harmonik/queues/<normalized-name>.replace-intent
+  canonical_v1_fields: [schema_version, transaction_id, operation_kind, normalized_name, queue_id, canonical_basename, prior_state, candidate_sha256, candidate_temp_basename, wake_required, completion_receipt_binding, archive_handoff_binding]
+  authority: queue_transaction_record
+  covered_operations:
+    - create submit append reservation Run-ID patch activation advance pause resume
+    - eager refill budget review maintenance startup inline bootstrap crew placeholder
+    - cancelled-state replacement before archive
+  transaction_identity: canonical lowercase UUIDv7 transaction_id plus enumerated operation and normalized name/queue ID
+  prior_identity: absent marker or SHA-256 over exact prior canonical bytes
+  candidate_identity: SHA-256 over exact candidate canonical bytes and exact canonical basename
+  temp_identity: unique already-durable sibling candidate temp basename fixed before intent
+  pre_intent_order:
+    - snapshot validate stale-generation check clone mutate validate
+    - marshal exact canonical bytes and construct applicable normal-path event payload
+    - create write fsync and close exact candidate temp
+  wake_rule: Wake only after committed_durable install; repeatable after restart; never authority
+  derived_event_rule: observational normal-path attempt only and not persisted or replayed by the intent
+  response_replay: false
+  cleanup_rule: ordinary success unlinks exact intent and queue-parent-syncs after canonical install/wake/observation; final and cancel keep it to their later cleanup boundary; unresolved intent continues ownership/refusal
+  restart_rule: classify exact schema transaction prior candidate temp canonical and receipt facts by the exhaustive classifier below; JSONL is never consulted
+  restart_classifier:
+    - exact candidate canonical: sync parent then remove/sync ordinary intent
+    - exact prior plus selected candidate temp: retry only selected canonical rename
+    - exact prior or absence plus abandoned selected temp: remove only selected temp then remove/sync intent as not committed
+    - exact prior or absence with no selected temp: remove/sync intent as not committed
+    - third canonical changed digest wrong temp corrupt unsupported or mismatch: preserve all and refuse
+    - definite intent-unlink failure retains refusal; unlink or parent-sync ambiguity reloads exact intent and syncs before release
+  generation_rule: volatile process-local guard only and never restart identity
+  cancellation_handoff:
+    allocation_order: before cancelled candidate temp and predecessor replace-intent durability
+    archive_origin: stable enum distinguishing operator-cancel graceful-shutdown inline-failure and recovery-corrupt
+    archive_kind: cancelled failed or corrupt
+    source_identity: exact queue ID or corrupt-source identity plus exact candidate/source digest
+    destination_basename: one preselected non-overwriting archive basename never retimestamped on recovery
+    successor_identity: one UUIDv7 plus exact canonical successor archive-intent bytes and SHA-256 digest bound in predecessor
+    predecessor_retention: retain through successor create/write/fsync/close/rename and queue-parent fsync
+    classifier: replace-only creates exact bound successor; exact linked pair continues; archive-only continues only after exact predecessor deletion; mismatch or originless cancelled canonical quarantines
+    main_legacy_rule: successor archive intent remains until legacy absence is durable through .harmonik parent fsync
+    successor_path: .harmonik/queues/<normalized-name>.archive-intent
+    successor_v1_fields: [schema_version, archive_intent_id, predecessor_transaction_id, predecessor_intent_sha256, archive_origin, archive_kind, normalized_name, source_identity, source_sha256, destination_basename]
+    install_rule: unique temp create/write/fsync/close then no-replace exact path and queue-parent fsync; exact bytes idempotent; mismatch preserved
+    source_rule: parseable source uses exact canonical path plus queue ID and digest; corrupt source uses exact bound pathname and digest without parsing
+    cleanup_classifier: predecessor-only creates prebound successor; exact pair syncs successor then unlinks/syncs predecessor; successor-only continues selected archive; archive and legacy durability precede successor unlink/root-sync; every rename/unlink/root-sync ambiguity reloads exact paths; release requires both intents durably absent
+  final_completion_binding:
+    required_status: complete-success
+    allocation_order: preallocate receipt_id and exact canonical receipt bytes before completed canonical install and before durable replace intent
+    receipt_id: one daemon-minted canonical lowercase UUIDv7 bound once
+    receipt_schema_version: 1
+    receipt_basename: <queue_id>--<receipt_id>.json fixed in the durable intent
+    receipt_canonical_bytes_base64: base64 of the exact canonical receipt bytes fixed before intent durability
+    receipt_canonical_bytes_digest: {algorithm: sha256, input_exact_bytes: receipt_canonical_bytes}
+    retention_rule: keep intent through receipt durability and canonical unlink directory durability classification
+    recovery_rule: reuse exact bound ID/basename/schema/bytes/digest; never mint reconstruct timestamp again or scan-select
+  exclusions:
+    - event ID effect key replay cursor or event payload delivery list
+    - pending/acknowledged delivery state
+    - RPC response
+completion_receipt:
+  owner: queue-model
+  implementation_owner: CQ-RECEIPT
+  path_template: .harmonik/queues/.completion-receipts/<queue_id>--<receipt_id>.json
+  identity:
+    queue_id: canonical lowercase UUIDv7 matching filename and completed canonical
+    receipt_id: canonical lowercase UUIDv7 preallocated and intent-bound
+    transaction_id: exact final replacement transaction UUIDv7
+  canonical_binding:
+    normalized_name: exact normalized canonical name
+    final_group_index: final group nonnegative index
+    final_status: complete-success
+    success_count: final group durable success count
+    fail_count: zero
+    completed_at: one canonical timestamp fixed before intent durability
+    completed_canonical_digest: {algorithm: sha256, input_exact_bytes: completed_canonical_bytes}
+  namespace:
+    layout: flat
+    root_create_rule: mkdir; EEXIST succeeds only after opening and verifying expected directory; definite failure is not-created; ambiguity reloads before readiness
+    root_parent_sync_rule: after first create open/fsync/close .harmonik/queues; successful fsync makes later close failure diagnostic
+    file_install_rule: unique root temp create/write/fsync/close then no-replace rename; existing target accepted only for exact intent-bound canonical bytes; root open/fsync/close establishes durability
+    no_per_queue_directory: true
+  create_before_unlink: true
+  cleanup_cas_rule: unlink canonical only when queue ID and SHA-256 of exact completed canonical bytes both match receipt binding
+  missing_path_rule: absent canonical is idempotent cleanup success after queue-parent durability classification
+  same_name_reuse_rule: different queue ID at the same name is a newer queue and is never touched; retained old receipt never blocks admission
+  status_query:
+    selector: queue_id
+    live_lookup: exact live queue ID wins even when its name is shared by historical receipts
+    watched_group_lookup: live exact-ID response includes exact watched group status/items/counts; missing group is integrity error
+    watched_group_continuing_statuses: [pending, active]
+    watched_group_success_status: complete-success
+    watched_group_failure_status: complete-with-failures
+    paused_or_cancelled_rule: paused-by-failure paused-by-drain or cancelled terminates waiter with exit 1 even when observations are absent
+    receipt_fallback: after no exact live queue, accept exactly one unexpired identity-consistent receipt; zero is not found; multiple/corrupt/unsupported/disagreeing prefix candidates are identity-integrity error, never first-match
+    receipt_group_proof_rule: receipt proves watched success only when final_group_index is at least watched index; lower index is integrity error
+    same_name_rule: never fall through to or infer from a newer same-name live queue
+    completed_response: status completed plus final_status/index/counts/completed_at/completion_receipt_id
+    not_found_rule: accepted queue ID with no live queue and zero receipt candidates returns error/exit 1
+    corrupt_or_unsupported_rule: matching-prefix corrupt unsupported multiple or filename/content/digest disagreement returns explicit identity-integrity error/exit 1
+  observation:
+    event: queue_group_completed
+    completion_receipt_id_field: completion_receipt_id
+    field_required_when: final_complete_success
+    field_absent_when: [nonfinal_complete_success, complete_with_failures]
+    mode: normal_path_single_attempt
+    replay: never
+    state_gate: false
+    failure_action: diagnostic_only
+    persistent_delivery_state: false
+  retention:
+    minimum_rule: retain through cleanup/ownership release and then at least 30 days
+    authority: immutable completion-release marker v1; receipt completed_at filesystem times JSONL and process-local timers are forbidden
+    marker_path_template: .harmonik/queues/.completion-receipts/<queue_id>--<receipt_id>.release-v1.json
+    marker_schema:
+      record_type: completion-release
+      schema_version: 1
+      binding: [queue_id, receipt_id, transaction_id, receipt_sha256, completed_queue_sha256]
+      released_at: canonical UTC timestamp sampled only after durable canonical and intent absence plus QueueStore/refusal release
+      gc_not_before: released_at plus exactly 720 hours
+      immutable: true
+    marker_install_rule: unique receipt-root temp create/write/fsync/close then no-replace rename to deterministic basename and receipt-root open/fsync/close; exact valid existing marker wins; different corrupt or unsupported marker is preserved and disables GC
+    missing_marker_restart_rule: after receipt validation and exact proof of old canonical absence or newer queue ID, old transaction intent absence, and no surviving old owner, sample a new later released_at and install; never infer an earlier time
+    time_rule: trusted synchronized UTC required; unavailable or regressed clock, now before released_at, invalid arithmetic, or now before gc_not_before is ineligible and can only delay deletion
+    gc_rule: revalidate receipt marker identity and time; unlink and root-sync receipt first; only after durable receipt absence unlink and root-sync marker; every ambiguity reloads exact entries before retry
+    marker_only_rule: retain until marker gc_not_before then exact unlink and receipt-root sync; never recreate a missing receipt
+    gc_blocks_admission: false
+  corrupt_or_unsupported_rule: corrupt receipt refuses affected recovery/status; corrupt or unsupported release marker preserves receipt-backed status but disables GC with operator-visible identity error; preserve bytes; never choose by directory order
+  capability_rule: target startup/upgrade/downgrade/rollback requires complete replace/archive versions including linked cancellation handoff classifiers, receipt schema/root/install, completion-release marker v1/install/recovery/trusted-clock classifier, CAS cleanup, exact-ID status, receipt-first marker-last retention/GC, and unresolved-state refusal; incapable downgrade refuses before handoff whenever receipts markers or marker temps may exist
+  operator_audit_excluded: true
+crash_matrix:
+  - {cut: validation or stale-generation rejection, durable_before: exact prior canonical or absence, attempted_effect: validate private replacement, possible_disk_after: [exact prior canonical or absence], memory_action: retain prior generation, result: rejected, permitted_next_effects: [correct input or resnapshot], restart_action: load prior, task_owner: CQ-02I}
+  - {cut: marshal or event-payload construction before intent, durable_before: exact prior canonical or absence, attempted_effect: construct exact transaction inputs, possible_disk_after: [exact prior canonical or absence], memory_action: retain prior generation, result: not_committed, permitted_next_effects: [bounded exact retry], restart_action: load prior; no observation recovery, task_owner: CQ-02I}
+  - {cut: candidate temp create/write/fsync/close, durable_before: exact prior canonical or absence, attempted_effect: make candidate temp durable, possible_disk_after: [prior plus removable unreferenced temp], memory_action: retain prior generation, result: not_committed, permitted_next_effects: [clean only unreferenced temp], restart_action: ignore/quarantine unreferenced temp, task_owner: CQ-02I}
+  - {cut: replace-intent temp create/write/fsync/close definite failure, durable_before: durable candidate temp and prior canonical, attempted_effect: prepare exact intent, possible_disk_after: [no selected intent], memory_action: retain prior, result: not_committed, permitted_next_effects: [clean unselected intent temp], restart_action: prior remains authoritative, task_owner: CQ-02I}
+  - {cut: replace-intent rename/queue-parent sync ambiguity, durable_before: durable candidate temp and intent rename attempted, attempted_effect: make exact intent durable, possible_disk_after: [no intent, exact intent, ambiguous intent entry], memory_action: retain prior and refuse pending exact classification, result: commit_indeterminate, permitted_next_effects: [reload exact intent/temp/canonical], restart_action: never use JSONL or generation, task_owner: CQ-02I}
+  - {cut: canonical rename/queue-parent open/fsync, durable_before: durable exact intent, attempted_effect: install candidate canonical, possible_disk_after: [prior, candidate, ambiguous selected entry], memory_action: retain prior until classifier selects, result: commit_indeterminate, permitted_next_effects: [exact intent comparison and parent sync], restart_action: candidate match promotes; prior/absence unwinds; third state quarantines, task_owner: CQ-02I}
+  - {cut: queue-parent close after successful fsync, durable_before: candidate canonical and parent sync, attempted_effect: close directory descriptor, possible_disk_after: [directory-durable candidate], memory_action: install candidate/advance generation, result: committed_durable, permitted_next_effects: [Wake and normal-path observation], restart_action: load candidate; close failure diagnostic, task_owner: CQ-02I}
+  - {cut: receipt-root mkdir definite failure, durable_before: queues parent without receipt root, attempted_effect: create flat root, possible_disk_after: [root absent], memory_action: not ready, result: not_committed, permitted_next_effects: [bounded create retry], restart_action: verify absence/type before retry, task_owner: CQ-RECEIPT}
+  - {cut: receipt-root mkdir EEXIST verified directory, durable_before: existing directory entry, attempted_effect: open and verify directory, possible_disk_after: [verified directory], memory_action: root capability available, result: committed_durable, permitted_next_effects: [recovery], restart_action: verify again before use, task_owner: CQ-RECEIPT}
+  - {cut: receipt-root mkdir EEXIST wrong type, durable_before: existing non-directory entry, attempted_effect: open and verify directory, possible_disk_after: [wrong-type entry preserved], memory_action: not ready, result: rejected, permitted_next_effects: [operator repair], restart_action: startup fails closed, task_owner: CQ-RECEIPT}
+  - {cut: first root create then queues-parent open/fsync, durable_before: newly created root entry, attempted_effect: make root namespace durable, possible_disk_after: [root present, root durability ambiguous], memory_action: not ready until classified, result: commit_indeterminate, permitted_next_effects: [reload root and sync queues parent], restart_action: never recover queues before root durability, task_owner: CQ-RECEIPT}
+  - {cut: queues-parent close after successful root fsync, durable_before: directory-durable root, attempted_effect: close descriptor, possible_disk_after: [durable flat root], memory_action: capability available, result: committed_durable, permitted_next_effects: [intent recovery/readiness], restart_action: verify root; close diagnostic, task_owner: CQ-RECEIPT}
+  - {cut: receipt temp create/write/fsync/close, durable_before: completed canonical and intent-bound receipt bytes, attempted_effect: make receipt temp durable, possible_disk_after: [completed canonical plus no receipt and optional unreferenced temp], memory_action: retain completion ownership, result: not_committed, permitted_next_effects: [retry exact bound temp/install], restart_action: reuse intent binding; never mint/reconstruct, task_owner: CQ-RECEIPT}
+  - {cut: receipt no-replace rename definite failure with target absent, durable_before: exact durable receipt temp, attempted_effect: rename to bound basename, possible_disk_after: [target absent and selected temp retained], memory_action: retain completion ownership, result: not_committed, permitted_next_effects: [bounded exact rename retry], restart_action: reuse bound basename only, task_owner: CQ-RECEIPT}
+  - {cut: receipt no-replace rename outcome ambiguous, durable_before: exact durable receipt temp, attempted_effect: rename to bound basename, possible_disk_after: [bound target or selected temp], memory_action: retain completion ownership, result: commit_indeterminate, permitted_next_effects: [exact target/temp reload], restart_action: reuse bound identity only, task_owner: CQ-RECEIPT}
+  - {cut: receipt target already exact bytes, durable_before: intent-bound target present, attempted_effect: classify no-replace collision, possible_disk_after: [one exact receipt], memory_action: continue to root sync, result: commit_indeterminate, permitted_next_effects: [sync receipt root to establish committed_durable], restart_action: exact-byte idempotent target selected, task_owner: CQ-RECEIPT}
+  - {cut: receipt target exists with different bytes or identity, durable_before: conflicting target, attempted_effect: classify no-replace collision, possible_disk_after: [conflicting target preserved], memory_action: retain ownership/quarantine, result: rejected, permitted_next_effects: [operator-visible repair only], restart_action: never overwrite or scan-select another receipt, task_owner: CQ-RECEIPT}
+  - {cut: receipt rename then root open/fsync, durable_before: completed canonical plus bound target entry, attempted_effect: make receipt directory-durable, possible_disk_after: [target durable or durability ambiguous], memory_action: retain completion ownership, result: commit_indeterminate, permitted_next_effects: [reload exact target and sync same root], restart_action: no event attempt or unlink until durable, task_owner: CQ-RECEIPT}
+  - {cut: receipt-root close after successful fsync, durable_before: directory-durable exact receipt, attempted_effect: close descriptor, possible_disk_after: [durable receipt], memory_action: proceed with QM-053, result: committed_durable, permitted_next_effects: [normal-path final observation then CAS cleanup], restart_action: close diagnostic; no replay, task_owner: CQ-RECEIPT}
+  - {cut: crash after completed canonical durable before receipt durable, durable_before: final intent and completed canonical, attempted_effect: install bound receipt, possible_disk_after: [no receipt, temp, exact target with ambiguous root sync], memory_action: none survives, result: commit_indeterminate, permitted_next_effects: [receipt classifier only], restart_action: reuse intent-bound identity/bytes then cleanup; never emit, task_owner: CQ-RECEIPT}
+  - {cut: crash after receipt durable before final event attempt, durable_before: exact receipt and completed canonical, attempted_effect: normal-path observation, possible_disk_after: [receipt with event absent], memory_action: none survives, result: committed_durable, permitted_next_effects: [CAS cleanup], restart_action: never retry/synthesize event, task_owner: CQ-RECEIPT}
+  - {cut: final event append failure, durable_before: exact durable receipt, attempted_effect: append queue_group_completed, possible_disk_after: [event absent or outcome uncertain; receipt unchanged], memory_action: continue cleanup, result: committed_durable, permitted_next_effects: [diagnostic and CAS cleanup], restart_action: never inspect JSONL/replay/refuse for event, task_owner: CQ-RECEIPT}
+  - {cut: crash after final event attempt, durable_before: exact durable receipt, attempted_effect: continue completion cleanup, possible_disk_after: [event present or absent; receipt unchanged], memory_action: none survives, result: committed_durable, permitted_next_effects: [CAS cleanup], restart_action: classify queue-owned facts only; no observation recovery, task_owner: CQ-RECEIPT}
+  - {cut: CAS exact-match canonical unlink returns definite failure, durable_before: receipt plus exact completed canonical, attempted_effect: unlink canonical, possible_disk_after: [exact canonical present], memory_action: retain ownership, result: not_committed, permitted_next_effects: [bounded exact retry], restart_action: receipt authorizes only exact match, task_owner: CQ-RECEIPT}
+  - {cut: CAS exact-match canonical unlink outcome ambiguous, durable_before: receipt plus exact completed canonical, attempted_effect: unlink canonical, possible_disk_after: [canonical present or absent], memory_action: retain ownership until parent durability, result: commit_indeterminate, permitted_next_effects: [exact unlink/parent classifier], restart_action: receipt authorizes only exact match, task_owner: CQ-RECEIPT}
+  - {cut: CAS sees canonical absent, durable_before: durable receipt, attempted_effect: classify cleanup, possible_disk_after: [canonical absent], memory_action: release after parent durability/intents resolve, result: committed_durable, permitted_next_effects: [queue-parent sync and intent cleanup], restart_action: idempotent absence, task_owner: CQ-RECEIPT}
+  - {cut: CAS sees newer same-name queue ID, durable_before: old receipt plus new canonical, attempted_effect: cleanup old completion, possible_disk_after: [new canonical untouched], memory_action: old cleanup does not own new queue, result: rejected, permitted_next_effects: [retain old receipt until eligible GC], restart_action: never unlink or name-fallback, task_owner: CQ-RECEIPT}
+  - {cut: CAS sees same ID with different digest or corrupt canonical, durable_before: receipt plus inconsistent canonical, attempted_effect: cleanup, possible_disk_after: [canonical preserved], memory_action: quarantine/refuse affected identity, result: rejected, permitted_next_effects: [operator-visible repair], restart_action: no unlink, task_owner: CQ-RECEIPT}
+  - {cut: canonical unlink then queue-parent open/fsync, durable_before: receipt and exact canonical, attempted_effect: make canonical absence durable, possible_disk_after: [absent, completed canonical may reappear after crash], memory_action: retain ownership until classified, result: commit_indeterminate, permitted_next_effects: [exact absence/match/newer classifier and parent sync], restart_action: never touch newer queue, task_owner: CQ-RECEIPT}
+  - {cut: queue-parent close after successful unlink fsync, durable_before: durable canonical absence, attempted_effect: close descriptor, possible_disk_after: [durable absence], memory_action: clear/release after intent state resolves, result: committed_durable, permitted_next_effects: [intent removal and release], restart_action: close diagnostic, task_owner: CQ-RECEIPT}
+  - {cut: ownership release with unresolved canonical or intent, durable_before: unresolved queue-owned state, attempted_effect: clear QueueStore/refusal, possible_disk_after: [blocker remains], memory_action: release forbidden, result: rejected, permitted_next_effects: [finish classifier], restart_action: unresolved record owns name, task_owner: CQ-RECEIPT}
+  - {cut: release marker attempted before durable canonical and intent absence or ownership release, durable_before: receipt plus unresolved cleanup or owner, attempted_effect: sample released_at or install marker, possible_disk_after: [receipt and no marker], memory_action: retain or finish old ownership; admission follows cleanup classifier, result: rejected, permitted_next_effects: [finish cleanup and release], restart_action: never infer release from completed_at filesystem time or events, task_owner: CQ-RECEIPT}
+  - {cut: crash after durable cleanup and ownership release before marker, durable_before: receipt with old canonical and intents durably absent, attempted_effect: install release marker, possible_disk_after: [receipt and no marker], memory_action: admission remains free and GC disabled, result: committed_durable, permitted_next_effects: [prove cleanup facts then sample later released_at], restart_action: create marker with conservative restart-time anchor; never reacquire name, task_owner: CQ-RECEIPT}
+  - {cut: release marker temp create/write/fsync/close failure, durable_before: released old ownership and exact receipt, attempted_effect: make canonical marker temp durable, possible_disk_after: [receipt plus no marker and optional temp], memory_action: admission free and GC disabled, result: not_committed, permitted_next_effects: [classify temp and retry marker only], restart_action: validate receipt and cleanup facts before later anchor, task_owner: CQ-RECEIPT}
+  - {cut: release marker no-replace rename or receipt-root sync ambiguity, durable_before: exact receipt and durable marker temp, attempted_effect: install deterministic marker, possible_disk_after: [no marker exact marker or ambiguous durability], memory_action: admission free and GC disabled until classified, result: commit_indeterminate, permitted_next_effects: [reload exact marker and temp then sync root], restart_action: valid existing marker timestamp wins; durably absent target permits a later anchor, task_owner: CQ-RECEIPT}
+  - {cut: release marker exact existing or conflicting corrupt unsupported target, durable_before: deterministic marker target, attempted_effect: classify no-replace collision, possible_disk_after: [target preserved], memory_action: valid bound target enables age checks; every mismatch disables GC only, result: exact_success_or_identity_integrity_error, permitted_next_effects: [sync valid target or diagnose and preserve invalid target], restart_action: never overwrite retimestamp or weaken receipt status, task_owner: CQ-RECEIPT}
+  - {cut: release marker root close after successful fsync, durable_before: directory-durable exact marker, attempted_effect: close descriptor, possible_disk_after: [durable receipt and marker], memory_action: admission unaffected, result: committed_durable, permitted_next_effects: [age wait], restart_action: close failure diagnostic, task_owner: CQ-RECEIPT}
+  - {cut: delayed cleanup spans completed_at plus 30 days, durable_before: receipt and unresolved canonical or intent ownership, attempted_effect: GC eligibility check then cleanup at later T1, possible_disk_after: [receipt retained; marker absent until release then anchored at T1], memory_action: GC forbidden while cleanup unresolved; admission follows ownership, result: rejected_then_committed_durable, permitted_next_effects: [after release install marker with gc_not_before T1 plus 720 hours], restart_action: full 720-hour interval begins from durable later marker not completed_at, task_owner: CQ-RECEIPT}
+  - {cut: clock unavailable unsynchronized regressed or before marker boundary, durable_before: exact receipt and valid marker, attempted_effect: age eligibility decision, possible_disk_after: [receipt and marker retained], memory_action: admission unaffected, result: rejected, permitted_next_effects: [wait for trusted UTC at or beyond gc_not_before], restart_action: marker interval never resets or shortens; regression only delays, task_owner: CQ-RECEIPT}
+  - {cut: trusted UTC at or after marker gc_not_before, durable_before: exact receipt and valid marker at least 720 hours after released_at, attempted_effect: age eligibility decision, possible_disk_after: [receipt and marker retained], memory_action: admission unaffected, result: committed_durable, permitted_next_effects: [start receipt-first GC], restart_action: revalidate exact pair and clock before unlink, task_owner: CQ-RECEIPT}
+  - {cut: GC receipt unlink definite failure or outcome ambiguous, durable_before: eligible exact receipt and marker, attempted_effect: unlink exact receipt path, possible_disk_after: [receipt present or absent; marker present], memory_action: admission never blocked, result: not_committed_or_indeterminate, permitted_next_effects: [reload both exact entries and revalidate], restart_action: marker remains; never unlink marker first, task_owner: CQ-RECEIPT}
+  - {cut: GC receipt unlink then receipt-root open/fsync, durable_before: eligible receipt selected and marker retained, attempted_effect: make receipt absence durable, possible_disk_after: [receipt absent or may reappear; marker present], memory_action: admission never blocked, result: commit_indeterminate, permitted_next_effects: [reload exact pair and root sync], restart_action: marker preserves retention authority, task_owner: CQ-RECEIPT}
+  - {cut: GC marker unlink definite failure or outcome ambiguous after durable receipt absence, durable_before: marker-only eligible orphan, attempted_effect: unlink exact marker path and sync root, possible_disk_after: [marker present or absent; receipt absent], memory_action: no queue effect, result: not_committed_or_indeterminate, permitted_next_effects: [reload exact marker and root sync], restart_action: never recreate receipt; retry only after marker eligibility validation, task_owner: CQ-RECEIPT}
+  - {cut: GC root close after successful marker-absence fsync, durable_before: durable receipt and marker absence, attempted_effect: close descriptor, possible_disk_after: [pair durably absent], memory_action: no queue effect, result: committed_durable, permitted_next_effects: [none], restart_action: close diagnostic, task_owner: CQ-RECEIPT}
+  - {cut: exact-ID lookup zero/one/multiple candidates, durable_before: no exact live queue and flat receipt root, attempted_effect: read-only status selection, possible_disk_after: [unchanged], memory_action: no mutation, result: not_found_or_success_or_identity_integrity_error, permitted_next_effects: [return deterministic response/error], restart_action: never first-match/name fallback; recovery rule unchanged, task_owner: CQ-RECEIPT}
+  - {cut: waiter non-final complete with event absent and later group live, durable_before: exact live queue with watched group complete-success, attempted_effect: heartbeat QueueStatus, possible_disk_after: [unchanged live queue], memory_action: terminate watched group from durable status, result: success, permitted_next_effects: [return own-bead or group outcome], restart_action: JSONL never queried, task_owner: CQ-RUN-WAIT}
+  - {cut: waiter final success with event absent and only receipt, durable_before: exact retained receipt, attempted_effect: heartbeat QueueStatus by accepted ID, possible_disk_after: [unchanged receipt], memory_action: terminate success, result: success, permitted_next_effects: [exit 0], restart_action: require receipt final index covers watched group, task_owner: CQ-RUN-WAIT}
+  - {cut: waiter failure pause with group/pause events absent, durable_before: exact live paused/cancelled state or failed watched group, attempted_effect: heartbeat QueueStatus, possible_disk_after: [unchanged], memory_action: terminate failure, result: failure, permitted_next_effects: [exit 1], restart_action: no JSONL fallback, task_owner: CQ-RUN-WAIT}
+  - {cut: waiter complete or incomplete own-bead observations, durable_before: authoritative watched group/receipt outcome, attempted_effect: combine observation attribution with status, possible_disk_after: [unchanged], memory_action: preserve own-bead attribution when complete; otherwise use group/receipt outcome, result: deterministic_terminal, permitted_next_effects: [exit], restart_action: no event completeness assumption, task_owner: CQ-RUN-WAIT}
+  - {cut: waiter pending/active heartbeat, durable_before: exact live watched group pending or active, attempted_effect: QueueStatus, possible_disk_after: [unchanged], memory_action: continue waiting, result: continuing, permitted_next_effects: [next event or heartbeat at existing interval], restart_action: same exact-ID rule, task_owner: CQ-RUN-WAIT}
+  - {cut: waiter same-name reuse/missing group/bad receipt index/not-found/corrupt/status transport, durable_before: accepted old queue ID, attempted_effect: exact-ID status, possible_disk_after: [unchanged], memory_action: never select newer name; terminate integrity/transport errors, result: failure, permitted_next_effects: [exit 1], restart_action: no JSONL or directory-order fallback, task_owner: CQ-RUN-WAIT}
+  - {cut: cancellation predecessor replace-only after cancelled canonical durability, durable_before: origin/kind/source/destination/successor bytes bound in predecessor, attempted_effect: begin exact successor archive intent, possible_disk_after: [cancelled canonical plus predecessor only], memory_action: retain ownership/refusal, result: committed_durable, permitted_next_effects: [create only prebound successor], restart_action: never guess origin kind destination or timestamp, task_owner: CQ-CALLER-CANCEL}
+  - {cut: successor archive-intent temp create/write/fsync/close definite failure, durable_before: predecessor plus cancelled canonical, attempted_effect: prepare exact successor, possible_disk_after: [predecessor plus unselected temp], memory_action: retain ownership/refusal, result: not_committed, permitted_next_effects: [clean unselected temp and retry exact successor], restart_action: replace-only classifier, task_owner: CQ-CALLER-CANCEL}
+  - {cut: successor archive-intent rename or queue-parent sync ambiguity, durable_before: predecessor and exact successor rename attempted, attempted_effect: make linked successor durable, possible_disk_after: [replace-only or exact linked pair], memory_action: retain ownership/refusal, result: commit_indeterminate, permitted_next_effects: [reload exact pair and sync], restart_action: mismatched pair quarantines, task_owner: CQ-CALLER-CANCEL}
+  - {cut: exact linked predecessor and successor pair, durable_before: both identities/bytes/digests match and successor parent-synced, attempted_effect: remove predecessor replace intent, possible_disk_after: [exact linked pair or archive-only], memory_action: retain ownership under successor, result: committed_durable, permitted_next_effects: [predecessor unlink plus parent sync then archive], restart_action: pair continues deterministically, task_owner: CQ-CALLER-CANCEL}
+  - {cut: mismatched predecessor/successor or originless cancelled canonical, durable_before: nonmatching or incomplete handoff facts, attempted_effect: classify handoff, possible_disk_after: [all bytes preserved], memory_action: quarantine/refuse, result: rejected, permitted_next_effects: [operator repair only], restart_action: never mint or infer handoff, task_owner: CQ-CALLER-CANCEL}
+  - {cut: predecessor unlink or queue-parent sync ambiguity, durable_before: exact durable successor plus predecessor, attempted_effect: remove predecessor, possible_disk_after: [exact pair or archive-only], memory_action: successor retains ownership/refusal, result: commit_indeterminate, permitted_next_effects: [reload pair and sync queue parent], restart_action: archive-only valid only for exact bound successor, task_owner: CQ-CALLER-CANCEL}
+  - {cut: archive rename definite failure, durable_before: archive-only successor plus exact source canonical, attempted_effect: rename to preselected destination, possible_disk_after: [source canonical and successor], memory_action: retain ownership/refusal, result: not_committed, permitted_next_effects: [bounded exact rename retry], restart_action: never choose a new destination, task_owner: CQ-CALLER-CANCEL}
+  - {cut: archive rename or queue-parent sync ambiguity, durable_before: successor and exact source/destination binding, attempted_effect: make selected archive durable, possible_disk_after: [source only destination only or namespace ambiguity], memory_action: retain ownership/refusal, result: commit_indeterminate, permitted_next_effects: [reload exact source/destination and sync], restart_action: changed source/different destination quarantines, task_owner: CQ-CALLER-CANCEL}
+  - {cut: archive queue-parent close after successful fsync, durable_before: selected archive directory-durable, attempted_effect: close directory descriptor, possible_disk_after: [durable archive], memory_action: continue legacy cleanup, result: committed_durable, permitted_next_effects: [main legacy rule or successor cleanup], restart_action: close failure diagnostic, task_owner: CQ-CALLER-CANCEL}
+  - {cut: main legacy unlink definite failure, durable_before: durable selected archive and legacy present, attempted_effect: remove legacy, possible_disk_after: [legacy present], memory_action: retain successor ownership/refusal, result: not_committed, permitted_next_effects: [bounded exact unlink retry], restart_action: successor cannot be removed, task_owner: CQ-CALLER-CANCEL}
+  - {cut: main legacy unlink or .harmonik parent sync ambiguity, durable_before: durable selected archive and successor intent, attempted_effect: make legacy absence durable, possible_disk_after: [legacy present or absent], memory_action: retain successor ownership/refusal, result: commit_indeterminate, permitted_next_effects: [reload legacy and sync .harmonik], restart_action: archive-intent removal forbidden until durable absence, task_owner: CQ-CALLER-CANCEL}
+  - {cut: successor archive-intent removal or queue-parent sync ambiguity, durable_before: archive and applicable legacy absence durable, attempted_effect: remove successor intent, possible_disk_after: [successor present or absent], memory_action: retain ownership until classified, result: commit_indeterminate, permitted_next_effects: [reload intent and sync queue parent], restart_action: release only after durable absence, task_owner: CQ-CALLER-CANCEL}
+  - {cut: operator cancel crash after release before audit or RPC response, durable_before: archive/legacy/intent cleanup and release durable, attempted_effect: best-effort audit then response, possible_disk_after: [released state with audit present or absent], memory_action: success state remains released, result: committed_durable, permitted_next_effects: [original normal path may attempt audit/response], restart_action: never replay audit or response, task_owner: CQ-CALLER-CANCEL}
+  - {cut: daemon-unreachable cancellation, durable_before: byte snapshot of canonical/temp/archive/intent/legacy/receipt/events, attempted_effect: connect target daemon, possible_disk_after: [byte-identical snapshot], memory_action: none, result: exit_17, permitted_next_effects: [none], restart_action: no local fallback, task_owner: CQ-CALLER-CANCEL}
+  - {cut: capable startup with valid intents/receipts, durable_before: supported queue-owned records, attempted_effect: recover before ready, possible_disk_after: [classified queue-owned state], memory_action: install or retain exact refusal, result: committed_durable, permitted_next_effects: [readiness after resolution], restart_action: complete capability required, task_owner: CQ-04}
+  - {cut: corrupt/unsupported/coexisting protocol records or incapable downgrade, durable_before: preserved records, attempted_effect: startup/upgrade/downgrade/rollback, possible_disk_after: [records unchanged], memory_action: not ready/refuse handoff, result: rejected, permitted_next_effects: [operator-visible compatible target/repair], restart_action: no partial capability or event repair, task_owner: CQ-04}
+  - {cut: migration destination create/legacy delete/both-copy startup, durable_before: legacy/canonical exact bytes, attempted_effect: preserve one valid copy, possible_disk_after: [legacy only, destination only, equivalent both, divergent both], memory_action: load only classified canonical, result: typed_namespace_result, permitted_next_effects: [exact copy/parent sync then legacy unlink/.harmonik sync], restart_action: equivalent completes; divergent/invalid preserves and refuses, task_owner: CQ-MIG-01}
+  - {cut: concurrent stale-generation mutation, durable_before: one installed generation, attempted_effect: second mutation from stale snapshot, possible_disk_after: [winner canonical only], memory_action: reject loser before I/O, result: rejected, permitted_next_effects: [resnapshot/retry], restart_action: generations never persisted, task_owner: CQ-02I}
+event_ordering:
+  - event: queue_group_completed
+    durability: F normal-path fsync-backed attempt; queue receipt/state remain authoritative
+    required_predecessors: [last item terminal event, durable queue state; final success also requires durable completion receipt]
+    forbidden_predecessors: [canonical unlink before receipt durability, restart synthesis, JSONL recovery decision]
+    outbox: false
+    replay: never
+    failure_action: diagnostic only; continue queue-owned cleanup/release/admission
+  - event: queue_group_started
+    durability: existing O-class unchanged
+    required_predecessors: [durable successor activation]
+    forbidden_predecessors: [uncommitted queue state]
+    outbox: false
+    replay: never by CQ-02
+    failure_action: diagnostic only
+  - event: queue_paused
+    durability: existing F-class normal-path attempt unchanged
+    required_predecessors: [durable paused queue state, queue_group_completed attempt on same uninterrupted path]
+    forbidden_predecessors: [uncommitted pause]
+    outbox: false
+    replay: never by CQ-02
+    failure_action: diagnostic only; exact-ID status remains authority
+  - event: queue_cancelled_operator
+    durability: O
+    required_predecessors: [durable archive/legacy cleanup, archive-intent removal, QueueStore/refusal release]
+    forbidden_predecessors: [graceful shutdown, unresolved ownership, replacement/archive intent membership]
+    outbox: false
+    replay: never
+    failure_action: cancellation success remains successful; diagnostic only and RPC response not suppressed
+migration_rules:
+  - {state: valid legacy only, action: create directory-durable main from exact bytes then durably remove legacy, failure: retain at least one valid copy}
+  - {state: valid canonical only, action: load canonical, failure: none}
+  - {state: equivalent valid both, action: retain canonical and durably remove legacy, failure: both may remain equivalent}
+  - {state: divergent valid both, action: preserve both and refuse, failure: operator repair}
+  - {state: invalid legacy or invalid canonical, action: preserve/quarantine and refuse without overwrite, failure: operator repair}
+  - {state: neither, action: no queue, failure: none}
+  - {state: destination rename or legacy unlink parent-sync ambiguity, action: exact reload/compare/sync classifier, failure: never delete last valid copy}
+implementation_slices:
+  - task: CQ-02I
+    prerequisites: [CQ-02, CQ-MIG-01]
+    lease_family: queue_transaction_substrate
+    writes: [QueueStore snapshot/generation transaction API, generic replace/archive-intent schemas/classifiers including optional exact linked archive-handoff record, typed persistence results and tests]
+    failing_first_proof: ordinary replacement fault cuts and stale generation fail without live-pointer mutation
+    accepted_intermediate_state: generic transaction/intent substrate only; no receipt QueueStatus QM-053 completion payload or optional group-observation delivery
+    rollback_boundary: revert generic substrate as one unit before caller migration
+    conflicts: [CQ-01 and CQ-RECEIPT follow on internal/queue persistence/store APIs; no caller migration may overlap substrate shape changes]
+  - task: CQ-01
+    prerequisites: [CQ-02I]
+    lease_family: queue_rpc_admission
+    writes: [internal/queue/rpc.go submit append and exact owned tests]
+    failing_first_proof: submit plus group-zero and append each use one immutable transaction
+    accepted_intermediate_state: RPC admission migrated; receipt/status symbols still disabled and optional group-observation delivery not enabled
+    rollback_boundary: submit/append RPC symbols only
+    conflicts: [CQ-RECEIPT follows on internal/queue/rpc.go]
+  - task: CQ-RECEIPT
+    prerequisites: [CQ-02I, CQ-01]
+    lease_family: queue_receipt
+    writes: [completion receipt and immutable completion-release marker v1 schemas/store/root/install/read/CAS cleanup/trusted-clock retention/receipt-first marker-last GC, internal/queue/types.go QueueStatusRequest QueueStatusResponse, internal/queue/rpc.go HandleQueueStatus findQueueByID HandlerAdapter.HandleQueueStatus, internal/queue/cli/status.go RunQueueStatus, internal/queue/cli/client.go renderQueueStatusText, focused JSON/text/wire tests, QM-053 primitives, internal/core/queueevents_extqueue.go QueueGroupCompletedPayload.CompletionReceiptID and QueueGroupCompletedPayload.Valid plus internal/core/queueevents_extqueue_test.go UUID/additive compatibility tests, focused fault/restart tests]
+    conflicts: [CQ-01 on internal/queue/rpc.go must precede, CQ-CALLER-CANCEL on internal/queue/rpc.go must follow]
+    failing_first_proof: intent-bound one receipt survives every root/install/CAS cut; marker cannot predate durable cleanup and ownership release; missing-marker restart selects a later anchor; exact/conflicting/corrupt/unsupported markers classify; delayed cleanup past completed_at plus 30 days still waits released_at plus 720 hours; unavailable or regressed clock refuses; event append failure still cleans up; GC proves pair identity and threshold then receipt-first marker-last exact unlink definite failure already-absent idempotency ambiguity root-open/root-fsync reload-before-retry close diagnostics marker-only recovery and admission nonblocking
+    accepted_intermediate_state: receipt/release-marker/status/QM-053 primitives land but optional group-observation delivery not enabled and terminal workloop callers remain gated
+    rollback_boundary: receipt/status/QM-053/root/release-marker/retention/complete-GC primitives are one unit; no receipt producer or partial GC without marker capability and no global event writer/replay changes
+  - task: CQ-RUN-WAIT
+    prerequisites: [CQ-RECEIPT]
+    lease_family: run_via_daemon_waiter
+    writes: [cmd/harmonik/run_via_daemon.go runBeadSubcommandViaDaemon watcher call site viaWatchGroupCompletion signature/body and smallest viaQueueStatusByID helper or injected viaStatusQuery seam backed by viaSendRequest over a separate RPC connection plus focused fresh-submit/shared-append tests]
+    failing_first_proof: fresh submit and shared append each query immediately after accepted setup and after every heartbeat; pending/active continues; transport failure terminates; queue_group_completed absent; final receipt; non-final success; paused-by-failure; same-name isolation; complete own-bead observations; incomplete own-bead observations; integrity failures
+    accepted_intermediate_state: exact-ID fallback protects both wait branches; optional group-observation delivery not enabled until integration after this slice
+    rollback_boundary: watcher call site signature/body independent status-query seam/helper and focused tests only
+    conflicts: [none; status server is CQ-RECEIPT-owned and must precede]
+  - task: CQ-CALLER-CANCEL
+    prerequisites: [CQ-RECEIPT]
+    lease_family: queue_cancel_rpc
+    writes: [internal/queue/types.go QueueCancelRequest QueueCancelResponse preserving JSON queue and force plus additive queue_id, internal/queue/rpc.go HandlerAdapter.HandleQueueCancel after CQ-RECEIPT, internal/queue/cli/cancel.go RunQueueCancel tryDaemonQueueCancel cancelFindByID journalCancel emitQueueCancelEvent daemon-only migration, N-1 queue/force and dual-selector conflict tests, internal/core/eventtype.go EventTypeQueueCancelledOperator, internal/core/queueevents_extqueue.go QueueCancelledOperatorPayload and Valid, internal/core/eventreg_hqwn59.go registerQueueEvents, internal/core/pertypecompat_hqwn38.go compatibility row, internal/core/queueevents_extqueue_test.go internal/core/pertypecompat_hqwn38_test.go internal/core/eventtype_coverage_gjyks_test.go constructor/decode/cohort/count/Class-O/compatibility coverage]
+    conflicts: [CQ-RECEIPT on internal/queue/rpc.go and internal/queue/types.go must precede]
+    failing_first_proof: daemon-down exit 17 writes nothing; replace-only exact-pair archive-only mismatch/originless classifiers; successor create/write/fsync/close/rename/parent-sync; predecessor delete/parent-sync; archive rename/parent-sync; main legacy unlink/.harmonik sync; successor removal/parent-sync; registered XOR audit decode/compat/cohort; audit failure preserves success
+    accepted_intermediate_state: cancellation serialized after receipt same-file work; optional group-observation delivery not enabled
+    rollback_boundary: linked handoff cancel CLI/RPC and complete typed audit registration are one slice
+  - task: CQ-CALLER-GROUP-ACTIVATION
+    prerequisites: [CQ-03]
+    lease_family: dispatch_spine
+    writes: [internal/daemon/workloop.go activateFirstPendingGroup activateFirstPendingGroupLocked and exact callers plus focused tests]
+    conflicts: [CQ-03 JR-03 CQ-CALLER-OPERATOR CQ-CALLER-WORKLOOP-MAINTENANCE serialize on workloop.go dispatch_spine]
+    failing_first_proof: submit/advance never expose separate normal-path activation persist
+    accepted_intermediate_state: standalone normal activation removed; optional group-observation delivery not enabled
+    rollback_boundary: activation symbols only
+  - task: JR-01
+    prerequisites: [CQ-03, JR-00, BR-00]
+    lease_family: dispatch_reservation
+    writes: [internal/daemon/workloop.go ClaimBead through durable Run-record and runRegistry.Register pre-launch region, claim/Run phase owner defined by BR-00, on-disk Run record and registry adapters, focused duplicate/crash tests]
+    failing_first_proof: after CQ-03 durable reservation ClaimBead failure returns durably or fails closed; crash before and after durable Run record or runRegistry.Register converges to exactly one correlated Run ID before launch
+    accepted_intermediate_state: reservation semantics settled before startup/final cleanup
+    rollback_boundary: claim through Run-registration phase plus its narrow adapters only
+    conflicts: [CQ-03 precedes and JR-03 follows on internal/daemon/workloop.go dispatch spine]
+  - task: CQ-04
+    prerequisites: [CQ-RECEIPT, JR-01]
+    lease_family: queue_startup_recovery
+    writes: [internal/lifecycle/startup_pl005_qm002.go LoadQueueAtStartup loadOneQueueAtStartup reconcileQueueTerminalState reconcileDispatchedItems reconcileThreeWay plus supported intent receipt root CAS cleanup recovery and tests]
+    failing_first_proof: startup resolves queue-owned records without JSONL and never synthesizes final event; reconcileDispatchedItems claim-loss correction is transactional; reconcileThreeWay commits all A/D corrections before A/D/C/B attempts and restart converges
+    conflicts: [JR-04 startup join follows; no concurrent edits to startup_pl005_qm002.go]
+    accepted_intermediate_state: complete capability recovery available; live receipt-producing terminal call sites and optional group-observation delivery remain gated by JR-03
+    rollback_boundary: startup queue recovery phase only
+  - task: JR-03
+    prerequisites: [CQ-RUN-WAIT, CQ-04, JR-01, JR-02, BR-03, CQ-CALLER-GROUP-ACTIVATION]
+    lease_family: dispatch_terminal
+    writes: [internal/daemon/workloop.go evaluateGroupAdvanceWithOutcome terminal claim-release QM-053 call sites and drainCancelledQueue plus focused tests]
+    conflicts: [all workloop.go dispatch_spine cards serialize]
+    failing_first_proof: terminal paths consume receipt primitives; missing observations cannot hang waiter; startup never emits final event
+    accepted_intermediate_state: crash-optional group-observation delivery may be enabled only now after waiter integration and capable startup recovery
+    rollback_boundary: JR-03 terminal composition; CQ-04 or CQ-RUN-WAIT rollback first requires disabling receipt-producing live terminal call sites
+  - task: CQ-03
+    prerequisites: [CQ-01, CQ-02I, WL-03]
+    lease_family: dispatch_spine
+    writes: [internal/daemon/workloop.go selected-item pending-to-dispatched reservation and adjacent post-startRun Run-ID patch, RunRegistry.Len and RunRegistry.LenForQueueLocal plus selected Queue.Workers capacity revalidation reads, internal/queuewiring/store.go narrow locked snapshot transaction API, focused race/fault/restart tests]
+    failing_first_proof: one reservation persists before Beads claim/handler launch; stale generation or newly exhausted global/selected-queue capacity retries before mutation; failed persist exposes no runnable owner; claim-loss restart converges through reconcileDispatchedItems; Run-ID patch never installs unclassified state
+    conflicts: [all workloop.go dispatch_spine cards serialize]
+    accepted_intermediate_state: reservation consumes generic transaction; terminal/receipt behavior unchanged
+    rollback_boundary: CQ-03 existing card
+  - task: CQ-CALLER-EAGER
+    prerequisites: [CQ-02I]
+    lease_family: queue_eager_refill
+    writes: [internal/daemon/eagerfill_em063.go eagerRefillEval complete snapshotFleet consumption all-name duplicate pre-screen deterministic normalized-name refill target queue mutation and focused tests]
+    failing_first_proof: every named queue is scanned; a sibling duplicate is excluded; paused completed full or ineligible siblings do not block an eligible stream; global and per-queue capacity bound deficit; persist failure leaves installed eager state unchanged and emits no success observation
+    accepted_intermediate_state: named eager refill consumes transaction; no receipt ownership
+    rollback_boundary: eagerRefillEval named-fleet selection and queue mutation only
+    conflicts: [none file-disjoint]
+  - task: WL-03
+    prerequisites: [ARCH-01, ARCH-GATE, WL-01, WL-02A, WL-02B, WL-MUT-01]
+    lease_family: dispatch_spine
+    writes: [internal/daemon/workloop.go queueSelection snapshotFleet selectNextQueue steady-state caller cursor advance and br-ready arbitration, internal/orchestrator/select.go FleetSnapshot SelectNextQueue, focused selection tests]
+    failing_first_proof: one complete immutable named-set snapshot feeds pure selection; fallback is enabled only with --auto-pull and only when fleet.named_queues IS EMPTY; non-empty ineligible fleet idles without consulting br ready; paused completed full or ineligible siblings do not block; global and per-queue gates hold; QM-067 cursor advances on every selection and reset-starvation fixture fails
+    accepted_intermediate_state: WL-03 returns an immutable named-queue candidate and performs no reservation claim Run registration persistence terminal or process effect
+    rollback_boundary: pure fleet projection selection and steady-state source arbitration only
+    conflicts: [all workloop.go dispatch_spine cards serialize; CQ-03 consumes WL-03 output]
+  - task: CQ-CALLER-OPERATOR
+    prerequisites: [CQ-02I]
+    lease_family: queue_operator_events
+    writes: [internal/queuewiring/operatorevents.go QueueOperatorEventConsumer.transitionToPausedByDrain QueueOperatorEventConsumer.transitionToActive and focused tests]
+    failing_first_proof: pause/resume failure preserves installed state and retry converges
+    accepted_intermediate_state: operator pause/resume consumes transaction; cancellation remains separate
+    rollback_boundary: operator pause/resume symbols only
+    conflicts: [none file-disjoint from workloop and queue-cancel]
+  - task: CQ-CALLER-BUDGET
+    prerequisites: [CQ-02I]
+    lease_family: queue_budget_meter
+    writes: [internal/daemon/perqueuespendmeter_tigaf11.go pauseQueueByBudget unpauseBudgetPausedQueues and focused tests]
+    failing_first_proof: budget pause/unpause failure leaves memory unchanged and emits no success observation
+    accepted_intermediate_state: budget meter consumes transaction; no receipt ownership
+    rollback_boundary: two budget queue mutation symbols only
+    conflicts: [none file-disjoint]
+  - task: CQ-CALLER-CREW
+    prerequisites: [CQ-02I]
+    lease_family: queue_crew_placeholder
+    writes: [internal/daemon/crewstart.go crewHandlerImpl.ensureQueue minimal queue placeholder transaction and focused tests]
+    failing_first_proof: placeholder persist failure creates no live queue and retry converges
+    accepted_intermediate_state: crew placeholder consumes transaction
+    rollback_boundary: crew placeholder creation only
+    conflicts: [none file-disjoint]
+  - task: CQ-CALLER-REVIEW
+    prerequisites: [CQ-02I, JR-02]
+    lease_family: queue_review_charge
+    writes: [internal/daemon/runports.go ChargeReviewLoopFailure narrow BudgetPort signature if required and focused tests]
+    failing_first_proof: charge failure preserves installed queue and truthful terminal decision
+    accepted_intermediate_state: review charging consumes transaction; terminal work remains JR-03-owned
+    rollback_boundary: review-charge adapter only
+    conflicts: [none file-disjoint]
+  - task: CQ-CALLER-BOOTSTRAP
+    prerequisites: [CQ-02I, CQ-01]
+    lease_family: queue_cli_bootstrap
+    writes: [cmd/harmonik/run.go runBeadSubcommandIO initial queue.Persist pre-daemon ArchiveFailedQueue paused cancelled proven-orphan branches and QueueStore adoption plus focused tests]
+    failing_first_proof: bootstrap routes through started/adopted owner and has no pre-ownership disk writer
+    accepted_intermediate_state: inline bootstrap consumes owner API; post-daemon exit remains separate
+    rollback_boundary: pre-daemon bootstrap regions only
+    conflicts: [CQ-CALLER-INLINE-EXIT follows on cmd/harmonik/run.go]
+  - task: CQ-CALLER-WORKLOOP-MAINTENANCE
+    prerequisites: [CQ-03, JR-03]
+    lease_family: dispatch_spine
+    writes: [internal/daemon/workloop.go deferred reevaluation claim-skipped dependency cross-queue duplicate and max-attempt direct-persist regions plus focused tests]
+    failing_first_proof: each mutation fails closed/retries to one state without reopening reservation terminal or activation
+    accepted_intermediate_state: residual maintenance consumes transaction API
+    rollback_boundary: four named workloop branches only
+    conflicts: [all workloop.go dispatch-spine cards serialize; adoption excluded and owned by JR-04 then WL-REC-01]
+  - task: CQ-CALLER-INLINE-EXIT
+    prerequisites: [CQ-CALLER-BOOTSTRAP, JR-03]
+    lease_family: queue_inline_exit
+    writes: [cmd/harmonik/run.go runBeadSubcommandIO post-daemon paused-by-failure archive/exit region and focused tests]
+    failing_first_proof: post-daemon failure routes through owner and durable archive precedes truthful exit
+    accepted_intermediate_state: inline run has no direct archive writer
+    rollback_boundary: post-daemon inline-exit region only
+    conflicts: [CQ-CALLER-BOOTSTRAP precedes on cmd/harmonik/run.go]
+  - task: JR-04
+    prerequisites: [CQ-04, JR-03]
+    lease_family: run_session_adoption
+    writes: [internal/daemon/runinflightreconcile_hkr73qr.go reconcileOrphanedRunsOnResume, internal/daemon/run_session_adoption.go adoptLiveRunSession, exact focused recovery adoption tests]
+    failing_first_proof: repeated orphan claim recovery and live-session adoption is idempotent; PID/session ambiguity fails closed; adopted and retried runs cannot both own the item
+    conflicts: [CQ-04 and JR-03 precede; WL-REC-01 follows; workloop call sites read-only]
+    accepted_intermediate_state: typed recovery/adoption owner ready; inline workloop call sites remain for WL-REC-01
+    rollback_boundary: runinflightreconcile_hkr73qr.go run_session_adoption.go adoptLiveRunSession typed boundary and focused tests only
+  - task: WL-REC-01
+    prerequisites: [ARCH-GATE, JR-04, BR-04, CQ-03, WL-03]
+    lease_family: workloop_recovery_spine
+    writes: [internal/daemon/workloop.go recovery adoption call sites, narrow adapter wiring, inline adoption policy removal, focused mutation fault restart tests]
+    failing_first_proof: repeated loop iterations cannot adopt and retry the same Run; ambiguous session/provenance fails closed; only typed JR-04 effects are applied
+    conflicts: [JR-04 production files read-only; serialize with all workloop.go cards]
+    accepted_intermediate_state: recovery policy exists only in JR-04 owner and runWorkLoop retains scheduling and effect application
+    rollback_boundary: workloop recovery adoption call-site migration and narrow adapter only
+worker_prepackage:
+  porcelain_status:
+    - "?? .kerf/works/queue-transaction-contract/01-problem-space.md"
+    - "?? .kerf/works/queue-transaction-contract/02-components.md"
+    - "?? .kerf/works/queue-transaction-contract/03-research/event-model/findings.md"
+    - "?? .kerf/works/queue-transaction-contract/03-research/execution-model/findings.md"
+    - "?? .kerf/works/queue-transaction-contract/03-research/process-lifecycle/findings.md"
+    - "?? .kerf/works/queue-transaction-contract/03-research/queue-model/findings.md"
+    - "?? .kerf/works/queue-transaction-contract/04-design/event-model-design.md"
+    - "?? .kerf/works/queue-transaction-contract/04-design/execution-model-design.md"
+    - "?? .kerf/works/queue-transaction-contract/04-design/process-lifecycle-design.md"
+    - "?? .kerf/works/queue-transaction-contract/04-design/queue-model-design.md"
+    - "?? .kerf/works/queue-transaction-contract/05-changelog.md"
+    - "?? .kerf/works/queue-transaction-contract/05-spec-drafts/event-model.md"
+    - "?? .kerf/works/queue-transaction-contract/05-spec-drafts/execution-model.md"
+    - "?? .kerf/works/queue-transaction-contract/05-spec-drafts/process-lifecycle.md"
+    - "?? .kerf/works/queue-transaction-contract/05-spec-drafts/queue-model.md"
+    - "?? .kerf/works/queue-transaction-contract/06-integration.md"
+    - "?? .kerf/works/queue-transaction-contract/07-tasks.md"
+    - "?? .kerf/works/queue-transaction-contract/SESSION.md"
+    - "?? .kerf/works/queue-transaction-contract/change-design-review-receipt-round-1-response.md"
+    - "?? .kerf/works/queue-transaction-contract/change-design-review-receipt-round-1.md"
+    - "?? .kerf/works/queue-transaction-contract/change-design-review-receipt-round-2-response.md"
+    - "?? .kerf/works/queue-transaction-contract/change-design-review-receipt-round-2.md"
+    - "?? .kerf/works/queue-transaction-contract/change-design-review.md"
+    - "?? .kerf/works/queue-transaction-contract/research-review-receipt-round-1-response.md"
+    - "?? .kerf/works/queue-transaction-contract/research-review-receipt-round-1.md"
+    - "?? .kerf/works/queue-transaction-contract/research-review-receipt-round-2-response.md"
+    - "?? .kerf/works/queue-transaction-contract/research-review-receipt-round-2.md"
+    - "?? .kerf/works/queue-transaction-contract/research-review.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-1-response.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-1.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-2-response.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-2.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-3.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-4-response.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-4.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-5.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-1-response.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-1.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-2-response.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-3-response.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-4-response.md"
+    - "?? .kerf/works/queue-transaction-contract/spec-draft-review.md"
+    - "?? .kerf/works/queue-transaction-contract/spec.yaml"
+    - "?? plans/2026-07-24-code-health-audit/tasks/evidence/CQ-02.yaml"
+  tracked_paths: []
+  untracked_paths:
+    - .kerf/works/queue-transaction-contract/01-problem-space.md
+    - .kerf/works/queue-transaction-contract/02-components.md
+    - .kerf/works/queue-transaction-contract/03-research/event-model/findings.md
+    - .kerf/works/queue-transaction-contract/03-research/execution-model/findings.md
+    - .kerf/works/queue-transaction-contract/03-research/process-lifecycle/findings.md
+    - .kerf/works/queue-transaction-contract/03-research/queue-model/findings.md
+    - .kerf/works/queue-transaction-contract/04-design/event-model-design.md
+    - .kerf/works/queue-transaction-contract/04-design/execution-model-design.md
+    - .kerf/works/queue-transaction-contract/04-design/process-lifecycle-design.md
+    - .kerf/works/queue-transaction-contract/04-design/queue-model-design.md
+    - .kerf/works/queue-transaction-contract/05-changelog.md
+    - .kerf/works/queue-transaction-contract/05-spec-drafts/event-model.md
+    - .kerf/works/queue-transaction-contract/05-spec-drafts/execution-model.md
+    - .kerf/works/queue-transaction-contract/05-spec-drafts/process-lifecycle.md
+    - .kerf/works/queue-transaction-contract/05-spec-drafts/queue-model.md
+    - .kerf/works/queue-transaction-contract/06-integration.md
+    - .kerf/works/queue-transaction-contract/07-tasks.md
+    - .kerf/works/queue-transaction-contract/SESSION.md
+    - .kerf/works/queue-transaction-contract/change-design-review-receipt-round-1-response.md
+    - .kerf/works/queue-transaction-contract/change-design-review-receipt-round-1.md
+    - .kerf/works/queue-transaction-contract/change-design-review-receipt-round-2-response.md
+    - .kerf/works/queue-transaction-contract/change-design-review-receipt-round-2.md
+    - .kerf/works/queue-transaction-contract/change-design-review.md
+    - .kerf/works/queue-transaction-contract/research-review-receipt-round-1-response.md
+    - .kerf/works/queue-transaction-contract/research-review-receipt-round-1.md
+    - .kerf/works/queue-transaction-contract/research-review-receipt-round-2-response.md
+    - .kerf/works/queue-transaction-contract/research-review-receipt-round-2.md
+    - .kerf/works/queue-transaction-contract/research-review.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-1-response.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-1.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-2-response.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-2.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-3.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-4-response.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-4.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-5.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-1-response.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-1.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-2-response.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-3-response.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-4-response.md
+    - .kerf/works/queue-transaction-contract/spec-draft-review.md
+    - .kerf/works/queue-transaction-contract/spec.yaml
+    - plans/2026-07-24-code-health-audit/tasks/evidence/CQ-02.yaml
+  classified_paths:
+    - {path: .kerf/works/queue-transaction-contract/01-problem-space.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/02-components.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/03-research/event-model/findings.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/03-research/execution-model/findings.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/03-research/process-lifecycle/findings.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/03-research/queue-model/findings.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/04-design/event-model-design.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/04-design/execution-model-design.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/04-design/process-lifecycle-design.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/04-design/queue-model-design.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/05-changelog.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/05-spec-drafts/event-model.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/05-spec-drafts/execution-model.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/05-spec-drafts/process-lifecycle.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/05-spec-drafts/queue-model.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/06-integration.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/07-tasks.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/SESSION.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/change-design-review-receipt-round-1-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/change-design-review-receipt-round-1.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/change-design-review-receipt-round-2-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/change-design-review-receipt-round-2.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/change-design-review.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/research-review-receipt-round-1-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/research-review-receipt-round-1.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/research-review-receipt-round-2-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/research-review-receipt-round-2.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/research-review.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-1-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-1.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-2-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-2.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-3.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-4-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-4.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-5.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-1-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-1.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-2-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-3-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-4-response.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec-draft-review.md, owner: worker_kerf}
+    - {path: .kerf/works/queue-transaction-contract/spec.yaml, owner: worker_kerf}
+    - {path: plans/2026-07-24-code-health-audit/tasks/evidence/CQ-02.yaml, owner: worker_evidence}
+proof:
+  - {command: git rev-parse HEAD, exit_code: 0, result: execution baseline 82212d4ce569c57298f37a66bb3752870d9896c5}
+  - {command: card-blob-and-review, exit_code: 0, result: committed c598a3223df61b63701bb6b752aac1bff1d2d80b; exact fallback-clause reviewer APPROVE}
+  - {command: historical-review-byte-identity, exit_code: 0, result: research d7d08ce4b8590304c0ce35d91e21aff4a9860e12; design 69b5c4fe0a282d899be8572a168da57a4192be28; draft fbd8bcd2f1d12c707f2775a7fe859cd196a4ad77}
+  - {command: execution-model-semantic-scope, exit_code: 0, result: bounded named-QueueStore dispatch consistency plus exact fallback-owner replacements; eleven regions four exact replacements version/date and one qualified revision row; preamble compared literally}
+  - {command: receipt-identity-selection, exit_code: 0, result: live exact ID wins; otherwise exactly one valid receipt; zero not found; multiple/corrupt/unsupported/disagreement identity error}
+  - {command: no-event-recovery-scan, exit_code: 0, result: active evidence never uses JSONL to classify completion or replay queue events}
+  - {command: dependency-cycle-check, exit_code: 0, result: CQ-02I -> CQ-01 -> CQ-RECEIPT then CQ-RUN-WAIT and CQ-04 both gate JR-03; acyclic; cancel serialized after receipt; CQ-04 depends receipt plus JR-01}
+  - {command: approved-card-yaml-validator-through-review-gate, exit_code: 0, result: exact embedded validator fully passes with independent durability and composition APPROVE artifacts bound by reviewer profile blob and SHA-256}
+  - {command: research-review-receipt-round-2, exit_code: 0, result: focused independent APPROVE; prior REQUEST_CHANGES explicitly superseded}
+  - {command: four-area-change-design-completeness, exit_code: 0, result: queue process event execution designs each contain current state target state rationale traceability explicit non-changes and readiness}
+  - {command: task-dag-design-check, exit_code: 0, result: rpc.go conflicts serialized; CQ-04 is a hard JR-03 prerequisite; waiter and startup both precede live receipt completion; no global event migration task}
+  - {command: change-design-round-1-disposition, exit_code: 0, result: linked cancellation handoff restored; CQ-04 gates JR-03; waiter owns call site and independent status seam; payload validation/registry symbols assigned; GC task enumerates every cut}
+  - {command: change-design-round-2-disposition, exit_code: 0, result: immutable post-release marker v1 anchors trusted-UTC 720-hour retention; delayed cleanup and restart are conservative; receipt-first marker-last GC and incapable downgrade are fully owned by CQ-RECEIPT}
+  - {command: four-full-file-drafts, exit_code: 0, result: queue-model process-lifecycle event-model and execution-model complete modified drafts exist; normative specs remain untouched}
+  - {command: execution-model-full-file-semantic-proof, exit_code: 0, result: literal preamble and all source content preserved outside frontmatter version/date eleven bounded named-QueueStore regions four exact fallback/test replacements and one qualifying revision row}
+  - {command: strengthened-task-dag-wire-caller-check, exit_code: 0, result: 21-slice graph acyclic with mandatory receipt/waiter/startup/adoption and WL-03 selection spines; exact shipped wire fields and selectors preserved; every production caller tuple maps to one task and all slices carry exact files or symbols prerequisites leases proofs intermediate rollback and conflicts}
+  - {command: production-cancel-tags-and-caller-bijection, exit_code: 0, result: literal shipped QueueCancelRequest tags are queue and force; draft preserves both and additively adds queue_id with conflict/no-default semantics; 13 critical production caller symbols each map to exactly one slice; JR-04 precedes WL-REC-01 and maintenance excludes adoption}
+  - {command: worker-prepackage-exact-classification, exit_code: 0, result: 44 non-history worker-owned paths exactly equal porcelain untracked and classified lists; no tracked or outside-lease path}
+  - {command: four-draft-diff-check, exit_code: 0, result: queue process event and execution source-to-draft patches contain no whitespace errors; normative sources remain byte-unchanged}
+  - {command: kerf-show-queue-transaction-contract, exit_code: 0, result: work resolves at ready with all four full-file draft targets integration record task DAG and session handoff present; not finalized}
+  - {command: kerf-square-queue-transaction-contract, exit_code: 0, result: SQUARE at ready; 19 of 19 expected planning files present and dependencies clear; not finalized and implementation remains pending}
+  - {command: make-specaudit-lint, exit_code: 2, result: repository-wide canonical baseline gate fails on unrelated existing process-lifecycle tags event consumers scenario-harness sensor socket sensor orphan wording spec-category and envelope findings; CQ-02 normative sources are byte-unchanged}
+  - {command: four-draft-byte-hashes, exit_code: 0, result: "queue-model blob ea8c23cf2e2dcb057e133ccb264b2f2a106f6e0b sha256 01a7313e892f204267448e72aa8e3fdf8fb8489aec54729358edcc6a2e9e59a3; process-lifecycle blob 814dd8f3b299f346f03b981ebb1317cccacfd7e3 sha256 beae6b8e2d621f25d1e957b09f79cae832796581be4693b17be956983b66b02f; event-model blob a499c7debf722a1f0a73fe52d6126ca8a0718398 sha256 43d342fb338912e3e506e27319249d702bb01f648374dcabe85da0f61bf66932; execution-model blob 4d897fe3ae4f39a695889beb7c0f0c36149b2221 sha256 36b01a1a54eb36ca579894d45a975fa6a8d8cb9b4c98f81d9fd1b40500d39c49"}
+review:
+  durability:
+    reviewer: /root/cq02_round6_design_review
+    profile: sol_xhigh
+    artifact: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-durability-round-1.md
+    blob_sha: c56109cadc2ad655e306bccd0bc8aa91483ea024
+    sha256: 1be5023e58927cdc87a6297f0799856f64492a23ac3f486db6e51dae4c5dba26
+    verdict: APPROVE
+  composition:
+    reviewer: /root/cq02_spec_draft_review
+    profile: sol_xhigh
+    artifact: .kerf/works/queue-transaction-contract/spec-draft-review-receipt-composition-round-5.md
+    blob_sha: 8f7e8710a8628d6513ed7e561a06a47436a5c17d
+    sha256: 1f60ef063e08cd7b8e41e9e7ffd37a7d424ef6ec178983727199fbc7e1968bec
+    verdict: APPROVE

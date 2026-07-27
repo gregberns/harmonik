@@ -954,13 +954,18 @@ tasks:
     card: tasks/JR-02.md
     group: JR
     priority: P1
-    phase: triage
+    phase: ready
     disposition: open
     routing: {complexity: low, profile: pi_ralph, escalation: terra_high, reviewer_profile: terra_high}
     hard_requires: [JR-00]
     conflicts_with: []
     lease_family: run_pure_kernels
-    required_proof: [targeted, property, frontier_review]
+    card_review:
+      state: approved
+      reviewer: core_graph_analysis
+      artifact: tasks/evidence/JR-02-CARD-REVIEW.md
+      verdict: APPROVE
+    required_proof: [yaml_parse, targeted, property, race, repeat, frontier_review]
 
   JR-03:
     title: Keep terminal state and claim release consistent

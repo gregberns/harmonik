@@ -309,9 +309,6 @@ func prepareReplacement(plan ReplacementPlan) (ReplaceIntentV1, []byte, error) {
 // explicit and gives tests a deterministic seam. Production callers use
 // prepareReplacement, which allocates canonical UUIDv7 values first.
 func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID string) (ReplaceIntentV1, []byte, error) {
-	if err := validateArchiveOperationCoupling(plan.OperationKind, plan.ArchiveHandoff); err != nil {
-		return ReplaceIntentV1{}, nil, err
-	}
 	name := NormaliseQueueName(plan.NormalizedName)
 	if ok, detail := ValidateQueueName(name); !ok {
 		return ReplaceIntentV1{}, nil, fmt.Errorf("invalid normalized name: %s", detail)
@@ -331,6 +328,9 @@ func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID 
 	}
 	if NormaliseQueueName(candidate.Name) != name || candidate.QueueID != plan.QueueID {
 		return ReplaceIntentV1{}, nil, errors.New("candidate identity does not match plan")
+	}
+	if err := validateCancellationCoupling(plan.OperationKind, candidate.Status, plan.ArchiveHandoff); err != nil {
+		return ReplaceIntentV1{}, nil, err
 	}
 	prior := "absent"
 	if plan.PriorBytes != nil {
@@ -384,6 +384,18 @@ func validateArchiveOperationCoupling(kind OperationKind, handoff *ArchiveHandof
 	}
 	if kind != OperationCancellation && handoff != nil {
 		return errors.New("archive handoff requires cancellation operation")
+	}
+	return nil
+}
+
+func validateCancellationCoupling(
+	kind OperationKind,
+	status QueueStatus,
+	handoff *ArchiveHandoffPlan,
+) error {
+	cancellation := kind == OperationCancellation
+	if cancellation != (status == QueueStatusCancelled) || cancellation != (handoff != nil) {
+		return errors.New("cancellation operation, cancelled candidate status, and archive handoff must occur together")
 	}
 	return nil
 }
@@ -589,9 +601,13 @@ func CleanupReplaceIntent(projectDir, normalizedName string) error {
 	return syncDirectory(queuesDir(projectDir), ops)
 }
 
-// InstallBoundArchiveIntent installs the predecessor-bound successor bytes
-// without reserializing caller-owned mutable state.
-func InstallBoundArchiveIntent(projectDir string, predecessor ReplaceIntentV1) NamespaceResult {
+// InstallBoundArchiveIntent strictly decodes raw predecessor bytes, then
+// installs their bound successor without reserializing caller-owned state.
+func InstallBoundArchiveIntent(projectDir string, predecessorBytes []byte) NamespaceResult {
+	predecessor, err := decodeReplaceIntent(predecessorBytes)
+	if err != nil {
+		return NamespaceResult{Outcome: OutcomeRejected, Err: err}
+	}
 	return installBoundArchiveIntent(projectDir, predecessor, osNamespaceOps())
 }
 
@@ -632,21 +648,25 @@ func installBoundArchiveIntent(
 	return NamespaceResult{Outcome: OutcomeCommittedDurable}
 }
 
-// ClassifyLinkedHandoff refuses any pair not bound byte-for-byte by the
-// predecessor. Successor-only recovery additionally requires exact namespace
-// facts independently observed by the caller.
+// ClassifyLinkedHandoff strictly decodes any raw predecessor and refuses any
+// pair not bound byte-for-byte. Empty predecessor bytes select successor-only
+// recovery, which additionally requires exact namespace facts.
 func ClassifyLinkedHandoff(
-	predecessor *ReplaceIntentV1,
+	predecessorBytes []byte,
 	successorBytes []byte,
 	facts ArchiveRecoveryFacts,
 ) (LinkedHandoffAction, error) {
 	if err := validateArchiveRecoveryFacts(facts); err != nil {
 		return LinkedRefuse, err
 	}
-	if predecessor == nil {
+	if len(predecessorBytes) == 0 {
 		return classifySuccessorOnly(successorBytes, facts)
 	}
-	return classifyLinkedPair(*predecessor, successorBytes, facts)
+	predecessor, err := decodeReplaceIntent(predecessorBytes)
+	if err != nil {
+		return LinkedRefuse, err
+	}
+	return classifyLinkedPair(predecessor, successorBytes, facts)
 }
 
 func classifySuccessorOnly(

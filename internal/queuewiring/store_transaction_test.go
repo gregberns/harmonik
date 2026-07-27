@@ -264,6 +264,70 @@ func TestQueueStoreRejectsArchiveBearingNoOpBeforeNamespaceIO(t *testing.T) {
 	}
 }
 
+func TestQueueStoreRejectsCancellationStatusMismatchBeforeNamespaceIO(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		operation  queue.OperationKind
+		handoff    bool
+		nextStatus queue.QueueStatus
+	}{
+		{
+			name:       "cancellation-with-paused-candidate",
+			operation:  queue.OperationCancellation,
+			handoff:    true,
+			nextStatus: queue.QueueStatusPausedByDrain,
+		},
+		{
+			name:       "cancelled-candidate-with-pause",
+			operation:  queue.OperationPause,
+			nextStatus: queue.QueueStatusCancelled,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := NewQueueStore()
+			store.SetQueue(&queue.Queue{
+				SchemaVersion: 1,
+				QueueID:       "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0025",
+				Name:          queue.QueueNameMain,
+				Status:        queue.QueueStatusActive,
+				Groups:        []queue.Group{},
+			})
+			snapshot := store.Snapshot(queue.QueueNameMain)
+			request := TransactionRequest{
+				Snapshot:      snapshot,
+				ProjectDir:    filepath.Join(t.TempDir(), "must-remain-absent"),
+				OperationKind: tc.operation,
+				Mutate: func(q *queue.Queue) error {
+					q.Status = tc.nextStatus
+					return nil
+				},
+			}
+			if tc.handoff {
+				request.ArchiveHandoff = &queue.ArchiveHandoffPlan{
+					ArchiveOrigin:       "operator-cancel",
+					ArchiveKind:         "cancelled",
+					SourceIdentity:      snapshot.Queue.QueueID,
+					DestinationBasename: "main.json.cancelled-fixed",
+				}
+			}
+
+			got := store.Transact(context.Background(), request)
+			if got.Outcome != queue.OutcomeRejected || got.Err == nil {
+				t.Fatalf("status mismatch = (%q, %v), want rejected", got.Outcome, got.Err)
+			}
+			if store.Snapshot(queue.QueueNameMain).Generation != snapshot.Generation {
+				t.Fatal("status mismatch advanced generation")
+			}
+			if _, err := os.Stat(request.ProjectDir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("status mismatch performed namespace I/O: %v", err)
+			}
+		})
+	}
+}
+
 func TestQueueStoreConflictingIntentQuarantinesAndRetryDoesNoIO(t *testing.T) {
 	t.Parallel()
 	store, _, projectDir := transactionStoreFixture(t)

@@ -5,7 +5,8 @@
 - Group / priority: run architecture / P0
 - Execution profile: `sol_xhigh`
 - Reviewer profile: two independent `sol_xhigh` reviewers
-- Depends on: `ARCH-00`, `RL-01`, `CQ-00`, `JR-00`, `CQ-02`
+- Depends on: `ARCH-00`, `RL-01`, `CQ-00`, `JR-00`, `CQ-02`,
+  `INPUT-ACK-CONTRACT-01`
 - Work type: kerf/spec architecture contract; no production implementation
 
 ## Objective
@@ -20,7 +21,7 @@ Beads, event, or process-lifecycle semantics.
 
 ## Authoritative inputs and preflight
 
-The coordinator must record all five dependencies as integrated, independently
+The coordinator must record all six dependencies as integrated, independently
 approved, and proof-green before claim. Consume these exact artifacts:
 
 - `tasks/evidence/ARCH-00.yaml`
@@ -29,6 +30,8 @@ approved, and proof-green before claim. Consume these exact artifacts:
 - `tasks/evidence/JR-00.yaml`
 - the finalized CQ-02 contract and review artifact recorded in
   `TASK-INDEX.yaml`
+- `tasks/evidence/INPUT-ACK-CONTRACT-01.yaml` and the reviewed
+  run-state-machine amendment it pins
 
 Paths above are relative to `plans/2026-07-24-code-health-audit/`. At claim
 time, record each input's Git blob ID in `tasks/evidence/ARCH-01.yaml`. Stop on

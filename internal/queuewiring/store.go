@@ -47,6 +47,11 @@
 package queuewiring
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/gregberns/harmonik/internal/queue"
@@ -72,8 +77,10 @@ const submitWakeCBufSize = 1
 // Spec ref: specs/queue-model.md §9.1 QM-060.
 // Bead ref: hk-j808w, hk-tigaf.2.
 type QueueStore struct {
-	queueMu sync.RWMutex
-	queues  map[string]*queue.Queue
+	queueMu     sync.RWMutex
+	queues      map[string]*queue.Queue
+	generations map[string]uint64
+	quarantined map[string]error
 	// wakeC receives a signal after every SetQueue / SetQueueByName call so the
 	// workloop can break out of its idle sleep immediately on queue-submit (hk-24xn1).
 	// Buffer of 1 coalesces rapid bursts; a full buffer is silently dropped
@@ -86,8 +93,10 @@ type QueueStore struct {
 // Bead ref: hk-j808w, hk-tigaf.2.
 func newQueueStore() *QueueStore {
 	return &QueueStore{
-		queues: make(map[string]*queue.Queue),
-		wakeC:  make(chan struct{}, submitWakeCBufSize),
+		queues:      make(map[string]*queue.Queue),
+		generations: make(map[string]uint64),
+		quarantined: make(map[string]error),
+		wakeC:       make(chan struct{}, submitWakeCBufSize),
 	}
 }
 
@@ -119,6 +128,8 @@ func (s *QueueStore) SetQueue(q *queue.Queue) {
 	name := queue.NormaliseQueueName(q.Name)
 	s.queueMu.Lock()
 	s.queues[name] = q
+	s.generations[name]++
+	delete(s.quarantined, name)
 	s.queueMu.Unlock()
 	select {
 	case s.wakeC <- struct{}{}:
@@ -157,6 +168,7 @@ func (s *QueueStore) Queue() *queue.Queue {
 func (s *QueueStore) ClearQueue() {
 	s.queueMu.Lock()
 	delete(s.queues, queue.QueueNameMain)
+	s.generations[queue.QueueNameMain]++
 	s.queueMu.Unlock()
 }
 
@@ -186,6 +198,8 @@ func (s *QueueStore) QueueByName(name string) *queue.Queue {
 func (s *QueueStore) SetQueueByName(name string, q *queue.Queue) {
 	s.queueMu.Lock()
 	s.queues[name] = q
+	s.generations[name]++
+	delete(s.quarantined, name)
 	s.queueMu.Unlock()
 	select {
 	case s.wakeC <- struct{}{}:
@@ -201,6 +215,7 @@ func (s *QueueStore) SetQueueByName(name string, q *queue.Queue) {
 func (s *QueueStore) ClearQueueByName(name string) {
 	s.queueMu.Lock()
 	delete(s.queues, name)
+	s.generations[name]++
 	s.queueMu.Unlock()
 }
 
@@ -318,6 +333,8 @@ func (lq *LockedQueueStore) Queue() *queue.Queue {
 func (lq *LockedQueueStore) SetQueue(q *queue.Queue) {
 	name := queue.NormaliseQueueName(q.Name)
 	lq.s.queues[name] = q
+	lq.s.generations[name]++
+	delete(lq.s.quarantined, name)
 }
 
 // Done releases the write lock. MUST be called exactly once per
@@ -347,6 +364,8 @@ func (lq *LockedQueueStore) LockedQueueByName(name string) *queue.Queue {
 // Bead ref: hk-tigaf.6.
 func (lq *LockedQueueStore) LockedSetQueueByName(name string, q *queue.Queue) {
 	lq.s.queues[name] = q
+	lq.s.generations[name]++
+	delete(lq.s.quarantined, name)
 }
 
 // LockedAllQueueNames returns the names of all queues currently in the store
@@ -412,4 +431,164 @@ func cloneItem(item queue.Item) queue.Item {
 		}
 	}
 	return out
+}
+
+// Snapshot is an immutable detached queue value plus its volatile
+// process-local generation. Generation is never persisted or recovery evidence.
+type Snapshot struct {
+	Name       string
+	Queue      *queue.Queue
+	Generation uint64
+}
+
+// TransactionRequest describes one clone-mutate-persist-install operation.
+type TransactionRequest struct {
+	Snapshot       Snapshot
+	ProjectDir     string
+	OperationKind  queue.OperationKind
+	WakeRequired   bool
+	ArchiveHandoff *queue.ArchiveHandoffPlan
+	Mutate         func(*queue.Queue) error
+}
+
+// TransactionResult combines durable namespace truth with a fresh snapshot.
+// Snapshot is populated only when committed state was installed.
+type TransactionResult struct {
+	queue.NamespaceResult
+	Snapshot   Snapshot
+	CleanupErr error
+}
+
+// Snapshot returns a deep-cloned, immutable view. Callers must provide this
+// exact generation to Transact; any intervening mutation rejects before I/O.
+func (s *QueueStore) Snapshot(name string) Snapshot {
+	name = queue.NormaliseQueueName(name)
+	s.queueMu.RLock()
+	defer s.queueMu.RUnlock()
+	return Snapshot{
+		Name:       name,
+		Queue:      cloneQueue(s.queues[name]),
+		Generation: s.generations[name],
+	}
+}
+
+// Transact enforces clone -> mutate -> persist -> install. It intentionally
+// performs no event emission and has no completion-receipt behavior.
+func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) TransactionResult {
+	name := queue.NormaliseQueueName(req.Snapshot.Name)
+	s.queueMu.Lock()
+	if quarantineErr := s.quarantined[name]; quarantineErr != nil {
+		s.queueMu.Unlock()
+		return rejectedTransaction(fmt.Errorf("queue name %q is quarantined: %w", name, quarantineErr))
+	}
+	if req.Snapshot.Generation != s.generations[name] {
+		s.queueMu.Unlock()
+		return rejectedTransaction(errors.New("stale queue snapshot generation"))
+	}
+	current := cloneQueue(s.queues[name])
+	if !sameQueue(current, req.Snapshot.Queue) {
+		s.queueMu.Unlock()
+		return rejectedTransaction(errors.New("snapshot bytes differ at same generation"))
+	}
+	if req.Mutate == nil {
+		s.queueMu.Unlock()
+		return rejectedTransaction(errors.New("transaction mutation is required"))
+	}
+	candidate := cloneQueue(current)
+	if candidate == nil {
+		candidate = &queue.Queue{Name: name}
+	}
+	if err := req.Mutate(candidate); err != nil {
+		s.queueMu.Unlock()
+		return rejectedTransaction(err)
+	}
+	candidate.Name = name
+	priorBytes, err := marshalOptional(current)
+	if err != nil {
+		s.queueMu.Unlock()
+		return rejectedTransaction(fmt.Errorf("marshal prior: %w", err))
+	}
+	candidateBytes, err := json.Marshal(candidate)
+	if err != nil {
+		s.queueMu.Unlock()
+		return TransactionResult{NamespaceResult: queue.NamespaceResult{
+			Outcome: queue.OutcomeNotCommitted,
+			Err:     fmt.Errorf("marshal candidate: %w", err),
+		}}
+	}
+	if bytes.Equal(priorBytes, candidateBytes) {
+		resultSnapshot := Snapshot{
+			Name:       name,
+			Queue:      cloneQueue(current),
+			Generation: s.generations[name],
+		}
+		s.queueMu.Unlock()
+		return TransactionResult{
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommittedDurable},
+			Snapshot:        resultSnapshot,
+		}
+	}
+	commit := queue.WriteReplacement(ctx, queue.ReplacementPlan{
+		ProjectDir:     req.ProjectDir,
+		OperationKind:  req.OperationKind,
+		NormalizedName: name,
+		QueueID:        candidate.QueueID,
+		PriorBytes:     priorBytes,
+		CandidateBytes: candidateBytes,
+		WakeRequired:   req.WakeRequired,
+		ArchiveHandoff: req.ArchiveHandoff,
+	})
+	if !commit.Committed() {
+		if commit.Outcome == queue.OutcomeCommitIndeterminate {
+			s.quarantined[name] = commit.Err
+		}
+		s.queueMu.Unlock()
+		return TransactionResult{NamespaceResult: commit.NamespaceResult}
+	}
+
+	s.queues[name] = cloneQueue(candidate)
+	s.generations[name]++
+	delete(s.quarantined, name)
+	resultSnapshot := Snapshot{
+		Name:       name,
+		Queue:      cloneQueue(candidate),
+		Generation: s.generations[name],
+	}
+
+	if req.WakeRequired {
+		s.Wake()
+	}
+	var cleanupErr error
+	if commit.Intent.ArchiveHandoff == nil {
+		cleanupErr = queue.CleanupReplaceIntent(req.ProjectDir, name)
+		if cleanupErr != nil {
+			s.quarantined[name] = cleanupErr
+		}
+	}
+	s.queueMu.Unlock()
+	return TransactionResult{
+		NamespaceResult: commit.NamespaceResult,
+		Snapshot:        resultSnapshot,
+		CleanupErr:      cleanupErr,
+	}
+}
+
+func rejectedTransaction(err error) TransactionResult {
+	return TransactionResult{NamespaceResult: queue.NamespaceResult{
+		Outcome: queue.OutcomeRejected,
+		Err:     err,
+	}}
+}
+
+func marshalOptional(q *queue.Queue) ([]byte, error) {
+	if q == nil {
+		return nil, nil
+	}
+	return json.Marshal(q)
+}
+
+func sameQueue(a, b *queue.Queue) bool {
+	aBytes, aErr := marshalOptional(a)
+	bBytes, bErr := marshalOptional(b)
+	return aErr == nil && bErr == nil && bytes.Equal(aBytes, bBytes)
 }

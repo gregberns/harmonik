@@ -1,0 +1,1172 @@
+schema_version: 1
+task_id: RL-01
+pinned_base_sha: 03b09dad6841ce28a1ff149051d7c78d4296d08e
+generated_at: 2026-07-27T06:35:00Z
+
+input_pins:
+  analysis_base:
+    ref: 3df091b5ea645132db89b0a1f44981b553549667
+    sha: 3df091b5ea645132db89b0a1f44981b553549667
+    verified: true
+  arch_00_integration:
+    sha: 24dcd3341c2931d3742b2ce02adf027ac1b6a0c4
+    ancestor_of_base: true
+  integration_candidate:
+    ref: origin/integration/phase-reviewloop-20260725
+    sha: 30d4e08764dbb1f1798a6ddeed6acaa6d2474226
+    verified: true
+  reviewloop_branch:
+    ref: origin/reviewloop-decoupling
+    sha: c9b957a5cbb524e1cf75fb04fcd046489e6356a4
+    verified: true
+  l8_snapshot:
+    branch: refactor/lift-l8-reviewloop
+    worktree: /Users/gb/github/harmonik-wt/lift-l8-reviewloop
+    head: 44266076ef31657f24c5ebe26dd9241a5d6c820b
+    dirty_paths:
+      - internal/daemon/reviewloop.go
+      - internal/runloop/reviewloop.go
+      - internal/daemon/reviewloop_test.go
+      - internal/runloop/reviewloop_test.go
+    binary_diff_sha256: 183bd75c6e623f40214b095c15d34648960cde5b8ad1bf330ed5dfff7348ca9e
+    verified: true
+  kerf:
+    canonical_path: .kerf/works/reviewloop-decoupling/
+    task_blob: 48423a2e24aee48b54395cd8983e9718d2cee816
+    task_introducing_commit: 179677162e1ebb6ce41342f20e2f5c300ce3a90b
+    base_spec_blob: 8ecf4b53617703c2fb7616a2cc4945b3dcf560e9
+    staged_spec_blob: ae2cf347af79a38a9c4c27fa19273fa56ace14fd
+
+methodology:
+  ancestry: >-
+    Exact merge-base --is-ancestor checks were run for every known atom against
+    the analysis base, integration candidate, and reviewloop branch. Blob IDs
+    were compared where source identity matters.
+  production_caller_search: >-
+    Non-test Go imports and qualified API uses were searched on the pinned
+    integration candidate. Direct owned-API callers were separated from legacy
+    compatibility methods whose implementation delegates to the owned API.
+  dependency_census: >-
+    The R0 go/types ratchet resolves identifiers and selector members to their
+    declaring daemon objects. The three pinned committed trees carry the same
+    reviewloop.go blob c844ce0ad00f7f312aa7a7f304f59f91af5153dc.
+    Focused R0 census tests pass on both staged refs. The staged typed test and
+    a temporary external logging test were overlaid read-only onto the analysis
+    worktree; that probe emitted the exact 26/48 analysis-base map shown below.
+    The temporary files were removed. All six census inputs are byte-identical
+    across the analysis, integration, and reviewloop refs, so the exact map
+    transports to both staged refs; their stock ceiling tests also pass. The
+    preserved L8 snapshot cannot type-check, so its direct undefined identifiers
+    were enumerated with compiler -e and reconciled with the typed map.
+  equivalence_standard: >-
+    Equivalent means identical production symbol behavior, production
+    reachability, and focused proof, not merely a similar name or later plan.
+    No R4-R12 analysis-base implementation met that standard.
+
+kerf_reconciliation:
+  canonical_path: .kerf/works/reviewloop-decoupling/
+  task_definition_blob: 48423a2e24aee48b54395cd8983e9718d2cee816
+  task_introducing_commit: 179677162e1ebb6ce41342f20e2f5c300ce3a90b
+  base_spec:
+    blob: 8ecf4b53617703c2fb7616a2cc4945b3dcf560e9
+    status: ready
+    implementation_branch: null
+    implementation_commits: []
+  staged_spec:
+    blob: ae2cf347af79a38a9c4c27fa19273fa56ace14fd
+    status: finalized
+    implementation_branch: reviewloop-decoupling
+    implementation_commits:
+      - 60b1daeaf6ec0fcb8c1dda13038922fbd258aaff
+  implementation_commits_authoritative: false
+  legacy_duplicate:
+    path: .kerf/reviewloop-decoupling/
+    introducing_commit: 88f36c15d78255c71d564382161a4c2c287e35e3
+    path_count: 25
+    authoritative: false
+    repair_performed: false
+    paths:
+      - .kerf/reviewloop-decoupling/01-problem-space.md
+      - .kerf/reviewloop-decoupling/02-components.md
+      - .kerf/reviewloop-decoupling/03-research/event-model/findings.md
+      - .kerf/reviewloop-decoupling/03-research/execution-model/checkpoint-ack.md
+      - .kerf/reviewloop-decoupling/03-research/execution-model/findings.md
+      - .kerf/reviewloop-decoupling/03-research/execution-model/reviewer-budget-activity.md
+      - .kerf/reviewloop-decoupling/03-research/handler-contract/findings.md
+      - .kerf/reviewloop-decoupling/03-research/process-lifecycle/findings.md
+      - .kerf/reviewloop-decoupling/03-research/workspace-model/findings.md
+      - .kerf/reviewloop-decoupling/04-design/checkpoint-ack-design.md
+      - .kerf/reviewloop-decoupling/04-design/event-model-design.md
+      - .kerf/reviewloop-decoupling/04-design/execution-model-design.md
+      - .kerf/reviewloop-decoupling/04-design/handler-contract-design.md
+      - .kerf/reviewloop-decoupling/04-design/process-lifecycle-design.md
+      - .kerf/reviewloop-decoupling/04-design/reviewer-budget-design.md
+      - .kerf/reviewloop-decoupling/04-design/workspace-model-design.md
+      - .kerf/reviewloop-decoupling/05-changelog.md
+      - .kerf/reviewloop-decoupling/06-integration.md
+      - .kerf/reviewloop-decoupling/07-tasks.md
+      - .kerf/reviewloop-decoupling/change-design-review.md
+      - .kerf/reviewloop-decoupling/decompose-review.md
+      - .kerf/reviewloop-decoupling/integration-review.md
+      - .kerf/reviewloop-decoupling/research-review.md
+      - .kerf/reviewloop-decoupling/spec-draft-review.md
+      - .kerf/reviewloop-decoupling/tasks-review.md
+  conclusion: >-
+    R0-R12 definitions are stable and byte-identical across all three refs, but
+    staged kerf metadata falsely presents one finalize commit as the
+    implementation history. Code-atom authority comes from the explicit Git
+    commits below. The legacy tree is drift and was not repaired.
+
+task_dispositions:
+  - task: R0
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: staged_test_only
+    commits: [f03ff7c1bb71b308b5156b565adc049eb7d1a837]
+    paths:
+      - internal/daemon/reviewloop_r0_characterization_test.go
+      - internal/runloop/reviewloop_relocation_r0_test.go
+      - internal/runloop/testdata/reviewloop_r0_oracle.json
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    production_callers: []
+    components:
+      - atom_id: r0_behavior_oracle
+        state: test_only
+        evidence: [four daemon characterization tests, one typed relocation census]
+    tests:
+      - TestR0ReviewLoopDecisionOracle
+      - TestR0CHBCheckpointRoundTripAndIdempotence
+      - TestR0HookSessionCloseRejectsLateArrival
+      - TestR0TargetConformanceGaps
+      - TestR0ReviewLoopDaemonPrivateDependencyCensus
+    blockers: []
+    factual_conclusion: >-
+      Reviewed characterization and a typed dependency ceiling are staged, but
+      no production source was changed and the tests are absent from the
+      analysis base.
+    arch_01_input: >-
+      Reuse the oracle and typed census as gates; do not describe R0 as a landed
+      production decomposition.
+
+  - task: R1
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: staged_unused_kernel
+    commits: [3f02f2f9a6cd40a7e401e7511d67d1e2e75374bd]
+    paths:
+      - internal/runloop/reviewcycle/reviewcycle.go
+      - internal/runloop/reviewcycle/reviewcycle_test.go
+      - internal/runloop/reviewcycle/purity_test.go
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    production_callers: []
+    components:
+      - atom_id: reviewcycle_kernel
+        state: unused
+        evidence: [no non-test import or qualified call on integration candidate]
+    tests:
+      - TestDecisionTable
+      - TestPropertyIterationMonotoneBoundedAndIdentitySelection
+      - TestPropertyTerminalAbsorption
+      - TestReviewerIntentOrderAndFlagNormalization
+      - TestProductionPackageRemainsPure
+    blockers: [runReviewLoop does not consume reviewcycle]
+    factual_conclusion: >-
+      The reviewed pure kernel and exhaustive tests pass, but the kernel has no
+      production caller on either staged line.
+    arch_01_input: Decide whether to adopt this kernel; do not create a competing one.
+
+  - task: R2
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: staged_unused_kernel
+    commits:
+      - b62f75b9f9db80b8773fec8e3903bbfa2ae5becc
+      - c9b957a5cbb524e1cf75fb04fcd046489e6356a4
+    paths:
+      - internal/runloop/continuity/continuity.go
+      - internal/runloop/continuity/continuity_test.go
+      - internal/runloop/continuity/purity_test.go
+      - internal/core/durability.go
+      - internal/core/durability_test.go
+      - internal/core/evidence.go
+      - internal/core/contextrestoreenforce_em046_test.go
+      - internal/core/transition.go
+      - internal/core/transition_test.go
+      - internal/core/transitionkind.go
+      - internal/core/transitionkind_test.go
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    production_callers:
+      - core.Transition.Valid
+      - core.TransitionKind.Valid
+      - core.isDurableKind
+    components:
+      - atom_id: continuity_service
+        state: unused
+        evidence: [no non-test import or qualified call]
+      - atom_id: context_checkpoint_vocabulary
+        state: active
+        evidence:
+          - production core validity and durability functions recognize the new kind
+          - no non-test producer constructs the new kind or evidence keys
+    tests:
+      - TestServiceMintedCheckpointPrecedesExactVersionSelected
+      - TestServiceIdenticalCommittedReusePreservesIntroducingSHA
+      - TestServiceCapturedIdentityCheckpointsBeforeResumeWithoutCHBAck
+      - TestServiceFaultsFailClosed
+      - TestValueValidation
+      - TestProductionPackageRemainsEffectFree
+    blockers: [runReviewLoop still uses legacy persistence and does not call continuity]
+    factual_conclusion: >-
+      The reviewed continuity service, vocabulary, and provenance fix are
+      staged and passing, but no production path produces or consumes a
+      context-checkpoint through the service.
+    arch_01_input: >-
+      Decide whether to integrate the staged contract and core vocabulary
+      together; vocabulary alone would be dormant shadow architecture.
+
+  - task: R3
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: staged_active_boundary
+    commits:
+      - 19975ef7a1731f5c14006248b7787f8607d2ad69
+      - 89cc3aa0245384f36aeacf1d61f2245a7b1d6637
+    paths:
+      - internal/hook/sessionstore.go
+      - internal/hook/sessionregistration_test.go
+      - internal/runloop/workloopeventsource.go
+      - internal/runloop/workloopeventsource_subscription_test.go
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    production_callers:
+      - SessionStore.RegisterHookSession, SetAgentReadyCallback, and CloseHookSession compatibility callers in beadRunOne, reviewloop, DOT gate, and DOT core
+      - PerRunEventTap.Subscribe callers in reviewloop, workloop, and DOT core
+    components:
+      - atom_id: session_registration
+        state: indirectly_active
+        evidence:
+          - legacy RegisterHookSession remains the only external production registration API
+          - compatibility teardown obtains a SessionRegistration and calls Close
+      - atom_id: owned_subscription
+        state: indirectly_active
+        evidence:
+          - Subscribe compatibility wrapper returns t.SubscribeOwned().Events()
+          - no external production caller calls SubscribeOwned directly
+      - atom_id: substrate_neutral_watcher_lifetime
+        state: absent
+        evidence: []
+      - atom_id: three_way_input_resolution
+        state: absent
+        evidence: []
+      - atom_id: joinable_heartbeat_and_observers
+        state: absent
+        evidence: []
+      - atom_id: bounded_phase_scope_close
+        state: absent
+        evidence: []
+      - atom_id: sleep_elimination
+        state: absent
+        evidence: []
+    tests:
+      - TestSessionRegistration_ReadyDeliveredExactlyOnce
+      - TestSessionRegistration_SealWaitsForAdmittedCallback
+      - TestSessionRegistration_CloseConcurrentAndIdempotent
+      - TestPerRunEventTap_SubscribeOwnedLifecycle
+      - TestPerRunEventTap_UnsubscribeRacesEmit
+      - TestPerRunEventTap_SubscribeCompatibilityWrapper
+    blockers:
+      - phase owners do not retain or close SessionRegistration directly
+      - event consumers cannot unsubscribe through the channel-only compatibility API
+      - watcher cancellation/completion is not implemented
+      - three-way input resolution is not implemented
+      - heartbeat and observer auxiliaries are not joinable
+      - PhaseScope.Close and sleep removal are not implemented
+    factual_conclusion: >-
+      Only the session-registration and owned-subscription sub-boundaries are
+      staged, and both reach production through compatibility APIs. The
+      remaining R3 watcher, input, auxiliary-join, PhaseScope, and sleep-removal
+      obligations are unimplemented.
+    arch_01_input: >-
+      Preserve the reviewed owner implementations and plan explicit caller
+      migration; compatibility mediation is not completed lifecycle ownership.
+
+  - task: R4
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: planned_unlanded
+    commits: []
+    paths: []
+    ancestry: {analysis_base: not_applicable, integration_candidate: not_applicable, reviewloop_branch: not_applicable}
+    production_callers: []
+    components: [{atom_id: artifact_transfer_projection, state: planned, evidence: []}]
+    tests: []
+    blockers: [no reviewed implementation atom]
+    factual_conclusion: Explicit artifact transfer and reviewer projection remain a kerf plan.
+    arch_01_input: Retain as a future owner boundary; no current-tree equivalence was proven.
+
+  - task: R5
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: planned_unlanded
+    commits: []
+    paths: []
+    ancestry: {analysis_base: not_applicable, integration_candidate: not_applicable, reviewloop_branch: not_applicable}
+    production_callers: []
+    components: [{atom_id: event_terminal_spine, state: planned, evidence: []}]
+    tests: []
+    blockers: [no reviewed implementation atom]
+    factual_conclusion: Event truth, terminal ordering, and attention-close remain planned.
+    arch_01_input: Coordinate with JR terminal ownership; do not infer delivery from event vocabulary.
+
+  - task: R6
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: planned_unlanded
+    commits: []
+    paths: []
+    ancestry: {analysis_base: not_applicable, integration_candidate: not_applicable, reviewloop_branch: not_applicable}
+    production_callers: []
+    components: [{atom_id: claude_pi_launch_conformance, state: planned, evidence: []}]
+    tests: []
+    blockers: [no reviewed implementation atom]
+    factual_conclusion: Claude/Pi reviewer launch conformance remains planned.
+    arch_01_input: Keep launch ownership below the review coordinator.
+
+  - task: R7
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: planned_unlanded
+    commits: []
+    paths: []
+    ancestry: {analysis_base: not_applicable, integration_candidate: not_applicable, reviewloop_branch: not_applicable}
+    production_callers: []
+    components: [{atom_id: implementer_phase_shell, state: planned, evidence: []}]
+    tests: []
+    blockers: [R1-R3 owner APIs are not production-wired]
+    factual_conclusion: The implementer phase remains embedded in runReviewLoop.
+    arch_01_input: Use this as a decomposition seam only after owner contracts are selected.
+
+  - task: R8
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: planned_unlanded
+    commits: []
+    paths: []
+    ancestry: {analysis_base: not_applicable, integration_candidate: not_applicable, reviewloop_branch: not_applicable}
+    production_callers: []
+    components: [{atom_id: reviewer_phase_shell, state: planned, evidence: []}]
+    tests: []
+    blockers: [R3-R6 owner APIs are not production-wired]
+    factual_conclusion: The reviewer phase remains embedded in runReviewLoop.
+    arch_01_input: Keep reviewer projection, observation, archive, and close under one phase owner.
+
+  - task: R9
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: planned_unlanded
+    commits: []
+    paths: []
+    ancestry: {analysis_base: not_applicable, integration_candidate: not_applicable, reviewloop_branch: not_applicable}
+    production_callers: []
+    components: [{atom_id: projection_orphan_sweep, state: planned, evidence: []}]
+    tests: []
+    blockers: [projection ownership is not implemented]
+    factual_conclusion: Projection orphan sweep and reconciliation handoff remain planned.
+    arch_01_input: Do not apply generic path-pattern cleanup to future projections.
+
+  - task: R10
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: planned_unlanded
+    commits: []
+    paths: []
+    ancestry: {analysis_base: not_applicable, integration_candidate: not_applicable, reviewloop_branch: not_applicable}
+    production_callers: []
+    components:
+      - atom_id: thin_coordinator
+        state: planned
+        evidence: []
+      - atom_id: l8_relocation
+        state: absent
+        evidence: [preserved dirty snapshot fails compile with 18 direct undefined symbols]
+    tests: []
+    blockers: [26 daemon-private symbols at 48 typed sites, L8 compile failure]
+    factual_conclusion: >-
+      No thin coordinator landed. The preserved L8 experiment is blocked
+      evidence, not a completed or mechanically resumable R10 implementation.
+    arch_01_input: Make zero daemon-private undefined symbols a relocation gate.
+
+  - task: R11
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: planned_unlanded
+    commits: []
+    paths: []
+    ancestry: {analysis_base: not_applicable, integration_candidate: not_applicable, reviewloop_branch: not_applicable}
+    production_callers: []
+    components: [{atom_id: scenario_campaign, state: planned, evidence: []}]
+    tests: []
+    blockers: [R5-R10 are not delivered]
+    factual_conclusion: The scenario acceptance campaign remains planned.
+    arch_01_input: Treat scenario beads as terminal dependencies, not evidence of current delivery.
+
+  - task: R12
+    definition_source: .kerf/works/reviewloop-decoupling/07-tasks.md
+    disposition: planned_unlanded
+    commits: []
+    paths: []
+    ancestry: {analysis_base: not_applicable, integration_candidate: not_applicable, reviewloop_branch: not_applicable}
+    production_callers: []
+    components: [{atom_id: operator_campaign, state: planned, evidence: []}]
+    tests: []
+    blockers: [R11 is not delivered]
+    factual_conclusion: The operator exploratory campaign and final gates remain planned.
+    arch_01_input: This is a release gate, not an architecture atom.
+
+atom_reconciliation:
+  - atom_id: r0_characterization
+    kerf_task: R0
+    commits: [f03ff7c1bb71b308b5156b565adc049eb7d1a837]
+    changed_paths:
+      - internal/daemon/reviewloop_r0_characterization_test.go
+      - internal/runloop/reviewloop_relocation_r0_test.go
+      - internal/runloop/testdata/reviewloop_r0_oracle.json
+    review_trailers:
+      - 'Reviewed-By: codex-agent-reviewer'
+      - 'Review-Verdict: {"schema_version":1,"verdict":"APPROVE"}'
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    direct_callers: []
+    indirect_callers: []
+    test_evidence: [five focused R0 tests pass on integration candidate]
+    reachability: test_only
+    conclusion: Staged reviewed behavior and relocation evidence only.
+
+  - atom_id: r1_reviewcycle
+    kerf_task: R1
+    commits: [3f02f2f9a6cd40a7e401e7511d67d1e2e75374bd]
+    changed_paths:
+      - internal/runloop/reviewcycle/reviewcycle.go
+      - internal/runloop/reviewcycle/reviewcycle_test.go
+      - internal/runloop/reviewcycle/purity_test.go
+    review_trailers:
+      - 'Reviewed-By: codex-agent-reviewer'
+      - 'Review-Verdict: {"schema_version":1,"verdict":"APPROVE"}'
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    direct_callers: []
+    indirect_callers: []
+    test_evidence: [decision table, properties, purity all pass]
+    reachability: unused
+    conclusion: Reviewed pure kernel with no production import.
+
+  - atom_id: r2_continuity
+    kerf_task: R2
+    commits:
+      - b62f75b9f9db80b8773fec8e3903bbfa2ae5becc
+      - c9b957a5cbb524e1cf75fb04fcd046489e6356a4
+    changed_paths:
+      - internal/runloop/continuity/continuity.go
+      - internal/runloop/continuity/continuity_test.go
+      - internal/runloop/continuity/purity_test.go
+    review_trailers:
+      - 'b62f75b9f9db80b8773fec8e3903bbfa2ae5becc Reviewed-By: codex-agent-reviewer'
+      - 'b62f75b9f9db80b8773fec8e3903bbfa2ae5becc Review-Verdict: {"schema_version":1,"verdict":"APPROVE"}'
+      - 'c9b957a5cbb524e1cf75fb04fcd046489e6356a4 Reviewed-By: codex-agent-reviewer'
+      - 'c9b957a5cbb524e1cf75fb04fcd046489e6356a4 Review-Verdict: {"schema_version":1,"verdict":"APPROVE"}'
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    direct_callers: []
+    indirect_callers: []
+    test_evidence:
+      - TestServiceMintedCheckpointPrecedesExactVersionSelected
+      - TestServiceIdenticalCommittedReusePreservesIntroducingSHA from the initial continuity commit
+      - TestValueValidation covers the c9 provenance-fix mismatched-run and missing-provenance cases
+      - Captured, fault, and purity tests pass
+    reachability: unused
+    conclusion: Reviewed continuity service and fix have no production import.
+
+  - atom_id: r2_context_checkpoint_vocabulary
+    kerf_task: R2
+    commits: [b62f75b9f9db80b8773fec8e3903bbfa2ae5becc]
+    changed_paths:
+      - internal/core/durability.go
+      - internal/core/durability_test.go
+      - internal/core/evidence.go
+      - internal/core/contextrestoreenforce_em046_test.go
+      - internal/core/transition.go
+      - internal/core/transition_test.go
+      - internal/core/transitionkind.go
+      - internal/core/transitionkind_test.go
+    review_trailers:
+      - 'Reviewed-By: codex-agent-reviewer'
+      - 'Review-Verdict: {"schema_version":1,"verdict":"APPROVE"}'
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    direct_callers:
+      - core.Transition.Valid
+      - core.TransitionKind.Valid
+      - core.isDurableKind
+    indirect_callers: []
+    test_evidence: [core package tests pass]
+    reachability: active
+    conclusion: >-
+      Production validation and durability vocabulary recognizes the new kind,
+      but the context-checkpoint branch is dormant because no production
+      producer constructs the kind or its evidence.
+
+  - atom_id: r3_session_registration
+    kerf_task: R3
+    commits: [19975ef7a1731f5c14006248b7787f8607d2ad69]
+    changed_paths:
+      - internal/hook/sessionstore.go
+      - internal/hook/sessionregistration_test.go
+    review_trailers:
+      - 'Reviewed-By: codex-agent-reviewer'
+      - 'Review-Verdict: {"schema_version":1,"verdict":"APPROVE"}'
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    direct_callers: []
+    indirect_callers:
+      - beadRunOne through RegisterHookSession, SetAgentReadyCallback, and CloseHookSession
+      - runReviewLoop through RegisterHookSession, SetAgentReadyCallback, and CloseHookSession
+      - dispatchDotAgenticNode through RegisterHookSession, SetAgentReadyCallback, and CloseHookSession
+      - executeCognitionGate through RegisterHookSession, SetAgentReadyCallback, and CloseHookSession
+    test_evidence: [twelve session registration tests and focused race pass]
+    reachability: indirectly_active
+    conclusion: New ownership internals affect legacy callers, but direct phase ownership is absent.
+
+  - atom_id: r3_owned_subscriptions
+    kerf_task: R3
+    commits: [89cc3aa0245384f36aeacf1d61f2245a7b1d6637]
+    changed_paths:
+      - internal/runloop/workloopeventsource.go
+      - internal/runloop/workloopeventsource_subscription_test.go
+    review_trailers:
+      - 'Reviewed-By: codex-agent-reviewer'
+      - 'Review-Verdict: {"schema_version":1,"verdict":"APPROVE"}'
+    ancestry: {analysis_base: false, integration_candidate: true, reviewloop_branch: true}
+    direct_callers: []
+    indirect_callers:
+      - PerRunEventTap.Subscribe delegates to t.SubscribeOwned().Events()
+    test_evidence: [four subscription tests and focused race pass]
+    reachability: indirectly_active
+    conclusion: Production gets the new fan-out implementation but cannot own unsubscribe handles.
+
+production_callers:
+  - symbol: reviewcycle.Decide
+    declaring_path: internal/runloop/reviewcycle/reviewcycle.go
+    caller_symbols: []
+    caller_paths: []
+    pinned_tree: integration_candidate
+    reachability: none
+  - symbol: continuity.Service
+    declaring_path: internal/runloop/continuity/continuity.go
+    caller_symbols: []
+    caller_paths: []
+    pinned_tree: integration_candidate
+    reachability: none
+  - symbol: core.TransitionKindContextCheckpoint
+    declaring_path: internal/core/transitionkind.go
+    caller_symbols: [core.Transition.Valid, core.TransitionKind.Valid, core.isDurableKind]
+    caller_paths:
+      - internal/core/transition.go
+      - internal/core/transitionkind.go
+      - internal/core/durability.go
+    pinned_tree: integration_candidate
+    reachability: direct
+  - symbol: runloop.PerRunEventTap.SubscribeOwned
+    declaring_path: internal/runloop/workloopeventsource.go
+    caller_symbols: [runloop.PerRunEventTap.Subscribe]
+    caller_paths: [internal/runloop/workloopeventsource.go]
+    pinned_tree: integration_candidate
+    reachability: indirect
+  - symbol: runloop.PerRunEventTap.Subscribe
+    declaring_path: internal/runloop/workloopeventsource.go
+    caller_symbols: [runloop.NewPerRunEventTap, runReviewLoop, beadRunOne, dispatchDotAgenticNode]
+    caller_paths:
+      - internal/runloop/workloopeventsource.go
+      - internal/daemon/reviewloop.go
+      - internal/daemon/workloop.go
+      - internal/daemon/dot_cascade_core.go
+    pinned_tree: integration_candidate
+    reachability: direct
+  - symbol: hook.SessionStore.RegisterSession
+    declaring_path: internal/hook/sessionstore.go
+    caller_symbols: []
+    caller_paths: []
+    pinned_tree: integration_candidate
+    reachability: none
+  - symbol: hook.SessionStore.RegisterHookSession
+    declaring_path: internal/hook/sessionstore.go
+    caller_symbols: [beadRunOne, runReviewLoop, dispatchDotAgenticNode, executeCognitionGate]
+    caller_paths:
+      - internal/daemon/workloop.go
+      - internal/daemon/reviewloop.go
+      - internal/daemon/dot_cascade_core.go
+      - internal/daemon/dot_gate.go
+    pinned_tree: integration_candidate
+    reachability: direct
+  - symbol: hook.SessionStore.SetAgentReadyCallback
+    declaring_path: internal/hook/sessionstore.go
+    caller_symbols: [beadRunOne, runReviewLoop, dispatchDotAgenticNode, executeCognitionGate]
+    caller_paths:
+      - internal/daemon/workloop.go
+      - internal/daemon/reviewloop.go
+      - internal/daemon/dot_cascade_core.go
+      - internal/daemon/dot_gate.go
+    pinned_tree: integration_candidate
+    reachability: direct
+  - symbol: hook.SessionStore.CloseHookSession
+    declaring_path: internal/hook/sessionstore.go
+    caller_symbols: [beadRunOne, runReviewLoop, dispatchDotAgenticNode, executeCognitionGate]
+    caller_paths:
+      - internal/daemon/workloop.go
+      - internal/daemon/reviewloop.go
+      - internal/daemon/dot_cascade_core.go
+      - internal/daemon/dot_gate.go
+    pinned_tree: integration_candidate
+    reachability: direct
+  - symbol: hook.SessionRegistration.SetAgentReadyCallback
+    declaring_path: internal/hook/sessionstore.go
+    caller_symbols: [hook.SessionStore.SetAgentReadyCallback]
+    caller_paths: [internal/hook/sessionstore.go]
+    pinned_tree: integration_candidate
+    reachability: indirect
+  - symbol: hook.SessionRegistration.Close
+    declaring_path: internal/hook/sessionstore.go
+    caller_symbols: [hook.SessionStore.CloseHookSession]
+    caller_paths: [internal/hook/sessionstore.go]
+    pinned_tree: integration_candidate
+    reachability: indirect
+  - symbol: hook.SessionRegistration.SealNonterminal
+    declaring_path: internal/hook/sessionstore.go
+    caller_symbols: [hook.SessionRegistration.Close]
+    caller_paths: [internal/hook/sessionstore.go]
+    pinned_tree: integration_candidate
+    reachability: indirect
+
+dependency_census:
+  historical_l7:
+    symbols: 18
+    sites: 29
+    source: reviewloop-decoupling research LIFT L7 snapshot
+    authority: historical
+  syntax_r0:
+    symbols: 19
+    sites: 32
+    source: f03ff7c1 internal/runloop/reviewloop_relocation_r0_test.go commentary
+    authority: superseded_probe
+  typed_r0:
+    ceiling_symbols: 26
+    ceiling_sites: 48
+    source: f03ff7c1 internal/runloop/reviewloop_relocation_r0_test.go go/types baseline
+    symbol_site_counts:
+      .BudgetMS: 3
+      .ChangedLines: 3
+      .CommitSHA: 3
+      .ElapsedMS: 2
+      .Reason: 3
+      .Skipped: 2
+      .workerSessionCwd: 1
+      .workerSessionName: 1
+      ErrSpawnCapTimeout: 4
+      ErrTmuxNewWindowTimeout: 4
+      ReadReviewerBudgetSentinelVia: 1
+      defaultNewWindowTimeout: 1
+      defaultSpawnAcquireTimeout: 1
+      emitClaudeSessionIDPersisted: 2
+      newDaemonHeartbeatEmitter: 1
+      newPerRunSubstrate: 2
+      newSessionIDInterceptor: 1
+      pasteInjectOnLaunch: 2
+      pasteInjectQuitOnCommit: 1
+      pasteInjectQuitOnReviewFile: 1
+      pasteInjecter: 1
+      persistClaudeSessionID: 2
+      quitSender: 2
+      routedLaunchSpecBuilder: 1
+      sendVersionSelectedACK: 1
+      substrateSpawnStats: 2
+  observed:
+    - tree: analysis_base
+      symbols: 26
+      sites: 48
+      symbol_site_counts: &typed_map
+        .BudgetMS: 3
+        .ChangedLines: 3
+        .CommitSHA: 3
+        .ElapsedMS: 2
+        .Reason: 3
+        .Skipped: 2
+        .workerSessionCwd: 1
+        .workerSessionName: 1
+        ErrSpawnCapTimeout: 4
+        ErrTmuxNewWindowTimeout: 4
+        ReadReviewerBudgetSentinelVia: 1
+        defaultNewWindowTimeout: 1
+        defaultSpawnAcquireTimeout: 1
+        emitClaudeSessionIDPersisted: 2
+        newDaemonHeartbeatEmitter: 1
+        newPerRunSubstrate: 2
+        newSessionIDInterceptor: 1
+        pasteInjectOnLaunch: 2
+        pasteInjectQuitOnCommit: 1
+        pasteInjectQuitOnReviewFile: 1
+        pasteInjecter: 1
+        persistClaudeSessionID: 2
+        quitSender: 2
+        routedLaunchSpecBuilder: 1
+        sendVersionSelectedACK: 1
+        substrateSpawnStats: 2
+      command: >-
+        GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+        go -C /Users/gb/github/harmonik-wt/rl-01-alpha test
+        -overlay=/private/tmp/rl01_census_overlay.json ./internal/runloop
+        -run '^TestRL01LogDaemonPrivateDependencyCensus$' -count=1 -v
+      transport_basis: >-
+        The overlay supplied the staged typed census plus an external logging
+        test, emitted the exact 26/48 map, and was removed after execution.
+    - tree: integration_candidate
+      symbols: 26
+      sites: 48
+      symbol_site_counts: *typed_map
+      command: >-
+        GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+        go -C /private/tmp/harmonik-main-integration-20260725 test
+        ./internal/runloop -run
+        '^TestR0ReviewLoopDaemonPrivateDependencyCensus$' -count=1
+      transport_basis: >-
+        Exact analysis-base logging output plus identical blobs for all six
+        census inputs across all three refs.
+    - tree: reviewloop_branch
+      symbols: 26
+      sites: 48
+      symbol_site_counts: *typed_map
+      command: >-
+        GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+        go -C /private/tmp/harmonik-reviewloop-finalize.VPfrEV/worktree test
+        ./internal/runloop -run
+        '^TestR0ReviewLoopDaemonPrivateDependencyCensus$' -count=1
+      transport_basis: >-
+        Exact analysis-base logging output plus identical blobs for all six
+        census inputs across all three refs.
+  declaration_paths:
+    reviewerBudgetSentinel_fields: internal/daemon/pasteinject.go
+    persistClaudeSessionIDResult_fields: internal/daemon/sessioncontext_chb023.go
+    perRunSubstrate_worker_fields: internal/daemon/tmuxsubstrate.go
+    tmux_timeouts_spawn_stats_and_substrate: internal/daemon/tmuxsubstrate.go
+    continuity_persistence_and_ack: internal/daemon/sessioncontext_chb023.go
+    heartbeat_emitter: internal/daemon/claudeheartbeat.go
+    paste_injection_and_budget_reader: internal/daemon/pasteinject.go
+    routed_launch_builder: internal/daemon/harnessregistry.go
+  reconciliation: >-
+    The 18/29 number was a historical direct-identifier research snapshot. The
+    first syntax probe counted 19/32 but included false-positive Config sites
+    and omitted selector members. The go/types probe resolves declaration
+    identity and adds eight selected members, establishing 26/48. The preserved
+    dirty L8 compile emits 18 direct undefined names at 30 sites; adding the
+    eight selected members at 18 sites reconciles to the typed 26/48 blocker.
+
+l8_relocation:
+  branch: refactor/lift-l8-reviewloop
+  worktree: /Users/gb/github/harmonik-wt/lift-l8-reviewloop
+  head: 44266076ef31657f24c5ebe26dd9241a5d6c820b
+  status_porcelain:
+    - 'RM internal/daemon/reviewloop.go -> internal/runloop/reviewloop.go'
+    - 'RM internal/daemon/reviewloop_test.go -> internal/runloop/reviewloop_test.go'
+  dirty_paths:
+    - internal/daemon/reviewloop.go
+    - internal/runloop/reviewloop.go
+    - internal/daemon/reviewloop_test.go
+    - internal/runloop/reviewloop_test.go
+  binary_diff_sha256: 183bd75c6e623f40214b095c15d34648960cde5b8ad1bf330ed5dfff7348ca9e
+  probe:
+    cwd: /Users/gb/github/harmonik-wt/lift-l8-reviewloop
+    command: >-
+      GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+      go -C /Users/gb/github/harmonik-wt/lift-l8-reviewloop test
+      -gcflags=all=-e ./internal/runloop -run ^$ -count=1
+    exit_code: 1
+    status: expected_failure
+    undefined_symbols:
+      - {symbol: newPerRunSubstrate, sites: 2}
+      - {symbol: newSessionIDInterceptor, sites: 1}
+      - {symbol: persistClaudeSessionID, sites: 2}
+      - {symbol: emitClaudeSessionIDPersisted, sites: 2}
+      - {symbol: sendVersionSelectedACK, sites: 1}
+      - {symbol: ErrSpawnCapTimeout, sites: 4}
+      - {symbol: substrateSpawnStats, sites: 2}
+      - {symbol: ErrTmuxNewWindowTimeout, sites: 4}
+      - {symbol: newDaemonHeartbeatEmitter, sites: 1}
+      - {symbol: pasteInjectOnLaunch, sites: 2}
+      - {symbol: quitSender, sites: 2}
+      - {symbol: pasteInjectQuitOnCommit, sites: 1}
+      - {symbol: routedLaunchSpecBuilder, sites: 1}
+      - {symbol: defaultSpawnAcquireTimeout, sites: 1}
+      - {symbol: defaultNewWindowTimeout, sites: 1}
+      - {symbol: pasteInjecter, sites: 1}
+      - {symbol: pasteInjectQuitOnReviewFile, sites: 1}
+      - {symbol: ReadReviewerBudgetSentinelVia, sites: 1}
+  daemon_private_blockers:
+    - {symbol: .BudgetMS, sites: 3, declaring_path: internal/daemon/pasteinject.go}
+    - {symbol: .ChangedLines, sites: 3, declaring_path: internal/daemon/pasteinject.go}
+    - {symbol: .CommitSHA, sites: 3, declaring_path: internal/daemon/sessioncontext_chb023.go}
+    - {symbol: .ElapsedMS, sites: 2, declaring_path: internal/daemon/pasteinject.go}
+    - {symbol: .Reason, sites: 3, declaring_path: internal/daemon/pasteinject.go}
+    - {symbol: .Skipped, sites: 2, declaring_path: internal/daemon/sessioncontext_chb023.go}
+    - {symbol: .workerSessionCwd, sites: 1, declaring_path: internal/daemon/tmuxsubstrate.go}
+    - {symbol: .workerSessionName, sites: 1, declaring_path: internal/daemon/tmuxsubstrate.go}
+    - {symbol: ErrSpawnCapTimeout, sites: 4, declaring_path: internal/daemon/tmuxsubstrate.go}
+    - {symbol: ErrTmuxNewWindowTimeout, sites: 4, declaring_path: internal/daemon/tmuxsubstrate.go}
+    - {symbol: ReadReviewerBudgetSentinelVia, sites: 1, declaring_path: internal/daemon/pasteinject.go}
+    - {symbol: defaultNewWindowTimeout, sites: 1, declaring_path: internal/daemon/tmuxsubstrate.go}
+    - {symbol: defaultSpawnAcquireTimeout, sites: 1, declaring_path: internal/daemon/tmuxsubstrate.go}
+    - {symbol: emitClaudeSessionIDPersisted, sites: 2, declaring_path: internal/daemon/sessioncontext_chb023.go}
+    - {symbol: newDaemonHeartbeatEmitter, sites: 1, declaring_path: internal/daemon/claudeheartbeat.go}
+    - {symbol: newPerRunSubstrate, sites: 2, declaring_path: internal/daemon/tmuxsubstrate.go}
+    - {symbol: newSessionIDInterceptor, sites: 1, declaring_path: internal/daemon/sessioncontext_chb023.go}
+    - {symbol: pasteInjectOnLaunch, sites: 2, declaring_path: internal/daemon/pasteinject.go}
+    - {symbol: pasteInjectQuitOnCommit, sites: 1, declaring_path: internal/daemon/pasteinject.go}
+    - {symbol: pasteInjectQuitOnReviewFile, sites: 1, declaring_path: internal/daemon/pasteinject.go}
+    - {symbol: pasteInjecter, sites: 1, declaring_path: internal/daemon/tmuxsubstrate.go}
+    - {symbol: persistClaudeSessionID, sites: 2, declaring_path: internal/daemon/sessioncontext_chb023.go}
+    - {symbol: quitSender, sites: 2, declaring_path: internal/daemon/pasteinject.go}
+    - {symbol: routedLaunchSpecBuilder, sites: 1, declaring_path: internal/daemon/harnessregistry.go}
+    - {symbol: sendVersionSelectedACK, sites: 1, declaring_path: internal/daemon/sessioncontext_chb023.go}
+    - {symbol: substrateSpawnStats, sites: 2, declaring_path: internal/daemon/tmuxsubstrate.go}
+  state: blocked
+  conclusion: >-
+    L8 is not mechanically resumable. It is an uncommitted R099 rename whose
+    compile fails on 18 direct names at 30 sites and whose typed dependency map
+    remains 26 daemon-private symbols at 48 sites. No later reviewed atom
+    supersedes the move or reduces those blockers to zero.
+
+contradictions:
+  - id: card_misattributed_canonical_task_introduction
+    sources:
+      - RL-01 card at claimed base 03b09dad6841ce28a1ff149051d7c78d4296d08e
+      - commits 179677162e1ebb6ce41342f20e2f5c300ce3a90b and 88f36c15d78255c71d564382161a4c2c287e35e3
+    observation: >-
+      The claimed-base card incorrectly named 88f36c15d as the canonical
+      07-tasks.md introducing commit. Git proves 179677162 added the canonical
+      file; 88f36c15d added the legacy duplicate and changed staged metadata.
+      The coordinator corrected the root card after independent review found
+      the mismatch; no worker source or task-authority file was edited.
+    blocks_reconciliation: false
+  - id: kerf_metadata_vs_git_atoms
+    sources:
+      - analysis-base canonical spec.yaml
+      - staged canonical spec.yaml
+      - explicit R0-R3 Git commits
+    observation: >-
+      The staged kerf record lists only finalize commit 60b1daeaf6 while the
+      actual reviewed code atoms are six different commits; the analysis-base
+      record lists none.
+    blocks_reconciliation: false
+  - id: finalized_specs_absent_from_analysis_base
+    sources:
+      - reviewloop branch 88f36c15d
+      - analysis base 3df091b5e
+    observation: >-
+      Eleven coordinated reviewloop spec amendments exist only on the staged
+      line. The analysis-base specs are unchanged from the common ancestor, so
+      this is staged normative work, not a two-sided incompatible edit.
+    blocks_reconciliation: false
+  - id: r3_owned_apis_vs_legacy_callers
+    sources:
+      - internal/hook/sessionstore.go
+      - internal/runloop/workloopeventsource.go
+      - daemon production callers
+    observation: >-
+      R3 introduced ownership handles, but all external production callers use
+      compatibility APIs that discard those handles.
+    blocks_reconciliation: false
+  - id: l8_move_vs_daemon_private_ownership
+    sources:
+      - preserved L8 snapshot
+      - typed R0 census
+    observation: The package move fails before tests because 26 private dependencies remain.
+    blocks_reconciliation: true
+
+gaps:
+  - id: reviewcycle_not_wired
+    missing_proof: No non-test producer or caller uses internal/runloop/reviewcycle.
+    required_follow_up: ARCH-01 must select adoption or retirement before RL implementation cards.
+    architecture_decision_required: true
+  - id: continuity_not_wired
+    missing_proof: No non-test caller uses continuity.Service or produces context-checkpoint.
+    required_follow_up: Decide the continuity owner and integrate service plus vocabulary atomically.
+    architecture_decision_required: true
+  - id: owned_handles_not_owned_by_phases
+    missing_proof: Production phase code retains neither SessionRegistration nor EventSubscription.
+    required_follow_up: Plan explicit phase-shell caller migration after ARCH-01.
+    architecture_decision_required: true
+  - id: l8_not_compilable
+    missing_proof: Zero daemon-private undefined symbols.
+    required_follow_up: Extract owner APIs before attempting relocation again.
+    architecture_decision_required: true
+  - id: r4_r12_no_implementation_atoms
+    missing_proof: No reviewed commits or current-tree equivalence for R4-R12.
+    required_follow_up: Decompose only after ARCH-01 selects boundaries and gates.
+    architecture_decision_required: true
+
+verification:
+  - class: pin
+    cwd: /Users/gb/github/harmonik-wt/rl-01-alpha
+    command: >-
+      claim_base="$(ruby -e 'require "yaml"; puts
+      YAML.load_file(ARGV[0]).fetch("tasks").fetch("RL-01").
+      fetch("claim").fetch("base_sha")'
+      /Users/gb/github/harmonik/plans/2026-07-24-code-health-audit/TASK-INDEX.yaml)";
+      test "$(git rev-parse HEAD)" = "$claim_base";
+      git merge-base --is-ancestor
+      3df091b5ea645132db89b0a1f44981b553549667 HEAD;
+      git merge-base --is-ancestor
+      24dcd3341c2931d3742b2ce02adf027ac1b6a0c4 HEAD;
+      test "$(git rev-parse origin/integration/phase-reviewloop-20260725)"
+      = 30d4e08764dbb1f1798a6ddeed6acaa6d2474226;
+      test "$(git rev-parse origin/reviewloop-decoupling)"
+      = c9b957a5cbb524e1cf75fb04fcd046489e6356a4;
+      test "$(git rev-parse refactor/lift-l8-reviewloop)"
+      = 44266076ef31657f24c5ebe26dd9241a5d6c820b
+    exit_code: 0
+    status: pass
+    result: claim and HEAD both 03b09dad6841ce28a1ff149051d7c78d4296d08e
+    builder_token: not_required
+  - class: ancestry
+    cwd: /Users/gb/github/harmonik-wt/rl-01-alpha
+    command: >-
+      for commit in f03ff7c1bb71b308b5156b565adc049eb7d1a837
+      3f02f2f9a6cd40a7e401e7511d67d1e2e75374bd
+      19975ef7a1731f5c14006248b7787f8607d2ad69
+      b62f75b9f9db80b8773fec8e3903bbfa2ae5becc
+      89cc3aa0245384f36aeacf1d61f2245a7b1d6637
+      c9b957a5cbb524e1cf75fb04fcd046489e6356a4; do
+      git merge-base --is-ancestor "$commit"
+      30d4e08764dbb1f1798a6ddeed6acaa6d2474226;
+      git merge-base --is-ancestor "$commit"
+      c9b957a5cbb524e1cf75fb04fcd046489e6356a4;
+      ! git merge-base --is-ancestor "$commit"
+      3df091b5ea645132db89b0a1f44981b553549667; done
+    exit_code: 0
+    status: pass
+    result: all six absent from analysis base and ancestors of both staged lines
+    builder_token: not_required
+  - class: diff
+    cwd: /Users/gb/github/harmonik-wt/rl-01-alpha
+    command: >-
+      for ref_name in
+      3df091b5ea645132db89b0a1f44981b553549667
+      30d4e08764dbb1f1798a6ddeed6acaa6d2474226
+      c9b957a5cbb524e1cf75fb04fcd046489e6356a4; do
+      git rev-parse "$ref_name:internal/daemon/reviewloop.go"; done
+    exit_code: 0
+    status: pass
+    result: all three equal c844ce0ad00f7f312aa7a7f304f59f91af5153dc
+    builder_token: not_required
+  - class: diff
+    cwd: /Users/gb/github/harmonik-wt/rl-01-alpha
+    command: >-
+      for file_name in internal/daemon/reviewloop.go
+      internal/daemon/pasteinject.go
+      internal/daemon/sessioncontext_chb023.go
+      internal/daemon/tmuxsubstrate.go
+      internal/daemon/claudeheartbeat.go
+      internal/daemon/harnessregistry.go; do
+      for ref_name in
+      3df091b5ea645132db89b0a1f44981b553549667
+      30d4e08764dbb1f1798a6ddeed6acaa6d2474226
+      c9b957a5cbb524e1cf75fb04fcd046489e6356a4; do
+      git rev-parse "$ref_name:$file_name"; done; done
+    exit_code: 0
+    status: pass
+    result: >-
+      each path is identical across all refs: reviewloop c844ce0,
+      pasteinject 06389b8, sessioncontext c527133, tmuxsubstrate 60ad4ef,
+      claudeheartbeat fd5118f, harnessregistry 4797b91
+    builder_token: not_required
+  - class: pin
+    cwd: /Users/gb/github/harmonik-wt/rl-01-alpha
+    command: >-
+      shasum -a 256
+      .kerf/works/reviewloop-decoupling/spec.yaml
+      .kerf/works/reviewloop-decoupling/07-tasks.md
+      .kerf/works/reviewloop-decoupling/06-integration.md;
+      for ref_name in HEAD
+      origin/integration/phase-reviewloop-20260725
+      origin/reviewloop-decoupling; do
+      git rev-parse
+      "$ref_name:.kerf/works/reviewloop-decoupling/spec.yaml"
+      "$ref_name:.kerf/works/reviewloop-decoupling/07-tasks.md"
+      "$ref_name:.kerf/works/reviewloop-decoupling/06-integration.md"; done;
+      git show --name-status --format=
+      179677162e1ebb6ce41342f20e2f5c300ce3a90b --
+      .kerf/works/reviewloop-decoupling/07-tasks.md;
+      git show --name-status --format=
+      88f36c15d78255c71d564382161a4c2c287e35e3 --
+      .kerf/reviewloop-decoupling/07-tasks.md;
+      git ls-tree -r --name-only origin/reviewloop-decoupling
+      .kerf/reviewloop-decoupling
+    exit_code: 0
+    status: pass
+    result: >-
+      canonical blob is 48423a2e on all refs and was added by 179677162;
+      88f36c15d added the 25-path legacy duplicate and staged metadata
+    builder_token: not_required
+  - class: pin
+    cwd: /Users/gb/github/harmonik-wt/lift-l8-reviewloop
+    command: >-
+      git status --porcelain=v1;
+      git diff --binary 44266076ef31657f24c5ebe26dd9241a5d6c820b --
+      internal/daemon/reviewloop.go internal/daemon/reviewloop_test.go
+      internal/runloop/reviewloop.go internal/runloop/reviewloop_test.go |
+      shasum -a 256
+    exit_code: 0
+    status: pass
+    result: >-
+      two R099 rename pairs; binary diff SHA-256
+      183bd75c6e623f40214b095c15d34648960cde5b8ad1bf330ed5dfff7348ca9e
+    builder_token: not_required
+  - class: caller
+    cwd: /Users/gb/github/harmonik-wt/rl-01-alpha
+    command: >-
+      rg -n
+      '"github.com/gregberns/harmonik/internal/runloop/(reviewcycle|continuity)"'
+      /private/tmp/harmonik-main-integration-20260725/internal
+      --glob '*.go' --glob '!*_test.go';
+      rg -n '\.SubscribeOwned\('
+      /private/tmp/harmonik-main-integration-20260725/internal
+      --glob '*.go' --glob '!*_test.go';
+      rg -n '\b[[:alnum:]_]*(Tap|tap)\.Subscribe\('
+      /private/tmp/harmonik-main-integration-20260725/internal
+      --glob '*.go' --glob '!*_test.go';
+      rg -n '\.(RegisterSession|RegisterHookSession|SetAgentReadyCallback|CloseHookSession)\('
+      /private/tmp/harmonik-main-integration-20260725/internal
+      --glob '*.go' --glob '!*_test.go';
+      rg -n '\bregistration\.(SetAgentReadyCallback|Close)\('
+      /private/tmp/harmonik-main-integration-20260725/internal/hook/sessionstore.go
+    exit_code: 0
+    status: pass
+    result: reviewcycle/continuity have no callers; R3 is compatibility-mediated
+    builder_token: not_required
+  - class: test
+    cwd: /private/tmp/harmonik-main-integration-20260725
+    command: >-
+      GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+      go -C /private/tmp/harmonik-main-integration-20260725
+      test ./internal/runloop/... ./internal/hook ./internal/core -count=1
+    exit_code: 0
+    status: pass
+    result: runloop 4.420s, continuity 1.185s, reviewcycle 0.870s, hook 0.569s, core 2.999s
+    builder_token: builder-1
+  - class: test
+    cwd: /private/tmp/harmonik-main-integration-20260725
+    command: >-
+      GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+      go -C /private/tmp/harmonik-main-integration-20260725
+      test ./internal/daemon -run '^TestR0' -count=1
+    exit_code: 0
+    status: pass
+    result: daemon 20.544s
+    builder_token: builder-1
+  - class: race
+    cwd: /private/tmp/harmonik-main-integration-20260725
+    command: >-
+      GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+      go -C /private/tmp/harmonik-main-integration-20260725
+      test -race ./internal/runloop ./internal/hook -run
+      '^(TestPerRunEventTap_|TestSessionRegistration_)' -count=1
+    exit_code: 0
+    status: pass
+    result: runloop 1.639s, hook 1.880s
+    builder_token: builder-1
+  - class: test
+    cwd: /private/tmp/harmonik-reviewloop-finalize.VPfrEV/worktree
+    command: >-
+      GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+      go -C /private/tmp/harmonik-reviewloop-finalize.VPfrEV/worktree
+      test ./internal/runloop -run
+      '^TestR0ReviewLoopDaemonPrivateDependencyCensus$' -count=1
+    exit_code: 0
+    status: pass
+    result: runloop 2.420s
+    builder_token: builder-1
+  - class: test
+    cwd: /Users/gb/github/harmonik-wt/rl-01-alpha
+    command: >-
+      GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+      go -C /Users/gb/github/harmonik-wt/rl-01-alpha
+      test -overlay=/private/tmp/rl01_census_overlay.json
+      ./internal/runloop -run '^TestRL01LogDaemonPrivateDependencyCensus$'
+      -count=1 -v
+    exit_code: 0
+    status: pass
+    result: exact analysis-base census emitted 26 symbols and 48 sites; temporary overlays removed
+    builder_token: builder-1
+  - class: probe
+    cwd: /Users/gb/github/harmonik-wt/lift-l8-reviewloop
+    command: >-
+      GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+      go -C /Users/gb/github/harmonik-wt/lift-l8-reviewloop
+      test ./internal/runloop -run '^$' -count=1
+    exit_code: 1
+    status: expected_failure
+    result: compile stopped after ten undefined-name diagnostics
+    builder_token: builder-1
+  - class: probe
+    cwd: /Users/gb/github/harmonik-wt/lift-l8-reviewloop
+    command: >-
+      GOCACHE=/Users/gb/github/harmonik-wt-cache/w0-alpha-rl-01/go-build
+      go -C /Users/gb/github/harmonik-wt/lift-l8-reviewloop
+      test -gcflags=all=-e ./internal/runloop -run '^$' -count=1
+    exit_code: 1
+    status: expected_failure
+    result: 18 unique direct undefined names at 30 sites; full list recorded
+    builder_token: builder-1
+  - class: schema
+    cwd: /Users/gb/github/harmonik-wt/rl-01-alpha
+    command: >-
+      ruby -e 'require "yaml"; y=YAML.load_file(ARGV[0]);
+      top=%w[schema_version task_id pinned_base_sha generated_at input_pins
+      methodology kerf_reconciliation task_dispositions atom_reconciliation
+      production_callers dependency_census l8_relocation contradictions gaps
+      verification lease_compliance review];
+      abort unless (top-y.keys).empty? && y["schema_version"]==1 &&
+      y["task_id"]=="RL-01";
+      ids=(0..12).map{|n|"R#{n}"}; rows=y["task_dispositions"];
+      abort unless rows.map{|r|r["task"]}.sort==ids.sort;
+      task_keys=%w[task definition_source disposition commits paths ancestry
+      production_callers components tests blockers factual_conclusion arch_01_input];
+      allowed=%w[landed_active_production landed_test_only
+      landed_unused_kernel staged_test_only staged_active_boundary
+      staged_unused_kernel equivalent_current_tree planned_unlanded
+      blocked_dirty_worktree superseded];
+      abort unless rows.all?{|r|(task_keys-r.keys).empty? &&
+      allowed.include?(r["disposition"])};
+      atom_keys=%w[atom_id kerf_task commits changed_paths review_trailers
+      ancestry direct_callers indirect_callers test_evidence reachability conclusion];
+      atoms=y["atom_reconciliation"];
+      abort unless !atoms.empty? && atoms.all?{|r|(atom_keys-r.keys).empty?};
+      kerf_keys=%w[canonical_path task_definition_blob task_introducing_commit
+      base_spec staged_spec implementation_commits_authoritative
+      legacy_duplicate conclusion];
+      abort unless (kerf_keys-y["kerf_reconciliation"].keys).empty?'
+      plans/2026-07-24-code-health-audit/tasks/evidence/RL-01.yaml
+    exit_code: 0
+    status: pass
+    result: RL01_SCHEMA_OK; all required top-level, task, atom, disposition, and kerf keys validated
+    builder_token: not_required
+  - class: lease
+    cwd: /Users/gb/github/harmonik-wt/rl-01-alpha
+    command: >-
+      git diff --check;
+      claim_base="$(ruby -e 'require "yaml"; puts
+      YAML.load_file(ARGV[0]).fetch("tasks").fetch("RL-01").
+      fetch("claim").fetch("base_sha")'
+      /Users/gb/github/harmonik/plans/2026-07-24-code-health-audit/TASK-INDEX.yaml)";
+      git diff --exit-code "$claim_base" -- .
+      ':(exclude)plans/2026-07-24-code-health-audit/tasks/evidence/RL-01.yaml';
+      git status --short
+    exit_code: 0
+    status: pass
+    result: only RL-01.yaml differs from the claimed base; diff-check passes
+    builder_token: not_required
+
+lease_compliance:
+  allowed_paths:
+    - plans/2026-07-24-code-health-audit/tasks/evidence/RL-01.yaml
+  changed_paths:
+    - plans/2026-07-24-code-health-audit/tasks/evidence/RL-01.yaml
+  production_code_changed: false
+  source_worktrees_mutated: false
+
+review:
+  required_profile: sol_xhigh
+  state: approved
+  reviewer: /root/rl01_final_review
+  verdict: APPROVE
+  findings:
+    - RL01-REV-001 through RL01-REV-011 resolved and reverified

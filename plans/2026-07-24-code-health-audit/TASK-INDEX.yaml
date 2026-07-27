@@ -862,11 +862,11 @@ tasks:
     lease_family: queue_contract
     claim:
       owner: sol-cq-02
-      base_sha: 001baabfca9c940bd4284c2ea94f3fe25717f032
-      branch: work/cq-02-sol
-      worktree: /Users/gb/github/harmonik-wt/cq-02-sol
+      base_sha: 4f750c11ab30afd9371405d5d591ae91e153c5c6
+      branch: phase1-session-restart-substrate
+      worktree: /Users/gb/github/harmonik
       bead_id: null
-      claimed_at: 2026-07-27T07:13:42Z
+      claimed_at: 2026-07-27T07:21:58Z
     card_review: {state: approved, reviewer: /root/rl01_final_review, artifact: tasks/evidence/CQ-02-CARD-REVIEW.md, verdict: APPROVE}
     required_proof: [kerf, spec_validation, cross_group_review]
 

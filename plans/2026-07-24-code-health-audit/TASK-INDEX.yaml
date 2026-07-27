@@ -177,9 +177,10 @@ tasks:
     phase: triage
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
-    hard_requires: [ARCH-00, RL-01, CQ-00, JR-00]
-    conflicts_with: []
+    hard_requires: [ARCH-00, RL-01, CQ-00, JR-00, CQ-02]
+    conflicts_with: [CQ-02]
     lease_family: run_architecture_contract
+    card_review: {state: approved, reviewer: /root/rl01_final_review, artifact: tasks/evidence/ARCH-01-CARD-REVIEW.md, verdict: APPROVE}
     required_proof: [kerf, spec_validation, cross_group_review]
 
   ARCH-GATE:
@@ -853,13 +854,14 @@ tasks:
     card: tasks/CQ-02.md
     group: CQ
     priority: P0
-    phase: triage
+    phase: ready
     disposition: open
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: [CQ-00]
     conflicts_with: []
     lease_family: queue_contract
-    required_proof: [kerf, spec_validation, config_review]
+    card_review: {state: approved, reviewer: /root/rl01_final_review, artifact: tasks/evidence/CQ-02-CARD-REVIEW.md, verdict: APPROVE}
+    required_proof: [kerf, spec_validation, cross_group_review]
 
   CQ-02I:
     title: Implement the reviewed queue transaction primitive

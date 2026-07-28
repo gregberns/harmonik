@@ -63,7 +63,7 @@ event:
 
 **Decision: in-process pub/sub backed by JSONL files on disk.**
 
-- **In-process pub/sub** for live subscribers (other subsystems within the running harmonik process). Low latency, zero infrastructure, fits the single-machine MVH (see [bootstrap.md](../bootstrap.md)).
+- **In-process pub/sub** for live subscribers (other subsystems within the running harmonik process). Low latency, zero infrastructure, fits harmonik's single-machine deployment (see [bootstrap.md](../bootstrap.md)).
 - **JSONL persistence on disk** for every published event. One line per event, append-only files, organized by workflow ID (and rotated by size or time within a workflow). The file is the source of truth; the in-process bus is a notification mechanism over it.
 - **Improvement loop (S09) reads the JSONL** -- it does not need to be a live subscriber. Reading-from-disk decouples slow analysis from real-time execution.
 - **CASS / memory layer (S08) also reads the JSONL** for events it needs (separate from agent-process logs, which are sourced from agent-specific log files -- see [memory-layer.md](memory-layer.md)).

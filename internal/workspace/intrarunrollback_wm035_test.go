@@ -30,7 +30,7 @@ import (
 //  (b) branch-stable:   the task branch MUST be identical before and after rollback.
 //  (c) run_id-unchanged: the Workspace.RunID MUST be identical before and after rollback.
 //
-// NOTE (post-mvh): The workspace manager's verdict-executor for intra-run rollback
+// NOTE (deferred): The workspace manager's verdict-executor for intra-run rollback
 // is not yet implemented. These tests capture the behavioral shape declared by WM-035
 // using a fixture-level rollback simulator (intraRunRollbackFixtureApplyVerdict) so
 // they pass as conformance gates once the implementation lands. The fixture is marked

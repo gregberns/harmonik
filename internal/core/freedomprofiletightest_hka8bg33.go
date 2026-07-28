@@ -5,9 +5,9 @@ import (
 	"fmt"
 )
 
-// mVHTierOrder maps model tier names to their capability rank.
-// Lower rank = less capable. MVH ordering per specs/control-points.md §4.6.CP-033.
-var mVHTierOrder = map[string]int{
+// modelTierOrder maps model tier names to their capability rank.
+// Lower rank = less capable. Ordering per specs/control-points.md §4.6.CP-033.
+var modelTierOrder = map[string]int{
 	"haiku":  0,
 	"sonnet": 1,
 	"opus":   2,
@@ -21,7 +21,7 @@ var ErrIncompatibleFreedomProfiles = errors.New("freedom profiles have incompati
 
 // ErrUnknownModelTier is returned by IntersectFreedomProfiles when a model_tier
 // value is not present in the harmonik-level tier table declared in
-// specs/_registry.yaml (MVH table: haiku, sonnet, opus).
+// specs/_registry.yaml (table: haiku, sonnet, opus).
 var ErrUnknownModelTier = errors.New("freedom profile model_tier is not in the declared tier table")
 
 // IntersectFreedomProfiles computes the effective FreedomProfile when multiple
@@ -31,7 +31,7 @@ var ErrUnknownModelTier = errors.New("freedom profile model_tier is not in the d
 // Field semantics:
 //   - ToolWhitelist, WritablePaths (list-valued): set intersection.
 //   - MaxIterations (integer-valued): smaller value.
-//   - ModelTier (ordered enum): less-capable tier per MVH ordering haiku < sonnet < opus;
+//   - ModelTier (ordered enum): less-capable tier per the ordering haiku < sonnet < opus;
 //     a nil tier (no constraint) loses to a non-nil tier (the constraint applies).
 //   - TokenBudgetRef, WallClockBudgetRef (non-ordered references): if one is nil,
 //     the non-nil value is used; if both are non-nil and differ,
@@ -110,7 +110,7 @@ func intersectStringSet(a, b []string) []string {
 }
 
 // tightestModelTier returns the less-capable of the two model tier pointers
-// per the MVH ordering: haiku < sonnet < opus.
+// per the ordering: haiku < sonnet < opus.
 //
 // nil means "no tier constraint"; a non-nil value is more restrictive than nil.
 // Returns ErrUnknownModelTier if a non-nil tier name is not in the tier table.
@@ -121,11 +121,11 @@ func tightestModelTier(a, b *string) (*string, error) {
 	if b == nil {
 		return a, nil
 	}
-	ra, ok := mVHTierOrder[*a]
+	ra, ok := modelTierOrder[*a]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownModelTier, *a)
 	}
-	rb, ok := mVHTierOrder[*b]
+	rb, ok := modelTierOrder[*b]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownModelTier, *b)
 	}

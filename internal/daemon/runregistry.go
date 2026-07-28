@@ -5,14 +5,14 @@ package daemon
 // RunRegistry tracks all currently executing bead runs inside the daemon
 // process. It is a field on the Daemon struct (NOT a package-level variable —
 // package-level globals break concurrent tests per
-// POST_MVH_PARALLELISM_ROADMAP.md §6 anti-pattern).
+// POST_OPERATIONAL_PARALLELISM_ROADMAP.md §6 anti-pattern).
 //
 // The registry is the foundation for concurrent throughput (roadmap row #4 /
 // blocker E). Once the work loop (row #5) launches goroutine-per-bead it will
 // Register on claim and Unregister after the bead closes. MaxConcurrent
 // enforcement (row #6) reads Len() before accepting a new claim.
 //
-// Spec ref: POST_MVH_PARALLELISM_ROADMAP.md §1 blocker E, §3 row #4.
+// Spec ref: POST_OPERATIONAL_PARALLELISM_ROADMAP.md §1 blocker E, §3 row #4.
 // Bead: hk-7s9z9.
 
 import (

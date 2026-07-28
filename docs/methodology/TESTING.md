@@ -135,7 +135,7 @@ Every change gets a **risk tier**; the risk tier sets the *minimum* set of layer
 
 ## Twin conformance
 
-Twins must stay honest — their behavior must track what real agents actually do. Drift detection is NOT in MVH but is a known gap. The scope belongs to S07 scenario-harness. Placeholder plan:
+Twins must stay honest — their behavior must track what real agents actually do. Drift detection is not built yet but is a known gap. The scope belongs to S07 scenario-harness. Placeholder plan:
 
 - **Conformance suite.** A small set of scenarios run against a real agent AND its twin. Assertions on the event stream. Drift = test fails.
 - **Cadence.** On every real-agent version bump; on every twin update; monthly in CI.

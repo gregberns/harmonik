@@ -6,7 +6,7 @@ import "fmt"
 // the bus routes events to the consumer and how failures are handled.
 // (event-model.md §6.1 ENUM consumer_class, EV-010/011/012).
 //
-// The enum is closed at MVH; future variants extend via the amendment
+// The enum is closed; future variants extend via the amendment
 // protocol per [architecture.md §4.6].
 //
 // At most one synchronous consumer per event type is permitted (EV-010);
@@ -33,8 +33,7 @@ const (
 	ConsumerClassObserver ConsumerClass = "observer"
 )
 
-// Valid reports whether c is one of the three declared ConsumerClass constants
-// at MVH.
+// Valid reports whether c is one of the three declared ConsumerClass constants.
 func (c ConsumerClass) Valid() bool {
 	switch c {
 	case ConsumerClassSynchronous, ConsumerClassAsynchronous, ConsumerClassObserver:
@@ -46,7 +45,7 @@ func (c ConsumerClass) Valid() bool {
 
 // MarshalText implements encoding.TextMarshaler so ConsumerClass serialises
 // correctly in JSON and YAML.
-// It rejects any value that is not one of the three declared constants at MVH.
+// It rejects any value that is not one of the three declared constants.
 func (c ConsumerClass) MarshalText() ([]byte, error) {
 	if !c.Valid() {
 		return nil, fmt.Errorf("consumerclass: unknown value %q", string(c))
@@ -55,7 +54,7 @@ func (c ConsumerClass) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
-// It rejects any value that is not one of the three declared constants at MVH.
+// It rejects any value that is not one of the three declared constants.
 func (c *ConsumerClass) UnmarshalText(text []byte) error {
 	v := ConsumerClass(text)
 	if !v.Valid() {

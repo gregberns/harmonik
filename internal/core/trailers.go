@@ -153,7 +153,7 @@ var trailerRegistry = []TrailerSpec{
 		Requirement: TrailerConditional,
 		OwnerSpec:   "reconciliation",
 		EnumValues:  []string{"reconciliation"},
-		Description: "Workflow class; MUST be present on reconciliation-workflow checkpoint commits. Enum values at MVH: {reconciliation}.",
+		Description: "Workflow class; MUST be present on reconciliation-workflow checkpoint commits. Enum values: {reconciliation}.",
 	},
 	{
 		// Known extension owned by the reconciliation spec (schemas.md §6.4; RC-023; RC-026).

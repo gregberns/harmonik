@@ -54,11 +54,11 @@ import (
 // brief is the handler subprocess's responsibility.
 //
 // Consequence — handler contract: the handler subprocess is responsible for
-// calling `br show <beadID> --format json` to obtain the work spec.  For MVH,
+// calling `br show <beadID> --format json` to obtain the work spec.  Today,
 // the bead ID is supplied to the handler via the implementer-protocol brief
 // in the SCOPE line (i.e., as content of the prompt passed by the operator to
 // claude).  Programmatic injection of the bead ID (e.g. a HARMONIK_BEAD_ID
-// env var) is a post-MVH hardening task; no bead exists for that yet.
+// env var) is a deferred hardening task; no bead exists for that yet.
 //
 // # ShowBead — pre-claim status guard (hk-p4xbw)
 //
@@ -68,7 +68,7 @@ import (
 // Ready list.  The guard has a TOCTOU window (another loop could claim between
 // Show and Claim), but this is acceptable at MaxConcurrent>1 because the claim
 // semaphore (hk-e61c3.3) serialises claims on this daemon to N at a time.
-// Cross-daemon double-dispatch (post-MVH multi-daemon) is addressed by the
+// Cross-daemon double-dispatch (multi-daemon, not yet supported) is addressed by the
 // deferred upstream br patch (option 2, out of scope for this bead).
 type BeadLedger interface {
 	Ready(ctx context.Context) ([]core.BeadRecord, error)

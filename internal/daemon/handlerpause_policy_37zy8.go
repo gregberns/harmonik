@@ -54,7 +54,7 @@ const rateLimitHysteresisCount = policy.DefaultRateLimitThreshold
 // NewHandlerPausePolicyGoroutine.
 type HandlerPausePolicyConfig struct {
 	// AgentType is the handler type this policy instance monitors.
-	// At MVH, one policy governs all agent types; we use a single instance
+	// One policy governs all agent types; we use a single instance
 	// for AgentTypeClaudeCode.  Required; must satisfy AgentType.Valid().
 	AgentType core.AgentType
 
@@ -161,7 +161,7 @@ func (p *HandlerPausePolicyGoroutine) handleRateLimitStatus(ctx context.Context,
 	}
 
 	// Use the configured agent type for policy decisions.
-	// At MVH all beads use claude-code; if the payload's run_id belongs to a
+	// All beads use claude-code; if the payload's run_id belongs to a
 	// different type we still apply to our configured agent type since AgentType
 	// is not on the payload.
 	agentType := p.cfg.AgentType
@@ -189,7 +189,7 @@ func (p *HandlerPausePolicyGoroutine) handleRateLimitStatus(ctx context.Context,
 			FailureClass: core.FailureClassTransient,
 			SubReason:    "rate_limit",
 			SourceRunID:  payload.RunID.String(),
-			SourceBeadID: string(p.cfg.AgentType), // best-effort at MVH; no bead on payload
+			SourceBeadID: string(p.cfg.AgentType), // best-effort; no bead on payload
 			TrippedAt:    time.Now().UTC().Format(time.RFC3339Nano),
 		}
 		inFlight := p.buildInFlightList()
@@ -236,7 +236,7 @@ func (p *HandlerPausePolicyGoroutine) handleBudgetExhausted(ctx context.Context,
 		FailureClass: core.FailureClassBudgetExhausted,
 		SubReason:    "budget_exhausted_handler_account",
 		SourceRunID:  payload.RunID.String(),
-		SourceBeadID: string(agentType), // best-effort at MVH; budget_exhausted carries no bead_id
+		SourceBeadID: string(agentType), // best-effort; budget_exhausted carries no bead_id
 		TrippedAt:    time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	inFlight := p.buildInFlightList()
@@ -253,8 +253,8 @@ func (p *HandlerPausePolicyGoroutine) handleBudgetExhausted(ctx context.Context,
 // buildInFlightList returns the set of in-flight runs for the configured agent
 // type at the moment the pause is triggered.
 //
-// At MVH all runs use AgentTypeClaudeCode, so this is effectively "all in-flight
-// runs".  Post-MVH, once per-bead agent-type resolution lands (see
+// All runs use AgentTypeClaudeCode, so this is effectively "all in-flight
+// runs".  Later, once per-bead agent-type resolution lands (see
 // ResolvedAgentType future-work comment in handlerpause_9hwbw.go), this can be
 // filtered by the run's actual agent type.
 func (p *HandlerPausePolicyGoroutine) buildInFlightList() []InFlightBeadRecord {
@@ -267,7 +267,7 @@ func (p *HandlerPausePolicyGoroutine) buildInFlightList() []InFlightBeadRecord {
 	// RunRegistry.Snapshot returns []*RunHandle but not the keys; we need to
 	// iterate in a way that preserves runID.  Use the internal snap approach.
 	// Since RunRegistry exports only Snapshot (which drops keys), we iterate via
-	// a helper that accesses the map directly.  At MVH, Snapshot is the only
+	// a helper that accesses the map directly.  Snapshot is the only
 	// public accessor; we build the freeze-list from it.
 	//
 	// NOTE: RunRegistry.Snapshot does not return the runID keys.  We use a

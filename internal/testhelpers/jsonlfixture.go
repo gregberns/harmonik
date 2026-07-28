@@ -196,7 +196,7 @@ type DurabilityClassLine struct {
 //
 //   - fsync-boundary  — mapped to "run_started" (§8.1.1 Dur=F)
 //   - ordinary        — mapped to "state_entered" (§8.1.4 Dur=O)
-//   - lossy-tail-ok   — no §8 type is L at MVH (§8.8.1 metric, but
+//   - lossy-tail-ok   — no §8 type is L (§8.8.1 metric, but
 //     "metric" requires amendment per EV-027; we use "state_entered"
 //     with an explicit comment and accept the fixture's class label as
 //     test-only metadata, not an EV-016 assertion).
@@ -215,7 +215,7 @@ func JSONLFixtureDurabilityClasses() []DurabilityClassLine {
 	ordinaryLine.Payload = json.RawMessage(`{"run_id":"` + jsonlFixtureRunID + `","state_id":"` + jsonlFixtureStateID + `","node_id":"node-001","entered_at":"` + jsonlFixtureTimestamp + `"}`)
 
 	// lossy-tail-ok: "metric" (§8.8.1) is the canonical L class but is not
-	// fully registered at MVH. We use a test-only type string here; the
+	// fully registered. We use a test-only type string here; the
 	// DurabilityClass label is the test metadata — no production reader is
 	// exercised against this type name in this fixture. Tests that need a real
 	// registered lossy event should register "metric" locally before decoding.

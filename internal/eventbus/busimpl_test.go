@@ -814,7 +814,7 @@ func TestBusImplEmit_PlainEmit_RunIDAbsentFromJSONL(t *testing.T) {
 //	still in flight.
 //
 // This verifies per-run fair termination: slow consumers from one run cannot
-// delay shutdown of another run (POST_MVH_PARALLELISM_ROADMAP.md §1, blocker A).
+// delay shutdown of another run (POST_OPERATIONAL_PARALLELISM_ROADMAP.md §1, blocker A).
 //
 // Bead: hk-fx6zl.
 func TestBusImplDrainRun_IsolatesRunFromSlowPeer(t *testing.T) {

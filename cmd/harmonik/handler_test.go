@@ -216,7 +216,7 @@ func TestHandlerStatus_PausedHandler_JSON(t *testing.T) {
 	if entry.PausedEpoch != 2 {
 		t.Errorf("paused_epoch = %d, want 2", entry.PausedEpoch)
 	}
-	// held_count always 0 at MVH CLI level.
+	// held_count always 0 at the CLI level.
 	if entry.HeldCount != 0 {
 		t.Errorf("held_count = %d, want 0", entry.HeldCount)
 	}
@@ -523,7 +523,7 @@ func TestHandlerResume_AlreadyLive(t *testing.T) {
 
 // TestHandlerResume_AlreadyLive_Force verifies --force exits 0 and no-ops.
 //
-// Acceptance: hk-ejyku — "--force flag is no-op at MVH (reserved)".
+// Acceptance: hk-ejyku — the --force flag is a no-op (reserved).
 func TestHandlerResume_AlreadyLive_Force(t *testing.T) {
 	t.Parallel()
 

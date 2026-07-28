@@ -33,7 +33,7 @@ type retryKey struct {
 //
 // RetryCounter is safe for concurrent use. A single mutex guards the counter
 // map; contention is expected to be low since each daemon handles one run at a
-// time per MVH.
+// time.
 type RetryCounter struct {
 	mu       sync.Mutex
 	counters map[retryKey]uint64

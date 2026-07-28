@@ -18,9 +18,9 @@
 //  7. Append handler_resumed event to .harmonik/events/events.jsonl.
 //  8. Print prior cause, in_flight_at_pause count, and confirmation.
 //
-// Both verbs read/write handler-state.json directly (no daemon socket required
-// at MVH). HandlerPauseController (hk-9hwbw) is not yet wired; direct file I/O
-// with atomic-write discipline (WM-026) is consistent with how `status` operates.
+// Both verbs read/write handler-state.json directly (no daemon socket required).
+// HandlerPauseController (hk-9hwbw) is not yet wired; direct file I/O with
+// atomic-write discipline (WM-026) is consistent with how `status` operates.
 // When hk-9hwbw + hk-m0k0a land the daemon-side controller will own the state
 // file; resume can then delegate to the socket. This is noted as a wiring site.
 //
@@ -36,7 +36,7 @@
 //	1  — argument or I/O error
 //	2  — unknown handler type (not in handler-state.json)
 //	3  — handler already live (not paused); use --force to no-op
-//	4  — socket-unreachable (reserved for post-hk-9hwbw wiring; unused at MVH)
+//	4  — socket-unreachable (reserved for post-hk-9hwbw wiring; unused for now)
 //
 // Spec ref: docs/components/internal/handler-pause-and-resume.md §7.
 // Spec ref: specs/event-model.md §8.11.2 (handler_resumed event).
@@ -58,7 +58,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-// handlerStateSchemaVersion is the only schema version the CLI accepts at MVH.
+// handlerStateSchemaVersion is the only schema version the CLI accepts.
 // A higher schema version causes exit 2 (forward-incompatible, mirrors QM-002).
 const handlerStateSchemaVersion = 1
 
@@ -368,7 +368,7 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 	// TOCTOU note: reading statePath here and renaming over it below creates a
 	// window in which a concurrent writer (e.g., a future daemon socket handler)
 	// could overwrite the file between our read and our rename, silently losing
-	// their update. This is acceptable for MVH because only the operator runs
+	// their update. This is acceptable for now because only the operator runs
 	// `harmonik handler resume` and the daemon does not yet write handler-state.json
 	// directly (HandlerPauseController is not yet wired). When hk-9hwbw lands the
 	// daemon-socket delegation path, the CLI will delegate to the controller and
@@ -484,7 +484,7 @@ func printHandlerResumeSuccess(out io.Writer, agentType string, priorCause *core
 	if _, err := fmt.Fprintf(out, "  in_flight_at_pause: %d\n", inFlightCount); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(out, "  dispatcher_backlog_held: (unavailable at MVH — HandlerPauseController not yet wired)"); err != nil {
+	if _, err := fmt.Fprintln(out, "  dispatcher_backlog_held: (unavailable — HandlerPauseController not yet wired)"); err != nil {
 		return err
 	}
 	return nil
@@ -523,7 +523,7 @@ func atomicWriteHandlerState(statePath string, state *handlerStateDisk) error {
 	// Rename (atomic on POSIX). This is the other end of the TOCTOU window noted
 	// at the loadHandlerState call above: a concurrent writer that read the file
 	// before this rename completes will have its update silently lost when this
-	// rename lands. Acceptable at MVH (single operator, no daemon writer). Resolved
+	// rename lands. Acceptable for now (single operator, no daemon writer). Resolved
 	// by hk-9hwbw daemon-socket delegation.
 	if renameErr := os.Rename(tmpPath, statePath); renameErr != nil {
 		return fmt.Errorf("rename %s → %s: %w", tmpPath, statePath, errors.Join(renameErr, cleanupHandlerStateTemp(nil, tmpPath)))
@@ -805,7 +805,7 @@ func renderJSON(state *handlerStateDisk, out, errOut io.Writer) int {
 			Cause:           entry.Cause,
 			InFlightAtPause: inFlight,
 			PausedEpoch:     entry.PausedEpoch,
-			HeldCount:       0, // derived; see struct comment — always 0 at MVH CLI level
+			HeldCount:       0, // derived; see struct comment — always 0 at the CLI level
 		}
 	}
 

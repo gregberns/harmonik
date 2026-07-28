@@ -1347,7 +1347,7 @@ func dispatchDotAgenticNode(
 		spec.Args = append(env.HandlerArgs, spec.Args...)
 	}
 
-	// Attach the optional substrate (nil at MVH / in the deterministic E2E test).
+	// Attach the optional substrate (nil by default and in the deterministic E2E test).
 	// remote-substrate: thread the run's runner (SSHRunner for remote, nil for
 	// local) so the per-run substrate's liveness + worktree probes target the
 	// WORKER, and the implementer/reviewer spawns on the worker (mirrors the

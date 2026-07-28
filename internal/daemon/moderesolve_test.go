@@ -145,9 +145,9 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			wantConflictEvent: true,
 		},
 
-		// ── Tier 2: per-project config (MVH no-op) ───────────────────────────
+		// ── Tier 2: per-project config (no-op) ───────────────────────────────
 		// No bead label, no daemon default → must fall to tier 4.
-		// Tier 2 is always absent at MVH; we verify tier 3 is tried first.
+		// Tier 2 is always absent; we verify tier 3 is tried first.
 
 		// ── Tier 3: daemon default ────────────────────────────────────────────
 		{

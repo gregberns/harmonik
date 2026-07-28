@@ -56,7 +56,7 @@ type EventEmitter interface {
 	//
 	// Use EmitWithRunID for all run-scoped events (run_started, run_completed,
 	// run_failed, etc.) so that the JSONL envelope carries the join key across
-	// git, Beads, and JSONL per EM-013 / POST_MVH_PARALLELISM_ROADMAP row #1.
+	// git, Beads, and JSONL per EM-013 / POST_OPERATIONAL_PARALLELISM_ROADMAP row #1.
 	// Plain Emit is reserved for daemon-level events where no run is in flight
 	// (daemon_started, daemon_orphan_sweep_completed, etc.).
 	//
@@ -660,7 +660,7 @@ func (w *Watcher) setTermErr(err error) {
 //
 // The payload is derived from the chunk fields: run_id and session_id are
 // decoded from chunkLine; chunk_index and bytes_emitted provide correlation and
-// cost_units respectively. cost_basis is always core.CostBasisOutputBytes at MVH
+// cost_units respectively. cost_basis is always core.CostBasisOutputBytes
 // (no token-count is available at the chunk boundary).
 //
 // Decoding is best-effort: if chunkLine is missing required fields the

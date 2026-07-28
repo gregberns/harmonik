@@ -51,7 +51,7 @@ Every composed workflow needs something to drive it forward: advance states, sel
   - **Kilroy** -- Go binary, graph-as-workflow, deterministic edge selection, git-native checkpointing (one-commit-per-node), parallel isolation via worktrees. Strongest direct model.
   - **Attractor** ([strongdm/attractor](https://github.com/strongdm/attractor)) -- NLSpec in the **same family as Kilroy**: a DOT-based pipeline runner with deterministic edge selection, checkpoint-snapshot durability (JSON, not git), single-threaded top-level traversal, and a more formalized handler/outcome/retry-routing vocabulary. NOT a distributed workflow engine. Adopt the outcome shape, edge cascade, goal-gate semantics, and retry-target routing; do NOT adopt JSON-snapshot durability or single-threaded traversal.
   - Reverse-spec ground truth: `.kerf/recon/kilroy-findings.md`, `.kerf/recon/attractor-findings.md`.
-  - **DTW references (Temporal / Restate / DBOS)** -- SEPARATE references, post-MVH consideration only. Foundation locked decision #12 declined DTW adoption for MVH (single-machine, cheap re-execution). Mentioned here only so subsystem specs do not mistake Kilroy/Attractor for DTW engines.
+  - **DTW references (Temporal / Restate / DBOS)** -- SEPARATE references only. Foundation locked decision #12 declined DTW adoption (single-machine, cheap re-execution). Mentioned here only so subsystem specs do not mistake Kilroy/Attractor for DTW engines.
 - **Candidate paths:**
   - Use Kilroy directly, wrapping its DOT pipeline model -- fastest path, may be too rigid for dynamic graph modification.
   - Build a Go-native state machine using Kilroy + Attractor as the design reference -- more work, more control, better fit for harmonik's specific needs.

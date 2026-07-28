@@ -18,7 +18,7 @@ For a deeper treatment of Kilroy's concepts and design patterns, see the [concep
 
 ### Sibling: Attractor
 
-[strongdm/attractor](https://github.com/strongdm/attractor) is Kilroy's sibling -- the **same DOT-pipeline-runner family**, delivered as an NLSpec rather than a Go binary. Both share graph-as-workflow, deterministic edge selection, checkpoint-based persistence, pluggable node handlers, and goal-gate semantics. Differences: Kilroy uses git-native one-commit-per-node checkpointing; Attractor uses JSON-snapshot durability and is single-threaded at the top level. Attractor contributes a more formalized handler/outcome/retry-routing vocabulary that harmonik selectively adopts. Recon ground truth: `.kerf/recon/attractor-findings.md`. Neither project is a distributed workflow engine; DTW references (Temporal / Restate / DBOS) are separate and post-MVH only.
+[strongdm/attractor](https://github.com/strongdm/attractor) is Kilroy's sibling -- the **same DOT-pipeline-runner family**, delivered as an NLSpec rather than a Go binary. Both share graph-as-workflow, deterministic edge selection, checkpoint-based persistence, pluggable node handlers, and goal-gate semantics. Differences: Kilroy uses git-native one-commit-per-node checkpointing; Attractor uses JSON-snapshot durability and is single-threaded at the top level. Attractor contributes a more formalized handler/outcome/retry-routing vocabulary that harmonik selectively adopts. Recon ground truth: `.kerf/recon/attractor-findings.md`. Neither project is a distributed workflow engine; DTW references (Temporal / Restate / DBOS) are separate.
 
 ## Key Capabilities
 

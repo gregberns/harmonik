@@ -133,7 +133,7 @@ func TestClassifyHandlerFatal_Taxonomy(t *testing.T) {
 }
 
 // TestHandlerFatalClassConstants_Strings verifies the wire values of the two
-// MVH HandlerFatalClass constants.
+// HandlerFatalClass constants.
 func TestHandlerFatalClassConstants_Strings(t *testing.T) {
 	t.Parallel()
 

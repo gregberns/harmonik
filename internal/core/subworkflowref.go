@@ -17,8 +17,8 @@ import "fmt"
 // SubWorkflowRef.
 //
 // execution-model.md §6.1 does not declare a structured record shape for the
-// reference value at MVH; MVH realises SubWorkflowRef as a typed non-empty
-// string alias following the same pattern as PolicyVersion. A future
+// reference value; SubWorkflowRef is realised as a typed non-empty string
+// alias following the same pattern as PolicyVersion. A future
 // execution-model.md revision may promote this to a structured record via the
 // amendment protocol per [architecture.md §4.6].
 type SubWorkflowRef string

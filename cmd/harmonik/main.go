@@ -7,19 +7,19 @@
 // Production bindings declared here:
 //
 //   - PolicyEngine: [core.NoOpPolicyEngine] — permits every evaluation with no
-//     constraints. This is the first-class production binding for MVH; it is
+//     constraints. This is the first-class production binding; it is
 //     NOT a nil sentinel and NOT a test double. The orchestrator dispatcher
 //     calls PolicyEngine.Evaluate on every gate and guard without branching on
 //     the concrete type, satisfying [specs/scenario-harness.md §4.3.SH-018].
 //
-//   - BusFlusher: nil for MVH. The [lifecycle.BusFlusher] interface is declared;
+//   - BusFlusher: nil for now. The [lifecycle.BusFlusher] interface is declared;
 //     its real implementation ([lifecycle.BusFlusher] on the EventBus type) lands
 //     when the EventBus bead (hk-hqwn.57) merges. Until then the bus-flush step
 //     in [lifecycle.RecoverWithLogFlush] is skipped (nil-safe per EV-019a).
 //     Wiring site (hk-hqwn.70): substitute nil with the real EventBus once
 //     hk-hqwn.57 lands.
 //
-// When the control-points subsystem (hk-a8bg) lands post-MVH, the composition
+// When the control-points subsystem (hk-a8bg) lands later, the composition
 // root substitutes the real PolicyEngine evaluator. No dispatcher changes are
 // required.
 //
@@ -923,7 +923,7 @@ EXAMPLES
 
 	// harmonik harness [flags] — scenario harness runner (hk-nwqa0).
 	//
-	// Implements the MVH CLI surface: 8 flags (--cadence, --scenario,
+	// Implements the CLI surface: 8 flags (--cadence, --scenario,
 	// --fixture-root, --twin-search-path, --list, --dry-run, --output,
 	// --verbose) and 5 exit codes (0/1/2/3/130).
 	//
@@ -938,7 +938,7 @@ EXAMPLES
 
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
-	// logFlusher and busFlusher are both nil for MVH:
+	// logFlusher and busFlusher are both nil for now:
 	//   - logFlusher:  the structured-log channel does not exist yet; the flush
 	//     step is nil-safe and skipped (lifecycle.RecoverWithLogFlush nil-safety).
 	//   - busFlusher:  the EventBus (hk-hqwn.57) is not yet implemented; the
@@ -950,7 +950,7 @@ EXAMPLES
 	//   - event-model.md §4.4 EV-019a — bus flush SHOULD follow log flush (nil-safe).
 	defer lifecycle.RecoverWithLogFlush(nil, nil, nil)
 
-	// PolicyEngine binding for MVH.
+	// PolicyEngine binding.
 	//
 	// NoOpPolicyEngine is the production interface — not a nil check, not a
 	// test double. The dispatcher always calls policyEngine.Evaluate; the
@@ -965,19 +965,20 @@ EXAMPLES
 	// dispatcher wiring beads (hk-b3f cluster-A) land. The binding site is
 	// here; the consumer site is internal/orchestrator (not yet shipped).
 
-	// --project flag (MVH_ROADMAP row #1, hk-56ajv).
+	// --project flag (EARLY_ROADMAP row #1, hk-56ajv).
 	//
 	// Default: current working directory. Resolved to an absolute path via
 	// filepath.Abs before the directory-existence check, so relative paths
 	// work intuitively from any shell context.
 	//
-	// MVH stays foreground — no additional flags, no env-var fallbacks, no
-	// config-file loading (MVH_ROADMAP §"What we are NOT building for MVH").
+	// The daemon stays foreground — no additional flags, no env-var fallbacks,
+	// no config-file loading (EARLY_ROADMAP §"What we are NOT building").
 	var projectFlag string
 	flag.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
 
 	// --max-concurrent: maximum beads dispatched concurrently.
-	// Default 1 preserves MVH single-threaded semantics (POST_MVH_PARALLELISM_ROADMAP row 6, hk-e61c3.1).
+	// Default 1 preserves single-threaded semantics
+	// (POST_OPERATIONAL_PARALLELISM_ROADMAP row 6, hk-e61c3.1).
 	// Values >1 are inert until the work-loop goroutine scheduler (hk-e61c3.2) lands.
 	var maxConcurrentFlag int
 	flag.IntVar(&maxConcurrentFlag, "max-concurrent", 1, "maximum number of beads dispatched concurrently")

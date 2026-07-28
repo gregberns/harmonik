@@ -1,11 +1,11 @@
 package daemon
 
 // claudeheartbeat.go — daemon-side agent_heartbeat emitter for the claude-code
-// MVH carve-out (HC-057).
+// carve-out (HC-057).
 //
 // HC-057 permits the daemon to emit agent_heartbeat{phase:"reasoning"} on the
 // handler-process's behalf when agent_type is "claude-code", because no
-// dedicated harmonik-claude-handler binary exists at MVH.
+// dedicated harmonik-claude-handler binary exists.
 //
 // This file provides newDaemonHeartbeatEmitter, which binds a run's (bus,
 // runID, sessionID) at construction time and returns a handler.HeartbeatEmitter

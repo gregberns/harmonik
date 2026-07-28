@@ -11,7 +11,7 @@ type WorkflowMode string
 
 // Declared WorkflowMode constants per execution-model.md §6.1.
 const (
-	// WorkflowModeSingle is the one-handler-per-node default (Core MVH).
+	// WorkflowModeSingle is the one-handler-per-node default (Core).
 	// Applies to ordinary workflow graphs.
 	WorkflowModeSingle WorkflowMode = "single"
 
@@ -19,8 +19,8 @@ const (
 	// cycle per §4.3.EM-015d; iteration cap of 3 per §4.3.EM-015e.
 	WorkflowModeReviewLoop WorkflowMode = "review-loop"
 
-	// WorkflowModeDot is the general workflow-graph walker; reserved for
-	// post-MVH. Out of scope for Core MVH conformance.
+	// WorkflowModeDot is the general workflow-graph walker; not yet
+	// implemented. Out of scope for Core conformance.
 	WorkflowModeDot WorkflowMode = "dot"
 )
 

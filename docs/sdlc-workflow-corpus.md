@@ -1278,9 +1278,9 @@ the brief discipline.
 
 True fork+join multi-reviewer: three reviewers run concurrently against a frozen HEAD, a join
 barrier waits for all three, then consolidate. Per the parity research §3, parallel/join is a real
-Attractor-spec primitive that harmonik **deliberately defers** (EM-059 §7.5.5: "parallel-node-type
-semantics... deferred to a post-MVH amendment"; OQ-WG-008: "parallel fan-out primitives rejected,
-not stubbed") and is **NOT required by any live kilroy pipeline** (both are strictly sequential).
+Attractor-spec primitive that harmonik **deliberately defers** (EM-059 §7.5.5 defers parallel-node-type
+semantics to a later amendment; OQ-WG-008: "parallel fan-out primitives rejected, not stubbed") and is
+**NOT required by any live kilroy pipeline** (both are strictly sequential).
 The sequential `triple-review-consolidate` (#2) is the runnable substitute. If ever pursued it is a
 NEW capability requiring coordinated amendments (EM-059 lift, WG-001 node-type additions + schema
 major bump, the one-worktree-per-run invariant lift, and a fork/join dispatcher in

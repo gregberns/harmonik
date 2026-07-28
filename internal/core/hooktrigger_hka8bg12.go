@@ -6,7 +6,7 @@ package core
 //
 //	A Hook's trigger MUST match one of the declared lifecycle event types.
 //	Hook-trigger names form a separate Hook-namespace (the "on_" prefix
-//	distinguishes them from raw event-type names). The MVH-baseline trigger
+//	distinguishes them from raw event-type names). The baseline trigger
 //	set is registered at daemon init; subsystems MAY declare additional
 //	triggers via the subsystem envelope (architecture.md §4.4). An
 //	unrecognized trigger fails registration.
@@ -28,7 +28,7 @@ import "fmt"
 // names from raw event-type names per CP-013.
 type HookTrigger string
 
-// MVH-baseline Hook trigger set per specs/control-points.md §4.3.CP-013.
+// Baseline Hook trigger set per specs/control-points.md §4.3.CP-013.
 // These 8 triggers are always registered at daemon init.
 const (
 	HookTriggerOnAgentStarted        HookTrigger = "on_agent_started"
@@ -41,7 +41,7 @@ const (
 	HookTriggerOnCheckpointFailed    HookTrigger = "on_checkpoint_failed"
 )
 
-// baselineHookTriggers is the ordered list of MVH-baseline trigger names.
+// baselineHookTriggers is the ordered list of baseline trigger names.
 var baselineHookTriggers = [...]HookTrigger{
 	HookTriggerOnAgentStarted,
 	HookTriggerOnAgentOutput,
@@ -55,7 +55,7 @@ var baselineHookTriggers = [...]HookTrigger{
 
 // HookTriggerSet is the in-daemon registry of declared Hook trigger names.
 //
-// Populated at daemon init with the 8 MVH-baseline triggers via
+// Populated at daemon init with the 8 baseline triggers via
 // NewBaselineHookTriggerSet; subsystem envelopes may call AddTrigger before
 // the daemon's main loop starts to register subsystem-specific triggers (per
 // architecture.md §4.4 and CP-013).
@@ -69,7 +69,7 @@ type HookTriggerSet struct {
 }
 
 // NewBaselineHookTriggerSet returns a HookTriggerSet pre-populated with the 8
-// MVH-baseline Hook trigger names declared in CP-013.
+// baseline Hook trigger names declared in CP-013.
 //
 // Callers that need to extend the set with subsystem-specific triggers MUST
 // call AddTrigger before any PolicyDocument is registered via S02Registrar.

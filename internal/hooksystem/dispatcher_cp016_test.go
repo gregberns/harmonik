@@ -7,7 +7,7 @@ package hooksystem_test
 //  1. S05 MUST deliver each Hook's side-effect at least once.
 //  2. Duplicate delivery is acceptable for idempotency_class = idempotent.
 //  3. For idempotency_class = non-idempotent, S05 MUST bound delivery to
-//     at-most-once via a persisted delivery-receipt mechanism (post-MVH).
+//     at-most-once via a persisted delivery-receipt mechanism (deferred).
 //  4. The hook's declared idempotency_class flows through to the
 //     SideEffectDescriptor carried in the hook_fired event.
 //  5. When idempotency_class is not declared on the hook, the spec default

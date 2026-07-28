@@ -1,4 +1,4 @@
-// Package handler — ClaudeCodeAdapter (MVH-R8).
+// Package handler — ClaudeCodeAdapter.
 //
 // This file provides the concrete handlercontract.Adapter implementation for
 // the "claude-code" agent type (core.AgentTypeClaudeCode).  It is a stateless
@@ -20,15 +20,15 @@ import (
 
 // ErrSingleAccountOnly is returned by ClaudeCodeAdapter.RotateAccount to
 // indicate that account rotation is not supported for the "claude-code"
-// agent type in MVH.
+// agent type.
 //
-// Account rotation is post-MVH; the interface stub exists so callers compile
+// Account rotation is deferred; the interface stub exists so callers compile
 // per the bead body. Callers SHOULD treat this as ErrDeterministic.
 //
 // Spec: specs/handler-contract.md §4.3.HC-013a.
 // TODO: when multi-account rotation lands, remove this sentinel and wire in
 // real rotation logic.
-var ErrSingleAccountOnly = fmt.Errorf("handler: claude-code account rotation not supported in MVH: %w", ErrDeterministic)
+var ErrSingleAccountOnly = fmt.Errorf("handler: claude-code account rotation not supported: %w", ErrDeterministic)
 
 // claudeCodeRateLimitedPayload is the minimal shape decoded from an
 // agent_rate_limited progress-stream message to extract retry_after_seconds.
@@ -146,9 +146,9 @@ func (ClaudeCodeAdapter) CleanExitSequence(ctx context.Context, session handlerc
 }
 
 // RotateAccount returns ErrSingleAccountOnly because account rotation is not
-// supported for "claude-code" in MVH (handler-contract.md §4.3.HC-013a).
+// supported for "claude-code" (handler-contract.md §4.3.HC-013a).
 //
-// This stub exists so callers compile.  Rotation is post-MVH.
+// This stub exists so callers compile.  Rotation is deferred.
 func (ClaudeCodeAdapter) RotateAccount(_ context.Context) error {
 	return ErrSingleAccountOnly
 }
@@ -156,21 +156,21 @@ func (ClaudeCodeAdapter) RotateAccount(_ context.Context) error {
 // Diagnose returns a minimal DiagnosticReport for the claude-code handler
 // (handler-contract.md §4.3a HC-014a).
 //
-// At MVH no real-time account or rate-limit status check is available; the
+// No real-time account or rate-limit status check is available; the
 // report records that the condition is unknown and assumed unresolved (Healthy
-// = false).  Post-MVH this method MAY probe the Anthropic API or the local
+// = false).  Later this method MAY probe the Anthropic API or the local
 // session-token state to determine whether the triggering condition has cleared.
 //
 // The handler-pause controller calls Diagnose on pause-trip (to enrich the
 // cause record) and on Resume (to note whether the condition appears resolved).
-// At MVH the controller logs the report at INFO and does not gate Resume on
+// The controller logs the report at INFO and does not gate Resume on
 // Healthy.
 //
 // Spec: specs/handler-contract.md §4.3a HC-014a.
 // Bead: hk-tvsl7.
 func (ClaudeCodeAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
 	return handlercontract.DiagnosticReport{
-		Message: "claude-code: rate-limit pause; no real-time rate-limit status check available at MVH",
+		Message: "claude-code: rate-limit pause; no real-time rate-limit status check available",
 		Healthy: false,
 	}, nil
 }

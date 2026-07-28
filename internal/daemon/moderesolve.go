@@ -7,7 +7,7 @@ package daemon
 // the run is dispatched.
 //
 // Tier 1 — per-bead workflow:<mode> label (beads-integration.md §4.3 BI-009a)
-// Tier 2 — per-project config (reserved no-op for MVH; always absent)
+// Tier 2 — per-project config (reserved no-op; always absent)
 // Tier 3 — daemon default (workLoopDeps.workflowModeDefault per hk-7om2q.8)
 // Tier 4 — hard fallback: dot (hk-30vlb)
 //
@@ -89,9 +89,9 @@ func resolveWorkflowMode(
 	}
 	// len(workflowLabels) == 0: tier 1 is simply absent; no event emitted.
 
-	// ── Tier 2: per-project config (reserved no-op for MVH) ───────────────
+	// ── Tier 2: per-project config (reserved no-op) ───────────────────────
 	//
-	// No per-project config mechanism exists at MVH; tier 2 is always absent.
+	// No per-project config mechanism exists; tier 2 is always absent.
 	// Falls through to tier 3.
 
 	// ── Tier 3: daemon default ─────────────────────────────────────────────

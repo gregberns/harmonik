@@ -16,7 +16,7 @@ import "fmt"
 //
 // The handler-contract spec (handler-contract.md §6.1) and workspace-model spec
 // (workspace-model.md §6.1, §4.6.WM-022) declare HandlerRef as a non-empty
-// String with no closed enum at MVH; validation requires only non-empty. The
+// String with no closed enum; validation requires only non-empty. The
 // identifier format follows the lowercase-hyphenated agent_type convention per
 // [architecture.md §6.1] (e.g., "agentic-claude", "non-agentic").
 //

@@ -114,7 +114,7 @@ var globalEventRegistry = &eventRegistry{
 }
 
 // RegisterEventType registers a constructor for the given event type name at
-// schema version 1 (the MVH baseline per EV-028 / OQ-EV-004).
+// schema version 1 (the baseline per EV-028 / OQ-EV-004).
 //
 // The constructor is called by DecodePayload to obtain a fresh zero-value
 // target for JSON unmarshaling.

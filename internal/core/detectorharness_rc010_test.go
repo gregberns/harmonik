@@ -367,18 +367,18 @@ func TestRC020a_DetectorCadenceHasThreeDispatchPoints(t *testing.T) {
 	}
 }
 
-// TestRC020a_ScheduledCadenceDefaultIsHourly verifies that the MVH default
-// for scheduled detector cadence is hourly per RC-020a.
+// TestRC020a_ScheduledCadenceDefaultIsHourly verifies that the default for
+// scheduled detector cadence is hourly per RC-020a.
 //
 // Spec ref: specs/reconciliation/spec.md §4.3 RC-020a — "Background scan at
-// a configurable interval; MVH default is hourly."
+// a configurable interval; the default is hourly."
 func TestRC020a_ScheduledCadenceDefaultIsHourly(t *testing.T) {
 	t.Parallel()
 
-	const mvhDefaultCadenceSeconds = 3600 // 1 hour = 3600 seconds
+	const defaultCadenceSeconds = 3600 // 1 hour = 3600 seconds
 
-	if mvhDefaultCadenceSeconds != 3600 {
-		t.Errorf("RC-020a: MVH default cadence = %d seconds, want 3600 (hourly)", mvhDefaultCadenceSeconds)
+	if defaultCadenceSeconds != 3600 {
+		t.Errorf("RC-020a: default cadence = %d seconds, want 3600 (hourly)", defaultCadenceSeconds)
 	}
 }
 

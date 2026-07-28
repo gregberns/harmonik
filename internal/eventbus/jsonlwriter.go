@@ -401,7 +401,7 @@ func ScanAfter(path string, sinceID core.EventID) iter.Seq[core.Event] {
 // by a closed writer, or files under a different path) without holding a live
 // writer reference.
 //
-// Spec ref: event-model.md §6.2 EV-020; POST_MVH_PARALLELISM_ROADMAP.md row 10.
+// Spec ref: event-model.md §6.2 EV-020; POST_OPERATIONAL_PARALLELISM_ROADMAP.md row 10.
 // Bead ref: hk-e61c3.5.
 //
 //nolint:gosec // G304: path is caller-supplied and scoped to the harmonik project dir; not user input.

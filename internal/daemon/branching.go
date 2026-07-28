@@ -318,12 +318,12 @@ func extractFencedYAML(body string) (string, bool) {
 // resolveStartFrom converts a start_from git ref (branch name or commit SHA)
 // to its commit SHA by querying the local git repository at repoRoot.
 //
-// Resolution order per WM-005b (local refs only; no network fetch for MVH):
+// Resolution order per WM-005b (local refs only; no network fetch):
 //  1. Try `git rev-parse refs/heads/<ref>` — exact branch name match.
 //  2. Fall back to `git rev-parse <ref>` — covers explicit SHAs and
 //     refs/remotes/origin/<ref> if <ref> is already a full refspec.
 //
-// No network fetch is performed. Fetching is deferred refinement (post-MVH).
+// No network fetch is performed. Fetching is a deferred refinement.
 //
 // When the ref does not resolve locally, returns a typed StartFromRefError
 // wrapping the underlying git error so the caller can emit a clear operator

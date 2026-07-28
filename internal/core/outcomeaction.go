@@ -12,7 +12,7 @@ import "fmt"
 //   - Guard:  OutcomeActionReorder (Guard may only reorder, never block)
 //   - Budget: OutcomeActionAdmit, OutcomeActionWarn, OutcomeActionDeny
 //
-// OutcomeAction is a closed string enum at MVH. Unknown values are rejected at
+// OutcomeAction is a closed string enum. Unknown values are rejected at
 // registration per [control-points.md §4.9].
 //
 // Per-Kind outcome-action semantics are declared in §4.2 (Gate), §4.3 (Hook),

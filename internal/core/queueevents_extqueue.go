@@ -263,7 +263,7 @@ type QueuePausedPayload struct {
 	// Required (non-empty).
 	PausedAt string `json:"paused_at"`
 
-	// Reason is the pause cause. Required; exhaustive enum at MVH:
+	// Reason is the pause cause. Required; exhaustive enum:
 	// "group_failure" (pause-by-failure path) or "operator_drain"
 	// (operator-initiated drain). New variants require an EV-027 amendment
 	// per event-model.md §8.10 queue_paused note.
@@ -446,7 +446,7 @@ func (p QueueItemDeferredForLedgerDepPayload) Valid() bool {
 //   - queue_id      — UUIDv7 as string
 //   - group_index   — zero-based group index containing the reconciled item
 //   - bead_id       — the bead item that was reconciled and reverted to pending
-//   - reason        — enum: "claim_write_lost" (exhaustive at MVH)
+//   - reason        — enum: "claim_write_lost" (exhaustive)
 //   - reconciled_at — RFC 3339 wall-clock timestamp
 type QueueItemReconciledPayload struct {
 	// QueueID is the daemon-minted UUIDv7 string identifying the queue.
@@ -461,7 +461,7 @@ type QueueItemReconciledPayload struct {
 	// Required (non-empty).
 	BeadID string `json:"bead_id"`
 
-	// Reason is the reconciliation cause. Required; exhaustive enum at MVH:
+	// Reason is the reconciliation cause. Required; exhaustive enum:
 	// "claim_write_lost" per queue-model.md §3.2a QM-002a.
 	Reason string `json:"reason"`
 

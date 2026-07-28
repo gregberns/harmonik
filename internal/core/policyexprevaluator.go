@@ -63,17 +63,17 @@ type PolicyExprEvalResult struct {
 type PolicyExprEvaluatorConfig struct {
 	// MaxASTNodes is the compile-time AST-node ceiling (primary static bound).
 	// Expressions whose AST exceeds this size fail at compile time.
-	// Default: 1000 (harmonik MVH ceiling; operator-fixed, not policy-tunable).
+	// Default: 1000 (harmonik ceiling; operator-fixed, not policy-tunable).
 	MaxASTNodes uint
 
 	// WallClockTimeout is the per-evaluation wall-clock soft-cap (secondary
 	// backstop per CP-034b). Wall-clock is non-deterministic; it is a backstop.
-	// Default: 100ms (harmonik MVH ceiling; operator-fixed, not policy-tunable).
+	// Default: 100ms (harmonik ceiling; operator-fixed, not policy-tunable).
 	WallClockTimeout time.Duration
 }
 
-// DefaultPolicyExprEvaluatorConfig returns the MVH harmonik-level cost-ceiling
-// configuration. Values are operator-fixed and NOT policy-tunable per CP-034b.
+// DefaultPolicyExprEvaluatorConfig returns the harmonik-level cost-ceiling
+// defaults. Values are operator-fixed and NOT policy-tunable per CP-034b.
 func DefaultPolicyExprEvaluatorConfig() PolicyExprEvaluatorConfig {
 	return PolicyExprEvaluatorConfig{
 		MaxASTNodes:      1000,
@@ -102,7 +102,7 @@ type PolicyExprEvaluator struct {
 }
 
 // NewPolicyExprEvaluator constructs a PolicyExprEvaluator with the given config.
-// Use DefaultPolicyExprEvaluatorConfig() for the MVH harmonik-level ceilings.
+// Use DefaultPolicyExprEvaluatorConfig() for the harmonik-level ceilings.
 func NewPolicyExprEvaluator(cfg PolicyExprEvaluatorConfig) *PolicyExprEvaluator {
 	return &PolicyExprEvaluator{Config: cfg}
 }

@@ -2,7 +2,7 @@ package eventbus_test
 
 // jsonlfilter_test.go — binding tests for hk-e61c3.5 (per-run-id JSONL filter).
 //
-// Spec ref: event-model.md §6.2 EV-020; POST_MVH_PARALLELISM_ROADMAP.md row 10.
+// Spec ref: event-model.md §6.2 EV-020; POST_OPERATIONAL_PARALLELISM_ROADMAP.md row 10.
 // Bead ref: hk-e61c3.5.
 //
 // These tests verify that Filter:

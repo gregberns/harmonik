@@ -202,7 +202,7 @@ type LaunchArtifacts struct {
 	PreExecMsgs []json.RawMessage
 
 	// Substrate is the optional tmux-substrate reference for this session.
-	// At MVH this is always nil; the handler falls back to exec.CommandContext.
+	// This is always nil; the handler falls back to exec.CommandContext.
 	// TODO(hk-gql20.x): wire tmux substrate once component-2 lands.
 	Substrate interface{}
 

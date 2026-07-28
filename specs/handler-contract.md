@@ -50,12 +50,12 @@ It is normative for every subsystem that launches, monitors, or interprets the o
 
 - Event payload schemas for handler-lifecycle events and `skills_provisioned` — owned by [event-model.md §6.3]. This spec declares WHEN each event fires and what fields it MUST carry at a name level; event-model is normative for the on-the-wire payload.
 - Workspace path construction, session-log directory creation, post-merge session-log archival — owned by [workspace-model.md §4.7]. This spec declares S04's emission obligation; workspace-model owns the three-subsystem pipeline (S04 → S06 → S08).
-- Per-handler implementations (Claude Code, Pi, `claude-twin`, `pi-twin`) — each is its own per-handler spec, post-MVH.
+- Per-handler implementations (Claude Code, Pi, `claude-twin`, `pi-twin`) — each is its own per-handler spec, deferred.
 - Skill storage location, skill-package registry, per-handler skill-installation shape — owned by [control-points.md §4.11] (declaration surface) and future `agent-configuration` spec (storage layout).
-- Scenario harness and twin-conformance drift detection — owned by the `scenario-harness` (S07) spec, post-MVH.
-- Binary signing (cosign, full supply-chain verification) — deferred post-MVH per locked decision; commit-hash check is the MVH gate.
-- Secret rotation mid-session — out of scope for MVH; a new launch is required. Note: this is **provider-secret rotation** (new API key value for the same provider); **account rotation** (different pool member) is in scope and is governed by §4.3.HC-013 + §4.6.HC-013a at clean turn boundaries.
-- Non-Unix transport targets — Windows and remote/cloud execution shapes cannot use the local filesystem socket pinned in §4.2.HC-007. They are deferred post-MVH. Adding them is a breaking change to §4.2 (a transport-substitution mechanism, preserving NDJSON framing, bidirectional flow, and authenticated-connection semantics) requiring a foundation amendment per §6.3; tracked as OQ-HC-010.
+- Scenario harness and twin-conformance drift detection — owned by the `scenario-harness` (S07) spec, deferred.
+- Binary signing (cosign, full supply-chain verification) — deferred per locked decision; the commit-hash check is the gate today.
+- Secret rotation mid-session — out of scope for this spec; a new launch is required. Note: this is **provider-secret rotation** (new API key value for the same provider); **account rotation** (different pool member) is in scope and is governed by §4.3.HC-013 + §4.6.HC-013a at clean turn boundaries.
+- Non-Unix transport targets — Windows and remote/cloud execution shapes cannot use the local filesystem socket pinned in §4.2.HC-007. They are deferred. Adding them is a breaking change to §4.2 (a transport-substitution mechanism, preserving NDJSON framing, bidirectional flow, and authenticated-connection semantics) requiring a foundation amendment per §6.3; tracked as OQ-HC-010.
 
 ## 3. Glossary
 
@@ -235,7 +235,7 @@ The implementation in `internal/daemon/claudelaunchspec.go` (`buildClaudeLaunchS
 | **`env` — `HARMONIK_CLAUDE_SESSION_ID`** | Fresh UUIDv7 minted by handler | Reused from prior implementer-initial launch (same value as `LaunchSpec.claude_session_id`) | Fresh UUIDv7 minted by handler; distinct from any implementer session | [claude-hook-bridge.md §4.2 CHB-006]; §4.10.HC-045c |
 | **`env` — `HARMONIK_WORKFLOW_MODE`** | `"review-loop"` | `"review-loop"` | `"review-loop"` | [claude-hook-bridge.md §4.2 CHB-006] (shared across all phases) |
 | **`env` — `HARMONIK_RUN_ID` / `HARMONIK_WORKSPACE_PATH` / `HARMONIK_DAEMON_SOCKET`** | Set from `claudeRunCtx.runID` / `workspacePath` / `daemonSocket` | Same values as `implementer-initial` (same run, same worktree, same socket) | Same `runID` and `daemonSocket`; `workspacePath` MAY be the same worktree or a review-staging path (see `working_dir` row below) | [claude-hook-bridge.md §4.2 CHB-006] |
-| **`working_dir` (`LaunchSpec.WorkDir`)** | Bead-assigned worktree path (e.g. `.harmonik/worktrees/<run_id>/`) | Same worktree as `implementer-initial` (resume writes to the same tree) | Same worktree as the implementer phases at MVH; a separate review-staging path is a post-MVH option | §4.2.HC-006 (`workspace_path` field); [workspace-model.md §4.1] |
+| **`working_dir` (`LaunchSpec.WorkDir`)** | Bead-assigned worktree path (e.g. `.harmonik/worktrees/<run_id>/`) | Same worktree as `implementer-initial` (resume writes to the same tree) | Same worktree as the implementer phases; a separate review-staging path is a later option | §4.2.HC-006 (`workspace_path` field); [workspace-model.md §4.1] |
 | **`LaunchSpec.claude_session_id` (wire-protocol field)** | **ABSENT** — no prior session exists | **PRESENT** — carries the Claude session ID minted by the `implementer-initial` launch; durability obligation per [claude-hook-bridge.md §4.6 CHB-023] | **ABSENT** — each reviewer launch is a fresh session; MUST NOT inherit any prior reviewer or implementer `claude_session_id` | §4.2.HC-006; §4.10.HC-045c |
 | **`session_id` source (harmonik-side `handlerSessionID`)** | Fresh UUIDv7 minted by `buildClaudeLaunchSpec` at call time | Fresh UUIDv7 minted at each `buildClaudeLaunchSpec` call (distinct from the Claude session ID being reused) | Fresh UUIDv7 minted at each `buildClaudeLaunchSpec` call | §4.2.HC-006; [event-model.md §4.1] |
 | **`agent-task.md` path and content** | `<workspace_path>/agent-task.md` — contains bead body, no prior-verdict section | Same path; `AgentTaskPayload.PriorVerdictFile` + `PriorVerdictSummary` are set (prior-iteration context section rendered) | Same path; `AgentTaskPayload.ReviewBaseSHA` + `ReviewHeadSHA` are set (diff under review section rendered) | [claude-hook-bridge.md §4.x CHB-028]; `internal/workspace/agenttask_chb028.go` |
@@ -252,7 +252,7 @@ Tags: mechanism
 
 #### HC-007 — Handler subprocess emits progress-stream messages over a Unix domain socket
 
-The handler subprocess MUST connect back to the daemon on the local Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §4.1] and §4.10.HC-044) and emit a stream of typed progress-stream messages over that connection. No other transport (named pipe, generic TCP, file tail) is permitted at MVH. The progress stream is the sole bidirectional channel between the daemon and the handler subprocess; the daemon-side watcher (§4.3.HC-011) consumes these messages and is the authoritative publisher of handler-lifecycle events to the in-process event bus.
+The handler subprocess MUST connect back to the daemon on the local Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §4.1] and §4.10.HC-044) and emit a stream of typed progress-stream messages over that connection. No other transport (named pipe, generic TCP, file tail) is permitted. The progress stream is the sole bidirectional channel between the daemon and the handler subprocess; the daemon-side watcher (§4.3.HC-011) consumes these messages and is the authoritative publisher of handler-lifecycle events to the in-process event bus.
 
 Progress-stream messages MUST include (at minimum) the message types: `handler_capabilities`, `agent_ready`, `agent_started`, `agent_output_chunk`, `agent_completed`, `agent_failed`, `agent_rate_limited`, `agent_rate_limit_cleared`, `agent_heartbeat`, `session_log_location`, `skills_provisioned`, `outcome_emitted`. Each message corresponds to a bus event of the same name per §6.4; the watcher translates on-stream messages into bus events, applying the envelope of [event-model.md §4.1] on publication.
 
@@ -281,7 +281,7 @@ Tags: mechanism
 
 #### HC-008a — Post-outcome shutdown window
 
-After emitting the `outcome_emitted` progress-stream message, the handler subprocess MUST exit cleanly within `T_shutdown` (default: 10 seconds; pinned at MVH). The daemon MUST NOT apply silent-hang detection (§4.6.HC-026, §7.1) during the shutdown window; the regime is distinct. On expiry of `T_shutdown` without subprocess exit, the watcher MUST send SIGKILL and emit `agent_failed` with class `ErrStructural` and sub-reason `post_outcome_shutdown_timeout`. The shutdown window begins when the watcher has acknowledged `outcome_emitted` to the subscribers (bus publication completed); it ends on observed subprocess exit.
+After emitting the `outcome_emitted` progress-stream message, the handler subprocess MUST exit cleanly within `T_shutdown` (default: 10 seconds; not configurable). The daemon MUST NOT apply silent-hang detection (§4.6.HC-026, §7.1) during the shutdown window; the regime is distinct. On expiry of `T_shutdown` without subprocess exit, the watcher MUST send SIGKILL and emit `agent_failed` with class `ErrStructural` and sub-reason `post_outcome_shutdown_timeout`. The shutdown window begins when the watcher has acknowledged `outcome_emitted` to the subscribers (bus publication completed); it ends on observed subprocess exit.
 
 **Dirty-exit inside the shutdown window.** If the subprocess exits non-zero during the shutdown window AFTER `outcome_emitted` has been published to the bus, the outcome is durable: the watcher MUST emit `agent_completed` (NOT `agent_failed`) with an additional payload field `shutdown_exit_code` carrying the non-zero exit status for operator observability. Exactly one terminal event per session is invariant (§5 HC-INV-006). The watcher MUST complete bus-publication of any already-received terminal message before observing subprocess exit status; if `Wait()` returns while a terminal message is still pending publication, the watcher MUST publish it before emitting the exit-derived terminal event. This collapses the shutdown-window / crash race into a total order.
 
@@ -431,14 +431,14 @@ Rules:
 1. **Adapters that do not support diagnostics MUST return `ErrDeterministic`** (not a nil report); the handler-pause controller MUST skip enrichment when it receives `ErrDeterministic`.
 2. **Adapters that support diagnostics MUST return a non-nil `DiagnosticReport` and a nil error** on success.
 3. The **handler-pause controller** (internal/daemon/handlerpause_9hwbw.go) MUST call `Diagnose` (a) on pause-trip, before persisting the pause cause, to enrich the cause's `diagnostic_message` field, and (b) on Resume, outside the state lock, to verify whether the triggering condition has cleared.
-4. At MVH, `DiagnosticReport.Healthy` is **informational only**; the controller MUST NOT gate Resume on `Healthy=true`.  Post-MVH the controller MAY enforce `Healthy=true` as a precondition.
+4. `DiagnosticReport.Healthy` is **informational only**; the controller MUST NOT gate Resume on `Healthy=true`.  A later change MAY allow the controller to enforce `Healthy=true` as a precondition.
 5. `Diagnose` MUST NOT be invoked while the controller's state lock is held; it may block on I/O.
-6. `DiagnosticReport` shape is reserved for post-MVH; at MVH only `Message string` and `Healthy bool` are defined.
+6. `DiagnosticReport` shape is reserved for later extension; only `Message string` and `Healthy bool` are defined today.
 
 Go implementation:
 
 - `handlercontract.DiagnosticReport` (internal/handlercontract/diagnostic_hc014a.go).
-- `ClaudeCodeAdapter.Diagnose` returns a minimal report at MVH (no real-time probe; Healthy=false).
+- `ClaudeCodeAdapter.Diagnose` returns a minimal report (no real-time probe; Healthy=false).
 - `HandlerPauseController.SetAdapter` / `runDiagnose` (internal/daemon/handlerpause_9hwbw.go).
 - `core.HandlerPauseCause.DiagnosticMessage` (optional, omitempty) carries the enriched message.
 
@@ -530,12 +530,12 @@ Tags: mechanism
 
 #### HC-020a — Closed handler-fatal taxonomy
 
-Certain failure classes are **HANDLER-FATAL**: they indicate that every subsequent invocation of the same `agent_type` will fail until external resolution.  The closed handler-fatal set at MVH is:
+Certain failure classes are **HANDLER-FATAL**: they indicate that every subsequent invocation of the same `agent_type` will fail until external resolution.  The closed handler-fatal set is:
 
 (i) `transient` with `agent_rate_limited` observed **two times consecutively** without an intervening `agent_rate_limit_cleared`, and
 (ii) `budget_exhausted` whose underlying budget point declares `budget_scope = handler-account`.
 
-The complete class × sub-reason taxonomy at MVH is:
+The complete class × sub-reason taxonomy is:
 
 | §8 class | Sub-reason | Handler-fatal? | HandlerFatalClass constant | Rationale |
 |---|---|---|---|---|
@@ -565,7 +565,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### HC-024a — Socket-level I/O error is distinct from subprocess crash
 
-A socket-level I/O error from the progress-stream read-loop — `EPIPE`, `ECONNRESET`, the socket file being unlinked or the filesystem unmounting under foot, or a decoder error per §4.2.HC-007b — MUST be distinguished from subprocess-level termination. On the FIRST occurrence of such an error without a prior `agent_completed` or `agent_failed` for the session, the watcher MUST: (a) emit `agent_failed` with class `ErrTransient` and sub-reason `socket_io_error`; (b) attempt ONE reconnect against the same socket path within a bounded window (default: 500ms). If reconnect succeeds and the subprocess is still alive, the watcher MAY resume the read-loop; if reconnect fails OR the subsequent stream emits another socket-level error before a clean terminal event, the watcher MUST reclassify to `ErrStructural` with sub-reason `progress_stream_broken`, send SIGKILL to the subprocess (the subprocess has no other channel to the daemon and any continued work is unobservable), and mark the session terminated. Sessions are single-socket-lifetime at MVH: there is no operator-visible reconnect UI. This requirement distinguishes "socket broken, subprocess alive" from silent-hang (§4.6.HC-026) and prevents the session from waiting the full silent-hang window when the cause is transport failure.
+A socket-level I/O error from the progress-stream read-loop — `EPIPE`, `ECONNRESET`, the socket file being unlinked or the filesystem unmounting under foot, or a decoder error per §4.2.HC-007b — MUST be distinguished from subprocess-level termination. On the FIRST occurrence of such an error without a prior `agent_completed` or `agent_failed` for the session, the watcher MUST: (a) emit `agent_failed` with class `ErrTransient` and sub-reason `socket_io_error`; (b) attempt ONE reconnect against the same socket path within a bounded window (default: 500ms). If reconnect succeeds and the subprocess is still alive, the watcher MAY resume the read-loop; if reconnect fails OR the subsequent stream emits another socket-level error before a clean terminal event, the watcher MUST reclassify to `ErrStructural` with sub-reason `progress_stream_broken`, send SIGKILL to the subprocess (the subprocess has no other channel to the daemon and any continued work is unobservable), and mark the session terminated. Sessions are single-socket-lifetime: there is no operator-visible reconnect UI. This requirement distinguishes "socket broken, subprocess alive" from silent-hang (§4.6.HC-026) and prevents the session from waiting the full silent-hang window when the cause is transport failure.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
@@ -714,7 +714,7 @@ Tags: mechanism
 
 #### HC-038 — Twin conformance drift detection is scoped to S07
 
-The ongoing obligation to keep twins honest against real-agent drift is scoped to the scenario-harness (S07) spec, post-MVH. This spec establishes the parity contract; S07 owns the drift-detection workflow.
+The ongoing obligation to keep twins honest against real-agent drift is scoped to the scenario-harness (S07) spec and is deferred. This spec establishes the parity contract; S07 owns the drift-detection workflow.
 
 Tags: mechanism
 
@@ -767,13 +767,13 @@ Cross-refs: HC-039 (emitter identity), HC-041 (DetectReady), HC-070 (per-input a
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
-#### HC-057 — Heartbeat-emission ownership for `claude-code` at MVH
+#### HC-057 — Heartbeat-emission ownership for `claude-code`
 
-For `agent_type == "claude-code"`, the daemon MAY emit `agent_heartbeat{phase:"reasoning"}` events on the handler-process's behalf at the [claude-hook-bridge.md §4.7 CHB-019] cadence (300 s). This is a permissive carve-out from CHB-019's "handler-process emits" language, justified by the absence of a distinct claude-handler wrapper binary at MVH. Subscribers MUST treat daemon-emitted heartbeats as semantically equivalent to handler-emitted heartbeats; no payload distinction is required.
+For `agent_type == "claude-code"`, the daemon MAY emit `agent_heartbeat{phase:"reasoning"}` events on the handler-process's behalf at the [claude-hook-bridge.md §4.7 CHB-019] cadence (300 s). This is a permissive carve-out from CHB-019's "handler-process emits" language, justified by the absence of a distinct claude-handler wrapper binary today. Subscribers MUST treat daemon-emitted heartbeats as semantically equivalent to handler-emitted heartbeats; no payload distinction is required.
 
 **Operational contract — daemon-side keep-alive goroutine.** The daemon implements HC-057 emission via a single background goroutine (`handler.RunHeartbeatLoop`) wired by the work-loop (implementation: `internal/daemon/claudeheartbeat.go` + `internal/daemon/workloop.go`). The following normative properties govern its behaviour:
 
-- **Tick interval.** The goroutine fires every `handler.HeartbeatInterval` = 300 s, satisfying the HC-026a obligation of ≤ T/2 (T = 600 s default). The interval is a constant, not configurable at MVH.
+- **Tick interval.** The goroutine fires every `handler.HeartbeatInterval` = 300 s, satisfying the HC-026a obligation of ≤ T/2 (T = 600 s default). The interval is a constant, not configurable.
 
 - **Exit conditions.** The goroutine terminates on whichever fires first: (a) the run context (`ctx`) is cancelled, or (b) the `done` channel is closed. The work-loop closes `done` via `defer close(hbDone)` immediately after the Claude subprocess exits (`cmd.Wait` returns). The goroutine MUST NOT block the work-loop exit path; close of `done` is the authoritative signal and is guaranteed to fire even on error paths.
 
@@ -781,7 +781,7 @@ For `agent_type == "claude-code"`, the daemon MAY emit `agent_heartbeat{phase:"r
 
 - **Back-pressure behaviour.** The emit callback (`bus.EmitWithRunID`) may return an error if the underlying bus publish path is unavailable or the per-run tap channel is full (bounded at 8 events per §4.6 and §6.3 dead-letter routing). Such errors are **non-fatal**: the goroutine logs the error to stderr and continues. The daemon's silent-hang FSM is the authoritative liveness guard; a single missed heartbeat does not trigger termination, and normal cadence resumes on the next tick.
 
-Post-MVH, when a `harmonik claude-handler` shim binary lands, heartbeat emission MUST migrate to the shim and this clause is retired.
+Once a `harmonik claude-handler` shim binary lands, heartbeat emission MUST migrate to the shim and this clause is retired.
 
 **Front-stop composition (HC-070).** The per-input synchronous input ack of §4.1a HC-070 is an earlier, per-input delivery-handoff observation — NOT positive acceptance, which is the async `agent_input_acked` event per HC-070 — that composes in front of this heartbeat watchdog; it does NOT replace the heartbeat / silent-hang liveness guard (§7.1), which remains the authoritative process-liveness guard for extended reasoning.
 
@@ -790,7 +790,7 @@ Cross-ref: [claude-hook-bridge.md §4.7 CHB-019]; §4.1a HC-070 (per-input ack, 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
-### 4.10 Agent-to-orchestrator trust (MVH)
+### 4.10 Agent-to-orchestrator trust
 
 #### HC-042 — Handler subprocess launched from repo-relative path
 
@@ -801,7 +801,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### HC-043 — Commit-hash check for in-repo binaries
 
-Before launch, the orchestrator MUST verify an in-repo handler binary's embedded commit hash matches the expected hash configured for the agent type. Mismatch MUST fail launch with `ErrStructural` and emit an `agent_failed` event carrying the mismatch details. System handlers MAY log the `--version` output at startup in lieu of a hash check; no signature verification is performed at MVH.
+Before launch, the orchestrator MUST verify an in-repo handler binary's embedded commit hash matches the expected hash configured for the agent type. Mismatch MUST fail launch with `ErrStructural` and emit an `agent_failed` event carrying the mismatch details. System handlers MAY log the `--version` output at startup in lieu of a hash check; no signature verification is performed.
 
 Tags: mechanism
 
@@ -832,7 +832,7 @@ The shape has precedent inside this system rather than being novel: the workflow
 
 State the limit at its true width. Such a descendant, once orphaned to init, IS reached by the orphan sweep of [process-lifecycle.md §4.2 PL-006], which matches on the marker and does not ask how the process became parentless. The case reached by nothing is the descendant that has left the group while its root is still alive. The full coverage table, including that one dated non-coverage row, is in [process-lifecycle.md §4.7 PL-021b §7] and is normative there.
 
-**(f) Socket and platform clauses, unchanged.** The handler subprocess MUST communicate back to the daemon on the Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §4.1]); this is the same socket that carries the progress stream per §4.2.HC-007 and §4.2.HC-007a. There is one bidirectional socket-backed channel per session; there is no separate "control channel" at MVH. Socket authenticity is filesystem-permission-based for MVH (daemon socket MUST be mode `0600` owned by the daemon user); per-connection challenges are deferred post-MVH. On Linux, handler subprocesses SHOULD install `PR_SET_PDEATHSIG(SIGTERM)` at spawn time; macOS has no equivalent and subprocess survival across daemon death is a platform reality addressed by §4.10.HC-044a.
+**(f) Socket and platform clauses, unchanged.** The handler subprocess MUST communicate back to the daemon on the Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §4.1]); this is the same socket that carries the progress stream per §4.2.HC-007 and §4.2.HC-007a. There is one bidirectional socket-backed channel per session; there is no separate "control channel". Socket authenticity is filesystem-permission-based (daemon socket MUST be mode `0600` owned by the daemon user); per-connection challenges are deferred. On Linux, handler subprocesses SHOULD install `PR_SET_PDEATHSIG(SIGTERM)` at spawn time; macOS has no equivalent and subprocess survival across daemon death is a platform reality addressed by §4.10.HC-044a.
 
 Tags: mechanism
 
@@ -851,7 +851,7 @@ Note that this is the opposite polarity to the reaper's fail-closed rule in PL-0
 1. The mechanism was never implemented, so retirement costs no migration and preserves no behavior. It was a fourth independent way of answering "does this process belong to us," and removing it reduces the number of provenance schemes in this system rather than adding one.
 2. Its `argv check` discriminator is forbidden by PL-006f(2), which prohibits the command line as an identity signal. Left in place, this requirement would have been non-conformant with the specification landing in the same revision — a contradiction inside one release, not a legacy inconsistency.
 
-The obligation is retained in full force; only the detection mechanism changed. This requirement is a minimum-surface stub that the reconciliation subsystem's startup sweep (per [reconciliation/spec.md §4]) will subsume post-MVH; until then, OQ-HC-006's cross-generation GC default is "reconciliation owns it, handler-contract owns fail-fast." The socket file at `.harmonik/daemon.sock` from a prior generation MUST be unlinked before `bind` by the new daemon generation per [process-lifecycle.md §4.1].
+The obligation is retained in full force; only the detection mechanism changed. This requirement is a minimum-surface stub that the reconciliation subsystem's startup sweep (per [reconciliation/spec.md §4]) will eventually subsume; until then, OQ-HC-006's cross-generation GC default is "reconciliation owns it, handler-contract owns fail-fast." The socket file at `.harmonik/daemon.sock` from a prior generation MUST be unlinked before `bind` by the new daemon generation per [process-lifecycle.md §4.1].
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -894,7 +894,7 @@ For `agent_type = "claude-code"`, the handler subprocess MUST observe the follow
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
-#### HC-055 — Allowed `claude` CLI flags at MVH
+#### HC-055 — Allowed `claude` CLI flags
 
 The daemon's claude-launch path MUST construct `argv` from exactly the following allow-list:
 
@@ -909,7 +909,7 @@ Operator-supplied additional arguments (`Config.HandlerArgs`) are appended after
 
 The daemon also MUST add `--dangerously-skip-permissions` to argv when the launch CWD canonicalizes to a path under the harmonik-owned worktree root, per §4.10.HC-055b.
 
-The following flags MUST NOT be passed at MVH (in addition to the CHB-007 deny-list):
+The following flags MUST NOT be passed (in addition to the CHB-007 deny-list):
 
 - `--print` / `-p` — incompatible with interactive tmux substrate.
 - `--add-dir` — workspace boundary is `cmd.Dir`; additional dirs defer to a follow-up bead.
@@ -1315,20 +1315,20 @@ Each item below is a progress-stream message emitted by the handler subprocess; 
 
 - `agent_warning_silent_hang`, `agent_resumed_after_warning`, `agent_soft_terminating`, `agent_hard_terminating` — from the §7.1 state machine.
 
-**Daemon-to-handler control messages (MVH catalog).** The daemon uses the same NDJSON-framed socket (per §4.2.HC-007a) to send a small closed set of control messages to the handler subprocess. The MVH catalog is:
+**Daemon-to-handler control messages (catalog).** The daemon uses the same NDJSON-framed socket (per §4.2.HC-007a) to send a small closed set of control messages to the handler subprocess. The catalog is:
 
 - `version_selected` — sent after `handler_capabilities` during the launch handshake per §7.2; payload `{selected_version: Integer}`.
 - `cancel` — requests orderly subprocess cancellation corresponding to `ctx` cancellation per §4.4.HC-018; handler responds by triggering its `CleanExitSequence`.
 - `shutdown` — daemon-initiated shutdown request (e.g., operator stop); handler responds via normal `CleanExitSequence` path.
 - `rotate_account` — triggers the handler's in-subprocess rotation at the next turn boundary per §4.3.HC-013a.
 
-Any control message the handler does not recognize MUST be ignored (forward-compatibility), NOT treated as a protocol error. Adding a new control message post-MVH is a foundation amendment (tracked as OQ-HC-009); adding fields to an existing control message is schema-additive. Twin binaries MUST support the MVH catalog.
+Any control message the handler does not recognize MUST be ignored (forward-compatibility), NOT treated as a protocol error. Adding a new control message later is a foundation amendment (tracked as OQ-HC-009); adding fields to an existing control message is schema-additive. Twin binaries MUST support the catalog above.
 
 ## 7. Protocols and state machines
 
 ### 7.1 Silent-hang detection state machine
 
-Per-agent-type threshold `T` is declared in the handler's subsystem envelope (**MVH default: T = 600 seconds**; raised from 120s because extended-thinking LLMs routinely exceed 120s of no-output; heartbeats per §4.6.HC-026a close the false-positive gap). Escalation multipliers `M_soft = 2 * T`, `M_hard = 4 * T`. The watcher maintains a per-session `last_progress_event_at` timestamp updated on every progress-stream message received, including `agent_heartbeat`. The watcher SHOULD tick at ≤ `T/10`. Absolute-from-last semantic: soft-terminate fires at `2*T` from the last message, hard-terminate at `4*T` from the last message (not `2*T` after soft-terminate entry).
+Per-agent-type threshold `T` is declared in the handler's subsystem envelope (**default: T = 600 seconds**; raised from 120s because extended-thinking LLMs routinely exceed 120s of no-output; heartbeats per §4.6.HC-026a close the false-positive gap). Escalation multipliers `M_soft = 2 * T`, `M_hard = 4 * T`. The watcher maintains a per-session `last_progress_event_at` timestamp updated on every progress-stream message received, including `agent_heartbeat`. The watcher SHOULD tick at ≤ `T/10`. Absolute-from-last semantic: soft-terminate fires at `2*T` from the last message, hard-terminate at `4*T` from the last message (not `2*T` after soft-terminate entry).
 
 Silent-hang detection is SUSPENDED during the post-outcome shutdown window of §4.2.HC-008a (distinct regime) and during explicit `ctx` cancellation (HC-018's cleanup bound applies instead — `ctx` cancellation supersedes silent-hang escalation and the resulting error is `ErrCanceled`, not `ErrStructural`).
 
@@ -1342,7 +1342,7 @@ Silent-hang detection is SUSPENDED during the post-outcome shutdown window of §
 | `soft-terminating` | timer tick | `now - last_progress_event_at >= M_hard` | `hard-terminating` | `agent_hard_terminating` + send SIGKILL to subprocess |
 | `hard-terminating` | subprocess exit | — | `terminated` | `agent_failed` (class `ErrStructural`, sub-reason `silent_hang_hard_kill`) |
 
-> INFORMATIVE: The warning-only event lets downstream workflows attempt a lightweight nudge (log a prompt, emit a correlation hint) before the watcher's automated escalation kicks in. Post-MVH may introduce a `nudge` callback on the adapter.
+> INFORMATIVE: The warning-only event lets downstream workflows attempt a lightweight nudge (log a prompt, emit a correlation hint) before the watcher's automated escalation kicks in. A `nudge` callback on the adapter may be introduced later.
 
 ### 7.2 Launch handshake (protocol pseudocode)
 
@@ -1469,16 +1469,16 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 
 ### 10.1 Conformance profiles
 
-**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement `HC-001` through `HC-053` (including `HC-007a`, `HC-007b`, `HC-008a`, `HC-011a`, `HC-013a`, `HC-024a`, `HC-026a`, `HC-036a`, `HC-044a`, `HC-048a`, `HC-049a`) and every invariant `HC-INV-001` through `HC-INV-008`. No requirement is deferred at MVH.
+**Core.** An implementation conforming to Core MUST pass every requirement `HC-001` through `HC-053` (including `HC-007a`, `HC-007b`, `HC-008a`, `HC-011a`, `HC-013a`, `HC-024a`, `HC-026a`, `HC-036a`, `HC-044a`, `HC-048a`, `HC-049a`) and every invariant `HC-INV-001` through `HC-INV-008`. No requirement is deferred.
 
-**Post-MVH extensions.** The following are additive extensions to Core MVH; none is required to claim Core MVH conformance:
+**Deferred extensions.** The following are additive extensions to Core; none is required to claim Core conformance:
 
-- Binary signing / cosign verification (per §4.10.HC-043 — commit-hash check is MVH, signing is post-MVH).
-- Per-connection socket authentication (per §4.10.HC-044 — filesystem-permission authenticity is MVH).
-- Twin-conformance drift detection (per §4.8.HC-038 — scoped to S07 scenario-harness post-MVH).
+- Binary signing / cosign verification (per §4.10.HC-043 — the commit-hash check is the gate today; signing is deferred).
+- Per-connection socket authentication (per §4.10.HC-044 — filesystem-permission authenticity is what ships today).
+- Twin-conformance drift detection (per §4.8.HC-038 — scoped to the S07 scenario-harness and deferred).
 - Account rotation support for a given handler type (per §4.3.HC-013 `RotateAccount` — returning `ErrDeterministic` is conformant for agent types without rotation).
-- Secret rotation mid-session (explicitly out of scope; a new launch is required for MVH).
-- Structured agent-input substrate (§4.1a HC-069 / HC-070 / HC-071 + §5 HC-INV-008): the first-class `InputPort`, its `Ack` contents + emitted `agent_input_acked` / `agent_input_stale` events, the machine-enforced seam inversion, and bounded input liveness. These are additive amendments layered on Core MVH in the manner of the HC-054 bridge family (NOT folded into the HC-001..HC-053 requirement range); the machine-checked, per-cell liveness home is AIS-INV-001 in [agent-input.md]. The interim tmux/paste implementation satisfies HC-069 by returning `Delivered` during the bake window (its positive acceptance is the async Claude-hook-bridge signal per HC-070).
+- Secret rotation mid-session (explicitly out of scope; a new launch is required).
+- Structured agent-input substrate (§4.1a HC-069 / HC-070 / HC-071 + §5 HC-INV-008): the first-class `InputPort`, its `Ack` contents + emitted `agent_input_acked` / `agent_input_stale` events, the machine-enforced seam inversion, and bounded input liveness. These are additive amendments layered on Core in the manner of the HC-054 bridge family (NOT folded into the HC-001..HC-053 requirement range); the machine-checked, per-cell liveness home is AIS-INV-001 in [agent-input.md]. The interim tmux/paste implementation satisfies HC-069 by returning `Delivered` during the bake window (its positive acceptance is the async Claude-hook-bridge signal per HC-070).
 
 ### 10.2 Test-surface obligations
 
@@ -1503,14 +1503,14 @@ Migration to `[testing.md §<layer>]` cross-references occurs within one revisio
 
 ### 10.3 Excluded conformance claims
 
-- This spec does NOT grant conformance over: per-handler wire-format specifics (each per-handler spec owns); session-log format (handler-specific; no unified schema across agent types per core-scope §4); skill storage layout (owned by `agent-configuration`); scenario-harness twin-drift detection (owned by S07, post-MVH).
+- This spec does NOT grant conformance over: per-handler wire-format specifics (each per-handler spec owns); session-log format (handler-specific; no unified schema across agent types per core-scope §4); skill storage layout (owned by `agent-configuration`); scenario-harness twin-drift detection (owned by S07, deferred).
 - This spec does NOT guarantee performance bounds on launch latency or session throughput; those are operator-observable in [operator-nfr.md §4.8] (restart RTO) and are not requirements of this spec.
 
 ## 11. Open questions
 
 #### OQ-HC-001 — Per-agent-type silent-hang threshold T defaults
 
-Question: The silent-hang state machine in §7.1 uses a per-agent-type threshold `T`. The MVH default was raised to 600s in v0.2 to accommodate extended-thinking LLMs; heartbeat obligation (HC-026a) at ≤T/2 makes false-positive kills rare. Do any agent types warrant lower values because they genuinely tick faster and heartbeat-less-often would still be detectable?
+Question: The silent-hang state machine in §7.1 uses a per-agent-type threshold `T`. The default was raised to 600s in v0.2 to accommodate extended-thinking LLMs; heartbeat obligation (HC-026a) at ≤T/2 makes false-positive kills rare. Do any agent types warrant lower values because they genuinely tick faster and heartbeat-less-often would still be detectable?
 Owner: foundation-author
 Blocks: HC-026 finalization at `reviewed` status
 Default-if-unresolved: T = 600s for all agent types; each handler spec may override in its subsystem envelope, but only downward with justification tied to heartbeat cadence.
@@ -1519,8 +1519,8 @@ Default-if-unresolved: T = 600s for all agent types; each handler spec may overr
 
 Question: The `Adapter.RotateAccount` callback is single-return-value (`error`). If a handler wants to report "rotated to account X of N remaining," does the surface need extending?
 Owner: foundation-author
-Blocks: none (MVH: single-return is adequate; Claude Code uses a script-driven rotation with its own account pool)
-Default-if-unresolved: Keep single-return-value; extend the surface if a post-MVH handler demonstrates a concrete need.
+Blocks: none (single-return is adequate today; Claude Code uses a script-driven rotation with its own account pool)
+Default-if-unresolved: Keep single-return-value; extend the surface if a later handler demonstrates a concrete need.
 
 #### OQ-HC-003 — Migrate test-obligation prose to testing.md references
 
@@ -1533,57 +1533,57 @@ Default-if-unresolved: Keep prose obligations; migrate within one revision cycle
 
 Question: `handler_capabilities` advertises supported wire-protocol versions. Is the version a monotonic integer, or should it be a semver to allow add-new-field-only "minor" compatibility without version bump?
 Owner: foundation-author
-Blocks: none (MVH: monotonic integer is sufficient; N-1 compatibility per §6.3 is declared at the LaunchSpec schema level, not at the wire-protocol level)
-Default-if-unresolved: Monotonic integer. Revisit if post-MVH demonstrates a concrete need for semver-style negotiation.
+Blocks: none (a monotonic integer is sufficient today; N-1 compatibility per §6.3 is declared at the LaunchSpec schema level, not at the wire-protocol level)
+Default-if-unresolved: Monotonic integer. Revisit if a concrete need for semver-style negotiation is demonstrated later.
 
 #### OQ-HC-005 — Nudge callback on the adapter before automated silent-hang escalation
 
-Question: §7.1 informative note suggests a post-MVH `Nudge` callback on the adapter that would fire during `warning` state before automated escalation. Should it be part of the adapter surface now to avoid a breaking change later?
+Question: §7.1 informative note suggests adding a `Nudge` callback to the adapter later, one that would fire during `warning` state before automated escalation. Should it be part of the adapter surface now to avoid a breaking change later?
 Owner: foundation-author
-Blocks: none (MVH: not part of the adapter surface)
-Default-if-unresolved: Not included in MVH. Adding it post-MVH is additive (new adapter method with a default implementation returning immediately); not a breaking change.
+Blocks: none (not part of the adapter surface today)
+Default-if-unresolved: Not included. Adding it later is additive (new adapter method with a default implementation returning immediately); not a breaking change.
 
 #### OQ-HC-006 — Cross-generation re-launch garbage-collection ownership
 
 Question: HC-004 pins idempotency "within one daemon generation." A reconciliation-driven re-launch after daemon restart is a new launch; prior-generation artifacts (residual subprocess, socket file, session-log handles) need a GC owner. Reconciliation's investigator flow addresses the semantic reconciliation but this spec does not name the concrete GC actor for prior-generation handler artifacts.
 Owner: foundation-author
-Blocks: none (MVH: the reconciliation investigator is the de facto owner; this OQ just pins the contract)
+Blocks: none (the reconciliation investigator is the de facto owner today; this OQ just pins the contract)
 Default-if-unresolved: Reconciliation's startup sweep owns prior-generation artifact GC; this spec cross-references that responsibility when `specs/reconciliation.md` lands.
 
 #### OQ-HC-007 — Skill-package on-disk shape
 
 Question: HC-047 declares deterministic resolution against `skill_search_paths[]` but does not pin what constitutes a "match" on disk (directory with a manifest, bare directory, file, symlink, archive). Bootstrap citation in HC-046 points at `[docs/foundation/components.md §10]`.
 Owner: foundation-author
-Blocks: none (MVH: handler implementers follow the bootstrap citation)
+Blocks: none (handler implementers follow the bootstrap citation today)
 Default-if-unresolved: When `specs/agent-configuration.md` lands, migrate HC-046's bootstrap citation to the normative reference and resolve this OQ.
 
 #### OQ-HC-008 — Rate-limit twin emission locus
 
 Question: HC-025 and §6.4 name `agent_rate_limited` / `agent_rate_limit_cleared` as progress-stream message types. Twin-author review r2 flagged two consistent interpretations: (A) twin emits the event directly and the adapter's `DetectRateLimit` is a trivial pass-through, vs. (B) twin emits a provider-shaped signal (e.g., a fake 429 response) embedded in `agent_output_chunk` and the adapter parses it. The two have different per-handler-spec implications.
 Owner: foundation-author
-Blocks: none (MVH: scenario-harness twins use interpretation A — direct event emission)
+Blocks: none (scenario-harness twins use interpretation A — direct event emission)
 Default-if-unresolved: Interpretation A for the canonical twin. Real-handler adapters MAY additionally parse provider-shaped content and synthesize an `agent_rate_limited` message before the watcher publishes; this is a per-handler-spec concern, not a handler-contract constraint. Resolve when first per-handler spec lands.
 
-#### OQ-HC-009 — Post-MVH daemon→handler control-message evolution
+#### OQ-HC-009 — Daemon→handler control-message evolution
 
-Question: §6.4 fixes the MVH control-message catalog at four messages (`version_selected`, `cancel`, `shutdown`, `rotate_account`). What is the evolution rule for adding a control message post-MVH (e.g., `pause`, `resume` for suspend/resume workflows)?
+Question: §6.4 fixes the control-message catalog at four messages (`version_selected`, `cancel`, `shutdown`, `rotate_account`). What is the evolution rule for adding a control message later (e.g., `pause`, `resume` for suspend/resume workflows)?
 Owner: foundation-author
-Blocks: none (MVH: the catalog is closed; handlers ignore unknown messages)
-Default-if-unresolved: Post-MVH additions are foundation amendments; capability-negotiated via an additive field on `handler_capabilities` (handlers declare the control-message names they support). Resolve when the first post-MVH control-message proposal arrives.
+Blocks: none (the catalog is closed; handlers ignore unknown messages)
+Default-if-unresolved: Later additions are foundation amendments; capability-negotiated via an additive field on `handler_capabilities` (handlers declare the control-message names they support). Resolve when the first new control-message proposal arrives.
 
 #### OQ-HC-010 — Non-Unix transport substitution mechanism
 
 Question: §2.2 defers Windows and remote/cloud transports. HC-053 pins the cross-subsystem surface as stable across shape evolution, but a remote shape by definition replaces the transport, not just the adapter. What is the substitution mechanism?
 Owner: foundation-author
-Blocks: none (MVH: single Unix-socket transport)
-Default-if-unresolved: Post-MVH, introduce a `Transport` interface behind the Handler/LaunchSpec surface that preserves NDJSON framing, bidirectional flow, authenticated-connection semantics, and the HC-007b durability rule. `.harmonik/daemon.sock` becomes the MVH implementation of that interface. Resolve when the first non-Unix transport proposal (Windows or cloud) is drafted.
+Blocks: none (a single Unix-socket transport today)
+Default-if-unresolved: Later, introduce a `Transport` interface behind the Handler/LaunchSpec surface that preserves NDJSON framing, bidirectional flow, authenticated-connection semantics, and the HC-007b durability rule. `.harmonik/daemon.sock` becomes the first implementation of that interface. Resolve when the first non-Unix transport proposal (Windows or cloud) is drafted.
 
 #### OQ-HC-011 — TOCTOU on verified binary path
 
-Question: HC-043 commit-hash check and HC-INV-005 path verification both occur BEFORE `exec()`. Between the check and the exec, a racer could replace the binary at the verified path. Platform-specific mitigations exist (`O_CLOEXEC` + `fexecve`-equivalent) but are not uniform; post-MVH binary signing (per §10.1) resolves this structurally.
+Question: HC-043 commit-hash check and HC-INV-005 path verification both occur BEFORE `exec()`. Between the check and the exec, a racer could replace the binary at the verified path. Platform-specific mitigations exist (`O_CLOEXEC` + `fexecve`-equivalent) but are not uniform; binary signing (per §10.1, deferred) would resolve this structurally.
 Owner: foundation-author
-Blocks: none (MVH: accepted risk for single-operator local execution)
-Default-if-unresolved: Accept TOCTOU risk at MVH; revisit with binary-signing post-MVH.
+Blocks: none (accepted risk for single-operator local execution)
+Default-if-unresolved: Accept the TOCTOU risk today; revisit when binary signing lands.
 
 #### OQ-HC-013 — Handler/daemon `failure_class` disagreement: log-only or escalate?
 
@@ -1613,10 +1613,10 @@ Default-if-unresolved: Log-only. Promote to Cat 6 escalation if observed disagre
 | 2026-05-09 | 0.3.4 | foundation-author | Normative spec section for twin script-file format (hk-ahvq.48.11). **New §4.8.HC-036a — Twin script-file format:** promotes de-facto schema from `cmd/harmonik-twin-claude/scriptdriver.go` package godoc (hk-ahvq.48.3) to normative HC text. Defines: file path rule (`<fixture-root>/<scenario>/twin-scripts/<role>.yaml`); top-level YAML fields (`heartbeat_mode` enum `wall_clock`|`scripted`, default `wall_clock`; `messages` list); ScriptMessage record fields (`type` required string, `payload` optional map, `relative_timestamp_ms` optional int); heartbeat-mode semantics; load-time validation requirements. No existing requirement IDs renumbered; no invariants, no §6/§8/§10 touches. Status: reviewed → reviewed (spec-edit only). |
 | 2026-05-12 | 0.3.5 | foundation-author | Add HC-045a / HC-045b / HC-045c in §4.10 (gap-filler placement after HC-045, matching the HC-016a / HC-026b pattern) covering claude-code agent type's launch mechanism (pointer to claude-hook-bridge.md), hook-bridge one-shot NDJSON connection regime, and handler-side claude_session_id minting/resume discipline including orphan-reconnect git-derived lookup. Clarifying sentence added to HC-006 pointing forward to HC-045c and to CHB-023's durability boundary. No requirement IDs renumbered or retired; HC-053 in §6.2 is unchanged. Status remains `reviewed`. |
 | 2026-05-30 | 0.6.0 | agent (flywheel spec-bundle hk-j7o3i) | **New §4.13 — per-session lifecycle FSM (HC-064..HC-067); disambiguates from handler-pause.md HandlerStatus.** HC-064: `LifecycleState` enum `{Spawning, Initializing, Ready, Executing, Suspended, Terminating, Terminated, Failed}`; `TERMINAL_STATES = {Terminated, Failed}`; `Suspended` is per-session (orthogonal to handler-pause.md's per-type operator-pause flag). HC-065: `VALID_TRANSITIONS[from][to]` table (16 legal edges; `Suspended` added as per [event-model.md §4.12 EV-043] decision-blocking path; `Ready→Failed` for silent-hang in Ready). HC-066: `InvalidStateTransitionError` sentinel wrapping `ErrDeterministic`; carries `From`, `To`, `SessionID`. HC-067: in-memory transition-history ring (size 50, drop-oldest); `Session.History()` returns point-in-time copy; cross-refs `lifecycle_transition` (§8.3.14) as durable cross-bus surface. Glossary §3 gains `LifecycleState`, `Suspended` disambiguation note. Cross-ref to [event-model.md §8.3.14] for `lifecycle_transition` event; cross-ref to [process-lifecycle.md §4.6 PL-019] for supervisor process layer. Refs: hk-j7o3i; hk-za5mz (silent-hang-as-deterministic-FSM-transition). |
-| 2026-05-13 | 0.3.6 | bridge-integration | **HC-054/055/056/057 added (hk-gql20.3).** Additive amendments for the bridge-integration initiative. **HC-054** (§6.1) — `Session.Attach()` for `agent_type=claude-code` under the PL-021b tmux substrate returns a live pty `io.Reader` (not a log tail); single-line buffering for real-time observation; close-reader does not terminate the session; multiple concurrent attaches permitted. **HC-055** (§4.10) — claude CLI flag allow-list at MVH: only `--session-id` / `--resume` constructed by the daemon; explicit deny on `--print`, `--add-dir`, `--allowed-tools`/`--disallowed-tools`, `--mcp-server`/`--mcp-config`, `--permission-mode` (policy lives in worktree-materialized `.claude/settings.json`); operator `Config.HandlerArgs` validated against CHB-007 deny-list. **HC-056** (§4.9) — `agent_ready` timeout default 30s via `Config.AgentReadyTimeout`; on timeout: kill, reap, emit `agent_failed{sub_reason=agent_ready_timeout}`, reopen bead. Closes `hk-do7te`. **HC-057** (§4.9) — heartbeat-emission ownership carve-out: for `agent_type=claude-code` at MVH, the daemon MAY emit `agent_heartbeat` on the handler-process's behalf (CHB-019 cadence); retired when post-MVH shim binary lands. No existing HC IDs renumbered. Status remains `reviewed`. |
+| 2026-05-13 | 0.3.6 | bridge-integration | **HC-054/055/056/057 added (hk-gql20.3).** Additive amendments for the bridge-integration initiative. **HC-054** (§6.1) — `Session.Attach()` for `agent_type=claude-code` under the PL-021b tmux substrate returns a live pty `io.Reader` (not a log tail); single-line buffering for real-time observation; close-reader does not terminate the session; multiple concurrent attaches permitted. **HC-055** (§4.10) — claude CLI flag allow-list: only `--session-id` / `--resume` constructed by the daemon; explicit deny on `--print`, `--add-dir`, `--allowed-tools`/`--disallowed-tools`, `--mcp-server`/`--mcp-config`, `--permission-mode` (policy lives in worktree-materialized `.claude/settings.json`); operator `Config.HandlerArgs` validated against CHB-007 deny-list. **HC-056** (§4.9) — `agent_ready` timeout default 30s via `Config.AgentReadyTimeout`; on timeout: kill, reap, emit `agent_failed{sub_reason=agent_ready_timeout}`, reopen bead. Closes `hk-do7te`. **HC-057** (§4.9) — heartbeat-emission ownership carve-out: for `agent_type=claude-code`, the daemon MAY emit `agent_heartbeat` on the handler-process's behalf (CHB-019 cadence); retired when the shim binary lands. No existing HC IDs renumbered. Status remains `reviewed`. |
 | 2026-05-13 | 0.3.7 | agent (hk-p63bz) | **agent_ready semantics reframed for the interactive substrate (audit §6 B3).** HC-039 amended: `agent_ready` emitter identity is now substrate-dependent; under the tmux substrate the relay synthesizes it on `SessionStart` receipt (not the handler pre-exec). HC-041 amended: `DetectReady` must accept relay-synthesized `agent_ready` with `provenance: "claude_session_start"` and MUST NOT accept `launch_initiated`. HC-056 amended: timeout window now starts at `SubstrateSpawn` return (not `cmd.Start()`) under the tmux substrate, explicitly excluding `launch_initiated` as a satisfying signal, and cross-refs updated to point at CHB-013 (SessionStart mapping) and CHB-018 (launch_initiated precursor). No existing HC IDs renumbered. Coexists with HC-054/055/056/057 (hk-gql20.3). Refs: hk-p63bz. |
-| 2026-05-18 | 0.4.0 | agent (hk-zudz0) | **Phase-LaunchSpec contract: HC-006a normative table added (§4.2).** **HC-006a added** — per-phase LaunchSpec field requirements table for `review-loop`, covering: `argv` (`--session-id` vs `--resume` per phase), `--model`/`--effort`/`--dangerously-skip-permissions` flags, `HARMONIK_PHASE` / `HARMONIK_ITERATION_COUNT` / `HARMONIK_CLAUDE_SESSION_ID` env vars, `HARMONIK_WORKFLOW_MODE` (shared across phases), `working_dir` (worktree path shared across all three phases at MVH), `LaunchSpec.claude_session_id` wire field (ABSENT for initial and reviewer, PRESENT for resume), harmonik-side `handlerSessionID` source (fresh UUIDv7 every call), `agent-task.md` content variants by phase, and wire-protocol `phase` / `iteration_count` fields. Cites `internal/daemon/claudelaunchspec.go` (`buildClaudeLaunchSpec`) as implementation evidence; spec remains authoritative. Includes test-hookpoint sensor note pointing at `internal/operatornfr/reviewloopstatus_on035a_test.go` (partial coverage) and naming `TestHC006a_PerPhaseLaunchSpecInvariants` as a follow-up gap. No existing HC IDs renumbered. Version bump to 0.4.0 (new normative section). |
-| 2026-05-19 | 0.4.1 | agent (hk-pxrv6) | **HC-057 operational contract added (hk-pxrv6 daemon audit).** HC-057 amended to add normative operational detail for the daemon-side keep-alive goroutine (`handler.RunHeartbeatLoop` / `internal/daemon/claudeheartbeat.go`): (1) **tick interval** — `handler.HeartbeatInterval` = 300 s constant, not configurable at MVH; (2) **exit conditions** — goroutine exits on context cancellation OR `done` channel close; `done` is closed by `defer close(hbDone)` in the work-loop, guaranteed on all exit paths; (3) **silent-hang FSM interaction** — daemon-emitted heartbeats update `last_progress_event_at` and reset the §7.1 FSM, semantically equivalent to subprocess-emitted heartbeats; (4) **back-pressure** — `bus.EmitWithRunID` errors are non-fatal; the loop logs and continues; bus bounded-buffer overflow routes per §4.6.HC-027; silent-hang FSM is the authoritative liveness guard. No requirement IDs added; this is a clarifying amendment to HC-057 body. |
+| 2026-05-18 | 0.4.0 | agent (hk-zudz0) | **Phase-LaunchSpec contract: HC-006a normative table added (§4.2).** **HC-006a added** — per-phase LaunchSpec field requirements table for `review-loop`, covering: `argv` (`--session-id` vs `--resume` per phase), `--model`/`--effort`/`--dangerously-skip-permissions` flags, `HARMONIK_PHASE` / `HARMONIK_ITERATION_COUNT` / `HARMONIK_CLAUDE_SESSION_ID` env vars, `HARMONIK_WORKFLOW_MODE` (shared across phases), `working_dir` (worktree path shared across all three phases), `LaunchSpec.claude_session_id` wire field (ABSENT for initial and reviewer, PRESENT for resume), harmonik-side `handlerSessionID` source (fresh UUIDv7 every call), `agent-task.md` content variants by phase, and wire-protocol `phase` / `iteration_count` fields. Cites `internal/daemon/claudelaunchspec.go` (`buildClaudeLaunchSpec`) as implementation evidence; spec remains authoritative. Includes test-hookpoint sensor note pointing at `internal/operatornfr/reviewloopstatus_on035a_test.go` (partial coverage) and naming `TestHC006a_PerPhaseLaunchSpecInvariants` as a follow-up gap. No existing HC IDs renumbered. Version bump to 0.4.0 (new normative section). |
+| 2026-05-19 | 0.4.1 | agent (hk-pxrv6) | **HC-057 operational contract added (hk-pxrv6 daemon audit).** HC-057 amended to add normative operational detail for the daemon-side keep-alive goroutine (`handler.RunHeartbeatLoop` / `internal/daemon/claudeheartbeat.go`): (1) **tick interval** — `handler.HeartbeatInterval` = 300 s constant, not configurable; (2) **exit conditions** — goroutine exits on context cancellation OR `done` channel close; `done` is closed by `defer close(hbDone)` in the work-loop, guaranteed on all exit paths; (3) **silent-hang FSM interaction** — daemon-emitted heartbeats update `last_progress_event_at` and reset the §7.1 FSM, semantically equivalent to subprocess-emitted heartbeats; (4) **back-pressure** — `bus.EmitWithRunID` errors are non-fatal; the loop logs and continues; bus bounded-buffer overflow routes per §4.6.HC-027; silent-hang FSM is the authoritative liveness guard. No requirement IDs added; this is a clarifying amendment to HC-057 body. |
 | 2026-05-15 | 0.3.9 | agent (hk-fdyip) | **Worktree auto-trust: `--dangerously-skip-permissions` carveout (HC-055 + HC-055b).** **HC-055 amended** to add `--dangerously-skip-permissions` to the flag allow-list, permitted only when the daemon launch CWD canonicalizes to a path under the harmonik-owned worktree root. **HC-055b added** (§4.10) — specifies the path-check rule: canonicalize both `workspacePath` and `<projectDir>/.harmonik/worktrees` via `os.EvalSymlinks`; emit the flag iff `canonicalWorkspace` has `canonicalWorktreeRoot+separator` as a prefix; positive-allowlist match, NOT negative-allowlist. **HC-055b-1** — `dangerouslyAllowedPermissions` settings.json workaround is obsoleted by this CLI flag and MUST be removed from the materialization path. Rationale: in an operator-daemon context the worktree is already operator-sanctioned; the flag removes the interactive confirmation that would otherwise block the unattended session. Operator-supplied `Config.HandlerArgs` MUST NOT carry this flag (CHB-007 guard applies). Refs: hk-fdyip. |
 | 2026-05-14 | 0.3.8 | agent (hk-7zvh4) | **Model-selection spec amendment: ModelPreference descriptor + HC-055 flag allow-list extension.** New **HC-055a** (§4.10) — `ModelPreference` descriptor invariants: shape constraints (`^[A-Za-z0-9._:/-]+$`, max 128 chars, rationale: allows aliases, version pins, provider-prefixed forms; rejects shell metacharacters); value-opacity invariant (harmonik validates shape not value; handler-side launch failure is the authoritative compatibility check; supports future handler types with arbitrary model strings); `effort` closed enum `{low,medium,high,xhigh,max}`; argv translation rule for `agent_type=claude-code`; `model_rejected_by_tool` structural sub-reason. **HC-055 amended** to extend the allow-list with `--model <value>` and `--effort <value>` as optional flags, both omitted when the resolution chain produces empty. **LaunchSpec RECORD** (§6.1) gains `model_preference : ModelPreference | None`; **HC-006** optional-fields list updated to include `model_preference`. **ModelPreference RECORD** added to §6.1. No existing HC IDs renumbered. Refs: hk-7zvh4, hk-cfhj2. |
 
@@ -1630,7 +1630,7 @@ Default-if-unresolved: Log-only. Promote to Cat 6 escalation if observed disagre
 
 **Why adapter-not-goroutine.** Putting per-session state in the watcher goroutine's closure means the daemon (S01) owns the concurrency boundary, and S04's adapter is a pure callback object. Adding a new agent type — the common case for extending harmonik — is then just writing an adapter; the concurrency boundary never moves. This is the concrete realization of the centralized-controller principle ([architecture.md §4.9]) at the concurrency layer.
 
-**Why twin parity is an architectural invariant, not a test discipline.** If twins were "almost like real handlers but different in minor ways," every test using a twin would need a caveat. The invariant (same interface, same wire protocol, same event schema, same tagging) means the daemon has zero test-mode branches — the real-vs-twin choice is purely config-level. Twin conformance drift detection (keeping twins honest against real-agent evolution) is a separate concern, owned by S07 post-MVH.
+**Why twin parity is an architectural invariant, not a test discipline.** If twins were "almost like real handlers but different in minor ways," every test using a twin would need a caveat. The invariant (same interface, same wire protocol, same event schema, same tagging) means the daemon has zero test-mode branches — the real-vs-twin choice is purely config-level. Twin conformance drift detection (keeping twins honest against real-agent evolution) is a separate concern, owned by S07 and deferred.
 
 **Why skill injection is fail-launch, not fail-soft.** An agent that starts work without its declared skills available silently produces bad work that fails at some later, harder-to-diagnose point (tool call returns "unknown command," a reference is missing, the agent hallucinates capabilities). Fail-launch is expensive in operator attention but cheap in wrong work; fail-soft is the opposite. The skill-injection obligation choosing fail-launch is the same trade the workflow-attribute validator makes at ingest-time.
 

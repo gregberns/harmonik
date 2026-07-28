@@ -558,8 +558,8 @@ const (
 	// EventTypeBeadTerminalTransitionRecovered is the bead_terminal_transition_recovered
 	// event type (§8.6.14). Durability class: F.
 	//
-	// (post-MVH) Reserved per OQ-BI-008. No MVH emitter exists; structured-log
-	// via ON-035 at MVH per event-model.md §8.6.14.
+	// Deferred per OQ-BI-008; the type is reserved. No emitter exists yet;
+	// the condition is structured-logged via ON-035 per event-model.md §8.6.14.
 	EventTypeBeadTerminalTransitionRecovered EventType = "bead_terminal_transition_recovered"
 
 	// EventTypeReconciliationCompleted is the reconciliation_completed event type.
@@ -838,7 +838,7 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// §8.11 Handler-pause lifecycle event types (handler-pause MVH, hk-ifqnj)
+// §8.11 Handler-pause lifecycle event types (handler-pause work, hk-ifqnj)
 // ---------------------------------------------------------------------------
 
 const (

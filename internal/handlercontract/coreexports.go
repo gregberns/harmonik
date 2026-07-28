@@ -37,7 +37,7 @@ type EventID = core.EventID
 type EventType = core.EventType
 
 // AgentTypeClaudeCode is a re-export of core.AgentTypeClaudeCode — the
-// reserved MVH agent-type identifier for the "claude-code" handler.
+// agent-type identifier for the "claude-code" handler.
 //
 // Handler-side packages (internal/handler, etc.) MUST use this constant
 // rather than importing internal/core directly (EV-002b boundary;

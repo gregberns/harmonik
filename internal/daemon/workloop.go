@@ -6,7 +6,7 @@ package daemon
 // MaxConcurrent at a time, materialises git worktrees, spawns handler
 // subprocesses, and closes (or reopens) beads based on outcome.
 //
-// # Concurrency model (hk-e61c3.2, POST_MVH_PARALLELISM_ROADMAP row 5)
+// # Concurrency model (hk-e61c3.2, POST_OPERATIONAL_PARALLELISM_ROADMAP row 5)
 //
 // Goroutine-per-active-bead: the outer poll loop spawns one goroutine per
 // claimed bead. The in-flight count is gated by MaxConcurrent via RunRegistry's
@@ -30,9 +30,9 @@ package daemon
 // no API credits are consumed during wave runs. If HandlerBinary is empty the
 // loop defaults to "claude".
 //
-// Spec ref: MVH_ROADMAP.md row #10; specs/execution-model.md §4.3 EM-013 (run_id
+// Spec ref: EARLY_ROADMAP.md row #10; specs/execution-model.md §4.3 EM-013 (run_id
 // as join key); specs/event-model.md §8.1 (run_started / run_completed events).
-// Beads: hk-ecrxy (MVH loop), hk-e61c3.2 (parallelism).
+// Beads: hk-ecrxy (work loop), hk-e61c3.2 (parallelism).
 
 import (
 	"context"
@@ -285,7 +285,7 @@ type workLoopDeps struct {
 	// dispatched goroutine calls Register on claim and Unregister on exit.
 	//
 	// MUST be a field on workLoopDeps — NOT a package-level variable (see
-	// POST_MVH_PARALLELISM_ROADMAP.md §6 anti-pattern).
+	// POST_OPERATIONAL_PARALLELISM_ROADMAP.md §6 anti-pattern).
 	//
 	// Spec ref: specs/execution-model.md §4.11 EM-049 (in-flight-run capacity gate).
 	// Bead ref: hk-e61c3.2.
@@ -295,7 +295,7 @@ type workLoopDeps struct {
 	// Sourced from daemon.Config.MaxConcurrent (zero → 1 per Config godoc).
 	// Row 6 (hk-e61c3.1) adds this field to Config; row 5 (this bead) enforces it.
 	//
-	// POST_MVH_PARALLELISM_ROADMAP §6: enforcement lives here, NOT in the bus
+	// POST_OPERATIONAL_PARALLELISM_ROADMAP §6: enforcement lives here, NOT in the bus
 	// or adapter.
 	//
 	// When concurrencyCtrl is non-nil, the dispatch gate reads the ceiling from
@@ -486,8 +486,8 @@ type workLoopDeps struct {
 	// Bead ref: hk-hj9ld.
 	harnessRegistry *handlercontract.HarnessRegistry
 
-	// substrate is the optional tmux-substrate for handler.Launch.  At MVH this
-	// is always nil; handler falls back to exec.CommandContext.  When non-nil it
+	// substrate is the optional tmux-substrate for handler.Launch.  This is
+	// always nil; handler falls back to exec.CommandContext.  When non-nil it
 	// is attached to the LaunchSpec.Substrate field so the handler spawns the
 	// subprocess inside a tmux window.
 	//
@@ -1067,7 +1067,7 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 	// Inject HARMONIK_PROJECT_HASH into every handler subprocess env (hk-nvrvp).
 	//
 	// The provenance marker is prepended so it is present even when
-	// Config.HandlerEnv is nil (the MVH default).  Callers that supply their own
+	// Config.HandlerEnv is nil (the default).  Callers that supply their own
 	// HandlerEnv retain all their entries; the hash entry is first so it is easy
 	// to spot in /proc/<pid>/environ debugging.
 	//
@@ -1183,7 +1183,7 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 // within the loop itself (never an error from a single bead run — those are
 // absorbed and result in ReopenBead).
 //
-// Goroutine-per-bead model (hk-e61c3.2, POST_MVH_PARALLELISM_ROADMAP row 5):
+// Goroutine-per-bead model (hk-e61c3.2, POST_OPERATIONAL_PARALLELISM_ROADMAP row 5):
 //
 // Each iteration of the outer poll loop:
 //  1. Check context cancellation.
@@ -1428,13 +1428,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		defer mergeQCancel()
 	}
 
-	// effectiveMax: 0-value → 1 to preserve MVH single-threaded default.
+	// effectiveMax: 0-value → 1 to preserve the single-threaded default.
 	effectiveMax := deps.maxConcurrent
 	if effectiveMax <= 0 {
 		effectiveMax = 1
 	}
 
-	// claimSem is a buffered-channel semaphore (hk-e61c3.3, POST_MVH_PARALLELISM_ROADMAP
+	// claimSem is a buffered-channel semaphore (hk-e61c3.3, POST_OPERATIONAL_PARALLELISM_ROADMAP
 	// row 9) that bounds the number of simultaneous ClaimBead SQLite write calls to
 	// effectiveMax. A token is acquired before ClaimBead and released immediately
 	// after, keeping the SQLite write surface narrow even as effectiveMax goroutines
@@ -2191,8 +2191,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 
 				// Phase 2 — handler-pause gate (hk-kac8g): check whether the resolved
-				// agent type is paused before claiming/dispatching the item.  At MVH all
-				// beads map to AgentTypeClaudeCode; multi-agent resolution is post-MVH.
+				// agent type is paused before claiming/dispatching the item.  All
+				// beads map to AgentTypeClaudeCode; multi-agent resolution is deferred.
 				//
 				// When paused:
 				//   - The item remains ItemStatus=pending (no stamp, no claim).
@@ -4318,7 +4318,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		spec.Args = append(env.HandlerArgs, spec.Args...)
 	}
 
-	// Attach the optional tmux substrate (nil at MVH; set from handles.Substrate).
+	// Attach the optional tmux substrate (nil unless set from handles.Substrate).
 	//
 	// hk-012af: when handles.Substrate is a *tmuxSubstrate, wrap it in a
 	// perRunSubstrate so this goroutine gets its own isolated pane handle.
@@ -5185,7 +5185,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// When no stop-hook outcome arrived (branch 3) AND the handler exited 0
 	// without a watcher error, we fall back to the pre-bridge close-on-exit-0
 	// heuristic so that existing test fixtures (shell scripts that exit 0) and
-	// MVH twin-blind runs continue to work as expected.
+	// twin-blind runs continue to work as expected.
 	//
 	// The fallback does NOT apply when a stop-hook outcome was observed but
 	// contained FAILURE_SIGNAL (branch 2), or when the watcher itself failed
@@ -5323,7 +5323,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 	case socketOutcome == nil && ei.ExitCode == exitCodeClean && !watcherFailed:
 		// No stop-hook arrived AND handler exited 0 without watcher error: the
-		// pre-bridge close-on-exit-0 heuristic for MVH twin-blind runs. Latches
+		// pre-bridge close-on-exit-0 heuristic for twin-blind runs. Latches
 		// path label "auto-close" (RSM-033).
 		bridge.Feed(ctx, runexec.Event{Kind: runexec.EvCleanExit, Detail: "auto-close: exit=0"})
 
@@ -5690,7 +5690,7 @@ func resolveHEAD(ctx context.Context, repoRoot string) (string, error) {
 
 // workloopRunStartedPayload is the minimal run_started payload emitted by the
 // work loop.  Full RunStartedPayload requires WorkflowID / WorkflowVersion
-// which are post-MVH; we emit a raw map so the event is observable without
+// which are deferred; we emit a raw map so the event is observable without
 // requiring a valid RunStartedPayload.Valid() call.
 //
 // QueueID and QueueGroupIndex are optional: set when the run was dispatched

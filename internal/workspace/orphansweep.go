@@ -125,12 +125,12 @@ func SweepStaleLeaseLocks(ctx context.Context, repoRoot string, cfg WorktreeRoot
 // is stale per the WM-033 content-first staleness rule:
 //
 //   - PID dead → stale regardless of mtime.
-//   - PID live → NOT stale (mtime NOT consulted at MVH).
+//   - PID live → NOT stale (mtime NOT consulted).
 //
 // Note: this function does NOT probe the argv of the owning process for
 // harmonik-daemon identity (the "mtime tiebreaker" path of WM-033). The
 // argv-probe path applies only when the PID is live and a different daemon
-// generation is suspected; that disambiguation is a post-MVH concern. At MVH,
+// generation is suspected; that disambiguation is deferred. For now,
 // a live PID is treated as non-stale.
 //
 // Spec ref: workspace-model.md §4.8 WM-033 — content-first, mtime tiebreaker.

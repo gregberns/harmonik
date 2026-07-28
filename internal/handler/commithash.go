@@ -7,9 +7,9 @@
 // # System-handler exception
 //
 // System handlers declared with system_handler=true (e.g. the Claude Code CLI)
-// are NOT routed through VerifyCommitHash.  Per HC-043: "System handlers MAY
+// are NOT routed through VerifyCommitHash.  Per HC-043: system handlers MAY
 // log --version at startup in lieu of hash check; no signature verification is
-// performed at MVH."  The launch path for system handlers ends at
+// performed.  The launch path for system handlers ends at
 // ResolveLaunchPath (launchpath.go); the commit-hash gate applies only to
 // in-repo binaries.
 //
@@ -25,8 +25,8 @@
 // read of the embedded string — no process execution required.
 //
 // Note: binary signing (cosign, full supply-chain verification) is deferred
-// post-MVH per the locked decision referenced in specs/handler-contract.md
-// §2.2.  The commit-hash check is the MVH gate.
+// per the locked decision referenced in specs/handler-contract.md
+// §2.2.  The commit-hash check is the smallest shippable gate.
 //
 // Cite: specs/handler-contract.md §4.10.HC-043.
 package handler

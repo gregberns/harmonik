@@ -7,7 +7,7 @@ package daemon
 // Implements one of the three external-trigger resume paths listed in
 // specs/handler-pause.md §1.2:
 //
-//	External-trigger resume (webhook, SIGUSR1, file-marker) — post-MVH
+//	External-trigger resume (webhook, SIGUSR1, file-marker) — deferred
 //
 // Design:
 //   - SignalResumeWatcher listens for SIGUSR1 on a dedicated channel.
@@ -24,7 +24,7 @@ package daemon
 //     at <ProjectDir>/.harmonik/daemon.pid so authorised operators can locate
 //     the process without inspecting /proc or similar.
 //
-// Spec ref: specs/handler-pause.md §1.2 (post-MVH external-trigger resume).
+// Spec ref: specs/handler-pause.md §1.2 (deferred external-trigger resume).
 // Bead ref: hk-bdvae.
 
 import (

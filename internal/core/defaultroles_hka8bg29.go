@@ -1,7 +1,7 @@
 package core
 
-// DefaultMVHRoles returns the three concrete default Role values for the
-// MVH-required roles (Planner, Builder, Reviewer) per CP-029.
+// DefaultRequiredRoles returns the three concrete default Role values for the
+// `mvh-required` roles (Planner, Builder, Reviewer) per CP-029.
 //
 // These defaults are shipped at harmonik init and form the lowest-precedence
 // layer in the §4.7 config-precedence stack. Higher-precedence layers
@@ -17,7 +17,7 @@ package core
 // [specs/architecture.md §4.8]; this function owns only the permission surface.
 //
 // Spec: specs/control-points.md §4.6.CP-029.
-func DefaultMVHRoles() []Role {
+func DefaultRequiredRoles() []Role {
 	return []Role{
 		defaultPlannerRole(),
 		defaultBuilderRole(),

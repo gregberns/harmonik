@@ -11,7 +11,7 @@ import "time"
 // decision "given a base delay and an attempt count, how long until the next
 // auto-resume?" — lives here.
 //
-// Spec ref: specs/handler-pause.md §1.2 (post-MVH auto-resume).
+// Spec ref: specs/handler-pause.md §1.2 (deferred auto-resume).
 
 // DefaultAutoResumeMaxBackoff is the maximum per-attempt backoff duration when
 // AutoResumeParams.MaxBackoff is zero or negative.

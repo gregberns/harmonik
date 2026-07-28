@@ -21,7 +21,7 @@ const DefaultWorktreeRoot = ".harmonik/worktrees"
 //  3. WorkflowDef      — per-workflow overrides
 //  4. DefaultConfig    — harmonik built-in default (DefaultWorktreeRoot)
 //
-// At MVH only the RuntimeOverride slot is populated; the remaining layers are
+// Only the RuntimeOverride slot is populated; the remaining layers are
 // deferred until the full control-points config surface lands. The struct shape
 // deliberately leaves room for those layers without exposing "single string"
 // as the permanent public contract.

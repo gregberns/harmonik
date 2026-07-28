@@ -817,7 +817,7 @@ assert_check_state "grace: checks.review-gate=ok" \
 rm -rf "$PROJ"
 
 # ── Test 12b: review-gate SUPPRESSION — legitimate review-LESS close path ─────
-# The daemon auto-closes runs with NO reviewer (MVH twin-blind `auto-close: exit=0`,
+# The daemon auto-closes runs with NO reviewer (twin-blind `auto-close: exit=0`,
 # noChange, subsumed — workloop.go ~:3811). Those emit run_completed but NEVER
 # reviewer_launched, so they must NOT be flagged (R6 fix hk-ayvx). This is the
 # regression the old completed∖verdict join produced (~180 false positives).

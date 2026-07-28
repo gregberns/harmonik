@@ -7,7 +7,7 @@ package core
 // obligation (detector + action-map entry + workflow-library addition in S01
 // in the same harmonik release).
 //
-// The WorkflowClass enum-fence test (TestRC006_WorkflowClassIsOnlyReconciliationAtMVH)
+// The WorkflowClass enum-fence test (TestRC006_WorkflowClassIsOnlyReconciliation)
 // lives in reconciliationworkflow_rc001_test.go. This file adds spec-artifact
 // and co-ship-obligation tests scoped to hk-63oh.10.
 //

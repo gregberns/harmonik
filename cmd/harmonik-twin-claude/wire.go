@@ -224,7 +224,7 @@ func (e *wireEmitter) emitAgentStarted(runID, sessionID, nodeID, agentType strin
 
 // heartbeatPhase is the extensible enum of phases for the agent_heartbeat message.
 //
-// The enum is additive-only; values declared here are the MVH set per HC-026a.
+// The enum is additive-only; values declared here are the set declared per HC-026a.
 // Additional handler-specific values may be declared in subsystem envelopes.
 //
 // Cite: specs/handler-contract.md §4.6.HC-026a.
@@ -363,7 +363,7 @@ func (e *wireEmitter) emitAgentRateLimitCleared(runID, sessionID string, changed
 //
 // Payload: run_id, session_id, node_id, outcome_status.
 // (Full Outcome schema deferred to execution-model.md §6.1; this stub carries
-// the minimum fields the watcher reads at MVH.)
+// the minimum fields the watcher reads.)
 //
 // Cite: specs/handler-contract.md §4.2.HC-008.
 func (e *wireEmitter) emitOutcomeEmitted(runID, sessionID, nodeID, outcomeStatus string) error {
@@ -572,7 +572,7 @@ func (e *wireEmitter) emitTwinError(reason string) error {
 // controlMsg is the envelope for daemon-to-handler control messages received
 // on the same bidirectional socket (HC-007a, §6.4).
 //
-// MVH catalog (§6.4):
+// Catalog (§6.4):
 //   - version_selected  {selected_version: int}
 //   - cancel            {}
 //   - shutdown          {}

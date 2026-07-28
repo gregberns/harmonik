@@ -6,12 +6,12 @@ import "fmt"
 // goroutine panics (event-model.md §6.1 ENUM on_panic, OQ-EV-007).
 //
 // The default policy is OnPanicRecoverAndLog per OQ-EV-007.
-// The enum is closed at MVH; future variants extend via the amendment
+// The enum is closed; future variants extend via the amendment
 // protocol per [architecture.md §4.6].
 //
 // Note: quarantine_consumer and fail_daemon are declared in the Subscription
 // record but their enforcement semantics are deferred post-testing.md per
-// OQ-EV-007. MVH implements recover_and_log behaviour.
+// OQ-EV-007. Only recover_and_log behaviour is implemented.
 type OnPanic string
 
 // OnPanic values per event-model.md §6.1 OQ-EV-007.
@@ -26,13 +26,12 @@ const (
 	// per OQ-EV-007).
 	OnPanicQuarantineConsumer OnPanic = "quarantine_consumer"
 
-	// OnPanicFailDaemon escalates to daemon_startup_failed. Inappropriate for
-	// MVH default (declared; enforcement deferred per OQ-EV-007).
+	// OnPanicFailDaemon escalates to daemon_startup_failed. Inappropriate as
+	// the default (declared; enforcement deferred per OQ-EV-007).
 	OnPanicFailDaemon OnPanic = "fail_daemon"
 )
 
-// Valid reports whether p is one of the three declared OnPanic constants
-// at MVH.
+// Valid reports whether p is one of the three declared OnPanic constants.
 func (p OnPanic) Valid() bool {
 	switch p {
 	case OnPanicRecoverAndLog, OnPanicQuarantineConsumer, OnPanicFailDaemon:
@@ -44,7 +43,7 @@ func (p OnPanic) Valid() bool {
 
 // MarshalText implements encoding.TextMarshaler so OnPanic serialises
 // correctly in JSON and YAML.
-// It rejects any value that is not one of the three declared constants at MVH.
+// It rejects any value that is not one of the three declared constants.
 func (p OnPanic) MarshalText() ([]byte, error) {
 	if !p.Valid() {
 		return nil, fmt.Errorf("onpanic: unknown value %q", string(p))
@@ -53,7 +52,7 @@ func (p OnPanic) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
-// It rejects any value that is not one of the three declared constants at MVH.
+// It rejects any value that is not one of the three declared constants.
 func (p *OnPanic) UnmarshalText(text []byte) error {
 	v := OnPanic(text)
 	if !v.Valid() {

@@ -60,7 +60,7 @@ type WorkLoopDepsParams struct {
 	WorkflowModeDefault core.WorkflowMode
 
 	// MaxConcurrent is the ceiling on simultaneously in-flight bead goroutines.
-	// Zero value is normalised to 1 (MVH single-threaded default) mirroring
+	// Zero value is normalised to 1 (single-threaded default) mirroring
 	// newWorkLoopDeps behaviour. Set to >1 to exercise concurrent dispatch in
 	// tests (hk-e61c3.2).
 	MaxConcurrent int
@@ -75,8 +75,7 @@ type WorkLoopDepsParams struct {
 	// AdapterRegistry is the sealed adapter registry forwarded into
 	// handler.NewHandler as a latent seam (hk-gql20.16). When nil,
 	// ExportedWorkLoopDeps creates a fresh empty registry — tests do not
-	// need adapters registered because Launch does not consult the registry
-	// at MVH.
+	// need adapters registered because Launch does not consult the registry.
 	AdapterRegistry *handlercontract.AdapterRegistry
 
 	// HookStore is the hook-session store injected into the work loop for
@@ -105,7 +104,7 @@ type WorkLoopDepsParams struct {
 	AdapterRegistry2 *handlercontract.AdapterRegistry
 
 	// Substrate is the optional tmux substrate for handler.Launch (hk-gql20.14).
-	// Nil at MVH.
+	// Defaults to nil.
 	//
 	// Bead ref: hk-gql20.14.
 	Substrate handler.Substrate
@@ -396,7 +395,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		wmd = core.WorkflowModeSingle
 	}
 
-	// Normalise MaxConcurrent: zero value → 1 (MVH single-threaded default).
+	// Normalise MaxConcurrent: zero value → 1 (single-threaded default).
 	maxConcurrent := p.MaxConcurrent
 	if maxConcurrent <= 0 {
 		maxConcurrent = 1

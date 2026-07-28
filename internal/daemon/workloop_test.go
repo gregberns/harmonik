@@ -1,6 +1,6 @@
 package daemon_test
 
-// workloop_test.go — tests for the MVH main work loop (hk-ecrxy).
+// workloop_test.go — tests for the main work loop (hk-ecrxy).
 //
 // Helper prefix: workloopFixture (per implementer-protocol.md §Helper-prefix
 // discipline; bead hk-ecrxy).
@@ -251,7 +251,7 @@ func (s *stubEventCollector) allEvents() []stubEmittedEvent {
 // in the JSONL log.  This is the unit-test mode: useful when test fixtures do
 // not have a real br binary.
 //
-// Spec ref: MVH_ROADMAP.md row #10; hk-ecrxy — "Skip the work loop when
+// Spec ref: EARLY_ROADMAP.md row #10; hk-ecrxy — "Skip the work loop when
 // BrPath is not configured (unit-test mode)".
 func TestDaemonStart_WorkLoopSkippedWithNoBrPath(t *testing.T) {
 	t.Parallel()

@@ -10,8 +10,8 @@ package core
 // component requires attention.
 //
 // DetectorClass is a string-backed opaque identifier: the daemon and observability
-// consumers treat it as an opaque label — no parsing or enumeration is imposed
-// at MVH. The non-empty invariant is enforced by
+// consumers treat it as an opaque label — no parsing or enumeration is
+// imposed. The non-empty invariant is enforced by
 // ReconciliationDetectorPanicPayload.Valid().
 //
 // Bead: hk-hqwn.75.

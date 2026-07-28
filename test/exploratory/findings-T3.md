@@ -102,8 +102,8 @@ from finding or sweeping anything.
 - `workspace.SweepStaleLeaseLocks` discovers worktrees via `DiscoverWorktrees`
   which requires `git worktree list --porcelain` registration.
 - For a git-registered worktree with a stale lease-lock (dead PID), the sweep DOES
-  remove the lease-lock file. This is the correct MVH behavior.
-- The **MVH work loop never calls `workspace.WriteLeaseLockAtomic`**, so worktrees
+  remove the lease-lock file. This is the correct behavior.
+- The **work loop never calls `workspace.WriteLeaseLockAtomic`**, so worktrees
   created by the work loop have NO lease-lock. Signal-killed worktrees therefore
   appear as `WM-003a bare-worktree-no-lease` orphans. The orphan sweep skips them
   (no lease to sweep). They require reconciliation routing, not simple sweep.

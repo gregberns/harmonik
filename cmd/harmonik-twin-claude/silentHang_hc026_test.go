@@ -543,7 +543,7 @@ func TestSilentHang_HC026a_ThresholdConstants(t *testing.T) {
 	//
 	// Fixtures use these names; mismatches here flag a drift from §7.1 prose.
 	const (
-		silentHangFixtureT     = 600 * time.Second // MVH default per §7.1
+		silentHangFixtureT     = 600 * time.Second // default per §7.1
 		silentHangFixtureMSoft = 2 * silentHangFixtureT
 		silentHangFixtureMHard = 4 * silentHangFixtureT
 	)

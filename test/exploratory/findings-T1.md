@@ -14,7 +14,7 @@ Binary built from source: `go build -o ./harmonik ./cmd/harmonik`
 Tests were run in two modes:
 
 1. **Binary mode** — `./harmonik --project <tmpdir>` directly.
-2. **Library mode** — `go test ./internal/daemon/ -run TestMVHSmoke` using the
+2. **Library mode** — `go test ./internal/daemon/ -run TestSmokeLoop` using the
    smoke test's direct `daemon.Start` call with `BrPath` + `JSONLLogPath` +
    `HandlerBinary` wired in.
 
@@ -53,7 +53,7 @@ The bead remains `open`. The work loop never runs.
 fallbacks, no config-file loading" but also omits the `LookPath` wiring.
 
 **Impact:** The full happy path (bead → closed → JSONL events) is only reachable
-through the Go test infrastructure (`TestMVHSmoke`), not the deployed binary.
+through the Go test infrastructure (`TestSmokeLoop`), not the deployed binary.
 
 ---
 
@@ -142,9 +142,9 @@ not found" warning, no indication of idle vs. active state.
 
 ---
 
-## Happy Path via Library (TestMVHSmoke) — CONFIRMED PASSING
+## Happy Path via Library (TestSmokeLoop) — CONFIRMED PASSING
 
-Verified via `go test ./internal/daemon/ -run TestMVHSmoke -v -count=1`:
+Verified via `go test ./internal/daemon/ -run TestSmokeLoop -v -count=1`:
 
 - 1 ready bead + `daemon.Start` (with `BrPath`, `JSONLLogPath`, `HandlerBinary`
   all wired) → claims bead, creates git worktree, spawns handler, waits for exit

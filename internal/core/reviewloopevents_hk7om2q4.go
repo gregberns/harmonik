@@ -61,7 +61,7 @@ const (
 	ReviewLoopCompletionReasonApproved ReviewLoopCompletionReason = "approved"
 
 	// ReviewLoopCompletionReasonCapHit indicates the iteration cap was
-	// exhausted (cap = 3 at MVH per execution-model.md §4.3.EM-015e).
+	// exhausted (cap = 3 per execution-model.md §4.3.EM-015e).
 	ReviewLoopCompletionReasonCapHit ReviewLoopCompletionReason = "cap_hit"
 
 	// ReviewLoopCompletionReasonBlocked indicates the cycle ended with a
@@ -377,16 +377,16 @@ func (p ReviewerVerdictPayload) Valid() bool {
 // terminal routing weight rests on review_loop_cycle_complete which is class F
 // per the §8.1a emission-ordering rule and §8.1a Note).
 //
-// Emitted by orchestrator-core when the iteration cap is reached (cap = 3 at
-// MVH per execution-model.md §4.3.EM-015e). Emitted BEFORE
+// Emitted by orchestrator-core when the iteration cap is reached (cap = 3 per
+// execution-model.md §4.3.EM-015e). Emitted BEFORE
 // review_loop_cycle_complete{completion_reason=cap_hit} per §8.1a ordering rule.
 //
 // # Payload fields (event-model.md §8.1a.4)
 //
 //   - run_id         — the umbrella run_id for this review-loop cycle
 //   - workflow_mode  — always "review-loop" for this event
-//   - iteration_count — = cap_value at MVH (the iteration at which cap was hit)
-//   - cap_value      — the configured cap (= 3 at MVH)
+//   - iteration_count — = cap_value (the iteration at which cap was hit)
+//   - cap_value      — the configured cap (= 3)
 //   - final_verdict  — the verdict at the cap-hit boundary: REQUEST_CHANGES | BLOCK
 type IterationCapHitPayload struct {
 	// RunID is the umbrella run identifier for this review-loop cycle.
@@ -398,11 +398,11 @@ type IterationCapHitPayload struct {
 	WorkflowMode WorkflowMode `json:"workflow_mode"`
 
 	// IterationCount is the 1-based iteration at which the cap was hit.
-	// Required (must be ≥ 1). Equals CapValue at MVH.
+	// Required (must be ≥ 1). Equals CapValue.
 	IterationCount int `json:"iteration_count"`
 
 	// CapValue is the configured iteration cap. Required (must be ≥ 1).
-	// = 3 at MVH per execution-model.md §4.3.EM-015e.
+	// = 3 per execution-model.md §4.3.EM-015e.
 	CapValue int `json:"cap_value"`
 
 	// FinalVerdict is the verdict at the cap-hit boundary. Required; must be
@@ -632,7 +632,7 @@ func (p ReviewFixupStalledPayload) Valid() bool {
 //
 //   - run_id                — the umbrella run_id for this review-loop cycle
 //   - workflow_mode         — always "review-loop" for this event
-//   - final_iteration_count — the iteration count at termination (1..3 at MVH)
+//   - final_iteration_count — the iteration count at termination (1..3)
 //   - completion_reason     — approved | cap_hit | blocked | no_progress | error
 type ReviewLoopCycleCompletePayload struct {
 	// RunID is the umbrella run identifier for this review-loop cycle.
@@ -644,7 +644,7 @@ type ReviewLoopCycleCompletePayload struct {
 	WorkflowMode WorkflowMode `json:"workflow_mode"`
 
 	// FinalIterationCount is the iteration count at termination (1-based).
-	// Required (must be ≥ 1). At MVH this is 1..3 per EM-015e.
+	// Required (must be ≥ 1). This is 1..3 per EM-015e.
 	FinalIterationCount int `json:"final_iteration_count"`
 
 	// CompletionReason describes why the review loop terminated.

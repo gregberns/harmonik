@@ -65,7 +65,7 @@ Three prefix reservations were missing from `specs/_registry.yaml` for specs wit
 | Gap | Resolution |
 |---|---|
 | Plans 001–006, 008 missing `## Done means...` section | Added behavioral acceptance criteria to each `_plan.md`; plan 007 was covered by the first pass; plan 009 already had the section. |
-| Remaining terminology drift scan | No new `MVH scope` / `bootstrap scope` / `Phase-1-only` drift found in `docs/`, `specs/`, or `plans/` beyond `docs/foundation/` and `docs/subsystems/` which use `MVH` as a historical milestone label (not a per-feature scope qualifier) — permitted under `AGENTS.md §"Terminology — avoid MVH"`. |
+| Remaining terminology drift scan | No new `bootstrap scope` / `Phase-1-only` drift found in `docs/`, `specs/`, or `plans/`. |
 
 ---
 
@@ -77,7 +77,7 @@ No subsystems are in PARTIAL status. The following nuances are worth noting:
 
 - **`lifecycle`** — straddles two specs by design: process-lifecycle governs the daemon process lifecycle; execution-model governs the run/state/transition lifecycle. This split is intentional and documented in execution-model.md §1 ("scope exclusions"). No ambiguity exists as long as both specs remain in sync on their shared vocabulary (daemon state machine, orphan sweep trigger).
 
-- **`daemon`** (composition root) — process-lifecycle.md §1 notes that the CLI command surface and socket wire format are explicitly excluded and deferred. These aspects are currently undocumented. If `cmd/harmonik/` or a daemon-CLI spec is added post-MVH, it should either extend process-lifecycle.md or be filed as a new `specs/daemon-cli.md`.
+- **`daemon`** (composition root) — process-lifecycle.md §1 notes that the CLI command surface and socket wire format are explicitly excluded and deferred. These aspects are currently undocumented. If `cmd/harmonik/` or a daemon-CLI spec is added, it should either extend process-lifecycle.md or be filed as a new `specs/daemon-cli.md`.
 
 ---
 

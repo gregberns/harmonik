@@ -41,7 +41,7 @@ The harness is a separate spec from the foundation 10 because its substance is a
 - Orchestration drive: harness drives the same orchestrator entry-point as `daemon` mode.
 - Workspace fixture lifecycle (setup, isolation, teardown) atop [workspace-model.md §4.1, §4.3].
 - Event-log capture: JSONL produced during the run is captured and read for assertion evaluation.
-- Assertion vocabulary at MVH: event-presence predicate, event-absence predicate, workspace-state predicate, exit-code predicate.
+- Assertion vocabulary: event-presence predicate, event-absence predicate, workspace-state predicate, exit-code predicate.
 - Per-scenario wall-clock timeout; failure class on exceedance.
 - Failure taxonomy (§8) and its coupling to [execution-model.md §8] failure classes.
 - Repeatability (deterministic on observable surface) given identical inputs.
@@ -50,18 +50,18 @@ The harness is a separate spec from the foundation 10 because its substance is a
 - Per-scenario verdict format (`ScenarioResult` record).
 - Scenario composition (parameter matrix per scenario name).
 - Twin-binary discovery: PATH prefix + scenario-declared absolute path; defined error class on missing.
-- Concurrent-execution policy at MVH: sequential.
+- Concurrent-execution policy: sequential.
 - Network-access policy: harness MUST run without external network access.
 - Conformance scenario set the harness MUST execute to claim S07 conformance.
 
 ### 2.2 Out of scope
 
-- The digital-twin binaries themselves (`claude-twin`, `pi-twin`) — owned by [handler-contract.md §4.8] for the parity contract and by per-handler specs (post-MVH) for behavior scripting. This spec consumes the twin surface; it does not specify it.
+- The digital-twin binaries themselves (`claude-twin`, `pi-twin`) — owned by [handler-contract.md §4.8] for the parity contract and by per-handler specs (not yet written) for behavior scripting. This spec consumes the twin surface; it does not specify it.
 - The orchestrator graph machinery (workflow validation, edge cascade, transition emission) — owned by [execution-model.md §4.6, §4.10]. The harness drives the orchestrator; it does not implement it.
 - CI scheduling, cron, GitHub Actions wiring — operator-domain scheduling, owned by `operator-nfr.md` once that spec defines a scheduling surface; this spec is normative for cadence tagging, not for who runs which cadence when.
-- The conformance suite that uses real model calls — explicitly distinct from the scenario suite per [docs/goals/end-to-end-testability.md] and [docs/concepts/digital-twins.md]; that suite is post-MVH and is not S07.
-- Scenario-authoring UX (editor support, scaffolding tools, scenario diff visualizers) — post-MVH operator-tooling concerns.
-- Twin-conformance drift detection (real-vs-twin output comparison over time) — declared in scope of S07 by [handler-contract.md §4.8.HC-038], deferred from this v0.1 draft to a post-MVH revision (tracked at OQ-SH-008).
+- The conformance suite that uses real model calls — explicitly distinct from the scenario suite per [docs/goals/end-to-end-testability.md] and [docs/concepts/digital-twins.md]; that suite is deferred and is not S07.
+- Scenario-authoring UX (editor support, scaffolding tools, scenario diff visualizers) — deferred operator-tooling concerns.
+- Twin-conformance drift detection (real-vs-twin output comparison over time) — declared in scope of S07 by [handler-contract.md §4.8.HC-038], deferred from this v0.1 draft to a later revision (tracked at OQ-SH-008).
 - Beads-integration verification at scenario level — beads writes are observable through the same JSONL surface this spec captures, but BI's per-write contracts are owned by [beads-integration.md §4.4].
 
 ## 3. Glossary
@@ -72,7 +72,7 @@ The harness is a separate spec from the foundation 10 because its substance is a
 - **twin substitution** — the mechanism by which a scenario's `agent_overrides` field selects a twin-handler binary in place of a real-handler binary at workflow-load time, via the same `handler_ref` resolution path declared in [handler-contract.md §4.1.HC-003]. (see §4.3)
 - **assertion** — a declared expectation in a scenario file evaluated against the captured observable surface (event log + workspace state + exit code) after orchestration completes. (see §4.6)
 - **scenario result** — the record produced for every scenario after evaluation, capturing verdict, timings, failure class (when applicable), and pointers to the captured event-log and workspace-snapshot artifacts. (see §6.1)
-- **conformance suite** — a separate test suite (post-MVH) that runs against real-model handlers; explicitly distinct from the scenario suite this spec governs. Naming overlap is acknowledged here so reviewers do not conflate the two.
+- **conformance suite** — a separate test suite (not yet built) that runs against real-model handlers; explicitly distinct from the scenario suite this spec governs. Naming overlap is acknowledged here so reviewers do not conflate the two.
 - **cadence tag** — one of `smoke | regression | nightly`, declared on every scenario, that determines which scenarios run in which CI lane. (see §4.9)
 - **harness verdict** — the terminal `ScenarioResult.verdict` value: one of `pass | fail | timeout | error`. `fail` means an assertion failed; `timeout` means the scenario exceeded its wall-clock budget; `error` means the harness itself or its orchestration drive failed before a verdict could be reached on the scenario's own terms. (see §6.1, §8)
 
@@ -151,13 +151,13 @@ Tags: mechanism
 
 #### SH-001 — Scenario format is YAML at v0.1
 
-Every scenario MUST be declared as a single YAML file conforming to the `ScenarioFile` schema in §6.1. Other formats (Go-as-code scenarios, DSLs, hybrid YAML+Go) are forbidden at v0.1; they are tracked as an open question (OQ-SH-001) for a post-MVH revision.
+Every scenario MUST be declared as a single YAML file conforming to the `ScenarioFile` schema in §6.1. Other formats (Go-as-code scenarios, DSLs, hybrid YAML+Go) are forbidden at v0.1; they are tracked as an open question (OQ-SH-001) for a later revision.
 
 Tags: mechanism
 
 #### SH-002 — Scenario files live under `scenarios/` at the repo root
 
-Scenario files MUST be discovered under the repo-root directory `scenarios/` (recursive descent permitted; subdirectories MAY be used for grouping). The repo root is the directory returned by `git rev-parse --show-toplevel` invoked in the harness's working directory at startup. The harness MUST NOT load scenarios from any other location at MVH; absolute or workspace-relative scenario paths are forbidden as a security and reproducibility guard. The cross-platform file extension is `.yaml` (lower-case, byte-exact); files with any other extension (including `.yml`, `.YAML`) MUST be rejected at suite-load discovery time (without opening the file) and classified as `scenario-load-failure` per §8.1.
+Scenario files MUST be discovered under the repo-root directory `scenarios/` (recursive descent permitted; subdirectories MAY be used for grouping). The repo root is the directory returned by `git rev-parse --show-toplevel` invoked in the harness's working directory at startup. The harness MUST NOT load scenarios from any other location; absolute or workspace-relative scenario paths are forbidden as a security and reproducibility guard. The cross-platform file extension is `.yaml` (lower-case, byte-exact); files with any other extension (including `.yml`, `.YAML`) MUST be rejected at suite-load discovery time (without opening the file) and classified as `scenario-load-failure` per §8.1.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -318,7 +318,7 @@ The wall-clock window for `event_absent` is `[fixture-setup-completion, terminal
 
 `assertion_results` ordering: declared assertions are evaluated in the union order of `expected_events` (declaration order), then `expected_workspace` (declaration order), then `expected_outcome` (single entry if declared); `AssertionResult` records appear in the same order in `ScenarioResult.assertion_results`. The harness MUST NOT short-circuit (per SH-023).
 
-Composite predicates, cross-event ordering predicates, and other assertion kinds are tracked at OQ-SH-006 for a post-MVH revision.
+Composite predicates, cross-event ordering predicates, and other assertion kinds are tracked at OQ-SH-006 for a later revision.
 
 Tags: mechanism
 
@@ -355,7 +355,7 @@ Tags: mechanism
 
 #### SH-026 — Timeout exceedance produces verdict `timeout` with `scenario-timeout`
 
-When a scenario's orchestration drive does not reach a terminal state within `timeout_secs` (measured per SH-025 from fixture-setup completion to the orchestrator emitting a terminal `run_completed` / `run_failed` event), the harness MUST cancel the orchestration by invoking the per-scenario daemon's `stop` RPC of [process-lifecycle.md §4.2.PL-003a] (graceful drain, escalating to SIGKILL of agent subprocesses on drain-timeout per [operator-nfr.md §4.7 ON-029]). Because each scenario runs against its own per-scenario daemon (per SH-016a), `daemon stop` halts the scenario's run cleanly without affecting any other scenario. The harness MUST then execute fixture teardown per SH-015 and emit a `ScenarioResult` with `verdict=timeout` and `failure_class=scenario-timeout`. Per-handler cancellation MUST honor the bounded-cancellation contract of [handler-contract.md §4.4.HC-018]; the harness's overall cancel-and-teardown wall-clock bound is `(N × HC-018-ceiling) + ON-029-drain-timeout`, where N is the live-handler count at timeout. Suite-mode efficiency (a per-scenario cancel that does NOT terminate the daemon) is post-MVH and tracked at OQ-SH-012.
+When a scenario's orchestration drive does not reach a terminal state within `timeout_secs` (measured per SH-025 from fixture-setup completion to the orchestrator emitting a terminal `run_completed` / `run_failed` event), the harness MUST cancel the orchestration by invoking the per-scenario daemon's `stop` RPC of [process-lifecycle.md §4.2.PL-003a] (graceful drain, escalating to SIGKILL of agent subprocesses on drain-timeout per [operator-nfr.md §4.7 ON-029]). Because each scenario runs against its own per-scenario daemon (per SH-016a), `daemon stop` halts the scenario's run cleanly without affecting any other scenario. The harness MUST then execute fixture teardown per SH-015 and emit a `ScenarioResult` with `verdict=timeout` and `failure_class=scenario-timeout`. Per-handler cancellation MUST honor the bounded-cancellation contract of [handler-contract.md §4.4.HC-018]; the harness's overall cancel-and-teardown wall-clock bound is `(N × HC-018-ceiling) + ON-029-drain-timeout`, where N is the live-handler count at timeout. Suite-mode efficiency (a per-scenario cancel that does NOT terminate the daemon) is deferred and tracked at OQ-SH-012.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
@@ -415,9 +415,9 @@ Tags: mechanism
 
 ### 4.12 Harness CLI surface (new in v0.2)
 
-#### SH-032 — Harness CLI grammar at MVH
+#### SH-032 — Harness CLI grammar
 
-The harness binary is `harmonik harness` (a `harmonik` subcommand). The MVH CLI surface is:
+The harness binary is `harmonik harness` (a `harmonik` subcommand). The CLI surface is:
 
 | Flag / argument | Type | Default | Purpose |
 |---|---|---|---|
@@ -455,7 +455,7 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 #### SH-034 — ScenarioResult durability and emission
 
-Every scenario's `ScenarioResult` MUST be written to disk at `<fixture-root>/<scenario-name>/result.json` immediately after the scenario completes (before the next scenario begins). The aggregate `SuiteResult` MUST be written to `<fixture-root>/suite-result.json` AND emitted to stdout per SH-032 at suite completion. `SuiteResult.suite_verdict` is `pass` iff every `result.verdict==pass`; any non-pass result (including `fail`, `timeout`, or `error`) implies `suite_verdict=fail`. If the harness crashes after a scenario's `result.json` write but before the suite-level emission, the per-scenario files allow operator reconstruction; the harness MAY (post-MVH) provide a `harmonik harness reconstruct <fixture-root>` subcommand for this. `ScenarioResult.error_detail`, when present, MUST be a non-empty operator-readable string carrying at minimum the underlying `err.Error()` string and (where applicable) the captured panic stack.
+Every scenario's `ScenarioResult` MUST be written to disk at `<fixture-root>/<scenario-name>/result.json` immediately after the scenario completes (before the next scenario begins). The aggregate `SuiteResult` MUST be written to `<fixture-root>/suite-result.json` AND emitted to stdout per SH-032 at suite completion. `SuiteResult.suite_verdict` is `pass` iff every `result.verdict==pass`; any non-pass result (including `fail`, `timeout`, or `error`) implies `suite_verdict=fail`. If the harness crashes after a scenario's `result.json` write but before the suite-level emission, the per-scenario files allow operator reconstruction; the harness MAY later provide a `harmonik harness reconstruct <fixture-root>` subcommand for this. `ScenarioResult.error_detail`, when present, MUST be a non-empty operator-readable string carrying at minimum the underlying `err.Error()` string and (where applicable) the captured panic stack.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
@@ -880,7 +880,7 @@ The §7.1 lifecycle pseudocode and §8.8 default response apply this table consi
 - **[docs/concepts/digital-twins.md]** — concept seed for the twin pattern; informative context for SH-009 / SH-011.
 - **[docs/goals/end-to-end-testability.md]** — G07 goal that motivates this spec; informative.
 - **[docs/goals/bootstrapping-self-building.md]** — G06 self-build cycle whose regression net this spec provides; informative.
-- **[docs/bootstrap.md §5 step 8]** — the MVH sequencing entry that names S07; informative.
+- **[docs/bootstrap.md §5 step 8]** — the bootstrap sequencing entry that names S07; informative.
 - **[docs/subsystems/scenario-harness.md]** — the seed-status subsystem doc; this spec supersedes it normatively.
 - **[replay-substrate.md §4 RS-017]** — the substrate's zero-token L0–L2 tiers select doubles by which `EventSource`/`Effector` value is wired, never a runtime branch; this is consistent with SH-018 / SH-INV-001. Read-only co-reference; no reverse dependency.
 
@@ -888,7 +888,7 @@ The §7.1 lifecycle pseudocode and §8.8 default response apply this table consi
 
 ### 10.1 Conformance profiles
 
-**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement SH-001 through SH-034 and every invariant SH-INV-001 through SH-INV-005. No requirement is deferred at MVH.
+**Core.** An implementation conforming to Core MUST pass every requirement SH-001 through SH-034 and every invariant SH-INV-001 through SH-INV-005. No requirement is deferred.
 
 **Conformance scenario set.** A harmonik build claims S07 conformance only if its harness can load and execute the following representative scenarios (located at `scenarios/<path>` per SH-002) and produce `verdict=pass` for each:
 
@@ -898,7 +898,7 @@ The §7.1 lifecycle pseudocode and §8.8 default response apply this table consi
 
 These three scenarios are the v0.1 conformance floor. Adding to the set is a foundation amendment per [architecture.md §4.6]; removing requires the same.
 
-**Post-MVH extensions.** Composite assertion predicates (OQ-SH-006), concurrent scenario execution (OQ-SH-002), Go-as-code scenarios (OQ-SH-001), schema versioning of scenario files (OQ-SH-007), twin-conformance drift detection (OQ-SH-008) are additive extensions; none is required to claim Core MVH conformance.
+**Deferred extensions.** Composite assertion predicates (OQ-SH-006), concurrent scenario execution (OQ-SH-002), Go-as-code scenarios (OQ-SH-001), schema versioning of scenario files (OQ-SH-007), twin-conformance drift detection (OQ-SH-008) are additive extensions; none is required to claim Core conformance.
 
 ### 10.2 Test-surface obligations
 
@@ -921,7 +921,7 @@ Migration to `[testing.md §<layer>]` cross-references occurs within one revisio
 
 - This spec does NOT grant conformance over: the twin binaries themselves (owned by [handler-contract.md §4.8] for parity, and by per-handler specs for behavior); orchestrator dispatch correctness (owned by [execution-model.md]); workspace lease correctness (owned by [workspace-model.md]); event JSONL correctness (owned by [event-model.md]).
 - This spec does NOT guarantee any performance bound on suite wall-clock duration; cadence design (smoke / regression / nightly) is the operator's mechanism for managing duration.
-- This spec does NOT cover the conformance suite that uses real model calls; that suite is post-MVH and is not S07.
+- This spec does NOT cover the conformance suite that uses real model calls; that suite is deferred and is not S07.
 
 ## 11. Open questions
 
@@ -934,29 +934,29 @@ Default-if-unresolved: YAML-only at v0.1; revisit when ≥3 in-tree scenarios ca
 
 #### OQ-SH-002 — Concurrent scenario execution
 
-Question: At MVH the harness runs scenarios sequentially (SH-031). When does parallel execution become worthwhile, and what isolation guarantees does it require (per-scenario fixture root and per-scenario daemon are the obvious answers; per-scenario daemon collides with [process-lifecycle.md §4.1.PL-001] one-daemon-per-project unless we treat each scenario as its own ephemeral project)?
+Question: The harness runs scenarios sequentially (SH-031). When does parallel execution become worthwhile, and what isolation guarantees does it require (per-scenario fixture root and per-scenario daemon are the obvious answers; per-scenario daemon collides with [process-lifecycle.md §4.1.PL-001] one-daemon-per-project unless we treat each scenario as its own ephemeral project)?
 Owner: foundation-author
 Blocks: SH-031 widening
-Default-if-unresolved: sequential at MVH; revisit when measured suite wall-clock is operator-painful.
+Default-if-unresolved: sequential; revisit when measured suite wall-clock is operator-painful.
 
 #### OQ-SH-003 — Twin-binary distribution model
 
 Question: Twin binaries are referenced by absolute path or by the configured search-path prefix per SH-009. Should they live in-tree alongside the harmonik repo (same release cadence as the daemon, twin-parity easier to enforce) or be vendored separately (twins as their own release stream, harmonik depends on a pinned version)?
 Owner: foundation-author
 Blocks: nothing in the v0.1 contract; affects build / release tooling design downstream
-Default-if-unresolved: in-tree alongside the harmonik repo for MVH; same release cadence as the daemon.
+Default-if-unresolved: in-tree alongside the harmonik repo; same release cadence as the daemon.
 
 #### OQ-SH-004 — Auto-generated scenarios from improvement-loop signals
 
-Question: Per [docs/subsystems/scenario-harness.md] open question 5: should the improvement loop (S09, post-MVH) auto-generate scenarios when it observes new failure patterns in production, closing the loop "production failure → regression scenario → never again"? If yes, what is the contract: does S09 emit a `ScenarioFile` directly, or a higher-level intent that a separate authoring agent translates?
-Owner: improvement-loop spec author (post-MVH)
-Blocks: nothing at MVH (no S09 yet)
+Question: Per [docs/subsystems/scenario-harness.md] open question 5: should the improvement loop (S09, not yet built) auto-generate scenarios when it observes new failure patterns in production, closing the loop "production failure → regression scenario → never again"? If yes, what is the contract: does S09 emit a `ScenarioFile` directly, or a higher-level intent that a separate authoring agent translates?
+Owner: improvement-loop spec author (spec not yet written)
+Blocks: nothing (no S09 yet)
 Default-if-unresolved: not in v0.1; defer until S09 lands.
 
 #### OQ-SH-005 — Twin-introduced non-determinism
 
 Status note (v0.2): the v0.1 default-if-unresolved was promoted to normative text in SH-027's "scope carve-out" paragraph. This OQ remains open as a watching brief on whether wall-clock-mode scenarios outgrow the nightly-cadence carve-out (e.g., whether reviewers find the carve-out leaks non-determinism into observable verdicts despite the cadence isolation).
-Question: Does the SH-027 wall-clock-mode carve-out remain sufficient as the twin set grows post-MVH, or do we need a richer determinism contract (per-twin-mode determinism profiles)?
+Question: Does the SH-027 wall-clock-mode carve-out remain sufficient as the twin set grows, or do we need a richer determinism contract (per-twin-mode determinism profiles)?
 Owner: foundation-author
 Blocks: SH-027 widening
 Default-if-unresolved: keep the carve-out as written in SH-027; revisit if ≥3 wall-clock-mode scenarios demonstrate practical determinism issues.
@@ -966,27 +966,27 @@ Default-if-unresolved: keep the carve-out as written in SH-027; revisit if ≥3 
 Question: At v0.1 the harness supports four assertion kinds (SH-021). Reviewers and scenario authors may need composite predicates (`A AND B`, `A OR (B AND C)`) and cross-event ordering predicates (`A precedes B`, `A within N seconds of B`). When and how do these enter the surface? Is the right shape a richer per-assertion DSL or a separate predicate-graph YAML structure?
 Owner: foundation-author
 Blocks: SH-021 widening
-Default-if-unresolved: four kinds at v0.1; widen post-MVH when ≥5 scenarios across the conformance set demonstrate the need.
+Default-if-unresolved: four kinds at v0.1; widen later when ≥5 scenarios across the conformance set demonstrate the need.
 
 #### OQ-SH-007 — Scenario-file schema versioning
 
 Question: At v0.1 there is no `schema_version` field on `ScenarioFile`; the spec's front matter version is the implicit version. When the scenario format gains a new field that older harness versions cannot ignore, the N-1 readable contract per [operator-nfr.md §4.5] kicks in. What is the migration path from v0.1's no-version file to v0.2's versioned file?
 Owner: foundation-author
-Blocks: nothing at MVH
+Blocks: nothing
 Default-if-unresolved: a missing `schema_version` is treated as `0.1.0` by future harness versions; a future spec revision adds the field as REQUIRED with a default-on-absence shim for v0.1 files. v0.1/v0.2 harness MUST refuse a `schema_version` that is forward-incompat (per §6.3); silent coercion is a defect.
 
 #### OQ-SH-008 — Twin-conformance drift detection
 
-Question: Per [handler-contract.md §4.8.HC-038], twin-vs-real drift detection is scoped to S07 post-MVH. What is the workflow's shape: a separate cadence (`real-conformance`) that runs the same scenarios against real handlers and diffs the observable surface? A periodic capture of real-handler output stored alongside the twin script as a parity-reference file?
-Owner: foundation-author (post-MVH)
-Blocks: nothing at MVH (drift detection is post-MVH per HC-038)
-Default-if-unresolved: separate post-MVH cadence; reference-file capture is the leading candidate; concrete shape lands in a v0.2 revision.
+Question: Per [handler-contract.md §4.8.HC-038], twin-vs-real drift detection is scoped to S07 but deferred. What is the workflow's shape: a separate cadence (`real-conformance`) that runs the same scenarios against real handlers and diffs the observable surface? A periodic capture of real-handler output stored alongside the twin script as a parity-reference file?
+Owner: foundation-author (a later revision)
+Blocks: nothing (drift detection is deferred per HC-038)
+Default-if-unresolved: a separate cadence, added later; reference-file capture is the leading candidate; concrete shape lands in a v0.2 revision.
 
 #### OQ-SH-009 — Migrate test-obligation prose to testing.md references
 
 Question: Section §10.2 currently names test obligations in prose. The template §10.2 expects cross-references to `[testing.md §<layer>]` once testing.md lands.
 Owner: foundation-author
-Blocks: none (MVH prose obligations are in place)
+Blocks: none (the prose obligations are in place)
 Default-if-unresolved: Keep prose obligations; migrate within one revision cycle after testing.md is finalized.
 
 #### OQ-SH-010 — Failure-class extension protocol
@@ -1007,7 +1007,7 @@ Default-if-unresolved: keep CWD-based mechanism; surface a coordination-patch fi
 
 Question: SH-026 cancels via `daemon stop`, which terminates the per-scenario daemon entirely (acceptable because each scenario uses its own daemon per SH-016a). When suite-mode efficiency becomes operator-painful (OQ-SH-002 trigger), a per-run cancel RPC on the daemon socket would let multiple scenarios share a daemon and cancel one without affecting others. Should PL add such an RPC, what's its signature, and how does it interact with the SH-031 sequential rule?
 Owner: foundation-author (cross-spec coordination with PL)
-Blocks: post-MVH suite-mode efficiency improvements; not blocking v0.2
+Blocks: later suite-mode efficiency improvements; not blocking v0.2
 Default-if-unresolved: stay with `daemon stop` per scenario at v0.2; coordinate with PL when the parallelism trigger fires.
 
 #### OQ-SH-013 — Network-sandbox mechanism on macOS (new in v0.2)
@@ -1022,7 +1022,7 @@ Default-if-unresolved: `pf`-based sandbox on macOS at v0.2; revisit if `pf` prov
 | Date | Version | Author | Summary |
 |---|---|---|---|
 | 2026-05-05 | 0.1.0 | foundation-author | Initial draft per `docs/subsystems/scenario-harness.md` seed + `docs/bootstrap.md` §5 step 8 framing. Authored as peer to the 10 existing reviewed specs. SH prefix reserved in `specs/_registry.yaml`. v0.1 declares YAML-only scenario format, four-kind assertion vocabulary, three-tag cadence (smoke / regression / nightly), eight-class failure taxonomy, sequential execution, and a three-scenario conformance floor. |
-| 2026-05-05 | 0.2.0 | foundation-author | R1 review integration. Inputs: `docs/reviews/2026-05-05-scenario-harness-r1/{implementer,cross-spec-architect,critic}-r1.md`. Three convergent themes resolved: (1) per-scenario synthetic project root (new SH-016a) reconciles SH-014's no-mutation rule with SH-017's production-daemon-entry-point requirement and PL-001's one-daemon-per-project; (2) twin-binary identity (SH-009 + SH-INV-003) now defers to HC-043 commit-hash check unchanged with a path-prefix predicate that excludes name-only heuristics; (3) per-run cancellation surface uses `daemon stop` per-scenario at v0.2 with OQ-SH-012 tracking suite-mode efficiency post-MVH. New normative requirements: SH-015a (workspace-snapshot mechanism), SH-016a (synthetic project root), SH-032 (CLI surface), SH-033 (signal handling), SH-034 (result emission/durability). New §8.0 failure-class precedence table. Cite repairs: WM-007→WM-019/WM-021 in §10.1, HC-043/HC-045 in SH-009, EV §8.1.8 + EM-005 alignment for `OutcomeExpectation`, AR-INV-007 for centralized-controller, ON-029 for drain-timeout, PL-006/PL-006a for SH-INV-002 sensor. `operator-nfr` added to depends-on. Schema fixes: split `workflow_ref` into `workflow_path`/`workflow_id`; new `GitSeedOp` and `FileSeed` records; `JSONValue` defined; per-kind `WorkspacePredicate.expected` table at §6.3; `ScenarioResult.source_path` + relative `event_log_path` / `workspace_snapshot_path` + role-keyed stdout/stderr capture maps. Three new OQs (OQ-SH-011/-012/-013); OQ-SH-005's default-if-unresolved promoted into SH-027 normatively. Status: draft → reviewed. |
+| 2026-05-05 | 0.2.0 | foundation-author | R1 review integration. Inputs: `docs/reviews/2026-05-05-scenario-harness-r1/{implementer,cross-spec-architect,critic}-r1.md`. Three convergent themes resolved: (1) per-scenario synthetic project root (new SH-016a) reconciles SH-014's no-mutation rule with SH-017's production-daemon-entry-point requirement and PL-001's one-daemon-per-project; (2) twin-binary identity (SH-009 + SH-INV-003) now defers to HC-043 commit-hash check unchanged with a path-prefix predicate that excludes name-only heuristics; (3) per-run cancellation surface uses `daemon stop` per-scenario at v0.2 with OQ-SH-012 tracking suite-mode efficiency, deferred. New normative requirements: SH-015a (workspace-snapshot mechanism), SH-016a (synthetic project root), SH-032 (CLI surface), SH-033 (signal handling), SH-034 (result emission/durability). New §8.0 failure-class precedence table. Cite repairs: WM-007→WM-019/WM-021 in §10.1, HC-043/HC-045 in SH-009, EV §8.1.8 + EM-005 alignment for `OutcomeExpectation`, AR-INV-007 for centralized-controller, ON-029 for drain-timeout, PL-006/PL-006a for SH-INV-002 sensor. `operator-nfr` added to depends-on. Schema fixes: split `workflow_ref` into `workflow_path`/`workflow_id`; new `GitSeedOp` and `FileSeed` records; `JSONValue` defined; per-kind `WorkspacePredicate.expected` table at §6.3; `ScenarioResult.source_path` + relative `event_log_path` / `workspace_snapshot_path` + role-keyed stdout/stderr capture maps. Three new OQs (OQ-SH-011/-012/-013); OQ-SH-005's default-if-unresolved promoted into SH-027 normatively. Status: draft → reviewed. |
 | 2026-06-23 | 0.2.3 | foundation-author | Extend §6.4 "Twin-extension wire messages" to add `twin_committed` and `twin_error`. Both were implemented in `cmd/harmonik-twin-claude/wire.go` (lines 530, 557) but were absent from the spec, leaving §6.4's claim of "matches wire.go exactly" false. `twin_committed` is emitted by the `commit_on_cue` script step (hk-8ys88) and carries `commit_sha`, `exit_code`, `duration_ms`, and optional `stderr_excerpt`; `twin_error` is a terminal-event message emitted before the twin exits 1 on any unrecoverable internal error, carrying a `reason` string. No requirement IDs added (descriptive section only); no existing content changed. Refs: hk-ho9qu, hk-8ys88, hk-ffw3h (conformance audit). |
 | 2026-05-14 | 0.2.2 | foundation-author | Add §6.4 "Twin-extension wire messages" enumerating `twin_settings_loaded` and `twin_hook_called`. These two additive, optional, twin-emitted message types were implemented by hk-e66ht (settings reader + Stop-hook caller) but were not documented in this spec. §6.4 declares field names, types, and semantics matching `cmd/harmonik-twin-claude/wire.go` exactly. Front matter `version` advanced to 0.2.2 and `last-updated` to 2026-05-14. No requirement IDs added (descriptive section only); no existing content changed. Refs: hk-1encw, hk-e66ht. |
 | 2026-05-06 | 0.2.1 | foundation-author | Backfill patch closing F-pilot-SH-4 (sh-pilot.md §7) per the discipline v0.10 §3.2 §4.a envelope grandfather carve-out FROZEN decision (SH is the 11th spec, drafted post-AR-053-2026-04-24, and is NOT in the grandfathered set `{EM, HC, CP, WM, PL, RC, EV}`). **Front matter:** added `spec-category: runtime-subsystem` per [architecture.md §4.0 AR-052]; `last-updated` advanced to 2026-05-06. **New §4.a Subsystem envelope with SH-ENV-001** declaring the eight envelope elements of [architecture.md §4.4 AR-013] per [architecture.md §4.0 AR-053] using the reserved `SH-ENV-NNN` requirement-ID range. (a) events produced = none (SH §6.2 framing); (b) events consumed = the [event-model.md §8] taxonomy via observational replay reader per SH-020 with explicit calls-out for `outcome_status` (EV-§8.1.8), `workspace_merge_status` (EV-§8.5.3), agent-state events (EV-§8.3), and `checkpoint_written` (EV-§8.4); (c) types introduced = `ScenarioFile`, `AgentOverride`, `FixtureSetup`, `GitSeedOp`, `FileSeed`, `EventExpectation`, `WorkspacePredicate`, `OutcomeExpectation`, `ScenarioResult`, `AssertionResult`, `SuiteResult`, `FailureClass` (CLI-surface types, not bus payloads); (d) handlers implemented = none (twin substitution drives via HC-003); (e) state owned = per-suite ephemeral fixture root + per-scenario synthetic project root + worktree + captured JSONL + stdout/stderr capture + workspace-snapshot in-place pointer + `ScenarioResult`/`SuiteResult` durable records; (f) control points = none; (g) NFRs inherited = ON-018 (schema compat) + ON-029 (drain timeout); none overridden; (h) boundary classification = 12 operations spanning `suite_load`, `parse_scenario_file`, `resolve_twin_binary`, `fixture_setup`, `synthesize_project_root`, `drive_orchestration`, `capture_event_log`, `evaluate_assertions`, `enforce_scenario_timeout`, `fixture_teardown` (best-effort axis), and the `emit_scenario_result` / `emit_suite_result` durability operations. No other content changed; no requirement IDs renumbered; no IDs retired; no OQs added or closed. Status remains `reviewed`. F-pilot-SH-4 self-flag transitions from "class lane" to "resolved by spec patch." |

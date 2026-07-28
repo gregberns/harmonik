@@ -142,7 +142,7 @@ func TestRegistryEntries_IsCopy(t *testing.T) {
 }
 
 // TestWorkflowClass_EnumValues verifies that Harmonik-Workflow-Class carries the
-// MVH enum value set {reconciliation}.
+// enum value set {reconciliation}.
 func TestWorkflowClass_EnumValues(t *testing.T) {
 	t.Parallel()
 

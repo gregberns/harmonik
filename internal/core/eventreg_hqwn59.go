@@ -310,7 +310,7 @@ func registerWorkspaceEvents() {
 //   - reconciliation_dispatch_deduplicated (§8.6.11)
 //   - reconciliation_detector_panic (§8.6.12)
 //   - reconciliation_verdict_execution_retry (§8.6.13)
-//   - bead_terminal_transition_recovered (§8.6.14) — post-MVH per OQ-BI-008; type reserved
+//   - bead_terminal_transition_recovered (§8.6.14) — deferred per OQ-BI-008; type reserved
 func registerReconciliationEvents() {
 	mustRegister("reconciliation_started", func() EventPayload { return &ReconciliationStartedPayload{} })
 	mustRegister("reconciliation_completed", func() EventPayload { return &ReconciliationCompletedPayload{} })
@@ -462,7 +462,7 @@ func registerQueueEvents() {
 }
 
 // registerHandlerPauseEvents registers all §8.11 handler-pause lifecycle event
-// payload constructors (handler-pause MVH, hk-ifqnj).
+// payload constructors (handler-pause work, hk-ifqnj).
 //
 // Durability classes per §8.11 table:
 //   - handler_paused                    (§8.11.1): F (fsync-boundary — pause-state landmark for restart recovery)

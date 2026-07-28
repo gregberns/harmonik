@@ -57,8 +57,8 @@ func (e *gitignoreMisconfigError) Error() string {
 // (workspace_merge_status with status=merged), the workspace manager MUST
 // preserve the sessions directory inside the merged branch (i.e., the session
 // logs remain in the integration-branch commit tree) by default. An
-// operator-configured alternative MAY move the directory to a post-merge archive
-// path post-MVH; the default for MVH is preserve-in-merged-branch for audit
+// operator-configured alternative MAY later move the directory to a post-merge
+// archive path; the default is preserve-in-merged-branch for audit
 // retention."
 func TestWM030_PostMergeSessionLogRetention(t *testing.T) {
 	t.Parallel()
@@ -117,7 +117,7 @@ func TestWM030_PostMergeSessionLogRetention(t *testing.T) {
 // misconfiguration, since it silently breaks the preserve-in-merged-branch
 // contract.
 //
-// Spec ref: workspace-model.md §4.7 WM-030 — "The MVH default requires that
+// Spec ref: workspace-model.md §4.7 WM-030 — "The default requires that
 // project .gitignore MUST NOT exclude .harmonik/sessions/; a gitignored
 // sessions directory silently breaks the preserve-in-merged-branch contract.
 // Violations are an operator-observable misconfiguration per [operator-nfr.md §4.9]."

@@ -73,9 +73,9 @@ func (nullJSONLWriter) Append(_ []byte, _ bool) error { return nil }
 // Emit returns after: (a) redaction (EV-035), (b) JSONL append + fsync for
 // F-class events per EV-016 (hk-8mup.63), (c) synchronous consumer dispatch
 // on the caller's goroutine. Asynchronous and observer consumers are dispatched
-// off the critical path via per-handler goroutines (MVH) and MUST NOT extend
+// off the critical path via per-handler goroutines and MUST NOT extend
 // Emit latency. A bounded worker pool (default 4 workers, operator-configurable)
-// replaces the per-goroutine approach in the post-MVH worker-pool bead.
+// will replace the per-goroutine approach in the deferred worker-pool bead.
 //
 // # Per-run Drain coordination (hk-fx6zl)
 //
@@ -324,7 +324,7 @@ func NewBusImplWithWriter(registry *core.RedactionRegistry, writer *JSONLWriter)
 //     events are silently discarded). Record is called unconditionally — no nil-guard.
 //
 // This constructor is the preferred call site for daemon.Start when
-// MVH_ROADMAP row #9 dead-letter wiring is active.
+// EARLY_ROADMAP row #9 dead-letter wiring is active.
 //
 // The returned bus is unsealed; callers MUST call Subscribe for all consumers
 // before calling Seal (EV-009). The returned value satisfies [EventBus].
@@ -426,18 +426,18 @@ func (b *busImpl) maybeUpdateHWM(hwm core.EventID) {
 }
 
 // Emit applies EV-035 redaction to payload via the registry's
-// RedactionMiddleware, then appends the event to the JSONL log (stub at MVH),
+// RedactionMiddleware, then appends the event to the JSONL log (currently a stub),
 // then dispatches to matching registered consumers per EV-014a.
 //
 // Dispatch order (EV-014a):
 //
 //  1. Redaction via HC-031 + HC-032 registry (EV-035).
-//  2. JSONL append + fsync per durability class (EV-016). Deferred stub at MVH:
+//  2. JSONL append + fsync per durability class (EV-016). Deferred stub:
 //     file path not yet threaded through daemon.Config; follow-up bead adds wiring.
 //  3. Synchronous-consumer dispatch on the caller's goroutine — Emit blocks until
 //     the at-most-one synchronous consumer returns or errors (EV-010).
 //  4. Asynchronous and observer consumers are dispatched off the critical path
-//     via per-handler goroutines (MVH; post-MVH: bounded worker pool) and MUST
+//     via per-handler goroutines (later: bounded worker pool) and MUST
 //     NOT extend Emit latency (EV-014a).
 //
 // Spec ref: specs/event-model.md §6.1, §7.1, §4.2 EV-014a, §4.4 EV-035.
@@ -463,7 +463,7 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 	// Step 4a: build the complete EV-001 envelope. event_id and timestamp_wall
 	// are stamped here, inside the emitter, per EV-001. source_subsystem uses
 	// the eventbus package identifier; callers that need a subsystem-specific
-	// value should set it before dispatch (post-MVH daemon-watcher stamping per
+	// value should set it before dispatch (deferred daemon-watcher stamping per
 	// EV-002b will own this). schema_version is taken from the per-type registry
 	// per EV-028 so it matches the declared payload version for this event type.
 	eventID, idErr := b.idGen.Next()
@@ -530,8 +530,8 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 
 		default:
 			// Asynchronous and observer consumers run off the critical path
-			// (EV-014a / EV-011 / EV-012). At MVH a dedicated goroutine is
-			// launched per dispatch; post-MVH: replace with bounded worker pool
+			// (EV-014a / EV-011 / EV-012). A dedicated goroutine is
+			// launched per dispatch; later: replace with bounded worker pool
 			// (default 4 workers, operator-configurable per EV-014a).
 			sub := sub // capture loop variable
 			b.addGlobalDrainer()
@@ -540,7 +540,7 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 				// Panic recovery (hk-xvpwb): recover observer panics and record
 				// them to the dead-letter sink with reason "observer_panic". If
 				// the sink is nil, the panic is absorbed and logged nowhere
-				// (post-MVH: add structured logger fallback).
+				// (deferred: add structured logger fallback).
 				defer func() {
 					if r := recover(); r != nil {
 						// deadLetterSink is never nil (NoopDeadLetterSink when no sink configured).

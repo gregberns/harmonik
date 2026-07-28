@@ -147,11 +147,11 @@ A change to any layer takes effect at the next operator pause per CP-037, except
 |---|---|
 | Spec source | [operator-nfr.md §4.1 ON-004a], [handler-contract.md §4.2 HC-006] |
 | Knob | Mode applied to a dispatched run |
-| Precedence layer | Per-task `workflow:<mode>` bead label ▷ per-project policy (reserved; not populated at MVH) ▷ daemon default ▷ built-in fallback |
+| Precedence layer | Per-task `workflow:<mode>` bead label ▷ per-project policy (reserved; not yet populated) ▷ daemon default ▷ built-in fallback |
 | Default value | **`single`** (built-in fallback) |
 | Allowed enumeration | `{single, review-loop, dot}` |
 | Change-takes-effect | Per-task at claim time (resolved mode is sealed into Run record; immutable for run lifetime). Daemon default changes on next daemon start. |
-| Notes | The iteration cap for `review-loop` mode is hardcoded at 3 for MVH and is NOT operator-tunable per ON-013d. There MUST NOT be a `harmonik set-mode` command or mid-run mutation surface. Operators change a per-task value by editing the bead's `workflow:<mode>` label via `br update` BEFORE claim. |
+| Notes | The iteration cap for `review-loop` mode is hardcoded at 3 and is NOT operator-tunable per ON-013d. There MUST NOT be a `harmonik set-mode` command or mid-run mutation surface. Operators change a per-task value by editing the bead's `workflow:<mode>` label via `br update` BEFORE claim. |
 
 ---
 
@@ -289,9 +289,9 @@ A change to any layer takes effect at the next operator pause per CP-037, except
 | Knob | Interval for the background divergence-detection scan that runs independently of the startup-reconciliation pass |
 | Precedence layer | Operator-policy file (operator YAML) ▷ default |
 | Default value | **Hourly** (3600 seconds) |
-| Allowed range | Positive integer (seconds); post-MVH cadence tuning tracked in OQ-RC-004 |
+| Allowed range | Positive integer (seconds); cadence tuning tracked in OQ-RC-004 |
 | Change-takes-effect | Next daemon start |
-| Notes | The startup-reconciliation pass (RC-020a) runs unconditionally at daemon startup before `ready`. This background scan is the ongoing daemon-lifetime complement — it re-classifies any store divergences that arise during normal operation. MVH default is hourly; workloads with high-frequency commits may benefit from a shorter interval. |
+| Notes | The startup-reconciliation pass (RC-020a) runs unconditionally at daemon startup before `ready`. This background scan is the ongoing daemon-lifetime complement — it re-classifies any store divergences that arise during normal operation. The default is hourly; workloads with high-frequency commits may benefit from a shorter interval. |
 
 ---
 
@@ -374,6 +374,6 @@ A change to any layer takes effect at the next operator pause per CP-037, except
 
 **OQ-ON-001** (from operator-nfr.md): Location of this inventory — sibling file here (`specs/operator-nfr/config-inventory.md`) is the default-if-unresolved per OQ-ON-001. Migration to a top-level spec if the inventory grows beyond ~300 lines or serves multiple non-NFR owners.
 
-**OQ-RC-004**: Post-MVH background reconciliation scan cadence tuning — whether hourly is too coarse for high-commit-rate workloads.
+**OQ-RC-004**: Background reconciliation scan cadence tuning (deferred) — whether hourly is too coarse for high-commit-rate workloads.
 
-**OQ-ON-005b**: RTO nominal target relaxation vs fixture tightening — whether the 30s p95 nominal is achievable under realistic MVH loads.
+**OQ-ON-005b**: RTO nominal target relaxation vs fixture tightening — whether the 30s p95 nominal is achievable under realistic loads.

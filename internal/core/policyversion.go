@@ -8,7 +8,7 @@ import "fmt"
 //
 // The value identifies the policy snapshot under which an actor's decision
 // was made. The spec declares policy_version as a String with no closed enum
-// and no mandatory regex shape; MVH validation requires only non-empty.
+// and no mandatory regex shape; validation requires only non-empty.
 //
 // Future revisions may introduce a regex constraint via the amendment protocol
 // per [architecture.md §4.6].

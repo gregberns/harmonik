@@ -52,7 +52,7 @@ It is a separate spec from `execution-model.md` because control-points is the no
 - Reconciliation wall-clock budget integration — reconciliation.md §4.4 owns the per-reconciliation outer bound; this spec owns the Budget primitive only.
 - Policy document schema evolution (field-level migration paths) — deferred per OQ-CP-001.
 - Skill storage layout and injection mechanism — owned by [handler-contract.md §4.11]; this spec owns only the *declaration* surface.
-- Role names, MVH-required vs. deferred role list, and role semantics — owned by [architecture.md §4.8]; this spec owns permission schemas keyed by those role names.
+- Role names, the `mvh-required` vs. deferred role list, and role semantics — owned by [architecture.md §4.8]; this spec owns permission schemas keyed by those role names.
 - Event payload shapes for control-point-emitted events — owned by [event-model.md §6.3]; this spec owns the emission WHEN.
 - The DOT workflow grammar itself — owned by [execution-model.md §4.1].
 
@@ -164,7 +164,7 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 #### CP-013 — Hook lifecycle event types
 
-A Hook's `trigger` MUST match one of the declared lifecycle event types. The MVH-baseline Hook-trigger set MUST include: `on_agent_started`, `on_agent_output`, `on_agent_completed`, `on_timeout`, `on_review_required`, `on_transition_attempted`, `on_checkpoint_written`, `on_checkpoint_failed`. Hook-trigger names form a separate Hook-namespace that maps to [event-model.md §8] event types (e.g., `on_agent_started` subscribes to the `agent_started` event; `on_checkpoint_written` subscribes to the `checkpoint_written` event per [operator-nfr.md §4.5]); the `on_` prefix distinguishes Hook-subscription names from raw event-type names. Subsystems MAY declare additional Hook trigger types via the subsystem envelope per [architecture.md §4.4]; declared triggers are registered at daemon init. An unrecognized trigger fails registration.
+A Hook's `trigger` MUST match one of the declared lifecycle event types. The baseline Hook-trigger set MUST include: `on_agent_started`, `on_agent_output`, `on_agent_completed`, `on_timeout`, `on_review_required`, `on_transition_attempted`, `on_checkpoint_written`, `on_checkpoint_failed`. Hook-trigger names form a separate Hook-namespace that maps to [event-model.md §8] event types (e.g., `on_agent_started` subscribes to the `agent_started` event; `on_checkpoint_written` subscribes to the `checkpoint_written` event per [operator-nfr.md §4.5]); the `on_` prefix distinguishes Hook-subscription names from raw event-type names. Subsystems MAY declare additional Hook trigger types via the subsystem envelope per [architecture.md §4.4]; declared triggers are registered at daemon init. An unrecognized trigger fails registration.
 
 Tags: mechanism
 
@@ -240,7 +240,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### CP-024 — Budget accrual is per-chunk
 
-Every agent-output chunk MUST emit a `budget_accrual` event within the same handler tick that produces the chunk (bounded by the handler's chunk-emission cadence per [handler-contract.md §4.2]). Per-chunk granularity is explicitly retained for MVH per [event-model.md §8.9]; a future log-level filter MAY suppress chunk events at consumer boundaries without changing the emission contract.
+Every agent-output chunk MUST emit a `budget_accrual` event within the same handler tick that produces the chunk (bounded by the handler's chunk-emission cadence per [handler-contract.md §4.2]). Per-chunk granularity is explicitly retained per [event-model.md §8.9]; a future log-level filter MAY suppress chunk events at consumer boundaries without changing the emission contract.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
@@ -282,21 +282,21 @@ Every role declared in a policy document MUST carry a `permission_schema` with f
 
 Tags: mechanism
 
-#### CP-029 — MVH-required roles carry concrete default permission sets
+#### CP-029 — `mvh-required` roles carry concrete default permission sets
 
-For each MVH-required role (Planner, Builder, Reviewer per [architecture.md §4.8]), the policy layer MUST supply a concrete default permission set (read-only vs. write to specific directories, tool whitelist, `default_skills`, spawn-source roles, Hooks that may modify behavior). Default sets are shipped at harmonik init and are overridable by higher-precedence layers per §4.7.
+For each `mvh-required` role (Planner, Builder, Reviewer per [architecture.md §4.8]), the policy layer MUST supply a concrete default permission set (read-only vs. write to specific directories, tool whitelist, `default_skills`, spawn-source roles, Hooks that may modify behavior). Default sets are shipped at harmonik init and are overridable by higher-precedence layers per §4.7.
 
 Tags: mechanism
 
 #### CP-030 — Declared-but-deferred roles carry empty shells
 
-For each declared-but-deferred role (Researcher, Verifier, Scheduler, Governor per [architecture.md §4.8]), the policy layer MUST supply a permission shell with `allowed_tools = []`, `writable_paths = []`, and `default_skills = []`. Activating a deferred role in MVH requires a foundation amendment per [architecture.md §4.6]; shell declarations are activation-time-filled.
+For each declared-but-deferred role (Researcher, Verifier, Scheduler, Governor per [architecture.md §4.8]), the policy layer MUST supply a permission shell with `allowed_tools = []`, `writable_paths = []`, and `default_skills = []`. Activating a deferred role requires a foundation amendment per [architecture.md §4.6]; shell declarations are activation-time-filled.
 
 Tags: mechanism
 
 #### CP-031 — Default skills include the Beads-CLI skill
 
-Every MVH-required role's `default_skills` MUST include the Beads-CLI skill per [docs/foundation/components.md §10.9]. This is a concrete instance of the general skill-injection pattern in §4.11 and [handler-contract.md §4.11]; roles MAY declare additional defaults; nodes MAY declare additional `required_skills` per [execution-model.md §4.2].
+Every `mvh-required` role's `default_skills` MUST include the Beads-CLI skill per [docs/foundation/components.md §10.9]. This is a concrete instance of the general skill-injection pattern in §4.11 and [handler-contract.md §4.11]; roles MAY declare additional defaults; nodes MAY declare additional `required_skills` per [execution-model.md §4.2].
 
 Tags: mechanism
 
@@ -308,7 +308,7 @@ Tags: mechanism
 
 #### CP-033 — Freedom-profile tightest-wins semantics
 
-When multiple freedom profiles apply to a state (e.g., a role-default profile and a node-level `freedom_profile_ref`), the effective profile is the per-field intersection: for list-valued fields, set intersection; for integer-valued fields, the smaller value; for `model_tier`, the less-capable tier per the harmonik-level ordering declared in the `_registry.yaml` tier table (MVH ordering: `haiku < sonnet < opus`, where `<` means "less capable"). Enums without a declared ordering are not composable by tightest-wins; both layers MUST declare compatible values or registration fails. "Tightest wins" is deterministic and mechanism-tagged.
+When multiple freedom profiles apply to a state (e.g., a role-default profile and a node-level `freedom_profile_ref`), the effective profile is the per-field intersection: for list-valued fields, set intersection; for integer-valued fields, the smaller value; for `model_tier`, the less-capable tier per the harmonik-level ordering declared in the `_registry.yaml` tier table (ordering: `haiku < sonnet < opus`, where `<` means "less capable"). Enums without a declared ordering are not composable by tightest-wins; both layers MUST declare compatible values or registration fails. "Tightest wins" is deterministic and mechanism-tagged.
 
 Tags: mechanism
 
@@ -324,14 +324,14 @@ Tags: mechanism
 
 #### CP-034b — Policy expression evaluation MUST be bound by a harmonik-level cost ceiling
 
-Policy-expression evaluation MUST be performed with a harmonik-level cost ceiling that is NOT exposed as a policy-level knob. Two bounds MUST be set by the MVH implementation:
+Policy-expression evaluation MUST be performed with a harmonik-level cost ceiling that is NOT exposed as a policy-level knob. Two bounds MUST be set by the implementation:
 
 1. **Primary bound — AST step count (deterministic).** A per-evaluation AST-visit count ceiling. This is the normative bound; it is deterministic across runtime versions and host-clock speed. Where `expr-lang/expr` does not ship a step-counter, implementations MUST wrap the evaluator to count AST visits and abort on ceiling cross. `expr.MaxNodes(...)` (a compile-time ceiling on the AST's SIZE) is a complementary static bound but does NOT substitute for the step counter.
 2. **Secondary bound — wall-clock soft-cap (best-effort).** `expr.Timeout(...)` MUST also be set as a safety net for evaluators that bypass or under-count the primary bound. Wall-clock is non-deterministic across runtime / host-clock speed; it is a backstop, not a peer.
 
 A pathological expression that would otherwise stall evaluation MUST abort with a typed `ErrDeterministic` per [handler-contract.md §4.5]. The abort and the accompanying event emission are a durability pair: the `policy_expression_exceeded_cost` event MUST be emitted to the event bus and reach JSONL durability per [event-model.md §4.4] BEFORE the evaluator wrapper returns control to its caller. On a crash between abort and event durability, the replayer MUST treat absence of the event as unresolved — the replay must re-run the evaluator, rely on the cost ceiling to re-abort, and emit the event on the replay.
 
-The event payload MUST carry a `bound_fired` discriminator valued in `{ast_steps, wall_clock}` identifying which bound triggered the abort. Operators diagnosing cost-ceiling crossings depend on this discriminator; re-adding it post-MVH is a breaking event-payload change.
+The event payload MUST carry a `bound_fired` discriminator valued in `{ast_steps, wall_clock}` identifying which bound triggered the abort. Operators diagnosing cost-ceiling crossings depend on this discriminator; re-adding it later is a breaking event-payload change.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
@@ -491,7 +491,7 @@ Tags: mechanism
 
 #### CP-052 — Beads-CLI skill is the motivating default
 
-The Beads-CLI skill per [docs/foundation/components.md §10.9] MUST be a default skill in every MVH-required role per §4.6.CP-031. Any agent requiring Beads queries or status updates depends on its presence; node-level declaration supplements the role default when additional skills are needed.
+The Beads-CLI skill per [docs/foundation/components.md §10.9] MUST be a default skill in every `mvh-required` role per §4.6.CP-031. Any agent requiring Beads queries or status updates depends on its presence; node-level declaration supplements the role default when additional skills are needed.
 
 Tags: mechanism
 
@@ -515,7 +515,7 @@ Tags: mechanism
 
 #### CP-055 — `*_ref` family is typed and disambiguated
 
-DOT workflow attributes MUST use the typed `*_ref` family, each pinning a single category of policy target. The complete MVH family is:
+DOT workflow attributes MUST use the typed `*_ref` family, each pinning a single category of policy target. The complete family is:
 
 | Attribute        | Targets                                            | Required on              | Optional on                  |
 |------------------|----------------------------------------------------|--------------------------|------------------------------|
@@ -524,15 +524,15 @@ DOT workflow attributes MUST use the typed `*_ref` family, each pinning a single
 | `freedom_profile_ref` | a `freedom_profiles[]` entry                  | (never required)         | any node                     |
 | `budget_ref`     | a `budgets[]` entry (Budget-kind ControlPoint)     | (never required)         | any node, any edge           |
 | `skills_ref`     | a `skill_sets[]` entry per §6.3                    | (never required)         | any node                     |
-| `policy_ref`     | (DEPRECATED at MVH — see CP-056)                   | —                        | —                            |
+| `policy_ref`     | (DEPRECATED — see CP-056)                          | —                        | —                            |
 
 `skills_ref` is the typed disambiguation of the prior `policy_ref → skill_sets[]` overload identified in pass-3 research finding D14. Under D3 Framing A, attribute-based binding is the sole rail for policy attachment to graph elements; a typed family is required to keep the binding deterministic and to keep workflow-ingest's reachability AST-walker (§4.8.CP-040a item 4) free of category ambiguity.
 
 Tags: mechanism
 
-#### CP-056 — `policy_ref` is deprecated at MVH; typed refs replace it
+#### CP-056 — `policy_ref` is deprecated; typed refs replace it
 
-The `policy_ref` attribute named in legacy text of §4.7.CP-036 MUST NOT appear in MVH-conformant workflows. Every prior `policy_ref` usage maps onto exactly one typed attribute in the CP-055 family: a `policy_ref` whose target was a `gates[]` entry MUST be rewritten as `gate_ref`; a `policy_ref` whose target was a `freedom_profiles[]` entry MUST be rewritten as `freedom_profile_ref`; a `policy_ref` whose target was a `skill_sets[]` entry MUST be rewritten as `skills_ref`. Workflow-ingest MUST reject any DOT attribute named `policy_ref` with `ErrDeterministic`; the rejection message MUST name the typed replacement attribute(s) the author should use.
+The `policy_ref` attribute named in legacy text of §4.7.CP-036 MUST NOT appear in conformant workflows. Every prior `policy_ref` usage maps onto exactly one typed attribute in the CP-055 family: a `policy_ref` whose target was a `gates[]` entry MUST be rewritten as `gate_ref`; a `policy_ref` whose target was a `freedom_profiles[]` entry MUST be rewritten as `freedom_profile_ref`; a `policy_ref` whose target was a `skill_sets[]` entry MUST be rewritten as `skills_ref`. Workflow-ingest MUST reject any DOT attribute named `policy_ref` with `ErrDeterministic`; the rejection message MUST name the typed replacement attribute(s) the author should use.
 
 This is a breaking change to §4.7.CP-036's prose enumeration of valid `*_ref` attributes; the CP-036 normative statement (DOT attributes resolve to registered names) is unchanged in substance — only the enumerated list is updated. No v1 DOT corpus exists in production (phase-3-dot is the first wire-up of DOT mode), so the migration cost is zero.
 
@@ -566,7 +566,7 @@ Tags: mechanism
 
 #### CP-059 — Egress whitelist governs agent network access per policy
 
-A role's `permission_schema.egress_whitelist` declares the domain patterns the policy permits for outbound network access from agents assigned to that role. The field is optional; when absent (or `None` in the resolved `PermissionSchema`), egress is unrestricted — equivalent to the pre-ON-025 default, preserving backward compatibility. An explicitly empty list (`[]`) means deny all network egress. Domain patterns are glob-style strings; a bare hostname matches that hostname only; a `*` wildcard matches any single label (e.g., `*.anthropic.com` matches `api.anthropic.com` but NOT `foo.bar.anthropic.com`); a double wildcard `**` matches any number of labels (e.g., `**.anthropic.com` matches at any depth). The resolved `egress_whitelist[]` value from the role's `PermissionSchema` MUST be propagated into `LaunchSpec.egress_whitelist` at claim time per [handler-contract.md §4.11.HC-048b]; the handler enforces the list during skill provisioning. Network egress by the agent process at runtime (beyond provisioning) is governed by the same whitelist; enforcement at that level is owned by the sandbox subsystem (S06) and is deferred post-MVH; this spec states the policy-surface obligation.
+A role's `permission_schema.egress_whitelist` declares the domain patterns the policy permits for outbound network access from agents assigned to that role. The field is optional; when absent (or `None` in the resolved `PermissionSchema`), egress is unrestricted — equivalent to the pre-ON-025 default, preserving backward compatibility. An explicitly empty list (`[]`) means deny all network egress. Domain patterns are glob-style strings; a bare hostname matches that hostname only; a `*` wildcard matches any single label (e.g., `*.anthropic.com` matches `api.anthropic.com` but NOT `foo.bar.anthropic.com`); a double wildcard `**` matches any number of labels (e.g., `**.anthropic.com` matches at any depth). The resolved `egress_whitelist[]` value from the role's `PermissionSchema` MUST be propagated into `LaunchSpec.egress_whitelist` at claim time per [handler-contract.md §4.11.HC-048b]; the handler enforces the list during skill provisioning. Network egress by the agent process at runtime (beyond provisioning) is governed by the same whitelist; enforcement at that level is owned by the sandbox subsystem (S06) and is deferred; this spec states the policy-surface obligation.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -812,7 +812,7 @@ RECORD PermissionSchema:
     writable_paths       : List<String>          -- workspace-relative globs
     readable_paths       : List<String>          -- default ["**"]
     model_tier           : String | None
-    default_skills       : List<String>          -- MUST include "beads-cli" for MVH roles (§4.6.CP-031)
+    default_skills       : List<String>          -- MUST include "beads-cli" for mvh-required roles (§4.6.CP-031)
     allowed_hooks        : List<String>          -- Hook names that may modify behavior
     invocable_by         : List<String>          -- role names permitted to spawn this role
     egress_whitelist     : List<String> | None   -- domain patterns permitted for agent network egress; None = unrestricted; [] = deny all (§4.11.CP-059)
@@ -939,7 +939,7 @@ type-check   : at workflow-ingest          -- expressions MUST type-check agains
 
 #### 6.4.1 Inlined key field paths
 
-The full `Run`, `Outcome`, `Event`, and `Edge` shapes are defined in other specs (cross-references above). Policy authors MUST be able to write common expressions without cross-spec reading; the following key paths are **stable and canonical** at the MVH schema version. A field missing from this table is NOT forbidden — authors MAY dereference any path the full shape documents — but the following paths are the 20 most-used and are guaranteed to exist and to carry the declared types.
+The full `Run`, `Outcome`, `Event`, and `Edge` shapes are defined in other specs (cross-references above). Policy authors MUST be able to write common expressions without cross-spec reading; the following key paths are **stable and canonical** at the current schema version. A field missing from this table is NOT forbidden — authors MAY dereference any path the full shape documents — but the following paths are the 20 most-used and are guaranteed to exist and to carry the declared types.
 
 ```
 -- Run (see [execution-model.md §6.1] for full shape)
@@ -978,12 +978,12 @@ One expression grammar, four return conventions. Authors MUST honor the conventi
 
 | Kind | Expression return shape | Interpretation |
 |---|---|---|
-| **Gate** (evaluator expression) | `Bool` | `true` → `allow`; `false` → `deny` using the record's declared `reason`. Structured returns are not supported at MVH. |
+| **Gate** (evaluator expression) | `Bool` | `true` → `allow`; `false` → `deny` using the record's declared `reason`. Structured returns are not supported. |
 | **Gate** (`subscription_filter`-style filters if added) | `Bool` | Filter predicate. |
 | **Hook** (evaluator expression) | `SideEffect` struct or `Null` | `Null` → no-op; a `SideEffect` struct is dispatched per §4.3.CP-016. Struct literal syntax follows the §6.1.6 `SideEffect` shape. |
 | **Hook** (`subscription_filter`) | `Bool` | Predicate filter on event payload. |
 | **Guard** (evaluator expression) | `List<Edge>` | Reordered edge list that is a subset or permutation of the input `edges` binding per §4.4.CP-018. |
-| **Budget** (any expression) | N/A at MVH | Budget evaluation is not authored in `expr-lang`; Budget enforcement is entirely mechanism-tagged per §4.5. |
+| **Budget** (any expression) | N/A | Budget evaluation is not authored in `expr-lang`; Budget enforcement is entirely mechanism-tagged per §4.5. |
 
 > NOTE: Expressions MUST be type-checked at registration against the environment. Dereferencing `event` outside a Hook-context expression (where `event` is `None`) is a type-check error detected at ingest, not a runtime panic. Dereferencing `edges` outside a Guard-context expression is also a type-check error.
 
@@ -1119,7 +1119,7 @@ Not applicable as a separate taxonomy; ControlPoint failures map onto the execut
 - **[architecture.md §4.2]** — ZFC rule; Guard mechanism-only restriction (§4.4.CP-020) is the ZFC enforcement point at the selection-logic layer.
 - **[architecture.md §4.4]** — subsystem envelope; registration path consumes it (§4.9.CP-044).
 - **[architecture.md §4.6]** — amendment protocol; declared-but-deferred role activation requires it (§4.6.CP-030).
-- **[architecture.md §4.8]** — role taxonomy; role names and MVH-required vs. deferred classification are owned there.
+- **[architecture.md §4.8]** — role taxonomy; role names and the `mvh-required` vs. deferred classification are owned there.
 - **[architecture.md §4.9]** — centralized-controller principle; the three owners (S01, S02, S05) embody it.
 - **[architecture.md §4.10]** — three-artifact separation; DOT references YAML by name (§4.7.CP-036).
 - **[execution-model.md §4.1]** — Run, State, Transition, Outcome types; policy expressions evaluate against them (§4.7.CP-034).
@@ -1155,9 +1155,9 @@ Not applicable as a separate taxonomy; ControlPoint failures map onto the execut
 
 ### 10.1 Conformance profiles
 
-**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement CP-001 through CP-058 (including CP-026a, CP-034b, CP-038a, and CP-040a) and every invariant CP-INV-001 through CP-INV-003. No requirement is deferred at MVH.
+**Core.** An implementation conforming to Core MUST pass every requirement CP-001 through CP-058 (including CP-026a, CP-034b, CP-038a, and CP-040a) and every invariant CP-INV-001 through CP-INV-003. No requirement is deferred.
 
-**Post-MVH extensions.** Declared-but-deferred role activation (§4.6.CP-030) is an additive extension requiring foundation amendment; not required to claim Core MVH conformance.
+**Deferred extensions.** Declared-but-deferred role activation (§4.6.CP-030) is an additive extension requiring foundation amendment; not required to claim Core conformance.
 
 ### 10.2 Test-surface obligations
 
@@ -1180,7 +1180,7 @@ Migration to `[testing.md §<layer>]` cross-references occurs within one revisio
 
 ### 10.3 Excluded conformance claims
 
-- This spec does NOT grant conformance over: Hook dispatch loop internals (owned by the S05 subsystem spec); Gate and Guard invocation mechanics inside the edge cascade (owned by the S01 subsystem spec per [execution-model.md §4.10]); the reconciliation wall-clock budget's outer-bound enforcement (owned by reconciliation/spec.md §4.4); skill package storage and injection mechanism (owned by [handler-contract.md §4.11]); event payload shapes (owned by [event-model.md §6.3]); role names and MVH-required vs. deferred classification (owned by [architecture.md §4.8]).
+- This spec does NOT grant conformance over: Hook dispatch loop internals (owned by the S05 subsystem spec); Gate and Guard invocation mechanics inside the edge cascade (owned by the S01 subsystem spec per [execution-model.md §4.10]); the reconciliation wall-clock budget's outer-bound enforcement (owned by reconciliation/spec.md §4.4); skill package storage and injection mechanism (owned by [handler-contract.md §4.11]); event payload shapes (owned by [event-model.md §6.3]); role names and the `mvh-required` vs. deferred classification (owned by [architecture.md §4.8]).
 - This spec does NOT specify `expr-lang/expr` version pinning or specific numeric sandboxing limits; those are deferred per OQ-CP-003 and are bounded by the CP-034b requirement that the implementation set `expr.MaxNodes` and `expr.Timeout` to harmonik-level (non-policy-tunable) values.
 
 ## 11. Open questions
@@ -1189,14 +1189,14 @@ Migration to `[testing.md §<layer>]` cross-references occurs within one revisio
 
 Question: The §4.7.CP-038 schema-version contract specifies N-1 readability. Policy documents are operator-authored; a richer migration story (field renames via alias map, deprecation windows, per-field migrations) may be needed as the foundation matures.
 Owner: foundation-author
-Blocks: none (MVH defaults to N-1 additive-only)
+Blocks: none (defaults to N-1 additive-only)
 Default-if-unresolved: N-1 additive-only. Aliases and renames are breaking and require a migration release.
 
 #### OQ-CP-002 — Migrate test-obligation prose to testing.md references
 
 Question: §10.2 currently names test obligations in prose. The template §10.2 expects cross-references to `[testing.md §<layer>]` once testing.md lands.
 Owner: foundation-author
-Blocks: none (MVH prose obligations are in place)
+Blocks: none (prose obligations are in place)
 Default-if-unresolved: Keep prose obligations; migrate within one revision cycle after testing.md is finalized.
 
 #### OQ-CP-003 — `expr-lang/expr` version-pin policy
@@ -1211,7 +1211,7 @@ Default-if-unresolved: Pin to a specific release; a version bump is a harmonik-l
 Question: §4.8.CP-040 writes cognition-tagged Hook verdicts to `.harmonik/hooks/<run_id>/...` on the run's task branch. Hooks may fire on events unscoped to a run (e.g., daemon-lifecycle events). Where do their verdicts persist?
 Owner: foundation-author
 Blocks: CP-040 completeness for unscoped Hooks
-Default-if-unresolved: Daemon-scoped Hooks with cognition-tagged evaluators are forbidden in MVH; if needed, the verdict persists to a daemon-scoped harmonik-repo branch under `.harmonik/daemon/hooks/...`. Revisit when a concrete daemon-scoped cognition Hook use-case appears.
+Default-if-unresolved: Daemon-scoped Hooks with cognition-tagged evaluators are forbidden; if needed, the verdict persists to a daemon-scoped harmonik-repo branch under `.harmonik/daemon/hooks/...`. Revisit when a concrete daemon-scoped cognition Hook use-case appears.
 
 #### OQ-CP-005 — Cross-policy reference resolution order
 
@@ -1222,9 +1222,9 @@ Default-if-unresolved: All policies load in a single startup phase per §4.7 pre
 
 #### OQ-CP-006 — Mechanism-tagged Gate drift envelope: re-use vs. separate hash
 
-Question: CP-038a defines a separate envelope hash for mechanism-tagged Gates (three inputs) parallel to CP-040a's cognition envelope hash (five inputs). Should the two hashes share a record shape, or remain separate types? MVH ships them as separate types (no shared `GateEnvelopeHash` record) to keep cognition's persisted-verdict pathway visually distinct from mechanism's per-replay-attempt recompute pathway.
+Question: CP-038a defines a separate envelope hash for mechanism-tagged Gates (three inputs) parallel to CP-040a's cognition envelope hash (five inputs). Should the two hashes share a record shape, or remain separate types? harmonik ships them as separate types (no shared `GateEnvelopeHash` record) to keep cognition's persisted-verdict pathway visually distinct from mechanism's per-replay-attempt recompute pathway.
 Owner: foundation-author
-Blocks: none (MVH defaults to separate types)
+Blocks: none (defaults to separate types)
 Default-if-unresolved: Keep separate; revisit if a third Kind develops a hash discipline.
 
 ## 12. Revision history

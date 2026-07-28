@@ -226,7 +226,7 @@ func (b PolicyCostBound) Valid() bool {
 // control-points.md §4.7.CP-034b).
 //
 // This field is load-bearing per CP-034b: `ast_steps` bound => deterministic;
-// `wall_clock` bound => best-effort. Re-adding or renaming post-MVH would be a
+// `wall_clock` bound => best-effort. Re-adding or renaming it later would be a
 // breaking event-payload change per §8.2.12 spec note.
 type PolicyEvalIODeterminism string
 
@@ -259,7 +259,7 @@ func (d PolicyEvalIODeterminism) Valid() bool {
 // Emitted by the control-points subsystem (S02) when a policy expression
 // evaluation aborts because it exceeded the cost ceiling per CP-034b. The
 // bound_fired and io_determinism fields are load-bearing per CP-034b and MUST
-// NOT be removed or renamed post-MVH.
+// NOT be removed or renamed later.
 //
 // # Payload fields (event-model.md §8.2.12 §6.3)
 //
@@ -284,14 +284,14 @@ type PolicyExpressionExceededCostPayload struct {
 
 	// BoundFired identifies which CP-034b cost bound triggered the abort.
 	// Required; must be a valid PolicyCostBound constant.
-	// Load-bearing per CP-034b — MUST NOT be removed or renamed post-MVH.
+	// Load-bearing per CP-034b — MUST NOT be removed or renamed later.
 	BoundFired PolicyCostBound `json:"bound_fired"`
 
 	// IODeterminism is the per-abort io-determinism tag per CP-034b.
 	// Must be PolicyEvalIODeterminismDeterministic when BoundFired=ast_steps,
 	// and PolicyEvalIODeterminismBestEffort when BoundFired=wall_clock.
 	// Required; must be a valid PolicyEvalIODeterminism constant.
-	// Load-bearing per CP-034b — MUST NOT be removed or renamed post-MVH.
+	// Load-bearing per CP-034b — MUST NOT be removed or renamed later.
 	IODeterminism PolicyEvalIODeterminism `json:"io_determinism"`
 
 	// AbortedAt is the RFC 3339 wall-clock timestamp at which the evaluation

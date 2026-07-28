@@ -10,7 +10,7 @@ import "github.com/gregberns/harmonik/internal/core"
 // handlercontract.DeadLetterSink and core.DeadLetterSink are interchangeable
 // in all contexts — no conversion is required.
 //
-// Spec ref: MVH_ROADMAP.md row #9.
+// Spec ref: EARLY_ROADMAP.md row #9.
 // Bead ref: hk-qyue9.
 type DeadLetterSink = core.DeadLetterSink
 

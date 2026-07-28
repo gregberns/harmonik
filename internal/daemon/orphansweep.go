@@ -228,7 +228,7 @@ type OrphanSweepConfig struct {
 
 	// BeadProvenance is the project-ownership signal for the bead-reset
 	// sweep. Nil → ownership is established solely by the local
-	// claim-intent fallback (the MVH default). Production callers wire a
+	// claim-intent fallback (the default). Production callers wire a
 	// non-nil implementation once Beads's audit-log actor field carries
 	// project_hash (or an alternate per-project provenance signal lands).
 	BeadProvenance lifecycle.ProvenanceChecker

@@ -4,7 +4,7 @@ import "fmt"
 
 // Kind is the discriminator for the ControlPoint payload envelope
 // (control-points.md §6.1 ENUM Kind, §4.1.CP-001, v0.3.2).
-// The enum is closed at MVH; future variants extend via the amendment
+// The enum is closed; future variants extend via the amendment
 // protocol per [architecture.md §4.6].
 //
 // Kind parameterizes a ControlPoint into one of four surfaces: Gate, Hook,
@@ -38,7 +38,7 @@ const (
 	KindBudget Kind = "Budget"
 )
 
-// Valid reports whether k is one of the four declared Kind constants at MVH.
+// Valid reports whether k is one of the four declared Kind constants.
 // Unknown values are NOT tolerated — a reader observing an unknown Kind MUST
 // reject the ControlPoint at registration per [control-points.md §4.9].
 func (k Kind) Valid() bool {
@@ -73,7 +73,7 @@ func (k Kind) AllowsCognition() bool {
 
 // MarshalText implements encoding.TextMarshaler so Kind serialises correctly
 // in JSON and YAML policy documents (control-points.md §6.3).
-// It rejects any value that is not one of the four declared constants at MVH.
+// It rejects any value that is not one of the four declared constants.
 func (k Kind) MarshalText() ([]byte, error) {
 	if !k.Valid() {
 		return nil, fmt.Errorf("kind: unknown value %q", string(k))
@@ -82,7 +82,7 @@ func (k Kind) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
-// It rejects any value that is not one of the four declared constants at MVH.
+// It rejects any value that is not one of the four declared constants.
 // Per control-points.md §4.9, unknown Kind values must be rejected at registration;
 // callers MUST NOT silently degrade to a default kind.
 func (k *Kind) UnmarshalText(text []byte) error {

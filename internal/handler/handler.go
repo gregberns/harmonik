@@ -1,4 +1,4 @@
-// Package handler — Handler.Launch (MVH_ROADMAP row #7).
+// Package handler — Handler.Launch (EARLY_ROADMAP row #7).
 //
 // Handler is the daemon-side entry point for spawning a Claude Code (or twin)
 // subprocess, wiring its stdout to the per-session Watcher, and returning both
@@ -22,7 +22,7 @@
 //     sess.Stdout().
 //  6. Returns (Session, *Watcher, nil).
 //
-// Cite: MVH_ROADMAP.md row #7; specs/handler-contract.md §4.3.HC-011, §4.5, §4.10.HC-044.
+// Cite: EARLY_ROADMAP.md row #7; specs/handler-contract.md §4.3.HC-011, §4.5, §4.10.HC-044.
 package handler
 
 import (
@@ -222,8 +222,8 @@ type handler struct {
 // All three arguments are required (non-nil); NewHandler panics if any is nil —
 // that would be a daemon-configuration defect with no recovery path.
 //
-// registry is stored as a latent seam for post-MVH adapter-selection in Launch;
-// it is not consulted at MVH (hk-gql20.16).
+// registry is stored as a latent seam for adapter-selection in Launch, which is
+// not yet wired; it is not consulted today (hk-gql20.16).
 func NewHandler(publisher handlercontract.EventEmitter, deadLetter handlercontract.WatcherDeadLetterSink, registry *handlercontract.AdapterRegistry) Handler {
 	if publisher == nil {
 		panic("handler: NewHandler: publisher is nil — daemon defect")

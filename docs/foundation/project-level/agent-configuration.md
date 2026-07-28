@@ -1,6 +1,6 @@
 # Agent Configuration
 
-> How coding agents (Claude Code sessions primarily; Pi and others post-MVH) are configured to build harmonik consistently across many sessions. This doc is the contract between the human and any agent: agents MUST read and follow it; reviewers MUST check that new work conforms. Cross-refs: `subsystem-organization.md` (package layout), `testing.md` (test tiers), `docs/methodology/AGENT_GUIDE.md` (knowledge-base navigation), `docs/components/internal/kerf.md` (planning).
+> How coding agents (Claude Code sessions primarily; Pi and others later) are configured to build harmonik consistently across many sessions. This doc is the contract between the human and any agent: agents MUST read and follow it; reviewers MUST check that new work conforms. Cross-refs: `subsystem-organization.md` (package layout), `testing.md` (test tiers), `docs/methodology/AGENT_GUIDE.md` (knowledge-base navigation), `docs/components/internal/kerf.md` (planning).
 
 ## Decisions
 
@@ -19,7 +19,7 @@ Repo-root AGENTS.md stays under 120 lines (CLAUDE.md is a symlink → AGENTS.md;
 
 ## Per-directory AGENTS.md (with CLAUDE.md symlink) — when to use
 
-Only when a directory has rules the repo-root does not cover. Each per-dir `AGENTS.md` has a sibling `CLAUDE.md` symlink (same canonical/symlink pattern as the repo root). MVH list (create lazily as each lands): `internal/core/AGENTS.md` (no internal imports); `internal/daemon/AGENTS.md` (composition root only); `test/scenario/AGENTS.md` (scenario YAML shape + harness invocation); `specs/AGENTS.md` (normative; edit via `kerf finalize`); `.kerf/AGENTS.md` (gitignored process artifacts; not source of truth). Agents MUST NOT create these speculatively; one concrete local-only rule required.
+Only when a directory has rules the repo-root does not cover. Each per-dir `AGENTS.md` has a sibling `CLAUDE.md` symlink (same canonical/symlink pattern as the repo root). Current list (create lazily as each lands): `internal/core/AGENTS.md` (no internal imports); `internal/daemon/AGENTS.md` (composition root only); `test/scenario/AGENTS.md` (scenario YAML shape + harness invocation); `specs/AGENTS.md` (normative; edit via `kerf finalize`); `.kerf/AGENTS.md` (gitignored process artifacts; not source of truth). Agents MUST NOT create these speculatively; one concrete local-only rule required.
 
 ## CLAUDE.md symlink — implementation
 
@@ -67,7 +67,7 @@ The `CONSTITUTION.md` at repo root lists immutable project foundations. Edits re
 - The three-store model (git / Beads / JSONL) and git-wins-on-completion arbitration.
 - Centralized controller (daemon owns workflow state; Gas Town polecat model rejected).
 - Three-artifact separation: spec / workflow graph / bead (no "feature" primitive).
-- Direct-to-main + agent-reviewer-every-commit (MVH, revisit when product has real users).
+- Direct-to-main + agent-reviewer-every-commit (revisit when the product has real users).
 - Deterministic skeleton + probabilistic organs (daemon in Go, cognition in agents).
 - The 10 locked decisions from 2026-04-19 + the 4 candidate decisions from 2026-04-20/21.
 - Pointer to full spec corpus in `docs/foundation/` and `specs/` (once `kerf finalize` populates it).
@@ -116,7 +116,7 @@ The `CONSTITUTION.md` at repo root lists immutable project foundations. Edits re
 
 ### Commit creation (direct-to-main)
 
-- **No PRs at this phase** (per `build-practices.md`). MVH and post-MVH until real users adopt the product, work lands via direct commit to `main`. PR workflow returns when the product has real users or multiple human contributors.
+- **No PRs** (per `build-practices.md`). Until real users adopt the product, work lands via direct commit to `main`. PR workflow returns when the product has real users or multiple human contributors.
 - **Commit message** follows Conventional Commits per `build-practices.md §Commit conventions`. Subject rules unchanged; non-trivial commits include a body with Why / What / Spec alignment / Test plan / Risk sections (same information previously required in PR bodies).
 - **Required trailers**: `Refs:` (bead-id or kerf-codename) for tracked work items; `Co-Authored-By:` for agent-assisted commits; on every non-trivial commit:
   - `Reviewed-By: agent-reviewer` (presence marker)
@@ -200,7 +200,7 @@ On `kerf finalize`, spec lands in `specs/`, and the finalize skill runs `agent-c
 
 **Automatic Tier 2 trigger on foundation drift.** Changes to any of `quality-checks.md` / `subsystem-organization.md` / `testing.md` / `build-practices.md` automatically trigger a Tier 2 review cycle to keep this doc's references current (skill names, make-target names, protected-file paths, toolchain versions). The reviewer subagent receives a diff of the changed foundation doc(s) alongside the current `agent-configuration.md`.
 
-Failure mode this prevents: rules that exist only in one agent's head, rediscovered by the next agent. Failure mode this does NOT prevent: agents ignoring the config entirely — which is a process-compliance problem, addressed by P05 and by hook-enforcement post-MVH.
+Failure mode this prevents: rules that exist only in one agent's head, rediscovered by the next agent. Failure mode this does NOT prevent: agents ignoring the config entirely — which is a process-compliance problem, addressed by P05 and, later, by hook enforcement.
 
 ## ⚑ Assumptions worth user's eye
 
@@ -209,12 +209,12 @@ Failure mode this prevents: rules that exist only in one agent's head, rediscove
 3. **⚑ `agent-config-reviewer` skill is the enforcement mechanism.** A skill reviewing the skills/rules config is recursive; the skill itself is the thing most likely to rot. Main-agent self-check at Tier 1 is the fallback.
 4. **⚑ Tier 2 review at every kerf pass advance may be excessive.** Early passes (problem-space, decompose) rarely generate config changes. If Tier 2 becomes noise, gate it to passes that touched code or specs.
 5. **⚑ Memory is user-scoped, repo is multi-user.** A second human working on harmonik sees `CLAUDE.md` but not the user's memory. Durable facts in memory that the team needs MUST be promoted to `docs/`. Enforcing this is on the human, not the agent.
-6. **⚑ Pre-commit hook blocking `--no-verify`.** No mechanical enforcement in git itself; this is a rule agents obey. A pre-receive hook on the remote would enforce mechanically — post-MVH concern.
+6. **⚑ Pre-commit hook blocking `--no-verify`.** No mechanical enforcement in git itself; this is a rule agents obey. A pre-receive hook on the remote would enforce mechanically — deferred.
 
 ## Deferred / follow-up
 
-- **Hook-based enforcement (post-MVH).** `Gas Town Hooks` (concept I01) lets us enforce rules mechanically via Claude Code hooks — e.g., "before commit, verify trailer format." Register hooks once the hook-system subsystem (S05) has a concrete spec.
+- **Hook-based enforcement (deferred).** `Gas Town Hooks` (concept I01) lets us enforce rules mechanically via Claude Code hooks — e.g., "before commit, verify trailer format." Register hooks once the hook-system subsystem (S05) has a concrete spec.
 - **Cross-agent skill sharing.** When Pi lands, audit which skills translate across agent types vs need per-handler variants. Initial assumption: `beads-cli` and `agent-comms` are universal; `agent-config-reviewer` may need per-handler system-prompt variants.
 - **Skill versioning.** If a skill's semantics change, in-flight runs may have the old version. Once `required_skills[]` is versioned (handler-contract §4.11), revisit here.
 - **Agent-config drift detector.** A nightly CI job that runs `agent-config-reviewer` against recent session logs and opens a PR if the config is stale. Requires CASS (S08) to be live.
-- **Multi-agent concurrent editing of this doc.** When two sessions both propose config edits, merge strategy. Unlikely pre-MVH (single-run concurrency); revisit when parallel runs land.
+- **Multi-agent concurrent editing of this doc.** When two sessions both propose config edits, merge strategy. Unlikely (single-run concurrency); revisit when parallel runs land.

@@ -48,7 +48,7 @@ import "github.com/google/uuid"
 // It is reconstructed on restart from the run's last durable checkpoint
 // (which records that the run is still in the source state) combined with the
 // emitted gate_denied event payload per event-model.md §8.2. There is no
-// separate ".harmonik/gate-pending/<run_id>.json" file at MVH.
+// separate ".harmonik/gate-pending/<run_id>.json" file.
 type GatePendingRecord struct {
 	// RunID identifies the parked run.
 	// Required (must not be zero UUID).

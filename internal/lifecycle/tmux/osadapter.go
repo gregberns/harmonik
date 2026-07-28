@@ -24,7 +24,7 @@ import (
 // tmux subprocess; no shared mutable state).
 //
 // Spec ref: process-lifecycle.md §4.5 PL-021b — direct-tmux substrate
-// implementation for the MVH.
+// implementation.
 type OSAdapter struct {
 	// runner is the seam for exec.CommandContext calls. nil defaults to LocalRunner.
 	runner CommandRunner

@@ -2,10 +2,10 @@ package core
 
 // PolicyVerdict is the result of a PolicyEngine evaluation.
 //
-// At MVH the verdict is always Permitted with no constraints
-// (NoOpPolicyEngine). When the control-points subsystem lands post-MVH, the
-// real evaluator replaces NoOpPolicyEngine at the composition root; the
-// orchestrator dispatcher remains unchanged.
+// The verdict is always Permitted with no constraints (NoOpPolicyEngine).
+// When the control-points subsystem lands, the real evaluator replaces
+// NoOpPolicyEngine at the composition root; the orchestrator dispatcher
+// remains unchanged.
 //
 // Spec ref: specs/control-points.md (fully deferred per bootstrap-subset.md §1;
 // 0 of 85 CP beads are in the bootstrap subset). See also
@@ -19,7 +19,7 @@ type PolicyVerdict struct {
 	// NoOpPolicyEngine always returns nil (no constraints).
 	//
 	// TODO(hk-a8bg): replace with a typed ConstraintSet per
-	// specs/control-points.md §4.2 when the CP subsystem lands post-MVH.
+	// specs/control-points.md §4.2 when the CP subsystem lands.
 	Constraints map[string]any
 }
 
@@ -38,10 +38,10 @@ type PolicyVerdict struct {
 // via the Registry() surface. The Registry is the single source of truth for
 // registered ControlPoints within a daemon (CP-045).
 //
-// At MVH the composition root wires NoOpPolicyEngine, which always returns
+// The composition root wires NoOpPolicyEngine, which always returns
 // {Permitted: true, Constraints: nil} and holds an empty registry. When the
-// control-points subsystem (hk-a8bg) lands post-MVH, the composition root
-// substitutes S02PolicyEngine; the EM dispatcher remains unchanged.
+// control-points subsystem (hk-a8bg) lands, the composition root substitutes
+// S02PolicyEngine; the EM dispatcher remains unchanged.
 //
 // Spec ref: docs/foundation/phase-1-readiness-gap-analysis.md §A5;
 // specs/control-points.md §4.2 (Gate), §4.4 (Guard), §4.9.CP-043,
@@ -65,8 +65,8 @@ type PolicyEngine interface {
 	// returned Registry as read-only after daemon init; writes during the main
 	// loop violate the registration-sequence invariant of §7.1.
 	//
-	// NoOpPolicyEngine returns an empty (always-empty) registry because at MVH
-	// no policy documents are loaded. S02PolicyEngine returns the populated
+	// NoOpPolicyEngine returns an empty (always-empty) registry because no
+	// policy documents are loaded. S02PolicyEngine returns the populated
 	// registry built from policy YAML during daemon startup.
 	Registry() Registry
 }
@@ -74,31 +74,31 @@ type PolicyEngine interface {
 // PolicyEvalContext carries the run-scoped inputs the PolicyEngine evaluates
 // against.
 //
-// At MVH this is an empty record because NoOpPolicyEngine ignores all inputs.
+// This is an empty record because NoOpPolicyEngine ignores all inputs.
 // When the CP subsystem (hk-a8bg) lands, this expands to the full
 // specs/control-points.md §6.4 environment (run, outcome, event, context,
 // policy_meta).
 //
-// TODO(hk-a8bg): expand to the full CP §6.4 environment record post-MVH.
+// TODO(hk-a8bg): expand to the full CP §6.4 environment record later.
 //
 // Spec ref: specs/control-points.md §6.4 (PolicyExpression evaluation
 // environment); docs/foundation/phase-1-readiness-gap-analysis.md §A5.
 type PolicyEvalContext struct{}
 
-// NoOpPolicyEngine is the production PolicyEngine binding for MVH.
+// NoOpPolicyEngine is the current production PolicyEngine binding.
 //
 // It always returns {Permitted: true, Constraints: nil} — "permitted, no
 // constraints." It is a first-class production value, NOT a test double or a
 // nil sentinel. The orchestrator dispatcher calls Evaluate on every gate and
 // guard without branching on the engine's concrete type, satisfying SH-018.
 //
-// Registry() returns an empty MapRegistry because at MVH no policy documents
-// are loaded. Callers querying the registry at MVH will always receive empty
-// results, which is correct: no ControlPoints are registered.
+// Registry() returns an empty MapRegistry because no policy documents are
+// loaded. Callers querying the registry will always receive empty results,
+// which is correct: no ControlPoints are registered.
 //
 // Wiring: the composition root (cmd/harmonik/main.go) constructs a
 // NoOpPolicyEngine and supplies it to the EM dispatcher as a PolicyEngine
-// interface value. When the CP subsystem lands post-MVH, the composition root
+// interface value. When the CP subsystem lands, the composition root
 // substitutes S02PolicyEngine; no dispatcher changes are required.
 //
 // Spec ref: docs/foundation/phase-1-readiness-gap-analysis.md §A5;
@@ -113,7 +113,7 @@ func (NoOpPolicyEngine) Evaluate(_ PolicyEvalContext) PolicyVerdict {
 
 // Registry implements PolicyEngine. It returns an empty MapRegistry.
 //
-// At MVH no policy documents are loaded, so the registry is always empty.
+// No policy documents are loaded, so the registry is always empty.
 // Callers querying LookupByName, LookupByTrigger, LookupByAttachPoint, or All
 // will receive zero-value / empty-slice results.
 func (NoOpPolicyEngine) Registry() Registry {

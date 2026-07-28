@@ -3,7 +3,7 @@ package daemon
 // handlerpause_autoresume_0otqs.go — auto-resume on timed backoff (hk-0otqs).
 //
 // This file adds the Schedule(agentType, after) primitive to HandlerPauseController,
-// fulfilling the post-MVH auto-resume surface from specs/handler-pause.md §1.2.
+// fulfilling the deferred auto-resume surface from specs/handler-pause.md §1.2.
 //
 // Design:
 //   - Schedule registers a timed auto-resume for a paused handler type.
@@ -15,7 +15,7 @@ package daemon
 //     supplied `after` duration, capped at AutoResumeConfig.MaxBackoff.
 //   - Operator can disable auto-resume per handler type via SetAutoResumeConfig.
 //
-// Spec ref: specs/handler-pause.md §1.2 (post-MVH auto-resume item).
+// Spec ref: specs/handler-pause.md §1.2 (deferred auto-resume item).
 // Bead ref: hk-0otqs.
 
 import (

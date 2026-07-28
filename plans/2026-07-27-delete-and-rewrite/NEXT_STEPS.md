@@ -769,6 +769,36 @@ and defaults off.
 
 ## Deferred — housekeeping
 
+**N. ~20 milestone-scoped normative claims were silently broadened by the terminology sweep — OPERATOR CALL.**
+Commit `72215ba69` removed the scope qualifier from sentences whose scope it was *bounding*, converting
+milestone-pinned declarations into unbounded ones across **nine reviewed specs**. Each is internally
+coherent and most have an amendment escape hatch, so none is provably false — but the temporal scope
+changed without an amendment, which is not a prose repair to make unilaterally.
+
+Strongest sites: `event-model.md` (a `queue_paused.reason` "exhaustive enum" and the "complete
+cross-subsystem emission surface", both now unqualified); `control-points.md` ("complete family";
+"structured returns not supported"); `handler-contract.md` ("complete class × sub-reason taxonomy";
+"no other transport permitted"; "flags MUST NOT be passed"); `architecture.md` ("only out-of-process
+actors admitted"; "all cross-subsystem registries daemon-owned and in-process"); `beads-integration.md`
+(states harmonik "does NOT write"); `handler-pause.md` (**`schema_version: 1` is the only supported
+version — while the next clause presupposes a v2**); `execution-model.md` (`workflow_class` "the only
+accepted value"); `workspace-model.md` (lock-file closed map, "additional keys forbidden");
+`scenario-harness.md` (discovery "MUST NOT load from any other location").
+
+**O. Two specs' §10.1 Core range contradicts their own Deferred-extensions list — OPERATOR CALL.**
+**Pre-existing; predates the sweep.** `handler-contract.md` Core requires "every invariant HC-INV-001
+through HC-INV-008" while the structured-agent-input bullet lists HC-INV-008 as an additive *deferred*
+extension — the carve-out is scoped to the HC-001..HC-053 range and silent on invariants, and the v0.7.0
+revision row suggests the Core bump was deliberate, so it likely resolves in Core's favour.
+`reconciliation/spec.md` Core requires "every requirement RC-001 through RC-031" while Deferred says
+RC-027 is required "only if operators have opted in" — RC-027 is titled a spec-draft obligation with its
+grammar unfinalized, so it likely resolves the other way. **They resolve in opposite directions; each
+needs its own call.** Both are `status: reviewed`, so adjudicating changes conformance scope.
+Landed 2026-07-28: the false blanket "No requirement is deferred." in both was replaced with a closure
+sentence pointing at the Deferred-extensions paragraph *without* adjudicating. Also: the sweep left
+reconciliation's deferred paragraph reading "MAY ship as a follow-on within one release" — an unanchored
+deadline with no release named.
+
 **M. Crews never load `PRINCIPLES.md`, and crews are who write the tests.** Found 2026-07-28 by
 `agent-config-reviewer` while wiring the document in. The new `PRINCIPLES → AGENT_INDEX → STATUS →
 HANDOFF` reading order lives in `AGENTS.md` §Start here, but the per-role load map says each role

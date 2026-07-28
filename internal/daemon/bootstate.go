@@ -236,11 +236,22 @@ func (bs *bootState) wireWatchersAndObservers(ctx context.Context) error {
 
 	// Bandwidth-tuner rate-limit backstop (hk-lqtzq). Two-phase: Subscribe here
 	// (pre-Seal, EV-009); SetTuner runs post-Seal where concurrencyCtrl exists.
-	bs.tunerBackstop = &bandwidthTunerBackstop{}
-	if subscribeErr := bs.tunerBackstop.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: bandwidth-tuner backstop subscribe: %w", subscribeErr)
+	//
+	// Gated on the SOCKET-LISTENER switch even though it is constructed here and
+	// not in bindSocket: its only job is to forward rate-limit events to the
+	// BandwidthTuner, and the tuner is constructed nowhere but
+	// buildPauseConcurrencyTuner, inside the gated subtree. With the subsystem
+	// off the tuner can never exist, so this subscription would be a permanently
+	// inert bus consumer — exactly the constructed-and-inert state the partition
+	// rule rejects. Both sites read the switch through socketListenerEnabled, so
+	// a nil backstop and a live SetTuner call cannot coexist.
+	if bs.socketListenerEnabled() {
+		bs.tunerBackstop = &bandwidthTunerBackstop{}
+		if subscribeErr := bs.tunerBackstop.Subscribe(bus); subscribeErr != nil {
+			return fmt.Errorf("daemon.Start: bandwidth-tuner backstop subscribe: %w", subscribeErr)
+		}
+		bs.tunerBackstop.SetRunRegistry(bs.sharedRunRegistry) // PI-073: isolate Pi events
 	}
-	bs.tunerBackstop.SetRunRegistry(bs.sharedRunRegistry) // PI-073: isolate Pi events
 
 	// QuiesceArbiter (hk-jeby): Subscribe wake triggers pre-Seal; Start post-Seal
 	// (inside if cfg.BrPath != ""). Constructed + subscribed even in unit-test

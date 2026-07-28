@@ -15,6 +15,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
@@ -37,7 +38,52 @@ func (bs *bootState) wireSocketListener(ctx context.Context, daemonStartTime tim
 	if bs.cfg.ProjectDir == "" {
 		return nil
 	}
-	return bs.bindSocket(ctx)
+	_, bindErr := bs.bindSocketIfEnabled(ctx)
+	return bindErr
+}
+
+// socketListenerEnabled reports whether the socket-listener subsystem is
+// switched on. It is the SINGLE reading of that switch: both construction sites
+// for the subtree (bindSocketIfEnabled here, and the pre-Seal bandwidth-tuner
+// backstop in wireWatchersAndObservers) call this, so the two can never
+// disagree about whether the tuner will exist.
+func (bs *bootState) socketListenerEnabled() bool {
+	return bs.cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemSocketListener)
+}
+
+// bindSocketIfEnabled applies subsystem partitioning to the socket listener: it
+// is the ONE construction seam for the whole socket subtree.
+//
+// When `subsystems.socket_listener.enabled: false` is set in
+// .harmonik/config.yaml, NONE of bindSocket's fan-out is constructed — no comms
+// or crew handler, no crew-idle reaper, no branch reaper, no live-state or
+// dashboard surface, no bandwidth tuner, no operator-pause or concurrency
+// controller, no drain detector, no queue handler adapter, and no listener
+// goroutine. The Unix socket is never even created on disk. This is deliberately
+// NOT "constructed but inert": inert code still holds the composition root
+// hostage, and the bootState fields those constructors fill stay nil, which
+// forces every downstream consumer seam to answer the nil question explicitly.
+//
+// Absent config (the zero ProjectConfig) enables the listener, so a deployment
+// without a subsystems: block behaves exactly as it did before the block existed.
+// The separate ProjectDir == "" early return in wireSocketListener is NOT this
+// switch — that is the unit-test escape hatch, never taken in production.
+//
+// Returns true when the subtree was constructed. The return value is the
+// observable decision; the production caller ignores it.
+func (bs *bootState) bindSocketIfEnabled(ctx context.Context) (bool, error) {
+	if !bs.socketListenerEnabled() {
+		// Say so at boot: a silent partition is indistinguishable from a config
+		// that did not take effect.
+		logW := bs.cfg.LogWriter
+		if logW == nil {
+			logW = os.Stderr
+		}
+		fmt.Fprintf(logW, "daemon: subsystem %q disabled by .harmonik/config.yaml; socket listener and its handler subtree not constructed\n", //nolint:errcheck // best-effort stderr status log
+			projectconfig.SubsystemSocketListener)
+		return false, nil
+	}
+	return true, bs.bindSocket(ctx)
 }
 
 // registerAdaptersAndHookStore performs Step 4 (hk-ecrxy) P9: construct + seal

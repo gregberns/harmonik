@@ -26,11 +26,15 @@ digraph "merge-race-two-node" {
         role="winner: first to commit merge-race-sentinel.txt; no startup delay"
     ];
 
+    // beta_node is this graph's only terminal and is not one of the two IDs
+    // reserved by workflow-graph.md §8 WG-022, so it must say outright that
+    // reaching it is the success path.
     beta_node [
         type="agentic",
         agent_type="claude-twin",
         handler_ref="twins/claude-twin",
         idempotency_class="non-idempotent",
+        terminal_disposition="success",
         role="loser: 200 ms startup delay; merge rejected with non_ff_merge"
     ];
 

@@ -7,11 +7,15 @@ digraph workflow {
         terminal_node_ids = "agent_node"
     ]
 
+    // agent_node is this graph's only terminal and is not one of the two IDs
+    // reserved by workflow-graph.md §8 WG-022, so it must say outright that
+    // reaching it is the success path.
     agent_node [
         type               = "agentic"
         handler_ref        = "twins/claude-twin"
         agent_type         = "claude-twin"
         idempotency_class  = "non-idempotent"
+        terminal_disposition = "success"
         "llm-freedom"      = "unbounded"
         "io-determinism"   = "nondeterministic"
         "replay-safety"    = "unsafe"

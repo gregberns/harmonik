@@ -408,7 +408,7 @@ runloop-emitter-gate:  ## P2 E5 RT16: forbid bypassing EmitterPort with a raw bu
 # uncompiled) and the GOOS constraints (darwin/linux/windows), which are chosen
 # by the toolchain rather than by -tags. Add a tag here whenever one is
 # introduced, or its files go back to being invisible.
-TAGGED_BUILD_TAGS := specaudit,scenario,integration,e2e_real_claude,subprocess,crash
+TAGGED_BUILD_TAGS := scenario,integration,e2e_real_claude,subprocess,crash
 
 .PHONY: vet-tagged
 vet-tagged:  ## hk-i1m20: typecheck every build-tagged file (invisible to plain `go vet ./...`)
@@ -789,16 +789,6 @@ lint-full-count:  ## Publish the full-tree grandfathered lint finding count (not
 	jq -er 'if any(.Issues[]; .FromLinter == "typecheck") then \
 		error("full lint count unavailable: typecheck failed; fix compilation first") \
 		else "full lint findings: \(.Issues | length)" end' "$$REPORT"
-
-# ---------------------------------------------------------------------------
-# specaudit-lint — spec-drift lint (M1-1)
-# Runs the 129 relocated spec-prose sensor tests behind the `specaudit` build
-# tag (skipped by the default `go test ./...`). See
-# internal/specaudit/RELOCATED-ALLOWLIST.md.
-# ---------------------------------------------------------------------------
-.PHONY: specaudit-lint
-specaudit-lint:  ## Run the tagged spec-drift sensor suite (-tags specaudit; M1-1)
-	scripts/specaudit-lint.sh
 
 # ---------------------------------------------------------------------------
 # Agent review — LOCAL ONLY

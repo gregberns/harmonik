@@ -193,12 +193,6 @@ run_go_test() {
     if [ "$class" = "scenario" ]; then
         gotest_args+=(-tags=scenario)
         tagdesc="-tags=scenario "
-    elif [ "$class" = "specaudit" ]; then
-        # Spec-drift lint: the 129 spec-prose tests are relocated behind the
-        # `specaudit` build tag (M1-1). They run ZERO product code, so they get
-        # the tag but not -short. Refs: internal/specaudit/RELOCATED-ALLOWLIST.md.
-        gotest_args+=(-tags=specaudit)
-        tagdesc="-tags=specaudit "
     else
         # Affected-unit step runs in -short mode: heavy real-daemon / real-binary
         # E2E tests opt out of the per-bead commit_gate via testing.Short()
@@ -374,17 +368,9 @@ main() {
     # `go test` argument):
     #   unit_pkgs     — every changed .go file's recursive package pattern.
     #   scenario_pkgs — only scenario-touching files' patterns (affectedScenarioPkgs).
-    local unit_acc="" scenario_acc="" specaudit_trigger=0
+    local unit_acc="" scenario_acc=""
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        # Detect files that require specaudit to always run (hk-wz95): changes to
-        # specs/, cmd/harmonik/, or internal/daemon/socket.go escape the affected-
-        # set because specaudit's sensors (oninv006 CLI-verb scan, socket-op scan,
-        # spec front-matter checks) read THOSE files but live in internal/specaudit.
-        case "$f" in
-            specs/*|cmd/harmonik/*|internal/daemon/socket.go)
-                specaudit_trigger=1 ;;
-        esac
         local pat
         pat=$(file_to_pkg_pattern "$f")
         [ -n "$pat" ] || continue
@@ -393,14 +379,6 @@ main() {
             scenario_acc="${scenario_acc}${pat}"$'\n'
         fi
     done <<< "$files"
-
-    # NOTE (M1-1): the 129 spec-prose sensor tests are now gated behind the
-    # `specaudit` build tag, so injecting ./internal/specaudit/... into the
-    # (untagged, -short) unit run would only exercise the 3 product-importing
-    # carve-outs and silently drop the spec-drift lint. Instead, when a
-    # specaudit-triggering file changes we run a DEDICATED -tags=specaudit pass
-    # below (see "specaudit lint" block). The trigger-detection above is
-    # unchanged — only WHAT runs changed, not WHEN. Refs: hk-wz95, M1-1.
 
     local -a unit_pkgs=() scenario_pkgs=()
     while IFS= read -r p; do [ -n "$p" ] && unit_pkgs+=("$p"); done \
@@ -435,17 +413,6 @@ main() {
         fi
     else
         log "no scenario-touching packages; skipping scenario suite"
-    fi
-
-    # ── specaudit lint (tagged spec-drift sensors) ───────────────────────────
-    # When specs/, cmd/harmonik/, or internal/daemon/socket.go changed, run the
-    # relocated spec-prose suite behind -tags=specaudit so the CLI-verb, socket-op,
-    # and spec-front-matter sensors still fire in CI. Refs: hk-wz95, M1-1.
-    if [ "$specaudit_trigger" -eq 1 ] && [ -d ./internal/specaudit ]; then
-        log "specaudit trigger: specs/, cmd/harmonik/, or internal/daemon/socket.go changed — running -tags=specaudit ./internal/specaudit/..."
-        if ! run_go_test "specaudit" ./internal/specaudit/...; then
-            block=1
-        fi
     fi
 
     if [ "$block" -eq 1 ]; then

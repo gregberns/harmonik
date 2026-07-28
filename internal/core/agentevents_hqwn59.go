@@ -37,7 +37,7 @@ import "github.com/google/uuid"
 //   - started_at  — RFC 3339 wall-clock timestamp at which the agent process started
 //
 // Note: agent_started MUST NOT include environment variables per HC-029
-// (handler-contract.md §6.4). See hk-8i31.36 and specaudit HC-029 binding test.
+// (handler-contract.md §6.4). See hk-8i31.36.
 type AgentStartedPayload struct {
 	// RunID is the run in whose context the agent started.
 	// Required (must not be uuid.Nil).

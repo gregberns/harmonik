@@ -8,10 +8,10 @@ requirement-prefix: RSM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.2.0
+version: 0.2.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-14
+last-updated: 2026-07-27
 depends-on:
   - replay-substrate
   - event-model
@@ -247,8 +247,11 @@ silent no-op.
 **RSM-024 (the bound).** The resume window MUST be bounded by the composed timer stack, all
 ClockPort-timed:
 - the agent-input output-or-stale bound on the resume seed (§9), which resolves the seed
-  submission to an `Ack` or an `agent_input_stale` terminal within the agent-input bounded
-  window ([agent-input.md] AIS-INV-001; the window value is owned by the agent-input seam);
+  submission to synchronous `Ack{Rejected}` or, after `Ack{Delivered}`, to a correlated
+  `agent_input_acked` / `agent_input_stale` terminal within the agent-input bounded window
+  ([agent-input.md] AIS-003, AIS-004, AIS-INV-001; the window value and the timer that measures
+  it are owned by the agent-input seam). A `Delivered` return is a delivery handoff, so it
+  does not by itself satisfy this sub-bound;
 - the ready sub-bound: resume to ready-or-fail MUST NOT exceed the effective agent-ready timeout
   (the tight headline guarantee that replaces the former fixed 2-second resume grace);
 - the post-agent-ready progress bound (`post_ready_hang`); and
@@ -273,22 +276,39 @@ type, stale terminal, or input-ack timer. Specifically:
 - The reactor MUST request input via submit actions (a resume-seed submit and a brief submit),
   each carrying an `InputRequest`; the shell effector MUST call the agent-input port
   `InputPort.SubmitInput(ctx, InputRequest) (Ack, error)` ([agent-input.md] AIS-001).
-- The reactor MUST honour the three-valued acceptance class of `Ack` ([agent-input.md]
-  AIS-003): `Accepted` (positively confirmed) MUST advance the dispatch; `Rejected`
-  (protocol refusal) MUST route to the fail-closed liveness edge (RSM-025); `Degraded`
-  (written but not positively confirmed — the interim tmux/paste case) MUST NOT be treated as
-  confirmation — the reactor MUST continue to require an agent-derived readiness or progress
-  signal and MUST rely on the liveness bound (RSM-024) to terminate a Degraded submission that
-  never confirms.
+- The reactor MUST honour the BINARY delivery outcome of `Ack` ([agent-input.md] AIS-003).
+  `Ack{Delivered}` records a successful handoff of the input to the driver; it MUST NOT by
+  itself advance a transition that requires positive agent acceptance — it leaves positive
+  acceptance PENDING on the correlated asynchronous terminal. `Ack{Rejected}` (a protocol-level
+  refusal — structured drivers only) MUST route to the fail-closed liveness edge (RSM-025).
+  There is no `Accepted` and no `Degraded` outcome, and no acceptance class or tier: a
+  successful write on the tmux/paste path is a delivery handoff, never positive acceptance.
+- The reactor MUST take the correlated asynchronous events ([agent-input.md] AIS-004) as the
+  acceptance verdict: `agent_input_acked` IS the positive-acceptance signal and MUST advance
+  the transition that the `Delivered` handoff left pending; `agent_input_stale` MUST route to
+  the fail-closed liveness edge (RSM-025). The four input-seam routes are therefore TOTAL —
+  `Delivered` → await the correlated asynchronous terminal; `Rejected` → fail closed;
+  `agent_input_acked` → acceptance path; `agent_input_stale` → fail closed — and none of
+  them is a silent no-op (RSM-INV-002).
 - The shell MUST convert `SubmitInput`'s synchronous `Ack` and the dual-delivered durable
   `agent_input_acked` / `agent_input_stale` events ([agent-input.md] AIS-004) into reactor
-  events; correlation MUST use the `Ack`'s driver-internal monotonic input-sequence id, and a
-  duplicate for an already-correlated submission MUST be dropped by `Step`.
+  events. Correlation MUST use the `Ack`'s driver-internal monotonic input-sequence id
+  ([agent-input.md] AIS-003b; its serialized `input_seq` payload field name is owned by
+  [event-model.md §6.3], not by this spec). For one `input_seq`, `Step` MUST consume the first
+  synchronous outcome exactly once; after a `Delivered`, the FIRST correlated asynchronous
+  terminal (`agent_input_acked` or `agent_input_stale`) wins. `Step` MUST drop only repeated
+  or late observations for an already-resolved `input_seq`; it MUST NOT drop the first
+  `agent_input_acked` merely because `Delivered` was already observed.
 - The bounded output-or-stale window and the acceptance definition belong to the agent-input
-  seam ([agent-input.md] AIS-INV-001); the reactor MUST NOT re-implement them.
+  seam ([agent-input.md] AIS-INV-001); the reactor MUST NOT re-implement them and MUST NOT add
+  a second input timer of its own. The run-level backstop for a `Delivered` submission whose
+  correlated asynchronous terminal never arrives is the ALREADY-composed RSM-024 timer stack
+  (the ready sub-bound, `post_ready_hang`, and the absolute commit-watchdog ceiling), which
+  routes to RSM-025 — not a new input timer.
 - The per-submission output-or-stale guarantee ([agent-input.md] AIS-INV-001) composes into
-  RSM-INV-001: a stale (or `Rejected`, or never-confirmed `Degraded`) resume seed MUST feed the
-  run's fail-closed liveness edge (RSM-025), never silence.
+  RSM-INV-001: a `Rejected` resume seed, or a `Delivered` resume seed whose correlated
+  asynchronous terminal is `agent_input_stale`, MUST feed the run's fail-closed liveness edge
+  (RSM-025), never silence.
 
 ## 10. Enforcement
 
@@ -398,3 +418,12 @@ subsumed path, which passes no flag).
 - [handler-contract.md] — the session-lifecycle machine (HC-065) driven as a projection (RSM-023).
 - [queue-model.md] — the bead-queue store, kept out of the run ports (RSM-011).
 - [beads-integration.md] — the daemon owns terminal bead transitions (§2.2).
+
+## 14. Revision history
+
+> This table starts at v0.2.1; earlier versions of this spec predate it and are recoverable
+> from Git history.
+
+| Date | Version | Author | Change |
+|------|---------|--------|--------|
+| 2026-07-27 | 0.2.1 | agent (codename: input-ack-contract) | **Input-ack consumption reconciled with the owner contracts (coordinated drift correction; co-landed with [agent-input.md] 0.1.1 and [handler-contract.md] 0.8.1).** RSM-027 carried a three-valued acceptance class (`Accepted` / `Rejected` / `Degraded`) that never existed in the owner specs: the `Ack` outcome landed BINARY (`Delivered` / `Rejected`) in AIS-003 / HC-070 the day after this spec, with positive acceptance decoupled onto the async `agent_input_acked` event. RSM-027 is amended in place (NOT renumbered) to consume that contract: `Ack{Delivered}` is a driver handoff that leaves positive acceptance pending; `Ack{Rejected}` fail-closes to RSM-025; the correlated `agent_input_acked` is the positive-acceptance event; the correlated `agent_input_stale` fail-closes to RSM-025. The four routes are stated as total. The `input_seq` consumption rule is made explicit — consume the first synchronous outcome once, then the first correlated asynchronous terminal wins; drop only repeated or late observations, never the first `agent_input_acked`; add no second timer. RSM-024's resume-seed bullet is reconciled so a `Delivered` return alone no longer satisfies the sub-bound, citing AIS-003 + AIS-004 + AIS-INV-001 as the composite authority. RSM-027 also names the run-level backstop for a `Delivered` whose async terminal never arrives: the already-composed RSM-024 timer stack (ready sub-bound, `post_ready_hang`, absolute commit-watchdog ceiling) routing to RSM-025 — NOT a new input timer. The correlation bullet also attributes the sequence id to AIS-003b and its serialized `input_seq` payload field name to [event-model.md §6.3], keeping this spec clear of the event payload. `Accepted`, `Degraded`, and the "three-valued acceptance class" are removed. No requirement renumbered; no port, `Ack` record, event schema, timer semantics, or production behaviour changed. |

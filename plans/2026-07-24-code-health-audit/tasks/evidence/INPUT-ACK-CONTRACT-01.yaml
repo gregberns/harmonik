@@ -1,0 +1,210 @@
+schema_version: 1
+task_id: INPUT-ACK-CONTRACT-01
+pinned_base_sha: 176d3fe87
+claim_base_sha: 8bf076deb5b7d8fb9608a62d40a82ed10500186c
+work_type: bounded normative drift correction; no production implementation
+kerf_work: .kerf/works/input-ack-contract
+
+pinned_inputs:
+  # git rev-parse 176d3fe87:<path>
+  - path: specs/run-state-machine.md
+    blob: 276c3c892356f95071e820e650b2a518e34090fe
+    version_before: 0.2.0
+    version_after: 0.2.1
+    role: consumer
+  - path: specs/agent-input.md
+    blob: b9825194a330826995ba4bf4edf985532c87d2f8
+    version_before: 0.1.0
+    version_after: 0.1.1
+    role: owner (port, Ack, async events, timer, output-or-stale)
+  - path: specs/handler-contract.md
+    blob: 8983e2db0904e7c0bb878f4dfe6d40497c382420
+    version_before: 0.8.0
+    version_after: 0.8.1
+    role: owner (seam-level restatement)
+
+chronology:
+  method: git log -S over each exact clause
+  facts:
+    - clause: RSM-027 "three-valued acceptance class" (Accepted / Degraded)
+      landed_in: 03eab1d29
+      date: 2026-07-14
+      subject: "spec(run-state-machine): RT0 land RSM spec + registry reservation"
+    - clause: AIS-003 'There is NO acceptance "class"' (binary Delivered/Rejected)
+      landed_in: 045e937b5
+      date: 2026-07-15
+      subject: "spec(agent-input): T1 land AIS spec + registry reservation (M2-1)"
+    - clause: HC-070 'No acceptance "class"/tier'
+      landed_in: 045e937b5
+      date: 2026-07-15
+    - clause: the five "positive acceptance" front-stop restatements (AIS glossary, AIS-005, HC-056, HC-057, HC-070)
+      landed_in: 045e937b5
+      date: 2026-07-15
+  conclusion: >
+    The OWNER contract landed LAST (2026-07-15) and landed BINARY. RSM's
+    three-valued model was written the day BEFORE the owner spec existed, so it
+    is stale consumer drift, not an open design choice. The five front-stop
+    restatements landed in the SAME commit as the binary model and are
+    intra-commit residue of the pre-hook-sourced-ack framing; the AIS revision
+    row added by that same commit (COORD c021, operator-ratified) states
+    verbatim that "the binary Delivered/Rejected + async acked/stale model is
+    unchanged". No later commit reopened either question and no
+    operator-approved decision endorses Accepted/Degraded or a positive
+    synchronous ack. Proceeding was therefore in scope.
+
+sites_changed:
+  - spec: specs/run-state-machine.md
+    requirement: RSM-027
+    before: >
+      "The reactor MUST honour the three-valued acceptance class of Ack
+      (AIS-003): Accepted (positively confirmed) MUST advance the dispatch;
+      Rejected MUST route to the fail-closed liveness edge; Degraded (written
+      but not positively confirmed) MUST NOT be treated as confirmation …"
+      plus a bullet routing "a stale (or Rejected, or never-confirmed
+      Degraded) resume seed" to the fail-closed edge.
+    after: >
+      Binary outcome honoured: Ack{Delivered} records driver handoff and leaves
+      positive acceptance PENDING; Ack{Rejected} fail-closes to RSM-025. A new
+      bullet makes the correlated async events the acceptance verdict
+      (agent_input_acked = acceptance path; agent_input_stale = fail closed)
+      and states the four routes as TOTAL. The correlation bullet spells out
+      the input_seq consumption rule (first synchronous outcome consumed once;
+      after Delivered the first correlated async terminal wins; drop only
+      repeated or late observations; never drop the first agent_input_acked).
+      The seam-ownership bullet adds "MUST NOT add a second input timer".
+      Accepted, Degraded, and "three-valued acceptance class" are gone.
+    renumbered: false
+  - spec: specs/run-state-machine.md
+    requirement: RSM-024
+    before: >
+      "…the agent-input output-or-stale bound on the resume seed (§9), which
+      resolves the seed submission to an Ack or an agent_input_stale terminal
+      within the agent-input bounded window …"
+    after: >
+      "…resolves the seed submission … to Ack{Rejected}, or to Ack{Delivered}
+      followed by its correlated agent_input_acked or agent_input_stale — a
+      Delivered return alone does NOT resolve the seed, because it is a
+      delivery handoff and not positive acceptance."
+    renumbered: false
+  - spec: specs/agent-input.md
+    requirement: "§3 glossary — front-stop"
+    before: 'the synchronous Ack is an *earlier* positive acceptance signal placed IN FRONT of the pre-existing async watchdogs'
+    after: 'the synchronous Ack is an *earlier* delivery-handoff observation placed IN FRONT of the pre-existing async watchdogs … It is not positive acceptance: that is the async agent_input_acked event (AIS-003, AIS-004).'
+  - spec: specs/agent-input.md
+    requirement: AIS-005
+    before: 'The synchronous Ack MUST be an earlier positive acceptance signal placed IN FRONT of the pre-existing async watchdogs'
+    after: 'The synchronous Ack MUST be an earlier delivery-handoff observation placed IN FRONT of the pre-existing async watchdogs … Ack{Delivered} is NOT positive acceptance — positive acceptance is the async agent_input_acked event (AIS-003, AIS-004), and its absence within the bounded window reaches agent_input_stale (AIS-INV-001).'
+    rule_preserved: composes in front of, and does not remove or weaken, agent_heartbeat / commit-poll
+  - spec: specs/handler-contract.md
+    requirement: HC-070
+    before: 'The synchronous input ack is an earlier, positive, per-input acceptance signal that composes in front of the existing process-liveness signals.'
+    after: 'The synchronous input ack is an earlier, per-input delivery-handoff observation that composes in front of the existing process-liveness signals; it is NOT positive acceptance — that is the async agent_input_acked event above.'
+    rule_preserved: does not gate first-work dispatch; does not replace heartbeat / commit watchdogs
+  - spec: specs/handler-contract.md
+    requirement: HC-056
+    before: 'composes in front of this timeout as an earlier, positive, per-input acceptance signal'
+    after: 'composes in front of this timeout as an earlier, per-input delivery-handoff observation — NOT positive acceptance, which is the async agent_input_acked event per HC-070'
+    rule_preserved: does not replace or satisfy the agent_ready gate (HC-INV-004)
+  - spec: specs/handler-contract.md
+    requirement: HC-057
+    before: 'is an earlier, per-input acceptance signal that composes in front of this heartbeat watchdog'
+    after: 'is an earlier, per-input delivery-handoff observation — NOT positive acceptance, which is the async agent_input_acked event per HC-070 — that composes in front of this heartbeat watchdog'
+    rule_preserved: does not replace the heartbeat / silent-hang liveness guard (§7.1)
+
+not_changed:
+  - the Ack record in either owner spec (AIS §6.2, HC §6.1)
+  - AIS-003 / AIS-004 bodies, AIS-INV-001
+  - HC-069, HC-INV-008
+  - event payload schemas and registration (event-model.md)
+  - the bounded-window value / any timer semantics
+  - production Go, tests, the spec registry, TASK-INDEX.yaml, other task cards
+  - any requirement status field; no requirement ID added, retired, or renumbered
+
+verification:
+  totality_matrix:
+    - observation: Ack{Delivered}
+      route: await the correlated asynchronous terminal
+    - observation: Ack{Rejected}
+      route: fail closed (RSM-025)
+    - observation: agent_input_acked (correlated)
+      route: acceptance path
+    - observation: agent_input_stale (correlated)
+      route: fail closed (RSM-025)
+  greps:
+    - command: 'grep -n "Accepted\|Degraded\|three-valued\|acceptance class\|acceptance tier" specs/run-state-machine.md'
+      result: >
+        Two hits, both intentional and non-normative-as-a-live-outcome: RSM-027's
+        explicit negative sentence ("There is no Accepted and no Degraded
+        outcome, and no acceptance class or tier") and the §14 revision-history
+        row describing the removal. No live three-valued Ack vocabulary remains.
+    - command: 'grep -rn "positive acceptance signal\|positive, per-input acceptance\|per-input acceptance signal" specs/*.md'
+      result: 'One hit, in the agent-input revision-history row that describes the correction. No requirement body remains.'
+  code_contradiction_check:
+    command: 'grep -rn "Degraded" --include="*.go" internal/ cmd/; grep -rni "DeliveryOutcome|OutcomeAccepted" --include="*.go" internal/ cmd/'
+    finding: >
+      No contradiction. internal/handler/input_port.go already defines
+      DeliveryOutcome as the binary {Delivered, Rejected} with a doc comment
+      stating "Positive acceptance is NOT a DeliveryOutcome value; it is the
+      async agent_input_acked event". No Accepted or Degraded ack outcome
+      exists anywhere in internal/ or cmd/. Every "Degraded" hit is an unrelated
+      identifier: DaemonDegradedPayload / DaemonDegradedReason / the
+      daemon_degraded event type, and the keeper's Degraded bool on a
+      clear-sent payload. Production code AGREES with the corrected specs and
+      contradicted the pre-correction RSM-027.
+  make_check_fast: recorded in the task report; no Go changed by this task
+
+escalations:
+  card_stop_conditions_triggered: none
+  rationale: >
+    No change was required to the Ack record, delivery outcomes, async event or
+    timer semantics, event payloads, production behavior, or a locked decision.
+    The amendment stays inside the leased prose.
+  surfaced_owner_spec_tension:
+    status: SURFACED, NOT RESOLVED HERE — needs an owner-spec decision, out of this lease
+    where: specs/agent-input.md AIS-INV-001 and specs/handler-contract.md HC-INV-008
+    contradiction: >
+      Both invariants' HEADLINE sentence enumerates the terminal set as "an Ack
+      (Delivered or Rejected) OR an emitted agent_input_stale event", which reads
+      as Ack{Delivered} discharging the bounded window. Their BODIES say the
+      opposite: the window is what bounds the wait for the Claude-hook-bridge
+      positive signal, and "when no such hook signal arrives within the window,
+      the driver MUST emit agent_input_stale". AIS-003 compounds it by having the
+      interim tmux impl return Delivered immediately on a successful write, while
+      AIS-001/HC-069 say SubmitInput "blocks until acked-or-stale". So the
+      headline terminal set and the body disagree about whether Delivered ends
+      the clock.
+    pre_existing: >
+      This tension landed in 045e937b5 (2026-07-15) and is untouched by this
+      task's diff. It was surfaced by the independent review of this amendment,
+      not created by it.
+    why_not_fixed_here: >
+      Resolving it means editing AIS-INV-001 / HC-INV-008 timer semantics, which
+      the card's "Escalate when" clause forbids and which is outside the write
+      lease (the lease covers only the five named front-stop restatements).
+    mitigation_applied_in_lease:
+      - >
+        RSM-024's resume-seed bullet now cites AIS-003 + AIS-004 + AIS-INV-001 as
+        the composite authority rather than AIS-INV-001 alone, so RSM no longer
+        asserts a reading that the invariant's headline appears to deny.
+      - >
+        RSM-027's seam-ownership bullet now names the run-level backstop
+        explicitly. A Delivered submission whose correlated async terminal never
+        arrives is bounded by the ALREADY-composed RSM-024 timer stack (ready
+        sub-bound, post_ready_hang, absolute commit-watchdog ceiling) routing to
+        RSM-025. No second input timer is introduced and RSM-INV-001 stays
+        bounded.
+    corroboration: >
+      The unlanded kerf draft .kerf/works/reviewloop-decoupling/05-spec-drafts/run-state-machine.md
+      independently reached the same "Delivered, then a correlated async terminal"
+      reading of RSM-024/RSM-027, citing the same AIS-003/AIS-004/AIS-INV-001
+      triple. Two independent passes agree on the semantics.
+    follow_up: bead hk-7rlmq (machine-local ledger) — reconcile the AIS-INV-001 / HC-INV-008 headline terminal set with their own bodies.
+
+collisions_noticed:
+  - what: >
+      .kerf/works/reviewloop-decoupling/05-spec-drafts/run-state-machine.md is a
+      committed, kerf-ready, NEVER-LANDED full draft of specs/run-state-machine.md
+      that also claims version 0.2.1, also rewrites RSM-027, and also adds a 0.2.1
+      revision row (dated 2026-07-24). RL-01 is closed without landing it.
+    risk: a later `kerf finalize reviewloop-decoupling` would clobber this correction and duplicate the 0.2.1 version number.
+    disposition: out of this card's lease; reported to the coordinator and filed as bead hk-ek5gp (machine-local ledger).

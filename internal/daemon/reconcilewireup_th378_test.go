@@ -159,7 +159,7 @@ func TestDaemonStart_BrSchemaMismatch_EmitsDivergenceInconclusive(t *testing.T) 
 // daemon.Start proceeds (does not return a fatal error) when all three br
 // adapter constructions fail with BrSchemaMismatch.
 //
-// BrSchemaMismatch maps to RecCat0 → proceed queue-less at MVH.  The daemon
+// BrSchemaMismatch maps to RecCat0 → proceed queue-less.  The daemon
 // remains operable without a bead ledger; the socket and work loop are still
 // active (the work loop uses the real br binary path for polling, which will
 // also fail — but that is a separate non-fatal retry path).

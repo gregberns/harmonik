@@ -3,7 +3,7 @@ package daemon_test
 // t11_throughput_test.go — 10-bead throughput integration test (hk-e61c3.6).
 //
 // TestThroughput_TenBeadsAtMaxFour is the roadmap row 11 closing test for the
-// post-MVH parallelism epic.  It exercises daemon.Start with 10 ready beads and
+// parallelism epic.  It exercises daemon.Start with 10 ready beads and
 // MaxConcurrent=4 and asserts:
 //
 //  1. All 10 beads close cleanly.
@@ -312,7 +312,7 @@ func throughputFixtureRunDaemon(
 //   - JSONL contains exactly 10 distinct run_started events with 10 distinct
 //     run_id values (verified via eventbus.Filter per row 10 / hk-e61c3.5).
 //
-// Spec ref: POST_MVH_PARALLELISM_ROADMAP.md row 11.
+// Spec ref: POST_OPERATIONAL_PARALLELISM_ROADMAP.md row 11.
 // Bead ref: hk-e61c3.6.
 func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 	skipRealDaemonE2EInShort(t)

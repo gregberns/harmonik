@@ -1,4 +1,4 @@
-// Package handler — Session wrapping exec.Cmd + WaitOwner (MVH_ROADMAP row #6).
+// Package handler — Session wrapping exec.Cmd + WaitOwner (EARLY_ROADMAP row #6).
 //
 // Session is the daemon's handle on a running subprocess (Claude Code or twin).
 // It owns stdin write, stdout/stderr Reader exposure for the row-#7 watcher
@@ -23,7 +23,7 @@
 // Handler.Launch can wire handlercontract.SpawnWatcher to the subprocess
 // stdout pipe without duplicating pipe setup logic.
 //
-// Cite: MVH_ROADMAP.md row #6; specs/handler-contract.md §4.5, §4.6.
+// Cite: EARLY_ROADMAP.md row #6; specs/handler-contract.md §4.5, §4.6.
 package handler
 
 import (

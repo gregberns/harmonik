@@ -19,7 +19,7 @@ import (
 //
 // Tags: cognition (WM-022 identification walk), mechanism (WM-022a, WM-023, WM-024).
 //
-// NOTE (post-mvh): The workspace manager's conflict-resolution dispatch machinery
+// NOTE (deferred): The workspace manager's conflict-resolution dispatch machinery
 // (3-attempt cap, operator-configurable cap, handler re-dispatch) is not yet
 // implemented. These tests capture the behavioral shape and boundary conditions
 // declared by §4.6 so that they pass as conformance gates once the implementation

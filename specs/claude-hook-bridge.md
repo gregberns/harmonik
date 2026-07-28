@@ -24,7 +24,7 @@ depends-on:
 
 ## 1. Purpose
 
-This spec defines the deterministic translation layer between the Claude Code CLI's native lifecycle (settings.json hooks, `--session-id`, transcripts) and harmonik's handler-contract progress-stream wire protocol. It is the MVH realization of S05 (Hook System) for the `claude-code` agent type.
+This spec defines the deterministic translation layer between the Claude Code CLI's native lifecycle (settings.json hooks, `--session-id`, transcripts) and harmonik's handler-contract progress-stream wire protocol. It is the realization of S05 (Hook System) for the `claude-code` agent type.
 
 The bridge has three load-bearing parts:
 
@@ -32,7 +32,7 @@ The bridge has three load-bearing parts:
 2. A `harmonik hook-relay <event-kind>` subcommand of the main harmonik binary that translates Claude's per-hook JSON-on-stdin into harmonik progress-stream NDJSON messages on the daemon's Unix domain socket.
 3. A pre-generated `claude_session_id` flow: the handler subprocess mints the UUID, passes it to Claude via `--session-id <uuid>`, reports it to the daemon via `handler_capabilities`, and uses `--resume <claude_session_id>` for `phase = implementer-resume`.
 
-This spec is normative for the claude-code agent type only. Other agent types may re-realize the bridge surface per their own per-agent-type bridge specs post-MVH.
+This spec is normative for the claude-code agent type only. Other agent types may re-realize the bridge surface per their own per-agent-type bridge specs; those specs are deferred.
 
 ## 2. Scope
 
@@ -51,12 +51,12 @@ This spec is normative for the claude-code agent type only. Other agent types ma
 
 ### 2.2 Out of scope
 
-- Per-agent-type bridges other than claude-code — each is its own spec post-MVH.
+- Per-agent-type bridges other than claude-code — each is its own spec, deferred.
 - Settings.json schema beyond what the bridge declares — the user's hook entries coexist with harmonik's per the merge rule (§4.1.CHB-009).
 - Claude Code authentication, account-rotation, or provider-secret rotation — out of scope here; covered by [handler-contract.md §4.7].
 - The Claude transcript file format at `~/.claude/projects/<slug>/<session-uuid>.jsonl` — read-only consumed; not redefined.
 - Hook events Claude supports other than the five enumerated in §4.4 — handled by relay no-op.
-- The `stream-json + --include-hook-events` alternative bridging architecture — documented in §11 Informative as a post-MVH evolution path; not adopted at MVH.
+- The `stream-json + --include-hook-events` alternative bridging architecture — documented in §11 Informative as a possible later evolution path; not adopted.
 
 ## 3. Glossary
 
@@ -72,7 +72,7 @@ This spec is normative for the claude-code agent type only. Other agent types ma
 
 #### CHB-ENV-001 — Envelope declaration
 
-Envelope for the claude-hook-bridge subsystem per [/Users/gb/github/harmonik/specs/architecture.md §4.0 AR-053]. The bridge is the deterministic translation layer between Claude Code's native lifecycle (settings.json hooks, `--session-id`, transcripts) and harmonik's handler-contract progress-stream wire protocol; it is the MVH realization of S05 (Hook System) for `agent_type = claude-code`. It has two emitter roles — the handler-process (long-lived) and the hook-relay subprocess (short-lived, one per Claude hook firing) — that together write NDJSON progress-stream messages to the daemon's Unix domain socket, both keyed by `(run_id, claude_session_id)`.
+Envelope for the claude-hook-bridge subsystem per [/Users/gb/github/harmonik/specs/architecture.md §4.0 AR-053]. The bridge is the deterministic translation layer between Claude Code's native lifecycle (settings.json hooks, `--session-id`, transcripts) and harmonik's handler-contract progress-stream wire protocol; it is the realization of S05 (Hook System) for `agent_type = claude-code`. It has two emitter roles — the handler-process (long-lived) and the hook-relay subprocess (short-lived, one per Claude hook firing) — that together write NDJSON progress-stream messages to the daemon's Unix domain socket, both keyed by `(run_id, claude_session_id)`.
 
 (a) Events produced (progress-stream messages emitted by handler-process and relay-subprocess; the bridge introduces zero new bus event types per §1; all entries are existing progress-stream messages whose schemas are owned by [/Users/gb/github/harmonik/specs/handler-contract.md §4.2] and [/Users/gb/github/harmonik/specs/event-model.md §8.1, §8.3]):
   - `handler_capabilities` — handler-process; emission rule §4.7 CHB-018 step 1 (carries `claude_session_id`); schema in [/Users/gb/github/harmonik/specs/handler-contract.md §4.2 HC-009].
@@ -173,7 +173,7 @@ The materialized `${workspace_path}/.claude/settings.json` MUST contain at least
 }
 ```
 
-The hook timeout is fixed at 30 seconds at MVH. The relay's internal retry budget against `daemon_not_ready` MUST fit inside this envelope. The `command` value `"harmonik"` MUST be resolvable via PATH at Claude exec time; the handler MUST verify resolvability per [handler-contract.md §4.10 HC-042] before launch.
+The hook timeout is fixed at 30 seconds. The relay's internal retry budget against `daemon_not_ready` MUST fit inside this envelope. The `command` value `"harmonik"` MUST be resolvable via PATH at Claude exec time; the handler MUST verify resolvability per [handler-contract.md §4.10 HC-042] before launch.
 
 Tags: mechanism
 
@@ -181,7 +181,7 @@ Tags: mechanism
 
 If a `${workspace_path}/.claude/settings.json` file already exists at the materialization time (inherited from the cloned repo state per [workspace-model.md §4.1 WM-003]), the workspace manager MUST attempt a merge: for each event-type key under `hooks`, the bridge-required matcher group is APPENDED to the existing array. User-declared hooks for the same event continue to fire alongside the bridge's hooks.
 
-If the existing file is malformed JSON, the workspace manager MUST OVERWRITE with the bridge-required content AND log a warning line to the session log noting the displacement. No new bus event is emitted at MVH (the bridge introduces zero new event types per §4); post-MVH operators MAY route this through an existing observability surface.
+If the existing file is malformed JSON, the workspace manager MUST OVERWRITE with the bridge-required content AND log a warning line to the session log noting the displacement. No new bus event is emitted (the bridge introduces zero new event types per §4); operators MAY later route this through an existing observability surface.
 
 The `disableAllHooks: true` key, if present in the merged result, MUST be removed; the bridge's correct operation depends on hooks firing.
 
@@ -287,11 +287,11 @@ Tags: mechanism
 
 | Claude hook event | Translates to progress-stream message | Derivation rules |
 |---|---|---|
-| `SessionStart {source: startup}` | (no-op at MVH; ready-state is handler-emitted per §4.7) | — |
-| `SessionStart {source: resume}` | (no-op at MVH; ready-state is handler-emitted per §4.7) | — |
+| `SessionStart {source: startup}` | (no-op; ready-state is handler-emitted per §4.7) | — |
+| `SessionStart {source: resume}` | (no-op; ready-state is handler-emitted per §4.7) | — |
 | `Stop` | `outcome_emitted` | `kind = WORK_COMPLETE` if phase ∈ {single, implementer-initial, implementer-resume}; `kind = REVIEWER_VERDICT` if phase = reviewer. For reviewer, payload is read from `${HARMONIK_WORKSPACE_PATH}/.harmonik/review.json` per §4.5.CHB-014. For implementer, payload is `{summary: <Claude's final assistant message text, truncated to 4 KiB>}`. The relay emits `outcome_emitted` on EVERY Stop invocation without filtering; in a multi-turn session multiple `outcome_emitted` messages are delivered. The daemon watcher applies last-received-wins dedup per §4.10 CHB-025. |
 | `SessionEnd` | (no-op; the handler emits `agent_completed` on Wait-return per §4.7) | — |
-| `StopFailure {error_type: rate_limit}` | `agent_rate_limited` | `retry_after_seconds = 60` (synthesized constant at MVH; no Claude-provided retry-after available). `agent_rate_limited` is non-terminal per [event-model.md §8.3]. |
+| `StopFailure {error_type: rate_limit}` | `agent_rate_limited` | `retry_after_seconds = 60` (synthesized constant; no Claude-provided retry-after available). `agent_rate_limited` is non-terminal per [event-model.md §8.3]. |
 | `StopFailure {error_type ∈ {authentication_failed, oauth_org_not_allowed, billing_error, invalid_request, max_output_tokens, unknown}}` | `outcome_emitted{kind = FAILURE_SIGNAL}` | `payload.error_type = "claude_" + error_type`; `payload.sub_reason = "claude_" + error_type`; `payload.suggested_class = ErrStructural`. The relay MUST NOT emit `agent_failed`; per CHB-INV-002 the relay never emits terminal events. The handler-process consumes `outcome_emitted{kind = FAILURE_SIGNAL}` on Wait-return and emits the single terminal `agent_failed` per §4.7 CHB-020 carrying the suggested class. |
 | `StopFailure {error_type: server_error}` | `outcome_emitted{kind = FAILURE_SIGNAL}` | `payload.error_type = "claude_server_error"`; `payload.sub_reason = "claude_server_error"`; `payload.suggested_class = ErrTransient`. Handler-process maps to terminal `agent_failed` per §4.7 CHB-020. |
 | `Notification {notification_type ∈ {idle_prompt, permission_prompt}}` | `agent_heartbeat` | `phase = "waiting_input"` |
@@ -352,9 +352,9 @@ Formally:
 
 2. **Across distinct connections** the watcher MUST NOT impose or guarantee any ordering. Two messages arriving on different connections at approximately the same wall-clock instant MAY be observed in either order by downstream subscribers. Subscribers (bus consumers, event-model state machines) MUST be written to tolerate any arrival order of messages from distinct connections.
 
-3. **No cross-connection reordering by `emitted_at_ns`** is performed at MVH. `emitted_at_ns` is a monotonic-relative timestamp recorded by the emitter (handler or relay) for observability and replay purposes; the daemon's acceptor MUST NOT buffer messages from one connection while waiting to sort them against messages from another connection.
+3. **No cross-connection reordering by `emitted_at_ns`** is performed. `emitted_at_ns` is a monotonic-relative timestamp recorded by the emitter (handler or relay) for observability and replay purposes; the daemon's acceptor MUST NOT buffer messages from one connection while waiting to sort them against messages from another connection.
 
-**Rationale:** the current socket acceptor (per `internal/daemon/socket.go RunSocketListener`) dispatches each accepted connection to an independent goroutine with no cross-goroutine ordering gate. This is Rule (C). Rules (A) and (B) would require a shared ordered channel or a reorder buffer with a quiescence window, both of which introduce complexity and latency that are unnecessary at MVH. In practice, concurrent relay arrivals are rare: Claude's hook execution model fires hooks sequentially relative to the agent's tool invocations; the handler's long-lived connection carries low-frequency lifecycle messages. When relay messages genuinely race (e.g., two `Notification` events from a parallelized tool call), both orderings are semantically equivalent to the subscriber.
+**Rationale:** the current socket acceptor (per `internal/daemon/socket.go RunSocketListener`) dispatches each accepted connection to an independent goroutine with no cross-goroutine ordering gate. This is Rule (C). Rules (A) and (B) would require a shared ordered channel or a reorder buffer with a quiescence window, both of which introduce complexity and latency that are unnecessary here. In practice, concurrent relay arrivals are rare: Claude's hook execution model fires hooks sequentially relative to the agent's tool invocations; the handler's long-lived connection carries low-frequency lifecycle messages. When relay messages genuinely race (e.g., two `Notification` events from a parallelized tool call), both orderings are semantically equivalent to the subscriber.
 
 **Twin parity implication:** `harmonik-twin-claude` emits all messages on a single connection (it does not spawn relay subprocesses). A twin run therefore trivially satisfies per-connection FIFO with no cross-connection ambiguity. CHB-021 byte-for-byte parity holds within each connection's ordered stream; the across-connection ordering variance that exists in real runs is absent in twin runs, which is consistent with declaring across-connection order as unspecified. Conformance tests MUST NOT assert a fixed cross-connection emission order; they MUST instead assert that each expected message is present and that per-connection order constraints hold.
 
@@ -368,7 +368,7 @@ If a relay subprocess is killed (SIGKILL, OOM, or any other cause) AFTER opening
 The daemon MUST:
 
 1. **Drop the connection silently.** No bus event is emitted. No terminal event (`agent_failed`, `agent_completed`) is emitted for any session. The connection is unidentifiable and cannot be attributed to any watcher.
-2. **Log a single debug-level line** noting the orphan connection (remote address, byte count received, timestamp). No structured event is emitted at MVH; the log line is for operator diagnostics only.
+2. **Log a single debug-level line** noting the orphan connection (remote address, byte count received, timestamp). No structured event is emitted; the log line is for operator diagnostics only.
 3. **Leave the handler's Wait-return path as the authoritative recovery mechanism.** Per CHB-020 and CHB-INV-002, the handler-process emits the terminal event when `cmd.Wait()` returns. If the relay was carrying a Stop hook and died mid-write, no `outcome_emitted` arrives at the daemon; the watcher's "no outcome_emitted observed" branch fires on Wait-return, emitting `agent_failed{class=ErrTransient, sub_reason=bridge_partial_write}` per §8. This is a recoverable false-negative: the terminal event is correctly emitted with an accurate sub_reason; orchestrator retry semantics apply.
 
 **Scope boundary.** This requirement covers only connection-level EOF before any byte of the envelope reaches the daemon. Partial envelope receipt (some bytes written, no `\n` terminator) is handled by the existing wire-framing rule: the NDJSON reader discards the incomplete line and treats the connection as EOF with zero complete messages, which falls under this same rule.
@@ -397,7 +397,7 @@ Tags: mechanism
 
 While Claude is alive (the handler's `cmd.Wait()` has not returned and `outcome_emitted` has not been observed), the handler-process MUST emit `agent_heartbeat{phase: "reasoning"}` at intervals of `T_silent_hang / 2 = 300 seconds` (per [handler-contract.md §4.6 HC-026a]). Heartbeats emitted by the relay (Notification-driven, §4.5.CHB-013) supplement, not replace, the handler's timer.
 
-> NOTE (cross-ref HC-057): For `agent_type = claude-code` at MVH, the daemon MAY emit `agent_heartbeat` on the handler-process's behalf per [handler-contract.md §4.6 HC-057] (daemon-side heartbeat carve-out); such daemon-emitted heartbeats satisfy this requirement without constituting a protocol violation.
+> NOTE (cross-ref HC-057): For `agent_type = claude-code`, the daemon MAY emit `agent_heartbeat` on the handler-process's behalf per [handler-contract.md §4.6 HC-057] (daemon-side heartbeat carve-out); such daemon-emitted heartbeats satisfy this requirement without constituting a protocol violation.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -558,7 +558,7 @@ Harmonik MUST write this entry to `~/.claude.json` before exec'ing Claude in the
 
 **Existing entry preservation.** The write MUST NOT remove or modify any other key in `~/.claude.json` or any other entry in the `projects` map. The merge is additive: only `hasTrustDialogAccepted` is set on the worktree's entry; all other fields in the entry (if pre-existing) are retained.
 
-**Scope note.** This is the user-operator machine running the daemon, not the worktree itself. No worktree-local file is written by this step. The entry persists after the run completes; cleanup is acceptable but not required at MVH (orphaned trust entries are cosmetically inert).
+**Scope note.** This is the user-operator machine running the daemon, not the worktree itself. No worktree-local file is written by this step. The entry persists after the run completes; cleanup is acceptable but not required (orphaned trust entries are cosmetically inert).
 
 **Test isolation and concurrency.** The implementation MUST honor `HARMONIK_CLAUDE_CONFIG_PATH` (full file path) or `CLAUDE_CONFIG_HOME` (directory; config file is `<dir>/.claude.json`) environment variable overrides so that unit and integration tests can redirect writes to a temp path and never touch the real `~/.claude.json`. Precedence: `HARMONIK_CLAUDE_CONFIG_PATH` > `CLAUDE_CONFIG_HOME` > `~/.claude.json`. The implementation MUST hold a blocking exclusive advisory flock (`LOCK_EX`) on a sidecar lockfile (`<cfgPath>.lock`) across the entire read-modify-write cycle to serialize concurrent daemon instances writing to the same config file. The sidecar pattern is required: locking the target file directly would interfere with the atomic rename. The sidecar MUST be created with `O_CREATE|O_RDWR` (mode `0600`) if it does not yet exist; the lock is released when the file descriptor is closed after the rename completes.
 
@@ -679,23 +679,23 @@ Scenario tests MUST cover:
 - A relay-can't-dial scenario: daemon socket file deleted mid-session; relay emits `bridge_dial_failed`; handler's Wait-return emits the terminal event.
 - A daemon-not-ready scenario: relay invoked during daemon startup window; retries succeed within the 25 s budget.
 
-## 11. Informative — alternative architecture (post-MVH)
+## 11. Informative — alternative architecture (not adopted; possible later evolution)
 
 Claude Code supports a `--output-format stream-json --include-hook-events --include-partial-messages` mode that emits hook lifecycle events natively on stdout as NDJSON. This is a competing bridging architecture in which the harmonik handler-process parses Claude's stdout directly, eliminating `.claude/settings.json` materialization and the relay subprocess entirely.
 
-This architecture is NOT adopted at MVH for the following reasons:
+This architecture is NOT adopted for the following reasons:
 
 - The stream-json event vocabulary is less documented than the hooks reference; the field schemas are subject to evolution.
 - The relay-subprocess pattern is simpler to test in isolation (canned stdin / env per invocation).
 - The kickoff-design constraint A2 specifies the relay path.
 
-Post-MVH evolution to stream-json + `--include-hook-events` is possible without changing the watcher (per [handler-contract.md §4.12 HC-052]); the adapter and the bridge spec change, the wire-level invariants do not.
+A later evolution to stream-json + `--include-hook-events` is possible without changing the watcher (per [handler-contract.md §4.12 HC-052]); the adapter and the bridge spec change, the wire-level invariants do not.
 
 ## 12. Open questions
 
-- **OQ-CHB-001** — Should the relay's daemon-socket protocol use a SO_PEERCRED check (Linux) / LOCAL_PEERCRED check (macOS) to verify it's running as the same user as the daemon? Default deferred to filesystem-permission discipline per HC-044 at MVH.
-- **OQ-CHB-002** — Should `Notification {notification_type: idle_prompt}` synthesize an additional `agent_output_chunk` carrying the notification message text for operator-side observability? Default no at MVH.
-- **OQ-CHB-003** — Settings.json merge: should the existence of conflicting user hooks (same event, same matcher, side-effect-bearing command) be detected and warned? Default no at MVH; relies on user discipline.
+- **OQ-CHB-001** — Should the relay's daemon-socket protocol use a SO_PEERCRED check (Linux) / LOCAL_PEERCRED check (macOS) to verify it's running as the same user as the daemon? Default deferred to filesystem-permission discipline per HC-044.
+- **OQ-CHB-002** — Should `Notification {notification_type: idle_prompt}` synthesize an additional `agent_output_chunk` carrying the notification message text for operator-side observability? Default no.
+- **OQ-CHB-003** — Settings.json merge: should the existence of conflicting user hooks (same event, same matcher, side-effect-bearing command) be detected and warned? Default no; relies on user discipline.
 
 ## Revision history
 
@@ -706,7 +706,7 @@ Post-MVH evolution to stream-json + `--include-hook-events` is possible without 
 | 2026-05-13 | 0.3 | agent (hk-w5vra.10) | CHB-026: concurrent-connection serialization rule — per-connection FIFO, across-connection unordered (Rule C). Matches current `RunSocketListener` topology; no code change required. Twin-parity implication added. |
 | 2026-05-13 | 0.4 | agent (hk-w5vra.9) | CHB-027: daemon silent-drop on orphan relay connection (relay OOM-killed after socket open, before envelope write). §8 error taxonomy entry added: `bridge_partial_write` (ErrTransient). Doc-only; no code change required. |
 | 2026-05-13 | 0.5 | agent (hk-gql20.4) | Decision record: no CHB-028 clause filed. The bridge-integration initiative (`hk-gql20`) evaluated whether the tmux substrate required an amendment to CHB. Conclusion: no amendment is needed. Twin parity remains at the wire-format level (CHB-021 and CHB-022 are unchanged); the substrate — tmux panes as the execution environment for Claude subprocesses — is orthogonal to the hook-relay and progress-stream contracts defined here. Tmux substrate obligations are captured in [workspace-model.md WM-002a] and [handler-contract.md HC-054]. Source: `.kerf/projects/gregberns-harmonik/bridge-integration/05-specs/claude-hook-bridge-amendments.md`. |
-| 2026-05-13 | 0.6 | agent (hk-gql20.25) | Bridge-integration spec review findings (MINOR + MEDIUM). **MINOR:** v0.5 changelog citation corrected: `HC-026a` → `HC-054` (Session.Attach pty contract; the prior cite was the heartbeat obligation, not the pty contract intended). **MEDIUM (CHB-019):** Added cross-reference note to §4.7 CHB-019 stating that for `agent_type=claude-code` at MVH the daemon MAY emit `agent_heartbeat` on the handler-process's behalf per HC-057; daemon-emitted heartbeats satisfy CHB-019 without constituting a protocol violation. Refs: hk-gql20.25. |
+| 2026-05-13 | 0.6 | agent (hk-gql20.25) | Bridge-integration spec review findings (MINOR + MEDIUM). **MINOR:** v0.5 changelog citation corrected: `HC-026a` → `HC-054` (Session.Attach pty contract; the prior cite was the heartbeat obligation, not the pty contract intended). **MEDIUM (CHB-019):** Added cross-reference note to §4.7 CHB-019 stating that for `agent_type=claude-code` the daemon MAY emit `agent_heartbeat` on the handler-process's behalf per HC-057; daemon-emitted heartbeats satisfy CHB-019 without constituting a protocol violation. Refs: hk-gql20.25. |
 | 2026-05-13 | 0.7 | agent (hk-yrplz) | CHB-028: per-launch task artifact — `${workspace_path}/.harmonik/agent-task.md` as the normative daemon→claude task-delivery channel under the tmux substrate. §4.11 added. Atomic-write discipline per WM-026. Reserved name (NOT CLAUDE.md). Content shape by phase (implementer-initial, implementer-resume, reviewer). Prior-iteration pointers for resume and reviewer phases. Gitignore hygiene, re-attach semantics, and task_file_collision / task_file_empty error sub-reasons added to §8. §2.1 scope and §9 cross-references updated. Conformance checklist updated. Refs: hk-yrplz. |
 | 2026-05-13 | 0.8 | agent (hk-p63bz) | **agent_ready semantics reframed for the interactive (tmux) substrate.** CHB-013: `SessionStart {source: startup}` and `SessionStart {source: resume}` rows updated — relay now synthesizes `agent_ready` (with `provenance: "claude_session_start"`) on first hook receipt rather than being a no-op. This makes `agent_ready` a claude-originated signal rather than a daemon self-emission. CHB-018: step 4 changed from `agent_ready` self-emission to `launch_initiated` precursor; added normative rationale explaining that `agent_ready` is gated on relay receipt under the tmux substrate. §2.1 scope bullet updated to reflect `launch_initiated` (not `agent_ready`) as the pre-exec handler emission. Coexists with CHB-028 (task artifact, hk-yrplz). Refs: hk-p63bz. |
 | 2026-05-13 | 0.9 | agent (hk-fdyip) | **CHB-029: worktree auto-trust pre-seed.** §4.12 added. The daemon MUST pre-seed `~/.claude.json` projects[worktreePath].hasTrustDialogAccepted=true before exec'ing Claude in a daemon-spawned tmux pane; without this the interactive trust dialog blocks indefinitely and HC-056 fires. Mechanism: atomic temp-file+rename write to user-level ~/.claude.json. Ordering: after WM-003 + WM-040a, before SubstrateSpawn. Failure: ErrStructural / trust_seed_failed / agent_failed. Alternatives rejected: --permission-mode and --dangerously-skip-permissions are deny-listed in HC-055 and CHB-007. Companion: workspace-model.md §4.7b WM-040b. Code: internal/workspace/claudetrust_wm040b.go. Refs: hk-fdyip. |

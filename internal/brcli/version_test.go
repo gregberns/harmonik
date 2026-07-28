@@ -116,7 +116,7 @@ func TestCheckBrVersionWithPrereleaseObserved(t *testing.T) {
 	}
 
 	// pinned is the bare numeric form; pre-release suffix is NOT part of the
-	// pinned manifest string at MVH.
+	// pinned manifest string.
 	if err := adapter.CheckBrVersion(context.Background(), "0.5.2"); err != nil {
 		t.Fatalf("CheckBrVersion: unexpected error for pre-release match: %v", err)
 	}

@@ -57,22 +57,22 @@ func (c *IdempotencyClass) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// DefaultIdempotencyClassForNodeRole returns the MVH-baseline idempotency-class
+// DefaultIdempotencyClassForNodeRole returns the baseline idempotency-class
 // default for a given node role, absent a YAML policy override, per
 // execution-model.md §4.2.EM-010.
 //
-// Mapping (MVH baseline):
+// Mapping (baseline):
 //
 //	reviewer, researcher, lint, test, typecheck, analysis → idempotent
 //	builder, merge                                        → non-idempotent
 //
 // A YAML policy MAY override any default at runtime; this function only
-// encodes the static baseline. Post-MVH node types that register
+// encodes the static baseline. Later node types that register
 // recoverable-non-idempotent defaults are NOT represented here — that
 // extension is deferred per EM-010 and §9.3.
 //
 // The second return value is false when role is not one of the eight declared
-// NodeRole constants at MVH; callers MUST check ok before using the class.
+// NodeRole constants; callers MUST check ok before using the class.
 func DefaultIdempotencyClassForNodeRole(role NodeRole) (class IdempotencyClass, ok bool) {
 	switch role {
 	case NodeRoleReviewer,

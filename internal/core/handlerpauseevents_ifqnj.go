@@ -1,7 +1,7 @@
 package core
 
 // handlerpauseevents_ifqnj.go — event-bus payload types for §8.11 handler-pause
-// lifecycle events introduced by the handler-pause MVH (hk-ifqnj):
+// lifecycle events introduced by the handler-pause work (hk-ifqnj):
 //
 //   - handler_paused                      (§8.11.1)
 //   - handler_resumed                     (§8.11.2)
@@ -25,7 +25,7 @@ type HandlerPauseCause struct {
 	FailureClass FailureClass `json:"failure_class"`
 
 	// SubReason is the fine-grained sub-reason within the failure class.
-	// Required (non-empty). Known values at MVH: "rate_limit", "budget_exhausted_handler_account".
+	// Required (non-empty). Known values: "rate_limit", "budget_exhausted_handler_account".
 	// The vocabulary is open per specs/handler-pause.md §5.
 	SubReason string `json:"sub_reason"`
 
@@ -44,7 +44,7 @@ type HandlerPauseCause struct {
 	// DiagnosticMessage is the human-readable summary from Adapter.Diagnose
 	// (specs/handler-contract.md §4.3a HC-014a).  Optional (omitempty); absent
 	// when the adapter does not support diagnostics or the probe failed.
-	// At MVH the field is informational only; no policy decision is gated on it.
+	// The field is informational only; no policy decision is gated on it.
 	DiagnosticMessage string `json:"diagnostic_message,omitempty"`
 }
 
@@ -151,8 +151,9 @@ func (p HandlerPausedPayload) Valid() bool {
 // HandlerResumedBy is the typed discriminator for the by field of a
 // handler_resumed event (event-model.md §8.11.2).
 //
-// At MVH the only value is "operator" (manual resume via `harmonik handler resume`).
-// Post-MVH values (e.g. "auto-backoff", "webhook") will be added via EV-027 amendment.
+// Currently the only value is "operator" (manual resume via `harmonik handler resume`).
+// Further values (e.g. "auto-backoff", "webhook") will be added later via EV-027
+// amendment.
 type HandlerResumedBy string
 
 const (
@@ -162,7 +163,7 @@ const (
 
 	// HandlerResumedByAutoBackoff indicates the resume was triggered automatically
 	// after a timed backoff derived from the rate-limit retry_after window.
-	// Post-MVH: see specs/handler-pause.md §1.2 and bead hk-0otqs.
+	// Not yet implemented: see specs/handler-pause.md §1.2 and bead hk-0otqs.
 	HandlerResumedByAutoBackoff HandlerResumedBy = "auto-backoff"
 
 	// HandlerResumedBySignal indicates the resume was triggered by an OS signal
@@ -172,8 +173,8 @@ const (
 	// daemon or by the superuser (root).  The kernel enforces this via kill(2)
 	// permission checks; no additional application-level authentication is needed.
 	//
-	// Post-MVH: see specs/handler-pause.md §1.2 (external-trigger resume) and
-	// bead hk-bdvae.
+	// Not yet implemented: see specs/handler-pause.md §1.2 (external-trigger
+	// resume) and bead hk-bdvae.
 	HandlerResumedBySignal HandlerResumedBy = "signal"
 )
 
@@ -212,7 +213,7 @@ type HandlerResumedPayload struct {
 	AgentType AgentType `json:"agent_type"`
 
 	// By is the resume initiator. Required; must be a valid HandlerResumedBy constant.
-	// At MVH: always HandlerResumedByOperator.
+	// Currently always HandlerResumedByOperator.
 	By HandlerResumedBy `json:"by"`
 
 	// PriorCause is the cause record from the preceding handler_paused event

@@ -12,7 +12,7 @@ description: >
   Depends on: ST1 (twin-scripts at scenarios/regression/merge-race-samefile/
   twin-scripts/), ST3 (commit_on_cue sentinel_name two-twin support, hk-q3u57).
   NOTE: The parallel fan-out that makes alpha and beta race concurrently is
-  post-MVH (EM-059). Under current sequential dispatch the workflow exercises the
+  deferred (EM-059). Under current sequential dispatch the workflow exercises the
   commit_on_cue path but both commits land on the same task branch; the race and
   the non_ff_merge rejection will fire once MaxConcurrent≥2 per-bead parallelism
   ships. This file is a normative spec artifact per specs/scenario-harness.md §SH-032.

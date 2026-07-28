@@ -9,8 +9,8 @@ package core
 // (control-points.md §4.5).
 //
 // CostBasis is a string-backed opaque identifier: the daemon and observability
-// consumers treat it as an opaque label — no parsing or enumeration is imposed
-// at MVH. The non-empty invariant is enforced by BudgetAccrualPayload.Valid().
+// consumers treat it as an opaque label — no parsing or enumeration is
+// imposed. The non-empty invariant is enforced by BudgetAccrualPayload.Valid().
 //
 // Bead: hk-hqwn.73.
 type CostBasis string

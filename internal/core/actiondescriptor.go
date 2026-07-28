@@ -9,8 +9,8 @@ import "fmt"
 //
 // The spec cites [handler-contract.md §4.1] as the defining location for
 // ActionDescriptor; that spec does not yet declare a structured record shape
-// at MVH (see execution-model.md OQ-EM-005). MVH realises ActionDescriptor as
-// a typed non-empty string alias following the same pattern as PolicyVersion.
+// (see execution-model.md OQ-EM-005). ActionDescriptor is realised here as a
+// typed non-empty string alias following the same pattern as PolicyVersion.
 // A future handler-contract revision may promote this to a structured record
 // via the amendment protocol per [architecture.md §4.6].
 type ActionDescriptor string

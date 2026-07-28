@@ -61,7 +61,7 @@ type AgentTaskPayload struct {
 	// Phase is the review-loop phase string:
 	// "implementer-initial" | "implementer-resume" | "reviewer".
 	// Empty string is treated as a single-mode dispatch; spec requires one of the
-	// three values for review-loop, but single-mode is valid at MVH.
+	// three values for review-loop, but single-mode is valid.
 	Phase string
 
 	// Iteration is the 1-based iteration index (LaunchSpec.iteration_count).

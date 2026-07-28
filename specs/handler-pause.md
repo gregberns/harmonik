@@ -44,12 +44,12 @@ The key design principle: handler-type pause is **orthogonal** to queue-level pa
 
 ### 1.2 Out of scope
 
-- Per-handler diagnostic-tool framework (run-on-pause / verify-on-resume) — post-MVH; seam declared in §9.1.
-- Auto-resume on timed backoff (`retry_after` derived window) — post-MVH.
-- External-trigger resume (webhook, SIGUSR1, file-marker) — post-MVH.
+- Per-handler diagnostic-tool framework (run-on-pause / verify-on-resume) — deferred; seam declared in §9.1.
+- Auto-resume on timed backoff (`retry_after` derived window) — deferred.
+- External-trigger resume (webhook, SIGUSR1, file-marker) — deferred.
 - Cross-handler task transfer — research-only; seam declared in §9.2.
-- Per-account pause within a single handler type — post-MVH; seam declared in §9.3.
-- `handler-status` JSON-RPC method — post-MVH; error-code block reserved at §8.3 (process-lifecycle §4.4 PL-003a `-32020..−32029`).
+- Per-account pause within a single handler type — deferred; seam declared in §9.3.
+- `handler-status` JSON-RPC method — deferred; error-code block reserved at §8.3 (process-lifecycle §4.4 PL-003a `-32020..−32029`).
 - Operator UI richer than CLI text.
 
 ## 2. Glossary
@@ -219,7 +219,7 @@ Drawing from [/Users/gb/github/harmonik/specs/execution-model.md §8] six failur
 | `budget_exhausted` | **Conditional** | Handler-fatal only when the budget is per-handler-account (session-token cap, daily-quota). Per-run budget exhaustion is per-bead. |
 | `compilation_loop` | No | Daemon-observed traversal cap; the handler itself is not broken. |
 
-### 5.2 MVH handler-fatal set
+### 5.2 The handler-fatal set
 
 **HP-011 — Rate-limit hysteresis trip.** A handler type MUST be paused when the daemon observes two consecutive `agent_rate_limited` events for that `agent_type` without an intervening `agent_rate_limit_cleared`. Rationale: one isolated rate-limit may resolve within the same run; two in a row indicates structural handler-wide saturation. The consecutive-count is per `agent_type` and is reset to zero on every `agent_rate_limit_cleared` or on a successful run completion for that handler type.
 
@@ -227,13 +227,13 @@ Drawing from [/Users/gb/github/harmonik/specs/execution-model.md §8] six failur
 
 > NOTE: `budget_scope = handler-account` denotes the Budget primitive's `scope` field carrying value `handler_account` per [/Users/gb/github/harmonik/specs/control-points.md §4.5 CP-022] (there is one field, `scope`, not a parallel `budget_scope` field). The producer of the qualifying account-scoped `budget_exhausted` is the cognition loop's unified per-day spend meter ([/Users/gb/github/harmonik/specs/cognition-loop.md §4.11 CL-090]) — the "daily-quota" case named in the §8 classification table. The end-to-end exhaustion path is documented in §11a.
 
-**HP-013 — MVH exclusions.** The following failure signals MUST NOT trip a handler pause:
+**HP-013 — Exclusions.** The following failure signals MUST NOT trip a handler pause:
 - `ErrSkillProvisioningFailed` — per-bead config issue.
 - `daemon_not_ready` — process-lifecycle concern, not handler.
 - `workspace_held_by_orphan` — workspace-model concern.
 - Any `structural` or `deterministic` failure class regardless of sub-reason.
 
-**HP-014 — Post-MVH sub-reasons (deferred).** `auth-expired` and `api-unreachable` are recognized handler-fatal sub-cases but are not formally surfaced as handler-contract sentinels at MVH. Until added to [/Users/gb/github/harmonik/specs/handler-contract.md §4.5], these cases ride the rate-limit hysteresis path via `agent_rate_limited`. Addition is tracked as a follow-up.
+**HP-014 — Deferred sub-reasons.** `auth-expired` and `api-unreachable` are recognized handler-fatal sub-cases but are not yet formally surfaced as handler-contract sentinels. Until added to [/Users/gb/github/harmonik/specs/handler-contract.md §4.5], these cases ride the rate-limit hysteresis path via `agent_rate_limited`. Addition is tracked as a follow-up.
 
 **HP-015 — Hysteresis is per epoch.** The consecutive-rate-limit counter MUST reset to zero at every resume (i.e., on a new epoch). Stale counts from a prior epoch MUST NOT carry forward.
 
@@ -287,7 +287,7 @@ Drawing from [/Users/gb/github/harmonik/specs/execution-model.md §8] six failur
 8. Log at INFO: `handler_resumed agent_type=<type> by=operator prior_cause=<failure_class>/<sub_reason>`.
 9. Release lock.
 
-**HP-041 — Resume does not verify.** At MVH, `Resume()` does NOT verify that the underlying issue is resolved. The operator is responsible for confirming the handler is operational before resuming. Post-MVH the diagnostic hook (§9.1) may add verification.
+**HP-041 — Resume does not verify.** `Resume()` does NOT verify that the underlying issue is resolved. The operator is responsible for confirming the handler is operational before resuming. The diagnostic hook (§9.1) may add verification in a later change.
 
 **HP-042 — Resume does not re-trigger beads.** Resume does NOT force re-dispatch of any previously held bead. The dispatcher picks up eligible items on its next tick via normal eligibility evaluation.
 
@@ -327,7 +327,7 @@ This subsection is the explicit cross-link to [/Users/gb/github/harmonik/specs/q
 
 ### 8.4 HP-016 — Schema versioning
 
-`schema_version: 1` is the only supported version at MVH. N-1 readability per [/Users/gb/github/harmonik/specs/operator-nfr.md §4.5 ON-018] applies once a v2 is introduced: a v2 daemon MUST be able to read and migrate a v1 file. Until then no migration logic is required.
+`schema_version: 1` is the only supported version. N-1 readability per [/Users/gb/github/harmonik/specs/operator-nfr.md §4.5 ON-018] applies once a v2 is introduced: a v2 daemon MUST be able to read and migrate a v1 file. Until then no migration logic is required.
 
 ## 9. In-flight bead handling
 
@@ -368,7 +368,7 @@ Behavior:
 4. CLI prints: prior cause, count of in-flight-at-pause runs, current dispatcher backlog awaiting this handler.
 5. Exit codes: `0` success; `2` unknown type; `3` already live (without `--force`); `4` socket unreachable.
 
-`--force` is reserved at MVH (no-op). Post-MVH it will bypass the diagnostic re-check if the diagnostic hook (§9.1) is implemented.
+`--force` is reserved (no-op). Once the diagnostic hook (§9.1) is implemented, it will bypass the diagnostic re-check.
 
 ### 10.2 Log surface
 
@@ -402,21 +402,21 @@ This subsection documents the end-to-end path by which the cognition-loop unifie
 
 ## 12. Forward-looking seams
 
-### 12.1 Per-handler diagnostic-tool hook (post-MVH)
+### 12.1 Per-handler diagnostic-tool hook (deferred)
 
-**HP-070 — Diagnostic seam.** A forward-looking `Diagnose(ctx) -> (DiagnosticReport, error)` method is reserved in the `Adapter` interface per [/Users/gb/github/harmonik/specs/handler-contract.md §4.3a HC-014a]. At MVH this method is not invoked by the daemon; post-MVH the HandlerPauseController MAY invoke it (a) on pause-trip to enrich the `cause` record, and (b) on Resume to verify resolution. Adapters not implementing it MUST return `ErrDeterministic`. The `DiagnosticReport` shape is reserved for post-MVH; no MVH consumer.
+**HP-070 — Diagnostic seam.** A forward-looking `Diagnose(ctx) -> (DiagnosticReport, error)` method is reserved in the `Adapter` interface per [/Users/gb/github/harmonik/specs/handler-contract.md §4.3a HC-014a]. The daemon does not invoke this method today; in a later change the HandlerPauseController MAY invoke it (a) on pause-trip to enrich the `cause` record, and (b) on Resume to verify resolution. Adapters not implementing it MUST return `ErrDeterministic`. The `DiagnosticReport` shape is reserved for later; it has no consumer today.
 
 ### 12.2 Cross-handler task transfer (research-only)
 
-**HP-071 — Transfer seam.** A paused handler's held items could in principle be re-bound to a fallback handler type if the workflow node declares `agent_type` as a fallback list. This is a workflow-graph-level concept (would touch [/Users/gb/github/harmonik/specs/execution-model.md §4.2] node attributes) and is research-only at MVH. No contract is reserved here.
+**HP-071 — Transfer seam.** A paused handler's held items could in principle be re-bound to a fallback handler type if the workflow node declares `agent_type` as a fallback list. This is a workflow-graph-level concept (would touch [/Users/gb/github/harmonik/specs/execution-model.md §4.2] node attributes) and is research-only. No contract is reserved here.
 
-### 12.3 Per-account pause (post-MVH)
+### 12.3 Per-account pause (deferred)
 
 **HP-072 — Account-pool seam.** Today one handler type maps to one account. A future adapter with account-pool rotation (see [/Users/gb/github/harmonik/specs/handler-contract.md §4.3 HC-014] RotateAccount seam) could pause individual accounts rather than the whole handler type. The `handlers.<type>` slot in `handler-state.json` would gain a per-account sub-map. Schema v2 would introduce this; v1 has no per-account fields.
 
-### 12.4 JSON-RPC handler-status method (post-MVH)
+### 12.4 JSON-RPC handler-status method (deferred)
 
-**HP-073 — JSON-RPC seam.** A `handler-status` JSON-RPC method is reserved in the `-32020..−32029` error-code block on [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.4 PL-003a]. The MVH programmatic surface is the CLI `--format json` path per HP-060. Promotion to JSON-RPC is deferred; the code block is allocated to prevent collisions.
+**HP-073 — JSON-RPC seam.** A `handler-status` JSON-RPC method is reserved in the `-32020..−32029` error-code block on [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.4 PL-003a]. The programmatic surface today is the CLI `--format json` path per HP-060. Promotion to JSON-RPC is deferred; the code block is allocated to prevent collisions.
 
 ## 13. Open questions deferred
 

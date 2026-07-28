@@ -1,6 +1,6 @@
 # Subsystem Organization
 
-> How harmonik's Go source tree is shaped, where each subsystem lives, and how cross-subsystem imports are mechanically constrained. Scope: single-binary daemon MVH per `process-lifecycle.md §8.6` and `architecture.md §1.4a` ("a subsystem is a Go package inside the daemon process").
+> How harmonik's Go source tree is shaped, where each subsystem lives, and how cross-subsystem imports are mechanically constrained. Scope: single-binary daemon per `process-lifecycle.md §8.6` and `architecture.md §1.4a` ("a subsystem is a Go package inside the daemon process").
 
 ## Decisions
 
@@ -10,7 +10,7 @@
 4. **Dependency layering enforced by `depguard` v2** (single tool for both lint rules and component-graph enforcement). Component graph lives in `.golangci.yml` under `linters-settings.depguard`; no separate architecture-tool binary. (Rationale in §Dependency layering.)
 5. **Handler implementations are subsystems too** — `internal/handler/claudecode`, `internal/handler/pi`, `internal/handler/twin` each declare a subsystem envelope per §1.4a.
 6. **External adapters are packages, not subsystems** — `internal/adapter/br` (Beads CLI), `internal/adapter/ntm` — thin shells per foundation boundary rules; do not declare envelopes.
-7. **`pkg/` is deliberately unused at MVH** — no public library surface; prevents accidental API-stability obligations. Revisit only if an external Go consumer materializes.
+7. **`pkg/` is deliberately unused** — no public library surface; prevents accidental API-stability obligations. Revisit only if an external Go consumer materializes.
 8. **Go 1.25 toolchain pinned via `go.mod`** — `toolchain go1.25.x`. Enables `log/slog`, `testing/synctest`, `os.Root`, `go.mod tool` directives. See `quality-checks.md` for the ⚑ on this assumption.
 9. **No `go.work` file.** Single module; no multi-module workspace. Keeps tooling expectations simple and avoids editor/LSP variance.
 10. **Dev tool dependencies managed via Go 1.24+ `go.mod tool` directive.** No `tools.go` pattern. `gofumpt`, `gci`, `golangci-lint`, etc., are declared as `tool` requirements in `go.mod` and resolved with `go tool <name>`.
@@ -39,9 +39,9 @@ harmonik/
     agentrunner/                  # S04
     hook/                         # S05
     workspace/                    # S06
-    scenario/                     # S07 (post-MVH, stub OK at bootstrap)
+    scenario/                     # S07 (deferred; stub OK at bootstrap)
     memory/                       # S08
-    improvement/                  # S09 (post-MVH)
+    improvement/                  # S09 (deferred)
     handler/                      # handler-contract §4 implementations
       contract/                   # the Handler interface + LaunchSpec types
       claudecode/
@@ -202,7 +202,7 @@ linters-settings:
 ## ⚑ Assumptions worth user's eye
 
 1. **⚑ Module path** — `github.com/gregberns/harmonik` assumed from the repo URL and git user. Confirm before first `go mod init`.
-2. **⚑ `pkg/` empty at MVH** — the standard Go-community debate. Closing it off prevents an agent inventing a "public API" nobody asked for. Revisit if cross-project reuse appears.
+2. **⚑ `pkg/` left empty** — the standard Go-community debate. Closing it off prevents an agent inventing a "public API" nobody asked for. Revisit if cross-project reuse appears.
 3. **⚑ `internal/core` as single shared package** — an alternative is finer-grained shared packages (`internal/ids`, `internal/events`, `internal/outcome`). One-package is simpler; subdividing is a refactor, not a design change. Flagging because the choice is load-bearing.
 4. **⚑ `internal/daemon` as composition root** — all wiring (DI, startup, socket listener, shutdown) lives here so subsystems stay mutually unaware. The daemon package is the only one allowed to import most subsystems. Standard Go-app pattern but worth naming.
 5. **⚑ Handlers live under `internal/handler/*`, not under `internal/agentrunner/*`** — handlers implement a contract the runner consumes, but they are their own subsystem-envelope-declaring packages per §1.4a. Co-locating with the runner would invert the dependency.

@@ -15,7 +15,7 @@ import "fmt"
 // site; BudgetRef itself must always be non-empty.
 //
 // control-points.md §4.5 does not declare a structured record shape for the
-// reference value at MVH; MVH realises BudgetRef as a typed non-empty string
+// reference value; BudgetRef is realised here as a typed non-empty string
 // alias following the same pattern as PolicyVersion. A future
 // control-points.md revision may promote this to a structured record via the
 // amendment protocol per [architecture.md §4.6].

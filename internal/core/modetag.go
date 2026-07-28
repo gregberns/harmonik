@@ -9,7 +9,7 @@ import "fmt"
 //
 // The two values are mutually exclusive per [architecture.md §4.2]: a surface
 // that is both mechanism- and cognition-tagged MUST be split into two
-// requirements. The enum is closed at MVH; future variants require the
+// requirements. The enum is closed; future variants require the
 // amendment protocol per [architecture.md §4.6].
 //
 // A reader observing an unknown ModeTag MUST NOT silently default to either
@@ -32,7 +32,7 @@ const (
 	ModeTagCognition ModeTag = "cognition"
 )
 
-// Valid reports whether m is one of the two declared ModeTag constants at MVH.
+// Valid reports whether m is one of the two declared ModeTag constants.
 // Unknown values are NOT tolerated — a reader observing an unknown ModeTag
 // MUST NOT silently default to either value per [architecture.md §4.2 AR-005].
 func (m ModeTag) Valid() bool {
@@ -46,7 +46,7 @@ func (m ModeTag) Valid() bool {
 
 // MarshalText implements encoding.TextMarshaler so ModeTag serialises
 // correctly in JSON and YAML.
-// It rejects any value that is not one of the two declared constants at MVH.
+// It rejects any value that is not one of the two declared constants.
 func (m ModeTag) MarshalText() ([]byte, error) {
 	if !m.Valid() {
 		return nil, fmt.Errorf("modetag: unknown value %q", string(m))
@@ -55,7 +55,7 @@ func (m ModeTag) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
-// It rejects any value that is not one of the two declared constants at MVH.
+// It rejects any value that is not one of the two declared constants.
 // Callers MUST NOT silently degrade to a default on error.
 func (m *ModeTag) UnmarshalText(text []byte) error {
 	v := ModeTag(text)

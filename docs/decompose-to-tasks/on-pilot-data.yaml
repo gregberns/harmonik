@@ -656,8 +656,6 @@ beads:
     title: "Full binary signing is deferred post-MVH"
     description: |
       Per ON-006: full cryptographic signing of binaries (code-signing certs, reproducible build attestations, signature-chain verification) is deferred post-MVH. Conforming MVH implementations MUST NOT be required to verify signatures beyond the commit-hash match of ON-005. Post-MVH introduction of signing is additive and does NOT invalidate MVH conformance.
-    extra_labels:
-      - "post-mvh"
 
   # ───────────────────────── §4.3 Operator-control between tasks ─────────────────────────
 
@@ -1086,8 +1084,6 @@ beads:
     title: "Multi-tenancy is explicitly deferred post-MVH"
     description: |
       Per ON-042: per-project daemon isolation (one daemon per project per [process-lifecycle.md §4.1]) is the MVH answer to multi-tenancy. Per-tenant cost attribution is out of scope for MVH; running N daemons does not auto-partition costs. Acknowledged-and-deferred concerns: shared operator LLM budgets (Anthropic quota is per-account; running N daemons does not create N quotas — machine-level budget coordinator required post-MVH); shared operator identity and auth (`harmonik attach` across N daemons is the same human with same skills and same `br` binary; global install conflicts and access controls are shared concerns); shared skill registries (skills installed machine-wide e.g. `~/.claude/skills/` — provisioning failure in one project is global failure surface). "Deferred" means "not solved by per-project-daemon isolation"; NOT "dismissed."
-    extra_labels:
-      - "post-mvh"
 
   - mnem: on-043
     kind: req
@@ -1095,8 +1091,6 @@ beads:
     title: "Metrics exposition format is deferred post-MVH"
     description: |
       Per ON-043: Prom and OTel wire formats for metric exposition are deferred post-MVH. MVH observability is structured logs (ON-035) plus typed events (ON-034). An implementation MAY additionally expose Prom/OTel endpoints but MUST NOT require them for MVH conformance.
-    extra_labels:
-      - "post-mvh"
 
   - mnem: on-044
     kind: req
@@ -1104,8 +1098,6 @@ beads:
     title: "Distributed tracing across daemons is deferred post-MVH"
     description: |
       Per ON-044: distributed tracing across multiple harmonik instances is deferred post-MVH. Per-project daemon isolation means multi-instance tracing is an OS-process-isolation concern, not a harmonik-code concern — each daemon is a separate process with its own event log and own state. Cross-daemon correlation (if ever needed) is an external-tooling layer, not a foundation spec.
-    extra_labels:
-      - "post-mvh"
 
   - mnem: on-050
     kind: req

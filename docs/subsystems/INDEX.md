@@ -71,5 +71,5 @@ The subsystems form a layered dependency structure:
 - [S06: Workspace Manager](workspace-manager.md) -- Worktree-per-workflow-branch with merges (Gas Town pattern)
 - [S07: Scenario Harness](scenario-harness.md) -- End-to-end test harness against digital twin agents
 - [S07-archived: Verifier Layer](verifier-layer.md) -- Superseded; responsibilities migrated to orchestrator + policy
-- [S08: Memory Layer](memory-layer.md) -- CASS-based session indexing (MVH scope)
+- [S08: Memory Layer](memory-layer.md) -- CASS-based session indexing (deliberately minimal scope)
 - [S09: Improvement Loop](improvement-loop.md) -- Self-improving meta-process

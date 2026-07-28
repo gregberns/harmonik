@@ -6,8 +6,8 @@
 //   - specs/scenario-harness.md §SH-008..SH-011 (agent_overrides)
 //
 // Two agentic nodes (alpha_node → beta_node) represent the two concurrent actors
-// in the same-file merge race. In current MVH mode (EM-059) they execute
-// sequentially; the parallel fan-out that produces the actual race is post-MVH.
+// in the same-file merge race. In current sequential mode (EM-059) they execute
+// sequentially; the parallel fan-out that produces the actual race is deferred.
 // This DOT file is the workflow handle the scenario fixture binds agent_overrides
 // keys against — "alpha_node" maps to the winner twin, "beta_node" to the loser.
 

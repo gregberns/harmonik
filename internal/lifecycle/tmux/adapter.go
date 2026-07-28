@@ -42,7 +42,7 @@ const (
 //
 // The internal representation is "session:window-index" in tmux notation, but
 // callers MUST treat it as an opaque string — the format may change when the
-// OSAdapter is extended to support multiple panes (post-MVH).
+// OSAdapter is later extended to support multiple panes.
 type WindowHandle string
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 package handler_test
 
-// handler_test.go — tests for Handler.Launch (MVH_ROADMAP row #7, bead hk-zxpj2).
+// handler_test.go — tests for Handler.Launch (EARLY_ROADMAP row #7, bead hk-zxpj2).
 //
 // Helper prefix: launchFixture (per implementer-protocol.md §Helper-prefix
 // discipline; bead hk-zxpj2).

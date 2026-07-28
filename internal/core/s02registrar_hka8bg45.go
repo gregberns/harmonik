@@ -66,7 +66,7 @@ type S02Registrar struct {
 }
 
 // NewS02Registrar returns a new S02Registrar with an empty MapRegistry and
-// the MVH-baseline Hook trigger set pre-populated per CP-013.
+// the baseline Hook trigger set pre-populated per CP-013.
 //
 // Subsystems that declare additional Hook trigger types MUST call AddHookTrigger
 // before invoking RegisterFromDocument, so that their triggers pass the
@@ -331,7 +331,7 @@ func constructGuard(pg PolicyGuard, schemaVersion int) (ControlPoint, error) {
 //
 // Budget evaluators are mechanism-tagged (deterministic threshold check per
 // §4.5.CP-022). The synthetic canonical expression is constructed from the
-// budget's limit value; full expression customisation is a post-MVH concern.
+// budget's limit value; full expression customisation is deferred.
 //
 // construction is PURE: no I/O, no side effects.
 func constructBudget(pb PolicyBudget, schemaVersion int) (ControlPoint, error) {
@@ -377,7 +377,7 @@ func constructBudget(pb PolicyBudget, schemaVersion int) (ControlPoint, error) {
 	// check; the evaluator uses this at dispatch time.
 	//
 	// TODO(hk-a8bg): replace with typed BudgetExpression once the full CP
-	// mechanism-evaluator surface (§6.4) is implemented post-MVH.
+	// mechanism-evaluator surface (§6.4) is not yet implemented.
 	expr := PolicyExpression(fmt.Sprintf("accrual <= %d", pb.Limit))
 
 	return ControlPoint{

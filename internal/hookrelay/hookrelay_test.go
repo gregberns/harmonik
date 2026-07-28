@@ -308,7 +308,7 @@ func TestHookRelay_SessionStart_SynthesizesAgentReady(t *testing.T) {
 func TestHookRelay_SessionEnd_NoOp(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013: SessionEnd is no-op at MVH.
+	// CHB-013: SessionEnd is a no-op.
 	e := hookRelayFixtureEnv(t.TempDir())
 	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "SessionEnd", nil)
 	var stderr bytes.Buffer

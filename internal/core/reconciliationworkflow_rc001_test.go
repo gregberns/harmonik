@@ -217,8 +217,8 @@ func TestRC005_DetectorsNotInWorkflowLibrary(t *testing.T) {
 	}
 }
 
-// TestRC006_WorkflowClassIsOnlyReconciliationAtMVH verifies that at MVH the
-// only accepted WorkflowClass value is "reconciliation", enforcing the closed
+// TestRC006_WorkflowClassIsOnlyReconciliation verifies that the only accepted
+// WorkflowClass value is currently "reconciliation", enforcing the closed
 // enum contract of RC-006's "same harmonik release" upgrade discipline.
 //
 // RC-006: "A new reconciliation category... MUST ship a daemon-code change...
@@ -230,10 +230,10 @@ func TestRC005_DetectorsNotInWorkflowLibrary(t *testing.T) {
 //
 // Spec ref: specs/reconciliation/spec.md §4.1 RC-006;
 // specs/reconciliation/schemas.md §6.5 "Future enum growth".
-func TestRC006_WorkflowClassIsOnlyReconciliationAtMVH(t *testing.T) {
+func TestRC006_WorkflowClassIsOnlyReconciliation(t *testing.T) {
 	t.Parallel()
 
-	// Only "reconciliation" is valid at MVH; any future class must be added
+	// "reconciliation" is currently the only valid class; any future class must be added
 	// to WorkflowClass.Valid() and the daemon detector table atomically.
 	futureClasses := []WorkflowClass{
 		"improvement-loop",
@@ -247,12 +247,12 @@ func TestRC006_WorkflowClassIsOnlyReconciliationAtMVH(t *testing.T) {
 		t.Run(string(cls), func(t *testing.T) {
 			t.Parallel()
 			if cls.Valid() {
-				t.Errorf("RC-006: WorkflowClass(%q).Valid() = true; future/unknown class MUST be rejected at MVH", cls)
+				t.Errorf("RC-006: WorkflowClass(%q).Valid() = true; future/unknown class MUST be rejected", cls)
 			}
 		})
 	}
 
-	// The only valid MVH value.
+	// The only currently valid value.
 	if !WorkflowClassReconciliation.Valid() {
 		t.Error("RC-006: WorkflowClassReconciliation.Valid() = false; want true")
 	}

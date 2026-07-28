@@ -11,7 +11,7 @@ package core
 //   - Guard:  fires during edge-evaluation cascade (no additional trigger field)
 //   - Budget: fires on dispatch + per-chunk accrual + threshold cross
 //
-// At MVH the Trigger record is carried as a raw string name for lookup purposes.
+// The Trigger record is carried as a raw string name for lookup purposes.
 // The per-Kind typed trigger records are resolved from the payload fields during
 // registration (HookPayload.TriggerEvent for Hook; AttachPoint from GatePayload
 // for Gate; implicit for Guard and Budget).

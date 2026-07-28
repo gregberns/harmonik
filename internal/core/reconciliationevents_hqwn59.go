@@ -17,7 +17,7 @@ import "github.com/google/uuid"
 //   - reconciliation_dispatch_deduplicated    (§8.6.11)
 //   - reconciliation_detector_panic           (§8.6.12)
 //   - reconciliation_verdict_execution_retry  (§8.6.13)
-//   - bead_terminal_transition_recovered      (§8.6.14) — post-MVH reserved per OQ-BI-008
+//   - bead_terminal_transition_recovered      (§8.6.14) — reserved for later per OQ-BI-008
 //
 // §8.6.4, §8.6.5, §8.6.6, §8.6.7 already have dedicated payload types in
 // this package (VerdictExecutedPayload, MalformedVerdictPayload,
@@ -42,7 +42,7 @@ const (
 
 	// ReconciliationTriggerScheduled indicates the reconciliation run was triggered
 	// by the background scheduled cadence (RC-020a dispatch point (c)).
-	// MVH default interval is hourly (3600 s); configurable via operator YAML
+	// The default interval is hourly (3600 s); configurable via operator YAML
 	// per operator-nfr.md §4.3 (knob: reconciliation_scan_cadence).
 	ReconciliationTriggerScheduled ReconciliationTrigger = "scheduled-hourly"
 
@@ -229,7 +229,7 @@ func (p ReconciliationVerdictEmittedPayload) Valid() bool {
 // DivergenceKind is the typed discriminator for the divergence_kind field of a
 // store_divergence_detected event (event-model.md §8.6.8 §6.3).
 //
-// The enum is closed at MVH per the §6.3 note. Adapter-specific values are
+// The enum is currently closed per the §6.3 note. Adapter-specific values are
 // reserved for a future revision per OQ-BI-008; until then, adapters emit
 // divergence_inconclusive (§8.6.10) per EV-023a's single-authority semantics.
 type DivergenceKind string
@@ -760,7 +760,7 @@ func (p ReconciliationCompletedPayload) Valid() bool {
 // BeadTerminalTransitionOp is the typed discriminator for the op field of a
 // bead_terminal_transition_recovered event (event-model.md §8.6.14).
 //
-// This type is declared at MVH even though the event itself is post-MVH, so
+// This type is declared now even though the event itself is deferred, so
 // the type identifier is burned per OQ-BI-008 for future BI-adapter use and
 // not reused for any other purpose.
 type BeadTerminalTransitionOp string
@@ -791,13 +791,13 @@ func (o BeadTerminalTransitionOp) Valid() bool {
 //
 // Tags: mechanism
 // Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent
-// Durability class: O (ordinary — reserved for post-MVH BI adapter emission per OQ-BI-008).
+// Durability class: O (ordinary — reserved for later BI adapter emission per OQ-BI-008).
 //
-// **(post-MVH)** This event type is reserved for a future revision per OQ-BI-008.
-// At MVH, the BI adapter emits a structured-log record per operator-nfr.md §4.9
+// **(deferred)** This event type is reserved for a future revision per OQ-BI-008.
+// The BI adapter currently emits a structured-log record per operator-nfr.md §4.9
 // ON-035 for adapter-recovery observability rather than this event. The type is
 // declared here so the identifier is burned and not reused for any other purpose.
-// No MVH conformance obligation attaches to §8.6.14.
+// No conformance obligation attaches to §8.6.14.
 //
 // # Payload fields (event-model.md §8.6.14)
 //
@@ -825,7 +825,7 @@ type BeadTerminalTransitionRecoveredPayload struct {
 
 // Valid reports whether p is a well-formed BeadTerminalTransitionRecoveredPayload.
 //
-// Rules per event-model.md §8.6.14 (post-MVH reserved; declared for type-burning per OQ-BI-008):
+// Rules per event-model.md §8.6.14 (reserved for later; declared for type-burning per OQ-BI-008):
 //   - BeadID must be non-empty.
 //   - Op must be a valid BeadTerminalTransitionOp constant.
 //   - IdempotencyKey must be non-empty.

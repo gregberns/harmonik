@@ -1,6 +1,6 @@
 # Quality Checks
 
-> Go 1.25 MVH. Agent-coded: Claude Code sessions write the implementation. The single invariant: **an agent must not be able to land low-quality or rule-violating code that CI lets through.** Every gate is deterministic and machine-enforceable, and every CI gate is ALSO runnable locally under the same make-target name.
+> Go 1.25. Agent-coded: Claude Code sessions write the implementation. The single invariant: **an agent must not be able to land low-quality or rule-violating code that CI lets through.** Every gate is deterministic and machine-enforceable, and every CI gate is ALSO runnable locally under the same make-target name.
 
 ## Decisions
 
@@ -9,7 +9,7 @@
 - Imports: **`gci`** with three groups (stdlib, third-party, `github.com/gregberns/harmonik`).
 - Meta-linter: **`golangci-lint` v2.3+** (config uses `version: 2` schema explicitly; migrated March 2025 GA). Config at repo root `.golangci.yml`.
 - Hook manager: **`lefthook`** (Go-native, single binary, no Python/Node dep).
-- Enforcement: pre-commit hooks + **`agent-reviewer` on every non-trivial commit** (per `build-practices.md`) + **post-push CI status checks on `main`** via GitHub branch protection. No PR-based merge gate at MVH (direct-to-main); CI failures fix-forward.
+- Enforcement: pre-commit hooks + **`agent-reviewer` on every non-trivial commit** (per `build-practices.md`) + **post-push CI status checks on `main`** via GitHub branch protection. No PR-based merge gate (direct-to-main); CI failures fix-forward.
 - Tests: `go test ./... -race -count=1` required in CI; short subset pre-commit.
 - **Local/CI parity:** every CI check is equivalently the local `make check-fast` / `make check` / `make check-full` target. See §Three-tier identical gauntlet.
 
@@ -112,7 +112,7 @@ Declaration-line anchoring also grandfathers a function only while its declarati
 
 ⚠ **Known hole in the ratchet:** a function that was already over the ceiling when written never reports at all, and an explicit `//nolint` defeats it entirely. `beadRunOne` was born at 119 lines, is 2,289 today, and has never produced a finding — it also carries `//nolint:funlen,gocognit,cyclop`. Tracked as `hk-csmfe`.
 
-Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Style-taste linters; noise without catching real defects at MVH scope.
+Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Style-taste linters; noise without catching real defects.
 
 **Path-scoped exclusions worth knowing** (`.golangci.yml §exclusions.rules`): `tools/` is excluded from the *whole* `forbidigo` and `noctx` linters; `internal/testhelpers/` from the whole `forbidigo` linter — so both get `panic` **and** `fmt.Print*` for free, not just one of them. `cmd/` gets a narrower third carve-out: only the `fmt.Print*` ban (printing to stdout is what a CLI does), so `panic` stays banned there.
 
@@ -223,7 +223,7 @@ Framed as tiers, not "pre-commit vs CI":
 
 Threat model: agent runs `git commit --no-verify` or writes `//nolint:all` to escape local hooks. Counter-pattern:
 
-1. **GitHub branch protection on `main` with required status checks on pushes.** Pushes that fail CI's `make check-full` are marked red but (MVH direction, per `build-practices.md`) are not rejected — the agent fixes forward with a corrective commit. Branch protection prevents force-push and admin-bypass. Not a merge gate (no PRs at MVH), but the same commands that run locally also run remotely; divergence surfaces as a red main.
+1. **GitHub branch protection on `main` with required status checks on pushes.** Pushes that fail CI's `make check-full` are marked red but (per `build-practices.md`) are not rejected — the agent fixes forward with a corrective commit. Branch protection prevents force-push and admin-bypass. Not a merge gate (no PRs), but the same commands that run locally also run remotely; divergence surfaces as a red main.
 2. **`nolintlint` blocks bulk suppression.** Every `//nolint` must name specific linters + carry an explanation + suppress something real. `//nolint:all` fails lint.
 3. **CI posts nolint-density delta on every push** (`git diff HEAD~1 | grep -c //nolint`). Agent-driven spikes are visible without manual diff reading.
 4. **No admin-bypass for branch protection** on `main`. Solo dev is not exempted; rule changes require an explicit config edit.
@@ -244,7 +244,7 @@ Threat model: agent runs `git commit --no-verify` or writes `//nolint:all` to es
 
    Prevents "agent relaxes the gate, then passes its own gate." Rule-change commits are distinguishable from ordinary code commits; silent rule weakening becomes impossible.
 
-**No PR-based gating at MVH.** Enforcement relies on: (a) the agent-declared-done ritual running `make check-full` locally before commit; (b) `agent-reviewer` running on every non-trivial commit (per `build-practices.md §Agent review on every commit`); (c) post-push CI re-running the same gauntlet and surfacing failure as a red main. Fix-forward is the recovery, not a block-on-red.
+**No PR-based gating.** Enforcement relies on: (a) the agent-declared-done ritual running `make check-full` locally before commit; (b) `agent-reviewer` running on every non-trivial commit (per `build-practices.md §Agent review on every commit`); (c) post-push CI re-running the same gauntlet and surfacing failure as a red main. Fix-forward is the recovery, not a block-on-red.
 
 Invariant: **CI mirrors local `make check-full`; local pass predicts CI pass; rule weakening requires a single-concern commit that trips the rule-change surface.**
 
@@ -252,7 +252,7 @@ Invariant: **CI mirrors local `make check-full`; local pass predicts CI pass; ru
 
 1. **⚑ `gofumpt` over `gofmt`** — Stricter; safe for solo-dev, flag if external contributions open up (PR friction).
 2. **⚑ `depguard` v2 handles component-graph rules natively.** Previously proposed `go-arch-lint`; dropped per reviewer convergence. `.go-arch-lint.yml` removed; component-graph rules live in `.golangci.yml`'s `depguard` settings. Durable only if subsystem package layout is stable; update when the 10-component foundation lands as code.
-3. **⚑ Branch protection without PR-based gating.** Solo-dev MVH: no PRs, no approval requirement. Branch protection prevents force-push + admin-bypass + requires status checks but cannot reject pushes outright. Revisit when PRs return (product has real users or multi-human team).
+3. **⚑ Branch protection without PR-based gating.** Solo-dev: no PRs, no approval requirement. Branch protection prevents force-push + admin-bypass + requires status checks but cannot reject pushes outright. Revisit when PRs return (product has real users or multi-human team).
 4. **⚑ `gosec` advisory, not blocking** — Elevate when the daemon handles secrets or opens network ports.
 5. **⚑ No `wrapcheck`** — Omitted deliberately; forces wrapping at every package boundary, conflicting with "wrap only at subsystem boundaries." `errorlint` + review cover the real cases.
 6. **⚑ Pre-commit 15s budget** — Split to `pre-commit` (format+vet) + `pre-push` (lint+test-short) if it passes 30s.
@@ -260,9 +260,9 @@ Invariant: **CI mirrors local `make check-full`; local pass predicts CI pass; ru
 
 ## Deferred / follow-up
 
-- Mutation testing (`gremlins`) — post-MVH once unit suite is substantive.
+- Mutation testing (`gremlins`) — deferred until the unit suite is substantive.
 - Coverage gate — once testing methodology codifies targets; enforce via `go-test-coverage` in CI.
 - Benchmark regression gate — `benchstat` diff once any hot path exists.
 - `govulncheck` blocking — promote from advisory once a CVE-triage process is defined.
-- **Custom analyzer for four-axis determinism tags** (architecture §1.1) — `go/analysis` pass verifying LLM-freedom / I/O / replay / idempotency tags on cross-subsystem types. Natural fit post-MVH.
-- Supply-chain pinning — Dependabot for MVH; SLSA/sigstore later.
+- **Custom analyzer for four-axis determinism tags** (architecture §1.1) — `go/analysis` pass verifying LLM-freedom / I/O / replay / idempotency tags on cross-subsystem types. Natural fit later.
+- Supply-chain pinning — Dependabot; SLSA/sigstore later.

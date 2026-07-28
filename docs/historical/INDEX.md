@@ -6,7 +6,7 @@ This directory holds documentation that is **clearly historical** — superseded
 
 - `dogfood-smoke-traces/` — May 2026 Phase-1 validation execution logs and smoke traces (see its `INDEX.md`).
 - `EXPLORATORY_TESTING_PLAN.md` — early exploratory-testing plan.
-- `MVH_ROADMAP.md` — the pre-Phase-1 MVH roadmap (MVH achieved 2026-05-14; do not reuse MVH framing per AGENTS.md §Terminology).
+- `EARLY_ROADMAP.md` — the pre-Phase-1 roadmap, superseded 2026-05-14.
 - `OVERNIGHT_RUN_2026-04-19.md` — April overnight-run log.
 - `QUESTIONS.md` — inception-era open-questions capture.
 - `extqueue-v0.1-changelog.md`, `extqueue-v0.1-integration.md` — extqueue v0.1 historical notes.

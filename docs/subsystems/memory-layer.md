@@ -13,14 +13,14 @@ updated: 2026-04-19
 # S08: Memory Layer
 
 ## Summary
-The memory layer ingests agent session logs into CASS so that future agents can search prior sessions and the improvement loop can analyze patterns. The MVH scope is intentionally minimal: just CASS, pointed at the canonical session-log directory. The richer three-layer cognitive architecture (episodic / working / procedural) is deferred until usage clarifies what curation is actually needed.
+The memory layer ingests agent session logs into CASS so that future agents can search prior sessions and the improvement loop can analyze patterns. The scope is intentionally minimal: just CASS, pointed at the canonical session-log directory. The richer three-layer cognitive architecture (episodic / working / procedural) is deferred until usage clarifies what curation is actually needed.
 
 ## Purpose
 Agent sessions are ephemeral. When a session ends, everything the agent learned -- what worked, what failed, which approaches were tried and abandoned -- dies with it (P03). The next agent working on a related problem starts from scratch. Multiply this across hundreds of agent sessions and the system is perpetually re-learning the same lessons.
 
 The memory layer captures what agents do and makes it searchable. CASS handles the indexing and retrieval. Future agents query CASS for relevant prior sessions when assembling context. The improvement loop (S09) reads CASS-indexed sessions to find patterns.
 
-## Key Responsibilities (MVH scope)
+## Key Responsibilities
 - **CASS configuration and operation.** Run a CASS instance configured to index the canonical session-log directory.
 - **Session-log capture orchestration.** Ensure that every agent's session log lands somewhere CASS can read. The agent runner (S04) is responsible for *producing* logs at known locations per agent type; the memory layer is responsible for ensuring CASS *consumes* them.
 - **Context provision (basic).** When the agent runner assembles a prompt, query CASS for relevant prior sessions and include them in context. Initial query strategy: keyword + recency. More sophisticated retrieval is deferred.
@@ -56,7 +56,7 @@ This needs to be made to work in the Phase-1 bootstrap; a self-build cycle witho
 - Query responses to subsystems requesting relevant prior context
 - Memory-layer status events emitted to event bus (S03)
 
-## Design Principles (MVH)
+## Design Principles
 - **Start simple, expand on evidence.** Just CASS for now. Three-layer cognition (episodic / working / procedural), curation rules, knowledge maturity tracking, deterministic-curation-only -- all deferred. We adopt them when concrete usage shows we need them, not before.
 - **Canonical session-log location.** The whole memory pipeline depends on session logs landing where CASS can find them. This is a deployment / configuration concern that the workspace manager and agent runner must cooperate on.
 - **No in-process log capture.** Agent process logs are *not* tee'd through harmonik's event bus -- the volume is wrong and the boundary is wrong. Read them from the agent's own log files.

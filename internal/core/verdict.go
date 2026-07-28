@@ -5,7 +5,7 @@ import "fmt"
 // Verdict is the reconciliation investigator's decision enum
 // (reconciliation/schemas.md §6.1 ENUM Verdict).
 //
-// The enum is closed at MVH; future variants extend via the amendment
+// The enum is currently closed; future variants extend via the amendment
 // protocol per [architecture.md §4.6]. A reader observing an unknown Verdict
 // MUST treat the VerdictEvent as malformed per RC-023 (MalformationReason
 // unknown-verdict-value) rather than silently falling back to any default.

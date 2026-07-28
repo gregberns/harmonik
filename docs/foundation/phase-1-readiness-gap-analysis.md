@@ -8,20 +8,20 @@
 
 ## Executive summary
 
-- **Bead corpus is ~75% labelled.** 823 total beads; 291 `scope:bootstrap`; only 5 `post-mvh`; **527 beads carry neither tag** (untagged middle ground). Either the bootstrap-subset analysis missed those or they are post-MVH but not labelled — the implicit gap is large enough to warrant a labelling pass before declaring Phase 1 ready.
+- **Bead corpus is ~75% labelled.** 823 total beads; 291 `scope:bootstrap`; only 5 carrying a deferred-delivery label (since retired); **527 beads carry neither tag** (untagged middle ground). Either the bootstrap-subset analysis missed those or they are deferred but not labelled — the implicit gap is large enough to warrant a labelling pass before declaring Phase 1 ready.
 - **SH (scenario-harness) spec landed at v0.2.0 reviewed and the SH pilot v0.1.0 is drafted (54 beads), but neither the SH pilot review pass nor the SH bead load has happened.** Until SH beads land in `.beads/`, the ~291 bootstrap subset is provably **insufficient for the §1 working-definition acceptance test** (which requires the harness to drive the round-trip per `bootstrap-subset.md` §7).
 - **The infrastructure substrate the corpus assumes does not exist as code or as beads.** Twin binaries, `make check-fast/check/check-full` Makefile + `lefthook.yml`, `.golangci.yml` with the depguard component matrix, the `agent-reviewer` skill, the `beads-cli` skill, and the `internal/core` Go scaffold are all named normatively in `docs/foundation/project-level/*.md` and `subsystem-organization.md` but are neither code nor labelled bootstrap beads.
 - **No "readiness workflow" exists in the corpus.** Per project memory ("loaded beads must not auto-start; parked state + readiness workflow"), there should be a workflow that promotes parked beads to dispatchable. There is no bead, no spec, and no pilot for it.
 - **No first self-build cycle slice has been authored.** "A basic version that can extend the system" requires a concrete first input — pick a spec slice (e.g., a single SH-021 assertion-vocabulary increment, or a CP single-gate landing) — and walk it end-to-end. That walk is the unblock for declaring Phase 1 ready.
 
-**Recommended Phase 1 entry gate:** SH pilot reviewed + loaded; corpus labelling reconciled (every bead is `scope:bootstrap` OR `post-mvh`); a thin "readiness workflow" beaded; the agent-reviewer skill + Makefile scaffold landed; one first-self-build slice picked + dry-walked through the bootstrap subset to confirm dependency-closure under operational use, not just static `br dep cycles`.
+**Recommended Phase 1 entry gate:** SH pilot reviewed + loaded; corpus labelling reconciled (every bead is either `scope:bootstrap` or explicitly marked deferred); a thin "readiness workflow" beaded; the agent-reviewer skill + Makefile scaffold landed; one first-self-build slice picked + dry-walked through the bootstrap subset to confirm dependency-closure under operational use, not just static `br dep cycles`.
 
 ## Current state snapshot
 
 - **Specs:** 11 reviewed (10 foundation + SH). SH at v0.2.0 reviewed; landed 2026-05-05. (`specs/scenario-harness.md`.)
 - **Beads in corpus:** 823 (live `br --json list --limit 0` count). Pre-SH count was ~639 + epic envelopes; SH's 54 beads not yet loaded.
 - **Beads tagged `scope:bootstrap`:** **291** (verified live; matches `bootstrap-subset.md` §2). When SH loads + is labelled, target rises ~291 + ~50 SH-bootstrap = ~340.
-- **Beads tagged `post-mvh`:** **5.** (`hk-sx9r.60` distributed-tracing, `.59` metrics-exposition, `.58` multi-tenancy, `.8` binary-signing; `hk-hqwn.59.56` `bead_terminal_transition_recovered`.)
+- **Beads carrying a deferred-delivery label (since retired):** **5.** (`hk-sx9r.60` distributed-tracing, `.59` metrics-exposition, `.58` multi-tenancy, `.8` binary-signing; `hk-hqwn.59.56` `bead_terminal_transition_recovered`.)
 - **Beads with neither tag:** **527** (823 − 291 − 5 = 527). This is the implicit-deferred middle ground. Cluster reports under `docs/decompose-to-tasks/bootstrap-subset/{pl,wm,em,hc,ev,bi}-bootstrap.md` enumerate per-cluster excludes (~517 beads in §5 narrative); the gap is the difference between "narrative-deferred" and "labelled."
 - **Discipline:** v0.9 (per `STATUS.md` and `HANDOFF.md`); v0.10 patch batch of 13 findings still queued.
 - **Phase 0 outstanding:** `hk-ahvq.39` forward-zero (S07-caveated), `hk-ahvq.42` milestone close (gated on S07).
@@ -35,22 +35,22 @@
 - **What's missing:** The SH pilot at `docs/decompose-to-tasks/sh-pilot.md` v0.1.0 enumerates 54 beads + 133 edges (including 38 cross-spec edges, 0 forward-deferred — first pilot in the corpus with zero forward-deferred). Pilot has not been through the 3-reviewer protocol per `pilot-review-protocol.md`, has not been loaded via `scripts/load-pilot.py`, and is not labelled `scope:bootstrap`.
 - **Severity:** BLOCKER. The §1 working-definition includes scenario-driven validation (twin handler, checkpoint commit, merge, scenario assertion). Without SH beads, the acceptance test for "system can build itself" has no implementation track.
 
-### A2. 527 beads have neither `scope:bootstrap` nor `post-mvh` — **MAJOR**
+### A2. 527 beads have neither `scope:bootstrap` nor a deferred-delivery label — **MAJOR**
 
-- **Source:** Live `br --json list --limit 0` (823 total; 291 bootstrap; 5 post-mvh; 527 untagged for scope).
-- **What's missing:** Discipline v0.7 §3.1 and the bootstrap-subset analysis carved out the bootstrap subset in narrative form (`bootstrap-subset.md` §5). No corresponding `post-mvh` labelling pass has occurred. Effects:
-  - Cannot answer "is bead X in MVH?" via a single `br list` query.
-  - Cannot run a closed-set validation (e.g., `br list -l scope:bootstrap` ∪ `-l post-mvh` should equal corpus minus epic-parents, but currently equals 296 / 823).
-  - When SH loads, ~50 of its beads will be bootstrap and ~4 will be post-MVH, but there is no convention being followed for the rest.
+- **Source:** Live `br --json list --limit 0` (823 total; 291 bootstrap; 5 labelled deferred; 527 untagged for scope).
+- **What's missing:** Discipline v0.7 §3.1 and the bootstrap-subset analysis carved out the bootstrap subset in narrative form (`bootstrap-subset.md` §5). No corresponding deferred-labelling pass has occurred. Effects:
+  - Cannot answer "is bead X in the bootstrap subset?" via a single `br list` query.
+  - Cannot run a closed-set validation (the bootstrap-labelled set ∪ the deferred-labelled set should equal corpus minus epic-parents, but currently equals 296 / 823).
+  - When SH loads, ~50 of its beads will be bootstrap and ~4 will be deferred, but there is no convention being followed for the rest.
 - **Severity:** MAJOR. Not a blocker for first-self-build (the closure-check confirms dependency-closure for the 291), but is a **defect in the validation surface** — see §E.
-- **Recommendation:** label-application pass. Either (a) the 527 are all implicit `post-mvh`, label them as such (one `br update --add-label` chunk); or (b) re-run the per-cluster carveouts with explicit per-bead labelling. Option (a) is cheap and correct given the cluster-report enumerations.
+- **Recommendation:** label-application pass. Either (a) the 527 are all implicitly deferred, label them as such (one `br update --add-label` chunk); or (b) re-run the per-cluster carveouts with explicit per-bead labelling. Option (a) is cheap and correct given the cluster-report enumerations.
 
 ### A3. No readiness workflow in the corpus — **BLOCKER**
 
 - **Source:** Project memory `project_harmonik_task_ingestion.md` ("loaded beads must not auto-start (parked state + readiness workflow)"); live corpus search for `parked` returns 0 beads, `readiness` returns 2 (one is `hk-8mup.18` Ready-protocol surface — about daemon `ready` state, not bead readiness; the other is `hk-ahvq.42` Phase 0 milestone).
 - **What's missing:** A workflow definition (DOT or equivalent) and a small bead family (3-6 beads) that defines: (a) bead loaded → enters `parked` state; (b) readiness check workflow runs (validates upstream deps closed, validates twin available, validates skill-set resolvable per HC §4.11); (c) on pass, bead transitions to `ready`/dispatchable; (d) on fail, bead emits `readiness_failed` event and stays parked.
 - **Severity:** BLOCKER. Without the readiness workflow, the operational criterion "system can start building itself" devolves to "operator manually flips beads to ready" — that's not self-building, it's hand-driving.
-- **Recommendation:** author a thin "readiness" pilot (3-6 beads) under a new meta-epic or under BI/EM. Not a full normative spec at MVH; one workflow + 3 beads (ParkedState, ReadinessCheckNode, ReadinessGate) is enough.
+- **Recommendation:** author a thin "readiness" pilot (3-6 beads) under a new meta-epic or under BI/EM. Not a full normative spec; one workflow + 3 beads (ParkedState, ReadinessCheckNode, ReadinessGate) is enough.
 
 ### A4. Meta-beads for review pipeline + skill registry are absent — **MAJOR**
 
@@ -68,7 +68,7 @@
 - **Source:** `bootstrap-subset.md` §1 ("Out of scope for v0… policy-engine guards"); CP fully deferred (0 of 85 beads in bootstrap); `core-scope.md` §10 framing.
 - **What's missing:** A clear statement that the bootstrap workflow has zero policy/guard/gate touchpoints AND that the orchestrator code path must be coded such that "no policy engine" is a first-class operating mode (not a `policyEngine == nil` branch — that violates SH-018's "no test-mode branches in production"). The discipline is implied but not corpus-tracked.
 - **Severity:** MINOR. The orchestrator implementer will hit this during the first cluster-A build.
-- **Recommendation:** one sentence in `bootstrap.md` (or a 2-line bead under EM) clarifying "MVH composition root wires a no-op PolicyEngine as the production interface; no branch."
+- **Recommendation:** one sentence in `bootstrap.md` (or a 2-line bead under EM) clarifying "the composition root wires a no-op PolicyEngine as the production interface; no branch."
 
 ## B. Infrastructure outside the bead corpus — gaps
 
@@ -129,11 +129,11 @@
 - **Source:** `STATUS.md` ("No kerf use in this session. User paused kerf: 'disregard kerf for now; come back when something's working.'"); `CLAUDE.md` ("Phase 0 (plan refinement → spec drafting) is active. Code begins after the bootstrap subset of tasks is identified.")
 - **What's missing:** No statement on whether implementation work in Phase 1 needs kerf for spec-drafting beyond what's already in `specs/`. Cluster-report cluster reports indicate the bootstrap subset is implementation-ready against the existing specs; therefore kerf MAY remain paused through Phase 1. Worth surfacing for explicit user decision.
 - **Severity:** MINOR. Doesn't block Phase 1 entry; one-line clarification.
-- **Recommendation:** explicit user statement either way. Default: kerf stays paused; reactivate when (i) an implementation cycle surfaces a real spec gap, or (ii) the post-MVH specs (CP gates, S09 improvement) start being authored.
+- **Recommendation:** explicit user statement either way. Default: kerf stays paused; reactivate when (i) an implementation cycle surfaces a real spec gap, or (ii) the deferred specs (CP gates, S09 improvement) start being authored.
 
 ### C4. CASS / Memory layer pointed at a session-log dir — **MINOR**
 
-- **Source:** `bootstrap.md` step 9 ("Memory Layer (S08): CASS pointed at the session-log dir"); project memory: "MVH = just CASS." `core-scope.md` §"Section 2" §"durability rules" — JSONL events.
+- **Source:** `bootstrap.md` step 9 ("Memory Layer (S08): CASS pointed at the session-log dir"); project memory: the memory layer starts as just CASS. `core-scope.md` §"Section 2" §"durability rules" — JSONL events.
 - **What's missing:** No bead in bootstrap subset for "S08 directory wiring." The bootstrap-subset analysis explicitly excludes S08 (per `bootstrap-subset.md` §1: "Out of scope for v0… CASS/memory"). But the operational criterion says "ready for Phase 2 with reasonable observability" requires S08 (per `bootstrap.md` step 9: "required soon after").
 - **Severity:** MINOR for **Phase 1 entry**; first self-build cycle can run without CASS. Becomes MAJOR before second self-build cycle.
 - **Recommendation:** stays out of Phase 1 entry. Add to Phase 1 exit criterion (i.e., "before declaring Phase 1 done, S08 wiring lands") in a separate doc.
@@ -204,7 +204,7 @@ Concrete checklist. Items marked **ENTRY** must complete before declaring Phase 
 ### ENTRY (must precede Phase 1)
 
 1. **SH pilot reviewed + loaded.** Run `pilot-review-protocol.md` 3-reviewer pass on `sh-pilot.md`; apply BLOCKER/MAJOR findings; load via `scripts/load-pilot.py`; verify `br dep cycles` still clean across union; label SH-bootstrap beads (~50 of 54) with `scope:bootstrap`. Source: HANDOFF.md, sh-pilot.md.
-2. **Corpus labelling reconciled (A2).** Either label the 527 untagged beads as `post-mvh`, or re-evaluate per cluster. After this, `br list -l scope:bootstrap` ∪ `br list -l post-mvh` should equal the corpus minus epic envelopes.
+2. **Corpus labelling reconciled (A2).** Either label the 527 untagged beads as deferred, or re-evaluate per cluster. After this, the bootstrap-labelled set ∪ the deferred-labelled set should equal the corpus minus epic envelopes.
 3. **Forward-zero (`hk-ahvq.39`) verification re-run.** With SH loaded, the S07-pending caveat lifts. Confirm zero forward-deferred edges.
 4. **Trivial-slice paper walkthrough (§E).** Author `docs/foundation/trivial-slice-walkthrough.md` (or kerf-scoped) mapping the 25-op walk to the bootstrap beads. Address any "no owner" findings either by labelling or by filing new beads.
 5. **Build/test scaffolding (B2).** Land `Makefile`, `.golangci.yml` with depguard component matrix, `lefthook.yml`, `.github/workflows/ci.yml`. Phase 0-tail meta-epic, ~6 beads.
@@ -242,7 +242,7 @@ Each is a candidate for a new bead under an existing or new epic. Names are mnem
 - **`p1-build-golangci-yml`** — author `.golangci.yml` with depguard component matrix per `subsystem-organization.md`. Labels: `phase:0`, `tag:meta`, `scope:bootstrap`.
 - **`p1-build-lefthook-yml`** — author `lefthook.yml` wiring pre-commit + pre-push to make targets. Labels: `phase:0`, `tag:meta`, `scope:bootstrap`.
 - **`p1-build-ci-workflow`** — author `.github/workflows/ci.yml` running same gauntlet. Labels: `phase:0`, `tag:meta`, `scope:bootstrap`.
-- **`p1-build-coverage-gate`** — author `scripts/coverage-gate.sh` per `quality-checks.md`. Labels: `phase:0`, `tag:meta`. (Optional at MVH; can be stub.)
+- **`p1-build-coverage-gate`** — author `scripts/coverage-gate.sh` per `quality-checks.md`. Labels: `phase:0`, `tag:meta`. (Optional; can be a stub.)
 - **`p1-build-forbid-import`** — author `tools/go-linters/forbid-import.go`. Labels: `phase:0`, `tag:meta`. (Optional.)
 
 ### Under HC implementation epic (`hk-8i31`, all `scope:bootstrap`)
@@ -252,25 +252,25 @@ Each is a candidate for a new bead under an existing or new epic. Names are mnem
 
 ### Under EM implementation epic (`hk-b3f`)
 
-- **`p1-policy-engine-noop-mode`** — explicit declarative bead: composition root wires no-op PolicyEngine as production interface for MVH. Labels: `tag:mechanism`, `scope:bootstrap`, `spec:execution-model`. (Resolves §A5.)
+- **`p1-policy-engine-noop-mode`** — explicit declarative bead: composition root wires a no-op PolicyEngine as the production interface. Labels: `tag:mechanism`, `scope:bootstrap`, `spec:execution-model`. (Resolves §A5.)
 
 ### Under "Phase-1-validation" (new sub-epic)
 
 - **`p1-trivial-slice-walkthrough`** — author the paper walkthrough doc per §D1+§E. Labels: `phase:0`, `tag:meta`. (Validation artifact.)
-- **`p1-corpus-label-reconciliation`** — apply `post-mvh` label to the 527 currently-untagged beads (or per-cluster as cluster reports specify). Labels: `phase:0`, `tag:meta`. (Resolves §A2.)
+- **`p1-corpus-label-reconciliation`** — reconcile the deferred-vs-bootstrap split for the 527 currently-untagged beads (or per-cluster as cluster reports specify). Labels: `phase:0`, `tag:meta`. (Resolves §A2.)
 
 **Total recommended new beads: ~17.** All small (1-3 sentence descriptions; no decomposition needed). User/follow-up agent decides which to file; this analysis lists candidates.
 
 ## Out of scope for this analysis
 
-These are clearly post-MVH and are NOT considered gaps for Phase 1 entry:
+These are clearly deferred and are NOT considered gaps for Phase 1 entry:
 
 - **Pi handler + Pi twin** (`bootstrap.md` step 10). User-resolved Q2 = OUT in opening pass.
 - **CP gates / freedom profiles / policy-engine guards.** Per `bootstrap-subset.md` §1 explicit out-of-scope.
 - **S09 Improvement loop.** Phase-2 capability per `bootstrap.md` §2.
 - **Revision-loop cap configuration.** Per `bootstrap.md` §3 — open decision; not a Phase-1 entry blocker (conservative default suffices).
 - **Operator pause/upgrade controls (`harmonik stop`, `harmonik upgrade`).** Per `bootstrap-subset.md` §1 deferred.
-- **Multi-run concurrency.** SH §4.6 declares sequential at MVH.
+- **Multi-run concurrency.** SH §4.6 declares sequential.
 - **Reconciliation Cat 1-6.** Only Cat 0 + Cat 5 in bootstrap.
 - **Adze, agent-mail.** Per `core-scope.md` §"Ground rules": not in foundation.
 - **Coverage tooling enforcement (95% targets).** Quality-checks.md §Coverage thresholds explicitly defers.
@@ -286,7 +286,7 @@ These are clearly post-MVH and are NOT considered gaps for Phase 1 entry:
 
 ## §Z. User clarifications (2026-05-05)
 
-This section captures three user-driven amendments that landed the same day as the v0.1 analysis. The original gap items above are preserved verbatim for historical context; this addendum is authoritative when it conflicts with the body.
+This section captures three user-driven amendments that landed the same day as the v0.1 analysis. The original gap items above are preserved in substance for historical context; this addendum is authoritative when it conflicts with the body.
 
 ### Z.1. CI clarification — local agent-reviewer runs, no GitHub Actions pipeline
 
@@ -320,7 +320,7 @@ This withdraws the "loaded beads must not auto-start; parked state + readiness w
 What this does NOT remove:
 
 - **Operator queue-level controls (`harmonik stop`, `harmonik pause`, `harmonik upgrade`).** These remain per `docs/bootstrap.md §4` and per the operator-nfr spec's pause/stop semantics. They operate at the QUEUE level (between tasks); they are not bead-lifecycle approval. The reframe specifically targets bead-lifecycle approval, not runtime safety.
-- **The `gated-by-spec-edit`, `post-mvh`, and `gated-by-corpus-scale` transient tags** (per discipline §2.8 / §2.11 / §2.5). These tags continue to mark beads whose dispatch should be deferred for substantive reasons (unresolved spec edits, post-MVH delivery scope, corpus-scale degeneracy). Their effect is now expressed as agent-side or loader-side filtering of the dispatchable set, not as a workflow gate.
+- **The `gated-by-spec-edit` and `gated-by-corpus-scale` transient tags, plus the deferred-delivery tag then in use** (per discipline §2.8 / §2.11 / §2.5). These tags continue to mark beads whose dispatch should be deferred for substantive reasons (unresolved spec edits, deferred delivery scope, corpus-scale degeneracy). Their effect is now expressed as agent-side or loader-side filtering of the dispatchable set, not as a workflow gate. (The deferred-delivery tag has since been withdrawn — see §A2.)
 
 **Source-of-record updates pending elsewhere in the corpus** (catalogued by the parked-state cleanup pass 2026-05-05):
 

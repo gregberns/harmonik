@@ -4,7 +4,7 @@ import "fmt"
 
 // OutcomeKind is the discriminator for the Outcome.payload envelope
 // (execution-model.md §4.1.EM-005a, §6.1 ENUM OutcomeKind, v0.3.3).
-// The enum is closed at MVH; future variants extend via the amendment
+// The enum is closed; future variants extend via the amendment
 // protocol per [architecture.md §4.6].
 //
 // Wire alias: the outcome_kind field on HC-008's outcome_emitted event

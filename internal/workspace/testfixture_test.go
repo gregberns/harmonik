@@ -18,7 +18,7 @@ var runIDRegex = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 // run_id values per workspace-model.md §4.2 WM-002.
 //
 // The regex [A-Za-z0-9-]+ is the normative constraint; UUIDv7 satisfies it by
-// construction. Post-MVH ID-scheme extensions must preserve this invariant or
+// construction. Later ID-scheme extensions must preserve this invariant or
 // declare an escape rule before adoption (WM-002).
 func runIDValid(s string) bool {
 	if s == "" {

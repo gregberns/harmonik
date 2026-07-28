@@ -14,7 +14,7 @@ import (
 //
 // Default path: <project>/.harmonik/events/dead-letters.jsonl
 //
-// Spec ref: MVH_ROADMAP.md row #9.
+// Spec ref: EARLY_ROADMAP.md row #9.
 // Bead ref: hk-qyue9.
 type DeadLetterSink interface {
 	// Record appends one dead-letter entry for env with the given reason.

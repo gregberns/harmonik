@@ -36,13 +36,13 @@ type HookRelayHandler interface {
 
 // SocketRequest is a single request sent by an agent subprocess over the
 // Unix socket. One request is sent per connection (simple request/response
-// model at MVH).
+// model).
 //
 // The "op" field selects the operation:
 //   - "emit-outcome": agent reports a completed run's outcome.
 //   - "claim-next": agent asks the daemon for the next ready bead.
 //
-// Spec ref: MVH_ROADMAP row #5.
+// Spec ref: EARLY_ROADMAP row #5.
 type SocketRequest struct {
 	// Op selects the operation: "emit-outcome" or "claim-next".
 	Op string `json:"op"`
@@ -89,7 +89,7 @@ type SocketRequest struct {
 // operations and for queue operations that succeed or fail with an internal
 // (non-validation) error.
 //
-// Spec ref: MVH_ROADMAP row #5.
+// Spec ref: EARLY_ROADMAP row #5.
 // Spec ref: specs/process-lifecycle.md §4.4 PL-003a (queue method error codes).
 type SocketResponse struct {
 	// Ok is true when the operation succeeded.
@@ -124,7 +124,7 @@ type OutcomeRequest struct {
 // The concrete implementation that talks to the bus and brcli is a
 // follow-up bead (DO NOT wire here — expose only the listener).
 //
-// Spec ref: MVH_ROADMAP row #5.
+// Spec ref: EARLY_ROADMAP row #5.
 type RequestHandler interface {
 	// EmitOutcome handles an "emit-outcome" request from an agent subprocess.
 	// The returned json.RawMessage is serialised into SocketResponse.Result.
@@ -198,20 +198,20 @@ type QueueHandler interface {
 }
 
 // noopRequestHandler is a minimal RequestHandler that rejects every request
-// with a clear error. It is used at MVH where the real claim-next / emit-outcome
+// with a clear error. It is used where the real claim-next / emit-outcome
 // wiring is deferred to a follow-up bead. Hook-relay envelopes never reach
 // RequestHandler (they are dispatched via HookRelayHandler), so this stub has
 // no impact on the hook-relay path.
 //
-// Spec ref: MVH_ROADMAP row #5.
+// Spec ref: EARLY_ROADMAP row #5.
 type noopRequestHandler struct{}
 
 func (n *noopRequestHandler) EmitOutcome(_ context.Context, _ OutcomeRequest) (json.RawMessage, error) {
-	return nil, errors.New("daemon: RequestHandler not wired at MVH")
+	return nil, errors.New("daemon: RequestHandler not wired yet")
 }
 
 func (n *noopRequestHandler) ClaimNext(_ context.Context, _ string) (json.RawMessage, error) {
-	return nil, errors.New("daemon: RequestHandler not wired at MVH")
+	return nil, errors.New("daemon: RequestHandler not wired yet")
 }
 
 // errLiveDaemon is returned by removeStaleSocket when a dial to the socket
@@ -283,7 +283,7 @@ func removeStaleSocket(sockPath string) error {
 //     (error response with code -32099).
 //   - All other ops → dispatched to h (RequestHandler).
 //
-// Spec ref: MVH_ROADMAP row #5 — "Production Unix socket listener …
+// Spec ref: EARLY_ROADMAP row #5 — "Production Unix socket listener …
 // request loop for emit-outcome / claim-next from agent subprocesses."
 // Spec ref: specs/claude-hook-bridge.md §4.6 CHB-015, §4.10 CHB-025.
 // Spec ref: specs/process-lifecycle.md §4.4 PL-003a (queue method set).

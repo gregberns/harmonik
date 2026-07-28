@@ -254,8 +254,8 @@ func TestSweepStaleInProgressBeads_ExclusionB_PendingCloseIntent(t *testing.T) {
 
 	// Provenance proxy: in production, the claim intent has been removed by
 	// BI-030 step 6 success. For exclusion (b) to fire we need to satisfy
-	// provenance via the claim intent OR an alternate signal. Since at MVH
-	// the only provenance signal is the claim intent, this test exercises a
+	// provenance via the claim intent OR an alternate signal. Since the only
+	// provenance signal today is the claim intent, this test exercises a
 	// situation where BOTH a claim and a close intent are present — which is
 	// transient but valid (claim intent in-flight on the previous instance
 	// when the daemon crashed; close intent never landed).
@@ -292,8 +292,8 @@ func TestSweepStaleInProgressBeads_ExclusionB_PendingCloseIntent(t *testing.T) {
 //
 // What this test actually verifies: when the claim intent is present AND a
 // merge commit also exists, exclusion (a) fires first and (c) is unreached.
-// The reset is NOT issued. This documents the layered-exclusion behavior at
-// MVH (when the in-memory-model rebuild is wired post-MVH, exclusion (a) will
+// The reset is NOT issued. This documents the current layered-exclusion
+// behavior (once the in-memory-model rebuild is wired, exclusion (a) will
 // become independent of the claim intent).
 func TestSweepStaleInProgressBeads_ExclusionC_LayeredWithA(t *testing.T) {
 	t.Parallel()
@@ -322,7 +322,7 @@ func TestSweepStaleInProgressBeads_ExclusionC_LayeredWithA(t *testing.T) {
 // TestSweepStaleInProgressBeads_ResetsWhenNoExclusions verifies that when the
 // only signal is "in_progress" AND a claim-intent existed once but has been
 // removed (BI-030 step 6 success), the bead is NOT reset because provenance
-// fails. Documents the MVH provenance discipline.
+// fails. Documents the provenance discipline.
 func TestSweepStaleInProgressBeads_NoClaimIntent_NotOwned(t *testing.T) {
 	t.Parallel()
 
@@ -692,7 +692,7 @@ func TestSweepStaleInProgressBeads_ResetFires_StaleCloseIntentEstablishesProvena
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
-	// No ProvenanceChecker wired (MVH production default).
+	// No ProvenanceChecker wired (production default).
 
 	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
@@ -747,7 +747,7 @@ func TestSweepStaleInProgressBeads_ResetFires_StaleResetIntentEstablishesProvena
 	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
-	// No ProvenanceChecker (MVH production default).
+	// No ProvenanceChecker (production default).
 
 	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {

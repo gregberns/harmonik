@@ -386,7 +386,7 @@ What does it mean for an implementation to conform to this spec? Required shape:
 
 ### 10.1 Conformance profiles
 
-List each profile (e.g., "Core MVH", "Extension X"). For each: which requirements (by ID) MUST pass, which MAY be deferred.
+List each profile (e.g., "Core", "Extension X"). For each: which requirements (by ID) MUST pass, which MAY be deferred.
 
 ### 10.2 Test-surface obligations
 
@@ -398,7 +398,7 @@ For each profile, the normative test obligations the implementation MUST satisfy
 
 ### 10.3 Excluded conformance claims
 
-Aspects this spec explicitly does NOT grant conformance over (post-MVH features, external-system guarantees, etc.).
+Aspects this spec explicitly does NOT grant conformance over (deferred features, external-system guarantees, etc.).
 
 ---
 
@@ -423,7 +423,7 @@ Default-if-unresolved: <what the spec assumes until decided>
 >
 > Question: Should failed transitions emit checkpoint commits to enable `git bisect` in the improvement loop?
 > Owner: foundation-author
-> Blocks: none (MVH decision: no failure commits)
+> Blocks: none (decision: no failure commits)
 > Default-if-unresolved: No failure commits; revisit when improvement-loop spec lands.
 
 ---

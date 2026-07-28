@@ -2,7 +2,7 @@
 // walking the module's transitive dependency graph and checking every import
 // path against a hard-coded allowlist and a deny list.
 //
-// # Allowlist rules (MVH — hardcoded)
+// # Allowlist rules (hardcoded)
 //
 //   - Standard library: paths whose first path segment contains no dot are
 //     stdlib (e.g. "fmt", "encoding/json").  Always allowed.
@@ -17,7 +17,7 @@
 //
 // # Externalization path (future evolution)
 //
-// At MVH the allow/deny rules are embedded here.  When the list grows, move
+// Today the allow/deny rules are embedded here.  When the list grows, move
 // them to tools/forbid-import/allowlist.txt and deny-list.txt (one prefix per
 // line, '#' comments) and load them at startup.  The tool's rule-file path
 // would then be a protected file per quality-checks.md §Agent-enforceability
@@ -176,7 +176,7 @@ func listTransitiveImports(pattern string) ([]string, error) {
 
 // readGoModRequires reads go.mod in the current working directory and returns
 // the module paths listed under "require" directives.  This is intentionally
-// simple (line-based) to avoid pulling in golang.org/x/mod at MVH.
+// simple (line-based) to avoid pulling in golang.org/x/mod.
 func readGoModRequires() ([]string, error) {
 	f, err := os.Open("go.mod")
 	if err != nil {

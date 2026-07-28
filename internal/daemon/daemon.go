@@ -40,7 +40,7 @@ var scanRegisteredPayloadsForSecretFields = core.ScanRegisteredPayloadsForSecret
 
 // Config holds the startup configuration for the harmonik daemon.
 //
-// At MVH the struct is intentionally minimal: subsystem-specific fields are
+// The struct is intentionally minimal: subsystem-specific fields are
 // added by the per-registry beads (hk-8mup.62, hk-8i31.83) as each registry
 // is wired into [Start].
 //
@@ -53,7 +53,7 @@ type Config struct {
 	// passing in. An empty string is only valid in unit tests that do not
 	// exercise path-dependent behaviour.
 	//
-	// MVH_ROADMAP row #1 (hk-56ajv).
+	// EARLY_ROADMAP row #1 (hk-56ajv).
 	ProjectDir string
 
 	// WorkflowModeDefault is the daemon-level default workflow mode loaded once
@@ -88,7 +88,7 @@ type Config struct {
 	// every Emit call appends a JSONL line. F-class (fsync-boundary) events are
 	// fsynced before Emit returns per EV-016 / EV-016a.
 	//
-	// The canonical MVH path is <ProjectDir>/.harmonik/events/events.jsonl
+	// The canonical path is <ProjectDir>/.harmonik/events/events.jsonl
 	// (event-model.md §6.2). When empty, JSONL logging is disabled (useful for
 	// unit tests that use an in-memory bus only).
 	//
@@ -148,7 +148,7 @@ type Config struct {
 	HandlerEnv []string
 
 	// MaxConcurrent is the maximum number of beads the work loop may dispatch
-	// concurrently. A value of zero is treated as 1, preserving MVH
+	// concurrently. A value of zero is treated as 1, preserving
 	// single-threaded semantics for any caller that does not set the field
 	// (zero-value compatibility).
 	//
@@ -159,7 +159,7 @@ type Config struct {
 	// The composition root (cmd/harmonik/main.go) exposes this as --max-concurrent.
 	// Default: 1. Valid range: ≥1. Values >1 are inert until hk-e61c3.2 lands.
 	//
-	// Bead ref: hk-e61c3.1. POST_MVH_PARALLELISM_ROADMAP row 6.
+	// Bead ref: hk-e61c3.1. POST_OPERATIONAL_PARALLELISM_ROADMAP row 6.
 	MaxConcurrent int
 
 	// AgentReadyTimeout is the maximum duration the daemon waits for an
@@ -455,7 +455,7 @@ type Config struct {
 	// per reconciliation/spec.md §4.3 RC-020a and the operator-nfr.md §4.3
 	// knob reconciliation_scan_cadence. Negative values are treated as zero
 	// (same fallback). Operators may set a shorter interval (e.g., 15 min) for
-	// high-commit-rate workloads; post-MVH cadence tuning is tracked in OQ-RC-004.
+	// high-commit-rate workloads; cadence tuning is deferred, tracked in OQ-RC-004.
 	//
 	// The field is immutable for the daemon's lifetime; a daemon restart is
 	// required to apply changes (change-takes-effect: next daemon start per

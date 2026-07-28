@@ -9,7 +9,7 @@ import "fmt"
 // Reviewer, Verifier, Scheduler, Governor. Daemon-synthesized transitions use
 // "daemon" or "reconciliation" per execution-model.md §4.10.EM-046.
 //
-// ActorRole is a closed enum at MVH. Unknown values MUST NOT be silently
+// ActorRole is a closed enum. Unknown values MUST NOT be silently
 // accepted; callers observing an unknown ActorRole MUST route to reconciliation
 // Cat 6a per [reconciliation/spec.md §8.11].
 type ActorRole string
@@ -17,25 +17,25 @@ type ActorRole string
 // Declared ActorRole constants per architecture.md §4.8.AR-032 and
 // execution-model.md §4.10.EM-046.
 const (
-	// ActorRolePlanner is the planning role (MVH-required per AR-033).
+	// ActorRolePlanner is the planning role (`mvh-required` per AR-033).
 	ActorRolePlanner ActorRole = "Planner"
 
-	// ActorRoleResearcher is the research role (declared-but-deferred at MVH per AR-033).
+	// ActorRoleResearcher is the research role (declared-but-deferred per AR-033).
 	ActorRoleResearcher ActorRole = "Researcher"
 
-	// ActorRoleBuilder is the builder role (MVH-required per AR-033).
+	// ActorRoleBuilder is the builder role (`mvh-required` per AR-033).
 	ActorRoleBuilder ActorRole = "Builder"
 
-	// ActorRoleReviewer is the reviewer role (MVH-required per AR-033).
+	// ActorRoleReviewer is the reviewer role (`mvh-required` per AR-033).
 	ActorRoleReviewer ActorRole = "Reviewer"
 
-	// ActorRoleVerifier is the verifier role (declared-but-deferred at MVH per AR-033).
+	// ActorRoleVerifier is the verifier role (declared-but-deferred per AR-033).
 	ActorRoleVerifier ActorRole = "Verifier"
 
-	// ActorRoleScheduler is the scheduler role (declared-but-deferred at MVH per AR-033).
+	// ActorRoleScheduler is the scheduler role (declared-but-deferred per AR-033).
 	ActorRoleScheduler ActorRole = "Scheduler"
 
-	// ActorRoleGovernor is the governor role (declared-but-deferred at MVH per AR-033).
+	// ActorRoleGovernor is the governor role (declared-but-deferred per AR-033).
 	ActorRoleGovernor ActorRole = "Governor"
 
 	// ActorRoleDaemon is used for daemon-synthesized transitions (EM-046).

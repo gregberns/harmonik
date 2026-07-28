@@ -52,7 +52,7 @@ var ErrContextRestoreHandlerForbidden = errors.New(
 //
 // # Actor role check
 //
-// Handler roles at MVH per architecture.md §4.8.AR-032:
+// Handler roles per architecture.md §4.8.AR-032:
 // Planner, Researcher, Builder, Reviewer, Verifier, Scheduler, Governor.
 // Daemon-permitted roles per EM-046: ActorRoleDaemon, ActorRoleReconciliation.
 func ValidateContextRestoreInitiationSource(kind TransitionKind, actorRole ActorRole) error {

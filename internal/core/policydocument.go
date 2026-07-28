@@ -191,7 +191,7 @@ var ErrMissingPermissionSchema = errors.New("role missing required permission_sc
 // or default_skills field (§4.6.CP-030).
 var ErrNonEmptyDeferredRoleShell = errors.New("declared-but-deferred role must carry empty shell: allowed_tools, writable_paths, and default_skills must all be empty")
 
-// ErrMissingBeadsCLISkill is returned by ValidateMVHRoleDefaultSkills when an
+// ErrMissingBeadsCLISkill is returned by ValidateRequiredRoleDefaultSkills when an
 // mvh-required role's default_skills does not include "beads-cli"
 // (specs/control-points.md §4.6.CP-031, §4.11.CP-052).
 var ErrMissingBeadsCLISkill = errors.New("mvh-required role missing \"beads-cli\" in default_skills")
@@ -319,15 +319,15 @@ func (d *PolicyDocument) ValidateDeferredRoleShells() error {
 	return nil
 }
 
-// ValidateMVHRoleDefaultSkills reports the first CP-031 violation found in
+// ValidateRequiredRoleDefaultSkills reports the first CP-031 violation found in
 // d.Roles, or nil when every mvh-required role's default_skills includes
 // "beads-cli".
 //
-// CP-031 requires every MVH-required role to carry "beads-cli" in
+// CP-031 requires every `mvh-required` role to carry "beads-cli" in
 // default_skills so that every handler session has the Beads-CLI skill
 // available (specs/control-points.md §4.6.CP-031, §4.11.CP-052).
 // Declared-but-deferred roles are exempt; they carry empty shells per CP-030.
-func (d *PolicyDocument) ValidateMVHRoleDefaultSkills() error {
+func (d *PolicyDocument) ValidateRequiredRoleDefaultSkills() error {
 	for i, r := range d.Roles {
 		if r.Status != "mvh-required" {
 			continue

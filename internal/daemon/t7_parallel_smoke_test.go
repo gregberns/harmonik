@@ -300,7 +300,7 @@ func parallelSmokeFixtureExtractRunCompletedRunIDs(t *testing.T, jsonlPath strin
 // The handler sleeps 0.3 s before exiting 0, ensuring both goroutines are
 // simultaneously in-flight when the work loop is at capacity.
 //
-// Spec ref: POST_MVH_PARALLELISM_ROADMAP.md row 7.
+// Spec ref: POST_OPERATIONAL_PARALLELISM_ROADMAP.md row 7.
 // Bead ref: hk-e61c3.4.
 func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 	skipRealDaemonE2EInShort(t)

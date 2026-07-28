@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	// ReconciliationScanCadenceDefault is the MVH default for the scheduled
+	// ReconciliationScanCadenceDefault is the default for the scheduled
 	// detector cadence (hourly) per RC-020a and operator-nfr.md §4.3.
 	ReconciliationScanCadenceDefault = time.Hour
 )

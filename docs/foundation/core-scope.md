@@ -4,9 +4,9 @@
 
 ## Ground rules
 
-- **Recovery / reconciliation is non-core for MVH.** Can be stubbed (crash = restart, no investigator needed). The foundation work previously over-weighted this area; specs for it come later.
-- **Pi handler is post-MVH.** Claude Code + twin is enough to prove the pattern.
-- **Adze not in foundation.** MVH workspaces are `git worktree add <subfolder>`. No provisioning layer.
+- **Recovery / reconciliation is not part of the core build.** Can be stubbed (crash = restart, no investigator needed). The foundation work previously over-weighted this area; specs for it come later.
+- **Pi handler is deferred.** Claude Code + twin is enough to prove the pattern.
+- **Adze not in foundation.** Workspaces are `git worktree add <subfolder>`. No provisioning layer.
 - **Dogfood the process.** Harmonik's declared pipeline (idea → spec → review → decompose → tasks → beads → implement) is the process we use for building harmonik itself. No shortcuts to code.
 - **Attractor adoption by default.** Harmonik uses Attractor's DOT spec + composition model verbatim where possible. Divergences are explicit and named.
 
@@ -20,13 +20,13 @@
 
 **Immutability at runtime.** No runtime edge rewriting or node insertion. Revision = edge back to earlier node, not graph mutation.
 
-**Input.** One run = one input = one bead. No multi-bead workflows in MVH.
+**Input.** One run = one input = one bead. Multi-bead workflows are out of scope for now.
 
 **Cycles.** Allowed (for revision loops). Bounded by per-edge traversal caps.
 
 **Conditionals.** Edge conditions (policy expressions on edges). `control-point` nodes also select edges via evaluator output. No separate "if node" type.
 
-**Authoring.** Human-editable DOT, reviewed in PRs. NL→DOT ingestion is post-MVH.
+**Authoring.** Human-editable DOT, reviewed in PRs. NL→DOT ingestion is deferred.
 
 ### Pre-run validation is first-class
 
@@ -49,10 +49,10 @@ Any failure = validation error, workflow does NOT start. Agents generating DOT r
 - **Sub-workflow output/error propagation.** Adopt Attractor's semantics verbatim (state propagation, output payload, error surfacing).
 - **Node input/output contract.** Adopt Attractor's `Outcome.context_updates` + shared context model verbatim.
 
-### Deferred post-MVH
+### Deferred capabilities
 
 - **Fan-in / parallel branches within a workflow.** Sequential workflows don't need fan-in. When a workflow needs parallel branches with convergence, revisit: Kilroy's fast-forward-only (simpler) vs Gas Town's merge-based (richer). No pre-commitment.
-- **NL → DOT generation.** Kilroy supports this; not in MVH scope.
+- **NL → DOT generation.** Kilroy supports this; out of scope for now.
 
 ### Forward-looking notes
 
@@ -91,7 +91,7 @@ Any failure = validation error, workflow does NOT start. Agents generating DOT r
 
 ### Deferred / follow-up
 
-- **JSONL rotation policy.** Unbounded append works for MVH dev-machine use; must be addressed before any production use. Options: size-triggered rotation, age-triggered, sidecar index (SQLite/DuckDB). Not MVH-blocking.
+- **JSONL rotation policy.** Unbounded append works for dev-machine use today; must be addressed before any production use. Options: size-triggered rotation, age-triggered, sidecar index (SQLite/DuckDB). Not blocking now.
 
 ## Section 3 — Workspace model (aligned 2026-04-24)
 
@@ -108,7 +108,7 @@ Any failure = validation error, workflow does NOT start. Agents generating DOT r
 **Conventions set:**
 - Worktree root: `<repo>/.harmonik/worktrees/<run_id>/` (default; implementation detail, stop asking).
 - Branch name: `run/<run_id>`. Integration branch fixed name (`harmonik/integration` or project-configurable).
-- Merge-conflict resolver: ORIGINAL IMPLEMENTER agent (not a dedicated merge-agent type). Human escalation only as last resort. (This was an open foundation question — "workspace conflict resolution role" — resolved for MVH here.)
+- Merge-conflict resolver: ORIGINAL IMPLEMENTER agent (not a dedicated merge-agent type). Human escalation only as last resort. (This was an open foundation question — "workspace conflict resolution role" — resolved here.)
 - Failed-run worktrees persist until operator cleans up. Beyond startup orphan sweep, no auto-cleanup.
 - One run per bead at a time (Beads atomic-claim enforces).
 
@@ -116,7 +116,7 @@ Any failure = validation error, workflow does NOT start. Agents generating DOT r
 
 **What a handler is.** Go interface abstracting agent spawning, monitoring, cleanup. Daemon doesn't know Claude Code from Pi from a twin — it calls the handler interface. One handler implementation per agent type.
 
-**MVH handlers:** `claude-code`, `claude-twin`. Post-MVH: `pi`, `pi-twin`.
+**Handlers being built:** `claude-code`, `claude-twin`. Deferred: `pi`, `pi-twin`.
 
 **Interface surface (conceptual):**
 - `Launch(LaunchSpec) → Session` spawns the agent subprocess.
@@ -144,7 +144,7 @@ Any failure = validation error, workflow does NOT start. Agents generating DOT r
 - Session-log format is handler-specific (no unified schema across agent types).
 - Rate-limit handling in adapter; daemon policy = exponential backoff within wall-clock budget.
 
-### Testing strategy for handlers (MVH)
+### Testing strategy for handlers
 
 **Tier 1 — CI-mandatory, every commit:**
 - Unit tests on handler interface (output parsing, lifecycle signals, rate-limit detection).
@@ -155,7 +155,7 @@ Any failure = validation error, workflow does NOT start. Agents generating DOT r
 - Small set of end-to-end workflows against real claude-code. Hard $ cap.
 - Same workflows also run through claude-twin; divergences flag drift candidates.
 
-**Post-MVH:** twin-conformance suite (automated periodic real-vs-twin comparison with tolerance alerts).
+**Deferred:** twin-conformance suite (automated periodic real-vs-twin comparison with tolerance alerts).
 
 ### Deferred / follow-up
 
@@ -189,19 +189,19 @@ loop forever:
 
 **Operator controls run BETWEEN runs** (locked decision #10). Pause/stop/upgrade complete the current run, don't interrupt. Only `stop --immediate` aborts mid-run.
 
-**Daemon is the sole driver for MVH.** No orchestrator-agent (LLM session) required. Daemon auto-picks eligible beads, dispatches workflows, commits, closes. Orchestrator-agent layer (separate Claude Code session driving daemon via CLI) is optional, post-MVH.
+**The daemon is the sole driver.** No orchestrator-agent (LLM session) required. Daemon auto-picks eligible beads, dispatches workflows, commits, closes. An orchestrator-agent layer (separate Claude Code session driving the daemon via CLI) is optional and deferred.
 
 **Conventions set:**
 - Concurrency is operator-configurable via `--max-concurrent N`. The default of 1 is a soft default, not a hard cap; multiple eligible beads queue when in-flight count reaches N.
 - Bead-to-workflow binding lives on the bead (a `workflow_name` field or typed edge). Daemon resolves to a DOT workflow in the library.
-- Bead selection: pick ANY eligible bead; oldest-first is a tiebreaker, not a priority. No prioritization or scoring in MVH.
+- Bead selection: pick ANY eligible bead; oldest-first is a tiebreaker, not a priority. No prioritization or scoring today.
 - `internal/daemon/workloop.go` runs goroutine-per-active-bead up to `MaxConcurrent`. Within a run, one node at a time. Handler I/O is async (watcher goroutine) but each run awaits node completion.
 - No workflow-level transactionality. A run that commits 3 nodes and fails on node 4 leaves 3 checkpoints durable; no rollback. State-at-failure preserved in git.
 
 ### Deferred / follow-up
 
 - **Operator-configurable concurrency** — `--max-concurrent` flag is live, gated by a claim semaphore in `RunRegistry` (hk-e61c3.3). Follow-ups: per-project cap, machine-level budget coordination across daemons.
-- **Bead prioritization** — post-MVH. Options: priority field on bead, orchestrator-agent-driven selection, SLA-based scheduling.
+- **Bead prioritization** — deferred. Options: priority field on bead, orchestrator-agent-driven selection, SLA-based scheduling.
 
 ## Section 6 — Subsystem organization (aligned 2026-04-24)
 
@@ -210,7 +210,7 @@ Full recommendation at `docs/foundation/project-level/subsystem-organization.md`
 - **Single Go module, single binary.** Module `github.com/gregberns/harmonik`. Daemon + subcommands at `cmd/harmonik/`; twin binaries separate (`cmd/harmonik-twin-{generic,claude,pi}/`); `harmonik-twin-generic` is the NDJSON back-half test handler; `harmonik-twin-claude` (hk-w5vra.2) will mirror real Claude lifecycle.
 - **Subsystems under `internal/`.** Each of S01–S09 plus `handler/{contract,claudecode,pi,twin}`, `adapter/{br,ntm}`, and `daemon` (composition root).
 - **Shared types in `internal/core`** (leaf package, imports no subsystem). Types: `RunID`, `StateID`, `TransitionID`, `BeadID`, event envelope + taxonomy, `Outcome`/`Transition`/`Checkpoint`, four-axis tag types.
-- **`pkg/` deliberately empty at MVH.** No public library surface.
+- **`pkg/` deliberately empty.** No public library surface.
 - **Dependency layering enforced by `go-arch-lint`.** Single YAML at repo root declares components + allowed edges; CI fails on violations naming the specific forbidden edge. Chosen over `depguard` (architecture-as-graph is native to go-arch-lint; depguard scatters rules across linter config).
 
 Conventions set:
@@ -254,7 +254,7 @@ Coverage-gaming rule: a line marked `// unreachable: <why>` covered by an assert
 - Tier A (every push): recorded-fixture parse tests (captured claude-code wire output replayed, handler methods asserted to parse into golden structs).
 - Tier B (every push): twin-driven scenario tests (daemon↔handler wiring end-to-end, token-free).
 - Tier C (nightly): budget-capped real-agent smoke (hard `$5/night` cap; diffs open auto-PR on fixture drift).
-- Post-MVH: automated real-vs-twin event-stream diff (twin conformance suite).
+- Deferred: automated real-vs-twin event-stream diff (twin conformance suite).
 
 **Crash-recovery via `faultpoint` package** behind `//go:build crash`. Named injection sites (`mid-checkpoint-commit`, `after-commit-before-beads-write`, `mid-jsonl-fsync`, etc.). Production builds: faultpoints are no-ops (dead-code-eliminated). Crash builds: `faultpoint.Arm(site, SIGKILL)` causes the next hit to kill the process. Fast 3-site subset per push; full set nightly.
 
@@ -262,8 +262,8 @@ Coverage-gaming rule: a line marked `// unreachable: <why>` covered by an assert
 
 ### Deferred / follow-up
 
-- **Twin-conformance automated diff** — Tier C writes captures; full real-vs-twin diff with tolerance is post-MVH.
-- **Fuzz corpora for boundary parsers** — continuous fuzz infra post-MVH; committed seed corpus is MVH.
+- **Twin-conformance automated diff** — Tier C writes captures; the full real-vs-twin diff with tolerance is deferred.
+- **Fuzz corpora for boundary parsers** — continuous fuzz infrastructure is deferred; a committed seed corpus is in scope now.
 - **Benchmark regression gate** — `benchstat` once RTO-sensitive paths have specs.
 
 ## Section 8 — Quality checks (aligned 2026-04-24, post-reviewer-convergence)
@@ -302,14 +302,14 @@ Excluded from agent done-check (CI-nightly or on-demand): real-agent smoke tests
   - Subsystem-boundary-aware wrap enforcement (replaces wishful "agents MUST wrap" rule).
   - AST-level anti-coverage-gaming check: every `Test*` function reaches an assertion on every return path. Blocks assertion-free table-loop tests.
 - **`gosec` blocking** (currently advisory) — elevate when daemon opens network ports or handles credentials.
-- **Mutation testing** (`gremlins`) — post-MVH once unit suite is substantive.
+- **Mutation testing** (`gremlins`) — deferred until the unit suite is substantive.
 - **Branch protection with approval gate** — solo-dev: required-approvals slot empty. Revisit when collaborators join.
 
 ## Section 9 — Go build practices (aligned 2026-04-24, per user direction)
 
 Full recommendation at `docs/foundation/project-level/build-practices.md` (revised per user direction). Key alignments:
 
-**User direction:** No PRs at MVH or post-MVH until the product has real users. Direct commits to `main`. Agent reviewers do all code review. User reads committed code asynchronously, never gates. Streamline for speed without lowering quality bars.
+**User direction:** No PRs — now or later — until the product has real users. Direct commits to `main`. Agent reviewers do all code review. User reads committed code asynchronously, never gates. Streamline for speed without lowering quality bars.
 
 **Branch model: direct-to-main.**
 - `main` is the working branch. Agents commit directly.
@@ -379,7 +379,7 @@ Prevents prompt injection; enables audit/metrics. Schema lives in the `agent-rev
 
 - **`agent-reviewer` verdict schema** — owned by the `agent-reviewer` skill; write concretely at bootstrap.
 - **CONSTITUTION.md content** — concrete text is authored at bootstrap (small file, but author with care).
-- **Hook-based enforcement post-MVH** — Gas Town Hooks for mechanical rule enforcement beyond what linters cover.
+- **Hook-based enforcement (deferred)** — Gas Town Hooks for mechanical rule enforcement beyond what linters cover.
 - **Pi-specific configuration** — when Pi arrives, `## Pi-specific` section in AGENTS.md + any per-agent skill variants.
 
 ---

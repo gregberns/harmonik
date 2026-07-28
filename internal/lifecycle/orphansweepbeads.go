@@ -51,7 +51,7 @@ package lifecycle
 // model rebuilt at PL-005 step 7 in exclusion (a) — the bead-reset enumeration
 // CANNOT precede the handshake.
 //
-// At MVH the in-memory model rebuild (PL-005 step 7) is not yet wired as a
+// The in-memory model rebuild (PL-005 step 7) is not yet wired as a
 // distinct phase; exclusion (a) reduces to the OR clause in the spec text —
 // "a `claim` intent file is still present and the BI adapter's BI-031 recovery
 // will re-drive it" — which is observable directly via the intent-log
@@ -71,7 +71,7 @@ package lifecycle
 //
 //	(a) Live run reattached. If the in-memory model rebuilt at PL-005 step 7
 //	    re-attaches a live in-flight run to this bead, the bead is NOT reset.
-//	    At MVH the in-memory model is not yet wired, so exclusion (a) reduces
+//	    The in-memory model is not yet wired, so exclusion (a) reduces
 //	    to the OR clause: a `claim` intent file at
 //	    `.harmonik/beads-intents/<key>.json` references this bead AND the BI
 //	    adapter's BI-031 recovery will re-drive it.
@@ -96,7 +96,7 @@ package lifecycle
 // `actor` field is unsuitable — via cross-referencing `claim` op entries in
 // the daemon's own intent-log at `.harmonik/beads-intents/*.json`.
 //
-// At MVH the audit-trail actor field is not reliably populated with the
+// The audit-trail actor field is not reliably populated with the
 // project hash (Beads v0.1.x records the user's git config `user.name`); the
 // implementation therefore uses the intent-log cross-reference as the default
 // provenance signal. A bead with NO intent file of ANY op type in the local
@@ -114,7 +114,7 @@ package lifecycle
 //
 // The [ProvenanceChecker] seam lets a future Beads release whose audit-log
 // actor field carries the project_hash plug in a deterministic owner check
-// independent of the intent-log presence (the MVH-fallback). When a
+// independent of the intent-log presence (the fallback). When a
 // ProvenanceChecker is wired and returns true, the reset path becomes
 // reachable for beads where all intent files were already cleared. See
 // hk-iuaed.4 follow-up.
@@ -185,13 +185,13 @@ type BeadCat3cCloser interface {
 
 // ProvenanceChecker reports whether a given bead is owned by this project's
 // daemon per PL-006a — independent of the claim-intent presence used as the
-// MVH-fallback provenance signal. Production callers MAY leave this nil; the
+// fallback provenance signal. Production callers MAY leave this nil; the
 // sweep then uses the claim-intent presence as the sole provenance signal (the
 // OR clause of PL-006's provenance discipline). When non-nil, Owns returning
 // true establishes provenance even when the claim intent is absent — this is
 // the seam by which a future Beads release whose audit-log actor field carries
 // project_hash will plug in, and the seam that unit tests use to exercise the
-// reset-firing path (the MVH layering otherwise rules it unreachable; see the
+// reset-firing path (the current layering otherwise rules it unreachable; see the
 // package doc).
 //
 // Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — provenance via
@@ -457,7 +457,7 @@ type IntentMutationSet map[core.BeadID]struct{}
 // the project's intent-log directory, regardless of op type. Membership
 // establishes provenance: any intent file in .harmonik/beads-intents/ was
 // written by this project's daemon (or a prior instance of it). This is the
-// MVH-fallback provenance signal used when [ProvenanceChecker] is nil.
+// fallback provenance signal used when [ProvenanceChecker] is nil.
 //
 // The set is a strict superset of IntentClaimSet ∪ IntentMutationSet: it
 // captures beads whose claim intent was cleared by BI-031 recovery but whose
@@ -468,7 +468,7 @@ type IntentProvenanceSet map[core.BeadID]struct{}
 
 // ScanIntentLog walks intentLogDir and returns:
 //   - provenance: bead IDs referenced by ANY intent file (claim, close, reopen,
-//     reset, or unknown op). Used as the MVH-fallback provenance signal.
+//     reset, or unknown op). Used as the fallback provenance signal.
 //   - claims:     bead IDs with a pending `claim` intent (exclusion (a)).
 //   - mutations:  bead IDs with a pending `close` or `reopen` intent (exclusion (b)).
 //
@@ -541,7 +541,7 @@ type SweepStaleInProgressBeadsConfig struct {
 
 	// Provenance, when non-nil, overrides the claim-intent-presence-only
 	// provenance signal with a deterministic per-bead owner check. Production
-	// callers SHOULD leave this nil at MVH (the OR-clause fallback governs);
+	// callers SHOULD leave this nil (the OR-clause fallback governs);
 	// when a future Beads release exposes a project_hash-carrying actor field
 	// on the audit log, the production wiring plugs an audit-log-based checker
 	// in here.

@@ -5,7 +5,7 @@
 // only harmonik-twin-claude — ZERO Claude API tokens. Bead: hk-psrnc.
 //
 // Design:
-//   - WorkflowModeDot + projectDir/workflow.dot (two agentic nodes, sequential MVH).
+//   - WorkflowModeDot + projectDir/workflow.dot (two agentic nodes, sequential mode).
 //   - Each node runs the same YAML twin script: commit_on_cue writes
 //     merge-race-sentinel.txt. Alpha commits first; beta commits a second revision
 //     (same filename, different timestamp-derived content). Both commits land on the
@@ -56,7 +56,7 @@ func mergeRaceST5FixtureWorkflowDot(t *testing.T, projectDir string) {
 
 // mergeRaceST5FixtureAlphaScript writes the twin YAML script for both DOT
 // nodes and returns its absolute path. The same script drives alpha_node and
-// beta_node because (a) sequential MVH shares one worktree and (b)
+// beta_node because (a) sequential mode shares one worktree and (b)
 // HARMONIK_NODE_ID is "bead/<id>", never the DOT node name, so per-node
 // routing via env is impossible. Both nodes commit merge-race-sentinel.txt;
 // alpha's content is commit-on-cue <ts1>, beta's is <ts2> (different ts →

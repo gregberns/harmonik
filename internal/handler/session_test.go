@@ -1,6 +1,6 @@
 package handler_test
 
-// session_test.go — tests for Session (MVH_ROADMAP row #6, bead hk-8bbp7).
+// session_test.go — tests for Session (EARLY_ROADMAP row #6, bead hk-8bbp7).
 //
 // Helper prefix: sessionFixture (per implementer-protocol.md §Helper-prefix
 // discipline; bead hk-8bbp7).

@@ -2465,7 +2465,7 @@ func (p *perRunSubstrate) PaneOutputFingerprint(ctx context.Context) (string, bo
 // operations (Kill) issue tmux commands via the stored adapter.
 //
 // Wait blocks until the pane PID disappears from the OS process table (polled
-// at 500ms intervals). This is a best-effort implementation for MVH; a
+// at 500ms intervals). This is a best-effort implementation; a
 // production implementation would use tmux wait-for or a side-channel signal.
 //
 // All methods are safe for concurrent use.

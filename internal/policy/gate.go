@@ -91,7 +91,7 @@ func GateEvalFailureOutcome(reason string) core.Outcome {
 //
 // The spec declares: run, outcome, event, context, policy_meta. For gate
 // pre-entry dispatch, outcome and event are nil (no outcome has been produced
-// yet; gate nodes are not event-triggered). policy_meta is nil at MVH (no
+// yet; gate nodes are not event-triggered). policy_meta is nil (no
 // policy-document metadata is threaded to the daemon in the current
 // implementation). The daemon shell populates this value and feeds it to the
 // core.PolicyExprEvaluator Compile/Evaluate calls (which stay in the daemon).

@@ -18,7 +18,7 @@ depends-on: []
 
 ## 1. Purpose
 
-This spec defines harmonik's architectural meta-contracts — the invariants, classification tests, and declaration rules that every other foundation and subsystem spec is required to conform to. It names the four-axis determinism classification, the ZFC mechanism/cognition test, the search+verifier+traces triple, the subsystem envelope, the MVH runtime realization of a subsystem as a Go package, the foundation amendment protocol, the agent-type abstraction, the verification-term disambiguation, the centralized-controller invariant, and the three-artifact separation of `spec` / `workflow graph` / `bead`.
+This spec defines harmonik's architectural meta-contracts — the invariants, classification tests, and declaration rules that every other foundation and subsystem spec is required to conform to. It names the four-axis determinism classification, the ZFC mechanism/cognition test, the search+verifier+traces triple, the subsystem envelope, the runtime realization of a subsystem as a Go package, the foundation amendment protocol, the agent-type abstraction, the verification-term disambiguation, the centralized-controller invariant, and the three-artifact separation of `spec` / `workflow graph` / `bead`.
 
 It is a separate spec from everything else because these rules are meta-rules: they constrain how downstream specs are shaped, not the runtime shape of any single subsystem. Downstream specs cite §4.1 (four-axis classification), §4.2 (ZFC test), §4.4 (subsystem envelope), §4.9 (centralized-controller), and §4.10 (three-artifact separation) at minimum. Citations to sub-requirements MUST use the `AR-NNN` form; section numbers alone are insufficient to target the re-review obligation in §4.6.AR-020.
 
@@ -30,11 +30,11 @@ It is a separate spec from everything else because these rules are meta-rules: t
 - ZFC (Zero Framework Cognition) mechanism/cognition classification test and the delegation-path obligation for cognition-tagged points.
 - The required triple — search, verifier, traces — declared at foundation level.
 - The subsystem envelope: what every subsystem declares, what it is forbidden from doing, the "add-a-subsystem" procedure.
-- MVH runtime realization pin: a subsystem is a Go package inside the daemon binary; out-of-process actors are enumerated and excluded from subsystem status.
+- Runtime realization pin: a subsystem is a Go package inside the daemon binary; out-of-process actors are enumerated and excluded from subsystem status.
 - Foundation amendment protocol, including parallel-amendment serialization and overlap detection.
 - Agent-type abstraction: concept, identifier shape, reserved identifiers, cross-subsystem reference points, orthogonality to role.
 - Verification naming: the three distinct meanings (`verification-node`, `verification-result`, `quality-gate`) and the hyphenated canonical forms.
-- Role taxonomy glossary entries for deferred AlphaGo abstractions (Planner, Researcher, Builder, Reviewer, Verifier, Scheduler, Governor); MVH-required vs declared-but-deferred split; orthogonality to agent type; merge-responsibility clarification.
+- Role taxonomy glossary entries for deferred AlphaGo abstractions (Planner, Researcher, Builder, Reviewer, Verifier, Scheduler, Governor); `mvh-required` vs `declared-but-deferred` split; orthogonality to agent type; merge-responsibility clarification.
 - Harness-engineering invariants (single-source-of-truth repo, guides+sensors, constrain-to-empower, filesystem-backed coordination, quality-left).
 - Centralized-controller principle and its acknowledged tradeoff (no graceful degradation under daemon failure).
 - Three-artifact separation (`spec`, `workflow graph`, `bead`) and the explicit exclusion of "feature" as a product primitive.
@@ -60,7 +60,7 @@ It is a separate spec from everything else because these rules are meta-rules: t
 - **search** — the backtracking-and-candidate-generation mechanism; represented by transition kinds, candidate generation as a node type, and freedom profiles per state. See §4.3.
 - **verifier** — a role-function of a workflow node whose purpose is to evaluate prior work; NOT a distinct node-type enum member and NOT a subsystem. See §4.3, §4.7.
 - **traces** — durable transition records carrying the full AlphaGo field set (prior state, actor role, candidate actions, chosen action, policy version, parameter vector, evidence, outcome, verifier metrics, next state, confidence). Distinct from events. See §4.3.
-- **subsystem** — a unit declaring an envelope per §4.4 and realized at MVH as a Go package inside the daemon binary per §4.5.
+- **subsystem** — a unit declaring an envelope per §4.4 and realized today as a Go package inside the daemon binary per §4.5.
 - **subsystem envelope** — the declaration surface a subsystem publishes (events produced, events consumed, types exported via event payloads or shared state, handlers implemented, state owned, control points provided, NFRs inherited/overridden, boundary classification per operation). See §4.4.
 - **agent type** — a handler-contract conformance class (`claude-code`, `pi`, `claude-twin`, `pi-twin`, future handlers) identified by a lowercase-hyphenated ASCII string. Orthogonal to role. See §4.7.
 - **role** — a function assignment on a workflow node (Planner, Researcher, Builder, Reviewer, Verifier, Scheduler, Governor). Orthogonal to agent type. See §4.8.
@@ -77,7 +77,7 @@ It is a separate spec from everything else because these rules are meta-rules: t
 
 #### AR-052 — Spec category distinguishes runtime-subsystem from foundation-cross-cutting
 
-Every spec under `specs/` MUST declare, in its front matter, a `spec-category` of either `runtime-subsystem` or `foundation-cross-cutting`. A `runtime-subsystem` spec is realized at MVH as a Go package inside the daemon binary per §4.5.AR-016 and MUST declare an envelope per AR-053. A `foundation-cross-cutting` spec owns invariants or cross-cutting obligations imposed on runtime subsystems (e.g., operator-nfr, beads-integration, reconciliation, testing, architecture itself) and is exempt from envelope declaration. The category assignment is reviewer-enforced; the front-matter presence is lint-enforced.
+Every spec under `specs/` MUST declare, in its front matter, a `spec-category` of either `runtime-subsystem` or `foundation-cross-cutting`. A `runtime-subsystem` spec is realized today as a Go package inside the daemon binary per §4.5.AR-016 and MUST declare an envelope per AR-053. A `foundation-cross-cutting` spec owns invariants or cross-cutting obligations imposed on runtime subsystems (e.g., operator-nfr, beads-integration, reconciliation, testing, architecture itself) and is exempt from envelope declaration. The category assignment is reviewer-enforced; the front-matter presence is lint-enforced.
 
 Tags: mechanism
 
@@ -185,17 +185,17 @@ Adding a new subsystem MUST be accomplished by writing a new subsystem spec that
 
 Tags: mechanism
 
-### 4.5 Subsystem runtime realization — MVH pin
+### 4.5 Subsystem runtime realization — Go-package pin
 
-#### AR-016 — Subsystem is a Go package inside the daemon for MVH
+#### AR-016 — Subsystem is a Go package inside the daemon
 
-For MVH, a subsystem MUST be realized as a Go package inside the daemon binary (see [docs/foundation/components.md §8] for the daemon's single-binary shape). The envelope's events-produced and events-consumed discipline is therefore inter-package discipline within a single process; the event bus is in-process. The consumer taxonomy's in-process-synchronous, in-process-asynchronous, and fan-out-observer classes all live inside the same daemon binary.
+Today, a subsystem MUST be realized as a Go package inside the daemon binary (see [docs/foundation/components.md §8] for the daemon's single-binary shape). The envelope's events-produced and events-consumed discipline is therefore inter-package discipline within a single process; the event bus is in-process. The consumer taxonomy's in-process-synchronous, in-process-asynchronous, and fan-out-observer classes all live inside the same daemon binary.
 
 Tags: mechanism
 
 #### AR-017 — Enumerated out-of-process actors
 
-The only out-of-process actors admitted in MVH are: (a) agent handler subprocesses (Claude Code, Pi, twin binaries; see [docs/foundation/components.md §4]), (b) orchestrator-agent sessions (separate Claude Code sessions driving the daemon via CLI; see [docs/foundation/components.md §8]), (c) `br` CLI invocations the daemon spawns for Beads reads and writes (see [docs/foundation/components.md §10]). None of (a), (b), (c) is a subsystem; handlers implement the handler contract but declare no envelope; orchestrator-agents are external callers of the command surface; `br` is an external dependency invoked as a subprocess. Introducing a fourth out-of-process actor class MUST proceed via the amendment protocol of §4.6; ad-hoc addition is forbidden.
+The only out-of-process actors admitted are: (a) agent handler subprocesses (Claude Code, Pi, twin binaries; see [docs/foundation/components.md §4]), (b) orchestrator-agent sessions (separate Claude Code sessions driving the daemon via CLI; see [docs/foundation/components.md §8]), (c) `br` CLI invocations the daemon spawns for Beads reads and writes (see [docs/foundation/components.md §10]). None of (a), (b), (c) is a subsystem; handlers implement the handler contract but declare no envelope; orchestrator-agents are external callers of the command surface; `br` is an external dependency invoked as a subprocess. Introducing a fourth out-of-process actor class MUST proceed via the amendment protocol of §4.6; ad-hoc addition is forbidden.
 
 Tags: mechanism
 
@@ -205,9 +205,9 @@ Reconciliation MUST NOT be a subsystem. Reconciliation is a workflow-library ent
 
 Tags: mechanism
 
-#### AR-019 — Post-MVH process geometry is out of foundation scope
+#### AR-019 — Future process geometry is out of foundation scope
 
-If harmonik later evolves to a multi-process shape (e.g., splitting the event bus into its own process), the subsystem envelope's semantics MUST remain unchanged: each Go package that declares an envelope is a subsystem regardless of which process binary hosts it. Post-MVH process geometry is a subsystem-spec concern, not a foundation concern; a change in process geometry MUST NOT require a foundation revision.
+If harmonik later evolves to a multi-process shape (e.g., splitting the event bus into its own process), the subsystem envelope's semantics MUST remain unchanged: each Go package that declares an envelope is a subsystem regardless of which process binary hosts it. Future process geometry is a subsystem-spec concern, not a foundation concern; a change in process geometry MUST NOT require a foundation revision.
 
 Tags: mechanism
 
@@ -256,7 +256,7 @@ Tags: mechanism
 
 #### AR-025 — Agent-type identifier shape
 
-An `agent_type` identifier MUST be a lowercase-hyphenated ASCII string matching the regex `^[a-z][a-z0-9-]{1,62}$`. Reserved identifiers for MVH: `claude-code`, `pi`, `claude-twin`, `pi-twin`. A new agent type is registered by (a) the subsystem spec introducing it declaring the identifier in its envelope, and (b) the handler-contract conformance class being claimed. Identifiers are daemon-scoped (process-scoped); no namespace prefix is required for MVH. A post-MVH reverse-DNS prefix discipline MAY be introduced via foundation amendment per §4.6.
+An `agent_type` identifier MUST be a lowercase-hyphenated ASCII string matching the regex `^[a-z][a-z0-9-]{1,62}$`. Reserved identifiers: `claude-code`, `pi`, `claude-twin`, `pi-twin`. A new agent type is registered by (a) the subsystem spec introducing it declaring the identifier in its envelope, and (b) the handler-contract conformance class being claimed. Identifiers are daemon-scoped (process-scoped); no namespace prefix is required. A reverse-DNS prefix discipline MAY be introduced later via foundation amendment per §4.6.
 
 Tags: mechanism
 
@@ -306,9 +306,9 @@ Foundation names seven roles drawn from the AlphaGo north-star: Planner, Researc
 
 Tags: mechanism
 
-#### AR-033 — MVH-required vs declared-but-deferred split
+#### AR-033 — `mvh-required` vs `declared-but-deferred` split
 
-Planner, Builder, and Reviewer MUST be implemented at MVH (sufficient to run the minimum self-build cycle described in the bootstrap doc). Researcher, Verifier, Scheduler, and Governor are declared-but-deferred: named in foundation so subsystem specs do not invent alternatives, but not required at MVH. Each deferred role MUST be activated when its triggering pattern appears in a workflow; activation MUST NOT require a foundation revision.
+Planner, Builder, and Reviewer MUST be implemented (sufficient to run the minimum self-build cycle described in the bootstrap doc). Researcher, Verifier, Scheduler, and Governor are `declared-but-deferred`: named in foundation so subsystem specs do not invent alternatives, but not required. Each deferred role MUST be activated when its triggering pattern appears in a workflow; activation MUST NOT require a foundation revision.
 
 Tags: mechanism
 
@@ -369,7 +369,7 @@ Tags: mechanism
 
 #### AR-040 — Acknowledged centralized-controller tradeoff
 
-The centralized-controller principle carries a real cost: if the daemon dies mid-run, every agent goes silent and reconciliation is required on restart (per [docs/foundation/components.md §9]). A decentralized alternative (Gas Town polecats/mayors) would offer graceful degradation; harmonik's choice foregoes that property in favor of routing simplicity. This tradeoff is acceptable within the MVH envelope (single-user, single-project, developer-machine — daemon colocated with work). A pivot to decentralized would require re-evaluating this principle under scenarios where the daemon is the only failure domain (remote-daemon, multi-operator-single-daemon); such a pivot is a foundation amendment per §4.6.
+The centralized-controller principle carries a real cost: if the daemon dies mid-run, every agent goes silent and reconciliation is required on restart (per [docs/foundation/components.md §9]). A decentralized alternative (Gas Town polecats/mayors) would offer graceful degradation; harmonik's choice foregoes that property in favor of routing simplicity. This tradeoff is acceptable within harmonik's current envelope (single-user, single-project, developer-machine — daemon colocated with work). A pivot to decentralized would require re-evaluating this principle under scenarios where the daemon is the only failure domain (remote-daemon, multi-operator-single-daemon); such a pivot is a foundation amendment per §4.6.
 
 Tags: mechanism
 
@@ -447,7 +447,7 @@ Tags: mechanism
 
 #### AR-INV-001 — Mechanism/cognition split is strict at the process boundary
 
-The daemon process MUST carry only mechanism-tagged logic. All cognition-tagged evaluation MUST occur in agent handler subprocesses. A cognition-tagged requirement whose delegation path (per §4.2.AR-007) resolves inside the daemon binary (rather than to an agent subprocess) is a violation of this invariant. Sensor: **corpus-search heuristic** — reviewer persona (conformance-auditor per build-practices.md §Agent review) scans every `cognition`-tagged requirement in the corpus and checks the declared delegation path targets an agent handler subprocess per §4.5.AR-017(a), not an in-daemon code path. The heuristic is reviewer-enforced (mechanism-tagged lint grammar cannot resolve "in-daemon" vs "in-subprocess" without a `Process:` tag the template does not currently require). Known false-negatives are tracked in OQ-AR-005; a post-MVH `Process:` tag to make the sensor mechanical is tracked there as a candidate amendment.
+The daemon process MUST carry only mechanism-tagged logic. All cognition-tagged evaluation MUST occur in agent handler subprocesses. A cognition-tagged requirement whose delegation path (per §4.2.AR-007) resolves inside the daemon binary (rather than to an agent subprocess) is a violation of this invariant. Sensor: **corpus-search heuristic** — reviewer persona (conformance-auditor per build-practices.md §Agent review) scans every `cognition`-tagged requirement in the corpus and checks the declared delegation path targets an agent handler subprocess per §4.5.AR-017(a), not an in-daemon code path. The heuristic is reviewer-enforced (mechanism-tagged lint grammar cannot resolve "in-daemon" vs "in-subprocess" without a `Process:` tag the template does not currently require). Known false-negatives are tracked in OQ-AR-005; a later `Process:` tag to make the sensor mechanical is tracked there as a candidate amendment.
 
 Tags: mechanism
 
@@ -459,7 +459,7 @@ Tags: mechanism
 
 #### AR-INV-007 — Centralized-controller invariant
 
-Harmonik MUST be a centralized-controller system. The deterministic daemon (Go binary, no LLM logic — see [docs/foundation/components.md §8] for the daemon-vs-orchestrator-agent distinction) MUST own all workflow state, routing, and dispatch. Agents MUST perform only cognitive work. Agent-to-agent coordination MUST route through the daemon. Agent-to-agent coordination via files, or via ad hoc IPC between agent processes, is forbidden. **All cross-subsystem registries (policy, control-point, handler, skill) are daemon-owned and in-process for MVH**; a subsystem spec MAY NOT locate its cross-cutting registry outside the daemon without invoking the amendment protocol of §4.6. Sensor: reviewer-agent scenario per §10.2 AR-038..AR-045 group — proposals introducing file-based agent handoff, per-agent worktree ownership for the same run, or an out-of-daemon cross-subsystem registry are rejected.
+Harmonik MUST be a centralized-controller system. The deterministic daemon (Go binary, no LLM logic — see [docs/foundation/components.md §8] for the daemon-vs-orchestrator-agent distinction) MUST own all workflow state, routing, and dispatch. Agents MUST perform only cognitive work. Agent-to-agent coordination MUST route through the daemon. Agent-to-agent coordination via files, or via ad hoc IPC between agent processes, is forbidden. **All cross-subsystem registries (policy, control-point, handler, skill) are daemon-owned and in-process**; a subsystem spec MAY NOT locate its cross-cutting registry outside the daemon without invoking the amendment protocol of §4.6. Sensor: reviewer-agent scenario per §10.2 AR-038..AR-045 group — proposals introducing file-based agent handoff, per-agent worktree ownership for the same run, or an out-of-daemon cross-subsystem registry are rejected.
 
 Tags: mechanism
 
@@ -486,7 +486,7 @@ The only data shape this spec owns is the agent-type identifier regex declared i
 agent_type := ^[a-z][a-z0-9-]{1,62}$
 ```
 
-Reserved identifiers for MVH: `claude-code`, `pi`, `claude-twin`, `pi-twin`.
+Reserved identifiers: `claude-code`, `pi`, `claude-twin`, `pi-twin`.
 
 ### 6.2 Schema evolution
 
@@ -518,9 +518,9 @@ None. This spec is the root of the foundation corpus.
 
 ### 10.1 Conformance profiles
 
-**Core MVH.** An implementation conforming to Core MVH MUST satisfy every requirement AR-001 through AR-053 (IDs AR-008 retired in v0.2, AR-037 and AR-046 retired in v0.3 after promotion to AR-INV-007 and AR-INV-008; never reused) and every invariant AR-INV-001, AR-INV-003, AR-INV-007, AR-INV-008 (IDs AR-INV-002, AR-INV-004, AR-INV-005, AR-INV-006 retired in v0.2; never reused). No requirement is deferred at MVH; the meta-rules are all load-bearing for spec-corpus coherence.
+**Core.** An implementation conforming to Core MUST satisfy every requirement AR-001 through AR-053 (IDs AR-008 retired in v0.2, AR-037 and AR-046 retired in v0.3 after promotion to AR-INV-007 and AR-INV-008; never reused) and every invariant AR-INV-001, AR-INV-003, AR-INV-007, AR-INV-008 (IDs AR-INV-002, AR-INV-004, AR-INV-005, AR-INV-006 retired in v0.2; never reused). No requirement is deferred; the meta-rules are all load-bearing for spec-corpus coherence.
 
-**Post-MVH extensions.** The reserved post-MVH extension is agent-type namespace discipline (reverse-DNS prefix per §4.7.AR-025), triggered only if cross-daemon identifier conflicts become possible. Its introduction is a foundation amendment per §4.6, not a Core MVH obligation.
+**Deferred extensions.** The reserved extension is agent-type namespace discipline (reverse-DNS prefix per §4.7.AR-025), triggered only if cross-daemon identifier conflicts become possible. Its introduction is a foundation amendment per §4.6, not a Core obligation.
 
 ### 10.2 Test-surface obligations
 
@@ -552,14 +552,14 @@ Migration to `[testing.md §<layer>]` cross-references occurs within one revisio
 
 Question: §10.2 currently names test obligations in prose. The template §10.2 expects cross-references to `[testing.md §<layer>]` once testing.md lands.
 Owner: foundation-author
-Blocks: none (MVH prose obligations are in place)
+Blocks: none (the prose obligations are in place)
 Default-if-unresolved: Keep prose obligations; migrate within one revision cycle after testing.md is finalized.
 
-#### OQ-AR-002 — Agent-type namespace discipline post-MVH
+#### OQ-AR-002 — Agent-type namespace discipline (deferred)
 
 Question: Should agent-type identifiers adopt a reverse-DNS prefix discipline (e.g., `com.anthropic.claude-code`) once cross-daemon identifier conflicts become possible, or is a flat namespace sufficient indefinitely?
 Owner: foundation-author
-Blocks: none (MVH decision: flat namespace per §4.7.AR-025)
+Blocks: none (current decision: flat namespace per §4.7.AR-025)
 Default-if-unresolved: Flat namespace. Revisit via amendment only if cross-daemon conflicts are observed or multi-tenant deployments appear.
 
 #### OQ-AR-003 — Amendment overlap detector tooling locus
@@ -569,18 +569,18 @@ Owner: foundation-author
 Blocks: none (overlap detection is mechanism-tagged and can be implemented in any of the three locations)
 Default-if-unresolved: Spec-corpus lint script under `tools/`. Revisit if kerf gains a corpus-wide validator.
 
-#### OQ-AR-004 — Post-MVH decentralization-pivot trigger conditions
+#### OQ-AR-004 — Decentralization-pivot trigger conditions
 
 Question: The centralized-controller tradeoff (§4.9.AR-040) names remote-daemon and multi-operator-single-daemon as trigger scenarios for re-evaluating the principle. Are there additional triggers (e.g., daemon-as-SaaS, multi-machine execution under a single run)?
 Owner: foundation-author
 Blocks: none
-Default-if-unresolved: The two scenarios named are sufficient for MVH. Additional triggers are captured as amendments when concrete cases arise.
+Default-if-unresolved: The two scenarios named are sufficient for now. Additional triggers are captured as amendments when concrete cases arise.
 
 #### OQ-AR-005 — AR-INV-001 sensor false-negative rate and candidate `Process:` tag
 
-Question: AR-INV-001's sensor is a reviewer-enforced corpus-search heuristic because the template carries no machine-readable daemon-vs-subprocess classification per requirement. A post-MVH amendment could introduce a `Process:` tag per requirement (`daemon`, `agent-subprocess`, `orchestrator-agent`, `br-subprocess`, `meta`) that lets the lint mechanically flag any `cognition`-tagged requirement whose `Process:` resolves to `daemon`. What is the false-negative rate of the reviewer-enforced heuristic in practice, and does it warrant the template amendment?
+Question: AR-INV-001's sensor is a reviewer-enforced corpus-search heuristic because the template carries no machine-readable daemon-vs-subprocess classification per requirement. A later amendment could introduce a `Process:` tag per requirement (`daemon`, `agent-subprocess`, `orchestrator-agent`, `br-subprocess`, `meta`) that lets the lint mechanically flag any `cognition`-tagged requirement whose `Process:` resolves to `daemon`. What is the false-negative rate of the reviewer-enforced heuristic in practice, and does it warrant the template amendment?
 Owner: foundation-author
-Blocks: none (MVH sensor is the reviewer-enforced heuristic)
+Blocks: none (the current sensor is the reviewer-enforced heuristic)
 Default-if-unresolved: Keep the reviewer-enforced heuristic. Revisit via amendment after the first two subsystem specs reach `reviewed` and the false-negative rate is observable.
 
 #### OQ-AR-006 — Trace-shape uniformity under deterministic dispatch
@@ -601,7 +601,7 @@ Default-if-unresolved: Keep reviewer-enforced. Revisit after the first three sub
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
-| 2026-04-24 | 0.1.0 | foundation-author | Initial draft. Encodes four-axis and ZFC classification tests, required triple, subsystem envelope and Go-package MVH pin, amendment protocol with parallel-amendment serialization, agent-type abstraction and verification naming disambiguation, role taxonomy glossary, centralized-controller principle with acknowledged tradeoff, and three-artifact separation. |
+| 2026-04-24 | 0.1.0 | foundation-author | Initial draft. Encodes four-axis and ZFC classification tests, required triple, subsystem envelope and Go-package pin, amendment protocol with parallel-amendment serialization, agent-type abstraction and verification naming disambiguation, role taxonomy glossary, centralized-controller principle with acknowledged tradeoff, and three-artifact separation. |
 | 2026-04-24 | 0.2.0 | foundation-author | Round-1 review integration. Fixed §1 Purpose self-citations (§1.x → §4.x). Added AR-052 (spec-category: `runtime-subsystem` vs `foundation-cross-cutting`) and AR-053 (pin §4.0 envelope section slot); scoped AR-013 to runtime-subsystem specs. Fixed AR-011 and AR-029 to state verification as a role-function over `{agentic, non-agentic}` nodes (not a distinct node-type enum member), aligning with execution-model EM-006. Added `handler_type` → `agent_type` migration note to AR-027 (downstream specs event-model, handler-contract, workspace-model MUST rename in their next cycle). Retired AR-008 (duplicated AR-006 + AR-INV-001; anti-pattern list moved to AR-007 EXAMPLE). Retired AR-INV-002, AR-INV-004, AR-INV-005, AR-INV-006 as duplicates of §4 requirements per template selection test; retained AR-INV-001 and AR-INV-003 as genuinely cross-subsystem. Re-tagged AR-007 as `mechanism` (it is a spec-authoring obligation, not a runtime cognition event). Tightened AR-042 to "invariants MUST name their sensor." Demoted AR-023's "mechanical overlap detector" to a declared `touches:` front-matter contract with reviewer-enforced overlap detection until tooling lands. Added explicit RETRY-exclusion to AR-030. Dropped "expected" from AR-003 title. Merged AR-035 into AR-026 as a cross-reference. Tightened AR-017 with explicit amendment-required clause. Added envelope-declaration exemplar in §A.1. NOTE: downstream specs carry wrong citation anchors (`[architecture.md §1.x]`, `§1.4a`, `§1.6a`) pointing at sections that never existed in architecture.md; the coordinated corpus-fix maps `§1.1→§4.1`, `§1.2→§4.2`, `§1.3→§4.3`, `§1.4→§4.4`, `§1.4a→§4.5` (subsystem runtime realization), `§1.5→§4.6`, `§1.6→§4.8`, `§1.6a→§4.7` or `§6.1` (agent-type identifier), `§1.8→§4.9`, `§1.9→§4.10`. Downstream specs fix these in their own integration cycles. |
 | 2026-04-24 | 0.3.0 | foundation-author | Round-2 review integration; status `draft` → `reviewed`. Fixed AR-053 §4.0 collision by renaming envelope slot to §4.a (letter suffix) and reserving a `<PREFIX>-ENV-NNN` ID range so envelope blocks do not consume topical ID space in existing subsystem specs; §A.1 exemplar updated in lockstep. Added front-matter `spec-category: foundation-cross-cutting`. Promoted AR-037 → AR-INV-007 (centralized-controller invariant, including new daemon-owned cross-subsystem registry clause per S02-implementer R1) and AR-046 → AR-INV-008 (three-artifact separation with explicit fourth-artifact forbid and configuration-artifact exemption); AR-037 and AR-046 retired (IDs never reused) per skeptic S5. Reworked AR-027: removed the self-violating "downstream specs MUST rename handler_type → agent_type in next revision cycle" migration clause from the normative body; the rename is now tracked as foundation-amendment `AR-MIG-001` in this revision-history row. **AR-MIG-001 (amendment SHOULD):** coordinated rename of `handler_type` → `agent_type` across event-model.md §8.3.2 and §8.3.8, handler-contract.md HC-008, workspace-model.md §5.3a and `harmonik.meta.json` sidecar; processed under AR-020/AR-023 on each owning spec's next revision; overlap-free since sites are non-overlapping per `touches:` accounting. AR-021 cognition-tagged delegation path completed per conformance-auditor: role=Reviewer(architect persona), model-class=agentic, input-shape=amendment doc + spec-diff against prior foundation baseline, output=`material | non-material` verdict with rationale. AR-INV-001 sensor weakened to "reviewer-enforced corpus-search heuristic" per conformance-auditor; known false-negative rate tracked in new OQ-AR-005 (candidate `Process:` tag amendment). Added polymorphic/sum-type tagging INFORMATIVE note under AR-004 (S02-implementer R3). Added reviewer-persona informative block at §10.2 top (architect / conformance-auditor / critic / scope-steward defaults). Added new OQs: OQ-AR-005 (AR-INV-001 false-negative tracking + `Process:` tag), OQ-AR-006 (AR-012 trace-shape uniformity under deterministic dispatch — skeptic hidden assumption 7), OQ-AR-007 (mechanical test for spec-category assignment — skeptic S4 / beads-integration edge case). §10.1 and §10.2 updated for retirements (AR-037, AR-046) and new invariants (AR-INV-007, AR-INV-008). Not addressed in this revision and deferred: corpus-wide §1.N → §4.N anchor migration (tracked per prior v0.2 NOTE); AR-022 `foundation-version:` front-matter enforcement across downstream specs (carried forward as a coordinated amendment). |
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; 2 citations fixed (both in §A.1 envelope exemplar: `[event-model.md §3.2]` → `[event-model.md §6.3]` for payload schema references). |
@@ -661,9 +661,9 @@ Tags: mechanism
 
 **Why meta-rules live in a separate spec.** The four-axis classification, the ZFC test, the subsystem envelope, and the three-artifact separation are all rules about how OTHER specs are shaped. Folding them into a "general rules" section of any single subsystem spec would bury them; hoisting them into their own spec gives every downstream author a single citation point and a single review surface. Every other foundation spec is expected to depend on this spec.
 
-**Why subsystem-as-Go-package is pinned rather than abstract.** The alternative — leaving subsystem realization open — would invite subsystem authors to propose out-of-process shapes for individual subsystems (separate event-bus process, separate workspace-manager process, etc.) during MVH. That proliferation would fragment the envelope discipline across process boundaries before the envelope discipline itself is proven. Pinning the Go-package shape for MVH forces the envelope discipline to prove itself in-process first; the post-MVH slot (§4.5.AR-019) preserves the option to split process boundaries later without revising the envelope semantics.
+**Why subsystem-as-Go-package is pinned rather than abstract.** The alternative — leaving subsystem realization open — would invite subsystem authors to propose out-of-process shapes for individual subsystems (separate event-bus process, separate workspace-manager process, etc.) early on. That proliferation would fragment the envelope discipline across process boundaries before the envelope discipline itself is proven. Pinning the Go-package shape forces the envelope discipline to prove itself in-process first; the deferral slot (§4.5.AR-019) preserves the option to split process boundaries later without revising the envelope semantics.
 
-**Why the centralized-controller tradeoff is acknowledged explicitly.** The decision to reject Gas Town's decentralized polecats/mayors pattern is load-bearing; subsystem authors downstream will look for the principle and assume it is costless. It is not costless: if the daemon dies mid-run, everything stops. Within the MVH envelope (daemon colocated with the developer's machine), "daemon dies" and "machine dies" have the same recovery path, so the tradeoff is acceptable. Outside that envelope, the tradeoff is a real cost the decentralized alternative does not pay. Naming this explicitly in §4.9.AR-040 prevents surprise and sets a clear trigger condition for re-evaluation (OQ-AR-004).
+**Why the centralized-controller tradeoff is acknowledged explicitly.** The decision to reject Gas Town's decentralized polecats/mayors pattern is load-bearing; subsystem authors downstream will look for the principle and assume it is costless. It is not costless: if the daemon dies mid-run, everything stops. Within harmonik's current envelope (daemon colocated with the developer's machine), "daemon dies" and "machine dies" have the same recovery path, so the tradeoff is acceptable. Outside that envelope, the tradeoff is a real cost the decentralized alternative does not pay. Naming this explicitly in §4.9.AR-040 prevents surprise and sets a clear trigger condition for re-evaluation (OQ-AR-004).
 
 **Why "feature" is explicitly excluded as a product primitive.** The temptation to introduce "feature" as a first-class compositional artifact is strong — it matches vocabulary from other systems and reads naturally in product discussions. But "feature" has no durable representation in harmonik: it is not a spec, not a workflow, not a bead. A spec describes what; a workflow graph describes how; a bead is the claimable unit. Any aggregation larger than a bead is achieved by composing nodes or sub-graphs. Admitting "feature" as a fourth artifact would require inventing a durable representation for it, which would fragment the three-store discipline (git, Beads, JSONL) and invent a fourth store. The exclusion in §4.10.AR-051 is load-bearing: it prevents that invention.
 

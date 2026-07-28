@@ -17,7 +17,7 @@
 
 ## 2. Scope
 
-### 2.1 MVH (in scope here)
+### 2.1 In scope for this design
 
 1. Per-handler-type pause state, gated by a closed taxonomy of handler-fatal failure classes.
 2. Daemon-side ingestion of handler outcomes → centralized policy decision → emission of `handler_paused` event.
@@ -28,7 +28,7 @@
 7. Log surface: WARN on pause, INFO on resume.
 8. Forward-looking seam in `handler-contract` for per-handler diagnostic tooling (declared, not implemented).
 
-### 2.2 Post-MVH (out of scope)
+### 2.2 Out of scope (deferred)
 
 - Per-handler diagnostic-tool framework (run-on-pause / verify-on-resume).
 - Auto-resume on timed backoff (`retry_after` derived window).
@@ -49,10 +49,10 @@ Drawing from execution-model §8 (6 classes) plus handler-contract §4.6 (rate-l
 | `structural` | No (per-bead) | Different beads can fail structurally for different reasons; one structural failure does not predict the next. |
 | `deterministic` | No | Single-bead determinism is per-bead by definition. |
 | `canceled` | No | Operator action; not a handler problem. |
-| `budget_exhausted` | **Conditional.** | If the budget is per-handler-account (e.g., session-token cap, daily-quota), it is handler-fatal until reset. If it is per-run (per-node budget), it is per-bead. The `budget_scope` field on the budget point per `control-points.md §4.5` decides. At MVH only the **account-level** sub-case is handler-fatal. |
+| `budget_exhausted` | **Conditional.** | If the budget is per-handler-account (e.g., session-token cap, daily-quota), it is handler-fatal until reset. If it is per-run (per-node budget), it is per-bead. The `budget_scope` field on the budget point per `control-points.md §4.5` decides. Only the **account-level** sub-case is handler-fatal. |
 | `compilation_loop` | No | Daemon-observed traversal cap; the handler is fine. |
 
-**MVH handler-fatal set:**
+**Handler-fatal set:**
 
 1. `transient` **with sub-reason `rate_limit`** — surfaced today as `agent_rate_limited` (handler-contract §4.6.HC-025). After two consecutive runs hit `agent_rate_limited` without intervening `agent_rate_limit_cleared`, mark the handler paused. (One isolated rate-limit may resolve within the same run; two in a row is structural.)
 2. `transient` **with sub-reason `auth-expired`** — proposed new sub-reason for handler-contract; today not formally surfaced. Until added, this case rides on rate-limit's path; tracked as a follow-up.
@@ -61,7 +61,7 @@ Drawing from execution-model §8 (6 classes) plus handler-contract §4.6 (rate-l
 
 **Excluded but commonly mistaken for handler-fatal:** `ErrSkillProvisioningFailed` (per-bead config issue), `daemon_not_ready` (process-lifecycle problem, not handler), `workspace_held_by_orphan` (workspace-model concern).
 
-**Open: hysteresis vs immediate trip.** MVH proposal: immediate trip on `budget_exhausted{handler-account}`; two-strike trip on `agent_rate_limited`. Tunable post-MVH per handler.
+**Open: hysteresis vs immediate trip.** Proposal: immediate trip on `budget_exhausted{handler-account}`; two-strike trip on `agent_rate_limited`. Making the thresholds tunable per handler is deferred.
 
 ## 4. Event flow
 
@@ -145,7 +145,7 @@ Why a new file rather than extending `queue.json`:
 
 ### 5.2 Schema-versioning
 
-- v1 only at MVH. N-1 readability per ON-018 once a v2 arrives.
+- v1 only. N-1 readability per ON-018 once a v2 arrives.
 - `paused_epoch` is a monotonic counter incremented on every pause → resume cycle; used by the dispatcher to dedup `queue_item_held_for_handler_pause` events.
 
 ### 5.3 Survivability
@@ -162,10 +162,10 @@ When the daemon trips a pause, the dispatcher MAY already have N runs of the aff
 1. **Do not interrupt.** Sibling runs proceed per QM-034. Hard-killing them at pause time would corrupt the run-branch and leave the bead in an undefined state.
 2. **Record the freeze-list.** `in_flight_at_pause` captures the run/bead/ts triple at the moment of pause.
 3. **Let them terminate naturally.** If they succeed, `bead_closed` per normal path; if they fail, they may individually trip the same pause (the controller dedups by epoch).
-4. **Operator-queryable via `harmonik handler status`.** Output includes the freeze-list so operators can decide: wait it out, cancel, or — post-MVH — reroute.
+4. **Operator-queryable via `harmonik handler status`.** Output includes the freeze-list so operators can decide: wait it out, cancel, or reroute (rerouting is deferred — see §9.2).
 5. **`in_flight_at_pause` is informational.** It is not the live in-flight set; the live set is owned by the dispatcher. The freeze-list is a snapshot for the pause-cause incident.
 
-What the daemon does NOT do at MVH:
+What the daemon does NOT do:
 
 - Does NOT reopen the in-flight beads (they may still succeed).
 - Does NOT cancel them (operator's call).
@@ -187,11 +187,11 @@ Behavior:
 4. CLI prints: prior cause, count of in-flight-at-pause runs, current dispatcher backlog awaiting this handler.
 5. Exit 0 on success, 2 on unknown type, 3 on already-live (without `--force`), 4 on socket-unreachable.
 
-`--force` is a no-op at MVH (reserved for post-MVH diagnostic-tool integration where Resume may want to skip a diagnostic re-check).
+`--force` is a no-op today (reserved for the deferred diagnostic-tool integration, where Resume may want to skip a diagnostic re-check).
 
-**What Resume does NOT do at MVH:**
+**What Resume does NOT do:**
 
-- Does NOT verify the underlying issue is actually resolved (post-MVH diagnostic hook).
+- Does NOT verify the underlying issue is actually resolved (the diagnostic hook is deferred).
 - Does NOT re-trigger any specific bead (the dispatcher picks up naturally on its next tick).
 - Does NOT clear an active `paused-by-failure` queue state (orthogonal concern; QM-052 handles that).
 
@@ -215,19 +215,19 @@ JSON shape mirrors the on-disk file plus a derived `held_count` field — the nu
 
 ### 8.3 Programmatic query API
 
-The CLI's `--format json` is the MVH programmatic surface. A future JSON-RPC method `handler-status` is reserved (`-32020`..`-32029` block on process-lifecycle.md §4.4 PL-003a, to be allocated when used).
+The CLI's `--format json` is the programmatic surface today. A future JSON-RPC method `handler-status` is reserved (`-32020`..`-32029` block on process-lifecycle.md §4.4 PL-003a, to be allocated when used).
 
 ## 9. Forward-looking seams
 
-### 9.1 Per-handler diagnostic-tool hook (post-MVH)
+### 9.1 Per-handler diagnostic-tool hook (deferred)
 
-Reserve in `handler-contract.md §4.3 Adapter`: an OPTIONAL `Diagnose(ctx) -> (DiagnosticReport, error)` method. When implemented, the controller calls it (a) on pause-trip to enrich the `cause` record, and (b) on Resume to verify the issue has cleared. MVH adapters MAY return `ErrDeterministic` ("not supported") and the controller skips. The mechanism itself is post-MVH; the seam in the interface is forward-looking design intent only.
+Reserve in `handler-contract.md §4.3 Adapter`: an OPTIONAL `Diagnose(ctx) -> (DiagnosticReport, error)` method. When implemented, the controller calls it (a) on pause-trip to enrich the `cause` record, and (b) on Resume to verify the issue has cleared. Adapters MAY return `ErrDeterministic` ("not supported") and the controller skips. The mechanism itself is deferred; the seam in the interface is forward-looking design intent only.
 
 ### 9.2 Cross-handler task transfer (research-only)
 
-A paused Claude-Code dispatcher could in principle have its queue items re-bound to a `codex`-bound equivalent node, *if* the workflow declares `agent_type` as a fallback list rather than a singleton. This is a workflow-graph-level concept (would touch `specs/execution-model.md §4.2` node attributes) and is research-only at MVH.
+A paused Claude-Code dispatcher could in principle have its queue items re-bound to a `codex`-bound equivalent node, *if* the workflow declares `agent_type` as a fallback list rather than a singleton. This is a workflow-graph-level concept (would touch `specs/execution-model.md §4.2` node attributes) and is research-only for now.
 
-### 9.3 Per-account pause (post-MVH)
+### 9.3 Per-account pause (deferred)
 
 Today a single handler maps to a single account. A future Claude-Code adapter with account-pool rotation (handler-contract.md §4.3.HC-014 RotateAccount) could pause individual accounts rather than the whole handler type. The on-disk schema's `handlers.<type>` slot would gain a per-account map.
 
@@ -258,11 +258,11 @@ Missing (this design's delivery):
 ## 11. Open questions deferred
 
 1. **Exact hysteresis for `agent_rate_limited`.** Two-strike is the starting rule. Should it be N-strikes-in-T-window? Tunable per handler-type? Deferred.
-2. **`auth-expired` and `api-unreachable` sub-reasons** are mentioned in §3 but do not exist as formal sentinels today. Either add them to `handler-contract` §4.5 as `ErrTransient` sub-reasons, or ship MVH against only `rate_limit + budget_exhausted{handler-account}` and add the others when first encountered.
+2. **`auth-expired` and `api-unreachable` sub-reasons** are mentioned in §3 but do not exist as formal sentinels today. Either add them to `handler-contract` §4.5 as `ErrTransient` sub-reasons, or ship against only `rate_limit + budget_exhausted{handler-account}` and add the others when first encountered.
 3. **Budget-scope discrimination.** `budget_exhausted{handler-account}` requires the budget-point policy to declare `budget_scope`. That field does not exist in `control-points.md §4.5`. Either add it or rely on a heuristic from the budget name. Deferred to control-points amendment.
 4. **Does `handler_paused` halt a `queue_paused-by-drain`?** Open: if a queue is mid-drain and a handler trips a pause, do we want to record the handler pause anyway? Proposal: yes — the handler pause persists across drain/restart and applies when the queue resumes. Confirm in pass-5.
-5. **Operator UX for the freeze-list.** Should `handler resume` offer to `--force-fail` the freeze-list beads in one step? At MVH no — separate the surfaces, keep resume cheap.
-6. **Programmatic query channel.** CLI `--format json` is MVH. Is JSON-RPC `handler-status` the post-MVH path, or do we promote it via an HTTP status server? Deferred to operator-nfr.
+5. **Operator UX for the freeze-list.** Should `handler resume` offer to `--force-fail` the freeze-list beads in one step? No — separate the surfaces, keep resume cheap.
+6. **Programmatic query channel.** CLI `--format json` is the surface today. Is JSON-RPC `handler-status` the eventual path, or do we promote it via an HTTP status server? Deferred to operator-nfr.
 7. **Interaction with reconciliation Cat 3a (workflow lock).** A paused handler's in-flight beads, if they fail later, run through reconciliation. The reconciliation investigator should NOT redispatch them while the handler is paused. Proposal: reconciliation reads handler-state on startup and respects pauses. Confirm in pass-5.
 
 ---
@@ -285,11 +285,11 @@ Missing (this design's delivery):
 
 **Add new sub-section §4.5a — HC-020a Handler-fatal classification (after §4.5):**
 
-> Certain failure classes are HANDLER-FATAL: they indicate that every subsequent invocation of the same `agent_type` will fail until external resolution. The closed handler-fatal set at MVH is: (i) `transient` with `agent_rate_limited` observed two times consecutively without an intervening `agent_rate_limit_cleared`, and (ii) `budget_exhausted` whose underlying budget point declares `budget_scope = handler-account`. The daemon's handler-pause controller (see [docs/components/internal/handler-pause-and-resume.md]) is the policy-layer consumer of these signals; this spec is normative for the signal-emission, not for the controller's behavior.
+> Certain failure classes are HANDLER-FATAL: they indicate that every subsequent invocation of the same `agent_type` will fail until external resolution. The closed handler-fatal set is: (i) `transient` with `agent_rate_limited` observed two times consecutively without an intervening `agent_rate_limit_cleared`, and (ii) `budget_exhausted` whose underlying budget point declares `budget_scope = handler-account`. The daemon's handler-pause controller (see [docs/components/internal/handler-pause-and-resume.md]) is the policy-layer consumer of these signals; this spec is normative for the signal-emission, not for the controller's behavior.
 
 **Add new sub-section §4.3a — HC-014a Diagnostic seam (after §4.3 Adapter):**
 
-> An Adapter MAY implement `Diagnose(ctx) -> (DiagnosticReport, error)` as a forward-looking seam. At MVH this method is not invoked by the daemon; post-MVH the handler-pause controller MAY invoke it on pause-trip and on resume to enrich the pause `cause` record and verify resolution. Adapters not implementing it MUST return `ErrDeterministic`. The `DiagnosticReport` shape is reserved for post-MVH; no MVH consumer.
+> An Adapter MAY implement `Diagnose(ctx) -> (DiagnosticReport, error)` as a forward-looking seam. This method is not invoked by the daemon today; a later change MAY have the handler-pause controller invoke it on pause-trip and on resume to enrich the pause `cause` record and verify resolution. Adapters not implementing it MUST return `ErrDeterministic`. The `DiagnosticReport` shape is reserved for that later change; there is no consumer today.
 
 ### A.3 `specs/execution-model.md`
 

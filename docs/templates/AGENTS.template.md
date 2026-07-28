@@ -66,10 +66,6 @@ This project uses [kerf](docs/components/internal/kerf.md) for structured planni
 - **Ten architectural decisions** are locked in as of 2026-04-19. See [STATUS.md](STATUS.md#decisions-locked-in-2026-04-19). Reopening one requires strong new evidence.
 - **Bead label convention for kerf work codenames:** use the `codename:<name>` prefix (e.g. `codename:handler-pause`, `codename:claude-hook-bridge`). Kerf work `bead_filter` clauses must match the same form. Functional/topical labels (e.g. `queue`, `spec-drift`) remain bare — only labels whose sole purpose is to identify a kerf work codename get the prefix.
 
-## Terminology — avoid MVH
-
-MVH (Minimum Viable Harmonik) was a project-level milestone achieved 2026-05-14. It is NOT a per-feature scope label. New plans/beads/specs MUST NOT use MVH framing — it has historically licensed half-built features. Use "Done means..." criteria per plans/README.md instead.
-
 ## Don't
 
 - Don't reopen locked-in decisions without explicit operator request.

@@ -12,7 +12,7 @@ import "fmt"
 // the registered name.
 //
 // The spec declares policy_ref as a non-empty String with no closed enum and
-// no mandatory regex shape at MVH; validation requires only non-empty.
+// no mandatory regex shape; validation requires only non-empty.
 //
 // Note: the bead title (hk-b3f.99) cites §6.3, but execution-model.md §6.1
 // authoritatively sources PolicyRef from [control-points.md §6.4]. §6.4 wins

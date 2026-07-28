@@ -2,7 +2,7 @@
 
 > **Scope clarification.** These practices govern work on the harmonik codebase itself — the human + agents collaborating to write the Go daemon, handlers, CLI, and tests. They do **NOT** govern the workflow-run commit pattern that harmonik produces at runtime (three-level branching, checkpoint commits with `Harmonik-Run-ID` / `Harmonik-State-ID` / `Harmonik-Transition-ID` / `Harmonik-Bead-ID` / `Harmonik-Schema-Version` trailers). That pattern is specified in components.md §2.1 (checkpoint format) and §5.8 (branching). If a commit lands in this repo without a `Harmonik-Run-ID` trailer, it is a project-level commit and this document applies.
 
-**2026-04-24 user direction:** MVH and post-MVH until real users adopt the product, harmonik uses **direct-to-main** development with **agent reviewers on every commit**. No pull requests. User reads committed code asynchronously, never gates it. This doc is revised accordingly; the PR-based shape it previously described is gone.
+**2026-04-24 user direction:** Until real users adopt the product, harmonik uses **direct-to-main** development with **agent reviewers on every commit**. No pull requests. User reads committed code asynchronously, never gates it. This doc is revised accordingly; the PR-based shape it previously described is gone.
 
 ## Decisions
 
@@ -55,7 +55,7 @@ Examples: `feat(s04): add claude-twin handler adapter` — `fix(workspace): hono
 
 ## Branch model — direct-to-main
 
-**`main` is the working branch.** Agents commit directly. The previous trunk-based + feature-branch shape is gone for MVH.
+**`main` is the working branch.** Agents commit directly. The previous trunk-based + feature-branch shape is gone.
 
 - **Ephemeral `agent/<codename>` branches allowed ONLY** for parked work that spans sessions and cannot cleanly land on main mid-way. Squash-merged to main on resume within the same session.
 - **No `user/<topic>` or long-lived `agent/<codename>` branches.** Direct-to-main is the norm; branching is the rare exception for session-straddling parks.
@@ -220,7 +220,7 @@ No binary signing pre-1.0. Distribution is GitHub releases only until a user ask
 - **Never rewrite main history** after a tag.
 - **Never `--force-push` main.** `--force-with-lease` allowed on ephemeral `agent/<codename>` park-branches only.
 - **`--no-verify` forbidden.** Pre-commit hook failures require fixing the underlying issue, not bypassing the hook.
-- **Signed commits (`git commit -S`)** — nice-to-have, not required pre-MVH; revisit when the product gets real users.
+- **Signed commits (`git commit -S`)** — nice-to-have, not required; revisit when the product gets real users.
 - **`.gitignore`** must cover: `/bin/`, `/dist/`, `.harmonik/` (runtime state), `*.test`, `coverage.out`, `.kerf/` (gitignored per CLAUDE.md).
 
 ## ⚑ Assumptions worth user's eye

@@ -48,7 +48,7 @@ type ControlPoint struct {
 	Kind Kind `json:"kind"`
 
 	// Trigger is the Kind-specific trigger record (§6.1 RECORD Trigger).
-	// See [Trigger] for the MVH placeholder shape.
+	// See [Trigger] for the placeholder shape.
 	Trigger Trigger `json:"trigger"`
 
 	// Evaluator carries the evaluation strategy — mechanism (PolicyExpression)

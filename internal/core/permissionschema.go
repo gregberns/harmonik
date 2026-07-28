@@ -13,7 +13,7 @@ package core
 // constructing a PermissionSchema via struct literal MUST set ReadablePaths
 // explicitly; the zero value (nil slice) is NOT equivalent to ["**"].
 //
-// # CP-031 MVH constraint
+// # CP-031 constraint
 //
 // DefaultSkills MUST include "beads-cli" for any role that is designated
 // mvh-required (specs/control-points.md §4.6.CP-031). Enforcement lives in

@@ -12,7 +12,7 @@ import "fmt"
 // [control-points.md §4.3.CP-044]; they carry only the registered name.
 //
 // The spec declares gate_ref as a non-empty String with no closed enum and no
-// mandatory regex shape at MVH; validation requires only non-empty.
+// mandatory regex shape; validation requires only non-empty.
 type GateRef string
 
 // Valid reports whether g is a non-empty GateRef string.

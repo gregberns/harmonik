@@ -23,7 +23,7 @@ import "fmt"
 //
 // # Closed enum
 //
-// Nine values are closed at MVH: seven handler-contract sentinels (including two
+// Nine values are closed: seven handler-contract sentinels (including two
 // structural sub-sentinels) and two bus-internal categories ("overflow", "panic").
 // Future additions follow the amendment protocol per [architecture.md §4.6].
 type ErrorCategory string

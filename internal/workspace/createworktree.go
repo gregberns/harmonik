@@ -114,9 +114,9 @@ func CreateReviewerWorktree(ctx context.Context, repoRoot, runID string, iterati
 // .harmonik state tree and shares its one mode.
 // It does NOT create the worktree directory itself — git does that.
 //
-// # No provisioning at MVH
+// # No provisioning
 //
-// No provisioning layer (adze, devbox, container build) participates in MVH
+// No provisioning layer (adze, devbox, container build) participates in
 // worktree creation. The worktree is a plain subfolder per WM-003.
 //
 // # Error handling

@@ -8,7 +8,7 @@ package core
 // revisions per the N-1 window rule); consumers MUST treat unrecognised values
 // as opaque strings and MUST NOT reject them.
 //
-// Known MVH values (informative; normative source is operator-nfr.md §8):
+// Known values (informative; normative source is operator-nfr.md §8):
 //
 //   - "binary-stamp-missing"             — binary lacks embedded ldflags commit-hash stamp (ON-005a)
 //   - "upgrade-hash-mismatch-on-restart" — restarted binary hash differs from the .harmonik/daemon.upgrading marker (ON-020a)

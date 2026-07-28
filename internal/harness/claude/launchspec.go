@@ -237,9 +237,9 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 	}
 	handlerSessionID := handlerSessUID.String()
 
-	// WorkflowID and NodeID: at MVH the bead is the workflow unit, so we
+	// WorkflowID and NodeID: the bead is the workflow unit, so we
 	// synthesise "bead/<beadID>" as the node identifier. WorkflowID reuses the
-	// runID's UUID (run is the workflow scope at MVH).
+	// runID's UUID (run is the workflow scope).
 	//
 	// TODO(hk-gql20.x): replace with typed WorkflowID / NodeID from a workflow
 	// registry once multi-node workflows are introduced.
@@ -339,7 +339,7 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 		nodeID,
 		mintRes.ClaudeSessionID,
 		sessionLogPath,
-		nil, // skills = nil at MVH per design §1 step 9
+		nil, // skills = nil per design §1 step 9
 	)
 	if err != nil {
 		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
@@ -353,7 +353,7 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 	// Step 9 — Assemble handler.LaunchSpec and return.
 	//
 	// Binary is opaque to this helper; the caller sets it via rc.handlerBinary.
-	// Substrate is nil at MVH; handler falls back to exec.CommandContext.
+	// Substrate is nil; handler falls back to exec.CommandContext.
 	spec := handler.LaunchSpec{
 		Binary:  rc.HandlerBinary,
 		Args:    args,

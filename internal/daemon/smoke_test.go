@@ -1,8 +1,8 @@
 package daemon_test
 
-// smoke_test.go — MVH end-to-end smoke test (hk-wql33).
+// smoke_test.go — end-to-end smoke test (hk-wql33).
 //
-// TestMVHSmoke is the proof-of-life integration test: one ready bead →
+// TestSmokeLoop is the proof-of-life integration test: one ready bead →
 // workspace → handler run → bead closed → run_completed event in JSONL.
 //
 // This test uses:
@@ -18,11 +18,11 @@ package daemon_test
 //
 // Helper prefix: smokeFixture (per implementer-protocol §Helper-prefix discipline; bead hk-wql33).
 //
-// Config.HandlerArgs is not yet present in daemon.Config (post-MVH gap filed
+// Config.HandlerArgs is not yet present in daemon.Config (deferred gap filed
 // as hk-4e5b5).  The test works around this by writing a baked /bin/sh
 // wrapper script to t.TempDir() and pointing HandlerBinary at it.
 //
-// Worktree cleanup is NOT performed by the work loop at MVH (gap filed as
+// Worktree cleanup is NOT performed by the work loop (gap filed as
 // hk-fgdgz).  The test accepts worktrees remaining after the run and just
 // verifies the happy path through bead close + JSONL events.
 
@@ -265,10 +265,10 @@ func smokeFixturePollRunTerminal(t *testing.T, jsonlPath string, budget time.Dur
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TestMVHSmoke — end-to-end happy path
+// TestSmokeLoop — end-to-end happy path
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestMVHSmoke is the MVH_ROADMAP row #11 proof-of-life integration test.
+// TestSmokeLoop is the EARLY_ROADMAP row #11 proof-of-life integration test.
 // It exercises the full daemon work loop against a real beads SQLite DB:
 //
 //  1. Seed one ready bead.
@@ -279,10 +279,10 @@ func smokeFixturePollRunTerminal(t *testing.T, jsonlPath string, budget time.Dur
 // The test passes a cancellable context to daemon.Start (hk-7oz2f) and calls
 // cancel once the bead is confirmed closed, avoiding SIGINT to the test process.
 //
-// Known MVH gaps (follow-up beads filed inline):
+// Known gaps (follow-up beads filed inline):
 //   - Config.HandlerArgs not present → workaround: baked handler.sh script.
 //   - Worktree cleanup not wired in R10 → workaround: accept worktree present.
-func TestMVHSmoke(t *testing.T) {
+func TestSmokeLoop(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
@@ -308,7 +308,7 @@ func TestMVHSmoke(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
-	// MVH gap (hk-4e5b5): daemon.Config.HandlerArgs — Config currently lacks a
+	// Gap (hk-4e5b5): daemon.Config.HandlerArgs — Config currently lacks a
 	// HandlerArgs field so the work loop always invokes HandlerBinary with no
 	// extra args.  The smoke test works around this by using a baked handler.sh
 	// that exits 0 without args.
@@ -362,7 +362,7 @@ func TestMVHSmoke(t *testing.T) {
 		closed = smokeFixturePollBeadClosed(t, brWrapper, beadID, 2*time.Second)
 	}
 	if !closed {
-		t.Errorf("bead %s was not closed within %s; MVH work loop did not complete the dispatch cycle", beadID, pollBudget)
+		t.Errorf("bead %s was not closed within %s; work loop did not complete the dispatch cycle", beadID, pollBudget)
 	}
 
 	// Assert JSONL log contains run_started and run_completed events.
@@ -398,7 +398,7 @@ func TestMVHSmoke(t *testing.T) {
 	}
 
 	// Note: worktree cleanup is not asserted here.  The work loop does not
-	// clean up worktrees at MVH.  Follow-up bead hk-fgdgz tracks this gap.
+	// clean up worktrees.  Follow-up bead hk-fgdgz tracks this gap.
 
 	t.Logf("smoke: JSONL line count = %d; bead closed = %v; run_started = %v; run_completed = %v",
 		len(lines), closed, foundRunStarted, foundRunCompleted)

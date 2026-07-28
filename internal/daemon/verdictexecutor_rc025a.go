@@ -442,7 +442,7 @@ func applyVerdictAction(ctx context.Context, ve core.VerdictEvent, plan core.Ver
 	case core.VerdictActionKindDispatchCurrentNode:
 		// resume-here / resume-with-context: re-dispatch the outer run's current
 		// node. This requires the daemon's dispatch infrastructure which is not
-		// yet wired to the verdict executor at MVH; the verdict-executed commit
+		// yet wired to the verdict executor; the verdict-executed commit
 		// still lands (idempotency is at the dispatch layer). Log and return nil.
 		//
 		// TODO: wire VerdictNodeDispatcher per RC-025 when dispatch infra is ready.
@@ -450,8 +450,8 @@ func applyVerdictAction(ctx context.Context, ve core.VerdictEvent, plan core.Ver
 
 	case core.VerdictActionKindResetToCheckpoint:
 		// reset-to-checkpoint: intra-run rollback to the named checkpoint. Requires
-		// the daemon dispatch infrastructure (EM-044 / EM-045). Not yet wired at
-		// MVH; verdict-executed commit lands for idempotency. Log and return nil.
+		// the daemon dispatch infrastructure (EM-044 / EM-045). Not yet wired;
+		// verdict-executed commit lands for idempotency. Log and return nil.
 		//
 		// TODO: wire VerdictNodeDispatcher per RC-025 / EM-044 when ready.
 		return nil

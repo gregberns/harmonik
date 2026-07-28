@@ -3,7 +3,7 @@
 **Tester:** T6 (agent `ad5c0f07f42a910da`)
 **Date:** 2026-05-12
 **Branch:** `worktree-agent-ad5c0f07f42a910da`
-**Spec references:** `specs/event-model.md` EV-001; `specs/process-lifecycle.md` PL-020; `MVH_ROADMAP.md`
+**Spec references:** `specs/event-model.md` EV-001; `specs/process-lifecycle.md` PL-020; `EARLY_ROADMAP.md`
 **Test file:** `internal/daemon/t6_scale_shape_test.go`
 
 ---
@@ -95,7 +95,7 @@ All timings from darwin/arm64.
 | git worktree add with 1000 subdirs | 2.37s total | No stall observed; 30s warning threshold not triggered |
 | Late-arriving bead pick-up latency | <=2.0s after creation | Bounded by workloopPollInterval=2s; beads created 1s after daemon start appeared within next poll cycle |
 
-**Wall-clock is acceptable for MVH.** The 2-second poll interval is the dominant latency factor.
+**Wall-clock is acceptable.** The 2-second poll interval is the dominant latency factor.
 
 ---
 

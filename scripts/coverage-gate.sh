@@ -43,7 +43,7 @@ fi
 #   rule-file diffs.
 #
 # DESIGN DECISIONS:
-#   - Shell (bash) chosen for MVH; Go rewrite filed as follow-up if logic grows.
+#   - Shell (bash) chosen for now; Go rewrite filed as follow-up if logic grows.
 #   - Coverage is extracted from the "go tool cover -func" output, which reports
 #     per-function coverage and a final total per package. We aggregate to
 #     per-package total coverage using the "total:" line emitted by go tool cover.

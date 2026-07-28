@@ -31,7 +31,7 @@ depends-on:
 ```
 
 ## 1. Purpose
-This spec defines harmonik's **cognition loop**: the long-running, agent-led process that supervises a harmonik daemon — prioritizing dispatch, reacting to run outcomes, investigating failures, and escalating when judgment is required. The cognition loop is the realization of the orchestrator-agent role named (and explicitly post-MVH) by [process-lifecycle.md §4.6 PL-019]; this spec promotes that role from an informative placeholder to a specified long-running process with its own lifecycle, consistency contract, and composition root.
+This spec defines harmonik's **cognition loop**: the long-running, agent-led process that supervises a harmonik daemon — prioritizing dispatch, reacting to run outcomes, investigating failures, and escalating when judgment is required. The cognition loop is the realization of the orchestrator-agent role named (and explicitly deferred) by [process-lifecycle.md §4.6 PL-019]; this spec promotes that role from an informative placeholder to a specified long-running process with its own lifecycle, consistency contract, and composition root.
 
 The loop sits **above** the daemon's deterministic work-loop. The daemon work-loop is LLM-free by [process-lifecycle.md §4.6 PL-018] (a locked invariant) and remains so. The cognition layer is the only place in harmonik where judgment-class decisions consult a model. Where the two interact, the daemon's contracts (atomic Beads claim, git-as-completion-authority, idempotency-keyed adapters, reconciliation taxonomy) are the substrate; this spec adds exactly two new state artifacts (the cognition watermark and the durable notes log) and zero new locks beyond a process-singleton.
 
@@ -287,7 +287,7 @@ Tags: mechanism
 - **OQ-CL-005.** Does loop's reaction set include `reviewer_verdict{APPROVE}`? Working: no — APPROVE is daemon happy path, no judgment required. Only REQUEST_CHANGES and BLOCK are wake-LLM.
 
 ## 9. Cross-spec coordination
-- **[process-lifecycle.md §4.6 PL-019].** This spec promotes PL-019's orchestrator-agent role from OPTIONAL/post-MVH to a specified long-running process. PL-019 informative paragraph SHOULD reference `cognition-loop.md` rather than describing the role inline. PL-018 LLM-free invariant unchanged.
+- **[process-lifecycle.md §4.6 PL-019].** This spec promotes PL-019's orchestrator-agent role from OPTIONAL/deferred to a specified long-running process. PL-019 informative paragraph SHOULD reference `cognition-loop.md` rather than describing the role inline. PL-018 LLM-free invariant unchanged.
 - **[event-model.md §4.3, §6.3, §8.4].** Consumes `harmonik subscribe` contract (CL-060) + heartbeat payload format + the `budget_accrual` cost surface (§8.4.2). The cognition loop is a registered producer of `budget_exhausted` (§8.4.3) for the account-scoped exhaustion of CL-090. Newly consumed types: `merge_conflict` (urgent), `decision_required` (NEW, owned by event-model), `pattern_detected` (NEW post-v0.1).
 - **[handler-pause.md §4 HP-012].** The unified meter's `budget_exhausted{budget_scope=handler_account}` (CL-090) trips the existing budget-exhaustion handler-pause policy; no new halt path is introduced.
 - **[control-points.md §4.5 CP-022].** The `budget_scope=handler_account` value maps to the Budget primitive's `scope` field value `handler_account`.

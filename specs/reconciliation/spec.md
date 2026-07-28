@@ -51,8 +51,8 @@ It is the concrete answer to "why we don't need a dedicated database for in-flig
 - Execution-model invariants (git wins on completion, checkpoint trailers, one-checkpoint-per-durable-transition) — owned by [execution-model.md §4.5, §5].
 - Beads terminal-transition adapter idempotency and intent-log mechanics — owned by [beads-integration.md §4.10].
 - Event payload schemas for reconciliation events — owned by [event-model.md §6.3] (payload registry) and the per-event subsections under [event-model.md §8].
-- DOT authoring details for the reconciliation workflow library (node-level policies, specific prompts) — owned by the S01 Orchestrator Core subsystem spec, post-MVH.
-- Failure-commit policy (MVH: no failure commits) — owned by [execution-model.md §4.5].
+- DOT authoring details for the reconciliation workflow library (node-level policies, specific prompts) — owned by the S01 Orchestrator Core subsystem spec, which is deferred.
+- Failure-commit policy (currently: no failure commits) — owned by [execution-model.md §4.5].
 - Agent-subprocess silent-hang detection mechanics — owned by [handler-contract.md §4.6].
 - `needs-attention`-labeled closed beads — NOT a reconciliation surface. Detectors operate on in-flight runs (RC-010); a closed bead with a `needs-attention` label is a dispatch-filter signal for the BI-013a ingestion workflow, not evidence of store divergence or an incomplete run.
 
@@ -484,7 +484,7 @@ Detectors MUST run at three dispatch points:
 
 - (a) **Daemon startup.** Full scan of in-flight runs once the orphan sweep of [process-lifecycle.md §4.2 PL-005] has completed and before the daemon transitions to `ready`.
 - (b) **On-demand operator command.** Operator surface (`harmonik reconcile [--run <run_id>]`) triggers a scoped detector run; grammar tracked in OQ-RC-005.
-- (c) **Scheduled cadence.** Background scan at a configurable interval; MVH default is **hourly**, configurable via operator YAML per [operator-nfr.md §4.3]. Post-MVH cadence tuning is tracked in OQ-RC-004.
+- (c) **Scheduled cadence.** Background scan at a configurable interval; the default is **hourly**, configurable via operator YAML per [operator-nfr.md §4.3]. Cadence tuning is deferred and tracked in OQ-RC-004.
 
 Detectors MUST be idempotent across dispatch points: re-running a detector on the same `(target_run_id, snapshot)` MUST produce the same category assignment. Concurrent detector runs for the same `target_run_id` are serialized by the registry lock of RC-002a.
 
@@ -889,9 +889,9 @@ Every branch point above corresponds to a normative requirement: Cat 0 pre-check
 
 ### 10.1 Conformance profiles
 
-**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement RC-001 through RC-031 (including the inserts RC-002a, RC-003a, RC-019a, RC-020a) and every invariant RC-INV-001 and RC-INV-004. RC-INV-002, RC-INV-003, RC-INV-005 are retired (not implementation obligations). No requirement is deferred at MVH.
+**Core.** An implementation conforming to Core MUST pass every requirement RC-001 through RC-031 (including the inserts RC-002a, RC-003a, RC-019a, RC-020a) and every invariant RC-INV-001 and RC-INV-004. RC-INV-002, RC-INV-003, RC-INV-005 are retired (not implementation obligations). No requirement is deferred.
 
-**Post-MVH extensions.** The operator verdict-override CLI surface (RC-027) MAY ship as a follow-on within one release after MVH; it is required to claim Core MVH conformance only if operators have opted in via policy.
+**Deferred extensions.** The operator verdict-override CLI surface (RC-027) MAY ship as a follow-on within one release; it is required to claim Core conformance only if operators have opted in via policy.
 
 ### 10.2 Test-surface obligations
 
@@ -915,7 +915,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 
 ### 10.3 Excluded conformance claims
 
-- This spec does NOT grant conformance over: the specific DOT contents of S01-shipped reconciliation workflows (post-MVH subsystem spec); investigator-agent prompt quality (cognition-tagged, not mechanism-verifiable); the operator CLI surface beyond the per-command grammar named in RC-027 (owned by a separate operator-CLI spec per [operator-nfr.md §4.10]); the `br` CLI's internal idempotency guarantees (owned by [beads-integration.md §4.10] and the upstream Beads project).
+- This spec does NOT grant conformance over: the specific DOT contents of S01-shipped reconciliation workflows (a deferred subsystem spec); investigator-agent prompt quality (cognition-tagged, not mechanism-verifiable); the operator CLI surface beyond the per-command grammar named in RC-027 (owned by a separate operator-CLI spec per [operator-nfr.md §4.10]); the `br` CLI's internal idempotency guarantees (owned by [beads-integration.md §4.10] and the upstream Beads project).
 - This spec does NOT guarantee performance or throughput bounds on reconciliation dispatch; those are operator-observable in [operator-nfr.md §4.8] (restart RTO) and are not requirements of this spec.
 
 ## 11. Open questions
@@ -924,7 +924,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 
 Question: When (if ever) should failed transitions emit checkpoint commits to enable `git bisect` over failures in the improvement loop? Reconciliation does not currently require them (§8.13).
 Owner: foundation-author
-Blocks: none (MVH decision: no failure commits)
+Blocks: none (current decision: no failure commits)
 Default-if-unresolved: No failure commits. Revisit when the improvement-loop spec lands and can demonstrate a concrete need.
 
 #### OQ-RC-002 — EM acceptance of `workflow_class` Workflow-record extension
@@ -938,14 +938,14 @@ Default-if-unresolved: Retain the tag in [schemas.md §6.5] as an RC-owned exten
 
 Question: RC-020a mandates that reconciliation dispatch runs BEFORE ordinary workflows on startup. If reconciliation's detectors themselves fail beyond Cat 0 (e.g., a detector panics on an unrecognized evidence shape that is not Cat 6b-classifiable), should the daemon (a) refuse to reach `ready` until the fault is resolved, or (b) fail open to `degraded` with an operator escalation and allow ordinary workflows to queue but not dispatch? The conservative default is (a); (b) would improve availability at the cost of letting new work accumulate against unclassified existing work.
 Owner: foundation-author (coordination with process-lifecycle owner)
-Blocks: none at MVH (default is (a) — refuse to reach `ready`).
-Default-if-unresolved: Conservative (a). Daemon refuses to reach `ready` when reconciliation cannot classify; operator escalation required. Revisit post-MVH when operational data informs availability trade-off.
+Blocks: none (default is (a) — refuse to reach `ready`).
+Default-if-unresolved: Conservative (a). Daemon refuses to reach `ready` when reconciliation cannot classify; operator escalation required. Revisit later, when operational data informs the availability trade-off.
 
-#### OQ-RC-004 — Detector cadence tuning post-MVH
+#### OQ-RC-004 — Detector cadence tuning (deferred)
 
-Question: RC-020a names the default scheduled-cadence detector interval as hourly. Post-MVH, the interval may need to adjust based on observed divergence rates, JSONL tail growth, and operator preferences. What is the principled way to tune cadence — fixed per operator YAML? Adaptive based on divergence-rate telemetry? Workload-class-specific? This is deliberately deferred until there is observational data.
+Question: RC-020a names the default scheduled-cadence detector interval as hourly. Later, the interval may need to adjust based on observed divergence rates, JSONL tail growth, and operator preferences. What is the principled way to tune cadence — fixed per operator YAML? Adaptive based on divergence-rate telemetry? Workload-class-specific? This is deliberately deferred until there is observational data.
 Owner: foundation-author
-Blocks: none (MVH default: hourly, configurable via operator YAML).
+Blocks: none (default: hourly, configurable via operator YAML).
 Default-if-unresolved: Hourly default, operator-YAML configurable per [operator-nfr.md §4.3]. Revisit when operator telemetry is available.
 
 #### OQ-RC-005 — Operator verdict-override CLI grammar
@@ -959,14 +959,14 @@ Default-if-unresolved: Keep the grammar as named in RC-027; operators opt in by 
 
 Question: §10.2 currently names test obligations in prose. The template §10.2 expects cross-references to `[testing.md §<layer>]` once testing.md lands.
 Owner: foundation-author
-Blocks: none (MVH prose obligations are in place)
+Blocks: none (the prose obligations are in place)
 Default-if-unresolved: Keep prose obligations; migrate within one revision cycle after testing.md is finalized. Migrated from prior OQ-RC-003 topic.
 
-#### OQ-RC-007 — Post-MVH `recoverable-non-idempotent` resume protocol
+#### OQ-RC-007 — Deferred `recoverable-non-idempotent` resume protocol
 
-Question: [execution-model.md §4.2 EM-010] reserves `recoverable-non-idempotent` as a post-MVH node-idempotency class with a declared resume protocol. Reconciliation's Cat 2 detector currently groups `recoverable-non-idempotent` with `non-idempotent`; when the class lands with its own resume protocol, Cat 2 may split into Cat 2 and Cat 2a.
+Question: [execution-model.md §4.2 EM-010] reserves `recoverable-non-idempotent` as a deferred node-idempotency class with a declared resume protocol. Reconciliation's Cat 2 detector currently groups `recoverable-non-idempotent` with `non-idempotent`; when the class lands with its own resume protocol, Cat 2 may split into Cat 2 and Cat 2a.
 Owner: foundation-author
-Blocks: none (MVH decision: group under Cat 2)
+Blocks: none (current decision: group under Cat 2)
 Default-if-unresolved: Group under Cat 2. Amendment protocol ([architecture.md §4.6]) applies when the class is introduced. Migrated from prior OQ-RC-004 topic.
 
 #### OQ-RC-008 — RC stricter corroboration vs EV-023a alignment
@@ -994,14 +994,14 @@ Default-if-unresolved: RC documents the `reconciliation_verdict` outcome_kind he
 
 Question: WM §4.9 WM-036 maps six verdict values to workspace dispositions; the seventh (`no-op-accept`) added in RC v0.3.0 is not in WM's table.
 Owner: foundation-author (coordination with workspace-model owner)
-Blocks: none at MVH (no-op-accept has no workspace effect by definition).
+Blocks: none (no-op-accept has no workspace effect by definition).
 Default-if-unresolved: Coordinate with WM's next revision to add a row mapping `no-op-accept` to a workspace disposition (likely 'no workspace action; outer run continues').
 
 #### OQ-RC-012 — Operator-confirmation UX for RC-027
 
 Question: RC-027 declares an operator-pause-and-confirm option per reconciliation workflow. What is the precise UX policy field shape, and which categories require operator-confirmation by default vs. opt-in?
 Owner: foundation-author
-Blocks: none at MVH (RC-027 default is execution proceeds without operator confirmation).
+Blocks: none (RC-027 default is execution proceeds without operator confirmation).
 Default-if-unresolved: `confirm_required` policy field on the playbook (RC-016) defaulting to false; per-category default policy (require for Cat 6a, optional otherwise).
 
 ## A. Appendices

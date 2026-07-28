@@ -5,7 +5,7 @@ package core
 // iff, with high confidence, every subsequent invocation of the same
 // agent_type will fail until external resolution (HP-010).
 //
-// Only two FailureClass values carry handler-fatal sub-cases at MVH; the
+// Only two FailureClass values carry handler-fatal sub-cases; the
 // remaining four (structural, deterministic, canceled, compilation_loop) are
 // per-bead and never trigger a handler-wide pause.  This type names those
 // sub-cases, not the parent FailureClass values.
@@ -56,7 +56,7 @@ type handlerFatalEntry struct {
 }
 
 // handlerFatalTaxonomy is the closed table of handler-fatal class × sub-reason
-// combinations at MVH per handler-contract.md §4.5a HC-020a.
+// combinations per handler-contract.md §4.5a HC-020a.
 //
 // Classification MUST be deterministic from structured fields; no cognition
 // participates (HC-023).
@@ -74,7 +74,7 @@ var handlerFatalTaxonomy = []handlerFatalEntry{
 }
 
 // ClassifyHandlerFatal maps a (FailureClass, HandlerFatalSubReason) pair to
-// the corresponding HandlerFatalClass using the closed MVH taxonomy per
+// the corresponding HandlerFatalClass using the closed taxonomy per
 // handler-contract.md §4.5a HC-020a.
 //
 // Returns (class, true) when the pair is in the handler-fatal set; returns

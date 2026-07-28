@@ -1,6 +1,6 @@
 # Testing Strategy
 
-> Concrete Go practice for the 5-layer methodology in `docs/methodology/TESTING.md`. Scoped to MVH, solo-dev, agent-coded. Go 1.25 toolchain (per `quality-checks.md`). Lib picks are not up for debate at PR review; anything outside the sanctioned list needs a note in this doc.
+> Concrete Go practice for the 5-layer methodology in `docs/methodology/TESTING.md`. Scoped to solo-dev, agent-coded. Go 1.25 toolchain (per `quality-checks.md`). Lib picks are not up for debate at PR review; anything outside the sanctioned list needs a note in this doc.
 
 ## Decisions
 
@@ -24,7 +24,7 @@ Tests one package; no fs beyond `t.TempDir()`, no subprocess, no network. Librar
 One subsystem, real filesystem/git/SQLite allowed via `t.TempDir()`. External services stubbed by in-process fakes (e.g., `br` CLI replaced by a `brfake` binary built once in `TestMain`). Library: stdlib + `require` + `gotest.tools/v3/fs` for tree assertions. Example: `workspace/integration_test.go` creates a real worktree, leases it, merges it back, asserts the final ref graph.
 
 ### 3. Scenario — `test/scenario/*_test.go` with `//go:build scenario`
-End-to-end via S07 harness. Harness entry point: `scenariotest.Run(t, "testdata/scenarios/golden-build.yaml")`. The harness: compiles `harmonik-daemon` and `claude-twin` once per `TestMain`, writes DOT workflow + twin script to a temp dir, launches daemon, asserts on JSONL events + final git state. Scenario YAML shape (locked here for MVH): `workflow: path/to.dot`, `twins: {builder: path/to/script.yaml}`, `asserts: {events: [...], git_head_trailers: {...}, files: {...}}`.
+End-to-end via S07 harness. Harness entry point: `scenariotest.Run(t, "testdata/scenarios/golden-build.yaml")`. The harness: compiles `harmonik-daemon` and `claude-twin` once per `TestMain`, writes DOT workflow + twin script to a temp dir, launches daemon, asserts on JSONL events + final git state. Scenario YAML shape (locked here): `workflow: path/to.dot`, `twins: {builder: path/to/script.yaml}`, `asserts: {events: [...], git_head_trailers: {...}, files: {...}}`.
 
 ### 4. Crash-recovery — `test/crash/*_test.go` with `//go:build crash`
 Built on the scenario harness + an `Interrupt(at: EventName)` primitive. See dedicated section below.
@@ -38,7 +38,7 @@ Rapid generators for: edge-selection determinism, DOT cycle-detection, checkpoin
 - Two `TestProp_*` invariants: string round-trip and equality symmetry.
 - Correct `*_prop_test.go` file naming (default tags; runs with plain `go test ./...`).
 
-**Fuzz seed corpora (MVH).** `go test -fuzz=Fuzz<Parser>` on the four boundary parsers (DOT workflow, YAML policy, JSONL event, commit trailer). A committed seed corpus lives at `testdata/fuzz/<parser>/` beside the test file — tiny, hand-curated inputs (including prior crashers once found). Every push runs each fuzz target in seed-only mode (`go test -run=FuzzX/seed` or equivalent) so regressions on known inputs are caught cheaply. Continuous fuzzing (long-running `-fuzz` on a schedule / OSS-Fuzz integration) remains deferred — see Deferred / follow-up.
+**Fuzz seed corpora.** `go test -fuzz=Fuzz<Parser>` on the four boundary parsers (DOT workflow, YAML policy, JSONL event, commit trailer). A committed seed corpus lives at `testdata/fuzz/<parser>/` beside the test file — tiny, hand-curated inputs (including prior crashers once found). Every push runs each fuzz target in seed-only mode (`go test -run=FuzzX/seed` or equivalent) so regressions on known inputs are caught cheaply. Continuous fuzzing (long-running `-fuzz` on a schedule / OSS-Fuzz integration) remains deferred — see Deferred / follow-up.
 
 ## Libraries and tools
 
@@ -71,7 +71,7 @@ CI gate: `scripts/coverage-gate.sh` parses `go tool cover -func` output and fail
 
 ## Handler-divergence testing
 
-The claude-code and claude-twin handlers will drift. MVH strategy (three tiers, concretely):
+The claude-code and claude-twin handlers will drift. The strategy (three tiers, concretely):
 
 **Tier A — Recorded-fixture tests (CI-mandatory, every push).** For each handler method that parses wire output (`parseOutputChunk`, `detectRateLimit`, `detectReady`, `parseExitCategory`), a table test feeds real captured bytes from `testdata/fixtures/claude-code/<version>/` and asserts the parsed `Session` event matches a golden struct. These tests do NOT launch the subprocess; they exercise parsing only. Coverage target: 100% of known wire-format variants at the pinned claude-code version.
 
@@ -79,7 +79,7 @@ The claude-code and claude-twin handlers will drift. MVH strategy (three tiers, 
 
 **Tier C — Budget-capped real-agent smoke (nightly, not per-commit).** `test/realagent/*_test.go` with `//go:build realagent`. 5–10 scenarios run against actual claude-code with a hard `$HARMONIK_REAL_AGENT_BUDGET_USD=5` cap enforced by a wrapper. The wrapper writes the same captured JSONL into `testdata/fixtures/claude-code/<version>/pending/`. A nightly job diffs `pending/` vs committed fixtures; a non-empty diff opens a PR titled `fixture-refresh: claude-code <version>`. This is the drift detector.
 
-**Twin conformance (post-MVH, named here so it is not forgotten).** Same scenarios run real-agent + twin in the same CI job; event streams diffed with a tolerance spec. Deferred; gap acknowledged in `docs/methodology/TESTING.md` §Twin conformance.
+**Twin conformance (deferred, named here so it is not forgotten).** Same scenarios run real-agent + twin in the same CI job; event streams diffed with a tolerance spec. Deferred; gap acknowledged in `docs/methodology/TESTING.md` §Twin conformance.
 
 ## Crash-recovery testing approach
 
@@ -115,18 +115,18 @@ Nightly (not merge-blocking, but opens auto-PR on failure): full crash site set,
 ## ⚑ Assumptions worth user's eye
 
 1. **⚑ Library allowlist enforced at CI.** Agents cannot introduce a second mocking or assertion library without a human edit to the allowlist. Tight, but prevents stylistic drift.
-2. **⚑ Hand-written fakes as MVH default; hybrid on the table later.** Start with hand-written fakes in `faketest/`. If interface count exceeds ~10 or fakes show clear rot (copy-paste drift, out-of-sync with the real interface), a hybrid (hand-written fakes + generated mocks for cleanly-typed, high-arity interfaces) becomes acceptable — reviewable as a one-shot decision, not a blocker for MVH start.
+2. **⚑ Hand-written fakes are the default; hybrid on the table later.** Start with hand-written fakes in `faketest/`. If interface count exceeds ~10 or fakes show clear rot (copy-paste drift, out-of-sync with the real interface), a hybrid (hand-written fakes + generated mocks for cleanly-typed, high-arity interfaces) becomes acceptable — reviewable as a one-shot decision, not a blocker.
 3. **⚑ Budget cap for real-agent tests is $5/nightly.** Drawn from nowhere; user should confirm acceptable. Hard cap enforced by a wrapper, not a soft convention.
 4. **⚑ 95% line coverage on core subsystems** (user-endorsed 2026-04-24). Matches user's Python-practice preference; forces modularity + error-path discipline. Aggressive by Go standards (industry median 70-80%).
    ⚠ **Revisited 2026-07-27 and downgraded from goal to diagnostic.** Percentage targets reward volume, and volume is what this repo got: 488k lines of test code against 216k of production, including 885 test files named after bead IDs (255,664 lines, 52% of all test code) that largely re-tested the same behavior. The numeric floors below remain as a *regression alarm* — `scripts/coverage-gate.sh` is their single authority — but the question a reviewer asks is **which real behavior is unprotected**, never what percent. See `plans/2026-07-27-delete-and-rewrite/NEXT_STEPS.md` §2.
-5. **⚑ Fault injection via runtime env-var, not compile-tagged dead code.** Simpler; runtime check cost is negligible (nanoseconds per site). Prior compile-tag approach was over-engineered for solo-dev MVH. A single binary configuration is used in prod and test alike; `HARMONIK_FAULTPOINT_ARM` arms sites at test launch.
+5. **⚑ Fault injection via runtime env-var, not compile-tagged dead code.** Simpler; runtime check cost is negligible (nanoseconds per site). Prior compile-tag approach was over-engineered for solo-dev. A single binary configuration is used in prod and test alike; `HARMONIK_FAULTPOINT_ARM` arms sites at test launch.
 6. **⚑ `require` (not `assert`) everywhere.** A failed precondition stops the test. Trades readability of multi-assertion tests for fewer cascading failures. Agents get one failure at a time, which is easier to debug.
 
 ## Deferred / follow-up
 
-- **Twin-conformance automated diff.** Tier C writes captures; automated real-vs-twin event-stream diff with tolerance spec is post-MVH.
-- **Continuous fuzz infrastructure.** Seed corpora at `testdata/fuzz/<parser>/` are MVH (see §Property). Long-running continuous fuzzing (scheduled `-fuzz` jobs, OSS-Fuzz integration) is deferred.
+- **Twin-conformance automated diff.** Tier C writes captures; automated real-vs-twin event-stream diff with tolerance spec is deferred.
+- **Continuous fuzz infrastructure.** Seed corpora at `testdata/fuzz/<parser>/` are in scope (see §Property). Long-running continuous fuzzing (scheduled `-fuzz` jobs, OSS-Fuzz integration) is deferred.
 - **AST-level anti-coverage-gaming analyzer.** Custom `go/analysis` pass verifying every `Test*` function reaches an assertion (`require.*`, `testify.*`, or an explicit `t.FailNow` / `t.Fatal` / `t.Error*`) on every return path. Prevents assertion-free table loops from pumping coverage without verifying behavior. Uses the same `go/analysis` vehicle as the four-axis-tag analyzer. Needed because the 95% coverage target is otherwise vulnerable to assertion-free tests; until it ships, reviewer-agents check for the pattern by hand on coverage-sensitive packages.
-- **Benchmark suite.** No performance regression gate for MVH. `testing.B` benchmarks land with the RTO-sensitive paths (reconciliation startup, bead selection) when those specs are written.
-- **Scenario generation from production failures.** S09 improvement loop may emit scenarios (see S07 open question); not MVH.
+- **Benchmark suite.** No performance regression gate. `testing.B` benchmarks land with the RTO-sensitive paths (reconciliation startup, bead selection) when those specs are written.
+- **Scenario generation from production failures.** S09 improvement loop may emit scenarios (see S07 open question); not yet.
 - **Coverage per-file exemption mechanism.** Current gate is per-package-class; generated code exemptions deferred until the first generated-code file exists.

@@ -37,7 +37,7 @@ type GuardReorderedPayload struct {
 
 	// GuardName is the registered guard name (control-points.md §6.1.3).
 	// Required (non-empty). Plain string per typed-alias-deferral — no GuardRef
-	// typed alias exists at MVH.
+	// typed alias exists yet.
 	//
 	// TODO(hk-hqwn.59.18): hoist to typed GuardRef alias when that type lands.
 	GuardName string `json:"guard_name"`

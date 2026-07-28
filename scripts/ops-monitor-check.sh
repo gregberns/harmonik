@@ -20,7 +20,7 @@
 #                         run_id↔verdict JOIN over the last N review-anchored run_ids,
 #                         NOT a (broken) workflow_mode grep, and NOT a bare
 #                         completed-without-verdict join (R6 fix hk-ayvx): the daemon has
-#                         a LEGITIMATE review-less close path — MVH twin-blind
+#                         a LEGITIMATE review-less close path — twin-blind
 #                         `auto-close: exit=0`, noChange, and subsumed completions
 #                         merge+close with NO reviewer BY DESIGN (workloop.go ~:3811).
 #                         Those neither launch NOR request a reviewer, so they are absent

@@ -72,7 +72,7 @@ preserves the "static graph is authoritative" invariant. The policy-level
 approach has merit when the deployment topology changes independently of graph
 authors (multi-tenant or managed deployments). Reserve a `handler_group_ref`
 node attribute (analogous to `gate_ref`) for the policy-level path in a future
-pass; it does not need to be declared at MVH.
+pass; it does not need to be declared now.
 
 ---
 
@@ -133,7 +133,7 @@ Three design options:
 | Option | Description | Verdict |
 |---|---|---|
 | **A: Operator-specified per-node** | `agent_type_fallbacks` list on each node; no shared concept. | Recommended for first iteration. Simple, explicit, static. |
-| **B: Named equivalence class** | A new policy artifact declares `handler_group: coding-llm = [claude-code, codex]`; nodes bind via `handler_group_ref`. | Reserve for post-MVH. Useful at operator scale (many nodes, many deployments). |
+| **B: Named equivalence class** | A new policy artifact declares `handler_group: coding-llm = [claude-code, codex]`; nodes bind via `handler_group_ref`. | Deferred; reserve the seam for now. Useful at operator scale (many nodes, many deployments). |
 | **C: Axis-tag capability matching** | The daemon infers equivalences from matching four-axis tags across handler implementations. | Do not recommend. Axis tags are node attributes, not handler capability declarations; the daemon has no authoritative handler-capability registry. |
 
 **Conclusion:** fallback is always operator-specified (Option A per node,
@@ -207,7 +207,7 @@ without it, operators cannot tell which handler actually ran a bead.
 
 | Question | Answer |
 |---|---|
-| Node-level or policy-level? | **Node-level first** (`agent_type_fallbacks` optional list attribute on `agentic` nodes). Reserve `handler_group_ref` policy seam for Option B post-MVH. |
+| Node-level or policy-level? | **Node-level first** (`agent_type_fallbacks` optional list attribute on `agentic` nodes). Reserve `handler_group_ref` policy seam for Option B as a later change. |
 | Semantic cost? | **High for stateful/review-loop/skill-bound nodes; acceptable for stateless idempotent analysis nodes.** Fallback must be opt-in per node AND per daemon (flag gate). |
 | Equivalence-class concept needed? | **Not needed at first iteration.** Operator specifies the fallback list explicitly. Named groups (Option B) are additive and can follow. |
 | `execution-model.md §4.2` change? | Add optional `agent_type_fallbacks: [String]` to `agentic` node attribute set. Gate activation on a new `--allow-handler-fallback` daemon flag. See §5 above for full proposed wording. |

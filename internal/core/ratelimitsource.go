@@ -13,7 +13,7 @@ import (
 // vocabulary — the provider-source set is open and expected to grow as
 // additional LLM providers are supported. RateLimitSource is therefore an opaque
 // typed string constrained by a regex shape, not a closed enum. Known providers
-// at MVH are listed as constants below; additional values are accepted by Valid()
+// are listed as constants below; additional values are accepted by Valid()
 // as long as they match the regex shape.
 //
 // Shape: ^[a-z][a-z0-9-]*$ — lowercase letter start, followed by lowercase
@@ -21,10 +21,10 @@ import (
 // "openai", "vertex-ai", "anthropic-tier-1", etc.
 //
 // The vocabulary will be formally enumerated in a future event-model.md revision
-// when the provider-source surface stabilizes across MVH adapters.
+// when the provider-source surface stabilizes across adapters.
 type RateLimitSource string
 
-// Known MVH rate-limit-source identifiers. Additional provider values are valid
+// Known rate-limit-source identifiers. Additional provider values are valid
 // as long as they match the ^[a-z][a-z0-9-]*$ regex shape.
 const (
 	// RateLimitSourceAnthropic identifies rate limits reported by the Anthropic API.

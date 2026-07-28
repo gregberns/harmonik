@@ -83,7 +83,7 @@ func notifySubstrateRunner(r tmux.CommandRunner) {
 }
 
 // reviewLoopIterationCap is the hardcoded maximum number of iterations per
-// execution-model.md §4.3.EM-015e. Not operator-tunable at MVH.
+// execution-model.md §4.3.EM-015e. Not operator-tunable.
 const reviewLoopIterationCap = 3
 
 // priorVerdictSummaryMaxBytes is the maximum byte length of the
@@ -321,7 +321,7 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, emit, runID, state.iterationCount, result.completionReason)
 			return result
 		}
-		// Attach the optional tmux substrate (nil at MVH; set from handles.Substrate).
+		// Attach the optional tmux substrate (nil unless set from handles.Substrate).
 		// REQUIRED: without this, h.Launch takes the exec.CommandContext path and
 		// SpawnWindow is never called; pasteInjectOnLaunch then fails with
 		// "no window spawned yet". This is the root cause of the pane-race bug
@@ -1281,7 +1281,7 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, emit, runID, state.iterationCount, result.completionReason)
 			return result
 		}
-		// Attach the optional tmux substrate (nil at MVH; set from handles.Substrate).
+		// Attach the optional tmux substrate (nil unless set from handles.Substrate).
 		// Same requirement as implSpec.Substrate above (hk-2hb2y): without this
 		// the reviewer launch takes the exec.CommandContext path, SpawnWindow is
 		// never called, and pasteInjectOnLaunch fails with "no window spawned yet".
@@ -1879,7 +1879,7 @@ func resolveBranchSHA(ctx context.Context, projectDir, branch string) (string, e
 	return sha, nil
 }
 
-// rlSynthesiseClaudeSessionID produces a synthetic session ID for the MVH twin-
+// rlSynthesiseClaudeSessionID produces a synthetic session ID for the twin-
 // binary case where the subprocess does not emit `--output-format json` stdout.
 //
 // The result must satisfy bufferNameRe ([a-z0-9-]+ after the "harmonik-" prefix
@@ -1890,7 +1890,7 @@ func resolveBranchSHA(ctx context.Context, projectDir, branch string) (string, e
 // ID body and no uppercase characters — so the buffer name always passes
 // validation.
 //
-// Post-MVH: replace with handlercontract.ParseClaudeSessionID on the session's
+// Later: replace with handlercontract.ParseClaudeSessionID on the session's
 // captured stdout buffer once the handler exposes it.
 func rlSynthesiseClaudeSessionID(clk substrate.ClockPort) string {
 	return "syntheticclaudesession" + clk.Now().UTC().Format("20060102150405")

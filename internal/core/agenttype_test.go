@@ -14,7 +14,7 @@ func TestAgentTypeValid(t *testing.T) {
 		input AgentType
 		want  bool
 	}{
-		// Reserved MVH consts — all must pass.
+		// Reserved consts — all must pass.
 		{"claude-code", AgentTypeClaudeCode, true},
 		{"pi", AgentTypePi, true},
 		{"claude-twin", AgentTypeClaudeTwin, true},

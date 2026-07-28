@@ -7,13 +7,13 @@ import (
 
 // AgentType is a handler-contract conformance class identifier (architecture.md §4.7, §6.1).
 // An AgentType value MUST match the regex ^[a-z][a-z0-9-]{1,62}$ (AR-025).
-// The four reserved MVH identifiers are declared as constants below.
+// The four reserved identifiers are declared as constants below.
 //
 // AgentType appears byte-for-byte identical across four cross-subsystem surfaces
 // per AR-027: YAML policies, DOT node attributes, LaunchSpec.agent_type, and event payloads.
 type AgentType string
 
-// Reserved MVH agent-type identifiers (AR-025).
+// Reserved agent-type identifiers (AR-025).
 const (
 	AgentTypeClaudeCode AgentType = "claude-code"
 	AgentTypePi         AgentType = "pi"
@@ -24,7 +24,7 @@ const (
 	AgentTypeCodex AgentType = "codex"
 )
 
-// ReservedAgentTypes returns the reserved MVH agent-type identifiers declared
+// ReservedAgentTypes returns the reserved agent-type identifiers declared
 // above, in declaration order. It is the single source of truth for "is this a
 // real agent type", so callers that must reject an unknown name do not carry
 // their own copy of the list and drift from it.
@@ -43,7 +43,7 @@ func ReservedAgentTypes() []AgentType {
 	}
 }
 
-// Reserved reports whether a is one of the reserved MVH agent-type identifiers.
+// Reserved reports whether a is one of the reserved agent-type identifiers.
 // This is the membership check that Valid() deliberately does not perform.
 func (a AgentType) Reserved() bool {
 	for _, r := range ReservedAgentTypes() {

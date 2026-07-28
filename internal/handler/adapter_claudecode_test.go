@@ -324,14 +324,14 @@ func TestClaudeCodeAdapter_Register_DuplicateReturnsError(t *testing.T) {
 	}
 }
 
-// TestClaudeCodeAdapter_Diagnose_ReturnsMVHMinimalReport verifies that
+// TestClaudeCodeAdapter_Diagnose_ReturnsMinimalReport verifies that
 // ClaudeCodeAdapter.Diagnose returns a non-error DiagnosticReport with a
-// non-empty Message and Healthy=false on a rate-limit pause at MVH.
+// non-empty Message and Healthy=false on a rate-limit pause.
 //
 // Acceptance criterion: "Test: claude-code adapter Diagnose run on rate-limit
 // pause returns minimal report" (specs/handler-contract.md §4.3a HC-014a,
 // bead hk-tvsl7).
-func TestClaudeCodeAdapter_Diagnose_ReturnsMVHMinimalReport(t *testing.T) {
+func TestClaudeCodeAdapter_Diagnose_ReturnsMinimalReport(t *testing.T) {
 	t.Parallel()
 
 	adapter := handler.NewClaudeCodeAdapter()
@@ -343,7 +343,7 @@ func TestClaudeCodeAdapter_Diagnose_ReturnsMVHMinimalReport(t *testing.T) {
 		t.Error("Diagnose returned empty Message; want non-empty diagnostic string")
 	}
 	if report.Healthy {
-		t.Error("Diagnose returned Healthy=true; want false at MVH (no real-time probe)")
+		t.Error("Diagnose returned Healthy=true; want false (no real-time probe)")
 	}
 }
 

@@ -24,8 +24,8 @@ import "github.com/google/uuid"
 //   - every NodeID in TerminalNodeIDs is present in Nodes
 //   - every Edge satisfies Edge.Valid() and its FromNode/ToNode are present in
 //     Nodes (well-formed directed graph per §4.1.EM-001)
-//   - WorkflowClass, when non-nil, equals "reconciliation" (the only MVH value;
-//     §4.1.EM-001, §6.2 Harmonik-Workflow-Class trailer; validator per
+//   - WorkflowClass, when non-nil, equals "reconciliation" (currently the only
+//     value; §4.1.EM-001, §6.2 Harmonik-Workflow-Class trailer; validator per
 //     §4.9.EM-038 MUST reject any other non-None value)
 //   - SchemaVersion > 0 (N-1 readable per §4.4.EM-022)
 //
@@ -79,7 +79,7 @@ type Workflow struct {
 	Metadata map[string]string
 
 	// WorkflowClass is an optional class tag for this workflow
-	// (reconciliation/schemas.md §6.5). At MVH the only accepted value is
+	// (reconciliation/schemas.md §6.5). At present the only accepted value is
 	// WorkflowClassReconciliation, which flags the §4.5.EM-026 checkpoint
 	// exception and the §6.2 Harmonik-Workflow-Class trailer. Absence (nil)
 	// means an ordinary (unclassed) workflow. Valid() rejects any non-nil value
@@ -157,8 +157,8 @@ func (w Workflow) Valid() bool {
 			return false
 		}
 	}
-	// WorkflowClass: when set, must be a valid WorkflowClass (MVH only value;
-	// EM-038, reconciliation/schemas.md §6.5).
+	// WorkflowClass: when set, must be a valid WorkflowClass (currently one
+	// value only; EM-038, reconciliation/schemas.md §6.5).
 	if w.WorkflowClass != nil && !w.WorkflowClass.Valid() {
 		return false
 	}

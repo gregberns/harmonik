@@ -220,7 +220,7 @@ func TestWorkflowValid_ReconciliationClass(t *testing.T) {
 }
 
 // TestWorkflowValid_InvalidWorkflowClass verifies that §4.9.EM-038 rejects any
-// non-nil WorkflowClass value other than "reconciliation" at MVH.
+// non-nil WorkflowClass value other than "reconciliation".
 func TestWorkflowValid_InvalidWorkflowClass(t *testing.T) {
 	t.Parallel()
 

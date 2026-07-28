@@ -263,7 +263,7 @@ func LoadCached(repoRoot string) (Defaults, error) {
 	}
 
 	// Cache miss or mtime changed: reload (without holding the lock across I/O
-	// for simplicity at MVH scale; the lock is re-acquired to write back).
+	// for simplicity at current scale; the lock is re-acquired to write back).
 	cacheMu.Unlock()
 	result, loadErr := Load(repoRoot)
 	cacheMu.Lock()

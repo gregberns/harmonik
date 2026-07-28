@@ -22,7 +22,7 @@ import (
 // Helper prefix: failedRunFixture (bead hk-8mwo.71; avoids collision with
 // sibling-bead helpers such as leaseFixture, conflictResFixture, etc.).
 //
-// NOTE (post-mvh): The workspace manager's verdict-executor and interrupt-state
+// NOTE (deferred): The workspace manager's verdict-executor and interrupt-state
 // mutation machinery are not yet fully implemented. These tests capture the
 // behavioral shape and boundary conditions declared by §4.8–§4.10 so that they
 // pass as conformance gates once the implementation lands. Sections that require

@@ -13,11 +13,12 @@ package core
 // # Design
 //
 // S02PolicyEngine is the concrete implementation of PolicyEngine for the
-// post-MVH CP subsystem. It wraps MapRegistry (the in-process table per
-// CP-043) and exposes it via the Registry() accessor declared in PolicyEngine.
+// (not yet landed) CP subsystem. It wraps MapRegistry (the in-process table
+// per CP-043) and exposes it via the Registry() accessor declared in
+// PolicyEngine.
 //
-// At MVH, the composition root wires NoOpPolicyEngine (zero-registry, always
-// Permitted). Post-MVH, the composition root substitutes S02PolicyEngine;
+// The composition root currently wires NoOpPolicyEngine (zero-registry, always
+// Permitted). Later, the composition root substitutes S02PolicyEngine;
 // callers hold a PolicyEngine interface and require no changes.
 //
 // Ownership: S02PolicyEngine holds the authoritative *MapRegistry. No other
@@ -61,7 +62,7 @@ func NewS02PolicyEngine() *S02PolicyEngine {
 
 // Evaluate implements PolicyEngine.
 //
-// At the current implementation stage (post-MVH stub), Evaluate always returns
+// At the current implementation stage (stub), Evaluate always returns
 // {Permitted: true, Constraints: nil} — identical to NoOpPolicyEngine. This
 // preserves the dispatcher-interface invariant (SH-018) while the full
 // expression-evaluation surface (§6.4, §7.2) is being built out.

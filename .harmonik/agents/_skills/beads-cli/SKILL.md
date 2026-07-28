@@ -237,5 +237,5 @@ A version mismatch causes daemon startup to fail with exit code 8
 - `specs/beads-integration.md §4.8a` — BI-025b (--format json mandatory),
   BI-025c (timeout discipline)
 - `specs/handler-contract.md §4.11` — HC-046–HC-049 (skill provisioning obligations)
-- `specs/control-points.md §4.6` — CP-031/CP-052 (Beads-CLI in every MVH-required
+- `specs/control-points.md §4.6` — CP-031/CP-052 (Beads-CLI in every required
   role's default_skills)

@@ -14,7 +14,7 @@ package eventbus_test
 // This file covers the event-log (JSONL) persistence surface.  The session-log
 // surface is handler-specific and is tracked separately.  The JSONL file is the
 // only persisted output owned by the eventbus package; it is the primary
-// at-rest artifact in scope for HC-034 at MVH.
+// at-rest artifact in scope for HC-034.
 //
 // # What this file provides
 //

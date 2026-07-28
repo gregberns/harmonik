@@ -18,7 +18,7 @@ package daemon
 //
 // Persistence hook-point: hk-m0k0a will wire .harmonik/handler-state.json
 // load/save here.  See the PERSISTENCE NOTE comments throughout this file
-// for the exact seam.  At MVH state is in-memory only; daemon restart resets
+// for the exact seam.  State is in-memory only; daemon restart resets
 // all handlers to live.
 //
 // Spec ref: specs/handler-pause.md §7, §8, §9.
@@ -245,7 +245,7 @@ type HandlerPauseStatusSnapshot struct {
 //
 // # Persistence seam (hk-m0k0a)
 //
-// At MVH the controller is in-memory only.  hk-m0k0a will inject a
+// The controller is in-memory only.  hk-m0k0a will inject a
 // PersistFunc at construction time; Pause and Resume call it under the lock
 // before emitting bus events.  See PERSISTENCE NOTE comments.
 //
@@ -266,7 +266,7 @@ type HandlerPauseController struct {
 	// PERSISTENCE NOTE (hk-m0k0a):
 	// persistFn, when non-nil, is called inside mu to persist the current
 	// state to .harmonik/handler-state.json before bus events are emitted.
-	// At MVH persistFn is always nil (no-op).  hk-m0k0a will inject this
+	// persistFn is always nil (no-op).  hk-m0k0a will inject this
 	// at daemon.Start alongside the load-on-startup path.
 	persistFn func(ctx context.Context, snapshots []HandlerPauseStatusSnapshot) error
 
@@ -506,7 +506,7 @@ func (c *HandlerPauseController) Pause(
 // The handler_resumed event is emitted AFTER state mutation and (when wired)
 // persistence, per the §4 event-flow ordering.
 //
-// resumedBy identifies the initiator of the resume.  At MVH the only value is
+// resumedBy identifies the initiator of the resume.  The only value is
 // core.HandlerResumedByOperator.
 func (c *HandlerPauseController) Resume(
 	ctx context.Context,
@@ -568,10 +568,10 @@ func (c *HandlerPauseController) Resume(
 	c.mu.Unlock()
 
 	// HC-014a: invoke Diagnose on Resume to verify the triggering condition has
-	// cleared.  At MVH the result is informational only; Resume proceeds
-	// regardless of Healthy.  Post-MVH the controller MAY gate Resume on
+	// cleared.  The result is informational only; Resume proceeds
+	// regardless of Healthy.  Later the controller MAY gate Resume on
 	// Healthy=true (spec §4.3a HC-014a).
-	_, _ = c.runDiagnose(ctx) // result is logged post-MVH; ignored at MVH
+	_, _ = c.runDiagnose(ctx) // result is currently ignored; logging is deferred
 
 	// Emit handler_resumed event (outside the lock).
 	payload := core.HandlerResumedPayload{
@@ -774,10 +774,10 @@ func (c *HandlerPauseController) PausedEpochFor(agentType core.AgentType) (epoch
 
 // ResolvedAgentType implements queue.HandlerPauseChecker.
 //
-// At MVH, all beads use the same agent type (claude-code).  This method
+// All beads use the same agent type (claude-code).  This method
 // returns core.AgentTypeClaudeCode unconditionally; a richer per-bead
 // resolution (reading the bead's DOT node attribute or handler-contract
-// dispatch table) is deferred to post-MVH.
+// dispatch table) is deferred.
 //
 // FUTURE: when per-bead agent-type resolution is wired, replace the body
 // of this method with a lookup against the bead ledger / dispatch table.

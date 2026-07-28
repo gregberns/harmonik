@@ -19,7 +19,7 @@
 3. **Git checkpoint trail is the state-reconstruction source** — JSONL is observational, never replayed for state. Every durable transition commits; git always knows last durable state. (execution-model §2.1a, §2.2)
 4. **Transition records live as sibling files** — Canonical path `.harmonik/transitions/<transition_id>.json` in the checkpoint commit tree; commit trailers are a cheap index. `transition_event` in JSONL is a projection, not authoritative. (execution-model §2.1b, §2.2)
 5. **Per-node idempotency_class tag drives reconciliation** — Nodes declare `idempotent` / `non-idempotent` / `recoverable-non-idempotent`; reconciliation reads the tag to classify crashed nodes. (execution-model §2.1c)
-6. **Failure commits NOT required for MVH** — Failure events record failures; only successful durable states commit. Revisit if improvement loop needs `git bisect` over failures. (execution-model §2.1a, reconciliation §9.7)
+6. **Failure commits NOT required** — Failure events record failures; only successful durable states commit. Revisit if improvement loop needs `git bisect` over failures. (execution-model §2.1a, reconciliation §9.7)
 
 ## External integrations
 
@@ -42,10 +42,10 @@
 
 1. **N-1 compatibility window** — Event schemas, checkpoint format, queue (Beads schema + harmonik overlay) are all N-1 readable. Breaking changes require a migration release at an operator pause. (event-model §3.5, operator-nfr §7.4–§7.6)
 2. **Restart RTO target: 30s p95, 300s hard ceiling** — Measured SIGTERM → daemon `ready`. Reconstruction proportional to git-walk depth + Beads query latency; JSONL count is not a factor. (operator-nfr §7.8)
-3. **Commit-hash check as MVH integrity gate** — Handler binaries are launched from a known repo-relative path; commit-hash check for in-repo binaries. Full binary signing deferred post-MVH. (handler-contract §4.10, operator-nfr §7.2)
+3. **Commit-hash check is the integrity gate** — Handler binaries are launched from a known repo-relative path; commit-hash check for in-repo binaries. Full binary signing is deferred. (handler-contract §4.10, operator-nfr §7.2)
 4. **Secrets redaction is mechanism-tagged and enforced pre-emission** — Prefix regex + per-handler patterns + compile-time payload-schema check. Secrets never appear in event log or unredacted session log. (handler-contract §4.7)
 5. **Fsync at run-boundaries and checkpoint_written; timer-flush optional** — Event-loss window = events since last fsync-point. Producers MUST emit idempotent events so loss-and-replay is safe. (event-model §3.4)
-6. **Structured JSON logs replace distributed tracing for MVH** — Every subsystem emits typed events + structured logs. Prom/OTel wire formats are post-MVH. Multi-tenancy deferred. (operator-nfr §7.1, §7.10)
+6. **Structured JSON logs replace distributed tracing** — Every subsystem emits typed events + structured logs. Prom/OTel wire formats are deferred, as is multi-tenancy. (operator-nfr §7.1, §7.10)
 
 ## State / durability
 
@@ -60,9 +60,9 @@
 
 - **Subsystem internals** — S01–S09 state machines, JSONL layout, CASS integration are their own spec works.
 - **Operator CLI surface** — Flags, API shape, dashboard UI defer to a separate spec work; semantics are in foundation.
-- **Binary signing** — Commit-hash check is MVH; full signing post-MVH.
+- **Binary signing** — The commit-hash check is the integrity gate; full signing is deferred.
 - **Metrics exposition format** — Internal emission is in foundation; Prom/OTel external scrape defers.
-- **Multi-tenancy / per-tenant cost attribution** — Per-project daemon is the only MVH answer. Shared LLM budgets, shared skill registries, shared operator identity acknowledged as real post-MVH concerns.
+- **Multi-tenancy / per-tenant cost attribution** — Per-project daemon is the only answer today. Shared LLM budgets, shared skill registries, and shared operator identity are acknowledged as real concerns, deferred not dismissed.
 - **Multi-repo workflows, distributed tracing, i18n, PII handling** — Out of scope until triggering conditions appear.
 - **Workflow library** — Example workflows, "self-build workflow," scenario examples come after foundation.
 - **Failure-commits for `git bisect`** — Design slot; add only if improvement loop later needs it.

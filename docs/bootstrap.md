@@ -19,7 +19,7 @@ updated: 2026-04-19
 
 ### Phase 1: Bootstrap
 
-Hand-built. Humans plus assistants in conventional sessions. The output is the **minimum viable harmonik (MVH)** -- the smallest system that can run a workflow against its own repository and produce useful output.
+Hand-built. Humans plus assistants in conventional sessions. The output is **the smallest system that can run a workflow against its own repository and produce useful output** -- no more than that.
 
 Phase 1 is a normal software project. The leverage we get from harmonik does not yet exist; we are building the ladder.
 
@@ -29,17 +29,17 @@ Harmonik runs against the harmonik repository. Workflows take subsystem specs (t
 
 Phase 2 is a meta-project. The leverage exists; we are climbing the ladder.
 
-The boundary between the two is operational, not architectural: as soon as MVH can run a non-trivial workflow against this repo and produce a mergeable change, we are in Phase 2.
+The boundary between the two is operational, not architectural: as soon as the hand-built system can run a non-trivial workflow against this repo and produce a mergeable change, we are in Phase 2.
 
 ---
 
-## 2. Minimum Viable Harmonik (MVH)
+## 2. The smallest slice that can build itself
 
-The MVH is the *smallest* slice of harmonik that supports a self-build cycle. Smaller is better -- everything we hand-build is everything we have to maintain by hand until self-build can extend it.
+What Phase 1 has to hand-build is the *smallest* slice of harmonik that supports a self-build cycle -- and no more. Smaller is better: everything we hand-build is everything we have to maintain by hand until self-build can extend it.
 
-A defensible MVH includes:
+A defensible first cut includes:
 
-| Subsystem | MVH cut |
+| Subsystem | First-cut scope |
 |---|---|
 | **S01 Orchestrator Core** | Static graph execution. Linear and simple branch workflows. No dynamic graph modification yet. Git-commit-per-node checkpointing. |
 | **S02 Policy Engine** | YAML policies. Role assignment + transition guards + freedom profiles. No OPA, no fancy rule language. |
@@ -49,14 +49,14 @@ A defensible MVH includes:
 | **S06 Workspace Manager** | `git worktree` + adze for environment setup. No containers. Sequential multi-agent on one workspace supported. |
 | **S07 Scenario Harness** | Enough to run one or two end-to-end scenarios against the Claude twin. CI integration optional initially. |
 | **S08 Memory Layer** | CASS pointed at the canonical session-log directory. No three-layer cognition yet. |
-| **S09 Improvement Loop** | *Not in MVH.* Improvement is a Phase-2 capability. MVH cycles are reviewed by humans; improvement-loop authoring waits. |
+| **S09 Improvement Loop** | *Not in the first cut.* Improvement is a Phase-2 capability. Early cycles are reviewed by humans; improvement-loop authoring waits. |
 
-MVH excludes a lot deliberately. Everything excluded becomes a candidate target for the first self-build cycles.
+The first cut excludes a lot deliberately. Everything excluded becomes a candidate target for the first self-build cycles.
 
 ### Decisions needed
-- Is the MVH cut above too aggressive (insufficient capability to run a meaningful self-build) or too conservative (more hand-built code than necessary)?
-- Should the Pi handler be in MVH or wait? (Argument for: forces the "agent type abstraction" honest. Argument against: more hand-built code.)
-- Do we want CI integration of the scenario harness in MVH or post-MVH?
+- Is the cut above too aggressive (insufficient capability to run a meaningful self-build) or too conservative (more hand-built code than necessary)?
+- Should the Pi handler be in the first cut or wait? (Argument for: forces the "agent type abstraction" honest. Argument against: more hand-built code.)
+- Do we want CI integration of the scenario harness in the first cut, or later?
 
 ---
 
@@ -156,7 +156,7 @@ These are the operator's safety net. They must be exercisable while harmonik is 
 
 ## 5. Sequencing the Bootstrap
 
-A reasonable order to build the MVH, hand-built:
+A reasonable order to hand-build that first cut:
 
 | Step | Builds | Why this order |
 |---|---|---|
@@ -171,7 +171,7 @@ A reasonable order to build the MVH, hand-built:
 | 9 | Memory Layer (S08): CASS pointed at the session-log dir | Optional for first self-build cycle, required soon after |
 | 10 | Pi handler + Pi twin | Forces the "agent type abstraction" honest |
 
-After step 8, MVH exists. After step 9, we are ready for Phase 2 with reasonable observability. Step 10 can happen in Phase 1 or Phase 2.
+After step 8, the first cut exists. After step 9, we are ready for Phase 2 with reasonable observability. Step 10 can happen in Phase 1 or Phase 2.
 
 ### Decisions needed
 - Is this the right order? Specific concern: building the orchestrator (step 5) before the policy engine (step 7) means early hand-built code may bypass policies that get added later. Possible alternative: build a stub policy engine in step 5's pass, refine in step 7.
@@ -217,4 +217,4 @@ These are deferred until the bootstrap shape is agreed.
 - [G07: End-to-End Testability](goals/end-to-end-testability.md) -- The testing posture self-build depends on
 - [S07: Scenario Harness](subsystems/scenario-harness.md) -- The regression net for self-build
 - [S09: Improvement Loop](subsystems/improvement-loop.md) -- The engine for "pause for improvement cycle"
-- [S01: Orchestrator Core](subsystems/orchestrator-core.md) -- The MVH centerpiece
+- [S01: Orchestrator Core](subsystems/orchestrator-core.md) -- The centerpiece of the first cut

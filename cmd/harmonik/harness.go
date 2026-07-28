@@ -6,7 +6,7 @@ package main
 // specs/scenario-harness.md §4.12 SH-032 and §4.13 SH-033.
 //
 // At this iteration the subcommand supports:
-//   - Flag parsing for all 8 MVH flags (SH-032).
+//   - Flag parsing for all 8 flags (SH-032).
 //   - --list: discover scenarios, filter by cadence, print name+cadence.
 //   - --dry-run: suite-load + matrix-expansion validation; no orchestration.
 //   - SIGINT/SIGTERM graceful shutdown with partial SuiteResult emission (SH-033).

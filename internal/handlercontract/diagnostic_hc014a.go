@@ -5,7 +5,7 @@ package handlercontract
 // DiagnosticReport is the return type of the optional Adapter.Diagnose seam
 // declared in specs/handler-contract.md §4.3a HC-014a.
 //
-// The full schema is reserved for post-MVH.  At MVH only Message and Healthy
+// The full schema is deferred.  Today only Message and Healthy
 // are populated; no daemon consumer reads them (they are logged for operator
 // visibility only).
 //
@@ -14,8 +14,8 @@ package handlercontract
 
 // DiagnosticReport carries the result of an Adapter.Diagnose call.
 //
-// Shape is reserved for post-MVH; the controller at MVH logs Message at INFO
-// and does not act on Healthy.  Post-MVH the controller MAY refuse to resume
+// The full shape is deferred; the controller logs Message at INFO
+// and does not act on Healthy.  A later change MAY refuse to resume
 // when Healthy is false.
 //
 // Adapters that do not support diagnostics MUST return ErrDeterministic from
@@ -28,8 +28,8 @@ type DiagnosticReport struct {
 	// Healthy reports whether the handler condition that triggered the pause
 	// appears to have resolved.  False means the condition persists or is unknown.
 	//
-	// At MVH this field is informational only; the controller does not gate
-	// Resume on its value.  Post-MVH the controller MAY enforce Healthy=true
+	// This field is informational only; the controller does not gate
+	// Resume on its value.  A later change MAY enforce Healthy=true
 	// as a precondition for Resume.
 	Healthy bool
 }

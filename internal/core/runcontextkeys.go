@@ -7,7 +7,7 @@ package core
 // Their absence in a review-loop run is an authoring error detected at claim time.
 //
 // For workflow_mode = single, no context keys are reserved by this spec.
-// For workflow_mode = dot, reserved keys are out of scope for MVH conformance.
+// For workflow_mode = dot, reserved keys are out of scope for conformance.
 //
 // Reference: execution-model.md §4.3 EM-012.
 const (
@@ -15,7 +15,7 @@ const (
 	// cycles the run has completed at a given moment (Integer, 1..3).
 	// Initialized to 1 at claim time; incremented immediately before each
 	// implementer dispatch after the first. MUST NOT exceed the cap defined by
-	// §4.3.EM-015e (hardcoded 3 at MVH).
+	// §4.3.EM-015e (hardcoded 3).
 	//
 	// Reference: execution-model.md §4.3 EM-012, §4.3.EM-015d, §4.3.EM-015e.
 	RunContextKeyIterationCount = "iteration_count"

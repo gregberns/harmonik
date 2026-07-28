@@ -240,7 +240,7 @@ func (d *Dispatcher) fireHook(ctx context.Context, ev core.Event, cp core.Contro
 // IdempotencyClass per CP-016. When IdempotencyClass is not set on the hook
 // declaration the spec default (non-idempotent per §6.3) applies.
 //
-// TODO(post-MVH): extend to support evaluator expressions that return a full
+// TODO(deferred): extend to support evaluator expressions that return a full
 // SideEffect map {target, payload, idempotency} for richer side-effect control.
 func (d *Dispatcher) fireMechanismHook(
 	ctx context.Context,
@@ -288,8 +288,8 @@ func (d *Dispatcher) fireMechanismHook(
 		return haltOnFailure, err
 	}
 
-	// TODO(post-MVH): apply the side effect (emit event, state mutation, external
-	// action). For MVH the hook_fired event is the observable signal; application
+	// TODO(deferred): apply the side effect (emit event, state mutation, external
+	// action). For now the hook_fired event is the observable signal; application
 	// is deferred pending the per-kind effector registry per CP-016.
 
 	return false, nil

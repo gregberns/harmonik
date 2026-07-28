@@ -236,7 +236,17 @@ func (bs *bootState) startBackgroundLoops(ctx context.Context, deps *workLoopDep
 
 	bs.quiesceArbiter.Start(ctx)
 	bs.crewIdleReaper.StartWatcher(ctx)
-	bs.branchReapWatcher.StartWatcher(ctx)
+	// Both reapers are constructed in buildCommsAndCrewHandlers, under the
+	// socket-listener subsystem switch, so both are nil when that subsystem is
+	// off. CrewIdleReaper.StartWatcher survives a nil receiver only because its
+	// body is currently empty; BranchReapWatcher.StartWatcher does not — it spawns
+	// loop, which dereferences w.cfg.ScanInterval immediately and would take the
+	// whole daemon down from a goroutine. Guarded here at the call site rather
+	// than inside the watcher: absence is a composition-root fact, and the type
+	// itself has no business pretending a nil watcher is a watcher.
+	if bs.branchReapWatcher != nil {
+		bs.branchReapWatcher.StartWatcher(ctx)
+	}
 
 	// All 31 wiring points are established at this point; the audit log is a stable
 	// diff surface for catching silent drops between daemon versions.

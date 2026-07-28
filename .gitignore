@@ -157,3 +157,7 @@ testdata/codex-app-server/gen/
 # simply not carried by git. If these notes should survive a machine loss, back
 # them up outside the working tree rather than tracking them here.
 .memory/
+
+# Nested .harmonik/ dirs are agent runtime scratch written from a wrong CWD.
+# Never source. The root /.harmonik/ has its own rules above.
+**/*/.harmonik/

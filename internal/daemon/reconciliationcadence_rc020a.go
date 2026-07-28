@@ -35,6 +35,7 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -71,6 +72,37 @@ type ReconciliationSchedulerConfig struct {
 
 	// LogWriter receives non-fatal scan status messages. Nil → os.Stderr.
 	LogWriter io.Writer
+}
+
+// startReconciliationSchedulerIfEnabled applies subsystem partitioning to the
+// RC-020a scheduled detector: it is the ONE construction seam for dispatch
+// point (c).
+//
+// When `subsystems.reconciliation_scheduler.enabled: false` is set in
+// .harmonik/config.yaml the scheduler is ABSENT — StartReconciliationScheduler
+// is never called, so there is no goroutine and no ticker. This is deliberately
+// NOT "constructed but inert": inert code still holds the composition root
+// hostage and still costs. Absent forces every consumer seam to be explicit.
+//
+// Absent config (the zero ProjectConfig) enables the scheduler, so a deployment
+// without a subsystems: block behaves exactly as it did before the block existed.
+//
+// Returns true when the scheduler was started. The return value is the
+// observable decision; callers in production ignore it.
+func startReconciliationSchedulerIfEnabled(ctx context.Context, pc projectconfig.ProjectConfig, cfg ReconciliationSchedulerConfig) bool {
+	if !pc.Subsystems.Enabled(projectconfig.SubsystemReconciliationScheduler) {
+		// Say so at boot: a silent partition is indistinguishable from a config
+		// that did not take effect.
+		logW := cfg.LogWriter
+		if logW == nil {
+			logW = os.Stderr
+		}
+		fmt.Fprintf(logW, "daemon: subsystem %q disabled by .harmonik/config.yaml; scheduler not constructed\n", //nolint:errcheck // best-effort stderr status log
+			projectconfig.SubsystemReconciliationScheduler)
+		return false
+	}
+	StartReconciliationScheduler(ctx, cfg)
+	return true
 }
 
 // StartReconciliationScheduler launches the RC-020a scheduled detector cadence

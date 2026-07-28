@@ -403,6 +403,12 @@ the suite runs, goes red, and nobody is stopped.
 3. **Fix it at the layer that failed.** See §2.2 — a bug reproduced at the wrong layer produces
    another bead-named unit test and leaves the real path uncovered.
 
+**Carried forward from the subsystem-partition work:** `unknownYAMLKey` in `internal/projectconfig`
+early-returns "no unknown keys" for any node that is not a mapping, so a YAML alias defeats the strict
+unknown-key rejection — `keeper: *anchor` (or a `subsystems:` entry) hides a typo'd key behind the
+alias and it is silently accepted. Pre-existing on the keeper block; inherited by the new `subsystems:`
+block. Fix is to resolve alias nodes before the mapping check.
+
 ---
 
 ## Sequence

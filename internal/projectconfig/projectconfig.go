@@ -178,26 +178,36 @@ func (e *ErrMalformedConfigYAML) Unwrap() error { return e.Cause }
 // typo'd key. The daemon and `harmonik keeper` MUST refuse to start when this
 // error is returned; the operator fixes the offending key.
 //
-// KeyPath names the offending key as a dotted path rooted at keeper
-// (e.g. "keeper.context_thresholds.warn_abs_token").
+// KeyPath names the offending key as a dotted path rooted at the rejecting
+// block (e.g. "keeper.context_thresholds.warn_abs_token").
 //
-// Scope: this strict-rejection applies ONLY to the keeper: block. The daemon:
-// block remains tolerant of unknown sibling keys per the PL-004b spec
-// requirement (specs/process-lifecycle.md §4.1).
+// Scope: this strict-rejection applies to the keeper: block and to entries under
+// the subsystems: block (see subsystems.go). The daemon: block remains tolerant
+// of unknown sibling keys per the PL-004b spec requirement
+// (specs/process-lifecycle.md §4.1).
 //
 // Bead ref: hk-9f3f.
 type ErrUnknownConfigKey struct {
 	// Path is the absolute path to the file.
 	Path string
-	// KeyPath is the dotted path to the offending key, rooted at keeper.
+	// KeyPath is the dotted path to the offending key, rooted at the block that
+	// rejected it (e.g. "keeper.context_thresholds.warn_abs_token" or
+	// "subsystems.reconciliation_scheduler.enbaled").
 	KeyPath string
 	// Cause is the underlying strict-decode error (carries the yaml.v3 message).
 	Cause error
 }
 
+// Error names the block from KeyPath's first segment rather than hardcoding
+// "keeper:" — the strict-rejection now covers more than one block, and telling
+// an operator to look at the wrong block is worse than no hint at all.
 func (e *ErrUnknownConfigKey) Error() string {
-	return fmt.Sprintf("daemon: project config: unknown key %q under keeper: in %s (unknown keeper keys are rejected; fix the key)",
-		e.KeyPath, e.Path)
+	block, _, _ := strings.Cut(e.KeyPath, ".")
+	if block == "" {
+		block = "config"
+	}
+	return fmt.Sprintf("daemon: project config: unknown key %q under %s: in %s (unknown %s keys are rejected; fix the key)",
+		e.KeyPath, block, e.Path, block)
 }
 
 func (e *ErrUnknownConfigKey) Unwrap() error { return e.Cause }
@@ -1202,6 +1212,11 @@ type rawProjectConfig struct {
 	Sandbox       rawSandboxConfig          `yaml:"sandbox"`        // hk-6596l: sandbox backend config
 	StallSentinel rawStallSentinelConfig    `yaml:"stall_sentinel"` // hk-hm09z: stall-sentinel detection thresholds
 	Crews         map[string]rawCrewConfig  `yaml:"crews"`          // hk-l63b9: per-crew-name config (harness selection)
+
+	// Subsystems is the subsystems: block — configuration-driven partitioning.
+	// See subsystems.go. Absent = every subsystem enabled. Held as yaml.Node so
+	// parseSubsystemsBlock can reject unknown keys inside an entry.
+	Subsystems map[string]yaml.Node `yaml:"subsystems"`
 }
 
 // rawCrewConfig is the per-crew-name block under crews: in config.yaml
@@ -1292,6 +1307,12 @@ type ProjectConfig struct {
 	// Crews holds the per-crew-name config read from the crews: block, keyed by
 	// crew name. Nil/absent = no per-crew config for any crew. Bead: hk-l63b9.
 	Crews map[string]CrewConfig
+
+	// Subsystems holds the resolved subsystems: block — configuration-driven
+	// partitioning of the composition root. The zero value enables every
+	// subsystem, so an absent block leaves behaviour unchanged. See
+	// subsystems.go.
+	Subsystems SubsystemsConfig
 }
 
 // LookupAgent returns the (model, effort) pair configured for agentType, or
@@ -1367,6 +1388,11 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	if len(sentinel.Crews) == 0 {
 		sentinel.Crews = nil
 	}
+	// Same normalization for an empty-but-non-nil subsystems map (`subsystems: {}`):
+	// it carries no partitioning intent, so it must not defeat the sentinel.
+	if len(sentinel.Subsystems) == 0 {
+		sentinel.Subsystems = nil
+	}
 	if reflect.DeepEqual(sentinel, rawProjectConfig{}) {
 		return ProjectConfig{}, nil
 	}
@@ -1436,6 +1462,14 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		return ProjectConfig{}, err
 	}
 
+	// Subsystem partitioning: parse the subsystems: block. Absent → every
+	// subsystem enabled; an unknown subsystem name is a hard error so a typo
+	// can never silently mean "off". See subsystems.go.
+	subsystemsCfg, err := parseSubsystemsBlock(path, raw.Subsystems)
+	if err != nil {
+		return ProjectConfig{}, err
+	}
+
 	cfg := ProjectConfig{
 		entries:       make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
 		Daemon:        daemonCfg,
@@ -1447,6 +1481,7 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		Harnesses:     harnessesCfg,
 		Sandbox:       sandboxCfg,
 		StallSentinel: stallSentinelCfg,
+		Subsystems:    subsystemsCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)

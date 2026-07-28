@@ -242,8 +242,9 @@ func (bs *bootState) startBackgroundLoops(ctx context.Context, deps *workLoopDep
 	// diff surface for catching silent drops between daemon versions.
 	logCompositionRoot(cfg.LogWriter)
 
-	// RC-020a dispatch point (c): scheduled detector cadence (default 1h).
-	StartReconciliationScheduler(ctx, ReconciliationSchedulerConfig{
+	// RC-020a dispatch point (c): scheduled detector cadence (default 1h),
+	// subject to subsystem partitioning (see startReconciliationSchedulerIfEnabled).
+	startReconciliationSchedulerIfEnabled(ctx, cfg.ProjectCfg, ReconciliationSchedulerConfig{
 		ProjectDir:   cfg.ProjectDir,
 		BrPath:       cfg.BrPath,
 		TargetBranch: "", // defaults to "main" inside the scheduler

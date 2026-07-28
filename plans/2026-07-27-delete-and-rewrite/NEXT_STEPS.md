@@ -441,6 +441,53 @@ bead ledger, which is machine-local and does not travel.
 
 ---
 
+## 7. Carried forward out of the step-4 `internal/scenario` test deletion
+
+Same framing as §6: recorded here rather than only in the bead ledger, which is machine-local and does
+not travel.
+
+- **The step-4 premise was wrong, and the corrected scope is one file pair, not ~18,000 LOC.**
+  `_plan.md` §3 row 4 says delete the `internal/scenario` harness engine. It cannot be deleted:
+  4,952 of its 17,126 lines are production code behind the shipped `harmonik harness` subcommand
+  (`cmd/harmonik/harness.go`, dispatched from `main.go`), which calls 45 exported symbols from the
+  package. `ParseScenarioFile` → `ScenarioFile.Valid()` reaches agentoverride, fixturesetup, gitseedop,
+  fileseed, eventexpectation, workspacepredicate, outcomeexpectation and cadencetag; `EvaluateAssertions`
+  evaluates three of those at runtime. Of the 31 test files, 22 cover that production surface and 9 drive
+  `internal/queue` / `queuewiring` / `lifecycle` directly. Exactly one — `crashrecovery_test.go` — had a
+  subject the CLI could not reach, and it went with `crashrecovery.go`. **Update the row rather than
+  re-attempting it.**
+- **The scenario harness has no crash-recovery tier, and now no Go marker for one.** Tracked as bead
+  `hk-p5sqp`, repeated here because beads do not travel. `specs/execution-model.md` EM-016..EM-022
+  (kill the daemon between `git write-tree`/`commit-tree` and `update-ref`, and between `update-ref` and
+  event emission), EM-024a branch-tip monotonicity, EM-025a ENOSPC transient classification, and
+  `specs/process-lifecycle.md` PL-024..PL-026 chaos tests are all still normative and still unenforced.
+  Three prerequisites, unchanged since the 2026-07-18 captain COORD entry deferred them: a daemon-side
+  crash-injection hook at the checkpoint boundary; a `crash_recovery` field on the `ScenarioFile` schema
+  (needs a `specs/scenario-harness.md` §6.1 amendment first — the record is not declared there); a
+  kill/restart driver. Deleted declarations recoverable at
+  `git show afdfccbd0:internal/scenario/crashrecovery.go`.
+- **Two more zero-caller residues the step-3 sweep missed**, both in `internal/scenario`:
+  `sh_inv_004_rerun_diff.go` (264 lines; all 7 exported symbols callerless, no test file) and
+  `NewFixtureRoot` in `fixtureroot.go` — `harness.go` inlines `os.MkdirTemp` instead of calling it.
+  `ScenarioProjectRoot` in the same file **is** live via `SynthesizeProjectRoot` ← `BootstrapFixture`,
+  so the file stays. Caveat for the sweeper: `NewFixtureRoot` has test coverage, so deleting it takes
+  tests with it.
+- **`FixtureSetup`'s `git_seed` and `files` are validated but never applied.** `ScenarioFile.Valid()`
+  checks every `GitSeedOp` and `FileSeed`, and `BootstrapFixture` takes no `FixtureSetup` argument at
+  all — so a scenario declaring fixture seeds parses clean and silently seeds nothing. A polarity
+  mismatch of exactly the kind §1 describes, in code rather than in a spec.
+- **Relocating the 9 queue tests out of `internal/scenario` is not a file move — leave them.** They are
+  self-contained (zero references to any of the 74 helpers declared in the 22 harness test files, in
+  either direction), but `.golangci.yml` depguard splits them three ways: the `queue` rule allows only
+  `$gostd` + `uuid` + `internal/core` + `internal/queue`, so `named_queues_workers_test.go` (imports
+  `queuewiring`) and `queue_daemon_wiring_test.go` (imports `lifecycle`) are denied there,
+  `single_active_per_name_test.go` needs `testify` added or removed, and `queue_lifecycle_test.go` calls
+  `scenario.BootstrapFixture` — the scaffolding drag. Cost is two depguard amendments, one testify
+  rewrite, and one fixture decision, to buy a directory rename with zero behavior change. §6 of this
+  document (the subsystem partition) should decide their home; do not pre-empt it.
+
+---
+
 ## What this document is not
 
 It is 400 lines, so the "keep it short" instruction at the top deserves an honest accounting: **length

@@ -770,12 +770,41 @@ the product's centre; and **what should it be** if kept. It also has a latent de
 takes no `FixtureSetup` argument at all — **a scenario declaring fixture seeds parses clean and seeds
 nothing.**
 
-**RA-2. The queue's stuck states — four overlapping stop mechanisms, and agents cannot tell them apart.**
+**RA-2. `paused-by-failure` has no exit — plus four overlapping stop mechanisms agents cannot tell apart.**
 Operator, 2026-07-28: *"we need to revise how the queues can get into a bad state — I forget what it's
 called, but it's really dumb. Some problem occurs and the queue is hung/stopped/whatever, then the
 agents think they can't do anything. That needs to change, but we need to talk about it later."*
 
-There is no single name because there are **four separate mechanisms that stop work**, each with its own
+**NAMED BY THE OPERATOR 2026-07-28 — it is `paused-by-failure`** (`specs/queue-model.md` §2.2). *"Queues
+get stuck in that state all the time and then the agents just leave them there and talk about them over
+and over. It may just be the instructions that need to be updated or something. Thats there for a reason
+and agents should by default 'unstick' things, and then get things moving again — not just create a new
+queue and leave the other one dead until I have to tell it to clean it up."*
+
+**It is not the instructions, and the agents are not being lazy — there is no command that clears it.**
+Verified in source:
+
+- A queue enters `paused-by-failure` **automatically** whenever any group reaches `complete-with-failures`
+  (§8.3, `workloop.go`). All dispatch on that queue stops and the state survives daemon restart.
+- **`harmonik queue resume <name>` does not clear it.** `internal/queuewiring/operatorevents.go` skips any
+  queue whose status is not `paused-by-drain`; its own doc comment says it transitions "from
+  paused-by-drain back to active". It resumes the *other* pause state.
+- `specs/queue-model.md` §8.4 states the recovery outright: *"v0.1 recovery is daemon restart followed by a
+  fresh `queue-submit` after the operator addresses the failed beads; v0.2 will add `queue-resume`."* And
+  QM-027 explicitly permits a fresh submit to overwrite a `paused-by-failure` queue.
+
+So **the documented recovery procedure IS "abandon it and submit a new queue"** — exactly the behaviour the
+operator is objecting to. The agents are following the spec. The spec is also now stale in a way that hides
+this: `queue-resume` did ship, so a reader concludes the v0.2 gap closed, when what shipped resumes a
+different state.
+
+**The fix is a capability, not a prompt:** something that transitions `paused-by-failure → active` after
+the failed items are dealt with, and an agent default of unsticking rather than abandoning. Note the
+asymmetry that makes this bite — entering the state is automatic and requires no judgment, while leaving
+it requires an operator. Any mechanism that is easy to enter and impossible to leave will accumulate.
+**Not a priority; recorded for the RA-5 queue walkthrough.**
+
+Beyond that specific state, there are **four separate mechanisms that stop work**, each with its own
 vocabulary, its own recovery path, and no common surface telling an agent which one it is in:
 
 1. **Queue paused** — `QueuePaused` / the `queue_paused` event. ~140 references.
@@ -828,10 +857,11 @@ Two halves, and the second is the interesting one:
 2. **The attention cost.** A crew currently has to watch the queue closely and continuously — the
    `crew-launch` skill's operating loop is built around polling its own named queue, and the progress
    feed is on a ≤10-minute timer while dispatching. The operator's objection is that this is the crew's
-   *dominant* activity rather than an occasional one. **Related and probably the same problem seen from
-   the other side: RA-2**, the four separate stop mechanisms (paused / quiesced / handler-paused /
-   decision-blocked) an agent cannot tell apart. An agent that must watch a queue closely *and* cannot
-   tell which of four ways it is stuck is being asked to do the system's job for it.
+   *dominant* activity rather than an occasional one. **Related, and probably the same problem seen from
+   the other side: RA-2** — `paused-by-failure` is a state a queue enters automatically and that nothing
+   in the product can leave, so the documented recovery is to abandon the queue and submit a new one.
+   Watching a queue closely is a rational response to a queue that can silently become permanently dead.
+   Fix that first and some of the attention cost may simply go away.
 
 ⚠ **Get the mechanism right before designing against it — the obvious framing is half wrong in each
 direction.** Per `.claude/skills/crew-launch/SKILL.md`:

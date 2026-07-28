@@ -23,6 +23,11 @@ locked_decisions:
   - single-daemon-per-project via pidfile lock (hk-li14r)
   - worktrees+merges over agent-mail reservation (Gas Town)
   - twin-binaries, not in-process mocks
-  - tmux inspectability required
+  # NARROWED 2026-07-28 by operator direction; see plans/2026-07-27-delete-and-rewrite/CHARTER.md §3.
+  # Was "tmux inspectability required" as a hard boot fail-fast. tmux remains the
+  # DEFAULT and the inspectability mechanism; what was reopened is the daemon's
+  # refusal to boot without it. Running without tmux is now allowed and degrades
+  # loudly. Do not re-derive the old fail-fast from this line.
+  - tmux inspectability is the default, not a boot precondition
   - no verifier subsystem
   - beads owns terminal bead transitions; harmonik daemon does NOT call br close directly

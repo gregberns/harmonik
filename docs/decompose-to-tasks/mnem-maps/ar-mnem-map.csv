@@ -33,7 +33,7 @@ ar-029,hk-zs0.30,"Verification is a role-function, not a node-type enum value"
 ar-030,hk-zs0.31,Verification-result shape (no RETRY admissible)
 ar-031,hk-zs0.32,Quality-gate is a gate that reads a verification-result
 ar-032,hk-zs0.33,Seven roles named (canonical role vocabulary)
-ar-033,hk-zs0.34,MVH-required vs declared-but-deferred role split
+ar-033,hk-zs0.34,required vs declared-but-deferred role split
 ar-034,hk-zs0.35,Per-role definition scope (purpose + typical actions + exclusions)
 ar-036,hk-zs0.36,Merge responsibility is not a top-level role
 ar-038,hk-zs0.37,Centralized-controller is the explicit inverse of Gas Town decentralization

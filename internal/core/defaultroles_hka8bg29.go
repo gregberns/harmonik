@@ -1,7 +1,7 @@
 package core
 
 // DefaultRequiredRoles returns the three concrete default Role values for the
-// `mvh-required` roles (Planner, Builder, Reviewer) per CP-029.
+// `required` roles (Planner, Builder, Reviewer) per CP-029.
 //
 // These defaults are shipped at harmonik init and form the lowest-precedence
 // layer in the §4.7 config-precedence stack. Higher-precedence layers
@@ -37,7 +37,7 @@ func defaultPlannerRole() Role {
 	ps.InvocableBy = []RoleName{}
 	return Role{
 		Name:             "Planner",
-		Status:           RoleStatusMVHRequired,
+		Status:           RoleStatusRequired,
 		PermissionSchema: ps,
 	}
 }
@@ -54,7 +54,7 @@ func defaultBuilderRole() Role {
 	ps.InvocableBy = []RoleName{"Planner"}
 	return Role{
 		Name:             "Builder",
-		Status:           RoleStatusMVHRequired,
+		Status:           RoleStatusRequired,
 		PermissionSchema: ps,
 	}
 }
@@ -72,7 +72,7 @@ func defaultReviewerRole() Role {
 	ps.InvocableBy = []RoleName{"Planner", "Builder"}
 	return Role{
 		Name:             "Reviewer",
-		Status:           RoleStatusMVHRequired,
+		Status:           RoleStatusRequired,
 		PermissionSchema: ps,
 	}
 }

@@ -28,7 +28,7 @@ cp-026,hk-a8bg.25,Budget counter state is internal; observable only via events
 cp-026a,hk-a8bg.26,Budget counters rehydrate from JSONL `budget_accrual` replay
 cp-027,hk-a8bg.27,Reconciliation wall-clock budget is an outer bound
 cp-028,hk-a8bg.28,Role permission schema
-cp-029,hk-a8bg.29,MVH-required roles carry concrete default permission sets
+cp-029,hk-a8bg.29,required roles carry concrete default permission sets
 cp-030,hk-a8bg.30,Declared-but-deferred roles carry empty shells
 cp-031,hk-a8bg.31,Default skills include the Beads-CLI skill (notes: CP-052)
 cp-032,hk-a8bg.32,Freedom profile is a per-state constraint bundle

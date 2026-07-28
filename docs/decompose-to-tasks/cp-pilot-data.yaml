@@ -94,7 +94,7 @@
 #
 # F-pilot-CP-2 [local — applies §2.1a mechanically] — CP-052 ("Beads-CLI is
 #   the motivating default") body is the verbatim restatement of CP-031 (which
-#   already mandates Beads-CLI in MVH-required role default_skills) with a
+#   already mandates Beads-CLI in required role default_skills) with a
 #   single inline cite to CP-031 and a one-line "supplementing when additional
 #   skills are needed" clarifier. All three §2.1a triggers fire (one-sentence
 #   body; single in-spec cite to CP-031; no substantive impl work distinct from
@@ -442,9 +442,9 @@ beads:
   - mnem: cp-029
     kind: req
     req: CP-029
-    title: "MVH-required roles carry concrete default permission sets"
+    title: "required roles carry concrete default permission sets"
     description: |
-      Per CP-029: for each MVH-required role (Planner, Builder, Reviewer per [architecture.md §4.8]), the policy layer MUST supply a concrete default permission set. Default sets ship at harmonik init; overridable by higher-precedence layers per §4.7.
+      Per CP-029: for each required role (Planner, Builder, Reviewer per [architecture.md §4.8]), the policy layer MUST supply a concrete default permission set. Default sets ship at harmonik init; overridable by higher-precedence layers per §4.7.
 
   - mnem: cp-030
     kind: req
@@ -458,9 +458,9 @@ beads:
     req: [CP-031, CP-052]   # CP-052 collapsed onto cp-031 per §2.1a (F-pilot-CP-2)
     title: "Default skills include the Beads-CLI skill (notes: CP-052)"
     description: |
-      Per CP-031: every MVH-required role's `default_skills` MUST include the Beads-CLI skill per [docs/foundation/components.md §10.9]. Concrete instance of the general skill-injection pattern in §4.11 + [handler-contract.md §4.11]; roles MAY declare additional defaults; nodes MAY declare additional `required_skills` per [execution-model.md §4.2].
+      Per CP-031: every required role's `default_skills` MUST include the Beads-CLI skill per [docs/foundation/components.md §10.9]. Concrete instance of the general skill-injection pattern in §4.11 + [handler-contract.md §4.11]; roles MAY declare additional defaults; nodes MAY declare additional `required_skills` per [execution-model.md §4.2].
 
-      notes (CP-052, collapsed per §2.1a — pure cross-reference): CP-052 restates "Beads-CLI MUST be a default skill in every MVH-required role" with a single in-spec inline cite back to CP-031, plus a one-line "node-level declaration supplements role default" clarifier. No substantive impl work distinct from CP-031; tag req:CP-052 on this bead.
+      notes (CP-052, collapsed per §2.1a — pure cross-reference): CP-052 restates "Beads-CLI MUST be a default skill in every required role" with a single in-spec inline cite back to CP-031, plus a one-line "node-level declaration supplements role default" clarifier. No substantive impl work distinct from CP-031; tag req:CP-052 on this bead.
 
   - mnem: cp-032
     kind: req
@@ -839,14 +839,14 @@ beads:
     schema_kind: schema
     title: "Define `Role` record (§6.2)"
     description: |
-      Implement the 3-field RECORD: name (String, per [architecture.md §4.8]); permission_schema (PermissionSchema record); status (RoleStatus enum, one of mvh-required | declared-but-deferred). RoleStatus discriminates CP-029 (concrete defaults) from CP-030 (empty shells).
+      Implement the 3-field RECORD: name (String, per [architecture.md §4.8]); permission_schema (PermissionSchema record); status (RoleStatus enum, one of required | declared-but-deferred). RoleStatus discriminates CP-029 (concrete defaults) from CP-030 (empty shells).
 
   - mnem: cp-schema.permission-schema
     kind: schema
     schema_kind: schema
     title: "Define `PermissionSchema` record (§6.2)"
     description: |
-      Implement the 7-field RECORD: allowed_tools (List<String>); writable_paths (List<String>, workspace-relative globs); readable_paths (List<String>, default ["**"]); model_tier (String | None); default_skills (List<String>; MUST include "beads-cli" for MVH roles per CP-031); allowed_hooks (List<String>, Hook names that may modify behavior); invocable_by (List<String>, role names permitted to spawn this role).
+      Implement the 7-field RECORD: allowed_tools (List<String>); writable_paths (List<String>, workspace-relative globs); readable_paths (List<String>, default ["**"]); model_tier (String | None); default_skills (List<String>; MUST include "beads-cli" for required roles per CP-031); allowed_hooks (List<String>, Hook names that may modify behavior); invocable_by (List<String>, role names permitted to spawn this role).
 
   - mnem: cp-schema.freedom-profile
     kind: schema

@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// RoleStatus discriminates mvh-required roles (CP-029 — concrete permission
+// RoleStatus discriminates required roles (CP-029 — concrete permission
 // defaults) from declared-but-deferred roles (CP-030 — empty shells pending
 // implementation).
 //
@@ -14,9 +14,9 @@ import (
 type RoleStatus string
 
 const (
-	// RoleStatusMVHRequired indicates the role is fully specified and MUST carry
+	// RoleStatusRequired indicates the role is fully specified and MUST carry
 	// a concrete PermissionSchema per CP-029.
-	RoleStatusMVHRequired RoleStatus = "mvh-required"
+	RoleStatusRequired RoleStatus = "required"
 
 	// RoleStatusDeclaredButDeferred indicates the role is declared as an empty
 	// shell, with permission schema left blank pending implementation per CP-030.
@@ -25,14 +25,14 @@ const (
 
 // ErrInvalidRoleStatus is returned by RoleStatus.Valid and Role.Validate when
 // the status value is not one of the two normative values.
-var ErrInvalidRoleStatus = errors.New("invalid role status: must be mvh-required or declared-but-deferred")
+var ErrInvalidRoleStatus = errors.New("invalid role status: must be required or declared-but-deferred")
 
 // Valid reports whether s is one of the two normative RoleStatus values.
 //
 // Rules per specs/control-points.md §6.2:
-//   - Only "mvh-required" and "declared-but-deferred" are valid.
+//   - Only "required" and "declared-but-deferred" are valid.
 func (s RoleStatus) Valid() bool {
-	return s == RoleStatusMVHRequired || s == RoleStatusDeclaredButDeferred
+	return s == RoleStatusRequired || s == RoleStatusDeclaredButDeferred
 }
 
 // UnmarshalJSON implements json.Unmarshaler so that any JSON string value is
@@ -55,7 +55,7 @@ func (s *RoleStatus) UnmarshalJSON(data []byte) error {
 //
 // # Status semantics
 //
-// A role with status mvh-required MUST carry a fully-populated PermissionSchema
+// A role with status required MUST carry a fully-populated PermissionSchema
 // (CP-029 concrete defaults). A role with status declared-but-deferred carries
 // an empty PermissionSchema shell (CP-030 empty shells); enforcement of
 // "non-empty" constraints lives in the policy validator, not at the type level.
@@ -76,7 +76,7 @@ type Role struct {
 	// Spec: specs/control-points.md §6.2 RECORD Role field permission_schema.
 	PermissionSchema PermissionSchema `json:"permission_schema"`
 
-	// Status discriminates mvh-required (CP-029) from declared-but-deferred
+	// Status discriminates required (CP-029) from declared-but-deferred
 	// (CP-030).
 	// Spec: specs/control-points.md §6.2 RECORD Role field status.
 	Status RoleStatus `json:"status"`
@@ -102,7 +102,7 @@ func NewRole(name RoleName, status RoleStatus) Role {
 //   - Status must be one of the two normative values (RoleStatus.Valid).
 //
 // PermissionSchema content validation (e.g. CP-031 beads-cli requirement for
-// mvh-required roles) is the responsibility of the policy validator, not this
+// required roles) is the responsibility of the policy validator, not this
 // method.
 func (r Role) Validate() error {
 	if !r.Name.Valid() {

@@ -86,8 +86,8 @@ Normative statement of harmonik's architectural invariants, operational classifi
 
 **1.6 Role taxonomy.**
 - The AlphaGo north-star names seven roles: Planner, Researcher, Builder, Reviewer, Verifier, Scheduler, Governor.
-- Foundation specifies which roles are `mvh-required` and which are `declared-but-deferred` (the two `RoleStatus` values):
-  - `mvh-required`: Planner, Builder, Reviewer (sufficient to run the minimum self-build cycle described in bootstrap.md §3).
+- Foundation specifies which roles are `required` and which are `declared-but-deferred` (the two `RoleStatus` values):
+  - `required`: Planner, Builder, Reviewer (sufficient to run the minimum self-build cycle described in bootstrap.md §3).
   - `declared-but-deferred`: Researcher, Verifier, Scheduler, Governor. Named in foundation so subsystem specs don't invent alternatives, but not required today — each is activated when its triggering pattern appears in a workflow.
 - For each role, this spec defines: purpose, typical actions, what it does not do. **Concrete permission schemas per role are owned by control-points.md §6.6, not this spec.** architecture.md describes WHAT the role is; control-points.md describes WHAT A ROLE IS ALLOWED TO DO.
 - States that role is orthogonal to agent type (§1.6a): role is a *function* assignment; handler is a *process* assignment. The same agent process can fill different roles across runs.
@@ -566,10 +566,10 @@ Normative unified primitive for gates, hooks, and transition guards — the real
 - Policy schema version is per-policy and per-document; compatibility is N-1 per the same rules as event-model versioning (per operator-nfr.md §7.6).
 
 **6.6 Role permissions — concrete.**
-- **Scope authority:** role names, semantics, and the `mvh-required` vs `declared-but-deferred` distinction are defined in architecture.md §1.6 (not here). This spec defines permission SCHEMAS per role; all citations of role names cite architecture.md §1.6.
-- For each `mvh-required` role (Planner, Builder, Reviewer per architecture §1.6): the normative default permission set (read-only vs. write to specific directories, tools allowed, **skills included in the default set**, agents that may invoke this role, hooks that may modify a role's behavior).
+- **Scope authority:** role names, semantics, and the `required` vs `declared-but-deferred` distinction are defined in architecture.md §1.6 (not here). This spec defines permission SCHEMAS per role; all citations of role names cite architecture.md §1.6.
+- For each `required` role (Planner, Builder, Reviewer per architecture §1.6): the normative default permission set (read-only vs. write to specific directories, tools allowed, **skills included in the default set**, agents that may invoke this role, hooks that may modify a role's behavior).
 - For each declared-but-deferred role (Researcher, Verifier, Scheduler, Governor): a permission schema shell is declared with `allowed=[]` defaults. Shell declarations are activation-time-filled; deferred roles may not be activated without a foundation amendment.
-- **Default skills.** Every `mvh-required` role's default permission set includes the **Beads-CLI skill** as a first-class default (per beads-integration.md §10.9). This is one concrete instance of the general skill-injection pattern in §6.11 and handler-contract.md §4.11: roles may declare default skill sets, nodes may declare additional `required_skills`, and the handler ensures the union is provisioned at agent launch.
+- **Default skills.** Every `required` role's default permission set includes the **Beads-CLI skill** as a first-class default (per beads-integration.md §10.9). This is one concrete instance of the general skill-injection pattern in §6.11 and handler-contract.md §4.11: roles may declare default skill sets, nodes may declare additional `required_skills`, and the handler ensures the union is provisioned at agent launch.
 
 **6.7 Freedom profile.**
 - A freedom profile is a per-state constraint bundle specifying: tool whitelist, directory write access, LLM model tier (if any), token budget, wall-clock budget, max iterations.

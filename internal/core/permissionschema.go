@@ -16,7 +16,7 @@ package core
 // # CP-031 constraint
 //
 // DefaultSkills MUST include "beads-cli" for any role that is designated
-// mvh-required (specs/control-points.md §4.6.CP-031). Enforcement lives in
+// required (specs/control-points.md §4.6.CP-031). Enforcement lives in
 // the policy validator, not at the type level.
 type PermissionSchema struct {
 	// AllowedTools is the closed list of tool names this role may invoke.
@@ -42,7 +42,7 @@ type PermissionSchema struct {
 
 	// DefaultSkills is the list of skill names injected into every handler
 	// session running under this role. MUST include "beads-cli" for any
-	// mvh-required role per CP-031.
+	// required role per CP-031.
 	// Spec: specs/control-points.md §6.2 RECORD PermissionSchema field default_skills.
 	DefaultSkills []SkillName `json:"default_skills"`
 

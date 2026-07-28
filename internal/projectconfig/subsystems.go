@@ -54,6 +54,50 @@ const (
 	// SubsystemReconciliationScheduler names the RC-020a scheduled detector
 	// cadence started by daemon.StartReconciliationScheduler.
 	SubsystemReconciliationScheduler SubsystemName = "reconciliation_scheduler"
+
+	// SubsystemSocketListener names the daemon's Unix-socket listener and the
+	// subtree of handlers constructed beneath it in daemon.bindSocket — comms,
+	// crew, crew-idle-reap, the branch reaper, live-state, the dashboard socket
+	// surface, the bandwidth tuner, the operator-pause and concurrency
+	// controllers, the drain detector, and the queue handler adapter.
+	//
+	// This is the single largest partition lever in the daemon: one gate, up to
+	// 13 constructions. "Up to" because three of them are themselves conditional
+	// — the queue handler adapter and drain detector need BrPath, and the
+	// bandwidth tuner needs a positive SubscriptionTokenCeiling.
+	//
+	// Note that the pre-existing `ProjectDir == ""` early return in the enclosing
+	// wireSocketListener is NOT this switch — it is a unit-test escape hatch that
+	// both production callers (cmd/harmonik/main.go, cmd/harmonik/run.go) set
+	// unconditionally, so it is never taken in a real deployment.
+	SubsystemSocketListener SubsystemName = "socket_listener"
+
+	// SubsystemDashboardGate names the dashboard FORCING GATE evaluated inside
+	// the core work loop — daemon.evaluateDashboardGate, whose result feeds
+	// selectNextQueue. Distinct from the dashboard's socket surface, which is
+	// constructed under SubsystemSocketListener.
+	//
+	// This gate is the ONLY route by which internal/dashboard enters package
+	// daemon, and it makes the core dispatch loop read the captain's lanes.json.
+	// It is the sharpest violation of "the core runs without it" on the boot
+	// path. (It is not the only route to internal/digest — that is imported
+	// independently by eagerfill, bootworkloop, and the governor block, so
+	// gating this off does not shed that dependency.)
+	SubsystemDashboardGate SubsystemName = "dashboard_gate"
+
+	// SubsystemMovementGovernor names the sentinel's movement-governor blocks
+	// evaluated inline in the core dispatch loop (observe and act modes).
+	//
+	// Observe mode runs on every production daemon today: a `br ready` shell-out
+	// plus an events.jsonl scan on a two-minute cadence, emitting governor_signal.
+	// It is dead by measurement — governor_signal has no non-test consumer, and
+	// as of 2026-07-28 it was ~12% of this machine's event log. Re-derive that
+	// figure rather than trusting it; it is a point-in-time reading, not an
+	// invariant. Act mode additionally writes a dispatch-blocking entry to
+	// the DecisionBlocker. Switching this off does NOT touch sentinel.ComputeSnapshot
+	// or sentinel.DetectLayerA, which are unrelated per-run stall detectors that
+	// merely share the package name.
+	SubsystemMovementGovernor SubsystemName = "movement_governor"
 )
 
 // knownSubsystems is the closed set of names the `subsystems:` block accepts.
@@ -61,6 +105,9 @@ const (
 // its construction seam). Any name outside this set is rejected loudly.
 var knownSubsystems = map[SubsystemName]struct{}{
 	SubsystemReconciliationScheduler: {},
+	SubsystemSocketListener:          {},
+	SubsystemDashboardGate:           {},
+	SubsystemMovementGovernor:        {},
 }
 
 // ErrUnknownSubsystem is returned when the subsystems: block names a subsystem

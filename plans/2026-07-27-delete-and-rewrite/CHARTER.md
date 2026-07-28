@@ -80,9 +80,17 @@ communicate with the daemon *exclusively* that way. Operator: *"I'd think it wou
 that out of the core — then the way it communicates with the core is essentially indirect.
 `process-lifecycle.md` is a spec that probably needs to be updated. If this is a critical aspect and/or
 if it is holding back refactor, then it should probably be extracted."* So the *placement* is decided —
-the socket is outside the core, the core is reached indirectly, and the socket is one caller among
-possible others (`harmonik run <bead-id>` already runs work without it). The *extraction work* is not
-scheduled: **extract it when it blocks the decomposition, and amend PL-003 rather than obey it.**
+the socket is outside the core, the core is reached indirectly, and the socket becomes one caller among
+possible others. The *extraction work* is not scheduled: **extract it when it blocks the decomposition,
+and amend PL-003 rather than obey it.**
+
+⚠ **The evidence once offered for this was false and is corrected here.** This section previously said
+`harmonik run <bead-id>` "already runs work without it." It does not: `cmd/harmonik/run.go` sets
+`ProjectDir` in its `daemon.Config` exactly as `main.go` does, so `bindSocket` runs and the socket
+subtree is constructed and bound. (Not quite all of it — `harmonik run` sets no subscription-token
+ceiling, so the bandwidth tuner is skipped — but the listener itself is there.) There is no production
+path today that runs work without the listener. The decision stands on its own merits; it never rested
+on that claim.
 
 **And the sequel is named, not scheduled.** Operator, same day: *"once we have the core system working
 again, before we do anything else we probably need to think about how to build a dataplane that

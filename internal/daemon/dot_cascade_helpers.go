@@ -37,11 +37,12 @@ package daemon
 // # Terminal handling
 //
 // The walk ends when DecideNextNode reports the current node is terminal (it is
-// in graph.TerminalNodeIDs). The driver classifies the terminal node by its
-// IDENTITY per WG-021/WG-022: reaching "close" (or any terminal that is NOT
-// "close-needs-attention") is the success path; reaching "close-needs-attention"
-// is the needs-attention path. This is the spec-mandated surface — consumers
-// MUST NOT inspect inbound-edge topology to determine terminal disposition.
+// in graph.TerminalNodeIDs). dotTerminalNodeIsSuccess then asks the graph what
+// reaching that terminal means: the WG-022 reserved pair ("close" /
+// "close-needs-attention") is normative; any author-declared terminal supplies
+// its own terminal_disposition; an undeclared terminal is unclassifiable and the
+// run goes to needs-attention rather than merging on a guess. Consumers MUST NOT
+// inspect inbound-edge topology to determine terminal disposition (WG-021).
 //
 // # Cap enforcement
 //
@@ -706,15 +707,76 @@ func isConsolidateJoinNode(graph *dot.Graph, nodesByID map[string]*dot.Node, nod
 	return upstream, len(upstream) >= 2
 }
 
-// dotTerminalNodeIsSuccess classifies a terminal node as the success terminal
-// by its ID per WG-021/WG-022.
+// Terminal-node disposition attribute (node-level) and its value domain.
+// Read out of dot.Node.UnknownAttrs — the same WG-031/WG-032 permissive-
+// retention channel dotEdgeTraversalCap uses for traversal_cap. It is NOT a
+// reserved attribute name in specs/workflow-graph.md §10 WG-031; promoting it
+// to one is a spec amendment, not a code change.
+const (
+	dotTerminalDispositionAttr           = "terminal_disposition"
+	dotTerminalDispositionSuccess        = "success"
+	dotTerminalDispositionNeedsAttention = "needs_attention"
+)
+
+// dotTerminalNodeIsSuccess reports whether reaching terminalID means the run's
+// work should be merged and its bead closed green. The second return value is
+// empty when the graph classified the terminal, and otherwise carries the reason
+// the run is being sent to needs-attention instead.
 //
-// Rule: "close-needs-attention" is the reserved needs-attention terminal.
-// Any other terminal ID — including the reserved "close" and author-defined
-// extensions per WG-022 — is treated as a success terminal. Inspecting
-// inbound-edge topology to infer disposition is forbidden by WG-021.
-func dotTerminalNodeIsSuccess(terminalID string) bool {
-	return terminalID != "close-needs-attention"
+// The answer comes from the GRAPH, in this order:
+//
+//  1. The two terminal IDs reserved by WG-022 are normative and cannot be
+//     redefined by a graph: "close" is normal completion, "close-needs-attention"
+//     is the operator-attention close. Standard graphs therefore need no
+//     annotation and behave exactly as they always have.
+//  2. Any other terminal — WG-022 permits authors to declare them, and says
+//     consumers route them per their own policy — must declare its polarity on
+//     the node: terminal_disposition="success" or "needs_attention".
+//  3. A terminal that declares nothing, or declares an unrecognized value, is
+//     NOT classifiable. The run goes to needs-attention with a reason. This is
+//     the one honest answer available: guessing from the node's spelling is what
+//     merged failing eval runs in the first place (eval-bead.dot's failure
+//     terminal is "close-fail"), and a broader name heuristic would be the same
+//     defect with a wider blast radius.
+//
+// Inspecting inbound-edge topology or the last edge's preferred_label to infer
+// disposition is forbidden by WG-021; this reads a declaration, not a topology.
+func dotTerminalNodeIsSuccess(graph *dot.Graph, terminalID string) (success bool, why string) {
+	switch terminalID {
+	case "close":
+		return true, ""
+	case "close-needs-attention":
+		return false, ""
+	}
+
+	var node *dot.Node
+	for _, n := range graph.Nodes {
+		if n.ID == terminalID {
+			node = n
+			break
+		}
+	}
+	if node == nil {
+		return false, fmt.Sprintf("terminal node %q is not declared in the graph", terminalID)
+	}
+
+	switch raw := node.UnknownAttrs[dotTerminalDispositionAttr]; raw {
+	case dotTerminalDispositionSuccess:
+		return true, ""
+	case dotTerminalDispositionNeedsAttention:
+		return false, ""
+	case "":
+		return false, fmt.Sprintf(
+			"terminal node %q is not a reserved terminal (WG-022) and declares no %s=%q|%q; "+
+				"the graph does not say whether reaching it is a success, so the run is not merged",
+			terminalID, dotTerminalDispositionAttr,
+			dotTerminalDispositionSuccess, dotTerminalDispositionNeedsAttention)
+	default:
+		return false, fmt.Sprintf(
+			"terminal node %q declares %s=%q, which is not one of %q|%q",
+			terminalID, dotTerminalDispositionAttr, raw,
+			dotTerminalDispositionSuccess, dotTerminalDispositionNeedsAttention)
+	}
 }
 
 // incrementCapIfBounded increments the per-edge cycle counter for the traversed

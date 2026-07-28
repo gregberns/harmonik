@@ -37,11 +37,12 @@ package daemon
 // # Terminal handling
 //
 // The walk ends when DecideNextNode reports the current node is terminal (it is
-// in graph.TerminalNodeIDs). The driver classifies the terminal node by its
-// IDENTITY per WG-021/WG-022: reaching "close" (or any terminal that is NOT
-// "close-needs-attention") is the success path; reaching "close-needs-attention"
-// is the needs-attention path. This is the spec-mandated surface — consumers
-// MUST NOT inspect inbound-edge topology to determine terminal disposition.
+// in graph.TerminalNodeIDs). dotTerminalNodeIsSuccess then asks the graph what
+// reaching that terminal means: the WG-022 reserved pair ("close" /
+// "close-needs-attention") is normative; any author-declared terminal supplies
+// its own terminal_disposition; an undeclared terminal is unclassifiable and the
+// run goes to needs-attention rather than merging on a guess. Consumers MUST NOT
+// inspect inbound-edge topology to determine terminal disposition (WG-021).
 //
 // # Cap enforcement
 //
@@ -1009,16 +1010,21 @@ func driveDotWorkflow(
 
 		switch {
 		case decision.IsTerminal:
-			// Reached a terminal node. Classify by terminal node IDENTITY per
-			// WG-021/WG-022: "close-needs-attention" → needs-attention; any other
-			// terminal (including "close" and author-defined terminals) → success.
+			// Reached a terminal node. Ask the GRAPH what reaching it means: the
+			// WG-022 reserved pair is normative, any other terminal declares its
+			// own terminal_disposition, and an undeclared terminal is reported as
+			// unclassifiable rather than merged on a guess about its name.
 			// Inspecting inbound-edge topology is forbidden by WG-021.
-			success := dotTerminalNodeIsSuccess(currentNodeID)
+			success, why := dotTerminalNodeIsSuccess(graph, currentNodeID)
+			summary := fmt.Sprintf("dot: reached terminal node %q", currentNodeID)
+			if why != "" {
+				summary += ": " + why
+			}
 			return dotWorkflowResult{
 				success:        success,
 				terminalNodeID: currentNodeID,
 				needsAttention: !success,
-				summary:        fmt.Sprintf("dot: reached terminal node %q", currentNodeID),
+				summary:        summary,
 			}
 
 		case decision.Failed:

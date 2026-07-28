@@ -11,7 +11,7 @@ func TestDecisionTable(t *testing.T) {
 	t.Parallel()
 
 	initial := mustState(t)
-	awaitReviewer := mustAwaitReviewer(t, initial, "head-1", "diff-1")
+	awaitReviewer := mustAwaitReviewer(t, initial)
 	resume := mustResume(t, awaitReviewer, rawVerdict(
 		core.ReviewerVerdictRequestChanges, []string{"correctness"}, "fix it",
 	))
@@ -201,7 +201,6 @@ func TestDecisionTable(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -252,12 +251,11 @@ func TestDecisionTable(t *testing.T) {
 func TestPropertyIterationMonotoneBoundedAndIdentitySelection(t *testing.T) {
 	t.Parallel()
 
-	for cap := 1; cap <= 12; cap++ {
-		cap := cap
-		t.Run("cap-"+itoa(cap), func(t *testing.T) {
+	for iterationCap := 1; iterationCap <= 12; iterationCap++ {
+		t.Run("cap-"+itoa(iterationCap), func(t *testing.T) {
 			t.Parallel()
 
-			state, err := NewState(cap, "stable-implementer-id", "baseline")
+			state, err := NewState(iterationCap, "stable-implementer-id", "baseline")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -273,7 +271,7 @@ func TestPropertyIterationMonotoneBoundedAndIdentitySelection(t *testing.T) {
 				if decideErr != nil {
 					t.Fatal(decideErr)
 				}
-				assertMonotoneIteration(t, previousIteration, impl.NextState.Iteration, cap)
+				assertMonotoneIteration(t, previousIteration, impl.NextState.Iteration, iterationCap)
 				previousIteration = impl.NextState.Iteration
 				for _, intent := range impl.Intents {
 					switch intent.Kind {
@@ -287,6 +285,7 @@ func TestPropertyIterationMonotoneBoundedAndIdentitySelection(t *testing.T) {
 						}
 					case IntentPublishCycleComplete:
 						cycleCompletions++
+					default:
 					}
 				}
 				if impl.Terminal != nil {
@@ -305,7 +304,7 @@ func TestPropertyIterationMonotoneBoundedAndIdentitySelection(t *testing.T) {
 				if reviewErr != nil {
 					t.Fatal(reviewErr)
 				}
-				assertMonotoneIteration(t, previousIteration, review.NextState.Iteration, cap)
+				assertMonotoneIteration(t, previousIteration, review.NextState.Iteration, iterationCap)
 				previousIteration = review.NextState.Iteration
 				for _, intent := range review.Intents {
 					switch intent.Kind {
@@ -318,6 +317,7 @@ func TestPropertyIterationMonotoneBoundedAndIdentitySelection(t *testing.T) {
 						}
 					case IntentPublishCycleComplete:
 						cycleCompletions++
+					default:
 					}
 				}
 				state = review.NextState
@@ -326,8 +326,8 @@ func TestPropertyIterationMonotoneBoundedAndIdentitySelection(t *testing.T) {
 				}
 			}
 
-			if state.Iteration != cap {
-				t.Errorf("terminal iteration = %d, want cap %d", state.Iteration, cap)
+			if state.Iteration != iterationCap {
+				t.Errorf("terminal iteration = %d, want cap %d", state.Iteration, iterationCap)
 			}
 			if cycleCompletions != 1 {
 				t.Errorf("cycle completions = %d, want 1", cycleCompletions)
@@ -344,7 +344,7 @@ func TestPropertyIterationMonotoneBoundedAndIdentitySelection(t *testing.T) {
 func TestPropertyTerminalAbsorption(t *testing.T) {
 	t.Parallel()
 
-	state := mustAwaitReviewer(t, mustState(t), "head-1", "diff-1")
+	state := mustAwaitReviewer(t, mustState(t))
 	decision, err := Decide(
 		state,
 		ObserveReviewer(rawVerdict(core.ReviewerVerdictBlock, []string{"security"}, "blocked")),
@@ -389,7 +389,7 @@ func TestPropertyDefensiveSliceHandling(t *testing.T) {
 	flags[0] = "caller-mutated"
 	verdict.Flags[0] = "verdict-mutated"
 
-	state := mustAwaitReviewer(t, mustState(t), "head-1", "diff-1")
+	state := mustAwaitReviewer(t, mustState(t))
 	decision, err := Decide(state, observation)
 	if err != nil {
 		t.Fatal(err)
@@ -428,7 +428,7 @@ func TestPropertyDefensiveSliceHandling(t *testing.T) {
 func TestReviewerIntentOrderAndFlagNormalization(t *testing.T) {
 	t.Parallel()
 
-	awaitReviewer := mustAwaitReviewer(t, mustState(t), "head-1", "diff-1")
+	awaitReviewer := mustAwaitReviewer(t, mustState(t))
 	tests := []struct {
 		name         string
 		state        State
@@ -466,7 +466,6 @@ func TestReviewerIntentOrderAndFlagNormalization(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -507,7 +506,7 @@ func TestReviewerIntentOrderAndFlagNormalization(t *testing.T) {
 func TestFixupIntentCarriesNonNilPriorFlags(t *testing.T) {
 	t.Parallel()
 
-	awaitReviewer := mustAwaitReviewer(t, mustState(t), "head-1", "diff-1")
+	awaitReviewer := mustAwaitReviewer(t, mustState(t))
 	resume := mustResume(t, awaitReviewer, rawVerdict(
 		core.ReviewerVerdictRequestChanges, []string{"correctness"}, "fix",
 	))
@@ -536,7 +535,7 @@ func TestPropertyBuiltInNeverProducesNoProgress(t *testing.T) {
 		assertNoProducedNoProgress(t, mustState(t), observation)
 	}
 
-	awaitReviewer := mustAwaitReviewer(t, mustState(t), "head-1", "diff-1")
+	awaitReviewer := mustAwaitReviewer(t, mustState(t))
 	for _, verdict := range []RawVerdict{
 		rawVerdict(core.ReviewerVerdictApprove, nil, "approved"),
 		rawVerdict(core.ReviewerVerdictRequestChanges, nil, "flagless"),
@@ -587,7 +586,6 @@ func TestInvalidStateAndObservationDoNotReturnDecision(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := Decide(tt.state, tt.observation)
@@ -610,9 +608,9 @@ func mustState(t *testing.T) State {
 	return state
 }
 
-func mustAwaitReviewer(t *testing.T, state State, head, diff string) State {
+func mustAwaitReviewer(t *testing.T, state State) State {
 	t.Helper()
-	decision, err := Decide(state, ObserveImplementer(head, diff, true))
+	decision, err := Decide(state, ObserveImplementer("head-1", "diff-1", true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -670,17 +668,18 @@ func assertVerdictIntentFlagsNonNil(t *testing.T, intents []Intent) {
 			} else if intent.Verdict.Flags == nil {
 				t.Errorf("%s flags = nil", intent.Kind)
 			}
+		default:
 		}
 	}
 }
 
-func assertMonotoneIteration(t *testing.T, before, after, cap int) {
+func assertMonotoneIteration(t *testing.T, before, after, iterationCap int) {
 	t.Helper()
 	if after < before {
 		t.Errorf("iteration decreased: %d -> %d", before, after)
 	}
-	if after < 1 || after > cap {
-		t.Errorf("iteration %d outside 1..%d", after, cap)
+	if after < 1 || after > iterationCap {
+		t.Errorf("iteration %d outside 1..%d", after, iterationCap)
 	}
 }
 

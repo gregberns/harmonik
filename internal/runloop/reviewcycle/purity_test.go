@@ -50,6 +50,7 @@ func TestProductionPackageRemainsPure(t *testing.T) {
 				switch generic.Tok {
 				case token.VAR:
 					t.Errorf("%s declares package-level mutable state", name)
+				default:
 				}
 			}
 		}

@@ -15,6 +15,8 @@ import (
 // Phase is the next phase whose observation the cycle accepts.
 type Phase string
 
+// The declared cycle phases. A cycle accepts exactly the observation named by
+// its current phase; PhaseTerminal accepts and absorbs everything.
 const (
 	PhaseAwaitImplementer Phase = "await-implementer"
 	PhaseAwaitReviewer    Phase = "await-reviewer"
@@ -64,11 +66,11 @@ type State struct {
 }
 
 // NewState constructs the state before the initial implementer observation.
-func NewState(cap int, continuityIdentity, initialBaselineSHA string) (State, error) {
+func NewState(iterationCap int, continuityIdentity, initialBaselineSHA string) (State, error) {
 	state := State{
 		Phase:                         PhaseAwaitImplementer,
 		Iteration:                     1,
-		Cap:                           cap,
+		Cap:                           iterationCap,
 		ImplementerContinuityIdentity: continuityIdentity,
 		InitialBaselineSHA:            initialBaselineSHA,
 	}
@@ -81,6 +83,8 @@ func NewState(cap int, continuityIdentity, initialBaselineSHA string) (State, er
 // ObservationKind discriminates the fact supplied to Decide.
 type ObservationKind string
 
+// The declared observation kinds. Each names the payload field that must be
+// populated on Observation.
 const (
 	ObservationImplementerComplete ObservationKind = "implementer-complete"
 	ObservationReviewerComplete    ObservationKind = "reviewer-complete"
@@ -129,8 +133,8 @@ func ObserveImplementer(headSHA, diffHash string, workProductAdvanced bool) Obse
 
 // ObserveReviewer constructs a validated reviewer-verdict observation.
 func ObserveReviewer(verdict RawVerdict) Observation {
-	copy := cloneVerdict(&verdict)
-	return Observation{Kind: ObservationReviewerComplete, Verdict: copy}
+	cloned := cloneVerdict(&verdict)
+	return Observation{Kind: ObservationReviewerComplete, Verdict: cloned}
 }
 
 // ObserveFailure constructs a typed phase-failure observation.
@@ -154,6 +158,7 @@ func ObserveCancellation(summary string) Observation {
 // reviewers always request a fresh identity.
 type SelectionPolicy string
 
+// The declared continuity selection policies attached to a dispatch intent.
 const (
 	SelectionStableImplementer SelectionPolicy = "stable-implementer"
 	SelectionFreshReviewer     SelectionPolicy = "fresh-reviewer"
@@ -162,6 +167,8 @@ const (
 // IntentKind identifies one ordered semantic intent returned by the kernel.
 type IntentKind string
 
+// The declared intent kinds returned by Decide, in the order the shell is
+// expected to apply them within a single decision.
 const (
 	IntentPersistIterationFacts  IntentKind = "persist-iteration-facts"
 	IntentDispatchFreshReviewer  IntentKind = "dispatch-fresh-reviewer"
@@ -368,72 +375,79 @@ func decideReviewer(state State, observed RawVerdict) (Decision, error) {
 		), nil
 
 	case core.ReviewerVerdictRequestChanges:
-		if len(verdict.Flags) == 0 {
-			return terminalDecision(
-				state,
-				intents,
-				TerminalResult{
-					Success:          true,
-					CompletionReason: core.ReviewLoopCompletionReasonApproved,
-					NeedsAttention:   false,
-					Summary: fmt.Sprintf(
-						"REQUEST_CHANGES with no flags at iteration %d treated as APPROVE",
-						state.Iteration,
-					),
-					RawVerdict: cloneVerdict(verdict),
-				},
-			), nil
-		}
-		if state.Iteration >= state.Cap {
-			intents = append(intents, Intent{
-				Kind:      IntentPublishIterationCapHit,
-				Iteration: state.Iteration,
-				Verdict:   cloneVerdict(verdict),
-			})
-			return terminalDecision(
-				state,
-				intents,
-				TerminalResult{
-					Success:          false,
-					CompletionReason: core.ReviewLoopCompletionReasonCapHit,
-					NeedsAttention:   true,
-					Summary: fmt.Sprintf(
-						"REQUEST_CHANGES at iteration %d (cap=%d)",
-						state.Iteration, state.Cap,
-					),
-					RawVerdict: cloneVerdict(verdict),
-				},
-			), nil
-		}
-
-		state.Iteration++
-		state.Phase = PhaseAwaitImplementer
-		intents = append(
-			intents,
-			Intent{
-				Kind:      IntentAdvanceIteration,
-				Iteration: state.Iteration,
-			},
-			Intent{
-				Kind:               IntentDispatchImplementer,
-				Iteration:          state.Iteration,
-				Selection:          SelectionStableImplementer,
-				ContinuityIdentity: state.ImplementerContinuityIdentity,
-				Verdict:            cloneVerdict(verdict),
-				CurrentDiffHash:    state.CurrentDiffHash,
-				PriorDiffHash:      state.PriorDiffHash,
-			},
-		)
-		return Decision{
-			NextState: cloneState(state),
-			Intents:   cloneIntents(intents),
-		}, nil
+		return decideRequestChanges(state, verdict, intents), nil
 	}
 
 	return Decision{}, fmt.Errorf(
 		"reviewcycle: validated verdict %q reached an unsupported routing branch",
 		verdict.Verdict,
 	)
+}
+
+// decideRequestChanges routes an actionable REQUEST_CHANGES: a flagless verdict
+// is treated as APPROVE, a verdict at the iteration cap terminates as cap-hit,
+// and anything else advances the iteration and resumes the same implementer.
+func decideRequestChanges(state State, verdict *RawVerdict, intents []Intent) Decision {
+	if len(verdict.Flags) == 0 {
+		return terminalDecision(
+			state,
+			intents,
+			TerminalResult{
+				Success:          true,
+				CompletionReason: core.ReviewLoopCompletionReasonApproved,
+				NeedsAttention:   false,
+				Summary: fmt.Sprintf(
+					"REQUEST_CHANGES with no flags at iteration %d treated as APPROVE",
+					state.Iteration,
+				),
+				RawVerdict: cloneVerdict(verdict),
+			},
+		)
+	}
+	if state.Iteration >= state.Cap {
+		intents = append(intents, Intent{
+			Kind:      IntentPublishIterationCapHit,
+			Iteration: state.Iteration,
+			Verdict:   cloneVerdict(verdict),
+		})
+		return terminalDecision(
+			state,
+			intents,
+			TerminalResult{
+				Success:          false,
+				CompletionReason: core.ReviewLoopCompletionReasonCapHit,
+				NeedsAttention:   true,
+				Summary: fmt.Sprintf(
+					"REQUEST_CHANGES at iteration %d (cap=%d)",
+					state.Iteration, state.Cap,
+				),
+				RawVerdict: cloneVerdict(verdict),
+			},
+		)
+	}
+
+	state.Iteration++
+	state.Phase = PhaseAwaitImplementer
+	intents = append(
+		intents,
+		Intent{
+			Kind:      IntentAdvanceIteration,
+			Iteration: state.Iteration,
+		},
+		Intent{
+			Kind:               IntentDispatchImplementer,
+			Iteration:          state.Iteration,
+			Selection:          SelectionStableImplementer,
+			ContinuityIdentity: state.ImplementerContinuityIdentity,
+			Verdict:            cloneVerdict(verdict),
+			CurrentDiffHash:    state.CurrentDiffHash,
+			PriorDiffHash:      state.PriorDiffHash,
+		},
+	)
+	return Decision{
+		NextState: cloneState(state),
+		Intents:   cloneIntents(intents),
+	}
 }
 
 func terminalDecision(state State, prefix []Intent, terminal TerminalResult) Decision {
@@ -474,6 +488,16 @@ func (s State) valid() error {
 	if s.PriorVerdict != nil && !s.PriorVerdict.Valid() {
 		return fmt.Errorf("prior verdict is not valid")
 	}
+	if err := s.validResumption(); err != nil {
+		return err
+	}
+	return s.validTerminalCoupling()
+}
+
+// validResumption checks the facts a post-first iteration must carry: a prior
+// work-product HEAD, and the actionable REQUEST_CHANGES that justified the
+// resume.
+func (s State) validResumption() error {
 	if s.Iteration > 1 {
 		if s.PriorWorkProductHeadSHA == "" {
 			return fmt.Errorf("iteration %d requires a prior work-product HEAD", s.Iteration)
@@ -487,6 +511,12 @@ func (s State) valid() error {
 	if s.Phase == PhaseAwaitReviewer && s.PriorWorkProductHeadSHA == "" {
 		return fmt.Errorf("reviewer phase requires a work-product HEAD")
 	}
+	return nil
+}
+
+// validTerminalCoupling checks that a terminal result is present exactly when
+// the phase is terminal, and is itself well-formed.
+func (s State) validTerminalCoupling() error {
 	if s.Phase == PhaseTerminal {
 		if s.Terminal == nil {
 			return fmt.Errorf("terminal phase requires a terminal result")
@@ -494,7 +524,9 @@ func (s State) valid() error {
 		if err := s.Terminal.valid(); err != nil {
 			return fmt.Errorf("terminal result: %w", err)
 		}
-	} else if s.Terminal != nil {
+		return nil
+	}
+	if s.Terminal != nil {
 		return fmt.Errorf("non-terminal phase must not carry a terminal result")
 	}
 	return nil
@@ -503,34 +535,48 @@ func (s State) valid() error {
 func (o Observation) valid() error {
 	switch o.Kind {
 	case ObservationImplementerComplete:
-		if o.Implementer == nil || o.Verdict != nil || o.Failure != nil {
-			return fmt.Errorf("implementer-complete requires only an implementer payload")
-		}
-		if o.Implementer.HeadSHA == "" {
-			return fmt.Errorf("implementer HEAD SHA must not be empty")
-		}
-		if o.Implementer.DiffHash == "" {
-			return fmt.Errorf("implementer diff hash must not be empty")
-		}
+		return o.validImplementer()
 	case ObservationReviewerComplete:
-		if o.Verdict == nil || o.Implementer != nil || o.Failure != nil {
-			return fmt.Errorf("reviewer-complete requires only a verdict payload")
-		}
-		if !o.Verdict.Valid() {
-			return fmt.Errorf("reviewer verdict is not valid")
-		}
+		return o.validVerdict()
 	case ObservationFailed, ObservationCancelled:
-		if o.Failure == nil || o.Implementer != nil || o.Verdict != nil {
-			return fmt.Errorf("%s requires only a failure payload", o.Kind)
-		}
-		if o.Failure.Code == "" {
-			return fmt.Errorf("%s failure code must not be empty", o.Kind)
-		}
-		if o.Failure.Summary == "" {
-			return fmt.Errorf("%s failure summary must not be empty", o.Kind)
-		}
+		return o.validFailure()
 	default:
 		return fmt.Errorf("observation kind %q is not valid", o.Kind)
+	}
+}
+
+func (o Observation) validImplementer() error {
+	if o.Implementer == nil || o.Verdict != nil || o.Failure != nil {
+		return fmt.Errorf("implementer-complete requires only an implementer payload")
+	}
+	if o.Implementer.HeadSHA == "" {
+		return fmt.Errorf("implementer HEAD SHA must not be empty")
+	}
+	if o.Implementer.DiffHash == "" {
+		return fmt.Errorf("implementer diff hash must not be empty")
+	}
+	return nil
+}
+
+func (o Observation) validVerdict() error {
+	if o.Verdict == nil || o.Implementer != nil || o.Failure != nil {
+		return fmt.Errorf("reviewer-complete requires only a verdict payload")
+	}
+	if !o.Verdict.Valid() {
+		return fmt.Errorf("reviewer verdict is not valid")
+	}
+	return nil
+}
+
+func (o Observation) validFailure() error {
+	if o.Failure == nil || o.Implementer != nil || o.Verdict != nil {
+		return fmt.Errorf("%s requires only a failure payload", o.Kind)
+	}
+	if o.Failure.Code == "" {
+		return fmt.Errorf("%s failure code must not be empty", o.Kind)
+	}
+	if o.Failure.Summary == "" {
+		return fmt.Errorf("%s failure summary must not be empty", o.Kind)
 	}
 	return nil
 }
@@ -569,28 +615,28 @@ func cloneVerdict(verdict *RawVerdict) *RawVerdict {
 	if verdict == nil {
 		return nil
 	}
-	copy := *verdict
+	cloned := *verdict
 	// The workspace parser normalizes JSON null to an empty list. Preserve that
 	// contract at the kernel boundary as well so every persisted/published raw
 	// verdict and every later fix-up intent carries a non-nil flags slice.
-	copy.Flags = append([]string{}, verdict.Flags...)
-	return &copy
+	cloned.Flags = append([]string{}, verdict.Flags...)
+	return &cloned
 }
 
 func cloneTerminal(terminal *TerminalResult) *TerminalResult {
 	if terminal == nil {
 		return nil
 	}
-	copy := *terminal
-	copy.RawVerdict = cloneVerdict(terminal.RawVerdict)
-	return &copy
+	cloned := *terminal
+	cloned.RawVerdict = cloneVerdict(terminal.RawVerdict)
+	return &cloned
 }
 
 func cloneState(state State) State {
-	copy := state
-	copy.PriorVerdict = cloneVerdict(state.PriorVerdict)
-	copy.Terminal = cloneTerminal(state.Terminal)
-	return copy
+	cloned := state
+	cloned.PriorVerdict = cloneVerdict(state.PriorVerdict)
+	cloned.Terminal = cloneTerminal(state.Terminal)
+	return cloned
 }
 
 func cloneIntents(intents []Intent) []Intent {

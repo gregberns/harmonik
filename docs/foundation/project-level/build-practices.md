@@ -106,17 +106,25 @@ Reviewer emits a structured JSON verdict in the `Review-Verdict:` trailer. Three
 
 **Human review happens asynchronously after commit.** The user reads `git log` + diffs on their own cadence; catches what agents miss (premature abstraction, scope creep, subtle spec-misinterpretation, "technically works but wrong"). Human review is NOT a gate — nothing blocks on it.
 
-## Bug fixes require a reproducing scenario test
+## Bug fixes require a reproducing test at the lowest failing layer
 
 **2026-05-21 user direction.** Several runtime bugs in the 2026-05-21 dogfood session (hk-37zy8, hk-yjduq, hk-2hb2y, hk-5s7tg, hk-trjef) passed unit tests and reviewer agents but failed in live runs. Unit-level coverage is insufficient for behavior that only manifests across subsystem boundaries or under real process lifecycle. New rule:
 
 **Trigger.** Any bead labeled `bug`, OR any bead filed in response to a runtime failure observed in dogfooding (regardless of label).
 
-**Requirement.** The fix-commit MUST land alongside a scenario test (per `docs/methodology/TESTING.md` scenario tier) that reproduces the bug. The scenario test SHOULD be written first and committed in a failing state; the fix flips it green. Landing both in a single commit is acceptable when the bisect-history value is low — document the choice in the commit body under `## Test plan`.
+**Requirement.** The fix-commit MUST land alongside a test that reproduces the bug, **at the lowest layer that still fails before the fix.** The test SHOULD be written first and committed failing; the fix flips it green.
 
-**Exemptions.** Trivial typo/docs fixes; fixes whose reproduction requires an irreproducible environment (flaky third-party service, race only observed on a since-retired machine). Exemption MUST be named explicitly in the commit body under `## Risk` with the phrase `scenario-test exempt: <reason>`.
+**Choosing the layer — this is the part that was missing, and its absence cost 885 bead-named test files.** If a unit test can express the bug, it was a unit-level bug and a unit test is the correct and sufficient answer. If no unit test can express it — because the bug only appears across a subsystem boundary or under real process lifecycle, which is what the 2026-05-21 failures above had in common — then the scenario tier is genuinely correct, **and you must actually run it.** Writing a scenario-*shaped* assertion inside a unit test, or committing a scenario test you never ran, satisfies neither layer and is what this rule previously produced in combination with implementer-protocol F19.
 
-**Reviewer check.** `agent-reviewer` MUST verify the bug bead has a corresponding scenario test in the diff (new file under `tests/scenarios/` or new `Test*` function in an existing scenario file). If absent and no exemption is claimed → `REQUEST_CHANGES` with flag `missing-scenario-test`. If the exemption clause is present but unjustified (e.g. bug is reproducible from the bead description) → `BLOCK` with the same flag.
+If the scenario tier is the right layer and you cannot run it inside your dispatch budget, that is a signal the change is too big for one dispatch — report it and commit the smaller piece. Do not defer the gate.
+
+**Exemptions.** Trivial typo/docs fixes; fixes whose reproduction requires an irreproducible environment (flaky third-party service, race only observed on a since-retired machine). Name the exemption in the commit body with the phrase `scenario-test exempt: <reason>` as a plain line — **not** under a `## Risk` heading, which `.claude/implementer-protocol.md` forbids.
+
+**Reviewer check.** `agent-reviewer` MUST verify the bug bead has a reproducing test in the diff **at the layer the bug actually occupies**. A unit test in the existing `_test.go` is correct and sufficient when a unit test can express the bug. **Do NOT require the scenario tier merely because the bead is labeled `bug`** — require it only when the diff shows the bug crosses a subsystem boundary or depends on real process lifecycle, and in that case the commit MUST state the scenario test was actually run.
+
+If no reproducing test is present at any layer and no exemption is claimed → `REQUEST_CHANGES` with flag `missing-scenario-test`. If the exemption clause is present but unjustified (e.g. bug is reproducible from the bead description) → `BLOCK` with the same flag.
+
+**A unit test where a unit test suffices is NEVER a `missing-scenario-test` finding.**
 
 Cross-refs: `docs/methodology/TESTING.md` (scenario-tier definition); `.claude/skills/agent-reviewer/SKILL.md §Flag vocabulary` (flag registration); `CLAUDE.md §Daily loop` (dogfood is the bug-discovery channel).
 

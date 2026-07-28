@@ -26,9 +26,17 @@ Then continue. You can amend (`git commit --amend`) or squash (`git rebase -i HE
 
 Skip the WIP only when the bead is a one-line typo/cross-reference fix.
 
-## Helper-prefix discipline
+## Where tests go
 
-When adding tests to an existing Go package, package-level test helpers MUST use a per-bead camelCase prefix (e.g., `leaseFixtureWriteLockAtomic`, NOT `leaseFixture_writeLockAtomic`). The brief tells you the prefix; if it doesn't, derive one from the bead's concept (e.g., `auditFixture`, `pidfileFixture`). Never collide with sibling-bead helpers.
+**Add tests to the existing `_test.go` file for the code you changed.** Do not create a new test file named after your bead. If two beads touch the same test file, the merge conflict is correct and cheap — it tells you two people tested the same behavior. A per-bead file hides that.
+
+Name a test file after the *behavior* it protects, never after a ticket.
+
+> This section previously mandated a per-bead camelCase prefix for package-level test *helpers*, to stop parallel worktrees colliding. Agents generalized it from helpers to files and produced **885 bead-named test files, 255,664 lines — 52% of all test code in the repo**, much of it duplicate coverage of the same behavior. Colocation solves the duplication the prefix rule caused. If you genuinely need a helper name that will not collide, derive it from the *behavior*, not the bead.
+
+⚠ **Colocation does not fully replace the old rule.** Go helper names are package-scoped, so two agents in separate worktrees can add the same helper name to two *different* files in one package, merge cleanly, and break the build. Grep the package for the name before declaring a new package-level helper.
+
+**Test through the entry point the daemon or a user actually calls.** If your test needs a new `export_*_test.go` entry to reach an unexported symbol, that is a report that the seam is in the wrong place — say so in your commit rather than widening the shim.
 
 ## Lint compliance (project `.golangci.yml` enforces)
 
@@ -66,8 +74,9 @@ When a Go file contains aligned Unicode box-drawing characters (e.g. `│`, `─
 
 ## Agent review (REQUIRED before non-trivial commits)
 
-Before committing, run the `agent-reviewer` subagent to produce the verdict the
-commit-msg hook requires. Use the `Agent` tool with `subagent_type: "agent-reviewer"`:
+Before committing, run the `agent-reviewer` subagent to produce the required verdict
+trailer. (Git hooks are retired — this is agent-enforced, and `/check` validates after
+the commit.) Use the `Agent` tool with `subagent_type: "agent-reviewer"`:
 
 ```
 Agent(subagent_type="agent-reviewer", prompt="""
@@ -109,8 +118,10 @@ EOF
 The quoted `'EOF'` prevents shell expansion. After committing, verify with `git show HEAD --format='%s'` — output MUST be ONLY the subject line, NOT bullets collapsed in.
 
 Do NOT add `## Why / ## What / ## Spec alignment / ## Test plan / ## Risk` sections.
-The `Reviewed-By:` and `Review-Verdict:` trailers are required by the commit-msg hook
-for non-trivial commits. Replace the `Review-Verdict:` value with the JSON the
+(`docs/foundation/project-level/build-practices.md` once directed a `scenario-test exempt:`
+note under `## Risk`; that is now a plain trailer-style line, so the two agree.)
+The `Reviewed-By:` and `Review-Verdict:` trailers are required for non-trivial commits —
+**agent-enforced, not hook-enforced.** Git hooks are retired; run `/check` after committing. Replace the `Review-Verdict:` value with the JSON the
 `agent-reviewer` subagent returned. Use `Trivial: true` trailer only for typos and
 whitespace fixes.
 
@@ -179,7 +190,11 @@ You will not get an answer — the orchestrator dispatches you and moves on. **M
 - `gofmt -d ./<target-package>/` (must show empty diff)
 - Optional: `golangci-lint run ./<target-package>/...` if available locally
 
-**F19 — Never run daemon-booting or scenario-tagged suites.** Tests tagged `//go:build scenario` spin up real daemons and routinely exceed your wall-clock budget, causing Exit-137 (SIGKILL). Run only the targeted fast unit-test gate for your package. If a scenario test is the natural gate for your bead, skip it here and note in your commit that the scenario-test gate is deferred.
+**F19 — Do not run daemon-booting or scenario-tagged suites.** Tests tagged `//go:build scenario` spin up real daemons and routinely exceed your wall-clock budget, causing Exit-137 (SIGKILL). Run the targeted fast unit-test gate for your package instead.
+
+**If the natural gate for your bead is a scenario test you cannot run, that is a signal the change is too big for one dispatch — not a licence to write the test anyway and defer it.** Say so in your report and commit the smaller piece. Writing a scenario-shaped test at the unit layer and never running it is how this repo accumulated 885 bead-named test files that proved nothing.
+
+**Put the test at the lowest layer that still fails before your fix.** If a unit test can express the bug, it was a unit-level bug. If no unit test can, the bug crossed a boundary and the scenario tier is genuinely the right layer — which is the case F19 is telling you to escalate rather than fake.
 
 If any of the above fails, fix before committing. Do not commit broken code expecting the reviewer to flag it.
 

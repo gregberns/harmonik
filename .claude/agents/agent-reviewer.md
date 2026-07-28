@@ -80,8 +80,19 @@ Per `docs/methodology/TESTING.md` layer expectations for the change scope:
 - Does the diff add tests at the appropriate tier (unit / integration / scenario)?
 - Are tests meaningful — do they exercise the contract, not just call the function?
 - Are there missing edge cases the bead body implies?
+- Is the test at the **lowest layer that would still fail before the fix**? A scenario-shaped assertion living in a unit test is a misplaced test, not a thorough one.
 
-Findings → flag: `missing-tests`
+**Three mechanical checks — no judgment required, apply them literally:**
+
+| Observed in the diff | Verdict | Flag |
+|---|---|---|
+| A new `_test.go` filename containing a bead ID — `hk`-prefixed (`*_hkz0f02_test.go`) or bare (`ar025_*`, `hqwn57_*`, `sh_inv005_*`). Treat any alphanumeric token that is an issue key rather than a behavior word as a bead ID. | `REQUEST_CHANGES` | `bead-named-test` |
+| A new or widened `export_*_test.go` entry | `REQUEST_CHANGES` | `test-only-seam` |
+| An `export_*_test.go` entry exporting a **pointer to a production global** | `BLOCK` | `test-only-seam` |
+
+Rationale: bead-named test files reached 885 files / 255,664 lines — 52% of all test code — before anyone noticed the duplication. Pointer exports let tests mutate production state and have already caused two real `-race` data races.
+
+Findings → flag: `missing-tests`, `bead-named-test`, `test-only-seam`
 
 ### 4. Unwanted-abstraction detection
 
@@ -130,15 +141,18 @@ verdict explicitly names required field/struct identifiers:
 
 Findings → flag: `spec-field-name`
 
-### 8. Scenario test for bug beads
+### 8. Reproducing test for bug beads
 
-Per `docs/foundation/project-level/build-practices.md §Bug fixes require a reproducing scenario test`: if the bead is labeled `bug` or was filed against a runtime failure observed in dogfooding:
+Per `docs/foundation/project-level/build-practices.md §Bug fixes require a reproducing test at the lowest failing layer`: if the bead is labeled `bug` or was filed against a runtime failure observed in dogfooding:
 
-- Verify the diff adds (or modifies) a scenario test that exercises the bug's repro path.
-- Confirm the test would have failed before the fix — either by inspection of the assertion or by an explicit note in the commit body.
-- If no scenario test is present, check for an exemption clause (`scenario-test exempt: <reason>`) in the commit body's `## Risk` section. Accept only trivial-fix or irreproducible-environment justifications.
+- Verify the diff adds (or modifies) a test exercising the bug's repro path **at the lowest layer that would still fail before the fix**. A unit test is correct and sufficient when a unit test can express the bug — **do NOT flag it for not being a scenario test.**
+- Require the scenario tier only when the diff shows the bug crosses a subsystem boundary or depends on real process lifecycle. In that case the commit body MUST state the scenario test was actually run; an unrun scenario-shaped assertion is not a passing test.
+- Confirm the test would have failed before the fix — by inspection of the assertion or an explicit note in the commit body.
+- If no reproducing test is present at any layer, check for an exemption clause (`scenario-test exempt: <reason>`) as a plain line in the commit body — **not** under a `## Risk` heading, which `.claude/implementer-protocol.md` forbids. Accept only trivial-fix or irreproducible-environment justifications.
 
-Missing scenario test, no exemption → `REQUEST_CHANGES` with `missing-scenario-test`.
+**A unit test where a unit test suffices is NEVER a `missing-scenario-test` finding.**
+
+Missing reproducing test at any layer, no exemption → `REQUEST_CHANGES` with `missing-scenario-test`.
 Exemption claimed but bug is clearly reproducible from the bead body → `BLOCK` with `missing-scenario-test`.
 
 Findings → flag: `missing-scenario-test`
@@ -152,6 +166,8 @@ Findings → flag: `missing-scenario-test`
 | `spec-divergence` | Diff diverges from a normative spec section. |
 | `idiom-violation` | Go idiom or linter rule violated. |
 | `missing-tests` | Inadequate test coverage for the change scope. |
+| `bead-named-test` | New `_test.go` filename contains a bead ID. |
+| `test-only-seam` | New or widened `export_*_test.go` entry. `BLOCK` if it exports a pointer to a production global. |
 | `unwanted-abstraction` | Agent added abstraction the bead didn't request. |
 | `scope-creep` | Diff exceeds the bead's stated scope. |
 | `bead-mismatch` | Diff does not match the bead body's description. |
@@ -160,7 +176,7 @@ Findings → flag: `missing-scenario-test`
 | `rule-file-bundled` | Rule-file change bundled with code change (must be separate commit). |
 | `constitution-edit-missing-trailer` | CONSTITUTION.md touched without `Constitution-Edit-Approved-By:` trailer. |
 | `x-missing-wire-up` | New symbol/goroutine/subscription not wired into production composition root. |
-| `missing-scenario-test` | Bug bead has no reproducing scenario test in the diff and no valid exemption. |
+| `missing-scenario-test` | Bug bead has no reproducing test at ANY layer in the diff and no valid exemption. Never fire this because a correct unit test is not a scenario test. |
 | `spec-field-name` | Diff uses a wrong field/struct/type name vs. the normative name in the spec or bead enrichment. |
 
 ---

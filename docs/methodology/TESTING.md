@@ -29,7 +29,7 @@ Harmonik tests at six layers, each answering a different question.
 - **No external dependencies.** No git, no filesystem (beyond `t.TempDir()`), no subprocesses, no network, no LLM.
 - **Deterministic.** Same input, same output, every run.
 - **Run:** always, on every push. Must complete in under 30 seconds for the full package.
-- **Coverage target:** 80% line coverage per package; 100% coverage of error paths for code that parses external input (policy YAML, workflow DOT, event JSONL, checkpoint commit trailers).
+- **Coverage obligation:** every error path exercised for code that parses external input (policy YAML, workflow DOT, event JSONL, checkpoint commit trailers). **No line-percentage target** — coverage is a diagnostic, never a goal. The question is *which real behavior is unprotected*, not *what percent*.
 - **Examples:** edge-selection cascade given a state and candidate edges; outcome-payload parsing; workflow-definition DOT ingestion.
 
 ### 2. Integration tests
@@ -284,8 +284,15 @@ The flake is the messenger for a **genuine product or infrastructure defect**. T
 ## Coverage enforcement
 
 - **CI gate.** The unit + integration + scenario suite passes on every push; the crash-recovery fast subset passes on every push. Nightly: full property suite, full crash-recovery suite, conformance suite (once implemented).
-- **Coverage thresholds** (per package): 80% line, 100% error-path for boundary parsers. CI fails the merge if thresholds regress.
-- **No skipped tests in main.** A skipped test is a lie about coverage; either fix, delete, or document as `//go:build integration` behind a gate.
+- **Coverage thresholds — the authority is `scripts/coverage-gate.sh`, not this document.** It enforces a
+  90.0% floor, 95.0% for core packages, and a 0.3pp regression cap against the checked-in
+  `coverage.baseline`; `scripts/cmd-coverage-gate.sh` ratchets `cmd/**`. Both run from `make check`.
+  **CI does not run either** — CI runs `check-short`. Do not restate the numbers here; they drift.
+  (This bullet previously said "80% line … CI fails the merge if thresholds regress." Both halves were
+  false: the wrong number, and a CI gate that does not exist.)
+- **A skipped test is a lie about coverage** — fix it, delete it, or put it behind a build tag. The one
+  exception is the flake-policy quarantine described above; a quarantined test must carry the bead ID
+  that will remove it.
 
 ## Testing during the bootstrap phase
 

@@ -390,7 +390,9 @@ List each profile (e.g., "Core MVH", "Extension X"). For each: which requirement
 
 ### 10.2 Test-surface obligations
 
-For each profile, the normative test obligations the implementation MUST satisfy. Cite the test layer ([testing.md §<layer>]) and the requirement IDs each test proves.
+For each profile, the normative test obligations the implementation MUST satisfy, stated as **observable behavior** and citing the test layer ([testing.md §<layer>]).
+
+> **Do NOT ask for a test that proves a requirement ID exists.** Requirement-ID→implementation traceability is a *generated report*, never a test. This section previously said "cite … the requirement IDs each test proves," which produced `internal/specaudit` — 129 test files, 37,927 lines, that walked `specs/*.md` asserting the markdown contained particular headings. They executed zero product code, so they could not fail when the code broke or pass when it was fixed. 129 files removed 2026-07-27; 3 product-importing sensors plus `doc.go` survive in `internal/specaudit/`. See `plans/2026-07-27-delete-and-rewrite/`.
 
 > INFORMATIVE: During bootstrap (before [testing.md] exists) cite the test obligation in prose and add an Open Question linking to it. Migrate to the spec reference within one revision cycle once testing.md lands.
 

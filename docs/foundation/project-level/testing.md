@@ -10,7 +10,7 @@
 4. **Mocking:** hand-written fakes in `internal/<pkg>/faketest/`. No `gomock`, no `mockery`. Rationale: hand-written fakes are ~20 lines and an agent can read them; generated mocks hide behavior.
 5. **Golden files:** `gotest.tools/v3/golden`. Updated with `go test ./... -update`.
 6. **Subprocess orchestration in tests:** stdlib `os/exec` wrapped by a thin `internal/proctest` helper. No external test-harness libraries.
-7. **Coverage tool:** `go test -cover` + `go tool cover`. Thresholds enforced by a `scripts/coverage-gate.sh` in CI.
+7. **Coverage tool:** `go test -cover` + `go tool cover`. Thresholds are enforced by `scripts/coverage-gate.sh`, which runs from `make check` — **not from CI**, which runs `check-short`.
 8. **Race detector:** `-race` on every CI run of unit + integration + scenario suites.
 9. **Build tags:** `//go:build integration` / `scenario` / `crash` / `nightly`. Default `go test ./...` runs unit + property only. CI explicitly selects tiers.
 10. **Naming:** `TestXxx` for unit, `TestIntegration_Xxx` for integration, `TestScenario_Xxx` for scenario, `TestCrash_Xxx` for crash-recovery, `TestProp_Xxx` for rapid properties.
@@ -63,7 +63,7 @@ Rationale for the tight list: one way to do each thing, enforced by `tools/go-li
 | Boundary parsers (DOT, YAML policy, JSONL event, commit trailer) | **95%** | 100% of error returns + malformed-input fuzz corpus |
 | Handler adapters (`claude-code`, `claude-twin`) | **90%** real + 100% twin | see handler-divergence below |
 | Utility / glue packages | **85%** | — |
-| Overall repo (floor) | **90%** | CI fails the merge if overall drops by >0.3% vs main |
+| Overall repo (floor) | **90%** | 0.3pp regression cap — enforced by `make check`, **not by CI** |
 
 Rule to prevent coverage-gaming: a line marked `// unreachable: <why>` + covered by an assert-panic test counts as covered. This blocks agents from writing bogus assertions to hit a line that can't fire in practice.
 
@@ -117,7 +117,8 @@ Nightly (not merge-blocking, but opens auto-PR on failure): full crash site set,
 1. **⚑ Library allowlist enforced at CI.** Agents cannot introduce a second mocking or assertion library without a human edit to the allowlist. Tight, but prevents stylistic drift.
 2. **⚑ Hand-written fakes as MVH default; hybrid on the table later.** Start with hand-written fakes in `faketest/`. If interface count exceeds ~10 or fakes show clear rot (copy-paste drift, out-of-sync with the real interface), a hybrid (hand-written fakes + generated mocks for cleanly-typed, high-arity interfaces) becomes acceptable — reviewable as a one-shot decision, not a blocker for MVH start.
 3. **⚑ Budget cap for real-agent tests is $5/nightly.** Drawn from nowhere; user should confirm acceptable. Hard cap enforced by a wrapper, not a soft convention.
-4. **⚑ 95% line coverage on core subsystems** (user-endorsed 2026-04-24). Matches user's Python-practice preference; forces modularity + error-path discipline. Aggressive by Go standards (industry median 70-80%). Revisit only if velocity demonstrably bites.
+4. **⚑ 95% line coverage on core subsystems** (user-endorsed 2026-04-24). Matches user's Python-practice preference; forces modularity + error-path discipline. Aggressive by Go standards (industry median 70-80%).
+   ⚠ **Revisited 2026-07-27 and downgraded from goal to diagnostic.** Percentage targets reward volume, and volume is what this repo got: 488k lines of test code against 216k of production, including 885 test files named after bead IDs (255,664 lines, 52% of all test code) that largely re-tested the same behavior. The numeric floors below remain as a *regression alarm* — `scripts/coverage-gate.sh` is their single authority — but the question a reviewer asks is **which real behavior is unprotected**, never what percent. See `plans/2026-07-27-delete-and-rewrite/NEXT_STEPS.md` §2.
 5. **⚑ Fault injection via runtime env-var, not compile-tagged dead code.** Simpler; runtime check cost is negligible (nanoseconds per site). Prior compile-tag approach was over-engineered for solo-dev MVH. A single binary configuration is used in prod and test alike; `HARMONIK_FAULTPOINT_ARM` arms sites at test launch.
 6. **⚑ `require` (not `assert`) everywhere.** A failed precondition stops the test. Trades readability of multi-assertion tests for fewer cascading failures. Agents get one failure at a time, which is easier to debug.
 

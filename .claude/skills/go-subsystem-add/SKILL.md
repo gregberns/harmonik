@@ -210,11 +210,16 @@ subsystem tests. Confirm the following before committing:
 
 1. The new `<subsystem>_test.go` compiles against the current `internal/testhelpers`
    surface — run `go test ./internal/<subsystem>/...`.
-2. If you introduce a per-bead test helper for this subsystem, use the camelCase
-   prefix convention from `.claude/implementer-protocol.md §Helper-prefix discipline`.
-   Derive the prefix from the subsystem concept (e.g., `agentrunnerFixture`,
-   `hookFixture`). Helpers MUST be declared in `*_test.go` files only — never
-   in production files.
+2. Add tests to the existing `_test.go` for the code under test, per
+   `.claude/implementer-protocol.md §Where tests go`. Do NOT create a per-bead test
+   file or a per-bead helper prefix — that convention was deleted 2026-07-27 after it
+   produced 885 bead-named test files. Name a package-level helper after the
+   *behavior* it sets up (e.g. `newLeaseFixture`), never after a bead.
+   ⚠ Helper names are package-scoped, so colocation alone does not guarantee
+   uniqueness across parallel worktrees: two agents can add the same helper name to
+   two *different* files in one package, merge cleanly, and break the build. Grep the
+   package for the name before declaring a new package-level helper.
+   Helpers MUST be declared in `*_test.go` files only — never in production files.
 3. If you need a shared fixture file for the subsystem, name it
    `testfixture_test.go` (matching the convention in `internal/lifecycle` and
    `internal/workspace`).

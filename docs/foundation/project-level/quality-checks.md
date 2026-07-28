@@ -106,6 +106,12 @@ issues: { max-issues-per-linter: 0, max-same-issues: 0, exclude-use-default: fal
 
 They ratchet via `--new-from-rev`, so existing functions are grandfathered but a function a diff rewrites is not. Excluded paths: `_test.go`, `internal/scenario/`, `internal/specaudit/`.
 
+⚠ **Test code therefore has no complexity ceiling of any kind** — 488k lines of it accumulated with 1,035 functions over the 100-line `funlen` limit. Removing `_test.go` from the exclusion was attempted 2026-07-27 and **reverted**: validated against `--new-from-rev=HEAD~1` it reported clean, but the merge-blocking gate is `check-short`'s `--new-from-rev=origin/main` (Makefile), where the change took this branch from 163 to 181 findings — 13 `gocognit`, 4 `cyclop`, 1 `funlen`, several in ordinary table-driven tests rather than bead-named files. Deferred to `hk-csmfe` and sequenced **after** the 885-file bead-named-test deletion, since most of those 18 live in code that deletion removes. **Validate any retry at `origin/main`, never at `HEAD~1`.**
+
+Declaration-line anchoring also grandfathers a function only while its declaration line is untouched — a rename or signature change re-anchors it.
+
+⚠ **Known hole in the ratchet:** a function that was already over the ceiling when written never reports at all, and an explicit `//nolint` defeats it entirely. `beadRunOne` was born at 119 lines, is 2,289 today, and has never produced a finding — it also carries `//nolint:funlen,gocognit,cyclop`. Tracked as `hk-csmfe`.
+
 Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Style-taste linters; noise without catching real defects at MVH scope.
 
 **Path-scoped exclusions worth knowing** (`.golangci.yml §exclusions.rules`): `tools/` is excluded from the *whole* `forbidigo` and `noctx` linters; `internal/testhelpers/` from the whole `forbidigo` linter — so both get `panic` **and** `fmt.Print*` for free, not just one of them. `cmd/` gets a narrower third carve-out: only the `fmt.Print*` ban (printing to stdout is what a CLI does), so `panic` stays banned there.

@@ -15,11 +15,23 @@ authority:
     - INTEGRATED-EXECUTION-PLAN.md
     - WORKTREE-RUNBOOK.md
   base_policy:
-    before_integration_pr_merge: origin/integration/phase-reviewloop-20260725
+    current: origin/phase1-session-restart-substrate
     after_integration_pr_merge: origin/main
     claim_rule: >-
       The coordinator resolves the current allowed ref to an exact base_sha at
       claim time. A mutable ref is never a worker base.
+    correction_note: >-
+      The former before_integration_pr_merge value
+      origin/integration/phase-reviewloop-20260725 no longer described practice.
+      The active line diverged from it at 498ad4450; the last ten claims all
+      based on phase1-session-restart-substrate, which is NOT a descendant of the
+      integration ref. Following the stale policy is what let CQ-DEF-01 be marked
+      integrated while its code was absent from the active branch. Base new work
+      on origin/phase1-session-restart-substrate until the integration PR merges.
+    open_divergence: >-
+      44 commits on origin/integration/phase-reviewloop-20260725 are still not in
+      the active branch, including the reviewloop-decoupling stack. Reconciling
+      them is a human merge/PR decision, not a worker task.
 
 state_model:
   phase: [triage, design, ready, implement, review, integrate, verify, complete]
@@ -826,7 +838,15 @@ tasks:
       claimed_at: 2026-07-26T17:17:11Z
     card_review: {state: approved, reviewer: index_usability_audit, artifact: tasks/evidence/TASK-PACK-REVIEW.md, verdict: APPROVE}
     review: {state: approved, reviewer: cq_def_01_review, artifact: tasks/evidence/CQ-DEF-01-REVIEW.md, verdict: APPROVE}
-    integration: {state: integrated, commit: 6b7b78c312cd6a33a3409f5b8cd5ba2ded20fda4, integrated_sha: 8478de9fa104a69af4df569d5804c5730b56ad22}
+    integration: {state: integrated, commit: 6b7b78c312cd6a33a3409f5b8cd5ba2ded20fda4, integrated_sha: c9dec648bc4c00814fe506de6ff0e96457427362}
+    integration_note: >-
+      Corrected 2026-07-27. The prior integrated_sha 8478de9fa lives only on the
+      integration line, not the active branch: origin/integration/phase-reviewloop-20260725
+      is NOT an ancestor of phase1-session-restart-substrate, so this task was
+      recorded complete while its code was absent from the active branch. Rescued onto the active branch as
+      3d9e99fab (fix) + 2ddc65619 + c9dec648b (tests), cherry-picked with -x.
+      Verified present: internal/daemon/queue_default_harness_cqdef01_test.go and
+      internal/orchestrator/select_queue_default_harness_test.go.
     proof: green
     required_proof_status:
       targeted: green

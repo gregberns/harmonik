@@ -74,19 +74,29 @@ that 'works' or is hooked up is the queue + beads processing. Comms, crews, keep
 **The reviewer is wrongly fused INTO the core** — welded into the work loop instead of being a
 switchable stage, which is a large part of why `beadRunOne` is 2,289 lines. Unfusing it is in scope.
 
-**TWO OPEN QUESTIONS — operator adjudication required, NOT program assumptions.** Both were written
-here as settled on 2026-07-28 and should not have been; recorded now as open:
+**The socket listener stays OUT of the core — operator decision, 2026-07-28.** The daemon opens a Unix
+socket and the CLI is a thin client over it; `specs/process-lifecycle.md` PL-003 says clients MUST
+communicate with the daemon *exclusively* that way. Operator: *"I'd think it would be best to structure
+that out of the core — then the way it communicates with the core is essentially indirect.
+`process-lifecycle.md` is a spec that probably needs to be updated. If this is a critical aspect and/or
+if it is holding back refactor, then it should probably be extracted."* So the *placement* is decided —
+the socket is outside the core, the core is reached indirectly, and the socket is one caller among
+possible others (`harmonik run <bead-id>` already runs work without it). The *extraction work* is not
+scheduled: **extract it when it blocks the decomposition, and amend PL-003 rather than obey it.**
 
-- **The `$TMUX` fail-fast.** The daemon cannot boot outside a tmux session although the substrate is
-  meant to be pluggable. Removing it **reopens locked decision #4** — *"Agent runner (S04): NTM-wrapped
-  Go. Inspectability via tmux is a requirement, not a preference"* — and contradicts
-  `specs/process-lifecycle.md` PL-028b, which calls a daemon reaching the dispatch loop without `TMUX`
-  a defect.
-- **The socket listener's place.** §3 puts it outside the core because `harmonik run <bead-id>` runs
-  work without it. But `specs/process-lifecycle.md` PL-003 says clients MUST communicate with the
-  daemon *exclusively* through this socket, and `queue submit` has no non-socket path.
+**And the sequel is named, not scheduled.** Operator, same day: *"once we have the core system working
+again, before we do anything else we probably need to think about how to build a dataplane that
+everything else communicates on/through."* That is the next design question after §6's "done" — it is
+not part of this program and must not be started early.
 
-Neither is decided. Phase 3 must not act on either without an operator reversal or a spec amendment.
+**ONE OPEN QUESTION — low stakes, deliberately parked.** The **`$TMUX` fail-fast**: the daemon cannot
+boot outside a tmux session although the substrate is meant to be pluggable. Removing it **reopens
+locked decision #4** — *"Agent runner (S04): NTM-wrapped Go. Inspectability via tmux is a requirement,
+not a preference"* — and contradicts `specs/process-lifecycle.md` PL-028b, which calls a daemon reaching
+the dispatch loop without `TMUX` a defect. Nothing is blocked by it: running inside tmux costs nothing.
+It becomes a real question only if a swappable agent-launch substrate becomes a real goal. Phase 3 must
+not act on it without an operator reversal or a spec amendment.
+
 Note also that `specs/execution-model.md` EM-061 already defines "Core" conformance as a larger set
 than §3's list — §6's "nothing else is required" is this program's target, not a redefinition of that
 normative term.

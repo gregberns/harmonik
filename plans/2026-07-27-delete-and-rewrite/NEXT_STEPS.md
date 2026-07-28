@@ -501,11 +501,15 @@ Three consequences that should settle arguments later:
    boundary of the rewrite's first target. Adding to it requires a reason; everything absent from it is
    deferred by default rather than by argument.
    **Comms, crew, captain, keeper, dashboard, live-state, subscribe and the sentinel are all outside
-   it** — as is the socket listener itself (`harmonik run <bead-id>` already runs work without it).
-   Two things are wrongly fused INTO the core and must come out: the hard `$TMUX` fail-fast at startup
-   (the daemon cannot boot outside tmux although the substrate is meant to be pluggable), and the
-   reviewer, which is welded into the work loop instead of being a switchable stage — a large part of
-   why `beadRunOne` is 2,289 lines.
+   it** — as is the socket listener itself (`harmonik run <bead-id>` already runs work without it);
+   operator decision 2026-07-28, recorded in `CHARTER.md` §3, extracted when it blocks the
+   decomposition and PL-003 amended rather than obeyed.
+   **The reviewer is wrongly fused INTO the core and must come out** — welded into the work loop
+   instead of being a switchable stage, a large part of why `beadRunOne` is 2,289 lines.
+   The hard `$TMUX` fail-fast is a **separate case and is NOT scheduled**: this document previously
+   listed it alongside the reviewer as something that "must come out", which `CHARTER.md` §3 now
+   supersedes. Removing it reopens locked decision #4, nothing is blocked by it, and Phase 3 must not
+   act on it without an operator reversal or a spec amendment.
 
 ---
 
@@ -833,6 +837,13 @@ next to it on `declared-but-deferred`. This is a `PRINCIPLES.md` §7 lever and w
 existing linter can express it — check `golangci-lint`'s `goconst`, `usestdlibvars`, and whether a
 `forbidigo`/`ruleguard` pattern can catch "string literal equal to the value of a declared constant of
 a named type." **Prefer configuring a linter already in `.golangci.yml` over writing a new gate.**
+
+**P. Any unrecognized `harmonik` subcommand starts the daemon.** `harmonik status`, `harmonik daemon
+status` — anything not in the dispatch table falls through to the daemon-start path, which then exits on
+the `$TMUX` guard. Known issue, recorded not chased: the consequence for this program is that there is
+**no read-only status surface outside tmux**, so "is the core running?" cannot be answered without
+booting something. Worth an unknown-subcommand error before the partition work needs to inspect a
+running core.
 
 **I. Fresh worktrees have no `.tools/`.** Every agent dispatched into a new worktree hits
 `make check-fast` failing immediately at `fmt-check` with `gofumpt: No such file or directory`. Either

@@ -36,7 +36,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -46,6 +45,7 @@ import (
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/hookrelay"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -1261,72 +1261,26 @@ EXAMPLES
 
 	// hk-kqdpf.4: wire tmuxSubstrate into the daemon composition root.
 	//
-	// Fail fast when $TMUX is not set: the daemon requires an active tmux session
-	// so that handler subprocesses appear as new windows inside that session.
-	// The user may run from any existing session — the prefix-enforcement done by
-	// hk tmux-start (PL-006a) applies only to that subcommand, not to daemon start.
+	// tmux hosting is RESOLVED, not demanded. An ambient $TMUX client is the
+	// preferred host and remains the operator's inspection surface, but its
+	// absence no longer refuses the boot: resolveTmuxHosting falls back to the
+	// deterministic per-project session and creates it. tmuxhosting.go carries
+	// the three outcomes and the operator direction (2026-07-28) that reopened
+	// locked decision #4 to allow this.
 	//
-	// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
-	if os.Getenv("TMUX") == "" {
-		fmt.Fprintln(os.Stderr, "harmonik: $TMUX is not set — run hk inside a tmux session or via hk tmux-start")
-		return 1
-	}
-
-	// hk-9vp51 + hk-u9ji: resolve the implementer spawn-target session at boot
-	// from the LIVE session the daemon runs inside, then EXCLUDE system sessions
-	// that must not receive implementer windows.
+	// Missing tmux ENTIRELY is still fatal for the tmux substrate — every spawn
+	// routes through `tmux new-window`, so booting would be a lie. It is only a
+	// degradation for the structured Codex driver, which owns child stdio.
 	//
-	// We ask tmux for the current session via `display-message -p
-	// '#{session_name}'` (a direct exec, not OSAdapter, because no window handle
-	// exists yet; it runs on the signal ctx so a SIGINT during boot cancels it
-	// like every other tmux call here). That returns whatever session the daemon
-	// was launched inside:
-	//   - operator's `hk tmux-start` session, or an ambient `harmonik` session →
-	//     use it verbatim; it provably exists right now so SpawnWindow can never
-	//     hit "session does not exist".
-	//   - the old per-project supervisor `hk-daemon-supervise` session, OR the
-	//     new flywheel shim session `harmonik-<hash>-flywheel` (daemon inherited
-	//     $TMUX on supervisor-revive via DaemonWatchdog — see hk-u9ji) →
-	//     fall back to the deterministic per-project DefaultSessionName and
-	//     EnsureSession it, so implementer windows land in the daemon's own
-	//     session, NOT the system session.
-	//
-	// This deliberately does NOT switch the whole mechanism to a boot-time
-	// deterministic name (the original sub-fix #3 did that and the created
-	// session did not persist to dispatch time → every spawn failed in 0.6s,
-	// reverted fe94e0b1). We keep the always-exists live session and only depart
-	// from it for the unusable system-session cases.
-	liveSession := ""
-	if out, dmErr := exec.CommandContext(ctx, "tmux", "display-message", "-p", "#{session_name}").Output(); dmErr != nil {
-		// display-message failure is non-fatal: ResolveDaemonSpawnSession treats
-		// an empty live session as "force fallback to the ensured daemon session".
-		fmt.Fprintf(os.Stderr, "harmonik: tmux display-message failed (%v); falling back to deterministic daemon session\n", dmErr)
-	} else {
-		liveSession = strings.TrimSpace(string(out))
-	}
-	sessionName, needEnsureSession := tmux.ResolveDaemonSpawnSession(projectDir, liveSession)
-
-	// Probe tmux version (≥ 3.0 required for -e env-injection per PL-021b).
+	// Spec ref: specs/process-lifecycle.md PL-021a, PL-021b item 3 and PL-028b all
+	// mandate the fail-fast this replaces. The full amendment surface is named —
+	// not made — in the SPEC DEBT block at the top of tmuxhosting.go.
 	tmuxAdapter := tmux.OSAdapter{}
-	if probeErr := tmuxAdapter.ProbeTmux(ctx); probeErr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik: tmux probe failed: %v\n", probeErr)
-		return 1
-	}
-
-	// hk-9vp51 + hk-u9ji: when we fell back to the deterministic daemon-owned
-	// session (live session was the supervisor's, the flywheel's, or
-	// display-message failed), ensure it exists BEFORE constructing the substrate.
-	// A detached session with a live shell persists for the daemon's whole
-	// lifetime, and the #4 coordinator reaper only targets "-flywheel" sessions
-	// (never this "-default" one), so it is guaranteed present at dispatch time.
-	// When we kept the live session (needEnsureSession=false) it already exists —
-	// we are running inside it — so we must NOT re-create it.
-	if needEnsureSession {
-		if ensErr := tmuxAdapter.EnsureSession(ctx, sessionName, projectDir); ensErr != nil {
-			fmt.Fprintf(os.Stderr, "harmonik: cannot ensure daemon tmux session %q: %v\n", sessionName, ensErr)
-			return 1
+	hosting := resolveTmuxHosting(ctx, projectDir, tmuxAdapter, os.Stderr)
+	if !hosting.Available {
+		if code := reportNoTmuxHosting(hosting, tmuxSubstrateSelected(), os.Stderr); code != 0 {
+			return code
 		}
-		fmt.Fprintf(os.Stderr, "harmonik: spawning implementer windows into daemon-owned session %q (ambient session was supervisor/flywheel/empty)\n", sessionName)
 	}
 
 	// hk-xb5yi: resolve spawn cap. HARMONIK_MAX_CONCURRENT_SESSIONS env var
@@ -1335,18 +1289,20 @@ EXAMPLES
 	maxSessions := spawnCapFromEnv(maxConcurrentFlag)
 
 	// hk-9ptu: build substrate options; add session keepalive when the daemon owns
-	// the session (needEnsureSession=true → supervisor-revive or display-message
-	// failure boot path). On this path the daemon is responsible for keeping the
-	// "-default" session alive for its entire lifetime. The keepalive goroutine
-	// complements the reactive hk-yaj ErrNoSession self-heal in SpawnWindow by
-	// proactively recreating the session between dispatches so a killed session
-	// does not cause a fleet-wide launch_initiated outage.
+	// the session (hosting.NeedKeepalive). Three boot paths reach it: $TMUX unset
+	// (the common one since 2026-07-28), supervisor-revive into the flywheel /
+	// supervisor session, and display-message failure inside a tmux client. On all
+	// three the daemon is responsible for keeping the "-default" session alive for
+	// its entire lifetime. The keepalive goroutine complements the reactive hk-yaj
+	// ErrNoSession self-heal in SpawnWindow by proactively recreating the session
+	// between dispatches, so a killed session does not cause a fleet-wide
+	// launch_initiated outage.
 	substrateOpts := []daemon.TmuxSubstrateOption{
 		daemon.WithSpawnCap(maxSessions),
 		daemon.WithSpawnStagger(spawnStaggerFlag),                            // hk-hzj: spread concurrent cold-starts; 0 = disabled
 		daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir)), // fleet-portability T2
 	}
-	if needEnsureSession {
+	if hosting.NeedKeepalive {
 		substrateOpts = append(substrateOpts, daemon.WithSessionKeepalive(0)) // 0 = default 30 s interval
 	}
 
@@ -1357,7 +1313,24 @@ EXAMPLES
 
 	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
 	// the live worker registry into the Codex driver's runner (nil for tmux).
-	codexSubstrate, codexRegObserver, reviewerSubstrate := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag)
+	//
+	// The tmux substrate is built ONLY when tmux hosting resolved. NewTmuxSubstrate
+	// panics on an empty session name (it treats that as a daemon defect), and the
+	// argument would be evaluated eagerly even on the codexdriver path where it is
+	// discarded — so a no-tmux boot must hand selectSubstrate a nil tmux substrate,
+	// not one built on an empty name. Unreachable with the tmux substrate selected:
+	// that combination already returned above.
+	//
+	// The third return is reviewerSubstrate (always tmuxSub), NOT the older
+	// requireIsolationBoundary bool: the fence was removed by operator decision
+	// 2026-07-23 and this branch replaced it with the reviewer-substrate pin, so
+	// the nil-safety fix above is grafted onto the newer signature rather than
+	// carrying its base's older one back in.
+	var tmuxSub handler.Substrate
+	if hosting.Available {
+		tmuxSub = daemon.NewTmuxSubstrate(tmuxAdapter, hosting.SessionName, substrateOpts...)
+	}
+	codexSubstrate, codexRegObserver, reviewerSubstrate := selectSubstrate(tmuxSub, codexBinaryFlag)
 
 	cfg := daemon.Config{
 		ProjectDir:               projectDir,

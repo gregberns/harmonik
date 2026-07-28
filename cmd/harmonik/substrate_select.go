@@ -30,6 +30,16 @@ import (
 // unset) keeps the tmux substrate — the safe pre-bake default.
 const substrateSelectEnv = "HARMONIK_SUBSTRATE"
 
+// tmuxSubstrateSelected reports whether the AIS-015 axis leaves the tmux
+// substrate wired (the safe default — anything other than an explicit
+// "codexdriver" opt-in). It is the single predicate for that axis: selectSubstrate
+// uses it to choose the substrate, and the composition root uses it to decide
+// whether missing tmux hosting is fatal (tmux substrate: every spawn would fail)
+// or merely degrading (Codex driver: it owns child stdio and never runs tmux).
+func tmuxSubstrateSelected() bool {
+	return os.Getenv(substrateSelectEnv) != "codexdriver"
+}
+
 // Live-capture selection (AIS-013/AIS-014, m2-4-capture-tee design §2). Capture
 // is OPT-IN and OFF by default: it engages only when HARMONIK_CAPTURE_DIR names
 // a workspace root under which the corpus lands at
@@ -102,7 +112,10 @@ const (
 // ssh-per-node worker that was the only thing able to satisfy it. Restored to
 // `false` per the operator's standing "Codex must work" decision.
 func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), reviewerSubstrate handler.Substrate) {
-	if os.Getenv(substrateSelectEnv) != "codexdriver" {
+	// tmuxSubstrateSelected() rather than an inline env comparison so the
+	// substrate choice and the boot-time tmux-hosting fatality share ONE
+	// predicate — they must never disagree about which substrate is running.
+	if tmuxSubstrateSelected() {
 		return tmuxSub, nil, tmuxSub
 	}
 	router := &codexWorkerRoutingRunner{requireBoundary: false}

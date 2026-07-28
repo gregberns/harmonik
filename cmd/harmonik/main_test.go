@@ -23,15 +23,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // mainFixtureResetFlags resets flag.CommandLine to a fresh FlagSet so that
@@ -82,24 +86,114 @@ func mainFixtureSaveRestoreEnv(t *testing.T, key, val string, unset bool) {
 	})
 }
 
-// TestRunTmuxEnvFastFail verifies the $TMUX fail-fast guard in run().
+// TestRunTmuxEnvUnset_BootsAndReachesDispatchLoop is the end-to-end proof of the
+// 2026-07-28 change: with $TMUX unset the daemon must BOOT and reach its dispatch
+// loop, then return only when its signal context is cancelled.
 //
-// When $TMUX is not set the composition root must return exit code 1 before
-// any I/O or daemon operations happen.
+// This replaces TestRunTmuxEnvFastFail, which asserted the opposite (exit 1
+// before any I/O). That guard was written when tmux was the only substrate and
+// before the daemon-owned-session fallback existed; the operator reopened locked
+// decision #4 on 2026-07-28 to remove it. See cmd/harmonik/tmuxhosting.go.
 //
-// Not parallel: calls run() which registers flags against flag.CommandLine;
-// see package comment.
+// The distinguishing assertion is NOT the exit code — it is that run() is still
+// executing after the settle window. A regression to the old fail-fast returns 1
+// immediately, so the "returned before signal delivery" branch fails the test
+// rather than passing quietly.
 //
-// Acceptance: hk-kqdpf.4 — "$TMUX unset → fail fast with operator-friendly message".
-func TestRunTmuxEnvFastFail(t *testing.T) {
+// Requires a real tmux: with $TMUX unset the daemon creates its own session, and
+// this test asserts that session really exists (the inspectability half of the
+// contract). Skipped where tmux is absent — the hermetic contract tests in
+// tmuxhosting_test.go cover that host.
+//
+// Not parallel: calls run() (flag.CommandLine), mutates env, signals the process.
+func TestRunTmuxEnvUnset_BootsAndReachesDispatchLoop(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not on PATH; hermetic coverage lives in tmuxhosting_test.go")
+	}
 	mainFixtureResetFlags(t)
 	mainFixtureSaveRestoreEnv(t, "TMUX", "", true /* unset */)
-	mainFixtureSaveRestoreArgs(t, []string{"harmonik"})
 
-	exitCode := run()
+	projectDir := t.TempDir()
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "--project", projectDir})
 
-	if exitCode != 1 {
-		t.Errorf("run() with TMUX unset: got exit code %d, want 1", exitCode)
+	sessionName := tmux.DefaultSessionName(projectDir)
+	t.Cleanup(func() {
+		//nolint:gosec,errcheck // G204: session name derives from t.TempDir(); best-effort cleanup, a missing session is fine
+		_ = exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", "="+sessionName).Run()
+	})
+
+	// Same SIGTERM safety net as TestRunTmuxEnvSet_ProceedsToSubstratePath
+	// (hk-llizq): absorb a mistimed signal rather than letting Go's default
+	// disposition terminate the whole test binary.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM)
+	t.Cleanup(func() { signal.Stop(sigCh) })
+
+	exitCh := make(chan int, 1)
+	go func() { exitCh <- run() }()
+
+	// Let run() install its signal.NotifyContext handler and enter daemon.Start.
+	time.Sleep(2 * time.Second)
+
+	select {
+	case exitCode := <-exitCh:
+		t.Fatalf("run() with $TMUX unset returned exit code %d before reaching the dispatch loop; want it still running — the daemon must no longer refuse to boot outside tmux", exitCode)
+	default:
+	}
+
+	// Inspectability half: the daemon created a session the operator can attach to.
+	//nolint:gosec // G204: session name is derived from t.TempDir()
+	if err := exec.CommandContext(context.Background(), "tmux", "has-session", "-t", "="+sessionName).Run(); err != nil {
+		t.Errorf("daemon-owned tmux session %q does not exist (%v); a daemon booted without $TMUX must still be inspectable via `tmux attach`", sessionName, err)
+	}
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("failed to deliver SIGTERM to self: %v", err)
+	}
+	select {
+	case exitCode := <-exitCh:
+		if exitCode != 0 {
+			t.Errorf("run() returned exit code %d after SIGTERM; want 0 (clean signal-driven shutdown)", exitCode)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("run() did not return within 30s of SIGTERM — the work-loop shutdown path is hung")
+	}
+}
+
+// TestRunTmuxUnusable_TmuxSubstrateStillRefuses is the other half of the
+// 2026-07-28 change, and the assertion that keeps it honest: removing the
+// $TMUX-unset guard must NOT make the daemon boot when tmux is genuinely
+// unusable AND the tmux substrate is the one being wired. Every agent spawn on
+// that substrate routes through `tmux new-window`, so booting would succeed and
+// then fail on the first dispatch — the one failure mode this work must avoid.
+//
+// tmux is made unusable by emptying $PATH, which is what the daemon actually
+// depends on (the tmux BINARY), rather than the ambient $TMUX client it used to
+// demand. This is the run()-level companion to the reporter-level
+// TestReportNoTmuxHosting_TmuxSubstrateIsFatal, and it replaces the refusal
+// coverage that deleting TestRunTmuxEnvFastFail would otherwise have lost.
+//
+// Not parallel: calls run() (flag.CommandLine) and mutates env.
+func TestRunTmuxUnusable_TmuxSubstrateStillRefuses(t *testing.T) {
+	mainFixtureResetFlags(t)
+	mainFixtureSaveRestoreEnv(t, "TMUX", "", true /* unset */)
+	// Default (unset) leaves the tmux substrate selected — the fatal combination.
+	mainFixtureSaveRestoreEnv(t, "HARMONIK_SUBSTRATE", "", true /* unset */)
+	// Empty PATH → exec.LookPath("tmux") fails → ProbeTmux returns ErrTmuxMissing.
+	mainFixtureSaveRestoreEnv(t, "PATH", "", false /* set */)
+
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "--project", t.TempDir()})
+
+	exitCh := make(chan int, 1)
+	go func() { exitCh <- run() }()
+
+	select {
+	case exitCode := <-exitCh:
+		if exitCode != 1 {
+			t.Errorf("run() with no tmux binary and the tmux substrate selected: got exit code %d, want 1", exitCode)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("run() did not return with no tmux binary — it must refuse rather than boot into a daemon whose every dispatch would fail")
 	}
 }
 

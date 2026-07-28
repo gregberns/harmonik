@@ -119,12 +119,12 @@ count_code_matches() {
 #     sub-package hold any number of field reads. A file absent from the table
 #     is budgeted at ZERO, so a brand-new daemon file cannot smuggle one in.
 #
-#     MOVERS (budget 0 / workloop.go 9) are asserted EXACTLY, in both
+#     MOVERS (budget 0 / workloop.go 8) are asserted EXACTLY, in both
 #     directions. A shrink is not silently accepted because the survivors in
 #     workloop.go are a deliberate, documented carve-out — runWorkLoop, the outer
-#     queue-claim loop, x7, plus activateFirstPendingGroup and
-#     evaluateGroupAdvanceWithOutcome. Those functions stay in internal/daemon
-#     forever (E5-dot-runloop.md §1c), so converting them is churn on the tree's
+#     queue-claim loop, x7, plus evaluateGroupAdvanceWithOutcome. Those functions
+#     stay in internal/daemon forever (E5-dot-runloop.md §1c), so converting them
+#     is churn on the tree's
 #     hottest file for zero extraction value. RT16 §7 risk 1 predicts an
 #     implementer reaching for a global sed; an exact assertion is what turns
 #     that into a RED gate instead of a silent scope creep.
@@ -140,7 +140,10 @@ count_code_matches() {
 #     definition itself), so a legitimate shrink there is pure improvement and
 #     must not fail the build.
 declare -a EXACT_FILES=(
-    "internal/daemon/workloop.go             9"
+    # 9 -> 8 on 2026-07-28: the dead activateFirstPendingGroup (superseded by
+    # activateFirstPendingGroupLocked, zero callers) was deleted, and with it the
+    # 9th read — its post-unlock deps.bus.Emit loop. Ratchet down, never up.
+    "internal/daemon/workloop.go             8"
     "internal/daemon/reviewloop.go           0"
     "internal/daemon/dot_cascade_core.go     0"
     "internal/daemon/dot_cascade_helpers.go  0"

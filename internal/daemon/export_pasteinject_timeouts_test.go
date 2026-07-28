@@ -21,7 +21,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/shared"
@@ -166,13 +165,6 @@ type quitSenderExported = quitSender
 // Bead: hk-trjef.
 func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
 	return shared.MainHistoryHasRefsTrailer(ctx, projectDir, beadID)
-}
-
-// ExportedBeadExplicitlyReopened exposes beadExplicitlyReopened for tests.
-//
-// Bead: hk-wcv.
-func ExportedBeadExplicitlyReopened(ctx context.Context, auditLogger func(context.Context, core.BeadID) ([]brcli.AuditEvent, error), beadID core.BeadID) bool {
-	return beadExplicitlyReopened(ctx, auditLogger, beadID)
 }
 
 // ExportedAutoCloseStaleBlockersOnClaimFailure exposes

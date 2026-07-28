@@ -419,6 +419,28 @@ list is recoverable; regrowing 255k lines of the wrong tests is not.
 
 ---
 
+## 6. Carried forward out of the step-3 dead-code deletion
+
+Three things the deletion surfaced and deliberately did not act on. Recorded here rather than in the
+bead ledger, which is machine-local and does not travel.
+
+- **CP-021 now has no live implementation anywhere.** Deleting
+  `internal/core/cp021_guard_invocation_s01.go` was right — it bolted onto `core.Registry.LookupByAttachPoint`
+  and `core.DispatchEdge`, both themselves callerless, so reviving it would have been re-architecture
+  rather than wiring. But the guard-invocation clause is now unimplemented, and the shipped cascade
+  reaching `core.SelectNextEdge` directly is not the same contract. Decide during the run-machine
+  decomposition whether CP-021 is a real requirement or spec rot.
+- **`CycleIDFromNonceMarker` (`internal/keeper/cycle.go`) is callerless** after
+  `nonce_provenance.go` went. It is exported, so nothing breaks and no linter fires — which is exactly
+  why it will sit there. Candidate for the next sweep, along with the rest of the keeper's T6 render leg.
+- **`coverage.baseline` is now approximate for four packages** — `internal/core`, `internal/daemon`,
+  `internal/handlercontract`, `internal/keeper` each lost covered production files. Do **not** hand-edit
+  the numbers; re-derive them. Nothing is gated on this today: `scripts/coverage-gate.sh` runs only from
+  `make check`, which exits non-zero by design and never runs in CI. §2.3 already flags that
+  doc-versus-script contradiction — fix both in one change or not at all.
+
+---
+
 ## What this document is not
 
 It is 400 lines, so the "keep it short" instruction at the top deserves an honest accounting: **length

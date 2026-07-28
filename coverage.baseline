@@ -25,7 +25,6 @@
 # (<0.3pp drop) active for all listed packages.
 github.com/gregberns/harmonik/internal/branching 84.1
 github.com/gregberns/harmonik/internal/brcli 87.5
-github.com/gregberns/harmonik/internal/cognition 72.2
 github.com/gregberns/harmonik/internal/core 95.3
 github.com/gregberns/harmonik/internal/crew 68.1
 github.com/gregberns/harmonik/internal/daemon 58.9

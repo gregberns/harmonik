@@ -5448,36 +5448,6 @@ func noCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, pare
 	return !shared.MainHistoryHasRefsTrailer(ctx, projectDir, beadID)
 }
 
-// beadExplicitlyReopened returns true when the bead's audit log contains a
-// "status_changed" event whose OldValue is "closed", indicating the bead was
-// properly closed (not crash-interrupted) and then intentionally reopened.
-//
-// The pre-dispatch subsume block that called this function was removed by
-// hk-f38n (bare Refs-grep false-positives on partial/multi-aspect commits).
-// The function is retained for its test coverage (predispatch_reopen_hkwcv_test.go
-// via ExportedBeadExplicitlyReopened) and as a building block if a safer
-// pre-dispatch check is introduced in the future.
-//
-// Bead ref: hk-wcv.
-func beadExplicitlyReopened(ctx context.Context, auditLogger func(context.Context, core.BeadID) ([]brcli.AuditEvent, error), beadID core.BeadID) bool {
-	if auditLogger == nil {
-		return false
-	}
-	events, err := auditLogger(ctx, beadID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr,
-			"daemon: workloop: beadExplicitlyReopened: AuditLog %s: %v (conservative: not bypassing pre-dispatch close)\n",
-			beadID, err)
-		return false
-	}
-	for _, e := range events {
-		if e.EventType == "status_changed" && e.OldValue == "closed" {
-			return true
-		}
-	}
-	return false
-}
-
 // autoCloseStaleBlockersOnClaimFailure is called after a ClaimBead failure to
 // detect and auto-close stale blocker beads whose implementations have already
 // landed on main. When br rejects a claim because the target bead is "blocked"
@@ -5901,121 +5871,15 @@ func resolveOwningEpicFromRecord(ctx context.Context, br beadLedger, record core
 	return epicID, epicRecord.Assignee
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// activateFirstPendingGroup — bootstrap the first group of a freshly-submitted
-// or freshly-loaded queue (hk-veoht).
+// activateFirstPendingGroupLocked bootstraps the first group of a
+// freshly-submitted or freshly-loaded queue on the multi-queue dispatch path
+// (NQ-B1). The caller already holds the QueueStore write lock (lq) and supplies
+// the specific queue q to bootstrap.
 //
-// When a queue is submitted via `harmonik queue submit` (or loaded on boot),
-// its first group is persisted GroupStatusPending. The only other caller of
-// AdvanceGroup is evaluateGroupAdvanceWithOutcome, which fires on a PRIOR run's
-// completion — so absent any prior run, group 0 never transitions
-// pending → active and the work loop idle-waits forever (the "no active group"
-// branch). This helper closes that gap: when no group is active, it finds the
-// lowest-index non-terminal pending group and advances it pending → active
-// under the queue write lock, persists, and emits the resulting
-// queue_group_started event — matching evaluateGroupAdvanceWithOutcome's
-// persist-before-emit (QM-063) idiom exactly.
-//
-// Returns true when a group was activated (the caller should re-evaluate the
-// loop so it now finds an active group and dispatches its eligible items),
-// false otherwise (no pending group, or AdvanceGroup did not transition — e.g.
-// the queue is not active, so advancePending is a no-op per QM-031).
-//
-// Idempotency / safety:
-//   - Only the FIRST pending group is advanced; subsequent pending groups
-//     advance on completion as before (evaluateGroupAdvanceWithOutcome).
-//   - Already-active and terminal groups are skipped (the early return when an
-//     active group exists, plus AdvanceGroup's QM-032 terminal-absorb guard).
-//   - If AdvanceGroup leaves the group pending (no-op), no event is emitted and
-//     the queue is not persisted, so calling this repeatedly is harmless.
-//
-// Spec ref: specs/queue-model.md §5 QM-031 (pending → active); §8 QM-063
-// (persist-before-emit).
-// Bead ref: hk-veoht.
-func activateFirstPendingGroup(ctx context.Context, deps workLoopDeps) bool {
-	if deps.queueStore == nil {
-		return false
-	}
-
-	lq := deps.queueStore.LockForMutation()
-
-	q := lq.Queue()
-	if q == nil {
-		lq.Done()
-		return false
-	}
-
-	// Never bootstrap when a group is already active — that case is owned by the
-	// normal dispatch path. This guards against racing a concurrent advance.
-	for i := range q.Groups {
-		if q.Groups[i].Status == queue.GroupStatusActive {
-			lq.Done()
-			return false
-		}
-	}
-
-	// Locate the lowest-index non-terminal pending group.
-	groupPos := -1
-	for i := range q.Groups {
-		if q.Groups[i].Status == queue.GroupStatusPending {
-			groupPos = i
-			break
-		}
-	}
-	if groupPos < 0 {
-		// No pending group to activate (all terminal, or no groups).
-		lq.Done()
-		return false
-	}
-
-	newStatus, events, advErr := queue.AdvanceGroup(ctx, &q.Groups[groupPos], q.Status, q.QueueID, time.Now())
-	if advErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: activateFirstPendingGroup AdvanceGroup queueID=%s groupIndex=%d: %v\n",
-			q.QueueID, q.Groups[groupPos].GroupIndex, advErr)
-		lq.Done()
-		return false
-	}
-
-	// AdvanceGroup is a no-op for pending groups when the queue is not active
-	// (QM-031 guard in advancePending): newStatus stays pending and events is
-	// empty. Detect that and avoid a spurious persist/emit.
-	if newStatus != queue.GroupStatusActive {
-		lq.Done()
-		return false
-	}
-
-	q.Groups[groupPos].Status = newStatus
-
-	// Persist-before-emit (QM-063): on-disk state must reflect the pending →
-	// active transition before the queue_group_started event reaches the bus.
-	if err := queue.Persist(ctx, deps.projectDir, q); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: activateFirstPendingGroup Persist queueID=%s: %v\n",
-			q.QueueID, err)
-		// Non-fatal: the in-memory transition stands so the loop can dispatch;
-		// the file resyncs on the next persist. Suppress events — they describe
-		// state not yet durable on disk (mirrors evaluateGroupAdvanceWithOutcome).
-		events = nil
-	}
-	lq.SetQueue(q)
-	lq.Done()
-
-	// Emit the queued events after lock release (mirrors
-	// evaluateGroupAdvanceWithOutcome; Bus.Emit is non-blocking per EV-002a).
-	for _, evt := range events {
-		raw, err := json.Marshal(evt.Payload)
-		if err != nil {
-			raw = evt.Payload
-		}
-		_ = deps.bus.Emit(ctx, core.EventType(evt.Type), raw)
-	}
-
-	return true
-}
-
-// activateFirstPendingGroupLocked is the under-lock variant of
-// activateFirstPendingGroup for the multi-queue dispatch path (NQ-B1). The
-// caller already holds the QueueStore write lock (lq) and supplies the specific
-// queue q to bootstrap. It advances q's lowest-index pending group pending →
+// Without it, group 0 never transitions pending → active: the only other caller
+// of AdvanceGroup is evaluateGroupAdvanceWithOutcome, which fires on a PRIOR
+// run's completion, so absent any prior run the work loop idle-waits forever
+// (hk-veoht). It advances q's lowest-index pending group pending →
 // active, persists (QM-063), writes the mutated queue back via
 // LockedSetQueueByName, and returns true plus the resulting queue_group_started
 // events for the CALLER to emit AFTER releasing the lock (preserving the
@@ -6066,7 +5930,7 @@ func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq 
 
 	// Events are returned for the caller to emit AFTER releasing the QueueStore
 	// write lock (EV-002a emit-after-persist-and-unlock idiom, matching
-	// activateFirstPendingGroup / evaluateGroupAdvanceWithOutcome).
+	// evaluateGroupAdvanceWithOutcome).
 	return true, events
 }
 

@@ -28,6 +28,12 @@ injection; time is a port; explicit state machines with a single writer; tests t
 (and the warning against test theater); enforcement by CI lever; prove one vertical, then generalize.
 Read before writing or rewriting code. Load-bearing for the delete-and-rewrite program.
 
+### Active Program -- Delete and Rewrite
+[plans/2026-07-27-delete-and-rewrite/CHARTER.md](plans/2026-07-27-delete-and-rewrite/CHARTER.md) — stable:
+why the program exists, the phase sequence, the decided core subsystem set, standing rules, and the
+recurring failure patterns. Read before any handoff. `NEXT_STEPS.md` beside it is the live working
+document; `CARRY-FORWARD.md` holds the external-world facts any rewrite must satisfy.
+
 ### Problems -- What We're Solving
 [docs/problems/INDEX.md](docs/problems/INDEX.md)
 

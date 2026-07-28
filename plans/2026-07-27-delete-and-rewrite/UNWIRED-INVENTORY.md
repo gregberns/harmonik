@@ -1,0 +1,186 @@
+# Partial-Feature Inventory — harmonik @ bba60dd37
+
+Read-only audit. Target: production code that LOOKS implemented but is not reachable or not
+finished. Dead code with zero callers anywhere is OUT of scope; this is work that was STARTED
+AND NOT FINISHED. No compilation was performed; every claim is grep/read evidence, plus the
+on-disk `events.jsonl` (~250k events) and `session-data.jsonl` (449 records) where cited.
+
+## Three corrections to the brief's premises — check these before scoping
+
+1. **`HandlerPauseController` is NOT unwired.** It is fully live daemon-side: constructed in
+   `internal/daemon/bootstate.go`, persist-fn injected in `bootsocket.go`, and threaded into
+   the dispatch gate at `internal/daemon/bootworkloop.go:176`. What is unwired is the
+   **operator surface** (findings 10, 11) and the **submit-time gate** (finding 11). The
+   `dispatcher_backlog_held: (unavailable — HandlerPauseController not yet wired)` line in
+   `cmd/harmonik/handler.go` is a **stale comment**, not a true statement. This is worse than
+   the brief assumed, not better: the pause works, and the operator cannot see or clear it.
+2. **`harmonik promote` really is landed**, both push-mode and PR-mode
+   (`cmd/harmonik/promote_cmd.go`, reachable from `main.go`). AGENTS.md is accurate. Do not
+   re-scope it.
+3. **`sentinel.mode: act` really is read** (`bootworkloop.go:114` → `workloop.go:1829`). An
+   early sub-agent claim that it was write-only was refuted on direct inspection.
+
+---
+
+## Baseline measurements (independently computed, whole-repo)
+
+| Measure | Value |
+|---|---|
+| Production Go LOC | 214,511 |
+| Test Go LOC | 300,627 (1.40x production) |
+| Go packages | 113 |
+| Packages import-reachable from any `main` | 67 |
+| Packages NOT import-reachable from any `main` | 46 |
+| Prod LOC in never-imported real-feature packages | 6,056 (guarded by 8,543 test LOC) |
+| Exported symbols with NO cross-package production reference | 759 / 3,304 (**23.0%**) |
+| Declared `EventType` constants not live outside the registry | 41 / 182 (**22.5%**) |
+| `projectconfig` YAML keys with no effective reader | ~20 / 122 (**~16%**) |
+| Production files named for a single bead ID | 187 / 864 (**22%**) |
+
+---
+
+## Ranked inventory — most consequential first
+
+| # | Feature (what an operator/spec-reader thinks they have) | Symbol | What is missing | Evidence it is not live |
+|---|---|---|---|---|
+| 1 | **Failing eval runs are not merged.** `eval-bead.dot` declares `close-pass` and `close-fail`; a failed grader closes without landing. | `dotTerminalNodeIsSuccess`, `internal/daemon/dot_cascade_helpers.go:716` | Terminal disposition is a single-literal denylist `terminalID != "close-needs-attention"`, not a lookup of the graph's declared terminals. | Verified directly. `close-fail` (`eval-bead.dot:29`), `record-fail`, `plan-needs-attention`, `gate_fail` all evaluate **true** → `dot_cascade_core.go:1016` → `workloop.go:4183` merges + closes. `moderesolve.go:186` routes `codename:eval` beads here; **55 such beads in `.beads/issues.jsonl`**. |
+| 2 | **Policy, roles, gates, guards, budgets and hooks are enforced** — control-points.md line 1158: *"No requirement is deferred."* | `core.NoOpPolicyEngine` at `cmd/harmonik/main.go:961`; `ParsePolicyDocument`, `NewS02Registrar` | The engine is constructed then **discarded on the next line** (`_ = policyEngine`). `Evaluate` returns `{Permitted: true}` unconditionally; `Registry()` returns an empty map. | `ParsePolicyDocument` has **zero references repo-wide, including tests**. `NewS02Registrar` zero callers. Only `core.PolicyDocument` construction sites are 3 literals in `workflow/loader_test.go`. `gate_allowed/denied/escalated`, `guard_failed/reordered`, `control_points_registered` never emitted. |
+| 3 | **The S05 hook system delivers side-effects at-least-once (at-most-once for non-idempotent).** CP-012..CP-017, CP-040, CP-042. | `internal/hooksystem` (763 prod / 2,785 test LOC) | Whole package. Also duplicated, equally uncalled, in `core/cp017_hook_cognition_s05.go`. | **Zero non-test importers** (verified). No delivery-receipt store exists (`rg 'deliveryReceipt'` → 0 non-test). `fireMechanismHook` emits and stops: `TODO(deferred): apply the side effect`. Live `events.jsonl`: **0** `hook_fired` / `hook_failed` across ~250k events. |
+| 4 | **Budget and spend ceilings deny a dispatch that would exceed the limit** (ON-045/047/048, CP-022). | `CheckBudgetAtDispatch`, `TightestBudget`, `CheckWallClockOuterBound`, `newBudgetCounterState` | Any dispatch-time budget consultation. `budget_ref` is parsed into the AST, non-empty-checked, and dropped. | All zero callers outside `internal/core`; the four `hka8bg*` files have zero tests too. What runs instead: a per-day bytes/max-runs proxy (`spendmeter_hkk3f8g.go`) + a review-retry counter. `budget_warning` has no producer — first signal is the hard stop. |
+| 5 | **Every queue mutation is crash-atomic** — QM-060: *"All queue mutations MUST execute through the single QueueStore transaction owner."* | `internal/queue/transaction.go` (1,005 lines) via `queuewiring.QueueStore.Transact` | Nothing. **UNFINISHED, EXPLICITLY KEPT — not for deletion.** | Verified: `.Transact(` appears at 10 sites, **all in `queuewiring/store_transaction_test.go`**. Live path is bare `queue.Persist` (~20 sites in `workloop.go`), which is per-file atomic but has no generation guard, no replace-intent, no archive-handoff binding, no quarantine. `persistence.go` doc-trailers itself `QM-001` — the requirement it bypasses. |
+| 6 | **Reconciliation verdicts are executed** — the daemon performs the action, emits `reconciliation_verdict_executed`, appends a trailer under a flock. RC-025a. | `daemon.ExecuteVerdict`, `internal/daemon/verdictexecutor_rc025a.go` | Any caller. | 8 call sites, all in its own `_test.go`. Sole non-test caller of `CheckVerdictStaleness`, `workspace.CaptureWIP`, `MarshalTransitionRecord`, and all of `internal/brcli/audit.go` — so those never execute either. `AcquireReconciliationLock`, `WriteVerdictAttemptAtomic`: zero callers. |
+| 7 | **Worktrees take a lease lock** (WM-013a mutual exclusion); orphan sweep clears stale locks. | `workspace.WriteLeaseLockAtomic`, `WriteLeaseReleasedMarker` | Both writers. `CreateWorktree` is live and takes no lease. | Zero non-test callers. Consequences: `SweepStaleLeaseLocks.Removed` always empty → `RemoveStaleWorktrees` never runs → `daemon_orphan_sweep_completed.locks_cleared` permanently 0; every worktree lands in `NoLock` and GC falls back to an mtime heuristic. `ReleaseLeaseLock` **is** wired and unlinks without the mandated marker. |
+| 8 | **Merge conflicts are re-dispatched to an implementer, capped at 3 attempts, then escalated** (WM-022..WM-024). | `ShouldDispatchConflictResolver`, `BuildConflictResolverLaunchSpec`, `BuildConflictEscalationPayload` | All of it. | All zero production callers. The one live call, `ValidateConflictResolutionAttemptCap` (`daemon.go:854`), is guarded by `if cfg.ConflictResolutionAttemptCap != 0` — a field **no caller ever sets**. `merge_conflict_escalation` never emitted. Live behaviour: `runmerge/merge.go` rebase-retries then fails the run. |
+| 9 | **On restart the daemon discovers and resumes in-flight runs** (EM-031a); branch-tip monotonicity is verified (EM-024a). | `lifecycle.DiscoverActiveRuns`, `CheckBranchTipMonotonicity` | Any caller. | Zero production callers. `specs/execution-model.md` §7.4 pseudocode names the call sites explicitly; `workspace/orphansweep.go` carries a *comment* referencing the survive-check that was meant to exist. A force-pushed task branch is never detected. |
+| 10 | **`harmonik handler status` / `resume` work** (HP-040, HP-060, HP-061). | `runHandlerResume`, `cmd/harmonik/handler.go` | A `handler-resume` RPC. Resume is pure file I/O; the daemon reads that file **only at startup** and overwrites it on next persist. | No pause/resume op in the socket router. **Plus a schema split-brain:** daemon writes `handlerStateSchemaVersion = 2` (`handlerpause_persist_m0k0a.go:354`), CLI rejects `> 1` (`handler.go:63,775`, exit 2) — the daemon file's own comment says "Matches ... in cmd/harmonik/handler.go" directly above `= 2`. First pause bricks both operator verbs. |
+| 11 | **`queue submit` rejects beads bound to a paused handler** (HP-025 / QM-052a, RPC `-32018`). | `ValidationRequest.PauseChecker`, `internal/queue/validation.go:561` | The field is never assigned. | `rg 'PauseChecker\s*[:=]'` → 5 hits, **all in `validation_test.go`**. All three production sites omit it (`queue/rpc.go:190`, `:647`, `queue/append.go:101`). `internal/daemon/handlerpause_9hwbw.go:45` holds `var _ queue.HandlerPauseChecker = (*HandlerPauseController)(nil)` — a compile-time assertion that reads like wiring and connects nothing. |
+| 12 | **Undeliverable events are captured and replayable**; consumer panics are logged (EV-011, 3 retries + backoff). | `core.NoopDeadLetterSink` hardwired in `bootstate.go:120` | The real sink and the retry policy. `NewBusImplWithSink` — whose doc calls it "the preferred call site for daemon.Start" — has zero production callers, and there is no setter. | `Record` returns nil, so `recordDeadLetter`'s log never fires. All five `handler.NewHandler` sites pass `NoopWatcherDeadLetter{}`. `eventbus.DeadLetterReplay` ships and reads `dead-letters.jsonl`, a file nothing writes. `consumer_failed` / `dead_letter_enqueued` never emitted. `Subscription.OnPanic` is never referenced by `busimpl.go` at all. |
+| 13 | **Secrets are scrubbed from event payloads before they hit `events.jsonl`** (HC-031/HC-032). | `RedactionRegistry.RegisterPattern` | Every pattern. `bootstate.go:77` says so: *"No seed patterns — handlers call RegisterPattern when they are wired."* They never do. | Zero production callers; all six call sites are `_test.go`. `RedactionMiddleware` short-circuits to `RedactByFieldName` — a flat, **non-recursive**, top-level field-*name* match. A credential nested in an object or array is written verbatim. `redaction_failed` has no emitter. |
+| 14 | **Stalled runs are detected and shown in the dashboard's bottleneck panel** (heartbeat-gap, review-stall, run-age). | `sentinel.DetectLayerA`, `internal/sentinel/layera_hkl087e.go` | Any caller. It is the sole producer of `stall_detected`. | Zero callers repo-wide (zero tests too). `dashboardgather.readActiveStalls` scans `events.jsonl` for an event nothing writes → always nil → `dashboard_cmd.go`'s `if len(ActiveStalls) > 0` unreachable. The `sentinel` package **is** live — but only its governor half. |
+| 15 | **The operator dashboard shows curated lanes, throughput and gates.** | `internal/dashboard/store.go` `Write` | A writer. | `Write`/`Default` are test-only; `harmonik dashboard` has `--json|--unlock|--until|--lock` and **no set verb**; no skill/doc/spec mentions `dashboard.json`. All four curated sections are permanently empty, while `dashboardgate.go` treats absence as maximally stale and the keeper nags the operator to refresh it with a command that does not exist. |
+| 16 | **`harmonik usage` reports real spend split productive vs orchestrator.** | `internal/usage/usage.go` `findOrchestratorSessions` | Project awareness and dedupe. | Hardcodes `-Users-$USER-github-harmonik`, ignoring `cfg.ProjectDir`; off-repo returns `nil,nil` → `Idle/Orchestrator: $0.0000 (0.0%)`, `ProductivePct` 100. Separately `knownSessionIDs := map[string]bool{}` is read and **never written** — `sessiondata.Record` has no session-id field — so daemon runs are billed twice. |
+| 17 | **Token/cost accounting covers all harnesses.** | `internal/sessiondata/sessiondata.go` `readTranscript` | Codex/pi parsing (`if type != "assistant" { continue }`); `TokensTotal` is a value not a pointer, so absent data marshals as `0`, not `null`. | Live `session-data.jsonl`: **213/449 records all-zero, 63 null-cost, including 33 successful sonnet runs at `cost_usd: 0`**; `harness` empty on 448/449. The upstream data exists unread (`harness/codex/jsonlparser.go` already parses `codexTokenUsage`). The `WARNINGS (%d coverage gaps)` channel is only ever fed by a file-read error. |
+| 18 | **`landing_strategy: squash\|cherry-pick` controls how work lands** (WM-019, written into every project by `harmonik init`). | `landTaskBranch`, `squashLanding`, `cherryPickLanding` | Any caller. | All zero non-test callers; `internal/runmerge/merge.go` contains no `squash` and no `cherry` — it is `git rebase` + `update-ref`. Parse, validate and three-tier resolve are all complete, so an invalid value is rejected and a valid one is ignored. Sibling keys `start_from`/`lands_on`/`protect_branches` **are** wired. |
+| 19 | **Handler subprocess egress is restricted to a whitelist** (ON-025, HC-048b — the propagation half was never marked deferred). | — | The concept entirely. | `rg 'EgressWhitelist\|egress_whitelist' -g '!*_test.go'` → **0 hits**; `rg 'HC-048b' -g '!*_test.go'` → **0 hits**. `LaunchSpec` has no egress field. |
+| 20 | **Skills declared on a node are resolved and provisioned** (HC-046..HC-050); `skills_provisioned` reports `rejected_skills[]`. | `handlercontract.ResolveSkill`, `ResolveAllSkills`; `LoadDotWorkflowWithPolicy` | Resolution on the live path. Both pre-exec paths pass `nil` skills. | `skills_provisioned` is emitted **only by the twins** (`cmd/harmonik-twin-*/wire.go`). Every real session emits a well-formed affirmative `skills_provisioned{skills: []}`. `harness/claude/launchspec.go:79`: `_ = ctx // reserved for future async steps (e.g. skill provisioning)`. `skills_resolved` has no producer. |
+| 21 | **Forbidden `claude` flags are refused** (HC-055: seven flags MUST NOT be passed, *"would silently shadow policy"*). | `forbiddenClaudeFlags`, `internal/handler/claudehandler_chb006_024.go:53` | Four of seven — the list holds only the three CHB-007 entries. `--permission-mode bypassPermissions` in `HandlerArgs` is forwarded verbatim. | Direct read. HC-055b also diverged: `isHarmonikManagedWorktree` falls back to the **unresolved** path on `EvalSymlinks` failure and adds a `strings.Contains(canonWS, "/.harmonik/worktrees/")` fallback — any path containing that segment earns `--dangerously-skip-permissions`. |
+| 22 | **A rate-limited handler auto-resumes when the window clears.** | `ClaudeCodeAdapter.Diagnose`, `internal/handler/adapter_claudecode.go` | A real health check — it returns `DiagnosticReport{Healthy: false}` **unconditionally**. | Production wires exactly this adapter (`bootsocket.go` `SetAdapter`). `handlerpause_autoresume_0otqs.go` does `if report, ok := c.runDiagnose(ctx); ok && !report.Healthy { return }` → **always abandoned**. The whole Schedule/flap-backoff/hysteresis machine is unreachable; a pause persists until manual operator action (which is finding 10). |
+| 23 | **claude-code account rotation.** | `Adapter.RotateAccount` (claude/codex/pi impls) | Everything. Precisely: declared in the contract, never built, **never called** — every call site is `_test.go`. | claude → `ErrSingleAccountOnly` with `// TODO: when multi-account rotation lands...`; codex/pi → `ErrDeterministic`. Safe (fails loud) rather than fail-open. Its sibling `DetectRateLimit` is also uncalled for every harness — which strands the *working* claude retry-after parser (`adapter_claudecode.go:117-133`). |
+| 24 | **Structured NDJSON logs from every subsystem, rotated at 100 MiB/24h** (ON-035, a MUST). | `internal/structuredlog` (498 prod LOC) | Adoption. | **Zero non-test importers.** 973 `log.Printf` / `fmt.Fprintf(os.Stderr, …)` sites in non-test code (`workloop.go` alone has 89). `.harmonik/logs/` is never written. |
+| 25 | **Replay substrate** (`specs/replay-substrate.md`, written in runtime MUST language) and **the watch tier** (an always-on ledger + escalation engine; the `watch` skill ships in the binary). | `internal/replay` (1,091 LOC), `internal/watch` (699 LOC) | Any production importer; and for watch, a `harmonik watch` command. | Both have **zero non-test importers** (verified). There is no `watch` subcommand — only `resolve_watch_config.go`, whose `ResolveWatchTargets` and fail-loud boot gate `checkMissingWatchValues` are themselves test-only. The shipped skill instructs an agent to run something the binary cannot do. |
+| 26 | **Resume-hang is bounded and recovered** (HC-070, HC-INV-008: driver emits ack on acceptance, stale on timeout). | `agent_input_acked` / `agent_input_stale` | Producers on **both** substrates. tmux: `SubmitInput` writes then `return Ack{Delivered}` with no timer. Codex: `codexdriver.Options.Emit` is never set at the composition root. | `rg 'EventTypeAgentInput' \| rg -v _test` → **0 hits**. Types are registered and never published. |
+| 27 | **Daemon readiness contract** — `daemon_ready` after five PL-009 criteria; pre-ready requests rejected (PL-003b). | `lifecycle.ReadyCriteria`, `PreReadyGate`, `MarkReady`, `CheckRequest` | All of it. | Zero references outside their own file — **not even a test**. `daemon_ready` is registered in 4 places (`eventreg`, `busimpl` allow-list, `pertypecompat`, `eventtype.go`) and emitted nowhere. Verified. |
+| 28 | **Agents report outcomes / claim beads over the daemon socket** (handler-contract.md builds a retry protocol on this). | `SocketHandlers.Request = &noopRequestHandler{}`, `bootsocket.go:300` | The implementation. `noopRequestHandler` is the **only** implementation in the repo. | Verified. `emit-outcome` and `claim-next` **are** registered in the router (`socketdispatch.go`) and reach a handler returning `errors.New("daemon: RequestHandler not wired yet")`. No client sends either op (27 distinct ops scanned). Both dereference `d.h` unguarded where every other op nil-checks. |
+| 29 | **Machine-level agent ceiling** (ON-041c: env var, count file, `dispatch_deferred`, cross-daemon decrement). | — | Everything. | `rg 'HARMONIK_MACHINE_AGENT_CEILING\|machine-agent-count'` → **0 hits**. `DispatchDeferredReasonMachineCeilingExhausted` is a constant with no emitter. |
+| 30 | **`kill -USR1 <pid>` resumes all paused handlers** (handler-pause.md §1.2). | `daemon.NewSignalResumeWatcher` | The goroutine. Its doc says *"Designed to run in a dedicated goroutine started by daemon.Start"*. | Zero callers. `signal.Notify(…SIGUSR1)` never runs, so the signal takes Go's default disposition. |
+| 31 | **Agent manifests declare scheduled `triggers:`** (`.harmonik/agents/captain/manifest.yaml` has `{id: fleet-status, every: 6h, enabled: true}`); `harmonik agent check` reports ok. | `agentmanifest.Trigger`, `ActiveTriggers` | A scheduler. `ActiveTriggers` is filtered then **printed** — the markdown/TOON renderers are its entire lifecycle. | Also `validateManifest` never checks `Harness` against `claude\|codex\|pi` and never inspects `Cardinality` — so `cardinality: {max: 1}` does not make the captain a singleton and `harness: cladue` passes. Only `Markers.NeverEmits` and `Lifecycle.Persistent` have consumers. |
+| 32 | **The structured Codex driver** (`codexdriver`, `codexinput`, `apptap`, `sessioncapture`, `codexreactor`). | `cmd/harmonik/substrate_select.go:105` | An activator. `if os.Getenv("HARMONIK_SUBSTRATE") != "codexdriver" { return tmuxSub, … }` and the **only** assignment of that var in the tree is in a `_test.go`. | Dormant by construction. `codexreactor.New()` — a finished, invariant-documented state machine — is called at two test sites only; the live output path bypasses it. NB `internal/harness/codex` (codex under tmux) is a *different* and genuinely live path. |
+| 33 | **Twin-parity gates prove the twins match the real harness.** | `internal/twinparity` `AssertStreamEquivalent` | Cross-comparison. `TestPiParityGate` passes `piSampleNDJSON(t)` as **both** twin and reference; two of three Claude sub-tests are `Assert(t, durable, durable)`. | Signature takes `testing.TB` — production reachability impossible. `make test-twin-parity-pi` asserts nothing about twin-vs-real. Fixtures carry `hand_authored: true`, `capture_date: "PLACEHOLDER-REAL-BOX"`. |
+| 34 | **The composition-root wiring audit catches silent drops between versions** (`HARMONIK_DEBUG_WIRING=1`). | `compositionRootWirings`, `internal/daemon/wiringlog_hk4mupj.go` | Derivation. It is a hand-maintained `[]wiringEntry` constant that prints identically no matter what is wired. | Every `callSite` points into `daemon.go` at line numbers that no longer hold that code (wiring moved to `bootstate/bootsocket/bootworkloop`). Lists `RunSocketListenerFull` though production calls `Serve`; ~20 real wirings absent. A drop-detector that cannot detect a drop. |
+| 35 | **Socket bind failure is reported** (PL-003 defines exit 6 for a live-daemon collision). | `startSocketListener`, `internal/daemon/bootsocket.go:297-312` | Any handling: `go func() { <-socketDone }() // drain: non-fatal`. | The daemon then runs the work loop with **no socket** — `queue submit`, `crew start`, `state`, `dashboard`, `comms`, hook-relay all silently unavailable, zero diagnostic. |
+| 36 | **`--codex-binary` selects the codex executable** (its godoc: *"used when the resolved harness is core.AgentTypeCodex"*). | `daemon.Config.CodexBinary` | A reader on the documented path. `harnessregistry.go:57` hardcodes `codex.NewHarness("", "")` → bare `codex` off PATH. | The flag *does* reach the dormant codexdriver substrate (finding 32), so it appears wired. The one path it reaches is the one its docs don't describe. |
+| 37 | **Crew slots are reclaimed when a crew goes idle.** | `crewrun.CrewIdleReaper.StartWatcher` | The watcher body — it is an empty function; `loop`/`scan`/`checkCrew`/`reap` are `//nolint:unused`. | Constructed fully at `bootsocket.go:252` and started at `bootworkloop.go:238`. A documented 2026-07-18 operator disable, but the consequence stands. |
+| 38 | **`harmonik queue resume` recovers a paused queue.** | `queuewiring.transitionToActive` | Handling for 2 of 3 pause states. Skips anything not `paused-by-drain`; `HandleOperatorResume` returns nil regardless, so the socket answers OK. | `paused-by-failure` (`workloop.go:6045`) and `paused-by-budget` (`perqueuespendmeter_tigaf11.go:246`) are both produced live. `queue.ResumeFromFailure` / `RearmFailedItems` have zero callers and there is no `queue retry` verb; `paused-by-budget` stays wedged until UTC-day rollover. |
+| 39 | **Review-cycle and continuity kernels** (deterministic review-loop policy, run continuity). | `internal/runloop/reviewcycle` (652), `internal/runloop/continuity` (475) | A caller. | Zero importers of any kind, including other packages' tests. **Knowingly parked** — harvested from an abandoned branch in `1b56dafb5` on 2026-07-28, one day before this audit. Distinguish these from the older unwired packages. |
+| 40 | **`harmonik harness` runs the conformance scenario suite.** | `cmd/harmonik/harness.go` | `BrPath`/`KerfPath` — no flag supplies them, and `bootworkloop.go:30` is `if bs.cfg.BrPath == "" { return nil }`, which skips the entire PL-005 work loop and is the last statement of `daemon.Start`. | The registered conformance command boots a daemon that never dispatches, while `scenarios/smoke/checkpoint-and-merge.yaml` asserts daemon-side events only the work loop can produce. |
+
+Also confirmed, lower severity: `LaunchSpec.HandlerSpec` is assigned only in tests, so `runIDStr`
+falls back to the constant `"unknown"` for every live handler FSM; `VerifyTwinLaunch` (HC-045
+commit-hash pin) is never called; `handler-pause` HP-015 counter never resets on resume; HC-056's
+default is 5× the spec (150s vs 30s, with a comment asserting it *is* the spec default); HC-004
+launch idempotency is marked "NOT ENFORCED" in source while the spec still says MUST;
+`workspace/doc.go` still claims the package "contains only test files" against 7.8k prod LOC;
+`make build-twin-claude` is an alias for `build-twin-generic`; `internal/scratchpad` ships toy
+exercises (anagram, roman numerals) inside `internal/`.
+
+---
+
+## DANGEROUS — incompleteness that causes silent WRONG behavior, not absent behavior
+
+Ranked by blast radius. These act wrong or claim success falsely.
+
+| Risk | Symbol / path | Why it is wrong, not merely missing |
+|---|---|---|
+| **Failing work is merged and closed green** | `dotTerminalNodeIsSuccess`, `internal/daemon/dot_cascade_helpers.go:716` | Inverted-by-default guard. Four failure-terminal spellings in-repo classify as success; 55 live `codename:eval` beads route through it. Confirmed by direct read. |
+| **Every policy decision is "allow"** | `core.NoOpPolicyEngine.Evaluate` → `{Permitted: true}`, wired at `cmd/harmonik/main.go:961` and discarded at `:962` | The adjacent comment claims *"The dispatcher always calls policyEngine.Evaluate"* — false. Gates, guards, budgets, clearances: permit-by-default, silently. |
+| **A run whose hook never fired closes as success** | `internal/daemon/workloop.go:5324` — `socketOutcome == nil && ei.ExitCode == 0` → auto-close success | Hook not firing, relay unable to dial, displaced `settings.json`, or an expired 3s grace are all indistinguishable from success. `hookrelay.go:161-166` returns 0 with **no stderr line** when `HARMONIK_*` vars are absent, so a typo'd var looks like a correctly-skipped hook. |
+| **Role/clearance validation validates nothing** | `internal/core/policydocument.go:332` — `if r.Status != "mvh-required" { continue }` | **The caller-supplied example, confirmed and worse.** Fail-open `continue`, not an error. `RoleStatusMVHRequired` still exists in `role.go` so it is not strictly unmatchable, but no policy YAML in-repo produces it — and the enclosing `ValidateRequiredRoleDefaultSkills` has **zero callers and zero tests**, so CP-031 is enforced nowhere at all. |
+| **A formatter crash reads as "tree is clean"** | `fmtGofumptPass`/`fmtGciPass`, `internal/runmerge/fmtgate.go` | `if err != nil \|\| strings.TrimSpace(out) == "" { return false, nil }` collapses exec failure into the clean result. Caller pushes. The file's *other* fail-open (tool absent) is disclosed; this one is not. |
+| **Secrets reach the durable log** | `RedactionRegistry` empty at runtime | Value-pattern stage always has an empty pattern set; the surviving name-match is flat and non-recursive. Nested/array credentials pass through to `events.jsonl` and every subscriber. `redaction_failed` has no emitter, so a scrub failure is unobservable. |
+| **Dead-letter health reports green because nothing is recorded** | `NoopDeadLetterSink` + `NoopWatcherDeadLetter` | `Watcher.DeadLetterFailures()` stays 0 by construction. A panicking or erroring subscriber produces no log, no record, no event. A **synchronous** consumer panic has no `recover` at all (`busimpl.go:523`) and takes down the daemon. |
+| **Worktree mutual exclusion is claimed, not provided** | `WriteLeaseLockAtomic` never called | Detectors keyed on lock presence (WM-003a bare-worktree-no-lease, WM-013c, reconciliation Cat 6) see **every** live worktree as unleased — a detector wired to a signal nothing produces. `LeakKindLease` scans for files nothing writes. |
+| **Budget exhaustion pauses the whole handler type — the spec says it MUST NOT** | `handleBudgetExhausted`, `handlerpause_policy_37zy8.go`; `policy.BudgetExhaustedTrips() → true` | HP-012 inverted. `BudgetExhaustedEventPayload.BudgetScope` **exists** and is never read. Compounded by findings 10+11: the resulting pause is un-clearable. |
+| **A codex/pi rate limit pauses the claude fleet** | `NewHandlerPausePolicyGoroutine(… AgentType: core.AgentTypeClaudeCode …)`, `bootstate.go` | One instance, hardcoded; handlers ignore the event's origin (`agentType := p.cfg.AgentType`, justified in-source by *"All beads use claude-code"* — now false, since `RegisterCodex`/`RegisterPi` are both live). `ResolvedAgentType` returns the constant `claude-code`, discarding both args — which becomes **fail-open** the moment finding 11 is wired. |
+| **Spend cap resets on every restart** | `internal/daemon/spendmeter_hkk3f8g.go` | `runsToday`/`bytesToday`/`exhausted` are plain struct fields with no persistence and no boot load. `harmonik supervise` auto-revives, so a crash-loop silently restores the full daily allowance. The ceiling is per-daemon-lifetime, not per-day. |
+| **Cost data is fabricated, not missing** | `sessiondata.Collect`; `usage.go` | 213/449 records all-zero and 33 successful sonnet runs at `cost_usd: 0`, presented identically to genuinely-free runs. Given the standing preference to route implementers to Codex, real spend is understated by roughly half with no signal. |
+| **`harmonik usage` reports 100% productive off-repo** | `findOrchestratorSessions` | `nil,nil` on a path miss → `$0.0000 (0.0%)`, indistinguishable from "you had no orchestrator sessions". |
+| **File-only Pi credentials silently fall back to ambient env** | `resolvePiAPIKeyValue`, `harness/pi/launchspec.go:227-237` | Swallows the error branch and returns `os.Getenv(apiKeyEnv)` — defeating the template's stated purpose ("the daemon ambient env never carries the secret") rather than refusing. |
+| **A `harness:pi` bead asks the pi provider for a Claude model** | `EnvModelKey = "HARMONIK_CLAUDE_MODEL"`, `modelpreference.go:64` | Read at tier 2.5 regardless of `agentType`. Same bug class as the already-fixed tier-3 leak (hk-pkugu), one tier above the fix. |
+| **The network sandbox guard makes isolation look enforced** | `ApplyNetworkSandbox` (zero callers); `if cfg.EnableNetworkSandbox && !IsNetworkSandboxActive()` | The flag is never set true and the sole `DriveOrchestration` caller omits it, so the real, fail-closed pf/netns implementation is never installed while SH-028 reads as enforced. |
+| **Parity gates cannot fail** | `internal/twinparity` | Self-comparison (above), plus three engine holes: `PayloadFields` is vacuous for any field outside the hardcoded `stablePayloadFields`; `AllowExtra` is declared and **never read in any conditional**; `run_completed.success` is not whitelisted, so a **failed run canonicalizes identically to a successful one**. |
+| **The dashboard gate blocks nothing / or blocks forever** | `dashboardgate.go` `captainCuratedQueues` | `BlockedQueues` derives from `lanes.json`, currently `"lanes": []` → emits `dashboard_stale` and blocks nothing, against its own in-source fail-loud mandate. Conversely, once lanes exist, `dashboard.max_staleness` becomes a permanent dispatch halt because nothing can write the file it measures (finding 15). |
+| **A typo in `sentinel.mode` silently disables the governor** | `internal/digest/sentinelconfig.go` | No enum validation. `"ACT"`, `"Act"`, `"enforce"` take neither the observe nor the act branch: no signal, no trip, no halt, no log. |
+| **The sentinel's opportunity gate is latched open forever** | `buildHasUndeployedTail`, `internal/digest/builder.go` | Returns true if **any** closed bead carries a Phase-2 label — a monotonically growing set — standing in for an unimplemented verify. Once one closes, the §1.3 "MUST NOT trip without actionable work" guard is pinned. |
+| **macOS process-leak sensor contributes zero leaks regardless of state** | `postsuiteleaksensor_darwin.go` `checkLeakedProcesses → nil, nil` | `HasLeaks()` returns false; SH-INV-002(i) silently does not run on this machine, and the report does not say "skipped". |
+| **The import-discipline test cannot fail** | `TestBreakageAdapterIsSoleExecImporter`, `internal/brcli/breakage_test.go:44` | Runs `go list -json ./...` without `cmd.Dir`, enumerating only `internal/brcli`, which it then skips. Real violations it should catch include `runmerge/merge.go:665` on the live merge path. |
+| **Config typos are discarded in silence** | `strictDecodeKeeperBlock`, `projectconfig.go` | `KnownFields(true)` is applied to the `keeper:` sub-node **only**. A typo in `daemon:`, `watch:`, `sandbox:`, `harnesses:`, `supervise:`, `stall_sentinel:`, `crews:` or `opsmonitor:` is dropped without a word. |
+| **Fail-open default arms** | `watch.Classify` default → `EscalationPullDigest` (*"never wakes the captain"*); `GenuineDrain` default → `DrainStateDrained` | Both currently moot (no live caller / three-value enum) but both default toward "safe/quiet" in code that is otherwise fail-closed. |
+
+Config keys that are parsed, validated, and then ignored — an operator sets a limit and gets
+none: `harnesses.pi.provider_slots` (per-provider concurrency runs **unbounded**),
+`stall_sentinel.escalation.*` and `.detection.*` (nothing detects, nothing pages, at any tier),
+`watch.absent_thresh_s` / `stall_ticks`, `keeper.timings.max_boot_grace_total` (forced to
+`2 × boot_grace`), `keeper.self_service.instruct_only_when_idle` (idle-gating with no effect),
+`keeper.hard_ceiling.cooldown` (silently shadowed by `keeper.cadence.hard_ceiling_cooldown`),
+`keeper.cadence.no_gauge_backoff` (**required to boot and inert**), `watch.opsmonitor_target`,
+`sandbox.network.mode`, `daemon.target_branch` (captain briefed on one branch, daemon merges
+into another), and `harnesses.pi.profiles.*.api_key_file` (`~` expansion computed and discarded
+on the live path).
+
+---
+
+## Assessment
+
+**Roughly a fifth to a quarter of the declared system is in this state**, and four independent
+measures agree: 23.0% of exported symbols have no cross-package production reference; 22.5% of
+declared event types (41/182) are fully registered, versioned, allow-listed and never produced
+or consumed; ~16% of config keys are inert; and 46 of 113 packages are unreachable from any
+`main`. That is not a uniform 20% haze — it is concentrated, and the concentration is the
+finding.
+
+**The partial implementations cluster in three places.** First and largest, **the entire
+policy/control-point/enforcement layer (S01/S02/S05) is unwired end to end** — policy documents
+are never parsed, the ControlPoint registry is never populated, the hook subsystem has no
+importer, and the composition root installs a `NoOpPolicyEngine` that returns "permitted" and is
+then discarded on the very next line. Gates, guards, budgets, roles, clearances, freedom
+profiles, egress, skills resolution and hook side-effects are, at runtime, collectively a no-op,
+while `specs/control-points.md` asserts *"No requirement is deferred."* Second, a **requirement-
+per-file cohort** across workspace-model, reconciliation and handler-contract (WM-013a, WM-019,
+WM-022..024, WM-040, WM-063, RC-002a/018/019/025a/026a, HC-004/043/045/046-050/055/070): each
+requirement got its own file, its own tests, and its own bead, and none got a call site. 187 of
+864 production files (22%) are named for a single bead ID — that decomposition is precisely the
+mechanism by which a feature reaches "compiles, tested, bead closed" without ever being
+integrated. Third, the **operator-observability surface** — dashboard, usage/cost, structured
+logging, the watch tier, replay, and the Layer-A stall detector — is uniformly reader-without-
+writer or writer-without-reader.
+
+**By era there are two waves.** May–June 2026 produced `hooksystem` (763 prod / 2,785 test LOC),
+`structuredlog` and `watch` — two months old, never wired. July 2026 produced the twin/reactor/
+parity/replay cluster (`codexreactor`, `codexdigitaltwin`, `keepertwin`, `twinparity`, `replay`,
+Jul 11–16) and, on Jul 24–28, `reviewcycle` and `continuity`. The last two are a different
+category and should be scoped as such: they were deliberately harvested from an abandoned branch
+one day before this audit and are knowingly parked, not forgotten.
+
+**The single most dangerous artifact of the terminology removal** is not in code but in specs.
+Commit `72215ba69` mechanically stripped a scope qualifier from 197 files, which turned
+*"No requirement is deferred **at MVH**"* into *"No requirement is deferred."* in six reviewed
+specs — control-points.md:1158, architecture.md:521, handler-contract.md:1472,
+scenario-harness.md:891, workspace-model.md:1208 and reconciliation/spec.md:892. Those six
+sentences are load-bearing for anyone sizing remaining work and every one of them is false at
+HEAD. Related strips turned sequencing notes into permanent architectural exclusions (ON-025
+egress *"deferred post-MVH"* → *"is deferred"*, hiding that its non-deferred propagation half is
+also absent; CP-058 role activation; AR-025 reserved identifiers). One case runs the other way:
+`beads-integration.md:929` still calls BI-010d deferred when it shipped. **Treat the conformance
+section of every reviewed spec as unverified.** Test mass is not evidence here — the unwired code
+carries 8,543 lines of tests over 6,056 lines of implementation, and the parity gates that would
+have caught the twins drifting compare their fixtures to themselves.

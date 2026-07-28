@@ -2,7 +2,19 @@
 
 > **[HANDOFF.md](HANDOFF.md) is the per-session authoritative source for current state and next steps.** This file is a higher-level structural summary. Sections below labelled "*(historical)*" are preserved for reference.
 >
-> **2026-07-23 (current program):** The active program is **P2 — the god-package extraction** (`plans/2026-07-21-p2-extraction/`, tracked in that dir's `PROGRESS.md`). The **daemon is intentionally DOWN** while a quality-cleanup pass hardens the tree (Close-errcheck enforcement, dead-`//nolint` removal, `cmd/harmonik` coverage 45.8%→58.4%, the `make check-report` quiet gate) — all landing single-writer, human-reviewed, on branch `phase1-session-restart-substrate` (unpushed). Extraction status: RT13–RT16 + E1/E2a/E3a/E4a-c landed (`internal/daemon` −14%); **RT17 is next and being planned**. The per-session authority is **HANDOFF-alpha.md**. The 2026-06-20 note below is historical.
+> **2026-07-28 (current program):** The active program is **delete-and-rewrite** — see
+> **[`plans/2026-07-27-delete-and-rewrite/CHARTER.md`](plans/2026-07-27-delete-and-rewrite/CHARTER.md)**
+> for why it exists, the phase sequence, the decided core subsystem set, and what "done" means. Phase 1
+> (deletion) is COMPLETE: ~225,000 lines of tests and dead code removed, zero production behavior changed.
+> Phase 2 (config-driven subsystem partition) has its first switch landed. Phase 3 rewrites
+> `workloop.go` + `reviewloop.go` + `dot_cascade_core.go` as one unit. The **daemon is intentionally
+> DOWN**. Work lands single-writer, human-reviewed, on branch `phase1-session-restart-substrate`
+> (unpushed). The per-session authority is **HANDOFF-alpha.md**.
+>
+> **SUPERSEDED 2026-07-27:** the P2 god-package extraction (`plans/2026-07-21-p2-extraction/`) and the
+> code-health audit (`plans/2026-07-24-code-health-audit/`). Do NOT resume their task cards. Their
+> measurements survive where cited in the charter's sibling documents; their lane models and task
+> indexes do not. The 2026-06-20 note below is historical.
 >
 > Last updated: 2026-06-20 — **Nine initiatives landed in a single-day burst** (keeper redesign, captain economy, doc/instruction audit, easy-start launchers, tmux session organization, RC session prefix, fleet sleep/wake Phase 0, remote-node telemetry, remote-substrate e2e proof). The project is now entering a **live-validation / testing phase**: most of the burst shipped as code but has not been exercised live. See "Recently completed (2026-06-20 burst)" below and [.harmonik/context/captain-lanes.md](.harmonik/context/captain-lanes.md) for the live initiatives board.
 >

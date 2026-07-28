@@ -317,3 +317,50 @@ subsystems:
 		t.Error("dispatchBlocked = true with subsystems.movement_governor.enabled: false; a switched-off subsystem must not hold the dispatcher shut through a gate nothing can open")
 	}
 }
+
+// The boot seam, not the loop seam. bootState.seedGovernorDeps reads the same
+// switch as newMovementGovernorIfEnabled, and it has to: it reads the sentinel:
+// block through digest.LoadSentinelConfig, and a malformed value there is FATAL
+// — daemon.Start returns the error and the daemon does not boot. A subsystem the
+// operator switched OFF must not be able to refuse the daemon's boot over config
+// it no longer reads (hk-e3y8x). It also allocates a sentinel.GovernorState,
+// which is the constructed-and-inert state CHARTER §4 rejects.
+//
+// The malformed value here is a suppression_ttl that is not a duration, which
+// parseSentinelConfig rejects. The pair is the point: OFF must swallow it, ON
+// must still fail loudly, or the gate has quietly become an error suppressor.
+const wlsubMalformedSentinelYAML = "schema_version: 1\nsentinel:\n  suppression_ttl: \"not-a-duration\"\n"
+
+func TestSubsystemPartition_MovementGovernor_DisabledSkipsFatalBootConfig(t *testing.T) {
+	t.Parallel()
+
+	pc, root := subpartLoadConfig(t, wlsubMalformedSentinelYAML+
+		"subsystems:\n  movement_governor:\n    enabled: false\n")
+	bs := &bootState{cfg: Config{ProjectDir: root, ProjectCfg: pc}}
+
+	var deps workLoopDeps
+	if err := bs.seedGovernorDeps(&deps, time.Now()); err != nil {
+		t.Fatalf("seedGovernorDeps = %v with subsystems.movement_governor.enabled: false; want nil — "+
+			"a switched-off subsystem must not refuse the daemon's boot over config it no longer reads", err)
+	}
+	if deps.governorState != nil {
+		t.Error("governorState allocated with the subsystem disabled; \"off\" means never constructed, not constructed-and-inert (CHARTER §4)")
+	}
+	if deps.sentinelMode != "" || deps.sentinelPhase2Classes != nil {
+		t.Errorf("sentinel deps seeded with the subsystem disabled: mode=%q phase2=%v", deps.sentinelMode, deps.sentinelPhase2Classes)
+	}
+}
+
+func TestSubsystemPartition_MovementGovernor_EnabledStillFailsOnBadConfig(t *testing.T) {
+	t.Parallel()
+
+	// No subsystems: block — the governor is ON, so the fatal path must survive.
+	pc, root := subpartLoadConfig(t, wlsubMalformedSentinelYAML)
+	bs := &bootState{cfg: Config{ProjectDir: root, ProjectCfg: pc}}
+
+	var deps workLoopDeps
+	if err := bs.seedGovernorDeps(&deps, time.Now()); err == nil {
+		t.Fatal("seedGovernorDeps = nil on a malformed sentinel: block with the subsystem ENABLED; " +
+			"the partition gate must not double as an error suppressor")
+	}
+}

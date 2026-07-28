@@ -21,11 +21,13 @@ package daemon
 //
 // # Why it is switchable
 //
-// Observe mode runs on every production daemon today (seedGovernorDeps sets
-// governorState whenever ProjectDir is non-empty), costing a `br` shell-out plus
-// an O(events.jsonl) scan every eval cadence — and governor_signal has no
-// non-test consumer. Neither the governor nor anything it touches is in the core
-// set (CHARTER §3), so it must be absent when switched off.
+// Observe mode ran on every production daemon before this subsystem existed:
+// seedGovernorDeps allocated governorState for any non-empty ProjectDir, costing
+// a `br` shell-out plus an O(events.jsonl) scan every eval cadence — and
+// governor_signal has no Go consumer. Neither the governor nor anything it
+// touches is in the core set (CHARTER §3), so it must be absent when switched
+// off. seedGovernorDeps now reads the same switch and skips the allocation
+// entirely; see newMovementGovernorIfEnabled on why both gates exist.
 //
 // # NOT part of this subsystem
 //
@@ -84,9 +86,18 @@ type movementGovernor struct {
 //   - `subsystems.movement_governor.enabled: false` — the operator partitioned it
 //     away. Said loudly on the log writer, because a silent partition is
 //     indistinguishable from a config that did not take effect.
-//   - deps.governorState is nil — nothing seeded the governor (unit-test mode, or
-//     an empty ProjectDir). This is the pre-existing `governorState != nil` guard
-//     the inline blocks carried, kept at the same seam.
+//   - deps.governorState is nil — nothing seeded the governor (unit-test mode, an
+//     empty ProjectDir, or the same subsystem switch read earlier at boot). This
+//     is the pre-existing `governorState != nil` guard the inline blocks carried,
+//     kept at the same seam.
+//
+// ORDER IS LOAD-BEARING: a disabled subsystem now trips BOTH branches, because
+// bootState.seedGovernorDeps reads the same switch and returns before allocating
+// GovernorState (hk-e3y8x — it also guards a FATAL sentinel-config read, so an
+// off subsystem must not be able to refuse the daemon's boot). The Enabled check
+// must therefore stay FIRST, or the loud "disabled by config" line is replaced by
+// the silent nil-state return and a partition becomes indistinguishable from a
+// config that never took effect. That is the whole reason the two are separate.
 //
 // An absent subsystems: block enables the governor, so a deployment without one
 // behaves exactly as it did before the block existed.

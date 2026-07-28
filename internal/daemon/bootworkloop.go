@@ -14,6 +14,7 @@ import (
 	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
@@ -95,6 +96,14 @@ func (bs *bootState) buildWorkLoopDeps(ctx context.Context, daemonStartTime time
 func (bs *bootState) seedGovernorDeps(deps *workLoopDeps, daemonStartTime time.Time) error {
 	cfg := bs.cfg
 	if cfg.ProjectDir == "" {
+		return nil
+	}
+	// Subsystem partition: with movement_governor off, seed nothing. Reading the
+	// sentinel: block below is a FATAL path on a malformed value, so a disabled
+	// subsystem could otherwise still refuse the daemon's boot — and allocating
+	// GovernorState is the constructed-and-inert state the charter rejects.
+	// newMovementGovernorIfEnabled treats the resulting nil deps as OFF.
+	if !cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemMovementGovernor) {
 		return nil
 	}
 	sentinelCfg, sentinelErr := digest.LoadSentinelConfig(cfg.ProjectDir)

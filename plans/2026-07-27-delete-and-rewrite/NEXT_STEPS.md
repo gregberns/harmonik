@@ -617,13 +617,37 @@ extracted from `runReviewLoop`** and never wired. Since `reviewloop.go` is now i
 that extraction is prior art for the rewrite rather than junk. **Cherry-pick those two packages; still
 do not merge the branch.**
 
-**D. Worktree and branch cleanup.** Operator: *"after the delete, we need to do a worktree cleanup and
-branch cleanup. This house is a mess."* **29** worktrees under `/Users/gb/github/harmonik-wt/`, most
-from finished or abandoned work, plus the stale local and remote branches behind them. Two of those
-worktrees have **forked bead ledgers** — running bare `br` inside a worktree silently creates a fresh
-`.beads/beads.db` and issues IDs from a new namespace, with no warning and exit 0; both forks are
-currently empty, so nothing has been lost yet. Must run **after** the deletion, so no worktree holding
-unmerged evidence is destroyed.
+**D. Worktree and branch cleanup — DONE 2026-07-28.** Operator: *"after the delete, we need to do a
+worktree cleanup and branch cleanup. This house is a mess."* Two counts here were wrong and are
+corrected: the registered worktree count was **37**, not 29 (31 removed), and **five** worktrees had
+**forked bead ledgers**, not two — `arch-01-contract`, `extinguish-mvh`, `input-ack-contract`,
+`subsystem-partition-01`, and a `reviewloop-finalize` tmp worktree. All five forks were verified empty
+before removal, so nothing was lost, but the hazard behind them is unchanged and still worth the
+warning: running bare `br` inside a worktree silently creates a fresh `.beads/beads.db` and issues IDs
+from a new namespace, with no warning and exit 0. 40 provably-merged local branches were deleted;
+**359 local and all 129 remote branches remain**, untouched — the worktrees are cleaned up, the
+branches essentially are not, so branch cleanup proper is still open.
+
+**Five worktrees were deliberately kept, and this is the part that has to survive:**
+
+| Kept | Why |
+|---|---|
+| `harmonik-wt/cq-01` | 8 staged files incl. an unfinished `internal/queue/transaction_store.go` — the queue-transaction work Trap 1 protects |
+| `harmonik-wt/lift-l8-reviewloop` | 2 staged renames moving `reviewloop.go` into `internal/runloop` — relevant to the run-machine decomposition (step 6) |
+| `harmonik-wt/arch-01-contract` | untracked `.kerf/` artifacts |
+| `harmonik-wt/cq-mig-01` | untracked evidence under `plans/` |
+| `/private/tmp/harmonik-main-integration-20260725` | staged for the item-C hand-harvest |
+
+Also kept, and **not** a worktree despite living under `harmonik-wt/`:
+`harmonik-wt/kilo-preserved` is a plain directory holding two deliberately-named evidence patches
+(`hk-o7x4w-BLOCKED-do-not-merge.patch`, `hk-pvrfx-UNCOMMITTED-under-review.patch`). It has no `.git`
+and `git worktree list` cannot see it, so a worktree-driven sweep will neither remove it nor warn you
+it exists.
+
+One thing needs a human look: **`/tmp/hk-rqhz3.2ebLUi/clone` (271 MB)**, an unregistered self-contained
+clone left by a `harmonik init` smoke test on 2026-07-24. Its three HEAD commits are all present in the
+main repo and its 8 dirty files are init's own scaffolding output, so it is almost certainly disposable
+— but it is dirty, so it was left.
 
 **E. Delete `plans/2026-07-24-code-health-audit/` — 129 files, 17,813 lines, all tracked.**
 It is ~10% live evidence and ~90% dead process; 13 of 92 tasks ever completed and every file with real

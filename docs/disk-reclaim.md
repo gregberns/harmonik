@@ -2,8 +2,10 @@
 
 What to check when the box runs low on disk, ordered by how much each source
 actually grows. Every entry here is harmonik-generated or harmonik-adjacent —
-this is not a general macOS cleanup guide. System caches (Spotify, Chrome,
-Homebrew) are large but *stable*; they are not what fills the disk.
+this is not a general macOS cleanup guide. Third-party caches (Spotify, Chrome,
+Homebrew) are large but *stable*; they are not what fills the disk. The shared
+Go and lint caches in `~/Library/Caches` look like that category and are not —
+they grow with the builds this project runs, which is why they lead the list.
 
 Why this matters beyond disk: below the daemon's `diskLowWatermarkDefault`
 (10 GiB, `internal/daemon/workloop.go`) dispatch is **skipped silently**. A full
@@ -15,6 +17,7 @@ First measurement, always:
 
 ```bash
 df -h /System/Volumes/Data
+du -sh ~/Library/Caches/go-build ~/Library/Caches/golangci-lint  # measured #1 — §0
 du -sh "$TMPDIR"                                           # often #1 — see §2
 du -sh /private/tmp/claude-502/-Users-gb-github-harmonik   # §1
 du -sh /Users/gb/github/harmonik/.beads                    # §3
@@ -41,6 +44,11 @@ as done. Corollaries that have each bitten someone here:
 - `rm -rf` prints `Permission denied` per file and still exits 0 on some
   shells' pipelines. Re-`ls` the directory.
 - `du -sh` after the delete is the cheapest per-directory confirmation.
+- A zsh glob that matches nothing **aborts the whole command**. `rm -rf "$T"/go-build*
+  "$T"/scratch-*` prints `no matches found` and deletes *nothing* — including the
+  glob that did match. This is the purest form of the failure this section exists
+  to catch: it looks like a completed step and reclaims 0 MiB. See the portability
+  table for the `find … -print0 | xargs -0` form that does not have this property.
 
 ## Portability: this box is darwin, the runbook is not GNU
 
@@ -59,6 +67,7 @@ Verified on this machine:
 | `xargs -r` | flag accepted, but BSD `xargs` already skips empty input | plain `xargs` |
 | `tac` | not installed | `tail -r`, or sort so you don't need reversal |
 | `n=$(… | wc -l); [ "$n" != 0 ]` | BSD `wc` pads (`"       0"`), so the test is **always true** | `wc -l \| tr -d ' '`, then `[ "$n" -gt 0 ]` |
+| `rm -rf "$T"/go-build* "$T"/scratch-*` (multi-glob) | zsh `nomatch`: one unmatched glob aborts the **entire** command — `no matches found`, zero deletions | `find "$T" -maxdepth 1 \( -name 'go-build*' -o -name 'scratch-*' \) -print0 \| xargs -0 rm -rf` |
 
 `-newermt` deserves the correction spelled out, because it is easy to conclude
 from a failed relative form that the whole primary is unusable on darwin. It is
@@ -68,6 +77,15 @@ in an agent shell `find` may be a shell-snapshot function resolving to `bfs`
 rather than `/usr/bin/find`; both reject the relative form, but their error text
 differs, so match on behavior, not on the message.
 
+The zsh `nomatch` row is the one most likely to void a whole reclaim step
+without anyone noticing (2026-07-28). Unlike bash, zsh treats an unmatched glob
+as a hard error and **never runs the command at all**, so a two-glob `rm -rf`
+where one pattern happens to be already-clean deletes nothing and reports
+nothing but `no matches found`. Prefer `find -maxdepth 1 … -print0 | xargs -0`
+for any multi-pattern delete: `find` returning no rows is an empty pipe, not an
+aborted command. `setopt null_glob` would also work, but it is per-shell state
+an agent cannot rely on inheriting.
+
 A note on `find` and sizes: sorting by *apparent* size hides the real offenders
 (sparse VM images look like 8 TB, occupy 13 GB). Rank by `du` output, not
 `ls -l`. And a log that has been deleted while a process still holds it open
@@ -75,6 +93,33 @@ consumes disk but is invisible to both `find` and `du` — `lsof -nP +L1` is the
 only way to see it.
 
 ---
+
+## 0. `~/Library/Caches/*` — the shared Go caches, measured #1 on 2026-07-28
+
+Until 2026-07-28 `~/Library/Caches/go-build` appeared in this runbook only as
+one row of §2's Go-cache table, annotated "macOS-purgeable, see hk-pgtbr". That
+annotation reads as *the OS handles this one*, and it is why prior sweeps walked
+straight past it while chasing 100 MB scratchpad caches. It held **9.4 GiB —
+more than everything else this sweep found combined** — and `go clean -cache`
+returned all of it in seconds. `~/Library/Caches/golangci-lint`, which this
+runbook did not mention at all, held another **1.1 GiB**.
+
+```bash
+du -sh ~/Library/Caches/go-build ~/Library/Caches/golangci-lint
+go clean -cache             # the 9.4 GiB; regenerable, zero risk
+golangci-lint cache clean   # the 1.1 GiB (or rm -rf the directory)
+```
+
+Both are pure build artifacts — the whole cost of deleting them is one slow
+build and one slow lint. Check them **first**: they are the cheapest large win
+on the box, and unlike §1–§3 they need no liveness reasoning about who owns
+what.
+
+The lesson worth carrying past this one cache: *purgeable* is not *purged*.
+macOS reclaims a purgeable cache under its own pressure signals, not because
+your data volume is at 94%, so treat "the OS handles it" as a claim to measure
+rather than a reason to skip a directory. Anything annotated that way in this
+document deserves a `du` before it is believed.
 
 ## 1. Agent session scratchpads
 
@@ -201,21 +246,22 @@ delete at session end — not one per command.
 Also in `$TMPDIR`: Go's own `go-build*` scratch dirs (8 present, up to 188 MB
 each) and `scratch-*` / `scenario-twin-*` test leftovers.
 
-### There are at least six places a Go cache lives in this project
+### There are at least seven places a Go cache lives in this project
 
 A reclaim that checks one convention finds almost nothing:
 
 | Path | Written by |
 |---|---|
-| `$TMPDIR/tmp.XXXXXXXX` | bare inline `GOCACHE=$(mktemp -d)` — **unowned, the big one** |
+| `~/Library/Caches/go-build` | Go's default `GOCACHE` — **9.4 GiB, the biggest single source on the box; see §0** |
+| `~/Library/Caches/golangci-lint` | the linter's default cache — **1.1 GiB**, missing from this runbook until 2026-07-28 |
+| `$TMPDIR/tmp.XXXXXXXX` | bare inline `GOCACHE=$(mktemp -d)` — **unowned, the big one in `$TMPDIR`** |
 | `$TMPDIR/harmonik-gocache.XXXXXX` | `scripts/with-isolated-gocache.sh` (self-cleaning except on SIGKILL) |
 | `$TMPDIR/go-build*` | the Go toolchain's own temp dirs |
-| `~/Library/Caches/go-build` | Go's default `GOCACHE` — **macOS-purgeable**, see hk-pgtbr |
 | `~/.cache/h-*-gocache`, `/tmp/h-*/gocache` | long-lived named caches (assessor campaigns, isolated lanes) |
 | `<worktree>/.harmonik/go-cache` | the daemon's merge gate (`internal/daemon/workloop.go`) |
 | scratchpad `gc-*`, `*-gocache`, `lintcache-*` | per-agent-session caches (§1) |
 
-## 3. `.beads/.br_history-archive` — the historical 25 GiB root cause
+## 3. `.beads/` history tiers — the historical 25 GiB root cause
 
 `br` writes a **full copy of `issues.jsonl` on every write** (~6.0 MB each,
 about one per minute during active work). Rotation *archives* these into
@@ -226,14 +272,24 @@ snapshots**. Capped by hk-8vnwg (`internal/daemon/brhistoryrotate.go`):
 
 | Directory | Policy | Constant |
 |---|---|---|
-| `.br_history/` | keep 5 | `brHistoryCloseTrimKeep` |
+| `.br_history/` | keep 20 on rotation, trimmed to 5 on bead-close | `brHistoryRotationDefaultKeep`, `brHistoryCloseTrimKeep` |
 | `.br_history-archive/` | keep 300 **or** older than 7d | `brHistoryArchiveKeep`, `brHistoryArchiveMaxAge` |
 
-**Two failure modes remain:**
+The live tier has **two** thresholds, not one — the tighter close-trim is what
+holds in-session growth down, and it only fires when a bead closes. Earlier
+versions of this table listed only the 5, which makes a directory sitting at 20
+look like a violation when it is exactly at rotation policy.
+
+**Two failure modes remain, and both tiers suffer the first:**
 
 1. **Every prune path is daemon-driven** — `daemon.Start` and on-bead-close in
    `workloop.go`. With the daemon off while `br` writes continue, nothing
-   prunes. Observed at 100 snapshots (642 MB) against a policy of 5.
+   prunes. Observed at 100 snapshots (642 MB) against a close-trim of 5, and
+   again on 2026-07-28 at **92 pairs / 618 MB against a rotation keep of 20**.
+   Both tiers grow by this mechanism and at the same ~6 MB per snapshot; the
+   25 GiB incident happened in the archive, which is why earlier versions of
+   this section warned only about the archive. Measure both, especially after
+   any stretch with the daemon stopped.
 2. **The cap is count-based, not size-based.** Measured 2026-07-23: **300 pairs
    — exactly at policy, every one inside the 7-day window — occupying
    1.7 GiB.** Full policy compliance still costs 1.7 GiB, and the cost grows
@@ -248,7 +304,7 @@ bare entry count reads 2× the number of snapshots and looks like a violation
 when the directory is exactly at policy:
 
 ```bash
-ls .beads/.br_history/*.jsonl | wc -l                        # pairs; policy 5
+ls .beads/.br_history/*.jsonl | wc -l                        # pairs; rotation 20 / close-trim 5
 ls .beads/.br_history-archive/ | grep -c '\.jsonl\.archived-'  # pairs; policy 300
 ls .beads/.br_history-archive/ | wc -l                       # 2x — NOT the count
 ```
@@ -278,6 +334,24 @@ drop=$((total-keep))
 ```
 
 Run it once with `rm -f` replaced by `echo` first, then confirm with `df`.
+
+**That loop cannot remove an orphan sidecar, and one existed on 2026-07-28.**
+It derives each sidecar's name *from its payload*, so a `.jsonl.meta.json`
+whose `.jsonl` is already gone is never named by any iteration and survives
+every future run — the loop is structurally blind to exactly the files a
+half-completed earlier prune leaves behind. Sweep the other direction
+afterwards:
+
+```bash
+A=.beads/.br_history-archive
+ls "$A" | grep '\.jsonl\.meta\.json\.archived-' | while read -r m; do
+  base=${m%%.jsonl.meta.json.archived-*}; suffix=${m#*.jsonl.meta.json.archived-}
+  [ -f "$A/${base}.jsonl.archived-${suffix}" ] || echo "orphan sidecar: $m"
+done
+```
+
+Same shape applies to `.br_history/`. Neither direction alone is a complete
+prune.
 
 Also here: `.beads/.br_recovery/` (pre-migration `beads.db` backups, 52 MB) and
 any `.beads.bak.<epoch>/` left by a migration. Both are one-shot, not growing —
@@ -369,14 +443,31 @@ nothing.
 
 ---
 
-## What we deliberately did NOT delete (2026-07-23)
+## What we deliberately did NOT delete (2026-07-23, revisited 2026-07-28)
 
 Recorded so the next sweeper does not re-litigate these.
 
-- **`.beads/.br_history-archive`, 1.7 GiB — left in place.** It is at *exactly*
-  its documented policy: 300 pairs, all inside the 7-day window. Nothing is
-  broken; the policy itself costs 1.7 GiB. See §3 failure mode 2. Fix the
-  policy, don't hand-prune a compliant directory.
+- **`.beads/.br_history-archive`, 1.7 GiB — left in place 2026-07-23, then
+  pruned anyway on 2026-07-28.** The 2026-07-23 reasoning still stands on its
+  own terms: 300 pairs, all inside the 7-day window, *exactly* at documented
+  policy, so the cost is the policy's and the fix belongs in the constants (§3
+  failure mode 2), not in a sweeper's hands.
+
+  The 2026-07-28 sweep pruned it to 20 pairs anyway — **1.6 GiB** — against a
+  directory that was again nominally compliant (300 pairs, oldest 6.98 days
+  against a 7-day cutoff). Recorded as precedent with its reasoning, not as a
+  new rule: *nominal* compliance was about to become non-compliance regardless
+  — every one of those snapshots crossed the daemon's own hard-delete line
+  within hours — and the contents were week-old copies of a machine-local
+  ledger that has been rewritten thousands of times since. Deleting them
+  removed nothing the daemon was not itself about to remove.
+
+  The general shape, offered as judgment rather than instruction: "at policy"
+  is a reason not to hand-prune when the policy is the thing keeping the files
+  useful. When the policy is about to discard them anyway and the files are
+  superseded copies, being at policy is a technicality. Check *where in the
+  window* a compliant directory is sitting before deciding — 6.98 of 7 days is
+  a different fact from 1 of 7.
 - **`.harmonik/events/events.jsonl` (99 MB) and `baseline-2026-07-13` (94 MB) —
   left in place.** Append-only per EV-020; truncation reads as corruption to
   the bus. The baseline is compressible (§5) but was not touched.
@@ -385,7 +476,13 @@ Recorded so the next sweeper does not re-litigate these.
   likely account for much of the gap between measured file usage and the
   volume's reported usage — ~58 GiB unaccounted on 2026-07-23. Removing them
   needs `sudo tmutil deletelocalsnapshot <name>`. **This is an operator
-  decision; an agent must surface it, not run it.**
+  decision; an agent must surface it, not run it.** Still three, still present
+  on 2026-07-28. Reach for this whenever the arithmetic does not close: it is
+  the standing explanation for "I deleted 10 GiB and free space barely moved,"
+  because a snapshot pins the blocks of files you just unlinked. If a step's
+  `df` delta is much smaller than its `du` delta, suspect a snapshot before
+  suspecting the delete failed — and note that this is the one case where the
+  0-MiB rule above has an innocent explanation.
 - **VM / container images — owner call, not sweeper territory.** `~/.lima` is
   3.3 GiB (`~/.lima/test`); OrbStack keeps its VM data outside `~/.orbstack`
   (which is only config). Deleting either destroys container/VM state that
@@ -393,10 +490,12 @@ Recorded so the next sweeper does not re-litigate these.
 
 ## Recurrence
 
-§1, §2 and §3 regenerate continuously; the rest are one-shot. Re-check them
+§0, §1, §2 and §3 regenerate continuously; the rest are one-shot. Re-check them
 whenever free space drops below ~20 GB, and after any stretch with the daemon
-stopped — that is when `.br_history` grows unbounded. §2 grows fastest of the
-three while the hk-gjbpp inline-`mktemp` workaround is in force.
+stopped — that is when **both** `.br_history` tiers grow unbounded. §2 grows
+fastest of the four while the hk-gjbpp inline-`mktemp` workaround is in force,
+but §0 is the largest at rest and the cheapest to clear, so it is the one to
+measure first.
 
 Whatever you run, bracket it with `df` (§"Did the command actually do
 anything?"). Every defect corrected in the 2026-07-23 rewrite of this file

@@ -186,8 +186,8 @@ tasks:
     card: tasks/INPUT-ACK-CONTRACT-01.md
     group: ARCH
     priority: P0
-    phase: implement
-    disposition: open
+    phase: complete
+    disposition: closed
     routing: {complexity: high, profile: sol_xhigh, reviewer_profile: sol_xhigh}
     hard_requires: []
     conflicts_with: [ARCH-01]

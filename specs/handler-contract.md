@@ -1469,7 +1469,7 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 
 ### 10.1 Conformance profiles
 
-**Core.** An implementation conforming to Core MUST pass every requirement `HC-001` through `HC-053` (including `HC-007a`, `HC-007b`, `HC-008a`, `HC-011a`, `HC-013a`, `HC-024a`, `HC-026a`, `HC-036a`, `HC-044a`, `HC-048a`, `HC-049a`) and every invariant `HC-INV-001` through `HC-INV-008`. No requirement is deferred.
+**Core.** An implementation conforming to Core MUST pass every requirement `HC-001` through `HC-053` (including `HC-007a`, `HC-007b`, `HC-008a`, `HC-011a`, `HC-013a`, `HC-024a`, `HC-026a`, `HC-036a`, `HC-044a`, `HC-048a`, `HC-049a`) and every invariant `HC-INV-001` through `HC-INV-008`. Deferrals, if any, are exactly those listed under Deferred extensions below.
 
 **Deferred extensions.** The following are additive extensions to Core; none is required to claim Core conformance:
 

@@ -889,7 +889,7 @@ Every branch point above corresponds to a normative requirement: Cat 0 pre-check
 
 ### 10.1 Conformance profiles
 
-**Core.** An implementation conforming to Core MUST pass every requirement RC-001 through RC-031 (including the inserts RC-002a, RC-003a, RC-019a, RC-020a) and every invariant RC-INV-001 and RC-INV-004. RC-INV-002, RC-INV-003, RC-INV-005 are retired (not implementation obligations). No requirement is deferred.
+**Core.** An implementation conforming to Core MUST pass every requirement RC-001 through RC-031 (including the inserts RC-002a, RC-003a, RC-019a, RC-020a) and every invariant RC-INV-001 and RC-INV-004. RC-INV-002, RC-INV-003, RC-INV-005 are retired (not implementation obligations). Deferrals, if any, are exactly those listed under Deferred extensions below.
 
 **Deferred extensions.** The operator verdict-override CLI surface (RC-027) MAY ship as a follow-on within one release; it is required to claim Core conformance only if operators have opted in via policy.
 

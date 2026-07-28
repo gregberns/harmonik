@@ -4,9 +4,10 @@
 **Supersedes:** `plans/2026-07-24-code-health-audit/` (see §4)
 **Posture:** delete mechanically, rewrite from spec, harvest only at IO boundaries.
 
-This plan is deliberately short. The failure mode of the last attempt was 15 lines of
-planning per line of shipped code. If this document grows past two pages, that is the
-disease returning.
+This plan is deliberately short. The failure mode of the last attempt was planning-doc churn
+outweighing shipped production code by roughly an order of magnitude. The disease returns if this
+acquires a task index or a state lattice — not if it gets longer. See
+[`NEXT_STEPS.md`](NEXT_STEPS.md) for what happens after the deletions.
 
 ---
 
@@ -19,8 +20,8 @@ Measured basis:
 
 | Fact | Value |
 |---|---|
-| Production Go | 216,690 LOC / 902 files |
-| Test Go | 525,123 LOC / 1,832 files |
+| Production Go | 216,695 LOC / 902 files |
+| Test Go | 487,997 LOC (was 525,123 before the specaudit deletion) |
 | Test files named after a bead ID | 885 files / 255,664 LOC (49% of all test code) |
 | Production files nothing calls | 35 files / 4,276 LOC (a floor, not a ceiling) |
 | Normative specs already written | 25,893 LOC across 19 files |
@@ -100,7 +101,7 @@ are bead-named but are the acceptance tier. They survive. Everything else bead-n
 ## 4. Is the code-health audit still valid?
 
 **Mostly no.** State as of today: **77 of 92 tasks still in triage, 13 complete, 5 deferred**
-— roughly 14% executed. And 47 of 94 task cards are written in extract / decompose /
+— roughly 14% executed. And 47 of 92 task cards (94 files minus README and TEMPLATE) are written in extract / decompose /
 characterize / thread language, which is work whose entire purpose is to make untestable
 code testable. If the code is being replaced, those cards are moot.
 
@@ -133,12 +134,16 @@ Bug archaeology on `internal/daemon/pasteinject.go` (~53 bugs across 56 commits)
 - **World-caused** bugs recur verbatim in any rewrite that does not carry the knowledge
   forward — and they are the chronic, user-visible half.
 
-The 20 irreducible external facts are recorded in [`CARRY-FORWARD.md`](CARRY-FORWARD.md).
+**All five subsystems are now harvested: 83 external facts recorded in**
+[`CARRY-FORWARD.md`](CARRY-FORWARD.md)**, against 214 structure-caused bugs discarded — ~72%.**
+That repo-wide ratio is far more favourable to a rewrite than pasteinject's 1:1, which is the worst
+case precisely because it sits on the TUI boundary.
 **That file is the highest-value artifact of this effort.** It should graduate to `specs/`
 once stable. Any rewrite of an agent-substrate subsystem must satisfy every fact in it.
 
-Harvest the same way, once per IO-boundary subsystem, before deleting its tests:
-`tmuxsubstrate.go`, `codexwire`/`codexdriver`, `harness/pi`, `brcli`. Not for interior logic.
+Harvesting is **complete** for `pasteinject`, `tmuxsubstrate`, `codexwire`/`codexdriver`,
+`harness/pi` and `brcli`. Do the same for any further IO-boundary subsystem before deleting its
+tests. Not for interior logic.
 
 ---
 
@@ -148,7 +153,7 @@ Driven by churn against a median of **3 commits per production file** in `intern
 
 | Target | LOC | Commits | Note |
 |---|---|---|---|
-| `workloop.go` | 6,656 | **370** | `beadRunOne` is 2,298 lines; `runWorkLoop` 1,670. 60% of the file in two functions. |
+| `workloop.go` | 6,656 | **370** | `beadRunOne` is 2,289 lines (peak 2,394, born at 119); `runWorkLoop` 1,670. 60% of the file in two functions. |
 | `daemon.go` | — | 175 | |
 | `reviewloop.go` | 2,194 | 116 | |
 | `tmuxsubstrate.go` | 3,023 | 67 | |

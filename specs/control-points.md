@@ -52,7 +52,7 @@ It is a separate spec from `execution-model.md` because control-points is the no
 - Reconciliation wall-clock budget integration — reconciliation.md §4.4 owns the per-reconciliation outer bound; this spec owns the Budget primitive only.
 - Policy document schema evolution (field-level migration paths) — deferred per OQ-CP-001.
 - Skill storage layout and injection mechanism — owned by [handler-contract.md §4.11]; this spec owns only the *declaration* surface.
-- Role names, the `mvh-required` vs. deferred role list, and role semantics — owned by [architecture.md §4.8]; this spec owns permission schemas keyed by those role names.
+- Role names, the `required` vs. deferred role list, and role semantics — owned by [architecture.md §4.8]; this spec owns permission schemas keyed by those role names.
 - Event payload shapes for control-point-emitted events — owned by [event-model.md §6.3]; this spec owns the emission WHEN.
 - The DOT workflow grammar itself — owned by [execution-model.md §4.1].
 
@@ -282,9 +282,9 @@ Every role declared in a policy document MUST carry a `permission_schema` with f
 
 Tags: mechanism
 
-#### CP-029 — `mvh-required` roles carry concrete default permission sets
+#### CP-029 — `required` roles carry concrete default permission sets
 
-For each `mvh-required` role (Planner, Builder, Reviewer per [architecture.md §4.8]), the policy layer MUST supply a concrete default permission set (read-only vs. write to specific directories, tool whitelist, `default_skills`, spawn-source roles, Hooks that may modify behavior). Default sets are shipped at harmonik init and are overridable by higher-precedence layers per §4.7.
+For each `required` role (Planner, Builder, Reviewer per [architecture.md §4.8]), the policy layer MUST supply a concrete default permission set (read-only vs. write to specific directories, tool whitelist, `default_skills`, spawn-source roles, Hooks that may modify behavior). Default sets are shipped at harmonik init and are overridable by higher-precedence layers per §4.7.
 
 Tags: mechanism
 
@@ -296,7 +296,7 @@ Tags: mechanism
 
 #### CP-031 — Default skills include the Beads-CLI skill
 
-Every `mvh-required` role's `default_skills` MUST include the Beads-CLI skill per [docs/foundation/components.md §10.9]. This is a concrete instance of the general skill-injection pattern in §4.11 and [handler-contract.md §4.11]; roles MAY declare additional defaults; nodes MAY declare additional `required_skills` per [execution-model.md §4.2].
+Every `required` role's `default_skills` MUST include the Beads-CLI skill per [docs/foundation/components.md §10.9]. This is a concrete instance of the general skill-injection pattern in §4.11 and [handler-contract.md §4.11]; roles MAY declare additional defaults; nodes MAY declare additional `required_skills` per [execution-model.md §4.2].
 
 Tags: mechanism
 
@@ -491,7 +491,7 @@ Tags: mechanism
 
 #### CP-052 — Beads-CLI skill is the motivating default
 
-The Beads-CLI skill per [docs/foundation/components.md §10.9] MUST be a default skill in every `mvh-required` role per §4.6.CP-031. Any agent requiring Beads queries or status updates depends on its presence; node-level declaration supplements the role default when additional skills are needed.
+The Beads-CLI skill per [docs/foundation/components.md §10.9] MUST be a default skill in every `required` role per §4.6.CP-031. Any agent requiring Beads queries or status updates depends on its presence; node-level declaration supplements the role default when additional skills are needed.
 
 Tags: mechanism
 
@@ -803,7 +803,7 @@ This record is the typed payload referenced by the `kind = gate_decision` discri
 RECORD Role:
     name                 : String                -- per [architecture.md §4.8]
     permission_schema    : PermissionSchema
-    status               : RoleStatus            -- mvh-required | declared-but-deferred
+    status               : RoleStatus            -- required | declared-but-deferred
 ```
 
 ```
@@ -812,7 +812,7 @@ RECORD PermissionSchema:
     writable_paths       : List<String>          -- workspace-relative globs
     readable_paths       : List<String>          -- default ["**"]
     model_tier           : String | None
-    default_skills       : List<String>          -- MUST include "beads-cli" for mvh-required roles (§4.6.CP-031)
+    default_skills       : List<String>          -- MUST include "beads-cli" for required roles (§4.6.CP-031)
     allowed_hooks        : List<String>          -- Hook names that may modify behavior
     invocable_by         : List<String>          -- role names permitted to spawn this role
     egress_whitelist     : List<String> | None   -- domain patterns permitted for agent network egress; None = unrestricted; [] = deny all (§4.11.CP-059)
@@ -851,7 +851,7 @@ roles:
       allowed_hooks: [<hook-name>, ...]
       invocable_by: [<role-name>, ...]
       egress_whitelist: [<domain-pattern>, ...]  # optional; omit = unrestricted; [] = deny all; per §4.11.CP-059
-    status: mvh-required | declared-but-deferred
+    status: required | declared-but-deferred
 
 freedom_profiles:
   - name: <profile-name>
@@ -1119,7 +1119,7 @@ Not applicable as a separate taxonomy; ControlPoint failures map onto the execut
 - **[architecture.md §4.2]** — ZFC rule; Guard mechanism-only restriction (§4.4.CP-020) is the ZFC enforcement point at the selection-logic layer.
 - **[architecture.md §4.4]** — subsystem envelope; registration path consumes it (§4.9.CP-044).
 - **[architecture.md §4.6]** — amendment protocol; declared-but-deferred role activation requires it (§4.6.CP-030).
-- **[architecture.md §4.8]** — role taxonomy; role names and the `mvh-required` vs. deferred classification are owned there.
+- **[architecture.md §4.8]** — role taxonomy; role names and the `required` vs. deferred classification are owned there.
 - **[architecture.md §4.9]** — centralized-controller principle; the three owners (S01, S02, S05) embody it.
 - **[architecture.md §4.10]** — three-artifact separation; DOT references YAML by name (§4.7.CP-036).
 - **[execution-model.md §4.1]** — Run, State, Transition, Outcome types; policy expressions evaluate against them (§4.7.CP-034).
@@ -1180,7 +1180,7 @@ Migration to `[testing.md §<layer>]` cross-references occurs within one revisio
 
 ### 10.3 Excluded conformance claims
 
-- This spec does NOT grant conformance over: Hook dispatch loop internals (owned by the S05 subsystem spec); Gate and Guard invocation mechanics inside the edge cascade (owned by the S01 subsystem spec per [execution-model.md §4.10]); the reconciliation wall-clock budget's outer-bound enforcement (owned by reconciliation/spec.md §4.4); skill package storage and injection mechanism (owned by [handler-contract.md §4.11]); event payload shapes (owned by [event-model.md §6.3]); role names and the `mvh-required` vs. deferred classification (owned by [architecture.md §4.8]).
+- This spec does NOT grant conformance over: Hook dispatch loop internals (owned by the S05 subsystem spec); Gate and Guard invocation mechanics inside the edge cascade (owned by the S01 subsystem spec per [execution-model.md §4.10]); the reconciliation wall-clock budget's outer-bound enforcement (owned by reconciliation/spec.md §4.4); skill package storage and injection mechanism (owned by [handler-contract.md §4.11]); event payload shapes (owned by [event-model.md §6.3]); role names and the `required` vs. deferred classification (owned by [architecture.md §4.8]).
 - This spec does NOT specify `expr-lang/expr` version pinning or specific numeric sandboxing limits; those are deferred per OQ-CP-003 and are bounded by the CP-034b requirement that the implementation set `expr.MaxNodes` and `expr.Timeout` to harmonik-level (non-policy-tunable) values.
 
 ## 11. Open questions

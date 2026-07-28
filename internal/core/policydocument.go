@@ -92,8 +92,12 @@ type PolicyRole struct {
 	// which is a CP-028 violation detected by ValidateRoles.
 	PermissionSchema *PolicyPermissionSchema `yaml:"permission_schema"`
 
-	// Status is "mvh-required" or "declared-but-deferred" (§4.6.CP-028).
-	Status string `yaml:"status"`
+	// Status is RoleStatusRequired or RoleStatusDeclaredButDeferred (§6.2).
+	// Typed so that the status comparisons in ValidateDeferredRoleShells and
+	// ValidateRequiredRoleDefaultSkills are checked against the enum constants
+	// rather than bare string literals. YAML decoding does not run the enum's
+	// validation hook, so ValidateRoles enforces membership.
+	Status RoleStatus `yaml:"status"`
 }
 
 // PolicyPermissionSchema is the permission_schema block of a role (§6.2).
@@ -191,10 +195,10 @@ var ErrMissingPermissionSchema = errors.New("role missing required permission_sc
 // or default_skills field (§4.6.CP-030).
 var ErrNonEmptyDeferredRoleShell = errors.New("declared-but-deferred role must carry empty shell: allowed_tools, writable_paths, and default_skills must all be empty")
 
-// ErrMissingBeadsCLISkill is returned by ValidateRequiredRoleDefaultSkills when an
-// mvh-required role's default_skills does not include "beads-cli"
+// ErrMissingBeadsCLISkill is returned by ValidateRequiredRoleDefaultSkills when a
+// required role's default_skills does not include "beads-cli"
 // (specs/control-points.md §4.6.CP-031, §4.11.CP-052).
-var ErrMissingBeadsCLISkill = errors.New("mvh-required role missing \"beads-cli\" in default_skills")
+var ErrMissingBeadsCLISkill = errors.New("required role missing \"beads-cli\" in default_skills")
 
 // ErrFreedomProfileEmptyName is returned by ValidateFreedomProfiles when a
 // freedom profile has an empty name field (§6.2.CP-032).
@@ -265,20 +269,31 @@ func (d *PolicyDocument) ValidateSections() error {
 	return fmt.Errorf("%w: %s", ErrMissingPolicySection, strings.Join(missing, ", "))
 }
 
-// ValidateRoles reports the first CP-028 violation found in d.Roles, or nil
-// when every role carries a permission_schema block.
+// ValidateRoles reports the first per-role declaration violation found in
+// d.Roles, or nil when every role carries a permission_schema block and a
+// recognised status.
 //
-// CP-028 requires every role declared in a policy document to carry a
-// permission_schema (specs/control-points.md §4.6.CP-028). A nil
-// PermissionSchema pointer means the key was absent from the YAML source.
+// Two rules are enforced:
+//
+//   - CP-028 requires every role declared in a policy document to carry a
+//     permission_schema (specs/control-points.md §4.6.CP-028). A nil
+//     PermissionSchema pointer means the key was absent from the YAML source.
+//   - §6.2 declares status as the RoleStatus enum. YAML decoding accepts any
+//     string into the named type, so membership is enforced here and returns
+//     [ErrInvalidRoleStatus]. This is the single enforcement site: it is what
+//     makes the status-discriminating skips in ValidateDeferredRoleShells and
+//     ValidateRequiredRoleDefaultSkills safe rather than fail-open.
 func (d *PolicyDocument) ValidateRoles() error {
 	for i, r := range d.Roles {
+		name := r.Name
+		if name == "" {
+			name = fmt.Sprintf("roles[%d]", i)
+		}
 		if r.PermissionSchema == nil {
-			name := r.Name
-			if name == "" {
-				name = fmt.Sprintf("roles[%d]", i)
-			}
 			return fmt.Errorf("%w: role %q", ErrMissingPermissionSchema, name)
+		}
+		if !r.Status.Valid() {
+			return fmt.Errorf("%w: role %q has status %q", ErrInvalidRoleStatus, name, r.Status)
 		}
 	}
 	return nil
@@ -292,9 +307,12 @@ func (d *PolicyDocument) ValidateRoles() error {
 // a permission shell where allowed_tools, writable_paths, and default_skills
 // are all empty. Activation of a deferred role requires a foundation amendment
 // per §4.6; shell fields are filled at activation time, not declaration time.
+//
+// Roles with any other status are skipped. Statuses outside the RoleStatus enum
+// are rejected by ValidateRoles, so the skip discriminates rather than fails open.
 func (d *PolicyDocument) ValidateDeferredRoleShells() error {
 	for i, r := range d.Roles {
-		if r.Status != "declared-but-deferred" {
+		if r.Status != RoleStatusDeclaredButDeferred {
 			continue
 		}
 		name := r.Name
@@ -320,16 +338,18 @@ func (d *PolicyDocument) ValidateDeferredRoleShells() error {
 }
 
 // ValidateRequiredRoleDefaultSkills reports the first CP-031 violation found in
-// d.Roles, or nil when every mvh-required role's default_skills includes
+// d.Roles, or nil when every required role's default_skills includes
 // "beads-cli".
 //
-// CP-031 requires every `mvh-required` role to carry "beads-cli" in
+// CP-031 requires every `required` role to carry "beads-cli" in
 // default_skills so that every handler session has the Beads-CLI skill
 // available (specs/control-points.md §4.6.CP-031, §4.11.CP-052).
 // Declared-but-deferred roles are exempt; they carry empty shells per CP-030.
+// Statuses outside the RoleStatus enum are rejected by ValidateRoles, so the
+// skip discriminates rather than fails open.
 func (d *PolicyDocument) ValidateRequiredRoleDefaultSkills() error {
 	for i, r := range d.Roles {
-		if r.Status != "mvh-required" {
+		if r.Status != RoleStatusRequired {
 			continue
 		}
 		name := r.Name

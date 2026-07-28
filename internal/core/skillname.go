@@ -10,7 +10,7 @@ import "regexp"
 // under a Role. An empty SkillName is invalid; Valid() returns false for the
 // zero value.
 //
-// Per CP-031, any `mvh-required` role MUST include the SkillName "beads-cli"
+// Per CP-031, any `required` role MUST include the SkillName "beads-cli"
 // in its DefaultSkills. Enforcement lives in the policy validator, not at the
 // type level.
 type SkillName string

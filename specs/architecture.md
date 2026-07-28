@@ -34,7 +34,7 @@ It is a separate spec from everything else because these rules are meta-rules: t
 - Foundation amendment protocol, including parallel-amendment serialization and overlap detection.
 - Agent-type abstraction: concept, identifier shape, reserved identifiers, cross-subsystem reference points, orthogonality to role.
 - Verification naming: the three distinct meanings (`verification-node`, `verification-result`, `quality-gate`) and the hyphenated canonical forms.
-- Role taxonomy glossary entries for deferred AlphaGo abstractions (Planner, Researcher, Builder, Reviewer, Verifier, Scheduler, Governor); `mvh-required` vs `declared-but-deferred` split; orthogonality to agent type; merge-responsibility clarification.
+- Role taxonomy glossary entries for deferred AlphaGo abstractions (Planner, Researcher, Builder, Reviewer, Verifier, Scheduler, Governor); `required` vs `declared-but-deferred` split; orthogonality to agent type; merge-responsibility clarification.
 - Harness-engineering invariants (single-source-of-truth repo, guides+sensors, constrain-to-empower, filesystem-backed coordination, quality-left).
 - Centralized-controller principle and its acknowledged tradeoff (no graceful degradation under daemon failure).
 - Three-artifact separation (`spec`, `workflow graph`, `bead`) and the explicit exclusion of "feature" as a product primitive.
@@ -306,7 +306,7 @@ Foundation names seven roles drawn from the AlphaGo north-star: Planner, Researc
 
 Tags: mechanism
 
-#### AR-033 — `mvh-required` vs `declared-but-deferred` split
+#### AR-033 — `required` vs `declared-but-deferred` split
 
 Planner, Builder, and Reviewer MUST be implemented (sufficient to run the minimum self-build cycle described in the bootstrap doc). Researcher, Verifier, Scheduler, and Governor are `declared-but-deferred`: named in foundation so subsystem specs do not invent alternatives, but not required. Each deferred role MUST be activated when its triggering pattern appears in a workflow; activation MUST NOT require a foundation revision.
 

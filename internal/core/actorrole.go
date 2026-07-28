@@ -17,16 +17,16 @@ type ActorRole string
 // Declared ActorRole constants per architecture.md §4.8.AR-032 and
 // execution-model.md §4.10.EM-046.
 const (
-	// ActorRolePlanner is the planning role (`mvh-required` per AR-033).
+	// ActorRolePlanner is the planning role (`required` per AR-033).
 	ActorRolePlanner ActorRole = "Planner"
 
 	// ActorRoleResearcher is the research role (declared-but-deferred per AR-033).
 	ActorRoleResearcher ActorRole = "Researcher"
 
-	// ActorRoleBuilder is the builder role (`mvh-required` per AR-033).
+	// ActorRoleBuilder is the builder role (`required` per AR-033).
 	ActorRoleBuilder ActorRole = "Builder"
 
-	// ActorRoleReviewer is the reviewer role (`mvh-required` per AR-033).
+	// ActorRoleReviewer is the reviewer role (`required` per AR-033).
 	ActorRoleReviewer ActorRole = "Reviewer"
 
 	// ActorRoleVerifier is the verifier role (declared-but-deferred per AR-033).

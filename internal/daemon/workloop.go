@@ -44,7 +44,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -55,7 +54,6 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
-	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -1466,13 +1464,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// fairness (QM-067; weighting deferred to v0.2).
 	rrCursor := 0
 
-	// Dashboard forcing-gate state (hk-xg6rw). dashboardGateWasBlocked persists
-	// across ticks so dashboard_stale/dashboard_refreshed emit only on the
-	// transition edge, not every tick. dashboardBlockedQueues is re-evaluated
-	// at most every dashboardGateEvalInterval and consulted by selectNextQueue.
-	var dashboardGateWasBlocked bool
-	var lastDashboardGateEval time.Time
-	var dashboardBlockedQueues map[string]bool
+	// Dashboard forcing gate (hk-xg6rw) — a SWITCHABLE subsystem. nil means
+	// `subsystems.dashboard_gate.enabled: false`: the gate is never constructed,
+	// never evaluated, and selectNextQueue is handed a nil blocked-queue set. See
+	// dashboardgate.go.
+	dashGate := newDashboardGateIfEnabled(deps.projectCfg, os.Stderr)
 
 	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
 	// in_progress with an active run. Entries suppress the item from the
@@ -1505,20 +1501,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// Bead ref: hk-pina9.
 	queuePreClaimShowAttempts := make(map[queuePreClaimAttemptKey]int)
 
-	// sentinelPendingAckToken is the ack_token of the in-flight sentinel trip
-	// (ACT mode, FW3 hk-4toh). Empty when no trip is pending. Persists across
-	// loop iterations so dormant transitions can clear the correct token.
-	var sentinelPendingAckToken string
-
-	// governorHalted is set to true when the G-liveness self-kill gate fires
-	// in ACT mode. The loop checks this at the top of each iteration and
-	// calls exitClean() — halting dispatch while allowing in-flight runs to drain.
-	var governorHalted bool
-
-	// lastSentinelEval is the wall-clock time of the most recent sentinel.Evaluate
-	// call. Zero triggers on the first iteration. Shared by FW2/FW3 (they are
-	// mutually exclusive on sentinelMode). Bead ref: hk-usn8o.
-	var lastSentinelEval time.Time
+	// Sentinel movement governor (FW2 hk-z1lr / FW3 hk-4toh) — a SWITCHABLE
+	// subsystem. nil means `subsystems.movement_governor.enabled: false` (or that
+	// nothing seeded a governor state): no evaluation, no trip, no halt, and no
+	// sentinel dispatch gate. All its per-loop state — eval cadence, pending ack
+	// token, halt flag — lives inside it. See movementgovernor.go.
+	governor := newMovementGovernorIfEnabled(deps, os.Stderr)
 
 	// dispatchCtx is the context checked by the outer poll loop to decide
 	// whether to halt dispatch. It is separate from ctx (the main daemon context)
@@ -1627,9 +1615,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 		// G-liveness halt (FW3 hk-4toh): if the governor fired ActivationHalt
 		// in ACT mode on a prior tick, drain in-flight runs and exit cleanly.
-		// The liveness_halt page event was already emitted when governorHalted
-		// was set; here we merely enforce the halt.
-		if governorHalted {
+		// The liveness_halt page event was already emitted when the halt was
+		// armed; here we merely enforce it. Always false when the governor
+		// subsystem is absent.
+		if governor.halted() {
 			return exitClean()
 		}
 
@@ -1709,53 +1698,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			}
 		}
 
-		// Step 2b: dashboard staleness forcing gate (hk-xg6rw). Rate-limited to
-		// dashboardGateEvalInterval; dashboardBlockedQueues is consulted by
+		// Step 2b: dashboard staleness forcing gate (hk-xg6rw). The gate's own
+		// rate limit, transition-edge event emission, and blocked-queue set live
+		// in dashboardGate (dashboardgate.go); the verdict is consulted by
 		// selectNextQueue below (Step 3) to withhold NEW item dispatch on
-		// captain-curated queues only — in-flight runs, the mailbox, reconcile,
-		// and every daemon-core path are untouched.
-		//
-		// Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §4.
-		if time.Since(lastDashboardGateEval) >= dashboardGateEvalInterval {
-			lastDashboardGateEval = time.Now()
-			gateNow := time.Now()
-			gateResult, gateErr := evaluateDashboardGate(deps.projectDir, gateNow)
-			if gateErr != nil {
-				// Fail loud (no-hardcoded-threshold mandate) but not fatal: the
-				// result already degrades to Blocked=true (fail-safe direction).
-				fmt.Fprintf(os.Stderr, "daemon: workloop: dashboard gate: config error, failing closed: %v\n", gateErr)
-			}
-			dashboardBlockedQueues = gateResult.BlockedQueues
-
-			if gateResult.Blocked && !dashboardGateWasBlocked {
-				dashboardGateWasBlocked = true
-				blockedNames := make([]string, 0, len(gateResult.BlockedQueues))
-				for name := range gateResult.BlockedQueues {
-					blockedNames = append(blockedNames, name)
-				}
-				sort.Strings(blockedNames)
-				payload := core.DashboardStalePayload{
-					MaxStalenessSecs: int64(gateResult.MaxStaleness.Seconds()),
-					StaleSecs:        gateResult.StaleSecs,
-					UpdatedAt:        gateResult.UpdatedAt,
-					BlockedQueues:    blockedNames,
-					DetectedAt:       gateNow.UTC().Format(time.RFC3339),
-				}
-				if raw, mErr := json.Marshal(payload); mErr == nil {
-					_ = deps.bus.Emit(ctx, core.EventTypeDashboardStale, raw)
-				}
-			} else if !gateResult.Blocked && dashboardGateWasBlocked {
-				dashboardGateWasBlocked = false
-				payload := core.DashboardRefreshedPayload{
-					Reason:     "refreshed",
-					UpdatedAt:  gateResult.UpdatedAt,
-					DetectedAt: gateNow.UTC().Format(time.RFC3339),
-				}
-				if raw, mErr := json.Marshal(payload); mErr == nil {
-					_ = deps.bus.Emit(ctx, core.EventTypeDashboardRefreshed, raw)
-				}
-			}
-		}
+		// captain-curated queues only. No-op when the subsystem is switched off.
+		dashGate.tick(ctx, deps, time.Now())
 
 		// EM-062: eager-refill fires on every poll tick (as well as after every
 		// run_terminal event in evaluateGroupAdvanceWithOutcome). This ensures
@@ -1766,201 +1714,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Bead ref: hk-9321v.
 		eagerRefillEval(ctx, deps)
 
-		// FW2 (hk-z1lr): sentinel governor observe-only evaluation.
-		//
-		// Cadence-gated (hk-usn8o): computeWindowMovement scans events.jsonl on each
-		// call; running on every 2s workloop tick caused 25-50% daemon CPU on large
-		// logs. Only evaluate when the configured cadence has elapsed.
-		//
-		// OBSERVE-ONLY CONTRACT: no EmitTrip, no halt, no dispatch side-effects.
-		// ACT mode (hk-4toh FW3) wires the trip/halt/all-clear block separately.
-		//
-		// Spec ref: flywheel-motion.md §§1, 6.1. Bead ref: hk-z1lr (FW2).
-		if deps.governorState != nil && (deps.sentinelMode == "" || deps.sentinelMode == "observe") {
-			evalCad := deps.governorCfg.EvalCadence
-			if evalCad <= 0 {
-				evalCad = sentinel.DefaultSentinelEvalCadence
-			}
-			if time.Since(lastSentinelEval) >= evalCad {
-				lastSentinelEval = time.Now()
-				now := time.Now()
-
-				// Snapshot hasReadyBeads: ≥1 unblocked open bead exists (§1.3).
-				var hasReadyBeads bool
-				if readyRecs, readyErr := deps.brAdapter.Ready(ctx); readyErr == nil {
-					hasReadyBeads = len(readyRecs) > 0
-				}
-
-				// HasUndeployedTail: closed Phase-2-class bead present (§1.3, §5.2).
-				// Skip the br call when no Phase-2 classes are configured (fast path).
-				var hasUndeployedTail bool
-				if len(deps.sentinelPhase2Classes) > 0 && deps.brPath != "" {
-					hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
-				}
-
-				operatorPaused := deps.operatorPauseCtrl != nil && deps.operatorPauseCtrl.IsPaused()
-				sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
-					ProjectDir:        deps.projectDir,
-					Now:               now,
-					HasReadyBeads:     hasReadyBeads,
-					HasUndeployedTail: hasUndeployedTail,
-					OperatorPaused:    operatorPaused,
-				}, deps.governorCfg)
-
-				if raw, mErr := json.Marshal(sig); mErr == nil {
-					_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw)
-				}
-			}
-		}
-
-		// FW3 (hk-4toh): sentinel governor ACT mode.
-		//
-		// Fires every tick when the governor is wired and sentinel.mode=="act".
-		// ACT mode adds real teeth: EmitTrip on sustained-low-movement, ClearTrip
-		// on real movement, and a G-liveness halt + page on doom-loop detection.
-		// Config default is OFF ("observe"); operators opt in via .harmonik/config.yaml.
-		//
-		// Trip/clear state is durable: EmitTrip writes an ack-state file to
-		// .harmonik/decision_acks/ (EV-043a anchor) AND updates the in-memory
-		// DecisionBlocker so IsQueueBlocked("sentinel") gates all dispatch while
-		// the trip is pending.
-		//
-		// Spec ref: flywheel-motion.md §§2, 6.1. Bead ref: hk-4toh (FW3).
-		if deps.governorState != nil && deps.sentinelMode == "act" {
-			evalCad := deps.governorCfg.EvalCadence
-			if evalCad <= 0 {
-				evalCad = sentinel.DefaultSentinelEvalCadence
-			}
-			// Cadence gate (hk-usn8o): skip O(events.jsonl) scan on this tick.
-			if time.Since(lastSentinelEval) >= evalCad {
-				lastSentinelEval = time.Now()
-				now := time.Now()
-
-				var hasReadyBeads bool
-				var readyBeadIDs []string
-				if readyRecs, readyErr := deps.brAdapter.Ready(ctx); readyErr == nil {
-					hasReadyBeads = len(readyRecs) > 0
-					for _, rec := range readyRecs {
-						readyBeadIDs = append(readyBeadIDs, string(rec.BeadID))
-					}
-				}
-
-				var hasUndeployedTail bool
-				if len(deps.sentinelPhase2Classes) > 0 && deps.brPath != "" {
-					hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
-				}
-
-				operatorPausedAct := deps.operatorPauseCtrl != nil && deps.operatorPauseCtrl.IsPaused()
-				sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
-					ProjectDir:        deps.projectDir,
-					Now:               now,
-					HasReadyBeads:     hasReadyBeads,
-					HasUndeployedTail: hasUndeployedTail,
-					OperatorPaused:    operatorPausedAct,
-				}, deps.governorCfg)
-
-				if raw, mErr := json.Marshal(sig); mErr == nil {
-					_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw)
-				}
-
-				switch {
-				case sig.Level == sentinel.ActivationHalt:
-					// G-liveness doom-loop: halt dispatch + emit liveness_halt page event.
-					// Set governorHalted=true so the next iteration calls exitClean().
-					governorHalted = true
-					halPayload, _ := json.Marshal(map[string]interface{}{
-						"consecutive_zero_cycles": sig.ConsecutiveZeroCycles,
-						"liveness_no_progress_n":  deps.governorCfg.LivenessNoProgressN,
-					})
-					_ = deps.bus.Emit(ctx, core.EventTypeLivenessHalt, halPayload)
-					fmt.Fprintf(os.Stderr,
-						"daemon: workloop: sentinel: G-liveness halt fired after %d zero-progress cycles (threshold=%d); halting dispatch\n",
-						sig.ConsecutiveZeroCycles, deps.governorCfg.LivenessNoProgressN)
-
-				case sig.Level == sentinel.ActivationActive && sig.SuppressedBy == "":
-					// Sustained low movement with opportunity: emit decision_required trip.
-					//
-					// AC4 (hk-jvul): reconcile the in-memory pending token against the
-					// on-disk ack file. A captain legitimate-halt (record-halt CLI) may
-					// have externally acknowledged the file between ticks. When that
-					// happens, clear the in-memory token and the DecisionBlocker so the
-					// next ActivationActive emits a fresh trip for re-adjudication (spec
-					// §2.2 clause 2 — "subject to re-adjudication next pass").
-					if sentinelPendingAckToken != "" {
-						if externallyAcked, checkErr := sentinel.IsTripAcknowledged(deps.projectDir, sentinelPendingAckToken); checkErr == nil && externallyAcked {
-							if deps.decisionBlocker != nil {
-								deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
-							}
-							sentinelPendingAckToken = ""
-						}
-					}
-					// Idempotent: EmitTrip returns the existing ack_token if one is pending.
-					if sentinelPendingAckToken == "" {
-						tok, tripErr := sentinel.EmitTrip(ctx, sentinel.TripInput{
-							ProjectDir:        deps.projectDir,
-							ReadyBeadIDs:      readyBeadIDs,
-							HasUndeployedTail: hasUndeployedTail,
-							Now:               now,
-						})
-						if tripErr != nil {
-							fmt.Fprintf(os.Stderr,
-								"daemon: workloop: sentinel: EmitTrip failed (non-fatal): %v\n", tripErr)
-						} else if tok != "" {
-							sentinelPendingAckToken = tok
-							if deps.decisionBlocker != nil {
-								deps.decisionBlocker.AddQueueBlock(sentinelSubjectIDACT, tok)
-							}
-						}
-					}
-
-					// FW4 (hk-jsvc): spawn a fresh-context adversary crew to adjudicate
-					// the trip. The adversary reviews captain comms/commits as a foreign
-					// artifact and emits sentinel emit-trip if it confirms the governor's
-					// verdict. Overlap-skip: SpawnAdversary is a no-op when the adversary
-					// crew is already online (prevents stacked sessions on consecutive trips).
-					if deps.crewHandler != nil {
-						var onlineAgents map[string]struct{}
-						if deps.commsWhoQuerier != nil {
-							if agents, whoErr := deps.commsWhoQuerier(ctx); whoErr == nil {
-								onlineAgents = agents
-							}
-						}
-						if onlineAgents == nil {
-							onlineAgents = map[string]struct{}{}
-						}
-						if _, spawnErr := sentinel.SpawnAdversary(ctx, sentinel.AdversaryInput{
-							ProjectDir: deps.projectDir,
-						}, deps.crewHandler, onlineAgents); spawnErr != nil {
-							fmt.Fprintf(os.Stderr,
-								"daemon: workloop: sentinel: SpawnAdversary failed (non-fatal): %v\n", spawnErr)
-						}
-					}
-
-				case sig.Level == sentinel.ActivationDormant && sentinelPendingAckToken != "":
-					// Real movement detected: clear the pending trip automatically.
-					// ClearTrip writes decision_acknowledged to events.jsonl + updates the
-					// ack file. Only governor movement (bead_closed / run_completed /
-					// HEAD-advance) can clear the trip — not the captain's say-so alone.
-					//
-					// AC4 (hk-jvul): if the ack was already acknowledged externally (e.g.
-					// RecordLegitimateHalt), skip ClearTrip to avoid a spurious
-					// governor_movement event on top of the existing legitimate_halt clear.
-					// Always clear in-memory state and DecisionBlocker so dispatch resumes.
-					alreadyAcked, _ := sentinel.IsTripAcknowledged(deps.projectDir, sentinelPendingAckToken)
-					if !alreadyAcked {
-						if clearErr := sentinel.ClearTrip(ctx, deps.projectDir, sentinelPendingAckToken, now); clearErr != nil {
-							fmt.Fprintf(os.Stderr,
-								"daemon: workloop: sentinel: ClearTrip failed (non-fatal): %v\n", clearErr)
-							break // preserve sentinelPendingAckToken for retry next tick
-						}
-					}
-					if deps.decisionBlocker != nil {
-						deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
-					}
-					sentinelPendingAckToken = ""
-				}
-			}
-		}
+		// Sentinel movement governor (FW2 hk-z1lr observe / FW3 hk-4toh act). One
+		// call: the mode split, the eval cadence gate (hk-usn8o — each evaluation
+		// scans events.jsonl), the trip/clear/halt handling and the adversary spawn
+		// all live in movementGovernor (movementgovernor.go). No-op — and never
+		// constructed — when the subsystem is switched off.
+		governor.tick(ctx, deps)
 
 		// Step 3: dispatch source — queue-pull or br-ready fallback.
 		//
@@ -2117,7 +1876,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// reflects the queue-owner's permanent concurrency intent, not the current tuner
 				// state; scaling it with the tuner would under-count eligible queues in the
 				// round-robin even when the global gate is the binding constraint.
-				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor, dashboardBlockedQueues)
+				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor, dashGate.blockedQueueSet())
 				// Capture queue count while the lock is still held so we can
 				// distinguish "zero queues loaded" from "queues exist but all
 				// paused/at-cap" after lq.Done() releases the lock (hk-mgoo7).
@@ -2219,9 +1978,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// hold it without claiming and retry on the next poll tick.
 				//
 				// Sentinel queue-level gate (FW3 hk-4toh): also hold when the
-				// sentinel governor trip is pending (IsQueueBlocked("sentinel")),
-				// which blocks ALL beads — not just a specific one — until real
-				// movement clears the trip.
+				// sentinel governor trip is pending, which blocks ALL beads — not
+				// just a specific one — until real movement clears the trip. The
+				// gate is asked THROUGH the governor, so it disappears with the
+				// subsystem rather than outliving the only code that can open it.
 				//
 				// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
 				// Bead ref: hk-pbmsq (bead gate), hk-4toh (sentinel queue gate).
@@ -2234,7 +1994,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 					continue
 				}
-				if deps.decisionBlocker != nil && deps.decisionBlocker.IsQueueBlocked(sentinelSubjectIDACT) {
+				if governor.dispatchBlocked(deps) {
 					fmt.Fprintf(os.Stderr,
 						"daemon: workloop: bead %s blocked by sentinel governor trip (EV-043, FW3) — holding until real movement\n",
 						snapItemBeadID)
@@ -2718,6 +2478,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			//
 			// Sentinel queue-level gate (FW3 hk-4toh): also hold when the sentinel
 			// governor trip is pending — all beads are blocked until real movement.
+			// Asked THROUGH the governor so the gate disappears with the subsystem.
 			//
 			// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
 			// Bead ref: hk-pbmsq (bead gate), hk-4toh (sentinel queue gate).
@@ -2730,7 +2491,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 				continue
 			}
-			if deps.decisionBlocker != nil && deps.decisionBlocker.IsQueueBlocked(sentinelSubjectIDACT) {
+			if governor.dispatchBlocked(deps) {
 				fmt.Fprintf(os.Stderr,
 					"daemon: workloop: bead %s blocked by sentinel governor trip (EV-043, FW3, br-ready path) — holding until real movement\n",
 					beadRecord.BeadID)

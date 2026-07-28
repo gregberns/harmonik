@@ -333,6 +333,28 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 		}
 	}
 
+	// Tests + Structure guidance (hk-3z5ow): agent-task.md is the only instruction
+	// surface every dispatched implementer is guaranteed to open, and it previously
+	// said nothing about either. Implementer phases only — the reviewer's quality
+	// sections live in buildReviewTargetContent. Written as principles, not rules:
+	// the prescriptive per-bead naming rule this replaces (removed in 92d81fd60)
+	// is what produced 885 bead-named test files.
+	//
+	// The delete-by-default clause carries the operator directive of 2026-07-28:
+	// an implementer changing code in a package heavy with bad tests removes them
+	// as part of the work rather than routing around them.
+	if p.Phase != "reviewer" {
+		sb.WriteString("\n## Tests\n\n")
+		sb.WriteString("A test earns its place by executing product code and failing when the behavior breaks. Asserting that a file exists, grepping prose, or pinning an internal signature is not a test.\n")
+		sb.WriteString("Reach the change through the entry point a user or the daemon actually calls; prefer the existing `_test.go` for the code you changed, and name any new file after the behavior it protects — never after a bead or ticket ID.\n")
+		sb.WriteString("Do not write a tier you will not run. If the natural gate is a suite you cannot run here, that is a signal the change is too big for one dispatch — say so rather than committing an unrun test.\n")
+		sb.WriteString("A bad test is worse than bad production code: it makes the production code harder to fix while claiming it is protected. When a test already sitting in your path does not clearly earn its keep by the standard above — it never reaches product code, it pins an internal signature, or it is large and intricate out of proportion to what it protects — the default is to delete it, as part of this change rather than as a follow-up.\n")
+		sb.WriteString("Deleting such a test is ordinary work, not a permission you need. Say what you deleted and why in the commit message.\n")
+
+		sb.WriteString("\n## Structure\n\n")
+		sb.WriteString("If the shape of the file or function you have to touch is what makes this change hard, say so in the bead rather than working around it. Make the smallest change that does not deepen the problem.\n")
+	}
+
 	// Prior-Iteration Context section: present only for implementer-resume and reviewer.
 	switch p.Phase {
 	case "implementer-resume":

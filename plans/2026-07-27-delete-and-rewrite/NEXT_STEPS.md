@@ -217,6 +217,12 @@ Every instruction above lives in a file the implementer may never open. This one
 or a user actually calls, name the file after the behavior rather than the bead, and treat "I need a
 new `export_*_test.go` seam" as a report that the seam is in the wrong place.
 
+**Landed, and one thing more.** The `## Tests` section now also carries the operator's 2026-07-28
+default: a bad test is worse than bad production code, so an implementer that meets one in its path
+deletes it as part of the work rather than filing it. This matters most for `internal/daemon` and
+`internal/core`, the two packages holding the largest remaining concentration and the next to be
+worked.
+
 ### 2.7 Reviewer checks that would have caught all of it
 
 `.claude/agents/agent-reviewer.md` §3 asks only whether tests are at "the appropriate tier" and are

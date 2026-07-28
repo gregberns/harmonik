@@ -409,19 +409,398 @@ the suite runs, goes red, and nobody is stopped.
 
 | # | Step | Blocks | Cost |
 |---|---|---|---|
-| 1 | Reconcile `origin/integration/phase-reviewloop-20260725` — **44 commits not in the active branch** (verified; it is not 44 ahead of `main`) | everything below | judgment |
-| 2 | **Agent instruction changes (§2)** | dispatching any new agent work | mostly deletions |
+| 1 | ~~Reconcile `origin/integration/phase-reviewloop-20260725`~~ — **RESOLVED 2026-07-28: abandon it.** See §Deferred item C | nothing | done |
+| 2 | **Agent instruction changes (§2)** — §2.6 landed 2026-07-28 (`734f283a7`); §2.5 ratchet and §2.8 structure-block remain | dispatching any new agent work | mostly deletions |
 | 3 | Wire the scenario tier to a merge-blocking gate (§5.1) | trusting any green build | small |
-| 4 | Bead the 29 hidden deferrals (§3) before touching era-marker prose | era-marker cleanup | mechanical |
-| 5 | Deletion steps 2–4 of the predecessor plan | the workloop rewrite | mechanical |
-| 6 | Spec triage of the 7 suspect specs (§1) | using specs as the rewrite oracle | real work |
+| 4 | Deletion steps 2–4 of the predecessor plan | the rewrite | mechanical |
+| 5 | **Subsystem partition — config-driven enable/disable of each part of the system** (§below) | the rewrite's shape and its priority order | design + planning |
+| 6 | Decompose the run machine — **`workloop.go` + `reviewloop.go` + `dot_cascade_core.go` as one unit** | — | the point of all this |
 | 7 | `.dot` fixture relocation + WG-036 amendment (§4) | nothing — do it opportunistically | small |
-| 8 | `workloop.go` rewrite | — | the point of all this |
-| 9 | MVH / `v0.1` era-marker sweep (§3) | nothing — cosmetic but clarifying | do last |
 
-**§2 is the one to do first, and it is the cheapest.** Steps 5–8 are undone by the next agent that
-reads `.claude/implementer-protocol.md` and names a test file after a bead. Everything else on this
-list is recoverable; regrowing 255k lines of the wrong tests is not.
+**Everything not on that list is deferred.** The failure mode of this project has never been running
+out of things to do; it has been doing the interesting adjacent thing instead of the load-bearing one.
+Steps 4–5 are undone by the next agent that names a test file after a bead, so §2 stays ahead of them.
+
+---
+
+## Two traps in the sequence above — read before running step 4
+
+Both found 2026-07-28 by re-verifying the superseded `plans/2026-07-24-code-health-audit/` against the
+tree as it stands. Both are silent: nothing fails, work just disappears.
+
+**Trap 1 — the zero-caller sweep will delete the queue transaction substrate.**
+`internal/queue/transaction.go` (1,005 LOC) is reached only via `queuewiring.QueueStore.Transact`, and
+`Transact` has exactly one caller: a test. Three of its five exported functions have no caller at all.
+It is therefore indistinguishable from dead code to the mechanical selector — but it is **unfinished,
+not dead**, and this plan lists it under KEEP. **It needs an explicit carve-out in the step-4 selector,
+alongside `internal/workflow/scenario/` and the `//go:build scenario` daemon files.**
+
+**Trap 2 — a `ready` kerf work will overwrite `specs/`, including the correction at this branch's tip.**
+`.kerf/works/reviewloop-decoupling/` holds 11 unlanded spec drafts, among them a `run-state-machine.md`
+numbered **0.2.1 — the same version as the input-ack correction landed on 2026-07-27**. `kerf finalize`
+copies drafts into `specs/` wholesale, so running it overwrites that correction plus ten other specs
+with pre-correction text. This plan names `specs/` the rewrite oracle. **Do not finalize that work.
+Resolve or abandon it before any spec triage begins.**
+
+---
+
+## 6. Subsystem partition — turn parts of the system on and off by configuration
+
+**Operator direction, 2026-07-28.** Before rebuilding or fixing anything, build a simple partition that
+decides — at startup, from configuration — which parts of the system are running: queue, comms, keeper,
+crew, and the rest. Each subsystem becomes something you can opt into or out of.
+
+**Why it comes before the rewrite, not after.** It lets the rebuild start with a small subset of the
+product and make *that* genuinely robust before anything else is switched on. Every previous attempt has
+had to hold the whole system live in order to run any of it, which is why a defect anywhere blocked
+progress everywhere and why "fix the bug" always meant "fix the bug in a rotten system."
+
+**Its second job is prioritisation, and that may be the more valuable one.** Deciding what may be
+switched off forces the question of what is actually core. The list of subsystems that must be on for
+the product to do anything at all *is* the rewrite's priority order — derived from a real constraint
+rather than argued about. Expect the exercise to demote things everyone assumed were central.
+
+This needs planning before implementation: what the partition boundaries are, what a disabled subsystem
+does at its call sites (absent, or present-and-inert), what the minimum viable "on" set is, and how the
+partition is expressed in config. Do that planning after the deletions land and before the run-machine
+decomposition starts — the decomposition should be shaped by the partition, not retrofitted to it.
+
+### The target, stated by the operator 2026-07-28
+
+> *"I like the idea of a clear concise architecture that segments out the subsystems and then stitches
+> them back together. It should also focus on the most critical parts of the system (queue) and make
+> things composable — meaning not all the parts of the system need to exist for the system to run.
+> I'm COMPLETELY ok if we get done with part of the re-write and the only thing that 'works' or is
+> hooked up is the queue + beads processing. Comms, crews, keeper, all can come later."*
+
+**This is the acceptance criterion for the rewrite, and it is a permission as much as a target.** A
+rewrite that ends with only the queue and bead processing working is a SUCCESS, not a partial one.
+Nothing else has to be reconnected to declare the core done.
+
+Three consequences that should settle arguments later:
+
+1. **Segment, then stitch.** Subsystems are separated first and composed back together explicitly at a
+   composition root — not left implicitly entangled and documented as if they were separate.
+2. **The queue is the centre.** Where effort is contested, it goes to the queue and the bead-processing
+   path. `internal/queue` is 7,627 production lines with the durable transaction substrate still
+   unfinished (see Trap 1) — that substrate is core work, not a deferred nicety.
+3. **Composability is the test of the design.** If the system cannot run without a given subsystem
+   present, that subsystem is entangled with the core and the entanglement is the defect.
+
+**THE CORE SET — measured 2026-07-28, confirmed by the operator the same day. This is decided, not proposed:**
+
+> **config → event bus → queue → bead-ledger adapter → worktrees → harness registry + one substrate → work loop → merge**
+
+   Operator: *"That seems like a fantastic set to start with. Comprehensive but tight."* Treat it as the
+   boundary of the rewrite's first target. Adding to it requires a reason; everything absent from it is
+   deferred by default rather than by argument.
+   **Comms, crew, captain, keeper, dashboard, live-state, subscribe and the sentinel are all outside
+   it** — as is the socket listener itself (`harmonik run <bead-id>` already runs work without it).
+   Two things are wrongly fused INTO the core and must come out: the hard `$TMUX` fail-fast at startup
+   (the daemon cannot boot outside tmux although the substrate is meant to be pluggable), and the
+   reviewer, which is welded into the work loop instead of being a switchable stage — a large part of
+   why `beadRunOne` is 2,289 lines.
+
+---
+
+## Two ways the mechanical selector lies — both hit during step 2, both silent
+
+The compiler is a good oracle for "does it still build", and a useless one for these. Neither was
+caught by `go build`, `go vet`, or any of six tag-qualified vet passes.
+
+**The cascade must come from the compiler, never from filenames.** A name-based expansion pass swept in
+`internal/daemon/daemon_test.go`, which holds the package-wide `TestMain` that points
+`HARMONIK_CLAUDE_CONFIG_PATH` at a temp file and isolates the whole daemon test package from the real
+`~/.claude.json`. Deleting it **compiled clean** and silently broke a scenario test with a
+`RemoveAll: directory not empty` race. Compiler-minimal set: **685** files. Name-based set: **715**.
+
+**The bead-ID pattern has false positives, and they cluster on the boundary subsystems.**
+`internal/harness/pi/live_hktwin_test.go` matched the `hk`-prefixed regex — but `hktwin` is
+*"harmonik twin"*, not a ticket; its header reads `Bead: M6 WS3-pi`. It is the sole definer of
+`TestPiA_LiveSingleTurn`, and the Makefile's `test-pi-live` runs `-run TestPiA_`, which **exits 0 when
+it matches nothing**. Deleting it leaves the only real-hardware Pi oracle green while running zero
+tests. `scripts/harnesspi-freeze-gate.sh` check (6) exists for precisely this hazard and would still
+have passed, because it only asserts the Makefile no longer points at `./internal/daemon`.
+
+Generalise before step 3: **a `-run` filter that matches nothing is a passing target.** Any deletion
+that removes the last definer of a name referenced by a live `-run` pattern converts a gate into a
+no-op. Sweep the Makefile, `*.sh`, and `*.yml` for `-run` patterns after every deletion step.
+
+---
+
+## Deferred — real work, deliberately not now
+
+Each of these has evidence already gathered and a reason it is not the current job. **Do not start any
+of them before step 5 above is underway.** Operator direction, 2026-07-28: *"We are not building or
+fixing bugs. We spent weeks fixing bugs in a rotten system and building more and more tech debt."*
+
+**A. Which part of flywheel we actually want — ANSWERED 2026-07-28, and part of it is a deletion, not a deferral.**
+
+The name covers **two** systems and only one was deleted. The TypeScript agent that *replaced* the
+human orchestrator (`.pi/extensions/flywheel/`, 9,038 lines) was deleted in `353fc3c1e` on 2 July
+after it fork-bombed the machine to load average 249 — it auto-loaded into every session and polled
+with no backoff. The second system is Go, lives in `internal/sentinel/`, was never deleted, and **is
+running now**. `specs/flywheel-motion.md` §0.2 is the *second* system's spec forbidding a rebuild of
+the first — not a self-prohibition.
+
+**The movement governor is dead by measurement.** It has run in observe-only mode since 21 June and
+emitted **34,125 `governor_signal` events — 12.4% of the entire 102 MB event log**. Replaying them
+against what acting mode would have done: 61% nothing, **26% block all dispatch and spawn an adversary
+session, 13% kill the daemon** — **4,520 daemon self-kills in five weeks**. It scores only commits,
+merges and bead-closes, so design work, planning, and a quiet weekend are indistinguishable from
+stalled. It also carries a documented 25–50% daemon-CPU hazard from scanning an event log it is itself
+filling. The reason no disposition record exists: the flip-to-acting decision was raised 22 June, never
+answered, and a backlog reset on 12 July bulk-closed every flywheel bead including the one whose only
+job was to write that record.
+
+**Delete during the decomposition, not after** — ~190 lines of the governor are near-duplicated *inside*
+`workloop.go`. Carrying dead-by-measurement code through a rewrite is how it becomes permanent. Also
+delete the positive loop, goal-keeper, and `internal/cognition/`.
+
+**Keep ~630 lines that are not flywheel at all:** `ComputeSnapshot` + `DetectLayerA`
+(`internal/sentinel/signals.go`, `layera_hkl087e.go`) came from different July work that borrowed the
+package name. They detect per-run stalls — heartbeat gap, review-loop wedge, run age — are tested, have
+zero production callers, and their judgment is evidence-local, which is exactly where the fleet-wide
+governor fails.
+
+**Three landmines when cutting:** `DecisionBlocker` (`decision_block_ev043a.go`) is the general
+human-in-the-loop mechanism with several callers — remove only its `AddQueueBlock("sentinel")` site;
+`eagerfill_em063.go` holds both the live eager refill and a never-fired staged-bead generator, so split
+it rather than delete it; and `.flywheel/skills/sentinel-adversary.md` is a **runtime dependency** of
+`sentinel.SpawnAdversary`, not documentation.
+
+**Dispositions:** gut `specs/flywheel-motion.md` to a stub preserving §0.2 and §0.3; delete
+`specs/cognition-loop.md`, `HANDOFF-flywheel.md`, `.flywheel/`, and the `sentinel:` config block; keep
+`harmonik supervise`'s `-flywheel` tmux name for now (load-bearing). Correct or delete
+`.kerf/works/flywheel-motion/06-completion-plan.md` — it still claims `sentinel.Evaluate()` has zero
+callers, which stopped being true on 21 June, making it the most misleading document in the tree.
+
+Worth keeping from §0.3 before that spec is gutted: *"Drift and over-deference are beaten by
+independence or determinism — never by more prompt text in the same context."*
+
+**B. Spec triage — good vs crufty, and what to build.** Operator: *"before we start building we will
+need to go through the specs and identify what is good and useful, and what is old and crufty"*, and
+separately: walk a good-size sample to see whether each feature exists and whether we still want it —
+delete some, mark others not-built and build them later. Measured 2026-07-28: **1,164 requirement IDs,
+293 uncited (25%)**; of a 119-ID sample, 48% are implemented-but-untagged, **28% stale**, 13% never
+built. **Seven** requirements would regress working code if a rewrite obeyed them — `AR-017` is the
+worst: a closed list of out-of-process actors that omits tmux, the supervisor, the keeper, `git`, and
+`gh`, so a rewrite obeying it would design a process model that cannot host the running system. Also:
+eight spec files declare **zero** requirement IDs and are unfalsifiable by construction, and
+`specs/cognition-loop.md` maps the flywheel subsystem deleted on 2 July.
+
+**C. Harvest the abandoned integration branch, then delete it.** Decided 2026-07-28: `origin/integration/phase-reviewloop-20260725`
+is **abandoned, not merged**. 25 of its 44 commits are probe garbage, `workloop.go` is byte-identical
+to ours, its two new packages have zero importers anywhere, and its ssh and queue-harness fixes are
+already on this branch verbatim. Merging would *regress* the input-ack correction landed six days ago
+(the branch still carries the `Degraded` outcome this branch removed) and demote `specs/execution-model.md`
+from `reviewed` to `draft`. One commit — `88f36c15d` — carries operationally-earned constants worth
+hand-copying into our specs: the reviewer time budget (10 min base, +10 min/kLOC, 60 min ceiling,
+75 s one-shot reseed), a session-identity checkpoint that must be written *before* `version_selected`,
+close-plus-`needs-attention` as one crash-convergent transaction, and a no-progress detector comparing
+HEAD SHAs instead of diff hashes. Harvest those clauses by hand, then delete the remote branch.
+
+**Revised 2026-07-28 after a second pass:** ~37,292 lines of that 44-commit diff is `internal/specaudit`
+— the test mass already deleted here. The real payload is ~3,130 lines in `internal/runloop`:
+`continuity` (457 LOC) and `reviewcycle` (606 LOC), two reviewed and tested **pure decision kernels
+extracted from `runReviewLoop`** and never wired. Since `reviewloop.go` is now in the rewrite scope,
+that extraction is prior art for the rewrite rather than junk. **Cherry-pick those two packages; still
+do not merge the branch.**
+
+**D. Worktree and branch cleanup.** Operator: *"after the delete, we need to do a worktree cleanup and
+branch cleanup. This house is a mess."* **29** worktrees under `/Users/gb/github/harmonik-wt/`, most
+from finished or abandoned work, plus the stale local and remote branches behind them. Two of those
+worktrees have **forked bead ledgers** — running bare `br` inside a worktree silently creates a fresh
+`.beads/beads.db` and issues IDs from a new namespace, with no warning and exit 0; both forks are
+currently empty, so nothing has been lost yet. Must run **after** the deletion, so no worktree holding
+unmerged evidence is destroyed.
+
+**E. Delete `plans/2026-07-24-code-health-audit/` — 129 files, 17,813 lines, all tracked.**
+It is ~10% live evidence and ~90% dead process; 13 of 92 tasks ever completed and every file with real
+content belongs to one of those 13. Its still-true findings are already folded into this document
+(the two traps above, the corrected measurements, the branch revision). Before `git rm -r`, keep
+pointers to the two kerf works that survive *outside* it: `queue-transaction-contract/07-tasks.md`
+(a 21-slice plan, 1 slice built — this is what Trap 1 protects) and
+`run-architecture-contract/04-design/c6-migration-gates-design.md` (a baseline/target complexity table
+per decomposition step — prior art for the run-machine seam map). Do **not** keep `TASK-INDEX.yaml` or
+the task cards under any framing; they are verbatim the disease this plan names.
+It also holds ~30 recorded defects that never reached the ledger, five confirmed live today — worst is
+`reconcileOrphanedRunsOnResume` scanning `run_started`-minus-terminal without excluding live run IDs,
+so it can reset a bead **under a live agent**. We are not fixing bugs now; carry the list forward, do
+not rediscover it.
+
+---
+
+### The rewrite is built to `PRINCIPLES.md`
+
+[`PRINCIPLES.md`](../../PRINCIPLES.md) — repo root, 84 lines, added 2026-07-15 — states the eight
+principles this codebase is supposed to be built on. **Until 2026-07-28 it had ZERO inbound references anywhere in the tree** —
+`git grep -l "PRINCIPLES.md" HEAD` returned nothing. The link direction was one-way: PRINCIPLES.md
+cites `plans/2026-07-13-code-revamp/`, not the reverse. So no agent ever loaded it. It is now cited from
+`AGENTS.md` and `AGENT_INDEX.md`.
+
+The cost of that omission is measurable. Its §6 reads: *"Beware test theater: a suite that mostly
+asserts constants is not coverage. 'Green' must mean the product code actually ran."* Thirteen days
+later this project deleted ~225,000 lines of exactly that. The warning was already in the tree.
+
+Four of the eight map directly onto work already planned, which is a good sign the principles are real
+rather than aspirational:
+
+- **§8 prove one vertical, then generalize** — this is the operator's own method for the rewrite
+  (queue + bead processing first, everything else later), independently re-derived.
+- **§2 consumer-owned ports** — the decomposition seams for `workloop.go` / `reviewloop.go` /
+  `dot_cascade_core.go`.
+- **§4 time is a port** — directly addresses the mutable package-level timing `var`s identified as the
+  single biggest blocker to rewriting the run machine.
+- **§5 explicit state machines, single writer** — the diagnosis of `beadRunOne`, which open-codes the
+  same transitions in four places.
+
+**One tension to hold consciously.** §7 says "enforce the principles with CI levers, not vibes", while
+the operator's direction is *"I dont want to build more guards and crap to maintain."* These reconcile:
+most of §7's named levers already exist (`.golangci.yml` complexity ceilings, depguard boundary rules,
+the `--new-from-rev` ratchet, the `scripts/*-gate.sh` set). The rule is **use the levers that exist;
+do not build new ones without a reason that survives being questioned.**
+
+### A worked example of why this section exists: AR-009
+
+An agent reported that `specs/architecture.md` **AR-009 forbids configuring subsystems away**, and that
+the partition work would need a spec amendment. **It does not, and it was never checked before being
+repeated.** AR-009 reads: *"Every harmonik deployment MUST include a representation of search, a
+representation of verification, and a representation of traces. Removing any one of the three from a
+deployment is not a valid configuration."* Those are abstract foundation mechanisms — backtracking
+transition kinds, a verifier role-function, the Transition record. **None of them is comms, crew, the
+keeper, or the socket.** The requirement says nothing about the partition work.
+
+Two lessons, and they are the reason for this whole section:
+
+1. **A requirement that sounds like a blocker will be repeated as one.** Nobody opened AR-009 until the
+   operator asked what it actually meant. Cost: a spec amendment nearly proposed against a requirement
+   that did not apply.
+2. **Its enforcement was a "corpus presence test"** — per the spec's own §10.2, a check that certain
+   terms appear in the markdown corpus. It constrains documents, not code, and the sensors enforcing it
+   were among the 129 prose-grepping files deleted on 2026-07-28. It is now unenforced and
+   unenforceable. `architecture.md` scores 61% of its requirement IDs appearing in no Go file; the
+   standing triage verdict is to keep §4.1–4.5 and delete §4.0/4.6/4.10, which constrain documents
+   rather than code. AR-009 is in that territory.
+
+---
+
+## Re-assess — parts of the system whose existence is in question
+
+**These are not bugs to fix. They are things to decide whether to keep.** Each one is a mechanism that
+was built, works as designed, and may simply not deserve to exist in the rebuilt system. The rewrite is
+the moment to ask; carrying them forward unexamined is how the last system accumulated.
+
+A pattern runs through most of them, and it is worth naming because it will keep producing new
+candidates: **a mechanical rule infers intent from a coarse signal, then acts automatically on that
+inference.** The movement governor scored "no commits" as "stalled" and would have killed the daemon
+4,520 times in five weeks (§A). Crew-idle-reap scores "quiet" as "dead". The bandwidth tuner scores a
+token rate as a concurrency ceiling. In every case the honest answer is either agent judgment — which
+can look and see — or an operator-set number. Not an inference.
+
+Specs belong in this section too: the spec triage in §B is the same exercise applied to requirements
+rather than mechanisms. 25% of requirement IDs appear in no Go file, and seven would actively regress
+working code if a rewrite obeyed them.
+
+**RA-1. Reassess `harmonik harness` — it is a testing system with tentacles into everything.**
+Operator, 2026-07-28: *"I'm not even sure we've actually used it and it seems to have tentacles all
+over."* `internal/scenario` is **4,952 lines of production code** behind the `harmonik harness`
+subcommand, and `cmd/harmonik/harness.go` calls **45** exported symbols from it. Its reach is far wider
+than the call list suggests: scenario-file parsing fans out into agent overrides, fixture setup, git
+seeding, file seeds, event expectations, workspace predicates, outcome expectations and cadence tags;
+bootstrap reaches project-root synthesis; matrix expansion is called straight from the CLI. That reach
+is why step 4 shrank from a planned ~18,000-line deletion to 860 lines — almost everything in there is
+load-bearing *for the harness itself*.
+
+Three questions to answer: **is it used at all** (check whether any run, CI job, or human invocation
+has exercised it); **is it separable** from the core — it is a test system and should have no claim on
+the product's centre; and **what should it be** if kept. It also has a latent defect found 2026-07-28:
+`ScenarioFile.Valid()` validates every `git_seed` and `files` fixture entry, while `BootstrapFixture`
+takes no `FixtureSetup` argument at all — **a scenario declaring fixture seeds parses clean and seeds
+nothing.**
+
+**RA-2. The queue's stuck states — four overlapping stop mechanisms, and agents cannot tell them apart.**
+Operator, 2026-07-28: *"we need to revise how the queues can get into a bad state — I forget what it's
+called, but it's really dumb. Some problem occurs and the queue is hung/stopped/whatever, then the
+agents think they can't do anything. That needs to change, but we need to talk about it later."*
+
+There is no single name because there are **four separate mechanisms that stop work**, each with its own
+vocabulary, its own recovery path, and no common surface telling an agent which one it is in:
+
+1. **Queue paused** — `QueuePaused` / the `queue_paused` event. ~140 references.
+2. **Quiesce / drain** — `QuiesceArbiter`, `DrainState`, `Quiesced`, plus a `QuiesceOverrideHandler`. ~210 references. Constructed unconditionally at boot.
+3. **Handler paused** — `ReasonHandlerPaused` (QM-052a), a queue-*submit* gate with its own JSON-RPC error code `-32018`.
+4. **Decision block** — `DecisionBlocker.AddQueueBlock`, the human-in-the-loop hold, awaiting an ack token. One of its callers is the sentinel governor that §A deletes.
+
+An agent hitting any of these sees "cannot proceed" and stops. The design question for later is not
+"fix the bug" — it is whether four stop mechanisms should be one, what an agent is supposed to DO when
+it meets one, and which of them should exist at all after the core is rebuilt. **Discuss before
+building.** Relevant to §6: the queue is the centre of the rewrite, so this is core work, not polish.
+
+**RA-3. `crew-idle-reap` MUST NOT be enabled by default.**
+Operator, 2026-07-28. The replacement should be **non-deterministic and agent-controlled** — a judgment
+about whether a crew is actually idle, made by an agent that can look, not a timer that reaps on a fixed
+rule. Deterministic reaping of a live-but-quiet session is the same failure shape as the movement
+governor in §A: a mechanical rule scoring "no visible output" as "not working", and acting on it.
+Carry this into the partition work (§6) — `crew-idle-reap` is one of the eleven subsystems currently
+behind the single socket-listener condition, and it should default to **off** when it becomes switchable.
+
+**RA-4. The bandwidth tuner — a rolling-5h token-rate auto-tuner for `--max-concurrent`.**
+Operator, 2026-07-28: *"I assume that may be something like token use — also dumb."* Confirmed:
+`internal/daemon/bandwidthtuner.go` samples a 5-hour rolling token rate every 60 seconds and moves the
+concurrency ceiling so the system "doesn't overshoot the operator's subscription bandwidth." It is
+entangled well beyond its own file — `workloop.go` reads its runtime value for the per-queue worker
+ceiling, it shares `PollGate` with the StaleWatcher, it needs a `bandwidthTunerBackstop` to bridge a
+pre-Seal bus subscription, and Pi's rate-limit signal had to be explicitly *isolated* from it (PI-073)
+because feeding one harness's limits into a global tuner was wrong.
+
+Same shape as the other three: a mechanical rule inferring intent from a coarse signal, then acting on
+it automatically. Reassess whether automatic concurrency tuning should exist at all, or whether the
+ceiling should simply be a number the operator sets. If it survives, it belongs OUTSIDE the core set
+and defaults off.
+
+---
+
+## Deferred — housekeeping
+
+**M. Crews never load `PRINCIPLES.md`, and crews are who write the tests.** Found 2026-07-28 by
+`agent-config-reviewer` while wiring the document in. The new `PRINCIPLES → AGENT_INDEX → STATUS →
+HANDOFF` reading order lives in `AGENTS.md` §Start here, but the per-role load map says each role
+skill's boot runbook is authoritative, and `crew-launch/SKILL.md` enumerates a deliberately minimal
+load that does not include it. So §6 — *"beware test theater: a suite that mostly asserts constants is
+not coverage"* — never reaches the role that writes tests. **Not a contradiction, a coverage hole.**
+Fixing it is a dual-path edit (`cmd/harmonik/assets/skills/crew-launch/` plus the byte-identical
+`.claude/skills/` mirror), which is why it was not smuggled into a config-review commit. Captains need
+no equivalent change — captains do not write code.
+
+**K. Role validators are not wired into `RegisterFromDocument`.** `internal/core/s02registrar_hka8bg45.go`
+calls only `ValidateSections` and `ValidateSchemaVersion`; `ValidateRoles`, `ValidateDeferredRoleShells`
+and `ValidateRequiredRoleDefaultSkills` have **no non-test caller**, so CP-028/CP-030/CP-031 are enforced
+only under `go test`. Found 2026-07-28 during the role-status rename; wiring them changes registrar
+behavior and needs its own test surface, so it was correctly kept out of a rename. Related to item J,
+which is the lint for this class of bug.
+
+**L. `MVH` survives as a milestone noun in 18 live documents.** The 2026-07-28 sweep cleared `specs/`,
+all Go code, and `docs/foundation/spec-template.md` — the generator — but "MVH-baseline", "post-MVH",
+"at MVH" and "MVH ordering" remain in `docs/decompose-to-tasks/` (the `bootstrap-subset/` set and the
+`mnem-maps/*.csv` files), plus `docs/review-claude-hook-bridge-spec.md`. A further 26 files are dated
+records or pilot captures and are deliberately left as history. **The 18 live ones are the regrowth
+path** — agents read working documents as current context and imitate the vocabulary, which is how the
+term survived two previous removals.
+
+**J. Lint for a bare string literal where a typed constant exists.** Operator, 2026-07-28, prompted by
+`internal/core/policydocument.go` comparing `r.Status` against the literal `"mvh-required"` while
+`internal/core/role.go` declares `RoleStatusMVHRequired` with that exact value. Renaming the constant
+would have left the literal stale **with no compiler error**, and that particular comparison `continue`s
+on mismatch, so role validation would have silently stopped enforcing CP-031. The same latent bug sat
+next to it on `declared-but-deferred`. This is a `PRINCIPLES.md` §7 lever and worth having *if* an
+existing linter can express it — check `golangci-lint`'s `goconst`, `usestdlibvars`, and whether a
+`forbidigo`/`ruleguard` pattern can catch "string literal equal to the value of a declared constant of
+a named type." **Prefer configuring a linter already in `.golangci.yml` over writing a new gate.**
+
+**I. Fresh worktrees have no `.tools/`.** Every agent dispatched into a new worktree hits
+`make check-fast` failing immediately at `fmt-check` with `gofumpt: No such file or directory`. Either
+worktree setup runs `make tools`, or `check-fast` bootstraps `.tools/` when absent.
 
 ---
 

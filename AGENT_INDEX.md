@@ -4,7 +4,7 @@
 >
 > **New to harmonik?** See [README.md](README.md) for what it is and how to install it.
 >
-> **Reading order on boot:** AGENT_INDEX (this map) → [STATUS.md](STATUS.md) (phase + locked decisions) → [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md) (live lanes, medium-term) → [HANDOFF.md](HANDOFF.md) (this-session state).
+> **Reading order on boot:** [PRINCIPLES.md](PRINCIPLES.md) (the standard code is held to) → AGENT_INDEX (this map) → [STATUS.md](STATUS.md) (phase + locked decisions) → [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md) (live lanes, medium-term) → [HANDOFF.md](HANDOFF.md) (this-session state).
 >
 > **Roadmap & progress:** [ROADMAP.md](ROADMAP.md). **Live lanes / epics-in-progress:** [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md).
 
@@ -21,6 +21,12 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 - [Testing Methodology](docs/methodology/TESTING.md) -- Five test layers (unit / integration / scenario / crash-recovery / property); coverage targets; twin conformance; testing during bootstrap and self-build
 
 ## Knowledge Base Map
+
+### Engineering Principles -- The Standard Code Is Held To
+[PRINCIPLES.md](PRINCIPLES.md) — pure core / effectful shell; consumer-owned ports; record→replay→fault
+injection; time is a port; explicit state machines with a single writer; tests that pin a real rule
+(and the warning against test theater); enforcement by CI lever; prove one vertical, then generalize.
+Read before writing or rewriting code. Load-bearing for the delete-and-rewrite program.
 
 ### Problems -- What We're Solving
 [docs/problems/INDEX.md](docs/problems/INDEX.md)

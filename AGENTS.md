@@ -46,7 +46,7 @@ Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (kerf-f
 - **Lifecycle** (init / supervise / reconcile / promote; work-project deployment, `branching.yaml`): the **harmonik-lifecycle** skill. integration→main is always a human PR step.
 - **Redeploy the live daemon binary** (in-place swap on the running box; supervisor revival, SIGTERM-the-daemon, health-window/last-good, `daemon-YYYYMMDD-NN` tag): the runbook at [`docs/daemon-redeploy.md`](docs/daemon-redeploy.md).
 - **Keeper** (per-session context-fill watcher; now incl. the `hold`/`release` co-working override that suspends the ACT/restart cutoff while WARN still fires): the **keeper** skill.
-- **Disk running low** (agent session scratchpads + orphaned `GOCACHE`, `.beads/.br_history-archive`, stale worktrees in four locations, unrotated `events.jsonl`): the runbook at [`docs/disk-reclaim.md`](docs/disk-reclaim.md) — check it before hand-deleting anything.
+- **Disk running low** — the runbook at [`docs/disk-reclaim.md`](docs/disk-reclaim.md); check it before hand-deleting anything. **Start at its §0, the shared `~/Library/Caches` Go caches** (`go-build`, `golangci-lint`): measured the single biggest source on 2026-07-28 at 10.5 GiB, more than everything else that sweep found combined, and repeatedly skipped because "macOS-purgeable" reads as "the OS handles it". Then: `$TMPDIR` Go caches, agent session scratchpads, both `.beads/` history tiers, stale worktrees in five locations, unrotated `events.jsonl`, launchd logs.
 
 <!-- END harmonik:managed -->
 

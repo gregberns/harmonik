@@ -97,13 +97,26 @@ again, before we do anything else we probably need to think about how to build a
 everything else communicates on/through."* That is the next design question after §6's "done" — it is
 not part of this program and must not be started early.
 
-**ONE OPEN QUESTION — low stakes, deliberately parked.** The **`$TMUX` fail-fast**: the daemon cannot
-boot outside a tmux session although the substrate is meant to be pluggable. Removing it **reopens
-locked decision #4** — *"Agent runner (S04): NTM-wrapped Go. Inspectability via tmux is a requirement,
-not a preference"* — and contradicts `specs/process-lifecycle.md` PL-028b, which calls a daemon reaching
-the dispatch loop without `TMUX` a defect. Nothing is blocked by it: running inside tmux costs nothing.
-It becomes a real question only if a swappable agent-launch substrate becomes a real goal. Phase 3 must
-not act on it without an operator reversal or a spec amendment.
+**The `$TMUX` fail-fast is CLEARED to come out IF removing it buys real flexibility — operator decision,
+2026-07-28, reopening locked decision #4.** The condition is the operator's and is load-bearing: it is
+the implementation's job to evaluate it, not to assume it. If the investigation finds tmux is genuinely
+load-bearing at dispatch rather than merely checked at boot, reporting that is the correct outcome.
+The daemon hard-refuses to boot outside a tmux session. Locked decision #4 says *"Agent runner (S04):
+NTM-wrapped Go. Inspectability via tmux is a requirement, not a preference"*, and
+`specs/process-lifecycle.md` PL-028b calls a daemon reaching the dispatch loop without `TMUX` a defect.
+Operator: *"If we get more flexibility from removing that, then do so. Seems like another 'crossed
+wires' issue where the underlying reasoning was lost. Maybe it was from before when not run as a daemon.
+Doesn't matter — but we should probably be able to run it any way."*
+
+Read the scope precisely: **the daemon must be able to run without tmux. tmux is not being removed.** It
+stays the default and stays the way an operator inspects live agents; what goes is the hard fail-fast
+that makes it the only possibility. A capability genuinely unavailable without tmux should be announced
+loudly at boot and degraded honestly — never faked, and never deferred to a crash on first dispatch.
+Whatever the implementation requires of PL-021b / PL-028b is a **named spec amendment**, adjudicated,
+not a silent violation.
+
+This is the second time a constraint here turned out to be an inherited assumption nobody had reopened —
+see §5, "a claim that sounds like a blocker gets repeated as one."
 
 Note also that `specs/execution-model.md` EM-061 already defines "Core" conformance as a larger set
 than §3's list — §6's "nothing else is required" is this program's target, not a redefinition of that

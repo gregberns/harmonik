@@ -506,10 +506,10 @@ Three consequences that should settle arguments later:
    decomposition and PL-003 amended rather than obeyed.
    **The reviewer is wrongly fused INTO the core and must come out** — welded into the work loop
    instead of being a switchable stage, a large part of why `beadRunOne` is 2,289 lines.
-   The hard `$TMUX` fail-fast is a **separate case and is NOT scheduled**: this document previously
-   listed it alongside the reviewer as something that "must come out", which `CHARTER.md` §3 now
-   supersedes. Removing it reopens locked decision #4, nothing is blocked by it, and Phase 3 must not
-   act on it without an operator reversal or a spec amendment.
+   The hard `$TMUX` fail-fast is **cleared to come out** — operator reversal 2026-07-28, recorded in
+   `CHARTER.md` §3, which reopens locked decision #4 and is the single source for that decision. Scope
+   it from there: the daemon must be able to *run* without tmux; tmux is not removed and stays the
+   default. Any contradicted requirement is a named spec amendment, not a silent violation.
 
 ---
 
@@ -566,6 +566,23 @@ job was to write that record.
 **Delete during the decomposition, not after** — ~190 lines of the governor are near-duplicated *inside*
 `workloop.go`. Carrying dead-by-measurement code through a rewrite is how it becomes permanent. Also
 delete the positive loop, goal-keeper, and `internal/cognition/`.
+
+**Operator confirmation, 2026-07-28** — the measurement matched the operator's independent recollection:
+*"I'm almost positive that should be pulled, and we probably need to consider removing. I think it was
+added early on and basically always has been a problem."* Sequence is unchanged: gate it out of the core
+(`SubsystemMovementGovernor` — the name exists, the call site does not yet), then delete it during the
+decomposition. Note the governor's observe block still runs on **every** production daemon today — a
+`br ready` shell-out plus an `events.jsonl` scan every two minutes, emitting `governor_signal`, which has
+no **Go** consumer (`scripts/ops-monitor-check.sh` does list it in `ACTIONABLE_EVENT_TYPES`, so the shell
+side is not quite nothing).
+
+**And a wider direction that falls out of it — audit every bead query outside the queue path.**
+Operator, same day: *"A lot of the bead calling to search beads (outside the normal queue stuff) should
+be closely looked at and questioned as far as its value."* The governor is one instance: a background
+loop shelling out to `br` on a timer to infer fleet health from a coarse count. The question to ask at
+each site is what decision the query feeds and whether that decision should be automatic at all — the
+§5 pattern predicts most of them score "no" on the second half. This is an audit to run during the
+decomposition, not a sweep to start now.
 
 **Keep ~630 lines that are not flywheel at all:** `ComputeSnapshot` + `DetectLayerA`
 (`internal/sentinel/signals.go`, `layera_hkl087e.go`) came from different July work that borrowed the
@@ -792,6 +809,103 @@ Same shape as the other three: a mechanical rule inferring intent from a coarse 
 it automatically. Reassess whether automatic concurrency tuning should exist at all, or whether the
 ceiling should simply be a number the operator sets. If it survives, it belongs OUTSIDE the core set
 and defaults off.
+
+**RA-5. Separate the queue, and fix how much attention it demands from a crew — OPERATOR ITEM, 2026-07-28.**
+*"Once we get everything in the core working, we should make sure the queue mechanism separated out and
+I want to go through how that works. I dont particularly like how closely the crew has to pay attention
+to the queue most of the time — we need to see if there are changes needed to it."*
+
+**Timing is explicit and load-bearing: after the core runs, not before.** This is a walkthrough with the
+operator followed by a design change, not a refactor to start unprompted.
+
+Two halves, and the second is the interesting one:
+
+1. **Separation.** The queue is the charter's centre (§4, "where effort is contested, it goes to the
+   queue"), so it is the one subsystem that must come out of the partition genuinely standalone rather
+   than merely switchable. `internal/queue` is 7,627 production lines with the durable transaction
+   substrate still unfinished — see Trap 1, and note the `harmonik-wt/cq-01` worktree preserved in item D
+   holds 8 staged files of exactly that work.
+2. **The attention cost.** A crew currently has to watch the queue closely and continuously — the
+   `crew-launch` skill's operating loop is built around polling its own named queue, and the progress
+   feed is on a ≤10-minute timer while dispatching. The operator's objection is that this is the crew's
+   *dominant* activity rather than an occasional one. **Related and probably the same problem seen from
+   the other side: RA-2**, the four separate stop mechanisms (paused / quiesced / handler-paused /
+   decision-blocked) an agent cannot tell apart. An agent that must watch a queue closely *and* cannot
+   tell which of four ways it is stuck is being asked to do the system's job for it.
+
+⚠ **Get the mechanism right before designing against it — the obvious framing is half wrong in each
+direction.** Per `.claude/skills/crew-launch/SKILL.md`:
+
+- **There is no queue *poll loop*.** The loop is event-driven — it arms `harmonik subscribe --types
+  run_completed,run_failed,run_stale,heartbeat` and advances on delivered events, with `comms recv
+  --follow --json` as the primary wake. So "make the queue push instead of pull" is *already true*, and
+  proposing it would waste the walkthrough.
+- **But the crew does read queue state, repeatedly.** `scripts/crew-boot-digest.sh` runs `harmonik queue
+  status` and `queue list --json` at boot, and the loop's own rule forbids reading an empty `br ready` as
+  "drained" without *also* checking in-progress beads, epic-blocked beads, and **paused/failed queues**.
+  The operator's sense that the queue demands constant attention is not a misreading of a push system.
+- **There are two sweeps, and they are constrained in opposite directions.** `br ready` against the bead
+  ledger is rate-*limited* — a floor on the interval ("no more frequently than every 10 minutes"). The
+  one-shot inbox backstop sweep (`comms recv --agent … --json`, own cursor) is *mandated* on a **ceiling**
+  — it must happen at least every 15 minutes, and it rides the idle progress-feed tick rather than
+  standing alone. Separately the ≤10-minute progress-*reporting* cadence writes to two surfaces — comms
+  status *and* `br` comments.
+
+**So the attention cost is real but it is not the queue's delivery model.** The candidates worth testing
+against the operator's lived experience: the dual-surface reporting cadence, two simultaneously-armed
+watchers plus the two sweeps above, the drain check that must consult four sources to answer one
+question, and **RA-2's four indistinguishable stop states** — an agent that cannot tell which of four
+ways it is stuck will re-check constantly no matter how work is delivered. Establish which before
+designing anything.
+
+**RA-6. The dashboard forcing gate — DECIDED 2026-07-28: the coupling comes out, the idea goes on a list.**
+Operator, on being told what it was: *"What is the 'dashboard' its talking about? At some point we talked
+about building an operator dashboard, but I didnt think that made it anywhere. Regardless — it looks like
+that coupling should be removed, and if its useful, put on a list for integration later."*
+
+**It is not the operator dashboard, which was never built.** It is `.harmonik/context/dashboard.json`
+(`internal/dashboard`), a **captain-curated planning file** — ranked current priorities, on-deck items,
+expected throughput per lane, a notes field. The captain or admiral writes it; the daemon reads it.
+
+The coupling is the **forcing gate**: `runWorkLoop`'s step 2b calls `evaluateDashboardGate` and feeds its
+blocked-queue set into `selectNextQueue`, so a stale freshness stamp withholds new dispatch. That is the
+§5 pattern — a mechanical rule reading a coarse signal (a timestamp) and acting on it — and
+`dashboardgate.go` is the only route by which `internal/dashboard` enters package `daemon`.
+
+**Do not overstate it, which an earlier draft of this entry did.** It is **opt-in and inert here today**:
+`LoadDashboardGateConfig` returns an off gate when there is no `dashboard:` block, this repo's config has
+none, and `lanes.json` is empty. It is **not silent** — the daemon emits `dashboard_stale` on the blocking
+edge and `dashboard_refreshed` on recovery, and `internal/keeper/dashboardnag.go` nags the captain's pane
+at 80% of the window. It does **not halt work** — it withholds only NEW dispatch on queues named in
+`lanes.json`; in-flight runs, mailbox and reconcile are untouched, and a gated queue is skipped like a
+paused one without blocking siblings. It is a work-loop tick, not a boot dependency. The core already runs
+without it by default.
+
+**The residue that IS sharp:** `dashboard_stale` has no Go consumer — the system emits a
+dispatch-withholding signal that nothing in the product reads.
+
+**Disposition:** gate the coupling out of the core (`SubsystemDashboardGate` — the name exists, the call
+site does not yet). Note this sheds the *import*, not the daemon's knowledge of the file:
+`internal/daemon/dashboardgather.go` reads the same `dashboard.json` directly through its own type, so
+"remove the blockers" means both the forcing gate and that second read path.
+
+**Keep the package; redesign it later as a plugin — operator, 2026-07-28.** On hearing that the captain
+writes the file and the daemon reads it: *"Oh… interesting. Yea worse. Definitely remove the coupling —
+that seems like a really shitty way to manage these things — a total hack. We should redesign that as
+like a 'plugin' to core. I assume we can defer that til later. Lets make sure we put that on the list to
+redesign/revisit later and think through a proper design."* And on what it should become: *"later we
+should be able to derive that from core…. or something."*
+
+Three constraints for that later design, all stated or implied above:
+1. **Derive from core, do not hand-author.** The present shape has an agent hand-writing a JSON file that
+   the daemon then treats as authoritative. Most of what it holds — what is running, on which lane, at
+   what rate — the core already knows. Only genuine human intent (expected throughput, notes) cannot be
+   derived, and that is a much smaller surface.
+2. **Plugin, not a gate.** It consumes core state; core must not consult it to decide whether to work.
+3. **Nothing it does may withhold dispatch**, by staleness or otherwise.
+
+This sits behind the dataplane question in `CHARTER.md` §3 — "how everything else communicates with the
+core" is the same problem, and a plugin surface is one answer to it. Do not design either in isolation.
 
 ---
 

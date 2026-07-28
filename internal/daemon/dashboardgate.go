@@ -9,15 +9,132 @@ package daemon
 // Bead ref: hk-xg6rw.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/dashboard"
 	"github.com/gregberns/harmonik/internal/digest"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
+
+// dashboardGate is the forcing gate's per-loop mutable state, owned solely by
+// the runWorkLoop goroutine — no locking.
+//
+// A nil *dashboardGate is the OFF state: `subsystems.dashboard_gate.enabled:
+// false` means this is never constructed, the loop never evaluates the gate, and
+// selectNextQueue is handed a nil blocked-queue set. Every method below tolerates
+// a nil receiver, so the nil-guard question is answered once here rather than at
+// each call site in the loop.
+//
+// This gate is the ONLY route by which internal/dashboard reaches package daemon,
+// and the only reason the core dispatch loop reads the captain's lanes.json — so
+// it is exactly the kind of non-core entanglement CHARTER §4 says must be absent
+// when switched off, not merely inert.
+type dashboardGate struct {
+	// lastEval rate-limits evaluation to dashboardGateEvalInterval. The gate
+	// reads three JSON files plus config.yaml, so it must not run every tick.
+	lastEval time.Time
+
+	// wasBlocked persists across ticks so dashboard_stale / dashboard_refreshed
+	// emit on the transition edge only, not on every evaluation.
+	wasBlocked bool
+
+	// blockedQueues is the most recent gate verdict, consulted by selectNextQueue.
+	blockedQueues map[string]bool
+
+	// logW receives the fail-loud config-error line. Never nil after construction.
+	logW io.Writer
+}
+
+// newDashboardGateIfEnabled builds the forcing gate's per-loop state, or returns
+// nil when `subsystems.dashboard_gate.enabled: false` partitions it away.
+//
+// The partition is announced on logW: a silent partition is indistinguishable
+// from a config that did not take effect. An absent subsystems: block enables the
+// gate, so a deployment without one behaves exactly as it did before.
+func newDashboardGateIfEnabled(pc projectconfig.ProjectConfig, logW io.Writer) *dashboardGate {
+	if logW == nil {
+		logW = os.Stderr
+	}
+	if !pc.Subsystems.Enabled(projectconfig.SubsystemDashboardGate) {
+		fmt.Fprintf(logW, "daemon: subsystem %q disabled by .harmonik/config.yaml; dashboard forcing gate not constructed\n", //nolint:errcheck // best-effort stderr status log
+			projectconfig.SubsystemDashboardGate)
+		return nil
+	}
+	return &dashboardGate{logW: logW}
+}
+
+// blockedQueueSet is the set of captain-curated queues currently withheld from
+// NEW item dispatch. Nil on an absent gate — nothing is withheld, which is the
+// same answer selectNextQueue already gets when the gate is untripped.
+func (g *dashboardGate) blockedQueueSet() map[string]bool {
+	if g == nil {
+		return nil
+	}
+	return g.blockedQueues
+}
+
+// tick re-evaluates the forcing gate if the rate limit has elapsed, updating the
+// blocked-queue set and emitting dashboard_stale / dashboard_refreshed on the
+// transition edge. No-op on a nil (absent) gate.
+//
+// Only NEW item dispatch on captain-curated queues is affected: in-flight runs,
+// the mailbox, reconcile, and every daemon-core path are untouched.
+//
+// Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §4.
+// Bead ref: hk-xg6rw.
+func (g *dashboardGate) tick(ctx context.Context, deps workLoopDeps, now time.Time) {
+	if g == nil || now.Sub(g.lastEval) < dashboardGateEvalInterval {
+		return
+	}
+	g.lastEval = now
+
+	result, gateErr := evaluateDashboardGate(deps.projectDir, now)
+	if gateErr != nil {
+		// Fail loud (the DESIGN §4 no-hardcoded-threshold mandate) but not fatal:
+		// the result already degrades to Blocked=true, the fail-safe direction.
+		fmt.Fprintf(g.logW, "daemon: workloop: dashboard gate: config error, failing closed: %v\n", gateErr) //nolint:errcheck // best-effort stderr status log
+	}
+	g.blockedQueues = result.BlockedQueues
+
+	switch {
+	case result.Blocked && !g.wasBlocked:
+		g.wasBlocked = true
+		blockedNames := make([]string, 0, len(result.BlockedQueues))
+		for name := range result.BlockedQueues {
+			blockedNames = append(blockedNames, name)
+		}
+		sort.Strings(blockedNames)
+		payload := core.DashboardStalePayload{
+			MaxStalenessSecs: int64(result.MaxStaleness.Seconds()),
+			StaleSecs:        result.StaleSecs,
+			UpdatedAt:        result.UpdatedAt,
+			BlockedQueues:    blockedNames,
+			DetectedAt:       now.UTC().Format(time.RFC3339),
+		}
+		if raw, mErr := json.Marshal(payload); mErr == nil {
+			_ = deps.bus.Emit(ctx, core.EventTypeDashboardStale, raw) //nolint:errcheck // best-effort observability emit
+		}
+	case !result.Blocked && g.wasBlocked:
+		g.wasBlocked = false
+		payload := core.DashboardRefreshedPayload{
+			Reason:     "refreshed",
+			UpdatedAt:  result.UpdatedAt,
+			DetectedAt: now.UTC().Format(time.RFC3339),
+		}
+		if raw, mErr := json.Marshal(payload); mErr == nil {
+			_ = deps.bus.Emit(ctx, core.EventTypeDashboardRefreshed, raw) //nolint:errcheck // best-effort observability emit
+		}
+	}
+}
 
 // dashboardGateResult is the outcome of one gate evaluation.
 type dashboardGateResult struct {

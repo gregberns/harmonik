@@ -143,7 +143,16 @@ declare -a EXACT_FILES=(
     # 9 -> 8 on 2026-07-28: the dead activateFirstPendingGroup (superseded by
     # activateFirstPendingGroupLocked, zero callers) was deleted, and with it the
     # 9th read — its post-unlock deps.bus.Emit loop. Ratchet down, never up.
-    "internal/daemon/workloop.go             8"
+    #
+    # 8 -> 3 on 2026-07-28 (subsystem-partition-01): NOT a global sed — RT16 §7
+    # risk 1 is what this assertion exists to catch, so read the reason. Five of
+    # the eight reads were the outer poll loop's dashboard-forcing-gate and
+    # sentinel-governor blocks, which were lifted verbatim out of runWorkLoop into
+    # dashboardgate.go and movementgovernor.go so those two non-core subsystems
+    # can be switched off and never constructed (CHARTER §4). They are still the
+    # SAME outer-queue-claim-loop reads and still never leave internal/daemon —
+    # they are re-budgeted below, not converted and not deleted. Ratchet down.
+    "internal/daemon/workloop.go             3"
     "internal/daemon/reviewloop.go           0"
     "internal/daemon/dot_cascade_core.go     0"
     "internal/daemon/dot_cascade_helpers.go  0"
@@ -155,6 +164,13 @@ declare -a CEILING_FILES=(
     "internal/daemon/diskcheck_hksxlb.go            3"
     "internal/daemon/eagerfill_em063.go             2"
     "internal/daemon/workloop_handlerpause_kac8g.go 3"
+    # subsystem-partition-01, 2026-07-28: the outer poll loop's dashboard-gate and
+    # movement-governor blocks, lifted out of runWorkLoop so each can be switched
+    # off and never constructed. Same category as the diskcheck / eager-fill rows
+    # above — outer-loop instrumentation, not an RT16 mover — so CEILING, and a
+    # later shrink is pure improvement rather than a build failure.
+    "internal/daemon/dashboardgate.go               2"
+    "internal/daemon/movementgovernor.go            2"
 )
 
 budget_for() { # path -> "exact <n>" | "ceiling <n>" | "exact 0"

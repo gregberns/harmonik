@@ -244,15 +244,21 @@ func (bs *bootState) startBackgroundLoops(ctx context.Context, deps *workLoopDep
 	cfg := bs.cfg
 
 	bs.quiesceArbiter.Start(ctx)
-	bs.crewIdleReaper.StartWatcher(ctx)
 	// Both reapers are constructed in buildCommsAndCrewHandlers, under the
-	// socket-listener subsystem switch, so both are nil when that subsystem is
-	// off. CrewIdleReaper.StartWatcher survives a nil receiver only because its
-	// body is currently empty; BranchReapWatcher.StartWatcher does not — it spawns
-	// loop, which dereferences w.cfg.ScanInterval immediately and would take the
-	// whole daemon down from a goroutine. Guarded here at the call site rather
-	// than inside the watcher: absence is a composition-root fact, and the type
-	// itself has no business pretending a nil watcher is a watcher.
+	// socket-listener switch AND their own (crew_idle_reap, branch_reaper), so
+	// either can be nil here. Guarded at the call site rather than inside the
+	// watchers: absence is a composition-root fact, and neither type has any
+	// business pretending a nil watcher is a watcher.
+	//
+	// BranchReapWatcher.StartWatcher is the sharp one — it spawns loop, which
+	// dereferences w.cfg.ScanInterval immediately and would take the whole daemon
+	// down from a goroutine. CrewIdleReaper.StartWatcher currently tolerates a nil
+	// receiver, but only because its body happens to be empty (the operator's
+	// 2026-07-18 disable of the sweep); that is a property of the sweep being
+	// inert, not of the type, so it is guarded on the same terms.
+	if bs.crewIdleReaper != nil {
+		bs.crewIdleReaper.StartWatcher(ctx)
+	}
 	if bs.branchReapWatcher != nil {
 		bs.branchReapWatcher.StartWatcher(ctx)
 	}
@@ -272,13 +278,37 @@ func (bs *bootState) startBackgroundLoops(ctx context.Context, deps *workLoopDep
 		LogWriter:    cfg.LogWriter,
 	})
 
-	// WR3 (hk-jn3u): recurring worker-report poll. Phase-1 observability only;
-	// off-by-default when no worker is enabled (byte-identical with no workers.yaml).
+	// WR3 (hk-jn3u): recurring worker-report poll, subject to subsystem
+	// partitioning (see startWorkerReportLoopIfEnabled).
+	bs.startWorkerReportLoopIfEnabled(ctx, deps.workerRegistry)
+}
+
+// startWorkerReportLoopIfEnabled applies subsystem partitioning to the WR3
+// worker-report poll: it is the ONE construction seam for that goroutine.
+//
+// When `subsystems.worker_report_loop.enabled: false` is set, the goroutine is
+// never spawned. RunReportLoop already returns immediately when no worker in
+// .harmonik/workers.yaml is enabled, but the daemon has to START it to find that
+// out; this decides it at the composition root instead, so "off" is absent rather
+// than a goroutine that exists just long enough to disagree.
+//
+// Absent config enables the loop, so a deployment without a subsystems: block
+// behaves exactly as it did before the block existed.
+//
+// Returns true when the goroutine was spawned. The return value is the observable
+// decision; the production caller ignores it.
+func (bs *bootState) startWorkerReportLoopIfEnabled(ctx context.Context, reg *workers.Registry) bool {
+	cfg := bs.cfg
+	if !cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemWorkerReportLoop) {
+		bs.logSubsystemDisabled(projectconfig.SubsystemWorkerReportLoop, "worker-report poll loop not constructed")
+		return false
+	}
 	var reportEmit workers.EmitFunc
 	if bs.bus != nil {
 		reportEmit = bs.bus.Emit
 	}
-	go workers.RunReportLoop(ctx, cfg.Workers, deps.workerRegistry, workers.ProductionRunnerForWorker, reportEmit)
+	go workers.RunReportLoop(ctx, cfg.Workers, reg, workers.ProductionRunnerForWorker, reportEmit)
+	return true
 }
 
 // wireStaleWatcherReapSeams wires the StaleWatcher force-reap watchdog seams

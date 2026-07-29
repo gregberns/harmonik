@@ -245,7 +245,12 @@ func (bs *bootState) wireWatchersAndObservers(ctx context.Context) error {
 	// inert bus consumer — exactly the constructed-and-inert state the partition
 	// rule rejects. Both sites read the switch through socketListenerEnabled, so
 	// a nil backstop and a live SetTuner call cannot coexist.
-	if bs.socketListenerEnabled() {
+	//
+	// bandwidthTunerEnabled is the second half of that same argument, read the
+	// same way at the same two sites: the tuner's own switch removes the
+	// subscription as well as the tuner, so switching bandwidth_tuner off leaves
+	// nothing behind on the bus.
+	if bs.socketListenerEnabled() && bs.bandwidthTunerEnabled() {
 		bs.tunerBackstop = &bandwidthTunerBackstop{}
 		if subscribeErr := bs.tunerBackstop.Subscribe(bus); subscribeErr != nil {
 			return fmt.Errorf("daemon.Start: bandwidth-tuner backstop subscribe: %w", subscribeErr)

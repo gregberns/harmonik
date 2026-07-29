@@ -244,19 +244,62 @@ func (bs *bootState) buildPauseConcurrencyTuner(ctx context.Context, queueHandle
 	}
 
 	// Bandwidth tuner (hk-ymav1): adjusts concurrencyCtrl on every 60s tick from
-	// rolling 5h token usage. normalised MaxConcurrent (zero → 1) is the N_max.
-	if cfg.SubscriptionTokenCeiling > 0 {
-		maxN := cfg.MaxConcurrent
-		if maxN <= 0 {
-			maxN = 1
-		}
-		if homeDir, homeDirErr := os.UserHomeDir(); homeDirErr == nil {
-			tuner := NewBandwidthTuner(bs.concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
-			tuner.SetGate(bs.pollGate)       // SS-007: OFF at INACTIVE (hk-w6q7)
-			bs.tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
-			go tuner.Run(ctx)
-		}
+	// rolling 5h token usage. Subject to subsystem partitioning; see
+	// startBandwidthTunerIfEnabled.
+	bs.startBandwidthTunerIfEnabled(ctx)
+}
+
+// bandwidthTunerEnabled reports whether the bandwidth-tuner subsystem is switched
+// on. It is the SINGLE reading of that switch: both halves of the tuner call it —
+// the pre-Seal backstop subscriber in wireWatchersAndObservers and the tuner
+// itself here — so the two can never disagree about whether the tuner will exist.
+// That invariant is load-bearing, because startBandwidthTunerIfEnabled calls
+// SetTuner on the backstop, which panics on a nil receiver.
+func (bs *bootState) bandwidthTunerEnabled() bool {
+	return bs.cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemBandwidthTuner)
+}
+
+// startBandwidthTunerIfEnabled applies subsystem partitioning to the bandwidth
+// tuner: it is the ONE construction seam for the tuner goroutine.
+//
+// When `subsystems.bandwidth_tuner.enabled: false` is set, neither the tuner nor
+// its bus subscriber exists — no BandwidthTuner object, no 60 s ticker goroutine,
+// and (via the same switch read in wireWatchersAndObservers) no
+// bandwidthTunerBackstop subscription on the event bus.
+//
+// ORDER IS LOAD-BEARING, for the same reason as newMovementGovernorIfEnabled: the
+// subsystem check comes BEFORE the SubscriptionTokenCeiling check. Most
+// deployments set no ceiling, so the ceiling check alone would swallow every
+// disabled boot silently and an operator could never tell the switch took effect.
+//
+// Returns true when the tuner was started. The return value is the observable
+// decision; the production caller ignores it.
+func (bs *bootState) startBandwidthTunerIfEnabled(ctx context.Context) bool {
+	cfg := bs.cfg
+	if !bs.bandwidthTunerEnabled() {
+		bs.logSubsystemDisabled(projectconfig.SubsystemBandwidthTuner, "bandwidth tuner and its rate-limit backstop not constructed")
+		return false
 	}
+	// No token ceiling configured: there is no rate to tune against. This is the
+	// pre-existing gate, not the subsystem switch — it stays quiet because it is
+	// the default state of most deployments, not an operator's partition.
+	if cfg.SubscriptionTokenCeiling <= 0 {
+		return false
+	}
+	// normalised MaxConcurrent (zero → 1) is the N_max.
+	maxN := cfg.MaxConcurrent
+	if maxN <= 0 {
+		maxN = 1
+	}
+	homeDir, homeDirErr := os.UserHomeDir()
+	if homeDirErr != nil {
+		return false
+	}
+	tuner := NewBandwidthTuner(bs.concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
+	tuner.SetGate(bs.pollGate)       // SS-007: OFF at INACTIVE (hk-w6q7)
+	bs.tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
+	go tuner.Run(ctx)
+	return true
 }
 
 // buildCommsAndCrewHandlers constructs the comms-send handler (+recv cursor deps,
@@ -293,29 +336,81 @@ func (bs *bootState) buildCommsAndCrewHandlers() CommsSendHandler {
 		WithCrewsConfig(cfg.ProjectCfg.Crews),
 	)
 
-	// SD-3 (hk-s2eac): idle-completed-crew reaper. Started post-Seal in the work loop.
-	crewIdleReaperAgentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "agents")
-	bs.crewIdleReaper = crewrun.NewCrewIdleReaper(crewrun.CrewIdleReaperConfig{
+	// SD-3 (hk-s2eac): idle-completed-crew reaper. Started post-Seal in the work
+	// loop. Nil when partitioned away.
+	bs.crewIdleReaper = bs.newCrewIdleReaperIfEnabled()
+
+	// hk-2i36s: periodic branch reaper. Started post-Seal in the work loop. Nil
+	// when partitioned away.
+	bs.branchReapWatcher = bs.newBranchReapWatcherIfEnabled()
+
+	return commsSendHandler
+}
+
+// newCrewIdleReaperIfEnabled builds the SD-3 idle-completed-crew reaper, or
+// returns nil when `subsystems.crew_idle_reap.enabled: false` partitions it away.
+//
+// Nil is the OFF state and startBackgroundLoops guards on it. That guard is now
+// load-bearing rather than incidental: it used to survive a nil receiver only
+// because CrewIdleReaper.StartWatcher's body happens to be empty today (the
+// operator-directed 2026-07-18 disable), which is an accident of the sweep being
+// inert, not a property of the type.
+//
+// Absent config enables the reaper, so a deployment without a subsystems: block
+// behaves exactly as it did before the block existed.
+func (bs *bootState) newCrewIdleReaperIfEnabled() *crewrun.CrewIdleReaper {
+	cfg := bs.cfg
+	if !cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemCrewIdleReap) {
+		bs.logSubsystemDisabled(projectconfig.SubsystemCrewIdleReap, "crew idle reaper not constructed")
+		return nil
+	}
+	agentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "agents")
+	return crewrun.NewCrewIdleReaper(crewrun.CrewIdleReaperConfig{
 		ProjectDir: cfg.ProjectDir,
 		Queues:     bs.qs,
 		Stopper:    bs.crewHandler,
 		// GATE-0 (hk-dy5gw): a persistent oversight role (manifest lifecycle.persistent)
 		// is never reclaimed; a load error reads as non-persistent.
 		PersistentType: func(typeName string) bool {
-			tf, err := agentmanifest.Load(crewIdleReaperAgentsDir, typeName)
+			tf, err := agentmanifest.Load(agentsDir, typeName)
 			if err != nil {
 				return false
 			}
 			return tf.Manifest.Lifecycle.Persistent
 		},
 	})
+}
 
-	// hk-2i36s: periodic branch reaper. Started post-Seal in the work loop.
-	bs.branchReapWatcher = NewBranchReapWatcher(BranchReapWatcherConfig{
-		RepoDir: cfg.ProjectDir,
+// newBranchReapWatcherIfEnabled builds the periodic branch reaper, or returns nil
+// when `subsystems.branch_reaper.enabled: false` partitions it away.
+//
+// Nil is the OFF state; startBackgroundLoops already guards on it, because
+// BranchReapWatcher.StartWatcher spawns a goroutine that dereferences the
+// receiver immediately — an unguarded nil takes the whole daemon down from a
+// goroutine rather than returning an error.
+//
+// Absent config enables the reaper, so a deployment without a subsystems: block
+// behaves exactly as it did before the block existed.
+func (bs *bootState) newBranchReapWatcherIfEnabled() *BranchReapWatcher {
+	if !bs.cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemBranchReaper) {
+		bs.logSubsystemDisabled(projectconfig.SubsystemBranchReaper, "branch reaper not constructed")
+		return nil
+	}
+	return NewBranchReapWatcher(BranchReapWatcherConfig{
+		RepoDir: bs.cfg.ProjectDir,
 	})
+}
 
-	return commsSendHandler
+// logSubsystemDisabled announces a partition on the daemon's log writer. Saying
+// it is not politeness: a silent partition is indistinguishable from a config
+// that did not take effect, which is how an operator ends up believing a
+// subsystem was switched off while it kept running.
+func (bs *bootState) logSubsystemDisabled(name projectconfig.SubsystemName, detail string) {
+	logW := bs.cfg.LogWriter
+	if logW == nil {
+		logW = os.Stderr
+	}
+	fmt.Fprintf(logW, "daemon: subsystem %q disabled by .harmonik/config.yaml; %s\n", name, detail) //nolint:errcheck // best-effort stderr status log
 }
 
 // startSocketListener builds the live state + dashboard handlers, starts the

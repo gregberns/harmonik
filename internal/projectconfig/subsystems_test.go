@@ -146,6 +146,46 @@ func TestSubsystems_EmptyBlockReadsAsAbsent(t *testing.T) {
 	}
 }
 
+// Every name in knownSubsystems must be switchable through the real config edge,
+// and switching one must not disturb any other.
+//
+// This is the test that catches the actual failure mode of adding a subsystem: a
+// SubsystemName constant whose string does not match the key registered in
+// knownSubsystems compiles fine and reads fine, but LoadProjectConfig then
+// rejects the operator's YAML as an unknown name — or, worse, accepts a key the
+// gate never asks about, so the partition silently does nothing.
+func TestSubsystems_EveryKnownNameSwitchesOffIndependently(t *testing.T) {
+	t.Parallel()
+
+	all := make([]SubsystemName, 0, len(knownSubsystems))
+	for name := range knownSubsystems {
+		all = append(all, name)
+	}
+
+	for _, target := range all {
+		t.Run(string(target), func(t *testing.T) {
+			t.Parallel()
+			root := projCfgFixtureDir(t, "schema_version: 1\nsubsystems:\n  "+
+				string(target)+":\n    enabled: false\n")
+			cfg, err := LoadProjectConfig(root)
+			if err != nil {
+				t.Fatalf("LoadProjectConfig: %v — the name is in knownSubsystems but the config edge rejected it", err)
+			}
+			if cfg.Subsystems.Enabled(target) {
+				t.Errorf("Enabled(%s) = true after an explicit enabled: false", target)
+			}
+			for _, other := range all {
+				if other == target {
+					continue
+				}
+				if !cfg.Subsystems.Enabled(other) {
+					t.Errorf("switching %s off also disabled %s; partitions must be independent", target, other)
+				}
+			}
+		})
+	}
+}
+
 // The zero value (no config was ever loaded) must enable everything — callers
 // that leave ProjectCfg unset keep the pre-partitioning behaviour.
 func TestSubsystems_ZeroValueEnablesEverything(t *testing.T) {

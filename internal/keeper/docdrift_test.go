@@ -137,7 +137,11 @@ var staleBandLiterals = []string{"270000", "300000", "340000", "270k", "300k", "
 var reconciledSources = []string{
 	filepath.Join("internal", "keeper", "cycle.go"),
 	filepath.Join("internal", "keeper", "watcher.go"),
-	filepath.Join("internal", "daemon", "projectconfig.go"),
+	// Moved out of internal/daemon by the projectconfig leaf extraction. The path
+	// here was not updated with it, so this test failed on a missing file on every
+	// run from that commit until 2026-07-29 — which both left this one file
+	// unguarded and made the whole package a permanent baseline failure.
+	filepath.Join("internal", "projectconfig", "projectconfig.go"),
 	filepath.Join("docs", "components", "internal", "keeper.md"),
 	filepath.Join("docs", "captain-restart.md"),
 }

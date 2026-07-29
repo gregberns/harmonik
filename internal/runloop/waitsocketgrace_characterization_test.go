@@ -98,18 +98,22 @@ func (s *charSession) SendInput(context.Context, string) error {
 	s.t.Error("wait step called SendInput — outside its contract")
 	return nil
 }
+
 func (s *charSession) Stdout() io.Reader {
 	s.t.Error("wait step called Stdout — outside its contract")
 	return nil
 }
+
 func (s *charSession) Stderr() io.Reader {
 	s.t.Error("wait step called Stderr — outside its contract")
 	return nil
 }
+
 func (s *charSession) CloseStdin() error {
 	s.t.Error("wait step called CloseStdin — outside its contract")
 	return nil
 }
+
 func (s *charSession) Machine() *hclifecycle.Machine {
 	s.t.Error("wait step called Machine — outside its contract")
 	return nil

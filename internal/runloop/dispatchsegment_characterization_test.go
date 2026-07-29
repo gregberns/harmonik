@@ -23,12 +23,11 @@ package runloop
 // Everything here runs in virtual time (substrate.FakeClock) or synchronously.
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
 	"time"
-
-	"context"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/runexec"

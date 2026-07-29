@@ -71,26 +71,32 @@ func (s *teardownSession) SendInput(context.Context, string) error {
 	s.t.Error("teardown called SendInput — outside its contract")
 	return nil
 }
+
 func (s *teardownSession) Wait(context.Context) error {
 	s.t.Error("teardown called Wait — outside its contract")
 	return nil
 }
+
 func (s *teardownSession) Outcome() handler.Outcome {
 	s.t.Error("teardown called Outcome — outside its contract")
 	return handler.Outcome{}
 }
+
 func (s *teardownSession) Stdout() io.Reader {
 	s.t.Error("teardown called Stdout — outside its contract")
 	return nil
 }
+
 func (s *teardownSession) Stderr() io.Reader {
 	s.t.Error("teardown called Stderr — outside its contract")
 	return nil
 }
+
 func (s *teardownSession) CloseStdin() error {
 	s.t.Error("teardown called CloseStdin — outside its contract")
 	return nil
 }
+
 func (s *teardownSession) Machine() *hclifecycle.Machine {
 	s.t.Error("teardown called Machine — outside its contract")
 	return nil

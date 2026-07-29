@@ -8,6 +8,48 @@
 
 ---
 
+## 0-CORRECTION (2026-07-28, late). The four are not peers. One of them already works.
+
+**Read this before §0.** The headline below — "one algorithm written out four separate times" — is
+true about the *code shape* and misleading about *what to do*. Measured against the live event log
+(`.harmonik/events/events.jsonl`, 100 MB, runs through 2026-07-22):
+
+- **The graph engine is the DEFAULT and has really run.** `moderesolve.go` tier 4 returns
+  `WorkflowModeDot`; `single` is reachable only via an explicit `workflow:single` per-bead label and
+  has been used **twice, ever** (2 of 2,153 `run_started`). The engine dispatched **1,697 `implement`
+  nodes, 1,376 `commit_gate` nodes, and made 6,846 edge-routing decisions** across **three distinct
+  graph files** — the project's own `workflow.dot` (`review`, `qa`), `sonnet-triple-review.dot`
+  (`review_correctness`, `review_design`, `review_tests`, `consolidate`) and `eval-bead.dot` (`grade`,
+  `judge`). All three node sets appear in the log. This is not a demo path.
+- **Measure it with `node_dispatch_*`, NOT with `workflow_mode`.** §6 of `PRIOR-ART.md` is right that
+  the `workflow_mode` field on `run_started` is stamped *before* the graph→review-loop demotion and so
+  cannot distinguish them. The node-dispatch events can: `node_dispatch_requested` is emitted only from
+  `dot_cascade_core.go` / `dot_cascade_helpers.go`, and `reviewloop.go` emits zero. Independently, the
+  demotion branch is **unreachable on this project** — it is gated on `<projectDir>/workflow.dot` not
+  existing, and it exists.
+- **Graph-mode failures are not engine failures.** 866 started / 417 completed / 451 failed. Of the
+  451: 144 orphaned by a daemon restart, ~138 the implementer agent not committing or not starting,
+  ~52 merge/vet/format, ~25 a reviewer producing no verdict file — and ~32 that are the engine working
+  correctly (retry cap hit, no-progress detected, routed to `close-needs-attention`). Review-loop's
+  failure mix is the same shape (545 of 1,282).
+
+**So Phase 3 is a deletion, not a rewrite of the run machine.** The engine exists; two hand-written
+shadows of it do not need to. The thing that keeps them alive is one line in `beadRunOne` — the
+`EM-012a-FLOOR` demotion that reassigns `workflowMode` to `review-loop` when the embedded graph fails
+to parse. While that line stands, `reviewloop.go` can never be deleted. Note the spec dependency:
+removing it needs a named amendment to `execution-model.md` EM-012a-FLOOR / `process-lifecycle.md`
+PL-004a / `beads-integration.md` BI-009a, which all restate it. See `PRIOR-ART.md` §6.
+
+**And the migration was already specified and never executed.** `specs/examples/review-loop.dot` draws
+the hardcoded review loop as five nodes, and its own header says: *"once the C2 dispatch driver
+subsumes the hardcoded Go path, this file becomes the source of truth and the Go path is deleted."*
+
+**Caveat that makes this task zero, not a conclusion:** the event log ends **2026-07-22** and Phase 1
+deleted ~225,000 lines afterwards. Everything above was true six days ago. Run one real ticket through
+graph mode at the current tip before building on it.
+
+---
+
 ## 0. The headline, before the detail
 
 The named center is `workloop.go`. It is not the only one, and the thing that makes it rotten is not

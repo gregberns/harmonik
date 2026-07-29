@@ -509,6 +509,15 @@ gap in the scenario tier, but not one this commit fills. The one novel fact is t
 
 ## 6. `reviewloop.go` is a reachability guarantee, not one mode of three
 
+> **Follow-up, 2026-07-28 (late):** this section's observability finding was confirmed from the other
+> direction and has a measurement consequence — see `DECOMPOSITION-MAP.md` §0-CORRECTION. Short form:
+> because `workflow_mode` cannot distinguish a demoted run, measure graph-engine usage with
+> `node_dispatch_*` events, which only the cascade emits. Doing so shows the engine is the default and
+> has really run (1,697 `implement` dispatches across three graph files). The floor described below is
+> therefore the single line keeping `reviewloop.go` alive, and dropping it is a **named spec amendment**
+> to the three requirements quoted below — not a silent deletion.
+
+
 Any decomposition touching `reviewloop.go` inherits a constraint that is easy to lose because **the place
 it is written down and the place it executes are different files**.
 

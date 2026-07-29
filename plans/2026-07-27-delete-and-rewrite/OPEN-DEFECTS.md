@@ -36,7 +36,9 @@ that already cost this program the crew idle-reap tests and the D2 conformance t
 
 | What is wrong | Notes | Bead |
 |---|---|---|
-| **Lost-commit race.** `TestScenario_MultiBead_SerializedNCompletion` drops commits nondeterministically — fails 5/5 including isolated on a quiet box, and *which* beads lose varies run to run. The beads write non-colliding files by construction, so a merge race is the only remaining explanation. **This is the most serious item in this file**: a correctness defect in the merge path, not a test-quality problem. | Undocumented in any prior campaign | `hk-co8g8` |
+| **A guard accuses innocent runs of escaping their worktree, and kills them.** Originally filed as a lost-commit race; **root-caused 2026-07-29 and it is neither a race nor a lost commit.** Full detail below — **still the most serious item in this file.** | Fix direction identified; `RSM-018` must be corrected in the same change | `hk-co8g8` |
+| **A wave-group queue stalls for 5 minutes** whenever its lowest-indexed pending item is claimed by a sibling queue, while its other items sit ready. Self-heals, so it presents as "the queue was slow." Reaches production. Detail below. | Missing fallback, not a tuning problem | `hk-nown4` |
+| **The registered bus decoder for `handler_capabilities` cannot decode what production emits** — wrong field key and `[]string` vs `[]int`. The wire path works (a different decoder agrees); it is the registered core payload type that is wrong, which breaks strict-decode replay verification. | Independent | `hk-b882r` |
 | **A flapping SSH makes the remote C2 gate pass.** `runAutoStatusInspection` discards `ErrRemoteTransport`, the sentinel that exists specifically to distinguish "SSH failed, inconclusive" from "confirmed absent". The sibling reader in the same package explicitly retries on it. On the **kept** graph path — survives all Phase 3 deletions. Was the only genuine bug among 152 delta-lint findings. | Independent fix | `hk-sbd4l` |
 | **Structural protocol mismatch on the 2nd and 3rd dispatch.** `TestScenario_ConcurrentMultiQueue_N2_HappyPath` fails 4/4 with `error_category=structural / sub_reason=protocol_mismatch` on a deterministic dispatch ordinal — not load. It sits on the known-flake allowlist, wrongly. | Second confirmed case of the allowlist absorbing a real defect | `hk-t2d7n` |
 | **Non-single-mode runs cannot be adopted after a daemon restart.** `useIndepSession` is declared before the mode switch but assigned only in the single-mode tail, so the shared worktree-cleanup defer's guard can only be false on that one path. Review-loop and DOT runs lose their worktree on shutdown. | Needs the terminal spine collapsed — a *second* step after the launch-path collapse, not the same one | `hk-mh3qy` |
@@ -53,6 +55,71 @@ when merge-target resolution moved to the per-bead `lands_on` and became **stric
 The real cost is coverage, not safety: this was the only work-loop exercise of that backstop, so the
 backstop has been unasserted for roughly three weeks. Annotated on the bead rather than re-scoped —
 changing a P0's priority is the owner's call.
+
+---
+
+---
+
+## The two that were root-caused, in detail
+
+Both were diagnosed 2026-07-29. **In both cases the symptom in the original filing was misleading**, and
+the real defect was worse. That is worth noting as a pattern in itself: the first-order reading of a
+failing test in this codebase has now been wrong three times running.
+
+### `hk-co8g8` — the escape guard fires on a sibling's half-finished merge
+
+**Not a merge race. No commit is lost.** The losing run is killed *before* it ever attempts its merge;
+its commit sits on `refs/heads/run/<id>` and simply never becomes an ancestor of the target. That
+exonerates the whole merge apparatus — `resolveMergeTips`, the fast-forward re-validation, the CAS
+rollback, the retry budget, the worktree lifecycle. None of them run for the losing bead.
+
+`beadRunOne`'s single-mode tail runs `runmerge.CheckMainWorkingTreeDirty` — a bare
+`git status --porcelain` on the project root — inside an escape-check slot in the merge exclusion domain.
+Both the call site and the function's own doc claim that domain makes the check race-free.
+**That invariant is dead.** `runmerge.RunBranchToTarget` splits the commit phase: Phase A
+`commitAdvanceRef` (inside the domain) → **domain released** → Phase B `gitPushOrigin` (outside) → Phase C
+`commitFinalizeWorkingTree` (inside). Between A and C the ref has advanced but the tree has not been
+refreshed, so every merged path reads dirty — and the domain is free. A sibling's escape-check lands in
+that gap and reports *the other bead's file* as this run's escape.
+
+Proven by intervention, not inference: widening the window (300 ms before push) takes losses from 1 to 3
+and all three losers name the same mid-push sibling's file; closing it (moving push and finalize inside
+Phase A) passes 4/4 at N=5. Minimal repro is N=4 on shipped code with no instrumentation.
+
+**Production exposure is larger than the test's**, because Phase B there is a network push to GitHub —
+hundreds of milliseconds to seconds, against single-digit milliseconds locally. A hit reopens valid
+reviewed work, re-runs the agent from scratch, and emits a durable event **accusing an innocent run**.
+Past `implementer_escaped_worktree` events under concurrent dispatch should be re-read as suspect.
+
+**This was predicted and refused, then done anyway.** The M3 design pass (`M3-D5`) said splitting these
+"regresses the escape invariant"; the merge-queue design flagged it as an open reviewer challenge; the
+relocation's own design doc said to keep the ref-advance *and* the tree reset inside. The implementation
+split them, and `M4-C5` answered only the rollback half. The commit that deleted the old path-exclusion
+heuristic *also pre-registered the fallback for exactly this contingency*.
+
+**`RSM-018` in `specs/run-state-machine.md` is now unsatisfiable as written** — it mandates exclusion
+against an interval that is no longer a critical section. It must be corrected in whatever change fixes
+this. Fix direction: reinstate path exclusion with a **blob compare** against the pre-merge tip, which is
+the pre-registered fallback and does not relitigate the push relocation.
+
+No existing test can catch it: the concurrent-merge test binds a merge mutex that suppresses the window,
+and the nearest regression test models the pre-split atomic sequence.
+
+### `hk-nown4` — head-of-line blocking stalls a queue for five minutes
+
+A sibling queue wins a duplicate-bead race → this queue's pre-claim guard sees `in_progress` and arms a
+**five-minute** cooldown, deferring the item → the deferral is immediately reversed on the next tick
+because the item has no blocking sibling → it lands back at index 0 → `SelectNextQueue` only ever offers
+`Eligible[0]` → the cooldown guard `continue`s **with no fallback to the next eligible item**.
+
+So the queue blocks on the one item it will refuse for five minutes and never looks at the items behind
+it. It self-heals, which is why it reads as "the queue was slow" rather than as a stall. The same
+`continue`-without-fallback shape also guards the greenlight gate.
+
+The cooldown that made this a five-minute stall (rather than the previous 2.5-second spin) landed
+**three weeks after** the test that exposes it was written — the test's 60-second budget is 5× too short.
+**Do not fix this by shortening the cooldown**; that reverts a deliberate fix instead of supplying the
+missing fallback.
 
 ---
 

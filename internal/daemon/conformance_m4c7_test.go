@@ -328,6 +328,27 @@ func TestM4C7_D2RemoteAPIKeyRefusal(t *testing.T) {
 // was disarmed. The AST form anchors the call to beadRunOne, checks identifier
 // bindings, and requires the guarded body to pass the typed reason to failRun
 // before returning.
+//
+// INDIRECT LAUNCH (2026-07-28). The launch is no longer a statement in
+// beadRunOne's own body: it moved inside the Launch closure of a
+// runloop.DispatchSegment composite literal, which a later statement runs. The
+// earlier form of this checker demanded the launch statement sit IMMEDIATELY
+// after the guard, so it went red the moment the launch moved — while the
+// security property still held. A false red on a security gate is how a gate
+// stops being read, and then it protects nothing. The rule is now DOMINANCE
+// rather than adjacency, and it is shape-agnostic — it holds for a direct launch
+// and for a launch reached through a closure:
+//
+//	the guard is a top-level statement of beadRunOne at index G;
+//	the sole launch is lexically inside the top-level statement at index L;
+//	G < L, and beyond the guard the identifier spec appears only as the
+//	launched value — no assignment, no alias, no read.
+//
+// Defining the launch closure after the guard is what makes G < L sufficient: a
+// closure that does not exist yet cannot already have been invoked, so
+// dominating the DEFINITION dominates every invocation. A launch closure built
+// BEFORE the guard is refused — not because it is provably unsafe, but because
+// this checker can no longer prove it safe, and a credential gate fails closed.
 func TestM4C7_D2Chokepoint_IsHarnessAgnostic(t *testing.T) {
 	t.Parallel()
 
@@ -339,9 +360,18 @@ func TestM4C7_D2Chokepoint_IsHarnessAgnostic(t *testing.T) {
 	}
 
 	if !hasValidD2Wiring(file) {
-		t.Fatal("beadRunOne must call d2RemoteAPIKeyRefusal(rbc != nil, spec.Env), failRun then return on refusal, immediately before its unique launch")
+		t.Fatal("beadRunOne must call d2RemoteAPIKeyRefusal(rbc != nil, spec.Env), failRun then return on refusal, in a top-level statement that DOMINATES its unique launch (direct, or inside a DispatchSegment closure defined after the guard); beyond that guard the identifier spec may appear ONLY as the launched value — a post-guard read is refused along with a write, so if you added a harmless-looking spec.<Field> read after the guard, move it above the guard")
 	}
 }
+
+// d2GuardFixture is the canonical guard as beadRunOne spells it, including the
+// `return false` demanded by its named `succeeded bool` result.
+const d2GuardFixture = `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return false }`
+
+// d2SegmentFixture is the INDIRECT launch shape: the launch lives in a closure
+// hanging off a runloop.DispatchSegment literal, which a separate statement runs.
+// This is the shape beadRunOne actually has since the segment extraction.
+const d2SegmentFixture = `implSeg := &runloop.DispatchSegment{ Launch: func(lctx context.Context) (<-chan struct{}, error) { sess, watcher, launchErr = runH.Launch(lctx, spec); return nil, nil } }; implDispatch := implSeg.Run(ctx)`
 
 func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 	t.Parallel()
@@ -367,6 +397,63 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 		{name: "environment mutation after guard", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }; spec.Env = append(spec.Env, "ANTHROPIC_API_KEY=late")`},
 		{name: "guard after launch", body: `sess, watcher, err := runH.Launch(ctx, spec); if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }`, ownsLaunch: true},
 		{name: "duplicate launch ambiguity", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }; sess, watcher, err := runH.Launch(ctx, spec); sess2, watcher2, err2 := runH.Launch(ctx, spec)`, ownsLaunch: true},
+
+		// ── INDIRECT SHAPE: the launch lives in a DispatchSegment closure ──────
+		// The cases above all assume the launch is a statement of beadRunOne. Since
+		// the segment extraction it is not, so every bypass has an indirect twin;
+		// without these, teaching the checker to follow the closure would MOVE the
+		// unsoundness rather than fix it.
+		{name: "indirect canonical", body: d2GuardFixture + `; ` + d2SegmentFixture, want: true, ownsLaunch: true},
+		// The guard refuses and returns, but the launch it was meant to prevent is
+		// built and run on the refusal path itself — a guard that returns whose
+		// segment still launches.
+		{name: "indirect launch inside the refusal branch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); seg := &runloop.DispatchSegment{ Launch: func(lctx context.Context) (<-chan struct{}, error) { sess, watcher, launchErr = runH.Launch(lctx, spec); return nil, nil } }; seg.Run(ctx); failRun(reason, reason); return false }`, ownsLaunch: true},
+		// The launch closure exists before the guard runs, so the guard cannot be
+		// shown to dominate every invocation of it. Fail closed.
+		{name: "indirect segment constructed before the guard", body: d2SegmentFixture + `; ` + d2GuardFixture, ownsLaunch: true},
+		// A second launch closure ahead of the guard. Refused by the one-launch
+		// rule rather than by the dominance comparison — which is the point: two
+		// launch sites make dominance a question this checker will not answer, so
+		// it fails closed instead of picking one.
+		{name: "indirect second launch closure ahead of the guard", body: `preSeg := &runloop.DispatchSegment{ Launch: func(lctx context.Context) (<-chan struct{}, error) { sess, watcher, launchErr = runH.Launch(lctx, spec); return nil, nil } }; ` + d2GuardFixture + `; ` + d2SegmentFixture + `; preDispatch := preSeg.Run(ctx)`, ownsLaunch: true},
+		// The guard demoted into the closure returns from the CLOSURE, not from
+		// beadRunOne, so the run is never failed and the refusal is invisible.
+		{name: "indirect guard demoted into the launch closure", body: `implSeg := &runloop.DispatchSegment{ Launch: func(lctx context.Context) (<-chan struct{}, error) { if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return nil, nil }; sess, watcher, launchErr = runH.Launch(lctx, spec); return nil, nil } }; implDispatch := implSeg.Run(ctx)`, ownsLaunch: true},
+		// Refusing a run but reporting it as succeeded is its own defect, so the
+		// only accepted refusal returns are `return` and `return false`.
+		{name: "indirect refusal returns success", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return true }; ` + d2SegmentFixture, ownsLaunch: true},
+
+		// ── POST-GUARD TAMPERING ──────────────────────────────────────────────
+		// Adjacency used to make these impossible by leaving nowhere to put them.
+		// Dominance opens the gap, so each shape gets its own case. Only the first
+		// is an assignment to spec.Env; the rest leak through an alias, a callee or
+		// a receiver, and a checker that looked for assignments would pass them all.
+		{name: "post-guard environment append", body: d2GuardFixture + `; spec.Env = append(spec.Env, "ANTHROPIC_API_KEY=late"); ` + d2SegmentFixture, ownsLaunch: true},
+		// Hidden one level deeper: the closure re-adds the key just before spawning,
+		// where a checker that only walked top-level statements would never look.
+		{name: "post-guard environment append inside the launch closure", body: d2GuardFixture + `; implSeg := &runloop.DispatchSegment{ Launch: func(lctx context.Context) (<-chan struct{}, error) { spec.Env = append(spec.Env, "ANTHROPIC_API_KEY=late"); sess, watcher, launchErr = runH.Launch(lctx, spec); return nil, nil } }; implDispatch := implSeg.Run(ctx)`, ownsLaunch: true},
+		// A slice alias shares the backing array, so writing through it mutates the
+		// spawn env with no assignment to spec anywhere.
+		{name: "post-guard environment alias write", body: d2GuardFixture + `; envAlias := spec.Env; envAlias[0] = "ANTHROPIC_API_KEY=leak"; ` + d2SegmentFixture, ownsLaunch: true},
+		// The mutation moves into a callee, out of this function's text entirely.
+		{name: "post-guard mutation via helper call", body: d2GuardFixture + `; injectWorkerEnv(spec); ` + d2SegmentFixture, ownsLaunch: true},
+		// Same, through a method on the spec itself.
+		{name: "post-guard mutation via method call", body: d2GuardFixture + `; spec.AddEnv("ANTHROPIC_API_KEY=leak"); ` + d2SegmentFixture, ownsLaunch: true},
+		// And through a pointer to the env field.
+		{name: "post-guard mutation via pointer alias", body: d2GuardFixture + `; envPtr := &spec.Env; *envPtr = append(*envPtr, "ANTHROPIC_API_KEY=leak"); ` + d2SegmentFixture, ownsLaunch: true},
+		// Reading spec after the guard is refused too. It is very likely harmless,
+		// but distinguishing a read from a write is exactly the reasoning that let
+		// the shapes above through, so the rule stays blunt and this case pins it.
+		{name: "post-guard read of spec is refused too", body: d2GuardFixture + `; logf("binary=%s", spec.Binary); ` + d2SegmentFixture, ownsLaunch: true},
+
+		// KNOWN GAP, pinned deliberately as want:true. An alias taken BEFORE the
+		// guard and written after it leaks through the shared backing array without
+		// naming spec anywhere the checker looks, so the gate stays green. This case
+		// exists so the limit is a recorded fact rather than a discovery: if someone
+		// later adds alias tracking, this case fails and gets flipped to want:false —
+		// which is the notification. The wider defence is that the launch spec is
+		// built once and not passed around; see hasValidD2Wiring's KNOWN GAP note.
+		{name: "known gap: pre-guard alias written after the guard", body: `preAlias := spec.Env; ` + d2GuardFixture + `; preAlias[0] = "ANTHROPIC_API_KEY=leak"; ` + d2SegmentFixture, want: true, ownsLaunch: true},
 	}
 
 	for _, tc := range tests {
@@ -390,6 +477,47 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 	}
 }
 
+// hasValidD2Wiring reports whether beadRunOne's D2 credential guard dominates its
+// launch. See TestM4C7_D2Chokepoint_IsHarnessAgnostic's doc comment for why this is
+// structural and why the rule is dominance rather than adjacency.
+//
+// Four conditions, all necessary:
+//
+//	(a) exactly one beadRunOne, holding exactly one d2RemoteAPIKeyRefusal call and
+//	    exactly one launch — a second decision call is a bypass, a second launch is
+//	    a path the guard may not cover, and both are refused rather than reasoned about;
+//	(b) the sole decision call is the init of a well-formed guard (isValidD2If) that
+//	    is a TOP-LEVEL statement of beadRunOne, so returning from it leaves the function;
+//	(c) that guard's statement index is strictly less than the index of the top-level
+//	    statement lexically containing the launch — whether the launch is that
+//	    statement itself or sits inside a closure it defines;
+//	(d) after the guard, the identifier spec is mentioned exactly once — as the
+//	    launched value — so the bytes the guard inspected are the bytes spawned.
+//
+// (d) is deliberately blunt. The adjacency rule this checker replaced made
+// post-guard tampering structurally impossible by leaving no room for it; nothing
+// weaker than "do not touch spec at all after the guard" recovers that. A rule
+// that hunted for assignments specifically would miss the aliasing shapes —
+// `env := spec.Env; env[0] = …`, `inject(spec)`, `spec.AddEnv(…)`,
+// `p := &spec.Env; *p = append(*p, …)` — every one of which leaks through a
+// backing array or a receiver without an assignment to spec in sight.
+//
+// KNOWN GAP, stated rather than papered over: (d) sees only the identifier spec,
+// so anything that binds a handle to it BEFORE the guard escapes entirely. The
+// simplest form needs no closure and no call at all —
+//
+//	preAlias := spec.Env                          // before the guard
+//	<guard>
+//	preAlias[0] = "ANTHROPIC_API_KEY=leak"        // leaks through the backing array
+//
+// and the same is true of a helper or closure that captured spec earlier and is
+// invoked later. Catching these needs alias tracking, which a conformance test is
+// the wrong place for. The gap is pinned by the "known gap" case in
+// TestM4C7_D2Wiring_RejectsAdversarialMutations, so it stays a documented limit
+// rather than becoming a surprise. The decision function itself is covered
+// behaviourally by TestM4C7_D2RemoteAPIKeyRefusal and
+// TestM4C7_BillingFailClosed_AllRemoteHarnesses; what is asserted here is only
+// the wiring.
 func hasValidD2Wiring(file *ast.File) bool {
 	var beadRunOne *ast.FuncDecl
 	for _, decl := range file.Decls {
@@ -405,42 +533,91 @@ func hasValidD2Wiring(file *ast.File) bool {
 		return false
 	}
 
-	valid := 0
-	var guardPos token.Pos
-	var launchPos token.Pos
-	var directLaunchPos token.Pos
-	guardIndex, launchIndex := -1, -1
-	decisionCalls := 0
+	// (a) One decision, one launch — anywhere in the function, closures included.
+	decisionCalls, launchCalls := 0, 0
+	var launch *ast.CallExpr
 	ast.Inspect(beadRunOne.Body, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
-		if ok && isIdent(call.Fun, "d2RemoteAPIKeyRefusal") {
+		if !ok {
+			return true
+		}
+		if isIdent(call.Fun, "d2RemoteAPIKeyRefusal") {
 			decisionCalls++
 		}
-		if ok && isRunLaunchCall(call) {
-			if launchPos != token.NoPos {
-				launchPos = -1 // more than one launch is always ambiguous
-			} else {
-				launchPos = call.Pos()
-			}
+		if isRunLaunchCall(call) {
+			launchCalls++
+			launch = call
 		}
 		return true
 	})
+	if decisionCalls != 1 || launchCalls != 1 {
+		return false
+	}
+
+	// (b) The guard is a well-formed, top-level statement.
+	var guard *ast.IfStmt
+	guardIndex := -1
 	for i, stmt := range beadRunOne.Body.List {
 		ifStmt, ok := stmt.(*ast.IfStmt)
-		if ok && isValidD2If(ifStmt) {
-			valid++
-			guardPos = ifStmt.Pos()
-			guardIndex = i
+		if !ok || !isValidD2If(ifStmt) {
+			continue
 		}
-		if assign, ok := stmt.(*ast.AssignStmt); ok && len(assign.Rhs) == 1 {
-			if call, ok := assign.Rhs[0].(*ast.CallExpr); ok && isRunLaunchCall(call) {
-				directLaunchPos = call.Pos()
-				launchIndex = i
+		if guardIndex >= 0 {
+			return false
+		}
+		guard, guardIndex = ifStmt, i
+	}
+	if guardIndex < 0 {
+		return false
+	}
+
+	// (c) The guard dominates the launch. A launch inside the guard's own body
+	// resolves to launchIndex == guardIndex and is refused by the same comparison.
+	launchIndex := topLevelStmtIndexContaining(beadRunOne.Body.List, launch)
+	if launchIndex < 0 || guardIndex >= launchIndex {
+		return false
+	}
+
+	// (d) The inspected environment is the launched environment.
+	return specUntouchedAfter(beadRunOne.Body, guard.End(), unparenExpr(launch.Args[1]))
+}
+
+// specUntouchedAfter reports whether every mention of the identifier spec beyond
+// after is the launched value itself. Anything else — an assignment, an alias, a
+// helper call, a method call, taking its address — is refused without trying to
+// decide whether that particular shape happens to be harmless.
+func specUntouchedAfter(body *ast.BlockStmt, after token.Pos, launchArg ast.Expr) bool {
+	clean := true
+	ast.Inspect(body, func(node ast.Node) bool {
+		ident, ok := node.(*ast.Ident)
+		if !ok || ident.Name != "spec" || ident.Pos() <= after {
+			return true
+		}
+		if ident.Pos() != launchArg.Pos() {
+			clean = false
+		}
+		return true
+	})
+	return clean
+}
+
+// topLevelStmtIndexContaining returns the index of the top-level statement that
+// lexically contains target, or -1. This is what makes the checker indifferent to
+// whether the launch is a direct statement or lives in a closure the statement builds.
+func topLevelStmtIndexContaining(list []ast.Stmt, target ast.Node) int {
+	for i, stmt := range list {
+		found := false
+		ast.Inspect(stmt, func(node ast.Node) bool {
+			if node == target {
+				found = true
 			}
+			return !found
+		})
+		if found {
+			return i
 		}
 	}
-	return valid == 1 && decisionCalls == 1 && launchPos > token.NoPos &&
-		directLaunchPos == launchPos && guardPos < launchPos && launchIndex == guardIndex+1
+	return -1
 }
 
 func isValidD2If(ifStmt *ast.IfStmt) bool {
@@ -477,15 +654,38 @@ func isValidD2If(ifStmt *ast.IfStmt) bool {
 				failIndex = i
 			}
 		}
-		if ret, ok := stmt.(*ast.ReturnStmt); ok && len(ret.Results) == 0 {
+		if ret, ok := stmt.(*ast.ReturnStmt); ok && isRefusalReturn(ret) {
 			returnIndex = i
 		}
 	}
 	return failIndex >= 0 && returnIndex == failIndex+1
 }
 
+// isRefusalReturn accepts the two spellings that abandon the run: a bare `return`
+// and `return false`. beadRunOne has a named `succeeded bool` result, so the guard
+// spells it `return false`; `return true` is rejected because reporting a refused
+// run as successful is its own defect.
+func isRefusalReturn(ret *ast.ReturnStmt) bool {
+	switch len(ret.Results) {
+	case 0:
+		return true
+	case 1:
+		return isIdent(ret.Results[0], "false")
+	default:
+		return false
+	}
+}
+
+// isRunLaunchCall matches `runH.Launch(<ctx>, spec)`. The context argument is any
+// identifier: inside the DispatchSegment closure the segment supplies its own
+// launch context (`lctx`), and pinning the name would re-create the brittleness
+// this checker exists to avoid. What is load-bearing is that the launched value is
+// `spec` — the same object the guard inspected.
 func isRunLaunchCall(call *ast.CallExpr) bool {
-	if len(call.Args) != 2 || !isIdent(call.Args[0], "ctx") || !isIdent(call.Args[1], "spec") {
+	if len(call.Args) != 2 || !isIdent(call.Args[1], "spec") {
+		return false
+	}
+	if _, ok := unparenExpr(call.Args[0]).(*ast.Ident); !ok {
 		return false
 	}
 	selector, ok := call.Fun.(*ast.SelectorExpr)

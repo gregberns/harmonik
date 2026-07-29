@@ -46,7 +46,16 @@ if [[ -n "$unformatted" ]]; then
     status=1
 fi
 
-gci_diff=$("$gci" diff -s standard -s default -s "prefix($module)" -- "${files[@]}")
+# Stdin must be a character device here. gci's diff (and print) subcommands
+# unconditionally prepend stdin to the file list whenever stdin is NOT a
+# character device -- see gci's pkg/io StdInGenerator, which tests
+# os.Stdin.Stat() against os.ModeCharDevice. An interactive shell hands gci a
+# terminal, so this is invisible locally; a CI build step hands it a pipe, so
+# gci parses zero bytes as Go source and dies with
+# "StdIn:1:1: expected 'package', found 'EOF'" before ever looking at the
+# arguments. /dev/null is a character device, so this pins the check to the
+# explicit file list in every environment.
+gci_diff=$("$gci" diff -s standard -s default -s "prefix($module)" -- "${files[@]}" </dev/null)
 if [[ -n "$gci_diff" ]]; then
     echo "gci: import order drift detected (run 'make fmt' to fix):"
     echo "$gci_diff"

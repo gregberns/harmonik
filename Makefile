@@ -583,6 +583,7 @@ fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 
 # ---------------------------------------------------------------------------
 .PHONY: check-fast
 check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint --new-from-rev, go test -short
+	scripts/go-format-test.sh
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...
@@ -618,6 +619,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 # ---------------------------------------------------------------------------
 .PHONY: check-short
 check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -short -race (skips real-daemon E2E; hk-jzepv)
+	scripts/go-format-test.sh
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...

@@ -10,7 +10,14 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Nightly at 04:00 UTC so failures surface before the next workday.
+    # Nightly at 04:00 UTC. The "make test-scenario" STEP below sets
+    # continue-on-error, so this workflow's RUN conclusion is ALWAYS green and
+    # does NOT surface a failing scenario suite on its own. (The step's own
+    # conclusion, and the job's, are still reported as failure by the REST API
+    # -- only the run conclusion is masked.) Failures are surfaced out-of-band
+    # by ops-monitor, which probes this scheduled run's "make test-scenario"
+    # STEP conclusion (scripts/ops-monitor-check.sh → checks['scenario-nightly']).
+    # (hk-plw4z)
     - cron: "0 4 * * *"
 
 jobs:

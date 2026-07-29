@@ -41,6 +41,13 @@ EOF
 cat > "$repo/bin/gci" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+# Mirror gci's real stdin behaviour: its diff/print subcommands treat stdin as
+# an additional Go source file whenever stdin is not a character device, which
+# is exactly what a CI build step hands a subprocess.
+if [[ $1 == diff && ! -c /dev/fd/0 ]]; then
+    echo "Error: StdIn:1:1: expected 'package', found 'EOF'" >&2
+    exit 1
+fi
 mode=$1
 shift
 while [[ $# -gt 0 && $1 != -- ]]; do shift; done
@@ -55,8 +62,12 @@ done
 EOF
 chmod +x "$repo/bin/gofumpt" "$repo/bin/gci"
 
+# Every invocation runs with a pipe on stdin, never a terminal. That is what a
+# CI build step provides, and it is the condition under which gci treats stdin
+# as an extra (empty) Go source file. Running the subject only from an
+# interactive shell hid a week of red CI.
 run_subject() {
-    (cd "$repo" && GOFUMPT="$repo/bin/gofumpt" GCI="$repo/bin/gci" "$subject" "$@")
+    printf '' | (cd "$repo" && GOFUMPT="$repo/bin/gofumpt" GCI="$repo/bin/gci" "$subject" "$@")
 }
 
 if output=$(run_subject check 2>&1); then

@@ -1,3 +1,5 @@
+//go:build scenario
+
 package daemon_test
 
 // rundriverfixture_test.go — the shared project/worktree/run-id fixtures used by
@@ -10,6 +12,11 @@ package daemon_test
 // (scenario_commit_gate_cap_hki8g59_test.go, scenario_subworkflow_dispatch_hkx9l_test.go)
 // build their project dirs and worktrees through exactly these functions. They live
 // here now so the deletion of the driver tests does not take them down.
+//
+// Carries //go:build scenario to match its only consumers. Without the tag the
+// file compiles into the untagged build with no users, where the `unused` linter
+// reports all five helpers as dead — a false positive that reads exactly like
+// real garbage and would invite a future sweep to delete live fixtures.
 //
 // Names are unchanged on purpose — a rename would touch every call site for no
 // behavioural reason.

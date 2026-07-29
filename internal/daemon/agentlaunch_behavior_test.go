@@ -22,10 +22,11 @@ package daemon
 // needs a test that observes the RESULT.
 //
 // Reaching runAgentLaunch needs no tmux and no worker: newPerRunSubstrate
-// returns nil for any substrate that is not a *tmuxSubstrate, sandboxScopeNone
-// skips the srt gate, and a nil harness registry / nil hook store skip the rest.
-// The only hard requirement before the guard is a non-nil AdapterRegistry
-// (handler.NewHandler panics on nil) and a non-nil Emitter/Clock.
+// returns nil for any substrate that is not a *tmuxSubstrate, the zero
+// SandboxCfg leaves the backend empty so sandboxSpawnForRun returns nil, and a
+// nil harness registry / nil hook store skip the rest. The only hard requirement
+// before the guard is a non-nil AdapterRegistry (handler.NewHandler panics on
+// nil) and a non-nil Emitter/Clock.
 
 import (
 	"bytes"
@@ -111,7 +112,6 @@ func alaunchInput(t *testing.T, spy handler.Substrate, remote bool, specEnv []st
 		Artifacts:     shared.LaunchArtifacts{ResolvedAgentType: core.AgentTypeClaudeCode},
 		WorktreePath:  wt,
 		BaseSubstrate: spy,
-		SandboxScope:  sandboxScopeNone,
 		Remote:        remote,
 	}
 }

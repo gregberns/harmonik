@@ -825,6 +825,54 @@ It also holds ~30 recorded defects that never reached the ledger, five confirmed
 so it can reset a bead **under a live agent**. We are not fixing bugs now; carry the list forward, do
 not rediscover it.
 
+**F. Verify the sandbox-gate consolidation on a real run — the code landed 2026-07-29, the check did not.**
+Operator direction the same day: *make the fix now, do the verification later when we test the whole
+system.* This is that later.
+
+The three launch sites each carried their own sandbox scope. They now all ask one gate,
+`sandboxSpawnForRun`, and `sandbox.harnesses` in `.harmonik/config.yaml` is the only switch. Three
+source-level tests in `internal/daemon/agentlaunch_scope_test.go` guard the shape. No call site
+re-scopes, the gate call stays unconditional, and the gate's answer is never overwritten afterwards.
+All three were mutation-checked. **Do not read the third as surplus** — it is the one that closes the
+real hole. A second gate written as `sandboxSpawn = nil` after the call keys off an existing field, so
+it adds no new name and leaves the call unconditional, which means the first two guards read it as
+clean.
+
+**What is NOT verified, and why it was deferred:** the shape tests cannot prove the gate does anything.
+Proving that means reaching the srt engagement probe, which shells out to the real `srt` binary — a
+whole-system check, not a package test. Two things to confirm when the system is next exercised end to
+end:
+
+- **A pi run on the graph path is still sandboxed and still passes.** Pi is the only harness listed
+  today, and it already took this path before the change, so this is a no-regression check.
+- **The build-cache redirect now firing on graph runs does no harm.** This is the one genuine behaviour
+  change in the consolidation. It was previously scoped to single-mode launches. A graph run that builds
+  inside the sandbox hit the same denied write with no redirect, so the change should fix a failure
+  rather than cause one — but it has never run. The redirect sits inside the captured-session-id branch,
+  so the real delta is exactly "pi graph nodes now get `GOCACHE`/`GOPATH`".
+
+**One consequence to know before editing `sandbox.harnesses`.** Consolidating did not remove the case the
+old write-up was afraid of. It made it reachable by one config line, which is the point of having a single
+switch. Adding `claude` to that list now does three things at once: it sandboxes every graph claude node
+for the first time, it sandboxes the cognition gate for the first time, and it arms `verifySandboxEngaged`
+in front of both. That check is fail-closed, so a harness the sandbox cannot engage for stops launching
+rather than launching unprotected. That is the behaviour we want, and it is still a bigger step than the
+one-line diff looks like. `.harmonik/config.yaml` is machine-local and gitignored, so this note is the only
+place the warning can live.
+
+**Related, and larger than a verification:** the redirect handles the **Go** toolchain only, because Go
+is what this repo builds. Every language with a writable cache under `$HOME` has the same problem inside
+the sandbox — Rust's `CARGO_HOME` is the one we expect to need next, and node, Python and Java all
+qualify. Operator, 2026-07-29: *we'll want to support similar things for other languages.* When the
+second toolchain arrives, the hardcoded `GOCACHE`/`GOPATH` block in `agentlaunch.go` should stop being
+Go-specific and become a per-language cache redirect the sandbox config names, so adding a language is
+config rather than code. Do not build that for Go alone — one instance is not yet a pattern, and the
+consolidation rule below is about removing duplication that exists, not pre-empting it.
+
+**Standing caveat:** the operator has paused sandbox support as a program and wants remote and
+containerized execution, which may replace srt outright. If that lands first, this whole item is
+deleted rather than done.
+
 ---
 
 ### The rewrite is built to `PRINCIPLES.md`

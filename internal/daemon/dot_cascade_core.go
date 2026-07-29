@@ -1464,10 +1464,6 @@ func dispatchDotAgenticNode(
 		BaseSubstrate:     baseSubstrate,
 		WorkerSessionName: workerSessionName,
 		WorkerSessionCwd:  workerSessionCwd,
-		// PRESERVED DIVERGENCE: the DOT cascade has only ever srt-wrapped the
-		// captured-session-id (exec) branch. Widening it to the substrate branch
-		// would start sandboxing graph nodes that have never been sandboxed.
-		SandboxScope: sandboxScopeCapturedOnly,
 		// hk-x882o: terminal/consolidate nodes draw from the reserved +1 slot.
 		Terminal: isTerminalSpawn,
 		// M3-D7: a DOT back-edge resume gets the segment's transitional

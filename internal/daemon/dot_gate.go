@@ -419,9 +419,6 @@ func executeCognitionGate(
 		BaseSubstrate:     gateBaseSubstrate,
 		WorkerSessionName: workerSessionName,
 		WorkerSessionCwd:  workerSessionCwd,
-		// PRESERVED DIVERGENCE: the cognition gate has never been srt-sandboxed.
-		// Turning it on here would be a live production change, not a cleanup.
-		SandboxScope: sandboxScopeNone,
 		// The gate is never the terminal/merge spawn and always launches fresh —
 		// never `claude --resume`.
 		Terminal:        false,

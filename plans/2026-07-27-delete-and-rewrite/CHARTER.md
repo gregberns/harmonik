@@ -124,6 +124,18 @@ normative term.
 
 ## 4. Standing rules
 
+- **Consolidate by default.** Operator, 2026-07-29: when the same thing is done in three places, that
+  is the thing this program exists to remove — so **the default position is to consolidate**, and it is
+  keeping the copies that needs the argument. This is the general form of §1's second cause: duplicated
+  logic drifts, the compiler stays silent, and the drift is found later as a bug. Note what the default
+  costs you if you get it wrong: consolidating wrongly is one visible change you can revert, while
+  leaving three copies is an invisible divergence that keeps compiling.
+  **Preserving a divergence is a real option, but it is a decision, not a deferral** — it needs a
+  written reason, a test that fails when someone tidies it away, and a named trigger for revisiting.
+  Beware the shape that already caught us once: a per-site parameter that is a *second* gate in front of
+  a real one. A second gate can only subtract, so it can only ever silently disable something the
+  configuration says is on.
+
 - **Segment, then stitch.** Separate subsystems first, compose them back explicitly at a composition
   root. Not entangled-but-documented-as-separate, which is the current state.
 - **The queue is the centre.** Where effort is contested, it goes to the queue and the bead path.

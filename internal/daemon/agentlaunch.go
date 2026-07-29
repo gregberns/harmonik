@@ -57,34 +57,36 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// agentLaunchSandboxScope names WHICH launches the srt sandbox gate applies to.
+// The srt sandbox gate used to be scoped per call site: the cognition gate never
+// sandboxed, the graph-node path sandboxed only harnesses that capture their own
+// session id, and single mode sandboxed everything. That divergence was carried
+// as a parameter through the launch-path collapse and RESOLVED on 2026-07-29 by
+// consolidating on the widest scope — every launch asks the gate, and the gate
+// alone decides.
 //
-// PRESERVED DIVERGENCE — this parameter exists because the three collapsed sites
-// disagreed, and normalizing either direction is a real production change that
-// can turn healthy runs red: widening starts sandboxing graph nodes and gates
-// that have never been sandboxed; narrowing silently un-sandboxes single-mode.
-// The divergence is carried in the signature so it stays VISIBLE at every call
-// site rather than hiding inside three copies of the code. It is awaiting a
-// decision; it is not a design.
-type agentLaunchSandboxScope int
-
-const (
-	// sandboxScopeNone never applies the srt gate. The cognition gate has never
-	// been sandboxed.
-	sandboxScopeNone agentLaunchSandboxScope = iota
-
-	// sandboxScopeCapturedOnly applies the srt gate only when the resolved
-	// harness captures its own session id (codex, pi — the exec path). This is
-	// the DOT cascade's historical scoping.
-	sandboxScopeCapturedOnly
-
-	// sandboxScopeAll applies the srt gate on both the substrate and the exec
-	// path, and additionally redirects the Go toolchain caches into the run
-	// worktree on the exec path (hk-cdpxu) so an in-sandbox `go build` can write
-	// them. This is single-mode's historical scoping; the go-cache redirect is
-	// part of the same preserved divergence.
-	sandboxScopeAll
-)
+// There is exactly one gate now, and it is `sandboxSpawnForRun`: it wraps a run
+// only when the backend is "srt", the harness is listed in sandbox.harnesses,
+// and the run is local. The per-site scope was a SECOND gate stacked on that
+// one, and a second gate can only ever subtract — which is what made it a silent
+// non-enforcement risk. No run loses sandboxing, because the gate is a pure
+// function of config and harness identity and no call site changed what it
+// passes. What changes is that config is now the only switch, so listing a
+// harness in sandbox.harnesses means it is sandboxed on every path rather than
+// on some.
+//
+// Read that as a live consequence, not only a repair. Adding a harness to
+// sandbox.harnesses is now one config line that sandboxes it everywhere at once,
+// including the cognition gate, and arms verifySandboxEngaged in front of every
+// one of those launches. That check is fail-closed, so a harness the sandbox
+// cannot engage for stops launching rather than launching unprotected. Intended,
+// and worth knowing before editing that list.
+//
+// Measured before the change, against the live config (backend "srt", harnesses
+// ["pi"]): pi captures its session id, so the graph path already sandboxed it.
+// Claude mints its own, and is not listed, so neither the graph path nor the
+// gate could sandbox it. The consolidation is therefore inert for two of the
+// three sites today. The one live change is that the exec-path build-cache
+// redirect below now applies to graph runs too.
 
 // agentLaunchFail discriminates HOW a launch stopped short of a completed
 // session. The caller owns what each one MEANS (reopen, node failure, gate
@@ -179,8 +181,6 @@ type agentLaunchInput struct {
 	// right after the wrap (single-mode's worker-offline callback and its
 	// independent-session/run-registry setup). nil for sites with none.
 	ConfigurePerRunSubstrate func(prs *perRunSubstrate)
-
-	SandboxScope agentLaunchSandboxScope
 
 	// Terminal marks a spawn that draws from the reserved +1 spawn slot: the
 	// single-mode implementer always, a DOT terminal/consolidate node
@@ -354,23 +354,19 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	}
 
 	// ── Sandbox gate ────────────────────────────────────────────────────────
-	// See agentLaunchSandboxScope: WHICH launches this applies to is a preserved
-	// per-site divergence; HOW it is applied is not.
-	var sandboxSpawn *SrtSpawnConfig
-	if in.SandboxScope == sandboxScopeAll ||
-		(in.SandboxScope == sandboxScopeCapturedOnly && sessionIDCaptured) {
-		sandboxSpawn = sandboxSpawnForRun(env.SandboxCfg, resolveGateAgentType(res.Harness, agentType), SandboxProfileInput{
-			WorktreePath:           in.WorktreePath,
-			GitDir:                 filepath.Join(env.ProjectDir, ".git"),
-			RunID:                  runID.String(),
-			DaemonSockPath:         in.DaemonSocket,
-			AllowedDomains:         env.SandboxCfg.Network.AllowedDomains,
-			AllowLocalBinding:      env.SandboxCfg.Network.AllowLocalBinding,
-			WeakerNetworkIsolation: env.SandboxCfg.Network.WeakerNetworkIsolation,
-			SharedReadCacheDirs:    env.SandboxCfg.Cache.WarmRead,
-			PrivateWriteCacheDirs:  env.SandboxCfg.Cache.PrivateWrite,
-		})
-	}
+	// Every launch asks. sandboxSpawnForRun is the only thing that decides. See
+	// the note above the launch-input type for what this replaced and why.
+	sandboxSpawn := sandboxSpawnForRun(env.SandboxCfg, resolveGateAgentType(res.Harness, agentType), SandboxProfileInput{
+		WorktreePath:           in.WorktreePath,
+		GitDir:                 filepath.Join(env.ProjectDir, ".git"),
+		RunID:                  runID.String(),
+		DaemonSockPath:         in.DaemonSocket,
+		AllowedDomains:         env.SandboxCfg.Network.AllowedDomains,
+		AllowLocalBinding:      env.SandboxCfg.Network.AllowLocalBinding,
+		WeakerNetworkIsolation: env.SandboxCfg.Network.WeakerNetworkIsolation,
+		SharedReadCacheDirs:    env.SandboxCfg.Cache.WarmRead,
+		PrivateWriteCacheDirs:  env.SandboxCfg.Cache.PrivateWrite,
+	})
 	if sandboxSpawn != nil {
 		if prs != nil {
 			prs.sandboxSpawn = sandboxSpawn
@@ -445,12 +441,23 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		spec.Binary = wrapBin
 		spec.Args = wrapArgs
 
-		if sandboxSpawn != nil && in.SandboxScope == sandboxScopeAll {
+		if sandboxSpawn != nil {
 			// hk-cdpxu: the sandbox denies writes to the default Go cache
 			// locations under $HOME, so any in-sandbox `go build`/`go test`
 			// fails on the cache write even though `go` itself resolves. Point
 			// them at the run worktree, which is already in the profile's
 			// allowWrite set. Additive: spec.Env wins on duplicate keys.
+			//
+			// Go is the only toolchain handled here because it is the only one
+			// this repo builds. The same problem applies to every language with
+			// a writable cache under $HOME — Rust's CARGO_HOME is the next one
+			// we expect to need. When a second toolchain arrives, this stops
+			// being a Go-specific block and becomes a per-language cache
+			// redirect the sandbox config names. See NEXT_STEPS.md.
+			//
+			// Was previously scoped to single-mode launches only. Consolidated
+			// 2026-07-29 — a graph run that builds inside the sandbox hit the
+			// same denied write and had no redirect.
 			spec.Env = append(spec.Env,
 				"GOCACHE="+filepath.Join(in.WorktreePath, ".harmonik", "go-cache"),
 				"GOPATH="+filepath.Join(in.WorktreePath, ".harmonik", "go-path"),

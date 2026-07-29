@@ -4144,11 +4144,6 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				useIndepSession = false
 			}
 		},
-		// PRESERVED DIVERGENCE: single-mode applies the srt gate on BOTH the
-		// substrate and the exec path, and redirects the Go toolchain caches into
-		// the worktree on the exec path (hk-cdpxu). Narrowing it to match the DOT
-		// cascade would silently un-sandbox single-mode.
-		SandboxScope: sandboxScopeAll,
 		// hk-wnqos: the single-mode implementer is the terminal/merge spawn — it
 		// draws from the reserved +1 slot in spawnSem so a saturated non-terminal
 		// pool cannot starve it at launch.

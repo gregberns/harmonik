@@ -163,10 +163,10 @@ harmonik run --beads id1,id2,... [flags]
 | `--max-concurrent N` | Max simultaneous beads | 1 |
 | `--context TEXT` | Free-form extra context injected into each agent task | — |
 | `--context @FILE` | Same, but read context from a file | — |
-| `--workflow-mode MODE` | Dispatch shape: `builtin`, `single`, `review-loop`, `dot` | builtin |
+| `--workflow-mode MODE` | Dispatch shape: `builtin`, `single`, `dot` (`review-loop` RETIRED — rejected with a pointer to `dot`) | builtin |
 | `--workflow-ref PATH` | Path to `.dot` workflow file (required with `--workflow-mode dot`) | — |
-| `--no-review-loop` | Opt out of review-loop; beads run single-node | review on |
-| `--review-loop` | Deprecated no-op (review-loop is now default) | — |
+| `--no-review-loop` | **RETIRED.** Exits 1. It used to mean "run single-node, unreviewed" — say that directly with `--workflow-mode single` | — |
+| `--review-loop` | **RETIRED.** Exits 1. `dot` is the default and is already reviewed; drop the flag | — |
 | `--notify-stream` | One line per bead completion to stdout (auto-on for multi-bead runs) | — |
 | `--notify-stream=PATH` | Same, but write to a FIFO or file | — |
 | `--no-notify-stream` | Disable per-bead completion lines | — |

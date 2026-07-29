@@ -153,6 +153,18 @@ var (
 	ExportedLaunchSuppressionCeiling = &launchSuppressionCeiling
 )
 
+// ExportedSendResumeSubmitEnter exposes sendResumeSubmitEnter for tests.
+//
+// This is the post-paste submit burst on the implementer-RESUME path: one Enter
+// immediately, then resumeSubmitRetries more spaced by resumeSubmitRetryDelay.
+// It is LIVE on the dot path (pasteInjectImplementerResume calls it), so it is
+// seamed here rather than left to the deleted review-loop suite.
+//
+// Beads: hk-ip33d, hk-8oy.
+func ExportedSendResumeSubmitEnter(ctx context.Context, es EnterSenderExported) {
+	sendResumeSubmitEnter(ctx, substrate.SystemClock{}, es)
+}
+
 // quitSenderExported is the exported alias for quitSender so the exported
 // wrapper can accept it.
 type quitSenderExported = quitSender

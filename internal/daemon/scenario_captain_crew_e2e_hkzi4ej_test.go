@@ -391,7 +391,7 @@ if [ -f "$PWD/.harmonik/review-target.md" ]; then
   printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"cc14 review-loop happy path"}' > "$PWD/.harmonik/review.json"
   exit 0
 fi
-exec "` + twinPath + `" --scenario single-happy-path
+exec "` + twinPath + `" --scenario commit-on-cue-startup-delay --worktree-path "$PWD"
 `
 	//nolint:gosec // G306: script is test-only; chmod 0755 required for execution
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o755), "cc14TwinWrapperScript: WriteFile")
@@ -793,6 +793,14 @@ func TestScenario_CaptainCrewE2E_hkzi4ej(t *testing.T) {
 	// concurrent merges to the shared bare-repo origin.
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
+
+	// Install the implementer→reviewer graph the twin wrapper is written for (it
+	// is phase-aware and writes an APPROVE verdict when review-target.md
+	// appears). This test ran under review-loop until that mode was retired
+	// (EM-015d); without the graph, dot resolution falls through to the embedded
+	// standard-bead.dot, whose commit_gate node runs go build / go vet inside a
+	// fixture worktree that is not a Go module, and all four children fail.
+	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
 	cfg := daemon.Config{
 		ProjectDir:            projectDir,

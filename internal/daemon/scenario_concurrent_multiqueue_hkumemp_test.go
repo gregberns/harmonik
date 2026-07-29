@@ -539,6 +539,13 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
+	// Install the implementer→reviewer graph cmqTwinWrapperScript is written for
+	// (it is phase-aware and writes an APPROVE verdict when review-target.md
+	// appears). Without this, dot resolution falls through to the embedded
+	// standard-bead.dot, whose commit_gate node runs go build / go vet inside a
+	// fixture worktree that is not a Go module.
+	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
+
 	cfg := daemon.Config{
 		ProjectDir:            projectDir,
 		JSONLLogPath:          jsonlPath,
@@ -797,6 +804,13 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
+
+	// Install the implementer→reviewer graph cmqTwinWrapperScript is written for
+	// (it is phase-aware and writes an APPROVE verdict when review-target.md
+	// appears). Without this, dot resolution falls through to the embedded
+	// standard-bead.dot, whose commit_gate node runs go build / go vet inside a
+	// fixture worktree that is not a Go module.
+	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
 	cfg := daemon.Config{
 		ProjectDir:            projectDir,

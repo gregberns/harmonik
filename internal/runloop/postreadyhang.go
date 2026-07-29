@@ -16,6 +16,42 @@ package runloop
 // The detector is exec-path only (implWatcher != nil): in the tmux path the
 // only post-ready signal would be daemon heartbeats, which fire unconditionally
 // and cannot distinguish a hung agent from a working one.
+//
+// # NO PRODUCTION CALLER as of the review-loop retirement (2026-07-29)
+//
+// Stated here so nobody reads the green tests below as evidence this is wired.
+// WaitPostAgentReadyProgress had exactly two production call sites, BOTH in
+// internal/daemon/reviewloop.go. That driver was deleted when
+// workflow_mode=review-loop was retired (execution-model.md §4.3.EM-015d), so
+// every remaining reference is a test or an export seam. RunEnv's
+// PostAgentReadyHangTimeout field is still assigned in runports.go and read by
+// nothing.
+//
+// It was NOT ported to the dot cascade, because the property it defends —
+// "the implementer became ready and then went silent" — is already covered
+// there, by a different and TIGHTER mechanism. driveDotWorkflow passes a live
+// heartbeat tap into pasteInjectQuitOnCommit (internal/daemon/pasteinject.go),
+// which arms two bounds this detector does not improve on:
+//
+//   - launchHeartbeatTimeout (180s): the FIRST agent_heartbeat after brief
+//     delivery must arrive inside this window or the session is killed. This
+//     detector's equivalent bound was DefaultPostAgentReadyHangTimeout, 7
+//     minutes — more than twice as loose.
+//   - heartbeatStalenessThreshold (8 min): ongoing silence after the first
+//     heartbeat, which this detector never covered at all (it only ever waited
+//     for the FIRST post-ready event, then returned).
+//
+// So this is a redundant second implementation whose surviving equivalent is
+// strictly stronger, not a capability that left the product. Recorded rather
+// than deleted because the decision to delete it takes four test files with it
+// (export_readywait_test.go, export_workloopdeps_test.go,
+// twinparity_timing_property_test.go, workingphasewatchdog_rt19c_test.go), and
+// two of those exercise real timing properties of the shared dispatch path that
+// want re-homing rather than deletion.
+//
+// Resolve one way or the other — delete it with its dead RunEnv plumbing, or
+// wire it into driveDotWorkflow if the 180s/8min pair is judged insufficient.
+// Tracked as hk-q5scy.
 
 import (
 	"context"

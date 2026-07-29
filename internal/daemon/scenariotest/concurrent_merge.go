@@ -232,8 +232,14 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 	}
 
 	// Phase-aware twin wrapper: implementer phase runs the scenario; reviewer
-	// phase writes an APPROVE review.json so the review loop terminates.
+	// phase writes an APPROVE review.json so the review cycle terminates.
 	twinWrapper := rcmTwinWrapperScript(t, twinPath, cfg.TwinScenario)
+
+	// Install the implementer→reviewer graph the twin wrapper is written for.
+	// Without it, dot resolution falls through to the embedded standard-bead.dot,
+	// whose commit_gate node runs go build / go vet inside a fixture worktree
+	// that is not a Go module.
+	WriteReviewLoopWorkflowDot(t, projectDir)
 
 	// Redirect EnsureWorktreeTrust to a test-local claude config so this test
 	// does not contend with a running harmonik daemon on ~/.claude.json.lock.
@@ -262,13 +268,24 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 		SkipRestartBackoff:    true,
 		AgentReadyTimeout:     agentReadyTimeout,
 		LogWriter:             rcmLogWriter{t: t},
-		// single, not dot: the fixture's twin runs ONE implementer phase
-		// (TwinScenario, e.g. "single-happy-path") and never writes a reviewer
-		// verdict. This was review-loop until that mode was retired (EM-015d) —
-		// under dot the graph's reviewer node finds no verdict and every run
-		// fails, which says nothing about the concurrency this fixture exists to
-		// test. single is the mode whose shape the twin actually models.
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		// dot, carrying the review gate this fixture has always run under.
+		//
+		// It ran under review-loop until that mode was retired (EM-015d). Two
+		// wrong turns were taken getting here, both recorded so they are not
+		// repeated: first it was moved to single on the false rationale that the
+		// twin "never writes a reviewer verdict" (rcmTwinWrapperScript below is
+		// phase-aware and DOES write an APPROVE review.json); then dot was tried
+		// without changing the implementer scenario, and every run failed.
+		//
+		// The actual requirement is that the implementer twin scenario must land
+		// a real per-node commit. dot checks HEAD advance per node, which
+		// "single-happy-path" does not satisfy — it leans on the fixture's
+		// pre-committed empty commit. "commit-on-cue-startup-delay" git-commits a
+		// timestamped sentinel and does satisfy it, which is why the sibling
+		// fixtures in scenario_queue_submit_dispatch_hksk00a_test.go have always
+		// worked under dot with an otherwise identical reviewer branch. Callers
+		// wanting the happy path pass that scenario.
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 	if cfg.Substrate != nil {
 		daemonCfg.Substrate = cfg.Substrate

@@ -3666,24 +3666,36 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	//   2. <projectDir>/workflow.dot exists → project-level path (resolved below).
 	//   3. Neither → use the embedded standard-bead.dot (loaded here).
 	//
-	// The embedded load happens here — before the switch — so that if it fails we
-	// can change workflowMode to review-loop and let the review-loop case execute
-	// normally (spec §REVIEW FLOOR item b: fall through to review-loop, NEVER single).
+	// The embedded load happens here — before the switch — so a failure can fail
+	// the run before anything is dispatched.
+	//
+	// Review floor (EM-012a-FLOOR, amended): the floor's guarantee is that a bead
+	// resolved below tier 1 is NEVER dispatched without a review gate. That is
+	// delivered by the embedded graph itself — standard-bead.dot carries a
+	// reviewer node on the sole inbound edge to close — plus this branch, which
+	// FAILS THE RUN rather than dispatching under some other shape.
+	//
+	// This used to demote to review-loop. It no longer does, for two reasons the
+	// amendment records: review-loop is retired (it was a hand-written particular
+	// of the general graph walker this very branch is loading), and a demotion was
+	// dishonest — run_started stamps workflow_mode ABOVE this line, so a demoted
+	// run's own start event named a mode it did not execute.
 	var preloadedDotGraph *dot.Graph
 	if workflowMode == core.WorkflowModeDot && itemWorkflowRef == "" {
 		defaultDotPath := filepath.Join(env.ProjectDir, "workflow.dot")
 		if _, statErr := os.Stat(defaultDotPath); os.IsNotExist(statErr) {
 			g, embErr := loadStandardGraph(itemTemplateParams)
 			if embErr != nil {
-				// Safety floor (hk-30vlb §REVIEW FLOOR item b): embedded graph parse
-				// failure — fall through to review-loop, NEVER to single.
 				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: embedded standard-bead.dot load failed for bead %s run %s: %v (falling back to review-loop)\n",
+					"daemon: workloop: embedded standard-bead.dot failed to load for bead %s run %s: %v — failing the run; "+
+						"the daemon will NOT dispatch this bead under a different workflow shape (EM-012a-FLOOR)\n",
 					beadID, runID.String(), embErr)
-				workflowMode = core.WorkflowModeReviewLoop
-			} else {
-				preloadedDotGraph = g
+				// Same reopen spine as the tier-1/tier-2 load failure below.
+				reason := fmt.Sprintf("workflow_load: embedded standard-bead.dot: %v", embErr)
+				failRun(reason, reason)
+				return bridge.Success()
 			}
+			preloadedDotGraph = g
 		}
 	}
 
@@ -3916,16 +3928,27 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			},
 			MergeTarget: mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
 			SkipGate:    true,
+			// hk-f9xzs: classify transient merge failures (rebase_conflict,
+			// non_ff_merge, merge_fmt_failed) as retryable so the spine spends the
+			// 3-attempt budget runBridgeConfig now grants DOT. Inherited from the
+			// retired review-loop path, which was the only mode that carried it;
+			// the rationale is on runBridgeConfig.
+			Retryable: runmerge.IsRetryableReason,
 			// hk-tnui: stamp Reviewed-By / Review-Verdict trailers on the HEAD
-			// commit before the FF merge, mirroring the review-loop path. LOCAL
-			// runs only (rbc == nil): remote runs keep the trailer injection
-			// deferred (same FLAGGED note as the review-loop path).
+			// commit before the FF merge. LOCAL runs only (rbc == nil): remote runs
+			// keep the trailer injection deferred (FLAGGED).
+			//
+			// Re-amends before EACH retry rather than only the first (RF :3899):
+			// now that merges retry, the prior inner rebase may have rewritten HEAD,
+			// so a once-only amend would leave the retried merge carrying no
+			// trailers. The amend is idempotent.
 			AmendTrailers: func(c context.Context, retry int) {
-				if retry > 0 || dotResult.approveVerdict == nil || rbc != nil {
+				if dotResult.approveVerdict == nil || rbc != nil {
 					return
 				}
 				if amendErr := runmerge.AppendReviewTrailersToHEAD(c, wtPath, dotResult.approveVerdict); amendErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
+					fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD (dot, merge retry %d) bead %s: %v (non-fatal)\n",
+						retry, beadID, amendErr)
 				}
 			},
 			// hk-whru3: advisory-RC + rebase_dropped_commits → work already on

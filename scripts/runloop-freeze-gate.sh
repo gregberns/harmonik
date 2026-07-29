@@ -78,8 +78,15 @@ done
 # (2) The destination must still exist. A gate whose target has been renamed away
 #     silently stops testing what it claims to test. (Later chunks append their
 #     moved run-path files here.)
+# internal/runloop/postreadyhang.go was REMOVED from this list on 2026-07-29. The
+# post-ready-hang detector it held was deleted outright in b714653b5, on evidence
+# that the rationale for keeping it was false. The deletion did not update this
+# list, so the gate reported its own target as missing and failed check-fast for
+# every commit after it. The forbidden-source check below still names the file:
+# the detector is gone, so re-creating it inside internal/daemon would reopen the
+# door this gate exists to hold shut.
 for f in internal/runloop/ports.go internal/runloop/workloopeventsource.go \
-         internal/runloop/postreadyhang.go internal/runloop/waitsocketgrace.go \
+         internal/runloop/waitsocketgrace.go \
          internal/runloop/runshell.go internal/runloop/dispatchsegment.go \
          internal/runloop/scenariogate.go internal/runloop/runbridge.go \
          internal/runloop/reviewerharness_hkiv748.go; do

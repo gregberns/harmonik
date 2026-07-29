@@ -263,9 +263,10 @@ func (bs *bootState) startBackgroundLoops(ctx context.Context, deps *workLoopDep
 		bs.branchReapWatcher.StartWatcher(ctx)
 	}
 
-	// All 31 wiring points are established at this point; the audit log is a stable
-	// diff surface for catching silent drops between daemon versions.
-	logCompositionRoot(cfg.LogWriter)
+	// Every composition-root singleton is established at this point; the audit
+	// log reads them off the live bootState, so it is a stable diff surface for
+	// catching silent drops between daemon versions.
+	bs.logCompositionRoot(ctx, cfg.LogWriter)
 
 	// RC-020a dispatch point (c): scheduled detector cadence (default 1h),
 	// subject to subsystem partitioning (see startReconciliationSchedulerIfEnabled).

@@ -34,19 +34,52 @@ true about the *code shape* and misleading about *what to do*. Measured against 
   failure mix is the same shape (545 of 1,282).
 
 **So Phase 3 is a deletion, not a rewrite of the run machine.** The engine exists; two hand-written
-shadows of it do not need to. The thing that keeps them alive is one line in `beadRunOne` — the
-`EM-012a-FLOOR` demotion that reassigns `workflowMode` to `review-loop` when the embedded graph fails
-to parse. While that line stands, `reviewloop.go` can never be deleted. Note the spec dependency:
-removing it needs a named amendment to `execution-model.md` EM-012a-FLOOR / `process-lifecycle.md`
-PL-004a / `beads-integration.md` BI-009a, which all restate it. See `PRIOR-ART.md` §6.
+shadows of it do not need to. Removing the shadows needs a named amendment to `execution-model.md`
+EM-012a-FLOOR / `process-lifecycle.md` PL-004a / `beads-integration.md` BI-009a, which all restate the
+demotion. See `PRIOR-ART.md` §6.
+
+**CORRECTION (2026-07-29): "kept alive by ONE line" is wrong as literal reachability.** It is right
+about which path fires *unbidden*, and that distinction is the useful one. Review-loop mode is produced
+at **five** non-test sites: the `EM-012a-FLOOR` demotion in `beadRunOne`; the `--review-loop` flag and
+`--workflow-mode review-loop` in `cmd/harmonik/run.go`; `harnessApplyWorkflowDOT` in
+`cmd/harmonik/harness.go`; and `DriveOrchestration` in `internal/scenario/orchdrive.go`. The last two
+default to review-loop when a scenario declares no `workflow_path` — but all six shipped scenario
+definitions under `scenarios/` do declare one, so both are **dormant**. `runBridgeConfig` in
+`internal/runloop/runbridge.go` is a *consumer* of the mode (it grants review-loop `MaxMergeAttempts=3`
+where dot gets 1), not an entry point — but retiring the mode must decide that retry's fate rather than
+drop it silently.
+
+So: **the floor is the only path that reaches review-loop when nobody asked for it.** The other four are
+deliberate opt-ins. Deleting the floor does not free `reviewloop.go` on its own; the opt-ins must be
+retired too.
 
 **And the migration was already specified and never executed.** `specs/examples/review-loop.dot` draws
 the hardcoded review loop as five nodes, and its own header says: *"once the C2 dispatch driver
 subsumes the hardcoded Go path, this file becomes the source of truth and the Go path is deleted."*
 
-**Caveat that makes this task zero, not a conclusion:** the event log ends **2026-07-22** and Phase 1
-deleted ~225,000 lines afterwards. Everything above was true six days ago. Run one real ticket through
-graph mode at the current tip before building on it.
+**Caveat that made this task zero, not a conclusion — NOW DISCHARGED.** The event log ends
+**2026-07-22** and Phase 1 deleted ~225,000 lines afterwards, so everything above rested on six-day-old
+evidence.
+
+**Task zero is GREEN, re-measured 2026-07-29 on the current tip (`cde2f54e`).** A real ticket ran
+end-to-end through graph mode in a fully isolated scratch daemon (own socket, own ledger, own tmux
+session, own binary built from the tip; the fleet daemon was never touched — `scripts/scratch-daemon.sh`).
+The graph routed **six nodes** — `start → implement → commit_gate → review → qa → close` — in 2m32s, and
+the run landed a **real commit** on the target branch, verified on disk and not merely inferred from
+events. Codex ran the implementer; the reviewer node fired twice and a valid verdict file was produced
+and consumed both times. So the engine is not merely historically real — it works on today's binary.
+
+Two things worth carrying forward from that run:
+
+- **The event-type names in this doc are approximate.** There is no `node_dispatch_started` /
+  `_completed` / `_failed`. The real emissions are `node_dispatch_requested`, `node_dispatch_decided`,
+  `node_started`, `node_completed`. A monitor filtered on the wrong names goes silent, and silence here
+  is indistinguishable from "the engine did nothing" — which is exactly the false-negative this project
+  keeps getting bitten by. Confirm event names against `internal/core` before filtering on them.
+- **`working_tree_refresh_failed` fired on this run and is benign.** The scratch checkout sat on a
+  different branch than the merge target, so the post-merge scoped refresh had nothing to check out. The
+  registry already classifies EM-054 as *"ordinary — informational; merge already durable"*, which is
+  precisely what happened. Do not read it as a failed merge.
 
 ---
 

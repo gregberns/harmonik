@@ -124,7 +124,7 @@ Run this before every `br create` (and it is the exact set an auditor re-checks)
 ## 6. Sources
 
 - `.claude/skills/beads-cli/SKILL.md` — the CLI surface + daemon write-discipline (this doc is the *filing* layer on top; it never overrides write-discipline).
-- `AGENTS.md` / `CLAUDE.md` §"Beads Workflow Integration" — priority meanings, types, the `codename:<name>` convention.
+- `docs/beads-workflow.md` §"br command surface" — priority meanings and types; `AGENTS.md` / `CLAUDE.md` §"Key conventions" for the `codename:<name>` convention.
 - `.harmonik/crew/admiral-initiatives.md` — the named-initiative registry the §4 alignment check points at.
 - `specs/beads-integration.md §4.4` — terminal-transition ownership (out of scope here, referenced for the boundary).
 </content>

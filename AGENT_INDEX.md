@@ -186,6 +186,7 @@ Booting into a specific role? Load its skill for the operating contract:
 - [docs/captain-restart.md](docs/captain-restart.md) -- Captain self-restart design (session-keeper on the captain session)
 - [docs/orchestration-protocol-v2.md](docs/orchestration-protocol-v2.md) -- Persistent-daemon + queue-submit daily loop; harmonik comms bus; stream/wave queue semantics
 - [docs/known-workarounds.md](docs/known-workarounds.md) -- Active workaround registry: worktree bugs, harness quirks, spawn-semaphore wedge mitigation
+- [docs/beads-workflow.md](docs/beads-workflow.md) -- Beads/kerf reference: machine-local ledger, `br` + `kerf` command surface, session protocol, commit-message validation, UBS quick reference
 - [docs/scratch-daemon-runbook.md](docs/scratch-daemon-runbook.md) -- Scratch-daemon harness: an on-demand isolated test daemon (init/build/up/cycle/batch/feedback/down) for exercising ANY daemon change without touching the fleet; worked examples + the four-layer safety guarantee
 
 ## Deep References

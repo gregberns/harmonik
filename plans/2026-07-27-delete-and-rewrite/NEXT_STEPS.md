@@ -634,6 +634,40 @@ extracted from `runReviewLoop`** and never wired. Since `reviewloop.go` is now i
 that extraction is prior art for the rewrite rather than junk. **Cherry-pick those two packages; still
 do not merge the branch.**
 
+**STATUS 2026-07-29 — the spec half of this item is DONE; the branch is now safe to delete.**
+
+The `88f36c15d` spec clauses were harvested by hand, verified against `internal/daemon/reviewloop.go`
+rather than taken on trust, and landed in `specs/execution-model.md` at v0.9.6 as a named amendment.
+Both drifts were confirmed in code: `emitNoProgressDetected` has zero call sites and the live path emits
+`review_fixup_stalled` instead, and a flagless `REQUEST_CHANGES` is treated as an implicit approval on a
+branch sitting *ahead* of the iteration-cap check. The lane deliberately did **not** take the
+`reviewed`→`draft` front-matter demotion, EM-015d-KERNEL/-CONT/-RVA, the WM-027a reviewer projection, or
+the EM-015f revert. It also recorded a dated implementation gap rather than asserting conformance: four
+of the five reserved context keys have no durable carrier at all.
+
+**The branch tip is preserved at `origin/salvage/reviewloop-kernels-20260729` (`30d4e08`)**, which this
+manifest's own convention marks as protected. So `origin/integration/phase-reviewloop-20260725` can now
+be deleted with nothing at risk, and the cherry-pick decision below is no longer on a deadline.
+
+**The cherry-pick recommendation is REVISED by the Phase 3 reframe, and split.** The original rationale
+was "`reviewloop.go` is in the rewrite scope, so this extraction is prior art for the rewrite." Phase 3
+is now a *deletion*, not a rewrite, which cuts the two packages apart:
+
+- **`reviewcycle` (606 LOC) — do NOT harvest.** Its entire subject is the review-loop decision cycle,
+  and that is being deleted rather than rebuilt. Pulling it in would re-add unwired code of exactly the
+  kind Phase 1 spent ~225,000 lines removing.
+- **`continuity` (457 LOC) — harvest WHEN the gap it answers is worked, not before.** Its subject is not
+  review-loop-specific: it is the implementer continuity checkpoint, and it models the identity handshake
+  as a policy split between `IdentityMinted` (identity known before first work) and `IdentityCaptured`
+  (harness reveals its native identity only after launch). That is precisely the codex/pi asymmetry
+  behind the 1-of-N findings, and it is a designed answer to `hk-5sebh` — crash-recovery resume being
+  review-loop-only, and therefore about to leave the product with `reviewloop.go`. It is a pure kernel
+  with a `purity_test.go` and effects behind narrow ports, which is the right shape. But it is still
+  unwired code, so it should arrive attached to the work that wires it, not ahead of it.
+
+Recorded as a decision rather than an omission: if wiring `continuity` later proves wrong, the salvage
+branch above is the recovery path.
+
 **D. Worktree and branch cleanup — DONE 2026-07-28.** Operator: *"after the delete, we need to do a
 worktree cleanup and branch cleanup. This house is a mess."* Two counts here were wrong and are
 corrected: the registered worktree count was **37**, not 29 (31 removed), and **five** worktrees had

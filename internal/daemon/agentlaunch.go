@@ -464,6 +464,19 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
 	}
 
+	// refuseLaunch records a pre-launch refusal on the result and releases the
+	// hook session. It is this path's analogue of beadRunOne's failRun: the
+	// launch reports WHY it refused, and the caller decides what that means
+	// (reopen the bead, fail the node, error the gate). The D2 conformance
+	// sensor (conformance_m4c7_test.go) requires the credential guard to report
+	// through this call and return immediately, with nothing in between.
+	refuseLaunch := func(reason string) {
+		closeHook()
+		logf("%s (refusing launch)", reason)
+		res.Fail = agentLaunchPrelaunchFailed
+		res.FailErr = errors.New(reason)
+	}
+
 	tap, tapCh := runloop.NewPerRunEventTap(emit, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
 	// NORMALIZED (was: armed only on the DOT cascade path). The proof is armed
@@ -479,10 +492,8 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// launched with live API credentials in its environment; that is now
 	// impossible by construction rather than by three sites remembering.
 	if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused {
-		closeHook()
-		res.Fail = agentLaunchPrelaunchFailed
-		res.FailErr = errors.New(string(refusal))
-		logf("%v (refusing launch)", res.FailErr)
+		reason := string(refusal)
+		refuseLaunch(reason)
 		return res
 	}
 

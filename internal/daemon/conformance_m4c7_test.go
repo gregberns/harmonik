@@ -349,18 +349,41 @@ func TestM4C7_D2RemoteAPIKeyRefusal(t *testing.T) {
 // dominating the DEFINITION dominates every invocation. A launch closure built
 // BEFORE the guard is refused — not because it is provably unsafe, but because
 // this checker can no longer prove it safe, and a credential gate fails closed.
+//
+// THE GUARD MOVED (2026-07-29, launch-path collapse). beadRunOne no longer
+// launches anything: the three hand-written launch paths (single-mode, the DOT
+// agentic node, the cognition gate) collapsed into runAgentLaunch
+// (agentlaunch.go), which is now the package's ONLY handler.Launch call site.
+// The guard moved with it, and this sensor is re-anchored there. The property is
+// unchanged and its REACH is strictly larger: one guard now dominates all three
+// launches instead of one of three — the DOT node and the cognition gate
+// previously had NO credential guard at all, which is the defect the collapse
+// eliminated by construction.
+//
+// Two spellings changed with the move and the shape predicates accept both:
+//
+//   - the remote predicate. beadRunOne spelled it `rbc != nil`; runAgentLaunch
+//     receives it as `in.Remote`. Both are accepted as a WHOLE, unmodified
+//     predicate — a bare identifier or field selector, never a composite. That
+//     is what keeps `in.Remote && false` and `in.Remote && isClaude` refused,
+//     exactly as `rbc != nil && false` always was.
+//   - the refusal report. beadRunOne called failRun(reason, reason) because it
+//     owned the run's terminal spine; runAgentLaunch calls refuseLaunch(reason)
+//     because after the collapse the CALLER owns what a refusal means. Either
+//     is accepted; the strict part — report, then return, with nothing in
+//     between — is unchanged.
 func TestM4C7_D2Chokepoint_IsHarnessAgnostic(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(repoRootForConformance(), "internal", "daemon", "workloop.go")
+	path := filepath.Join(repoRootForConformance(), "internal", "daemon", "agentlaunch.go")
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 	if err != nil {
-		t.Fatalf("parse workloop.go: %v", err)
+		t.Fatalf("parse agentlaunch.go: %v", err)
 	}
 
-	if !hasValidD2Wiring(file) {
-		t.Fatal("beadRunOne must call d2RemoteAPIKeyRefusal(rbc != nil, spec.Env), failRun then return on refusal, in a top-level statement that DOMINATES its unique launch (direct, or inside a DispatchSegment closure defined after the guard); beyond that guard the identifier spec may appear ONLY as the launched value — a post-guard read is refused along with a write, so if you added a harmless-looking spec.<Field> read after the guard, move it above the guard")
+	if !hasValidD2Wiring(file, "runAgentLaunch") {
+		t.Fatal("runAgentLaunch must call d2RemoteAPIKeyRefusal(in.Remote, spec.Env), report the refusal then return, in a top-level statement that DOMINATES its unique launch (direct, or inside a DispatchSegment closure defined after the guard); beyond that guard the identifier spec may appear ONLY as the launched value — a post-guard read is refused along with a write, so if you added a harmless-looking spec.<Field> read after the guard, move it above the guard")
 	}
 }
 
@@ -373,6 +396,12 @@ const d2GuardFixture = `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil,
 // This is the shape beadRunOne actually has since the segment extraction.
 const d2SegmentFixture = `implSeg := &runloop.DispatchSegment{ Launch: func(lctx context.Context) (<-chan struct{}, error) { sess, watcher, launchErr = runH.Launch(lctx, spec); return nil, nil } }; implDispatch := implSeg.Run(ctx)`
 
+// d2CollapsedGuardFixture is the canonical guard as runAgentLaunch spells it
+// after the launch-path collapse: the remote predicate arrives on the input
+// struct, the refusal is reported through refuseLaunch (the caller decides what
+// it means), and the function returns its result value.
+const d2CollapsedGuardFixture = `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }`
+
 func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 	t.Parallel()
 
@@ -381,6 +410,11 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 		body       string
 		want       bool
 		ownsLaunch bool
+		// fn is the function the fixture body is wrapped in and the name the
+		// checker is anchored to. Empty means beadRunOne — the pre-collapse
+		// spelling, kept verbatim so every adversarial case below still exercises
+		// the shape it was written to catch.
+		fn string
 	}{
 		{name: "canonical", body: `if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return }`, want: true},
 		{name: "decoy outside beadRunOne", body: `return`},
@@ -454,15 +488,40 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 		// which is the notification. The wider defence is that the launch spec is
 		// built once and not passed around; see hasValidD2Wiring's KNOWN GAP note.
 		{name: "known gap: pre-guard alias written after the guard", body: `preAlias := spec.Env; ` + d2GuardFixture + `; preAlias[0] = "ANTHROPIC_API_KEY=leak"; ` + d2SegmentFixture, want: true, ownsLaunch: true},
+
+		// ── POST-COLLAPSE SHAPE (runAgentLaunch) ──────────────────────────────
+		// The guard moved into runAgentLaunch with the launch, and spells its two
+		// variable parts differently: `in.Remote` for the remote predicate and
+		// refuseLaunch(reason) for the report, because the caller now owns what a
+		// refusal means. These twins prove the loosened predicates did not loosen
+		// the property: every bypass the old shape refuses, the new shape refuses.
+		{name: "collapsed canonical", fn: "runAgentLaunch", body: d2CollapsedGuardFixture + `; ` + d2SegmentFixture, want: true, ownsLaunch: true},
+		{name: "collapsed disabled remote", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote && false, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed agent narrowed", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote && isClaude, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed or remote", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote || local, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed hardcoded remote false", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(false, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed wrong environment", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, other.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed report only, no return", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused { reason := string(refusal); refuseLaunch(reason) }; ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed log instead of report", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused { reason := string(refusal); log(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed intervening side effect", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); log(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed refusal returns success", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return true }; ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed segment constructed before the guard", fn: "runAgentLaunch", body: d2SegmentFixture + `; ` + d2CollapsedGuardFixture, ownsLaunch: true},
+		{name: "collapsed post-guard environment append", fn: "runAgentLaunch", body: d2CollapsedGuardFixture + `; spec.Env = append(spec.Env, "ANTHROPIC_API_KEY=late"); ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed post-guard read of spec is refused too", fn: "runAgentLaunch", body: d2CollapsedGuardFixture + `; logf("binary=%s", spec.Binary); ` + d2SegmentFixture, ownsLaunch: true},
+		{name: "collapsed guard demoted into the launch closure", fn: "runAgentLaunch", body: `implSeg := &runloop.DispatchSegment{ Launch: func(lctx context.Context) (<-chan struct{}, error) { if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return nil, nil }; sess, watcher, launchErr = runH.Launch(lctx, spec); return nil, nil } }; implDispatch := implSeg.Run(ctx)`, ownsLaunch: true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			fn := tc.fn
+			if fn == "" {
+				fn = "beadRunOne"
+			}
 			body := tc.body
 			if !tc.ownsLaunch {
 				body += `; sess, watcher, err := runH.Launch(ctx, spec)`
 			}
-			src := "package fixture\nfunc beadRunOne() { " + body + " }\n"
+			src := "package fixture\nfunc " + fn + "() { " + body + " }\n"
 			if tc.name == "decoy outside beadRunOne" {
 				src += `func decoy() { if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused { reason := string(refusal); failRun(reason, reason); return } }`
 			}
@@ -470,7 +529,7 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse fixture: %v", err)
 			}
-			if got := hasValidD2Wiring(file); got != tc.want {
+			if got := hasValidD2Wiring(file, fn); got != tc.want {
 				t.Errorf("hasValidD2Wiring() = %v, want %v", got, tc.want)
 			}
 		})
@@ -518,11 +577,11 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 // behaviourally by TestM4C7_D2RemoteAPIKeyRefusal and
 // TestM4C7_BillingFailClosed_AllRemoteHarnesses; what is asserted here is only
 // the wiring.
-func hasValidD2Wiring(file *ast.File) bool {
+func hasValidD2Wiring(file *ast.File, fnName string) bool {
 	var beadRunOne *ast.FuncDecl
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if ok && fn.Name.Name == "beadRunOne" {
+		if ok && fn.Name.Name == fnName {
 			if beadRunOne != nil {
 				return false
 			}
@@ -650,7 +709,7 @@ func isValidD2If(ifStmt *ast.IfStmt) bool {
 			}
 		}
 		if exprStmt, ok := stmt.(*ast.ExprStmt); ok && reason != nil {
-			if call, ok := exprStmt.X.(*ast.CallExpr); ok && isFailRunWithReason(call, reason) {
+			if call, ok := exprStmt.X.(*ast.CallExpr); ok && isRefusalReportWithReason(call, reason) {
 				failIndex = i
 			}
 		}
@@ -661,16 +720,22 @@ func isValidD2If(ifStmt *ast.IfStmt) bool {
 	return failIndex >= 0 && returnIndex == failIndex+1
 }
 
-// isRefusalReturn accepts the two spellings that abandon the run: a bare `return`
-// and `return false`. beadRunOne has a named `succeeded bool` result, so the guard
-// spells it `return false`; `return true` is rejected because reporting a refused
-// run as successful is its own defect.
+// isRefusalReturn accepts the spellings that abandon the run: a bare `return`,
+// `return false`, and `return <ident>` for a single result value. beadRunOne has a
+// named `succeeded bool` result so its guard spells it `return false`;
+// runAgentLaunch returns its populated `res` so its guard spells it `return res`.
+// `return true` stays rejected because reporting a refused run as successful is
+// its own defect. A single identifier result carries the same ambiguity a bare
+// `return` on a named result always did — the checker asserts that control leaves
+// the function, not what value it leaves with; the value is covered behaviourally
+// by the callers' handling of agentLaunchPrelaunchFailed.
 func isRefusalReturn(ret *ast.ReturnStmt) bool {
 	switch len(ret.Results) {
 	case 0:
 		return true
 	case 1:
-		return isIdent(ret.Results[0], "false")
+		ident, ok := unparenExpr(ret.Results[0]).(*ast.Ident)
+		return ok && ident.Name != "true"
 	default:
 		return false
 	}
@@ -696,21 +761,58 @@ func isD2DecisionCall(call *ast.CallExpr) bool {
 	if !isIdent(call.Fun, "d2RemoteAPIKeyRefusal") || len(call.Args) != 2 {
 		return false
 	}
-	remote, ok := unparenExpr(call.Args[0]).(*ast.BinaryExpr)
-	if !ok || remote.Op != token.NEQ || !isIdent(remote.X, "rbc") || !isNil(remote.Y) {
+	if !isWholeRemotePredicate(unparenExpr(call.Args[0])) {
 		return false
 	}
 	env, ok := unparenExpr(call.Args[1]).(*ast.SelectorExpr)
 	return ok && isIdent(env.X, "spec") && env.Sel.Name == "Env"
 }
 
-func isFailRunWithReason(call *ast.CallExpr, reason *ast.Ident) bool {
-	if !isIdent(call.Fun, "failRun") || len(call.Args) != 2 {
+// isWholeRemotePredicate accepts the remote predicate only in a form that cannot
+// have been narrowed, widened or switched off:
+//
+//	rbc != nil   — beadRunOne's pre-collapse spelling
+//	in.Remote    — runAgentLaunch's, arriving on the input struct
+//
+// Anything composite is refused. That is the whole point: `rbc != nil && false`,
+// `in.Remote && isClaude` and `in.Remote || local` are all BinaryExprs, so
+// loosening the accepted spelling to include a field selector did NOT loosen the
+// rule — a bare selector is as unmodifiable as `rbc != nil` was. A bare boolean
+// literal is refused for the same reason.
+func isWholeRemotePredicate(expr ast.Expr) bool {
+	if sel, ok := expr.(*ast.SelectorExpr); ok {
+		_, baseIsIdent := unparenExpr(sel.X).(*ast.Ident)
+		return baseIsIdent && sel.Sel.Name == "Remote"
+	}
+	remote, ok := expr.(*ast.BinaryExpr)
+	return ok && remote.Op == token.NEQ && isIdent(remote.X, "rbc") && isNil(remote.Y)
+}
+
+// isRefusalReportWithReason matches the call that reports the refusal, in either
+// spelling: beadRunOne's failRun(reason, reason) — it owned the run's terminal
+// spine — or runAgentLaunch's refuseLaunch(reason), which records the refusal on
+// the result for the caller to act on. Every argument must be the reason bound
+// from the refusal, so a report that invents its own text is refused.
+func isRefusalReportWithReason(call *ast.CallExpr, reason *ast.Ident) bool {
+	var want int
+	switch {
+	case isIdent(call.Fun, "failRun"):
+		want = 2
+	case isIdent(call.Fun, "refuseLaunch"):
+		want = 1
+	default:
 		return false
 	}
-	left, leftOK := unparenExpr(call.Args[0]).(*ast.Ident)
-	right, rightOK := unparenExpr(call.Args[1]).(*ast.Ident)
-	return leftOK && rightOK && reason.Obj != nil && left.Obj == reason.Obj && right.Obj == reason.Obj
+	if len(call.Args) != want || reason.Obj == nil {
+		return false
+	}
+	for _, arg := range call.Args {
+		ident, ok := unparenExpr(arg).(*ast.Ident)
+		if !ok || ident.Obj != reason.Obj {
+			return false
+		}
+	}
+	return true
 }
 
 func unparenExpr(expr ast.Expr) ast.Expr {

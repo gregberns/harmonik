@@ -293,29 +293,81 @@ func (bs *bootState) buildCommsAndCrewHandlers() CommsSendHandler {
 		WithCrewsConfig(cfg.ProjectCfg.Crews),
 	)
 
-	// SD-3 (hk-s2eac): idle-completed-crew reaper. Started post-Seal in the work loop.
-	crewIdleReaperAgentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "agents")
-	bs.crewIdleReaper = crewrun.NewCrewIdleReaper(crewrun.CrewIdleReaperConfig{
+	// SD-3 (hk-s2eac): idle-completed-crew reaper. Started post-Seal in the work
+	// loop. Nil when partitioned away.
+	bs.crewIdleReaper = bs.newCrewIdleReaperIfEnabled()
+
+	// hk-2i36s: periodic branch reaper. Started post-Seal in the work loop. Nil
+	// when partitioned away.
+	bs.branchReapWatcher = bs.newBranchReapWatcherIfEnabled()
+
+	return commsSendHandler
+}
+
+// newCrewIdleReaperIfEnabled builds the SD-3 idle-completed-crew reaper, or
+// returns nil when `subsystems.crew_idle_reap.enabled: false` partitions it away.
+//
+// Nil is the OFF state and startBackgroundLoops guards on it. That guard is now
+// load-bearing rather than incidental: it used to survive a nil receiver only
+// because CrewIdleReaper.StartWatcher's body happens to be empty today (the
+// operator-directed 2026-07-18 disable), which is an accident of the sweep being
+// inert, not a property of the type.
+//
+// Absent config enables the reaper, so a deployment without a subsystems: block
+// behaves exactly as it did before the block existed.
+func (bs *bootState) newCrewIdleReaperIfEnabled() *crewrun.CrewIdleReaper {
+	cfg := bs.cfg
+	if !cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemCrewIdleReap) {
+		bs.logSubsystemDisabled(projectconfig.SubsystemCrewIdleReap, "crew idle reaper not constructed")
+		return nil
+	}
+	agentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "agents")
+	return crewrun.NewCrewIdleReaper(crewrun.CrewIdleReaperConfig{
 		ProjectDir: cfg.ProjectDir,
 		Queues:     bs.qs,
 		Stopper:    bs.crewHandler,
 		// GATE-0 (hk-dy5gw): a persistent oversight role (manifest lifecycle.persistent)
 		// is never reclaimed; a load error reads as non-persistent.
 		PersistentType: func(typeName string) bool {
-			tf, err := agentmanifest.Load(crewIdleReaperAgentsDir, typeName)
+			tf, err := agentmanifest.Load(agentsDir, typeName)
 			if err != nil {
 				return false
 			}
 			return tf.Manifest.Lifecycle.Persistent
 		},
 	})
+}
 
-	// hk-2i36s: periodic branch reaper. Started post-Seal in the work loop.
-	bs.branchReapWatcher = NewBranchReapWatcher(BranchReapWatcherConfig{
-		RepoDir: cfg.ProjectDir,
+// newBranchReapWatcherIfEnabled builds the periodic branch reaper, or returns nil
+// when `subsystems.branch_reaper.enabled: false` partitions it away.
+//
+// Nil is the OFF state; startBackgroundLoops already guards on it, because
+// BranchReapWatcher.StartWatcher spawns a goroutine that dereferences the
+// receiver immediately — an unguarded nil takes the whole daemon down from a
+// goroutine rather than returning an error.
+//
+// Absent config enables the reaper, so a deployment without a subsystems: block
+// behaves exactly as it did before the block existed.
+func (bs *bootState) newBranchReapWatcherIfEnabled() *BranchReapWatcher {
+	if !bs.cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemBranchReaper) {
+		bs.logSubsystemDisabled(projectconfig.SubsystemBranchReaper, "branch reaper not constructed")
+		return nil
+	}
+	return NewBranchReapWatcher(BranchReapWatcherConfig{
+		RepoDir: bs.cfg.ProjectDir,
 	})
+}
 
-	return commsSendHandler
+// logSubsystemDisabled announces a partition on the daemon's log writer. Saying
+// it is not politeness: a silent partition is indistinguishable from a config
+// that did not take effect, which is how an operator ends up believing a
+// subsystem was switched off while it kept running.
+func (bs *bootState) logSubsystemDisabled(name projectconfig.SubsystemName, detail string) {
+	logW := bs.cfg.LogWriter
+	if logW == nil {
+		logW = os.Stderr
+	}
+	fmt.Fprintf(logW, "daemon: subsystem %q disabled by .harmonik/config.yaml; %s\n", name, detail) //nolint:errcheck // best-effort stderr status log
 }
 
 // startSocketListener builds the live state + dashboard handlers, starts the

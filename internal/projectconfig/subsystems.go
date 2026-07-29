@@ -98,6 +98,27 @@ const (
 	// or sentinel.DetectLayerA, which are unrelated per-run stall detectors that
 	// merely share the package name.
 	SubsystemMovementGovernor SubsystemName = "movement_governor"
+
+	// SubsystemCrewIdleReap names the SD-3 idle-completed-crew sweep
+	// (crewrun.CrewIdleReaper), constructed in daemon.buildCommsAndCrewHandlers.
+	//
+	// Its scan body has been an operator-directed NO-OP since 2026-07-18 —
+	// StartWatcher launches nothing — yet the reaper is still CONSTRUCTED on
+	// every boot, which is precisely the constructed-and-inert state this block
+	// exists to remove. Switching it off makes the object absent rather than
+	// merely silent. Whether the inert body should instead be DELETED is an
+	// operator call, not this switch's business.
+	SubsystemCrewIdleReap SubsystemName = "crew_idle_reap"
+
+	// SubsystemBranchReaper names the periodic housekeeping sweep that deletes
+	// merged and orphaned run/* + worktree-agent-* branches
+	// (daemon.BranchReapWatcher, a 6 h ticker over lifecycle.ReapBranches).
+	//
+	// It is git housekeeping, not work processing: nothing in the core set
+	// (CHARTER §3) reads a branch it reaps, and `harmonik gc branches` performs
+	// the identical pass on demand. Note the watcher DELETES BRANCHES, so unlike
+	// the other three an unwanted one is not merely wasted CPU.
+	SubsystemBranchReaper SubsystemName = "branch_reaper"
 )
 
 // knownSubsystems is the closed set of names the `subsystems:` block accepts.
@@ -108,6 +129,8 @@ var knownSubsystems = map[SubsystemName]struct{}{
 	SubsystemSocketListener:          {},
 	SubsystemDashboardGate:           {},
 	SubsystemMovementGovernor:        {},
+	SubsystemCrewIdleReap:            {},
+	SubsystemBranchReaper:            {},
 }
 
 // ErrUnknownSubsystem is returned when the subsystems: block names a subsystem

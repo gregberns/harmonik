@@ -86,11 +86,19 @@ done
 #     review-file watchdogs plus the three splash/backoff/submit stragglers),
 #     dot_gate.go (pasteInjectQuitOnGateFile), waitsocketgrace.go (the stop-hook
 #     grace) and postreadyhang.go (the post-agent_ready progress bound).
+#
+#     RE-DERIVED 2026-07-29. Two entries left the list because their files were
+#     deleted, not moved: internal/daemon/reviewloop.go went with the review-loop
+#     retirement, and internal/runloop/postreadyhang.go went in b714653b5, which
+#     deleted the post-ready hang detector outright. internal/daemon/agentlaunch.go
+#     joined it: the launch-path collapse made it the single home of the dispatch
+#     path, so it is now the file that most needs to stay FakeClock-drivable. It
+#     is wall-clock clean today, so the pin ratchets rather than arriving red.
 for f in internal/runloop/dispatchsegment.go internal/runloop/runshell.go \
-         internal/runloop/runbridge.go internal/daemon/reviewloop.go \
+         internal/runloop/runbridge.go internal/daemon/agentlaunch.go \
          internal/daemon/dot_cascade_core.go internal/runloop/workloopeventsource.go \
          internal/daemon/pasteinject.go internal/daemon/dot_gate.go \
-         internal/runloop/waitsocketgrace.go internal/runloop/postreadyhang.go; do
+         internal/runloop/waitsocketgrace.go; do
     if [ ! -f "$f" ]; then
         echo "readywait-freeze-gate: pinned file $f is gone — re-derive this gate's file list" >&2
         HITS=$((HITS + 1))
@@ -132,20 +140,37 @@ if ! grep -q '^type DispatchSegment struct' internal/runloop/dispatchsegment.go;
     HITS=$((HITS + 1))
 fi
 
-# (5) Every agent-launch site binds through the seam. RT14 took the number of
-#     sites that hand-roll their own ready wait to ZERO. Pin exact construction,
-#     Launch callback, and matching segment Run counts, not mere text presence:
-#     reviewloop has distinct implementer + reviewer launches, so a contains-only
-#     check would miss either one escaping. The anchored patterns exclude comment
-#     text; the three equal counts reject dummy or stale constructions.
+# (5) Every agent launch binds through the seam. RT14 took the number of sites
+#     that hand-roll their own ready wait to ZERO, and this check held each site
+#     to exactly one construction of its own.
+#
+#     RE-DERIVED 2026-07-29 by the launch-path collapse, which changed what the
+#     right answer IS. The three hand-written launch paths became one function,
+#     runAgentLaunch in agentlaunch.go, so there is now ONE construction in the
+#     whole package and the three former sites must have NONE. Holding each of
+#     them to 1 was the old shape and made this gate fail on every commit after
+#     the collapse landed.
+#
+#     Expressed as a per-file expected count rather than deleting the three
+#     entries, because "these files build zero segments" is the collapse's actual
+#     invariant: a site that starts hand-rolling its own again is exactly the
+#     regression this gate exists to catch, and dropping the entries would stop
+#     watching for it.
+#
+#     The variable-name patterns went with it. The old ones required a name
+#     ending in "Seg" and a `<name>Dispatch :=` receiver, which was reviewloop's
+#     local convention, not a contract — the collapsed code assigns into a result
+#     FIELD (`res.Dispatch = seg.Run(ctx)`), which no naming rule can anticipate.
+#     Matching any identifier and then requiring that same identifier to be Run
+#     keeps the real property, "every segment built is also driven", without
+#     pinning a style.
 check_segment_count() {
     local f=$1
     local want=$2
     local constructions
     local construction_vars
     local launches
-    local runs
-    local run_vars
+    local v
 
     if [ ! -f "$f" ]; then
         echo "readywait-freeze-gate: launch consumer $f is gone — re-derive this gate" >&2
@@ -153,14 +178,10 @@ check_segment_count() {
         return
     fi
     construction_vars="$(sed -nE \
-        's/^[[:space:]]*([[:alnum:]_]+Seg)[[:space:]]*:=[[:space:]]*\&runloop\.DispatchSegment\{.*/\1/p' \
-        "$f" | sort)"
-    run_vars="$(sed -nE \
-        's/^[[:space:]]*[[:alnum:]_]+Dispatch[[:space:]]*:=[[:space:]]*([[:alnum:]_]+Seg)\.Run\(ctx\).*/\1/p' \
-        "$f" | sort)"
+        's/^[[:space:]]*([[:alnum:]_]+)[[:space:]]*:=[[:space:]]*\&runloop\.DispatchSegment\{.*/\1/p' \
+        "$f" | sort -u)"
     constructions="$(printf '%s\n' "$construction_vars" | awk 'NF { n++ } END { print n + 0 }')"
     launches="$(grep -cE '^[[:space:]]*Launch:[[:space:]]*func\(lctx[[:space:]]+context\.Context\)' "$f" || true)"
-    runs="$(printf '%s\n' "$run_vars" | awk 'NF { n++ } END { print n + 0 }')"
 
     if [ "$constructions" -ne "$want" ]; then
         echo "readywait-freeze-gate: $f builds runloop.DispatchSegment $constructions time(s), expected $want — a launch site left or bypassed the seam" >&2
@@ -170,20 +191,22 @@ check_segment_count() {
         echo "readywait-freeze-gate: $f binds DispatchSegment Launch(lctx) $launches time(s), expected $want — a construction is stale or bypasses launch ownership" >&2
         HITS=$((HITS + 1))
     fi
-    if [ "$runs" -ne "$want" ]; then
-        echo "readywait-freeze-gate: $f runs its DispatchSegment $runs time(s), expected $want — a construction is stale or not driven" >&2
-        HITS=$((HITS + 1))
-    fi
-    if [ "$construction_vars" != "$run_vars" ]; then
-        echo "readywait-freeze-gate: $f constructs and runs different DispatchSegment variables — every segment must have one matching Run(ctx)" >&2
-        HITS=$((HITS + 1))
-    fi
+    # Every segment constructed here must also be driven. An undriven segment is
+    # a launch that silently never waits, which is the pre-RT14 behaviour wearing
+    # the new type.
+    for v in $construction_vars; do
+        if ! grep -qE "\b${v}\.Run\(ctx\)" "$f"; then
+            echo "readywait-freeze-gate: $f builds DispatchSegment '$v' but never runs it — every segment needs a matching Run(ctx)" >&2
+            HITS=$((HITS + 1))
+        fi
+    done
 }
 
-check_segment_count internal/daemon/workloop.go 1
-check_segment_count internal/daemon/dot_gate.go 1
-check_segment_count internal/daemon/reviewloop.go 2
-check_segment_count internal/daemon/dot_cascade_core.go 1
+# The one launch path. Everything below it must stay at zero.
+check_segment_count internal/daemon/agentlaunch.go 1
+check_segment_count internal/daemon/workloop.go 0
+check_segment_count internal/daemon/dot_gate.go 0
+check_segment_count internal/daemon/dot_cascade_core.go 0
 
 if [ "$HITS" -ne 0 ]; then
     echo "readywait-freeze-gate: FAIL — the open-coded agent_ready wait was retired in P2 E5 RT14; bind onto runloop.DispatchSegment, do not re-hand-roll it" >&2

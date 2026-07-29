@@ -153,7 +153,11 @@ declare -a EXACT_FILES=(
     # SAME outer-queue-claim-loop reads and still never leave internal/daemon —
     # they are re-budgeted below, not converted and not deleted. Ratchet down.
     "internal/daemon/workloop.go             3"
-    "internal/daemon/reviewloop.go           0"
+    # reviewloop.go left this list with the review-loop retirement that deleted
+    # the file. agentlaunch.go took its place on 2026-07-29: the launch-path
+    # collapse made it the single launch path, and it reaches the bus only
+    # through the port, so it belongs at the same zero budget.
+    "internal/daemon/agentlaunch.go          0"
     "internal/daemon/dot_cascade_core.go     0"
     "internal/daemon/dot_cascade_helpers.go  0"
     "internal/daemon/dot_gate.go             0"
@@ -252,7 +256,7 @@ fi
 PORT_RE='\brp\.Emitter\b|\bports\.Emitter\b'
 declare -a PORT_SITES=(
     "internal/daemon/workloop.go            4"  # beadRunOne x2; close + epic helpers x2
-    "internal/daemon/reviewloop.go          1"  # runReviewLoop binds
+    "internal/daemon/agentlaunch.go         1"  # runAgentLaunch binds
     "internal/daemon/dot_cascade_core.go    2"  # driveDotWorkflow + dispatchDotAgenticNode bind
     "internal/daemon/dot_gate.go            2"  # executeCognitionGate binds; dispatchDotGateNode reads inline
     "internal/runloop/runbridge.go           3"  # three inline b.rp.Emitter reads, no local
@@ -282,7 +286,7 @@ declare -a PORT_SYMBOL_SITES=(
     "internal/daemon/workloop.go|^func beadRunOne\\(|beadRunOne|1"
     "internal/daemon/workloop.go|^func emitBeadClosedAndMaybeEpic\\(|emitBeadClosedAndMaybeEpic|1"
     "internal/daemon/workloop.go|^func maybeEmitEpicCompleted\\(|maybeEmitEpicCompleted|1"
-    "internal/daemon/reviewloop.go|^func runReviewLoop\\(|runReviewLoop|1"
+    "internal/daemon/agentlaunch.go|^func runAgentLaunch\\(|runAgentLaunch|1"
     "internal/daemon/dot_cascade_core.go|^func driveDotWorkflow\\(|driveDotWorkflow|1"
     "internal/daemon/dot_cascade_core.go|^func dispatchDotAgenticNode\\(|dispatchDotAgenticNode|1"
     "internal/daemon/dot_gate.go|^func dispatchDotGateNode\\(|dispatchDotGateNode|1"

@@ -26,6 +26,26 @@ Found 2026-07-29 unless noted.
 | **The credential guard covers 1 of 3 dispatch sites, and not the default one.** `d2RemoteAPIKeyRefusal` runs only on the single-mode path. DOT is the default and carries essentially all traffic, so the 2026-05-30 credential-leak gate protects the path that has run twice ever and not the path everything uses. The conformance test repaired 2026-07-28 guards the guard's *shape*, not its *coverage* — which is why nothing caught this. | Launch-path collapse (§Next step 4) — by construction, since one launch path cannot drift from itself | `hk-z4cow` |
 | **Launch-failure classification is computed by every site and consumed by none.** `classifyLaunchFailure` maps a launch error onto structural event classes; `dispatchSegmentRun.emit` switches only on two other event types and drops both structural classes into `default:`. Sites then hand-roll the same check themselves, and at least one emits nothing. The purest instance of the 1-of-N pattern in the tree. | Launch-path collapse (§Next step 4) | `hk-q15hi` |
 
+**Five more found 2026-07-29 while mapping the three sites, all eliminated by the same collapse.** Recording
+them because each is a live production defect *today*, and because they are the direct evidence for why the
+collapse is worth doing — every one is a guard that exists on one path and is simply absent on another,
+with the compiler silent throughout. None is being fixed on its own.
+
+- **A cognition gate's agent-ready signal carries no run id**, so the stale-run watcher skips it, the
+  "never spawned" flag never flips, and the reaper stays armed for the whole run. The other two paths were
+  fixed for exactly this; the gate was missed by that sweep.
+- **A gate launch that fails reports no reason.** The gate sets both classifier errors, so the machine
+  knows whether the spawn pool was saturated or the terminal-window request hung — and then emits neither.
+  The operator sees a failed launch with no cause.
+- **Single-mode runs never disarm the never-spawned reaper.** Only the graph-node path arms the proof. A
+  codex or pi run in single mode is therefore killed around the thirty-minute mark while perfectly healthy
+  — the same failure already diagnosed and fixed once for the graph path, never propagated.
+- **The agent-ready-timeout event reports the wrong number on remote runs.** All three sites pass the
+  *local* configured timeout to a parameter that means the *effective* one, so a remote run reports a bound
+  shorter than the one that actually fired.
+- **Two of the three paths emit that timeout on a cancellable context**, which is precisely the context the
+  reaper has already cancelled by the time the emission runs. The third deliberately uses a detached one.
+
 ## RESOLVED by the review-loop retirement — verified 2026-07-29 on `e46658ed5`
 
 Both were cases where `runReviewLoop` was the **sole** non-test home of a behaviour, so deleting the file
@@ -48,6 +68,8 @@ test. Both are now closed out; kept here because the *reasoning* is the reusable
 | **A flapping SSH makes the remote C2 gate pass.** `runAutoStatusInspection` discards `ErrRemoteTransport`, the sentinel that exists specifically to distinguish "SSH failed, inconclusive" from "confirmed absent". The sibling reader in the same package explicitly retries on it. On the **kept** graph path — survives all Phase 3 deletions. Was the only genuine bug among 152 delta-lint findings. | Independent fix | `hk-sbd4l` |
 | **Structural protocol mismatch on the 2nd and 3rd dispatch.** `TestScenario_ConcurrentMultiQueue_N2_HappyPath` fails 4/4 with `error_category=structural / sub_reason=protocol_mismatch` on a deterministic dispatch ordinal — not load. It sits on the known-flake allowlist, wrongly. | Second confirmed case of the allowlist absorbing a real defect | `hk-t2d7n` |
 | **Non-single-mode runs cannot be adopted after a daemon restart.** `useIndepSession` is declared before the mode switch but assigned only in the single-mode tail, so the shared worktree-cleanup defer's guard can only be false on that one path. Review-loop and DOT runs lose their worktree on shutdown. | Needs the terminal spine collapsed — a *second* step after the launch-path collapse, not the same one | `hk-mh3qy` |
+| **The Pi provider profile never reaches graph nodes or cognition gates.** The single-mode launch context carries the provider, key-env, key-file, base-URL and API fields resolved from the Pi profile; the graph-node and gate launch contexts set none of them. A Pi-harness node under the default mode is launched without its profile. | Found while mapping the launch sites. **Not** fixed by the launch-path collapse — spec construction stays at the call site by design, so this needs its own change | `hk-yo9g6` |
+| **The sandbox gate never wraps claude nodes on the default graph path.** Single mode computes the sandbox spawn unconditionally, covering both the substrate and exec paths; the graph-node path computes it only on the captured-session-id branch, so a claude node on the substrate path is never wrapped even with the backend configured and claude listed. Gates are never sandboxed at all. | **Deliberately preserved as a parameter** in the launch-path collapse instead of normalized. Normalizing toward single mode would start sandboxing every graph claude node for the first time; normalizing the other way would silently un-sandbox single mode. Both can turn healthy runs red — this needs a decision, not a refactor | `hk-j52we` |
 | **An entire tier of test failures is invisible.** `go test -tags scenario ./internal/daemon/` yields eight failures where the untagged run yields one. Root cause established: no assessment ever ran the tagged tier at all — the recipes only `go vet`ed it and the CI workflow carries `continue-on-error: true`. Full per-test disposition in `NEXT_STEPS.md` §5.2. | Fix is §5.1's merge-blocking gate, then §5.2's hardening | `hk-97gcz` |
 
 ## One open P0 that is probably wrong

@@ -2,6 +2,22 @@
 
 Base: `e7e74214b` (worktree was at `dc2217527`, BASE_STALE → reset per instruction). No code changed.
 
+> ## ⚠ Read this before using any count below — corrected 2026-07-29 on `0db5dcc28`
+>
+> **This measurement was taken when there were five agent-launch sites. There are now three.** Sites B and
+> C both lived in `reviewloop.go`, which has since been deleted; A, D and E survive unchanged. So every
+> "1 of 5" below is really **1 of 3**, and the two review-loop-only findings (the crash-recovery resume
+> and the merge-retry classifier) are closed out — see `OPEN-DEFECTS.md` for how each was resolved.
+>
+> The measurement is left otherwise intact rather than rewritten, because the per-site detail for A, D and
+> E is still accurate and expensive to re-derive. Two specific claims that DID go stale with the deletion:
+> the fabricated-duration finding (N17) described the review-loop reviewer segment and no longer applies to
+> anything in the tree; and §(a)'s driver table lists two drivers that no longer exist.
+>
+> Re-measuring the three surviving sites on 2026-07-29 found **five further divergences** this document
+> does not contain — they are written up in `OPEN-DEFECTS.md`, not backfilled here, to keep this file a
+> dated measurement rather than a living one.
+
 ---
 
 ## What this changes about the plan (2026-07-29 synthesis)

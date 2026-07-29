@@ -18,7 +18,11 @@ func TestValidateWorkflowMode(t *testing.T) {
 		{"empty", core.WorkflowMode(""), "WorkflowModeDefault must be set"},
 		{"invalid", core.WorkflowMode("bogus"), "invalid workflow_mode_default"},
 		{"single", core.WorkflowModeSingle, ""},
-		{"review-loop", core.WorkflowModeReviewLoop, ""},
+		// review-loop used to boot the daemon cleanly. Since its retirement
+		// (EM-015d) it must fail closed at boot with a message naming dot, so
+		// an operator with a stale --workflow-mode-default is told what to
+		// switch to instead of silently getting a different mode.
+		{"retired review-loop", core.WorkflowMode(core.WorkflowModeRetiredReviewLoop), `RETIRED (EM-015d); use "dot"`},
 		{"dot", core.WorkflowModeDot, ""},
 	}
 	for _, tc := range tests {
@@ -172,7 +176,7 @@ func TestResolve(t *testing.T) {
 		},
 		{
 			name:        "flag_target_and_protect_ok",
-			in:          bootconfig.Input{WorkflowMode: core.WorkflowModeReviewLoop, FlagTargetBranch: "release", FlagProtectBranches: []string{"main"}, ForbidUnprotectedDefault: true},
+			in:          bootconfig.Input{WorkflowMode: core.WorkflowModeDot, FlagTargetBranch: "release", FlagProtectBranches: []string{"main"}, ForbidUnprotectedDefault: true},
 			wantTarget:  "release",
 			wantProtect: []string{"main"},
 		},

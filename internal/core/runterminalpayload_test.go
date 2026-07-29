@@ -646,7 +646,7 @@ func TestRunFailedPayload_WorkflowModeEmittedWhenSet(t *testing.T) {
 	t.Parallel()
 
 	p := runterminalFixtureFailed(t)
-	mode := WorkflowModeReviewLoop
+	mode := WorkflowModeDot
 	p.WorkflowMode = &mode
 
 	data, err := json.Marshal(p)
@@ -667,8 +667,8 @@ func TestRunFailedPayload_WorkflowModeEmittedWhenSet(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("json.Unmarshal workflow_mode value: %v", err)
 	}
-	if got != string(WorkflowModeReviewLoop) {
-		t.Errorf("workflow_mode: got %q, want %q", got, WorkflowModeReviewLoop)
+	if got != string(WorkflowModeDot) {
+		t.Errorf("workflow_mode: got %q, want %q", got, WorkflowModeDot)
 	}
 }
 

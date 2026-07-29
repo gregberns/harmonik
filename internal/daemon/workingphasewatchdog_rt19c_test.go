@@ -4,8 +4,8 @@ package daemon
 // FakeClock (P2 E5 RT19c).
 //
 // These tests could not exist before RT19c. Each one exercises a timeout branch
-// whose real duration is minutes (7-minute post-ready hang, 10-minute gate-file
-// verdict wait, 90-minute commit hard ceiling) and each completes in microseconds
+// whose real duration is minutes (10-minute gate-file verdict wait, 90-minute
+// commit hard ceiling) and each completes in microseconds
 // of wall time, because every deadline, ticker and kill grace inside the watchdog
 // now reads the injected substrate.ClockPort rather than package time.
 //
@@ -18,14 +18,11 @@ package daemon
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -128,92 +125,6 @@ func rt19cBlockUntil(t *testing.T, clk *substrate.FakeClock, n int, what string)
 	case <-armed:
 	case <-time.After(rt19cWallBudget):
 		t.Fatalf("timed out (%v of REAL time) waiting for %d FakeClock sleeper(s)/ticker(s) to arm (%s) — a converted site is probably still on the wall clock", rt19cWallBudget, n, what)
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// postreadyhang.go — waitPostAgentReadyProgress
-// ─────────────────────────────────────────────────────────────────────────────
-
-// TestRT19cPostAgentReadyHang_FiresOnFakeClock drives the post-agent_ready hang
-// bound (7 minutes in production) to completion in virtual time.
-func TestRT19cPostAgentReadyHang_FiresOnFakeClock(t *testing.T) {
-	t.Parallel()
-
-	const timeout = 7 * time.Minute
-	clk := substrate.NewFakeClock(rt19cFakeClockEpoch)
-	eventCh := make(chan core.EventEnvelope) // never receives
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- runloop.WaitPostAgentReadyProgress(context.Background(), clk, eventCh, timeout)
-	}()
-
-	wallStart := time.Now()
-	// The hang bound is a one-shot clk.NewTicker, not a substrate.After sleeper —
-	// RT19c's deliberate delta, because a ticker is the only ClockPort deadline
-	// that can still be Stop()ped on an early return.
-	rt19cBlockUntil(t, clk, 1, "the hang-bound ticker")
-	clk.Advance(timeout + time.Second)
-
-	select {
-	case err := <-errCh:
-		if !errors.Is(err, runloop.ErrPostAgentReadyHang) {
-			t.Fatalf("waitPostAgentReadyProgress = %v; want ErrPostAgentReadyHang", err)
-		}
-	case <-time.After(rt19cWallBudget):
-		t.Fatalf("waitPostAgentReadyProgress did not return within %v of REAL time", rt19cWallBudget)
-	}
-
-	if wall := time.Since(wallStart); wall > rt19cWallBudget {
-		t.Fatalf("drove a %v virtual timeout in %v of REAL time; want well under %v", timeout, wall, rt19cWallBudget)
-	}
-}
-
-// TestRT19cPostAgentReadyHang_NonPositiveDefaultStillErrors pins the one place
-// RT19c's timer→ticker swap was NOT behaviour-preserving.
-//
-// waitPostAgentReadyProgress substitutes defaultPostAgentReadyHangTimeout for a
-// non-positive caller timeout but did not re-check the substituted value — and
-// that default is a MUTABLE package var, exposed to tests as
-// ExportedDefaultPostAgentReadyHangTimeout and already rewritten by
-// postreadyhang_hka2okh_test.go. The pre-RT19c time.NewTimer(0) fired
-// immediately; time.NewTicker(0) PANICS, so a zero default turned a documented
-// error return into a daemon panic (and, on a FakeClock, into a permanent block,
-// since FakeClock.nextEventBefore only considers instants strictly after now).
-//
-// SystemClock deliberately: the panic is time.NewTicker's and only the real
-// clock reaches it. The call runs in a goroutine with recover so a regression
-// fails THIS test with a readable message instead of aborting the test binary.
-func TestRT19cPostAgentReadyHang_NonPositiveDefaultStillErrors(t *testing.T) {
-	// Deliberately NOT t.Parallel: this rewrites the same shared package var that
-	// TestPostReadyHang_zeroTimeoutUsesDefault rewrites, and a sequential test
-	// never overlaps this binary's parallel ones.
-	orig := runloop.DefaultPostAgentReadyHangTimeout
-	runloop.DefaultPostAgentReadyHangTimeout = 0
-	t.Cleanup(func() { runloop.DefaultPostAgentReadyHangTimeout = orig })
-
-	ctx, cancel := context.WithTimeout(context.Background(), rt19cWallBudget)
-	defer cancel()
-	eventCh := make(chan core.EventEnvelope) // never receives
-
-	errCh := make(chan error, 1)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				errCh <- fmt.Errorf("waitPostAgentReadyProgress panicked: %v", r)
-			}
-		}()
-		errCh <- runloop.WaitPostAgentReadyProgress(ctx, substrate.SystemClock{}, eventCh, 0)
-	}()
-
-	select {
-	case err := <-errCh:
-		if !errors.Is(err, runloop.ErrPostAgentReadyHang) {
-			t.Fatalf("waitPostAgentReadyProgress with a zero default = %v; want ErrPostAgentReadyHang", err)
-		}
-	case <-time.After(rt19cWallBudget):
-		t.Fatalf("waitPostAgentReadyProgress did not return within %v of REAL time with a zero default", rt19cWallBudget)
 	}
 }
 

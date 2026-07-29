@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -13,7 +14,6 @@ func TestWorkflowModeValid(t *testing.T) {
 
 	valid := []WorkflowMode{
 		WorkflowModeSingle,
-		WorkflowModeReviewLoop,
 		WorkflowModeDot,
 	}
 	for _, m := range valid {
@@ -26,6 +26,11 @@ func TestWorkflowModeValid(t *testing.T) {
 		"",
 		"Single",
 		"SINGLE",
+		// "review-loop" was a declared mode until it was retired
+		// (execution-model.md §4.3.EM-015d). It must now be REJECTED: the
+		// literal survives only as WorkflowModeRetiredReviewLoop so stale
+		// values can be named, never as a valid mode.
+		WorkflowMode(WorkflowModeRetiredReviewLoop),
 		"Review-Loop",
 		"REVIEW-LOOP",
 		"reviewloop",
@@ -56,12 +61,13 @@ func TestWorkflowModeMarshalText(t *testing.T) {
 		t.Errorf("MarshalText = %q, want %q", string(got), "single")
 	}
 
-	got, err = WorkflowModeReviewLoop.MarshalText()
-	if err != nil {
-		t.Fatalf("MarshalText error: %v", err)
-	}
-	if string(got) != "review-loop" {
-		t.Errorf("MarshalText = %q, want %q", string(got), "review-loop")
+	// "review-loop" used to marshal successfully; since its retirement
+	// (execution-model.md §4.3.EM-015d) MarshalText must reject it, and the
+	// error must point the operator at dot.
+	if _, err := WorkflowMode(WorkflowModeRetiredReviewLoop).MarshalText(); err == nil {
+		t.Error("MarshalText accepted the retired review-loop value")
+	} else if !strings.Contains(err.Error(), "dot") {
+		t.Errorf("retired-mode error %q does not name the dot replacement", err.Error())
 	}
 
 	got, err = WorkflowModeDot.MarshalText()
@@ -96,7 +102,15 @@ func TestWorkflowModeUnmarshalText(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "single", input: `{"workflow_mode":"single"}`, want: WorkflowModeSingle},
-		{name: "review-loop", input: `{"workflow_mode":"review-loop"}`, want: WorkflowModeReviewLoop},
+		// Retired mode (execution-model.md §4.3.EM-015d) still DECODES, on
+		// purpose: historical event logs and pre-retirement Run records are facts
+		// about what already happened, and a reader that refuses to parse them
+		// goes blind on exactly the runs an operator is investigating. Selection
+		// is what must be strict, and it is — Valid() rejects the value (asserted
+		// in TestWorkflowModeValid) so a decoded value cannot reach a dispatch
+		// path, and the config / bootconfig / CLI surfaces reject the raw string
+		// before this ever runs.
+		{name: "retired review-loop still decodes for history", input: `{"workflow_mode":"review-loop"}`, want: WorkflowMode(WorkflowModeRetiredReviewLoop)},
 		{name: "dot", input: `{"workflow_mode":"dot"}`, want: WorkflowModeDot},
 		{name: "empty rejected", input: `{"workflow_mode":""}`, wantErr: true},
 		{name: "uppercase SINGLE rejected", input: `{"workflow_mode":"SINGLE"}`, wantErr: true},
@@ -136,7 +150,6 @@ func TestWorkflowModeAllConstantsRoundTrip(t *testing.T) {
 
 	workflowModeFixtureAllModes := []WorkflowMode{
 		WorkflowModeSingle,
-		WorkflowModeReviewLoop,
 		WorkflowModeDot,
 	}
 

@@ -292,10 +292,17 @@ const (
 	EventTypeAgentReadyTimeout EventType = "agent_ready_timeout"
 
 	// EventTypePostAgentReadyHang is the post_agent_ready_hang event type.
-	// Emitted by the daemon review-loop when an implementer session emits
-	// agent_ready but then makes no observable progress (no further events)
-	// within deps.postAgentReadyHangTimeout. Allows fail-fast detection of a
-	// hung-claude rather than burning the full 30-min commitPollTimeout budget.
+	// Emitted by the daemon review-loop when an implementer session emitted
+	// agent_ready but then made no observable progress (no further events)
+	// within the loop's hang bound. NO CURRENT EMITTER: the review loop and its
+	// detector were retired together, and NOTHING replaced the detection. Do not
+	// read this absence as "covered elsewhere" — the dot cascade does NOT cover
+	// it. Its launch-heartbeat and heartbeat-staleness bounds cannot observe a
+	// silently-hung agent, because daemon heartbeats fire unconditionally and
+	// cannot distinguish a hung agent from a working one. The only bound that
+	// actually fires on the default path is commitHardCeiling, at 90 minutes.
+	// Recorded as an accepted deficiency in hk-q5scy. The type is retained so
+	// historical events still decode on replay.
 	// Durability class: O.
 	// Refs: hk-a2okh.
 	EventTypePostAgentReadyHang EventType = "post_agent_ready_hang"

@@ -12,10 +12,8 @@ package daemon_test
 // # What makes this non-tautological
 //
 // The harness does NOT re-implement anomaly detection. Each timing draw is fed
-// through the REAL anomaly emitters emitAgentReadyTimeout /
-// emitPostAgentReadyHang (exposed via export_test.go), and — for the
-// post_agent_ready_hang edge — through the REAL detector
-// waitPostAgentReadyProgress. The generator's role is played by the production
+// through the REAL anomaly emitter emitAgentReadyTimeout (exposed via
+// export_test.go). The generator's role is played by the production
 // code; the harness only draws timings and CHECKS the emitted-event set against
 // the F1 vocabulary (twinparity.AnomalyKinds / twinparity.TerminalKinds).
 //
@@ -31,8 +29,6 @@ package daemon_test
 // The real production thresholds are:
 //   - agent_ready_timeout:    runlaunch.DefaultAgentReadyTimeout = 150s
 //     (internal/runlaunch/deadlines.go)
-//   - post_agent_ready_hang:  defaultPostAgentReadyHangTimeout = 7m
-//     (internal/daemon/postreadyhang.go:37)
 //   - keeper handoff (co-obs): keeper.DefaultHandoffTimeout   = 300s
 //     (internal/keeper/thresholds.go:157)
 //
@@ -45,19 +41,23 @@ package daemon_test
 //
 // # Scope of anomalies
 //
-// This harness covers the two anomalies whose detectors are point-in-time timing
-// predicates cleanly drivable as pure functions: agent_ready_timeout and
-// post_agent_ready_hang. The other two AnomalyKinds — agent_warning_silent_hang
-// and agent_resumed_after_warning — are produced by the stateful stale-watch /
-// paste-inject scanners (internal/daemon/stalewatch.go, pasteinject.go), not by a
-// single latency comparison, so they are out of scope for a timing-vector harness.
-// See the JUDGMENT CALL note in the WS3-Claude-C report.
+// This harness covers agent_ready_timeout, the anomaly whose detection is a
+// point-in-time timing predicate cleanly drivable as a pure function. The other
+// AnomalyKinds — agent_warning_silent_hang and agent_resumed_after_warning — are
+// produced by the stateful stale-watch / paste-inject scanners
+// (internal/daemon/stalewatch.go, pasteinject.go), not by a single latency
+// comparison, so they are out of scope for a timing-vector harness. See the
+// JUDGMENT CALL note in the WS3-Claude-C report.
+//
+// post_agent_ready_hang was a second covered edge until its detector
+// (waitPostAgentReadyProgress) and its emitter were deleted with the review-loop
+// retirement. The event type survives in the core registry with no production
+// emitter, so there is nothing left here to observe.
 //
 // Bead ref: M6 WS3-Claude-C. Composes on WS3-F1 (internal/twinparity).
 
 import (
 	"context"
-	"errors"
 	"math/rand"
 	"reflect"
 	"sort"
@@ -80,8 +80,6 @@ import (
 const (
 	// agentReadyBand models runlaunch.DefaultAgentReadyTimeout (150s).
 	agentReadyBand = 200 * time.Millisecond
-	// postReadyBand models defaultPostAgentReadyHangTimeout (7m, postreadyhang.go:37).
-	postReadyBand = 250 * time.Millisecond
 
 	// boundaryGuard is a dead-zone around each band's boundary that neither the
 	// in-band nor the out-of-band draws enter. The harness drives the REAL
@@ -97,48 +95,27 @@ const (
 )
 
 // timingDraw is one point in the fuzz timing space: the per-edge latencies the
-// twin would produce (via scriptdriver.go's per-step delay_ms knob) for the two
-// causal edges the harness exercises.
+// twin would produce (via scriptdriver.go's per-step delay_ms knob) for the
+// causal edge the harness exercises.
 type timingDraw struct {
 	// AgentReadyDelay is how long after launch the agent_ready signal arrives.
 	// > agentReadyBand ⇒ agent_ready_timeout.
 	AgentReadyDelay time.Duration
-	// PostReadyDelay is how long after agent_ready the first progress event
-	// arrives. > postReadyBand ⇒ post_agent_ready_hang. Only reached when
-	// agent_ready itself was in band.
-	PostReadyDelay time.Duration
 }
 
 // asVector projects a draw onto the []time.Duration vector the shrinker operates
-// over (index 0 = agent_ready edge, index 1 = post_ready edge).
+// over (index 0 = agent_ready edge).
 func (d timingDraw) asVector() []time.Duration {
-	return []time.Duration{d.AgentReadyDelay, d.PostReadyDelay}
+	return []time.Duration{d.AgentReadyDelay}
 }
 
 func drawFromVector(v []time.Duration) timingDraw {
-	return timingDraw{AgentReadyDelay: v[0], PostReadyDelay: v[1]}
+	return timingDraw{AgentReadyDelay: v[0]}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Real-emitter observation
 // ─────────────────────────────────────────────────────────────────────────────
-
-// delayedEventCh returns a channel that yields one (arbitrary) progress event
-// after `delay`, modelling the first post-agent_ready event waitPostAgentReadyProgress
-// waits for.
-func delayedEventCh(ctx context.Context, delay time.Duration) <-chan core.EventEnvelope {
-	ch := make(chan core.EventEnvelope, 1)
-	go func() {
-		select {
-		case <-time.After(delay):
-			// waitPostAgentReadyProgress treats ANY received event as progress;
-			// the kind is immaterial, so a plain agent_started envelope suffices.
-			ch <- core.EventEnvelope{Type: string(core.EventTypeAgentStarted)}
-		case <-ctx.Done():
-		}
-	}()
-	return ch
-}
 
 // observeAnomalies runs one timing draw through the REAL daemon detectors and
 // emitters, returning the sorted set of AnomalyKinds that actually fired.
@@ -150,22 +127,13 @@ func observeAnomalies(t *testing.T, draw timingDraw) []string {
 	emitter := &handlercontract.CollectingEmitter{}
 	runID := core.RunID(uuid.Must(uuid.NewV7()))
 
-	// Stage 1 — agent_ready. The real detector is now the dispatch segment's
-	// ready pump (RT14 retired waitAgentReady); the timing DECISION it encodes is
-	// "did a ready envelope satisfying adapter.DetectReady arrive within the
-	// band". Express that directly so the property still observes the REAL
-	// emitter (ExportedEmitAgentReadyTimeout).
+	// agent_ready. The real detector is now the dispatch segment's ready pump
+	// (RT14 retired waitAgentReady); the timing DECISION it encodes is "did a
+	// ready envelope satisfying adapter.DetectReady arrive within the band".
+	// Express that directly so the property still observes the REAL emitter
+	// (ExportedEmitAgentReadyTimeout).
 	if draw.AgentReadyDelay > agentReadyBand {
 		daemon.ExportedEmitAgentReadyTimeout(ctx, emitter, runID, "twin-sid", agentReadyBand)
-		return anomalyKindsIn(emitter.EventTypes())
-	}
-
-	// Stage 2 — post-agent_ready progress. REAL waitPostAgentReadyProgress.
-	perr := daemon.ExportedWaitPostAgentReadyProgress(ctx, delayedEventCh(ctx, draw.PostReadyDelay), postReadyBand)
-	if errors.Is(perr, daemon.ExportedErrPostAgentReadyHang) {
-		daemon.ExportedEmitPostAgentReadyHang(ctx, emitter, runID, "twin-sid", postReadyBand, 0, "implement")
-	} else if perr != nil {
-		t.Fatalf("observeAnomalies: unexpected waitPostAgentReadyProgress error: %v", perr)
 	}
 	return anomalyKindsIn(emitter.EventTypes())
 }
@@ -290,11 +258,10 @@ func TestTimingProperty_InBandInvariants(t *testing.T) {
 
 	var firstTerminal []string
 	for i := 0; i < numDraws; i++ {
-		// Draw both edges strictly INSIDE their bands, below the dead-zone guard
-		// so timer scheduling jitter cannot flip an in-band draw over the boundary.
+		// Draw the edge strictly INSIDE its band, below the dead-zone guard so
+		// timer scheduling jitter cannot flip an in-band draw over the boundary.
 		draw := timingDraw{
 			AgentReadyDelay: time.Duration(rng.Int63n(int64(agentReadyBand - boundaryGuard))),
-			PostReadyDelay:  time.Duration(rng.Int63n(int64(postReadyBand - boundaryGuard))),
 		}
 
 		anoms := observeAnomalies(t, draw)
@@ -351,26 +318,15 @@ func TestTimingProperty_OutOfBandMatchingAnomaly(t *testing.T) {
 			name: "agent_ready over band",
 			build: func() timingDraw {
 				return timingDraw{
-					// Over agentReadyBand by at least the guard; post-ready in band (never reached).
+					// Over agentReadyBand by at least the guard.
 					AgentReadyDelay: agentReadyBand + boundaryGuard + time.Duration(rng.Int63n(int64(overBandSpread))),
-					PostReadyDelay:  time.Duration(rng.Int63n(int64(postReadyBand - boundaryGuard))),
 				}
 			},
 			wantOne: string(core.EventTypeAgentReadyTimeout),
 		},
-		{
-			name: "post_ready over band",
-			build: func() timingDraw {
-				return timingDraw{
-					AgentReadyDelay: time.Duration(rng.Int63n(int64(agentReadyBand - boundaryGuard))),
-					PostReadyDelay:  postReadyBand + boundaryGuard + time.Duration(rng.Int63n(int64(overBandSpread))),
-				}
-			},
-			wantOne: string(core.EventTypePostAgentReadyHang),
-		},
 	}
 
-	const drawsPerCase = 30 // ≥50 total across the two cases
+	const drawsPerCase = 60 // ≥50 total; the post_ready case that used to share the budget is gone
 	for _, tc := range cases {
 		for i := 0; i < drawsPerCase; i++ {
 			draw := tc.build()
@@ -409,9 +365,6 @@ func TestTimingProperty_RealThresholdsPinned(t *testing.T) {
 	t.Parallel()
 	if got := daemon.ExportedDefaultAgentReadyTimeout; got != 150*time.Second {
 		t.Errorf("defaultAgentReadyTimeout drifted: got %v, want 150s (agentready.go:64)", got)
-	}
-	if got := *daemon.ExportedDefaultPostAgentReadyHangTimeout; got != 7*time.Minute {
-		t.Errorf("defaultPostAgentReadyHangTimeout drifted: got %v, want 7m (postreadyhang.go:37)", got)
 	}
 }
 

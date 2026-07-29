@@ -62,23 +62,10 @@ func ExportedStoreLocalInFlight(deps workLoopDeps, n int32) {
 	deps.localInFlight.Store(n)
 }
 
-// ExportedBuildLaunchSpecImplementerInitial exposes buildLaunchSpecImplementerInitial
-// for tests in package daemon_test. See launchspecbuild.go for semantics.
-func ExportedBuildLaunchSpecImplementerInitial(base handlercontract.LaunchSpec, iterationCount int) (handlercontract.LaunchSpec, error) {
-	return buildLaunchSpecImplementerInitial(base, iterationCount)
-}
-
-// ExportedBuildLaunchSpecImplementerResume exposes buildLaunchSpecImplementerResume
-// for tests in package daemon_test. See launchspecbuild.go for semantics.
-func ExportedBuildLaunchSpecImplementerResume(base handlercontract.LaunchSpec, iterationCount int, claudeSessionID string) (handlercontract.LaunchSpec, error) {
-	return buildLaunchSpecImplementerResume(base, iterationCount, claudeSessionID)
-}
-
-// ExportedBuildLaunchSpecReviewer exposes buildLaunchSpecReviewer for tests in
-// package daemon_test. See launchspecbuild.go for semantics.
-func ExportedBuildLaunchSpecReviewer(base handlercontract.LaunchSpec, iterationCount int) (handlercontract.LaunchSpec, error) {
-	return buildLaunchSpecReviewer(base, iterationCount)
-}
+// The three launch-spec builder shims (ExportedBuildLaunchSpecImplementerInitial /
+// ImplementerResume / Reviewer) went with launchspecbuild.go when the review-loop
+// mode was retired (EM-015d). The DOT path builds its per-node launch specs
+// through rp.LaunchBuilder instead.
 
 // runBeadOneTest mirrors the runWorkLoop goroutine caller for white-box tests:
 // it builds the per-run bundles (including the RT18.11 launch-builder resolution

@@ -112,8 +112,11 @@ func vn4BootForTesting(t *testing.T) func(ctx context.Context, cfg daemon.Config
 func TestScenario_ConcurrentDispatch_VN4_AllReachMerge(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	res := scenariotest.RunConcurrentMerge(t, scenariotest.ConcurrentMergeConfig{
-		N:                 3,
-		TwinScenario:      "single-happy-path",
+		N: 3,
+		// commit-on-cue-startup-delay, not single-happy-path: dot checks HEAD
+		// advance per node, and single-happy-path leans on the fixture's
+		// pre-committed empty commit rather than landing one of its own.
+		TwinScenario:      "commit-on-cue-startup-delay",
 		Boot:              vn4BootForTesting(t),
 		ExpectAllComplete: true,
 		AgentReadyTimeout: 5 * time.Second,

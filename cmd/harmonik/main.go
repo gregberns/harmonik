@@ -997,11 +997,11 @@ EXAMPLES
 	// per-bead label → per-project → daemon-default (this flag) → built-in fallback.
 	// Defaults to "dot" so every bead with no explicit ref runs the embedded
 	// standard-bead.dot workflow (implement → commit_gate → review → merge).
-	// Pass --workflow-mode review-loop or --workflow-mode single to override.
-	// Valid values: single, review-loop, dot.
+	// Pass --workflow-mode single to override.
+	// Valid values: single, dot ("review-loop" RETIRED per EM-015d).
 	var workflowModeFlag string
 	flag.StringVar(&workflowModeFlag, "workflow-mode", string(core.WorkflowModeDot),
-		"daemon-level default workflow mode: single, review-loop, dot (default: dot)")
+		"daemon-level default workflow mode: single, dot (default: dot)")
 
 	// Queue-only is now the default (hk-8vy18): a bare boot with no submitted
 	// queue dispatches zero runs. --auto-pull opts in to the historical br-ready

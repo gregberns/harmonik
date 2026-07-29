@@ -227,8 +227,21 @@ func TestWLC_SingleValidSingle_NoConflict(t *testing.T) {
 	}
 }
 
-// TestWLC_SingleValidReviewLoop_NoConflict verifies workflow:review-loop does not conflict.
-func TestWLC_SingleValidReviewLoop_NoConflict(t *testing.T) {
+// TestWLC_RetiredReviewLoopLabelConflicts verifies that a bead still carrying the
+// RETIRED workflow:review-loop label is treated as an unknown mode.
+//
+// This assertion is inverted from its pre-retirement form, which required
+// Conflicted=false and zero emissions because review-loop was a valid mode. Per
+// the amended BI-009a the mode is retired (execution-model.md §4.3.EM-015d) and a
+// stale label MUST take the unknown-mode path: tier 1 treated as absent,
+// bead_label_conflict emitted, resolution continuing down the chain to dot.
+//
+// The bead is deliberately NOT failed. That is the asymmetry with the project
+// config, which per PL-004a MUST fail at load on the same value: a config file is
+// operator-authored and read once at boot, whereas a bead label is queue data an
+// operator may not control, and failing on it would turn a naming change into a
+// stuck queue.
+func TestWLC_RetiredReviewLoopLabelConflicts(t *testing.T) {
 	t.Parallel()
 
 	bus := wlcFixtureEmitter()
@@ -236,16 +249,18 @@ func TestWLC_SingleValidReviewLoop_NoConflict(t *testing.T) {
 		context.Background(), "hk-test.5", []string{"workflow:review-loop"}, bus,
 	)
 
-	if result.Conflicted {
-		t.Errorf("BI-009a: expected Conflicted=false for workflow:review-loop; got true")
+	if !result.Conflicted {
+		t.Errorf("BI-009a: expected Conflicted=true for the retired workflow:review-loop label; got false — " +
+			"a stale label would silently select a mode that no longer exists")
 	}
 
 	bus.mu.Lock()
 	callCount := len(bus.calls)
 	bus.mu.Unlock()
 
-	if callCount != 0 {
-		t.Errorf("BI-009a: bus.Emit called %d time(s) for valid review-loop label; want 0", callCount)
+	if callCount != 1 {
+		t.Errorf("BI-009a: bus.Emit called %d time(s) for the retired review-loop label; want 1 "+
+			"(bead_label_conflict, so the stale label is visible rather than silently coerced)", callCount)
 	}
 }
 

@@ -361,7 +361,7 @@ func TestScenario_FailingImplementer_RunFailed(t *testing.T) {
 		// Short timeout for scenario tests — the twin exits quickly on handler-fatal.
 		AgentReadyTimeout:   5 * time.Second,
 		LogWriter:           testLogWriter{t: t},
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// Launch daemon.Start in a goroutine.

@@ -48,9 +48,21 @@ type RunBridge struct {
 
 // runBridgeConfig maps a workflow mode onto its RunConfig divergence parameters
 // (RSM-020): single has no merge retry and composes its transient from the
-// latched path label; review-loop retries the merge step (1 + the pre-RT9
-// maxMergeStepRetries=2) with its APPROVE transient; DOT merges once with its
-// success transient.
+// latched path label; DOT retries the merge step (1 + maxMergeStepRetries=2)
+// with its success transient.
+//
+// DOT INHERITED the 3-attempt merge budget from the retired review-loop mode
+// (hk-f9xzs), deliberately rather than by omission. The reasons the review-loop
+// had it apply verbatim to DOT: the retryable reasons runmerge.IsRetryableReason
+// classifies — rebase_conflict, non_ff_merge, merge_fmt_failed — are artifacts of
+// CONCURRENT merge-to-main, not properties of a workflow shape. They get MORE
+// likely as concurrency rises, not less, and DOT runs under the same
+// --max-concurrent as review-loop did. Letting the budget lapse to 1 when
+// review-loop was deleted would have made the surviving default mode strictly
+// less robust at the merge step than the mode it replaced — a regression
+// introduced by a deletion, which is the failure this port exists to avoid.
+//
+// single keeps its single attempt (A1 §3), unchanged and out of scope here.
 func runBridgeConfig(mode core.WorkflowMode) runexec.RunConfig {
 	cfg := runexec.RunConfig{
 		Mode:             string(mode),
@@ -58,10 +70,8 @@ func runBridgeConfig(mode core.WorkflowMode) runexec.RunConfig {
 		EmitOutcome:      true,
 	}
 	switch mode {
-	case core.WorkflowModeReviewLoop:
-		cfg.MaxMergeAttempts = 3 // initial + maxMergeStepRetries (hk-f9xzs)
-		cfg.BrUnavailableSummary = "close-transient-merged (review-loop APPROVE)"
 	case core.WorkflowModeDot:
+		cfg.MaxMergeAttempts = 3 // initial + maxMergeStepRetries (hk-f9xzs)
 		cfg.BrUnavailableSummary = "close-transient-merged (dot success)"
 	default: // single: A1 §3 — no retry, label-composed transient.
 	}

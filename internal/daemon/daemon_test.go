@@ -64,7 +64,7 @@ func TestDaemonStartCompiles(t *testing.T) {
 	t.Run("start-with-minimal-config-returns-nil", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := daemon.Config{WorkflowModeDefault: core.WorkflowModeReviewLoop}
+		cfg := daemon.Config{WorkflowModeDefault: core.WorkflowModeDot}
 		err := daemon.Start(context.Background(), cfg)
 		if err != nil {
 			t.Errorf("daemon.Start(minimal Config) returned non-nil error: %v; "+
@@ -76,7 +76,7 @@ func TestDaemonStartCompiles(t *testing.T) {
 		t.Parallel()
 
 		// Config.LogWriter is nil → silences log output; must not panic.
-		cfg := daemon.Config{LogWriter: nil, WorkflowModeDefault: core.WorkflowModeReviewLoop}
+		cfg := daemon.Config{LogWriter: nil, WorkflowModeDefault: core.WorkflowModeDot}
 		if err := daemon.Start(context.Background(), cfg); err != nil {
 			t.Errorf("daemon.Start with nil LogWriter returned error: %v", err)
 		}
@@ -149,7 +149,7 @@ func TestDaemonStart_PidfileBlocksSecondInvocation(t *testing.T) {
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 	startErr := daemon.Start(context.Background(), cfg)
 	if startErr == nil {
@@ -178,7 +178,7 @@ func TestDaemonStart_EmitsDaemonStarted(t *testing.T) {
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v", err)
@@ -235,7 +235,7 @@ func TestDaemonStart_DaemonStartedInJSONLLog(t *testing.T) {
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v", err)
@@ -284,7 +284,7 @@ func TestDaemonStart_OrphanSweepEventEmitted(t *testing.T) {
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v; want nil (orphan sweep errors must not abort Start)", err)
@@ -327,7 +327,7 @@ func TestDaemonStart_OrphanSweepNonFatalOnEmptyDir(t *testing.T) {
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 	// Start MUST succeed even in a fresh directory with no orphans.
 	if err := daemon.Start(context.Background(), cfg); err != nil {
@@ -390,14 +390,14 @@ func TestWorkflowModeDefault_ReviewLoopObservableViaAccessor(t *testing.T) {
 		HandlerBinary:       "echo",
 		IntentLogDir:        t.TempDir(),
 		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	deps := daemon.ExportedWorkLoopDeps(params)
 	got := daemon.WorkflowModeDefaultOf(deps)
 
-	if got != core.WorkflowModeReviewLoop {
-		t.Errorf("WorkflowModeDefaultOf = %q; want %q", got, core.WorkflowModeReviewLoop)
+	if got != core.WorkflowModeDot {
+		t.Errorf("WorkflowModeDefaultOf = %q; want %q", got, core.WorkflowModeDot)
 	}
 }
 
@@ -505,7 +505,7 @@ func TestDaemonStart_BindsSocket(t *testing.T) {
 		startDone <- daemon.Start(ctx, daemon.Config{
 			ProjectDir:          projectDir,
 			JSONLLogPath:        jsonlPath,
-			WorkflowModeDefault: core.WorkflowModeReviewLoop,
+			WorkflowModeDefault: core.WorkflowModeDot,
 		})
 	}()
 

@@ -39,7 +39,7 @@ func TestDaemonStart_QueueOperatorEventConsumerSubscribedInProductionComposition
 		// Unit-test mode: no ProjectDir, no BrPath, no JSONL log.
 		// daemon.Start skips pidfile, orphan sweep, socket, and work loop.
 		// The bus + subscription path still runs in full.
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	if err := daemon.StartForTesting(context.Background(), cfg,

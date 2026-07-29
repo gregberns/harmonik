@@ -249,7 +249,7 @@ func TestRunStartedPayload_WorkflowModeEmittedWhenSet(t *testing.T) {
 	t.Parallel()
 
 	p := runstartedFixture(t)
-	mode := WorkflowModeReviewLoop
+	mode := WorkflowModeDot
 	p.WorkflowMode = &mode
 
 	data, err := json.Marshal(p)
@@ -270,8 +270,8 @@ func TestRunStartedPayload_WorkflowModeEmittedWhenSet(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("json.Unmarshal workflow_mode value: %v", err)
 	}
-	if got != string(WorkflowModeReviewLoop) {
-		t.Errorf("workflow_mode: got %q, want %q", got, WorkflowModeReviewLoop)
+	if got != string(WorkflowModeDot) {
+		t.Errorf("workflow_mode: got %q, want %q", got, WorkflowModeDot)
 	}
 }
 
@@ -289,13 +289,12 @@ func TestRunStartedPayload_Valid_InvalidWorkflowMode(t *testing.T) {
 }
 
 // TestRunStartedPayload_Valid_AllWorkflowModes verifies that Valid() accepts
-// each of the three declared WorkflowMode constants when set as a non-nil pointer.
+// each of the declared WorkflowMode constants when set as a non-nil pointer.
 func TestRunStartedPayload_Valid_AllWorkflowModes(t *testing.T) {
 	t.Parallel()
 
 	modes := []WorkflowMode{
 		WorkflowModeSingle,
-		WorkflowModeReviewLoop,
 		WorkflowModeDot,
 	}
 

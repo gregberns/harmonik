@@ -67,6 +67,25 @@ func codexLifecycleFixtureProjectDir(t *testing.T) (string, string) {
 	return projectDir, jsonlPath
 }
 
+// codexLifecycleFixtureWorkflowDot installs the canonical implementer→reviewer
+// graph (specs/examples/review-loop.dot) as <projectDir>/workflow.dot, so a
+// dot-mode run walks that two-node topology instead of the embedded
+// standard-bead.dot with its Go-toolchain commit_gate. Read from the repo, not
+// embedded, so it cannot drift from the spec example it names.
+func codexLifecycleFixtureWorkflowDot(t *testing.T, projectDir string) {
+	t.Helper()
+	// This package lives at <root>/test/scenario.
+	src := filepath.Join("..", "..", "specs", "examples", "review-loop.dot")
+	//nolint:gosec // G304: fixed repo-relative path, not user input
+	content, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("codexLifecycleFixtureWorkflowDot: read %s: %v", src, err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "workflow.dot"), content, 0o644); err != nil {
+		t.Fatalf("codexLifecycleFixtureWorkflowDot: write workflow.dot: %v", err)
+	}
+}
+
 // codexLifecycleFixtureGitRepo initialises a git repository in dir with a
 // single initial commit and a bare origin remote so the daemon's post-merge
 // `git push origin main` succeeds.
@@ -228,12 +247,20 @@ func TestScenario_CodexAdapter_FullLifecycle(t *testing.T) {
 	handlerScript := codexLifecycleFixtureHandlerScript(t, codexTwinBinaryPath)
 	beadID := codexLifecycleFixtureInitBr(t, realBrPath, projectDir, brWrapper)
 
+	// Dispatch in dot mode over the implementer→reviewer graph this fixture's
+	// handler wrapper models (it was review-loop mode until EM-015d retired it).
+	// The embedded standard-bead.dot default would additionally run its
+	// commit_gate node — go build / go vet / scripts/scenario-gate.sh — inside
+	// this three-file temp worktree, which is not a Go module, so every run
+	// would fail for reasons unrelated to the codex adapter.
+	codexLifecycleFixtureWorkflowDot(t, projectDir)
+
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       handlerScript,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 		HandlerEnv:          os.Environ(),
 	}
 

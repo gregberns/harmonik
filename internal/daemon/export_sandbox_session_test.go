@@ -1,13 +1,15 @@
 package daemon
 
-// export_sandbox_session_test.go — test-seam exports for internal/daemon sandbox
-// gating and session-context capture (RT19.19 split of export_test.go): the
-// sandboxgate.go and sessioncontext_chb023.go seams. package daemon test file;
-// see export_test.go header for the seam rationale. Bead: hk-ecrxy.
+// export_sandbox_session_test.go — test-seam exports for the internal/daemon
+// sandbox-gating seams in sandboxgate.go. package daemon test file; see
+// export_test.go header for the seam rationale. Bead: hk-ecrxy.
+//
+// The sessioncontext_chb023.go seams (persistClaudeSessionID,
+// newSessionIDInterceptor) were removed with that file when the review-loop
+// driver — their sole production caller — was retired.
 
 import (
 	"context"
-	"io"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -46,21 +48,6 @@ func ExportedVerifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, ca
 // package daemon_test. See sandboxgate.go (hk-5wdon).
 func ExportedSrtEngagementCanaryPath(projectDir, runID string) string {
 	return srtEngagementCanaryPath(projectDir, runID)
-}
-
-// ExportedPersistClaudeSessionID exposes persistClaudeSessionID for tests.
-//
-// Bead ref: hk-w5vra.6.
-func ExportedPersistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID, sessionID string) (commitSHA string, skipped bool, err error) {
-	res, err := persistClaudeSessionID(ctx, wtPath, runID, sessionID)
-	return res.CommitSHA, res.Skipped, err
-}
-
-// ExportedNewSessionIDInterceptor exposes newSessionIDInterceptor for tests.
-//
-// Bead ref: hk-w5vra.6.
-func ExportedNewSessionIDInterceptor(r io.Reader, cb func(string)) io.Reader {
-	return newSessionIDInterceptor(r, cb)
 }
 
 // ExportedSrtSpawnConfig is a type alias for SrtSpawnConfig so tests in

@@ -464,7 +464,6 @@ func TestRunWM003_WorkflowModeSetAtClaimTime(t *testing.T) {
 		name string
 	}{
 		{WorkflowModeSingle, "single"},
-		{WorkflowModeReviewLoop, "review-loop"},
 		{WorkflowModeDot, "dot"},
 	}
 
@@ -519,6 +518,24 @@ func TestRunWM003_UnknownWorkflowModeIsInvalid(t *testing.T) {
 	}
 }
 
+// TestRunWM003_RetiredReviewLoopModeIsInvalid verifies that a Run carrying the
+// retired "review-loop" mode string is rejected by Run.Valid().
+//
+// This assertion is the inverse of what T-WM-003 used to require: review-loop
+// was a declared mode and a valid Run field until it was retired
+// (execution-model.md §4.3.EM-015d). A persisted Run resurrected from before
+// the retirement must now fail validation rather than dispatch a driver that
+// no longer exists.
+func TestRunWM003_RetiredReviewLoopModeIsInvalid(t *testing.T) {
+	t.Parallel()
+
+	r := runFixtureWMRun(t, WorkflowModeSingle)
+	r.WorkflowMode = WorkflowMode(WorkflowModeRetiredReviewLoop)
+	if r.Valid() {
+		t.Error("Run.Valid() = true with retired review-loop WorkflowMode, want false")
+	}
+}
+
 // TestRunWM003_WorkflowModeJSONRoundTrip verifies that WorkflowMode
 // round-trips correctly through JSON marshal/unmarshal when embedded in a Run.
 //
@@ -532,7 +549,6 @@ func TestRunWM003_WorkflowModeJSONRoundTrip(t *testing.T) {
 
 	modes := []WorkflowMode{
 		WorkflowModeSingle,
-		WorkflowModeReviewLoop,
 		WorkflowModeDot,
 	}
 

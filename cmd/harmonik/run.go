@@ -3,7 +3,7 @@ package main
 // run.go — `harmonik run <bead-id>` subcommand implementation.
 //
 // Semantics (hk-icecw + hk-w3cp1 + hk-boiwe + hk-hiqrl + hk-ibilr + hk-qo9pq + hk-55zv2 + hk-cebjc + hk-b3wqd):
-//  1. Parse flags: --project, --beads, --max-concurrent, --context, --review-loop, --notify-stream, --workflow-mode, --workflow-ref, --param, --dry-run/--plan-only.
+//  1. Parse flags: --project, --beads, --max-concurrent, --context, --notify-stream, --workflow-mode, --workflow-ref, --param, --dry-run/--plan-only.
 //  2. Resolve br binary via PATH.
 //  3. Validate every bead exists and is in a claimable state (open/ready).
 //  3a. [--dry-run] Print intended spawns and exit 0 — no state changes, no daemon.
@@ -24,12 +24,12 @@ package main
 //	                             agent-task.md for every dispatched item (hk-boiwe).
 //	--context @<file>            Same, but read context from a file (hk-boiwe).
 //	--workflow-mode <mode>       Workflow dispatch shape: builtin (default), single,
-//	                             review-loop, dot (hk-qo9pq). "builtin" defers to
-//	                             --review-loop / --no-review-loop.
+//	                             dot (hk-qo9pq). "builtin" leaves the mode unset so
+//	                             the daemon's own default resolution applies.
 //	--workflow-ref <path>        Path to the .dot workflow file; required when
 //	                             --workflow-mode dot (hk-qo9pq).
-//	--no-review-loop             Opt out of review-loop workflow; items run single-node (hk-g0ckv).
-//	--review-loop                Deprecated alias; review-loop is now the default (hk-g0ckv).
+//	--no-review-loop             RETIRED (EM-015d); rejected with a pointer to --workflow-mode single.
+//	--review-loop                RETIRED (EM-015d); rejected with a pointer to --workflow-mode dot.
 //	--notify-stream              Write one line per bead completion to stdout (hk-ibilr); auto-enabled
 //	                             for multi-bead runs (len>1 or max-concurrent>1) per hk-ze3op.
 //	--notify-stream=<path>       Same, but write to a FIFO or file instead of stdout.
@@ -115,14 +115,12 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	// --- Parse flags ---
 
 	projectDirFlag := ""
-	beadsFlag := ""        // --beads id1,id2,... (hk-w3cp1)
-	maxConcurrent := 1     // --max-concurrent N (hk-w3cp1); default 1 for back-compat
-	contextFlag := ""      // --context <inline|@file> (hk-boiwe)
-	reviewLoop := true     // default ON per hk-g0ckv; --no-review-loop opts out
-	reviewLoopSet := false // tracks whether --review-loop or --no-review-loop was explicit
-	notifyStream := ""     // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
+	beadsFlag := ""    // --beads id1,id2,... (hk-w3cp1)
+	maxConcurrent := 1 // --max-concurrent N (hk-w3cp1); default 1 for back-compat
+	contextFlag := ""  // --context <inline|@file> (hk-boiwe)
+	notifyStream := "" // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
 	notifyStreamSet := false
-	workflowModeFlag := ""                // --workflow-mode <builtin|single|review-loop|dot> (hk-qo9pq); empty = "builtin"
+	workflowModeFlag := ""                // --workflow-mode <builtin|single|dot> (hk-qo9pq); empty = "builtin"
 	workflowRefFlag := ""                 // --workflow-ref <path> (hk-qo9pq); required when --workflow-mode dot
 	noNotifyStream := false               // --no-notify-stream: opt out of auto-enable on multi-bead runs (hk-ze3op)
 	templateParams := map[string]string{} // --param KEY=VALUE (hk-55zv2 / WG-045); repeatable
@@ -175,13 +173,22 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		case strings.HasPrefix(arg, "--context="):
 			contextFlag = strings.TrimPrefix(arg, "--context=")
 
-		// --no-review-loop (hk-g0ckv): opt out; --review-loop kept as deprecated alias
+		// --review-loop / --no-review-loop: RETIRED with the mode (EM-015d).
+		// Both are rejected rather than ignored. Silently accepting --no-review-loop
+		// would be the worst outcome: it used to select single (no review gate), so
+		// a stale script would keep running unreviewed work while believing it had
+		// opted out of a loop that no longer exists.
+		case arg == "--review-loop":
+			fmt.Fprintln(os.Stderr,
+				"harmonik run: --review-loop was retired along with the review-loop mode.\n"+
+					"  Drop the flag: dot is the default and is already reviewed.")
+			return 1
 		case arg == "--no-review-loop":
-			reviewLoop = false
-			reviewLoopSet = true
-		case arg == "--review-loop": // deprecated: review-loop is now the default (hk-g0ckv)
-			reviewLoop = true
-			reviewLoopSet = true
+			fmt.Fprintln(os.Stderr,
+				"harmonik run: --no-review-loop was retired along with the review-loop mode.\n"+
+					"  It used to mean \"run single-node, unreviewed\". If that is what you want,\n"+
+					"  say it directly: --workflow-mode single.")
+			return 1
 
 		// --notify-stream[=path] (hk-ibilr)
 		case arg == "--notify-stream":
@@ -194,7 +201,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 				notifyStream = "-"
 			}
 
-		// --workflow-mode (hk-qo9pq): "builtin" (default), "single", "review-loop", "dot"
+		// --workflow-mode (hk-qo9pq): "builtin" (default), "single", "dot"
 		case arg == "--workflow-mode" && i+1 < len(subArgs):
 			i++
 			workflowModeFlag = subArgs[i]
@@ -301,8 +308,8 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		beadIDs = []core.BeadID{core.BeadID(positional[0])}
 	case len(positional) == 0:
 		fmt.Fprintln(os.Stderr, "harmonik run: missing <bead-id> argument")
-		fmt.Fprintln(os.Stderr, "usage: harmonik run <bead-id> [--project DIR] [--context TEXT] [--no-review-loop]")
-		fmt.Fprintln(os.Stderr, "       harmonik run --beads id1,id2,... [--max-concurrent N] [--project DIR] [--context TEXT] [--no-review-loop]")
+		fmt.Fprintln(os.Stderr, "usage: harmonik run <bead-id> [--project DIR] [--context TEXT] [--workflow-mode MODE]")
+		fmt.Fprintln(os.Stderr, "       harmonik run --beads id1,id2,... [--max-concurrent N] [--project DIR] [--context TEXT] [--workflow-mode MODE]")
 		return 1
 	default:
 		fmt.Fprintf(os.Stderr, "harmonik run: too many positional arguments (got %d, expected 1); use --beads for multiple\n", len(positional))
@@ -326,24 +333,17 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	}
 
 	// Resolve workflow mode (hk-qo9pq).
-	// --workflow-mode takes precedence over --review-loop / --no-review-loop when set.
-	// Valid --workflow-mode values: "builtin" (default), "single", "review-loop", "dot".
-	// "builtin" defers to the --review-loop / --no-review-loop logic.
-	// When neither --workflow-mode nor --review-loop/--no-review-loop is explicit, leave
-	// itemWorkflowMode empty so the daemon-resolved default (dot/triple-review) wins (hk-zhysl).
+	// Valid --workflow-mode values: "builtin" (default), "single", "dot".
+	// When --workflow-mode is not given, leave itemWorkflowMode empty so the
+	// daemon-resolved default (dot) wins (hk-zhysl).
+	//
+	// "review-loop" was RETIRED (EM-015d); it is rejected below with a message
+	// naming dot rather than silently coerced, so a stale script is told what
+	// happened instead of quietly changing behaviour.
 	var itemWorkflowMode string
 	var itemWorkflowRef string
 	switch workflowModeFlag {
 	case "", "builtin":
-		// When --review-loop / --no-review-loop was explicitly passed, honour it.
-		// Otherwise leave empty so the daemon's config default applies.
-		if reviewLoopSet {
-			if reviewLoop {
-				itemWorkflowMode = string(core.WorkflowModeReviewLoop)
-			} else {
-				itemWorkflowMode = string(core.WorkflowModeSingle)
-			}
-		}
 		if workflowRefFlag != "" {
 			fmt.Fprintln(os.Stderr, "harmonik run: --workflow-ref requires --workflow-mode dot")
 			return 1
@@ -354,12 +354,13 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 			fmt.Fprintln(os.Stderr, "harmonik run: --workflow-ref requires --workflow-mode dot")
 			return 1
 		}
-	case "review-loop":
-		itemWorkflowMode = string(core.WorkflowModeReviewLoop)
-		if workflowRefFlag != "" {
-			fmt.Fprintln(os.Stderr, "harmonik run: --workflow-ref requires --workflow-mode dot")
-			return 1
-		}
+	case core.WorkflowModeRetiredReviewLoop:
+		fmt.Fprintln(os.Stderr,
+			"harmonik run: --workflow-mode review-loop was retired; use --workflow-mode dot.\n"+
+				"  review-loop was a hand-written implementer→reviewer cycle; dot is the general\n"+
+				"  graph walker it was a special case of, and the embedded standard-bead.dot\n"+
+				"  default already runs an implementer→reviewer→close shape.")
+		return 1
 	case "dot":
 		itemWorkflowMode = string(core.WorkflowModeDot)
 		if workflowRefFlag == "" {
@@ -368,7 +369,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		}
 		itemWorkflowRef = workflowRefFlag
 	default:
-		fmt.Fprintf(os.Stderr, "harmonik run: unknown --workflow-mode %q (valid: builtin, single, review-loop, dot)\n", workflowModeFlag)
+		fmt.Fprintf(os.Stderr, "harmonik run: unknown --workflow-mode %q (valid: builtin, single, dot)\n", workflowModeFlag)
 		return 1
 	}
 
@@ -820,24 +821,19 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 //
 //	harmonik run --dry-run: plan for N beads (max-concurrent=M, queue=stream)
 //
-//	  hk-abc123  "title..."       workflow=review-loop  → 1 implementer + up to 3 reviewers
-//	  hk-def456  "another title"  workflow=single       → 1 implementer
+//	  hk-abc123  "title..."       workflow=dot     → agents per graph ./my.dot
+//	  hk-def456  "another title"  workflow=single  → 1 implementer
 //
-//	Total: N implementers + up to R reviewers across N beads (max-concurrent=M)
+//	Total: N implementers across N beads (max-concurrent=M)
 //	No changes written. Run without --dry-run to execute.
 //
 // Bead ref: hk-cebjc.
 func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode, workflowRef string, maxConcurrent int, groupKind queue.GroupKind) error {
-	// reviewLoopMaxReviewers mirrors the unexported reviewLoopIterationCap = 3
-	// in internal/daemon/reviewloop.go (hk-cebjc).
-	const reviewLoopMaxReviewers = 3
-
 	n := len(beadRecords)
 	plan := fmt.Sprintf("harmonik run --dry-run: plan for %d bead(s) (max-concurrent=%d, queue=%s)\n\n",
 		n, maxConcurrent, groupKind)
 
 	totalImplementers := 0
-	totalMaxReviewers := 0
 
 	for _, rec := range beadRecords {
 		title := rec.Title
@@ -847,10 +843,6 @@ func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode,
 
 		var spawnDesc string
 		switch core.WorkflowMode(workflowMode) {
-		case core.WorkflowModeReviewLoop:
-			spawnDesc = fmt.Sprintf("1 implementer + up to %d reviewers", reviewLoopMaxReviewers)
-			totalImplementers++
-			totalMaxReviewers += reviewLoopMaxReviewers
 		case core.WorkflowModeDot:
 			ref := workflowRef
 			if ref == "" {
@@ -869,9 +861,6 @@ func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode,
 
 	plan += "\n"
 	switch core.WorkflowMode(workflowMode) {
-	case core.WorkflowModeReviewLoop:
-		plan += fmt.Sprintf("Total: %d implementer(s) + up to %d reviewer(s) across %d bead(s) (max-concurrent=%d)\n",
-			totalImplementers, totalMaxReviewers, n, maxConcurrent)
 	case core.WorkflowModeDot:
 		plan += fmt.Sprintf("Total: %d+ agent(s) across %d bead(s) — exact count depends on graph (max-concurrent=%d)\n",
 			totalImplementers, n, maxConcurrent)
@@ -903,10 +892,8 @@ FLAGS
   --max-concurrent N            Maximum simultaneous beads (default 1)
   --context TEXT                Free-form extra context injected into each agent task
   --context @FILE               Same, but read context from a file
-  --workflow-mode MODE          Workflow dispatch shape: builtin (default), single, review-loop, dot
+  --workflow-mode MODE          Workflow dispatch shape: builtin (default), single, dot
   --workflow-ref PATH           Path to the .dot workflow file; required with --workflow-mode dot
-  --no-review-loop              Opt out of review-loop workflow (default: on); beads run single-node
-  --review-loop                 Deprecated: review-loop is now the default; this flag is a no-op
   --notify-stream               Write one line per bead completion to stdout (auto-enabled for multi-bead runs)
   --notify-stream=PATH          Same, but write to a FIFO or file
   --no-notify-stream            Disable per-bead completion lines (opt out of auto-enable on multi-bead runs)
@@ -929,8 +916,7 @@ EXAMPLES
   harmonik run --beads hk-abc123,hk-def456 --max-concurrent 2
   harmonik run hk-abc123 --context "Focus on the migration spec only"
   harmonik run hk-abc123 --context @/path/to/context.txt
-  harmonik run hk-abc123 --no-review-loop
-  harmonik run hk-abc123 --workflow-mode dot --workflow-ref ./review-loop.dot
+  harmonik run hk-abc123 --workflow-mode dot --workflow-ref ./my-workflow.dot
   harmonik run hk-abc123 --workflow-mode dot --workflow-ref ./my.dot --param ISSUE_NUMBER=172
   harmonik run --beads hk-abc123,hk-def456 --project /path/to/project --max-concurrent 4
   harmonik run --beads hk-abc123,hk-def456 --notify-stream

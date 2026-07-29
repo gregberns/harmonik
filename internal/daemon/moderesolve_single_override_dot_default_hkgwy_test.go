@@ -18,9 +18,9 @@ package daemon_test
 // whenever workflow:single resolves at tier-1 — the event fires regardless of
 // what the daemon default would have been.
 //
-// The existing tier-1 test in moderesolve_test.go covers the case where the
-// daemon default is WorkflowModeReviewLoop. This file covers the new v1.0
-// production scenario where the daemon default is WorkflowModeDot.
+// The existing tier-1 tests in moderesolve_test.go cover the other daemon-default
+// values (including a stale, retired review-loop default). This file covers the
+// v1.0 production scenario where the daemon default is WorkflowModeDot.
 //
 // # Tests
 //
@@ -117,8 +117,9 @@ func TestResolveWorkflow_SingleLabelOverridesDotDefault(t *testing.T) {
 // emits the review_bypassed audit event (hk-81n9r) with a valid payload when
 // workflow:single resolves at tier-1, regardless of the daemon's default mode.
 //
-// Checked under both the v1.0 dot daemon default and the historical review-loop
-// default to confirm the audit event is unconditional on the daemon default value.
+// Checked under both the v1.0 dot daemon default and a stale, now-retired
+// review-loop default to confirm the audit event is unconditional on the daemon
+// default value — including when that value is no longer a valid mode at all.
 func TestResolveWorkflow_SingleLabelEmitsReviewBypassed(t *testing.T) {
 	t.Parallel()
 
@@ -127,7 +128,7 @@ func TestResolveWorkflow_SingleLabelEmitsReviewBypassed(t *testing.T) {
 		daemonDefault core.WorkflowMode
 	}{
 		{"daemon default = dot (v1.0 production default)", core.WorkflowModeDot},
-		{"daemon default = review-loop (historical default)", core.WorkflowModeReviewLoop},
+		{"daemon default = retired review-loop (stale, invalid)", core.WorkflowMode(core.WorkflowModeRetiredReviewLoop)},
 	}
 
 	for _, dd := range daemonDefaults {
@@ -194,14 +195,21 @@ func TestResolveWorkflow_DotDefaultPreservesNonSingleLabels(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name     string
-		labels   []string
-		wantMode core.WorkflowMode
+		name         string
+		labels       []string
+		wantMode     core.WorkflowMode
+		wantConflict bool
 	}{
 		{
-			name:     "workflow:review-loop label overrides dot daemon default",
-			labels:   []string{"workflow:review-loop"},
-			wantMode: core.WorkflowModeReviewLoop,
+			// This case used to assert workflow:review-loop overrode the dot
+			// default at tier-1. Since the retirement (EM-015d) the label names
+			// an unknown mode: tier 1 is treated as absent and bead_label_conflict
+			// is emitted, so a stale bead label degrades to dot instead of
+			// wedging the queue (BI-009a).
+			name:         "retired workflow:review-loop label degrades to the dot daemon default",
+			labels:       []string{"workflow:review-loop"},
+			wantMode:     core.WorkflowModeDot,
+			wantConflict: true,
 		},
 		{
 			name:     "workflow:dot label with dot daemon default resolves to dot (no conflict)",
@@ -232,11 +240,19 @@ func TestResolveWorkflow_DotDefaultPreservesNonSingleLabels(t *testing.T) {
 			}
 
 			// review_bypassed must NOT fire for non-single labels.
+			gotConflict := false
 			for _, e := range modeResolveFixtureBusEvents(t, bus) {
 				if e.EventType == core.EventTypeReviewBypassed {
 					t.Errorf("unexpected review_bypassed event for labels %v (only workflow:single triggers it)",
 						tc.labels)
 				}
+				if e.EventType == core.EventTypeBeadLabelConflict {
+					gotConflict = true
+				}
+			}
+			if gotConflict != tc.wantConflict {
+				t.Errorf("bead_label_conflict emitted = %v for labels %v; want %v",
+					gotConflict, tc.labels, tc.wantConflict)
 			}
 		})
 	}

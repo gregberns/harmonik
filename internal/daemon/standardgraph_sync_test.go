@@ -9,22 +9,24 @@ import (
 // TestStandardBeadDotLoadFailureReturnsError pins the EM-012a-FLOOR review-floor
 // guarantee: loadStandardGraph MUST return a non-nil error when the embedded
 // bytes are invalid so that the pre-switch block in workloop.go (lines ~1985-1992)
-// can demote workflowMode from dot to review-loop, NEVER to single.
+// can FAIL the run rather than dispatch the bead under some other workflow
+// shape. (It used to demote the mode to review-loop; that mode is retired
+// (EM-015d) and the demotion was dishonest anyway — run_started stamps
+// workflow_mode before this point, so a demoted run's own start event named a
+// mode it did not execute.)
 //
 // This test verifies the failure half of the safety contract: when
 // standardBeadDotSrc is corrupt, loadStandardGraph fails.  The positive half
 // (the embedded graph is always valid in production) is covered by
 // TestStandardBeadDotEmbedValidAndInSync above.
 //
-// The workloop pre-switch block that catches this error and sets
-//
-//	workflowMode = core.WorkflowModeReviewLoop
-//
-// is at internal/daemon/workloop.go (look for "Safety floor (hk-30vlb §REVIEW
-// FLOOR item b)").  The two tests together pin the full chain:
+// The workloop pre-switch block that catches this error and reopens the bead
+// with a workflow_load reason is at internal/daemon/workloop.go (look for
+// "EM-012a-FLOOR").  The two tests together pin the full chain:
 //
 //	valid embedded bytes   → loadStandardGraph succeeds → dot dispatch
-//	invalid embedded bytes → loadStandardGraph fails   → workloop → review-loop (NEVER single)
+//	invalid embedded bytes → loadStandardGraph fails   → workloop fails the run
+//	                                                     (NEVER a silent single)
 func TestStandardBeadDotLoadFailureReturnsError(t *testing.T) {
 	// Save the real embedded bytes so we can restore them after the test.
 	orig := standardBeadDotSrc
@@ -36,8 +38,8 @@ func TestStandardBeadDotLoadFailureReturnsError(t *testing.T) {
 	_, err := loadStandardGraph(nil)
 	if err == nil {
 		t.Fatal("loadStandardGraph: expected an error for invalid DOT bytes; got nil — " +
-			"the EM-012a-FLOOR review-floor in workloop.go relies on this error to " +
-			"demote workflowMode from dot to review-loop")
+			"the EM-012a-FLOOR in workloop.go relies on this error to fail the run " +
+			"instead of dispatching the bead under a different workflow shape")
 	}
 }
 

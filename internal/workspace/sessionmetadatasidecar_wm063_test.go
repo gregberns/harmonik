@@ -430,17 +430,17 @@ func sidecarWMFixtureWithMode(t *testing.T, mode core.WorkflowMode) SessionMetad
 	return s
 }
 
-// TestWM030_ReviewLoopSidecarCarriesWorkflowMode verifies that a sidecar
-// written for a review-loop run round-trips with workflow_mode="review-loop"
+// TestWM030_DotSidecarCarriesWorkflowMode verifies that a sidecar
+// written for a dot run round-trips with workflow_mode="dot"
 // (T-WM-030 acceptance criterion 1).
-func TestWM030_ReviewLoopSidecarCarriesWorkflowMode(t *testing.T) {
+func TestWM030_DotSidecarCarriesWorkflowMode(t *testing.T) {
 	t.Parallel()
 
 	workspacePath := t.TempDir()
 	sessionID := "sess-0196e300-0000-7000-8000-000000000010"
 	target := SessionMetadataSidecarPath(workspacePath, sessionID)
 
-	original := sidecarWMFixtureWithMode(t, core.WorkflowModeReviewLoop)
+	original := sidecarWMFixtureWithMode(t, core.WorkflowModeDot)
 	if err := WriteSessionMetadataSidecarAtomic(target, &original); err != nil {
 		t.Fatalf("T-WM-030: WriteSessionMetadataSidecarAtomic: %v", err)
 	}
@@ -454,19 +454,19 @@ func TestWM030_ReviewLoopSidecarCarriesWorkflowMode(t *testing.T) {
 	}
 
 	if decoded.WorkflowMode == nil {
-		t.Fatal("T-WM-030: decoded.WorkflowMode is nil; want review-loop")
+		t.Fatal("T-WM-030: decoded.WorkflowMode is nil; want dot")
 	}
-	if *decoded.WorkflowMode != core.WorkflowModeReviewLoop {
-		t.Errorf("T-WM-030: decoded.WorkflowMode = %q; want %q", *decoded.WorkflowMode, core.WorkflowModeReviewLoop)
+	if *decoded.WorkflowMode != core.WorkflowModeDot {
+		t.Errorf("T-WM-030: decoded.WorkflowMode = %q; want %q", *decoded.WorkflowMode, core.WorkflowModeDot)
 	}
 }
 
-// TestWM030_ReviewLoopSidecarJSONKeyPresent verifies that a review-loop sidecar
-// marshals with the "workflow_mode" key set to "review-loop".
-func TestWM030_ReviewLoopSidecarJSONKeyPresent(t *testing.T) {
+// TestWM030_DotSidecarJSONKeyPresent verifies that a dot sidecar
+// marshals with the "workflow_mode" key set to "dot".
+func TestWM030_DotSidecarJSONKeyPresent(t *testing.T) {
 	t.Parallel()
 
-	s := sidecarWMFixtureWithMode(t, core.WorkflowModeReviewLoop)
+	s := sidecarWMFixtureWithMode(t, core.WorkflowModeDot)
 
 	data, err := json.Marshal(s)
 	if err != nil {
@@ -480,10 +480,10 @@ func TestWM030_ReviewLoopSidecarJSONKeyPresent(t *testing.T) {
 
 	val, ok := raw["workflow_mode"]
 	if !ok {
-		t.Fatal("T-WM-030: workflow_mode key absent in JSON; want present for review-loop run")
+		t.Fatal("T-WM-030: workflow_mode key absent in JSON; want present for dot run")
 	}
-	if string(val) != `"review-loop"` {
-		t.Errorf("T-WM-030: workflow_mode JSON value = %s; want \"review-loop\"", val)
+	if string(val) != `"dot"` {
+		t.Errorf("T-WM-030: workflow_mode JSON value = %s; want \"dot\"", val)
 	}
 }
 
@@ -540,7 +540,7 @@ func TestWM030_SingleModeSidecarCarriesWorkflowModeSingle(t *testing.T) {
 }
 
 // TestWM030_WorkflowModeRoundTrip verifies that a sidecar with
-// WorkflowMode=review-loop survives a full write→read round-trip with the
+// WorkflowMode=dot survives a full write→read round-trip with the
 // field intact.
 func TestWM030_WorkflowModeRoundTrip(t *testing.T) {
 	t.Parallel()
@@ -549,7 +549,7 @@ func TestWM030_WorkflowModeRoundTrip(t *testing.T) {
 	sessionID := "sess-0196e300-0000-7000-8000-000000000011"
 	target := SessionMetadataSidecarPath(workspacePath, sessionID)
 
-	original := sidecarWMFixtureWithMode(t, core.WorkflowModeReviewLoop)
+	original := sidecarWMFixtureWithMode(t, core.WorkflowModeDot)
 	if err := WriteSessionMetadataSidecarAtomic(target, &original); err != nil {
 		t.Fatalf("T-WM-030: WriteSessionMetadataSidecarAtomic: %v", err)
 	}
@@ -572,10 +572,10 @@ func TestWM030_WorkflowModeRoundTrip(t *testing.T) {
 
 	// WorkflowMode must survive.
 	if decoded.WorkflowMode == nil {
-		t.Fatal("T-WM-030: decoded.WorkflowMode is nil after round-trip; want review-loop")
+		t.Fatal("T-WM-030: decoded.WorkflowMode is nil after round-trip; want dot")
 	}
-	if *decoded.WorkflowMode != core.WorkflowModeReviewLoop {
-		t.Errorf("T-WM-030: WorkflowMode mismatch: got %q, want %q", *decoded.WorkflowMode, core.WorkflowModeReviewLoop)
+	if *decoded.WorkflowMode != core.WorkflowModeDot {
+		t.Errorf("T-WM-030: WorkflowMode mismatch: got %q, want %q", *decoded.WorkflowMode, core.WorkflowModeDot)
 	}
 }
 

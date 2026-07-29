@@ -43,7 +43,7 @@ package projectconfig
 //	    model: sonnet
 //	    effort: medium
 //	daemon:
-//	  workflow_mode: dot       # review-loop or dot; single FORBIDDEN (PL-004a floor)
+//	  workflow_mode: dot       # dot only; single FORBIDDEN (PL-004a floor), review-loop RETIRED
 //	  max_concurrent: 4        # > 0 to override --max-concurrent default
 //	  target_branch: main      # observability/symmetry only; authoritative source is branching.yaml
 //	  remote_control_prefix: hk # cosmetic Claude RC session-label prefix (empty = bare name); hk-igpg
@@ -1507,7 +1507,8 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 //
 // Validation rules per PL-004b:
 //   - workflow_mode absent → zero DaemonConfig.WorkflowMode (defer to flag/default).
-//   - workflow_mode present but not in {review-loop, dot, single} → *ErrMalformedConfigYAML.
+//   - workflow_mode present but not in {dot, single} → *ErrMalformedConfigYAML.
+//   - workflow_mode == review-loop → *ErrMalformedConfigYAML naming dot (RETIRED, EM-015d).
 //   - workflow_mode == single → *ErrWorkflowModeFloorViolation (PL-004a review floor).
 //   - max_concurrent ≤ 0 → treated as not configured (zero DaemonConfig.MaxConcurrent).
 //   - target_branch → stored for observability/symmetry only; not used in resolution chain.
@@ -1518,10 +1519,26 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 
 	if raw.WorkflowMode != "" {
 		wm := core.WorkflowMode(raw.WorkflowMode)
+		// PL-004a (amended): a config naming the retired review-loop mode FAILS at
+		// load with a message naming dot; it is never silently coerced. This is
+		// deliberately stricter than the per-bead label path, which degrades a
+		// stale workflow:review-loop label to dot with a bead_label_conflict — a
+		// config file is operator-authored and read once at boot, so a wrong value
+		// there is worth stopping for, whereas a bead label is queue data the
+		// operator may not control and must not wedge the queue.
+		if raw.WorkflowMode == core.WorkflowModeRetiredReviewLoop {
+			return DaemonConfig{}, &ErrMalformedConfigYAML{
+				Path: path,
+				Cause: fmt.Errorf(
+					"daemon.workflow_mode %q: RETIRED (execution-model.md §4.3.EM-015d); use \"dot\", "+
+						"the general workflow-graph walker review-loop was a hand-written special case of",
+					raw.WorkflowMode),
+			}
+		}
 		if !wm.Valid() {
 			return DaemonConfig{}, &ErrMalformedConfigYAML{
 				Path:  path,
-				Cause: fmt.Errorf("daemon.workflow_mode %q: unknown value; must be one of review-loop, dot (single is forbidden at daemon level)", raw.WorkflowMode),
+				Cause: fmt.Errorf("daemon.workflow_mode %q: unknown value; must be dot (single is forbidden at daemon level)", raw.WorkflowMode),
 			}
 		}
 		// PL-004a review floor: single MUST NOT be reachable from the daemon-level

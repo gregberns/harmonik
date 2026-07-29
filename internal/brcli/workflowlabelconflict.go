@@ -14,7 +14,7 @@ package brcli
 // next-lower precedence tier.
 //
 // Detection also fires when a single workflow:<mode> label names a mode value
-// not in {single, review-loop, dot} (per BI-009a / event-model.md §8.8.6
+// not in {single, dot} (per BI-009a / event-model.md §8.8.6
 // emission rule).
 //
 // This file provides:
@@ -65,7 +65,7 @@ type WorkflowLabelConflictResult struct {
 	// conditions was detected:
 	//   (a) more than one workflow:<mode> label on the bead, OR
 	//   (b) a single workflow:<mode> label whose <mode> is not in
-	//       {single, review-loop, dot}.
+	//       {single, dot} — "review-loop" is RETIRED (EM-015d) and so lands here.
 	Conflicted bool
 
 	// ConflictingLabels is the set of offending workflow:<mode> labels.
@@ -83,7 +83,9 @@ type WorkflowLabelConflictResult struct {
 //  1. The labels slice contains more than one string with the "workflow:"
 //     prefix.
 //  2. The labels slice contains exactly one "workflow:" label, but the mode
-//     value after the colon is not one of {single, review-loop, dot}.
+//     value after the colon is not one of {single, dot}. The retired
+//     "review-loop" value is deliberately in this bucket: a stale label emits
+//     bead_label_conflict and the bead resolves onward to dot rather than failing.
 //
 // When a conflict is detected the function:
 //   - Marshals a core.BeadLabelConflictPayload and emits it via bus.Emit using

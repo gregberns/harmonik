@@ -8,7 +8,7 @@ requirement-prefix: CHB
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.9
+version: 0.10
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-13
@@ -333,7 +333,21 @@ The relay MUST exit 0 iff the progress-stream message was acknowledged by the da
 
 Tags: mechanism
 
-#### CHB-023 — Daemon-side `claude_session_id` durability before Claude exec
+#### CHB-023 — Daemon-side `claude_session_id` durability before Claude exec — UNIMPLEMENTED v0.10, implementation REMOVED
+
+> **AMENDED v0.10 (amendment `review-loop-retirement`). The requirement below is UNCHANGED and remains normative; what changed is that the daemon no longer implements any part of it, and this clause now says so rather than letting a reader infer conformance.**
+>
+> The implementation (`internal/daemon/sessioncontext_chb023.go`) was deleted when `workflow_mode = review-loop` was retired per [execution-model.md §4.3 EM-015d], because the review-loop driver was its ONLY production caller. It was NOT ported to the `dot` path, and that was a deliberate decision rather than an oversight. The evidence:
+>
+> 1. **The write had no reader, so it delivered no capability.** Nothing in the tree reads `.harmonik/run-context/<run_id>/context.json` back; nothing consumes the `claude_session_id_persisted` event; and `internal/lifecycle/activerun_em031a.go` recovers RUN IDs from branch-tip trailers, never a `claude_session_id`. `internal/runmerge/stripruncontext.go` states the same conclusion in its own header, reached independently at design time: "zero runtime readers of context.json from main."
+> 2. **The resume that worked never depended on it.** The review-loop's `claude --resume` used an IN-MEMORY field on its per-cycle state, not the persisted file. So the persisted copy served only the crash-recovery path of [execution-model.md §4.7 EM-031] — the path that has no reader. Resume did not "work under review-loop and stop working under dot"; the durable half was never wired end to end under either.
+> 3. **Porting it would have cost without buying anything.** Every `dot` run would land a `git add -f` commit on its run branch that `StripRunContextFromMerge` (hk-4je) then has to strip back out — the exact churn that previously put `context.json` on 37% of trunk commits and required that strip subsystem to exist.
+>
+> The `dot` and `single` paths DO capture `claude_session_id`, via the harness-level `NewSessionIDInterceptor` on `handlercontract.Harness`, and hold it in memory for implementer-resume back-edges. What is absent is the durable checkpoint and the crash-recovery reader that would consume it.
+>
+> Also removed with that file, and for the same reason (review-loop was its only production caller): the daemon-side HC-009 wire-version negotiation and its ACK. The `dot` and `single` paths never called it — they use the harness interceptor — so this deletes an unwired second implementation, not a working one. [handler-contract.md §4.10 HC-009] is unchanged and remains unimplemented daemon-side.
+>
+> Closing this gap means implementing BOTH halves — the persist and the EM-031 reader that resumes from it — on the `dot` path. Tracked as `hk-50li9`. Until then this requirement is a target, not a conformance claim, and `StripRunContextFromMerge` is a vestigial guard over a directory nothing writes.
 
 The daemon MUST persist `claude_session_id` into `Run.context.claude_session_id` (per [execution-model.md §4.3 EM-012, EM-015d]) on receipt of the handler's `handler_capabilities` progress-stream message, BEFORE returning the connection-accept ACK that gates the handler's `claude --session-id <uuid>` exec. The persistence MUST be backed by a checkpoint-commit-class durability boundary: the daemon MUST land a `transition_event` with the updated `context.claude_session_id` to git (per [execution-model.md §4.5 EM-023a]) before the handler is permitted to exec Claude. A mid-launch crash MUST therefore find either (a) no session_id persisted (handler had not yet emitted `handler_capabilities` — safe to re-launch under a fresh UUIDv7) or (b) session_id durably committed (safe to `--resume`). Storage in JSONL, on the bead, or in-memory only is forbidden; `Run.context` (git-backed) is the sole durable home.
 

@@ -326,8 +326,11 @@ func TestScenario_TrustClobber_ConcurrentDispatch_SurvivesHostileRewriter(t *tes
 	hostile := tclStartHostileWriter(t, claudeCfg)
 
 	res := scenariotest.RunConcurrentMerge(t, scenariotest.ConcurrentMergeConfig{
-		N:                 3,
-		TwinScenario:      "single-happy-path",
+		N: 3,
+		// commit-on-cue-startup-delay, not single-happy-path: dot checks HEAD
+		// advance per node, and single-happy-path leans on the fixture's
+		// pre-committed empty commit rather than landing one of its own.
+		TwinScenario:      "commit-on-cue-startup-delay",
 		Boot:              tclBootForTesting(t),
 		ExpectAllComplete: true,
 		AgentReadyTimeout: 5 * time.Second,

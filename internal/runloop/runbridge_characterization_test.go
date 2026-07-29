@@ -16,7 +16,7 @@ package runloop
 // unreachable without a real git repository: every branch that runs a merge or
 // the scenario gate. mergeHook calls runmerge.RunBranchToTarget and gateHook
 // calls runScenarioGateIfNeededVia directly — neither is behind a port — so the
-// per-mode merge-retry budget (single 1 / review-loop 3 / DOT 1), the
+// per-mode merge-retry budget (single 1 / DOT 3), the
 // retryable-vs-fatal classification, and the DOT already-approved carve-out
 // cannot be exercised in a unit test. That is a real seam finding, not an
 // omission.
@@ -280,22 +280,28 @@ func TestRunBridge_SubsumedClosesWithoutMerging(t *testing.T) {
 }
 
 // TestRunBridge_BudgetExhaustedClosesNeedsAttentionButFailsTheRun pins the
-// review-loop budget ladder, which is the one terminal that does BOTH: it
+// retry-spend budget ladder, which is the one terminal that does BOTH: it
 // closes the bead (flagged needs-attention, so a human sees it) and reports the
 // run as FAILED.
+//
+// The ladder is a property of the terminal spine, not of any one workflow mode.
+// It was driven here under review-loop only because that was the sole mode
+// feeding ModeBudget; when review-loop was retired the charge was ported to the
+// DOT failure path, so the mode this exercises changed and the asserted
+// behaviour did not.
 //
 // The combination is deliberate and easy to lose. Closing without the flag
 // hides a bead that needs a human; reopening instead would re-dispatch work
 // that has already burned its budget.
 func TestRunBridge_BudgetExhaustedClosesNeedsAttentionButFailsTheRun(t *testing.T) {
-	b, ledger, emitter, term := newBridge(t, core.WorkflowModeReviewLoop)
+	b, ledger, emitter, term := newBridge(t, core.WorkflowModeDot)
 	ctx := context.Background()
 
-	b.Start(ctx, core.WorkflowModeReviewLoop)
-	b.SetRejectReason("review_loop_budget_exhausted")
+	b.Start(ctx, core.WorkflowModeDot)
+	b.SetRejectReason("run_budget_exhausted")
 	b.Feed(ctx, runexec.Event{
 		Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeBudget,
-		NeedsAttention: true, Detail: "review_loop_budget_exhausted (max=2)",
+		NeedsAttention: true, Detail: "run_budget_exhausted (max=2)",
 	})
 
 	closes := ledger.only("close")
@@ -315,7 +321,7 @@ func TestRunBridge_BudgetExhaustedClosesNeedsAttentionButFailsTheRun(t *testing.
 	if !found || kind != "rejected" {
 		t.Errorf("outcome_emitted = %q (found=%v), want rejected", kind, found)
 	}
-	if reason != "review_loop_budget_exhausted" {
+	if reason != "run_budget_exhausted" {
 		t.Errorf("rejected outcome reason = %q, want the caller-set reject reason", reason)
 	}
 }

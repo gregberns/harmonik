@@ -237,13 +237,26 @@ func TestRunHelpFlag(t *testing.T) {
 		"--beads",
 		"--max-concurrent",
 		"--context",
-		"--review-loop",
+		"--workflow-mode",
 		"--project",
 		"EXIT CODES",
 		"harmonik run", // at least one example line
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("run --help output missing %q:\n%s", want, output)
+		}
+	}
+
+	// The retired review-loop flags MUST NOT be advertised (EM-015d). Help text
+	// is the surface an operator copies from, so listing a flag that now exits 1
+	// is worse than listing nothing. --workflow-mode above is the replacement
+	// this help must carry instead.
+	for _, banned := range []string{
+		"--review-loop",
+		"--no-review-loop",
+	} {
+		if strings.Contains(output, banned) {
+			t.Errorf("run --help still advertises retired flag %q:\n%s", banned, output)
 		}
 	}
 }

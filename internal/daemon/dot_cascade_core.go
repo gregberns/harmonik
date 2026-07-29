@@ -469,7 +469,7 @@ func driveDotWorkflow(
 					summary:        fmt.Sprintf("dot: resolve HEAD before agentic node %q at iteration %d: %v", currentNodeID, iterationCount, headErr),
 				}
 			}
-			currentHash, hashErr := rlComputeDiffHashVia(ctx, runner, wtPath, parentSHA)
+			currentHash, hashErr := computeDiffHashVia(ctx, runner, wtPath, parentSHA)
 			if hashErr != nil {
 				return dotWorkflowResult{
 					success:        false,
@@ -762,7 +762,7 @@ func driveDotWorkflow(
 								Flags:          priorVerdictFlags,
 								Notes:          priorVerdictNotes,
 							}
-							priorSummary = rlTruncateUTF8(priorVerdictNotes, priorVerdictSummaryMaxBytes)
+							priorSummary = truncateUTF8(priorVerdictNotes, priorVerdictSummaryMaxBytes)
 						} else {
 							// (b) commit_gate (or any non-reviewer) → implement back-edge.
 							// Disambiguate on the actual cause:
@@ -782,7 +782,7 @@ func driveDotWorkflow(
 									Verdict:        "GATE_FAIL",
 									Notes:          gateFailMsg,
 								}
-								priorSummary = rlTruncateUTF8(gateFailMsg, priorVerdictSummaryMaxBytes)
+								priorSummary = truncateUTF8(gateFailMsg, priorVerdictSummaryMaxBytes)
 							} else {
 								const commitNudge = "Your previous pass produced NO commit — the workflow bounced back to you because HEAD did not advance. " +
 									"Re-read .harmonik/agent-task.md, make the required changes if you have not already, and you MUST commit your changes before exiting. " +
@@ -793,7 +793,7 @@ func driveDotWorkflow(
 									Verdict:        "NO_COMMIT",
 									Notes:          commitNudge,
 								}
-								priorSummary = rlTruncateUTF8(commitNudge, priorVerdictSummaryMaxBytes)
+								priorSummary = truncateUTF8(commitNudge, priorVerdictSummaryMaxBytes)
 							}
 						}
 						if rfErr := workspace.WriteReviewerFeedback(rfPayload); rfErr != nil {

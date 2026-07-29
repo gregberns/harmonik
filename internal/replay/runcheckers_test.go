@@ -41,14 +41,14 @@ func rReady(r core.RunID) core.EventPayload {
 
 func rResumed(r core.RunID, it int) core.EventPayload {
 	return &core.ImplementerResumedPayload{
-		RunID: r, WorkflowMode: core.WorkflowModeReviewLoop, SessionID: "sess-uuid",
+		RunID: r, WorkflowMode: core.WorkflowModeDot, SessionID: "sess-uuid",
 		ClaudeSessionID: "sess", IterationCount: it, PriorVerdictSummary: "prior",
 	}
 }
 
 func rRLComplete(r core.RunID, it int) core.EventPayload {
 	return &core.ReviewLoopCycleCompletePayload{
-		RunID: r, WorkflowMode: core.WorkflowModeReviewLoop,
+		RunID: r, WorkflowMode: core.WorkflowModeDot,
 		FinalIterationCount: it, CompletionReason: core.ReviewLoopCompletionReasonApproved,
 	}
 }
@@ -78,7 +78,7 @@ func TestCheckRuns_RSM9_FlagsHungRun(t *testing.T) {
 	r := runID(1)
 	// resumed, then SILENCE — no terminal, no failure-class event.
 	lines := []line{
-		{seq: 1, evType: core.EventTypeRunStarted, payload: rStarted(r, core.WorkflowModeReviewLoop)},
+		{seq: 1, evType: core.EventTypeRunStarted, payload: rStarted(r, core.WorkflowModeDot)},
 		{seq: 2, evType: core.EventTypeLaunchInitiated, payload: rLaunch(r)},
 		{seq: 3, evType: core.EventTypeAgentReady, payload: rReady(r)},
 		{seq: 4, evType: core.EventTypeImplementerResumed, payload: rResumed(r, 2)},
@@ -95,7 +95,7 @@ func TestCheckRuns_RSM9_FlagsHungRun(t *testing.T) {
 func TestCheckRuns_RSM9_PassesCleanRun(t *testing.T) {
 	r := runID(2)
 	lines := []line{
-		{seq: 1, evType: core.EventTypeRunStarted, payload: rStarted(r, core.WorkflowModeReviewLoop)},
+		{seq: 1, evType: core.EventTypeRunStarted, payload: rStarted(r, core.WorkflowModeDot)},
 		{seq: 2, evType: core.EventTypeLaunchInitiated, payload: rLaunch(r)},
 		{seq: 3, evType: core.EventTypeAgentReady, payload: rReady(r)},
 		{seq: 4, evType: core.EventTypeImplementerResumed, payload: rResumed(r, 2)},
@@ -114,7 +114,7 @@ func TestCheckRuns_RSM9_FailureClassDischarges(t *testing.T) {
 	r := runID(3)
 	// resumed, then agent_ready_timeout (fail-closed) — NOT silence, so clean.
 	lines := []line{
-		{seq: 1, evType: core.EventTypeRunStarted, payload: rStarted(r, core.WorkflowModeReviewLoop)},
+		{seq: 1, evType: core.EventTypeRunStarted, payload: rStarted(r, core.WorkflowModeDot)},
 		{seq: 2, evType: core.EventTypeLaunchInitiated, payload: rLaunch(r)},
 		{seq: 3, evType: core.EventTypeImplementerResumed, payload: rResumed(r, 2)},
 		{seq: 4, evType: core.EventTypeAgentReadyTimeout, payload: rReadyTimeout(r)},

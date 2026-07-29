@@ -529,14 +529,6 @@ type workLoopDeps struct {
 	// Bead ref: hk-96d7w (LOCAL slice of hk-5z1f0).
 	remoteAgentReadyTimeout time.Duration
 
-	// postAgentReadyHangTimeout is the duration the review-loop's post-agent_ready
-	// hang detector waits for any activity after agent_ready before declaring the
-	// implementer hung and failing fast (hk-a2okh). Zero → defaultPostAgentReadyHangTimeout
-	// (7 min). Only active on the exec path (implWatcher != nil).
-	//
-	// Bead ref: hk-a2okh.
-	postAgentReadyHangTimeout time.Duration
-
 	// projectCfg is the decoded .harmonik/config.yaml loaded once at startup
 	// (EM-012b tier-2). The zero value is safe: LookupAgent returns ("","") for
 	// all agent types. Passed to ResolveModelPreference at claim time.
@@ -3666,24 +3658,36 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	//   2. <projectDir>/workflow.dot exists → project-level path (resolved below).
 	//   3. Neither → use the embedded standard-bead.dot (loaded here).
 	//
-	// The embedded load happens here — before the switch — so that if it fails we
-	// can change workflowMode to review-loop and let the review-loop case execute
-	// normally (spec §REVIEW FLOOR item b: fall through to review-loop, NEVER single).
+	// The embedded load happens here — before the switch — so a failure can fail
+	// the run before anything is dispatched.
+	//
+	// Review floor (EM-012a-FLOOR, amended): the floor's guarantee is that a bead
+	// resolved below tier 1 is NEVER dispatched without a review gate. That is
+	// delivered by the embedded graph itself — standard-bead.dot carries a
+	// reviewer node on the sole inbound edge to close — plus this branch, which
+	// FAILS THE RUN rather than dispatching under some other shape.
+	//
+	// This used to demote to review-loop. It no longer does, for two reasons the
+	// amendment records: review-loop is retired (it was a hand-written particular
+	// of the general graph walker this very branch is loading), and a demotion was
+	// dishonest — run_started stamps workflow_mode ABOVE this line, so a demoted
+	// run's own start event named a mode it did not execute.
 	var preloadedDotGraph *dot.Graph
 	if workflowMode == core.WorkflowModeDot && itemWorkflowRef == "" {
 		defaultDotPath := filepath.Join(env.ProjectDir, "workflow.dot")
 		if _, statErr := os.Stat(defaultDotPath); os.IsNotExist(statErr) {
 			g, embErr := loadStandardGraph(itemTemplateParams)
 			if embErr != nil {
-				// Safety floor (hk-30vlb §REVIEW FLOOR item b): embedded graph parse
-				// failure — fall through to review-loop, NEVER to single.
 				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: embedded standard-bead.dot load failed for bead %s run %s: %v (falling back to review-loop)\n",
+					"daemon: workloop: embedded standard-bead.dot failed to load for bead %s run %s: %v — failing the run; "+
+						"the daemon will NOT dispatch this bead under a different workflow shape (EM-012a-FLOOR)\n",
 					beadID, runID.String(), embErr)
-				workflowMode = core.WorkflowModeReviewLoop
-			} else {
-				preloadedDotGraph = g
+				// Same reopen spine as the tier-1/tier-2 load failure below.
+				reason := fmt.Sprintf("workflow_load: embedded standard-bead.dot: %v", embErr)
+				failRun(reason, reason)
+				return bridge.Success()
 			}
+			preloadedDotGraph = g
 		}
 	}
 
@@ -3696,119 +3700,17 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 	// Mode-dispatch: route to the mode-specific driver.
 	//
-	// review-loop mode (EM-015d): multi-iteration implementer→reviewer cycle
-	// handled by runReviewLoop in reviewloop.go. Also the fallback when the
-	// embedded DOT graph fails to load (hk-30vlb §REVIEW FLOOR item b).
-	//
 	// dot mode: DOT-defined workflow graph; loader validates the artifact,
 	// then drives the cascade (driveDotWorkflow). Default uses the embedded
 	// standard-bead.dot (pre-loaded above into preloadedDotGraph).
 	//
-	// single mode: one-shot implementer dispatch.
+	// single mode: one-shot implementer dispatch. Reachable ONLY via an explicit
+	// per-bead workflow:single label, audited via review_bypassed (EM-012a).
+	//
+	// review-loop mode was RETIRED (EM-015d): it was a hand-written particular of
+	// the graph the dot walker executes generally, and the dot path is the
+	// production default.
 	switch workflowMode {
-	case core.WorkflowModeReviewLoop:
-		// rlRunner is the per-run CommandRunner threaded into the review loop: the
-		// worker's SSHRunner for a REMOTE run (so the implementer-worktree HEAD/diff
-		// probes target the worker and the run branch is synced to box A before each
-		// reviewer launch), nil for a LOCAL run (byte-identical local path, NFR7).
-		var rlRunner tmuxpkg.CommandRunner
-		// hk-fxy9: rlWorkerBinary resolves the SessionStart hook command to the WORKER's
-		// harmonik path; rlWorkerHookSock is the worker-side reverse-tunnel TCP endpoint
-		// the worker's claude dials for the hook relay; rlWorkerSession/Cwd tell the
-		// per-run substrate which tmux session to ensure+spawn into ON THE WORKER. All
-		// empty for a LOCAL run (rbc == nil) ⇒ byte-identical box-A-local path (NFR7).
-		var rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd string
-		if rbc != nil {
-			rlRunner = rbc.sshRunner
-			rlWorkerBinary = tunnelpkg.WorkerHarmonikPath(rbc.worker)
-			rlWorkerHookSock = rbc.workerHookSock
-			rlWorkerCwd = rbc.worker.RepoPath
-			if ts, ok := handles.Substrate.(*tmuxSubstrate); ok {
-				rlWorkerSession = ts.workerSpawnSessionName(rbc.worker.Name)
-			}
-		}
-		rlResult := runReviewLoop(ctx, env, rp, handles, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch, rlRunner, rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd)
-
-		// ── RT9: the review-loop terminal rides the Run tail (RSM-020) ────────
-		//
-		// The gate → code-sync → merge-retry → close/reopen sequence below is the
-		// machine's Gating→Merging→Finalizing spine; the pre-RT9 open-coded block
-		// survives as SpineArgs policy (trailer amend + per-retry re-amend
-		// hk-dyim/RF :3899, isRetryableMergeReason classification hk-f9xzs) and
-		// event data (the label-parameterized reason/summary strings, RSM-033).
-		transitionTID, _ := handles.TIDGen.Next()
-		bridge.Start(ctx, workflowMode)
-		bridge.WireSpine(runloop.SpineArgs{
-			RunRunner:       rlRunner,
-			WTPath:          wtPath,
-			HeadSHA:         headSHA,
-			PreMergeSync:    preMergeSync,
-			MPort:           mport,
-			ActiveRepo:      activeRepo,
-			ProtectBranches: effectiveMergeProtectBranches,
-			TransitionTID:   transitionTID,
-			EmitBeadClosed: func(c context.Context) {
-				emitBeadClosedAndMaybeEpic(c, rp, handles, runID, beadID)
-			},
-			MergeTarget: mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
-			Retryable:   runmerge.IsRetryableReason,
-			// hk-dyim: amend the HEAD commit to embed Reviewed-By/Review-Verdict
-			// trailers before each FF-merge attempt. Non-fatal. LOCAL runs only
-			// (rbc == nil): for REMOTE runs the trailers land post-rebase on box-A
-			// in a follow-up (FLAGGED). Re-amends before each retry: the prior
-			// inner rebase may have rewritten HEAD (idempotent, RF :3899).
-			AmendTrailers: func(c context.Context, retry int) {
-				if rlResult.approveVerdict == nil || rbc != nil {
-					return
-				}
-				if amendErr := runmerge.AppendReviewTrailersToHEAD(c, wtPath, rlResult.approveVerdict); amendErr != nil {
-					if retry == 0 {
-						fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
-					} else {
-						fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD (merge retry %d) bead %s: %v (non-fatal)\n",
-							retry, beadID, amendErr)
-					}
-				}
-			},
-		})
-		if rlResult.success {
-			bridge.Feed(ctx, runexec.Event{
-				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSuccess,
-				PathLabel: "review-loop", Detail: rlResult.summary,
-			})
-			return bridge.Success()
-		}
-		// Review-loop failed. For queue-dispatched runs with needsAttention=true,
-		// increment the per-item ReviewLoopFailures counter and check whether the
-		// global retry-spend budget is exhausted (hk-c1ah6). RSM-011: charged
-		// through BudgetPort (the sole run-path queueStore use); the machine owns
-		// only the close-vs-reopen CHOICE the event carries.
-		budgetExhausted := false
-		if rlResult.needsAttention {
-			budgetExhausted = handles.Budget.ChargeReviewLoopFailure(
-				ctx, queueName, queueID, queueGroupIndex, queueItemIndex, beadID)
-		}
-		if budgetExhausted {
-			// Budget exhausted: permanently close the bead with needs-attention
-			// rather than reopening it (hk-c1ah6) — the machine's attention ladder.
-			exhaustedSummary := fmt.Sprintf("review_loop_budget_exhausted (max=%d failures): %s",
-				queue.MaxReviewLoopFailures, rlResult.summary)
-			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s review-loop budget exhausted — closing with needs-attention (hk-c1ah6)\n",
-				beadID, runID.String())
-			bridge.SetRejectReason(exhaustedSummary)
-			bridge.Feed(ctx, runexec.Event{
-				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeBudget,
-				NeedsAttention: true, Detail: exhaustedSummary,
-			})
-			return bridge.Success()
-		}
-		// Budget not exhausted (or no queue): reopen the bead for retry.
-		bridge.Feed(ctx, runexec.Event{
-			Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure,
-			Reason: rlResult.summary, Detail: rlResult.summary,
-		})
-		return bridge.Success()
-
 	case core.WorkflowModeDot:
 		// DOT workflow mode: load + validate the .dot artifact, then hand the
 		// validated graph to the cascade driver (driveDotWorkflow, dot_cascade.go)
@@ -3818,8 +3720,8 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// Graph source resolution uses preloadedDotGraph (Tier 3: embedded) when
 		// already set by the pre-switch block; otherwise resolves Tier 1/2 from
 		// an explicit ref or <projectDir>/workflow.dot (three-tier spec hk-30vlb).
-		// Embedded-load failure was already handled above: workflowMode was changed
-		// to WorkflowModeReviewLoop and this case is not reached.
+		// Embedded-load failure was already handled above: the run was failed and
+		// the bead reopened with a workflow_load reason, so this case is not reached.
 		var graph *dot.Graph
 		if preloadedDotGraph != nil {
 			// Tier 3: embedded standard-bead.dot (already parsed and validated).
@@ -3916,16 +3818,27 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			},
 			MergeTarget: mergeTarget, // hk-lgykq: per-bead integration-branch landing target (resolved baseBranch w/ fallback)
 			SkipGate:    true,
+			// hk-f9xzs: classify transient merge failures (rebase_conflict,
+			// non_ff_merge, merge_fmt_failed) as retryable so the spine spends the
+			// 3-attempt budget runBridgeConfig now grants DOT. Inherited from the
+			// retired review-loop path, which was the only mode that carried it;
+			// the rationale is on runBridgeConfig.
+			Retryable: runmerge.IsRetryableReason,
 			// hk-tnui: stamp Reviewed-By / Review-Verdict trailers on the HEAD
-			// commit before the FF merge, mirroring the review-loop path. LOCAL
-			// runs only (rbc == nil): remote runs keep the trailer injection
-			// deferred (same FLAGGED note as the review-loop path).
+			// commit before the FF merge. LOCAL runs only (rbc == nil): remote runs
+			// keep the trailer injection deferred (FLAGGED).
+			//
+			// Re-amends before EACH retry rather than only the first (RF :3899):
+			// now that merges retry, the prior inner rebase may have rewritten HEAD,
+			// so a once-only amend would leave the retried merge carrying no
+			// trailers. The amend is idempotent.
 			AmendTrailers: func(c context.Context, retry int) {
-				if retry > 0 || dotResult.approveVerdict == nil || rbc != nil {
+				if dotResult.approveVerdict == nil || rbc != nil {
 					return
 				}
 				if amendErr := runmerge.AppendReviewTrailersToHEAD(c, wtPath, dotResult.approveVerdict); amendErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
+					fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.AppendReviewTrailersToHEAD (dot, merge retry %d) bead %s: %v (non-fatal)\n",
+						retry, beadID, amendErr)
 				}
 			},
 			// hk-whru3: advisory-RC + rebase_dropped_commits → work already on
@@ -3978,6 +3891,36 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			if tipSHA, tipErr := gitprobe.ResolveWorktreeHEADVia(tipResolveCtx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
 				runTipSHA = &tipSHA
 			}
+
+			// Retry-spend budget (hk-c1ah6). Inherited from the retired review-loop
+			// path, which was its only caller: without it a bead that cannot pass
+			// review is reopened and re-dispatched forever, paying for a fresh set
+			// of sessions each time. The ladder charges the per-item failure counter
+			// and, once the budget is spent, closes the bead flagged
+			// needs-attention instead of reopening it — so a human sees it and the
+			// spend stops.
+			//
+			// Charged only when the cascade asked for attention: a transient or
+			// structural failure that is not the bead's fault should not consume a
+			// budget meant for "this work keeps failing review".
+			budgetExhausted := false
+			if dotResult.needsAttention {
+				budgetExhausted = handles.Budget.ChargeReviewLoopFailure(
+					ctx, queueName, queueID, queueGroupIndex, queueItemIndex, beadID)
+			}
+			if budgetExhausted {
+				exhaustedSummary := fmt.Sprintf("run_budget_exhausted (max=%d failures): %s",
+					queue.MaxReviewLoopFailures, dotResult.summary)
+				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s retry budget exhausted — closing with needs-attention (hk-c1ah6)\n",
+					beadID, runID.String())
+				bridge.SetRejectReason(exhaustedSummary)
+				bridge.Feed(ctx, runexec.Event{
+					Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeBudget,
+					NeedsAttention: true, Detail: exhaustedSummary,
+				})
+				break
+			}
+
 			bridge.Feed(ctx, runexec.Event{
 				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure,
 				Reason: dotResult.summary, Detail: dotResult.summary,

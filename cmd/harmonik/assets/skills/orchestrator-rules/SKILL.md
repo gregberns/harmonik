@@ -64,7 +64,7 @@ dispatch → **harmonik-dispatch**, comms → **agent-comms**, beads → **beads
 
 **FRICTION GETS PRIORITY (HARD RULE).** Any bead labeled `phase2-dogfood-friction` MUST be filed at P1 minimum; friction beads jump ahead of substantive feature work.
 
-**PHASE-3 DOT IS THE NEAR-TERM ENDGAME.** DOT-defined bead-process workflow is the planned replacement for `--review-loop`.
+**PHASE-3 DOT IS THE NEAR-TERM ENDGAME.** DOT-defined bead-process workflow has REPLACED `--review-loop`, which is retired.
 
 **KERF IS IN BETA.** Use `kerf next` as the primary dispatch surface but expect friction (`kerf next` may report empty for works lacking `bead_filter` clauses; `kerf triage` mixes good and phantom suggestions). Log issues to `docs/kerf-beta-feedback.md`.
 
@@ -93,7 +93,7 @@ done
 
 **THE DAEMON OWNS TERMINAL TRANSITIONS (HARD RULE).** Leave beads `open`; the daemon owns claim/close/reopen. Do NOT `br update --status=in_progress` before submit — it triggers a false `bead_already_dispatched`. NEVER pre-assign a dispatchable bead (`--assignee` on the EPIC only). See **beads-cli** for the read/write discipline.
 
-**EVERY BEAD GETS A REVIEW PHASE (HARD RULE).** Dispatch includes a review phase on every batch by default. Opt out only explicitly (`--no-review-loop`).
+**EVERY BEAD GETS A REVIEW PHASE (HARD RULE).** Dispatch includes a review phase on every batch by default — the dot default runs the embedded `standard-bead.dot`, which carries a reviewer node on the sole inbound edge to `close`, so it is reviewed by construction. Opting out is an explicit, per-bead `--workflow-mode single`; the old `--no-review-loop` spelling is retired and now exits 1.
 
 **DON'T LET BEADS CLOSE WITHOUT IMPL.** Reopen any bead marked closed-without-commit (`br update <id> --status=open`). Implementers sometimes `br close` then exit without producing code.
 

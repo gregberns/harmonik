@@ -241,19 +241,25 @@ func cmqBuildActiveWaveQueue(name, queueID string, beadIDs ...core.BeadID) *queu
 // daemon writes ONLY into the reviewer's isolated worktree:
 //
 //   - Implementer phase (review-target.md absent): invoke the twin with
-//     --scenario single-happy-path. The twin emits the agent protocol events
-//     without making any git commits; the no-commit guard (hk-mmh8f) is
-//     satisfied by the emptyCommitWorktreeFactory injected via
-//     WithWorktreeFactory, which pre-commits before the handler binary starts,
-//     serialising commits and eliminating the concurrent-merge race.
+//     --scenario commit-on-cue-startup-delay, which git-commits a timestamped
+//     sentinel. The commit must be the twin's OWN: dot checks HEAD advance per
+//     node, and the pre-commit that emptyCommitWorktreeFactory lands before the
+//     handler starts does not count for that check.
 //   - Reviewer phase (review-target.md present): write an APPROVE verdict to
-//     $PWD/.harmonik/review.json so the review loop terminates with success →
-//     run_completed + bead closed. The reviewer must NOT commit (its worktree
-//     gets no pre-commit from the factory).
+//     $PWD/.harmonik/review.json so the review cycle terminates with success →
+//     run_completed + bead closed. The reviewer must NOT commit.
 //
-// Before hk-81n9r these runs were single-mode (no reviewer); hk-81n9r made them
-// review-loop, so the reviewer phase ran single-happy-path too, wrote no
-// verdict, and tripped "verdict absent at iteration 1".
+// History, because this scenario has been mis-set twice. Before hk-81n9r these
+// runs were single-mode (no reviewer); hk-81n9r made them review-loop, so the
+// reviewer phase ran single-happy-path too, wrote no verdict, and tripped
+// "verdict absent at iteration 1". Then the review-loop retirement (EM-015d)
+// moved them to dot while leaving the implementer on single-happy-path — which
+// does not advance HEAD per node, so every implementer node failed with
+// "exited without advancing HEAD", the queue paused at fail_count=2, and the
+// reviewer never ran at all. That regression hid inside a pass/fail comparison
+// because this test was already red at base for an unrelated third-bead
+// timeout: it went from 2-of-3 beads completing to 0-of-3 while staying "still
+// failing". Compare completion counts here, not pass/fail.
 func cmqTwinWrapperScript(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -265,7 +271,7 @@ if [ -f "$PWD/.harmonik/review-target.md" ]; then
   printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"cmq review-loop happy path"}' > "$PWD/.harmonik/review.json"
   exit 0
 fi
-exec "` + twinPath + `" --scenario single-happy-path
+exec "` + twinPath + `" --scenario commit-on-cue-startup-delay --worktree-path "$PWD"
 `
 	//nolint:gosec // G306: script is test-only; chmod 0755 required for execution
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o755), "cmqTwinWrapperScript: WriteFile")
@@ -539,6 +545,13 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
+	// Install the implementer→reviewer graph cmqTwinWrapperScript is written for
+	// (it is phase-aware and writes an APPROVE verdict when review-target.md
+	// appears). Without this, dot resolution falls through to the embedded
+	// standard-bead.dot, whose commit_gate node runs go build / go vet inside a
+	// fixture worktree that is not a Go module.
+	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
+
 	cfg := daemon.Config{
 		ProjectDir:            projectDir,
 		JSONLLogPath:          jsonlPath,
@@ -551,7 +564,7 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		SkipRestartBackoff:    true,
 		AgentReadyTimeout:     5 * time.Second,
 		LogWriter:             testLogWriter{t: t},
-		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
 	// Launch daemon.StartForTesting with:
@@ -798,6 +811,13 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	defer loopCancel()
 
+	// Install the implementer→reviewer graph cmqTwinWrapperScript is written for
+	// (it is phase-aware and writes an APPROVE verdict when review-target.md
+	// appears). Without this, dot resolution falls through to the embedded
+	// standard-bead.dot, whose commit_gate node runs go build / go vet inside a
+	// fixture worktree that is not a Go module.
+	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
+
 	cfg := daemon.Config{
 		ProjectDir:            projectDir,
 		JSONLLogPath:          jsonlPath,
@@ -810,7 +830,7 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 		SkipRestartBackoff:    true,
 		AgentReadyTimeout:     10 * time.Second,
 		LogWriter:             testLogWriter{t: t},
-		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
 	// Launch daemon.Start in a goroutine.

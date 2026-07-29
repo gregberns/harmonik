@@ -462,7 +462,7 @@ func TestBranchGuard_BootValidation_RefusesEmptyTargetUnderForbid(t *testing.T) 
 	}
 
 	cfg := daemon.Config{
-		WorkflowModeDefault:      core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:      core.WorkflowModeDot,
 		ForbidUnprotectedDefault: true,
 		TargetBranch:             "", // deliberately absent → resolves to "main", which is the default
 	}

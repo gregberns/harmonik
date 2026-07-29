@@ -126,7 +126,7 @@ func sockpartRunDaemon(t *testing.T, projectDir, jsonlPath string, waitFor time.
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
 		BrPath:              sockpartStubBr(t), // non-empty so the work loop is reached
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 		LogWriter:           logBuf,
 	}
 	ctx, cancel := context.WithCancel(context.Background())

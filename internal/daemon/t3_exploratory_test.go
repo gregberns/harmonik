@@ -228,7 +228,7 @@ func TestT3_DoubleInvocation(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       slowHandler,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// Start daemon 1 in background — it will pick up the bead and block on slow handler.
@@ -298,7 +298,7 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       slowHandler,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// ctx cancellation replaces syscall.Kill self-signal (hk-i4mtq). Testing ctx
@@ -416,7 +416,7 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       slowHandler,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// ctx cancellation replaces syscall.Kill self-signal (hk-i4mtq).
@@ -527,7 +527,7 @@ func TestT3_StalePidfile(t *testing.T) {
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
 		BrPath:              "", // no work loop; just test pidfile acquisition
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -580,7 +580,7 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
 		BrPath:              "", // no work loop; just orphan sweep on startup
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

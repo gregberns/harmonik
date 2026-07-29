@@ -433,13 +433,20 @@ problem):
   red at HEAD, so the oracle is differential, not zero.** Capture a before-set with the identical
   command, then `comm -13`.
 
-**The one finding worth not losing.** `TestThroughput_TenBeadsAtMaxFour` was chased to ground: it fails
-5/5 *because* box load is sustained, not because product code regressed. Every extra `run_started`
-envelope carries a **distinct run_id** with `envelope.run_id == payload.run_id` — no double-emit. The
-extra events are legitimate re-dispatches of beads whose fixture handlers timed out under CPU
-starvation, ~26 of 50 beads re-running exactly once across five iterations. **The emission invariant is
-intact; the test's `exactly 10` assertion encodes a first-try-success assumption that only holds with
-spare CPU headroom.** That is the shape of the whole family: the assertions encode scheduling luck.
+**The one finding worth not losing.** `TestThroughput_TenBeadsAtMaxFour` was chased to ground: every
+extra `run_started` envelope carries a **distinct run_id** with `envelope.run_id == payload.run_id` — no
+double-emit. The extra events are legitimate re-dispatches of beads whose fixture handlers timed out,
+~26 of 50 beads re-running exactly once across five iterations. **The emission invariant is intact; the
+test's `exactly 10` assertion encodes a first-try-success assumption that only holds with spare CPU
+headroom.** That is the shape of the whole family: the assertions encode scheduling luck.
+
+> **⚠ RE-OPEN THE CAUSE, 2026-07-29.** The *invariant* half above is confirmed. The **CPU-starvation
+> mechanism is not.** Re-measured on an idle box (load 2.8 across 10 cores), the test still produces
+> **exactly the same `got 16`** — so "sustained box load" cannot be the explanation, even though the
+> emission invariant genuinely holds. This run also settles two conflicting prior signatures in favour
+> of `got 16` (the `ratio` line passes at 0.44 and is a `t.Logf`, not the failure). Something
+> deterministic is causing ~6 re-dispatches regardless of load. Treat the prior ENV/LOAD-FLAKE label as
+> **right about the invariant, unproven about the cause.**
 
 **Two traps that invert the answer if you get them wrong:**
 
@@ -463,6 +470,27 @@ spare CPU headroom.** That is the shape of the whole family: the assertions enco
   2026-07-29: `go test -tags scenario ./internal/daemon/` yields **eight** failures where the untagged
   run yields one. This is the same invisibility that made "does EM015e fail or never run?" unanswerable
   from the tree for days. §5.1's gate is the fix; this section is why it matters.
+  **Root cause established 2026-07-29: no prior assessment ever ran `go test -tags scenario` on this
+  package at all.** The P2 recipes only `go vet`ed it, and `.github/workflows/scenario.yml` carries
+  `continue-on-error: true`. The tier was not neglected — it was never looked at.
+
+- **Three of these tests print an unconditional `OK` / `PASS`-shaped `t.Logf` while failing** —
+  `TestBranchGuard_FailClosed_MergeGuardBackstop`, `TestScenario_RestartRecovery_QM002bDeadlock`, and
+  `TestScenario_MultiBead_SerializedNCompletion`. Skim-reading their output tells you the opposite of
+  the truth. Deleting those log lines is a five-minute change with outsized payoff, and it belongs with
+  this work.
+
+**Dispositions, measured 2026-07-29 — all seven are pre-existing; the tier blocks nothing in Phase 3:**
+
+| Test | Verdict |
+|---|---|
+| `BranchGuard_FailClosed_MergeGuardBackstop` | **False red.** Guard did not fail open — the ref that moved was the *unprotected* `integration` branch the bead asks for. Premise went stale 2026-07-06 (`hk-lgykq`) when merge-target resolution moved to per-bead `lands_on` and got **stricter**. Open P0 `hk-zobns` is a mis-diagnosis. Real cost is three weeks with no coverage of that backstop. |
+| `RemoteSubstrate_Localhost_DOT_E2E` | **False red, environmental.** `t.TempDir()` + a 45-char test name pushes `daemon.sock` to 131 bytes and `ValidateSocketPathLength` correctly refuses. `TMPDIR=/tmp/h` → **PASS in 6.95s**. **The DOT path is healthy** — full remote lifecycle over SSH lands on main and reaches origin. One-line `TMPDIR` pin. |
+| `RestartRecovery_QM002bDeadlock` | **False red.** Behaviour changed correctly under `hk-qkahq`; the wedge is still prevented via `paused-by-failure` + QM-027. |
+| `EM015e_NoProgress_ReviewerNotLaunched` | **True red.** Dead emitter. Dies with `reviewloop.go`; property survives on DOT. |
+| `MultiBead_SerializedNCompletion` | **True red — genuine lost-commit race.** 5/5 including isolated on a quiet box; *which* beads lose varies. Files are non-colliding by construction, so a merge race is the only explanation. → `hk-co8g8`. |
+| `ConcurrentMultiQueue_N2_HappyPath` | **True red.** `structural / protocol_mismatch` on the 2nd and 3rd dispatch — a deterministic ordinal, not load. → `hk-t2d7n`. |
+| `T6_10BeadSequentialDrain` | **Confirmed load flake.** Passes 3/3 on a quiet box at both commits. No action. |
 - **The assertions should stop encoding scheduling luck.** The durable fix is not to re-diagnose these
   every quarter but to make them assert the *invariant* rather than the *count* — for Throughput, that
   distinct-run_id-per-dispatch with no double-emit is exactly the property that survived, and exactly

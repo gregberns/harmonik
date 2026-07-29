@@ -102,12 +102,12 @@ func WithSpendMeterObserver(fn func(*DaemonSpendMeter)) TestOption {
 // inject a bus observer or a stub br-adapter factory.
 //
 // Empty-cfg seam (hk-i0hor): when the caller leaves cfg.WorkflowModeDefault
-// unset, StartForTesting defaults it to core.WorkflowModeReviewLoop. Production
+// unset, StartForTesting defaults it to core.WorkflowModeDot. Production
 // Start (PL-004a, hk-81n9r) fail-closes on an empty WorkflowModeDefault and
 // returns before any pre-Seal subscription wiring — including the busObserver /
 // spendMeterObserver hooks. Unit-test-mode callers (ProjectDir:"") that only
 // exercise the bus-wiring path should not have to repeat
-// `WorkflowModeDefault: core.WorkflowModeReviewLoop` boilerplate just to reach
+// `WorkflowModeDefault: core.WorkflowModeDot` boilerplate just to reach
 // those hooks; the harness supplies the sensible default here so an otherwise
 // empty cfg fires the observers. This does NOT relax production Start, which
 // still validates WorkflowModeDefault itself.
@@ -121,7 +121,7 @@ func WithSpendMeterObserver(fn func(*DaemonSpendMeter)) TestOption {
 // Bead ref: hk-j192n, hk-i0hor.
 func StartForTesting(ctx context.Context, cfg Config, opts ...TestOption) error {
 	if cfg.WorkflowModeDefault == "" {
-		cfg.WorkflowModeDefault = core.WorkflowModeReviewLoop
+		cfg.WorkflowModeDefault = core.WorkflowModeDot
 	}
 	var hooks daemonTestHooks
 	for _, o := range opts {

@@ -57,8 +57,11 @@ func ValidateWorkflowMode(mode core.WorkflowMode) error {
 	if mode == "" {
 		return fmt.Errorf("WorkflowModeDefault must be set (PL-004a); set cfg.WorkflowModeDefault = core.WorkflowModeDot for the standard dot default")
 	}
+	if string(mode) == core.WorkflowModeRetiredReviewLoop {
+		return fmt.Errorf("workflow_mode_default %q: RETIRED (EM-015d); use %q", mode, core.WorkflowModeDot)
+	}
 	if !mode.Valid() {
-		return fmt.Errorf("invalid workflow_mode_default %q: must be one of single, review-loop, dot (PL-004a)", mode)
+		return fmt.Errorf("invalid workflow_mode_default %q: must be one of single, dot (PL-004a)", mode)
 	}
 	return nil
 }

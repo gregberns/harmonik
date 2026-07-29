@@ -404,6 +404,11 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 	t.Logf("queueSubmitDispatch idle-wake: seeded bead %s", beadID)
 
 	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
+	// Dispatch in dot mode over the implementer→reviewer graph the twin
+	// wrapper models. The embedded standard-bead.dot default would run its
+	// commit_gate (go build/vet/tests) inside this three-file temp worktree
+	// and fail every run for reasons unrelated to queue dispatch.
+	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
@@ -435,7 +440,7 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 		NoAutoPull:            true, // queue-only dispatch; prevents br-ready pre-emption (hk-24xn1)
 		QueueStore:            qs,
 		LogWriter:             testLogWriter{t: t},
-		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
 	startDone := make(chan error, 1)
@@ -561,6 +566,11 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 	t.Logf("queueSubmitDispatch deferred-undefer: A=%s B=%s (B depends on A)", aID, bID)
 
 	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
+	// Dispatch in dot mode over the implementer→reviewer graph the twin
+	// wrapper models. The embedded standard-bead.dot default would run its
+	// commit_gate (go build/vet/tests) inside this three-file temp worktree
+	// and fail every run for reasons unrelated to queue dispatch.
+	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
@@ -591,7 +601,7 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 		NoAutoPull:            true, // queue-only; prevents br-ready from racing the submit
 		QueueStore:            qs,
 		LogWriter:             testLogWriter{t: t},
-		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
 	startDone := make(chan error, 1)

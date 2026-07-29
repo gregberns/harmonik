@@ -109,7 +109,7 @@ func TestScenario_PL001_SecondDaemonPidfileLocked(t *testing.T) {
 	cfg := daemon.Config{
 		ProjectDir:          proj.projectDir,
 		JSONLLogPath:        proj.jsonlPath,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	type startResult struct{ err error }
@@ -187,7 +187,7 @@ func TestScenario_PL002_StalePidfileRecovery(t *testing.T) {
 	cfg := daemon.Config{
 		ProjectDir:          proj.projectDir,
 		JSONLLogPath:        proj.jsonlPath,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 	startErr := daemon.Start(t.Context(), cfg)
 

@@ -262,7 +262,13 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 		SkipRestartBackoff:    true,
 		AgentReadyTimeout:     agentReadyTimeout,
 		LogWriter:             rcmLogWriter{t: t},
-		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+		// single, not dot: the fixture's twin runs ONE implementer phase
+		// (TwinScenario, e.g. "single-happy-path") and never writes a reviewer
+		// verdict. This was review-loop until that mode was retired (EM-015d) —
+		// under dot the graph's reviewer node finds no verdict and every run
+		// fails, which says nothing about the concurrency this fixture exists to
+		// test. single is the mode whose shape the twin actually models.
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 	if cfg.Substrate != nil {
 		daemonCfg.Substrate = cfg.Substrate

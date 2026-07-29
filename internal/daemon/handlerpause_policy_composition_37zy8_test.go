@@ -38,7 +38,7 @@ func TestDaemonStart_HandlerPausePolicySubscribedInProductionComposition(t *test
 		// Unit-test mode: no ProjectDir, no BrPath, no JSONL log.
 		// daemon.Start skips pidfile, orphan sweep, socket, and work loop.
 		// The bus + policy subscription path still runs in full.
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	if err := daemon.StartForTesting(context.Background(), cfg,

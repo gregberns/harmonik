@@ -806,7 +806,7 @@ func TestScenario_CaptainCrewE2E_hkzi4ej(t *testing.T) {
 		SkipRestartBackoff:    true,
 		AgentReadyTimeout:     5 * time.Second,
 		LogWriter:             testLogWriter{t: t},
-		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
 	// The injected merge exclusion domain (mergeq) is Started here (with a

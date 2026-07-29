@@ -567,3 +567,41 @@ func findMainRepoRoot(start string) string {
 		dir = parent
 	}
 }
+
+// WriteReviewLoopWorkflowDot installs the canonical implementer→reviewer graph
+// (specs/examples/review-loop.dot) as <projectDir>/workflow.dot, so a fixture
+// dispatched in dot mode walks that two-node topology instead of the embedded
+// standard-bead.dot.
+//
+// Why fixtures need this: standard-bead.dot's commit_gate node shells out to
+// `go build` / `go vet` / scripts/scenario-gate.sh inside the run's worktree.
+// A scenario fixture's worktree is a three-file temp git repo, not a Go module,
+// so that gate fails and every run reopens — which says nothing about the queue
+// mechanics the fixture exists to test. review-loop.dot has no gate: it is
+// exactly the implementer→reviewer→close shape the phase-aware twin wrappers
+// model, and (per its own header) it is the graph the retired review-loop
+// driver was a hand-written particular of.
+//
+// The file is read from the repo, not embedded, so it cannot drift from the
+// spec example it names.
+func WriteReviewLoopWorkflowDot(t *testing.T, projectDir string) {
+	t.Helper()
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("WriteReviewLoopWorkflowDot: runtime.Caller failed")
+	}
+	// thisFile = <root>/internal/daemon/scenariotest/scenariotest.go
+	root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
+	src := filepath.Join(root, "specs", "examples", "review-loop.dot")
+
+	//nolint:gosec // G304: path derived from this source file's location, not user input
+	content, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("WriteReviewLoopWorkflowDot: read %s: %v", src, err)
+	}
+	dst := filepath.Join(projectDir, "workflow.dot")
+	if err := os.WriteFile(dst, content, 0o644); err != nil {
+		t.Fatalf("WriteReviewLoopWorkflowDot: write %s: %v", dst, err)
+	}
+}

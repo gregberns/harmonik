@@ -106,7 +106,7 @@ func TestDaemonStart_BrSchemaMismatch_EmitsDivergenceInconclusive(t *testing.T) 
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
 		BrPath:              "/stub/br", // non-empty so all 3 sites run; factory overrides NewForProject
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	cancel, done := recwireupFixture378StartDaemon(t, cfg,
@@ -175,7 +175,7 @@ func TestDaemonStart_BrSchemaMismatch_DaemonProceedsQueueless(t *testing.T) {
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
 		BrPath:              "/stub/br",
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	cancel, done := recwireupFixture378StartDaemon(t, cfg,

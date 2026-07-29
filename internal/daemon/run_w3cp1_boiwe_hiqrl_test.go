@@ -4,7 +4,7 @@ package daemon_test
 //
 //	hk-w3cp1  harmonik run --beads id1,id2 --max-concurrent N
 //	hk-boiwe  harmonik run --context <inline|@file>
-//	hk-hiqrl  harmonik run --review-loop
+//	hk-hiqrl  queue.Item.WorkflowMode (tier-0 per-item mode override)
 //
 // These tests exercise the workloop-level behaviour that the three CLI flags
 // produce via queue.Item.Context and queue.Item.WorkflowMode fields.
@@ -347,30 +347,43 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// hk-hiqrl — --review-loop flag sets WorkflowModeReviewLoop
+// hk-hiqrl — the tier-0 per-item queue.Item.WorkflowMode override
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// These tests were written for the --review-loop flag, which set
+// queue.Item.WorkflowMode = "review-loop". Both flag and mode are retired
+// (EM-015d), but the field they exercised — the tier-0 per-item mode override —
+// is live, so the tests carry a valid mode now instead of being deleted.
 
-// TestReviewLoopFlag_ItemWorkflowModeField verifies that queue.Item.WorkflowMode
-// is set to "review-loop" when the --review-loop flag is used, and that the
-// field survives JSON round-trip.
+// TestQueueItemWorkflowMode_Field verifies that queue.Item.WorkflowMode carries a
+// declared WorkflowMode and survives a JSON round-trip, and that the retired
+// "review-loop" value is NOT accepted as a tier-0 override (beadRunOne applies
+// the per-item mode only when candidate.Valid(), so a stale queue file degrades
+// to the resolved mode instead of wedging).
 //
 // Bead ref: hk-hiqrl.
-func TestReviewLoopFlag_ItemWorkflowModeField(t *testing.T) {
+func TestQueueItemWorkflowMode_Field(t *testing.T) {
 	t.Parallel()
 
 	item := queue.Item{
 		BeadID:       "hk-hiqrl-item-001",
 		Status:       queue.ItemStatusPending,
-		WorkflowMode: string(core.WorkflowModeReviewLoop), // set by --review-loop
+		WorkflowMode: string(core.WorkflowModeDot),
 	}
 
-	if item.WorkflowMode != "review-loop" {
-		t.Errorf("WorkflowMode = %q; want %q", item.WorkflowMode, "review-loop")
+	if item.WorkflowMode != "dot" {
+		t.Errorf("WorkflowMode = %q; want %q", item.WorkflowMode, "dot")
 	}
 
 	// Validate it is a recognised WorkflowMode constant.
 	if mode := core.WorkflowMode(item.WorkflowMode); !mode.Valid() {
 		t.Errorf("WorkflowMode %q is not a valid core.WorkflowMode", item.WorkflowMode)
+	}
+
+	// A queue file written before the retirement must not pass the tier-0
+	// validity gate.
+	if core.WorkflowMode(core.WorkflowModeRetiredReviewLoop).Valid() {
+		t.Error("retired review-loop is still a valid tier-0 per-item override; want rejected")
 	}
 
 	// JSON round-trip.
@@ -382,21 +395,21 @@ func TestReviewLoopFlag_ItemWorkflowModeField(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if got.WorkflowMode != string(core.WorkflowModeReviewLoop) {
-		t.Errorf("WorkflowMode round-trip: got %q, want %q", got.WorkflowMode, core.WorkflowModeReviewLoop)
+	if got.WorkflowMode != string(core.WorkflowModeDot) {
+		t.Errorf("WorkflowMode round-trip: got %q, want %q", got.WorkflowMode, core.WorkflowModeDot)
 	}
 }
 
-// TestReviewLoopFlag_WorkloopOverridesMode verifies that when queue.Item.WorkflowMode
-// is set to "review-loop", the workloop routes the bead through review-loop mode
-// (enters runReviewLoop) and the bead reaches a terminal state (closed or reopened).
+// TestQueueItemWorkflowMode_WorkloopHonoursItemMode verifies that when
+// queue.Item.WorkflowMode is set, the workloop dispatches the bead in that mode
+// and the bead reaches a terminal state (closed or reopened).
 //
 // The test wires both CancelOnQueueDrain (success path) and CancelOnQueueExit
 // (failure/error path) so the loop exits on either outcome; the key assertion is
 // that the bead transitions to a terminal state.
 //
 // Bead ref: hk-hiqrl.
-func TestReviewLoopFlag_WorkloopOverridesMode(t *testing.T) {
+func TestQueueItemWorkflowMode_WorkloopHonoursItemMode(t *testing.T) {
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -419,7 +432,7 @@ func TestReviewLoopFlag_WorkloopOverridesMode(t *testing.T) {
 					{
 						BeadID:       beadID,
 						Status:       queue.ItemStatusPending,
-						WorkflowMode: string(core.WorkflowModeReviewLoop), // hk-hiqrl
+						WorkflowMode: string(core.WorkflowModeDot), // hk-hiqrl
 					},
 				},
 				CreatedAt: now,
@@ -429,7 +442,7 @@ func TestReviewLoopFlag_WorkloopOverridesMode(t *testing.T) {
 
 	bus := &stubEventCollector{}
 
-	// Wire both cancel funcs: the review-loop bead may succeed (drain) or fail
+	// Wire both cancel funcs: the bead may succeed (drain) or fail
 	// (exit/error path). Either cancels exitCtx so the loop exits promptly.
 	exitCtx, cancelExit := context.WithCancel(context.Background())
 
@@ -439,9 +452,9 @@ func TestReviewLoopFlag_WorkloopOverridesMode(t *testing.T) {
 
 	// The real hookSessionStore installed by ExportedWorkLoopDeps will wait up
 	// to stopHookGrace (3s) in WaitForOutcome. The handler exits 0; without a
-	// real verdict file the review loop exits via its error path and reopens
+	// real verdict file the run exits via its error path and reopens
 	// the bead. Either closed or reopened is acceptable: both confirm the bead
-	// reached a terminal state via review-loop dispatch (hk-ngw3d).
+	// reached a terminal state via per-item-mode dispatch (hk-ngw3d).
 	p := daemon.WorkLoopDepsParams{
 		BrAdapter:          ledger,
 		Bus:                bus,
@@ -476,7 +489,7 @@ func TestReviewLoopFlag_WorkloopOverridesMode(t *testing.T) {
 			t.Error("bead neither closed nor reopened; expected at least one terminal transition")
 		}
 	case <-time.After(25 * time.Second):
-		t.Fatal("runWorkLoop did not exit for review-loop bead")
+		t.Fatal("runWorkLoop did not exit for the per-item-mode bead")
 	}
 }
 

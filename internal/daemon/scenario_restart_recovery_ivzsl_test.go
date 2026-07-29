@@ -439,7 +439,7 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		SkipBrHistoryRotation: true,
 		SkipRestartBackoff:    true,
 		LogWriter:             testLogWriter{t: t},
-		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
 	// Launch daemon.Start in a goroutine.

@@ -198,7 +198,7 @@ func TestScenario_Fix2_SocketBoundBeforeTwin(t *testing.T) {
 		ProjectDir:          proj.projectDir,
 		JSONLLogPath:        proj.jsonlPath,
 		BrPath:              "", // no work loop — we only test socket binding
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	cancel, done := scenarioFixtureStartDaemon(t, cfg)

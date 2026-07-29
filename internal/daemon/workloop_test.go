@@ -263,7 +263,7 @@ func TestDaemonStart_WorkLoopSkippedWithNoBrPath(t *testing.T) {
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
 		BrPath:              "", // skip work loop
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// daemon.Start should return promptly (no blocking work loop).

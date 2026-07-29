@@ -1056,7 +1056,12 @@ func harnessApplyFixtureFiles(projectRoot string, files map[string]scenario.File
 // and seeds it into <projectRoot>/.harmonik/workflow.dot so the daemon picks
 // it up at startup when WorkflowModeDefault=dot. Returns core.WorkflowModeDot
 // on success. When sf.WorkflowPath is nil (workflow_id case), returns
-// core.WorkflowModeReviewLoop with no filesystem mutation.
+// core.WorkflowModeDot with no filesystem mutation, leaving the daemon on its
+// own default resolution.
+//
+// This branch is DORMANT: every scenario definition under scenarios/ declares a
+// workflow_path. It returned core.WorkflowModeReviewLoop until that mode was
+// retired (EM-015d).
 //
 // Resolution order per specs/scenario-harness.md §6.1 WorkflowPath:
 //
@@ -1069,7 +1074,7 @@ func harnessApplyWorkflowDOT(
 	sf scenario.ScenarioFile,
 ) (core.WorkflowMode, error) {
 	if sf.WorkflowPath == nil {
-		return core.WorkflowModeReviewLoop, nil
+		return core.WorkflowModeDot, nil
 	}
 	dotRelPath := *sf.WorkflowPath
 	if !filepath.IsLocal(dotRelPath) {

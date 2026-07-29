@@ -204,7 +204,7 @@ func TestRC020a_DaemonStartEmitsStartupReconciliationStarted(t *testing.T) {
 		SkipWALCheckpoint:     true,
 		SkipBrHistoryRotation: true,
 		SkipRestartBackoff:    true,
-		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:   core.WorkflowModeDot,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

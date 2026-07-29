@@ -97,14 +97,21 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 		{
 			name:          "tier1 single label overrides daemon default",
 			beadLabels:    []string{"area:daemon", "workflow:single"},
-			daemonDefault: core.WorkflowModeReviewLoop,
+			daemonDefault: core.WorkflowModeDot,
 			wantMode:      core.WorkflowModeSingle,
 		},
 		{
-			name:          "tier1 review-loop label overrides daemon default",
-			beadLabels:    []string{"workflow:review-loop"},
-			daemonDefault: core.WorkflowModeSingle,
-			wantMode:      core.WorkflowModeReviewLoop,
+			// This case used to assert that workflow:review-loop resolved to
+			// review-loop at tier 1. Since the mode's retirement (EM-015d) the
+			// label names an unknown mode, so per BI-009a tier 1 is treated as
+			// absent, bead_label_conflict is emitted, and the walk continues —
+			// here to the tier-3 daemon default. A queue full of stale labels
+			// must degrade, never wedge.
+			name:              "tier1 retired review-loop label is unknown: conflict, falls to tier3",
+			beadLabels:        []string{"workflow:review-loop"},
+			daemonDefault:     core.WorkflowModeSingle,
+			wantMode:          core.WorkflowModeSingle,
+			wantConflictEvent: true,
 		},
 		{
 			name:          "tier1 dot label overrides daemon default",
@@ -117,8 +124,8 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 		{
 			name:              "tier1 conflict multiple labels emits bead_label_conflict and falls to tier3",
 			beadLabels:        []string{"workflow:single", "workflow:review-loop"},
-			daemonDefault:     core.WorkflowModeReviewLoop,
-			wantMode:          core.WorkflowModeReviewLoop,
+			daemonDefault:     core.WorkflowModeDot,
+			wantMode:          core.WorkflowModeDot,
 			wantConflictEvent: true,
 		},
 		{
@@ -133,8 +140,8 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 		{
 			name:              "tier1 unknown mode value emits bead_label_conflict and falls to tier3",
 			beadLabels:        []string{"workflow:bogus"},
-			daemonDefault:     core.WorkflowModeReviewLoop,
-			wantMode:          core.WorkflowModeReviewLoop,
+			daemonDefault:     core.WorkflowModeDot,
+			wantMode:          core.WorkflowModeDot,
 			wantConflictEvent: true,
 		},
 		{
@@ -157,10 +164,16 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			wantMode:      core.WorkflowModeSingle,
 		},
 		{
-			name:          "tier3 daemon default review-loop when no bead label",
+			// This case used to assert a review-loop daemon default was honoured
+			// at tier 3. Since the retirement (EM-015d) that default is not a
+			// valid WorkflowMode, so tier 3 is skipped and the walk lands on the
+			// tier-4 dot fallback. (The daemon also refuses to boot with this
+			// default at all — bootconfig.ValidateWorkflowMode. This is the
+			// belt-and-braces resolution-layer half.)
+			name:          "tier3 retired review-loop daemon default is invalid: falls to tier4 dot",
 			beadLabels:    []string{"area:brcli"}, // non-workflow label; tier 1 absent
-			daemonDefault: core.WorkflowModeReviewLoop,
-			wantMode:      core.WorkflowModeReviewLoop,
+			daemonDefault: core.WorkflowMode(core.WorkflowModeRetiredReviewLoop),
+			wantMode:      core.WorkflowModeDot,
 		},
 		{
 			// EM-012a / hk-30vlb: when the daemon is configured with dot as the
@@ -273,9 +286,11 @@ func TestResolveWorkflowModeResultIsValidMode(t *testing.T) {
 		{nil, core.WorkflowMode("")},
 		{[]string{"workflow:single"}, core.WorkflowMode("")},
 		{[]string{"workflow:review-loop"}, core.WorkflowModeSingle},
-		{[]string{"workflow:dot"}, core.WorkflowModeReviewLoop},
-		{[]string{"workflow:bogus"}, core.WorkflowModeReviewLoop},
+		{[]string{"workflow:dot"}, core.WorkflowModeSingle},
+		{[]string{"workflow:bogus"}, core.WorkflowModeDot},
 		{[]string{"workflow:single", "workflow:review-loop"}, core.WorkflowModeDot},
+		// A stale review-loop daemon default must still resolve to a VALID mode.
+		{[]string{"area:core"}, core.WorkflowMode(core.WorkflowModeRetiredReviewLoop)},
 		{[]string{"area:core"}, core.WorkflowMode("")},
 	}
 

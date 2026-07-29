@@ -163,7 +163,7 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 	cfg := daemon.Config{
 		BrPath:              "", // no work loop; no bead ledger required
 		ProjectDir:          "", // no filesystem-dependent paths
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	startDone := make(chan error, 1)

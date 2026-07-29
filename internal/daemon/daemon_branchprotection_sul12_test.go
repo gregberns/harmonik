@@ -39,7 +39,7 @@ func TestDaemonStart_ForbidUnprotectedDefault_EmptyTargetBranch(t *testing.T) {
 	t.Parallel()
 
 	cfg := daemon.Config{
-		WorkflowModeDefault:      core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:      core.WorkflowModeDot,
 		ForbidUnprotectedDefault: true,
 		TargetBranch:             "", // deliberately absent
 	}
@@ -59,7 +59,7 @@ func TestDaemonStart_TargetBranchInProtectBranches(t *testing.T) {
 	t.Parallel()
 
 	cfg := daemon.Config{
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 		TargetBranch:        "main",
 		ProtectBranches:     []string{"main"},
 	}
@@ -79,7 +79,7 @@ func TestDaemonStart_DefaultTargetBranchInProtectBranches(t *testing.T) {
 	t.Parallel()
 
 	cfg := daemon.Config{
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeDot,
 		TargetBranch:        "", // resolves to "main"
 		ProtectBranches:     []string{"main"},
 	}
@@ -101,7 +101,7 @@ func TestDaemonStart_EmitsDaemonConfig(t *testing.T) {
 	t.Parallel()
 
 	cfg := daemon.Config{
-		WorkflowModeDefault:      core.WorkflowModeReviewLoop,
+		WorkflowModeDefault:      core.WorkflowModeDot,
 		TargetBranch:             "release",
 		ProtectBranches:          []string{"main"},
 		ForbidUnprotectedDefault: true,

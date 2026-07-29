@@ -1160,12 +1160,12 @@ func TestRunQueueSubmit_DefaultsToMain(t *testing.T) {
 // --beads workflow_mode stamping (hk-tldws)
 // ---------------------------------------------------------------------------
 
-// TestRunQueueSubmit_BeadsCarryWorkflowModeReviewLoop is the regression guard for
-// hk-tldws: items minted by `harmonik queue submit --beads` must carry
-// workflow_mode=review-loop in the serialized request so the queue.json record
-// is self-describing and durable (the daemon default may change; the item must
-// not silently inherit a different mode on daemon restart).
-func TestRunQueueSubmit_BeadsCarryWorkflowModeReviewLoop(t *testing.T) {
+// TestRunQueueSubmit_BeadsCarryEmptyWorkflowMode is the regression guard for
+// hk-tldws / hk-y3o51: items minted by `harmonik queue submit --beads` leave
+// workflow_mode empty in the serialized request so the item inherits the daemon
+// default, while an explicit --workflow-mode is stamped durably (see
+// TestRunQueueSubmit_BeadsWorkflowModeOverride).
+func TestRunQueueSubmit_BeadsCarryEmptyWorkflowMode(t *testing.T) {
 	t.Parallel()
 
 	projectDir := queueCliFixtureTempDir(t)
@@ -1220,7 +1220,7 @@ func TestRunQueueSubmit_BeadsCarryWorkflowModeReviewLoop(t *testing.T) {
 }
 
 // TestRunQueueSubmit_BeadsWorkflowModeOverride verifies that --workflow-mode single
-// overrides the review-loop default on minted items.
+// is stamped onto minted items, overriding the daemon default.
 func TestRunQueueSubmit_BeadsWorkflowModeOverride(t *testing.T) {
 	t.Parallel()
 

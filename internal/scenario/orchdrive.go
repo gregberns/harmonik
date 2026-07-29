@@ -77,7 +77,7 @@ type OrchestrationConfig struct {
 	KerfPath string
 
 	// WorkflowMode is the daemon workflow mode for this scenario run.
-	// When empty it defaults to core.WorkflowModeReviewLoop (PL-004a).
+	// When empty it defaults to core.WorkflowModeDot (PL-004a).
 	WorkflowMode core.WorkflowMode
 
 	// TimeoutSecs is the per-scenario wall-clock budget in seconds per
@@ -150,7 +150,10 @@ type OrchestrationConfig struct {
 func DriveOrchestration(ctx context.Context, cfg OrchestrationConfig) error {
 	mode := cfg.WorkflowMode
 	if mode == "" {
-		mode = core.WorkflowModeReviewLoop
+		// PL-004a: the daemon-level default is dot. This was review-loop until
+		// that mode was retired (EM-015d); it is a DORMANT default either way —
+		// every shipped scenario under scenarios/ declares a workflow_path.
+		mode = core.WorkflowModeDot
 	}
 
 	// Network sandbox enforcement (SH-028): when requested, verify the sandbox

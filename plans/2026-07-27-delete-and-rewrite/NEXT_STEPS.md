@@ -755,6 +755,27 @@ is now a *deletion*, not a rewrite, which cuts the two packages apart:
   with a `purity_test.go` and effects behind narrow ports, which is the right shape. But it is still
   unwired code, so it should arrive attached to the work that wires it, not ahead of it.
 
+> **⚠ CORRECTION, 2026-07-29 — the two bullets above were written on a false premise and are now moot.**
+> **Both packages were already in-tree**, not waiting on the integration branch: `internal/runloop/continuity`
+> and `internal/runloop/reviewcycle` were present at HEAD, and `continuity` arrived via a commit literally
+> titled *"feat(runloop): harvest continuity checkpoint kernel"*. The cherry-pick this item asks for had
+> **already been done** — the item was stale, and so was my reasoning about whether to do it.
+>
+> Measured state at the time of correction: **both had zero importers anywhere in the tree.** They were
+> unwired dead code, of exactly the kind Phase 1 removed ~225,000 lines of. The review-loop retirement
+> deleted both (~2,600 lines including their tests), which is the right call — `reviewcycle` is the
+> review-loop decision cycle by definition, and `continuity`'s own package doc frames it as *"the
+> review-loop implementer continuity checkpoint"*.
+>
+> **The design insight is still worth keeping even though the code is gone**: the minted-vs-captured
+> identity split is a real distinction that the live code does not model, and it maps directly onto the
+> codex/pi asymmetry in `ONE-OF-N-DRIFT.md` N3. Whoever works `hk-5sebh` should read `continuity.go` from
+> `origin/salvage/reviewloop-kernels-20260729` for the design, not to re-import the package.
+>
+> **Do not confuse these packages with the actually-wired resume path.** `hk-5sebh` is about
+> `persistClaudeSessionID` in `internal/daemon/sessioncontext_chb023.go`, which is live and separate.
+> Deleting these two kernels does not touch it.
+
 Recorded as a decision rather than an omission: if wiring `continuity` later proves wrong, the salvage
 branch above is the recovery path.
 

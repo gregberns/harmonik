@@ -62,7 +62,19 @@ For the running progress log / earlier milestones, see [ROADMAP.md](ROADMAP.md).
 
 ### 10 locked decisions (2026-04-19)
 
-(Unchanged — see prior STATUS.md versions in git history.)
+(Otherwise unchanged — see prior STATUS.md versions in git history. One decision has been narrowed since; it is recorded below rather than left to git archaeology, because the narrowing is the kind of thing an agent needs at boot and will not find by reading a diff.)
+
+**#4 (agent runner / tmux inspectability) — NARROWED 2026-07-28 by operator decision.** The decision reads *"Agent runner (S04): NTM-wrapped Go. Inspectability via tmux is a requirement, not a preference."* The operator reopened it and narrowed it:
+
+> *"If we get more flexibility from removing that, then do so. Seems like another 'crossed wires' issue where the underlying reasoning was lost. Maybe it was from before when not run as a daemon. Doesn't matter — but we should probably be able to run it any way."*
+
+Read the scope precisely, because the obvious misreading is wider than the decision:
+
+- **The daemon must be able to run WITHOUT tmux. tmux is NOT being removed.** It stays the default host and stays the way an operator inspects live agents. What went is the hard fail-fast on a missing `$TMUX` that made tmux the only possibility.
+- **A capability genuinely unavailable without tmux is announced loudly at boot and degraded honestly** — never faked, and never deferred to a crash on first dispatch. Silent degradation remains forbidden.
+- The full statement of the operator's reasoning is in [`plans/2026-07-27-delete-and-rewrite/CHARTER.md`](plans/2026-07-27-delete-and-rewrite/CHARTER.md) §3.
+
+Landed in code by `1f8781730`; the specs were amended to match on 2026-07-28 — `specs/process-lifecycle.md` v0.6.2 (PL-021a, PL-021b items 2 and 3, PL-028, PL-028b), `specs/workspace-model.md` v0.4.8 (WM-002a), `specs/execution-model.md` v0.9.5 (EM-015d-RIA), `specs/cognition-loop.md` v0.1.3 (CL-081).
 
 ### 4 candidate decisions (2026-04-20/21)
 

@@ -16,21 +16,27 @@ Found 2026-07-29 unless noted.
 
 ## Eliminated by planned work — do not fix these directly
 
+> **Count correction, 2026-07-29.** These two were measured when there were **five** agent-launch sites.
+> Deleting `reviewloop.go` removed two of them, so the live count is **three**: the single-mode tail in
+> `workloop.go`, the graph-node path in `dot_cascade_core.go`, and the graph-gate path in `dot_gate.go`.
+> The defects are unchanged in kind — the *coverage fractions* below are now 1-of-3, not 1-of-5.
+
 | What is wrong | When it goes away | Bead |
 |---|---|---|
-| **The credential guard covers 1 of 5 dispatch sites, and not the default one.** `d2RemoteAPIKeyRefusal` runs only on the single-mode path. DOT is the default and carries essentially all traffic, so the 2026-05-30 credential-leak gate protects the path that has run twice ever and not the path everything uses. The conformance test repaired 2026-07-28 guards the guard's *shape*, not its *coverage* — which is why nothing caught this. | Launch-path collapse (§Next step 4) — by construction, since one launch path cannot drift from itself | `hk-z4cow` |
-| **Launch-failure classification is computed by all five sites and consumed by none.** `classifyLaunchFailure` maps a launch error onto structural event classes; `dispatchSegmentRun.emit` switches only on two other event types and drops both structural classes into `default:`. Four sites then hand-roll the same check themselves; the fifth emits nothing. The purest instance of the 1-of-N pattern in the tree. | Launch-path collapse (§Next step 4) | `hk-q15hi` |
+| **The credential guard covers 1 of 3 dispatch sites, and not the default one.** `d2RemoteAPIKeyRefusal` runs only on the single-mode path. DOT is the default and carries essentially all traffic, so the 2026-05-30 credential-leak gate protects the path that has run twice ever and not the path everything uses. The conformance test repaired 2026-07-28 guards the guard's *shape*, not its *coverage* — which is why nothing caught this. | Launch-path collapse (§Next step 4) — by construction, since one launch path cannot drift from itself | `hk-z4cow` |
+| **Launch-failure classification is computed by every site and consumed by none.** `classifyLaunchFailure` maps a launch error onto structural event classes; `dispatchSegmentRun.emit` switches only on two other event types and drops both structural classes into `default:`. Sites then hand-roll the same check themselves, and at least one emits nothing. The purest instance of the 1-of-N pattern in the tree. | Launch-path collapse (§Next step 4) | `hk-q15hi` |
 
-## Being handled right now by the review-loop retirement
+## RESOLVED by the review-loop retirement — verified 2026-07-29 on `e46658ed5`
 
-Both are cases where `runReviewLoop` is the **sole** non-test home of a behaviour, so deleting the file
-removes it from the product entirely — and neither would fail to compile. Third instance of the pattern
-that already cost this program the crew idle-reap tests and the D2 conformance test.
+Both were cases where `runReviewLoop` was the **sole** non-test home of a behaviour, so deleting the file
+would have removed it from the product entirely — and neither would have failed to compile. Third
+instance of the pattern that already cost this program the crew idle-reap tests and the D2 conformance
+test. Both are now closed out; kept here because the *reasoning* is the reusable part.
 
-| What is wrong | Status | Bead |
+| What was wrong | Resolution | Bead |
 |---|---|---|
-| **Crash-recovery resume works only in review-loop mode.** `persistClaudeSessionID` is review-loop-only; single-mode and DOT both capture a Claude session id and drop it. So EM-031 resume does not work on the default mode *today*, and would leave the product with `reviewloop.go`. | In flight — lane instructed to port or consciously retire, with evidence, not drop | `hk-5sebh` |
-| **The default mode treats every merge failure as terminal.** `Retryable: runmerge.IsRetryableReason` is passed to the terminal spine only by the review-loop. DOT and single-mode do not retry transient merge failures. Compounding it, a DOT failure never charges the retry budget, so the close-with-needs-attention ladder cannot fire on the default mode either. | In flight — lane has already touched `runbridge.go` to give DOT the retry | `hk-dqmw2` |
+| **Crash-recovery resume worked only in review-loop mode.** `persistClaudeSessionID` was review-loop-only; single-mode and DOT both captured a Claude session id and dropped it. | **Consciously retired, with evidence** — the durable write had no reader anywhere (nothing reads `context.json` back, nothing consumes the persisted event, EM-031 recovery reads branch-tip trailers instead), and the resume that *did* work read an in-memory field, not the persisted copy. So the machinery was deleted rather than ported. No production symbol survives; only comments reference it. | `hk-5sebh` |
+| **The default mode treated every merge failure as terminal.** `Retryable: runmerge.IsRetryableReason` was passed to the terminal spine only by the review-loop, and a DOT failure never charged the retry budget, so the close-with-needs-attention ladder could not fire on the default mode. | **Ported to DOT.** Both now ride the DOT arm of the terminal spine in `beadRunOne` — `Retryable: runmerge.IsRetryableReason` and the `Budget.ChargeReviewLoopFailure` ladder. Single-mode still carries neither, which is acceptable only because single mode is scheduled for deletion; if that sequencing changes, this reopens. | `hk-dqmw2` |
 
 ## Needs deliberate attention — nothing planned will fix these
 

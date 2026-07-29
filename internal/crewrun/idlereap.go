@@ -158,11 +158,22 @@ func NewCrewIdleReaper(cfg CrewIdleReaperConfig) *CrewIdleReaper {
 //
 // Traceability (hk-do173): hk-s2eac is the FEATURE bead that introduced SD-3; the
 // DISABLE and its guards are tracked under hk-98at0 (the teardown-level guard) and
-// hk-do173 (the tighter no-scan guard). Two regression tests in
-// idlereap_hks2eac_test.go pin this no-op —
-// TestCrewIdleReaper_StartWatcher_Disabled_NeverReaps and
+// hk-do173 (the tighter no-scan guard). Two regression tests in idlereap_test.go
+// pin this no-op — TestCrewIdleReaper_StartWatcher_Disabled_NeverReaps and
 // TestCrewIdleReaper_StartWatcher_Disabled_NeverScans — both FAIL if this body is
-// reverted to launch loop(), so a re-enable cannot land silently.
+// reverted to launch loop(), so a re-enable cannot land silently. They assert on
+// behaviour (no crew stopped, registry never read), not on the body being empty,
+// so any re-enable REACHED THROUGH StartWatcher fails them — including one that
+// hand-rolls its own pump instead of restoring loop(). They do not cover a caller
+// that bypasses StartWatcher and drives loop()/scan() itself; the only production
+// call site is bootworkloop.go's bs.crewIdleReaper.StartWatcher(ctx), and adding
+// a second entry point is the change to be suspicious of.
+//
+// Those two tests did NOT exist between 2026-07-22 and 2026-07-28: they lived in
+// idlereap_hks2eac_test.go, which the Phase 1 ticket-named-test-file deletion
+// (ec66da798) removed wholesale, while this comment went on asserting they were
+// there. If you are moving or renaming them, run them against a re-enabled
+// StartWatcher first — a claim in a comment is not a test.
 func (r *CrewIdleReaper) StartWatcher(ctx context.Context) {
 	// Idle-crew reaping is disabled; the sweep goroutine is never launched.
 }

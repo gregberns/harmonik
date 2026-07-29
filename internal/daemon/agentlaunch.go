@@ -43,6 +43,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -204,6 +205,13 @@ type agentLaunchInput struct {
 	// when the readiness handshake was skipped entirely.
 	Deliver func(ctx context.Context, dc agentDeliverCtx)
 
+	// OnBeforeLaunch is site-specific work that must happen AFTER the CHB-018
+	// pre-exec messages and immediately BEFORE the spawn — the DOT cascade emits
+	// reviewer_launched here so it is the last event before the spawn wait, which
+	// is what gives a reviewer node the stale watcher's longer launch floor.
+	// nil for sites with none.
+	OnBeforeLaunch func(ctx context.Context)
+
 	// OnLaunchedExtra is site-specific post-launch work (single-mode's
 	// RunHandle machine set and its comms presence join). nil for sites with none.
 	OnLaunchedExtra func(ctx context.Context, sess handler.Session)
@@ -247,6 +255,16 @@ type agentLaunchResult struct {
 
 	Dispatch runexec.DispatchState
 
+	// Cleanup stops the CHB-019 heartbeat and force-tears-down the session, in
+	// that order. The caller MUST `defer launch.Cleanup()` immediately after the
+	// call — it is never nil, and it is a no-op when no session was created.
+	//
+	// It is handed back rather than run inside because the heartbeat must keep
+	// beating through the CALLER's post-run phase: it is what holds the stale
+	// watcher's dead-process reap off a long post-exit step such as a DOT node's
+	// auto_status `go build`.
+	Cleanup func()
+
 	Fail    agentLaunchFail
 	FailErr error
 
@@ -276,7 +294,10 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		fmt.Fprintf(os.Stderr, in.LogPrefix+": "+format+"\n", args...)
 	}
 
-	var res agentLaunchResult
+	// Cleanup is non-nil from the first return onward so a caller can defer it
+	// unconditionally; it is replaced with the real teardown pair once a session
+	// exists.
+	res := agentLaunchResult{Cleanup: func() {}}
 
 	// ── Resolve the harness once ────────────────────────────────────────────
 	// Every downstream policy question — does it capture its own session id, does
@@ -364,9 +385,15 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		// credentials and is deliberately 0o700. MkdirAll does not chmod an
 		// existing dir, so whichever creator runs first decides the mode —
 		// matching the credential owner is the only safe choice.
+		// PiCaptureDir is published as soon as the DIRECTORY exists, not once the
+		// stdout file does. The caller gates its post-mortem stderr capture on this
+		// being non-empty, and a failed os.Create below is exactly the case where
+		// that capture matters most — publishing it only on full success would
+		// disable the post-mortem precisely when there is a post-mortem to do.
 		if mkErr := os.MkdirAll(captureDir, 0o700); mkErr != nil { //dirmode:allow tighter on purpose: pi agent credential dir, matches internal/harness/pi.BuildLaunchSpec
 			logf("hk-j6wm7: create pi capture dir %q: %v (stdout capture disabled)", captureDir, mkErr)
 		} else if f, ferr := os.Create(filepath.Join(captureDir, "pi-stdout.log")); ferr != nil { //nolint:gosec // G304: path is the run's own worktree capture dir, not caller-supplied
+			res.PiCaptureDir = captureDir
 			logf("hk-j6wm7: create pi-stdout.log: %v (stdout capture disabled)", ferr)
 		} else {
 			res.PiCaptureDir = captureDir
@@ -509,6 +536,10 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// when SpawnWindow is wedged on a leaked slot.
 	launchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, emit, runID, artifacts.PreExecMsgs)
 
+	if in.OnBeforeLaunch != nil {
+		in.OnBeforeLaunch(ctx)
+	}
+
 	adapter, adapterErr := handles.AdapterRegistry.ForAgent(agentType)
 	if adapterErr != nil {
 		// No adapter for the resolved agent type — non-fatal; the segment feeds a
@@ -581,7 +612,12 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			// saturated spawn pool and a hung `tmux new-window` are different
 			// operator problems and must not both read as an opaque launch error.
 			if errors.Is(lErr, ErrSpawnCapTimeout) {
-				inUse, capSize := substrateSpawnStats(handles.Substrate)
+				// in.BaseSubstrate, not handles.Substrate: the spawn cap that
+				// blocked this launch belongs to the substrate this run actually
+				// spawned on. A reviewer-class launch runs on ReviewerSubstrate,
+				// so the old spelling reported the implementer pool's saturation
+				// for a launch the implementer pool never touched.
+				inUse, capSize := substrateSpawnStats(in.BaseSubstrate)
 				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, ports.Clock.Since(res.LaunchedAt), inUse, capSize)
 			}
 			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
@@ -717,18 +753,31 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// — and carried a comment claiming that inversion as deliberate. It is
 	// superseded here.
 	//
+	// The pair is handed BACK rather than run before this function returns, and
+	// the caller MUST `defer launch.Cleanup()`. Running it here looked tidier and
+	// was wrong: the CHB-019 heartbeat is what holds the stale watcher's
+	// dead-process reap (5 minutes) off the caller's post-run phase, and that
+	// phase can legitimately take longer — a DOT node's auto_status inspection
+	// runs `go build ./...` on the run context. Stopping the heartbeat at this
+	// return would let a cold build past the five-minute mark be cancelled and
+	// recorded as a deterministic node failure.
+	//
 	// Force-teardown is the hk-68pvl guard: the caller's worktree cleanup must
 	// never remove the directory while an agent is still live inside it. Kill is
-	// idempotent, so this is a no-op on the normal exit path.
-	defer func() { //nolint:contextcheck // the teardown pair takes no ctx (pre-RT8 idiom); ForceTeardownSession reaps on context.Background() so the kill completes even after the run ctx is cancelled
-		if hbDone != nil {
-			close(hbDone)
-		}
-		if in.SkipTeardown != nil && in.SkipTeardown() {
-			return
-		}
-		runlaunch.ForceTeardownSession(sess)
-	}()
+	// idempotent, so it is a no-op on the normal exit path, and Cleanup is
+	// once-guarded so a caller that calls it twice is safe.
+	var cleanupOnce sync.Once
+	res.Cleanup = func() { //nolint:contextcheck // the teardown pair takes no ctx (pre-RT8 idiom); ForceTeardownSession reaps on context.Background() so the kill completes even after the run ctx is cancelled
+		cleanupOnce.Do(func() {
+			if hbDone != nil {
+				close(hbDone)
+			}
+			if in.SkipTeardown != nil && in.SkipTeardown() {
+				return
+			}
+			runlaunch.ForceTeardownSession(sess)
+		})
+	}
 
 	if res.Dispatch.Phase == runexec.DispatchFailed && res.Dispatch.Reason == "agent_ready_timeout" {
 		res.Fail = agentLaunchReadyTimeout
@@ -750,8 +799,13 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		runID.String(), artifacts.ClaudeSessionID)
 
 	// Substrate path: completion is signalled through the hook store, not a
-	// watcher, so nothing has killed the window yet.
-	if watcher == nil {
+	// watcher, so nothing has killed the window yet. SkipTeardown gates it for
+	// the same reason it gates the teardown pair — a session the caller means to
+	// outlive this process must not be killed here either. (In practice the
+	// substrate's killOnce has already been burned by a no-op kill inside the
+	// completion wait on that path, so this guard is belt to that brace; it is
+	// stated explicitly rather than relied upon implicitly.)
+	if watcher == nil && (in.SkipTeardown == nil || !in.SkipTeardown()) {
 		_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // best-effort window kill on a deliberately non-cancellable ctx: the run ctx may already be cancelled and the pane must still die (pre-RT8 idiom)
 	}
 

@@ -4279,6 +4279,14 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		}()
 	}
 
+	// Stop the heartbeat and tear the session down, in that order. Deferred
+	// rather than run inside the launch so the CHB-019 heartbeat keeps beating
+	// through the whole post-run spine below — it is what holds the stale
+	// watcher's dead-process reap off a long merge or no-commit inspection.
+	// Registered after the Pi capture defer so, under LIFO, teardown still runs
+	// BEFORE that defer reads sess.Outcome().
+	defer launch.Cleanup()
+
 	// hk-xnnd: retire the implementer identity on the comms bus. The join is
 	// emitted by the launch's onLaunched hook; this defer fires the leave on
 	// every exit path (normal, abort, error).

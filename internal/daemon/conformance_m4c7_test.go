@@ -509,6 +509,15 @@ func TestM4C7_D2Wiring_RejectsAdversarialMutations(t *testing.T) {
 		{name: "collapsed post-guard environment append", fn: "runAgentLaunch", body: d2CollapsedGuardFixture + `; spec.Env = append(spec.Env, "ANTHROPIC_API_KEY=late"); ` + d2SegmentFixture, ownsLaunch: true},
 		{name: "collapsed post-guard read of spec is refused too", fn: "runAgentLaunch", body: d2CollapsedGuardFixture + `; logf("binary=%s", spec.Binary); ` + d2SegmentFixture, ownsLaunch: true},
 		{name: "collapsed guard demoted into the launch closure", fn: "runAgentLaunch", body: `implSeg := &runloop.DispatchSegment{ Launch: func(lctx context.Context) (<-chan struct{}, error) { if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return nil, nil }; sess, watcher, launchErr = runH.Launch(lctx, spec); return nil, nil } }; implDispatch := implSeg.Run(ctx)`, ownsLaunch: true},
+		// The remote predicate reads a Remote field off a DECOY struct instead of
+		// the launch input. It reads as correct and disarms the gate — the same
+		// substitution "wrong environment" refuses on the other argument, so the
+		// selector base is pinned to `in` and this is refused too.
+		{name: "collapsed remote predicate off a decoy struct", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(decoy.Remote, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return res }; ` + d2SegmentFixture, ownsLaunch: true},
+		// A refusal that returns a named bool result which may well be true is the
+		// same defect as `return true`, so the accepted return identifiers are a
+		// closed set rather than "anything but true".
+		{name: "collapsed refusal returns a named success result", fn: "runAgentLaunch", body: `if refusal, refused := d2RemoteAPIKeyRefusal(in.Remote, spec.Env); refused { reason := string(refusal); refuseLaunch(reason); return succeeded }; ` + d2SegmentFixture, ownsLaunch: true},
 	}
 
 	for _, tc := range tests {
@@ -720,22 +729,23 @@ func isValidD2If(ifStmt *ast.IfStmt) bool {
 	return failIndex >= 0 && returnIndex == failIndex+1
 }
 
-// isRefusalReturn accepts the spellings that abandon the run: a bare `return`,
-// `return false`, and `return <ident>` for a single result value. beadRunOne has a
-// named `succeeded bool` result so its guard spells it `return false`;
-// runAgentLaunch returns its populated `res` so its guard spells it `return res`.
-// `return true` stays rejected because reporting a refused run as successful is
-// its own defect. A single identifier result carries the same ambiguity a bare
-// `return` on a named result always did — the checker asserts that control leaves
-// the function, not what value it leaves with; the value is covered behaviourally
-// by the callers' handling of agentLaunchPrelaunchFailed.
+// isRefusalReturn accepts exactly the three spellings that abandon the run: a
+// bare `return`, `return false`, and `return res`. beadRunOne has a named
+// `succeeded bool` result so its guard spells it `return false`; runAgentLaunch
+// returns its populated result value so its guard spells it `return res`.
+//
+// The allow-list is a closed set of names rather than "any identifier that is
+// not true". A blanket ident rule would accept `return succeeded` — an
+// identifier that may well BE true — which is the same "refused run reported as
+// successful" defect `return true` is refused for. Naming the two accepted
+// identifiers costs nothing and leaves no judgment to a future reader.
 func isRefusalReturn(ret *ast.ReturnStmt) bool {
 	switch len(ret.Results) {
 	case 0:
 		return true
 	case 1:
 		ident, ok := unparenExpr(ret.Results[0]).(*ast.Ident)
-		return ok && ident.Name != "true"
+		return ok && (ident.Name == "false" || ident.Name == "res")
 	default:
 		return false
 	}
@@ -779,10 +789,15 @@ func isD2DecisionCall(call *ast.CallExpr) bool {
 // loosening the accepted spelling to include a field selector did NOT loosen the
 // rule — a bare selector is as unmodifiable as `rbc != nil` was. A bare boolean
 // literal is refused for the same reason.
+//
+// The BASE of the selector is pinned to `in`, exactly as the environment
+// argument is pinned to `spec`. Accepting any `<ident>.Remote` would let a decoy
+// struct with an always-false Remote field disarm the gate while reading as
+// correct — the same substitution the "wrong environment" case already refuses
+// on the other argument.
 func isWholeRemotePredicate(expr ast.Expr) bool {
 	if sel, ok := expr.(*ast.SelectorExpr); ok {
-		_, baseIsIdent := unparenExpr(sel.X).(*ast.Ident)
-		return baseIsIdent && sel.Sel.Name == "Remote"
+		return isIdent(sel.X, "in") && sel.Sel.Name == "Remote"
 	}
 	remote, ok := expr.(*ast.BinaryExpr)
 	return ok && remote.Op == token.NEQ && isIdent(remote.X, "rbc") && isNil(remote.Y)

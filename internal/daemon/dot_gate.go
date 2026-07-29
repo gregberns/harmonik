@@ -437,6 +437,10 @@ func executeCognitionGate(
 			}
 		},
 	})
+	// Stops the heartbeat then tears the session down, in that order — the
+	// inversion the two separate defers here used to produce is gone. Deferred so
+	// the heartbeat covers the verdict read below.
+	defer launch.Cleanup()
 
 	switch launch.Fail {
 	case agentLaunchPrelaunchFailed:

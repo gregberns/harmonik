@@ -1376,11 +1376,21 @@ func dispatchDotAgenticNode(
 	// launch, matching the builtin review-loop path. After the 06-08 DOT-default
 	// deploy, all reviews ran via this function but reviewer_launched was never
 	// emitted, making verdict latency unmeasurable. Mint the session ID here so
-	// it can be reused in the post-run emitDotReviewerVerdict call below.
+	// it can be reused in the post-run emitDotReviewerVerdict call below; the
+	// EMIT rides the launch's OnBeforeLaunch hook so it stays the last event
+	// before the spawn, after the CHB-018 pre-exec messages. That ordering is
+	// load-bearing: the stale watcher gives a reviewer node a longer launch floor
+	// only while lastEventType is reviewer_launched, so letting the pre-exec
+	// messages land after it would silently drop a spawn-cap-blocked reviewer
+	// back to the default window.
 	var reviewerSessionID core.SessionID
 	if isReviewer {
 		reviewerSessionID = handlercontract.NewSessionID()
-		emitDotReviewerLaunched(ctx, emit, runID, reviewerSessionID, *claudeSessionID, iterationCount)
+	}
+	emitReviewerLaunched := func(lctx context.Context) {
+		if isReviewer {
+			emitDotReviewerLaunched(lctx, emit, runID, reviewerSessionID, *claudeSessionID, iterationCount)
+		}
 	}
 
 	// dotDeliver is the post-ready brief delivery: paste-inject + quit-on-commit
@@ -1471,8 +1481,13 @@ func dispatchDotAgenticNode(
 		// reviewer alive until the 60-minute hard ceiling after claude has died.
 		// Implementers DO go through the tap so the budget watchdog sees progress.
 		HeartbeatViaTap: !isReviewer,
+		OnBeforeLaunch:  emitReviewerLaunched,
 		Deliver:         dotDeliver,
 	})
+	// The heartbeat must keep beating through everything below — the auto_status
+	// `go build` in particular — or the stale watcher's dead-process reap cancels
+	// the run mid-inspection.
+	defer launch.Cleanup()
 
 	switch launch.Fail {
 	case agentLaunchPrelaunchFailed:

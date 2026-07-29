@@ -283,7 +283,7 @@ type agentLaunchResult struct {
 // unreadable output.
 func newAgentLaunchLogf(w io.Writer, prefix string) func(format string, args ...any) {
 	return func(format string, args ...any) {
-		fmt.Fprintf(w, "%s: "+format+"\n", append([]any{prefix}, args...)...)
+		_, _ = fmt.Fprintf(w, "%s: "+format+"\n", append([]any{prefix}, args...)...) //nolint:errcheck // best-effort diagnostic write; a failed log must never fail a launch
 	}
 }
 

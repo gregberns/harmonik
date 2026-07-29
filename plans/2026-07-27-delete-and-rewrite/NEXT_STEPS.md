@@ -409,6 +409,68 @@ unknown-key rejection — `keeper: *anchor` (or a `subsystems:` entry) hides a t
 alias and it is silently accepted. Pre-existing on the keeper block; inherited by the new `subsystems:`
 block. Fix is to resolve alias nodes before the mapping check.
 
+### 5.2 The load-sensitive test family — make these robust instead of re-diagnosing them
+
+**Operator, 2026-07-29: "at some point we need to come back to that and figure out where the issues are
+so those tests can be robust."** This exists because the same diagnosis keeps being re-derived from
+scratch. A session runs the daemon suite, finds a spread of failures, and spends an hour concluding
+"load flake" — a conclusion four earlier campaigns already reached and wrote down in four different
+dated directories that nothing points at.
+
+**Where the prior work actually lives** (none of it is reachable from a boot read — that is half the
+problem):
+
+- `plans/2026-07-17-assessor-daemon-campaign/runs/baseline-599f80ab/REGRESSION-TREE.md` — names the
+  family: **srt, SocketBinds, ShutdownDrains, Throughput, ClaimSemaphore, SubscribeStream**. Contains
+  the deepest single diagnosis in the set (below).
+- `plans/2026-07-13-code-revamp/RT12-acceptance-evidence.md` — a wider **"Bucket A — pinned
+  known-flakes"** list: SSHLocalhost, StopHookE2E, TenBeadsAtMaxFour, Hk6ynv4_SubscribeStream, VN4,
+  ConcurrentMultiQueue, RestartRecovery_QM002bDeadlock, EM015e, QueueSubmit_*,
+  ConcurrentRemoteAgentReady, OperatorNFR_Pause, CaptainCrewE2E, ReviewLoop_ResumeSubmitReliable,
+  AutoStatus*.
+- `plans/2026-07-21-p2-extraction/RT16-emitterport-conversion.md` — the procedural traps.
+- `plans/2026-07-21-p2-extraction/E1c-pi.md` — states the oracle plainly: `internal/daemon` **is already
+  red at HEAD, so the oracle is differential, not zero.** Capture a before-set with the identical
+  command, then `comm -13`.
+
+**The one finding worth not losing.** `TestThroughput_TenBeadsAtMaxFour` was chased to ground: it fails
+5/5 *because* box load is sustained, not because product code regressed. Every extra `run_started`
+envelope carries a **distinct run_id** with `envelope.run_id == payload.run_id` — no double-emit. The
+extra events are legitimate re-dispatches of beads whose fixture handlers timed out under CPU
+starvation, ~26 of 50 beads re-running exactly once across five iterations. **The emission invariant is
+intact; the test's `exactly 10` assertion encodes a first-try-success assumption that only holds with
+spare CPU headroom.** That is the shape of the whole family: the assertions encode scheduling luck.
+
+**Two traps that invert the answer if you get them wrong:**
+
+1. **The confirmation procedure is not uniform.** The load-sensitive ones are confirmed by re-running
+   **in isolation** (isolated pass ⇒ load artifact). But `TestMergeToMain_RealConflictWithBeadsLedger_Escalates`
+   is **isolation-sensitive** and must be confirmed **in the full suite**. Applying the wrong procedure
+   to either gives you a confident wrong answer.
+2. **`FAIL scenariopkg.test/scenariopkg [build failed]` is not a failure.** It is intentional
+   scaffolding from the scenario-gate efficacy test, and it also appears as a *timeout-cascade artifact*
+   when the package blows Go's 10-minute default. Neither is breakage.
+
+**The part that is actually broken, and the reason this is a work item rather than a filing exercise:**
+
+- **The allowlist has absorbed at least one genuine defect.** `EM015e` sits in RT12's pinned-known-flakes
+  bucket. Re-measured 2026-07-29 it is a **deterministic true red**, not a flake: it asserts a
+  `no_progress_detected` event and `completion_reason="no_progress"`, but `emitNoProgressDetected` has
+  **zero call sites** and the live path emits `review_fixup_stalled`. A flake allowlist that swallows a
+  real bug is worse than no allowlist, because it converts a red into permanent silence. Assume EM015e
+  is not the only one — every entry needs re-confirming against today's tree, not inherited.
+- **Nothing routinely runs the tagged tier**, so its state is unknown between deliberate looks. Measured
+  2026-07-29: `go test -tags scenario ./internal/daemon/` yields **eight** failures where the untagged
+  run yields one. This is the same invisibility that made "does EM015e fail or never run?" unanswerable
+  from the tree for days. §5.1's gate is the fix; this section is why it matters.
+- **The assertions should stop encoding scheduling luck.** The durable fix is not to re-diagnose these
+  every quarter but to make them assert the *invariant* rather than the *count* — for Throughput, that
+  distinct-run_id-per-dispatch with no double-emit is exactly the property that survived, and exactly
+  what the test should have been checking instead of `exactly 10`.
+
+**Sequenced after §5.1's gate**, not before: making the tier merge-blocking is what stops the set
+growing, and there is no point hardening tests nothing runs. Tracked as `hk-97gcz`.
+
 ---
 
 ## Sequence
@@ -417,7 +479,7 @@ block. Fix is to resolve alias nodes before the mapping check.
 |---|---|---|---|
 | 1 | ~~Reconcile `origin/integration/phase-reviewloop-20260725`~~ — **RESOLVED 2026-07-28: abandon it.** See §Deferred item C | nothing | done |
 | 2 | **Agent instruction changes (§2)** — §2.6 landed 2026-07-28 (`734f283a7`); §2.5 ratchet and §2.8 structure-block remain | dispatching any new agent work | mostly deletions |
-| 3 | Wire the scenario tier to a merge-blocking gate (§5.1) | trusting any green build | small |
+| 3 | Wire the scenario tier to a merge-blocking gate (§5.1), then harden the load-sensitive family (§5.2) | trusting any green build | small / then real |
 | 4 | Deletion steps 2–4 of the predecessor plan | the rewrite | mechanical |
 | 5 | **Subsystem partition — config-driven enable/disable of each part of the system** (§below) | the rewrite's shape and its priority order | design + planning |
 | 6 | Decompose the run machine — **`workloop.go` + `reviewloop.go` + `dot_cascade_core.go` as one unit** | — | the point of all this |

@@ -278,13 +278,37 @@ func (bs *bootState) startBackgroundLoops(ctx context.Context, deps *workLoopDep
 		LogWriter:    cfg.LogWriter,
 	})
 
-	// WR3 (hk-jn3u): recurring worker-report poll. Phase-1 observability only;
-	// off-by-default when no worker is enabled (byte-identical with no workers.yaml).
+	// WR3 (hk-jn3u): recurring worker-report poll, subject to subsystem
+	// partitioning (see startWorkerReportLoopIfEnabled).
+	bs.startWorkerReportLoopIfEnabled(ctx, deps.workerRegistry)
+}
+
+// startWorkerReportLoopIfEnabled applies subsystem partitioning to the WR3
+// worker-report poll: it is the ONE construction seam for that goroutine.
+//
+// When `subsystems.worker_report_loop.enabled: false` is set, the goroutine is
+// never spawned. RunReportLoop already returns immediately when no worker in
+// .harmonik/workers.yaml is enabled, but the daemon has to START it to find that
+// out; this decides it at the composition root instead, so "off" is absent rather
+// than a goroutine that exists just long enough to disagree.
+//
+// Absent config enables the loop, so a deployment without a subsystems: block
+// behaves exactly as it did before the block existed.
+//
+// Returns true when the goroutine was spawned. The return value is the observable
+// decision; the production caller ignores it.
+func (bs *bootState) startWorkerReportLoopIfEnabled(ctx context.Context, reg *workers.Registry) bool {
+	cfg := bs.cfg
+	if !cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemWorkerReportLoop) {
+		bs.logSubsystemDisabled(projectconfig.SubsystemWorkerReportLoop, "worker-report poll loop not constructed")
+		return false
+	}
 	var reportEmit workers.EmitFunc
 	if bs.bus != nil {
 		reportEmit = bs.bus.Emit
 	}
-	go workers.RunReportLoop(ctx, cfg.Workers, deps.workerRegistry, workers.ProductionRunnerForWorker, reportEmit)
+	go workers.RunReportLoop(ctx, cfg.Workers, reg, workers.ProductionRunnerForWorker, reportEmit)
+	return true
 }
 
 // wireStaleWatcherReapSeams wires the StaleWatcher force-reap watchdog seams

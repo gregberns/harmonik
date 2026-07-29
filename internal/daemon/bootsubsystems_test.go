@@ -1,17 +1,19 @@
 package daemon
 
-// bootsubsystems_test.go — subsystem partitioning of the background subsystems
-// the daemon builds at boot: the crew idle reaper and the branch reaper.
+// bootsubsystems_test.go — subsystem partitioning of the four background
+// subsystems the daemon builds at boot: the crew idle reaper, the branch reaper,
+// the bandwidth tuner (plus its pre-Seal bus backstop), and the WR3 worker-report
+// poll.
 //
 // Both states are driven through the REAL config edge: a .harmonik/config.yaml
 // written to disk and read by projectconfig.LoadProjectConfig. Nothing here
 // hand-builds a SubsystemsConfig, because the thing under test is the whole path
 // from operator YAML to construction seam.
 //
-// "Off" is asserted as ABSENT AT RUNTIME, not as a boolean. Where a subsystem is
-// a goroutine, the assertion is that no goroutine carrying its loop frame
-// exists — read out of a live runtime.Stack dump, not inferred. A
-// constructed-but-inert watcher still parks a goroutine on a ticker and would
+// "Off" is asserted as ABSENT AT RUNTIME, not as a boolean. Three of these four
+// subsystems are a goroutine, so the assertion is that no goroutine carrying
+// their loop frame exists — read out of a live runtime.Stack dump, not inferred.
+// A constructed-but-inert watcher still parks a goroutine on a ticker and would
 // fail these tests; an absent one has nothing to park.
 //
 // Counting is done as a DELTA against a baseline sampled immediately before the
@@ -42,13 +44,17 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/projectconfig"
+	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// bootpartBranchReaperFrame is the goroutine frame the branch reaper's sweep
-// parks on. Matching the frame rather than counting goroutines is what makes the
-// assertion specific: it says "this subsystem's loop is/is not running", not
-// "the goroutine count moved".
-const bootpartBranchReaperFrame = "internal/daemon.(*BranchReapWatcher).loop"
+// Goroutine frames the loop-bearing subsystems park on. Matching the frame rather
+// than counting goroutines is what makes the assertion specific: it says "this
+// subsystem's loop is/is not running", not "the goroutine count moved".
+const (
+	bootpartBranchReaperFrame = "internal/daemon.(*BranchReapWatcher).loop"
+	bootpartTunerFrame        = "internal/daemon.(*BandwidthTuner).Run"
+	bootpartReportLoopFrame   = "internal/workers.RunReportLoop"
+)
 
 // bootpartNoWaitForAbsence is how long an "absent" assertion waits before
 // concluding a goroutine will never appear. It only has to outlast the scheduler
@@ -171,44 +177,208 @@ func TestSubsystemPartition_BranchReaper_DisabledIsAbsent(t *testing.T) {
 	}
 }
 
-// --- both reapers at once, through a real daemon boot ------------------------
+// --- bandwidth tuner ---------------------------------------------------------
 
-// bootpartReapersDisabledYAML switches off every subsystem this file covers, as
-// an operator would write it in one block.
-const bootpartReapersDisabledYAML = sockpartBaseConfigYAML + `
+// bootpartTunerBootState builds a bootState with everything the tuner needs to
+// actually start: a concurrency controller, a poll gate, the pre-Seal backstop,
+// and a positive subscription-token ceiling.
+func bootpartTunerBootState(t *testing.T, yamlContent string) (*bootState, *sockpartSyncBuffer) {
+	t.Helper()
+	bs, logBuf := bootpartBootState(t, yamlContent)
+	bs.cfg.MaxConcurrent = 2
+	bs.cfg.SubscriptionTokenCeiling = 1_000_000
+	bs.concurrencyCtrl = NewConcurrencyController(bs.cfg.MaxConcurrent)
+	bs.pollGate = &PollGate{}
+	// SS-007 INACTIVE, so Run's immediate startup tick returns before reading any
+	// Claude transcripts. The goroutine still parks on its ticker, so the frame
+	// assertions are unaffected — this only keeps the test off the developer's
+	// real ~/.claude tree.
+	bs.pollGate.SetInactive(true)
+	bs.tunerBackstop = &bandwidthTunerBackstop{}
+	return bs, logBuf
+}
+
+// Default state: with a token ceiling configured the tuner is constructed and its
+// Run goroutine is live, exactly as before partitioning existed.
+func TestSubsystemPartition_BandwidthTuner_DefaultRuns(t *testing.T) {
+	bs, logBuf := bootpartTunerBootState(t, "schema_version: 1\n")
+
+	baseline := bootpartCountFrame(bootpartTunerFrame)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if !bs.startBandwidthTunerIfEnabled(ctx) {
+		t.Fatal("startBandwidthTunerIfEnabled = false with no subsystems: block and a positive token ceiling; absent config must not disable anything")
+	}
+	if strings.Contains(logBuf.String(), string(projectconfig.SubsystemBandwidthTuner)) {
+		t.Errorf("the bandwidth-tuner partition was announced with no subsystems: block; log = %q", logBuf.String())
+	}
+	if !bootpartFrameAppeared(bootpartTunerFrame, baseline, 2*time.Second) {
+		t.Fatal("no goroutine running BandwidthTuner.Run after the tuner was reported started")
+	}
+	if bs.tunerBackstop.tuner.Load() == nil {
+		t.Error("the pre-Seal backstop was never armed with the tuner; rate-limit events would go nowhere")
+	}
+}
+
+// Disabled state: neither half of the subsystem exists — no tuner object, no Run
+// goroutine, and no backstop subscription on the event bus.
+func TestSubsystemPartition_BandwidthTuner_DisabledIsAbsent(t *testing.T) {
+	bs, logBuf := bootpartTunerBootState(t, bootpartDisabledYAML(projectconfig.SubsystemBandwidthTuner))
+
+	baseline := bootpartCountFrame(bootpartTunerFrame)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if bs.startBandwidthTunerIfEnabled(ctx) {
+		t.Fatal("startBandwidthTunerIfEnabled = true with subsystems.bandwidth_tuner.enabled: false; the tuner must be ABSENT")
+	}
+	if !strings.Contains(logBuf.String(), "bandwidth tuner and its rate-limit backstop not constructed") {
+		t.Errorf("the daemon did not report the bandwidth-tuner partition; log = %q", logBuf.String())
+	}
+	if bootpartFrameAppeared(bootpartTunerFrame, baseline, bootpartNoWaitForAbsence) {
+		t.Error("a BandwidthTuner.Run goroutine appeared with the subsystem switched off")
+	}
+	if bs.tunerBackstop.tuner.Load() != nil {
+		t.Error("the backstop was armed with a tuner behind the disabled switch")
+	}
+	// The other half of the switch: wireWatchersAndObservers reads the SAME
+	// bandwidthTunerEnabled, so the backstop is never even subscribed to the bus.
+	// A live subscriber with no tuner to forward to is the constructed-and-inert
+	// state this partition exists to remove.
+	if bs.bandwidthTunerEnabled() {
+		t.Error("bandwidthTunerEnabled = true with the subsystem switched off; the two construction sites would then disagree")
+	}
+}
+
+// The gate short-circuits BEFORE touching anything: a bootState with every tuner
+// dependency nil survives it. Any construction that leaked past the switch would
+// dereference one of those nils — SetTuner on a nil backstop panics — and take
+// the test binary down here rather than fail one assertion.
+func TestSubsystemPartition_BandwidthTuner_DisabledGateTouchesNothing(t *testing.T) {
+	t.Parallel()
+
+	bs, _ := bootpartBootState(t, bootpartDisabledYAML(projectconfig.SubsystemBandwidthTuner))
+	bs.cfg.SubscriptionTokenCeiling = 1_000_000 // the pre-existing gate would let it through
+	// concurrencyCtrl, pollGate and tunerBackstop are deliberately left nil.
+
+	if bs.startBandwidthTunerIfEnabled(context.Background()) {
+		t.Fatal("startBandwidthTunerIfEnabled = true behind the disabled switch")
+	}
+}
+
+// --- WR3 worker-report poll --------------------------------------------------
+
+// bootpartWorkerConfig is a workers.Config with one ENABLED worker, which is what
+// makes RunReportLoop arm its ticker instead of returning immediately. Nothing
+// here ever contacts the host: the loop's first act is to wait out the report
+// interval, and the tests cancel long before that elapses.
+func bootpartWorkerConfig() workers.Config {
+	return workers.Config{
+		Version: 1,
+		Workers: []workers.Worker{{
+			Name:      "bootpart-worker",
+			Transport: "ssh",
+			Host:      "bootpart.invalid",
+			OS:        "darwin",
+			RepoPath:  "/tmp/bootpart",
+			MaxSlots:  1,
+			Enabled:   true,
+		}},
+	}
+}
+
+// Default state: the poll goroutine is spawned and parks on its ticker.
+func TestSubsystemPartition_WorkerReportLoop_DefaultRuns(t *testing.T) {
+	bs, logBuf := bootpartBootState(t, "schema_version: 1\n")
+	bs.cfg.Workers = bootpartWorkerConfig()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reg := workers.BuildRegistryWithRunner(ctx, bs.cfg.Workers, nil, nil)
+	if reg == nil {
+		t.Fatal("BuildRegistryWithRunner returned nil for a configured worker; the loop would self-disable and prove nothing")
+	}
+
+	baseline := bootpartCountFrame(bootpartReportLoopFrame)
+	if !bs.startWorkerReportLoopIfEnabled(ctx, reg) {
+		t.Fatal("startWorkerReportLoopIfEnabled = false with no subsystems: block; absent config must not disable anything")
+	}
+	if strings.Contains(logBuf.String(), string(projectconfig.SubsystemWorkerReportLoop)) {
+		t.Errorf("the worker-report partition was announced with no subsystems: block; log = %q", logBuf.String())
+	}
+	if !bootpartFrameAppeared(bootpartReportLoopFrame, baseline, 2*time.Second) {
+		t.Fatal("no goroutine running workers.RunReportLoop after it was reported started")
+	}
+}
+
+// Disabled state: the goroutine is never spawned. RunReportLoop would have
+// returned immediately on its own with no worker enabled — so this test enables
+// one, making the difference the SWITCH rather than the empty registry.
+func TestSubsystemPartition_WorkerReportLoop_DisabledIsAbsent(t *testing.T) {
+	bs, logBuf := bootpartBootState(t, bootpartDisabledYAML(projectconfig.SubsystemWorkerReportLoop))
+	bs.cfg.Workers = bootpartWorkerConfig()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reg := workers.BuildRegistryWithRunner(ctx, bs.cfg.Workers, nil, nil)
+
+	baseline := bootpartCountFrame(bootpartReportLoopFrame)
+	if bs.startWorkerReportLoopIfEnabled(ctx, reg) {
+		t.Fatal("startWorkerReportLoopIfEnabled = true with subsystems.worker_report_loop.enabled: false; the loop must be ABSENT")
+	}
+	if !strings.Contains(logBuf.String(), "worker-report poll loop not constructed") {
+		t.Errorf("the daemon did not report the worker-report partition; log = %q", logBuf.String())
+	}
+	if bootpartFrameAppeared(bootpartReportLoopFrame, baseline, bootpartNoWaitForAbsence) {
+		t.Error("a workers.RunReportLoop goroutine appeared with the subsystem switched off")
+	}
+}
+
+// --- all of them at once, through a real daemon boot -------------------------
+
+// bootpartAllDisabledYAML switches off every subsystem this file covers, as an
+// operator would write it in one block. Extend it when a partition is added.
+const bootpartAllDisabledYAML = sockpartBaseConfigYAML + `
 subsystems:
   crew_idle_reap:
     enabled: false
+  bandwidth_tuner:
+    enabled: false
   branch_reaper:
+    enabled: false
+  worker_report_loop:
     enabled: false
 `
 
-// The switches compose, and the daemon still reaches its work loop with both
-// reapers off. This is the assertion that the nil bootState fields they leave
-// behind are actually guarded: startBackgroundLoops calls StartWatcher on both,
+// The switches compose, and the daemon still reaches its work loop with all of
+// them off. This is the assertion that the nil bootState fields they leave behind
+// are actually guarded: startBackgroundLoops calls StartWatcher on both reapers,
 // and an unguarded nil branch reaper panics inside a goroutine — taking the whole
 // test binary down rather than failing one test.
-func TestSubsystemPartition_Reapers_DisabledDaemonStillReachesWorkLoop(t *testing.T) {
+func TestSubsystemPartition_BootSubsystems_DisabledDaemonStillReachesWorkLoop(t *testing.T) {
 	t.Setenv("HARMONIK_DEBUG_WIRING", "1")
 
-	projectDir, jsonlPath := sockpartProjectDir(t, bootpartReapersDisabledYAML)
+	projectDir, jsonlPath := sockpartProjectDir(t, bootpartAllDisabledYAML)
 	logs := sockpartRunDaemon(t, projectDir, jsonlPath, 1500*time.Millisecond)
 
 	for _, want := range []string{
 		"crew idle reaper not constructed",
 		"branch reaper not constructed",
+		"bandwidth tuner and its rate-limit backstop not constructed",
+		"worker-report poll loop not constructed",
 	} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("boot log never reported %q; a silent partition is indistinguishable from a config that did not take effect", want)
 		}
 	}
 	if !strings.Contains(logs, "composition-root wiring audit") {
-		t.Error("daemon did not reach startBackgroundLoops with both reapers switched off; the core must run without them")
+		t.Error("daemon did not reach startBackgroundLoops with these subsystems switched off; the core must run without them")
 	}
 	// The socket listener stays ON here, so its subtree was built and only these
-	// two were carved out of it — the partitions are independent, not a re-run of
-	// the socket-listener switch.
+	// were carved out of it — the partitions are independent, not a re-run of the
+	// socket-listener switch.
 	if strings.Contains(logs, "socket listener and its handler subtree not constructed") {
-		t.Error("the socket-listener partition fired; this fixture only switches off the two reapers")
+		t.Error("the socket-listener partition fired; this fixture only switches off the background subsystems above")
 	}
 }

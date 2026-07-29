@@ -110,6 +110,22 @@ const (
 	// operator call, not this switch's business.
 	SubsystemCrewIdleReap SubsystemName = "crew_idle_reap"
 
+	// SubsystemBandwidthTuner names the rolling-5h token-rate auto-tuner that
+	// rewrites the ConcurrencyController ceiling every 60 s, together with the
+	// pre-Seal bandwidthTunerBackstop that feeds it rate-limit events.
+	//
+	// Both halves are gated, and that pairing is the point: the tuner itself only
+	// exists when --subscription-token-ceiling is positive (so it is off on most
+	// deployments), but the backstop SUBSCRIBES TO THE BUS unconditionally
+	// underneath the socket listener. With no ceiling set that subscriber can
+	// never have a tuner to forward to — a permanently inert bus consumer. One
+	// switch removes both.
+	//
+	// This is a mechanical rule that infers intent from a coarse signal (CHARTER
+	// §5): token rate is read as "the fleet should run narrower", and the honest
+	// answer is an operator-set number.
+	SubsystemBandwidthTuner SubsystemName = "bandwidth_tuner"
+
 	// SubsystemBranchReaper names the periodic housekeeping sweep that deletes
 	// merged and orphaned run/* + worktree-agent-* branches
 	// (daemon.BranchReapWatcher, a 6 h ticker over lifecycle.ReapBranches).
@@ -119,6 +135,16 @@ const (
 	// the identical pass on demand. Note the watcher DELETES BRANCHES, so unlike
 	// the other three an unwanted one is not merely wasted CPU.
 	SubsystemBranchReaper SubsystemName = "branch_reaper"
+
+	// SubsystemWorkerReportLoop names the WR3 recurring worker-report poll
+	// (workers.RunReportLoop), started as a goroutine in
+	// daemon.startBackgroundLoops.
+	//
+	// The loop self-disables when no worker in .harmonik/workers.yaml is enabled,
+	// but the daemon spawns the goroutine to discover that. This switch decides it
+	// at the composition root instead, so an operator running without remote
+	// workers gets no goroutine at all rather than one that returns immediately.
+	SubsystemWorkerReportLoop SubsystemName = "worker_report_loop"
 )
 
 // knownSubsystems is the closed set of names the `subsystems:` block accepts.
@@ -130,7 +156,9 @@ var knownSubsystems = map[SubsystemName]struct{}{
 	SubsystemDashboardGate:           {},
 	SubsystemMovementGovernor:        {},
 	SubsystemCrewIdleReap:            {},
+	SubsystemBandwidthTuner:          {},
 	SubsystemBranchReaper:            {},
+	SubsystemWorkerReportLoop:        {},
 }
 
 // ErrUnknownSubsystem is returned when the subsystems: block names a subsystem

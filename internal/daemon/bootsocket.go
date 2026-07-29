@@ -244,19 +244,62 @@ func (bs *bootState) buildPauseConcurrencyTuner(ctx context.Context, queueHandle
 	}
 
 	// Bandwidth tuner (hk-ymav1): adjusts concurrencyCtrl on every 60s tick from
-	// rolling 5h token usage. normalised MaxConcurrent (zero → 1) is the N_max.
-	if cfg.SubscriptionTokenCeiling > 0 {
-		maxN := cfg.MaxConcurrent
-		if maxN <= 0 {
-			maxN = 1
-		}
-		if homeDir, homeDirErr := os.UserHomeDir(); homeDirErr == nil {
-			tuner := NewBandwidthTuner(bs.concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
-			tuner.SetGate(bs.pollGate)       // SS-007: OFF at INACTIVE (hk-w6q7)
-			bs.tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
-			go tuner.Run(ctx)
-		}
+	// rolling 5h token usage. Subject to subsystem partitioning; see
+	// startBandwidthTunerIfEnabled.
+	bs.startBandwidthTunerIfEnabled(ctx)
+}
+
+// bandwidthTunerEnabled reports whether the bandwidth-tuner subsystem is switched
+// on. It is the SINGLE reading of that switch: both halves of the tuner call it —
+// the pre-Seal backstop subscriber in wireWatchersAndObservers and the tuner
+// itself here — so the two can never disagree about whether the tuner will exist.
+// That invariant is load-bearing, because startBandwidthTunerIfEnabled calls
+// SetTuner on the backstop, which panics on a nil receiver.
+func (bs *bootState) bandwidthTunerEnabled() bool {
+	return bs.cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemBandwidthTuner)
+}
+
+// startBandwidthTunerIfEnabled applies subsystem partitioning to the bandwidth
+// tuner: it is the ONE construction seam for the tuner goroutine.
+//
+// When `subsystems.bandwidth_tuner.enabled: false` is set, neither the tuner nor
+// its bus subscriber exists — no BandwidthTuner object, no 60 s ticker goroutine,
+// and (via the same switch read in wireWatchersAndObservers) no
+// bandwidthTunerBackstop subscription on the event bus.
+//
+// ORDER IS LOAD-BEARING, for the same reason as newMovementGovernorIfEnabled: the
+// subsystem check comes BEFORE the SubscriptionTokenCeiling check. Most
+// deployments set no ceiling, so the ceiling check alone would swallow every
+// disabled boot silently and an operator could never tell the switch took effect.
+//
+// Returns true when the tuner was started. The return value is the observable
+// decision; the production caller ignores it.
+func (bs *bootState) startBandwidthTunerIfEnabled(ctx context.Context) bool {
+	cfg := bs.cfg
+	if !bs.bandwidthTunerEnabled() {
+		bs.logSubsystemDisabled(projectconfig.SubsystemBandwidthTuner, "bandwidth tuner and its rate-limit backstop not constructed")
+		return false
 	}
+	// No token ceiling configured: there is no rate to tune against. This is the
+	// pre-existing gate, not the subsystem switch — it stays quiet because it is
+	// the default state of most deployments, not an operator's partition.
+	if cfg.SubscriptionTokenCeiling <= 0 {
+		return false
+	}
+	// normalised MaxConcurrent (zero → 1) is the N_max.
+	maxN := cfg.MaxConcurrent
+	if maxN <= 0 {
+		maxN = 1
+	}
+	homeDir, homeDirErr := os.UserHomeDir()
+	if homeDirErr != nil {
+		return false
+	}
+	tuner := NewBandwidthTuner(bs.concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
+	tuner.SetGate(bs.pollGate)       // SS-007: OFF at INACTIVE (hk-w6q7)
+	bs.tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
+	go tuner.Run(ctx)
+	return true
 }
 
 // buildCommsAndCrewHandlers constructs the comms-send handler (+recv cursor deps,

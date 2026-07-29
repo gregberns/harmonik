@@ -1573,27 +1573,25 @@ func dispatchDotAgenticNode(
 	// the daemon stages+commits any changes codex produced via codex.EnsureRefsTrailer
 	// (internal/harness/codex/commit.go, hk-gd9r). Mirrors workloop.go:4007-4019. Must run before
 	// resolveDotWorktreeHEAD so the no-commit guard below sees any commit we create.
-	{
-		// runAgentLaunch already resolved the harness; reuse its answer rather
-		// than re-walking the registry for the same question.
-		if launch.Harness != nil && launch.Harness.Completion() == handlercontract.CompletionProcessExit {
-			codexOutcome, ensureErr := codex.EnsureRefsTrailer(ctx, runner, wtPath, preHeadSHA, beadID)
-			if ensureErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
-					beadID, ensureErr)
-			} else {
-				fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %s\n",
-					beadID, codexOutcome)
-				// hk-368i4: same detector as the workloop path — a no-change
-				// outcome from a node that finished in seconds is a no-work run.
-				// Diagnostic only; the no-commit guard below still decides.
-				if codex.NoWorkSuspected(codexOutcome, nodePhaseDur, env.CodexNoWorkDurationFloor) {
-					floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
-					fmt.Fprintf(os.Stderr,
-						"daemon: dot: bead %s node %q: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
-						beadID, node.ID, nodePhaseDur, floor)
-					codex.EmitImplementerNoWorkSuspected(ctx, emit, runID, beadID, nodePhaseDur, floor)
-				}
+	// runAgentLaunch already resolved the harness; reuse its answer rather than
+	// re-walking the registry for the same question.
+	if launch.Harness != nil && launch.Harness.Completion() == handlercontract.CompletionProcessExit {
+		codexOutcome, ensureErr := codex.EnsureRefsTrailer(ctx, runner, wtPath, preHeadSHA, beadID)
+		if ensureErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
+				beadID, ensureErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %s\n",
+				beadID, codexOutcome)
+			// hk-368i4: same detector as the workloop path — a no-change
+			// outcome from a node that finished in seconds is a no-work run.
+			// Diagnostic only; the no-commit guard below still decides.
+			if codex.NoWorkSuspected(codexOutcome, nodePhaseDur, env.CodexNoWorkDurationFloor) {
+				floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
+				fmt.Fprintf(os.Stderr,
+					"daemon: dot: bead %s node %q: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
+					beadID, node.ID, nodePhaseDur, floor)
+				codex.EmitImplementerNoWorkSuspected(ctx, emit, runID, beadID, nodePhaseDur, floor)
 			}
 		}
 	}

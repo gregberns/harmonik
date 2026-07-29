@@ -260,6 +260,10 @@ type agentLaunchResult struct {
 // It never decides what a failure MEANS — no bead is reopened, no node outcome
 // is synthesized, no verdict is read here. It reports which boundary was hit and
 // leaves the interpretation to the caller.
+// sequence exists ONCE. Splitting it back into pieces to satisfy a complexity
+// threshold would re-create the seams the three copies drifted through.
+//
+//nolint:funlen,gocognit,cyclop // the whole point of this function is that the launch
 func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult {
 	env, ports, handles := in.Env, in.Ports, in.Handles
 	emit := ports.Emitter
@@ -362,7 +366,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		// matching the credential owner is the only safe choice.
 		if mkErr := os.MkdirAll(captureDir, 0o700); mkErr != nil { //dirmode:allow tighter on purpose: pi agent credential dir, matches internal/harness/pi.BuildLaunchSpec
 			logf("hk-j6wm7: create pi capture dir %q: %v (stdout capture disabled)", captureDir, mkErr)
-		} else if f, ferr := os.Create(filepath.Join(captureDir, "pi-stdout.log")); ferr != nil {
+		} else if f, ferr := os.Create(filepath.Join(captureDir, "pi-stdout.log")); ferr != nil { //nolint:gosec // G304: path is the run's own worktree capture dir, not caller-supplied
 			logf("hk-j6wm7: create pi-stdout.log: %v (stdout capture disabled)", ferr)
 		} else {
 			res.PiCaptureDir = captureDir
@@ -413,7 +417,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 
 		capturedH := res.Harness
 		capturedSessionIDCh := make(chan string, 1) // buffered; no site reads it back
-		agentEndCb := func() {
+		agentEndCb := func() {                      //nolint:contextcheck // PI-014 backstop kill fires from the stdout interceptor goroutine, which outlives any request ctx
 			// PI-014: pi's process exit is unreliable, so agent_end is the
 			// event-driven kill backstop.
 			if sess != nil {
@@ -637,7 +641,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			// CHB-019 heartbeat (daemon-owned per OQ5). Without it lastEventType
 			// stays frozen at launch_initiated for the whole run and the stale
 			// watcher fires a false-positive run_stale on every dispatch (hk-nvjk).
-			hbTarget := handlercontract.EventEmitter(emit)
+			hbTarget := emit
 			if in.HeartbeatViaTap {
 				hbTarget = tap
 			}
@@ -716,14 +720,14 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// Force-teardown is the hk-68pvl guard: the caller's worktree cleanup must
 	// never remove the directory while an agent is still live inside it. Kill is
 	// idempotent, so this is a no-op on the normal exit path.
-	defer func() {
+	defer func() { //nolint:contextcheck // the teardown pair takes no ctx (pre-RT8 idiom); ForceTeardownSession reaps on context.Background() so the kill completes even after the run ctx is cancelled
 		if hbDone != nil {
 			close(hbDone)
 		}
 		if in.SkipTeardown != nil && in.SkipTeardown() {
 			return
 		}
-		runlaunch.ForceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom); it reaps on context.Background() so the kill completes even after the run ctx is cancelled
+		runlaunch.ForceTeardownSession(sess)
 	}()
 
 	if res.Dispatch.Phase == runexec.DispatchFailed && res.Dispatch.Reason == "agent_ready_timeout" {
@@ -748,7 +752,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// Substrate path: completion is signalled through the hook store, not a
 	// watcher, so nothing has killed the window yet.
 	if watcher == nil {
-		_ = sess.Kill(context.Background()) //nolint:errcheck // best-effort window kill (pre-RT8 idiom)
+		_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // best-effort window kill on a deliberately non-cancellable ctx: the run ctx may already be cancelled and the pane must still die (pre-RT8 idiom)
 	}
 
 	closeHook()

@@ -39,7 +39,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -4022,303 +4021,26 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		spec.Args = append(env.HandlerArgs, spec.Args...)
 	}
 
-	// Attach the optional tmux substrate (nil unless set from handles.Substrate).
-	//
-	// hk-012af: when handles.Substrate is a *tmuxSubstrate, wrap it in a
-	// perRunSubstrate so this goroutine gets its own isolated pane handle.
-	// Under MaxConcurrent>1, each concurrent beadRunOne call would otherwise
-	// race on a shared pane-target; the second SpawnWindow would overwrite the
-	// first run's target, causing paste-inject messages to land in the wrong pane
-	// and stalling both runs indefinitely (7-hour silent gap in 22:29 UTC dogfood).
-	// perRunSubstrate captures the pane ID of *this* goroutine's spawned window
-	// and routes all paste-inject I/O there. (hk-jfh59: shared-state methods on
-	// tmuxSubstrate removed.)
-	//
-	// B10: for remote runs pass the SSHRunner so liveness probes (pgrep, ps) and
-	// git commit-detect are tunnelled to the worker host instead of executing locally.
-	var runSubstrate handler.Substrate = handles.Substrate
-	var runPasteTarget handler.Substrate = handles.Substrate // fallback: shared substrate
+	// B10: for remote runs the SSHRunner tunnels liveness probes (pgrep, ps) and
+	// commit-detection to the worker host instead of executing them locally.
 	var runRunner tmuxpkg.CommandRunner
 	if rbc != nil {
 		runRunner = rbc.sshRunner
 	}
-	if prs := newPerRunSubstrate(handles.Substrate, env.HandlerBinary, runRunner); prs != nil {
-		// B11: wire the offline callback so mid-run SSH failures emit worker_offline
-		// and disable the worker. Nil for local runs (rbc == nil).
-		if rbc != nil {
-			prs.onConnectionFailure = func(c context.Context, detail string) {
-				notifyWorkerOffline("liveness", detail)
-			}
-			// remote-substrate worker-spawn gap: tell the per-run substrate which
-			// tmux session to ENSURE + spawn into ON THE WORKER, and the cwd to use
-			// when creating it (the worker's repo_path). Without this the spawn would
-			// target box A's local "-default" session — which does not exist on the
-			// worker — and the launch wedges at launch_initiated.
-			prs.workerSessionName = prs.inner.workerSpawnSessionName(rbc.worker.Name)
-			prs.workerSessionCwd = rbc.worker.RepoPath
-		}
-		runSubstrate = prs
-		runPasteTarget = prs
 
-		// hk-o85ye (Move 3): route this run through an independent tmux session so
-		// it survives a daemon SIGKILL. Only for local runs (rbc == nil) where the
-		// substrate implements runSessionSpawner AND the underlying tmux adapter
-		// supports independent session creation (sessionCreator). Adapters that lack
-		// sessionCreator (e.g. test stubs, the $TMUX-reuse mode) fall through to the
-		// standard shared-session path — no behavior change for them.
-		if rbc == nil && env.ProjectDir != "" {
-			canIndepSession := false
-			if ts, tsOK := handles.Substrate.(*tmuxSubstrate); tsOK {
-				_, canIndepSession = ts.adapter.(sessionCreator)
-			}
-			if _, ok := handles.Substrate.(runSessionSpawner); ok && canIndepSession {
-				prs.runSessionID = runID.String()
-				useIndepSession = true
-				// Pre-compute session name for the registry (best-effort; empty is fine).
-				sessName := ""
-				if ts, tsOK := handles.Substrate.(*tmuxSubstrate); tsOK {
-					if sn, snErr := ts.runSessionName(runID.String()); snErr == nil {
-						sessName = sn
-					}
-				}
-				queueIDStr := ""
-				if queueID != nil {
-					queueIDStr = *queueID
-				}
-				queueGroupIdx := -1
-				if queueGroupIndex != nil {
-					queueGroupIdx = *queueGroupIndex
-				}
-				if writeErr := runpkg.Write(env.ProjectDir, runpkg.Record{
-					SchemaVersion: 1,
-					RunID:         runID.String(),
-					BeadID:        string(beadID),
-					QueueName:     queueName,
-					QueueID:       queueIDStr,
-					GroupIndex:    queueGroupIdx,
-					ItemIndex:     queueItemIndex,
-					SessionName:   sessName,
-					StartedAt:     rp.Clock.Now(),
-				}); writeErr != nil {
-					// Registry write failed: fall back to shared-session path (no survive-restart).
-					fmt.Fprintf(os.Stderr, "daemon: workloop: run registry write failed for %s: %v (using shared session)\n", runID.String(), writeErr)
-					prs.runSessionID = ""
-					useIndepSession = false
-				}
-			}
-		}
-	}
-	// PI-012a / hk-mzgh workloop analog: for SessionIDCaptured harnesses (Pi,
-	// codex) the tmux substrate returns Stdout()==nil, so StdoutWrapper is never
-	// called and neither the session-id capture nor the PI-014 agent_end watcher
-	// fires. Force implSpec.Substrate=nil to select the exec path, which wires a
-	// real stdout pipe. Mirrors the reviewloop implIsSessionIDCaptured block.
-	implIsSessionIDCapturedWL := false
-	var implHarnessWL handlercontract.Harness
-	if handles.HarnessRegistry != nil {
-		if implH, implHErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); implHErr == nil {
-			implIsSessionIDCapturedWL = implH.SessionIDPolicy() == handlercontract.SessionIDCaptured
-			implHarnessWL = implH
-			sdHarness = string(implH.AgentType())
-		}
-	}
-	// hk-6596l: srt sandbox argv-wrap wiring. hk-r4p0l: key the gate off the
-	// resolved harness identity (implHarnessWL.AgentType()), NOT the
-	// artifacts-derived agent type. The originally-shipped gate matched
-	// string(shared.ArtifactAgentType(artifacts)); for a pi run that value could read
-	// "claude-code" and the wrap silently no-op'd even with backend=srt +
-	// harnesses:[pi]. resolveGateAgentType prefers implHarnessWL (the concrete
-	// Harness resolved via HarnessRegistry.ForAgent just above) whose AgentType()
-	// is the guaranteed-correct identity, falling back to the artifacts value only
-	// when no resolved Harness is in scope.
-	//
-	// When backend=srt and the resolved harness is in sandbox.harnesses,
-	// sandboxSpawnForRun returns the SrtSpawnConfig to attach to the
-	// perRunSubstrate so SpawnWindow prepends the srt argv-wrap (hk-rlxgx). The
-	// profile input is populated with per-run coordinates available here: worktree
-	// path, git dir, run ID, daemon socket, and the config-driven cache + network
-	// fields. Strict no-op when backend == "" (block absent) or backend == "none",
-	// or when the harness is not listed.
-	//
-	// hk-r4p0l part 2: the gate decision is computed ONCE here into sandboxSpawn
-	// (the single source of truth for "should this run be srt-wrapped + with what
-	// profile") and then applied on whichever launch path this run takes:
-	//   - substrate path (non-SessionIDCaptured harnesses, e.g. claude/codex):
-	//     attach to prs.sandboxSpawn; perRunSubstrate.SpawnWindow prepends the
-	//     srt argv-wrap when the tmux window is spawned.
-	//   - exec path (SessionIDCaptured harnesses, e.g. pi): spec.Substrate is
-	//     forced nil below (to capture stdout/session-id), so SpawnWindow never
-	//     runs. The wrap is instead applied directly to spec.Binary/spec.Args in
-	//     the SessionIDCaptured branch below. The two branches are mutually
-	//     exclusive, so there is no double-wrap.
-	sandboxSpawn := sandboxSpawnForRun(env.SandboxCfg, resolveGateAgentType(implHarnessWL, shared.ArtifactAgentType(artifacts)), SandboxProfileInput{
-		WorktreePath:           wtPath,
-		GitDir:                 filepath.Join(env.ProjectDir, ".git"),
-		RunID:                  runID.String(),
-		DaemonSockPath:         agentDaemonSock,
-		AllowedDomains:         env.SandboxCfg.Network.AllowedDomains,
-		AllowLocalBinding:      env.SandboxCfg.Network.AllowLocalBinding,
-		WeakerNetworkIsolation: env.SandboxCfg.Network.WeakerNetworkIsolation,
-		SharedReadCacheDirs:    env.SandboxCfg.Cache.WarmRead,
-		PrivateWriteCacheDirs:  env.SandboxCfg.Cache.PrivateWrite,
-	})
-	if prs, ok := runSubstrate.(*perRunSubstrate); ok && sandboxSpawn != nil {
-		prs.sandboxSpawn = sandboxSpawn
-	}
-	// hk-5wdon: before trusting sandboxSpawn to isolate this run, PROVE the
-	// srt sandbox actually engages under the profile we are about to launch
-	// with. hk-tch4t showed srt's own exit code is NOT sufficient evidence —
-	// under fork saturation sandbox_init can silently fail to apply while srt
-	// still exits 0. A verification failure here means the sandbox is not
-	// trustworthy for this run; refuse to launch the agent unsandboxed and
-	// hard-fail the run loud rather than treating it as green.
-	if sandboxSpawn != nil {
-		canaryPath := srtEngagementCanaryPath(env.ProjectDir, runID.String())
-		if engageErr := verifySandboxEngaged(ctx, sandboxSpawn, canaryPath, func(format string, args ...any) {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s: "+format+"\n",
-				append([]any{beadID, runID.String()}, args...)...)
-		}); engageErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: srt sandbox engagement verification bead %s run %s: %v (reopening)\n",
-				beadID, runID.String(), engageErr)
-			reason := fmt.Sprintf("srt sandbox engagement verification failed: %v", engageErr)
-			failRun(reason, reason)
-			return
-		}
-	}
-
-	if implIsSessionIDCapturedWL {
-		spec.Substrate = nil
-		// hk-r4p0l part 2: exec-path srt argv-wrap. A SessionIDCaptured harness
-		// (pi) runs via exec.CommandContext(spec.Binary, spec.Args...) — the
-		// substrate's SpawnWindow (which wraps the substrate path) is never
-		// invoked, so without this the gate would attach sandboxSpawn to a
-		// discarded substrate and pi would launch UN-sandboxed. Prepend
-		// 'srt --settings <profile>' to the final argv so the run is actually
-		// sandboxed. Strict no-op when sandboxSpawn is nil (backend != srt or
-		// harness not listed).
-		wrapBin, wrapArgs, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
-		if wrapErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: srt argv-wrap bead %s run %s: %v (reopening)\n",
-				beadID, runID.String(), wrapErr)
-			reason := fmt.Sprintf("srt argv-wrap error: %v", wrapErr)
-			failRun(reason, reason)
-			return
-		}
-		spec.Binary = wrapBin
-		spec.Args = wrapArgs
-		// hk-cdpxu: when the run is actually srt-sandboxed, point Go's toolchain
-		// caches at the run worktree (already in the profile's allowWrite set,
-		// see GenerateSandboxProfile step 1) instead of their default location
-		// under $HOME (e.g. ~/Library/Caches/go-build, ~/go) — a path the sandbox
-		// denies. Without this, any `go build`/`go vet`/`go test` the agent runs
-		// inside the sandbox fails with "operation not permitted" on the cache
-		// write, even though `go` itself resolves fine. Reproduced empirically
-		// via a direct srt invocation against the production warm_read set.
-		// Additive only (spec.Env wins on duplicate GOCACHE/GOPATH keys per Go's
-		// env semantics — last entry wins); harmless when the agent's task has no
-		// go.mod. No-op when this run is not srt-sandboxed (sandboxSpawn == nil).
-		if sandboxSpawn != nil {
-			spec.Env = append(spec.Env,
-				"GOCACHE="+filepath.Join(wtPath, ".harmonik", "go-cache"),
-				"GOPATH="+filepath.Join(wtPath, ".harmonik", "go-path"),
-			)
-		}
-	} else {
-		spec.Substrate = runSubstrate
-	}
-	// hk-wnqos: single-mode implementer is the terminal/merge spawn — it draws
-	// from the reserved +1 slot in spawnSem so a saturated non-terminal pool
-	// cannot starve a single-mode run (codex or otherwise) at launch.
-	spec.Terminal = true
-
-	// PI-014 workloop analog: predeclare sess so agentEndCb can capture it by
-	// reference. RT14: watcher/launchErr/hbDone join it because the dispatch
-	// segment's launch and onLaunched hooks assign them from inside closures;
-	// the closure capture is safe because agent_end can only arrive after Launch
-	// returns and sets sess, and because RunDispatch drives every effector
-	// inline on this goroutine (runshell.go RunDispatch).
-	var sess handler.Session
-	var watcher *handlercontract.Watcher
-	var launchErr error
-	var hbDone chan struct{}
-	// hk-j6wm7: for a Pi run, capture a COPY of the child's stdout to a file under
-	// the run worktree so the fast-fail NDJSON output is observable post-mortem
-	// when the worktree is retained on failure. The pi-agent dir is where
-	// buildPiLaunchSpec writes models.json; co-locate the captured output there.
-	// The stdout is TEE'd (not redirected) so the session-id interceptor below
-	// still sees every byte — session-id capture is unaffected.
-	var piCaptureDir string
-	var piStdoutFile *os.File
-	if runIsPi {
-		piCaptureDir = filepath.Join(wtPath, ".harmonik", "pi-agent")
-		// 0o700, NOT core.HarmonikDirMode: same directory as
-		// pi.BuildLaunchSpec's PI_CODING_AGENT_DIR (internal/harness/pi/
-		// launchspec.go), which holds agent credentials and is deliberately
-		// 0o700. MkdirAll does not chmod an existing dir, so the first creator
-		// decides the mode; match the credential owner, never widen it.
-		if mkErr := os.MkdirAll(piCaptureDir, 0o700); mkErr != nil { //dirmode:allow tighter on purpose: pi agent credential dir, matches internal/harness/pi.BuildLaunchSpec
-			fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: create pi capture dir %q: %v (stdout capture disabled)\n", piCaptureDir, mkErr)
-			piCaptureDir = ""
-		} else if f, ferr := os.Create(filepath.Join(piCaptureDir, "pi-stdout.log")); ferr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: create pi-stdout.log: %v (stdout capture disabled)\n", ferr)
-		} else {
-			piStdoutFile = f
-			defer func() {
-				if closeErr := piStdoutFile.Close(); closeErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: close pi-stdout.log: %v\n", closeErr)
-				}
-			}()
-		}
-	}
-	if implIsSessionIDCapturedWL {
-		capturedH := implHarnessWL
-		capturedSessionIDCh := make(chan string, 1) // buffered; single-mode has no resume reader
-		agentEndCb := func() {
-			if sess != nil {
-				_ = sess.Kill(context.Background())
-			}
-		}
-		spec.StdoutWrapper = func(r io.Reader) io.Reader {
-			src := r
-			if piStdoutFile != nil {
-				src = io.TeeReader(r, piStdoutFile)
-			}
-			return capturedH.NewSessionIDInterceptor(src, func(id string) {
-				capturedSessionIDCh <- id
-			}, agentEndCb)
-		}
-	}
-
-	// Step 2: register the hook session so incoming Stop-hook relays are routed
-	// to this run's hookSessionStore entry (CHB-025).
-	handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
-	defer handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
-
-	// Step 3: emit pre-exec messages on the bus BEFORE Launch (CHB-018 ordering).
-	// Each message carries a "type" field that maps directly to a core.EventType.
-	// Parse it from the raw JSON and use it as the envelope type.
-	//
-	// hk-4l7zs: launch_initiated is held back and emitted AFTER Launch returns —
-	// it must signal that a tmux window actually spawned, not merely that the
-	// daemon is about to try (which would mislead operators when SpawnWindow is
-	// wedged on a leaked spawn slot).
-	implLaunchInitiatedMsg := runlaunch.EmitPreExecBeforeLaunch(ctx, emit, runID, artifacts.PreExecMsgs)
-
-	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
-	// watcher events without a post-seal bus subscription (EV-009).
-	tap, tapCh := runloop.NewPerRunEventTap(emit, runID)
-	// Precondition: handles.AdapterRegistry must be non-nil (enforced by
-	// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
-	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, handles.AdapterRegistry)
+	// noChangeTimeoutCh is declared here so the default switch branch at the
+	// post-wait select can read it (nil = no watchdog, treated as an open
+	// channel). The deliver hook below is what assigns it (hk-trjef).
+	var noChangeTimeoutCh chan struct{}
 
 	// hk-5z1f0: per-worker cold-start spawn semaphore. Acquire immediately before
 	// the remote agent Launch so no more than cap (3) claude cold-starts run
 	// concurrently on a single worker — the 2nd (reviewer) cold-start over the
 	// reverse tunnel otherwise trips agent_ready_timeout under 6-concurrent remote
 	// load. Remote-only (rbc != nil): local runs never construct a tunnel and are
-	// never gated, mirroring the reverse-tunnel readiness gate above. Released once
-	// agent_ready resolves (success/failure/timeout); the sync.Once + defer backstop
-	// guarantees the slot is returned on every exit path so it can never leak.
+	// never gated. Released once agent_ready resolves (success/failure/timeout);
+	// the sync.Once + defer backstop guarantees the slot is returned on every exit
+	// path so it can never leak.
 	releaseSpawnSlot := func() {}
 	if rbc != nil && handles.AgentSpawnSem != nil {
 		select {
@@ -4331,7 +4053,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		}
 		var once sync.Once
 		releaseSpawnSlot = func() { once.Do(func() { <-handles.AgentSpawnSem }) }
-		defer releaseSpawnSlot() // leak backstop; explicit release after agent_ready below
+		defer releaseSpawnSlot() // leak backstop; prompt release rides AfterReadyResolved
 	}
 
 	// RT7: provisioning is complete — start the Run machine so every
@@ -4339,353 +4061,206 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// the terminal spine rides the machine.
 	bridge.Start(ctx, workflowMode)
 
-	implementerLaunchedAt := rp.Clock.Now()
-	// D2 (fail-closed): inspect the final spawn environment at the launch
-	// boundary, after every spec mutation, and refuse live Anthropic credentials
-	// on remote workers (the 2026-05-30 credential-leak incident).
-	if refusal, refused := d2RemoteAPIKeyRefusal(rbc != nil, spec.Env); refused {
-		reason := string(refusal)
-		fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s run %s (reopening)\n",
-			reason, beadID, runID.String())
-		failRun(reason, reason)
-		return false
-	}
-	// hk-zlo8: resolve completionMode BEFORE the segment so it is accessible at
-	// the paste-inject deliver hook below (pasteInjectOnLaunch +
-	// pasteInjectQuitOnCommit must be skipped for ProcessExit harnesses — same
-	// class as hk-f6g7) and so cfg.SkipReadyHandshake can carry the hk-f6g7
-	// posture: ProcessExit harnesses (codex) self-terminate on turn completion
-	// and never emit agent_ready, so the readiness handshake is skipped.
-	// Spec: specs/harness-contract.md §2 N5.
-	completionMode := handlercontract.CompletionEventStreamThenQuit
-	if handles.HarnessRegistry != nil {
-		if h, hErr := handles.HarnessRegistry.ForAgent(shared.ArtifactAgentType(artifacts)); hErr == nil {
-			completionMode = h.Completion()
-		}
-	}
-
-	// Precondition: handles.AdapterRegistry is non-nil (enforced by newWorkLoopDeps;
-	// hk-d8u1y). Obtain the adapter from the registry for DetectReady.
-	adapter, adapterErr := handles.AdapterRegistry.ForAgent(shared.ArtifactAgentType(artifacts))
-	if adapterErr != nil {
-		// No adapter for the resolved agent type — non-fatal; skip ready-wait
-		// (the segment feeds a synthetic ready so the brief is still delivered).
-		fmt.Fprintf(os.Stderr, "daemon: workloop: ForAgent(%s) bead %s: %v (skipping ready-wait)\n",
-			shared.ArtifactAgentType(artifacts), beadID, adapterErr)
-		adapter = nil
-	}
-
-	// Capture values for the agent-ready callback closure and the ready-timeout
-	// emission; claudeSessionID is a plain string (not core.SessionID) so copy it
-	// explicitly to avoid capturing a loop var.
-	cbRunID := runID
-	cbClaudeSessionID := artifacts.ClaudeSessionID
-
-	// noChangeTimeoutCh is declared unconditionally so the default switch branch at
-	// the post-wait select can read it (nil = no watchdog, treated as open channel).
-	// The segment's deliver hook is what assigns it (hk-trjef).
-	var noChangeTimeoutCh chan struct{}
-
-	implSeg := &runloop.DispatchSegment{
-		Clock: rp.Clock,
-		RunID: runID,
-		Config: runexec.DispatchConfig{
-			SkipReadyHandshake: completionMode == handlercontract.CompletionProcessExit,
-			// Single-mode beadRunOne is always a fresh launch (pre-RT14 parity):
-			// it has no iteration counter and never issues `claude --resume`.
-			IsResume:         false,
-			MaxInputAttempts: 1,
-			// hk-96d7w: remote dispatch (rbc != nil) gets the longer remote window.
-			ReadyTimeout:  runlaunch.EffectiveAgentReadyTimeout(env.AgentReadyTimeout, env.RemoteAgentReadyTimeout, rbc != nil),
-			InputAck:      runloop.DispatchSegmentInputAckWindow,
-			ReadyKillReap: runlaunch.KillReapTimeout,
-		},
-		// nil adapter (no adapter for the resolved agent type) → the segment feeds
-		// a synthetic ready so the brief is still delivered without a wait.
-		Adapter: adapter,
-		// pre-RT14 parity: the single-mode path had no resume accommodation.
-		ProbeResume: false,
-		Tap:         tap,
-		TapCh:       tapCh,
-		Launch: func(lctx context.Context) (<-chan struct{}, error) {
-			sess, watcher, launchErr = runH.Launch(lctx, spec)
-			if launchErr != nil {
-				return nil, launchErr
+	// The launch itself is the ONE path in agentlaunch.go. This site keeps only
+	// what to launch (above) and what the exit means (below).
+	launch := runAgentLaunch(ctx, agentLaunchInput{
+		Env:     env,
+		Ports:   rp,
+		Handles: handles,
+		RunID:   runID,
+		LogPrefix: fmt.Sprintf("daemon: workloop: bead %s run %s",
+			beadID, runID.String()),
+		Spec:          spec,
+		Artifacts:     artifacts,
+		WorktreePath:  wtPath,
+		DaemonSocket:  agentDaemonSock,
+		Runner:        runRunner,
+		Remote:        rbc != nil,
+		BaseSubstrate: handles.Substrate,
+		ConfigurePerRunSubstrate: func(prs *perRunSubstrate) {
+			if rbc != nil {
+				// B11: wire the offline callback so a mid-run SSH failure emits
+				// worker_offline and disables the worker.
+				prs.onConnectionFailure = func(c context.Context, detail string) {
+					notifyWorkerOffline("liveness", detail)
+				}
+				// remote-substrate worker-spawn gap: name the tmux session to ENSURE
+				// + spawn into ON THE WORKER and the cwd to create it with (the
+				// worker's repo_path). Without this the spawn targets box A's local
+				// "-default" session — which does not exist on the worker — and the
+				// launch wedges at launch_initiated.
+				prs.workerSessionName = prs.inner.workerSpawnSessionName(rbc.worker.Name)
+				prs.workerSessionCwd = rbc.worker.RepoPath
+				return
 			}
-			if watcher != nil {
-				return watcher.Done(), nil
+			// hk-o85ye (Move 3): route a LOCAL run through an independent tmux
+			// session so it survives a daemon SIGKILL. Only where the substrate
+			// implements runSessionSpawner AND the underlying tmux adapter supports
+			// independent session creation (sessionCreator). Adapters that lack it
+			// (test stubs, the $TMUX-reuse mode) fall through to the shared-session
+			// path — no behavior change for them.
+			if env.ProjectDir == "" {
+				return
 			}
-			return nil, nil
-		},
-		OnLaunchFailed: func(lctx context.Context, lErr error) {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
-				beadID, runID.String(), lErr)
-			// hk-4l7zs: a spawn-cap-timeout launch failure is the slot-leak signature.
-			// Emit spawn_cap_blocked so operators see WHY the launch failed (pool
-			// saturated) instead of an opaque launch-error reopen.
-			if errors.Is(lErr, ErrSpawnCapTimeout) {
-				inUse, capSize := substrateSpawnStats(handles.Substrate)
-				runlaunch.EmitSpawnCapBlocked(lctx, emit, runID, rp.Clock.Since(implementerLaunchedAt), inUse, capSize)
+			canIndepSession := false
+			if ts, tsOK := handles.Substrate.(*tmuxSubstrate); tsOK {
+				_, canIndepSession = ts.adapter.(sessionCreator)
 			}
-			// hk-r1rup: a tmux-new-window-timeout launch failure is the hung-tmux
-			// signature (the no-spawn wedge). Emit tmux_new_window_timeout so operators
-			// see WHY the launch failed (tmux new-window did not return) instead of an
-			// opaque launch-error reopen.
-			if errors.Is(lErr, ErrTmuxNewWindowTimeout) {
-				runlaunch.EmitTmuxNewWindowTimeout(lctx, emit, runID, rp.Clock.Since(implementerLaunchedAt))
+			if _, ok := handles.Substrate.(runSessionSpawner); !ok || !canIndepSession {
+				return
+			}
+			prs.runSessionID = runID.String()
+			useIndepSession = true
+			// Pre-compute the session name for the registry (best-effort; empty is fine).
+			sessName := ""
+			if ts, tsOK := handles.Substrate.(*tmuxSubstrate); tsOK {
+				if sn, snErr := ts.runSessionName(runID.String()); snErr == nil {
+					sessName = sn
+				}
+			}
+			queueIDStr := ""
+			if queueID != nil {
+				queueIDStr = *queueID
+			}
+			queueGroupIdx := -1
+			if queueGroupIndex != nil {
+				queueGroupIdx = *queueGroupIndex
+			}
+			if writeErr := runpkg.Write(env.ProjectDir, runpkg.Record{
+				SchemaVersion: 1,
+				RunID:         runID.String(),
+				BeadID:        string(beadID),
+				QueueName:     queueName,
+				QueueID:       queueIDStr,
+				GroupIndex:    queueGroupIdx,
+				ItemIndex:     queueItemIndex,
+				SessionName:   sessName,
+				StartedAt:     rp.Clock.Now(),
+			}); writeErr != nil {
+				// Registry write failed: fall back to the shared-session path (no
+				// survive-restart).
+				fmt.Fprintf(os.Stderr, "daemon: workloop: run registry write failed for %s: %v (using shared session)\n", runID.String(), writeErr)
+				prs.runSessionID = ""
+				useIndepSession = false
 			}
 		},
-		OnLaunched: func(lctx context.Context) {
-			// hk-4l7zs: now that the tmux window has actually spawned (Launch returned a
-			// live session), emit the held-back launch_initiated. Emitting it here — not
-			// before SpawnWindow — keeps the event truthful when the spawn semaphore is
-			// wedged on a leaked slot (in that case Launch returns an error above and
-			// launch_initiated is never emitted).
-			if implLaunchInitiatedMsg != nil {
-				runlaunch.EmitPreExecMessage(lctx, emit, runID, implLaunchInitiatedMsg)
+		// PRESERVED DIVERGENCE: single-mode applies the srt gate on BOTH the
+		// substrate and the exec path, and redirects the Go toolchain caches into
+		// the worktree on the exec path (hk-cdpxu). Narrowing it to match the DOT
+		// cascade would silently un-sandbox single-mode.
+		SandboxScope: sandboxScopeAll,
+		// hk-wnqos: the single-mode implementer is the terminal/merge spawn — it
+		// draws from the reserved +1 slot in spawnSem so a saturated non-terminal
+		// pool cannot starve it at launch.
+		Terminal: true,
+		// Single-mode beadRunOne is always a fresh launch: it has no iteration
+		// counter and never issues `claude --resume`.
+		IsResume:        false,
+		ProbeResume:     false,
+		HeartbeatViaTap: true,
+		Deliver: func(dctx context.Context, dc agentDeliverCtx) {
+			// hk-zlo8: a ProcessExit harness (codex) has no tmux pane and receives
+			// its task via argv; pasteInjectOnLaunch would fail with "WriteLastPane:
+			// cant find pane" → no_commit in ~4s.
+			if dc.ProcessExit {
+				return
 			}
+			// pasteInjectOnLaunch delivers "Please read .harmonik/agent-task.md and
+			// begin." to the pane. It MUST run on the post-ready deliver edge (smoke
+			// v9 RED, hk-zchbu): pasted before agent_ready, the trailing \n is
+			// consumed by Claude Code's welcome-splash render, the text sits in the
+			// input bar unsubmitted, and the run hangs. Errors are non-fatal (PL-021d).
+			briefDelivered := pasteInjectOnLaunch(dctx, rp.Clock, dc.PasteTarget, artifacts.ClaudeSessionID,
+				rc.Phase, rc.IterationCount, wtPath, emit, runID)
 
-			// Store the session's lifecycle Machine in the RunHandle so the stale watcher
-			// can read the current state and drive Ready→Failed(silent_hang) before
-			// emitting run_stale (SPEC_ACCEPTANCE_GAP fix per hk-xrygh iter-2).
+			// pasteInjectQuitOnCommit: in interactive TUI mode the Stop hook fires on
+			// session exit, not after each response, and a Claude Code agent cannot
+			// run a slash command from its tool API — so once the task commit lands
+			// the daemon injects `/quit` via tmux send-keys to trigger the hook and
+			// unblock the workloop (CHB-028, hk-cmybm). briefDelivered gates the
+			// commit poll so a stale pane cannot be /exit-raced (hk-930o3).
+			//
+			// noChangeTimeoutCh is closed by the watchdog when it kills the session
+			// after commitPollTimeout without a new commit; the post-wait switch reads
+			// it non-blockingly to tell a forced kill from a genuine agent failure
+			// (hk-trjef).
+			//
+			// hk-37giq: the watchdog MUST take its own tap subscription. Sharing the
+			// ready pump's channel let the ready-side drain goroutine steal every
+			// heartbeat under concurrent dispatch, wedging the watchdog in its
+			// launch-suppression branch forever.
+			qs, ok := dc.PasteTarget.(quitSender)
+			if !ok {
+				return
+			}
+			noChangeTimeoutCh = make(chan struct{})
+			watchdogCh := dc.Tap.Subscribe()
+			go pasteInjectQuitOnCommit(ctx, rp.Clock, qs, dc.Session, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, emit, runID)
+		},
+		OnLaunchedExtra: func(lctx context.Context, sess handler.Session) {
+			// Store the session's lifecycle Machine in the RunHandle so the stale
+			// watcher can read the current state and drive Ready→Failed(silent_hang)
+			// before emitting run_stale (hk-xrygh iter-2).
 			if handle, ok := handles.RunRegistry.Get(runID); ok {
 				handle.SetMachine(sess.Machine())
 			}
-
-			// hk-xnnd: register the implementer identity on the comms bus so peers can
-			// attribute escalation messages sent under "<beadID>-impl". Retire on run-end
-			// via the defer registered after the segment returns, so the leave event
-			// fires on every exit path (normal, abort, error).
+			// hk-xnnd: register the implementer identity on the comms bus so peers
+			// can attribute escalation messages sent under "<beadID>-impl". Retired
+			// by the defer registered below, which fires on every exit path.
 			emitImplPresence(lctx, emit, beadID, core.AgentPresenceStatusOnline, core.AgentPresenceReasonJoin)
+		},
+		// hk-o85ye: SITE-SPECIFIC. Unlike the DOT paths, whose teardown is
+		// unconditional, single-mode must NOT kill an independent-session run on
+		// daemon shutdown: that session outlives SIGKILL and the next boot's
+		// adoption pass monitors it, which is why the shutdown branch below returns
+		// without ReopenBead. Killing here would strand the bead in_progress with no
+		// live session to adopt. The abort edge, the teardown and the post-wait
+		// window kill all carry the identical guard.
+		SkipAbortKill: func() bool { return useIndepSession && ctx.Err() != nil },
+		SkipTeardown:  func() bool { return useIndepSession && ctx.Err() != nil },
+		// hk-5z1f0: agent_ready has resolved (or was skipped) — the cold-start
+		// window is over, so return the spawn slot rather than holding it for the
+		// whole run body. The deferred backstop above still covers the early-return
+		// error paths.
+		AfterReadyResolved: releaseSpawnSlot,
+	})
 
-			// Wire the agent-ready callback so that incoming agent_ready relay
-			// messages from the hook-relay subprocess (CHB-013 / HC-039) are forwarded
-			// into tapCh, which the segment's ready pump consumes.
-			//
-			// Without this call, hookSessionStore.notifyAgentReady finds agentReadyCallback
-			// == nil and is a no-op: tapCh stays empty and the ready pump never observes
-			// agent_ready, so HC-056 fires runlaunch.ErrAgentReadyTimeout. This is the root
-			// cause identified in smoke v6 (docs/dogfood-smoke-run-2026-05-13-bridge-substrate-v6.md
-			// §9, bead hk-lj1p9.4).
-			//
-			// The callback is invoked from the socket-acceptor goroutine and MUST be
-			// non-blocking. tap.EmitWithRunID is used to forward the event through the
-			// same path as watcher events, ensuring the ready pump receives it.
-			// context.Background() is intentional: the callback fires asynchronously from
-			// a socket-acceptor goroutine whose lifetime is decoupled from ctx; bus.Emit
-			// with Background is non-blocking and safe to call after ctx is cancelled.
-			//
-			// The defer CloseHookSession (step 2 above) ensures the callback is never
-			// called after the hook session is torn down: notifyAgentReady reads the
-			// callback under the mutex, and CloseHookSession deletes the session entry,
-			// so any post-close relay message returns unknown_session before reaching the
-			// callback.
-			//
-			// Ordering: tap is created before Launch, Launch returns before this hook
-			// runs (the machine emits launch_initiated only on EvLaunched), and the ready
-			// pump consumes tapCh from segment start — so the callback is registered
-			// before the machine's TimerAgentReady can expire.
-			//
-			// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
-			// Bead ref: hk-lj1p9.4.
-			handles.HookStore.SetAgentReadyCallback(runID.String(), artifacts.ClaudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
-				// hk-5cox8 observability: populate run_id, claude_session_id, and provenance
-				// so the emitted agent_ready event in events.jsonl can be correlated per-run.
-				// Previously this called tap.Emit with nil payload, producing payload:null
-				// in the JSONL and making it impossible to determine which runs received
-				// agent_ready and which timed out.
-				pl := core.AgentReadyPayload{
-					RunID:           cbRunID,
-					SessionID:       core.SessionID(cbClaudeSessionID),
-					Capabilities:    []string{},
-					ClaudeSessionID: cbClaudeSessionID,
-					Provenance:      "claude_session_start",
-				}
-				b, marshalErr := json.Marshal(pl)
-				if marshalErr != nil {
-					// Fallback: emit without payload rather than silently dropping the event.
-					// hk-wths: use EmitWithRunID so the bus envelope carries run_id and the
-					// stale watcher's never-spawned reaper sees agentReadySeen = true.
-					_ = tap.EmitWithRunID(context.Background(), cbRunID, core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
-					return
-				}
-				// hk-wths: use EmitWithRunID so the bus envelope carries run_id and the
-				// stale watcher's never-spawned reaper sees agentReadySeen = true.
-				_ = tap.EmitWithRunID(context.Background(), cbRunID, core.EventTypeAgentReady, b) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
-			})
-
-			// Step 5: start CHB-019 heartbeat goroutine.  Daemon-owned per OQ5 resolution.
-			// Closed via the defer registered after the segment returns.
-			hbDone = make(chan struct{})
-			go handler.RunHeartbeatLoop(ctx, artifacts.HandlerSessionID,
-				handler.HeartbeatInterval, hbDone,
-				newDaemonHeartbeatEmitter(tap, runID))
-		},
-		Deliver: func(dctx context.Context) {
-			// Steps 6a/6b: paste-inject — only for interactive TUI harnesses (not ProcessExit).
-			// hk-zlo8: CodexHarness (CompletionProcessExit) has no tmux pane; calling
-			// pasteInjectOnLaunch causes "WriteLastPane: cant find pane" → no_commit in ~4s.
-			// ProcessExit harnesses receive their task via argv (launch spec), not pane paste.
-			// Belt to cfg.SkipReadyHandshake's braces: that config already keeps the
-			// machine from reaching the deliver edge for a ProcessExit harness, but the
-			// guard is the pre-RT14 gate and removing it would be a logic change.
-			if completionMode != handlercontract.CompletionProcessExit {
-				// Step 6a: pasteInjectOnLaunch — deliver "Please read .harmonik/agent-task.md
-				// and begin." (or phase-appropriate equivalent) to the tmux pane via
-				// WriteLastPane.
-				//
-				// MUST run on the machine's post-ready deliver edge (smoke v9 RED, hk-zchbu):
-				// when paste-inject fires before agent_ready, the trailing \n is consumed by
-				// Claude Code's welcome-splash render before the REPL input state is
-				// active; the buffered text sits in the input bar unsubmitted, claude
-				// never reads agent-task.md, HC-056 never fires (the splash itself
-				// doesn't emit SessionStart on its own), and the run hangs.
-				//
-				// Errors are logged to stderr but non-fatal (PL-021d).
-				//
-				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
-				// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
-				briefDelivered := pasteInjectOnLaunch(dctx, rp.Clock, runPasteTarget, artifacts.ClaudeSessionID,
-					rc.Phase, rc.IterationCount, wtPath,
-					emit, runID)
-
-				// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
-				// worktree, send `/quit Enter` to Claude Code's REPL to trigger the Stop
-				// hook and unblock the workloop (CHB-028 session-completion-instruction,
-				// hk-cmybm).
-				//
-				// Background: in interactive TUI mode the Stop hook fires on session exit
-				// (/quit or Ctrl-C) — NOT after each assistant response.  Claude Code agents
-				// cannot execute slash commands from their tool API; the daemon detects the
-				// commit and injects /quit programmatically via tmux send-keys.
-				//
-				// The goroutine polls the worktree HEAD every 500ms.  When HEAD changes from
-				// headSHA (the pre-commit parent), it sends /quit.  Non-fatal on error.
-				//
-				// hk-012af: use runPasteTarget (per-run substrate) so /quit targets this
-				// run's pane, not the shared "last pane" which may have been overwritten by
-				// a concurrent beadRunOne goroutine.
-				//
-				// hk-930o3: briefDelivered is passed so pasteInjectQuitOnCommit blocks on
-				// brief delivery before starting the commit poll loop, preventing a stale
-				// tmux pane /exit race.
-				//
-				// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
-				// Beads: hk-cmybm, hk-930o3.
-				// noChangeTimeoutCh is closed by pasteInjectQuitOnCommit when it kills the
-				// session after commitPollTimeout without a new commit (hk-trjef).  The
-				// workloop checks it non-blockingly in the default switch branch to
-				// distinguish a forced-kill from a genuine agent failure.
-				//
-				// hk-7srrd: pass a per-run heartbeat channel so pasteInjectQuitOnCommit can
-				// track agent_heartbeat events and use heartbeat staleness as the primary
-				// kill trigger instead of a fixed wall-clock deadline.
-				//
-				// hk-37giq: this MUST be an INDEPENDENT subscription (tap.Subscribe()), NOT
-				// the same tapCh that the segment's ready pump consumes. A Go channel receive
-				// is exclusive, so sharing tapCh let the ready-side drain goroutine — which
-				// can keep running until the segment ends — steal every heartbeat from this
-				// watchdog under concurrent dispatch. With the fan-out tap, the watchdog gets
-				// its own copy of every event and observes firstHeartbeatSeen, so it advances
-				// instead of spinning in the launch-suppression branch forever
-				// (launch_stall_detected → run_stale wedge).
-				if qs, ok := runPasteTarget.(quitSender); ok {
-					noChangeTimeoutCh = make(chan struct{})
-					watchdogCh := tap.Subscribe()
-					go pasteInjectQuitOnCommit(ctx, rp.Clock, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, emit, runID)
-				}
-			}
-		},
-		KillReady: func(kctx context.Context) {
-			// HC-056: agent_ready_timeout — kill, reap. The reopen follows at the
-			// segment return below (the machine emits agent_ready_timeout after this
-			// hook returns, preserving the pre-RT14 kill-then-emit ordering).
-			fmt.Fprintf(os.Stderr, "daemon: workloop: waitAgentReady bead %s run %s: %v (reopening)\n",
-				beadID, runID.String(), runlaunch.ErrAgentReadyTimeout)
-			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
-			if watcher != nil {
-				// Wait for the watcher goroutine to exit, but do not block
-				// indefinitely — runlaunch.KillReapTimeout guards against a
-				// hung watcher after SIGKILL. The bead is still reopened even
-				// if reaping times out; the watcher goroutine will unblock
-				// when the outer ctx is eventually cancelled.
-				// Bead ref: hk-do7te.
-				select {
-				case <-watcher.Done():
-				case <-substrate.After(rp.Clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
-					fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
-						beadID, runID.String())
-				}
-			}
-			// hk-4hso5: bound sess.Wait so a remote pane that stays alive after
-			// Kill cannot hold this goroutine up to 30 min (never-spawned reaper
-			// deadline). runlaunch.KillReapTimeout gives the pane time to close
-			// after SIGKILL; if not closed by then, proceed to ReopenBead anyway.
-			// context.Background() as parent makes this independent of the per-run
-			// ctx that the reaper may have already cancelled.
-			{
-				waitCtx, waitCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
-				_ = sess.Wait(waitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
-				waitCancel()
-			}
-		},
-		EmitReadyTimeout: func(context.Context) {
-			// hk-5cox8 observability: emit agent_ready_timeout to events.jsonl so
-			// post-hoc analysis can distinguish "never ready" runs from runs that
-			// received agent_ready. hk-4hso5: use context.Background() so the
-			// emission succeeds even when the never-spawned reaper has cancelled
-			// the per-run ctx before this point (the reopen hook applies the same
-			// Background fallback per RSM-022).
-			runlaunch.EmitAgentReadyTimeout(context.Background(), emit, runID, cbClaudeSessionID, env.AgentReadyTimeout) //nolint:contextcheck // hk-4hso5: Background is deliberate so the emission survives a reaper-cancelled run ctx (pre-RT14 idiom)
-		},
-		KillAbort: func(context.Context) {
-			// hk-o85ye: SITE-SPECIFIC — unlike reviewloop.go / dot_cascade.go, whose
-			// ForceTeardownSession backstop is unconditional, this site's backstop is
-			// guarded (`!useIndepSession || ctx.Err() == nil`) because on daemon
-			// shutdown an independent-session run MUST survive: the session outlives
-			// SIGKILL and the next boot's adoption pass monitors it, which is why the
-			// shutdown branch below returns without ReopenBead. Killing here would
-			// strand the bead in_progress with no live session to adopt, so the abort
-			// edge carries the identical guard.
-			if useIndepSession && ctx.Err() != nil {
-				return
-			}
-			// Ctx-cancel abort edge: Kill is idempotent (the runlaunch.ForceTeardownSession
-			// backstop registered below rides behind it either way).
-			if sess != nil {
-				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
-			}
-		},
-		SpawnCapTimeout:      ErrSpawnCapTimeout,
-		TmuxNewWindowTimeout: ErrTmuxNewWindowTimeout,
+	// The resolved harness identity stamps the run-terminal diagnostic. It must
+	// be set before any failRun below, which reads sdHarness.
+	if launch.Harness != nil {
+		sdHarness = string(launch.Harness.AgentType())
 	}
-	implDispatch := implSeg.Run(ctx)
 
-	if launchErr != nil {
-		reason := fmt.Sprintf("launch error: %v", launchErr)
+	sess := launch.Session
+	watcher := launch.Watcher
+
+	switch launch.Fail {
+	case agentLaunchPrelaunchFailed:
+		// A pre-launch guard refused: srt engagement verification, the srt argv
+		// wrap, or the D2 remote-credential check. No session was created.
+		reason := launch.FailErr.Error()
+		failRun(reason, reason)
+		return false
+	case agentLaunchErrored:
+		reason := fmt.Sprintf("launch error: %v", launch.FailErr)
 		failRun(reason, reason)
 		// succeeded is never assigned before this point, so the explicit false is
 		// byte-equivalent to the pre-RT14 naked return (nakedret).
 		return false
+	case agentLaunchReadyTimeout, agentLaunchOK:
+		// A session exists; register its cleanup defers before deciding.
 	}
-
-	// RT14: the four post-launch cleanup defers are registered here, in their
-	// pre-RT14 textual order, so LIFO firing order is preserved exactly. They
-	// MUST be registered BEFORE the ready-timeout terminal check below —
-	// otherwise the agent_ready_timeout path stops tearing down the session,
-	// stops emitting presence-offline, and leaks the heartbeat goroutine.
-	// (reviewloop.go and dot_cascade.go register theirs at the same point.)
 
 	// hk-j6wm7: on a Pi FAILURE, persist the session's stderr tail alongside the
 	// captured stdout so the fast-fail error output survives with the retained
-	// worktree. Registered after Launch so it runs BEFORE the deferred wtCleanup
-	// (LIFO: wtCleanup was registered earlier at the worktree-factory step). On
-	// success this is a no-op — the worktree is cleaned up so no capture is
-	// needed. sess.Outcome() blocks until the run's Wait completes, which has
-	// already happened by the time this defer fires.
-	if runIsPi && piCaptureDir != "" {
+	// worktree. Registered here so it runs BEFORE the deferred wtCleanup (LIFO:
+	// wtCleanup was registered earlier at the worktree-factory step). On success
+	// this is a no-op — the worktree is cleaned up so no capture is needed.
+	// sess.Outcome() blocks until the run's Wait completes, which has already
+	// happened by the time this defer fires.
+	if runIsPi && launch.PiCaptureDir != "" {
 		capturedSess := sess
-		capturedCaptureDir := piCaptureDir
+		capturedCaptureDir := launch.PiCaptureDir
 		defer func() {
 			if bridge.Success() {
 				return
@@ -4704,59 +4279,31 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		}()
 	}
 
-	// hk-68pvl: force-tear-down the implementer session before beadRunOne
-	// returns — and therefore before the deferred wtCleanup (registered earlier
-	// at the worktree-factory step, so it runs LAST under LIFO defer ordering)
-	// removes the worktree. Without this, a ctx-cancel that makes sess.Wait
-	// return early (substrate path) lets removeWorktree delete the directory out
-	// from under a still-live claude mid-`go test`, producing a false
-	// no_commit_during_implementer exit=0. Kill is idempotent, so this is a
-	// no-op backstop on the normal exit path where the session already exited.
-	//
-	// hk-o85ye: skip teardown on daemon shutdown for independent-session runs;
-	// the session must survive so the adoption pass on next boot can monitor it.
-	defer func() {
-		if !useIndepSession || ctx.Err() == nil {
-			runlaunch.ForceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom); it deliberately reaps on context.Background() so the kill completes even after the run ctx is cancelled
-		}
-	}()
+	// Stop the heartbeat and tear the session down, in that order. Deferred
+	// rather than run inside the launch so the CHB-019 heartbeat keeps beating
+	// through the whole post-run spine below — it is what holds the stale
+	// watcher's dead-process reap off a long merge or no-commit inspection.
+	// Registered after the Pi capture defer so, under LIFO, teardown still runs
+	// BEFORE that defer reads sess.Outcome().
+	defer launch.Cleanup()
 
 	// hk-xnnd: retire the implementer identity on the comms bus. The join is
-	// emitted by the segment's onLaunched hook; this defer fires the leave on
+	// emitted by the launch's onLaunched hook; this defer fires the leave on
 	// every exit path (normal, abort, error).
 	defer func() {
 		emitImplPresence(context.Background(), emit, beadID, core.AgentPresenceStatusOffline, core.AgentPresenceReasonLeave)
 	}()
 
-	if hbDone != nil {
-		hbDoneToClose := hbDone
-		defer close(hbDoneToClose)
-	}
-
-	if implDispatch.Phase == runexec.DispatchFailed && implDispatch.Reason == "agent_ready_timeout" {
-		// RT7 / RSM-031 row 1: the ready-timeout Dispatch terminal maps onto
-		// the Run reopen spine (reopen "agent_ready_timeout" + run_failed).
+	if launch.Fail == agentLaunchReadyTimeout {
+		// RT7 / RSM-031 row 1: the ready-timeout Dispatch terminal maps onto the
+		// Run reopen spine (reopen "agent_ready_timeout" + run_failed).
 		failRun("agent_ready_timeout", "agent_ready_timeout")
 		// succeeded is never assigned before this point, so the explicit false is
 		// byte-equivalent to the pre-RT14 naked return (nakedret).
 		return false
 	}
-	// Working / Exited / Aborted: fall through to waitWithSocketGrace — the
-	// pre-RT14 posture for agent_ready-observed, watcher-exit-first
-	// (context.Canceled), and ctx-cancel.
 
-	// hk-5z1f0: agent_ready has resolved (or was skipped for a ProcessExit
-	// harness / missing adapter) — the cold-start window is over, so release the
-	// spawn semaphore now rather than holding it for the whole run body. The
-	// deferred backstop above already guarantees release on the early-return
-	// error paths (launch failure, agent_ready_timeout); this prompt release
-	// keeps the gate scoped to cold-start only. No-op for local runs.
-	releaseSpawnSlot()
-
-	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
-	// apply the stop-hook grace window for a pending outcome_emitted payload.
-	socketOutcome, ei := runloop.WaitWithSocketGrace(ctx, rp.Clock, handles.HookStore, watcher, sess,
-		runID.String(), artifacts.ClaudeSessionID)
+	socketOutcome, ei := launch.SocketOutcome, launch.Exit
 
 	// hk-0z5x: per-run abort check — fired when the never-spawned reaper in
 	// StaleWatcher cancels the per-run context (ctx) because launch_initiated
@@ -4765,8 +4312,8 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// Distinguish from daemon-wide shutdown (where ctx is also cancelled but
 	// handle.aborted is NOT set): check handle.aborted before treating this as
 	// a per-run abort. Daemon shutdown falls through to the existing ctx.Err()
-	// check in the no-commit path (line ~3441) which leaves the item 'dispatched'
-	// for QM-002a recovery.
+	// check in the no-commit path which leaves the item 'dispatched' for QM-002a
+	// recovery.
 	if ctx.Err() != nil {
 		if handle, ok := handles.RunRegistry.Get(runID); ok && handle.Aborted() {
 			// RT7 / RSM-031 row 1b: the never-spawned-reaper abort is the Aborted
@@ -4781,22 +4328,12 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	}
 
 	// HC-065: Drive StateTerminating → StateTerminated/StateFailed transitions.
-	// The session has exited (waitWithSocketGrace returned). Attempt to advance
+	// The session has exited (the completion wait returned). Attempt to advance
 	// the Machine through Terminating to a terminal state. Transitions that are
 	// invalid for the current state (e.g. machine already in StateFailed from
 	// agent_failed) are silently ignored.
 	transitionToTerminated(context.Background(), sess.Machine(), runID, emit,
 		ei.ExitCode, ei.WaitErr)
-
-	// hk-e6mtt: destroy the tmux window after the session completes so dead panes
-	// do not persist after run-fail/cancel. On the natural-exit path (claude /quit),
-	// only the process exited; the tmux pane window remains until explicitly killed.
-	// Kill is idempotent on the substrate path (killOnce guard in tmuxSubstrateSession);
-	// the cancel path already called Kill inside waitWithSocketGrace so this is a no-op.
-	// Guarded by watcher==nil which is the tmux-substrate indicator (exec path: watcher!=nil).
-	if watcher == nil {
-		_ = sess.Kill(context.Background())
-	}
 
 	// Step 7a: emit implementer_phase_complete (hk-cd8yu).
 	//
@@ -4813,7 +4350,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// no-work detector below, so the event's duration_seconds and the detector's
 	// verdict are computed from the same measurement — a reader correlating the
 	// two can never see them disagree.
-	implementerPhaseDur := rp.Clock.Since(implementerLaunchedAt)
+	implementerPhaseDur := rp.Clock.Since(launch.LaunchedAt)
 	{
 		curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA

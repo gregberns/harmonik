@@ -253,9 +253,11 @@ func (p AgentReadyTimeoutPayload) Valid() bool {
 // Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 // Durability class: O (ordinary — fail-fast observability for hung implementers).
 //
-// Emitted when an implementer session emits agent_ready but then makes no
-// observable progress within postAgentReadyHangTimeout, allowing the daemon
-// to fail fast rather than burning the full commitPollTimeout budget.
+// Emitted when an implementer session emitted agent_ready but then made no
+// observable progress within the review loop's hang bound, letting the daemon
+// fail fast rather than burn the full commitPollTimeout budget. NO CURRENT
+// EMITTER — the review loop and its detector were retired; the type is retained
+// so historical events still decode on replay.
 //
 // # Payload fields
 //

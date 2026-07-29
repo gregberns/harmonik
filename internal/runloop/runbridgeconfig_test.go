@@ -14,12 +14,12 @@ package runloop
 // have made the surviving default mode strictly less robust at the merge step
 // than the mode it replaced.
 //
-// The scenario fixture that used to exercise this (RunConcurrentMerge) is
-// currently pinned to single mode, where MaxMergeAttempts is 1 by design — see
-// hk-gpwmj. So that fixture does NOT cover the budget today. This unit test is
-// deliberately independent of it: the invariant is guarded here, at the level
-// where it is decided, and it stays guarded regardless of how that fixture is
-// eventually re-homed.
+// The scenario fixture that exercises this end to end (RunConcurrentMerge) is
+// back on dot and does cover the budget again. This unit test stays anyway, and
+// deliberately does not depend on it: the fixture was briefly pinned to single
+// (where MaxMergeAttempts is 1 by design), and while it was, nothing in the tree
+// covered the budget at all. The invariant is guarded here at the level where it
+// is decided, so it survives whatever happens to that fixture next.
 //
 // Helper prefix: rbc (per implementer-protocol.md §Helper-prefix discipline).
 

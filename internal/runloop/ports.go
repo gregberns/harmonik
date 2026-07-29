@@ -257,17 +257,16 @@ type RunEnv struct {
 	// Immutable daemon-level launch/handler config, straight copies of the
 	// same-named workLoopDeps fields (RT18-W). Populated in runEnv(); the run
 	// path reads them here after the RT18 signature drop replaces deps with env.
-	HandlerBinary             string
-	HandlerArgs               []string
-	HandlerEnv                []string
-	DaemonBinaryPath          string
-	IntentLogDir              string
-	AgentReadyTimeout         time.Duration
-	RemoteAgentReadyTimeout   time.Duration
-	PostAgentReadyHangTimeout time.Duration
-	CodexNoWorkDurationFloor  time.Duration
-	SandboxCfg                projectconfig.SandboxConfig
-	BrTimeoutCfg              brcli.TimeoutConfig
+	HandlerBinary            string
+	HandlerArgs              []string
+	HandlerEnv               []string
+	DaemonBinaryPath         string
+	IntentLogDir             string
+	AgentReadyTimeout        time.Duration
+	RemoteAgentReadyTimeout  time.Duration
+	CodexNoWorkDurationFloor time.Duration
+	SandboxCfg               projectconfig.SandboxConfig
+	BrTimeoutCfg             brcli.TimeoutConfig
 
 	RunID      core.RunID
 	BeadRecord core.BeadRecord

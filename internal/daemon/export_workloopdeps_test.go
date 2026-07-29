@@ -115,13 +115,6 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-gql20.14.
 	AgentReadyTimeout time.Duration
 
-	// PostAgentReadyHangTimeout is the hang-detection timeout for the
-	// post-agent_ready progress detector (hk-a2okh).
-	// Zero → defaultPostAgentReadyHangTimeout (7 min).
-	//
-	// Bead ref: hk-a2okh.
-	PostAgentReadyHangTimeout time.Duration
-
 	// CPRegistry, when non-nil, is the ControlPoint registry used to resolve
 	// gate_ref values during DOT workflow gate-node dispatch (hk-karlz). When
 	// nil, gate nodes return a structural eval-failure Outcome without crashing.
@@ -477,7 +470,6 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		harnessRegistry:            p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
 		substrate:                  p.Substrate,
 		agentReadyTimeout:          p.AgentReadyTimeout,
-		postAgentReadyHangTimeout:  p.PostAgentReadyHangTimeout,
 		projectCfg:                 p.ProjectCfg,
 		queueStore:                 p.QueueStore,
 		queueLedger:                p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam

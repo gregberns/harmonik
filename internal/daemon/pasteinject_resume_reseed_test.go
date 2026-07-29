@@ -209,8 +209,14 @@ func TestQuitOnCommit_NoReseedEnterOnceCommitLands(t *testing.T) {
 	wtPath, headSHA := prrGitRepoWithCommit(t)
 
 	origGrace := *daemon.ExportedImplementerReseedGrace
-	// Long grace: the commit below is detected first, so the reseed never comes due.
-	*daemon.ExportedImplementerReseedGrace = time.Hour
+	// 700ms, NOT an hour. The grace MUST come due inside this test's context, or
+	// the test proves nothing: with an hour-long grace the reseed is never due,
+	// so "no Enter was sent" holds even if commit detection is broken. At 700ms
+	// the reseed WOULD fire, and the only thing stopping it is the watchdog
+	// returning on commit detection first — which is the property under test.
+	// Verified by mutation: deleting the return after commit detection turns
+	// this red, and it stays green 5/5 unmutated.
+	*daemon.ExportedImplementerReseedGrace = 700 * time.Millisecond
 	t.Cleanup(func() { *daemon.ExportedImplementerReseedGrace = origGrace })
 
 	// Land a second commit so HEAD != initialSHA on the first poll.
@@ -243,4 +249,87 @@ func TestQuitOnCommit_NoReseedEnterOnceCommitLands(t *testing.T) {
 	if quits == 0 {
 		t.Error("no /quit sent after the commit was detected — the Stop hook never fires and the session lingers")
 	}
+}
+
+// TestImplementerResume_WiresTheSubmitBurst pins that pasteInjectImplementerResume
+// actually CALLS sendResumeSubmitEnter after pasting the brief.
+//
+// Without this, the three guards above are all satisfiable by a resume path that
+// pastes the brief and never submits it: they test sendResumeSubmitEnter and the
+// reseed watchdog in isolation, so gutting the call site between them leaves
+// every one of them green. That is the same live-code-with-no-test shape that
+// deleting reviewloop_resume_reseed_hk8oy_test.go created in the first place.
+//
+// The count is exact and its parts are named, so a regression says which half
+// broke: 1 splash-dismiss Enter before the paste, then the submit burst of
+// 1 + resumeSubmitRetries after it.
+func TestImplementerResume_WiresTheSubmitBurst(t *testing.T) {
+	origDelay := daemon.ExportedResumeSubmitRetryDelay()
+	daemon.ExportedSetResumeSubmitRetryDelay(time.Millisecond)
+	t.Cleanup(func() { daemon.ExportedSetResumeSubmitRetryDelay(origDelay) })
+
+	origSplash := daemon.ExportedSplashDismissDelay()
+	daemon.ExportedSetSplashDismissDelay(time.Millisecond)
+	t.Cleanup(func() { daemon.ExportedSetSplashDismissDelay(origSplash) })
+
+	// pasteInjectImplementerResume stats <wtPath>/.harmonik/agent-task.md and
+	// bails early if it is absent, so the brief has to be on disk.
+	wtPath := t.TempDir()
+	harmonikDir := filepath.Join(wtPath, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
+		t.Fatalf("mkdir .harmonik: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(harmonikDir, "agent-task.md"),
+		[]byte("# task\n"), 0o600); err != nil {
+		t.Fatalf("write agent-task.md: %v", err)
+	}
+
+	rec := &prrPaster{}
+	reason := daemon.ExportedPasteInjectImplementerResume(
+		context.Background(), rec, "sess-1", 2, wtPath)
+	if reason != "" {
+		t.Fatalf("implementer-resume returned failure reason %q, want success", reason)
+	}
+
+	if rec.writes == 0 {
+		t.Fatal("the resume brief was never pasted")
+	}
+
+	wantEnters := 1 + (1 + *daemon.ExportedResumeSubmitRetries)
+	enters, _, _ := rec.counts()
+	if enters != wantEnters {
+		t.Errorf("implementer-resume sent %d Enters, want %d "+
+			"(1 splash-dismiss + 1 submit + %d submit-retries); "+
+			"a count of 1 means the submit burst is no longer wired and the brief "+
+			"sits typed-but-unsubmitted",
+			enters, wantEnters, *daemon.ExportedResumeSubmitRetries)
+	}
+
+	// The submit burst must land AFTER the paste, not before it — Enters that
+	// precede the paste submit an empty prompt and leave the brief pending.
+	if rec.entersBeforeFirstWrite != 1 {
+		t.Errorf("%d Enters preceded the paste, want exactly 1 (the splash dismiss)",
+			rec.entersBeforeFirstWrite)
+	}
+}
+
+// prrPaster is a pasteInjecter that is also an enterSender, so it can drive
+// pasteInjectImplementerResume end to end and record the ORDER of Enters
+// relative to the paste. It deliberately does NOT implement paneCapturer:
+// injectAndVerifySeed trusts the write when the substrate cannot capture, which
+// keeps this test on the submit-wiring property rather than the verify loop.
+type prrPaster struct {
+	prrRecorder
+	writes                 int
+	entersBeforeFirstWrite int
+}
+
+func (p *prrPaster) WriteLastPane(context.Context, string, []byte) error {
+	p.mu.Lock()
+	if p.writes == 0 {
+		p.entersBeforeFirstWrite = p.enters
+	}
+	p.writes++
+	p.mu.Unlock()
+	return nil
 }

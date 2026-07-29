@@ -306,12 +306,23 @@ func TestM4C7_D2RemoteAPIKeyRefusal(t *testing.T) {
 // agnostic remote predicate and built spec environment to it, then fails the run
 // and returns before launch.
 //
-// WHY THIS IS A STATIC TEST, DELIBERATELY. The guard lives inside beadRunOne
-// (workloop.go), a ~2,200-line function whose remote arm needs a live worker, an
-// ssh runner and a reverse tunnel to reach. There is no cheap behavioural route to
-// the branch, and the credential-leak class is severe enough to warrant a
-// structural assertion rather than no assertion. The predicate itself is covered
-// behaviorally above; what is asserted here is only its composition-root wiring.
+// WHY THIS IS A STATIC TEST — AND WHAT IT CANNOT SEE. This sensor asserts the
+// guard's SHAPE: that the harness-agnostic remote predicate and the built spec
+// environment reach d2RemoteAPIKeyRefusal, and that the refusal is reported and
+// returned before the launch. Shape is all it asserts. It cannot see whether
+// reporting the refusal does anything — gut refuseLaunch's body and every shape
+// fact here is still true while a refused remote run becomes indistinguishable
+// from one that launched and completed. That is not hypothetical; it was
+// demonstrated, and the suite stayed green.
+//
+// So this sensor is HALF the gate, not the gate. The other half is
+// agentlaunch_behavior_test.go, which calls runAgentLaunch and asserts on the
+// RESULT. The older claim that there was "no cheap behavioural route to the
+// branch" was true of beadRunOne, whose remote arm needed a live worker, an ssh
+// runner and a reverse tunnel; it stopped being true when the guard moved to
+// runAgentLaunch, which is reachable with neither tmux nor a worker. If the
+// guard moves again, move BOTH halves — a shape assertion alone has already
+// been shown to protect nothing.
 //
 // It parses the AST rather than grepping source text. The previous version took a
 // 200-character window before the call site and string-matched inside it. That was

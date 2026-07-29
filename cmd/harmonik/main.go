@@ -1272,9 +1272,9 @@ EXAMPLES
 	// routes through `tmux new-window`, so booting would be a lie. It is only a
 	// degradation for the structured Codex driver, which owns child stdio.
 	//
-	// Spec ref: specs/process-lifecycle.md PL-021a, PL-021b item 3 and PL-028b all
-	// mandate the fail-fast this replaces. The full amendment surface is named —
-	// not made — in the SPEC DEBT block at the top of tmuxhosting.go.
+	// Spec ref: specs/process-lifecycle.md PL-021a, PL-021b items 2-3 and PL-028b,
+	// as amended 2026-07-28 (PL v0.6.2) to specify exactly this behavior. The two
+	// declared residuals are listed at the top of tmuxhosting.go.
 	tmuxAdapter := tmux.OSAdapter{}
 	hosting := resolveTmuxHosting(ctx, projectDir, tmuxAdapter, os.Stderr)
 	if !hosting.Available {

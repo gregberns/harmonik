@@ -47,32 +47,43 @@ import (
 // client means "resolve deterministically", which is exactly what
 // tmux.ResolveDaemonSpawnSession does for an empty live session.
 //
-// SPEC DEBT — this code KNOWINGLY diverges from specs/, which is normative here.
-// The amendment is NAMED, not made: it is a multi-clause spec pass that does not
-// belong inside a behavior change. Whoever does it must cover the whole set, not
-// just the two clauses the guard cited:
+// SPEC ALIGNMENT — the debt this file used to carry is PAID (specs amended
+// 2026-07-28). This code is now the conforming implementation of:
 //
-//   - specs/process-lifecycle.md PL-021a — the real locked-decision-#4 anchor:
-//     "handler spawns MUST fail-fast ... rather than silently degrading to
-//     non-tmux mode". Amending only PL-021b/PL-028b leaves this one contradicting.
-//   - PL-021b item 3 — "If TMUX is unset, the daemon MUST NOT proceed to spawn
-//     handler subprocesses ... a daemon that reaches the dispatch loop without
-//     TMUX is a defect."
-//   - PL-028b — daemon MUST refuse the ready state, MUST NOT silently create its
-//     own session when $TMUX is unset.
-//   - PL-028 refinement item 3 and the PL-028 `harmonik runner` step-3 bullet.
-//   - specs/cognition-loop.md CL-081 — flywheel pane inherits the session from $TMUX.
-//   - Re-scope (not repeal) to mode-conditional: WM-002a, PL-021c, HC-054.
-//   - Exit-code taxonomy: code 22 on probe failure originates in PL-021a
-//     (`ntm-unavailable`, per PL-008a) and is retitled `tmux-unavailable` by
-//     PL-021b item 2; PL-028b mandates 24 on $TMUX-unset. This code returns 1.
-//     That divergence is INHERITED (the deleted guard also returned 1), but the
-//     two spec-distinguished conditions now collapse behind one code, so the
-//     taxonomy pass belongs in the same amendment.
-//     cmd/harmonik/supervise/start.go still reserves 24 citing PL-028b.
+//   - specs/process-lifecycle.md PL-021b item 3 — the three-outcome session
+//     resolution below, including the rule that `tmux display-message` is NOT
+//     consulted when $TMUX is unset, and that owns_session means "the daemon
+//     created it" rather than "$TMUX was unset".
+//   - PL-028b (retitled; the $TMUX-unset refusal is withdrawn) — resolve tmux
+//     hosting rather than demand it, and announce a lost capability at boot
+//     naming the CAPABILITIES lost, not merely the missing binary.
+//   - PL-021a — the fail-fast is scoped to the substrate that hosts agents in
+//     tmux; silent degradation stays forbidden.
 //
-// Locked decision #4's canonical wording is NOT in STATUS.md (that section points
-// at git history) — it is in docs/foundation/problem-space.md.
+// Two residuals are DECLARED in the specs rather than fixed here, so neither is
+// mistaken for conformance:
+//
+//   - hk-0cjb8 — reportNoTmuxHosting returns exit code 1; PL-021b item 2 and
+//     ON §8 code 22 say 22. Inherited (the deleted guard also returned 1); the
+//     fix belongs to the ON §8 taxonomy pass, which also owns the ON-vs-PL
+//     two-name split on 22 and the orphaning of code 24.
+//   - hk-p01zm — on a no-tmux boot the reviewer substrate is left nil and the
+//     work loop treats nil as "fall back to the general substrate", silently
+//     un-pinning the claude reviewer from tmux (hk-qxvc2). The WARNING below
+//     does not name the review loop among the lost capabilities. Declared at
+//     specs/execution-model.md EM-015d-RIA step 2.
+//
+// SCOPE — this file frees the DAEMON boot path only. The CLI entry points were
+// not touched and are not described by the amended clauses: run.go still
+// self-exec-replaces itself with `tmux new-session` when $TMUX is unset, ahead
+// of its own daemon-up check, so a thin-socket-client invocation against a
+// running daemon still refuses to run outside tmux (hk-o3aj5, declared at
+// PL-021a §SCOPE). It is the only such pre-daemon gate in cmd/.
+//
+// Locked decision #4's narrowing is recorded in STATUS.md §"Decisions in force"
+// and in plans/2026-07-27-delete-and-rewrite/CHARTER.md §3. (An earlier version
+// of this block pointed at docs/foundation/problem-space.md for the decision's
+// canonical wording; it is not there.)
 
 // bootNotef writes an operator-facing boot diagnostic. The write error is
 // deliberately dropped: the destination is the daemon's stderr, and a daemon

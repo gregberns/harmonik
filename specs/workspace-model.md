@@ -8,10 +8,10 @@ requirement-prefix: WM
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.4.5
+version: 0.4.8
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-13
+last-updated: 2026-07-28
 depends-on:
   - architecture
   - execution-model
@@ -182,7 +182,11 @@ where `bead_id` is the run's bound bead identifier ([beads-integration.md §4.6 
 
 The tmux session that contains these windows is named per [process-lifecycle.md §4.2 PL-006a] (`harmonik-<project_hash>`) and is referenced as `provenance.TmuxSessionName` at the substrate boundary — window names are scoped within that session and MUST NOT be assumed unique across sessions.
 
-When the daemon runs in the PL-021b `$TMUX`-reuse mode (operator's session, `owns_session=false`), the window name MUST be prefixed with `hk-<hash6>-` where `<hash6>` is the first 6 hex chars of the project hash, yielding e.g. `hk-a1b2c3-<bead_id>` or `hk-a1b2c3-<bead_id>/i2`. The prefix preserves the sweep-sentinel invariant required by PL-021c.
+When the daemon is spawning into a session it does NOT own (`owns_session=false`), the window name MUST be prefixed with `hk-<hash6>-` where `<hash6>` is the first 6 hex chars of the project hash, yielding e.g. `hk-a1b2c3-<bead_id>` or `hk-a1b2c3-<bead_id>/i2`.
+
+**`owns_session` is not a restatement of "`$TMUX` was unset" (CORRECTED 2026-07-28).** This clause previously equated the two by calling `owns_session=false` "the PL-021b `$TMUX`-reuse mode". Since the [process-lifecycle.md §4.7 PL-021b] item-3 amendment they are decoupled: a daemon started with `$TMUX` set, but pointing at a supervisor or flywheel session, resolves to the daemon-owned `harmonik-<project_hash>-default` session and is therefore `owns_session=true`. Read `owns_session` as "the daemon created and owns this session" and nothing else; deriving it from the environment is the inherited assumption this correction removes.
+
+**The sentinel's consumer is retired.** The prefix was introduced to preserve a sweep-sentinel invariant required by PL-021c, which was RETIRED at process-lifecycle v0.6.0 precisely because no production spawn path produces a name carrying it. The prefix rule is retained (it is harmless, deterministic, and restoring window-level cleanup would need it) but it currently guarantees nothing, and MUST NOT be cited as coverage. The live sweep is PL-021b §7's session-level sweep.
 
 **Replay determinism.** Given identical `(bead_id, phase, iteration_count, project_hash, owns_session)` inputs the function MUST produce a byte-identical window name across daemon restarts, host migrations, and replayed scenario runs. The substrate adapter MUST NOT inject wall-clock components, PIDs, run_ids, or random suffixes into the window name. Collision with an already-existing window of the same name inside the project's tmux session is a fail-fast `WindowNameCollision` error (mapped to PL-006 orphan-sweep coverage — a colliding window from a prior daemon instance is by construction an orphan and is reaped before any new spawn).
 
@@ -1367,6 +1371,7 @@ Default-if-unresolved: Out of scope for now. Later support is an additive extens
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-28 | 0.4.8 | agent (tmux-optional-boot / hk-0cjb8) | **WM-002a corrected: `owns_session` is decoupled from `$TMUX`, and its sentinel's consumer is retired.** Companion to [process-lifecycle.md] v0.6.2, which withdrew the daemon's hard `$TMUX` fail-fast (operator direction 2026-07-28 narrowing locked decision #4). Two corrections, both of stale premises rather than of the rule itself; the window-name function, its inputs, the replay-determinism rule and the truncation rule are UNCHANGED. (1) The `hk-<hash6>-` prefix clause called `owns_session=false` "the PL-021b `$TMUX`-reuse mode", equating ownership with the environment. PL-021b item 3 now resolves a daemon started WITH `$TMUX` set — but pointing at a supervisor or flywheel session — to the daemon-owned `harmonik-<project_hash>-default` session, i.e. `owns_session=true`. The clause is reworded to key on ownership alone, and states explicitly that deriving `owns_session` from the environment is the inherited assumption being removed. (2) The clause cited "the sweep-sentinel invariant required by PL-021c"; PL-021c was RETIRED at process-lifecycle v0.6.0 because no production spawn path produces a name carrying that sentinel, so the cross-reference was dangling. The prefix rule is retained (deterministic, harmless, and needed if window-level cleanup is ever restored) but is now declared to guarantee nothing and MUST NOT be cited as coverage; the live sweep is PL-021b §7. **Front-matter version corrected:** it read 0.4.5 while this table already carried a 0.4.7 row, so it is set to 0.4.8 rather than 0.4.6. No WM IDs added or renumbered. Refs: `1f8781730`, `hk-0cjb8`. |
 | 2026-06-13 | 0.4.7 | agent (hk-2j90) | **§6.2 adds `.harmonik/auto_status.json` canonical-path row; WM-013e gitignore set adds the same; §4.7 adds informative auto_status.json lifecycle clause mirroring review.json. Refs: hk-2j90.** |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft. Requirements-first shape; 40 requirements, 5 invariants, 4 open questions. Bootstrap citations into docs/foundation/components.md for specs not yet finalized. |
 | 2026-04-24 | 0.2.0 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N map per the v0.2 NOTE (the citations had been carried as `docs/foundation/components.md §1.N` bootstrap references to content now owned by the reviewed architecture.md): §1.1→architecture.md §4.1 (×1 in §9 Depends on), §1.8→architecture.md §4.9 (×3 in §4.3 lease-model lead-in, §5 WM-INV-001, §9 Depends on) plus §A.3 Rationale footer (×1). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §4.7.WM-026 (metadata-sidecar field list), §6.1 SessionMetadataSidecar RECORD, and §7.2 stamp_session_metadata protocol pseudocode. No requirement IDs, invariants, or schemas were touched. |

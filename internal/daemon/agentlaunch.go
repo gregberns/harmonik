@@ -272,16 +272,33 @@ type agentLaunchResult struct {
 	Exit          runloop.ExitInfo
 }
 
+// newAgentLaunchLogf returns the per-launch stderr diagnostic logger, writing
+// `<prefix>: <formatted message>` lines to w.
+//
+// The prefix is passed as an ARGUMENT and never spliced into the format string.
+// It is caller-supplied and routinely carries a bead id or an operator-authored
+// DOT node id; a single `%` in either would otherwise be read as a verb and
+// garble EVERY diagnostic line for that run — including the ones inside
+// verifySandboxEngaged, which is where the operator is least able to afford
+// unreadable output.
+func newAgentLaunchLogf(w io.Writer, prefix string) func(format string, args ...any) {
+	return func(format string, args ...any) {
+		fmt.Fprintf(w, "%s: "+format+"\n", append([]any{prefix}, args...)...)
+	}
+}
+
 // runAgentLaunch spawns the agent described by in.Spec, proves it is alive,
 // drives it to a dead session and returns the exit facts.
 //
 // It never decides what a failure MEANS — no bead is reopened, no node outcome
 // is synthesized, no verdict is read here. It reports which boundary was hit and
 // leaves the interpretation to the caller.
-// sequence exists ONCE. Splitting it back into pieces to satisfy a complexity
-// threshold would re-create the seams the three copies drifted through.
 //
-//nolint:funlen,gocognit,cyclop // the whole point of this function is that the launch
+// It is long on purpose. The whole point of this function is that the launch
+// sequence exists ONCE; splitting it back into pieces to satisfy a complexity
+// threshold would re-create exactly the seams the three copies drifted through.
+//
+//nolint:funlen,gocognit,cyclop // length is the design — see the paragraph above
 func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult {
 	env, ports, handles := in.Env, in.Ports, in.Handles
 	emit := ports.Emitter
@@ -290,9 +307,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	artifacts := in.Artifacts
 	agentType := shared.ArtifactAgentType(artifacts)
 
-	logf := func(format string, args ...any) {
-		fmt.Fprintf(os.Stderr, in.LogPrefix+": "+format+"\n", args...)
-	}
+	logf := newAgentLaunchLogf(os.Stderr, in.LogPrefix)
 
 	// Cleanup is non-nil from the first return onward so a caller can defer it
 	// unconditionally; it is replaced with the real teardown pair once a session

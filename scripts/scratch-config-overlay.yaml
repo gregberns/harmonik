@@ -20,7 +20,7 @@
 # default — buildCodexRoutedLaunchSpec fail-louds without it). It is appended below.
 #
 # The harnesses.pi block MIRRORS the fleet's live ornith/DGX pass (the operator's
-# forced-local matrix environment: DGX reachable via the `ssh -f -N -L 8551:localhost:8551
+# forced-local matrix environment: DGX reachable via the `ssh -f -N -L 8553:localhost:8553
 # dgx` loopback tunnel, key at ~/.config/harmonik/ornith.key). cells.json pins
 # pi model_selected.model = "ornith" to match. If DGX is wedged, swap in the parked
 # OpenRouter block from the fleet config and repoint cells.json accordingly.
@@ -36,7 +36,7 @@ harnesses:
   pi:
     provider: ornith
     model: ornith
-    base_url: http://127.0.0.1:8551/v1   # loopback tunnel -> DGX vLLM (srt permits loopback; LAN IP blocked)
+    base_url: http://127.0.0.1:8553/v1   # loopback tunnel -> DGX vLLM (srt permits loopback; LAN IP blocked)
     api: openai-completions              # ornith needs "openai-completions", NOT bare "openai"
     api_key_env: ORNITH_API_KEY
     api_key_file: ~/.config/harmonik/ornith.key

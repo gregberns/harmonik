@@ -637,16 +637,33 @@ except Exception:
 fi
 
 # ── Check scenario-nightly: latest SCHEDULED scenario run's STEP conclusion ──
-# scenario.yml's 'make test-scenario' STEP sets continue-on-error, so the RUN
-# conclusion is ALWAYS 'success' and masks a red suite. Only the run conclusion
-# is masked: the REST API still reports that step's own conclusion (and the
-# job's) as 'failure', which is what makes this probe possible. Note the
-# contrast with workflow EXPRESSIONS, where steps.<id>.conclusion is the value
-# AFTER continue-on-error is applied — read that way the probe would say
-# 'success' forever and silently close nothing. So we probe the STEP conclusion
-# of 'make test-scenario' on the latest SCHEDULED (cron) run, never the run
-# conclusion. A not-green step surfaces as a digest flag, same as nightly-race.
-# (hk-plw4z Part 4)
+# BROKEN. THIS PROBE CANNOT REPORT RED. Do not trust a green here. See hk-21v7c.
+#
+# The probe rests on a claim that is false. It was built to read the STEP
+# conclusion of 'make test-scenario' because continue-on-error was believed to
+# mask only the RUN conclusion, leaving the step's own conclusion as 'failure'
+# in the REST API. Measured 2026-07-29 against run 30428294340, the nightly
+# that exited 2 and timed out at 10m: all three surfaces report 'success'.
+#   GET /actions/runs/<id>              -> conclusion success
+#   GET /actions/runs/<id>/jobs         -> step 'make test-scenario' success
+#   GET /commits/<sha>/check-runs       -> conclusion success
+# 20 of the last 20 scenario.yml runs really failed. This probe called all 20
+# green, so the 'scenario-nightly-fail' digest signal has never fired.
+#
+# The ONE surface that tells the truth is the annotations API:
+#   GET /check-runs/<id>/annotations -> annotation_level 'failure',
+#                                       message 'Process completed with exit
+#                                       code 2.'
+# Filter to that message. The same list carries deliberate scaffolding failures
+# from the gate-efficacy fixture ('undefined: thisIdentifierIsUndefined',
+# 'undefined: Foo') which are NOT real failures.
+#
+# Two ways to fix, both in hk-21v7c: drop continue-on-error from scenario.yml,
+# after which this code starts working unchanged, or re-point it at the
+# annotations API. The tier is red today (hk-97gcz, hk-co8g8), so removing the
+# flag is a reporting change to sequence with those, not a merge gate yet.
+# The code below is left in place so the fix is a small edit, not a rewrite.
+# (hk-plw4z Part 4, corrected)
 # dquote-safe (hk-2mw1x): the embedded python below uses ONLY single-quoted
 # string literals; SCENARIO_NIGHTLY_STATUS carries only safe ASCII tokens.
 SCENARIO_NIGHTLY_STATUS=unknown

@@ -1,7 +1,28 @@
 # Tier 3 — make test-scenario
 # Builds all twin binaries then runs the scenario suite (-race, -tags=scenario, 10m).
 # Covers test/scenario/... and internal/daemon/... scenario build-tag files.
-# Non-merge-blocking: no required status check configured in branch protection.
+# Non-merge-blocking: no required status check configured in branch protection
+# (main requires only "check (Tier 2)").
+#
+# READ THIS BEFORE YOU TRUST A GREEN TICK ON THIS WORKFLOW. It reports success
+# whatever happens, and it has reported success while failing on every one of
+# the last 20 runs (measured 2026-07-29).
+#
+# Two separate reasons, tracked separately:
+#  1. continue-on-error on the step below masks the outcome on EVERY surface —
+#     run conclusion, step conclusion, and check-runs conclusion all read
+#     'success' after an exit 2. Only the annotations API tells the truth. So the
+#     out-of-band ops-monitor probe cannot fire either. See hk-21v7c.
+#  2. Nothing here installs br and nothing declares a twin build, so about half
+#     the tier skips, and a skip reads as a pass. See hk-ynohn.
+#
+# The suite is genuinely red: 8 deterministic failures reproduce in isolation,
+# plus a family of load flakes. Most of the 8 are stale tests, tracked as
+# hk-97gcz. One is a real defect in the merge path, tracked as hk-co8g8.
+# Do NOT make this a required
+# check before those close — it would wedge every merge. Removing
+# continue-on-error alone is safe and would make the tier visible, because
+# branch protection does not require this workflow.
 name: Scenario
 
 on:
@@ -10,14 +31,14 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Nightly at 04:00 UTC. The "make test-scenario" STEP below sets
-    # continue-on-error, so this workflow's RUN conclusion is ALWAYS green and
-    # does NOT surface a failing scenario suite on its own. (The step's own
-    # conclusion, and the job's, are still reported as failure by the REST API
-    # -- only the run conclusion is masked.) Failures are surfaced out-of-band
-    # by ops-monitor, which probes this scheduled run's "make test-scenario"
-    # STEP conclusion (scripts/ops-monitor-check.sh → checks['scenario-nightly']).
-    # (hk-plw4z)
+    # Nightly at 04:00 UTC. This run surfaces NOTHING today. The
+    # "make test-scenario" step below sets continue-on-error, which masks the
+    # failure on the run conclusion, the step conclusion, AND the check-runs
+    # conclusion. The ops-monitor probe
+    # (scripts/ops-monitor-check.sh → checks['scenario-nightly']) reads the step
+    # conclusion and so returns green forever. That probe was written believing
+    # the step conclusion survived the flag. It does not. See hk-21v7c.
+    # (hk-plw4z, corrected 2026-07-29)
     - cron: "0 4 * * *"
 
 jobs:
@@ -35,4 +56,9 @@ jobs:
 
       - name: make test-scenario
         run: make test-scenario
+        # This flag hides the result on every API surface, not just the run
+        # conclusion. Remove it to make the tier visible (hk-21v7c). Removing it
+        # does not block merges on its own, because branch protection requires
+        # only "check (Tier 2)". Compare nightly-race.yml, which carries the
+        # correct warning against adding this flag.
         continue-on-error: true

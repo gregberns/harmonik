@@ -15,8 +15,11 @@ jobs:
     name: check-race-full (nightly)
     runs-on: ubuntu-latest
     # Non-gating: not listed as a required status check in branch protection.
-    # Do NOT add continue-on-error here — it silences the run conclusion and
-    # makes gh run list always report success, killing ops-monitor surfacing.
+    # Do NOT add continue-on-error here. It silences the run conclusion, the step
+    # conclusion, AND the check-runs conclusion, so every REST surface reports
+    # success after a real failure. Only the annotations API still reports it.
+    # That kills ops-monitor surfacing. Measured 2026-07-29 on scenario.yml,
+    # which carried the flag and reported success on 20 straight real failures.
     steps:
       - uses: actions/checkout@v4
         with:

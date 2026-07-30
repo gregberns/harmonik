@@ -681,8 +681,21 @@ earlier" and no less real.
    methods: `runWorkLoop` has **31 outer-loop `continue` statements**, of which **26 wait** and **five do
    not**. The five: the queue bootstrap, the `hk-pina9` pre-claim `ShowBead` bound, cross-queue duplicate,
    the `hk-6pspu` max-attempts **stamp** bound, and the `hk-n91y0` claim-blocked path. Keep the word
-   "stamp" — `hk-6pspu` tags two sites and the br-ready one sleeps. One of the 26 waits through
-   `scheduleAwareIdleWait`, not a poll-interval `workloopSleep`.
+   "stamp" — `hk-6pspu` tags two sites and the br-ready one sleeps.
+
+   **The 26 are not one behavior, and a merged `delay` must carry a bound plus a wake-set rather than a
+   duration.** The nothing-selected `continue` is a single statement with **three wait shapes**: a
+   2-second `workloopSleep` when deferred items remain; a 2-second wait that also selects on the schedule
+   channel when an enabled scheduled job is loaded; and `workloopIdleWait` with **no timer** when neither
+   holds. Shape 2 is bounded by a flat `time.After(workloopPollInterval)` — the same 2 seconds as shape 1,
+   with no next-fire-time arithmetic — so never describe it as waiting until the next scheduled job time.
+   Shape 3 is untimed but wake-interruptible: the daemon parks, it does not stall, and putting a timer
+   there restores the busy-poll `PL-013` forbids. By timeout semantics there are only two shapes; the
+   third appears only when you count select shape. Counting immediate-continue, the loop has **four**
+   distinct delay outcomes.
+
+   That same branch has a fourth outcome that is not a wait at all: when no queues are loaded it falls
+   through with neither a wait nor a `continue`.
 
    **Do not merge the two variants into one on the assumption that a merge is only slower.** That holds
    only toward the sleeping variant. The other direction busy-spins the `hk-403fw` cooldown — the

@@ -248,18 +248,36 @@ br (3), unix socket (3), codex CLI (1), pi CLI (1), srt (1), the event bus (~24 
 the filesystem throughout.** Every one of the six external tools named in `CARRY-FORWARD.md` is
 touched from inside this one function.
 
-### 1d. The two dead things still in the file
+### 1d. The two dead things still in the file — BOTH DELETED, and the comments are not dead
 
-- **`activateFirstPendingGroup` (94 lines) has zero callers** — not production, not test. The
-  multi-queue path replaced it with `activateFirstPendingGroupLocked`. It is a complete, commented,
-  spec-cited, dead function.
-- **`beadExplicitlyReopened` (39 lines) has zero production callers.** Its own doc says so: *"The
-  pre-dispatch subsume block that called this function was removed by hk-f38n. The function is
-  retained for its test coverage."* Two test files exist solely to test it.
+- ~~**`activateFirstPendingGroup` (94 lines) has zero callers**~~ — **deleted 2026-07-28.** Only
+  `activateFirstPendingGroupLocked` remains, and `runWorkLoop` calls it.
+- ~~**`beadExplicitlyReopened` (39 lines) has zero production callers**~~ — **deleted 2026-07-28**,
+  with the one test file that held it, `internal/daemon/predispatch_reopen_hkwcv_test.go`. The claim
+  above said "two test files". A content search over all history finds one.
 
-Plus a 42-line comment block (lines 6582–6631) documenting a function that was **removed**
-(`sandboxOSTmpDirs`), and two more multi-paragraph comments (`hk-l5saf` at 2838, `hk-f38n` at 3883)
-explaining where code *used to be*.
+**Re-measured 2026-07-29 — the three comment blocks are NOT gravestones, and deleting them would
+lose knowledge this program exists to keep.** Each was read in full:
+
+- The `sandboxOSTmpDirs` block (lines 5682–5730, so 49 lines — the "42" above was never measured
+  either) does not merely record that a function was removed. It states why the sandbox must never
+  grant recursive write access to the shared temp directory, and it
+  names the mechanism that made the hole reachable — the profile generator expands every temp-dir
+  entry into a recursive write rule, and the fallback path lands on the shared `/tmp` whenever no
+  per-user temp dir is set. That is an external-world fact about the sandbox, which is
+  `CARRY-FORWARD.md` material.
+- The `hk-l5saf` block explains why there is deliberately **no** guard at that point: the item is
+  already stamped and persisted, so a guard there would strand it. Delete the comment and the next
+  reader re-adds the guard. §3 step 3 states the same ordering constraint and calls it load-bearing,
+  so the fact survives the comment — but only the comment says it at the place someone would edit.
+- The `hk-f38n` block records a live false-close. A bare commit-message grep matched an old partial
+  commit that carried the same issue ID, so the daemon closed a bead whose remaining work had not run.
+  This is a production correctness sensor, which is a third category — phase 1's deletions covered
+  prose-grepping test sensors and ticket-named test files, not sensors inside product code. Nothing
+  has swept this class.
+
+**Disposition:** move each into the doc that owns the fact, then delete the copy in the source. Do
+not delete first. This is no longer a free deletion, and it is not blocking anything.
 
 ---
 
@@ -465,16 +483,32 @@ prove.** Anything requiring a behaviour decision goes late and gets flagged.
    `check-short` runs the tier. **You cannot validate a rewrite against a gate that blocks nothing.**
    This is one line of YAML and it is the single highest-leverage item on the list.
 
-### Step 1 — free deletions (zero risk, do first, ~200 lines)
+### Step 1 — free deletions — ⚠ RETIRED 2026-07-29. Nothing here is both free and outstanding.
 
-- `activateFirstPendingGroup` — zero callers anywhere.
-- `beadExplicitlyReopened` + its two test files — zero production callers, admitted in its own doc.
-- The `sandboxOSTmpDirs` gravestone comment (42 lines documenting a deleted function).
-- `RunPorts.LaunchBuilder` — a duplicate of `RunPorts.Launch` holding the same closure.
-- The `hk-l5saf` and `hk-f38n` "where this used to be" comment blocks.
+Every item was re-checked against the tree. **All five were wrong or already satisfied**, so this step
+no longer gates the structural work below and **step 2 is now the first thing to do.**
 
-Compiler proves all of it. Do it as one commit before anything structural, so the diffs that follow
-are not polluted.
+- `activateFirstPendingGroup` — **already deleted.** Only the `…Locked` variant remains, with callers.
+- `beadExplicitlyReopened` + its one test file — **already deleted.** The claim above said two files.
+- `RunPorts.LaunchBuilder` — **not a zero-caller duplicate.** The graph path
+  (`dot_cascade_core.go`) and the cognition gate (`dot_gate.go`) both read it, and
+  `internal/runloop/ports.go` documents it as the raw resolved spec builder that sub-drivers reach
+  after the deps drop. Deleting it breaks two callers. The claim was never true.
+- The `sandboxOSTmpDirs`, `hk-l5saf` and `hk-f38n` comment blocks — **real knowledge, not
+  gravestones.** See §1d for what each one holds. Move the fact to the doc that owns it, then delete
+  the source copy. That is a writing task, not a deletion, and it blocks nothing.
+
+**The general lesson, which is the part worth keeping:** decay is the smaller half of the problem here.
+Only one entry — `activateFirstPendingGroup` — was true when written and then went stale. The other
+four were wrong on the day they were written. `LaunchBuilder` already had two callers. The "two test
+files" count was one file. The "42 lines" count was 49, and it did not even match the line range
+printed beside it. And calling three blocks of live rationale "where this used to be" comments was a
+misreading, not a fact that expired.
+
+So the instruction is not only "re-derive the list before acting on it", though do that too. It is
+that a list which says the compiler will prove it invites you to skip reading the thing you are about
+to delete. §5 already says plan estimates do not survive contact. A deletion inventory is an estimate,
+and it is one that reads as a fact.
 
 ### Step 2 — lift the cadenced maintenance out of the poll loop (~300 lines, low risk)
 

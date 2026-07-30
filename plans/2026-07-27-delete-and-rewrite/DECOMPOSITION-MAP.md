@@ -473,10 +473,30 @@ prove.** Anything requiring a behaviour decision goes late and gets flagged.
 
 ### Step 0 — prerequisites (already in the plan, restated because they gate everything)
 
-1. Reconcile `origin/integration/phase-reviewloop-20260725` (44 stranded commits). Nothing below is
-   safe on a branch whose contents are unknown.
-2. Finish the test-mass deletion, including the 4 unit-test files that bind `beadRunOne`'s
-   7-parameter signature.
+**Re-measured 2026-07-29: items 1 and 2 are DONE. Only item 3 is outstanding.**
+
+1. ~~Reconcile `origin/integration/phase-reviewloop-20260725` (44 stranded commits).~~ **DONE.** Its
+   contents are known, its worthwhile spec clauses were harvested by hand and checked against the code
+   rather than taken on trust, and its tip is preserved at
+   `origin/salvage/reviewloop-kernels-20260729`, whose tip is byte-identical to the integration tip.
+   `NEXT_STEPS.md` item C carries the detail, and the harvest is settled rather than hopeful — the
+   v0.9.6 changelog row in `specs/execution-model.md` records that the prose was checked against the
+   code before amending, and names what was deliberately left behind. The branch itself still exists
+   and is now safe to delete. That is an operator action, not a prerequisite, and it is not a one-liner:
+   a worktree is still checked out on that branch at `/private/tmp/harmonik-main-integration-20260725`
+   and has to be removed first.
+2. ~~Finish the test-mass deletion, including the 4 unit-test files that bind `beadRunOne`'s
+   7-parameter signature.~~ **DONE as written, but read the caveat.** Exactly **one** test file calls
+   `beadRunOne` today — the shim at `internal/daemon/export_workloop_test.go`. Against one production
+   caller, that is the shape §2 Seam A wants: two call sites, the dispatch goroutine and one test shim.
+
+   ⚠ **"Two call sites" reads as more freedom to restructure than you actually have.**
+   `internal/daemon/conformance_m4c7_test.go` does not merely mention `beadRunOne` — it parses the
+   daemon source, finds the function's declaration, and asserts that a credential guard is a top-level
+   statement dominating the launch call. That binds `beadRunOne`'s **internal statement structure**, not
+   its signature, so the compiler will not warn you. Its own header records that it already broke once
+   when the launch path was collapsed. Expect to update it whenever statements move inside that
+   function.
 3. **Make the scenario tier merge-blocking.** The rewrite's *only* oracle is
    `internal/daemon/scenario_*` (26 files, 54 test funcs) + `test/scenario/` (11 tests, 27 s). Today
    `.github/workflows/scenario.yml` carries `continue-on-error: true` and neither `check-fast` nor
@@ -615,10 +635,20 @@ right. Touching it early means re-doing it.
   in four stages across `bootworkloop.go` and captured by a background watchdog closure; a partial
   cleanup produces a bundle that is neither the old thing nor the new one. Replace it when steps 2–6
   have made most of its fields locally owned, not before.
-- **`WorkLoopDepsParams` (48 exported fields) and the 20 `export_*_test.go` files.** The header of
-  `export_workloopdeps_test.go` says 157 test files reference these shims. That is the true blast
-  radius of any signature change — and it is precisely why the test-mass deletion has to complete
-  first. Do not attempt to preserve this fixture.
+- **`WorkLoopDepsParams` (47 exported fields) and the 20 `export_*_test.go` files.** Do not attempt to
+  preserve this fixture. The field count read 48 here. The struct spans lines 36–373 of
+  `export_workloopdeps_test.go` with no embedded and no multi-name fields, and it holds 47.
+
+  ⚠ **The 157-file blast radius is stale by 4.6x. Re-measured 2026-07-29: it is 34 test files.** The
+  header of `export_workloopdeps_test.go` still says 157, and that number was written before the
+  test-mass deletion removed ~225,000 lines. Counted today, 34 of the 183 test files in
+  `internal/daemon` reference `WorkLoopDepsParams` or any of the four exported shims. Those five
+  symbols are the whole surface, so the number cannot go up. The file-count claim in that header is
+  now wrong and should be corrected when someone next edits it.
+
+  **This changes a decision, not just a number.** 157 files was the stated reason a signature change
+  was too expensive to contemplate and had to wait for the deletion. The deletion has happened, and
+  the cost is now a fifth of what this section priced. Re-price the change before deferring it again.
 
 ---
 

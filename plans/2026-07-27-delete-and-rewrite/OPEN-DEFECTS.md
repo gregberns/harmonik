@@ -249,13 +249,237 @@ The cooldown that made this a five-minute stall (rather than the previous 2.5-se
 **Do not fix this by shortening the cooldown**; that reverts a deliberate fix instead of supplying the
 missing fallback.
 
+### Six line-number citations inside `runWorkLoop` point at nothing
+
+Found while pinning the admission-gate order (§3 Step 3 prerequisite). The comments in
+`internal/daemon/scheduler.go` `runWorkLoop` cite six approximate line numbers, and **all six are wrong**.
+The Seam A split moved the loop into a new file and every number stayed behind:
+
+| The comment says | Where the thing is now |
+|---|---|
+| `beadRecord` construction "below (line ~1658)" | the `beadRecord = core.BeadRecord{` assignment |
+| the post-claim `ShowBead` "at ~line 1954" (twice) | the queue-path label-hydration `ShowBead` |
+| "The Step-2 split gate (~line 1818)" | the Step-2 split capacity gate |
+| `localInFlight` "increment at ~line 3072" (twice) | `deps.localInFlight.Add(1)` |
+
+Every one lands past the end of the function or in unrelated code. This is the exact rot the repo's
+cite-symbols rule exists to stop, and the guidance it produces is now actively misleading: the hoisted
+local-cap guard's safety argument rests on "localInFlight is not incremented until ~line 3072", so a
+reader who checks that line finds no increment and cannot verify the claim. Cite the symbol.
+
+### The admission-order constraints that no test pins, and why
+
+`internal/daemon/admissionorder_test.go` now pins constraints 1, 2, 5 and 7 from DECOMPOSITION-MAP §3, the
+second clause of 3, and half of 4 and 8. Constraint 9 has no real constraint to pin. What is left is
+recorded here so the next reader does not spend the same time discovering it. **The numbers are the
+plan's numbers.** Keep them aligned.
+
+**This section carries no headline count, on purpose.** Three successive rounds of review found the count
+wrong — once too low, twice stale after the list beneath it was corrected. A count is the one line most
+likely to be quoted and the least likely to be re-derived, and it can disagree with the list two
+paragraphs below it. A list cannot disagree with itself. So the state of each constraint is stated once,
+where that constraint is discussed, and nowhere else. The map in
+`internal/daemon/admissionorder_test.go` follows the same rule and is the other authority.
+
+**Incompletely pinned: 4, 6 and 8.** Each is below. Constraint 3 is complete, and the story of how it was
+nearly missed is worth keeping, because it is the reason this section stopped carrying a count.
+
+An earlier version of this section said constraint 3 was fully pinned by
+`l5saf_localonly_strand_test.go`, "re-checked for gaps and none found." That is wrong, because constraint
+3 has TWO clauses and that test covers one:
+
+- The guard's POSITION relative to the Phase-3 stamp. Pinned by that test.
+- **`localInFlight` must not be incremented before the guard.** This is the hoist's own safety argument —
+  the source comment says the pre-stamp read stays below `gateMax` through dispatch *because* the
+  increment is post-claim. `l5saf` structurally cannot see it: it preloads the counter to `gateMax` with
+  `gateMax = 1`, so the guard reads `1 >= 1`. Hoist `deps.localInFlight.Add(1)` above the guard and it
+  reads `2 >= 1` — the SAME branch. The item stays pending and the test stays green. Its fixture sits on
+  the saturated side of the boundary, so it cannot see the boundary move. Only two test files touch that
+  seam and only `l5saf` drives the loop, so nothing in the tree pinned it.
+
+  **Now pinned** by `TestAdmissionOrder_LocalCapGuardReadsThePreIncrementCount`, which sits one slot
+  BELOW the cap, where the increment's position changes the answer.
+
+The lesson is the same one §5 keeps teaching: a multi-clause constraint summarized as one line reads as
+covered. Count the clauses, not the constraints.
+
+**Constraint 4 — the write-lock hold is not observable through `runWorkLoop`.** The source comment says
+the dedup check must run while the write lock is held so the winning queue's stamp is visible. Selection
+and stamping run on ONE goroutine for the daemon's whole life, so two queues can never reach the stamp at
+the same time whatever the lock does. The lock defends the stamp against the per-run goroutines that write
+item status through `evaluateGroupAdvanceWithOutcome`, and no seam lets a test interleave one of those
+with the stamp. The *outcome* is pinned; the lock boundary is not.
+
+**Constraint 6 — `governor.tick` before the sentinel-queue gate cannot be reached from `daemon_test` at
+all.** The gate is `loopMaintenance.sentinelBlocksDispatch`, which calls `movementGovernor.dispatchBlocked`
+and returns false on a nil governor. `newMovementGovernorIfEnabled` builds one only when the
+`movement_governor` subsystem is enabled AND `workLoopDeps.governorState` is non-nil. `governorState` has
+no field on `WorkLoopDepsParams`, so no external test can construct a loop in which this gate can fire.
+
+*The cheapest route, if someone wants it:* add `GovernorState` and `SentinelMode` to
+`WorkLoopDepsParams`. That is a shared fixture 20-plus files bind, so it is a real edit, not a one-liner.
+It does **not** require driving ACT mode. `dispatchBlocked` is only
+`deps.decisionBlocker.IsQueueBlocked("sentinel")`, and `DecisionBlocker` is already an exported param with
+an exported `AddQueueBlock`. So the governor needs to exist, not to trip — the trip can be injected.
+
+*And one finding that shrinks the stake. This is a closed-world enumeration, not a survey of the
+neighborhood.* The writer set for the sentinel block is provably complete:
+
+- `DecisionBlocker`'s mutators are exactly `AddBeadBlock`, `AddQueueBlock` and `Acknowledge`.
+- **No interface in the repo declares any of them.** The field is always the concrete
+  `decisionBlocker *DecisionBlocker`, so there is no structural back door — nothing can substitute another
+  implementation.
+- The only non-test callers are `movementGovernor.onTrip` and `onClear`, both on the dispatch goroutine,
+  plus boot-time `loadOneAckFile`. `LoadDecisionAckState` has exactly one caller, in `bootsocket.go`, and
+  there is **no reload path**.
+- `internal/sentinel` cannot reach `DecisionBlocker` at all: `internal/daemon` imports `internal/sentinel`,
+  so the reverse import would be a cycle. That is why `sentinelAckRecord` duplicates the on-disk shape and
+  the subject constant is spelled again in the daemon package — its own comment says so.
+
+So in steady state there is one writer, on this goroutine, and nothing between the maintenance pass and
+the gate writes the sentinel subject (the intervening work is the queue snapshot, the bootstrap, the
+deferred re-evaluation, selection, the cooldown, handler-pause and decision-required).
+
+**But note WHERE that writer sits, because it changes the conclusion's shape.** `governor.tick` is the LAST
+statement of `tickBeforeSelect`. So a snapshot is equivalent to the live read only if it is taken AFTER
+that call. Taken at the top of the pass, the daemon dispatches one extra bead on the tick a trip first
+fires — the same one-tick-late hazard `loopmaintenance.go` already documents for `halt`, and documents as
+deliberate there. The conclusion holds for the natural implementation, and it holds because of where the
+snapshot sits, NOT because ordering is irrelevant.
+
+`dispatchBlocked`'s own comment already says converting it to a snapshot is "arguable on its merits, not
+obviously wrong". Read the constraint as protecting a code shape plus that one-tick edge, not a behavior
+that changes today — which is why it stayed a gap rather than getting a test that would assert a
+preference.
+
+**Constraint 8 — half pinned, and the earlier reading of it was WRONG. Corrected here.**
+An earlier version of this section claimed there were two no-sleep sites, that both drive the item
+terminal first, that a merged variant would be "slower, never wrong", and that only a wall-clock flake
+could test it. Every one of those four claims is false. Re-derived by classifying all 31 outer-loop
+`continue` statements in `runWorkLoop`:
+
+- **There are FIVE no-sleep sites, not two:** the queue bootstrap, the `hk-pina9` pre-claim `ShowBead`
+  bound, the cross-queue duplicate, the `hk-6pspu` max-attempts **stamp** bound, and the `hk-n91y0`
+  claim-blocked path. Twenty-six sites wait. The plan's own §3 item 8 says "twelve sites sleep" and names
+  three no-sleep sites, so it undercounts on both sides.
+
+  **`hk-6pspu` tags TWO sites** — the queue-path stamp bound, which does not sleep, and the br-ready skip
+  bound, which does. Keep the word "stamp" or the bead tag alone points at both.
+
+- **"26 sites sleep one poll interval" is loose, and the shape it hides is the one a merge would flatten.**
+  One statement — the `continue` taken when `selectNextQueue` selects nothing — carries **three wait
+  shapes**:
+
+  1. a 2-second `workloopSleep` when deferred items remain;
+  2. a 2-second wait that ALSO selects on the schedule wake channel, when an enabled scheduled job is
+     loaded;
+  3. `workloopIdleWait` with no timer at all, when neither holds.
+
+  Shape 2 is bounded by a flat `time.After(workloopPollInterval)` — the same 2 seconds as shape 1, with no
+  next-fire-time arithmetic. **Never write that it "waits until the next scheduled job time."** It does
+  not compute one. Shape 3 is untimed but wake-interruptible: the daemon parks, it does not stall, and
+  putting a timer there would restore the busy-poll PL-013 forbids.
+
+  By TIMEOUT semantics there are only two shapes. Three appears only when you count select shape, and
+  shape 2 is the one that disappears silently if a merge keeps only the timeout: a scheduled job would
+  then wait for a queue-submit wake instead of its own channel.
+
+  That same branch has a fourth outcome that is not a wait at all. When ZERO queues are loaded it falls
+  through with neither a wait nor a `continue`, which is how the br-ready fallback is reached — and what
+  the empty queue store in `TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause` relies on.
+
+  So across the whole loop there are **four distinct delay outcomes** once immediate-continue is counted,
+  not two.
+- **The queue-bootstrap site does not terminalize anything** — its items stay pending. It is still sound,
+  but for a different reason: that tick writes group→active, which flips its own `hasActiveGroup`
+  predicate, so the next pass sees the active group and dispatches. The "they all drive the item
+  terminal" reasoning does not cover it.
+- **"Slower, never wrong" holds only for merging toward the SLEEPING variant.** Merging the other way
+  busy-spins the `hk-403fw` cooldown — the exact `bead_claim_skipped` storm the cooldown was added to
+  stop. The direction has to be stated or the conclusion is not usable.
+- **It is not even slower in that direction, and a deterministic test exists.** Four of the five reach
+  their `continue` through `evaluateGroupAdvanceWithOutcome`, which calls `queueStore.Wake()`
+  unconditionally on the not-all-succeeded branch. `workloopSleep` selects on that same channel, so a
+  sleep there returns at once: merging those four costs ZERO latency. The bootstrap site is the one
+  exception — no `Wake()` fires there, so merging it would cost one poll interval on every queue submit.
+  `WakeCh()` is exported, which makes the token a non-blocking-receive observable with no wall clock in
+  it. `TestAdmissionOrder_TerminalDedupLeavesAWakeTokenPending` now asserts it.
+
+What remains unpinned is only the busy-spin direction, and no test can reach a code shape that does not
+exist in the tree.
+
+### Three more found while classifying the loop's wait shapes
+
+All pre-existing, none fixed, all recorded because each is cheap to trip over and expensive to diagnose.
+
+**`workloopPollInterval`'s own comment is now false.** It says the constant "is NOT used for queue-loaded
+idle states, which block indefinitely via `workloopIdleWait` per PL-013". Wait shapes 1 and 2 above are
+queue-loaded idle states and both use exactly this constant. The comment describes shape 3 and presents it
+as the only case. A reader who trusts it will conclude the daemon never re-polls with a queue loaded, which
+is wrong for two of the three shapes, and PL-013 is cited in support of the wrong scope.
+
+**The dependency-blocked detector is a bare substring match.** `runWorkLoop` decides whether a claim
+failure means "the bead has open dependencies" with
+`strings.Contains(claimErrStr, "cannot claim blocked issue") || strings.Contains(claimErrStr, "blocked")`.
+The second clause subsumes the first, so the specific phrase is dead code, and ANY error text containing
+the word "blocked" anywhere silently changes behavior: the queue item is driven terminal through
+`evaluateGroupAdvanceWithOutcome` instead of being reverted to pending and retried. A `br` wording change,
+a wrapped network error, or a path with "blocked" in it is enough. This is the movement-governor shape from
+§5 — a coarse signal read as intent — applied to an error string. `internal/daemon/admissionorder_test.go`
+dodges it deliberately and its fake error carries a DO-NOT-SIMPLIFY note, because every test there that
+counts claims across ticks depends on the retry path.
+
+**Enabling the FIRST scheduled job does not wake a parked daemon.** In wait shape 3 the loop blocks on
+`workloopIdleWait`, which selects only on the queue-submit wake and shutdown — not on the schedule wake
+channel. Shape 3 is reached precisely when no enabled job exists, so the job that would move the loop to
+shape 2 is the one that cannot announce itself.
+
+**The mechanism matters, and a first draft of this entry got it wrong.** `harmonik schedule enable` does
+NOT fail to signal: `runScheduleEnableDisable` calls `Store.SetEnabled`, which routes through
+`Store.mutate`, which calls `signalWake` — as eight store methods do. The signal is real. It just cannot
+arrive, because **the CLI is a separate process, so its wake lands on its own in-memory channel and never
+on the daemon's.** `WakeCh`'s own doc already hedges with "when the daemon shares the in-memory store",
+which a separate CLI process does not. Do not record this as a missing call.
+
+So the CLI's own header claim — "a running daemon
+reloads the file on its next tick and picks up the change within one poll interval" — is false in this
+state: there is no next tick until a queue submit or a restart. Once one enabled job exists the loop sits
+in shape 2 and later edits are picked up within 2 seconds, so this bites exactly once per daemon life, at
+the moment an operator first arms a schedule. `WakeCh`'s own doc already hedges with "when the daemon
+shares the in-memory store", which the CLI does not.
+
+### The string `"sentinel"` names two different things, and one of them is a real queue
+
+Latent, not live. Recorded because it is cheap to trip over and expensive to diagnose.
+
+`internal/sentinel/adversary.go` sets `AdversaryQueueName = "sentinel"` — the named queue the adversary
+crew member binds to, so a queue with that literal name really exists once ACT mode spawns one.
+`internal/daemon/decision_block_ev043a.go` sets `sentinelSubjectIDACT = "sentinel"` — the decision-block
+SUBJECT the dispatch gate asks about. Two constants, two packages, one string, two unrelated meanings.
+
+They live in different maps today, so nothing is broken: the dashboard forcing gate's `blockedQueues` is
+keyed on queue NAME and consumed by `selectNextQueue`, while `IsQueueBlocked` is keyed on subject ID.
+**No code writes across them.** The hazard is that both key spaces are `map[string]…` over the same
+literal, so any future code that reads one with a key from the other silently type-checks. The concrete
+shape to watch: write the decision-block subject into `blockedQueues` and the adversary's own queue is
+withheld from dispatch — the sentinel would gag the crew it just spawned.
+
+Related and worth knowing: this duplication exists because `internal/sentinel` cannot import
+`internal/daemon` without a cycle, which is the same reason `sentinelAckRecord` re-declares the on-disk
+ack shape. So the fix is not "share the constant" — there is nowhere shared to put it that does not mean
+moving one of the two. Leave it until something needs it.
+
 ---
 
 ## The pattern worth carrying forward
 
-Six of the eleven items above are instances of one shape: **several code paths perform the same
+Most of the launch-path items above are instances of one shape: **several code paths perform the same
 conceptual step, and only one of them actually applies it.** The full catalogue — seventeen instances,
-with a step-by-path matrix — is in `ONE-OF-N-DRIFT.md`. The reason it matters for this program is that
+with a step-by-path matrix — is in `ONE-OF-N-DRIFT.md`.
+
+(This sentence used to read "six of the eleven items above". The count went stale the moment entries were
+added above it, which is the same failure the admission-order section now avoids by carrying no count.
+`ONE-OF-N-DRIFT.md` owns the number.) The reason it matters for this program is that
 the compiler is silent on every one of them: the callers still compile, the tests still pass, and the
 guard simply stops being applied on four paths out of five.
 

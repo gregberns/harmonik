@@ -549,19 +549,128 @@ mutable state this needs.
 dispatch effect emitted from a maintenance pass, so the observation type must carry `halt`
 explicitly rather than the maintenance code calling `exitClean` itself.
 
-### Step 3 — the pure admission decision (~200 lines, low risk)
+### Step 3 — the admission decision — ⚠ SPLIT REQUIRED. Re-measured 2026-07-29.
+
+**Read this correction before the original text below.** Every one of the eight gates was read in the
+source. **Four of the step's five claims are false.** Only the ordering claim holds. Do not start this
+step from the original description.
+
+**The claim, and what the code says:**
+
+| Claim | Measured |
+|---|---|
+| All eight are `snapshot → allow\|delay(reason)\|stop` | **False for four.** cross-queue-dedup and attempts-bound(a) write durable state and fire the group-advance effect chain. handler-pause emits an event on its hold path, and on BOTH paths it may clear the dedup map when the pause epoch has advanced. cooldown's arm site mutates its own input. **Four fit the shape** — decision-required, sentinel-queue, local-cap and greenlight — but greenlight does not fit it *over the same snapshot*, which is the real finding. |
+| None does I/O except greenlight | **False, and backwards.** handler-pause writes the event log. cross-queue-dedup and two of the three attempts bounds write `queue.json` and emit events. greenlight writes stderr exactly as decision-required and sentinel-queue do, so it is not the I/O exception — local-cap is the only gate that touches nothing, reading an atomic and sleeping. What is true, and is the point worth keeping: greenlight is the one gate that cannot run without a `br show` result in front of it. |
+| ~200 lines | **305 code lines** for the eight gate bodies on both dispatch paths plus the helpers the fold must re-own (`heldDedupKey`, `emitHeldEvent`, `pruneHeldDedupOnEpochChange`, `dispatchBlocked`, `markQueueItemFailureReason`), excluding `evaluateGroupAdvanceWithOutcome`. State that region set with any raw-line figure or do not quote one — an earlier draft of this table said "435 raw" and a re-measure of the same regions gives 411. The 305 excludes the **115-code-line** pre-claim `br show` block the sequence is built around, and the step cannot be done without deciding that block's fate. |
+| Low risk | **No.** The two gates that cannot be reordered are the concurrency-critical ones. See constraints 4 and 5. |
+| The sequence is load-bearing, local-cap before the stamp | **True.** The only claim that survived. |
+
+**Every gate named below lives in `internal/daemon/scheduler.go`**, moved there from `workloop.go` by the
+Seam A split. Their own source comments still say `workloop.go`. None of them is a named symbol — each is
+an inline statement block inside `runWorkLoop`, and its only greppable handle is its bead-tag comment.
+
+**The eight are not a list, because they straddle a subprocess.** cooldown exists to suppress repeated
+`br show` calls at poll cadence, so it must stay BEFORE the pre-claim `br show`. greenlight reads
+`preClaimRecord.Labels`, which is the zero value until `ShowBead` returns, so it must stay AFTER it.
+Those two requirements are directly contradictory for a single pre-claim predicate list over one
+snapshot. Worse, moving greenlight earlier **compiles clean and the gate silently never fires**, because
+`preClaimRecord` is declared above the block. That hazard holds for the window between the declaration
+and the assignment — above the declaration it would not compile, so the trap is narrower than "anywhere
+earlier" and no less real.
+
+**The three attempts bounds, named once so the constraints below can refer to them:** **(a)** the
+`Attempts++` / `max_attempts_exceeded` site inside the Phase-3 lock, **(b)** the `hk-pina9` pre-claim
+`ShowBead` bound, **(c)** the br-ready `readyPathAttempts` bound.
+
+**Ordering constraints that exist only as the current source order:**
+
+1. cooldown before the pre-claim `br show` — else the subprocess it exists to suppress runs every tick.
+2. greenlight after the pre-claim `br show` — else it reads a zero value and never fires, silently.
+3. local-cap before the Phase-3 dispatch stamp (`hk-l5saf`). Its safety also depends on `localInFlight`
+   not being incremented until the post-claim site, so the fold must not move that increment earlier.
+4. cross-queue-dedup must run inside the same write-lock hold as the stamp. The lock is what makes the
+   winning queue's stamp visible. A pure pre-claim predicate cannot hold it, and without it two
+   implementers run one bead again — the bug `hk-a11re` fixed.
+5. attempts-bound(a) must stay fused to the stamp. `Attempts++` happens only when the item is found
+   Pending under the live lock, so only real stamp attempts consume the budget. A pre-lock predicate
+   either double-counts or loses that property.
+6. `governor.tick` must run before the sentinel-queue gate in the same tick. This couples Step 3 to
+   Step 2: either the maintenance observation carries the trip state, or the gate keeps reading the
+   blocker directly. **Step 2 as BUILT keeps the direct read**, through `sentinelBlocksDispatch`, because
+   the blocker is a dispatch-time question and a verdict captured during the maintenance pass would be
+   answered hundreds of lines before it is used. Step 2's own description above still lists
+   `governor_signal` as a field of the crossing type. That field was never added — it has no consumer in
+   the loop — so read the code, not that field list.
+7. The two dispatch paths order the same gates differently. The br-ready path puts attempts-bound
+   before handler-pause. The queue path has no early attempts bound at all. One merged order therefore
+   changes one path: today a ready bead over its budget is skipped with no held event, where the queue
+   path would hold it and emit one.
+8. `delay` is two different outcomes. Twelve sites sleep one poll interval and continue.
+   cross-queue-dedup and both terminal attempts-bound paths continue with NO sleep. A single
+   `delay(reason)` variant erases that difference.
+9. decision-required and sentinel-queue are freely swappable. The only difference is the stderr string.
+   This is the one pair with no real constraint.
+
+**Nothing asserts any of this except one edge.** `TestL5saf_LocalOnlyItemNotStrandedByCapGuard` drives
+a real tick and fails if local-cap moves after the stamp. Its own header records that the sibling unit
+test missed the bug because it only re-stated the boolean. Five of the eight gates have no test at all —
+cooldown, decision-required, sentinel-queue, greenlight and attempts-bound. The freeze gate asserts file
+placement and symbol counts, not order.
+
+That test header is itself decaying: the sibling it names, `TestSplitGate_LocalOnlyBypassFix`, was
+deleted in the signature-pinning sweep, and the header still places the gate in `workloop.go`.
+
+**And the comments that hold the reasons are already rotten. This rot is ours, and it is one commit old.**
+All six line references in the gate region are wrong. Read them as symbols in
+`internal/daemon/scheduler.go`: the split capacity gate is the `if` on `deps.localInFlight.Load() >=
+gateMax`, the twice-cited reference is the `deps.localInFlight.Add(1)` increment, the third is the
+`beadRecord = core.BeadRecord{` construction, and the fourth — also cited twice, and uncorrected until
+now — is the queue-path post-claim `ShowBead` label hydration.
+
+The `localInFlight.Add(1)` reference is the load-bearing half of the local-cap hoist argument, so the
+only record of why the order is safe points at coordinates that no longer exist. **At the commit that
+wrote them, two of these numbers were exact.** The Seam A split moved the code and updated none of them
+— which means four of the six were broken by this program's own commit, one commit before a commit
+titled "cite the symbol instead of a line number." This is a defect fixable today, not slow decay.
+
+**The eight are also not the set.** The same loop holds **four** more admission gates: the primary split
+capacity gate (`hk-hs7ex`), the disk-low gate, the no-auto-pull gate (`hk-exd7m`) and the operator-pause
+gate (`hk-ry8q1`). Two more sit outside the loop: the `needs-attention` exclusion at adapter read time in
+`internal/brcli/ready.go` beside greenlight, and `HandlerPauseChecker` in `internal/queue/validation.go`
+at submit time, which is a sixth handler-pause site. If the goal is "the admission decision lives in one
+place", name the real set first.
+
+**Do this instead — split the step:**
+
+- **Step 3a (66 code lines across both dispatch paths, 42 for the queue path alone; low risk, worth
+  doing).** Fold the genuinely pure predicates —
+  decision-required, sentinel-queue, local-cap, and greenlight once the bead record is in hand — into
+  `internal/orchestrator` beside `SelectNextQueue`. Encode the order as data, not scattered `if`s.
+- **Step 3b (MEDIUM risk, belongs with Step 4).** cross-queue-dedup and attempts-bound(a) are a
+  reservation-transaction problem wearing a gate costume. Fold them into Step 4's single durable write,
+  not into an admission list.
+- **handler-pause needs its event emission split from its predicate before it can move at all.**
+- **cooldown stays where it is.** It is a rate limiter on a subprocess, not an admission gate.
+- **Before either half, write the tests that pin the order.** Six of the nine constraints above have
+  nothing holding them.
+
+---
+
+**Original text, kept because the correction above is a response to it. It is the only place the eight are
+named as one list. Every ⛔ sentence below is REFUTED — do not quote one as current fact.**
 
 Fold the remaining gates (handler-pause, decision-required, sentinel-queue, greenlight, cooldown,
 local-cap, cross-queue-dedup, attempts-bound) into `internal/orchestrator` beside the existing
-`SelectNextQueue`. All of them are `snapshot → allow|delay(reason)|stop`. None of them do I/O except
-`greenlight`, which reads a label already present on the pre-claim record.
+`SelectNextQueue`. ⛔ REFUTED: ~~All of them are `snapshot → allow|delay(reason)|stop`. None of them do
+I/O except `greenlight`, which reads a label already present on the pre-claim record.~~ Four fit the
+shape, not eight, and greenlight is not the I/O exception.
 
-**Why now:** the pure selector already landed there and works; this is the same shape. It is
-table-testable with no daemon.
+**Why now:** the pure selector already landed there and works; this is the same shape. ⛔ REFUTED:
+~~It is table-testable with no daemon.~~ Two of the eight need the live write lock.
 
-**Risk:** low, but note the *sequence* is load-bearing — the hoisted `hk-l5saf` local-cap guard must
-stay **before** the dispatch stamp. Encode it as an ordered list of predicates, not as scattered
-`if`s, so the ordering is data.
+⛔ REFUTED on risk, upheld on sequence: ~~**Risk:** low, but~~ note the *sequence* is load-bearing — the
+hoisted `hk-l5saf` local-cap guard must stay **before** the dispatch stamp. Encode it as an ordered list
+of predicates, not as scattered `if`s, so the ordering is data.
 
 ### Step 4 — the reservation transaction (~150 lines, MEDIUM risk — real fix, not a move)
 

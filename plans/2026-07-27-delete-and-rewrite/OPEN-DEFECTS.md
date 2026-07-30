@@ -104,6 +104,18 @@ passed" as unverified unless the exit code is shown.** This is the fourth green-
 in this file, after the masked scenario tier, the `continue-on-error` flag that masked it, and
 `make check-fast` skipping its own test step on a clean tree.
 
+**A second way to mis-read the same script, found 2026-07-30.** The script is bash, not POSIX shell, and
+it carries no `#!/usr/bin/env bash` protection against being invoked under the wrong interpreter. Running
+it as `sh scripts/go-format.sh check` dies on a bash-only construct with a syntax error. That failure is
+loud rather than silent, so it is the milder sibling of the defect above, but it produces a NON-ZERO exit
+that has nothing to do with formatting. An agent that reads only the exit code concludes the tree is
+badly formatted when the real fault is the interpreter. Invoke it with `bash`, or execute it directly.
+
+**This section was re-confirmed on 2026-07-30 rather than extended.** An agent independently
+"discovered" the stdout-versus-stderr behaviour already written above and reported it as a correction.
+It was not one. Recorded because the re-discovery is itself the evidence that the trap is easy to hit
+twice.
+
 ---
 
 ## Found 2026-07-29 while harvesting the three `workloop.go` comment blocks

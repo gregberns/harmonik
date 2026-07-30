@@ -159,7 +159,48 @@ when it was written.
   the third instance recorded in this file after the masked scenario tier and the `continue-on-error`
   reporting flag.
 
-## One open P0 that is probably wrong
+## RESOLVED — the P0 that was probably wrong, settled 2026-07-30
+
+**`hk-zobns` is invalid as written and the coverage it stood for is restored.** The product was
+correct all along. The diagnosis below held up under a third measurement. What changed on 2026-07-30
+is that the reasoning became executable, so nobody has to re-derive it a fourth time.
+
+**The recorded fix — "put the bead's own target in the protected set" — does not work, and the reason
+is the useful part.** That fix assumed the early landing gate and the deep merge guard could be made
+to disagree. They cannot. The work loop resolves ONE value, the per-bead landing branch, and hands the
+same value and the same protected list to both gates. Both compare by exact string. So protecting the
+bead's target makes the EARLY gate refuse, no worktree is ever cut, and the deep guard is still never
+reached — a green test asserting the wrong guard, which is the same loss of coverage in a shape that
+looks fixed. **No work-loop fixture exists in which the early gate passes and the deep guard refuses.**
+For a cross-repo run the loop skips the early gate and also empties the protected list, so neither
+fires.
+
+**So the backstop is now asserted where it lives**, by a direct call to the merge entry point with a
+protected target over a real worktree — which is the shape the original issue asked for and which no
+test in the repo had ever done. It pins the refusal reason, that the result is a refusal rather than a
+no-change short-circuit, and that both branches, both remote refs, both reflogs and the run-branch tip
+are byte-for-byte unchanged. A companion test pins the landing-branch measurement the whole argument
+rests on, so if the per-bead landing rule ever reverts, that test fails and says to rewrite the
+backstop test as a full work-loop run.
+
+Verified by mutation: neutering the protected-branch check leaves `go build` and `go vet` green and
+turns the test red on five assertions — and the merge genuinely runs, moving `refs/heads/main` and
+`origin/main`. The test drives the real merge path, not a stub.
+
+**One caveat, and it is not small.** `branchguard_test.go` is behind the `scenario` build tag, so this
+restored assertion does NOT run in the default short gate. It runs only in the scenario tier, which
+this program treats as red and does not gate on. Two other tests in the same file
+(`TestBranchGuard_TargetBranchMergeIsolation`, `TestBranchGuard_FailClosed_TargetInProtectSet`) fail
+there today, identically before and after this work, both timing out at about 30 seconds. **The
+backstop is asserted but nobody is watching the tier that asserts it.** That is a weaker outcome than
+"covered" and should be read that way.
+
+**The bead should be closed as invalid.** Changing a P0's priority or state was previously left as the
+owner's call, so it is named here rather than done.
+
+---
+
+## The original diagnosis, kept because the resolution above is a response to it
 
 `hk-zobns` — *"Branch-protection deep guard fails open: bead merges to protected target and closes
 approved."* Re-measured 2026-07-29: **the guard did not fail open.** The ref that moved was the

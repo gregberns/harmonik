@@ -1,6 +1,9 @@
 // Package orchestrator holds the pure queue-dispatch DECISION predicates: the
-// cross-queue round-robin selector and (in later sub-slices) the eager-fill,
-// pre-screen, and group-advance planners.
+// cross-queue round-robin selector, the eager-fill and group-advance planners,
+// and the ordered admission gate table (admission.go) that decides whether a
+// chosen bead may dispatch. The admission table also owns the operator-facing
+// text a held bead produces. The strings are values the daemon prints, so the
+// package still writes nothing itself.
 //
 // It is the M5-slice-3 work-loop-brain leaf, extracted from internal/daemon
 // WITHOUT semantic change (mirroring internal/policy). The daemon shell owns

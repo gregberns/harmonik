@@ -49,9 +49,13 @@ import (
 // labelNeedsGreenlight is the Beads label applied by stagedBeadGeneratorEval
 // to staged deploy+verify follow-up beads. It gates dispatch until a captain
 // explicitly clears it via `harmonik greenlight <bead-id>`.
-// Flywheel-motion.md §5.3/§6.2 (AC2, hk-lacr). Mirrors the constant in
-// internal/brcli/ready.go (two packages, one well-known string).
-const labelNeedsGreenlight = "needs-greenlight"
+// Flywheel-motion.md §5.3/§6.2 (AC2, hk-lacr).
+//
+// The WRITER lives here and the READER lives in the pure admission gate, so the
+// string itself is owned by internal/orchestrator (LabelNeedsGreenlight) and
+// this is the daemon-local name for it. internal/brcli keeps its own copy
+// because the br-ready path filters the label at adapter read time.
+const labelNeedsGreenlight = orchestrator.LabelNeedsGreenlight
 
 // eagerRefillEval implements the EM-062 eager-refill trigger and compute
 // function.

@@ -109,6 +109,15 @@ func TestL5saf_LocalOnlyItemNotStrandedByCapGuard(t *testing.T) {
 		WorkerRegistry:   reg,
 		MaxConcurrent:    gateMax,
 		NoAutoPull:       true,
+		// Report free disk far above the watermark. Without this the test is
+		// VACUOUS on any machine below the 10 GiB floor: the disk-low gate holds
+		// the tick before selection, the item is never even considered, and it
+		// stays Pending for a reason that has nothing to do with the guard under
+		// test. It stayed green through a mutation that moved the guard back to
+		// its stranding position, which is how this was found. A high reading
+		// also keeps the reclaim pass and `go clean -cache` from running as real
+		// subprocesses against this machine's shared build cache.
+		DiskFreeBytesFunc: func(string) (uint64, error) { return 1 << 62, nil },
 	})
 
 	// Preload local saturation: localInFlight == gateMax. The split gate then

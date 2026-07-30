@@ -24,8 +24,16 @@ So the first measurement is not a file list. It is a subtraction:
 
 ```bash
 df -k /System/Volumes/Data | awk 'NR==2{print "df used MiB:", $3/1024}'
-sudo du -x -sk /System/Volumes/Data 2>/dev/null | awk '{print "du  sees MiB:", $1/1024}'
+sudo du -x -sk /System/Volumes/Data | awk '{print "du  sees MiB:", $1/1024}'
 ```
+
+**Do not add `2>/dev/null` to the `du` line.** An earlier version of this runbook did, and that hides
+the one error you must see. Without **Full Disk Access** for your terminal application, macOS TCC
+denies `du` on almost every path **even under `sudo`**, and it prints `Operation not permitted` per
+file. Silenced, the command still exits 0 and still prints a number — a very small one — so the gap
+looks enormous and you chase a phantom. Grant Full Disk Access in **System Settings → Privacy &
+Security → Full Disk Access**, then re-run. This is the runbook's own headline command failing the
+"did it actually do anything?" test below.
 
 **If those disagree by more than a few GiB, the gap IS the answer and no file list will show it.**
 Chase the gap in this order, and stop when it closes:
@@ -53,6 +61,14 @@ Chase the gap in this order, and stop when it closes:
    Measured only 1.6 GiB on 2026-07-30, so it was not the answer that day, but it is cheap to rule out.
 
 Only when the gap is closed does the file list below become the right tool.
+
+**Outcome of the 2026-07-30 case, so nobody re-derives it.** Free space went 5.2 GiB → 31 GiB by hand,
+then **31 GiB → 64 GiB from one action**: install the pending macOS update and restart. That single
+step did what no `rm` could. It let macOS remove the SIP-protected installer under
+`macOS Install Data/Locked Files/` (`rm` refuses there even as root, so do not try), retired the
+staged Preboot copy, and zeroed 8 GiB of swap. After the restart: swap 0.00M, Preboot back to 8.5 GiB,
+`macOS Install Data/` an empty stub. **When items 1, 2 and 3 all point at a pending update, stop
+deleting and install it.**
 
 **Two traps in this runbook's own history.** The shared `~/Library/Caches/go-build` is listed below as
 the measured number-one source. It read **7 MiB** on 2026-07-30 — because the daemon's own low-disk

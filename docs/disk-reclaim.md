@@ -13,14 +13,70 @@ disk therefore manufactures fake test failures and fake hangs fleet-wide, and
 the event log makes them look like real regressions. Check `df` before blaming
 a timing-out daemon or scenario test.
 
-First measurement, always:
+## READ FIRST — reconcile `df` against `du` before you look at any file list
+
+**More than a dozen agents worked this runbook and none of them found the space.** The reason is
+structural: on 2026-07-30 the single biggest consumer was **invisible to `du` by permission**, and
+about 42 GiB more sat on APFS volumes this runbook never mentions. Every command below the fold
+reported honest numbers about the wrong 4% of the disk.
+
+So the first measurement is not a file list. It is a subtraction:
+
+```bash
+df -k /System/Volumes/Data | awk 'NR==2{print "df used MiB:", $3/1024}'
+sudo du -x -sk /System/Volumes/Data 2>/dev/null | awk '{print "du  sees MiB:", $1/1024}'
+```
+
+**If those disagree by more than a few GiB, the gap IS the answer and no file list will show it.**
+Chase the gap in this order, and stop when it closes:
+
+1. **Directories `du` cannot read.** Measured 2026-07-30: `/System/Volumes/Data/macOS Install Data/`
+   held a **16.7 GB** completed-in-March macOS installer that was never removed. Its `Locked Files`
+   subdirectory is mode `d-w-r-xr--`, so `du` reports **`0B`** and `ls` returns permission denied.
+   The manifest beside it (`index.sproduct`) is world-readable and names the payload and its exact
+   byte count. Check it: `grep -a InstallAssistant "/System/Volumes/Data/macOS Install Data/index.sproduct"`.
+2. **Other APFS volumes in the same container.** They share the disk and are invisible to any `du` of
+   `/Users` or `/System/Volumes/Data`. Measured: System 16.6, Preboot 16.5, VM 6–8, Recovery 2.4 —
+   about 42 GiB. A Preboot far above 1–2 GiB means a staged-but-not-installed macOS update is holding
+   `cryptex1/proposed` beside `current`. Check `softwareupdate --list` for a pending `Action: restart`.
+   **Do not hand-delete anything under Preboot — that can leave the box unbootable.** Install the
+   update and restart.
+3. **Swap, which is monotonic within a boot.** macOS grows swapfiles under pressure and never removes
+   them until restart. `sysctl vm.swapusage`. Measured 8 GiB after 5 days of heavy agent load. This is
+   why a reboot "frees a ton" and why the growth feels like a leak — it is one, and only a restart
+   returns it.
+4. **Local APFS snapshots.** `tmutil listlocalsnapshots /` and
+   `diskutil apfs listSnapshots /dev/<data-volume>`. A snapshot named `MSUPrepareUpdate` is item 2
+   again.
+5. **Deleted-but-still-open files** held by a long-lived process — `lsof +L1`, and sum the SIZE
+   column. This is the classic signature when `df` and `du` disagree and everything above is clean.
+   Measured only 1.6 GiB on 2026-07-30, so it was not the answer that day, but it is cheap to rule out.
+
+Only when the gap is closed does the file list below become the right tool.
+
+**Two traps in this runbook's own history.** The shared `~/Library/Caches/go-build` is listed below as
+the measured number-one source. It read **7 MiB** on 2026-07-30 — because the daemon's own low-disk
+reap runs `go clean -cache` and had already emptied it. **A small `go-build` reading is evidence the
+reap already ran, not evidence of a clean box.** And `du -x` does **not** confine itself to one volume
+here: firmlinks give `/`, `/Users` and `/System/Volumes/Data` the same device id, so `du -x -s -g /`
+returns more than the disk holds.
+
+---
+
+First measurement of the file-list phase (only after the gap above is closed):
 
 ```bash
 df -h /System/Volumes/Data
-du -sh ~/Library/Caches/go-build ~/Library/Caches/golangci-lint  # measured #1 — §0
+du -sh ~/Library/Caches/go-build ~/Library/Caches/golangci-lint  # see the trap note above
 du -sh "$TMPDIR"                                           # often #1 — see §2
 du -sh /private/tmp/claude-502/-Users-gb-github-harmonik   # §1
 du -sh /Users/gb/github/harmonik/.beads                    # §3
+```
+
+Add one more, measured at 8.3 GiB on 2026-07-30 and growing about 3.7 GiB/day while lanes run:
+
+```bash
+du -sh /Users/gb/github/harmonik-wt-cache   # per-lane go-build + golangci caches; NO reaper owns this
 ```
 
 ## Did the command actually do anything?

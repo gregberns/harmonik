@@ -119,10 +119,10 @@ count_code_matches() {
 #     sub-package hold any number of field reads. A file absent from the table
 #     is budgeted at ZERO, so a brand-new daemon file cannot smuggle one in.
 #
-#     MOVERS (budget 0 / workloop.go 8) are asserted EXACTLY, in both
+#     MOVERS (budget 0 / scheduler.go 3) are asserted EXACTLY, in both
 #     directions. A shrink is not silently accepted because the survivors in
-#     workloop.go are a deliberate, documented carve-out — runWorkLoop, the outer
-#     queue-claim loop, x7, plus evaluateGroupAdvanceWithOutcome. Those functions
+#     scheduler.go are a deliberate, documented carve-out — runWorkLoop, the outer
+#     queue-claim loop, plus evaluateGroupAdvanceWithOutcome. Those functions
 #     stay in internal/daemon forever (E5-dot-runloop.md §1c), so converting them
 #     is churn on the tree's
 #     hottest file for zero extraction value. RT16 §7 risk 1 predicts an
@@ -152,7 +152,15 @@ declare -a EXACT_FILES=(
     # can be switched off and never constructed (CHARTER §4). They are still the
     # SAME outer-queue-claim-loop reads and still never leave internal/daemon —
     # they are re-budgeted below, not converted and not deleted. Ratchet down.
-    "internal/daemon/workloop.go             3"
+    #
+    # 3 -> 0 on 2026-07-29, and a new scheduler.go row at 3: the Seam A split moved
+    # runWorkLoop and the helpers only it reaches into internal/daemon/scheduler.go.
+    # The three reads did not change — they are the same outer-queue-claim-loop
+    # reads, in a new file. Re-budgeted, not converted and not deleted. workloop.go
+    # keeps beadRunOne and the run-terminal helpers, which reach the bus only
+    # through the port, so its raw-read budget is now zero and stays there.
+    "internal/daemon/workloop.go             0"
+    "internal/daemon/scheduler.go            3"
     # reviewloop.go left this list with the review-loop retirement that deleted
     # the file. agentlaunch.go took its place on 2026-07-29: the launch-path
     # collapse made it the single launch path, and it reaches the bus only
@@ -339,7 +347,7 @@ if [ "$HITS" -ne 0 ]; then
     echo "In a function that already binds it, use 'emit'. Otherwise use RunPorts.Emitter (for example" >&2
     echo "rp.Emitter, ports.Emitter, or b.rp.Emitter). If a read genuinely belongs to the OUTER" >&2
     echo "queue-claim loop (runWorkLoop and" >&2
-    echo "friends, which never leave internal/daemon), raise workloop.go's budget here and say why in" >&2
+    echo "friends, which never leave internal/daemon), raise scheduler.go's budget here and say why in" >&2
     echo "the commit body." >&2
     exit 1
 fi

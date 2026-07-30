@@ -390,6 +390,19 @@ workersbootwire-freeze-gate:  ## P2 E4c: forbid new worker-registry boot-wiring 
 runloop-emitter-gate:  ## P2 E5 RT16: forbid bypassing EmitterPort with a raw bus-field read in internal/daemon
 	scripts/runloop-emitter-gate.sh
 
+# workloop-scheduler-freeze-gate: the Seam A split ratchet — the dispatch
+# SCHEDULER (runWorkLoop plus the 25 helpers only it reaches) left
+# internal/daemon/workloop.go for internal/daemon/scheduler.go. Both files are
+# one Go package, so the compiler cannot stop a later edit from pasting the
+# scheduler back beside beadRunOne. This grep gate fails if a scheduler symbol is
+# declared in workloop.go, if a scheduler symbol is declared anywhere other than
+# scheduler.go, or if either side of the seam is missing — the last case is named
+# so a deleted target fails loudly instead of passing on an empty grep. Wired
+# into check-fast and check-short.
+.PHONY: workloop-scheduler-freeze-gate
+workloop-scheduler-freeze-gate:  ## Seam A: forbid moving the dispatch scheduler back into workloop.go
+	scripts/workloop-scheduler-freeze-gate.sh
+
 
 # vet-tagged: typecheck the files that `go vet ./...` cannot see (hk-i1m20).
 # Static analyzers and the default build compile ONLY the untagged build, so a
@@ -602,6 +615,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	scripts/runloop-emitter-gate.sh
+	scripts/workloop-scheduler-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -638,6 +652,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/readywait-freeze-gate.sh
 	scripts/workersbootwire-freeze-gate.sh
 	scripts/runloop-emitter-gate.sh
+	scripts/workloop-scheduler-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

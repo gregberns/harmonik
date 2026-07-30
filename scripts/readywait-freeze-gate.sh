@@ -202,9 +202,18 @@ check_segment_count() {
     done
 }
 
+#     scheduler.go joined the list on 2026-07-29: Seam A split the dispatch
+#     scheduler out of workloop.go, and this per-file list is hand-maintained, so
+#     the 2,371 lines that moved arrived unwatched. It builds zero segments today,
+#     so the pin ratchets rather than arriving red. It matters more than most: the
+#     scheduler is what decides to dispatch, so a hand-rolled ready wait born
+#     there is the same regression RT14 retired, in the one file that would look
+#     like a natural home for it.
+#
 # The one launch path. Everything below it must stay at zero.
 check_segment_count internal/daemon/agentlaunch.go 1
 check_segment_count internal/daemon/workloop.go 0
+check_segment_count internal/daemon/scheduler.go 0
 check_segment_count internal/daemon/dot_gate.go 0
 check_segment_count internal/daemon/dot_cascade_core.go 0
 

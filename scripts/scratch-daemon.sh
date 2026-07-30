@@ -636,7 +636,9 @@ cmd_batch() {
         # point they are out of scope — under `set -u` a bare "$sub_pid" then aborts the
         # trap with "unbound variable" (leaking the subscribe child + temp file). Guard
         # both with :- so the cleanup always runs.
-        trap 'kill "${sub_pid:-}" 2>/dev/null || true; rm -f "${raw:-}" 2>/dev/null || true' EXIT
+        # EXIT alone is not enough: a non-interactive bash does NOT run the EXIT trap on an
+        # untrapped SIGINT or SIGTERM, so a Ctrl-C during a batch leaked the child anyway.
+        trap 'kill "${sub_pid:-}" 2>/dev/null || true; rm -f "${raw:-}" 2>/dev/null || true' EXIT INT TERM
 
         echo "[scratch-daemon] batch: submitting $item_count item(s) to queue '$name' (project=$scratch)"
         local submit_out

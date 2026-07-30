@@ -5,7 +5,10 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/.." && pwd)
 test_root=$(mktemp -d)
-trap 'rm -rf "$test_root"' EXIT
+# Kill the two backgrounded lint children BEFORE the tree they run in disappears. On a
+# Ctrl-C during the waits below, a bare `rm -rf` pulls fake-tools/golangci-lint and the
+# FAKE_STATE lock dir out from under two still-running `make lint-full-count` subtrees.
+trap 'kill "${first_pid:-}" "${second_pid:-}" 2>/dev/null || true; rm -rf "$test_root"' EXIT INT TERM
 
 tools_dir="$test_root/fake-tools"
 state_dir="$test_root/state"

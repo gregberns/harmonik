@@ -319,6 +319,12 @@ for _run_cell in "${RUN_CELLS[@]}"; do
             "$SCRATCH_BIN" subscribe --socket "$SCRATCH_SOCK" --types "$CAP_TYPES" --heartbeat 30s \
                 > "$cap_file" 2>/dev/null &
             cap_pid=$!
+            # Reap the capture child on EVERY exit path, not only the assert-verdict block
+            # below. A `die`, a `set -e` abort, or a Ctrl-C between here and that block
+            # orphans a live `subscribe` that holds the daemon socket and keeps writing to
+            # $cap_file. Single quotes are load-bearing: the trap body expands when it
+            # fires, so it always reads the CURRENT cell's pid.
+            trap 'kill "${cap_pid:-}" 2>/dev/null || true' EXIT INT TERM
         fi
 
         # D2: git landing baseline (record BEFORE submit). The intended branch is the cell

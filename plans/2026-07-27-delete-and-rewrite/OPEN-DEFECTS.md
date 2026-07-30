@@ -616,12 +616,22 @@ One is proven vacuous. The rest are not individually verified and should not be 
 some will fail loudly, some may assert nothing. The failure mode is silent in the direction that
 matters.
 
-**What to do, in order.** Free disk above the watermark first, because that alone turns the package
-green and makes the suite usable as a gate again — see `docs/disk-reclaim.md`, which measures the
-shared Go caches under `~/Library/Caches` as the biggest single source. Then stop treating the
-package as untrustworthy. Stubbing the reading in every fixture is the belt-and-braces follow-up, and
-it is the only part that survives a future low-disk machine, but it is 32 files of churn and it is not
-the urgent half.
+**DONE, and confirmed on the real tree.** Disk was reclaimed on 2026-07-30 and the package was then
+run unmutated, with the real disk reading: **`go test -short ./internal/daemon/` passes in 103
+seconds.** Not a subset, not a stub — the whole package, green. Treat `internal/daemon` as a usable
+gate again.
+
+The reclaim itself is worth recording, because `docs/disk-reclaim.md` §0 points at the shared Go
+caches and on this box that was **not** where the space was. `~/Library/Caches/go-build` held 7 MiB,
+because the daemon's own low-disk reap had already emptied it — the runbook's number-one source is
+self-clearing exactly when the problem is worst. The space was 14 GiB of agent session scratchpads
+under `/private/tmp/claude-502/`, mostly per-session Go build caches and mutation-test copies of the
+tree. Two stale session directories from 2026-07-28 gave back 9.5 GiB and took the box from 5.2 GiB to
+14 GiB. **The runbook should promote agent scratchpads above the shared Go caches**, or at least say
+that a tiny `go-build` reading is evidence the reap already ran rather than evidence of a clean box.
+
+**Still open:** stubbing the disk reading in the remaining 32 fixtures. That is the only part that
+survives a future low-disk machine, and it is 32 files of churn. Tracked as `hk-q2r9q`.
 
 **`WorkLoopDepsParams` exposes no watermark field**, so a fixture cannot lower the floor. The disk
 reading function is the only lever, which is why omitting it is silently fatal.

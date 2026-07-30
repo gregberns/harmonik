@@ -299,6 +299,15 @@ func AmendHEADAddRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtP
 //
 // Returns false on any git error (conservative: treat as not subsumed).
 //
+// hk-f38n — a match proves a commit NAMES the bead. It does not prove the bead is
+// done. On a bead worked in several parts an older partial commit carries the same
+// ID, so this returns true while work is still outstanding. A pre-dispatch
+// subsumption check built on it closed a bead early, and the remaining work had to
+// be refiled under a new ID. So pair every call with evidence that the work itself
+// is absent — no HEAD advance, or a no-change timeout — and never use this as a
+// standalone completion test. Full record: the informative note under BI-022 in
+// specs/beads-integration.md §4.7.
+//
 // UNLIKE its neighbours in this file it does NOT route through a
 // tmux.CommandRunner: it probes the LOCAL project checkout's main history, never
 // a remote worker's. Do not "fix" that asymmetry — it is the behaviour the

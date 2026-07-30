@@ -8,8 +8,8 @@ Source: bug archaeology across ~53 defects in `internal/daemon/pasteinject.go` (
 Each fact cost at least one production incident.
 
 **Status:** harvested from `pasteinject`, `tmuxsubstrate`, `codexwire`/`codexdriver`,
-`harness/pi`, and `brcli`. **83 facts** (one since retracted, see pane fact 4); **214
-structure-caused bugs were discarded** in the
+`harness/pi`, `brcli`, and the srt sandbox gate. **89 facts** — one is since retracted,
+see pane fact 4. **214 structure-caused bugs were discarded** in the
 process — those are the ones a rewrite makes unrepresentable.
 
 **Known overlap, not yet consolidated.** The pane-injection and tmux-substrate sections were
@@ -247,6 +247,61 @@ must satisfy every fact below.
 
 ---
 
+# srt sandbox
+
+srt is the sandbox wrapper that runs a harnessed agent under macOS seatbelt or Linux
+bubblewrap. These six facts all sit at the temp directory, because that is the one
+place the sandbox's write grants and the host's shared scratch state meet.
+
+1. **`os.TempDir()` returns `$TMPDIR`, and falls back to the world-shared `/tmp` when
+   `$TMPDIR` is not set.** macOS gives each login session a private `/var/folders/...`
+   temp dir, so the same line of code reads a private path on a desktop and the shared
+   root on a daemon started without that environment. Treat the shared-root case as
+   routine here rather than exotic: this repo's own `go test` recipes in `Makefile` set
+   `TMPDIR=/tmp` to keep socket paths short.
+
+2. **Never feed an ambient temp dir into a sandbox write grant — srt expands each
+   temp-dir entry into a RECURSIVE write rule.** One shared root therefore hands the run
+   write access to every other process's scratch state, and to any socket or lock file
+   that lives there. That is a hole in a mechanism whose only purpose is confinement. A
+   grant must name a per-run directory such as `/tmp/harmonik-run-<id>`. On the harmonik
+   side this is now mechanical rather than a review rule: `GenerateSandboxProfile` in
+   `internal/daemon/sandboxprofile.go` rejects a world-shared root and fails the launch
+   with a named error.
+
+3. **srt 1.0.0 sets `TMPDIR=/tmp/claude` for every sandboxed child, whatever the
+   parent's `TMPDIR` holds, and the child's own children inherit it.** So a consumer
+   that honors `TMPDIR` never reaches the host temp root, with or without a grant. Grant
+   `/tmp/claude` on its own merits. Do not widen the profile to the root above it.
+   ⚠ Version-dependent: the value belongs to srt, not to us.
+
+4. **Not every consumer honors `TMPDIR`, so a `TMPDIR`-derived grant covers the rest
+   only by accident.** C's `tmpfile()` and `P_tmpdir`, and any `mkstemp("/tmp/...")`,
+   hardcode a host temp root. tmux reads `TMUX_TMPDIR`, not `TMPDIR`, for its socket at
+   `/tmp/tmux-<uid>`. Such a consumer falls inside a `TMPDIR`-derived grant only when
+   the ambient value happens to equal the root it hardcodes — that is, under
+   `TMPDIR=/tmp` or an unset `TMPDIR`, never under the macOS per-user default. Widening
+   the grant to reach these consumers is the wrong trade, because it opens the whole
+   shared root for the processes the sandbox exists to confine.
+
+5. **A sandbox write-denial test that fails only under load can be a profile that is too
+   wide, not a sandbox that fails to apply.** Measured: a write-to-main denial acceptance
+   case failed 3 of 3 runs with `TMPDIR=/tmp` and passed 3 of 3 runs with a per-user temp
+   dir, at load average 7.53 — the band in which the "srt fails to apply under fork
+   saturation" theory predicted a failure. srt was applying the profile correctly the
+   whole time. The profile granted the shared temp root, and the test's own fixture sat
+   inside that grant. Do not go looking for the acceptance case — it went in the
+   signature-pinning test deletion and no longer exists in the tree. The measurement is
+   recorded here because the test that produced it is gone.
+
+6. **⚠ PLATFORM-DEPENDENT — fact 3 is established on macOS only.** The `/tmp/claude`
+   value is hardcoded with no `GOOS` gate, and the write-denial acceptance suite ran on
+   darwin alone. Whether srt injects the same `TMPDIR` on Linux is untested, so fact 3's
+   cover on Linux rests on a property of srt that nobody has measured there. Linux is
+   uncertified either way.
+
+---
+
 # beads CLI (br)
 
 1. **Real `br` 0.2.10 returns exit 3 — not exit 1 — for "Issue not found", and exit 1 is a *generic* failure code.** Verified live: `br show <missing>` → exit 3, empty stdout, stderr `Error: Issue not found:`. Exit 3 also means SQLite-busy, so **exit 3 alone cannot separate a missing bead from lock contention** — it must be refined by stderr (`"not found"` → NotFound, else DbLocked).
@@ -290,7 +345,7 @@ must satisfy every fact below.
 
 ## The shape of the problem
 
-Three patterns run through all 83 facts. They are the actual design constraints.
+Three patterns run through all 89 facts. They are the actual design constraints.
 
 **1. No external tool gives you an acknowledgement.** Pane-injection facts 7, 8, 10 and 11
 share one root cause — the target TUI exposes no readiness or ack signal. codex fact 12 says
@@ -322,7 +377,7 @@ changed exit codes, JSON flag spellings, and default sort. tmux prints non-numer
 > they guarded against (br fact 16). Probe behaviour at startup; do not encode it as a
 > constant.
 
-**What this means for the rewrite.** These 83 facts are not a checklist to apply at the end.
+**What this means for the rewrite.** These 89 facts are not a checklist to apply at the end.
 Patterns 1 and 2 dictate the *shape* of the core loop, and pattern 3 dictates that harness
 behaviour is runtime-discovered configuration rather than compile-time knowledge. A rewrite
 that gets the structure right and ignores this document will reproduce roughly half the bug

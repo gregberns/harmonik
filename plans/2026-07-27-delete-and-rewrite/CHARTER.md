@@ -6,7 +6,7 @@ the program is and what "done" means. If the two disagree about intent, this one
 
 Siblings: [`_plan.md`](_plan.md) — deletion sequencing. [`NEXT_STEPS.md`](NEXT_STEPS.md) — the live
 working document (findings, carry-forward, open re-assessments; changes constantly).
-[`CARRY-FORWARD.md`](CARRY-FORWARD.md) — 83 facts about the outside world any rewrite must satisfy.
+[`CARRY-FORWARD.md`](CARRY-FORWARD.md) — 89 facts about the outside world any rewrite must satisfy.
 [`../../PRINCIPLES.md`](../../PRINCIPLES.md) — the engineering standard all of this is built to.
 
 Evidence gathered 2026-07-28, kept because it is expensive to re-derive and was otherwise about to be

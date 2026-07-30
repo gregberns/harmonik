@@ -1893,24 +1893,15 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	}
 	emitRunStarted(ctx, emit, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS, string(workflowMode))
 
-	// hk-f38n: the pre-dispatch subsumption check (hk-ly0hg Fix-2 / hk-wcv) was
-	// REMOVED here. That check called shared.MainHistoryHasRefsTrailer — a bare
-	// "Refs: <id>" git-log grep — and closed the bead pre-dispatch when it
-	// matched. For multi-aspect / partially-committed beads this was a
-	// false-positive: old partial commits carrying the same bead ID caused the
-	// daemon to conclude the whole bead was done and close it before the
-	// remaining work ran (live incident: hk-cmry false-closed, work refiled as
-	// hk-zmpd to escape the poisoned grep-match).
-	//
-	// The crash-restart recovery case (bead commit landed on main, daemon died
-	// before CloseBead completed) is correctly handled by the RUNTIME paths
-	// instead:
-	//   • noChange-timeout (pasteInjectQuitOnCommit): agent makes no commit →
-	//     noChangeTimeoutCh fires → shared.MainHistoryHasRefsTrailer → CloseBead.
-	//   • noCommitGuard (beadRunOne): no HEAD advance + Refs on main →
-	//     noCommitGuardShouldReopen=false → auto-close branch.
-	// Both paths inspect whether work is actually present before closing, so
-	// the crash-restart close is preserved without false-positives.
+	// Do NOT add a pre-dispatch "already landed on main?" check here. One used to
+	// sit at this point and closed the bead when shared.MainHistoryHasRefsTrailer
+	// — a bare "Refs: <id>" git-log grep — matched. On a bead worked in several
+	// parts an older partial commit carries the same ID, so the grep matched and
+	// the daemon closed a bead whose remaining work had not run. The crash-restart
+	// case the check was meant to cover is handled at runtime instead, by the
+	// noChange timeout and by noCommitGuardShouldReopen, and both of those check
+	// whether the work is present before closing. Full record: hk-f38n, and the
+	// informative note under BI-022 in specs/beads-integration.md §4.7.
 
 	// Pre-switch: for DOT mode, resolve and pre-load the graph source (hk-30vlb).
 	// Three-tier resolution:
@@ -3387,53 +3378,3 @@ func emitImplementerEscapedWorktree(ctx context.Context, bus handlercontract.Eve
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerEscapedWorktree, b)
 }
-
-// sandboxOSTmpDirs is REMOVED (hk-guapd). It used to return os.TempDir() (plus
-// /private/tmp when that was "/tmp") for the sandbox profile's allowWrite set,
-// and GenerateSandboxProfile expands every TmpDirs entry into a RECURSIVE write
-// rule. os.TempDir() honours $TMPDIR and falls back to "/tmp" when TMPDIR is
-// UNSET, so a daemon started without a per-user TMPDIR — or with TMPDIR=/tmp,
-// which Makefile:453 and :465 do routinely — granted every sandboxed run write
-// access to all of /tmp: other runs' scratch state, other tools' temp files, and
-// any socket or lockfile living there. That is a hole in a mechanism whose only
-// purpose is confinement.
-//
-// No consumer can regress, and the argument is exhaustive rather than "the suite
-// stayed green". srt injects TMPDIR=/tmp/claude into every sandboxed child
-// regardless of the parent's TMPDIR (sandboxgate.go:87, MkdirAll'd
-// unconditionally at :122), and children inherit it. So every consumer falls in
-// one of two branches:
-//
-//   - HONOURS TMPDIR: resolves to /tmp/claude, granted separately by section 6a.
-//     It never reached the host temp root even before this change.
-//   - HARDCODES A HOST TEMP ROOT (C's P_tmpdir/tmpfile(), mkstemp("/tmp/..."),
-//     and tmux, whose socket is /tmp/tmux-<uid> via TMUX_TMPDIR — not TMPDIR):
-//     the old grant covered these only when os.TempDir() happened to EQUAL that
-//     root, i.e. TMPDIR=/tmp or unset. Under the macOS default per-user TMPDIR
-//     the grant was /var/folders/<...> and every such consumer was already
-//     denied.
-//
-// A consumer could therefore only regress if it hardcodes /tmp AND has only ever
-// run under TMPDIR=/tmp — that is, only in the gating configuration, never in
-// normal operation. The old grant bought nothing in any configuration and opened
-// a hole in one. The run worktree is granted separately too (section 1,
-// in.WorktreePath), so a worktree that itself lives under the host temp root
-// still gets its writes.
-//
-// Measured, not assumed (hk-guapd): TestSandboxAcceptance_WriteToMainDenied_hki0377
-// failed 3/3 with TMPDIR=/tmp and passed 3/3 with a per-user TMPDIR, at load 7.53
-// — the band the "srt fails to apply under fork saturation" theory predicted
-// failure in. srt was applying correctly the whole time; the profile was too wide
-// and the test's own fixture sat inside the grant. Do not reintroduce an ambient
-// os.TempDir() feed here. If a future caller genuinely needs a temp grant, pass an
-// explicit PER-RUN directory via SandboxProfileInput.TmpDirs — never a shared
-// root. That is not left to review: GenerateSandboxProfile now REJECTS a
-// world-shared root in TmpDirs, so reintroducing the ambient feed fails at launch
-// with a named error instead of silently restoring the over-grant.
-//
-// NOT ESTABLISHED ON LINUX. srtClaudeTmpDir is hardcoded with no GOOS gate and the
-// acceptance suite skips non-darwin (sandboxacceptance_hki0377_test.go:79), so
-// section 6a's coverage on Linux rests on srt injecting the same TMPDIR there.
-// That is plausible — it is a property of srt, not of the host — but it is
-// untested, and Linux is uncertified either way. The Linux-pass bead inherits the
-// question.

@@ -744,10 +744,41 @@ place", name the real set first.
 
 **Do this instead — split the step:**
 
-- **Step 3a (66 code lines across both dispatch paths, 42 for the queue path alone; low risk, worth
-  doing).** Fold the genuinely pure predicates —
-  decision-required, sentinel-queue, local-cap, and greenlight once the bead record is in hand — into
+- **Step 3a (low risk, worth doing).** Fold the genuinely pure predicates — decision-required,
+  sentinel-queue, local-cap, and greenlight once the bead record is in hand — into
   `internal/orchestrator` beside `SelectNextQueue`. Encode the order as data, not scattered `if`s.
+
+  **Re-measured 2026-07-30, and the step's own description repeats Step 3's mistake at smaller scale.**
+  Three corrections, each of which changes what the work is:
+
+  **The queue-path figure was exact and the both-paths figure was not.** 42 code lines for the four
+  gates on the queue path is right, counted body-only with comments and blanks excluded. The
+  both-paths figure was 66. It is **60**. The 6-line gap is the `hk-l5saf` guard counted a second
+  time, on a path where it does not exist — **the br-ready path has no local-cap guard at all.** Only
+  a vestigial comment on the converged path marks where the old post-stamp version sat. That is
+  sound rather than a defect: the guard keys on the per-queue local-only routing field, and a
+  br-ready bead comes from no queue, so the field has no meaning there. The br-ready path relies on
+  the tick-level split capacity gate alone. Record it so nobody "restores symmetry" later.
+
+  **"local-cap" names two gates, and they share a tick-local.** The split capacity gate
+  (`hk-hs7ex`) runs once per tick before the path branch and is silent. The `hk-l5saf` guard runs on
+  the queue path only, immediately before the dispatch stamp, and is also silent. The cap they
+  compare against is derived ONCE per tick, at the first gate, and read again by the second. Fold one
+  without the other and that single derivation splits in two, which changes behaviour whenever the
+  concurrency controller is adjusted between the two reads. Counting the derivation and the split
+  gate, the real region is **72 code lines**, not 60.
+
+  **Greenlight is queue-path only.** The br-ready path excludes those beads earlier, at adapter read
+  time in `internal/brcli/ready.go`, beside the needs-attention exclusion. That is a different
+  package and a different moment, and it stays out of this step.
+
+  **So the order cannot be one flat list here either, for the same reason it could not be in Step 3.**
+  The four gates sit at four points in a tick: before the path branch, before the pre-claim `br show`,
+  after it, and immediately before the dispatch stamp. Two subprocess-and-lock boundaries cut through
+  them. The step is therefore to make the **stage** data as well as the order, so that a gate asked to
+  run before its inputs exist FAILS LOUDLY. Today the reverse is true, and that is the whole point:
+  hoisting greenlight above the `br show` compiles clean, reads a zero value, and the gate silently
+  never fires.
 - **Step 3b (MEDIUM risk, belongs with Step 4).** cross-queue-dedup and attempts-bound(a) are a
   reservation-transaction problem wearing a gate costume. Fold them into Step 4's single durable write,
   not into an admission list.

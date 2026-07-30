@@ -471,6 +471,42 @@ moving one of the two. Leave it until something needs it.
 
 ---
 
+## The nightly race signal cannot pass, and it hides two real failures — found 2026-07-30
+
+**The nightly race job has failed every run in retained history — 22 nights, back to 2026-07-09.** A
+previous handoff reported it as failing "since at least 2026-07-26" and noted no earlier handoff
+mentioned it. Both parts understate it. There is no successful run to compare against.
+
+**It cannot pass, and the reason is structural rather than a bug in the product.** The job runs
+`make check-race-full`, which is `go test -race -count=1 ./...` across the whole module. The module
+contains `evaltasks/`, a set of thirteen fixture packages that hold DELIBERATE bugs — they are the
+inputs to bug-fixing evaluations. One of them states its own defect in a source comment
+(`evaltasks/eval-bugfix-rate-limiter/limiter.go`, the token-bucket initial-token count, tagged
+`BUG(off-by-one)`).
+
+**This is why the failure is invisible to the gating tier.** Those fixture tests skip under
+`testing.Short()`. CI Tier 2 passes `-short`, so it never sees them, and `go test -short ./evaltasks/...`
+is green here on all thirteen. The nightly job deliberately drops `-short` in order to surface races
+that the gating tier's parallelism cap suppresses. Dropping `-short` is exactly what un-skips the
+planted bugs. So the one job designed to catch real races is the only job that runs the code designed
+to fail.
+
+**Two real failures are sitting behind that permanent red**, in product packages, not fixtures:
+
+- `TestDaemonWatchdog_PhantomReviveGuard` in `internal/supervise`.
+- `TestWM040a_OrderingSettingsBeforeWorkspaceLeased` in `internal/workspace`.
+
+Neither is diagnosed here. The point of the entry is that nobody could have seen them: a signal that
+is always red carries no information, so it stopped being read. Four data-race warnings also appear in
+the fixture package and are presumably planted too, but that was not confirmed.
+
+**Not fixed, per the standing directive.** When it is fixed, the shape is to scope the race target off
+`./...` rather than to change the fixtures — the fixtures are correct as they are, and their bugs are
+the product. Note that `make check` and `check-short` share the `./...` spelling, so whatever excludes
+`evaltasks/` should be checked against every tier that walks the module, not the nightly one alone.
+
+---
+
 ## The pattern worth carrying forward
 
 Most of the launch-path items above are instances of one shape: **several code paths perform the same

@@ -62,6 +62,21 @@ build: build-harmonik  ## go build ./... + cmd/harmonik stamped binary (hk-mz0x4
 test:  ## go test ./... (no race; quick smoke)
 	go test ./...
 
+# leakcheck: report processes this user abandoned — orphaned to init and of a
+# shape that never legitimately outlives its parent (a bare shell, a Go test
+# binary, or any non-system orphan burning CPU). Reports only, never kills.
+#
+# Run it after any test run that spawned helpers, and after any script that
+# backgrounds a child. A test-support script once leaked 30 spin loops that ran
+# 13 hours at ~551% CPU with nothing in the repo able to report it.
+#
+# Deliberately NOT wired into `test` or `check`. It observes the whole machine,
+# not the build, so a failure would be unrelated to the code under test and
+# would train people to ignore it. Keep it a thing you run, or a shell hook.
+.PHONY: leakcheck
+leakcheck:  ## Report abandoned processes (orphaned shells, test binaries, busy orphans)
+	@./scripts/leakcheck.sh
+
 # smoke-scratch: run harmonik smoke in a throw-away temp project so real-daemon
 # validation never commits scratch files to the main trunk (logmine F17 / hk-nk9pu).
 # Prereq: harmonik binary is built from source (this target builds it internally).

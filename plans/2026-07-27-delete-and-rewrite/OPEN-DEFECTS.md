@@ -310,17 +310,31 @@ the same time whatever the lock does. The lock defends the stamp against the per
 item status through `evaluateGroupAdvanceWithOutcome`, and no seam lets a test interleave one of those
 with the stamp. The *outcome* is pinned; the lock boundary is not.
 
-**Constraint 6 — `governor.tick` before the sentinel-queue gate cannot be reached from `daemon_test` at
-all.** The gate is `loopMaintenance.sentinelBlocksDispatch`, which calls `movementGovernor.dispatchBlocked`
-and returns false on a nil governor. `newMovementGovernorIfEnabled` builds one only when the
-`movement_governor` subsystem is enabled AND `workLoopDeps.governorState` is non-nil. `governorState` has
-no field on `WorkLoopDepsParams`, so no external test can construct a loop in which this gate can fire.
+**Constraint 6 — CLOSED. `governor.tick` before the sentinel-queue gate is now pinned.** The gate is
+`loopMaintenance.sentinelBlocksDispatch`, which calls `movementGovernor.dispatchBlocked` and returns false
+on a nil governor. `newMovementGovernorIfEnabled` builds one only when the `movement_governor` subsystem is
+enabled AND `workLoopDeps.governorState` is non-nil. `governorState` had no field on `WorkLoopDepsParams`,
+so no external test could construct a loop in which this gate could fire.
 
-*The cheapest route, if someone wants it:* add `GovernorState` and `SentinelMode` to
-`WorkLoopDepsParams`. That is a shared fixture 20-plus files bind, so it is a real edit, not a one-liner.
-It does **not** require driving ACT mode. `dispatchBlocked` is only
-`deps.decisionBlocker.IsQueueBlocked("sentinel")`, and `DecisionBlocker` is already an exported param with
-an exported `AddQueueBlock`. So the governor needs to exist, not to trip — the trip can be injected.
+*What closed it:* one field, `WorkLoopDepsParams.GovernorState`, wired straight through to
+`workLoopDeps.governorState`. Nil keeps the subsystem absent, so every existing fixture is unchanged.
+`SentinelMode` was **not** added and was not needed — the mode stays at the production default (observe)
+and the trip is injected through `DecisionBlocker.AddQueueBlock("sentinel", …)`, which is the same
+in-memory state a real ACT-mode trip writes. The finding above was right: the governor has to exist, not
+to trip.
+
+The tests are in `internal/daemon/sentinelgate_test.go`, built on the `admissionorder_test.go` fixture:
+
+- the gate holds a bead on the **queue** dispatch path, and the same fixture claims with no trip pending;
+- the gate holds a bead on the **br-ready** path (the gate is written out twice, so deleting either copy
+  compiles clean and un-gates one path);
+- with the subsystem **absent** the same block does not gate dispatch, which is the "off does not get to
+  hold the dispatcher shut" property `movementgovernor.go` documents;
+- **the ordering clause itself**: a trip armed INSIDE `governor.tick` gates the SAME tick. The trip is
+  armed through `brAdapter.Ready`, which `governorGatherInput` is the only caller of once `NoAutoPull` is
+  set, so the arming happens at a point strictly inside `governor.tick`. Mutating
+  `sentinelBlocksDispatch` to serve a snapshot taken at the TOP of `tickBeforeSelect` produces exactly one
+  claim instead of zero — the one-extra-bead hazard described below, now executable.
 
 *And one finding that shrinks the stake. This is a closed-world enumeration, not a survey of the
 neighborhood.* The writer set for the sentinel block is provably complete:
@@ -348,9 +362,9 @@ deliberate there. The conclusion holds for the natural implementation, and it ho
 snapshot sits, NOT because ordering is irrelevant.
 
 `dispatchBlocked`'s own comment already says converting it to a snapshot is "arguable on its merits, not
-obviously wrong". Read the constraint as protecting a code shape plus that one-tick edge, not a behavior
-that changes today — which is why it stayed a gap rather than getting a test that would assert a
-preference.
+obviously wrong". That still holds, and the test does not contradict it: what the test pins is the
+one-tick edge, not a preference between a live read and a snapshot. A snapshot taken AFTER `governor.tick`
+keeps the test green. A snapshot taken before it does not.
 
 **Constraint 8 — half pinned, and the earlier reading of it was WRONG. Corrected here.**
 An earlier version of this section claimed there were two no-sleep sites, that both drive the item

@@ -46,15 +46,16 @@ package daemon_test
 //   - 5 attempts-bound(a) fused to the stamp — PINNED.
 //     TestAdmissionOrder_AttemptsBoundStaysFusedToTheStamp. A bead held by a
 //     pre-stamp gate must not spend its dispatch budget.
-//   - 6 governor.tick before the sentinel-queue gate in the same tick —
-//     NOT PINNED, declared gap. The gate is m.sentinelBlocksDispatch, which
-//     returns false unless a movementGovernor was constructed, and that needs
-//     workLoopDeps.governorState plus the movement_governor subsystem enabled.
-//     governorState has no field on WorkLoopDepsParams, so no test in package
-//     daemon_test can build a loop where this gate can fire at all. Pinning it
-//     means widening that shared fixture, which 20-plus files bind. Recorded in
-//     OPEN-DEFECTS.md with the cheapest route and one finding that shrinks the
-//     stake.
+//   - 6 governor.tick before the sentinel-queue gate in the same tick — PINNED,
+//     in sentinelgate_test.go rather than here. The gate is
+//     m.sentinelBlocksDispatch, which returns false unless a movementGovernor was
+//     constructed. That construction gates on the movement_governor subsystem
+//     switch first (enabled by default, so every fixture passes it) and on
+//     workLoopDeps.governorState second. governorState now has a mirror on
+//     WorkLoopDepsParams (GovernorState), so a loop in which the gate can fire is
+//     buildable from daemon_test. Three tests: the gate holds on the queue path,
+//     it holds on the br-ready path, and a trip armed INSIDE governor.tick gates
+//     the same tick it was armed.
 //   - 7 the two dispatch paths order the same gates differently — PINNED.
 //     TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause.
 //   - 8 delay is two different outcomes — HALF PINNED.

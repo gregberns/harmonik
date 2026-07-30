@@ -666,12 +666,13 @@ earlier" and no less real.
    `loopmaintenance.go` already documents for the `halt` field. So the fold may snapshot this, but where
    the snapshot sits is load-bearing.
 
-   This constraint has **no test**, and cannot get one as the code stands: `sentinelBlocksDispatch`
-   returns false unless a governor was constructed, which needs `workLoopDeps.governorState` non-nil, and
-   `governorState` has no field on `WorkLoopDepsParams`. A test would need that seam. It would not need
-   ACT mode or a crew spawn — `dispatchBlocked` reduces to `decisionBlocker.IsQueueBlocked("sentinel")`,
-   and `DecisionBlocker` is already an exported param with an exported `AddQueueBlock`, so the trip can be
-   injected. The governor has to exist, not to trip.
+   This constraint is now **tested**, in `internal/daemon/sentinelgate_test.go`. The seam it needed is one
+   field, `WorkLoopDepsParams.GovernorState`, wired straight to `workLoopDeps.governorState`; nil keeps the
+   subsystem absent, so no existing fixture changed. ACT mode was not needed — `dispatchBlocked` reduces to
+   `decisionBlocker.IsQueueBlocked("sentinel")` and the trip is injected through `AddQueueBlock`. The tests
+   pin the gate on BOTH dispatch paths, pin that an absent subsystem does not gate dispatch, and pin the
+   ordering clause: a trip armed inside `governor.tick` gates the SAME tick. A snapshot taken at the top of
+   `tickBeforeSelect` produces exactly one claim instead of zero, so the fold will hear about it.
 7. The two dispatch paths order the same gates differently. The br-ready path puts attempts-bound
    before handler-pause. The queue path has no early attempts bound at all. One merged order therefore
    changes one path: today a ready bead over its budget is skipped with no held event, where the queue

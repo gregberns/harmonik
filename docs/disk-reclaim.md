@@ -88,6 +88,17 @@ staged Preboot copy, and zeroed 8 GiB of swap. After the restart: swap 0.00M, Pr
 `macOS Install Data/` an empty stub. **When items 1, 2 and 3 all point at a pending update, stop
 deleting and install it.**
 
+**What a closed reconciliation looks like**, measured the same day after the restart: `df` used
+146,110 MiB, privileged `du` saw 139,917 MiB, **gap 6.05 GiB**. No local snapshots, nothing held by
+deleted-but-open files. A gap that size is the denied system databases plus APFS accounting, and it
+means the subtraction is finished — go read the file list. Compare against the same machine before
+the restart, where the gap was above 40 GiB.
+
+**Do not compute the gap by summing your own list of top-level directories.** That was tried here and
+it manufactured a 25 GiB hole that did not exist, because the list left out `Data/System`, the other
+home directories, and the hidden databases. The `du` total is the measurement. A hand-built sum of
+parts is a guess wearing a measurement's clothes.
+
 **Two traps in this runbook's own history.** The shared `~/Library/Caches/go-build` is listed below as
 the measured number-one source. It read **7 MiB** on 2026-07-30 — because the daemon's own low-disk
 reap runs `go clean -cache` and had already emptied it. **A small `go-build` reading is evidence the

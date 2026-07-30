@@ -82,6 +82,30 @@ test. Both are now closed out; kept here because the *reasoning* is the reusable
 | **`main`'s only required status check has failed on every run since 2026-07-17.** Branch protection requires exactly one check, `check (Tier 2)` from `ci.yml`. Five consecutive failures, latest 2026-07-22. This was invisible because the ops-monitor health probe read *the newest run of any workflow* on main — which is the Scenario tier reporting a masked success every day. | Surfaced 2026-07-29 by filtering that probe to the required check. `release_due` is gated on a green CI status, so it now correctly refuses to fire — do **not** widen the probe again to make it green | `hk-main-required-check-red-i14hq` |
 | **About half the scenario tier skips in CI, and a skip reads as a pass.** Nothing installs `br` and nothing declares a twin build. Evidence: `internal/daemon` takes 69s in CI against 368s locally, and `TestThroughput_TenBeadsAtMaxFour` fails locally every time yet has never failed in 20 CI runs. | Means a **green** run on that workflow proves much less than it appears to — do not read one as the tier passing | `hk-ynohn` |
 
+## The format check reports success when its tools are absent — found 2026-07-29
+
+`scripts/go-format.sh` resolves its two tools with `gofumpt=${GOFUMPT:-"$repo_root/.tools/gofumpt"}` and
+never checks that the path exists. Under `set -euo pipefail` a missing tool exits **127 with zero bytes
+on stdout**, and bash writes its diagnostic to stderr only. Empty stdout is byte-identical to a clean
+pass, so `bash scripts/go-format.sh check | tail -5` reports success in any caller that does not set
+`pipefail`.
+
+Reproduced directly: `GOFUMPT=/nonexistent/gofumpt bash scripts/go-format.sh check` exits 127 and prints
+nothing to stdout. The same command piped through `tail` exits 0.
+
+**Why it matters more than it looks.** `.tools/` is gitignored, so a fresh clone and every agent worktree
+starts without it. Agents in this program run the format check and report "format check passed" from the
+piped output. Three separate agents did so today in worktrees that had no `.tools/` at all. `make
+fmt-check` and CI are unaffected — neither pipes, and CI runs `make tools` first — so this hides only
+from the agents who report it most often.
+
+Fix is a path-existence check that fails with a named error. **Until then, treat any bare "format check
+passed" as unverified unless the exit code is shown.** This is the fourth green-signal-protecting-nothing
+in this file, after the masked scenario tier, the `continue-on-error` flag that masked it, and
+`make check-fast` skipping its own test step on a clean tree.
+
+---
+
 ## Found 2026-07-29 while harvesting the three `workloop.go` comment blocks
 
 None of these was chased. The first one is a live correctness defect and the most serious item in this
@@ -146,6 +170,19 @@ when merge-target resolution moved to the per-bead `lands_on` and became **stric
 The real cost is coverage, not safety: this was the only work-loop exercise of that backstop, so the
 backstop has been unasserted for roughly three weeks. Annotated on the bead rather than re-scoped —
 changing a P0's priority is the owner's call.
+
+**Re-confirmed 2026-07-29 (late), and a warning about how to read the failure.** The repro was run again
+and it does fail deterministically in about 4.4 seconds. Reading only the failure output leads to the
+wrong conclusion — it says the `integration` ref moved, the bead closed, and the outcome was `approved`,
+which reads exactly like a fail-open. The fixture settles it, and the test states it in its own setup
+comments: the bead body sets `target_branch: integration`, the comment beside it says integration is
+**NOT protected**, and the protected set passed to the run is `["main"]` alone. So the daemon merged to
+an unprotected branch that the bead asked for. That is correct behavior.
+
+The stale half is the next comment: *"the merge call uses deps.targetBranch (main), so the deep guard
+fires."* Per-bead `lands_on` resolution replaced the daemon-wide target, so the merge targets
+`integration` and the guard correctly does not fire. **Do not "fix" the product against this test.** Fix
+the fixture — put the bead's own target in the protected set — or the backstop stays unasserted.
 
 ---
 

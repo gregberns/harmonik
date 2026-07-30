@@ -77,7 +77,11 @@ Non-building planner/reviewer worktrees may be created below the disk builder th
 - Give each live lane stable private `GOCACHE` and `GOLANGCI_LINT_CACHE` directories outside the repo.
 - Do not create a fresh cache per command.
 - Do not run `go clean -cache` while any builder is active.
-- Remove a lane cache only after review, integration, and final evidence capture.
+- **Remove a lane cache when the lane ends.** Wait until review, integration, and final evidence
+  capture are done — then delete it. This line used to say "only after", and every reader obeyed the
+  restriction and skipped the obligation. Nothing else removes these directories: no code knows the
+  path, so no reaper reaches it. Measured 2026-07-30 at **8.3 GiB, idle for four days, growing about
+  3.7 GiB per day while lanes run** (`hk-99szy`).
 - Pause new builders at or below 10 GiB available; seek stable headroom above the watermark before
   differential, race, or broad scenario runs.
 - Follow `docs/disk-reclaim.md`; never hand-delete other sessions' state.
@@ -103,6 +107,20 @@ env \
 Redeclare `HARMONIK_LANE_CACHE` in the same shell invocation for every separate tool call, or use the
 literal manifest path in each `GOCACHE=`/`GOLANGCI_LINT_CACHE=` prefix. Prefix `make`, lint, build, vet,
 and test commands the same way. Record the cache path in the wave manifest.
+
+**Tear the cache down when the lane closes**, and sweep for the ones earlier lanes left behind:
+
+```bash
+rm -rf -- "$HARMONIK_LANE_CACHE"                                   # this lane
+
+# Anything under the shared root untouched for 2 days belongs to a dead lane.
+find /Users/gb/github/harmonik-wt-cache -mindepth 1 -maxdepth 1 -type d -mtime +2 -print
+# Re-run with -exec rm -rf {} + once the list looks right.
+```
+
+`scripts/with-isolated-gocache.sh` does **not** replace this. It builds one cache per command with
+`mktemp` and removes it on exit, so it defeats the warm cache this section exists to keep, and it
+isolates `GOCACHE` only — never `GOLANGCI_LINT_CACHE`. Use it for a one-shot gate, not for a lane.
 
 The coordinator schedules builds. A third active implementer may read or edit while two builders compile,
 but waits for a builder token before running Go/lint gates.

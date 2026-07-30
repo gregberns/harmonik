@@ -35,6 +35,24 @@ looks enormous and you chase a phantom. Grant Full Disk Access in **System Setti
 Security → Full Disk Access**, then re-run. This is the runbook's own headline command failing the
 "did it actually do anything?" test below.
 
+**Full Disk Access does not silence every denial, and that is correct behaviour.** About a dozen paths
+stay denied to root even with it — `.Spotlight-V100` (owned by `_mds_stores`), `.DocumentRevisions-V100`,
+`.fseventsd`, `private/var/db/{Spotlight,sysdiagnose,DumpPanic,SoC,appinstalld}`,
+`System/Library/AssetsV2/com_apple_MobileAsset_*`. **Read the list, do not silence it.** A dozen lines
+naming system databases means the number below is trustworthy to within a few GiB. Pages of denials
+under `/Users` means Full Disk Access did not take. Those three hidden directories are the only ones
+big enough to matter, and only root can size them:
+
+```bash
+sudo du -xsh /System/Volumes/Data/.Spotlight-V100 \
+             /System/Volumes/Data/.DocumentRevisions-V100 \
+             /System/Volumes/Data/.fseventsd
+```
+
+`.DocumentRevisions-V100` is the macOS Versions database. It reaches tens of GiB on a machine that
+writes files constantly, nothing in this project reaps it, and it is invisible to every other command
+in this runbook.
+
 **If those disagree by more than a few GiB, the gap IS the answer and no file list will show it.**
 Chase the gap in this order, and stop when it closes:
 

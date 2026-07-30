@@ -22,7 +22,8 @@
 #                         completed-without-verdict join (R6 fix hk-ayvx): the daemon has
 #                         a LEGITIMATE review-less close path — twin-blind
 #                         `auto-close: exit=0`, noChange, and subsumed completions
-#                         merge+close with NO reviewer BY DESIGN (workloop.go ~:3811).
+#                         merge+close with NO reviewer BY DESIGN — see `SkipGate: true`
+#                         on the `WireSpine` call in `beadRunOne`, internal/daemon/workloop.go.
 #                         Those neither launch NOR request a reviewer, so they are absent
 #                         from both anchors and stay suppressed instead of firing ~180
 #                         false `review-bypass` alerts (alert fatigue would bury the REAL
@@ -833,7 +834,8 @@ last_watch_msg_ts = prev_last_watch_msg_ts
 # Review-gate (M2 code-half; R6 fix): a run is review-BYPASSED only if it actually
 # ENTERED a review path (emitted reviewer_launched) yet completed without APPROVE.
 # Runs that auto-closed / made no change / were subsumed never launch a reviewer (by
-# design — workloop.go ~:3811) so they must NOT be flagged. We therefore join
+# design — `SkipGate: true` on the `WireSpine` call in `beadRunOne`,
+# internal/daemon/workloop.go) so they must NOT be flagged. We therefore join
 # reviewer_launched -> reviewer_verdict{APPROVE} by run_id, not bare run_completed.
 reviewer_launched_ts = {}  # run_id -> epoch of the reviewer_launched event (review entered)
 verdict_run_ids      = set() # run_ids that have any reviewer_verdict event

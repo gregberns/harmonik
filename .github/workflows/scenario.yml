@@ -2,27 +2,26 @@
 # Builds all twin binaries then runs the scenario suite (-race, -tags=scenario, 10m).
 # Covers test/scenario/... and internal/daemon/... scenario build-tag files.
 # Non-merge-blocking: no required status check configured in branch protection
-# (main requires only "check (Tier 2)").
+# (main requires only "check (Tier 2)"). So this workflow reports the truth and
+# blocks nothing.
 #
-# READ THIS BEFORE YOU TRUST A GREEN TICK ON THIS WORKFLOW. It reports success
-# whatever happens, and it has reported success while failing on every one of
-# the last 20 runs (measured 2026-07-29).
+# EXPECT THIS TO BE RED. The suite is genuinely red, and the red is the point.
+# Until 2026-07-29 this workflow reported success on every one of its last 20 real
+# failures. A red run here is not a broken workflow. It is a working one.
 #
-# Two separate reasons, tracked separately:
-#  1. continue-on-error on the step below masks the outcome on EVERY surface —
-#     run conclusion, step conclusion, and check-runs conclusion all read
-#     'success' after an exit 2. Only the annotations API tells the truth. So the
-#     out-of-band ops-monitor probe cannot fire either. See hk-21v7c.
-#  2. Nothing here installs br and nothing declares a twin build, so about half
-#     the tier skips, and a skip reads as a pass. See hk-ynohn.
+# The known failures, measured 2026-07-29: 8 deterministic failures that reproduce
+# in isolation, plus a family of load flakes that pass when run alone. Most of the
+# 8 are stale tests, tracked as hk-97gcz. One is a real defect in the merge path,
+# tracked as hk-co8g8.
 #
-# The suite is genuinely red: 8 deterministic failures reproduce in isolation,
-# plus a family of load flakes. Most of the 8 are stale tests, tracked as
-# hk-97gcz. One is a real defect in the merge path, tracked as hk-co8g8.
-# Do NOT make this a required
-# check before those close — it would wedge every merge. Removing
-# continue-on-error alone is safe and would make the tier visible, because
-# branch protection does not require this workflow.
+# STILL BROKEN, and do not read a green run as evidence against it: nothing here
+# installs br and nothing declares a twin build, so about half the tier skips, and
+# a skip reads as a pass. See hk-ynohn. A green run on this workflow today would
+# prove much less than it appears to.
+#
+# Do NOT add this to required status checks until the 8 deterministic failures
+# close. That would wedge every merge. Making the tier visible, which is what
+# removing continue-on-error did, is the safe half of that change.
 name: Scenario
 
 on:
@@ -31,14 +30,13 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Nightly at 04:00 UTC. This run surfaces NOTHING today. The
-    # "make test-scenario" step below sets continue-on-error, which masks the
-    # failure on the run conclusion, the step conclusion, AND the check-runs
-    # conclusion. The ops-monitor probe
-    # (scripts/ops-monitor-check.sh → checks['scenario-nightly']) reads the step
-    # conclusion and so returns green forever. That probe was written believing
-    # the step conclusion survived the flag. It does not. See hk-21v7c.
-    # (hk-plw4z, corrected 2026-07-29)
+    # Nightly at 04:00 UTC. The ops-monitor probe
+    # (scripts/ops-monitor-check.sh → checks['scenario-nightly']) reads this run's
+    # "make test-scenario" step conclusion. That probe was dead for as long as this
+    # workflow carried continue-on-error, because the flag masked the failure on
+    # the run conclusion, the step conclusion, AND the check-runs conclusion. The
+    # flag is gone as of 2026-07-29, so the probe reports the truth again with no
+    # change to the probe itself. (hk-plw4z, hk-21v7c)
     - cron: "0 4 * * *"
 
 jobs:
@@ -54,11 +52,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Do NOT add continue-on-error to this step. It hid the result on every REST
+      # surface, not just the run conclusion, which is how 20 straight failures
+      # read as green. Compare nightly-race.yml, which carries the same warning.
       - name: make test-scenario
         run: make test-scenario
-        # This flag hides the result on every API surface, not just the run
-        # conclusion. Remove it to make the tier visible (hk-21v7c). Removing it
-        # does not block merges on its own, because branch protection requires
-        # only "check (Tier 2)". Compare nightly-race.yml, which carries the
-        # correct warning against adding this flag.
-        continue-on-error: true

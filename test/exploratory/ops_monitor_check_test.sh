@@ -470,10 +470,15 @@ EOF
     local gh_bin="$tmpdir/bin/gh"
     local gh_concl_escaped
     gh_concl_escaped=$(printf '%s' "$gh_run_conclusion" | sed "s/'/'\\\\''/g")
+    # The stub answers every invocation the same way, as it always has. It now also
+    # records its own argv, so a test can assert HOW the probe called it and not
+    # only what it returned. Added 2026-07-29: the CI-status probe must filter to
+    # ci.yml, and an argument-blind stub cannot catch it if someone drops that.
     cat > "$gh_bin" <<EOF
 #!/usr/bin/env bash
 # Stub gh for ops-monitor CI-status test
 GH_CONCLUSION='${gh_concl_escaped}'
+printf '%s\n' "\$*" >> '${tmpdir}/gh-args.log'
 printf '[{"conclusion":"%s"}]\n' "\$GH_CONCLUSION"
 EOF
     chmod +x "$gh_bin"
@@ -1593,6 +1598,15 @@ OUTPUT=$(run_check "$PROJ")
 assert_contains "27b: IMMEDIATE in stdout"      "IMMEDIATE"    "$OUTPUT"
 assert_contains "27b: release-due in stdout"    "release-due"  "$OUTPUT"
 assert_contains "27b: count in stdout"          "55"           "$OUTPUT"
+# The CI-status probe must read main's REQUIRED check, which is "check (Tier 2)"
+# from ci.yml. Unfiltered, it read the newest run of ANY workflow on main, which
+# is the Scenario tier — a non-required gate that is expected to be red. That let
+# an expected-red tier decide whether main looked healthy. Assert the filter.
+if grep -qE -- '--branch main .*--workflow=ci\.yml|--workflow=ci\.yml .*--branch main' "$PROJ/gh-args.log" 2>/dev/null; then
+  pass "27b: CI-status probe filters to ci.yml (main's required check)"
+else
+  fail "27b: CI-status probe did NOT filter to ci.yml — it would read the newest run of any workflow on main, letting the expected-red Scenario tier stand in for main's health (see ops-monitor-check.sh, the load-bearing --workflow=ci.yml comment)"
+fi
 assert_json_list_contains "27b: immediate_signals has release-due" \
   "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "release-due:55"
 assert_check_state "27b: checks.release-due=flag" \

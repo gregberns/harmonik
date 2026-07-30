@@ -587,7 +587,24 @@ fi
 [[ "$RELEASE_COMMIT_COUNT" =~ ^[0-9]+$ ]] || RELEASE_COMMIT_COUNT=0
 if command -v gh >/dev/null 2>&1; then
   _GH_OUT=""
-  _GH_OUT=$( (cd "$PROJ" && gh run list --branch main --limit 1 --json conclusion 2>/dev/null) ) || true
+  # --workflow=ci.yml is LOAD-BEARING (2026-07-29). Unfiltered, this picked the
+  # newest run of ANY workflow on main, which is Scenario every day (06:28 UTC,
+  # after Nightly Race at 05:56). Scenario is a non-required Tier 3 gate that is
+  # EXPECTED to be red, so an unfiltered probe let an expected-red tier stand in
+  # for "is main healthy", and CI_STATUS would have been not-green forever the
+  # moment scenario.yml stopped masking its failures. That would have killed
+  # release_due below, which is gated on ci_status == 'green'. Read only the
+  # required check, which branch protection says is "check (Tier 2)" from ci.yml.
+  #
+  # ONE LEVEL STILL LOOSE, and it is the same bug class one step narrower. This
+  # reads the ci.yml RUN conclusion, which aggregates every job in that workflow,
+  # not the "check (Tier 2)" JOB conclusion. The two agree today because ci.yml
+  # has one job. A run from 2026-07-22 carried a second, non-required job named
+  # "hooks (non-merge-blocking)", since removed. If any non-required job is added
+  # back to ci.yml, its failure will again decide whether main looks healthy. Read
+  # the job conclusion if that happens. test/exploratory/ops_monitor_check_test.sh
+  # test 27b asserts the workflow filter, and it is mutation-checked.
+  _GH_OUT=$( (cd "$PROJ" && gh run list --branch main --workflow=ci.yml --limit 1 --json conclusion 2>/dev/null) ) || true
   _GH_CONCLUSION=""
   _GH_CONCLUSION=$(printf '%s' "$_GH_OUT" | python3 -c "
 import json, sys
@@ -658,12 +675,25 @@ fi
 # from the gate-efficacy fixture ('undefined: thisIdentifierIsUndefined',
 # 'undefined: Foo') which are NOT real failures.
 #
-# Two ways to fix, both in hk-21v7c: drop continue-on-error from scenario.yml,
-# after which this code starts working unchanged, or re-point it at the
-# annotations API. The tier is red today (hk-97gcz, hk-co8g8), so removing the
-# flag is a reporting change to sequence with those, not a merge gate yet.
-# The code below is left in place so the fix is a small edit, not a rewrite.
-# (hk-plw4z Part 4, corrected)
+# FIXED 2026-07-29 by removing continue-on-error from scenario.yml. The code below
+# is unchanged and now reports the truth, because the step conclusion is honest
+# once the flag is gone. Removing the flag blocks no merges, because branch
+# protection on main requires only "check (Tier 2)".
+#
+# EXPECT THIS PROBE TO REPORT FAILURE. The tier is genuinely red — 8 deterministic
+# failures, most of them stale tests under hk-97gcz, and one real merge-path defect
+# under hk-co8g8. That is the probe working, not the probe broken. Do not silence
+# it by putting the flag back.
+#
+# If the nightly noise is not wanted yet, there is no mute switch — the
+# 'scenario-nightly-fail' signal is appended unconditionally where digest_signals
+# is built. Gate the append there and leave a dated line saying why. Write the
+# choice down. An undocumented commented-out append is the same invisible masking
+# that the flag was.
+#
+# Keep the annotations route in mind for one case only: it stays the only honest
+# surface for any workflow that DOES carry continue-on-error.
+# (hk-plw4z Part 4, hk-21v7c)
 # dquote-safe (hk-2mw1x): the embedded python below uses ONLY single-quoted
 # string literals; SCENARIO_NIGHTLY_STATUS carries only safe ASCII tokens.
 SCENARIO_NIGHTLY_STATUS=unknown

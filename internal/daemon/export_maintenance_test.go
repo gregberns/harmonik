@@ -22,14 +22,21 @@ type ExportedMaintState struct{ m loopMaintenanceState }
 func ExportedNewMaintState() *ExportedMaintState { return &ExportedMaintState{} }
 
 // ExportedRunPeriodicDiskCheck calls runPeriodicDiskCheck with the given deps
-// and maintenance-state handle. Used by diskcheck_hksxlb_test.go to drive the
-// reaper directly without running the full work loop (hk-guez).
+// and maintenance-state handle, to drive the reaper directly without running the
+// full work loop (hk-guez).
+//
+// Used by loopmaintenance_test.go TestDiskLowBranch. The original caller,
+// diskcheck_hksxlb_test.go, was deleted, and this comment went on naming it —
+// which left every shim in this file looking covered while all four had zero
+// callers. Name a live caller here or say there is none.
 func ExportedRunPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, ms *ExportedMaintState) {
 	runPeriodicDiskCheck(ctx, deps, &ms.m)
 }
 
 // ExportedDiskCheckDiskLow reads the diskLow field from the maintenance-state
-// handle. Used by diskcheck_hksxlb_test.go to assert post-call state (hk-guez).
+// handle, to assert post-call state (hk-guez).
+//
+// Used by loopmaintenance_test.go TestDiskLowBranch.
 func ExportedDiskCheckDiskLow(ms *ExportedMaintState) bool {
 	return ms.m.diskLow
 }
@@ -38,14 +45,22 @@ func ExportedDiskCheckDiskLow(ms *ExportedMaintState) bool {
 // so tests fire immediately. A zero override restores the production default
 // (diskCheckInterval).
 //
+// Used by loopmaintenance_test.go TestDiskLowBranch.
+//
 // Bead ref: hk-guez.
 func ExportedDiskCheckSetCheckInterval(deps *workLoopDeps, d time.Duration) {
 	deps.diskCheckIntervalOverride = d
 }
 
 // ExportedReclaimStaleWorktrees calls reclaimStaleWorktrees with the given deps
-// and returns the count of stale worktrees removed. Used by
-// diskcheck_hksxlb_test.go to drive the reclaim step directly (hk-5uezz).
+// and returns the count of stale worktrees removed, to drive the reclaim step
+// directly (hk-5uezz).
+//
+// NO CALLER at present. diskcheck_hksxlb_test.go, which this comment used to
+// name, was deleted. TestDiskLowBranch covers the go-cache reap but not the
+// stale-worktree reclaim, which needs a run registry and UUID-named worktree
+// directories. Wire deps.worktreeReclaimFunc when you write that test — it keeps
+// `git worktree remove` out of the run.
 func ExportedReclaimStaleWorktrees(ctx context.Context, deps *workLoopDeps) int {
 	return reclaimStaleWorktrees(ctx, deps)
 }

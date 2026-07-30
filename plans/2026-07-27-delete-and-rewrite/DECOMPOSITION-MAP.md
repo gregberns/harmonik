@@ -632,6 +632,11 @@ earlier" and no less real.
 2. greenlight after the pre-claim `br show` — else it reads a zero value and never fires, silently.
 3. local-cap before the Phase-3 dispatch stamp (`hk-l5saf`). Its safety also depends on `localInFlight`
    not being incremented until the post-claim site, so the fold must not move that increment earlier.
+   **These are two clauses and only the first is pinned.** `TestL5saf_LocalOnlyItemNotStrandedByCapGuard`
+   catches the gate moving after the stamp, but it cannot catch the increment moving earlier: it preloads
+   `localInFlight` to `gateMax`, so the guard reads `1 >= 1`, and hoisting the increment makes it `2 >= 1`
+   — the same branch, the item still Pending, the test still green. Nothing in the tree pins the
+   increment's position, and that position is the hoist's own safety argument.
 4. cross-queue-dedup must run inside the same write-lock hold as the stamp. The lock is what makes the
    winning queue's stamp visible. A pure pre-claim predicate cannot hold it, and without it two
    implementers run one bead again — the bug `hk-a11re` fixed.
@@ -645,13 +650,53 @@ earlier" and no less real.
    answered hundreds of lines before it is used. Step 2's own description above still lists
    `governor_signal` as a field of the crossing type. That field was never added — it has no consumer in
    the loop — so read the code, not that field list.
+
+   **This constraint protects a code shape, not a behavior — established 2026-07-29 by enumerating every
+   writer, not by reading a region.** The `sentinel` subject has exactly one steady-state writer,
+   `movementGovernor.onTrip`/`onClear`, on the dispatch goroutine, plus one boot-time writer with no
+   reload path. `DecisionBlocker`'s mutators are declared by no interface anywhere in the repo — it is
+   only ever held as a concrete type, so there is no structural back door — and `internal/sentinel`
+   cannot reach it at all, because the import would be a cycle. That is why the subject constant is
+   duplicated in the daemon package. So nothing between the maintenance pass and the gate can change what
+   the gate returns, and a snapshot would be equivalent to today's live read.
+
+   **With one condition that is the whole point:** `governor.tick` is the LAST statement of
+   `tickBeforeSelect`, so a snapshot is equivalent only if taken AFTER it. Taken at the top of the pass,
+   the daemon dispatches one extra bead on the tick a trip first fires — the same hazard
+   `loopmaintenance.go` already documents for the `halt` field. So the fold may snapshot this, but where
+   the snapshot sits is load-bearing.
+
+   This constraint has **no test**, and cannot get one as the code stands: `sentinelBlocksDispatch`
+   returns false unless a governor was constructed, which needs `workLoopDeps.governorState` non-nil, and
+   `governorState` has no field on `WorkLoopDepsParams`. A test would need that seam. It would not need
+   ACT mode or a crew spawn — `dispatchBlocked` reduces to `decisionBlocker.IsQueueBlocked("sentinel")`,
+   and `DecisionBlocker` is already an exported param with an exported `AddQueueBlock`, so the trip can be
+   injected. The governor has to exist, not to trip.
 7. The two dispatch paths order the same gates differently. The br-ready path puts attempts-bound
    before handler-pause. The queue path has no early attempts bound at all. One merged order therefore
    changes one path: today a ready bead over its budget is skipped with no held event, where the queue
    path would hold it and emit one.
-8. `delay` is two different outcomes. Twelve sites sleep one poll interval and continue.
-   cross-queue-dedup and both terminal attempts-bound paths continue with NO sleep. A single
-   `delay(reason)` variant erases that difference.
+8. `delay` is two different outcomes, and **the counts here were wrong on both sides until 2026-07-29**
+   — this entry said twelve sleeping sites and named three no-sleep ones. Re-derived twice, by two
+   methods: `runWorkLoop` has **31 outer-loop `continue` statements**, of which **26 wait** and **five do
+   not**. The five: the queue bootstrap, the `hk-pina9` pre-claim `ShowBead` bound, cross-queue duplicate,
+   the `hk-6pspu` max-attempts **stamp** bound, and the `hk-n91y0` claim-blocked path. Keep the word
+   "stamp" — `hk-6pspu` tags two sites and the br-ready one sleeps. One of the 26 waits through
+   `scheduleAwareIdleWait`, not a poll-interval `workloopSleep`.
+
+   **Do not merge the two variants into one on the assumption that a merge is only slower.** That holds
+   only toward the sleeping variant. The other direction busy-spins the `hk-403fw` cooldown — the
+   `bead_claim_skipped` storm the cooldown exists to stop.
+
+   And the sleeping direction is not free either, because the cost is not symmetric across the five.
+   `evaluateGroupAdvanceWithOutcome` calls `queueStore.Wake()` unconditionally on its
+   not-all-succeeded branch, so four of the five already have a wake token pending and merging them
+   toward sleep costs **zero** latency, not one interval. The bootstrap site is the exception:
+   `activateFirstPendingGroupLocked` writes through `LockedSetQueueByName`, which does not signal the
+   wake channel, so merging **that one** site costs a full poll interval on every queue submit.
+
+   The wake-token fact is now pinned by an executable test with no wall clock in it, so this entry no
+   longer rests on reading the code.
 9. decision-required and sentinel-queue are freely swappable. The only difference is the stderr string.
    This is the one pair with no real constraint.
 

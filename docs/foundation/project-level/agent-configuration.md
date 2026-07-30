@@ -35,7 +35,7 @@ Skills live at `.claude/skills/<skill-name>/` in the repo, plus `~/.claude/skill
 
 A project-local skill is a directory containing a `SKILL.md` whose frontmatter `name` matches the directory name. A directory under `.claude/skills/` with no `SKILL.md` is not a skill — it is not loadable by Claude Code and is either a scratch artifact or an unfinished skill.
 
-Registry as of 2026-07-22 (15 skills):
+Registry as of 2026-07-29 (16 skills):
 
 | Skill | Where | Purpose |
 |---|---|---|
@@ -50,9 +50,10 @@ Registry as of 2026-07-22 (15 skills):
 | `harmonik-lifecycle` | `.claude/skills/harmonik-lifecycle/` | the four project/daemon lifecycle commands — `harmonik init`, `supervise`, `reconcile`, `promote` — with real flags and exit codes. Load when standing up, restarting, reconciling, or promoting a deployment (as opposed to the per-task dispatch loop). **Load-bearing; must not rot.** |
 | `keeper` | `.claude/skills/keeper/` | operating contract for the per-session context-fill watcher: the two thresholds (warn / act), the command surface (`enable` / `doctor` / `set-dispatching` / `clear-dispatching`), the `hold` / `release` co-working override, crew-restart re-hydration, and verifying watcher liveness with `keeper doctor --check live-watcher`. **Load-bearing; must not rot.** |
 | `major-issue-fanout` | `.claude/skills/major-issue-fanout/` | protocol for diagnosing recurring critical-path blockers via parallel agent fan-out. Triggers when a root cause has been refuted ≥2× or a wedge has survived ≥2 fix attempts. Never hand-grep `events.jsonl` by `run_id`; fan out on distinct angles plus ≥2 adversarial verifiers that can overrule a wrong synthesis. |
-| `no-jargon` | `.claude/skills/no-jargon/` | operator-invoked writing-mode switch: restate the current answer/status/open decisions in plain language and hold plain language for the rest of the session. No scripts, no side effects. |
+| `no-jargon` | `.claude/skills/no-jargon/` | operator-invoked writing-mode switch: restate the current answer/status/open decisions in plain language and hold plain language for the rest of the session. Owns the AUDIENCE layer — never make a bead ID, SHA, or codename the handle for a thing. Pairs with `ste-writing`, which owns the FORM layer. No scripts, no side effects. |
 | `orchestrator-rules` | `.claude/skills/orchestrator-rules/` | the universal standing-rules contract for any harmonik orchestrator (captain, implementer-orchestrator, solo): dispatch discipline and its HARD-RULE exceptions, kerf-first priority, bead lifecycle (the daemon owns terminal transitions), the review gate, CWD discipline, autonomy boundaries, the fan-out trigger. Points at the detail-owner skills; does not duplicate them. **Load-bearing; must not rot.** |
 | `status-report` | `.claude/skills/status-report/` | on-demand operator-invoked program status: discover the active plan dir, reconcile plan/kerf/beads/git (git log is ground truth), print a phase scoreboard plus what needs the operator. Read-only. |
+| `ste-writing` | `.claude/skills/ste-writing/` | ASD-STE100 Simplified Technical English for all project prose — short common words, active voice, one instruction per sentence, ≤20 words, no semicolons, no marketing adjectives, one name per thing. Two modes: strict (runbooks, error strings) and STE-flavored (the default, everywhere else). Owns the FORM layer; `no-jargon` owns the AUDIENCE layer. Referenced from `AGENTS.md §Key conventions`. Read-only, emits text only. |
 | `watch` | `.claude/skills/watch/` | operating context for a Watch session: consume the bus and crew status posts, record every intercepted event to the ledger, triage, and escalate only actionable summaries to the captain event-driven. MAY record/classify/batch/dedupe; MUST escalate (never decide) crew-failure, new-initiative ranking, locked-decision reversal, destructive ops, staffing. |
 
 **Known non-skill directories under `.claude/skills/`:** `playing-field/` (holds `board.sh` only, no `SKILL.md`). Not a skill, not registry drift — but it should either grow a `SKILL.md` or move out of the skills tree.

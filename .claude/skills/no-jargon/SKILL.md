@@ -15,6 +15,8 @@ description: >
 
 The operator ran this because the writing drifted into insider shorthand. Fix it now, and keep it fixed for the rest of the session.
 
+This skill owns the **audience** layer: who the reader is, and what they can be expected to know. The **form** layer — word choice, active voice, sentence length — belongs to the `ste-writing` skill, which is on by default for all project prose. The two apply together. A sentence can pass every STE rule and still be unreadable because it hangs on a bead ID.
+
 ## Do this immediately when invoked
 
 1. **Re-state what's on the table, plainly.** Take the last answer / current status / open questions and rewrite them so someone outside this project would follow. Lead with the decision or the bottom line; put the detail under it.

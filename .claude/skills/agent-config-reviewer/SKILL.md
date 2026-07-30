@@ -135,8 +135,8 @@ When the two disagree, the foundation doc wins and this mirror is the bug: emit
 `skill-registry-drift` naming the mirror, not `skill-missing`. Both must be updated in
 the same commit whenever a directory is added to or removed from `.claude/skills/`.
 
-- Are all fifteen registered skills present? (Mirror of `agent-configuration.md
-  §Skills`, verified 2026-07-22.)
+- Are all sixteen registered skills present? (Mirror of `agent-configuration.md
+  §Skills`, verified 2026-07-29.)
 
   | Skill | Path |
   |---|---|
@@ -154,6 +154,7 @@ the same commit whenever a directory is added to or removed from `.claude/skills
   | `no-jargon` | `.claude/skills/no-jargon/SKILL.md` |
   | `orchestrator-rules` | `.claude/skills/orchestrator-rules/SKILL.md` |
   | `status-report` | `.claude/skills/status-report/SKILL.md` |
+  | `ste-writing` | `.claude/skills/ste-writing/SKILL.md` |
   | `watch` | `.claude/skills/watch/SKILL.md` |
 
 - **Scope: project-local only.** `~/.claude/skills/` holds user-global skills

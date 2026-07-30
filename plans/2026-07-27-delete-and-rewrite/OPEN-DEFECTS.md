@@ -574,6 +574,66 @@ the product. Note that `make check` and `check-short` share the `./...` spelling
 
 ---
 
+## The daemon package is not flaky. This machine is out of disk. Measured 2026-07-30
+
+**This corrects a belief the program has been acting on for days, and the correction goes both ways:
+tests that fail here are not environmental, and at least one test that PASSES here is asserting
+nothing.**
+
+**The standing claim.** The record has said the full `internal/daemon` package is "already red and
+flaky here — about 18 baseline failures, needing real `br`, git remotes and tmux", and that the fix is
+to gate on a narrow deterministic subset instead. Every part of that except the failure count is
+wrong.
+
+**The measurement.** Three runs of `go test -short ./internal/daemon/`, same box, same commit, one
+variable each:
+
+| Variant | Top-level failures | Wall clock |
+|---|---|---|
+| Real disk reading (low), real cache reap | 23 | — |
+| Real disk reading (low), cache reap stubbed out | **23** | 297 s |
+| Disk reading reports healthy, nothing else changed | **0** | 84 s |
+
+The cache reap is not the cause — the count is identical with it disabled. The low disk reading is
+the whole cause. **The package is GREEN when the disk reading is healthy**, and it is also three and a
+half times faster, because the low-disk gate makes every tick sleep a poll interval.
+
+**The mechanism.** The dispatch loop holds a tick when the maintenance pass reports disk below the
+watermark. That gate sits BEFORE queue selection. A fixture that does not stub the disk reading gets
+its tick held before the loop ever reaches the thing the test is about. This box has about 6.4 GiB
+free against a 10 GiB watermark, so the gate is armed for every such fixture.
+
+**The dangerous half. `TestL5saf_LocalOnlyItemNotStrandedByCapGuard` was VACUOUS on this box, and it
+is one of the two tests this program had been using as its deterministic gate.** Proven by deleting
+the guard it exists to protect: the test stayed GREEN with the guard entirely removed. Adding the
+one-line disk stub, with the guard still removed, turns it RED. So the guard position that
+`DECOMPOSITION-MAP.md` constraint 3 records as PINNED was not pinned here at all. The newer
+admission-order tests were unaffected — they already stub the reading, which is why they kept their
+kill power and why only the older test rotted.
+
+**Exposure.** 32 of the 36 daemon test files that drive the work loop do not stub the disk reading.
+One is proven vacuous. The rest are not individually verified and should not be assumed either way —
+some will fail loudly, some may assert nothing. The failure mode is silent in the direction that
+matters.
+
+**What to do, in order.** Free disk above the watermark first, because that alone turns the package
+green and makes the suite usable as a gate again — see `docs/disk-reclaim.md`, which measures the
+shared Go caches under `~/Library/Caches` as the biggest single source. Then stop treating the
+package as untrustworthy. Stubbing the reading in every fixture is the belt-and-braces follow-up, and
+it is the only part that survives a future low-disk machine, but it is 32 files of churn and it is not
+the urgent half.
+
+**`WorkLoopDepsParams` exposes no watermark field**, so a fixture cannot lower the floor. The disk
+reading function is the only lever, which is why omitting it is silently fatal.
+
+**This is the fifth green-signal-protecting-nothing in this file** — after the masked scenario tier,
+the `continue-on-error` flag that masked it, `make check-fast` skipping its own test step, and the
+format check passing when its tools are absent. It is the worst of the five, because the other four
+hide a missing check and this one also manufactured a false story about the environment that shaped
+how the whole program tests.
+
+---
+
 ## The pattern worth carrying forward
 
 Most of the launch-path items above are instances of one shape: **several code paths perform the same

@@ -637,6 +637,17 @@ earlier" and no less real.
    `localInFlight` to `gateMax`, so the guard reads `1 >= 1`, and hoisting the increment makes it `2 >= 1`
    — the same branch, the item still Pending, the test still green. Nothing in the tree pins the
    increment's position, and that position is the hoist's own safety argument.
+
+   **Correction, 2026-07-30: the first clause was not pinned either, and had not been for as long as
+   this machine has been low on disk.** `TestL5saf_LocalOnlyItemNotStrandedByCapGuard` did not stub the
+   disk-free reading. The dispatch loop holds a tick when disk is below the watermark, and that hold
+   sits BEFORE queue selection, so the fixture never reached the guard. Proven by deleting the guard
+   outright: the test stayed GREEN. With a one-line disk stub added and the guard still deleted, it
+   goes RED. Both clauses are pinned now — the first by the repaired fixture, the second by
+   `TestAdmissionOrder_LocalCapGuardReadsThePreIncrementCount`, which always stubbed the reading and so
+   never rotted. The wider finding, that the whole `internal/daemon` package is green on a machine
+   above the watermark and that 32 of its 36 loop-driving fixtures share this exposure, is in
+   `OPEN-DEFECTS.md`.
 4. cross-queue-dedup must run inside the same write-lock hold as the stamp. The lock is what makes the
    winning queue's stamp visible. A pure pre-claim predicate cannot hold it, and without it two
    implementers run one bead again — the bug `hk-a11re` fixed.

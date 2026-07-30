@@ -565,28 +565,40 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			continue
 		}
 
-		// Step 2: split capacity gate (hk-hs7ex) — local hard sub-cap separate from
-		// remote-worker capacity. Read from the controller on every tick when set
-		// (hk-ohiaf) so that queue-set-concurrency adjustments take effect without a
-		// restart. Raising n lets the local gate admit up to n local runs; remote
-		// runs are bounded only by worker.MaxSlots (enforced by SelectWorker).
+		// Step 2: the tick-level admission stage — the split capacity gate
+		// (hk-hs7ex). The gate itself is orchestrator.AdmitAtTick. The reasoning
+		// travels with it in internal/orchestrator/admission.go.
 		//
-		// Block only when local is full AND no remote worker has a free slot. When a
-		// worker has a free slot the loop proceeds: SelectWorker (hoisted to after
-		// ClaimBead in the pre-selection block below) will route the run remotely.
-		//
-		// Spec ref: specs/execution-model.md §4.11 EM-049 (in-flight-run capacity gate).
-		gateMax := effectiveMax
+		// gateMax is derived ONCE per tick, here, and passed to every later stage.
+		// The pre-stamp local-only gate reads the same value. Read from the live
+		// controller when it is wired (hk-ohiaf) so a queue set-concurrency change
+		// takes effect without a daemon restart.
+		controllerMax, controllerPresent := 0, false
 		if deps.concurrencyCtrl != nil {
-			gateMax = deps.concurrencyCtrl.Get()
+			controllerMax, controllerPresent = deps.concurrencyCtrl.Get(), true
 		}
-		if int(deps.localInFlight.Load()) >= gateMax {
-			if deps.workerRegistry == nil || !deps.workerRegistry.HasFreeSlot() {
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
-					return exitClean()
-				}
-				continue
+		gateMax := orchestrator.LocalGateMax(effectiveMax, controllerMax, controllerPresent)
+
+		tickVerdict, tickAdmitErr := orchestrator.AdmitAtTick(orchestrator.AdmissionInput{
+			Path:          orchestrator.PathAny,
+			GateMax:       gateMax,
+			LocalInFlight: int(deps.localInFlight.Load()),
+			// HasFreeSlot is a non-consuming peek (internal/workers Registry), so
+			// asking on every tick reserves nothing and changes no state.
+			WorkerHasFreeSlot: deps.workerRegistry != nil && deps.workerRegistry.HasFreeSlot(),
+		})
+		if tickAdmitErr != nil {
+			wg.Wait()
+			return fmt.Errorf("daemon: workloop: tick admission: %w", tickAdmitErr)
+		}
+		if !tickVerdict.Admitted {
+			if tickVerdict.Message != "" {
+				fmt.Fprint(os.Stderr, tickVerdict.Message)
 			}
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+				return exitClean()
+			}
+			continue
 		}
 
 		// Step 2b: the post-capacity maintenance pass — dashboard forcing gate,
@@ -850,32 +862,29 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 
-				// Decision-required dispatch-blocking gate (EV-043, queue path):
-				// if the bead has an unacknowledged decision_required pending,
-				// hold it without claiming and retry on the next poll tick.
+				// The before-lookup admission stage, queue path: decision-required
+				// (hk-pbmsq) then sentinel-queue (hk-4toh). Both hold the bead
+				// WITHOUT claiming it and retry on the next poll tick. Both run here,
+				// before the pre-claim ShowBead below, so a held bead never pays for
+				// that subprocess at poll cadence.
 				//
-				// Sentinel queue-level gate (FW3 hk-4toh): also hold when the
-				// sentinel governor trip is pending, which blocks ALL beads — not
-				// just a specific one — until real movement clears the trip. The
-				// gate is asked THROUGH the maintenance handle that owns the governor, so
-				// it disappears with the subsystem rather than outliving the only
-				// code that can open it.
-				//
-				// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
-				// Bead ref: hk-pbmsq (bead gate), hk-4toh (sentinel queue gate).
-				if deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(snapItemBeadID) {
-					fmt.Fprintf(os.Stderr,
-						"daemon: workloop: bead %s blocked by unacknowledged decision_required (EV-043) — holding\n",
-						snapItemBeadID)
-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
-						return exitClean()
-					}
-					continue
+				// The sentinel test is asked THROUGH the maintenance handle that owns
+				// the governor, so the gate disappears with the subsystem rather than
+				// outliving the only code that can open it.
+				preLookupVerdict, preLookupErr := orchestrator.AdmitBeforeLookup(orchestrator.AdmissionInput{
+					Path:            orchestrator.PathQueue,
+					BeadID:          string(snapItemBeadID),
+					DecisionBlocked: deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(snapItemBeadID),
+					SentinelBlocked: maint.sentinelBlocksDispatch(deps),
+				})
+				if preLookupErr != nil {
+					wg.Wait()
+					return fmt.Errorf("daemon: workloop: before-lookup admission (queue path): %w", preLookupErr)
 				}
-				if maint.sentinelBlocksDispatch(deps) {
-					fmt.Fprintf(os.Stderr,
-						"daemon: workloop: bead %s blocked by sentinel governor trip (EV-043, FW3) — holding until real movement\n",
-						snapItemBeadID)
+				if !preLookupVerdict.Admitted {
+					if preLookupVerdict.Message != "" {
+						fmt.Fprint(os.Stderr, preLookupVerdict.Message)
+					}
 					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
@@ -894,11 +903,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				//     and ClaimBead, where the dedicated guard handles them.
 				//
 				// hk-lr5t: preClaimRecord is declared outside the anonymous block so
-				// its labels/title/description are available at beadRecord construction
-				// below (line ~1658). This avoids a second ShowBead round-trip for the
-				// most common case; the post-claim ShowBead at ~line 1954 refreshes if
-				// anything changed between the pre-claim read and the claim write.
+				// its labels/title/description are available at beadRecord
+				// construction further down. This avoids a second ShowBead round-trip
+				// for the most common case. The post-claim ShowBead refreshes the
+				// record if anything changed between the pre-claim read and the claim
+				// write.
 				var preClaimRecord core.BeadRecord
+				// preClaimLoaded turns true at the ONE line below that fills
+				// preClaimRecord, and nowhere else. The after-lookup admission stage
+				// reads it, and it holds the gates there to their staging: move that
+				// call above the block and this is still false, so admission returns a
+				// hard error instead of reading a zero record and passing quietly.
+				preClaimLoaded := false
 				{
 					// hk-pina9: bound the pre-claim ShowBead retry on the QUEUE path.
 					// Without a bound this item stays pending at the head of its group
@@ -948,6 +964,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					// consumes the budget, so a transient blip never poisons the item.
 					delete(queuePreClaimShowAttempts, preClaimKey)
 					preClaimRecord = rec
+					preClaimLoaded = true
 					if preClaimRecord.Status != core.CoarseStatusOpen && preClaimRecord.Status != core.CoarseStatusBlocked {
 						// BI-013c: non-open status observed — skip claim, emit bead_claim_skipped.
 						fmt.Fprintf(os.Stderr,
@@ -1055,47 +1072,52 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 
-				// Greenlight gate (AC2 — hk-lacr, queue path): staged deploy+verify beads
-				// carry "needs-greenlight" and MUST NOT be dispatched until a captain clears
-				// the label via `harmonik greenlight <bead-id>`. This check is independent of
-				// --no-auto-pull because it reads the live bead label, not a daemon mode flag.
-				// The br-ready path is gated at adapter read time (brcli/ready.go).
-				{
-					greenlightHeld := false
-					for _, lbl := range preClaimRecord.Labels {
-						if lbl == labelNeedsGreenlight {
-							greenlightHeld = true
-							break
-						}
+				// The after-lookup admission stage, queue path: the greenlight gate
+				// (hk-lacr). It MUST stay below the pre-claim ShowBead above, because
+				// it reads labels off preClaimRecord. preClaimLoaded carries that fact
+				// into the gate, so AdmitAfterLookup returns a hard error rather than
+				// a quiet pass if this call ever moves above the read.
+				afterLookupVerdict, afterLookupErr := orchestrator.AdmitAfterLookup(orchestrator.AdmissionInput{
+					Path:             orchestrator.PathQueue,
+					BeadID:           string(snapItemBeadID),
+					BeadRecordLoaded: preClaimLoaded,
+					BeadLabels:       preClaimRecord.Labels,
+				})
+				if afterLookupErr != nil {
+					wg.Wait()
+					return fmt.Errorf("daemon: workloop: after-lookup admission (queue path): %w", afterLookupErr)
+				}
+				if !afterLookupVerdict.Admitted {
+					if afterLookupVerdict.Message != "" {
+						fmt.Fprint(os.Stderr, afterLookupVerdict.Message)
 					}
-					if greenlightHeld {
-						fmt.Fprintf(os.Stderr,
-							"daemon: workloop: bead %s has needs-greenlight label — holding until captain runs `harmonik greenlight %s`\n",
-							snapItemBeadID, snapItemBeadID)
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
-							return exitClean()
-						}
-						continue
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						return exitClean()
 					}
+					continue
 				}
 
-				// hk-l5saf: secondary local-cap guard, HOISTED to before the Phase-3
-				// dispatch stamp (was previously post-stamp, at the loop-body level).
-				// The Step-2 split gate (~line 1818) may have admitted in "remote bypass"
-				// mode (localInFlight >= gateMax, HasFreeSlot=true), expecting this bead to
-				// route remotely. If the selected item turned out local-only
-				// (capturedQueueLocalOnly=true), dispatching it locally would overrun the
-				// HARD session cap — so defer WITHOUT stamping, exactly like the sibling
-				// hold gates above (handler-pause, decision-required, sentinel, greenlight).
-				// The old post-stamp position stranded the item forever: Phase 3 had already
-				// stamped ItemStatusDispatched + a placeholder RunID and PERSISTED queue.json,
-				// then the guard's sleep+continue left it un-reverted; a Dispatched item with
-				// no run/goroutine is never re-selected (only Pending is projected) and no
-				// reverter reclaims it, wedging the group until daemon restart. Hoisting is
-				// safe because localInFlight is incremented only by this single dispatch
-				// goroutine and not until ~line 3072 (post-claim), so a pre-stamp read that
-				// is < gateMax stays < gateMax through dispatch.
-				if capturedQueueLocalOnly && int(deps.localInFlight.Load()) >= gateMax {
+				// The before-stamp admission stage, queue path: the local-only cap
+				// (hk-l5saf). It reads the SAME gateMax the tick gate derived, and the
+				// SAME local in-flight counter, which is incremented only after the
+				// claim further down this loop body. Keep this call immediately above
+				// the Phase-3 stamp: a hold that lands after the stamp strands the
+				// item, which is the bug the gate exists to close.
+				beforeStampVerdict, beforeStampErr := orchestrator.AdmitBeforeStamp(orchestrator.AdmissionInput{
+					Path:           orchestrator.PathQueue,
+					BeadID:         string(snapItemBeadID),
+					GateMax:        gateMax,
+					LocalInFlight:  int(deps.localInFlight.Load()),
+					QueueLocalOnly: capturedQueueLocalOnly,
+				})
+				if beforeStampErr != nil {
+					wg.Wait()
+					return fmt.Errorf("daemon: workloop: before-stamp admission (queue path): %w", beforeStampErr)
+				}
+				if !beforeStampVerdict.Admitted {
+					if beforeStampVerdict.Message != "" {
+						fmt.Fprint(os.Stderr, beforeStampVerdict.Message)
+					}
 					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
@@ -1244,11 +1266,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// hk-lr5t: initialize beadRecord with the pre-claim ShowBead result so
 				// labels (harness:<agent-type>, workflow:<mode>, model:<alias>, etc.)
 				// are available to resolveHarness and resolveWorkflowMode even when
-				// the post-claim ShowBead below fails. The post-claim ShowBead at
-				// ~line 1954 refreshes these fields after claim and remains the
-				// authoritative source; this initialization closes the label-load gap
-				// where a post-claim ShowBead failure left Labels=nil, causing
-				// resolveHarness to fall through to the claude-code built-in fallback
+				// the post-claim ShowBead below fails. The post-claim ShowBead
+				// refreshes these fields after the claim and stays the authoritative
+				// source. This initialization closes the label-load gap where a
+				// post-claim ShowBead failure left Labels nil, which made
+				// resolveHarness fall through to the claude-code built-in fallback
 				// despite a harness:codex label on the bead (root cause of hk-lr5t).
 				beadRecord = core.BeadRecord{
 					BeadID:      snapItemBeadID,
@@ -1351,29 +1373,25 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 			}
 
-			// Decision-required dispatch-blocking gate (EV-043, br-ready path):
-			// mirror the check applied in the queue path above.
-			//
-			// Sentinel queue-level gate (FW3 hk-4toh): also hold when the sentinel
-			// governor trip is pending — all beads are blocked until real movement.
-			// Asked THROUGH the maintenance handle that owns the governor, so the
-			// gate disappears with the subsystem.
-			//
-			// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
-			// Bead ref: hk-pbmsq (bead gate), hk-4toh (sentinel queue gate).
-			if deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(beadRecord.BeadID) {
-				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: bead %s blocked by unacknowledged decision_required (EV-043, br-ready path) — holding\n",
-					beadRecord.BeadID)
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
-					return exitClean()
-				}
-				continue
+			// The before-lookup admission stage, br-ready path: the same two gates
+			// the queue path runs, in the same order, differing only in the message
+			// suffix the operator reads. The br-ready path has NO greenlight gate —
+			// it drops the label at adapter read time instead (internal/brcli ready
+			// path), so there is no after-lookup stage here.
+			readyPreLookupVerdict, readyPreLookupErr := orchestrator.AdmitBeforeLookup(orchestrator.AdmissionInput{
+				Path:            orchestrator.PathBrReady,
+				BeadID:          string(beadRecord.BeadID),
+				DecisionBlocked: deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(beadRecord.BeadID),
+				SentinelBlocked: maint.sentinelBlocksDispatch(deps),
+			})
+			if readyPreLookupErr != nil {
+				wg.Wait()
+				return fmt.Errorf("daemon: workloop: before-lookup admission (br-ready path): %w", readyPreLookupErr)
 			}
-			if maint.sentinelBlocksDispatch(deps) {
-				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: bead %s blocked by sentinel governor trip (EV-043, FW3, br-ready path) — holding until real movement\n",
-					beadRecord.BeadID)
+			if !readyPreLookupVerdict.Admitted {
+				if readyPreLookupVerdict.Message != "" {
+					fmt.Fprint(os.Stderr, readyPreLookupVerdict.Message)
+				}
 				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
@@ -1475,12 +1493,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			beadRecord.Description = showRecord.Description
 		}
 
-		// hk-l5saf: the secondary local-cap guard that previously sat here (post-stamp)
-		// was hoisted to before the Phase-3 dispatch stamp (see the guard tagged
-		// hk-l5saf above). At this point the item has already been stamped Dispatched
-		// and persisted, so deferring here would strand it; the hoisted guard defers
-		// pre-stamp instead, and localInFlight cannot have risen since (single dispatch
-		// goroutine, increment at ~line 3072), so no cap re-check is needed here.
+		// Do NOT re-check the local cap at this point (hk-l5saf). The queue item is
+		// already stamped Dispatched and persisted here, so a hold strands it. The
+		// check runs at the before-stamp admission stage instead.
 
 		// Acquire the claim semaphore before the SQLite write (hk-e61c3.3).
 		// The select allows dispatch-halt to abort the acquire so the loop

@@ -5,10 +5,11 @@ package daemon_test
 // branchguard_test.go — the deployment-gate scenario test for the
 // integration-branch productization work (hk-eun55).
 //
-// These tests run a bead through the REAL work loop (daemon.ExportedRunWorkLoop
-// + daemon.ExportedWorkLoopDeps, the same composition seam the production
-// dispatch path uses) and assert the load-bearing branch-protection guarantees
-// landed by hk-mkxw1 / hk-6r6xv / hk-ncwb3 / hk-sul12:
+// Most of these tests run a bead through the REAL work loop
+// (daemon.ExportedRunWorkLoop + daemon.ExportedWorkLoopDeps, the same
+// composition seam the production dispatch path uses) and assert the
+// load-bearing branch-protection guarantees landed by hk-mkxw1 / hk-6r6xv /
+// hk-ncwb3 / hk-sul12:
 //
 //	1. TargetBranchMergeIsolation — with TargetBranch="integration" and
 //	   ProtectBranches=["main"], a committing bead MERGES to the integration
@@ -17,11 +18,18 @@ package daemon_test
 //	   refs/heads/integration advances to the run-branch tip.
 //
 //	2. FailClosed_TargetInProtectSet — with TargetBranch="main" and
-//	   ProtectBranches=["main"], the fail-closed guard at the top of
-//	   mergeRunBranchToMain (hk-6r6xv) REFUSES the merge BEFORE any
-//	   update-ref/push. We assert ZERO git side effects (main, origin/main,
-//	   integration all unchanged), the bead is reopened (not closed), and the
-//	   emitted outcome is rejected with reason "merge_target_protected".
+//	   ProtectBranches=["main"], the EARLY lands_on gate in the work loop
+//	   (hk-ncwb3, workloop.go, the LandsOnProtectedError branch) REFUSES the
+//	   bead before a worktree is cut. We assert ZERO git side effects (main,
+//	   origin/main, integration all unchanged) and that the bead is reopened,
+//	   not closed.
+//
+//	2b. FailClosed_MergeGuardBackstop — a DIRECT call to
+//	   runmerge.RunBranchToTarget with targetBranch="main" and
+//	   protectBranches=["main"]. This is the last-line fail-closed guard
+//	   (hk-6r6xv, runmerge/merge.go resolveMergeTips). It is NOT reachable
+//	   through the work loop any more — see that test's own comment for the
+//	   measurement — so it is asserted at its own seam.
 //
 //	3. BootValidation_RefusesEmptyTargetUnderForbid — daemon.Start hard-errors
 //	   (no socket bind) when ForbidUnprotectedDefault is set but TargetBranch is
@@ -38,10 +46,14 @@ package daemon_test
 //
 //	go test -tags=scenario -run 'TestBranchGuard' ./internal/daemon/ -count=1
 //
+// A plain `go test -run TestBranchGuard ./internal/daemon/` reports
+// "no tests to run" — the tag is mandatory. `make test-scenario` supplies it.
+//
 // Spec refs:
 //   - specs/execution-model.md §4.12 EM-052/EM-053 (ordered merge sequence)
 //   - hk-6r6xv (fail-closed merge guard), hk-ncwb3 (start_from retarget),
-//     hk-mkxw1 (Config branch fields), hk-sul12 (boot-time validation)
+//     hk-mkxw1 (Config branch fields), hk-sul12 (boot-time validation),
+//     hk-lgykq (per-bead landing target)
 //
 // Bead: hk-eun55.
 
@@ -54,8 +66,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -282,16 +297,17 @@ func TestBranchGuard_TargetBranchMergeIsolation(t *testing.T) {
 // unchanged (ZERO git mutations) and the bead is reopened (NOT closed).
 //
 // FINDING (hk-eun55): a bead configured with a target branch that is ALSO in the
-// protect-set is refused by the EARLIER lands_on-protection gate (hk-ncwb3,
-// workloop.go ~1688) — BEFORE a worktree is cut or run_started is emitted —
-// because resolveBranching defaults the bead's lands_on to the configured target
-// ("main"), which is protected. This is a STRONGER fail-closed than the deep
-// merge-function guard (hk-6r6xv): the protected-target bead never even gets a
-// worktree. The merge-function guard remains the last-line backstop for any bead
-// that slips past the lands_on gate; it is unit-covered separately. This test
-// therefore asserts the load-bearing invariant the productization gate cares
-// about — ZERO git side effects + reopen + not-closed + a protected-branch
-// refusal reason — and accepts whichever guard fires.
+// protect-set is refused by the EARLY lands_on-protection gate (hk-ncwb3, the
+// LandsOnProtectedError branch in internal/daemon/workloop.go) — BEFORE a
+// worktree is cut or run_started is emitted — because resolveBranching defaults
+// the bead's lands_on to the configured target ("main"), which is protected.
+// This is a STRONGER fail-closed than the deep merge guard (hk-6r6xv): the
+// protected-target bead never even gets a worktree.
+//
+// This test therefore asserts the load-bearing invariant the productization gate
+// cares about — ZERO git side effects + reopen + not-closed + a protected-branch
+// refusal reason. The deep merge guard is asserted at its own seam by
+// TestBranchGuard_FailClosed_MergeGuardBackstop below.
 //
 // Bead: hk-eun55 (assertion 2).
 func TestBranchGuard_FailClosed_TargetInProtectSet(t *testing.T) {
@@ -337,9 +353,9 @@ func TestBranchGuard_FailClosed_TargetInProtectSet(t *testing.T) {
 	}
 
 	// ── Assertion: the reopen reason names a protected-branch refusal. The
-	//    lands_on gate (hk-ncwb3) reopens with "protected" in its message; the
-	//    deep merge guard (hk-6r6xv) reopens with "merge_target_protected".
-	//    Accept whichever fired — both are valid fail-closed paths. ────────────
+	//    early lands_on gate (hk-ncwb3) reopens with "protected" in its message.
+	//    The deep merge guard is asserted separately by
+	//    TestBranchGuard_FailClosed_MergeGuardBackstop. ─────────────────────────
 	reopenReason := ledger.getReopenReason()
 	if !strings.Contains(reopenReason, "protected") {
 		t.Errorf("reopen reason %q does not indicate a protected-branch refusal", reopenReason)
@@ -354,24 +370,57 @@ func TestBranchGuard_FailClosed_TargetInProtectSet(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test 2b: deep merge-function guard (hk-6r6xv) refuses a protected daemon
-// target even when the bead's lands_on slips past the early lands_on gate.
+// Test 2b: deep merge guard (hk-6r6xv) refuses a protected merge target.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestBranchGuard_FailClosed_MergeGuardBackstop exercises the LAST-LINE
-// fail-closed guard at the top of mergeRunBranchToMain (hk-6r6xv): the daemon's
-// configured TargetBranch is "main" (protected), but the bead's `## Branching`
-// section sets lands_on/start_from to "integration" — a non-protected branch —
-// so the EARLY lands_on gate (hk-ncwb3) passes and a worktree IS cut and
-// committed. The merge then targets the daemon's protected TargetBranch="main"
-// and the deep guard must refuse it BEFORE any update-ref/push, leaving ZERO git
-// mutations and reopening the bead with "merge_target_protected".
+// TestBranchGuard_FailClosed_MergeGuardBackstop asserts the LAST-LINE
+// fail-closed guard in internal/runmerge/merge.go: resolveMergeTips refuses the
+// merge with reason "merge_target_protected" when the merge target is in the
+// protect-set, BEFORE any rebase, update-ref, or push. The test calls
+// runmerge.RunBranchToTarget directly with targetBranch="main" and
+// protectBranches=["main"], and asserts ZERO git mutations.
 //
-// This is the unit-level guarantee the bead names ("unit test
-// mergeRunBranchToMain target=main/protect=[main] returns branch_guard + ZERO
-// git mutations"), exercised end-to-end through the real work loop.
+// WHY THIS IS A DIRECT CALL AND NOT A WORK-LOOP RUN. Until hk-lgykq, the work
+// loop passed the daemon-wide TargetBranch to the merge, so a bead could reach
+// the merge with a target the EARLY lands_on gate had never seen. That is gone.
+// The loop now resolves ONE value — the per-bead lands_on from resolveBranching
+// — and uses it for BOTH gates:
 //
-// Bead: hk-eun55 (assertion 2, deep backstop).
+//   - The early gate (hk-ncwb3, the LandsOnProtectedError branch in
+//     internal/daemon/workloop.go) compares that value against
+//     env.ProtectBranches.
+//   - The deep guard receives the SAME value as mergeTarget and the SAME list as
+//     effectiveMergeProtectBranches.
+//
+// Both comparisons are exact string equality on the same pair, so for a
+// same-repo run the two gates cannot disagree: whatever the deep guard would
+// refuse, the early gate already refused. (For a cross-repo run the loop skips
+// the early gate AND nils the protect-list, so neither gate fires.) There is
+// therefore no work-loop fixture left in which the early gate passes and the
+// deep guard refuses.
+//
+// One escape hatch looks open and is not. The loop falls back to the
+// daemon-wide target when baseBranch is empty, and baseBranch is empty only
+// when resolveBranching errors — which would skip the early gate and still
+// reach the deep guard. resolveParentCommit calls the SAME resolveBranching
+// with the SAME arguments a few lines earlier and reopens the bead on error, so
+// the loop never gets that far. If that earlier call ever moves or goes away,
+// re-measure this reasoning before trusting it.
+//
+// The previous version of this test tried to build one: it set the daemon
+// TargetBranch to "main" and the bead's `## Branching` target_branch to
+// "integration", on the belief that the merge still used the daemon-wide
+// target. It does not — resolveBranching returns lands_on="integration" for
+// that body, so the merge targeted "integration", which is not protected, and
+// the guard correctly stayed silent. The test then reported a moved integration
+// ref and a closed bead, which reads like a fail-open and is not one. The
+// product is correct; the fixture was stale.
+//
+// This is also the exact shape hk-eun55 asked for: "unit test the merge
+// function with target=main, protect=[main]; returns a branch-guard refusal and
+// ZERO git mutations".
+//
+// Bead: hk-eun55 (assertion 2, deep backstop). Refs: hk-6r6xv, hk-lgykq.
 func TestBranchGuard_FailClosed_MergeGuardBackstop(t *testing.T) {
 	t.Parallel()
 
@@ -379,9 +428,21 @@ func TestBranchGuard_FailClosed_MergeGuardBackstop(t *testing.T) {
 
 	projectDir := branchGuardSetupRepoWithIntegration(t)
 
-	// Bead body lands on integration (NOT protected) so the early lands_on gate
-	// passes; the worktree cuts from integration and commits there.
-	body := "## Summary\n\nbranchguard backstop.\n\n## Branching\n\n```yaml\nstart_from: integration\ntarget_branch: integration\n```\n"
+	// A fixed UUIDv7 keeps the run-branch and worktree paths deterministic.
+	runID := core.RunID(uuid.MustParse("019628a0-0000-7000-8000-0000000000b5"))
+
+	// Cut a real worktree from main's tip and commit one file on the run branch.
+	// The run branch must be genuinely AHEAD of main, or the merge would take
+	// the no-change short-circuit and the refusal below would prove nothing.
+	headSHA := mergeToMainFixtureHeadSHA(t, projectDir, "main")
+	_, cleanup, wtErr := mergeToMainCommittingFactory(t)(t.Context(), projectDir, runID.String(), headSHA)
+	if wtErr != nil {
+		t.Fatalf("could not create committing worktree: %v", wtErr)
+	}
+	t.Cleanup(cleanup)
+
+	runBranch := "run/" + runID.String()
+	runTip := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/"+runBranch)
 
 	mainBefore := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/main")
 	originMainBefore := branchGuardGit(t, projectDir, "rev-parse", "refs/remotes/origin/main")
@@ -389,9 +450,36 @@ func TestBranchGuard_FailClosed_MergeGuardBackstop(t *testing.T) {
 	mainReflogBefore, _ := branchGuardReflog(t, projectDir, "refs/heads/main")
 	integrationReflogBefore, _ := branchGuardReflog(t, projectDir, "refs/heads/integration")
 
-	// Daemon target = "main" (protected). The merge call uses deps.targetBranch
-	// ("main"), so the deep hk-6r6xv guard fires when the merge is attempted.
-	ledger, collector := branchGuardRunBead(t, projectDir, beadID, "main", []string{"main"}, body)
+	// ── Precondition: there IS work to merge. ─────────────────────────────────
+	if runTip == mainBefore {
+		t.Fatalf("run branch %s is not ahead of main (%s); the refusal below would be vacuous", runBranch, mainBefore)
+	}
+
+	// The merge target is "main" AND "main" is protected. Every other input is
+	// valid, so the ONLY reason this merge can fail is the branch guard.
+	outcome := runmerge.RunBranchToTarget(
+		t.Context(),
+		nil, // nil Submit → runmerge.InlineSubmit
+		projectDir,
+		runID,
+		&stubEventCollector{},
+		beadID,
+		headSHA,
+		"main",           // targetBranch
+		[]string{"main"}, // protectBranches
+		"br",             // brPath. The guard refuses before any br call.
+	)
+
+	// ── Assertion: the guard refused, and named itself. ───────────────────────
+	if outcome.Success {
+		t.Errorf("RunBranchToTarget succeeded with target=main protect=[main]; want a branch-guard refusal")
+	}
+	if outcome.NoChange {
+		t.Errorf("outcome.NoChange = true; want a REFUSAL, not a no-change short-circuit (the run branch was ahead of main)")
+	}
+	if !strings.Contains(outcome.Reason, "merge_target_protected") {
+		t.Errorf("outcome.Reason = %q; want it to contain %q (deep guard hk-6r6xv)", outcome.Reason, "merge_target_protected")
+	}
 
 	// ── Assertion: ZERO git mutations — every ref + reflog pinned. ────────────
 	if mainAfter := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/main"); mainAfter != mainBefore {
@@ -410,34 +498,44 @@ func TestBranchGuard_FailClosed_MergeGuardBackstop(t *testing.T) {
 		t.Errorf("integration reflog changed despite deep-guard refusal:\nBEFORE:\n%s\nAFTER:\n%s", integrationReflogBefore, integrationReflogAfter)
 	}
 
-	// ── Assertion: bead REOPENED, NOT closed. ─────────────────────────────────
-	if got := ledger.getClosedCount(); got != 0 {
-		t.Errorf("CloseBead call count = %d; want 0 when deep guard refuses protected target", got)
-	}
-	if got := ledger.getReopenedCount(); got < 1 {
-		t.Errorf("ReopenBead call count = %d; want ≥1 when deep guard refuses protected target", got)
+	// ── Assertion: the run branch itself is untouched (no rebase ran). ────────
+	if runTipAfter := branchGuardGit(t, projectDir, "rev-parse", "refs/heads/"+runBranch); runTipAfter != runTip {
+		t.Errorf("run branch %s moved despite deep-guard refusal: before=%s after=%s; the guard must refuse BEFORE the prepare rebase", runBranch, runTip, runTipAfter)
 	}
 
-	// ── Assertion: outcome_emitted{kind=rejected, reason=merge_target_protected}.
-	//    The deep guard path emits an outcome before reopening (unlike the early
-	//    lands_on gate). ────────────────────────────────────────────────────────
-	outcomeEvs := mergeToMainFindEvents(collector, "outcome_emitted")
-	if len(outcomeEvs) == 0 {
-		t.Fatalf("no outcome_emitted events; stream: %v", mergeToMainEventOrder(collector))
+	if !t.Failed() {
+		t.Logf("branchguard deep-guard backstop OK: reason=%q, all refs pinned at main=%s", outcome.Reason, mainBefore[:8])
 	}
-	if kind := mergeToMainPayloadKind(t, outcomeEvs[0]); kind != "rejected" {
-		t.Errorf("outcome_emitted kind = %q; want %q", kind, "rejected")
-	}
-	if reason := mergeToMainPayloadReason(t, outcomeEvs[0]); !strings.Contains(reason, "merge_target_protected") {
-		t.Errorf("outcome_emitted reason %q does not contain %q (deep guard hk-6r6xv)", reason, "merge_target_protected")
-	}
+}
 
-	// ── Assertion: bead_closed event MUST NOT appear. ─────────────────────────
-	if evs := mergeToMainFindEvents(collector, "bead_closed"); len(evs) > 0 {
-		t.Errorf("bead_closed emitted despite deep-guard refusal; want absent: %v", mergeToMainEventOrder(collector))
-	}
+// TestBranchGuard_MergeTargetFollowsBeadLandsOn pins the measurement the test
+// above depends on: for a bead body whose `## Branching` section names
+// target_branch: integration, resolveBranching returns lands_on="integration"
+// EVEN WHEN the daemon-wide target branch is "main".
+//
+// The work loop feeds that resolved value to BOTH the early lands_on gate and
+// the deep merge guard (hk-lgykq). So a protect-set of ["main"] cannot make the
+// deep guard fire on this bead — the merge never targets "main". Keep this test
+// next to the backstop test: if it ever fails, the per-bead landing rule has
+// changed and the "no work-loop fixture reaches the deep guard" reasoning above
+// must be re-measured.
+//
+// Bead: hk-eun55. Refs: hk-lgykq, hk-ncwb3.
+func TestBranchGuard_MergeTargetFollowsBeadLandsOn(t *testing.T) {
+	t.Parallel()
 
-	t.Logf("branchguard deep-guard backstop OK: protected daemon target refused at merge, all refs pinned, bead reopened")
+	body := "## Summary\n\nbranchguard backstop.\n\n## Branching\n\n```yaml\nstart_from: integration\ntarget_branch: integration\n```\n"
+
+	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, t.TempDir(), "main")
+	if err != nil {
+		t.Fatalf("ExportedResolveBranching: %v", err)
+	}
+	if cfg.LandsOn != "integration" {
+		t.Errorf("lands_on = %q; want %q. The bead body must win over the daemon-wide target. "+
+			"If it now resolves to \"main\", the deep merge guard is reachable from the work loop again "+
+			"and TestBranchGuard_FailClosed_MergeGuardBackstop must be rewritten as a work-loop run.",
+			cfg.LandsOn, "integration")
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

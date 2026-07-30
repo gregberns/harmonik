@@ -111,32 +111,12 @@ type queuePreClaimAttemptKey struct {
 	beadID     core.BeadID
 }
 
-// periodicCoordinatorReapInterval is the default minimum interval between
-// successive periodic coordinator-session reap passes in the work loop
-// (hk-t08m). 5 minutes balances prompt cleanup against excess tmux chatter.
-// Tests may inject a shorter value via workLoopDeps.coordinatorReapInterval.
-const periodicCoordinatorReapInterval = 5 * time.Minute
-
-// loopMaintenanceState holds the periodic-maintenance value fields owned solely
-// by the runWorkLoop goroutine (RSM-011). They were lifted off workLoopDeps
-// because that bundle is copied by value into every run goroutine, where a
-// mutation of a value field is a silent no-op (PF §3 hazard). Declared local to
-// runWorkLoop and threaded by pointer into the periodic maintenance passes.
-type loopMaintenanceState struct {
-	// lastCoordinatorReap records when the periodic coordinator reaper last ran.
-	// Zero → the first tick always fires (hk-t08m).
-	lastCoordinatorReap time.Time
-
-	// lastDiskCheck records when the periodic disk free-space probe last ran.
-	// Zero → the first tick fires after diskCheckInterval elapses (hk-sxlb).
-	lastDiskCheck time.Time
-
-	// diskLow is true when the most recent disk probe found available space below
-	// diskLowWatermarkDefault (or deps.diskLowWatermark). The dispatch loop skips
-	// bead claiming while this flag is set (hk-sxlb).
-	diskLow bool
-}
-
+// The cadenced maintenance — the schedule tick, the coordinator reap, the disk
+// check, the dashboard forcing gate, the eager refill and the sentinel governor
+// — left this loop for loopmaintenance.go (DECOMPOSITION-MAP §3 Step 2). It
+// carries loopMaintenanceState, periodicCoordinatorReapInterval, and the two
+// maintenance passes the loop calls below.
+//
 // runWorkLoop is the main dispatch goroutine. It blocks until ctx is cancelled
 // (typically from SIGINT/SIGTERM received by the daemon process). On context
 // cancellation it stops accepting new beads, waits for all in-flight goroutines
@@ -368,10 +348,6 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
 
-	// maint holds the periodic-maintenance value fields (RSM-011). Owned solely
-	// by this goroutine; threaded by pointer into the maintenance passes below.
-	var maint loopMaintenanceState
-
 	// RSM-015: own the merge exclusion-domain queue. runWorkLoop CREATES and
 	// starts the queue when deps carries none (production, and every StartForTesting
 	// / ExportedRunWorkLoop test that does not inject one) — and it alone cancels
@@ -430,11 +406,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// fairness (QM-067; weighting deferred to v0.2).
 	rrCursor := 0
 
-	// Dashboard forcing gate (hk-xg6rw) — a SWITCHABLE subsystem. nil means
-	// `subsystems.dashboard_gate.enabled: false`: the gate is never constructed,
-	// never evaluated, and selectNextQueue is handed a nil blocked-queue set. See
-	// dashboardgate.go.
-	dashGate := newDashboardGateIfEnabled(deps.projectCfg, os.Stderr)
+	// maint owns the cadenced maintenance: the periodic-maintenance timing state
+	// (RSM-011) plus the dashboard forcing gate and the sentinel movement
+	// governor, both of which are SWITCHABLE subsystems that may be absent. It is
+	// touched only from this goroutine. See loopmaintenance.go.
+	maint := newLoopMaintenance(deps, os.Stderr)
 
 	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
 	// in_progress with an active run. Entries suppress the item from the
@@ -466,13 +442,6 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	//
 	// Bead ref: hk-pina9.
 	queuePreClaimShowAttempts := make(map[queuePreClaimAttemptKey]int)
-
-	// Sentinel movement governor (FW2 hk-z1lr / FW3 hk-4toh) — a SWITCHABLE
-	// subsystem. nil means `subsystems.movement_governor.enabled: false` (or that
-	// nothing seeded a governor state): no evaluation, no trip, no halt, and no
-	// sentinel dispatch gate. All its per-loop state — eval cadence, pending ack
-	// token, halt flag — lives inside it. See movementgovernor.go.
-	governor := newMovementGovernorIfEnabled(deps, os.Stderr)
 
 	// dispatchCtx is the context checked by the outer poll loop to decide
 	// whether to halt dispatch. It is separate from ctx (the main daemon context)
@@ -580,61 +549,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		default:
 		}
 
-		// G-liveness halt (FW3 hk-4toh): if the governor fired ActivationHalt
-		// in ACT mode on a prior tick, drain in-flight runs and exit cleanly.
-		// The liveness_halt page event was already emitted when the halt was
-		// armed; here we merely enforce it. Always false when the governor
-		// subsystem is absent.
-		if governor.halted() {
+		// Step 1b: the pre-dispatch maintenance pass — governor halt check,
+		// schedule tick, coordinator reap, disk check (loopmaintenance.go). It
+		// reports. This loop decides. In particular the sentinel governor asks for
+		// a halt through preObs.halt rather than shutting the daemon down itself,
+		// so exitClean stays owned here.
+		preObs := maint.tickBeforeDispatch(ctx, &deps)
+		if preObs.halt {
 			return exitClean()
 		}
-
-		// Step 1b: schedule tick — fire any due recurring jobs (codename:schedule,
-		// hk-0es). Runs IN-LOOP (reusing this loop's poll cadence + claim-write
-		// serialisation), placed after the dispatch-halt check and before the
-		// capacity gate so a fired spawn-crew/command action is independent of the
-		// bead-dispatch capacity. No-op when scheduleStore is nil.
-		runScheduleTick(ctx, deps)
-
-		// Step 1c: periodic coordinator-session reap (hk-t08m).
-		//
-		// The boot-time sweep (RunOrphanSweep) reaped dead flywheel-coordinator
-		// sessions once at startup, but sessions accumulated across hard supervisor
-		// crashes that skipped clean shutdown.  Running the same predicate
-		// periodically here ensures leaked sessions are cleaned up without requiring
-		// a daemon restart.
-		//
-		// Rate-limited by coordinatorReapInterval (default 5 min) so the tmux
-		// adapter is not called on every 2 s poll tick.  The first tick fires
-		// immediately (lastCoordinatorReap is zero-valued).  No-op when
-		// coordinatorReapAdapter is nil (no tmux substrate).
-		{
-			interval := deps.coordinatorReapInterval
-			if interval <= 0 {
-				interval = periodicCoordinatorReapInterval
-			}
-			if deps.coordinatorReapAdapter != nil && time.Since(maint.lastCoordinatorReap) >= interval {
-				runPeriodicCoordinatorReap(ctx, deps.projectDir, deps.coordinatorReapProjectHash, deps.coordinatorReapAdapter, nil)
-				maint.lastCoordinatorReap = time.Now()
-			}
-		}
-
-		// Step 1d: periodic disk watermark check and reactive go-cache reap
-		// (hk-sxlb, hk-guez). Reactive only — every diskCheckInterval (default
-		// 10 min). When the probe finds available space below the watermark,
-		// deps.diskLow is set true, a disk_low event is emitted, and
-		// `go clean -cache` is run immediately (reactive reap) — but ONLY when
-		// no merge-build is in flight (runRegistry.Len()==0). If a merge is in
-		// flight the reap is skipped and a loud warning is logged instead
-		// (hk-guez fix). The loop then skips dispatch this iteration (see the
-		// gate below).
-		//
-		// A second sub-step used to live here — a cadence-based reap that ran
-		// `go clean -cache` even when disk was healthy. It was REMOVED and must
-		// not be restored (hk-gjbpp); full rationale in the file-level comment
-		// on diskcheck_hksxlb.go.
-		runPeriodicDiskCheck(ctx, &deps, &maint)
-		if maint.diskLow {
+		if preObs.diskLow {
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 				return exitClean()
 			}
@@ -665,28 +589,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			}
 		}
 
-		// Step 2b: dashboard staleness forcing gate (hk-xg6rw). The gate's own
-		// rate limit, transition-edge event emission, and blocked-queue set live
-		// in dashboardGate (dashboardgate.go); the verdict is consulted by
-		// selectNextQueue below (Step 3) to withhold NEW item dispatch on
-		// captain-curated queues only. No-op when the subsystem is switched off.
-		dashGate.tick(ctx, deps, time.Now())
-
-		// EM-062: eager-refill fires on every poll tick (as well as after every
-		// run_terminal event in evaluateGroupAdvanceWithOutcome). This ensures
-		// that a deficit opened by a run completion is filled promptly even when
-		// the workloop was already idle between terminal events.
-		//
-		// Spec ref: specs/execution-model.md §4.13 EM-062.
-		// Bead ref: hk-9321v.
-		eagerRefillEval(ctx, deps)
-
-		// Sentinel movement governor (FW2 hk-z1lr observe / FW3 hk-4toh act). One
-		// call: the mode split, the eval cadence gate (hk-usn8o — each evaluation
-		// scans events.jsonl), the trip/clear/halt handling and the adversary spawn
-		// all live in movementGovernor (movementgovernor.go). No-op — and never
-		// constructed — when the subsystem is switched off.
-		governor.tick(ctx, deps)
+		// Step 2b: the post-capacity maintenance pass — dashboard forcing gate,
+		// eager refill, sentinel governor evaluation (loopmaintenance.go). It runs
+		// AFTER the capacity gate above because that gate's sleep-and-continue path
+		// is meant to skip all three for the tick. Its verdict — the set of
+		// captain-curated queues withheld from NEW item dispatch — is consulted by
+		// selectNextQueue below (Step 3).
+		selObs := maint.tickBeforeSelect(ctx, deps, time.Now())
 
 		// Step 3: dispatch source — queue-pull or br-ready fallback.
 		//
@@ -844,7 +753,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// reflects the queue-owner's permanent concurrency intent, not the current tuner
 				// state; scaling it with the tuner would under-count eligible queues in the
 				// round-robin even when the global gate is the binding constraint.
-				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor, dashGate.blockedQueueSet())
+				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor, selObs.blockedQueues)
 				// Capture queue count while the lock is still held so we can
 				// distinguish "zero queues loaded" from "queues exist but all
 				// paused/at-cap" after lq.Done() releases the lock (hk-mgoo7).
@@ -948,8 +857,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// Sentinel queue-level gate (FW3 hk-4toh): also hold when the
 				// sentinel governor trip is pending, which blocks ALL beads — not
 				// just a specific one — until real movement clears the trip. The
-				// gate is asked THROUGH the governor, so it disappears with the
-				// subsystem rather than outliving the only code that can open it.
+				// gate is asked THROUGH the maintenance handle that owns the governor, so
+				// it disappears with the subsystem rather than outliving the only
+				// code that can open it.
 				//
 				// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
 				// Bead ref: hk-pbmsq (bead gate), hk-4toh (sentinel queue gate).
@@ -962,7 +872,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 					continue
 				}
-				if governor.dispatchBlocked(deps) {
+				if maint.sentinelBlocksDispatch(deps) {
 					fmt.Fprintf(os.Stderr,
 						"daemon: workloop: bead %s blocked by sentinel governor trip (EV-043, FW3) — holding until real movement\n",
 						snapItemBeadID)
@@ -1446,7 +1356,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			//
 			// Sentinel queue-level gate (FW3 hk-4toh): also hold when the sentinel
 			// governor trip is pending — all beads are blocked until real movement.
-			// Asked THROUGH the governor so the gate disappears with the subsystem.
+			// Asked THROUGH the maintenance handle that owns the governor, so the
+			// gate disappears with the subsystem.
 			//
 			// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
 			// Bead ref: hk-pbmsq (bead gate), hk-4toh (sentinel queue gate).
@@ -1459,7 +1370,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 				continue
 			}
-			if governor.dispatchBlocked(deps) {
+			if maint.sentinelBlocksDispatch(deps) {
 				fmt.Fprintf(os.Stderr,
 					"daemon: workloop: bead %s blocked by sentinel governor trip (EV-043, FW3, br-ready path) — holding until real movement\n",
 					beadRecord.BeadID)

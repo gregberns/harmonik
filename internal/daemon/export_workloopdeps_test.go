@@ -28,6 +28,7 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
@@ -370,6 +371,32 @@ type WorkLoopDepsParams struct {
 	// harness-selection precedence walk. Mirrors Config.DefaultHarness;
 	// empty → built-in claude-code fallback (hk-ytzj2).
 	DefaultHarness core.AgentType
+
+	// GovernorState, when non-nil, seeds the sentinel movement governor's
+	// per-loop state. It mirrors what bootState.seedGovernorDeps sets in
+	// production.
+	//
+	// newMovementGovernorIfEnabled gates on two things in order: the
+	// movement_governor subsystem switch FIRST, then this state. An absent
+	// subsystems: block enables the governor, so the zero-valued ProjectCfg
+	// every test fixture carries passes the first gate. This field is the
+	// second gate, and it is the one a test has to supply.
+	//
+	// When nil the governor subsystem is ABSENT: no evaluation, no trip, and
+	// no sentinel dispatch gate — m.sentinelBlocksDispatch always reports
+	// false. That is the safe default for every test that does not care.
+	//
+	// Supply &sentinel.GovernorState{DaemonStartedAt: time.Now()} to build a
+	// loop in which the sentinel-queue gate can fire. The governor only has to
+	// EXIST for the gate to read the block, so a test does not need ACT mode
+	// or a real trip: it can inject the trip through DecisionBlocker
+	// (AddQueueBlock with subject "sentinel"), which is the same in-memory
+	// state a real trip writes.
+	//
+	// The mode stays the production default (observe), so a governor built
+	// this way evaluates and emits governor_signal but never trips, halts or
+	// spawns an adversary crew.
+	GovernorState *sentinel.GovernorState
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -517,6 +544,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		worktreeReclaimFunc: p.WorktreeReclaimFunc, // hk-5uezz: stale-worktree reclaim seam
 		runner:              p.Runner,              // hk-hd2w6: Config.Runner injection seam
 		defaultHarness:      p.DefaultHarness,      // hk-ytzj2: tier-4 global harness default
+		governorState:       p.GovernorState,       // nil → movement governor absent, sentinel gate off
 	}
 }
 

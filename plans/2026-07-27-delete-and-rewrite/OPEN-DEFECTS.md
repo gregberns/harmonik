@@ -82,6 +82,59 @@ test. Both are now closed out; kept here because the *reasoning* is the reusable
 | **`main`'s only required status check has failed on every run since 2026-07-17.** Branch protection requires exactly one check, `check (Tier 2)` from `ci.yml`. Five consecutive failures, latest 2026-07-22. This was invisible because the ops-monitor health probe read *the newest run of any workflow* on main — which is the Scenario tier reporting a masked success every day. | Surfaced 2026-07-29 by filtering that probe to the required check. `release_due` is gated on a green CI status, so it now correctly refuses to fire — do **not** widen the probe again to make it green | `hk-main-required-check-red-i14hq` |
 | **About half the scenario tier skips in CI, and a skip reads as a pass.** Nothing installs `br` and nothing declares a twin build. Evidence: `internal/daemon` takes 69s in CI against 368s locally, and `TestThroughput_TenBeadsAtMaxFour` fails locally every time yet has never failed in 20 CI runs. | Means a **green** run on that workflow proves much less than it appears to — do not read one as the tier passing | `hk-ynohn` |
 
+## Found 2026-07-29 while harvesting the three `workloop.go` comment blocks
+
+None of these was chased. The first one is a live correctness defect and the most serious item in this
+section. The rest are the same shape as the decay the harvest itself found: a pointer that was right
+when it was written.
+
+- **A stale-blocker sweep closes a bead on a bare commit-message match, with no evidence the work is
+  present.** `autoCloseStaleBlockersOnClaimFailure` in `internal/daemon/scheduler.go` reaches
+  `shared.MainHistoryHasRefsTrailer` for each candidate blocker and, on a match, closes that blocker
+  through `SweepCloseBead`. Nothing else is checked. **This is the same false-close shape as the
+  incident that removed the pre-dispatch check** (`hk-f38n`: bead `hk-cmry` closed wrongly, remaining
+  work refiled as `hk-zmpd`), and it is live in the daemon today.
+  Measured across all four production call sites of that primitive. Three pair the match with evidence
+  that the work is genuinely absent, and only close when both agree: the no-change timeout in the run
+  driver waits on `noChangeTimeoutCh`, `noCommitGuardShouldReopen` requires `curHeadSHA == parentSHA`,
+  and the graph cascade requires `postHeadSHA == preHeadSHA`. This fourth site pairs it with nothing.
+  It is worse than merely unpaired: the three good sites gather evidence about the same bead they then
+  close, while this one reads the *dependent* bead's status and then closes a *different* bead — the
+  blocker — about which it has no signal at all.
+  It also directly contradicts the godoc now written on the primitive, which tells every caller to pair
+  the match with work-absence evidence and never to use it as a standalone completion test. **Not
+  fixed here:** `scheduler.go` belongs to another piece of work, and chasing defects is against the
+  standing directive. This wants its own change.
+- **`GenerateSandboxProfile` has no doc comment.** Its 19-line comment block in
+  `internal/daemon/sandboxprofile.go` is separated from the function by the `worldSharedTempRoot`
+  helper, so Go attaches it to nothing and the exported function godocs as bare. The comment holds the
+  full `allowWrite` inventory and the world-shared-root rejection rule, so this is the most valuable
+  detached comment in the file. Moving the helper above the comment fixes it.
+- **Both `hk-l5saf` comments in `internal/daemon/scheduler.go` cite stale line numbers.** The hoisted
+  guard comment cites "~line 1818" for the Step-2 split gate and "~line 3072" for the `localInFlight`
+  increment. The post-stamp "no guard here" comment cites "~line 3072" as well. All three were
+  `workloop.go` positions and none survived the Seam A split. `scheduler.go` is 2,371 lines, so 3072
+  points past the end of the file. This is the exact failure the "cite symbols, not line numbers"
+  convention exists to stop, and it appeared within one day of the split. Two unrelated "~line 1954"
+  citations in the same file have the same problem.
+- **`specs/execution-model.md` EM-063 Phase 2 and EM-064 tier 2 mandate a completion test that is
+  known to produce false positives.** Both require `git log --grep "Refs: <bead_id>"` and read a match
+  as "already landed" — EM-063 in the daemon's eager-refill pre-screen, EM-064 in the orchestrator's
+  guard before it submits. `hk-f38n` measured that a bead worked in several parts leaves an older
+  partial commit carrying the same ID, so the match fires while work is outstanding. The dispatch-time
+  use of that grep was removed for exactly this reason. These two were never revisited. Recorded as a
+  spec-drift item, not fixed: narrowing a normative test is an execution-model amendment and needs
+  adjudication. Flagged in the new informative note under BI-022 in `specs/beads-integration.md` §4.7.
+- **`make check-fast` runs no tests at all on a clean tree, and reads green.** Its final step derives
+  the package list from `git diff --name-only HEAD`, so after a commit the list is empty and the step
+  prints "no changed Go packages, skipping go test" and exits 0. The repo's own instruction is to run
+  that gate *after* committing, which is precisely when the test step does nothing. So a green
+  `check-fast` on a committed tree proves the build, the linters and the freeze gates, and proves
+  nothing whatever about tests. Run `go test -short` directly against the packages you touched.
+  This is the same pattern the program keeps finding — a green signal protecting nothing — and it is
+  the third instance recorded in this file after the masked scenario tier and the `continue-on-error`
+  reporting flag.
+
 ## One open P0 that is probably wrong
 
 `hk-zobns` — *"Branch-protection deep guard fails open: bead merges to protected target and closes

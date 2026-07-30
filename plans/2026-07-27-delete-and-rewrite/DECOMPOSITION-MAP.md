@@ -257,27 +257,68 @@ touched from inside this one function.
   above said "two test files". A content search over all history finds one.
 
 **Re-measured 2026-07-29 — the three comment blocks are NOT gravestones, and deleting them would
-lose knowledge this program exists to keep.** Each was read in full:
+lose knowledge this program exists to keep.** Each was read in full. **Settled 2026-07-29 — the fact
+now lives in the doc that owns it, and the disposition differs per block.** Two of the three kept a
+comment in the source, so the one-line "move the fact out, then delete the copy" instruction below
+was wrong as a general rule, and it is corrected here.
 
-- The `sandboxOSTmpDirs` block (lines 5682–5730, so 49 lines — the "42" above was never measured
-  either) does not merely record that a function was removed. It states why the sandbox must never
-  grant recursive write access to the shared temp directory, and it
-  names the mechanism that made the hole reachable — the profile generator expands every temp-dir
-  entry into a recursive write rule, and the fallback path lands on the shared `/tmp` whenever no
-  per-user temp dir is set. That is an external-world fact about the sandbox, which is
-  `CARRY-FORWARD.md` material.
-- The `hk-l5saf` block explains why there is deliberately **no** guard at that point: the item is
-  already stamped and persisted, so a guard there would strand it. Delete the comment and the next
-  reader re-adds the guard. §3 step 3 states the same ordering constraint and calls it load-bearing,
-  so the fact survives the comment — but only the comment says it at the place someone would edit.
-- The `hk-f38n` block records a live false-close. A bare commit-message grep matched an old partial
-  commit that carried the same issue ID, so the daemon closed a bead whose remaining work had not run.
-  This is a production correctness sensor, which is a third category — phase 1's deletions covered
+Note before reading further: **only two of the three are in `workloop.go`.** The Seam A split carried
+both `hk-l5saf` comments into `internal/daemon/scheduler.go`.
+
+- **The `sandboxOSTmpDirs` block — fact moved to `CARRY-FORWARD.md`, source copy DELETED.** It did
+  not merely record that a function was removed. It stated why the sandbox must never grant recursive
+  write access to the shared temp directory, and it named the mechanism that made the hole reachable:
+  srt expands every temp-dir entry into a recursive write rule, and `os.TempDir()` falls back to the
+  shared `/tmp` whenever no per-user temp dir is set. `CARRY-FORWARD.md` now carries that as a new
+  **srt sandbox** section of six facts, which also holds the parts that lived nowhere else — srt's
+  hardcoded `TMPDIR=/tmp/claude` for sandboxed children, the consumers that hardcode a host temp root
+  instead of reading `TMPDIR` (C's `tmpfile()`, tmux's `TMUX_TMPDIR` socket), the load-7.53
+  measurement, and the untested Linux case.
+  **Deleting the source copy is safe because the rule already sits at the real edit site and is
+  mechanical there.** `GenerateSandboxProfile` in `internal/daemon/sandboxprofile.go` rejects a
+  world-shared root in `TmpDirs` and fails the launch with a named error, and the `TmpDirs` field
+  comment states the same rule. Nobody was going to reintroduce a function that no longer exists, and
+  the block was attached to no code. It had also decayed twice: it cited `Makefile:453` and `:465` for
+  a `TMPDIR=/tmp` that the `check-short` and `check-race-full` recipes now carry, and it cited
+  `TestSandboxAcceptance_WriteToMainDenied_hki0377` as its evidence, which no longer exists anywhere
+  in the tree. Cited by recipe name on purpose — replacing two rotted line numbers with two fresh ones
+  reproduces the defect the sentence is describing.
+- **The `hk-l5saf` block — KEPT as it stands, in `internal/daemon/scheduler.go`.** It explains why
+  there is deliberately **no** guard at that point: the item is already stamped and persisted, so a
+  guard there would strand it. Delete the comment and the next reader re-adds the guard. §3 step 3
+  states the same ordering constraint and calls it load-bearing, so the fact survives the comment —
+  but only the comment says it at the place someone would edit. The comment is already six lines and
+  already at that place, so there is nothing to move and nothing to shorten. **This one was never a
+  writing task.**
+  Two decays to fix when someone next edits that file, and they sit in BOTH `hk-l5saf` comments, not
+  only the sibling. The hoisted-guard comment cites "~line 1818" for the Step-2 split gate and
+  "~line 3072" for the `localInFlight` increment. The kept post-stamp comment — the "no guard here"
+  one — cites "~line 3072" as well. So the block described here as needing no change does carry a
+  rotted reference. That does not change the conclusion: the constraint it states is still correct, is
+  still at the edit site, and is still recorded in §3 step 3. Only the pointer rotted.
+- **The `hk-f38n` block — fact moved to `specs/beads-integration.md` §4.7, SHORT comment kept at the
+  edit site.** It records a live false-close: a bare commit-message grep matched an old partial commit
+  that carried the same issue ID, so the daemon closed a bead whose remaining work had not run. This
+  is a production correctness sensor, which is a third category — phase 1's deletions covered
   prose-grepping test sensors and ticket-named test files, not sensors inside product code. Nothing
-  has swept this class.
+  has swept this class. The receiving home is the informative note under BI-022, which owns "git is
+  authoritative for completion" and is exactly the claim the incident qualifies. The 18-line block in
+  `beadRunOne` became a 9-line "do not add a pre-dispatch already-landed check here" comment that
+  names the two runtime paths covering crash-restart and points at the spec note. The same warning
+  now sits on `MainHistoryHasRefsTrailer` in `internal/harness/shared/refstrailer.go`, because a
+  future caller reaches the primitive rather than the old edit site.
+  **Open, and larger than the comment was.** Two things outlive the block. First, `specs/execution-model.md`
+  EM-063 Phase 2 (the daemon's eager-refill pre-screen) and EM-064 tier 2 (the orchestrator's guard
+  before submit) both still mandate the same bare match as an "already landed" test. Second, and worse,
+  `autoCloseStaleBlockersOnClaimFailure` in `internal/daemon/scheduler.go` closes a blocker bead on a
+  bare match with no work-presence evidence at all — the same false-close shape, live in the daemon
+  today. Both are recorded in `OPEN-DEFECTS.md` and neither is fixed here: narrowing a normative test
+  needs adjudication, and the scheduler belongs to another piece of work.
 
-**Disposition:** move each into the doc that owns the fact, then delete the copy in the source. Do
-not delete first. This is no longer a free deletion, and it is not blocking anything.
+**Disposition, per block rather than in general:** where the fact is about the outside world and
+nobody editing that line needs it in front of them, move it out and delete the source copy. Where the
+comment's value is its POSITION — it stops a specific edit someone would otherwise make right there —
+leave a short comment that states the constraint and points at the doc holding the rationale.
 
 ---
 
@@ -515,8 +556,11 @@ no longer gates the structural work below and **step 2 is now the first thing to
   `internal/runloop/ports.go` documents it as the raw resolved spec builder that sub-drivers reach
   after the deps drop. Deleting it breaks two callers. The claim was never true.
 - The `sandboxOSTmpDirs`, `hk-l5saf` and `hk-f38n` comment blocks — **real knowledge, not
-  gravestones.** See §1d for what each one holds. Move the fact to the doc that owns it, then delete
-  the source copy. That is a writing task, not a deletion, and it blocks nothing.
+  gravestones. DONE 2026-07-29, and the disposition was not uniform.** See §1d. One fact went to
+  `CARRY-FORWARD.md` and its source copy is deleted, one fact was already in a doc and its comment
+  stays untouched, and one fact went to `specs/beads-integration.md` §4.7 with a short comment kept at
+  the edit site. Only one of the three was in `workloop.go` by the time the work ran, and only one of
+  the three ended in a deletion.
 
 **The general lesson, which is the part worth keeping:** decay is the smaller half of the problem here.
 Only one entry — `activateFirstPendingGroup` — was true when written and then went stale. The other

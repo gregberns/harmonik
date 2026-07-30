@@ -106,6 +106,22 @@ as done. Corollaries that have each bitten someone here:
   to catch: it looks like a completed step and reclaims 0 MiB. See the portability
   table for the `find … -print0 | xargs -0` form that does not have this property.
 
+## zsh: three ways a cleanup command does nothing and reports success
+
+The default interactive shell here is zsh. Agents write bash idioms from muscle memory. **All three of
+the following ran during one session on 2026-07-30, and every one silently did nothing while looking
+like it worked.** This is the same failure class §"Did the command actually do anything?" exists for,
+so check the reclaimed bytes, not the exit code.
+
+| Idiom | What zsh does | Cost when it bit us | Use instead |
+|---|---|---|---|
+| `for d in $LIST; do rm -rf "$dir/$d"; done` | **No word splitting** on unquoted expansion. `$LIST` is ONE word, so the path never exists and `rm -rf` succeeds against nothing. | Reclaimed 0 MiB, reported success, every directory still present. | `LIST=(a b c)` and `"${LIST[@]}"`, or run the loop under `bash -c`. |
+| `BUSY=$(jobs -p); kill $BUSY` | **Clears the job table inside command substitution.** `$BUSY` is empty, `kill` gets no arguments and exits 1. | 30 orphaned spin loops survived 13 h at ~551% CPU. The `2>/dev/null` ate the error and the next line printed success. | Collect `$!` per spawn, or `trap 'kill -- -$$' EXIT INT TERM`. Note `trap 'kill $BUSY'` fails identically — the variable is empty either way. |
+| `rm -rf "$T"/go-build* "$T"/scratch-*` | A glob matching nothing **aborts the whole command**, including the glob that did match. | Documented below; reclaims 0 MiB and looks done. | `find … -print0 \| xargs -0`, or `setopt nullglob`. |
+
+The shared lesson: **on this box a cleanup step is not verified by its exit code.** Re-`ls` the target
+or measure the bytes.
+
 ## Portability: this box is darwin, the runbook is not GNU
 
 Commands here run on macOS (BSD userland). Several GNU idioms that appear in

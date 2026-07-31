@@ -2,21 +2,30 @@
 
 Base: `e7e74214b` (worktree was at `dc2217527`, BASE_STALE → reset per instruction). No code changed.
 
-> ## ⚠ Read this before using any count below — corrected 2026-07-29 on `0db5dcc28`
+> ## ⚠ Read this before using any count below — corrected 2026-07-29, corrected again 2026-07-30
 >
-> **This measurement was taken when there were five agent-launch sites. There are now three.** Sites B and
-> C both lived in `reviewloop.go`, which has since been deleted; A, D and E survive unchanged. So every
-> "1 of 5" below is really **1 of 3**, and the two review-loop-only findings (the crash-recovery resume
-> and the merge-retry classifier) are closed out — see `OPEN-DEFECTS.md` for how each was resolved.
+> **2026-07-30. The launch sites are no longer separate at all, so the "1 of N" framing has expired for
+> the launch half of this document.** `runAgentLaunch` in `internal/daemon/agentlaunch.go` landed on
+> 2026-07-29 and owns spawn, liveness proof, drive-to-dead-session and exit facts. Sites A, D and E all
+> call it. `scripts/readywait-freeze-gate.sh` allows exactly one `runloop.DispatchSegment` in the tree,
+> and it must be in that file, so the class cannot silently come back.
 >
-> The measurement is left otherwise intact rather than rewritten, because the per-site detail for A, D and
-> E is still accurate and expensive to re-derive. Two specific claims that DID go stale with the deletion:
-> the fabricated-duration finding (N17) described the review-loop reviewer segment and no longer applies to
-> anything in the tree; and §(a)'s driver table lists two drivers that no longer exist.
+> Re-verified in the code on 2026-07-30, the collapse closed exactly what §What-this-changes predicted:
+> **N1, N2, N3, N6a, N13, N17 and the teardown-ordering divergence.** What it did NOT close is also
+> exactly as predicted: **N4, N5, N7, N8, N9, N11, N12, N14, N15, N16 — the mode-driver tails — and N10,
+> the sub-workflow walker.** Read those rows as live. Read the launch-site rows as history.
 >
-> Re-measuring the three surviving sites on 2026-07-29 found **five further divergences** this document
-> does not contain — they are written up in `OPEN-DEFECTS.md`, not backfilled here, to keep this file a
-> dated measurement rather than a living one.
+> **Site count is TWO, not three.** Site E, the cognition gate in `dot_gate.go`, cannot execute:
+> `daemon.Config.CPRegistry` has zero assignments anywhere in the tree and no graph declares a
+> `type="gate"` node. The count on this line has read five, then three. It is two.
+>
+> *Earlier correction, 2026-07-29 on `0db5dcc28`, kept for provenance:* this measurement was taken when
+> there were five agent-launch sites; sites B and C both lived in `reviewloop.go`, which was deleted, so
+> every "1 of 5" below was really "1 of 3". The two review-loop-only findings (the crash-recovery resume
+> and the merge-retry classifier) are closed out — see `OPEN-DEFECTS.md`. N17 described the review-loop
+> reviewer segment and no longer applies to anything. §(a)'s driver table lists drivers that are gone.
+> Re-measuring on 2026-07-29 found five further divergences, written up in `OPEN-DEFECTS.md` rather than
+> backfilled here.
 
 ---
 
@@ -47,13 +56,21 @@ classification first.
 
 **3. The credential guard does not cover the default path.** `d2RemoteAPIKeyRefusal` runs on
 single-mode only (1 of 5). DOT is the default, so the 2026-05-30 credential-leak gate does not protect
-the path almost all real work takes. Recorded as a defect, not fixed here.
+the path almost all real work takes. Recorded as a defect, not fixed here. **CLOSED 2026-07-29:** the
+refusal is called once, inside `runAgentLaunch`, so every launch asks it.
 
 **The launch-path collapse (§Next step 4) is confirmed as the highest-value move**, and by a wider
 margin than the map claimed: it eliminates N1, N2, N3, N6a, N13, N17 and the teardown-ordering
 divergence *by construction*, because those are all per-launch-site steps. It does not touch the
 mode-driver tails (N4, N5, N7, N8, N9, N11, N12, N14, N15, N16), which need the terminal spine collapsed
 as a separate second step, nor the sub-workflow walker (N10), which needs a third.
+
+> **Outcome, recorded 2026-07-30.** The collapse landed on 2026-07-29 and this prediction held item for
+> item. Point 2 above is the one that still needs acting on and has not been: `handler.MapWaitReturnToTerminalEvent`
+> still has exactly one production consumer, the single-mode tail of `beadRunOne`. So "delete single
+> mode" remains blocked on porting terminal classification onto the graph node, which today decides the
+> same question by comparing HEAD before and after. Point 1 is closed both ways — the crash-recovery
+> resume was retired with evidence rather than ported, and the merge retry was ported to DOT.
 
 ---
 

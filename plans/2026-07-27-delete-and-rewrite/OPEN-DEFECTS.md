@@ -647,6 +647,26 @@ how the whole program tests.
 
 ---
 
+## The test tiers report on themselves, and four of those reports are wrong — found 2026-07-30
+
+Found while working out what a live-daemon phase would cover. **All four are the same shape as the
+`continue-on-error` defect above: a gate that reports a result it did not produce.** None is chased.
+
+| What is wrong | Notes |
+|---|---|
+| **The per-commit scenario gate allows the merge when it cannot compile the tests.** `classifyScenarioGateError` in `internal/runloop/scenariogate.go` returns `warn("compile-fail")`, and warn means ALLOW. Observed live: `scenario-gate: WARNING: could not produce a verdict (compile-fail) … — ALLOWING merge (fail-open, hk-ur428)`. Fail-open on *flake* is a deliberate and defensible choice. Fail-open on *does not build* is not the same decision, and it was not made separately. | The gate is loudest exactly when it is least informative. Splitting compile-fail out of the flake path is a small change |
+| **The crash-recovery tier and the integration tier are empty stubs.** `test/crash/crash_stub.go` and `test/integration/integration_stub.go` are 7-line build-tag package docs holding **zero test functions**, so `check-full`'s `go test -tags=crash ./test/crash/...` runs nothing and exits 0. Crash, SIGKILL-mid-merge and restart recovery have no home. | A named tier that runs nothing is worse than an absent one, because `check-full` lists it as covered |
+| **Seven scenario-tagged tests are never run by the tier that names them.** `make test-scenario` covers `./test/scenario/...` and `./internal/daemon/...`, but `//go:build scenario` files also exist in `cmd/harmonik` (4 tests), `internal/sentinel` (2), `internal/keeper` (1) and `internal/runloop` (1). **Two fail when invoked directly** — a missing keeper hook script, and a warn-cooldown that fires twice inside its own window. | Either the target's package list or the tag is wrong. Both are one line |
+| **`make test-scenario` states a build precondition it does not satisfy.** Its comment says `build-all` compiles `harmonik-twin-claude` "so scenario tests can locate them without a rebuild". `build-twin-claude` is an alias to `build-twin-generic`, which writes `twins/generic-twin` — a different name in a different directory — and carries a live `TODO(hk-w5vra.2)` saying the real twin build has not shipped. Seven tests skip on the missing binaries, **locally as well as in CI**, and `twin-fail` / `twin-hang` are built by nothing anywhere in the tree. | This is why "the twins are built" reads as settled. Detail and the two-resolver problem are in `NEXT_STEPS.md` §5.1a |
+
+**One environmental row, because it is a one-line fix that has been open a while:**
+`TestScenario_RemoteSubstrate_Localhost_DOT_E2E` fails under `make test-scenario` because macOS
+`TMPDIR` puts `daemon.sock` at 130 bytes against the 104-byte `sun_path` limit. `check-short` pins
+`TMPDIR=/tmp` and `test-scenario` does not. `NEXT_STEPS.md` §5.2 lists this as fixed; the fix landed in
+the wrong target.
+
+---
+
 ## The pattern worth carrying forward
 
 Most of the launch-path items above are instances of one shape: **several code paths perform the same

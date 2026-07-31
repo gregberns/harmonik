@@ -1117,6 +1117,315 @@ right. Touching it early means re-doing it.
 > **⚠ Operator decision (D2) lands here**: whether the guards move into the machine's `Guarding`
 > phase (behaviour change for review-loop and DOT) or the machine's escape slot is deleted.
 
+---
+
+## Steps 9 onward — added 2026-07-30. The step is no longer "the inside of a function"
+
+Step 8 ends with `beadRunOne` a phase coordinator. **That is where the plan used to stop, and the core
+is not done there.** Steps 0–8 carve up the inside of two functions. Everything below is about what is
+*around* them: the bundle that builds a run, the packages that write the queue, and the line between
+the core and everything the charter switched off.
+
+**The §3 ordering rule stops working here, and it should be replaced rather than stretched.** "Carve
+out what flows one way and whose absence the compiler can prove" needs a compiler that can prove
+something. It cannot prove anything about a struct whose fields are written after it is returned, and
+that shape is what steps 9–15 are about. The rule from here is: **make each unit's dependency set
+declarable, then declare it.**
+
+All numbers below measured 2026-07-30 on `15bfdc154`. Two that the rest of this section rests on:
+`internal/daemon` is **42,438 production lines in 95 files**, and **106 files in `internal/` are over
+400 lines and hold 49% of the tree's production code in 14% of its files**.
+
+Steps 9–15 are the core. **Step 16 is not** — it is named because the operator asked for it, and it is
+flagged as sequel work rather than quietly promoted into the core set.
+
+### Step 9 — the live pass (~2 days, LOW risk, and it is the oracle steps 10–15 do not otherwise have)
+
+**This is not a carve-out.** It is here because every step below changes boot-time construction, and
+nothing that runs today exercises a real boot.
+
+**What the scenario tier already covers, and what it cannot. Be precise about this, because the tier
+is stronger than "unit tests" and weaker than "end to end", and both mislabels have been used.**
+`internal/daemon/scenario_*` (26 files) and `test/scenario/` (5) boot the production composition root
+by calling `daemon.Start` in a goroutine. Real `git` and real `br` run as subprocesses. The *agent* does
+not: `Config.HandlerBinary` points at a twin and `Config.BrPath` at a wrapper. So the tier is genuine
+in-process coverage of construction against a fake agent, and it should stay.
+
+What it never does: **start the daemon as a process, run a real agent, run the supervisor, or cross a
+process boundary.** A defect in the shipped binary, in supervisor revival, or in state that must
+survive a restart is therefore invisible to it. Note also that `scenario_happypath_n1_test.go` pins
+`WorkflowModeSingle`, a mode selected twice in the entire event log.
+
+**The tmux substrate is the sharpest gap, and the tier says so itself.** Three of the 32 scenario files
+set `Config.Substrate`; the other 29 leave it nil, and `daemon.Config.Substrate`'s own doc says a nil
+substrate falls back to `exec.CommandContext` — no panes. All three that do set one wrap
+`NewTmuxSubstrate` around a **fake adapter**, and
+`scenario_launch_liveness_slotleak_hk40c3y_test.go` records the consequence in a comment: *"the
+fake-substrate path cannot reach `run_completed` (no hook-bridge socket relay → agent_ready_timeout)."*
+`scenario_concurrent_dispatch_vn4_hkukhzu_test.go` is skipped unconditionally for the same reason, and
+its skip text names what is missing: *"agent_ready/outcome arrive over the socket, not stdout… That is
+real tmux + real socket altitude."* So `tmuxsubstrate.go` (3,023 lines), `pasteinject.go` (2,691) and
+the whole hook-bridge relay are untested by this tier **by construction, not by neglect** — and the one
+constraint that stopped it, not touching real tmux on the shared box, no longer applies with the daemon
+down and a scratch clone available.
+
+**Two named tiers that would cover the rest are empty.** `test/crash/crash_stub.go` and
+`test/integration/integration_stub.go` are 7-line build-tag stubs holding **zero test functions**, so
+`check-full`'s `-tags=crash` sub-run tests nothing. Crash, SIGKILL-mid-merge and restart recovery have
+no home today.
+
+**A live pass does not duplicate this tier. It covers the half the tier cannot reach.**
+
+**The apparatus for a real pass is already built and is not being run.** `scripts/scratch-daemon.sh`
+(959 lines) starts a second, fully isolated daemon — its own clone, socket, pidfile, tmux session,
+binary and bead ledger — with `init / build / up / status / down / cycle / batch / feedback`. `batch`
+submits beads and writes a structured pass/fail artifact. `feedback` turns failures into beads in the
+main repo. `scripts/core-loop-matrix.sh` (481 lines) drives a matrix of cells through it and folds the
+results. `docs/scratch-daemon-runbook.md` documents all of it. It was used once, on 2026-07-29, for the
+run recorded in §0-CORRECTION: six graph nodes, a real commit on the target branch, 2m32s.
+
+**It is stale at its own default.** `SCRATCH_WORKFLOW_MODE` defaults to `review-loop`, and the daemon
+no longer offers that mode — the flag help in `cmd/harmonik/main.go` now reads "single, dot", and
+`core-loop-matrix.sh` already carries a comment working around the same default. The first thing a live
+pass needs is not new code. It is a default that names a mode that exists.
+
+**Why here and not at the end.** Putting the live pass last repeats the mistake `NEXT_STEPS.md` §5.1
+documents: an oracle that is built and never run reports nothing, and a tier nobody runs is
+indistinguishable from a tier that passes. Steps 10–15 change the composition root, the queue's writers
+and the subsystem switches — the parts a unit test reaches least and a real boot reaches first. Run the
+pass before them and it is a baseline. Run it after and it is an autopsy.
+
+**What a pass is:** repair the default, run one bead end-to-end on the tip, keep the batch artifact,
+then re-run it as the acceptance check at the end of each step below. No new tier, no new harness,
+nothing to keep in sync.
+
+**Risk:** low. The isolation is already designed for — the script refuses to target the fleet daemon
+and kills only the PID named in the scratch pidfile, and only after confirming that process's command
+line contains the scratch path. The real cost is agent tokens per run, which is why this is a per-step
+check and not a per-commit one.
+
+**"The daemon is off" means less than it sounds.** Measured today: no daemon process is running and no
+launchd agent is loaded. Nothing gates it off in code. Turning it back on is a command, not a project.
+
+### Step 10 — the composition root (~800 lines, MEDIUM risk — a design, not a move)
+
+`workLoopDeps` holds **81 fields**, and its declaration alone spans **743 of `workloop.go`'s 3,389
+lines** — more than a fifth of the file is one type. It is assembled in four stages across
+`bootworkloop.go` (`buildWorkLoopDeps`, `seedGovernorDeps`, `injectWorkLoopDeps`,
+`startBackgroundLoops`), with **25 post-construction field writes** there and 3 more in `scheduler.go`.
+`bootState` (`internal/daemon/bootstate.go`, 22 fields) has the same shape and admits it in its own doc
+comment: early phases write the fields, later phases read them, and a missed hand-off surfaces as a
+nil-deref at boot.
+
+**Why here:** §3's "What must NOT move" defers this in so many words — *"Replace it when steps 2–6 have
+made most of its fields locally owned, not before."* Steps 2–6 are that work. This step is the licensed
+successor to that instruction, and the reason it was deferred rather than dropped.
+
+**Why it blocks done:** `PRINCIPLES.md` §2 asks for consumer-owned ports. An 81-field bundle threaded
+through every run means no unit of the core has a declared dependency set, and validity is temporal —
+which boot phase are we in — rather than something the compiler checks. It also blocks §6's "switching
+one back on is a one-line change", because a subsystem's handle is a nullable field on a shared bundle
+instead of its own composition.
+
+**Risk:** medium. The bundle is captured by a background watchdog closure, so a partial cleanup
+produces a bundle that is neither the old thing nor the new one — the §3 warning still holds and this
+step is the only sanctioned way to discharge it. Deciding which fields belong to which extracted stage
+is a design decision, not a transcription.
+
+### Step 11 — one writer for the queue (~400 lines, MEDIUM risk — a design)
+
+`queue.Item.Status`, `Group.Status` and `Queue.Status` are set by **direct field assignment at 27
+production sites, in 9 files, across 5 packages** — `internal/queue` (`state.go`, `rpc.go`,
+`resume.go`), `internal/queuewiring/operatorevents.go`, `internal/lifecycle/startup_pl005_qm002.go`,
+and `internal/daemon` (`scheduler.go`, `scheduler_reservation.go`,
+`perqueuespendmeter_tigaf11.go`). `queue.Persist` is called from 9 production files in 5 packages, 7 of
+those sites in `scheduler.go` alone. `queuewiring.QueueStore.LockForMutation` has 18 production call
+sites in 6 files. A real state machine exists — `AdvanceGroup` in `internal/queue/state.go` — but it is
+one writer among many rather than **the** writer.
+
+**Why here:** the charter names both halves of this directly. §6's done criteria include "one explicit
+state machine with a single writer", and §4 says the queue is the centre and contested effort goes
+there. Step 4 landed the reservation transaction; it did not make the store the sole writer.
+
+**Why it is a design:** collapsing writers decides who may pause a queue and when a write must be
+durable. That is the same class of question as D3, and it is the shape RA-2 in `NEXT_STEPS.md` is
+complaining about from the other end — a queue that enters `paused-by-failure` automatically and that
+nothing in the product can leave.
+
+**Risk:** medium. The invariant is held today by a mutex plus convention, so the failure mode of
+getting this wrong is a lost status write that still compiles.
+
+### Step 12 — finish the partition (~600 lines, LOW risk — mostly a move)
+
+`knownSubsystems` in `internal/projectconfig/subsystems.go` holds **8 names**, and all 8 are wired at
+their construction seams. Against that, `bootState.wireSpendAndQueueConsumers` and
+`bootState.wireWatchersAndObservers` construct and subscribe **9 bus consumers with no switch at all**:
+`HandlerPausePolicyGoroutine`, `DaemonSpendMeter`, `PerQueueSpendMeter`, `QueueOperatorEventConsumer`,
+`SubscribeHub`, `StaleWatcher`, `ReviewGateAnomalyWatcher`, `QuiesceArbiter`, `CatBL2Handler`. Comms,
+crew, captain, keeper, live-state and subscribe — six of the names the charter puts *outside* the core
+— have no switch of their own either. They ride `SubsystemSocketListener`, which is one coarse switch
+over eleven things rather than a partition. And **8,678 production lines inside `internal/daemon`**
+(20% of the package) are non-core by the charter's own list.
+
+**Why here:** §6 defines done as "every other subsystem is switched off by configuration and absent at
+runtime". Nine ungated consumers is nine subsystems constructed whatever the config says, so §4's
+composability test fails for all nine today. Until this closes, "done" cannot be demonstrated — only
+asserted.
+
+**Why it is mostly a move:** the mechanism is right and cheap. `SubsystemsConfig.Enabled`'s own doc
+states the rule correctly — gate at the construction seam, never make the subsystem inert — and the
+`bandwidth_tuner` gate is a worked example of gating a pair of seams consistently. The gap is coverage,
+not design. The design residue is the handful of consumers that hold queue state
+(`PerQueueSpendMeter`, `QueueOperatorEventConsumer`): switching those off changes queue behaviour, so
+each needs its own decision.
+
+**Risk:** low, with one trap. `unknownYAMLKey` in `internal/projectconfig` early-returns "no unknown
+keys" for any node that is not a mapping, so a YAML alias hides a typo'd key inside the `subsystems:`
+block. That hole is inherited, not new, and it is now on the surface this step widens.
+
+### Step 13 — the event payloads the core actually emits (~300 lines, MEDIUM risk — a design, and it carries a live defect)
+
+`internal/core` registers **181 event types** with typed payloads, and `daemon.startWithHooks` refuses
+to boot if `scanRegisteredPayloadsForSecretFields` finds a secret in one. But **25 `…Payload` structs
+live outside `internal/core`**, four of them in `workloop.go` — `workloopRunStartedPayload`,
+`workloopRunCompletedPayload`, `beadClosedPayload`, `epicCompletedPayload` — and those, not the
+registered types, are what the run path marshals. A further **29 sites marshal a bare `map[string]…`**
+as a payload with no type at all.
+
+The divergence is not cosmetic. `core.RunStartedPayload` requires `workflow_id` and
+`workflow_version` and has a `Valid()`. `workloopRunStartedPayload` omits both and adds `queue_id`,
+`queue_group_index`, `worker_name`, `worker_os` and `workflow_mode`. `run_started` is nonetheless
+registered to `&RunStartedPayload{}`, and `internal/replay/runcheckers.go` type-switches on it — so
+replay decodes the daemon's real wire bytes into a type that zeroes the fields it expects and drops the
+fields that are there. `internal/daemon/runinflightreconcile_hkr73qr.go` reads the same events back
+through the shadow struct, so two readers of one event disagree by construction.
+
+**Why here:** this is §4's "consolidate by default" in its purest form — two definitions of one wire
+format, both compiling, already drifted. And it blocks §6's "tests that fail when behavior breaks": a
+payload change breaks a consumer with nothing red in between. `PRINCIPLES.md` §3 wants record→replay to
+be the substrate, and replay is currently decoding into the wrong shape.
+
+**Why it is a design:** the fix is a choice. Either amend the spec'd payload to the shape actually
+emitted, or make the run path emit the spec'd shape — which needs a `workflow_id` the single-mode path
+does not have. Either way it is a named spec amendment.
+
+**Risk:** medium, and note that the replay mis-decode is a live correctness defect, not only a
+structural one. **Recorded, not chased** — it is fixed by this step or not at all.
+
+### Step 14 — declare substrate capability instead of asking for it (~250 lines, MEDIUM risk — a design)
+
+`handler.Substrate` has **one** method. Around it, `internal/daemon/tmuxsubstrate.go` declares **16
+capability interfaces** — `substrateWithAdapter`, `substrateWithSessionName`, `substrateWithKeepalive`,
+`substrateWithSpawnCap`, `substrateWithSpawnCapSetter`, `substrateSpawnReadier`,
+`substrateDiagnosticHookSetter`, `paneTargeter`, `paneCaptureAdapter`, `pasteInjecter`,
+`sessionCreator`, `sessionEnsurer`, `runnerSwapper`, `crewSessionSpawner`, `crewSessionStopper`,
+`runSessionSpawner` — resolved at **21 production type-assertion sites** across eleven files. The event
+bus has the same shape at smaller scale: `EventBus` plus four extension interfaces probed at 6 sites.
+
+**Read the contrast, or this gets mis-applied.** The 13 one-method `Emit` interfaces re-declared across
+`eventbus`, `lifecycle`, `handlercontract`, `queue`, `brcli` and `daemon` are **not** a tangle — that is
+`PRINCIPLES.md` §2 working as designed, and `runloop.EmitterPort` is the documented idiom. The
+difference is direction. A consumer narrowing a dependency is the principle. A consumer interrogating
+an implementation to find out what it can do is the defect.
+
+**Why here:** the core set names "harness registry + one substrate". A capability that is discovered
+rather than declared cannot be switched off honestly — a missing capability fails as a silent
+`ok == false` branch, which is the charter §3 prohibition on faking a degraded capability, applied to
+tmux. It is also what makes a second substrate expensive: a new implementation has to satisfy 16
+undeclared contracts to behave like the first.
+
+**Risk:** medium. Every one of the 21 sites has a fallback branch today, and some of those fallbacks
+are the only thing keeping a non-tmux path alive.
+
+### Step 15 — split `internal/daemon` (~large, LOW risk — a move, and it is the last one)
+
+42,438 production lines, 95 non-test files, 183 test files, and a fan-out of **52 internal packages**.
+It holds the scheduler, the run driver, the tmux substrate, the paste-inject watchdogs, the DOT
+cascade, the boot composition root — *and* comms, crew, dashboard, decisions, subscribe, quiesce,
+handler-pause, spend metering and the schedule tick.
+
+**Why last:** the package boundary is what steps 10 and 12 produce, not a prerequisite for them.
+Splitting first means guessing the boundary and moving the files twice. `internal/runloop` (2,412
+lines, depguard-fenced against importing `daemon`) is the proof the split works — it stopped at the
+port surface because nothing had yet made the fields locally owned.
+
+**Why it blocks done:** §4's "segment, then stitch — not entangled-but-documented-as-separate, which is
+the current state." Everything in this package can reach everything else's unexported identifiers,
+which is the single fact that makes steps 10, 12 and 14 possible in the first place.
+
+**Risk:** low by then, and high if attempted early. That asymmetry is the whole reason it is last.
+
+### Step 16 — the keeper — SEQUEL WORK, and it is separable from crew
+
+**The operator asked for the keeper to be pulled into the program, and suspected it could not come
+without the crew system. The second half is not true.** Measured, not argued:
+
+- `internal/keeper` imports exactly five internal packages: `core`, `substrate`, `presence`,
+  `dashboard`, `digest`. It does **not** import crew. `.golangci.yml` already allow-lists those five
+  and denies `internal/daemon`.
+- `internal/crew` imports only `internal/core`. `internal/crewrun` imports `crew`, `handler`, `queue`.
+  Neither imports keeper.
+- The one edge that touches crew is transitive and accidental:
+  `internal/keeper/dashboardnag.go` calls `digest.LoadDashboardGateConfig`, and `internal/digest`
+  separately calls `crew.List` from an unrelated file. `LoadDashboardGateConfig`'s own file imports
+  nothing but the standard library and a YAML package. Move that one reader to a leaf and the edge is
+  gone — which is the same work `NEXT_STEPS.md` RA-6 already decided on for other reasons.
+- `specs/session-keeper.md` contains the word "crew" **zero** times.
+- Only four daemon files reach into keeper at all, and every call is read-only or a name resolver:
+  `crewstart.go` (`LiveKeeperPresent`), `quiesce.go` (`ResolveTmuxTarget`, `HarmonikSessionName`),
+  `statedisk.go` and `stategather.go` (`ReadCtxFile`, `ReadSessionIDFile`). The crew one is already
+  behind an injectable seam.
+
+**What actually couples keeper and crew is a file protocol, not code:** the markers under
+`.harmonik/keeper/` (`.managed`, the flock `.lock`, `.ctx`, `.sid`, `.idle`, `.dispatching`,
+`.hold.<sid>`) plus the tmux session and window names. Freeze that set and the two can be worked
+independently, in either order.
+
+**What the workstream would have to include:** `internal/keeper` (8,163 production lines, 18 files),
+its CLI (`keeper_cmd.go`, `keeper_enable_doctor_cmd.go`, `resolve_keeper_config.go` — about 3,300
+lines, and where the staged config assembly actually happens), and the four embedded shell hooks (412
+lines) that write the gauge the Go watcher only reads. The named tangles are `WatcherConfig` (**63
+fields**, mutated in place by `applyDefaults`), `CyclerConfig` (**56 fields**, about 20 of them
+function-pointer seams that duplicate the `ports.go` interfaces — two parallel seam systems over the
+same behaviour), and `(*Watcher).Run` at **531 lines** inside an otherwise well-decomposed file.
+`internal/keepertwin` and `internal/keepertest` bind to the pure reactor in `step.go` and are the
+safety net that makes this affordable.
+
+**Why it is marked sequel work and not folded into the core.** `CHARTER.md` §3 puts the keeper outside
+the core set by operator decision, and §6 says nothing else is required to declare the core done.
+Scheduling it before step 15 would be adding to the core set, which §3 says needs a reason. **The
+evidence above is the reason it is now cheap and safe to schedule — it is not a reason to schedule it
+early.** If the operator wants it moved ahead of step 15, that is a charter change, and it should be
+made as one.
+
+**One thing worth taking from the keeper before then, in the other direction.** `step.go` / `cycle.go` /
+`shell.go` / `ports.go` are a working functional-core-and-shell split, and four files in
+`internal/daemon` and `internal/runloop` already carry comments naming `internal/keeper/ports.go` as
+the idiom they mirror. `PRINCIPLES.md` §8 says to find the subsystem that already embodies the target
+and make the rest of the tree look like it. **That subsystem is the keeper.** Steps 10 and 14 should
+read it before designing anything.
+
+### The shape of what is left, in one table
+
+| Step | What it is | Size | Risk | Depends on | Move or design |
+|---|---|---|---|---|---|
+| 9 | Repair the scratch-daemon default and make a live pass the per-step acceptance check | ~2 days | low | nothing | neither — it is the oracle |
+| 10 | Replace the 81-field `workLoopDeps` and the 22-field `bootState` with constructed units | ~800 lines | medium | steps 2–6 | **design** |
+| 11 | Make the queue store the only writer of queue status | ~400 lines | medium | step 4 | **design** |
+| 12 | Give the nine ungated bus consumers and the six unswitched subsystems their own switches | ~600 lines | low | step 10 | move, with 2 decisions |
+| 13 | One definition per event payload, and make replay decode what the core emits | ~300 lines | medium | nothing | **design** + a spec amendment |
+| 14 | Replace 16 substrate capability assertions with a declared contract | ~250 lines | medium | step 10 | **design** |
+| 15 | Split `internal/daemon` along the boundary steps 10 and 12 produce | large | low | steps 10, 12 | move |
+| 16 | The keeper — separable from crew, outside the charter's core set | ~11,500 lines | medium | nothing technical | move + design |
+
+**Honest read on how much is left:** steps 9–15 are on the order of 2,400 lines of production change
+over a 42,000-line package, and three of the seven are designs rather than transcriptions. The line
+count is not the cost. **Steps 10, 11, 13 and 14 each need a decision before they can start**, and this
+program's record is that it runs out of decisions rather than lines. D1 is the case in point in both
+directions: it blocked step 7 from the day the map was written until 2026-07-30, and when it was
+finally read against the code the answer turned out to be already built. **Ask whether a decision is
+still open before waiting on it.**
+
 ### What must NOT move, and why
 
 - **`workLoopDeps` field-by-field.** Do not "clean up" the 81-field bundle in place. It is assembled

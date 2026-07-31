@@ -7,10 +7,10 @@ spec-id: session-keeper
 requirement-prefix: SK   # reserve in specs/_registry.yaml at landing (same commit as this spec)
 status: draft
 spec-shape: requirements-first
-version: 0.2.0
+version: 0.2.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-14
+last-updated: 2026-07-30
 depends-on:
   - replay-substrate
   - event-model
@@ -69,7 +69,7 @@ Tags: mechanism
 
 #### SK-002 — PanePort follows PL-021d; Capture is keeper-only
 
-`PanePort` is the tmux write/read boundary. Its `Inject` method MUST follow the `tmux load-buffer` + `paste-buffer` write discipline of [process-lifecycle.md §4.7 PL-021d]; the bare `send-keys` form is FORBIDDEN for injected payloads. `PanePort.Capture` (pane read via `capture-pane`) is keeper-scoped: it MUST NOT be extended into the daemon's process-spawn path. [process-lifecycle.md §4.7 PL-021b] §5 forbids the daemon the `pipe-pane` bridge side-channel specifically (the daemon's own `logs` uses `capture-pane`, `process-lifecycle.md:958`); `PanePort` MUST remain consistent with the PL-021b process-spawn seam without rebuilding the daemon side.
+`PanePort` is the tmux write/read boundary. Its `Inject` method MUST follow the `tmux load-buffer` + `paste-buffer` write discipline of [process-lifecycle.md §4.7 PL-021d]; the bare `send-keys` form is FORBIDDEN for injected payloads. `PanePort.Capture` (pane read via `capture-pane`) is keeper-scoped: it MUST NOT be extended into the daemon's process-spawn path. [process-lifecycle.md §4.7 PL-021b] §5 forbids the daemon the `pipe-pane` bridge side-channel specifically (the `harmonik supervise logs` verb uses `capture-pane`, per [process-lifecycle.md §PL-028d]); `PanePort` MUST remain consistent with the PL-021b process-spawn seam without rebuilding the daemon side.
 
 NOTE (M2 agent-input-substrate carve-out): [process-lifecycle.md §4.7 PL-021d] is DEMOTED for the daemon RUN input path (superseded by [agent-input.md] AIS for daemon-spawned agent runs), but is PRESERVED for the keeper. `PanePort.Inject`'s conformance to the load-buffer + paste-buffer discipline is UNCHANGED by that demotion: the keeper is off-daemon, holds no `SubstrateSession` handle, and drives interactive panes it did not spawn, so it is explicitly EXCLUDED from the C6 deletion boundary that retires the daemon run input stack. The `load-buffer`/`paste-buffer`/`send-keys` tmux verbs keeper depends on MUST survive that deletion.
 
@@ -510,7 +510,7 @@ The only path that never sends `/clear` — the `AwaitingHandoff` `handoff_timeo
 
 ### 10.2 Test-surface obligations
 
-- The full ~55-file keeper suite (including `TestKeeperConformance`, `conformance_keeperx_test.go`, `conformance_keeper_integration_test.go`) stays green at every migration step (SK-016, SK-017 prove parity). Cite [scenario-harness.md] cadence tiers once available.
+- The full keeper suite stays green at every migration step (SK-016, SK-017 prove parity). The two named conformance sensors are `TestKeeperConformanceCorpus_Integration` (`internal/keeper/conformance_keeper_integration_test.go`) and `TestKeeperConformanceMigration` (`cmd/harmonik/conformance_keeper_migration_test.go`). A third file, `conformance_keeperx_test.go`, was deleted and nothing replaced it. Cite [scenario-harness.md] cadence tiers once available.
 - The existing causal harness and scenario suites, re-wired as `SyntheticSource[keeper.Event]` + `FakeEffector[keeper.Action]`, become the golden Step-sequence corpus: injected-command-order assertions map 1:1 onto action-log assertions (SK-009).
 - Property tests over the frozen corpus (`baseline-2026-07-13`, 507 cycles) plus the four fault modes prove SK-INV-001…SK-INV-005 (SK-020); the permanent L1 net is the golden-vs-`summary.json` corpus test.
 - The old-vs-new differential (transition scaffold) proves SK-018 and SK-019 with the permitted-divergence allowlist; it is deleted only after the `StimulusSynthesizer` decision table is frozen and reviewed against a green differential.
@@ -532,6 +532,7 @@ None blocking.
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-30 | 0.2.1 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
 | 2026-07-13 | 0.1.0 | foundation-author | Initial draft — session-restart vertical: five ports (SK-001…SK-007), ClockPort migration (SK-008), pure Step reactor + timers-as-events + gate ladder (SK-009…SK-011), four durable interior events (SK-012…SK-013), model-done signal (SK-014), bounded liveness (SK-015), behavior parity (SK-016…SK-018), baseline anchor (SK-019), verification obligation (SK-020); SR3/SR4/SR6/SR7/SR9 as SK-INV-001…SK-INV-005; Step transition table and model-done detection protocol; terminal/abort taxonomy. |
 | 2026-07-14 | 0.2.0 | foundation-author | M2 agent-input-substrate carve-out (D6/C6/A11): appended the PL-021d keeper carve-out NOTE to SK-002 prose (PL-021d demoted-for-daemon-run-but-preserved-for-keeper; `PanePort.Inject` unchanged; keeper EXCLUDED from the C6 deletion boundary; keeper's load-buffer/paste-buffer/send-keys verbs MUST survive); §9.1 PL-021d "Depends on" clause noting the demoted-not-deleted survival; new deferred requirement SK-021 (§4.10) — keeper input MAY migrate to a session-id-keyed leaf-package port / daemon RPC, with the normative MUST-precondition gating any C6 teardown — plus its §11 deferred-register pointer. No SK renumbering; SK-002 interface block untouched. |
 ```

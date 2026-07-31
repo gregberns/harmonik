@@ -8,10 +8,10 @@ requirement-prefix: RSM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.2.1
+version: 0.2.2
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-27
+last-updated: 2026-07-30
 depends-on:
   - replay-substrate
   - event-model
@@ -106,13 +106,48 @@ or sustain the working state.
 ### 3.3 The Run machine
 **RSM-007.** The Run machine MUST express one bead run as the states
 `Resolving → Provisioning → Dispatching → [Guarding] → Gating → Merging → Finalizing →
-Done{closed | reopened}`, with the workflow-mode fork (review-loop, DOT cascade, single-shot)
+Done{closed | reopened}`, with the workflow-mode fork (DOT cascade, single-shot)
 driving one or more Dispatch instances from the `Dispatching` state.
 
 **RSM-008.** The single-shot path's post-exit guards — the escaped-worktree check and the
 no-commit-guard — MUST run in a `Guarding` state between `Dispatching` and `Gating`, and MUST
-execute mutually exclusively with the merge critical section (§6). The review-loop and DOT
-paths MUST NOT enter `Guarding` (they do not run those guards).
+execute mutually exclusively with the merge critical section (§6). The DOT path MUST NOT enter
+`Guarding` (it does not run those guards).
+
+> **OPEN — RSM-008 guard coverage. This needs an operator decision (raised 2026-07-30).**
+>
+> The obligation above is unchanged and stays as written. The only edit was to the pointer: the
+> retired `review-loop` mode was removed from the list of paths, because that mode no longer
+> exists. The question the rule raises is still open, and a citation sweep must not settle it.
+>
+> **What the rule means in production.** RSM-008 makes two safety checks — "did the agent write
+> files outside its workspace" and "did the agent commit anything" — run only on the single-shot
+> path. The graph path skips both. Almost every run takes the graph path. A count of the local
+> event log on 2026-07-30 found 866 runs that started on `dot` against 2 that started on
+> `single`. So both checks are close to dead code in practice, even though the spec presents them
+> as protection.
+>
+> **What the code does today.** `WireSpine` in `internal/runloop/runbridge.go` binds the
+> `CheckEscape` effect to a function that returns the `EvGuardsPassed` event and nothing else. The
+> `Guarding` state therefore records a pass without running a check. The action kind
+> `ActCheckEscape` still exists in `internal/runexec/vocab.go`. The real guards stay imperative in
+> `beadRunOne` in `internal/daemon/workloop.go` on the single path.
+>
+> **Option A — amend the rule so the guards run on the graph path.** This restores the protection
+> the spec claims. The cost is that runs which pass today would start to fail, and nobody can say
+> how many until it ships.
+>
+> **Option B — leave the rule alone and stop describing these checks as protection.** This keeps
+> today's behavior. The cost is real. The escape guard was built for a real observed failure: an
+> implementer wrote files into the main working tree instead of its own worktree (hk-6zylj). That
+> failure mode is not prevented on the graph path today.
+>
+> **Evidence that argues against shipping option A unchanged.** The escaped-worktree check has a
+> known false-failure mode. A working tree that stays dirty for an unrelated reason trips the
+> `implementer_escaped_worktree` detector, and the detector then fails dispatched beads that did
+> nothing wrong (hk-yru). AGENTS.md repeats this as a standing trap. Extending that check as it
+> stands would put a guard with a known false-positive mode onto the path that carries nearly all
+> the traffic. If option A is chosen, the false-failure mode should be fixed first.
 
 **RSM-009.** Every pre-launch failure (configuration, branching, remote setup, worktree
 creation) MUST route to `Finalizing(reopen)`; the terminal spine (§7), not scattered returns,
@@ -345,8 +380,8 @@ path MUST meet the measured coverage floor from the coverage audit.
 **RSM-031 (the failed-Dispatch → reopen edge).** A single-mode Dispatch instance that reaches a
 failure-class terminal (`Failed`, `Stalled`, `Exited`-with-abort, or `Aborted`) MUST be mapped
 onto the Run machine's reopen spine by the shell synthesizing a mode-outcome event —
-`EvModeOutcome{ModeOutcome: failure}` — exactly as the review-loop and DOT sub-drivers surface
-their returns (RSM-011: "the run outcome MUST be surfaced … as a terminal event"). Single-shot
+`EvModeOutcome{ModeOutcome: failure}` — exactly as the DOT sub-driver surfaces its returns
+(RSM-011: "the run outcome MUST be surfaced … as a terminal event"). Single-shot
 is a workflow mode; its sub-driver is one Dispatch instance, and its failure is a mode failure.
 The Run machine MUST NOT gain a separate dispatch-failure event kind, and the Dispatch machine
 MUST NOT gain knowledge of the Run machine. In `Dispatching`, `EvModeOutcome{failure}` is
@@ -358,13 +393,13 @@ for an event-classified failure MUST be carried on the triggering event's payloa
 the `ReopenBead` reason string; `Detail` = the run-terminal summary string), NOT derived from
 static `RunConfig`. The `RunConfig` templates (`ReopenReason`, `CloseSummary`,
 `BrUnavailableSummary`, `NoMergeCloseSummary`) remain the fallback when the event carries no
-string, preserving RT6 behavior for the review-loop/DOT paths until their own re-drives. This
+string, preserving RT6 behavior for the DOT path until its own re-drive. This
 applies to: `EvModeOutcome{failure}`, `EvGateFailed`, `EvEscapeDetected`,
 `EvNoCommitGuardReopen`, `EvMergeResult{fatal|exhausted}`, `EvCloseResult{error}`, and
 `EvProvisionFailed`. The last covers every pre-launch/provisioning failure that
 `stepRunResolving`/`stepRunProvisioning` route to the reopen spine — the launch-spec build error
-(`build launch spec error: %v`, workloop.go ~:4346), the D2 API-key refusal (`remote run:
-ANTHROPIC_API_KEY in spawn env (D2 fail-closed)`, ~:4376), worktree-create failures, and the
+(`build launch spec error: %v`, `internal/daemon/workloop.go` `beadRunOne`), the D2 API-key
+refusal (the `d2APIKeyRefusal` constant in the same file), worktree-create failures, and the
 prepareRun guard failures — all of which interpolate runtime strings that today's
 `finalizeReopen(cfg, s, nil)` → static `cfg.ReopenReason` cannot reproduce; `EvProvisionFailed`
 MUST therefore carry its `Reason`/`Detail` payload like the other failure events. The machine
@@ -384,8 +419,9 @@ failure reproduces its distinct `code-sync failed (<label>): …` reopen reason 
 on the P13/P18 spine are exactly: `agent_ready_timeout`, the code-sync failure, the merge
 failure, the gate failure, the escaped-worktree guard, the no-commit guard, `noChange-timeout`,
 and the never-spawned-reaper abort (`never_spawned_reaper: launch_initiated but agent_ready not
-received within deadline`, workloop.go ~:5071) — the last surfaced mechanically via RSM-031's
-`Aborted` dispatch-terminal class carrying its reason on payload, no distinct edge required.
+received within deadline`, the `abortReason` constant in `internal/daemon/workloop.go`
+`beadRunOne`) — the last surfaced mechanically via RSM-031's `Aborted` dispatch-terminal class
+carrying its reason on payload, no distinct edge required.
 
 **RSM-034 (rejected-outcome pairing).** The gate-failure, code-sync-failure, and merge-failure
 reopens MUST be preceded by an `outcome_emitted=rejected` emission carrying the classified
@@ -426,4 +462,5 @@ subsumed path, which passes no flag).
 
 | Date | Version | Author | Change |
 |------|---------|--------|--------|
+| 2026-07-30 | 0.2.2 | agent (spec citation cleanup) | **Rotted pointers repaired. No obligation changed.** The workflow mode `review-loop` was retired and its driver deleted, so `core.WorkflowMode.Valid()` now accepts only `single` and `dot`. The retired mode is removed from the mode lists in RSM-007, RSM-008, RSM-031 and RSM-032. What each of those rules requires is unchanged. Three approximate line-number citations into `workloop.go` are replaced by symbol names (`beadRunOne`, the `d2APIKeyRefusal` constant, the `abortReason` constant), per the repo convention to cite symbols and never line numbers. RSM-008 also gains an OPEN note that records a question the sweep found but must not settle: the rule confines both post-exit guards to the single-shot path, almost all runs take the graph path, and the choice between extending the guards and dropping the protection claim belongs to the operator. References to the event `review_loop_cycle_complete` and to the review-loop-failure budget are left alone, because `core.EventTypeReviewLoopCycleComplete`, `ChargeReviewLoopFailure` and `MaxReviewLoopFailures` all still exist. |
 | 2026-07-27 | 0.2.1 | agent (codename: input-ack-contract) | **Input-ack consumption reconciled with the owner contracts (coordinated drift correction; co-landed with [agent-input.md] 0.1.1 and [handler-contract.md] 0.8.1).** RSM-027 carried a three-valued acceptance class (`Accepted` / `Rejected` / `Degraded`) that never existed in the owner specs: the `Ack` outcome landed BINARY (`Delivered` / `Rejected`) in AIS-003 / HC-070 the day after this spec, with positive acceptance decoupled onto the async `agent_input_acked` event. RSM-027 is amended in place (NOT renumbered) to consume that contract: `Ack{Delivered}` is a driver handoff that leaves positive acceptance pending; `Ack{Rejected}` fail-closes to RSM-025; the correlated `agent_input_acked` is the positive-acceptance event; the correlated `agent_input_stale` fail-closes to RSM-025. The four routes are stated as total. The `input_seq` consumption rule is made explicit — consume the first synchronous outcome once, then the first correlated asynchronous terminal wins; drop only repeated or late observations, never the first `agent_input_acked`; add no second timer. RSM-024's resume-seed bullet is reconciled so a `Delivered` return alone no longer satisfies the sub-bound, citing AIS-003 + AIS-004 + AIS-INV-001 as the composite authority. RSM-027 also names the run-level backstop for a `Delivered` whose async terminal never arrives: the already-composed RSM-024 timer stack (ready sub-bound, `post_ready_hang`, absolute commit-watchdog ceiling) routing to RSM-025 — NOT a new input timer. The correlation bullet also attributes the sequence id to AIS-003b and its serialized `input_seq` payload field name to [event-model.md §6.3], keeping this spec clear of the event payload. `Accepted`, `Degraded`, and the "three-valued acceptance class" are removed. No requirement renumbered; no port, `Ack` record, event schema, timer semantics, or production behaviour changed. |

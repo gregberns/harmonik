@@ -69,8 +69,9 @@ DGX/ornith. With no override supplied, resolution yields today's
 1. **Named-profile registry.** A config `harnesses.pi.profiles:` map of named
    `{provider, model, api_key_env, api_key_file, base_url, api}` bundles, selected
    per-bead by a `profile:<name>` bead label (mirroring the existing `model:` label
-   path at `modelpreference.go:166`). Chosen over raw per-field bead overrides
-   because the wire-format triple (provider+base_url+api) and the fail-closed
+   path at `internal/daemon/modelpreference.go` `labelPrefixModel`). Chosen over raw
+   per-field bead overrides because the wire-format triple (provider+base_url+api)
+   and the fail-closed
    credential invariant must travel as one atomic unit; raw per-field overrides
    fragment both.
 2. **`model:` + `profile:` precedence — option (b): `model:` overrides ONLY the
@@ -113,23 +114,26 @@ config profiles: map            bead profile:<name> label
         |                                  v
         +---------→ [C3 resolvePiProfile] runs AFTER resolveHarnessAgentTypeQuiet
                      (hk-pkugu), keyed off resolvedAgentType (pi family only)
-                          |  writes tuple into claudeRunCtx (claudelaunchspec.go:50)
+                          |  writes tuple into shared.LaunchCtx
+                          |  (internal/harness/shared/launchctx.go)
                           v
-              harnessregistry.go:240-264  — projects claudeRunCtx → RunCtx literal
+              buildCodexRoutedLaunchSpec (internal/daemon/harnessregistry.go)
+                          |  — projects shared.LaunchCtx → RunCtx literal
                           |  (C1 fields on handlercontract.RunCtx; zero-value = no-override)
                           v
-              PiHarness.LaunchSpec (C4)  — rc.X override else h.X fallback, per field
+              pi.Harness.LaunchSpec (C4)  — rc.X override else h.X fallback, per field
                           |  (tuple arrives populated & coupled from C3)
                           v
-              piRunCtx → buildPiLaunchSpec / buildPiEnv / buildPiModelsJSON
+              pi.RunCtx → pi.BuildLaunchSpec / buildPiEnv / buildPiModelsJSON
                           |  (ALREADY tuple-complete — no change below this line)
                           v
                      pi --mode json --provider .. --model ..  (+ models.json if base_url)
 ```
 
 ### Build order (dependency DAG: `C1→C3`, `C2→C3`, `C1→C4`, `{C3,C4}→C5`, `{C3,C4}→C6`)
-0. **Prereq:** verify hk-pkugu (`resolveHarnessAgentTypeQuiet`,
-   `workloop.go:3077-3082`) is in place.
+0. **Prereq:** verify hk-pkugu is in place. The resolver is
+   `resolveHarnessAgentTypeQuiet` in `internal/daemon/harnessresolve.go`. The claim
+   path calls it from `internal/daemon/workloop_runplan.go` `resolveRunPlanHarness`.
 1. **C1** (struct contract) — before C3/C4 use it.
 2. **C2** (config + validation) — before C3 resolves profiles. May run parallel to C1.
 3. **C4** (LaunchSpec override) — after C1; parallel to C2/C3.
@@ -141,7 +145,7 @@ config profiles: map            bead profile:<name> label
 ## 5. C1 — RunCtx tuple contract
 
 **File:** `internal/handlercontract/harness.go` (the `RunCtx` struct, after the
-`Effort` field at line 143).
+`Effort` field).
 
 Add exactly five `string` fields, named to match the `PiHarness` struct field
 spelling exported to Go-public form (so C4 reads as a straight copy), each with an
@@ -189,13 +193,13 @@ literals; new fields default to `""`.
 
 ## 6. C2 — Named-profile config + resolver
 
-**Files:** `internal/daemon/projectconfig.go` (config structs);
+**Files:** `internal/projectconfig/projectconfig.go` (config structs);
 `cmd/harmonik/resolve_pi_config.go` (validation — MUST live here because depguard
 bans `internal/*` importing `internal/daemon`, and the resolver already lives in
 `cmd/harmonik` for exactly this reason).
 
-### Config structs (`internal/daemon/projectconfig.go`)
-Raw layer (beside `rawHarnessesPiConfig`, `:789-797`):
+### Config structs (`internal/projectconfig/projectconfig.go`)
+Raw layer (beside `rawHarnessesPiConfig`):
 ```go
 type rawHarnessesPiProfileConfig struct {
     Provider   string `yaml:"provider"`
@@ -209,7 +213,7 @@ type rawHarnessesPiProfileConfig struct {
 Add `Profiles map[string]rawHarnessesPiProfileConfig \`yaml:"profiles"\`` to
 `rawHarnessesPiConfig`.
 
-Typed layer (beside `PiHarnessConfig`, `:823-854`):
+Typed layer (beside `PiHarnessConfig`):
 ```go
 type PiProfileConfig struct {
     Provider   string
@@ -229,17 +233,20 @@ here).
 validation share one implementation (avoids drift; guarded by
 `resolve_pi_config_test.go` staying green — C6):
 - `validatePiBaseURL(field, baseURL string) error` — the `url.Parse` / non-empty
-  Scheme+Host / ≤512 logic inline at `:171-185`.
+  Scheme+Host / ≤512 logic inline in the top-level `base_url` block of
+  `ResolvePiConfig`.
 - `resolvePiAPIKeyFile(field, apiKeyFile string) (expanded string, err error)` — the
-  `expandHomePath` + `os.ReadFile` + `TrimSpace` non-empty logic at `:144-166`.
+  `expandHomePath` + `os.ReadFile` + `TrimSpace` non-empty logic in the top-level
+  `api_key_file` block of `ResolvePiConfig`.
 Rewrite the existing top-level `base_url` and `api_key_file` blocks to call these.
 
 **Step 2 — per-profile validation loop** in `ResolvePiConfig`, after top-level
 validation, for each `name, prof := range cfg.Profiles`:
 1. **Missing-key aggregation** into the SAME `missing []string` slice feeding
-   `PiConfigMissingError` (mirror `:109-138`; because the map key's presence means
-   the profile is present, provider/model/api_key_env are all required — same rule
-   as the fallback block at `:122-132`): append
+   `PiConfigMissingError` (mirror the missing-value gate at the head of
+   `ResolvePiConfig`; because the map key's presence means the profile is present,
+   provider/model/api_key_env are all required — same rule as the `fallback` block
+   inside that gate): append
    `harnesses.pi.profiles.<name>.provider` / `.model` / `.api_key_env` as absent.
 2. **Shape validation** (opacity — shape only, NO allowlist): call
    `validatePiModelShape("harnesses.pi.profiles.<name>.model", prof.Model)` AND
@@ -254,8 +261,9 @@ validation, for each `name, prof := range cfg.Profiles`:
 
 Keep the missing-value gate FIRST (aggregate top-level + all profiles' missing keys,
 return before any shape/file/url check) to preserve the "aggregate ALL missing keys
-before any other failure" contract at `:135-138`. Write the resolved profiles map
-(expanded APIKeyFile paths) back onto `daemon.PiHarnessConfig.Profiles`.
+before any other failure" contract that the `PiConfigMissingError` return at the end
+of that gate carries. Write the resolved profiles map (expanded APIKeyFile paths)
+back onto `projectconfig.PiHarnessConfig.Profiles`.
 
 **Requirements.** (1) Config accepts a map of named profiles; empty/absent map valid.
 (2) Shape-only validation; NO provider allowlist (opacity). (3) `base_url` set but
@@ -281,12 +289,13 @@ depguard stays green.
 ## 7. C3 — Claim-time per-bead profile resolver (the crux)
 
 **Files:** `internal/daemon/modelpreference.go` (or a new sibling
-`pi_profile_resolve.go`); `internal/daemon/workloop.go` (`:3082-3091, 4052`);
-`internal/daemon/claudelaunchspec.go` (`:21-50`);
-`internal/daemon/harnessregistry.go` (`:240-264`).
+`pi_profile_resolve.go`); `internal/daemon/workloop_runplan.go`
+(`resolveRunPlanHarness`); `internal/daemon/workloop.go` (`beadRunOne`, the
+`shared.LaunchCtx` literal); `internal/harness/shared/launchctx.go` (`LaunchCtx`);
+`internal/daemon/harnessregistry.go` (`buildCodexRoutedLaunchSpec`).
 
 ### 7.1 Label constant + resolver
-Add beside `labelPrefixModel` (`modelpreference.go:166`):
+Add beside `labelPrefixModel` in `internal/daemon/modelpreference.go`:
 ```go
 // labelPrefixProfile is the label prefix for per-bead Pi provider-profile
 // selection (pi-provider-switch). E.g. `profile:ornith-dgx`.
@@ -308,18 +317,22 @@ Logic:
 1. **Harness gate (hk-pkugu, load-bearing).** If `agentType != core.AgentTypePi`,
    return the zero `PiProfileConfig` immediately — no lookup, no error (quiet,
    non-fatal; optionally emit an observability event but do NOT fail). This is the
-   no-leak guard. The predicate is the concrete `core.AgentTypePi` constant (used at
-   `harnessregistry.go:64`, `workloop.go:4094/4837`, `dot_cascade.go`), NOT a "family"
-   test.
-2. **Collect** all labels with `labelPrefixProfile` (mirror `:212-218`).
+   no-leak guard. The predicate is the concrete `core.AgentTypePi` constant (used in
+   `internal/daemon/harnessregistry.go` `newHarnessRegistry`, in
+   `internal/daemon/workloop.go` `beadRunOne`, and on the DOT path in
+   `internal/daemon/dot_cascade_core.go`), NOT a "family" test.
+2. **Collect** all labels with `labelPrefixProfile` (mirror the tier-1 collect loop
+   in `resolveModelField`).
 3. **Count:**
    - `== 1`: `name := strings.TrimPrefix(...)`. Look up `piCfg.Profiles[name]`.
      **Existence check (fail-loud):** absent name → return an error naming the
      unknown profile and the bead (the C2→C3 contract). Otherwise return the found
      `PiProfileConfig`. NAME value never re-validated (opacity).
    - `> 1`: conflict — `emitBeadLabelConflict` (reuse existing helper), treat as
-     absent, return zero tuple (mirror `:225-232`).
-   - `== 0`: absent, zero tuple, no event (mirror `:233`).
+     absent, return zero tuple (mirror the multi-label branch in
+     `resolveModelField`).
+   - `== 0`: absent, zero tuple, no event (mirror the zero-label fall-through in
+     `resolveModelField`).
 
 ### 7.2 `model:` vs `profile:` precedence (LOCKED — encode exactly)
 Option (b): `model:` overrides ONLY the profile's model field. After both
@@ -337,8 +350,14 @@ Option (b): `model:` overrides ONLY the profile's model field. After both
 The wire-format triple + credentials come atomically from the profile and are NEVER
 split. When NO profile is present, model resolution is byte-identical to today (C6).
 
-### 7.3 Claim-time wiring (`workloop.go:3082-3091, 4052`)
-After `resolvedAgentType` (`:3082`) and `ResolveModelPreference` (`:3090`):
+### 7.3 Claim-time wiring
+Two sites carry this hop. The resolver call goes in
+`internal/daemon/workloop_runplan.go` `resolveRunPlanHarness`. The tuple is then
+seated in the `shared.LaunchCtx` literal in `internal/daemon/workloop.go`
+`beadRunOne`.
+
+After `resolveHarnessAgentTypeQuiet` and `ResolveModelPreference` in
+`resolveRunPlanHarness`:
 ```go
 resolvedProfile, profErr := resolvePiProfile(
     ctx, beadRecord.Labels, resolvedAgentType,
@@ -350,9 +369,10 @@ if profErr != nil {
     //   deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg,
     //       runID, reopenTID, beadID, profErr.Error())
     //   return
-    // (workloop.go: see the CrossRepoUnsafeError block at ~:3110 and the
-    // resolveParentCommit StartFromRefError block at ~:3140 for the exact shape:
-    // stderr log + ReopenBead with the error as reason + early return.) The bead is
+    // (see the CrossRepoUnsafeError and resolveParentCommit StartFromRefError
+    // refusals in internal/daemon/workloop_runplan.go resolveRunPlanPlace for the
+    // exact shape: stderr log + ReopenBead with the error as reason + early
+    // return. refuseRunPlan in that file performs the report and the reopen.) The bead is
     // reopened (NOT left in_progress, NOT launched on an empty/wrong tuple). The
     // implementer MUST cite this seam. The C5 corpus adds an end-to-end test
     // asserting the WORKLOOP refuses to launch (no LaunchSpec built) for an
@@ -370,8 +390,8 @@ exactly-one test; false for both 0 and >1 labels ⇒ coalesce to `profile.Model`
 locked observable precedence is unchanged: `model:` overrides ONLY the profile's model
 field; the wire-format triple + credentials stay atomic from the profile.
 
-At `workloop.go:4052-4053`, seat the five tuple fields into `claudeRunCtx` beside
-`model`/`effort`:
+In the `shared.LaunchCtx` literal in `internal/daemon/workloop.go` `beadRunOne`, seat
+the five tuple fields beside `model`/`effort`:
 ```go
 model:      resolvedModel,   // now possibly profile.Model (see precedence)
 effort:     resolvedEffort,
@@ -382,7 +402,8 @@ baseURL:    resolvedProfile.BaseURL,
 api:        resolvedProfile.API,
 ```
 
-### 7.4 `claudeRunCtx` struct (`claudelaunchspec.go:21-50`)
+### 7.4 The launch DTO struct — `shared.LaunchCtx` (`internal/harness/shared/launchctx.go`)
+This struct was named `claudeRunCtx` and lived in `internal/daemon/claudelaunchspec.go`.
 Add five fields beside `model`/`effort` (doc: "per-bead Pi provider tuple; empty ⇒
 harness-global default (C4 fallback)"):
 ```go
@@ -393,8 +414,8 @@ baseURL    string
 api        string
 ```
 
-### 7.5 Projection onto `RunCtx` (`harnessregistry.go:240-264`)
-Add to the `handlercontract.RunCtx{...}` literal beside `Model: rc.model` (`:258`):
+### 7.5 Projection onto `RunCtx` (`internal/daemon/harnessregistry.go` `buildCodexRoutedLaunchSpec`)
+Add to the `handlercontract.RunCtx{...}` literal beside the `Model` field:
 ```go
 Provider:   rc.provider,
 APIKeyEnv:  rc.apiKeyEnv,
@@ -406,8 +427,9 @@ BOTH the struct edit (7.4) and this projection edit are required — missing eit
 the tuple never reaches `LaunchSpec`.
 
 ### 7.6 DOT-path survival (verify, likely no code change)
-The DOT cascade (`dot_cascade.go:1274-1281`) re-resolves `node.Model`/`effort` per
-node but does NOT touch the provider tuple; it rides `claudeRunCtx` unchanged. No DOT
+The DOT cascade (`internal/daemon/dot_cascade_core.go` `dispatchDotAgenticNode`, the
+per-node `shared.LaunchCtx` literal) re-resolves `node.Model`/`effort` per
+node but does NOT touch the provider tuple; it rides `shared.LaunchCtx` unchanged. No DOT
 code change is expected, but the C5 no-leak scenario MUST include a DOT-path variant
 (locked C3-Q5) proving the tuple survives unclobbered. If the variant reveals a
 reset, add a guard mirroring `nodeModelForHarness`.
@@ -431,12 +453,13 @@ that the resolver errors). (6) `>1` `profile:` labels → `bead_label_conflict`,
 
 ## 8. C4 — PiHarness.LaunchSpec tuple override
 
-**File:** `internal/daemon/piharness.go` (`LaunchSpec`, `:125-156`).
+**File:** `internal/harness/pi/harness.go` (`Harness.LaunchSpec`; this file was
+`internal/daemon/piharness.go`).
 
 Today only `model` has the override shape (`model := h.model; if rc.Model != "" {
-model = rc.Model }`, `:126-129`); the other five hard-read `h.*` at `:134-139`. Give
+model = rc.Model }`); the other five hard-read `h.*` in the same body. Give
 each the identical `x := h.x; if rc.X != "" { x = rc.X }` shape reading the new C1
-`RunCtx` fields, then feed the picked values into the `piRunCtx` literal:
+`RunCtx` fields, then feed the picked values into the `pi.RunCtx` literal:
 ```go
 provider := h.provider
 if rc.Provider != "" { provider = rc.Provider }
@@ -448,14 +471,14 @@ baseURL := h.baseURL
 if rc.BaseURL != "" { baseURL = rc.BaseURL }
 api := h.api
 if rc.API != "" { api = rc.API }
-// ...feed provider/apiKeyEnv/apiKeyFile/baseURL/api into the piRunCtx literal
+// ...feed provider/apiKeyEnv/apiKeyFile/baseURL/api into the pi.RunCtx literal
 // instead of h.*
 ```
 (A small `pick(rcVal, hVal string) string` helper is acceptable.) **No change** to
-`NewPiHarness`, the struct, `newHarnessRegistry`, or anything below the `piRunCtx`
-literal — the daemon-global singleton stays the fallback source; the plumbing below
-(`piRunCtx`, `buildPiLaunchSpec`, `buildPiEnv`, `buildPiModelsJSON`) is already
-tuple-complete.
+`pi.NewHarness`, the `pi.Harness` struct, `newHarnessRegistry`, or anything below the
+`pi.RunCtx` literal — the daemon-global singleton stays the fallback source; the
+plumbing below (`pi.RunCtx`, `pi.BuildLaunchSpec`, `buildPiEnv`, `buildPiModelsJSON`,
+all in `internal/harness/pi/launchspec.go`) is already tuple-complete.
 
 **Coupling invariant (state, do not enforce mid-launch):** provider + base_url + api
 arrive coupled from C3 (one profile); C4 copies them through together and introduces
@@ -466,16 +489,18 @@ Wire-format coupling honored (no provider-from-rc / api-from-h split). (3) Overr
 `apiKeyEnv` re-runs the `buildPiEnv` fail-closed strip keyed on the NEW key — only
 that provider's key injected, siblings `KEY=`. (4) Overridden `baseURL` on an initial
 turn ⇒ `buildPiModelsJSON` generates models.json for the new endpoint; resume turns
-reuse prior session's config (initial-turn-only, `:300`). (5) Billing guard
-(`:281-289`) refuses launch before agent_ready if the overridden provider's key is
-absent/empty.
+reuse prior session's config (the base_url passthrough block in `pi.BuildLaunchSpec`
+runs only when `PriorSessionID` is nil). (5) The billing guard
+(`runPiBillingGuard`, `internal/harness/pi/billingguard.go`, called from
+`pi.BuildLaunchSpec`) refuses launch before agent_ready if the overridden provider's
+key is absent/empty.
 
 **Acceptance.** rc tuple wins over `h.*`; empty rc falls back per field; ornith rc
 (base_url + openai-completions) produces the loopback models.json + correct argv;
 overridden apiKeyEnv strips siblings and injects only the selected key; missing key ⇒
 refused.
 
-**Tests** (`internal/daemon/pilaunchspec_test.go`, template
+**Tests** (`internal/harness/pi/launchspec_test.go`, template
 `TestPiHarness_BaseURL_ProductionPath_*`):
 `_LaunchSpec_RCTupleOverridesGlobal`, `_LaunchSpec_EmptyRCFallsBackToGlobal`
 (shared with C6), `_LaunchSpec_OverriddenAPIKeyEnv_StripsSiblings`,
@@ -563,7 +588,7 @@ registration, assertion wiring, `scenario-gate.sh` pickup).
 
 ## 10. C6 — Backward-compat regression pin
 
-**File:** `internal/daemon/pilaunchspec_test.go` (or new
+**File:** `internal/harness/pi/launchspec_test.go` (or new
 `pi_default_path_golden_test.go`). No product code changes — pure regression
 protection proving C1–C4 did not disturb the zero-value path.
 

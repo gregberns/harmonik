@@ -871,7 +871,7 @@ wins on a 1M window, the pct ceiling wins on a 200K window).
 the effective band is `min(absolute_band_tokens, pct_ceiling × window_size)` —
 i.e. whichever knob yields the smaller token budget wins. This is the real helper
 `EffectiveBandTokens` / `minAbsOrPctCeil` in
-`internal/keeper/thresholds.go` (~line 181); citing it makes "which knob wins"
+`internal/keeper/thresholds.go`; citing it makes "which knob wins"
 testable, not prose. The same `min(abs, pct×window)` rule produces every band
 level (`warn` / `act` / `force_act` / `hard_ceiling`).
 

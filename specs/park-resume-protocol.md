@@ -7,10 +7,10 @@ spec-id: park-resume-protocol
 status: draft
 spec-shape: contract
 spec-category: foundation-cross-cutting
-version: 1.1.0
+version: 1.1.1
 spec-template-version: 1.1
 owner: sleep-wake-author
-last-updated: 2026-06-21
+last-updated: 2026-07-30
 depends-on:
   - crew-handoff-schema
   - queue-model
@@ -102,8 +102,11 @@ park via their `comms recv --follow` stream.
 The session's `comms recv --follow` Monitor therefore exits cleanly after
 delivering the park message. The LLM session observes the Monitor exit.
 
-**Tests:** `TestCommsRecvFollow_ParkMessageExitsWithoutReconnect`
-(cmd/harmonik/comms_recv_follow_hk5xuvc_test.go).
+**Tests:** none. The sensor `TestCommsRecvFollow_ParkMessageExitsWithoutReconnect`
+and its file `cmd/harmonik/comms_recv_follow_hk5xuvc_test.go` were deleted. No test
+replaced them, and `cmd/harmonik` now holds no comms test at all. The rule is
+unverified. The code that implements it is `runCommsRecvFollowIO` in
+`cmd/harmonik/comms.go`.
 
 ### 3.2 LLM-session behavior (crew) — NORMATIVE
 
@@ -406,3 +409,4 @@ Recovery: manual `harmonik start captain` after daemon restart.
 |---|---|---|---|
 | 1.0.0 | 2026-06-17 | sleep-wake-author | Initial spec (M2): park signal, session PARK/WAKE procedures, invariants |
 | 1.1.0 | 2026-06-21 | hk-wrjv (P3-SPEC) | Added §0 vocabulary (SLEEP/PARK/STOP/TEARDOWN; no "quiesce"), §8 `--level` enum (L0–L3), §9 workflow sequences (W1/W3/W4/teardown); scrubbed operator-facing "quiesce" from §§2–6 |
+| 1.1.1 | 2026-07-30 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. §3.1 additionally records that its named test and that test's file were deleted, that nothing replaced them, and that the rule is unverified. |

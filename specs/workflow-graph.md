@@ -8,10 +8,10 @@ requirement-prefix: WG
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.1.0
+version: 0.3.2
 spec-template-version: 1.1
 owner: phase-3-dot
-last-updated: 2026-05-23
+last-updated: 2026-07-30
 depends-on:
   - architecture
   - execution-model
@@ -418,7 +418,7 @@ Tags: mechanism, normative
 
 Terminal-state semantics in a `workflow_mode=dot` graph MUST be communicated by **distinct terminal node IDs**: a workflow that has multiple terminal outcomes (normal close, needs-attention close, paused close, etc.) MUST declare a distinct terminal node for each outcome, and the run's terminal node ID MUST be the surface the orchestrator and downstream consumers read. This spec does NOT introduce a `terminal_kind` attribute and does NOT direct consumers to inspect the last edge's `preferred_label` to determine outcome.
 
-Per `D12` (pass-3 design): node identity equals node semantics; the `.dot` artifact makes the alternative outcomes visually distinct at the graph layer; the mechanism matches the existing review-loop reservation in [execution-model.md §4.3 EM-015d].
+Per `D12` (pass-3 design): node identity equals node semantics; the `.dot` artifact makes the alternative outcomes visually distinct at the graph layer; the mechanism matches the retired review-loop reservation in [execution-model.md §4.3 EM-015d].
 
 Tags: mechanism, normative
 
@@ -808,7 +808,7 @@ Traversal caps:
 
 - The `commit_gate → implement` deterministic fix-loop (edge 4) is capped at **3**: at most three fix attempts before the cascade exhausts the capped edge and falls through to the unconditional fallback (edge 6 → `close-needs-attention`) per §9 WG-028 / [execution-model.md §4.9 EM-043].
 - The `commit_gate → commit_gate` transient self-loop (edge 5) is capped at **2**: transient retries are bounded to avoid masking a real failure.
-- The `review → implement` REQUEST_CHANGES fix-loop (edge 8) is capped at **3**, consistent with the review-loop iteration cap of [execution-model.md §4.3 EM-015e].
+- The `review → implement` REQUEST_CHANGES fix-loop (edge 8) is capped at **3** per the per-edge traversal caps of [execution-model.md §4.9 EM-043]. The value carries over from the retired review-loop iteration cap of [execution-model.md §4.3 EM-015e].
 - Both unconditional fallback edges (6, 10) MUST carry no condition, MUST be declared last among their node's outgoing edges, and exist to satisfy the §5 WG-011 unconditional-edge-fallback invariant — guaranteeing a route exists for any outcome that matches no conditional edge (e.g. `canceled`, `structural`, or an unrecognized `preferred_label`).
 
 Tags: mechanism, normative
@@ -847,7 +847,9 @@ Tags: mechanism, normative
 
 ### WG-052 — Golden-test obligation for the standard-bead invariants
 
-The invariants of WG-047–WG-050 MUST be asserted by a golden/scenario test that drives `specs/examples/standard-bead.dot` through the real parser → validator → loader → cascade dispatcher pipeline. The asserting test at the time of this spec is `internal/workflow/scenario_standard_bead_hkp0kum_test.go` (bead ref hk-p0kum), which asserts:
+The invariants of WG-047–WG-050 MUST be asserted by a golden/scenario test that drives `specs/examples/standard-bead.dot` through the real parser → validator → loader → cascade dispatcher pipeline.
+
+**This sensor no longer exists.** The asserting test was `internal/workflow/scenario_standard_bead_hkp0kum_test.go` (bead ref hk-p0kum). That file was deleted, and none of the test functions named below survive anywhere in the tree. The obligation above is therefore OPEN and unasserted. The function names are kept as the record of what the deleted sensor covered and what a replacement MUST cover:
 
 - **Invariant A (WG-050) — single-inbound-edge-to-`close`:** the `close` node has exactly one inbound edge, originating from `review` with the raw condition `outcome.preferred_label == 'APPROVE'` (`TestSB_SingleInboundEdgeToClose`).
 - **Invariant B — the seven cascade routes (WG-048):** happy-path (`TestSB_HappyPath`: start→implement→commit_gate[SUCCESS]→review[APPROVE]→close); gate deterministic fix-loop (`TestSB_GateDeterministicFixLoop`); gate transient self-loop (`TestSB_GateTransientSelfLoop`); gate fallback → `close-needs-attention` (`TestSB_GateFallback`); review REQUEST_CHANGES → `implement` (`TestSB_ReviewRequestChanges`); review BLOCK → `close-needs-attention` (`TestSB_ReviewBlock`); review unconditional fallback → `close-needs-attention` (`TestSB_ReviewFallback`).
@@ -860,6 +862,7 @@ Tags: mechanism, normative
 
 | date | version | author | change |
 |---|---|---|---|
+| 2026-07-30 | 0.3.2 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. WG-052 additionally records that its named golden test was deleted and that no test replaced it, so that obligation is open and unasserted. |
 | 2026-06-16 | 0.3.1 | agent (hk-p0bj) | **spec-drift fix — new WG-054 (graph-level `no_progress_guard` attribute; value domain {strict,capped:N,off}); WG-031 reserved-set adds `no_progress_guard` (graph-level per §4 WG-054; invalid value = ingest error); WG-031 position-rules add `no_progress_guard` as graph-level. Documents hk-nvd3/cdb6867f. Refs: hk-p0bj.** |
 | 2026-06-13 | 0.3.0 | agent (hk-2j90) | **auto_status v2 — new WG-053 (deny-side outcome-derivation, implementer-class agentic); WG-041 reserved-block REPLACED with accepted/orthogonal framing; WG-031 reserved-set + position-rules add auto_status (value domain {true,false}, non-boolean = ingest error); §16.1 vocab-diff WG-041 row rewritten + WG-053 row added. Documents shipped v1 (hk-oo4 / 5c5b15ef) + adds C2 carrier. Refs: hk-2j90.** |
 | 2026-06-11 | 0.2.0 | kerf work `standard-bead-dot` (epic hk-o7j) | **Canonical standard-bead exemplar.** New §17 (WG-047–WG-052) pins `specs/examples/standard-bead.dot` as the canonical default `workflow_mode = dot` workflow: WG-047 (six-node catalog with type/category/handler bindings), WG-048 (ten-edge set with conditions + traversal caps), WG-049 (verdict + failure-class routing inputs), WG-050 (SOLE-inbound-edge-to-`close` review-floor invariant), WG-051 (default-binding via [execution-model.md §4.3 EM-012a] tier-4 + [execution-model.md §7.5.1 EM-055]; forward cross-ref to the planned `sub-workflow-dispatch.md`), WG-052 (golden-test obligation, cited test `internal/workflow/scenario_standard_bead_hkp0kum_test.go`, bead hk-p0kum). §14 Cross-references gains EM-012a, EM-055, and the (unverified) `sub-workflow-dispatch.md` forward reference. §16.1 vocabulary-diff table gains the §17 row. No prior requirement IDs renumbered or retired; strictly additive over v0.1.0. Refs: kerf work `standard-bead-dot`, epic hk-o7j, hk-p0kum, hk-30vlb. |

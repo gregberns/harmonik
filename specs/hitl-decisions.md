@@ -76,7 +76,7 @@ This was the **only open gate**; with it signed the work advances change-spec �
 
 ## §1 Event schemas
 
-Three new typed events on the standard EV-001 envelope (`schema_version`, `event_id` UUIDv7 bus-minted, `timestamp_wall`, `type`, optional `run_id`, `source_subsystem`, `payload`). All three are **F-class** (see N1). Type constants added to `internal/core/eventtype.go`; constructors registered via `RegisterEventType` (`eventregistry.go:79`); payloads modeled on `AgentMessagePayload` (`agentcommspayloads_djqc9.go:77`) with a `Valid()` method.
+Three new typed events on the standard EV-001 envelope (`schema_version`, `event_id` UUIDv7 bus-minted, `timestamp_wall`, `type`, optional `run_id`, `source_subsystem`, `payload`). All three are **F-class** (see N1). Type constants added to `internal/core/eventtype.go`; constructors registered via `RegisterEventType` (`internal/core/eventregistry.go`); payloads modeled on `AgentMessagePayload` (`internal/core/agentcommspayloads_djqc9.go`) with a `Valid()` method.
 
 **`decision_id`** = the `decision_needed` event's own `event_id` (UUIDv7), returned to the agent by `raise`. The two terminals carry it as `payload.decision_id` (mirrors `agent_message.in_reply_to`). It is distinct from the terminals' own `event_id`s (satisfies C7).
 
@@ -115,7 +115,7 @@ The decision is keyed in the projection by this event's `event_id`.
 
 ## §2 CLI surface — `harmonik decisions`
 
-New top-level route at `cmd/harmonik/main.go:465` (sibling of `"comms"`); verb switch copied from `runCommsSubcommand` (`comms.go:88`) as `runDecisionsSubcommand`. All daemon-bound verbs dial the socket (`<project>/.harmonik/daemon.sock`, `{"op":...,"payload":{}}` → `{ok,result,error}`, **exit 17 if absent**); new daemon op-cases at `internal/daemon/socket.go:394`.
+New top-level route in `cmd/harmonik/main.go` `run` (sibling of `"comms"`); verb switch copied from `runCommsSubcommand` (`cmd/harmonik/comms.go`) as `runDecisionsSubcommand`. All daemon-bound verbs dial the socket (`<project>/.harmonik/daemon.sock`, `{"op":...,"payload":{}}` → `{ok,result,error}`, **exit 17 if absent**); new daemon op-cases in `internal/daemon/socket.go` `Serve`.
 
 **Verb → daemon-op map (explicit):** `raise` → `decisions-raise` (emit `decision_needed`, return `decision_id`) · `answer` → `decisions-answer` (emit `decision_resolved`) · `withdraw` → `decisions-withdraw` (emit `decision_withdrawn`) · `list` and `show` → `decisions-list` (`show` = `list` filtered to one `decision_id`, client-side) · **`wait` has NO daemon op** — it is a pure client-side `subscribe` stream over the existing subscribe op (§4 arm-then-check). So three emit-ops + one read-op; `wait` reuses `subscribe`.
 
@@ -133,24 +133,24 @@ New top-level route at `cmd/harmonik/main.go:465` (sibling of `"comms"`); verb s
 
 ## §3 Open-set projection (K3)
 
-The open-decision set is a **pure fold over `events.jsonl`**, computed on demand (no persistent aggregator — C3). Mirror `ComputePresenceRegistry()` (`comms.go:759-847`): a single `eventbus.ScanAfter(path, 0)` (`jsonlwriter.go:312`), folding into `map[decision_id]Decision`:
+The open-decision set is a **pure fold over `events.jsonl`**, computed on demand (no persistent aggregator — C3). Mirror `ComputePresenceRegistry()` (`cmd/harmonik/comms.go`): a single `eventbus.ScanAfter(path, 0)` (`internal/eventbus/jsonlwriter.go` `ScanAfter`), folding into `map[decision_id]Decision`:
 - add on `decision_needed` (key = event_id);
 - remove on `decision_resolved` / `decision_withdrawn` (key = payload.decision_id);
 - dedupe on `event_id` (N2).
 
-Open = `needed − (resolved ∪ withdrawn)`. Restart-survivable for free (the daemon replays the log on boot, `daemon.go:1514-1528`). **Both** `decisions list` and the kerf reader view (K7) read this one projection (D2).
+Open = `needed − (resolved ∪ withdrawn)`. Restart-survivable for free (the daemon re-reads the durable log on boot with `internal/eventbus/jsonlwriter.go` `ScanAfter`). **Both** `decisions list` and the kerf reader view (K7) read this one projection (D2).
 
 ---
 
 ## §4 Blocked-wait contract (K2 + K6 unified) — NORMATIVE
 
-Delivery is **at-least-once and PULL-only**: an idle agent does NOT wake on event arrival unless it is *holding an open subscribe/recv stream* (`A2-crew-retro.md:21-29`). Therefore:
+Delivery is **at-least-once and PULL-only**: an idle agent does NOT wake on event arrival unless it is *holding an open subscribe/recv stream* (`docs/retro/2026-06-10/A2-crew-retro.md` §"Pattern 2"). Therefore:
 
 > **A blocked agent MUST wait by holding an open `harmonik subscribe --types decision_resolved,decision_withdrawn` stream (this is what `decisions wait` / `raise --wait` do), not by idling bare.**
 
 This single mechanism solves two problems at once:
 1. **Wake:** the stream delivers the matching terminal (filtered by `decision_id`), and the agent resumes with `chosen_option`. Dedupe on `event_id` (N2); a second terminal for the same `decision_id` is a no-op (N3).
-2. **Keeper-alive:** the subscribe stream's heartbeat (every 60s, `internal/daemon/subscribe.go:506-542`) keeps the agent's keeper gauge fresh, so session-keeper does not reap it as a 120s-silent hang (`internal/keeper/watcher.go:208`). Belt-and-suspenders: a `.decision_waiting` marker may be added to the keeper staleness-exemption (mirroring the `.dispatching` gate, `gates.go:79`) — optional, since the heartbeat already covers it.
+2. **Keeper-alive:** the subscribe stream's heartbeat (every 60s, `internal/daemon/subscribe.go` `HandleSubscribe` / `subscribeHeartbeatDefault`) keeps the agent's keeper gauge fresh, so session-keeper does not reap it as a 120s-silent hang (`internal/keeper/watcher.go` `maybeRespawn`). Belt-and-suspenders: a `.decision_waiting` marker may be added to the keeper staleness-exemption (mirroring the `.dispatching` gate, `internal/keeper/gates.go` `HoldingDispatch`) — optional, since the heartbeat already covers it.
 
 **Read-after-arm ordering (NORMATIVE — N8, prevents the answer-vs-arm race).** A subscribe stream only delivers events that arrive *after* it is armed. If `answer` fires `decision_resolved` between the agent reading §3 (saw "open") and arming its stream, the terminal is already in the log and the fresh stream never sees it → the agent waits forever. Therefore `decisions wait` / `raise --wait` MUST: (1) **arm** the `subscribe --types decision_resolved,decision_withdrawn` stream *first*; (2) **then re-project §3** (re-scan the log) for this `decision_id`; (3) if already terminal, return immediately with the logged result; (4) else block on the stream. This is the standard subscribe-then-check pattern — paul will get it wrong without the explicit ordering.
 
@@ -160,8 +160,8 @@ On restart, the agent re-derives its open decisions from the §3 projection and 
 
 ## §5 Lifecycle, orphan reaping (K5), keeper seam (K6)
 
-- **Orphan reaper (K5) — precise "truly gone" predicate (NORMATIVE).** Presence has only Online/Stale/Offline and **no "waiting-on-decision" signal** (`comms.go:718-744`), so reaping on mere absence/Stale would withdraw a *momentarily-quiet-but-alive* blocked agent (TOCTOU). Because §4 keeps a genuinely-waiting agent **Online** via its stream heartbeat, the only sound "gone" signals are: **(a)** the agent emitted an explicit `leave` beat, OR **(b)** the agent is **Offline** — past the ~10-min cutoff, *not* merely Stale (120s). K5 reaps `decision_withdrawn(reason=orphaned, by="keeper")` **only** under (a) or (b) — and only the keeper tick emits it (N9). A Stale (quiet <10min) agent is presumed still blocked and is **not** reaped.
-- **Reaper cadence & latency bound (NORMATIVE).** Do **not** hang K5 on the 1-hour reconciliation sweep (`daemon.go:405`) — orphan latency would be ~1h. Split read-visibility from emission to keep reads pure and emission single-writer: **(i)** `decisions list` **flags** an open decision whose `blocked_agent` is Offline as *orphaned-pending* in its output (display-only, no read-side emit — immediate operator visibility); **(ii)** the **keeper watch tick is the SOLE emitter** of `decision_withdrawn(reason=orphaned, by="keeper")` once the predicate holds. Asserted bound: an orphaned decision is *flagged* the instant it's listed and *formally withdrawn* within **≤ the Offline cutoff (~10min) + one keeper tick** — never the 1h sweep. The agent, being gone, never needed the answer → no zombie (G6, S7a).
+- **Orphan reaper (K5) — precise "truly gone" predicate (NORMATIVE).** Presence has only Online/Stale/Offline and **no "waiting-on-decision" signal** (`internal/presence/presence.go` `State` / `GetState`), so reaping on mere absence/Stale would withdraw a *momentarily-quiet-but-alive* blocked agent (TOCTOU). Because §4 keeps a genuinely-waiting agent **Online** via its stream heartbeat, the only sound "gone" signals are: **(a)** the agent emitted an explicit `leave` beat, OR **(b)** the agent is **Offline** — past the ~10-min cutoff, *not* merely Stale (120s). K5 reaps `decision_withdrawn(reason=orphaned, by="keeper")` **only** under (a) or (b) — and only the keeper tick emits it (N9). A Stale (quiet <10min) agent is presumed still blocked and is **not** reaped.
+- **Reaper cadence & latency bound (NORMATIVE).** Do **not** hang K5 on the 1-hour reconciliation sweep (`internal/daemon/daemon.go` `ReconciliationScanCadence`) — orphan latency would be ~1h. Split read-visibility from emission to keep reads pure and emission single-writer: **(i)** `decisions list` **flags** an open decision whose `blocked_agent` is Offline as *orphaned-pending* in its output (display-only, no read-side emit — immediate operator visibility); **(ii)** the **keeper watch tick is the SOLE emitter** of `decision_withdrawn(reason=orphaned, by="keeper")` once the predicate holds. Asserted bound: an orphaned decision is *flagged* the instant it's listed and *formally withdrawn* within **≤ the Offline cutoff (~10min) + one keeper tick** — never the 1h sweep. The agent, being gone, never needed the answer → no zombie (G6, S7a).
 - **Keeper seam (K6):** before reaping an idle agent, session-keeper consults the §3 projection; an agent with an open decision (and a fresh heartbeat per §4) is *blocked*, not *hung* — exempt. K5 reaps the *decision* when the agent is truly gone; K6 protects the *agent* while it is legitimately blocked. The two are complementary, not in tension.
 - **Idempotency (C7):** `answer`/`withdraw` on an unknown or already-terminal `decision_id` is a no-op (N3) — no error, no second wake.
 
@@ -169,7 +169,7 @@ On restart, the agent re-derives its open decisions from the §3 projection and 
 
 ## §6 Normative conditions
 
-- **N1 — F-class durability.** `decision_needed` / `decision_resolved` / `decision_withdrawn` MUST be added to `fsyncBoundaryEventTypes` (`busimpl.go:115-131`). Else a terminal can be lost on crash before the blocked agent reads it.
+- **N1 — F-class durability.** `decision_needed` / `decision_resolved` / `decision_withdrawn` MUST be added to `fsyncBoundaryEventTypes` (`internal/eventbus/busimpl.go`). Else a terminal can be lost on crash before the blocked agent reads it.
 - **N2 — dedupe on `event_id`.** Consumers MUST treat a re-delivered `event_id` as a no-op (at-least-once / N3-of-agent-comms). Flagged in the agent skill/handler-contract.
 - **N3 — decision_id idempotency / first-writer-wins (LOCKED, §9).** Resolution/withdrawal is keyed on `decision_id` and idempotent: resolving an unknown or already-terminal `decision_id` is a no-op. Policy is **first-writer-wins** — the first `decision_resolved` for a `decision_id` is authoritative; any later `decision_resolved` (a second human, a replay) is a no-op, no second wake. (Beyond N2's per-event dedupe.) Multi-human arbitration deferred (NG1).
 - **N4 — write discipline.** Agents MUST NOT write terminal bead state; any bead "blocked-on-human" marker is **daemon-written only** (C5/D4).
@@ -185,12 +185,12 @@ On restart, the agent re-derives its open decisions from the §3 projection and 
 
 | Component | Files (anchors from research) | Change |
 |-----------|------------------------------|--------|
-| K1 events | `internal/core/eventtype.go`; `eventregistry.go:79`; new `…payloads` file modeled on `agentcommspayloads_djqc9.go:77`; **`busimpl.go:115` fsync map (N1)** | 3 type constants + 3 payload structs w/ `Valid()` + registration + fsync-boundary entries; §8.x event-model doc entries (EV-025) |
-| K2 raise/wait | `cmd/harmonik/main.go:465`; new `cmd/harmonik/decisions.go` (mirror `comms.go:88`); emit ops mirror `commshandler_nbrmf.go:39` | `raise`→`decisions-raise` (return `decision_id`); `withdraw`→`decisions-withdraw`; **`wait` = client-side `subscribe` stream, NO new op**, with the N8 arm-then-check ordering |
-| K3 projection | new `decisionsProjection()` mirroring `ComputePresenceRegistry()` (`comms.go:759-847`) + `ScanAfter` (`jsonlwriter.go:312`) | pure fold → open set; shared by K4 + K7 |
-| K4 operator | `cmd/harmonik/decisions.go`; daemon op-cases `socket.go:394` | `list`/`show`→`decisions-list`; `answer`→`decisions-answer` (emits `decision_resolved`, no-op on unknown/terminal — N3) |
-| K5 reaper | keeper-tick = **sole emitter**; `decisions list` flags only (read-pure); NOT the 1h reconciliation (`daemon.go:405`) | keeper tick emits `decision_withdrawn(orphaned, by=keeper)` when `blocked_agent` `leave`d or Offline (N9), never on Stale; `list` flags orphaned-pending, never emits |
-| K6 keeper | `internal/keeper/gates.go:53-88`, `watcher.go:208` | exempt blocked-on-decision from the 120s reaper (heartbeat covers it; optional `.decision_waiting` gate) |
+| K1 events | `internal/core/eventtype.go`; `internal/core/eventregistry.go` `RegisterEventType`; new `…payloads` file modeled on `internal/core/agentcommspayloads_djqc9.go` `AgentMessagePayload`; **`internal/eventbus/busimpl.go` `fsyncBoundaryEventTypes` (N1)** | 3 type constants + 3 payload structs w/ `Valid()` + registration + fsync-boundary entries; §8.x event-model doc entries (EV-025) |
+| K2 raise/wait | `cmd/harmonik/main.go` `run`; new `cmd/harmonik/decisions.go` (mirror `cmd/harmonik/comms.go` `runCommsSubcommand`); emit ops mirror `internal/daemon/commshandler_nbrmf.go` `HandleCommsSend` | `raise`→`decisions-raise` (return `decision_id`); `withdraw`→`decisions-withdraw`; **`wait` = client-side `subscribe` stream, NO new op**, with the N8 arm-then-check ordering |
+| K3 projection | new `decisionsProjection()` mirroring `ComputePresenceRegistry()` (`cmd/harmonik/comms.go`) + `ScanAfter` (`internal/eventbus/jsonlwriter.go`) | pure fold → open set; shared by K4 + K7 |
+| K4 operator | `cmd/harmonik/decisions.go`; daemon op-cases in `internal/daemon/socket.go` `Serve` | `list`/`show`→`decisions-list`; `answer`→`decisions-answer` (emits `decision_resolved`, no-op on unknown/terminal — N3) |
+| K5 reaper | keeper-tick = **sole emitter**; `decisions list` flags only (read-pure); NOT the 1h reconciliation (`internal/daemon/daemon.go` `ReconciliationScanCadence`) | keeper tick emits `decision_withdrawn(orphaned, by=keeper)` when `blocked_agent` `leave`d or Offline (N9), never on Stale; `list` flags orphaned-pending, never emits |
+| K6 keeper | `internal/keeper/gates.go` `HoldingDispatch`, `internal/keeper/watcher.go` `maybeRespawn` | exempt blocked-on-decision from the 120s reaper (heartbeat covers it; optional `.decision_waiting` gate) |
 | K7 kerf view | kerf reader of §3 projection; optional daemon-written bead marker | v1-SECOND; reads same projection, no new transport (separate `/Users/gb/github/kerf` repo) |
 
 ---
@@ -218,7 +218,7 @@ Two test beads gate this work (filed 2026-06-13, label `codename:hitl-decisions`
 
 ## §9 Integration seams & risks
 
-- **kerf (K7, v1-second):** kerf has no existing blocked-on-human concept (`kerf.md:65`) — no collision. The cross-works "what-needs-me" view is an out-of-band reader of the §3 projection (in the separate `/Users/gb/github/kerf` repo); note the orthogonality so operators don't conflate it with kerf *planning* decisions.
+- **kerf (K7, v1-second):** kerf has no existing blocked-on-human concept (`docs/components/internal/kerf.md` §"Limitations and Gaps") — no collision. The cross-works "what-needs-me" view is an out-of-band reader of the §3 projection (in the separate `/Users/gb/github/kerf` repo); note the orthogonality so operators don't conflate it with kerf *planning* decisions.
 - **Risk R1:** if N1 (F-class fsync) is missed, a `decision_resolved` can be lost on crash → the agent waits forever. K5 bounds the blast (the decision eventually orphan-withdraws), but the human answer is lost — **N1 is load-bearing.**
 - **Risk R2:** an agent that idles bare (violates N5) silently never wakes AND gets keeper-reaped. The skill/handler-contract MUST carry the blocked-wait clause.
 

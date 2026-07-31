@@ -8,10 +8,10 @@ requirement-prefix: SW
 status: draft
 spec-shape: requirements-first
 spec-category: foundation-cross-cutting
-version: 0.1.0
+version: 0.1.1
 spec-template-version: 1.1
 owner: standard-bead-dot-author
-last-updated: 2026-06-11
+last-updated: 2026-07-30
 depends-on:
   - execution-model
   - handler-contract
@@ -21,7 +21,7 @@ depends-on:
 
 
 ## 1. Purpose
-This spec consolidates the **sub-workflow node dispatch** contract for `workflow_mode = dot` workflows into one normative source. The DOT cascade engine and the sub-workflow data types are already landed; what remains is the dispatch behavior that wires a `sub-workflow`-type node into the parent run's execution — the action the DOT cascade currently stubs as out of scope (`internal/daemon/dot_cascade.go`, the `core.NodeTypeSubWorkflow` case). This spec makes that dispatch behavior normative so the implementation bead can replace the stub.
+This spec consolidates the **sub-workflow node dispatch** contract for `workflow_mode = dot` workflows into one normative source. The DOT cascade engine and the sub-workflow data types are already landed; what remains is the dispatch behavior that wires a `sub-workflow`-type node into the parent run's execution — the action the DOT cascade currently stubs as out of scope (`internal/daemon/dot_cascade_core.go`, the `core.NodeTypeSubWorkflow` case). This spec makes that dispatch behavior normative so the implementation bead can replace the stub.
 
 The contract is **mechanism**, not cognition ([execution-model.md §4.2 EM-006]): expansion, namespacing, acyclicity rejection, event emission, and outcome escape are all deterministic; no model judgment is consulted to decide whether or how a sub-workflow expands.
 
@@ -37,7 +37,7 @@ This spec does not re-own the requirements it binds. The expansion semantics, na
 - The **terminal-outcome escape** the dispatch propagates verbatim to the parent cascade (SW-006).
 - The **`SubWorkflowRunner` handler-boundary** contract that the daemon's DOT cascade invokes instead of `Handler.Launch` (SW-007).
 - The **context-update discipline** observed during expanded-child execution (SW-008).
-- The **graph-driven-mode** constraint on `sub-workflow` nodes — valid only under `dot` (and the `single` carve-out), never `review-loop` (SW-009).
+- The **graph-driven-mode** constraint on `sub-workflow` nodes — valid only under `dot` (and the `single` carve-out), never the retired `review-loop` (SW-009).
 - The **no review-loop sub-workflow** constraint (SW-010).
 
 ### 2.2 Out of scope
@@ -127,13 +127,13 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 ### 4.6 Mode constraints
 
 #### SW-009 — Sub-workflow nodes are valid only under DOT-mode (and `single`) runs
-A `sub-workflow` node MUST be dispatched only within a run whose resolved `workflow_mode` ([execution-model.md §4.3 EM-012a]) admits graph-driven composition: `dot` (the general workflow-graph walker of [execution-model.md §7.5]) or `single` (per [execution-model.md §4.3 EM-015d]'s carve-out that sub-workflow nodes MAY appear inside a `single`-mode node-level workflow). The `review-loop` cycle is mode-driven, not graph-driven, and the EM-034 expansion rule does not apply to it. This spec's dispatch obligations (SW-001..SW-008) are written for the `dot` cascade dispatch site; a `single`-mode run reuses the same expansion mechanism per [execution-model.md §4.8].
+A `sub-workflow` node MUST be dispatched only within a run whose resolved `workflow_mode` ([execution-model.md §4.3 EM-012a]) admits graph-driven composition: `dot` (the general workflow-graph walker of [execution-model.md §7.5]) or `single` (per [execution-model.md §4.3 EM-015d]'s carve-out that sub-workflow nodes MAY appear inside a `single`-mode node-level workflow). The retired `review-loop` mode was mode-driven, not graph-driven, and the EM-034 expansion rule never applied to it. This spec's dispatch obligations (SW-001..SW-008) are written for the `dot` cascade dispatch site; a `single`-mode run reuses the same expansion mechanism per [execution-model.md §4.8].
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### SW-010 — No review-loop sub-workflows
-A `dot` (or `single`) workflow MUST NOT reference a sub-workflow whose `workflow_mode` is `review-loop`. The review-loop cycle is the hardcoded two-node implementer→reviewer machine of [execution-model.md §4.3 EM-015d]; it is mode-driven, not graph-driven, and is NOT a sub-workflow per [execution-model.md §4.8]. The DOT validator ([execution-model.md §7.5.3]) MUST reject such a reference; if a non-conforming reference reaches dispatch, the dispatch MUST fail closed and route to `needs-attention` with failure class `structural` per [execution-model.md §4.10 EM-046a]. This binds the [execution-model.md §4.3 EM-015d] carve-out and [execution-model.md §7.5.5] (`A dot workflow MUST NOT reference a review-loop sub-workflow`).
+A `dot` (or `single`) workflow MUST NOT reference a sub-workflow whose `workflow_mode` is `review-loop`. `review-loop` is a RETIRED mode value ([execution-model.md §4.3 EM-015d]). It was the hardcoded two-node implementer→reviewer machine. It was mode-driven, not graph-driven, and was NOT a sub-workflow per [execution-model.md §4.8]. The DOT validator ([execution-model.md §7.5.3]) MUST still reject such a reference. If a non-conforming reference reaches dispatch, the dispatch MUST fail closed and route to `needs-attention` with failure class `structural` per [execution-model.md §4.10 EM-046a]. This binds the [execution-model.md §4.3 EM-015d] carve-out and [execution-model.md §7.5.5] (`A dot workflow MUST NOT reference a review-loop sub-workflow`).
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -167,7 +167,7 @@ None at draft. The dispatch contract reuses landed types (`SubWorkflowExpansion`
 ## 9. Cross-spec coordination
 This spec is the dispatch-behavior consolidation point for the requirements owned elsewhere. The owning specs carry the normative definitions; this spec restates the dispatch obligations and MUST be kept consistent with them:
 - [execution-model.md §4.8 EM-034 / EM-034a / EM-034b / EM-034c / EM-035 / EM-036 / EM-036a] — expansion, namespacing, acyclicity, pin durability, checkpoint coverage, events, terminal outcome.
-- [execution-model.md §4.2 EM-007], §4.3 EM-012a, §4.3 EM-015d, §7.5 — handler-ref discipline, mode resolution, review-loop carve-out, DOT-mode binding.
+- [execution-model.md §4.2 EM-007], §4.3 EM-012a, §4.3 EM-015d, §7.5 — handler-ref discipline, mode resolution, the review-loop retirement and its `single` carve-out, DOT-mode binding.
 - [workflow-graph.md §4 WG-001 / WG-006], §10 WG-029 — node-type enum, sub-workflow attribute set, static acyclicity.
 - [event-model.md §8.1.9 / §8.1.10] — the two lifecycle event names and payload field lists.
 - [handler-contract.md §5 HC-058 / HC-061 / HC-062] — per-node-type Outcome obligations, sub-workflow boundary no-emit rule, registered-key discipline.
@@ -175,5 +175,6 @@ This spec is the dispatch-behavior consolidation point for the requirements owne
 ## 10. Revision history
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-30 | 0.1.1 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
 | 2026-06-11 | 0.1.0 | agent (kerf `standard-bead-dot` work, epic hk-o7j) | Initial draft. Consolidates the sub-workflow dispatch contract for `workflow_mode = dot` into SW-001..SW-010 plus two invariants, to replace the out-of-scope stub at the `core.NodeTypeSubWorkflow` case in `internal/daemon/dot_cascade.go`. Binds expansion/namespacing/acyclicity/events/terminal-outcome to [execution-model.md §4.8 EM-034 family / EM-036 / EM-036a], the `SubWorkflowRunner` boundary to `internal/handler/runtime.go`, resolution to [workflow-graph.md §4 WG-006], and context discipline to [handler-contract.md §5 HC-058 / HC-061 / HC-062]. |
 | 2026-06-11 | 0.2.0 | agent (hk-jlp exploration bead) | Add §7 Worked examples (SW-EX-001): pins `specs/examples/sub-workflow-example.dot` (parent workflow with sub-workflow node) and `specs/examples/sub-workflow-commit-gate.dot` (child commit-gate sub-workflow). Renumber §7 Open questions → §8, §8 Cross-spec → §9, §9 Revision history → §10. Validated: both files pass `graph validate`; scenario test coverage confirmed (hk-x9l, all three tests PASS). |

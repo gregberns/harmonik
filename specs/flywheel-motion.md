@@ -114,7 +114,8 @@ The following are explicitly DEFERRED to v2 and MUST NOT block v1:
 The adversary's ONLY power SHALL be to write ONE `decision_required`-class exception under `.harmonik/`,
 reusing the **shipped DecisionBlocker / ack-token machinery** (`internal/daemon/decision_block_ev043a.go`;
 the `.harmonik/decision_acks/<ack_token>` ack-state files; the EV-044 digest summary in
-`internal/digest/builder.go:165` / `internal/digest/types.go:50`). The deterministic digest projector then
+`internal/digest/builder.go` `buildPendingDecisions` / `internal/digest/types.go`
+`DecisionRequiredSummary`). The deterministic digest projector then
 **structurally BLOCKS the all-clear** on that exception: **the captain CANNOT return "nothing to do" while
 it is pending.** Bindingness comes from the projector, not from any claimed authority of the adversary
 session.
@@ -161,7 +162,7 @@ Suppression MAY be granted only by durable surfaces the daemon already owns, eac
 
 | Source | Surface | Guard |
 |---|---|---|
-| Operator attached | keeper `operatorAttached()` (`internal/keeper/cycle.go:671`) | TTL + attached-but-inactive timeout so the known *operatorAttached-pins-forever* bug cannot silently disarm the sentinel |
+| Operator attached | keeper `internal/keeper/tmuxresolve.go` `OperatorAttached`, wired through `internal/keeper/cycle.go` `CyclerConfig.OperatorAttachedFn` | TTL + attached-but-inactive timeout so the known *operatorAttached-pins-forever* bug cannot silently disarm the sentinel |
 | Operator dialogue recency | `comms log --from operator` | decaying TTL |
 | Operator phase flag (optional) | `sentinel:` block in `.harmonik/config.yaml` | MUST carry a **mandatory expiry**; a flag without expiry is invalid config |
 
@@ -215,7 +216,8 @@ daemon workloop (`workLoopDeps.governorState/governorCfg`) and the captain sessi
   - `.harmonik/intent/goal-state.json` — goal-keeper distil output; updated each keeper cycle (§4.1/FW5).
   - `.harmonik/decision_acks/` — ack-state files for trip/clear decisions (§3.2, AC1).
   - `governorState` / `governorCfg` / `sentinelMode` / `sentinelPhase2Classes` on `workLoopDeps` —
-    in-process per-daemon-lifecycle state; initialized at `daemon.go:1667` (FW1).
+    in-process per-daemon-lifecycle state; initialized in `internal/daemon/bootworkloop.go`
+    `seedGovernorDeps` (FW1).
   - `reacted_ledger` — persisted `(target_bead_id, follow_up_class)` set preventing double-emit (AC1).
 
 (f) Control points provided:
@@ -421,7 +423,7 @@ runbook (`docs/flywheel/sentinel-runbook.md`) can reference a canonical status.
 
 | Component | Bead | Commit | Status | Notes |
 |---|---|---|---|---|
-| **FW1** config adapter + deps plumbing | hk-y9fn | `6272ba34` | ✅ LIVE | `LoadSentinelConfig` → `GovernorConfig()` bridge; `governorState`/`governorCfg`/`sentinelMode`/`sentinelPhase2Classes` on `workLoopDeps`; initialized at `daemon.go:1667` |
+| **FW1** config adapter + deps plumbing | hk-y9fn | `6272ba34` | ✅ LIVE | `LoadSentinelConfig` → `GovernorConfig()` bridge; `governorState`/`governorCfg`/`sentinelMode`/`sentinelPhase2Classes` on `workLoopDeps`; initialized in `internal/daemon/bootworkloop.go` `seedGovernorDeps` |
 | **FW2** Evaluate observe-only | hk-z1lr | `c468bed4` | ✅ LIVE | Fires each tick when `sentinel.mode` is `""` or `"observe"`; emits `governor_signal` typed event; no EmitTrip, no halt |
 | **FW3** ACT mode trip/clear/halt | hk-4toh | `e2252c3a` | ✅ LIVE | Fires each tick when `sentinel.mode == "act"`; `EmitTrip` on `ActivationActive`; `ClearTrip` on `ActivationDormant`+pending; G-liveness halt+page on `ActivationHalt`; wires `DecisionBlocker.AddQueueBlock("sentinel")` |
 | **FW4** adversary spawn | hk-jsvc | (deferred) | ⏳ PENDING | Spawn fresh-context adversary session on trip; bounded by overlap-skip |

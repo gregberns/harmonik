@@ -48,7 +48,8 @@ depends-on:
   turn as `--session <id>`. The `session`/`agent_end` event shapes are asserted from docs and carry a
   **confirm-by-test obligation** in Phase 0 (findings.md §2).
 - **PI-012a (forced-exec substrate — load-bearing)** Pi MUST inherit codex's `SessionIDCaptured`
-  forced-exec posture: the launch path MUST force `implSpec.Substrate = nil` (`reviewloop.go:367–383`)
+  forced-exec posture: the launch path MUST force the launch spec's `Substrate` to nil
+  (`internal/daemon/agentlaunch.go` `runAgentLaunch`)
   so the NDJSON `StdoutWrapper` is actually invoked. If Pi runs on the tmux substrate (`Stdout()==nil`)
   both session-id capture (PI-012) and the `agent_end` watcher (PI-014) silently no-op.
 - **PI-013** `DetectReady` MUST return `false` for `launch_initiated` (HC-041) and MUST NOT synthesize
@@ -58,8 +59,9 @@ depends-on:
   terminal **`agent_end`** event, invoke `Teardown`→Kill. The run's completion MUST NOT depend on Pi
   self-exiting; the 90-minute `commitHardCeiling` is a backstop only. The watcher MUST **extend the
   existing per-harness `StdoutWrapper`/`SessionIDInterceptor`** assigned in shared launch code
-  (`reviewloop.go:430`, gated on `implIsSessionIDCaptured`) — it MUST NOT add a *new* shared-loop
-  branch, and MUST NOT be described as "outside the shared loop" (it rides the SessionIDCaptured hook
+  (`internal/daemon/agentlaunch.go` `runAgentLaunch`, on its `sessionIDCaptured` branch) — it MUST
+  NOT add a *new* shared-loop branch, and MUST NOT be described as "outside the shared loop" (it
+  rides the SessionIDCaptured hook
   codex established). Depends on PI-012a.
 - **PI-015** The harness MUST NOT pass a `--sandbox` flag (Pi is unsandboxed). The seed prompt MUST
   instruct Pi to read `.harmonik/agent-task.md`, implement, and commit with a `Refs: <bead-id>`
@@ -151,7 +153,8 @@ Tags: mechanism
   `authIndicatesAPIKeyLogin`. Until (a) is confirmed (findings.md §4, UNCONFIRMED), (b) is required.
 - **PI-043 (no silent claude fallback)** A Pi config/guard failure MUST yield `run_failed` + bead
   reopen, NEVER a silent re-route to claude. A `harness:pi` label resolves hard at tier-1, so the
-  tier-4 claude fallback (`harnessresolve.go:109–117`) cannot fire on a Pi config failure.
+  tier-4 claude fallback (`internal/daemon/harnessresolve.go` `resolveHarness`, tier 4) cannot fire
+  on a Pi config failure.
 
 ## §6 Configuration (no hardcoded defaults)
 
@@ -230,17 +233,19 @@ Tags: mechanism
   with state rebuild — UNVERIFIED, findings.md); (2) the keystroke→Pi→pane translator design;
   (3) a context-fill trigger WITHOUT a Claude gauge — the keeper is **blind on a non-claude pane**
   (its hooks read Claude's context %; its restart pastes `/clear`+`/session-resume`), and
-  `probeKeeperLiveness` (`crewstart.go:608`) masks the blindness by checking only the flock — so the
-  harness needs its own token-tracking + self-restart and `/clear`/`/session-resume` handling;
-  (4) a post-spawn **shim-liveness probe** (crew-start returns success with no readiness check);
-  (5) `HandlerBinary` config-wiring (`daemon.go:116–123`) — Phase 1 depends on this Phase-2 capability,
-  resolved via a narrow global-binary override or by moving the wiring earlier.
+  `probeKeeperLiveness` (`internal/daemon/crewstart.go`) masks the blindness by checking only the
+  flock — so the harness needs its own token-tracking + self-restart and `/clear`/`/session-resume`
+  handling; (4) a post-spawn **shim-liveness probe** (crew-start returns success with no readiness
+  check); (5) `HandlerBinary` config-wiring (`internal/daemon/daemon.go` `Config.HandlerBinary`) —
+  Phase 1 depends on this Phase-2 capability, resolved via a narrow global-binary override or by
+  moving the wiring earlier.
 
 ## §10 Phase 2 — crew-launch provider abstraction (gated on Phase 1)
 
 - **PI-090** Crew launch MUST be routed through a provider/harness abstraction resolved by the same
-  tier mechanism as the per-bead path, replacing the hard-coded `claude` at `crewlaunchspec.go:100`
-  and `captain.go:208`. The binary MUST be selectable per-crew/per-lane (not a global swap). The
+  tier mechanism as the per-bead path, replacing the hard-coded `claude` at
+  `internal/crewrun/launchspec.go` `crewHarnessClaude` and `cmd/harmonik/captain.go`
+  `buildCaptainTmuxCmd`. The binary MUST be selectable per-crew/per-lane (not a global swap). The
   captain MUST remain Claude unconditionally.
 
 ## §11 Tests (acceptance)

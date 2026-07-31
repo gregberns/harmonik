@@ -8,10 +8,10 @@ requirement-prefix: HN
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.1.0
+version: 0.1.1
 spec-template-version: 1.1
 owner: codex-harness-author
-last-updated: 2026-06-10
+last-updated: 2026-07-30
 depends-on:
   - architecture
   - handler-contract
@@ -31,7 +31,7 @@ git worktree. Today the only harness is Claude Code; the harness identity has be
 assumption baked into the dispatch path. This spec names the **Harness contract**: the interface and
 the normative properties that any implementer harness MUST satisfy so a second harness (OpenAI
 **codex**) — and any future harness — can be selected per run without forking the shared
-dispatch, worktree, merge, or review-loop machinery.
+dispatch, worktree, merge, or cascade machinery.
 
 The contract is the cross-harness seam. It defines *what* a harness is and *what* the shared
 infrastructure may assume of every harness; it does NOT define how any one harness (claude, codex)
@@ -85,7 +85,7 @@ runs a given bead.
 - **Harness** — a CLI agent type harmonik can launch into a managed worktree to implement (or review)
   a bead. Today: `claude` (Claude Code) and `codex` (OpenAI codex). (see §4.1)
 - **Implementer harness** — the harness selected to do a bead's implementation work. (see §4.4)
-- **Reviewer harness** — the harness selected to run the review-loop verdict for a bead; defaults to
+- **Reviewer harness** — the harness selected to run the review verdict for a bead; defaults to
   the implementer harness. (see §4.5)
 - **Adapter registry** — the in-process table mapping `core.AgentType` to its registered `Harness`
   implementation. (see §4.1)
@@ -153,9 +153,9 @@ Tags: mechanism
 `Seed(sess, rc)` MUST deliver the first-turn task to a fresh session. `Retask(sess, feedback, rc)`
 MUST deliver review feedback for iteration ≥ 2. The two are separate operations because a harness MAY
 deliver the first turn and a subsequent turn differently (claude live-injects into a persistent
-session; codex spawns a fresh `exec resume` process per turn). The shared review-loop calls `Seed`
-once per run and `Retask` once per review iteration; it makes no assumption about whether the same OS
-process services both.
+session; codex spawns a fresh `exec resume` process per turn). The shared launch path
+(`runAgentLaunch` in `internal/daemon/agentlaunch.go`) calls `Seed` once per run and `Retask` once per
+review iteration. It makes no assumption about whether the same OS process services both.
 
 Tags: mechanism
 
@@ -243,7 +243,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 The shared, harness-blind infrastructure MUST NOT be branched per harness except at the two declared
 seam points of §4.8. The off-limits surface is: the tmux substrate; worktree create / merge / remove;
-commit-detection; merge-one-at-a-time; queue and dispatch; and the DOT cascade and review-loop control
+commit-detection; merge-one-at-a-time; queue and dispatch; and the DOT cascade control
 flow. Harness code interacts with this surface only through opaque argv/env/cwd (the `LaunchSpec`
 return) and the shared `Session` handle; it MUST NOT reach into the substrate, the worktree manager,
 or the merge path. Any `if <harness>` branch outside the two seam points is a structural violation of
@@ -304,9 +304,9 @@ Tags: mechanism
 
 #### HN-014 — Reviewer harness defaults to the implementer harness
 
-The reviewer's harness MUST default to the implementer's resolved harness. The review-loop reaches its
-reviewer harness through the SAME registry lookup as the implementer; harness selection is inherited by
-the review-loop without a parallel resolution path. Both the implementer node and the reviewer node
+The reviewer's harness MUST default to the implementer's resolved harness. The cascade reaches its
+reviewer harness through the SAME registry lookup as the implementer. The reviewer node inherits the
+harness selection without a parallel resolution path. Both the implementer node and the reviewer node
 fetch `LaunchSpec` / `Seed` / `Retask` / `Teardown` from the run's resolved harness; only the
 cascade's existing phase split (implementer vs. reviewer) differs.
 
@@ -374,7 +374,7 @@ branching is permitted ONLY at these two:
    skipped for `ProcessExit` (§4.6). The same gate applies at the analogous reviewer launch site.
 
 Every other surface (tmux substrate, worktree mgmt, commit-detection, merge, queue/dispatch, the DOT
-cascade and review-loop control flow) MUST remain shared and harness-blind per HN-010. A grep for
+cascade control flow) MUST remain shared and harness-blind per HN-010. A grep for
 harness dispatch MUST show one launch-dispatch site and one completion-gate site — never an
 `if <harness>` branch in shared infrastructure.
 
@@ -469,7 +469,7 @@ Tags: mechanism
 
 Every per-harness behavioral difference MUST be expressed through one of the eight `Harness` interface
 members or consulted at one of the two seam points of §4.7. No `if <harness>` branch may appear in the
-shared substrate, worktree, merge, queue, cascade, or review-loop code. A private per-harness branch
+shared substrate, worktree, merge, queue, or cascade code. A private per-harness branch
 anywhere in shared infrastructure is a structural invariant violation.
 
 Tags: mechanism

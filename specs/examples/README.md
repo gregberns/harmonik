@@ -7,10 +7,10 @@ spec-id: examples-readme
 status: draft
 spec-shape: index
 spec-category: foundation-cross-cutting
-version: 1.0.0
+version: 1.0.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-06-09
+last-updated: 2026-07-30
 ---
 ```
 
@@ -43,8 +43,8 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory and runs it through the C2 validator).
-- Scenario harness: `internal/workflow/scenario/review_loop_test.go` (drives mock handler responses against the five scenarios enumerated in C5 design §3.5 — APPROVE-immediately, two-round retry then APPROVE, BLOCK, cap-hit fallback, and no-progress early exit — each asserting both the terminal node reached and the emitted event sequence against a golden trace).
+- Static round-trip: `TestDotFixtureSpecsExamplesReviewLoop` (`internal/workflow/dot/parser_test.go`), `TestValFixtureSpecsExamplesReviewLoopClean` (`internal/workflow/dot/validator_test.go`), and `TestScenarioCanonicalReviewLoopRoundTrip` (`internal/workflow/dot/scenario_roundtrip_wg_test.go`). Each one reads this file, parses it, and validates it. The directory-wide sensor `internal/workflow/examples_test.go` was deleted.
+- Scenario harness: none. `internal/workflow/scenario/review_loop_test.go` was deleted and nothing replaced it. The five scenarios of C5 design §3.5 are unverified: APPROVE-immediately, two-round retry then APPROVE, BLOCK, cap-hit fallback, and no-progress early exit.
 
 ### `implement-review-fix.dot`
 
@@ -67,7 +67,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/implement_review_fix_test.go` (drives mock handler responses against five scenarios — APPROVE-immediately, two-round retry then APPROVE, BLOCK, cap-hit fallback, and unconditional-fallback — each asserting both the terminal node reached and the dispatch decision sequence).
 
 ### `dual-review-consolidate.dot`
@@ -91,7 +91,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/dual_review_consolidate_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-pass, cap-hit fallback, and BLOCK escalation, each asserting the terminal node reached and the dispatch decision sequence).
 
 ### `triple-review-consolidate.dot`
@@ -115,7 +115,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/triple_review_consolidate_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-pass, cap-hit fallback, and BLOCK escalation, each asserting the terminal node reached and the dispatch decision sequence).
 
 ### `two-reviewer-consensus.dot`
@@ -139,7 +139,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/two_reviewer_consensus_test.go` (drives mock handler responses against scenarios including unanimous APPROVE, dissenting REQUEST_CHANGES, BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
 
 ### `plan-review-loop.dot`
@@ -163,7 +163,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/plan_review_loop_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-pass, multi-round REQUEST_CHANGES, BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
 
 ### `plan-review-finalize.dot`
@@ -186,7 +186,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/plan_review_finalize_test.go` (drives mock handler responses against scenarios including APPROVE-through-finalize, BLOCK escalation, and cap-hit fallback, each asserting the terminal node reached via the intermediate non-agentic seam).
 
 ### `security-review-loop.dot`
@@ -210,7 +210,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/security_review_loop_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-pass, REQUEST_CHANGES with security feedback, BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
 
 ### `spec-R1-R2-cycle.dot`
@@ -233,7 +233,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/spec_r1_r2_cycle_test.go` (drives mock handler responses against scenarios including clean R1→R2 pass, R1 REQUEST_CHANGES loop, R2 adversarial REQUEST_CHANGES looping back to integrate_r1, BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
 
 ### `spec-citation-cleanup.dot`
@@ -256,7 +256,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/spec_citation_cleanup_test.go` (drives mock handler responses against scenarios including clean content+citations pass, content REQUEST_CHANGES loop, citation-fixer sub-loop, and BLOCK escalation, each asserting the terminal node and dispatch sequence).
 
 ### `decompose-review-load.dot`
@@ -279,7 +279,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/decompose_review_load_test.go` (drives mock handler responses against scenarios including APPROVE-then-load, decomposition REQUEST_CHANGES, BLOCK, and load-commit failure, each asserting the terminal node and dispatch sequence).
 
 ### `dependency-cycle-fix-loop.dot`
@@ -303,7 +303,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/dependency_cycle_fix_loop_test.go` (drives mock handler responses against scenarios including ACYCLIC-on-first-check, CYCLE-then-fix-then-ACYCLIC, structural failure escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
 
 ### `docs-sync.dot`
@@ -326,7 +326,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/docs_sync_test.go` (drives mock handler responses against scenarios including APPROVE, REQUEST_CHANGES (docs-only fix), CODE_CHANGE (code requires rework), BLOCK, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
 
 ### `review-route-by-failure-class.dot`
@@ -350,7 +350,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/review_route_by_failure_class_test.go` (drives synthetic outcomes against the failure-class taxonomy — transient retry, structural escalation, deterministic escalation, canceled escalation — and the verdict paths APPROVE/REQUEST_CHANGES/BLOCK, each asserting the terminal node and dispatch sequence).
 
 ### `characterize-refactor-verify.dot`
@@ -373,7 +373,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/characterize_refactor_verify_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-verify, REQUEST_CHANGES loop back to refactor (not characterize), BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
 
 ### `plan-to-shipped-now.dot` (DEMO D1)
@@ -400,7 +400,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/plan_to_shipped_now_test.go` (drives mock handler responses against eight scenarios covering the full S2 path obligations: happy-path full arc, plan-review BLOCK early exit, spec-review RC loop, load-beads non-SUCCESS commit gate, consolidate BLOCK including the red-build path, consolidate cap-hit, docs-review APPROVE, and docs-review unrecognized-label fallback).
 
 ### `plan-to-shipped-faithful.dot` (DEMO D2)
@@ -439,7 +439,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically). Two permissive warnings for `class="hard"` on `draft_plan` and `decompose` are expected (retained in `UnknownAttrs`, not dispatched at v1).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic. Two permissive warnings for `class="hard"` on `draft_plan` and `decompose` are expected (retained in `UnknownAttrs`, not dispatched at v1).
 - Scenario harness: `internal/workflow/scenario/plan_to_shipped_faithful_test.go` (drives mock handler responses against nine scenarios covering the full S2 path obligations: happy-path full arc, plan-review BLOCK early exit, plan-review RC loop, load-beads non-SUCCESS tool gate, cycle-check non-SUCCESS tool gate, consolidate BLOCK, consolidate cap-hit, green-build deterministic fail → implement loop, and green-build non-deterministic fail → unconditional fallback).
 
 ### `regression-gate.dot`
@@ -467,7 +467,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/regression_gate_test.go` (drives mock handler responses against six scenarios covering the S2 path obligations: happy-path bug-reproduced arc, cannot-reproduce routing, reproduce infra fallback, regression-suite fix-loop, regression-suite cap-hit, and regression-suite transient fallback).
 
 ### `release-with-rollback.dot`
@@ -495,7 +495,7 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Static round-trip: no directory-wide sensor. `internal/workflow/examples_test.go` was deleted. This file is still parsed and validated, because the scenario harness below loads it with `workflow.LoadDotWorkflow`, which rejects any C2 error diagnostic.
 - Scenario harness: `internal/workflow/scenario/release_with_rollback_test.go` (drives mock handler responses against five scenarios covering the S2 path obligations: happy-path full arc, build-failure fallback, build-infra fallback, publish-failure rollback via explicit FAIL condition, and publish-fallback rollback via unconditional fallback).
 
 ### `quality-gate-policy.dot`
@@ -524,8 +524,8 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 **Test surface.**
 
-- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
-- Scenario harness: `internal/workflow/scenario_quality_gate_policy_hko52fm21_test.go` (drives synthetic outcomes through the real loader → cascade pipeline against nine scenarios covering the S2 path obligations: gate-allow happy path, gate-deny loop, gate-escalate-to-human, reviewer-REQUEST_CHANGES loop → approve, reviewer-BLOCK escalation, reviewer-fallback, gate-fallback/eval-failure, reviewer-cap-hit, and gate-deny-cap-hit).
+- Static round-trip: none. `internal/workflow/examples_test.go` was deleted and nothing replaced it.
+- Scenario harness: none. `internal/workflow/scenario_quality_gate_policy_hko52fm21_test.go` was deleted and nothing replaced it. No test loads this file. The nine scenarios it covered are unverified: gate-allow happy path, gate-deny loop, gate-escalate-to-human, reviewer-REQUEST_CHANGES loop then approve, reviewer-BLOCK escalation, reviewer-fallback, gate-fallback/eval-failure, reviewer-cap-hit, and gate-deny-cap-hit.
 
 ### `sub-workflow-example.dot` + `sub-workflow-commit-gate.dot`
 
@@ -558,7 +558,7 @@ Together the two files demonstrate: (a) how to declare a `type="sub-workflow"` n
 
 **Test surface.**
 
-- Static round-trip: both files pass `harmonik graph validate` and round-trip through the C2 DOT validator. They will be picked up by `internal/workflow/examples_test.go` (the auto-discovery test, once authored per the `Future examples` note in this README).
+- Static round-trip: both files pass `harmonik graph validate` and round-trip through the C2 DOT validator. No automated test loads them. The auto-discovery test `internal/workflow/examples_test.go` was deleted and nothing replaced it.
 - Scenario harness: end-to-end sub-workflow dispatch is covered by `internal/daemon/scenario_subworkflow_dispatch_hkx9l_test.go` (bead hk-x9l, three tests — SW-001/SW-INV-001, SW-006/SW-INV-002 success path, SW-006/SW-INV-002 fail path). All three pass as of 2026-06-11.
 
 ### Future examples
@@ -595,7 +595,7 @@ The discipline:
 1. **Identify the pinning spec section.** A new example must be referenced by name from at least one normative section in `specs/` (typically in `workflow-graph.md`, `execution-model.md`, or `handler-contract.md`). If no spec section pins it, the example belongs under `internal/workflow/testdata/`, not here.
 2. **Author the `.dot` file.** Inline DOT comments on every non-terminal node naming its role are required. Inline comments on every conditional edge naming the D-decision or spec section it derives from are required.
 3. **Add a subsection to this README** matching the structure of the `review-loop.dot` subsection above (Purpose / Schema version / Spec anchors / Gap coverage / Test surface). Every attribute, node-type, and edge-condition LHS the example uses must trace to a normative spec anchor.
-4. **Wire the static round-trip test.** The example is automatically picked up by `internal/workflow/examples_test.go`'s directory walk; no test code change is required for layer-1 coverage.
+4. **Wire the static round-trip check.** There is no directory-walk test. `internal/workflow/examples_test.go` was deleted and nothing replaced it. The scenario test of step 5 supplies layer-1 coverage, because `workflow.LoadDotWorkflow` parses and validates the file before the scenario runs. An example with no scenario test gets no layer-1 coverage.
 5. **Author at least one scenario-harness test** with a golden trace, asserting the terminal-node path and the event sequence. The scenario test must exercise at least one cascade fallback (unconditional edge) if the example has one.
 6. **Reviewer approval.** A separate reviewer agent (or fresh-context re-read) must approve the addition before merge. The reviewer's checklist: (a) every attribute used appears in the spec; (b) every edge condition uses only the D5 dialect; (c) every terminal node is declared in `terminal_node_ids`; (d) at least one scenario test exists.
 
@@ -603,7 +603,7 @@ The discipline:
 
 Every example in this directory is exercised by two test layers; both are required.
 
-**Layer 1 — static round-trip.** `internal/workflow/examples_test.go` parses every `.dot` file under `specs/examples/` and runs it through the C2 validator. CI fails on any parse error or any validation error (unknown attribute, unknown node-type, malformed edge condition, missing terminal-node declaration, etc.). This layer catches schema drift between the spec and the examples — if C1's vocabulary changes, the static test surfaces every example that drifted.
+**Layer 1 — static round-trip.** `internal/workflow/examples_test.go` parsed every `.dot` file under `specs/examples/` and ran it through the C2 validator. That test was deleted and nothing replaced it. There is no directory-wide sensor today. An example now gets layer-1 coverage only through its own layer-2 scenario test, which loads the file with `workflow.LoadDotWorkflow` (parse plus C2 validate, and it fails on any error diagnostic). An example with no scenario test gets no layer-1 coverage. This layer catches schema drift between the spec and the examples — if C1's vocabulary changes, the static check surfaces every example that drifted.
 
 **Layer 2 — scenario harness with golden trace.** A scenario test per example, written against `specs/scenario-harness.md`, loads the example, drives mock handler responses, and asserts (a) the terminal node reached and (b) the emitted event sequence against a checked-in `expected-trace.golden.jsonl`. Golden-trace files live with the test code under `internal/workflow/scenario/testdata/`, NOT under `specs/examples/` — this directory contains specs, not test fixtures.
 

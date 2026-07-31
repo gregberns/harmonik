@@ -826,10 +826,43 @@ between them.
 **Why here:** it must precede any run-path work, because the run path's recovery semantics
 (QM-002a on restart, `adoptLiveRunSession`) depend on what a dispatched item means.
 
-> **⚠ Operator decision (D3): what happens when the reservation write fails?**
-> The audit's answer is "zero claim and zero launch." That is correct but it is a behaviour change:
-> today a persist failure is logged and the run proceeds. Under load with a full disk this converts
-> a silent inconsistency into a visible dispatch stall. Confirm that is wanted.
+> **D3 — ANSWERED 2026-07-30. A failed reservation write aborts the dispatch: no claim, no launch.**
+> Operator: *"No more launching and hoping."* The bead stays pending and the next tick re-picks it,
+> which is correct, because it never started. Retry with backoff is a later layer, not the first move —
+> a full disk or a corrupt queue file does not clear on retry, and retrying quietly rebuilds the failure
+> this decision removes. The error must be loud: an event, a visible marker on `queue list`, and a
+> message specific enough that an agent investigates rather than shrugs.
+
+**⚠ The premise of this step is stale — re-verified 2026-07-30. Step 4 is mostly WIRING, not writing.**
+
+`QueueStore.Transact` in `internal/queuewiring/store.go` already implements the reservation
+transaction, backed by `internal/queue/transaction.go` (1,005 lines). Verified today: **all ten
+`.Transact(` call sites are in `queuewiring/store_transaction_test.go`. Production callers: zero.**
+The dispatch path uses bare `queue.Persist` — ten calls in `internal/daemon/scheduler.go`.
+
+`Transact` supplies each thing this step was going to build:
+
+- **`Mutate func(*queue.Queue) error`** — one closure sets status *and* RunID together, so the
+  empty-string placeholder stops existing. The RunID is a UUIDv7, generated locally from a timestamp
+  plus randomness; nothing stops it being generated before the stamp instead of after.
+- **Generation guard plus a byte-equality check on the snapshot** — a stale or concurrently-mutated
+  queue rejects *before* any I/O. This is the defence against a second writer.
+- **Quarantine** — refuses further mutations on a queue that failed a write, which is QM-001's
+  "refuse further mutations".
+- **`TransactionResult.Outcome`** — a value the caller must read, rather than an error that
+  `_ =` can discard.
+
+**What `Transact` deliberately does not do**, per its own comment: *"performs no event emission and has
+no completion-receipt behavior."* So `infrastructure_unavailable{failed_prerequisite:
+queue_write_error}` is still the caller's job. `internal/queue/persistence.go` says the same thing and
+names the wiring point. The payload type exists in `internal/core`. **It is emitted nowhere.** That
+emission, not the transaction, is the part of Step 4 that must actually be written.
+
+Do not restate this step as "collapse two writes into one" without first re-running
+`grep -rn '\.Transact(' --include='*.go' internal/ cmd/`. If production callers are still zero, the
+work is to route `scheduler.go` through the owner that exists and to wire the event — not to design a
+new transaction. Background: `UNWIRED-INVENTORY.md` row 5, and the 21-slice plan in
+`.kerf/works/queue-transaction-contract/07-tasks.md` with one slice built.
 
 ### Step 5 — the run-plan resolver (~350 lines, low risk, high value)
 

@@ -669,10 +669,17 @@ prove.** Anything requiring a behaviour decision goes late and gets flagged.
 > under its own heading. **Steps 6 through 15 are NOT STARTED**, and none of them was done under
 > another name — the tree was checked for each. Step 3b, step 7's first piece and step 8 are the parts
 > of the early steps that remain.
+>
+> **Added 2026-07-30: Steps 19 and 27a, and a candidates section.** Step 0 gained two prerequisites,
+> items 4 and 5. Two new steps sit after Step 16 and keep the numbers they were proposed under, so
+> the numbering jumps. **A missing number between 16 and 27a is a candidate, not a lost step** — see
+> §3b, "Candidate work beyond Step 16", which also records four items that need an operator decision
+> because they amend `CHARTER.md`.
 
 ### Step 0 — prerequisites (already in the plan, restated because they gate everything)
 
-**Re-measured 2026-07-29: items 1 and 2 are DONE. Only item 3 is outstanding.**
+**Re-measured 2026-07-29: items 1 and 2 are DONE. Items 3, 4 and 5 are outstanding, and item 4 is
+operator-gated.**
 
 1. ~~Reconcile `origin/integration/phase-reviewloop-20260725` (44 stranded commits).~~ **DONE.** Its
    contents are known, its worthwhile spec clauses were harvested by hand and checked against the code
@@ -716,6 +723,48 @@ prove.** Anything requiring a behaviour decision goes late and gets flagged.
    the required status checks until the 8 close, because doing so wedges every merge. So: close the 8,
    fix the skip, then make it required. **You still cannot validate a rewrite against a gate that
    blocks nothing** — but the work to get there is test repair, and it should be priced as such.
+
+4. **Reconcile `main`. OPERATOR-GATED — an agent must not do this alone.** The fix needs a push to
+   `origin/main`, and that is the operator's call. `origin/main` last moved on 2026-07-22 and forked
+   from this branch on 2026-07-19 — `git log -1 --format=%ci $(git merge-base origin/main HEAD)`
+   reads `2026-07-19 01:06:06`. Measured 2026-07-30 at `89782676d`,
+   `git rev-list --left-right --count origin/main...HEAD` reads **27 on the `main` side and 532 on
+   this one**. The second figure climbs with every commit that lands here, so re-measure rather than
+   quote it. All 27 were read. **Two are real fixes that already reached the tip under different
+   hashes** — the remote-cwd-aware direct-exec spawn (`hk-fufel`, on the tip as `3e8a96a10`) and the
+   remote-cwd-aware ssh spawn (`hk-czb11`, on the tip as `942069ebf`). **The other 25 split two ways,
+   and "25 probe markers" is too loose.** Eleven add a marker file and nothing else — `PROBE.md`,
+   `PROBE4.md`, `CONC1.md`, `CONC3.md`, `docs/regate-seq.md` and `docs/conc-a.md` through
+   `docs/conc-f.md`. The remaining **fourteen are two code commits that the probe runs re-applied
+   seven times each**: `hk-4je`, strip run-context from merge, and `CHB-023`, persist
+   `claude_session_id` to `Run.context`. Both subjects are settled on the tip under other hashes —
+   the run-context strip landed and was later fixed and covered, and the `CHB-023` machinery was
+   deliberately deleted in `60692dafe`. Confirm both before you discard the branch.
+
+   **Three things key off that branch, which is why a stale `main` is an instrument fault and not
+   housekeeping.** `make check-short` computes its lint delta with
+   `golangci-lint run --new-from-rev=origin/main`. Branch protection's only required check runs there
+   — `gh api repos/gregberns/harmonik/branches/main/protection` returns exactly one entry,
+   `check (Tier 2)`. And the agent-worktree tool cuts every new worktree from it. **How you know it
+   worked:** `git rev-list --left-right --count origin/main...HEAD` reads `0 0`, and `PROBE.md` is
+   gone from the tip.
+
+5. **Repair the measurement commands, then prune the agent worktrees.** A tree-wide
+   `find . -name '*.go'` walks nine agent worktrees under `.claude/worktrees/` and counts the same
+   code up to ten times. Measured today: **8,916 production Go files against a true 897, and
+   2,138,555 production lines against a true 214,604**. Test files are worse — 11,074 against a true
+   1,046, and 3,276,799 lines against a true 309,509. Add `-not -path './.claude/*'` to any
+   `find`-based count. Two of the nine worktrees also still hold `internal/daemon/reviewloop.go`,
+   deleted on 2026-07-28, so a tree-wide search finds code this program already removed. The nine
+   hold about **842 MB**.
+
+   **Check before you rewrite. Part of this is already done.** `UNWIRED-INVENTORY.md` already carries
+   `-not -path './.claude/*'` on every `find` in its measurement table. The commands still without it
+   are in `KEEP-DELETE.md` and `NEXT_STEPS.md`. The two tree-wide `grep -r` commands in §2b of this
+   file were re-run today and give the same answer with and without the worktrees, so do not "fix"
+   them for symmetry. A search for a symbol is not automatically wrong the way a file count or a line
+   count is. **How you know it worked:** the documented command and the corrected command return the
+   same number.
 
 ### Step 1 — free deletions — ⚠ RETIRED 2026-07-29. Nothing here is both free and outstanding.
 
@@ -1263,10 +1312,24 @@ process boundary.** A defect in the shipped binary, in supervisor revival, or in
 survive a restart is therefore invisible to it. Note also that `scenario_happypath_n1_test.go` pins
 `WorkflowModeSingle`, a mode selected twice in the entire event log.
 
-**The tmux substrate is the sharpest gap, and the tier says so itself.** Three of the 32 scenario files
-set `Config.Substrate`; the other 29 leave it nil, and `daemon.Config.Substrate`'s own doc says a nil
-substrate falls back to `exec.CommandContext` — no panes. All three that do set one wrap
-`NewTmuxSubstrate` around a **fake adapter**, and
+**The tmux substrate is the sharpest gap, and the tier says so itself.**
+
+> ⚠ **CORRECTED 2026-07-30. This paragraph used to open "Three of the 32 scenario files set
+> `Config.Substrate`", and that reads as partial coverage. It is not partial. The honest number is
+> **0 of 31** scenario files exercise real tmux in a default run.** There are 31 scenario files, not
+> 32 — 26 named `internal/daemon/scenario_*.go` plus 5 in `test/scenario/`, counting
+> `test/scenario/scenario_stub.go` out because it is a build-tag stub with no tests. Three set
+> `Config.Substrate` and **none of the three reaches real tmux unattended**: one wraps a fake adapter
+> and is skipped unconditionally, one wraps a fake adapter, and the third skips unless an environment
+> variable names a reachable remote host. Do not write "3 of 32". It is wrong in both numbers and it
+> overstates the coverage.
+
+The other 28 leave `Config.Substrate` nil, and `daemon.Config.Substrate`'s own doc says a nil
+substrate falls back to `exec.CommandContext` — no panes. Two of the three wrap `NewTmuxSubstrate`
+around a **fake adapter**. The third, `scenario_remote_substrate_t4_claude_test.go`, wraps the real
+`tmux.OSAdapter{}` and is the one file in the tier that would touch real tmux — and it calls
+`t.Skipf` unless `HARMONIK_T4_WORKER` names a host that answers a reachability probe, so it never
+runs by default. Of the two fake-adapter files,
 `scenario_launch_liveness_slotleak_hk40c3y_test.go` records the consequence in a comment: *"the
 fake-substrate path cannot reach `run_completed` (no hook-bridge socket relay → agent_ready_timeout)."*
 `scenario_concurrent_dispatch_vn4_hkukhzu_test.go` is skipped unconditionally for the same reason, and
@@ -1390,7 +1453,25 @@ each needs its own decision.
 keys" for any node that is not a mapping, so a YAML alias hides a typo'd key inside the `subsystems:`
 block. That hole is inherited, not new, and it is now on the surface this step widens.
 
-### Step 13 — the event payloads the core actually emits (~300 lines, MEDIUM risk — a design, and it carries a live defect)
+### Step 13 — the event payloads the core actually emits (~340 lines, MEDIUM risk — a design, and it carries a live defect)
+
+**Do this part first. It is 40 lines and it is correctness, not structure. Added 2026-07-30, verified
+at both sites.** Two production paths append their own envelope to the same `events.jsonl` that every
+reader parses. `core.Event` (`internal/core/event.go`) declares `event_id`, `schema_version` and
+`type`. Both of these write `event_type` and `emitted_at` instead:
+
+- `internal/queue/cli/cancel.go` — the `queueCancelOperatorEvent` struct, written by
+  `emitQueueCancelEvent` on `harmonik queue cancel`.
+- `cmd/harmonik/handler.go` — the `handlerResumedEvent` struct, written by `emitHandlerResumedEvent`
+  on `harmonik handler resume`.
+
+A line in that shape decodes into `core.Event` with an **empty type and a zero event id**, so it is
+invisible to `harmonik subscribe`, to replay, and to the jq fan-out queries the major-issue protocol
+depends on. The `handler.go` case is the sharper one: `emitHandlerResumedEvent` builds a
+`core.HandlerResumedPayload`, calls `Valid()` on it, refuses to emit when it fails — and then
+**discards the typed payload and marshals the untyped struct instead**. The correct payload already
+exists at the write site. Give both sites a `core.Event` envelope with a real event id and schema
+version, and keep their payloads where they are.
 
 `internal/core` registers **181 event types** with typed payloads, and `daemon.startWithHooks` refuses
 to boot if `scanRegisteredPayloadsForSecretFields` finds a secret in one. But **25 `…Payload` structs
@@ -1444,7 +1525,7 @@ undeclared contracts to behave like the first.
 **Risk:** medium. Every one of the 21 sites has a fallback branch today, and some of those fallbacks
 are the only thing keeping a non-tmux path alive.
 
-### Step 15 — split `internal/daemon` (~large, LOW risk — a move, and it is the last one)
+### Step 15 — split `internal/daemon`, and retire the freeze gates in the same change (~large, LOW risk for the move, and it is the last one)
 
 **42,924 production lines, 96 non-test files, 193 test files** (re-measured later on 2026-07-30). The
 production figures read 42,438 in 95 files at `15bfdc154` earlier the same day. The 183 test files
@@ -1464,6 +1545,38 @@ the current state." Everything in this package can reach everything else's unexp
 which is the single fact that makes steps 10, 12 and 14 possible in the first place.
 
 **Risk:** low by then, and high if attempted early. That asymmetry is the whole reason it is last.
+
+**⚠ The "LOW risk — a move" price left out the gate scripts, and they are not free. Added
+2026-07-30, counted by hand.** The CI gate scripts encode the current shape of `internal/daemon` as
+literal symbol names and file globs, so the split breaks them. **Sixteen scripts break, not
+fourteen.** The count:
+
+- **14 grep ratchets** over `internal/daemon` symbols. Thirteen are named `*-freeze-gate.sh`
+  (`crewrun`, `harnessclaude`, `harnesscodex`, `harnesspi`, `projectconfig`, `queuewiring`,
+  `readywait`, `runlaunch`, `runloop`, `runmerge`, `transport`, `workersbootwire`,
+  `workloop-scheduler`). The fourteenth is `runloop-emitter-gate.sh`, which does not carry the
+  `freeze-gate` name and is the same mechanism — it names `internal/daemon` 40 times, more than any
+  of the thirteen.
+- **2 mutation harnesses** that copy named `internal/daemon/*.go` files into a fixture tree and patch
+  them by hardcoded path: `readywait-freeze-gate-test.sh` and `runloop-emitter-gate-test.sh`. These
+  break on a file move even if the symbol survives. `readywait-freeze-gate-test.sh` already patches
+  `internal/daemon/reviewloop.go`, a file deleted on 2026-07-28, which is what this coupling looks
+  like when it rots.
+
+Reproduce the set with `ls scripts/*gate*.sh` and `grep -c 'internal/daemon' scripts/<name>.sh`.
+**`scenario-gate.sh` is NOT in the count.** All six of its `internal/daemon` references are inside
+`#` comment lines, so the split makes its comments lie but does not break it. Fix the comments, do
+not rewrite the script.
+
+**Why the greps exist, and why they cannot simply be deleted.** `.golangci.yml` is 1,166 lines and
+**1,016 of them — 87% — are the depguard block** (lines 146 to 1161). That block repeats the same
+caveat in **five** places: depguard checks DIRECT imports only. The greps are the compensation for
+that hole. So retiring them is not a deletion. It is a trade: each retired gate needs the depguard
+rules to get stronger first, or the boundary it defended goes unguarded. Once the package boundary
+is real, most of the 14 ratchets become one depguard rule per new package, which is a boundary a
+linter can deny rather than a boundary a grep can approximate. Keep the gates that defend something
+a linter cannot state. **Land this with the split, in the same change** — a split that leaves 16 red
+gates behind is a split nobody can merge.
 
 ### Step 16 — the keeper — SEQUEL WORK, and it is separable from crew
 
@@ -1515,6 +1628,79 @@ the idiom they mirror. `PRINCIPLES.md` §9 says to find the subsystem that alrea
 and make the rest of the tree look like it. **That subsystem is the keeper.** Steps 10 and 14 should
 read it before designing anything.
 
+### Steps 19 and 27a — two more, and why the numbers jump
+
+**The gap in the numbering is deliberate.** A planning pass on 2026-07-30 proposed sixteen more
+steps, numbered 17 to 32. A review found the set overstated and most of it not yet ready to be a
+step. Two of the sixteen were measured, small, and carry a real behavior fix, so they land here as
+steps and keep the numbers they were proposed under. The rest are recorded as candidates in
+"Candidate work beyond Step 16" below, under those same numbers. **A missing number in this section
+is a candidate, not a lost step.**
+
+### Step 19 — one terminal predicate (~15 lines, LOW risk, and it is a live behavior fix)
+
+`core.CoarseStatus` has no `IsTerminal()` method, so **six production sites re-derive the test.
+Five agree that terminal means `closed` or `tombstone`. One does not.**
+
+| Site | Test |
+|---|---|
+| `internal/lifecycle/activerun_em031a.go` `isTerminalBeadStatus` | `Closed \|\| Tombstone` |
+| `internal/lifecycle/activerun_em031a.go` — `terminalStatuses := []string{"closed", "tombstone"}` | same test, written as string literals |
+| `internal/lifecycle/startup_pl005_qm002.go` `isDispLedgerClosed` | `Closed \|\| Tombstone` |
+| `internal/lifecycle/startup_pl005_qm002.go` `isLedgerClosed` | `Closed \|\| Tombstone` |
+| `internal/daemon/scheduler.go`, the BI-013c terminal path | `Closed \|\| Tombstone` |
+| `internal/daemon/workloop.go` `maybeEmitEpicCompleted` | **`Closed` only** |
+
+**The one that disagrees carries the cost.** `maybeEmitEpicCompleted` walks the parent's
+`parent-child` edges and returns early on the first child whose `EndpointStatus != CoarseStatusClosed`.
+A tombstoned child is not closed, so it never satisfies that test, and it **permanently suppresses
+`epic_completed` for its parent**. That event is the captain's re-tasking signal, so one tombstoned
+child silently stops a lane.
+
+Add `IsTerminal()` to `core.CoarseStatus` and route all six sites through it. **Depends on** nothing.
+Do it inside Step 11's window — it is queue-adjacent and it touches `scheduler.go`, which Step 11
+also touches. **How you know it worked:** a test that tombstones one child of a two-child epic and
+asserts that `epic_completed` still fires.
+
+### Step 27a — one `daemon.Config` constructor with a required-field check (~120 lines, MEDIUM risk)
+
+Step 10 replaces the 81-field `workLoopDeps` and the 22-field `bootState`. It does not name
+`daemon.Config`, and that is the second composition root.
+
+`daemon.Config` (`internal/daemon/daemon.go`) has **40 fields**. Two production sites assemble it,
+and they disagree about what a daemon needs:
+
+| Site | Field literals |
+|---|---:|
+| `cmd/harmonik/main.go` | 21 |
+| `cmd/harmonik/run.go` | 17 |
+
+Count them with `grep -n 'daemon\.Config{'` and read each literal. **`run.go` omits nine fields that
+`main.go` sets**: `DefaultHarness`, `WorkflowModeDefault`, `AgentReadyTimeout`,
+`RemoteAgentReadyTimeout`, `KerfPath`, `CodexBinary`, `Workers`, `NoAutoPull` and
+`SubscriptionTokenCeiling`. So `harmonik run` asks for a daemon with no default harness, no
+workflow-mode default, no agent-ready timeouts and no worker registry. The two timeout fields fall
+back to constants by their own doc comments. The rest do not.
+
+**And `harmonik run` does not boot at all.** `run.go` calls `daemon.Start(runCtx, cfg)`, which reaches
+`resolveBootConfig` in `internal/daemon/daemon.go`. That function calls
+`bootconfig.ValidateWorkflowMode`, which rejects an empty `WorkflowModeDefault` with a named error —
+*"WorkflowModeDefault must be set (PL-004a)"*. `run.go` never sets that field anywhere. So the second
+composition root is not a degraded daemon. It is a dead verb, and it has been shipping. The boot check
+is the good news here: it fails loudly and it names the field. This step's job is to make the other
+eight omissions fail the same way at construction instead of one at a time at boot.
+
+Two further assembly sites exist and are out of scope here, because neither is a production boot
+path: `internal/scenario/orchdrive.go` (14 fields) and `internal/daemon/scenariotest/concurrent_merge.go`
+(12). They are worth knowing about, because a constructor with a required-field check has to admit
+them.
+
+Give `daemon.Config` one constructor that names its required fields and fails loudly when one is
+absent. **Depends on Step 10** — the design of that constructor is the same design question, and
+doing it twice produces two answers. **How you know it worked:** `harmonik run` and `harmonik daemon`
+construct the same config, and removing a required field fails at construction rather than at first
+use.
+
 ### The shape of what is left, in one table
 
 | Step | What it is | Size | Risk | Depends on | Move or design |
@@ -1523,10 +1709,12 @@ read it before designing anything.
 | 10 | Replace the 81-field `workLoopDeps` and the 22-field `bootState` with constructed units | ~800 lines | medium | steps 2–6 | **design** |
 | 11 | Make the queue store the only writer of queue status | ~400 lines | medium | step 4 | **design** |
 | 12 | Give the nine ungated bus consumers and the six unswitched subsystems their own switches | ~600 lines | low | step 10 | move, with 2 decisions |
-| 13 | One definition per event payload, and make replay decode what the core emits | ~300 lines | medium | nothing | **design** + a spec amendment |
+| 13 | Fix the two hand-rolled `events.jsonl` envelopes, then one definition per event payload | ~340 lines | medium | nothing | fix, then **design** + a spec amendment |
 | 14 | Replace 16 substrate capability assertions with a declared contract | ~250 lines | medium | step 10 | **design** |
-| 15 | Split `internal/daemon` along the boundary steps 10 and 12 produce | large | low | steps 10, 12 | move |
+| 15 | Split `internal/daemon`, and retire the 16 gate scripts the split breaks | large | low for the move | steps 10, 12 | move + a linter trade |
 | 16 | The keeper — separable from crew, outside the charter's core set | ~11,500 lines | medium | nothing technical | move + design |
+| 19 | One `IsTerminal()` on `core.CoarseStatus`, and stop a tombstoned child suppressing `epic_completed` | ~15 lines | low | nothing | move + a behavior fix |
+| 27a | One `daemon.Config` constructor with a required-field check | ~120 lines | medium | step 10 | **design** |
 
 **Honest read on how much is left:** steps 9–15 are on the order of 2,400 lines of production change
 over a 42,000-line package, and three of the seven are designs rather than transcriptions. The line
@@ -1535,6 +1723,55 @@ program's record is that it runs out of decisions rather than lines. D1 is the c
 directions: it blocked step 7 from the day the map was written until 2026-07-30, and when it was
 finally read against the code the answer turned out to be already built. **Ask whether a decision is
 still open before waiting on it.**
+
+### Where the program as scoped actually lands — and what is not costed
+
+**A defensible end state for `internal/daemon` has not been costed. Say that plainly rather than
+quoting a target.** What follows is what can be measured today.
+
+**The package is 42,924 production lines in 96 files** (`find internal/daemon -maxdepth 1 -name
+'*.go' -not -name '*_test.go'`). That total is re-derivable from the command shown. **The per-group
+split below is not, and you should know that before you price anything off it.** It comes from a
+file-by-file classification pass whose working artifact never reached the repo, and the numbers
+appear nowhere else in `plans/`, `docs/` or `.kerf/`. Redo the classification before treating any
+single group as a budget. The four core and core-adjacent survivor groups it names:
+
+| Group | Lines |
+|---|---:|
+| `run` — scheduler, run driver, graph cascade, launch, run plan, harness select | 14,548 |
+| `substrate` — tmux substrate, paste-inject watchdogs, heartbeat, hook relay | 5,947 |
+| `boot` — `daemon.go`, bootstate, bootsocket, bootworkloop, bootreconcile, wiring log | 2,862 |
+| `merge` — branching, beads merge driver, WAL checkpoint | 961 |
+| **survivor total** | **24,318** |
+
+**The nine groups with no step against them hold 18,606 lines — 43% of the package.** They are
+`watchdog` (4,713), `reconcile` (3,795), `opsview` (2,583), `pause` (2,173), `socket` (2,055),
+`spend` (1,008), `comms` (982), `crew` (719) and `sandbox` (578). **The two line totals add to 42,924
+exactly, and the classification's file counts do not add up.** The table above shows only lines, but
+the classification also assigned a file count to each of the 14 groups, and those sum to 100 against
+a measured 96. Those two facts
+cannot both be innocent: four double-counted files would inflate the line sum as well, so either the
+line sum is a coincidence or the error is in the file column alone. Nobody has checked which.
+**Reconcile it before pricing anything off the per-group counts.** The 43% share is the durable
+finding here, and it survives either answer.
+
+**Do not subtract the candidate steps' deletion estimates from 24,318.** Most of what they delete is
+not in those four groups, and several of them delete nothing inside `internal/daemon` at all. Traced
+by file location:
+
+- The argv-builder and refs-trailer candidate (proposed Step 21) names
+  `internal/crewrun/launchspec.go`, `internal/harness/codex/commit.go` and
+  `internal/harness/pi/commit.go`. **No file it touches is in `internal/daemon`.**
+- The second-merge-engine candidate (proposed Step 24) splits across
+  `internal/workspace/mergedispatch_wm018a.go` and `internal/daemon/branching.go`. Only the second is
+  in a survivor group, and the three landing functions in it total 94 lines.
+- The substrate-coverage candidate (proposed Step 26) **adds** lines to the `substrate` group before
+  it removes any.
+
+Taken together the candidate set removes a few hundred lines from the four survivor groups, not two
+thousand. **The defensible read is that 24,318 falls to roughly 23,900 in four or five packages.**
+That is worth doing and it is not the same claim as halving the package. Anyone who wants a smaller
+number has to cost the nine unaddressed groups, and nobody has.
 
 ### What must NOT move, and why
 
@@ -1556,6 +1793,154 @@ still open before waiting on it.**
   **This changes a decision, not just a number.** 157 files was the stated reason a signature change
   was too expensive to contemplate and had to wait for the deletion. The deletion has happened, and
   the cost is now a fifth of what this section priced. Re-price the change before deferring it again.
+
+---
+
+## 3b. Candidate work beyond Step 16 — NOT YET STEPS
+
+**Read this heading literally. Nothing below is scheduled, priced or approved.** On 2026-07-30 a
+planning pass proposed extending this program from 16 steps to 32. An adversarial review of that
+proposal returned **not fit to merge as written** and found the set overstated as a whole: the
+end-state arithmetic ran in the program's favor, several counts did not reproduce, and four items
+quietly amend `CHARTER.md`. Two items were measured, small and worth taking, and they are Steps 19
+and 27a above. **Everything else is recorded here as a candidate, with what has to be settled before
+it can become a step.**
+
+Treat each entry's claim as the proposer's, not as measured fact. Where a number below was
+re-measured it says so. **`CHARTER.md` §5 says to re-derive every number before acting on it, and
+that rule applies to this section more than to any other part of this file.**
+
+### The four that amend the charter — operator decision required before any of them is a step
+
+`CHARTER.md` defines the core subsystem set and what "done" means, and it outranks a plan on intent.
+These four change one or the other. **Two of the four admitted they needed a decision. Two did not,
+and that is the more useful signal.** None of them is a step until the operator says so.
+
+| # | Candidate | What it amends | Admitted it? |
+|---|---|---|---|
+| **27** (beyond 27a) | Split `cmd/harmonik`'s verb switch, and lift the config resolvers into their own package | Adds `cmd/harmonik` to the core set. §3 names the core subsystems and this is not among them | **No** |
+| **29** | Amend `specs/` — retire the stale review-loop and cognition-loop requirements | Changes what "the spec is always right" means mid-program, and gates future deletions on a spec sweep | **No** |
+| **30** | Make a missing external binary a test failure instead of a skip | Changes §6's "tests that fail when behavior breaks" from a goal into a gate, and turns roughly a hundred silent passes red at once | **No** |
+| **32** | Enumerate and decide the unwired packages | §4 defers this by operator decision. Doing it is reversing that deferral | **Yes** |
+
+Candidate 27's claim is worth stating because it is the largest single item in the proposal:
+`cmd/harmonik` holds `main.run`, a flat verb switch reported as the worst function in the tree by
+cognitive complexity. That is a real finding. It is still not this program's scope until the charter
+says so.
+
+### The rest, in one line each
+
+**17 — one worktree teardown.** Claims worktree removal is implemented eight times, that four skip
+the `~/.claude.json` trust garbage collection, and that two of those four are the
+garbage-collection paths. Points at the filed defect `hk-bfvby`. Cost: about 90 new lines and 150
+deleted, low risk. **Settle first:** whether the eight really share one contract, or whether the
+promote path's single `--force` is deliberate.
+
+**18 — one git-fact probe.** Claims six `git rev-parse HEAD` wrappers with four different
+empty-result contracts, plus four `git merge-base --is-ancestor` wrappers that disagree about
+whether an error means "not an ancestor". Carries a separate and sharper claim:
+`MainHistoryHasRefsTrailer` hardcodes the branch `main` inside a function that takes a project
+directory and never a branch, so a project with `target_branch: integration` reads the wrong branch.
+Cost: about 70 lines removed plus four call-site changes, medium risk. **Settle first:** whether the
+differing empty-result contracts are drift or requirements. The branch-hardcoding half may be a
+defect to file rather than a step to schedule.
+
+**20 — one crew session name, one orphan classifier.** Claims crew tmux sessions are spawned with a
+`crew-` infix and looked up without it, so crews report as not alive, and that two functions named
+`SweepOrphanTmuxSessions` are called twelve lines apart with only one of them applying an orphan
+test. Cost: about 40 new and 50 deleted, medium risk. **Settle first:** this step kills tmux
+sessions and getting it wrong reaps a live one. It needs a test that proves the classifier is the
+only path to a kill, before the change and not after.
+
+**21 — one argv builder and one refs-trailer writer.** Claims the `claude` command line is built four
+ways, that two of the four drop `--model`, and that one of those two is the keeper's dead-pane
+self-heal path. Folds in `codex.EnsureRefsTrailer` and `pi.EnsureRefsTrailer`. **Verified location:
+every file it names is outside `internal/daemon`** — `internal/crewrun/launchspec.go`,
+`internal/harness/codex/commit.go`, `internal/harness/pi/commit.go`. Cost: about 125 deleted, low
+risk. **Settle first:** the four builders carry two different security postures for the
+skip-permissions flag. Collapsing them picks one, and that is a decision.
+
+**22 — one guarded "already merged, close it".** Claims three code paths decide a merge commit exists
+for a bead and close it, that one checks seven guards first and two check none, and that one of the
+two runs unattended and hourly. Cost: about 60 lines, medium risk. **Settle first:** depends on
+candidate 18 for branch resolution. Closing a bead under a live run is the failure this guards
+against, so the acceptance test has to exist first.
+
+**23 — time as a port, on a ratchet.** Claims low adoption of the existing `substrate.ClockPort`,
+eight hand-rolled poll loops, twelve hand-rolled retry loops, and one constant relation that
+guarantees a false alarm — a stall threshold of 180 seconds sitting between a local agent-ready
+timeout of 150 and a remote one of 210. **The counts in this area do not agree across three
+independent measurements and the step cannot be priced until one command is agreed.** Two figures
+did reproduce here: `internal/daemon` makes **119** direct wall-clock calls
+(`find internal/daemon -maxdepth 1 -name '*.go' -not -name '*_test.go' -exec grep -hE
+'time\.(Now|Since|After|Tick|NewTicker|NewTimer|Sleep|AfterFunc)\(' {} + | wc -l`), and `time.Now`
+appears **237** times across `internal/` and `cmd/`
+(`grep -rn 'time\.Now(' --include='*.go' internal/ cmd/ | grep -v '_test.go' | wc -l`). **Do not
+quote 111 for the daemon figure — it is wrong.** The whole-tree totals proposed as 321 and 322 both
+failed to reproduce. The same regex over the same scope gives 356 here. One uncancellable sleep did
+verify: `internal/hookrelay/hookrelay.go` `sendToSocket` declares `wallMax = 25 * time.Second` and
+retries under a bare `time.Sleep`, so it can block shutdown for 25 seconds. **Settle first:** one
+agreed measurement command, then the free half — ban `time.Now` in the packages that are already
+clean, so they cannot regress.
+
+**24 — delete the second merge engine, dedupe the live one.** Claims a complete second merge engine
+of about 1,048 production lines with zero non-test callers, held alive by tests, and that
+`runmerge.RunBranchToTarget` and `runPromotePush` are the same routine written twice with three
+drifts that each make promote worse. **This one already knows it needs a decision** —
+`CHARTER.md` §4 says unwired code is not deleted by default, so the deletion half belongs to
+candidate 32 above. **Settle first:** the charter deferral. The dedupe half may be separable.
+
+**25 — the dead twin halves in the substrate.** Claims the local-versus-remote twin pattern appears
+27 times with dead halves still in the tree, and that the remote fingerprint drops a progress signal
+so a remote agent editing an untracked file registers as making no progress. Cost: about 145 lines,
+low risk. **Settle first:** it touches `pasteinject.go`, so it has to be done inside candidate 26 or
+the same 2,691 lines get read twice.
+
+**26 — cover the substrate.** The largest candidate, and the one the review rated highest value:
+6,535 production lines of tmux, paste injection and hook relay with no default-run coverage. Claims
+about two weeks of one agent, high risk, and that it has a prerequisite inside itself — two
+paste-inject watchdog loops that are the same loop with different constants and cannot be tested
+without collapsing them first. **Settle first:** it is the only candidate that runs real tmux
+unattended on the box. Decide whether that is allowed, and where, before anything else about it.
+
+**27b and 27c — split the verb switch, lift the config resolvers.** Both fall under the charter
+question in the table above. Neither is a step until that is answered.
+
+**31 — hermetic tests, so red means something.** Claims the merge gate's `-p=1 -parallel=1` exists to
+hide non-hermetic packages, that the Makefile says so in its own comment and files the follow-up as
+`hk-d515w`, and that the cause is candidate 23's cause. **Settle first:** candidate 23's measurement
+dispute. This one is downstream of it and cannot be priced separately.
+
+### Three proposed changes to Steps 9, 14 and 16 — recorded, not applied
+
+The same pass proposed re-ordering three landed steps. **None is applied here.** Each changes an
+order that other work already assumes, so each needs the operator rather than an agent.
+
+- **Step 9 — split it in two and run both halves in parallel.** The claim is that the live pass
+  proves a bead ran end to end but cannot say which change broke a run, so it is half an oracle, and
+  the other half is candidate 31. The correction to Step 9's substrate coverage **has** been applied
+  above, because that was a wrong number and not a re-ordering.
+- **Step 14 — move it after candidate 26.** The claim is that all 21 substrate type-assertion sites
+  have a fallback branch, that some of those fallbacks are the only thing keeping a non-tmux path
+  alive, and that nothing today exercises any of them — so landing Step 14 first is a change no
+  oracle can check. **This is the strongest of the three and it depends entirely on whether
+  candidate 26 happens at all.**
+- **Step 16 — cut the keeper from this program.** The claim is that about half the keeper's
+  configuration chain lives in `cmd/harmonik` and `internal/projectconfig`, which Step 16's stated
+  scope does not cover, so the step cannot finish its own headline item. Step 16 already marks itself
+  sequel work and already says the operator asked for it, so this is a request to reverse an operator
+  decision. It is not an agent's to make.
+
+### What the review said to cut outright
+
+The same review listed six things the proposal implied and recommended against. They are recorded so
+nobody re-derives them: triaging the twelve agent branches as a workstream (measured at nineteen
+distinct commits, three worth having), chasing the spec orphan rate to zero (the rate rewards writing
+comments, not fixing specs), enabling `dupl` / `maintidx` / `lll`, a typed-container campaign, and
+extracting `internal/core`'s three impure files as its own step rather than folding it into Step 13.
+And one standing restatement that grows more tempting as the core gets clean: **do not start the
+dataplane.** `CHARTER.md` §3 names it as the next design question after done and says it must not be
+started early.
 
 ---
 
@@ -1863,6 +2248,8 @@ The size column is re-measured 2026-07-30. Sizes that moved are shown as `then �
 | **D3** | **Is a failed queue-reservation persist fatal to the dispatch?** | Rewrite step 4 | Correct answer is yes (no claim, no launch). But under disk pressure it converts silent inconsistency into visible dispatch stall. |
 | **D4** | ✅ **MOOT 2026-07-30.** It asked whether `reviewloop.go` and `dot_cascade_core.go` were in scope with `workloop.go`. `reviewloop.go` was deleted on 2026-07-28, and the launch step of the other two was collapsed into `agentlaunch.go` on 2026-07-29, so the question answered itself by events. The surviving half of it — "are the run driver and the graph cascade one unit?" — is yes, and step 7 above now states it directly. | Nothing | — |
 | **D5** | **Does the scenario tier become merge-blocking before the rewrite starts?** | Everything | **Re-briefed 2026-07-30. It is no longer one line of YAML.** That line landed (`1ee9154e8`, `7f1028316`) and the tier now reports its own failures. What is left is 8 deterministic scenario failures plus a skip that reads as a pass, and `.github/workflows/scenario.yml` warns not to make itself required until those close. The decision is therefore how much test repair to buy before the rewrite starts, not whether to flip a flag. Without an oracle the rewrite has nothing to validate against. See Step 0 item 3. |
+| **D6** | **Push a reconciled `main`.** Step 0 item 4. `origin/main` is 27 commits of probe markers plus two fixes already on the tip, and three things key off it — the lint delta in `make check-short`, the one required status check, and every new agent worktree. | The measurement gate for everything | It needs a push to `origin/main`. An agent must not rewrite the branch every merge is judged against. |
+| **D7** | **Do the four charter-amending candidates become steps?** They are `cmd/harmonik` beyond Step 27a, the specs pass, the missing-binary-is-a-failure pass, and the unwired enumeration. See §3b. | Nothing today. Each blocks itself | `CHARTER.md` defines the core subsystem set and what done means, and it outranks a plan on intent. Two of the four did not admit they were amending it. |
 
 ---
 
@@ -1874,8 +2261,17 @@ proof, drive-to-dead-session and exit facts, and a CI gate
 (`scripts/readywait-freeze-gate.sh`) pins the invariant mechanically: exactly one
 `runloop.DispatchSegment` may be constructed in the tree, and it must be in `agentlaunch.go`. There
 are two workflow modes left, not three, and one of them is a rounding error — across the whole live
-event log (2,153 runs through 2026-07-22) `workflow_mode` reads `dot` 5,890 times, the retired
-`review-loop` 1,635 times, and `single` **twice**. The remaining work is therefore the graph program:
+event log (through 2026-07-22) there are **866 `dot` run starts against 2 `single`**. Measure it with
+`jq -r 'select(.type=="run_started") | .payload.workflow_mode' .harmonik/events/events.jsonl | sort |
+uniq -c`, which also reports 1,285 run starts with no mode field at all, from the review-loop era.
+
+> ⚠ **CORRECTED 2026-07-30. This sentence used to read "`workflow_mode` reads `dot` 5,890 times, the
+> retired `review-loop` 1,635 times, and `single` twice."** Those are **event-occurrence** counts —
+> `workflow_mode` rides many event types, so the same run is counted once per event it emits. Set
+> beside "2,153 runs" they read as run counts and they are not. The ratio holds and the absolute
+> numbers do not. Use run starts.
+
+The remaining work is therefore the graph program:
 finish moving the last shape onto the graph and delete the other. Two things stand in the way. First,
 "what the exit means" is still written twice — the single-mode tail and `dispatchDotAgenticNode` each
 hand-roll probe-HEAD, `implementer_phase_complete`, the process-exit commit fallback and the

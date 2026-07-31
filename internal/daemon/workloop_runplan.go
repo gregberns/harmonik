@@ -11,15 +11,16 @@ package daemon
 // the run holds a worktree, a tunnel port, an agent process, or an ssh session
 // on a worker.
 //
-// WHY THE SEAM IS HERE. Four of the ten decisions can REFUSE the bead: an
-// unknown Pi profile, a target repo outside the safelist, a start_from ref that
-// does not resolve, and a lands_on branch the operator protects. Before the
-// plan existed those four refusals sat inline in a 1700-line function, above
-// the acquisitions but with nothing to keep them there. One of them drifted
-// below a worker-slot reservation once already and leaked the slot on every
-// refusal until the remote path wedged (hk-3hozm). With the decisions in one
-// function that returns a value, a refusal cannot move below an acquisition
-// without moving the whole plan.
+// WHY THE SEAM IS HERE. Five decisions can REFUSE the bead: an unknown Pi
+// profile, a target repo outside the safelist, a start_from ref that does not
+// resolve, a lands_on branch the operator protects, and a daemon hook socket
+// path too long for a remote run's tunnel to reach. Before the plan existed the
+// first four sat inline in a 1700-line function, above the acquisitions but
+// with nothing to keep them there. One of them drifted below a worker-slot
+// reservation once already and leaked the slot on every refusal until the
+// remote path wedged (hk-3hozm). The fifth was BELOW three acquisitions and was
+// moved up here. With the decisions in one function that returns a value, a
+// refusal cannot move below an acquisition without moving the whole plan.
 //
 // THE PLAN IS NOT PURE, AND DOES NOT CLAIM TO BE. It stats and reads
 // <repo>/.harmonik/branching.yaml. It forks up to two `git rev-parse`
@@ -45,8 +46,9 @@ package daemon
 // the plan to pick a worker would split that section and re-open the race it
 // closes.
 //
-// KNOWN INCONSISTENCY, RECORDED NOT FIXED. The four plan refusals reopen the
-// bead and emit NO run_failed. Other refusals further down the run path ride
+// KNOWN INCONSISTENCY, RECORDED NOT FIXED. The plan refusals reopen the bead
+// and emit NO run_failed. The socket-path one emits worker_tunnel_failed, and
+// the other four emit nothing at all. Refusals further down the run path ride
 // the Run bridge and DO emit run_failed. That split is real and is not defended
 // by any spec rule. It is left alone here on purpose: unifying it would ADD
 // events to the stream that operator tooling does not expect today.
@@ -67,11 +69,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/workers"
 )
 
 // runPlanRequest names everything the resolver reads.
@@ -82,10 +87,17 @@ import (
 // present for ONE reason: a Pi run stamps its resolved provider onto the run
 // handle at the same point it emits provider_selected, and both must keep their
 // position in the sequence.
+//
+// PreSelectedWorker is the worker the OUTER dispatch loop already reserved for
+// this run, or nil. The plan reads it, and reads nothing else about placement.
+// It does not select and does not reserve. It is here so that the one check
+// which only matters for a remote run can refuse before the run takes a tunnel
+// port or touches the worker over ssh.
 type runPlanRequest struct {
-	Env     runloop.RunEnv
-	Emit    handlercontract.EventEmitter
-	Handles runloop.SharedHandles
+	Env               runloop.RunEnv
+	Emit              handlercontract.EventEmitter
+	Handles           runloop.SharedHandles
+	PreSelectedWorker *workers.Worker
 }
 
 // runPlanVerdict tells beadRunOne whether the bead may proceed, and when it may
@@ -112,6 +124,11 @@ const (
 	// runPlanRefusedLandsOnProtected — the resolved lands_on is a branch the
 	// operator declared off-limits for direct pushes.
 	runPlanRefusedLandsOnProtected runPlanVerdict = "refused_lands_on_protected"
+
+	// runPlanRefusedSocketPath — the daemon's hook socket path is too long for
+	// the platform to bind or connect, so the reverse tunnel this remote run
+	// needs could never carry a hook. Remote runs only.
+	runPlanRefusedSocketPath runPlanVerdict = "refused_socket_path"
 )
 
 // runPlanRefusal carries exactly what the daemon must say when it refuses a
@@ -128,6 +145,23 @@ type runPlanRefusal struct {
 	// Err is the typed error the refusal came from, for callers and tests that
 	// want errors.As rather than a string match.
 	Err error
+
+	// TunnelFailure, when set, is the worker_tunnel_failed event this refusal
+	// emits BETWEEN the stderr line and the reopen. Only the socket-path
+	// refusal sets it. It is data rather than a callback so that the order of
+	// the three reports stays fixed in one place.
+	TunnelFailure *runPlanTunnelFailure
+}
+
+// runPlanTunnelFailure is the worker_tunnel_failed payload a refusal owes an
+// operator: which run, which bead, which worker, which socket path, and why.
+type runPlanTunnelFailure struct {
+	RunID      string
+	BeadID     string
+	WorkerName string
+	WorkerHost string
+	SocketPath string
+	Detail     string
 }
 
 // runPlan is the answer to all ten questions plus the verdict.
@@ -245,6 +279,7 @@ func resolveRunPlan(ctx context.Context, req runPlanRequest) runPlan {
 	if !resolveRunPlanPlace(ctx, req, &plan) {
 		return plan
 	}
+	resolveRunPlanHookSocket(req, &plan)
 	return plan
 }
 
@@ -468,17 +503,77 @@ func resolveRunPlanPlace(ctx context.Context, req runPlanRequest, plan *runPlan)
 	return true
 }
 
+// resolveRunPlanHookSocket refuses a remote run whose daemon hook socket path is
+// too long for the platform to bind or connect.
+//
+// The check is a length comparison against a platform constant and depends only
+// on the project dir, so it can be answered here. It used to run much later, in
+// the tunnel setup, AFTER the run had already reserved a worker slot, allocated
+// a tunnel port, and made an ssh round trip to create a directory on the
+// worker. All three were taken for a run that could never work.
+//
+// It stays remote-only, and it stays LAST among the refusals, so that a bead
+// which would also fail an earlier decision still reports that earlier reason.
+//
+// The gate is a pre-selected worker rather than "this run is remote", because
+// remote is not yet decided for a run whose worker the fallback path will pick.
+// The tunnel setup keeps its own copy of the check for that path. The two never
+// both refuse: a pre-selected run that fails here returns before the tunnel
+// setup runs at all.
+//
+// ssh never validates this forward destination when the tunnel starts, only
+// when a connection needs forwarding, so a too-long path lets the tunnel come
+// up and the readiness probe pass, then swallows every hook connection in
+// silence. The run surfaces it much later as an unexplained agent-ready
+// timeout. Fail loud instead (hk-ta6dg).
+func resolveRunPlanHookSocket(req runPlanRequest, plan *runPlan) {
+	if req.PreSelectedWorker == nil {
+		return
+	}
+	env := req.Env
+	beadID := env.BeadRecord.BeadID
+	sockPath := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
+	lenErr := lifecycle.ValidateSocketPathLength(sockPath)
+	if lenErr == nil {
+		return
+	}
+	plan.Verdict = runPlanRefusedSocketPath
+	plan.Refusal = runPlanRefusal{
+		LogLine: fmt.Sprintf(
+			"daemon: workloop: reverse-tunnel socket-path bead %s run %s: %v (reopening, not launching)\n",
+			beadID, env.RunID.String(), lenErr),
+		ReopenReason: fmt.Sprintf("reverse-tunnel not ready: %v", lenErr),
+		Err:          lenErr,
+		TunnelFailure: &runPlanTunnelFailure{
+			RunID:      env.RunID.String(),
+			BeadID:     string(beadID),
+			WorkerName: req.PreSelectedWorker.Name,
+			WorkerHost: req.PreSelectedWorker.Host,
+			SocketPath: sockPath,
+			Detail:     lenErr.Error(),
+		},
+	}
+}
+
 // refuseRunPlan reports one plan refusal and reopens the bead.
 //
-// The report is the stderr line the plan built, then a best-effort ReopenBead
-// with the plan's reason. The reopen is best-effort by design: when it fails
-// the bead stays in_progress and an operator reopens it by hand, which is
-// preferable to the daemon spinning on a bead it has already refused (hk-s20z).
+// The report is the stderr line the plan built, then the refusal's own event
+// when it has one, then a best-effort ReopenBead with the plan's reason. That
+// order is the order the daemon used before the plan, and it lives here so it
+// is stated once for every refusal.
+//
+// The reopen is best-effort by design: when it fails the bead stays in_progress
+// and an operator reopens it by hand, which is preferable to the daemon
+// spinning on a bead it has already refused (hk-s20z).
 //
 // No run_failed is emitted. See this file's header: that omission is the
 // pre-plan behaviour, preserved on purpose.
-func refuseRunPlan(ctx context.Context, env runloop.RunEnv, handles runloop.SharedHandles, refusal runPlanRefusal) {
+func refuseRunPlan(ctx context.Context, env runloop.RunEnv, handles runloop.SharedHandles, emit handlercontract.EventEmitter, refusal runPlanRefusal) {
 	fmt.Fprint(os.Stderr, refusal.LogLine)
+	if tf := refusal.TunnelFailure; tf != nil {
+		workers.EmitWorkerTunnelFailedEvent(ctx, tf.RunID, tf.BeadID,
+			tf.WorkerName, tf.WorkerHost, tf.SocketPath, tf.Detail, emit.Emit)
+	}
 	reopenTID, _ := handles.TIDGen.Next()                                     //nolint:errcheck // a failed TID still reopens; the reopen is the report that matters
 	_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
 		env.RunID, reopenTID, env.BeadRecord.BeadID, refusal.ReopenReason)

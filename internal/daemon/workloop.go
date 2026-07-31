@@ -1272,16 +1272,21 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// ref, harness, model and effort, Pi provider profile, active repo,
 	// protected branches, parent commit, lands_on, and merge target. All ten
 	// sit above every acquisition in this function — the worktree, the tunnel
-	// port, the agent process, the ssh session on a worker. Four of them can
-	// refuse the bead, and a refusal reopens it and returns having taken
-	// nothing. Keep that order: nothing between here and the worker-selection
-	// block below may acquire a resource.
+	// port, the agent process, the ssh session on a worker. Five of the
+	// decisions can refuse the bead, and a refusal reopens it and returns having
+	// taken nothing. Keep that order: nothing between here and the
+	// worker-selection block below may acquire a resource.
 	//
 	// The plan carries the RUN-level harness tuple. A DOT run corrects the
 	// harness and the model per node further down — see the note on runPlan.
-	plan := resolveRunPlan(ctx, runPlanRequest{Env: env, Emit: emit, Handles: handles})
+	plan := resolveRunPlan(ctx, runPlanRequest{
+		Env:               env,
+		Emit:              emit,
+		Handles:           handles,
+		PreSelectedWorker: preSelectedWorker,
+	})
 	if plan.Verdict != runPlanReady {
-		refuseRunPlan(ctx, env, handles, plan.Refusal)
+		refuseRunPlan(ctx, env, handles, emit, plan.Refusal)
 		return false
 	}
 
@@ -1444,6 +1449,13 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		}
 
 		daemonHookSock := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
+		// This check also runs in the run plan, which refuses BEFORE the port and
+		// the ssh round trip above. The plan can only cover a run whose worker was
+		// pre-selected. A run that got its worker from the fallback selection was
+		// not yet known to be remote when the plan ran, so this copy is that
+		// path's guard. The two never both refuse: a pre-selected run that failed
+		// the plan returned before this block.
+		//
 		// hk-ta6dg: `ssh -N -R <port>:<daemonHookSock>` never validates this local
 		// forward destination at tunnel start — only when a connection actually
 		// needs forwarding — so a too-long daemonHookSock would let the tunnel

@@ -85,24 +85,31 @@ Two things worth carrying forward from that run:
 
 ## 0. The headline, before the detail
 
+> **⚠ SUPERSEDED 2026-07-30. Do not brief anyone off the original headline below.** It said one
+> algorithm was "written out four separate times", in 6,459 lines. Two of the four are gone. Measured
+> at HEAD on 2026-07-30:
+>
+> | Function | File | Lines | State |
+> |---|---|---:|---|
+> | `runAgentLaunch` | `internal/daemon/agentlaunch.go` | 836 | **the ONE launch path.** All three remaining sites call it. A CI gate (`scripts/readywait-freeze-gate.sh`) allows exactly one `runloop.DispatchSegment` in the tree, and it must be here |
+> | `beadRunOne` | `internal/daemon/workloop.go` | 1,773 | run driver. Its single-mode tail is about 722 lines |
+> | `driveDotWorkflow` | `internal/daemon/dot_cascade_core.go` | 997 | the graph walker. **The default and the traffic** |
+> | `dispatchDotAgenticNode` | `internal/daemon/dot_cascade_core.go` | 543 | per-node dispatch inside the walker |
+> | `executeCognitionGate` | `internal/daemon/dot_gate.go` | 234 | **cannot run.** No code sets `daemon.Config.CPRegistry` and no graph declares a `type="gate"` node |
+> | ~~`runReviewLoop`~~ | ~~`internal/daemon/reviewloop.go`~~ | ~~2,194~~ | **deleted 2026-07-28 (`3cec5afd7`)** |
+>
+> `runWorkLoop`, the outer scheduler, also left this file — `756b6604c` (2026-07-29) moved it to
+> `internal/daemon/scheduler.go`. That is why `workloop.go` reads 3,389 lines and not 6,656.
+>
+> What is still duplicated, and what to do about it, is §2b. The short version: the launch step is
+> one function; "decide whether it did the work" is still written twice.
+
 The named center is `workloop.go`. It is not the only one, and the thing that makes it rotten is not
 its size.
 
-**The rotten center is one algorithm — "launch an agent, watch it, decide whether it did the work,
-merge, terminalize" — written out four separate times**, in four functions totalling **6,459 lines**:
-
-| Function | File | Lines | What it is |
-|---|---|---:|---|
-| `beadRunOne` | `internal/daemon/workloop.go` | 2,289 | single-mode driver + the shared prologue/epilogue for the other two |
-| `runReviewLoop` | `internal/daemon/reviewloop.go` | 1,586 | implementer↔reviewer iteration driver |
-| `driveDotWorkflow` | `internal/daemon/dot_cascade_core.go` | 1,002 | DOT-graph cascade driver |
-| `dispatchDotAgenticNode` | `internal/daemon/dot_cascade_core.go` | 882 | per-node agent dispatch inside the cascade |
-
-Plus `runWorkLoop` (1,670 lines), which is a *different* algorithm — the outer scheduler — living in
-the same file.
-
-The four-way duplication is measurable, not inferred. These symbols each appear in three or four of
-those files independently:
+The rotten center is one algorithm — "launch an agent, watch it, decide whether it did the work,
+merge, terminalize". The duplication was measurable, not inferred. These symbols each used to appear
+in three or four files independently:
 
 ```
 pasteInjectOnLaunch          → workloop, reviewloop, dot_cascade_core
@@ -115,21 +122,27 @@ HookStore.RegisterHookSession→ workloop, reviewloop, dot_cascade_core, dot_gat
 gitprobe.ResolveWorktreeHEADVia → workloop, reviewloop, dot_cascade_helpers
 ```
 
+**All eight rows are now single-site.** Every symbol above except `gitprobe.ResolveWorktreeHEADVia`
+appears once, inside `runAgentLaunch`. HEAD resolution is the one step the collapse deliberately left
+with the caller, and it is therefore the one still written twice.
+
 And the drift that duplication predicts is already present, in two places I confirmed:
 
 - **`runmerge.CheckMainWorkingTreeDirty` (the implementer-escaped-worktree guard) has exactly one
-  production caller: `beadRunOne`.** Review-loop runs and DOT runs do not run it. The run state
+  production caller: `beadRunOne`.** DOT runs do not run it. The run state
   machine has a slot for it (`runexec.ActCheckEscape` / `EvEscapeDetected`, `RunEffectors.CheckEscape`)
   but `RunBridge.WireSpine` wires that slot to a function that unconditionally returns
   `EvGuardsPassed`. The guard is imperative, single-mode, and the machine records a pass it never
-  performed.
-- **`sandboxSpawnForRun` (the srt sandbox gate) is called from `workloop.go` and
-  `dot_cascade_core.go` only.** `reviewloop.go` and `dot_gate.go` do not call it — so with
-  `sandbox.backend: srt` configured, reviewer and gate agents launch unsandboxed.
+  performed. **Correction 2026-07-30: this is not drift.** `specs/run-state-machine.md` RSM-008
+  requires the DOT path to skip both guards. See §2b.
+- ~~**`sandboxSpawnForRun` (the srt sandbox gate) is called from `workloop.go` and
+  `dot_cascade_core.go` only.**~~ **FIXED 2026-07-29 by `30b5cf02c`.** There is one gate, and
+  `sandbox.harnesses` in the config is the only switch. Every launch asks it.
 
 `CARRY-FORWARD.md` names this exact bug class from the pasteinject archaeology: *"4× single-mode and
-review-loop paths drifted"*, *"3× gate applied to one of N call sites"*. Those are not historical.
-They are the current state of the tree.
+review-loop paths drifted"*, *"3× gate applied to one of N call sites"*. The bug class is real. The
+two instances above are now one specified asymmetry and one closed defect, so read `CARRY-FORWARD` as
+the reason the collapse was worth doing, not as a live inventory.
 
 ---
 
@@ -422,41 +435,112 @@ classified events (`EvAgentCompleted`, `EvCleanExit`, `EvModeOutcome{success|fai
 
 ### 2b. Where there is genuinely NO seam — and what must be decided
 
-**No-seam #1: the mode boundary (C3). This is the central defect.**
+**No-seam #1: the mode boundary (C3). ⚠ REWRITTEN 2026-07-30 — the section below described a tree
+that no longer exists, and the operator was briefed off it. What it said, and why it was wrong, is
+kept at the end of this sub-section so a reader can tell decay from a claim that was never true.**
 
-There is no `ModeExecutor` interface. Instead:
+There are **two** workflow modes, not three. `core.WorkflowMode.Valid()` in
+`internal/core/workflowmode.go` accepts `single` and `dot` and nothing else. `review-loop` was retired
+at v0.10.0 (`specs/execution-model.md` §4.3.EM-015d) and its driver deleted in `3cec5afd7`
+(2026-07-28), which removed 3,834 lines: `internal/daemon/reviewloop.go` (2,194 lines),
+`internal/daemon/launchspecbuild.go`, `internal/runloop/reviewcycle/` and
+`internal/runloop/continuity/`. Eight declarations that were never review-loop-specific moved to
+`internal/daemon/runsupport.go` and are still called by the graph cascade.
 
-- Single mode is written **inline inside `beadRunOne`**, lines 4232–5407 (~1,175 lines).
-- Review-loop mode is `runReviewLoop(ctx, env, rp, handles, runID, beadID, title, description,
-  wtPath, headSHA, model, effort, extraContext, baseBranch, runner, workerBinary, workerHookSock,
-  workerSession, workerCwd)` — **19 parameters**.
-- DOT mode is `driveDotWorkflow(...)` — **19 parameters**, nearly the same list.
+The default is `dot`. `resolveWorkflowMode` in `internal/daemon/moderesolve.go` returns `dot` at
+tier 3 (the daemon default, whose flag default is `dot`) and again at tier 4 (the hard fallback).
+`single` is reachable **only** through an explicit `workflow:single` bead label, and taking it emits a
+`review_bypassed` audit event. So essentially all real dispatch is graph dispatch.
 
-Each of the three then re-implements: build launch spec → attach substrate → register hook session →
-`DispatchSegment` with 7 hooks → paste inject → wait with socket grace → probe worktree HEAD →
-force-teardown → emit presence. Four times (dot_gate.go is the fourth, for cognition gates).
+**The launch step is already ONE function.** `runAgentLaunch` in `internal/daemon/agentlaunch.go`
+(836 lines) owns "given a built launch spec plus artifacts, spawn the agent, prove it is alive, drive
+it to a dead session, hand back the exit facts". It landed on 2026-07-29 across `6077a24dc`,
+`ea96471b3`, `18d59aded`, `159b68e78`, `0743e4dec`, `8346edc2f` and `30b5cf02c`. It has exactly three
+callers:
 
-The tangle is genuine, not cosmetic: the three modes need *different subsets* of the resource set at
-*different times*. Review-loop needs a reviewer substrate and a per-iteration worktree diff hash;
-DOT needs a per-node harness override and a ControlPoint registry; single mode needs the
-noChange-timeout channel that `pasteInjectQuitOnCommit` closes. So a naive "extract the common part"
-produces a function with a union-of-all-three parameter list — which is what the 19-parameter
-signatures already are.
+| Caller | Where | Reachable in production? |
+|---|---|---|
+| single-mode tail of `beadRunOne` | `internal/daemon/workloop.go` | Only via an explicit `workflow:single` bead label |
+| `dispatchDotAgenticNode` | `internal/daemon/dot_cascade_core.go` | **Yes — this is the default and carries the traffic** |
+| `executeCognitionGate` | `internal/daemon/dot_gate.go` | **No. Dead twice over — see below** |
 
-> **Operator decision required (D1): is one agent launch one thing, or three?**
->
-> Option A — **one `AgentTurn` primitive**: `{launch spec, substrate, ready policy, delivery policy,
-> completion policy, budget}` → `{exit code, stderr tail, socket outcome, session id, HEAD before/after,
-> duration}`. All three modes become loops over it. This is the correct shape and is what the
-> CARRY-FORWARD "act → verify by observation → retry with bound" pattern demands. Cost: every
-> harness-specific special case (`SessionIDCaptured` stdout interception, `CompletionProcessExit`
-> skipping the ready handshake, Pi stdout tee, srt argv wrap) has to be expressed as *policy on the
-> primitive*, not as an `if` in the driver. That is a real design exercise, not a mechanical move.
->
-> Option B — keep three drivers, share only the resource scope. Cheaper, preserves the drift.
->
-> This decision gates everything below §3 step 5. It cannot be deferred, because the whole point of
-> the rewrite is that structure-caused drift stops being representable.
+The cognition gate cannot run. `daemon.Config.CPRegistry` has **zero assignments anywhere in the
+tree**, tests included, so `daemonGate.LookupGate` always reports "no registry loaded" and a gate node
+returns a structural eval-failure before any launch. And no graph declares one: `type="gate"` appears
+zero times in the embedded `internal/daemon/standard-bead.dot`, in this project's `workflow.dot`, in
+`sonnet-triple-review.dot` and in `eval-bead.dot`. Counting `dot_gate.go` as a live launch path
+overstates the live count by one.
+
+**What is genuinely still duplicated**, after the launch collapse and measured on 2026-07-30:
+
+- **The post-exit interpretation.** The single-mode tail (`internal/daemon/workloop.go`, about 722
+  lines from the mode switch to the end of `beadRunOne`) and the graph node
+  (`dispatchDotAgenticNode`, about 543 lines) each hand-roll the same four steps after
+  `runAgentLaunch` returns: probe worktree HEAD, emit `implementer_phase_complete`, run the
+  process-exit commit fallback, then decide what no-commit means. The steps agree in shape and
+  disagree in detail.
+- **Nothing else.** The terminal spine is shared already: both arms build a `runloop.RunBridge` and
+  call `WireSpine`, and `runBridgeConfig` is where the two modes' merge-retry budgets are declared
+  side by side.
+
+**The steps that differ, path by path.** Split into two groups, because they need different answers.
+This split did not exist in the old text, and its absence is what made the whole set read as one bug.
+
+*Group 1 — the spec says these two paths must differ. Do not "fix" these without amending the spec
+first.* `specs/run-state-machine.md` RSM-008 reads: "The single-shot path's post-exit guards — the
+escaped-worktree check and the no-commit-guard — MUST run in a `Guarding` state between `Dispatching`
+and `Gating` … The review-loop and DOT paths MUST NOT enter `Guarding` (they do not run those
+guards)."
+
+| Step | single | dot graph node |
+|---|---|---|
+| escaped-worktree check (`emitImplementerEscapedWorktree`) | yes | no, **and RSM-008 requires no** |
+| `noCommitGuardShouldReopen` | yes | no, **and RSM-008 requires no** — the graph does a bare HEAD-advance compare |
+
+Two things follow. RSM-008 is stale in its own right: RSM-007 still names review-loop as a live fork,
+and review-loop was deleted on 2026-07-28. And extending the escape check to the default path is not
+obviously an improvement, because `hk-co8g8` root-caused that same check as firing on innocent runs
+and killing them. Decide D2 with both facts in hand.
+
+*Group 2 — nothing specifies these. They are real drift, and four of the five leave the DEFAULT path
+worse off.*
+
+| Step | single | dot graph node |
+|---|---|---|
+| Pi provider profile on the launch context (`Provider` / `APIKeyEnv` / `APIKeyFile` / `BaseURL` / `API`) | yes | **no** — `hk-yo9g6`. `resolvedProfile` is resolved once in `beadRunOne` and read only by the single-mode `shared.LaunchCtx`. A Pi node on the default path launches with no provider profile. The model does reach it, because `resolvedModel` is overwritten from the profile before the mode switch |
+| implementer comms presence join and leave (`emitImplPresence`) | yes | **no**. No spec requires it on either path |
+| Pi stderr capture kept beside the retained worktree on failure | yes | **no** |
+| right harness for the process-exit commit fallback | yes | **no** — the graph calls `codex.EnsureRefsTrailer` for every process-exit harness, and Pi is one. Behaviour is the same, because both wrappers call the same `internal/harness/shared/refstrailer.go` primitives. Only the commit message is wrong: a Pi node's daemon-fallback commit says `feat(codex)` |
+| independent tmux session, so the run survives a daemon kill and is adopted on the next boot | yes | **no** — `hk-mh3qy`. This is the one capability that makes "just delete single mode" not a one-line change |
+| merge retry budget of 3 and the `ChargeReviewLoopFailure` ladder | **no** | yes — deliberate, declared in `runBridgeConfig` |
+| `auto_status` work-product inspection | **no** | yes — a graph node attribute, so single has no place to put it |
+
+> **Decision D1 — ANSWERED by the operator, 2026-07-30: collapse the duplication (option A).**
+> Do not re-open this. See §7 for what option A now means in practice, which is not what the
+> retired text below assumed.
+
+<details>
+<summary>Retired text of no-seam #1 (written 2026-07-27/28, false in part on the day it was written,
+fully false by 2026-07-29). Kept so a reader can date the decay.</summary>
+
+It claimed:
+
+- Single mode was "lines 4232–5407 (~1,175 lines)". **Wrong by about 1.6x today.** The single-mode
+  tail is about 722 lines. Two things shrank it: the review-loop retirement, and `756b6604c`
+  (2026-07-29) which moved the dispatch scheduler out to `internal/daemon/scheduler.go`.
+  `beadRunOne` now spans about 1,773 lines in total, not 2,289.
+- `runReviewLoop` existed with 19 parameters. **Gone since `3cec5afd7`, 2026-07-28.**
+- "Each of the three then re-implements: build launch spec → attach substrate → register hook
+  session → `DispatchSegment` with 7 hooks → paste inject → wait with socket grace → probe worktree
+  HEAD → force-teardown → emit presence. Four times." **False since 2026-07-29.** Every step in that
+  list except "probe worktree HEAD" now happens once, inside `runAgentLaunch`.
+- "DOT needs ... a ControlPoint registry." **Never true in the sense implied.** No production code
+  ever set one, so the graph path has never consulted a ControlPoint registry.
+- D1 asked "is one agent launch one thing, or three?" and treated the answer as unbuilt. The launch
+  half of option A **shipped on 2026-07-29**, one to two days after the question was written, and the
+  document was not updated.
+
+</details>
 
 **No-seam #2: the guards and the state machine disagree about who owns them.**
 
@@ -467,12 +551,25 @@ that they "run BEFORE the dispatch-terminal classification for EVERY class (the 
 the time the machine traverses Guarding they are known-green."
 
 Result: the machine's `Guarding` phase is theatre for single mode, and **does not exist at all** for
-review-loop and DOT, because those modes reach `WireSpine` without ever running the guard.
+DOT, because DOT reaches `WireSpine` without ever running the guard. (Corrected 2026-07-30: this
+sentence used to say "for review-loop and DOT". Review-loop was deleted on 2026-07-28. The claim
+holds for DOT, which is the default path, so the finding got worse, not better — the one mode without
+the guards is now the one carrying the traffic.)
+
+**⚠ Added 2026-07-30 — this section never cited the spec, and the spec disagrees with its framing.**
+`specs/run-state-machine.md` RSM-008 says: "The single-shot path's post-exit guards — the
+escaped-worktree check and the no-commit-guard — MUST run in a `Guarding` state between `Dispatching`
+and `Gating` … The review-loop and DOT paths MUST NOT enter `Guarding` (they do not run those
+guards)." So the asymmetry is **specified**, not accidental drift, and D2 is a request to change the
+spec. Two further facts belong in that decision. RSM-007 and RSM-008 both still name review-loop as a
+live fork, so they are stale and need editing whichever way D2 goes. And `hk-co8g8` root-caused the
+escaped-worktree check as firing on innocent runs and killing them, so moving it into the machine
+would put a known-broken guard on the path that carries all the traffic. Fix `hk-co8g8` first.
 
 > **Operator decision required (D2): do the guards belong to the machine or to the caller?**
-> If the machine — then all three modes get the escape check and the no-commit guard automatically,
-> and behaviour *changes* for review-loop and DOT (runs that pass today may start failing). If the
-> caller — then delete `ActCheckEscape` from `runexec`, because it is a lie.
+> If the machine — then both modes get the escape check and the no-commit guard automatically, and
+> behaviour *changes* for DOT (runs that pass today may start failing). If the caller — then delete
+> `ActCheckEscape` from `runexec`, because it is a lie.
 > This is a behaviour change either way and needs an explicit call.
 
 **No-seam #3: `SharedHandles` is an admitted escape hatch.**
@@ -979,17 +1076,35 @@ mode boundary needs a complete resource scope to receive).
 externally bounded (tmux fact 3), and every kill must target `-pgid` and probe the group (tmux fact
 7). Get these wrong and runs die silently.
 
-### Step 7 — the mode boundary  ⛔ **BLOCKED on decision D1**
+### Step 7 — the mode boundary  ✅ **UNBLOCKED. D1 is answered, and half of it already shipped.**
 
-Cannot start until the operator answers "one `AgentTurn` primitive, or three drivers?" Everything
-before this step is a move; this step is a design.
+Rewritten 2026-07-30. The old text said this step was blocked on "one `AgentTurn` primitive, or three
+drivers?", and priced it at 6,459 lines across four functions. Both numbers are stale and the question
+is settled.
 
-If D1 = one primitive: this is the biggest single piece of work in the program and it subsumes
-`runReviewLoop`, `driveDotWorkflow`, `dispatchDotAgenticNode`, and `beadRunOne`'s single-mode body —
-6,459 lines collapsing to one primitive plus three thin loops.
+**Done already (2026-07-29):** the launch half. `runAgentLaunch` in `internal/daemon/agentlaunch.go`
+is the one launch path, and all three remaining call sites use it. A guard added there cannot fail to
+reach a mode.
 
-If D1 = three drivers: extract the shared prologue/epilogue only, accept that drift remains, and
-compensate with a conformance test that asserts all three call the same guard set.
+**What step 7 is now.** Two pieces, in order.
+
+1. **Collapse the post-exit interpretation.** The single-mode tail and `dispatchDotAgenticNode` both
+   hand-roll probe HEAD → emit `implementer_phase_complete` → process-exit commit fallback → decide
+   what no-commit means. They disagree in detail, and the guard table in §2b lists exactly how. This
+   is the same shape of work the launch collapse was, on a smaller surface.
+2. **Make single-shot a graph and delete the single-mode tail.** A one-implementer graph
+   (`start → implement → close`) expresses `workflow:single` exactly. Nothing in the graph engine
+   stops it. What stops it today is that five capabilities live only in the single-mode tail and have
+   no graph equivalent: the independent tmux session and its restart adoption (`hk-mh3qy`, the real
+   blocker), the escaped-worktree guard, `noCommitGuardShouldReopen`, the implementer comms presence
+   join and leave, and the Pi provider profile on the launch context (`hk-yo9g6`). Port those onto the
+   graph node, then the tail is about 722 deletable lines and `core.WorkflowMode` reduces to one
+   value.
+
+Do **not** count `dot_gate.go` in this step. Its cognition-gate launch is unreachable — no code sets
+`daemon.Config.CPRegistry` and no graph declares a `type="gate"` node. Decide separately whether to
+wire it or delete it. Migrating it costs real work and buys nothing until one of those two things is
+true.
 
 ### Step 8 — the terminal spine (LAST, and mostly already done)
 
@@ -1287,8 +1402,10 @@ read it before designing anything.
 **Honest read on how much is left:** steps 9–15 are on the order of 2,400 lines of production change
 over a 42,000-line package, and three of the seven are designs rather than transcriptions. The line
 count is not the cost. **Steps 10, 11, 13 and 14 each need a decision before they can start**, and this
-program's own record is that decisions, not lines, are what it runs out of — D1 has blocked step 7
-since the map was written.
+program's record is that it runs out of decisions rather than lines. D1 is the case in point in both
+directions: it blocked step 7 from the day the map was written until 2026-07-30, and when it was
+finally read against the code the answer turned out to be already built. **Ask whether a decision is
+still open before waiting on it.**
 
 ### What must NOT move, and why
 
@@ -1417,10 +1534,15 @@ symbols that implement it and must not be simplified back to a return-code check
 Ranked. "Rot" = size × churn × longest-function × distinct responsibilities × mutable globals.
 `workloop.go` is rank 0 and excluded.
 
+⚠ **Re-measured 2026-07-30.** Rank 1 no longer exists: `internal/daemon/reviewloop.go` was deleted on
+2026-07-28. Rank 2's numbers moved when its helpers split out and the launch step left it. The rest of
+the table is unverified at HEAD and every LOC figure in it should be re-read as of its 2026-07-28
+measurement date, not today.
+
 | # | File | LOC | Commits | Longest function | Mutable globals | External world |
 |---|---|---:|---:|---|---:|---|
-| 1 | `internal/daemon/reviewloop.go` | 2,194 | 116 | `runReviewLoop` **1,586** | 1 | tmux, claude, codex, git, ssh, fs, bus, hook socket |
-| 2 | `internal/daemon/dot_cascade_core.go` | 1,989 | 123† | `driveDotWorkflow` **1,002** (+`dispatchDotAgenticNode` **882**) | 0 | tmux, claude, codex, git, ssh, fs, bus |
+| ~~1~~ | ~~`internal/daemon/reviewloop.go`~~ | ~~2,194~~ | ~~116~~ | ~~`runReviewLoop` **1,586**~~ | ~~1~~ | **DELETED 2026-07-28 (`3cec5afd7`)** |
+| 2 | `internal/daemon/dot_cascade_core.go` | 1,653 at HEAD (was 1,989) | 123† | `driveDotWorkflow` **997** (+`dispatchDotAgenticNode` **543**, was 882 before the launch collapse) | 0 | tmux, claude, codex, git, ssh, fs, bus |
 | 3 | `internal/daemon/pasteinject.go` | 2,691 | 56 | `pasteInjectQuitOnCommit` ~575 | **23** | tmux, ssh, raw `exec.Command` (pgrep/ps/git), git, fs, bus |
 | 4 | `internal/daemon/tmuxsubstrate.go` | 3,023 | 67 | `spawnWindowVia` 194 (76 funcs) | 1 | tmux (385 refs), ssh, `syscall.Kill` |
 | 5 | `internal/keeper/watcher.go` | 2,110 | 78 | `(*Watcher).Run` 531 | 1 | fs, tmux, `exec.Command`, events.jsonl |
@@ -1431,19 +1553,20 @@ Ranked. "Rot" = size × churn × longest-function × distinct responsibilities �
 † `dot_cascade_core.go` shows 2 direct commits because it was recently split out of `dot_cascade.go`;
 `--follow` gives 123.
 
-Runners-up: `internal/daemon/dot_gate.go` (888, `executeCognitionGate` 367),
+Runners-up: `internal/daemon/dot_gate.go` (749 at HEAD, was 888; `executeCognitionGate` 234, was 367
+— and it cannot execute in production, see §2b),
 `cmd/harmonik/comms.go` (2,212, `runCommsRecvFollowIO` 300, six hand-rolled socket dial sites),
 `cmd/harmonik/run.go` (942, `runBeadSubcommandIO` 701).
 
 ### Genuinely part of the rotten center (ranks 1–3)
 
-**#1 `reviewloop.go` and #2 `dot_cascade_core.go` are the same disease as `workloop.go`, not
-neighbours of it.** `dot_cascade_core.go` has the worst concentration in the repo — **two functions
-are 94% of the file**, with no intermediate decomposition at all. `runReviewLoop` at 1,586 lines is
-the second-largest function in the repo after `beadRunOne`, and it is structurally *the same code*
-as `beadRunOne`'s single-mode body, re-implemented. **These three files must be rewritten as one
-unit or not at all** — rewriting `workloop.go` alone leaves two-thirds of the duplicated dispatch
-loop in place and guarantees the drift continues.
+**Rewritten 2026-07-30.** This paragraph used to read: "#1 `reviewloop.go` and #2
+`dot_cascade_core.go` are the same disease as `workloop.go`, not neighbours of it … These three files
+must be rewritten as one unit or not at all." One of the three is gone, so the sentence cannot stand
+as written. Its conclusion survives, narrowed to two files: **`workloop.go` and `dot_cascade_core.go`
+are one unit.** The launch collapse already treated them that way and proved the point — a change
+made in `agentlaunch.go` reaches both. `dot_cascade_core.go` still has a bad concentration: two
+functions are about 93% of the file, with no intermediate decomposition.
 
 **#3 `pasteinject.go` is the hardest to move**, despite being smaller. Its 23 mutable package
 globals are the empirical budgets from CARRY-FORWARD fact 18, every one of them a test seam mutated
@@ -1567,23 +1690,54 @@ The audit's *process* is dead. Its *evidence* holds up well.
 
 | # | Decision | Blocks | Why it cannot be delegated |
 |---|---|---|---|
-| **D1** | **One `AgentTurn` primitive, or three mode drivers?** | Rewrite step 7; determines whether 6,459 lines collapse or 3 copies persist | It is the whole thesis of the rewrite. Choosing "three drivers" means accepting that the drift bug class stays representable. |
-| **D2** | **Do the escape check and no-commit guard belong to the Run machine or to the caller?** | Rewrite step 8 | Moving them into the machine *changes behaviour* — review-loop and DOT runs that pass today would start being guarded. Deleting `ActCheckEscape` admits the machine's `Guarding` phase is decorative. |
+| **D1** | ✅ **ANSWERED 2026-07-30 — collapse the duplication (option A).** See the note below for what option A turned out to mean. | Nothing. Step 7 is unblocked | — |
+| **D2** | **Do the escape check and no-commit guard belong to the Run machine or to the caller?** | Rewrite step 8 | Moving them into the machine *changes behaviour* — DOT runs that pass today would start being guarded, and DOT is the default. Deleting `ActCheckEscape` admits the machine's `Guarding` phase is decorative. |
 | **D3** | **Is a failed queue-reservation persist fatal to the dispatch?** | Rewrite step 4 | Correct answer is yes (no claim, no launch). But under disk pressure it converts silent inconsistency into visible dispatch stall. |
-| **D4** | **Are `reviewloop.go` and `dot_cascade_core.go` in scope with `workloop.go`, or after it?** | Scoping of the whole program | Rewriting `workloop.go` alone leaves 3,470 lines of the same duplicated dispatch loop in two other files. The stated contract (`runWorkLoop` + `workLoopDeps`) does *not* cover them — they are called from inside `beadRunOne` with 19-parameter signatures. **My reading says they are one unit.** |
+| **D4** | ✅ **MOOT 2026-07-30.** It asked whether `reviewloop.go` and `dot_cascade_core.go` were in scope with `workloop.go`. `reviewloop.go` was deleted on 2026-07-28, and the launch step of the other two was collapsed into `agentlaunch.go` on 2026-07-29, so the question answered itself by events. The surviving half of it — "are the run driver and the graph cascade one unit?" — is yes, and step 7 above now states it directly. | Nothing | — |
 | **D5** | **Does the scenario tier become merge-blocking before the rewrite starts?** | Everything | It is one line of YAML. Without it there is no oracle. It goes red immediately (the `hk-zobns` branch-protection guard fails open) — which is the point, but it is a visible red build the operator has to accept. |
 
 ---
 
-## 8. One-paragraph answer
+## 8. One-paragraph answer — REWRITTEN 2026-07-30
 
-`workloop.go` is not one file that got too big; it is two unrelated programs (a scheduler and a run
-driver) sharing a file, where the run driver is one of **four** copies of the same
-launch-watch-verify-merge algorithm spread across `workloop.go`, `reviewloop.go`,
-`dot_cascade_core.go`, and `dot_gate.go` — 6,459 lines in four functions. The duplication has already
-produced the drift it predicts: the escaped-worktree guard runs in one of the four, and the sandbox
-gate in two of the four. The seams are real and mostly already identified — the 2026-07-24 audit
-found the same five, independently — and a good state machine for the terminal spine already exists
-in `internal/runexec`. What does not exist, and what no amount of extraction will produce, is a
-single primitive for "launch one agent and find out whether it did the work." Deciding whether to
-build that is the operator call that gates the entire program.
+The remaining work is **not** "design one primitive that all modes call". That primitive exists and is
+in production. `runAgentLaunch` (`internal/daemon/agentlaunch.go`, 836 lines) owns spawn, liveness
+proof, drive-to-dead-session and exit facts, and a CI gate
+(`scripts/readywait-freeze-gate.sh`) pins the invariant mechanically: exactly one
+`runloop.DispatchSegment` may be constructed in the tree, and it must be in `agentlaunch.go`. There
+are two workflow modes left, not three, and one of them is a rounding error — across the whole live
+event log (2,153 runs through 2026-07-22) `workflow_mode` reads `dot` 5,890 times, the retired
+`review-loop` 1,635 times, and `single` **twice**. The remaining work is therefore the graph program:
+finish moving the last shape onto the graph and delete the other. Two things stand in the way. First,
+"what the exit means" is still written twice — the single-mode tail and `dispatchDotAgenticNode` each
+hand-roll probe-HEAD, `implementer_phase_complete`, the process-exit commit fallback and the
+no-commit decision, and they disagree in detail. Second, and worse, the drift now runs the wrong way:
+four steps live only on the path used twice ever and are missing from the path that carries
+everything — the Pi provider profile on the launch context (`hk-yo9g6`), implementer comms presence,
+Pi stderr capture, and the independent tmux session that lets a run survive a daemon restart
+(`hk-mh3qy`). Close those, express single-shot as a one-implementer graph, delete the tail, and
+`workflow_mode` stops being a branch. Two carve-outs. The escaped-worktree check and
+`noCommitGuardShouldReopen` are **not** in that list: `specs/run-state-machine.md` RSM-008 says the
+DOT path MUST NOT run them, so aligning them is a spec amendment (D2), not a cleanup — and `hk-co8g8`
+found the escape check killing innocent runs, so extending it as-is would spread a live bug. And the
+cognition gate in `dot_gate.go` is not part of this either: no code sets `daemon.Config.CPRegistry`
+and no graph declares a `type="gate"` node, so it cannot execute today. Wire it or delete it as its
+own decision.
+
+<details>
+<summary>What §8 said before 2026-07-30, and why each claim was wrong.</summary>
+
+- "**four** copies … spread across `workloop.go`, `reviewloop.go`, `dot_cascade_core.go`, and
+  `dot_gate.go` — 6,459 lines in four functions." Two errors. `reviewloop.go` was deleted on
+  2026-07-28 (`3cec5afd7`). And of the three that remained, the launch step was collapsed into one
+  function on 2026-07-29, leaving two live post-exit copies plus one unreachable gate.
+- "the sandbox gate in two of the four." Fixed on 2026-07-29 by `30b5cf02c`. There is one gate,
+  `sandboxSpawnForRun`, and config is the only switch.
+- "the escaped-worktree guard runs in one of the four." **Still true**, and it is the more important
+  half of the finding, because the one is not the default.
+- "What does not exist, and what no amount of extraction will produce, is a single primitive for
+  'launch one agent and find out whether it did the work.'" False from 2026-07-29. The first half of
+  that sentence — launch one agent — was built. The second half — find out whether it did the work —
+  is the part still duplicated, and it is the honest statement of what is left.
+
+</details>

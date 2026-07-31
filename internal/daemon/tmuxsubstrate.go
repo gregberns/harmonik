@@ -171,21 +171,26 @@ type tmuxSubstrate struct {
 	// moment of the timeout. Nil in tests that do not need the hook.
 	spawnCapBlocked func(waited time.Duration, inUse, capSize int)
 
-	// newWindowTimeout bounds how long SpawnWindow waits for the underlying
-	// `tmux new-window` call (adapter.NewWindowIn) to return before treating the
-	// launch as failed (hk-r1rup). A hung tmux invocation otherwise blocks
-	// SpawnWindow → handler.Launch indefinitely (the no-spawn wedge); bounding it
-	// converts that into a prompt, observable launch failure.
+	// newWindowTimeout bounds how long a tmux CREATION call may run before the
+	// caller gives up on it. It covers both shapes of creation this substrate
+	// performs: `tmux new-window` (adapter.NewWindowIn, via callNewWindowBounded)
+	// and `tmux new-session` (sessionCreator.NewSessionIn, via
+	// callNewSessionBounded). A hung tmux invocation otherwise blocks its caller
+	// indefinitely — SpawnWindow → handler.Launch for the window shape, and a
+	// whole bead run or an operator's crew start for the session shape. One bound
+	// serves both because the hazard is identical: the shell call has no inherent
+	// timeout and the tmux server holds a global command lock.
 	//
-	// Zero or negative disables the bound (blocks until ctx is cancelled, the
-	// pre-hk-r1rup behaviour). NewTmuxSubstrate applies defaultNewWindowTimeout
-	// when unset. Set via WithNewWindowTimeout.
+	// Zero or negative disables the bound (blocks until ctx is cancelled).
+	// NewTmuxSubstrate applies defaultNewWindowTimeout when unset. Set via
+	// WithNewWindowTimeout.
 	newWindowTimeout time.Duration
 
-	// newWindowTimedOut, when non-nil, is invoked once when the `tmux new-window`
-	// call does not return within newWindowTimeout. It is a diagnostic hook the
-	// daemon wires to emit a tmux_new_window_timeout event (hk-r1rup). waited is
-	// the duration spent blocked. Nil in tests that do not need the hook.
+	// newWindowTimedOut, when non-nil, is invoked once when a tmux creation call
+	// does not return within newWindowTimeout — either `tmux new-window` or
+	// `tmux new-session`. It is a diagnostic hook the daemon wires to emit a
+	// tmux_new_window_timeout event (hk-r1rup). waited is the duration spent
+	// blocked. Nil in tests that do not need the hook.
 	newWindowTimedOut func(waited time.Duration)
 
 	// spawnStagger, when positive, enforces a minimum interval between consecutive
@@ -439,6 +444,21 @@ const defaultSpawnAcquireTimeout = 2 * time.Minute
 // itself hangs.
 var ErrTmuxNewWindowTimeout = errors.New("daemon: tmux new-window timed out (possible hung tmux invocation)")
 
+// ErrTmuxNewSessionTimeout is the sentinel wrapped by SpawnRunSession and
+// SpawnCrewSession when the underlying `tmux new-session` shell call
+// (sessionCreator.NewSessionIn) does not return within newWindowTimeout. Like
+// ErrTmuxNewWindowTimeout it is also wrapped with handler.ErrStructural, so the
+// existing structural-error handling (reopen-the-bead, fail the crew start)
+// continues to apply.
+//
+// It is a DISTINCT sentinel from ErrTmuxNewWindowTimeout because the two name
+// different failures with different blast radii. A hung `tmux new-window` wedges
+// one launch inside the daemon's shared session. A hung `tmux new-session`
+// wedges the creation of a whole independent session: for SpawnRunSession that
+// is the bead run itself, and for SpawnCrewSession it is an operator waiting on
+// a crew start. A caller that wants to tell the two apart can.
+var ErrTmuxNewSessionTimeout = errors.New("daemon: tmux new-session timed out (possible hung tmux invocation)")
+
 // defaultNewWindowTimeout is the default bound on how long SpawnWindow waits for
 // the underlying `tmux new-window` call to return before treating the launch as
 // failed (hk-r1rup). The actual shell call has no inherent timeout, so a hung
@@ -472,9 +492,11 @@ func WithSpawnCapBlockedHook(fn func(waited time.Duration, inUse, capSize int)) 
 	}
 }
 
-// WithNewWindowTimeout sets the bound on how long SpawnWindow waits for the
-// underlying `tmux new-window` call (adapter.NewWindowIn) to return before
-// treating the launch as failed (hk-r1rup).
+// WithNewWindowTimeout sets the bound on how long a tmux CREATION call may run
+// before its caller gives up on it (hk-r1rup). It bounds both `tmux new-window`
+// (adapter.NewWindowIn, used by SpawnWindow) and `tmux new-session`
+// (sessionCreator.NewSessionIn, used by SpawnRunSession and SpawnCrewSession) —
+// see the newWindowTimeout field for why one bound serves both.
 //
 // A value <= 0 disables the bound (blocks until ctx is cancelled — the
 // pre-hk-r1rup behaviour). When unset, NewTmuxSubstrate applies
@@ -1126,6 +1148,71 @@ func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, adapter tmux.A
 		s.lastWindowAt = time.Now()
 	}
 
+	return s.callBoundedTmuxCreate(ctx, boundedCreate{
+		op:       "tmuxSubstrate.SpawnWindow",
+		verb:     "tmux new-window",
+		timedOut: ErrTmuxNewWindowTimeout,
+		invoke:   func(callCtx context.Context) tmux.Outcome { return adapter.NewWindowIn(callCtx, params) },
+	})
+}
+
+// boundedCreate describes one tmux CREATION call for callBoundedTmuxCreate.
+//
+// The two creation shapes this substrate performs — `tmux new-window` and
+// `tmux new-session` — differ only in these four values. Everything else about
+// bounding them is identical, and identical is what it has to stay: see
+// callBoundedTmuxCreate.
+type boundedCreate struct {
+	// op names the calling surface and opens the error message, e.g.
+	// "tmuxSubstrate.SpawnWindow" or "SpawnRunSession".
+	op string
+	// verb names the tmux command being bounded and MAY carry the target, e.g.
+	// "tmux new-window" or `tmux new-session for "harmonik-ab12-run-0f0e"`. On the
+	// abandoned path this string is the operator's only evidence about what the
+	// tmux server may have gone on to create, so name the target where there is
+	// one.
+	verb string
+	// timedOut is the sentinel wrapped when the bound fires — the caller's way to
+	// tell a hung creation from any other failure.
+	timedOut error
+	// invoke performs the call. It receives the BOUNDED context, so a ctx-aware
+	// adapter gets its tmux client SIGKILLed on timeout; the goroutine+select in
+	// callBoundedTmuxCreate is the backstop for adapters that ignore it.
+	invoke func(ctx context.Context) tmux.Outcome
+}
+
+// callBoundedTmuxCreate runs one tmux creation call under an external bound.
+//
+// # Why the bound has to be external
+//
+// The production adapter reaches tmux through cmd.CombinedOutput. A wedged tmux
+// server returns NEITHER a value nor an error, and honouring a context is the
+// adapter's choice, not something the caller can rely on. So the call runs in a
+// goroutine and a select races its completion against a bounded context and the
+// caller's ctx. That is the only shape that holds when the adapter ignores its
+// context entirely.
+//
+// # Why the two creation paths share this
+//
+// `tmux new-window` and `tmux new-session` are two paths that agree in shape and
+// differ in detail (PRINCIPLES §5). The details that differ are in boundedCreate.
+// The details that MUST NOT differ are here: the result channel is buffered so
+// the abandoned goroutine can always finish its send and be collected, and the
+// caller's cancellation is distinguished from the bound firing by checking the
+// PARENT context first — the bound can only fire while the parent is still live.
+// Both are easy to get subtly wrong twice.
+//
+// Returns (outcome, nil) when the call completes in time; the caller then
+// inspects outcome.Err itself, which is what lets SpawnCrewSession keep its
+// ErrWindowCollision adopt branch. Returns (zero, err) wrapping create.timedOut +
+// handler.ErrStructural when the bound fires (also firing the newWindowTimedOut
+// diagnostic hook), or wrapping handler.ErrStructural alone when the caller's ctx
+// is cancelled. A non-positive newWindowTimeout disables the bound, leaving only
+// the caller's ctx.
+//
+// This function takes NO lock and applies NO stagger. Both belong to the
+// shared-session window path alone and stay in callNewWindowBounded.
+func (s *tmuxSubstrate) callBoundedTmuxCreate(ctx context.Context, create boundedCreate) (tmux.Outcome, error) {
 	callCtx := ctx
 	var cancel context.CancelFunc
 	if s.newWindowTimeout > 0 {
@@ -1133,35 +1220,103 @@ func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, adapter tmux.A
 		defer cancel()
 	}
 
-	type result struct {
-		outcome tmux.Outcome
-	}
 	// Buffered so the goroutine never leaks if we return on the timeout path
 	// before it finishes (the hung-tmux case).
-	resCh := make(chan result, 1)
+	resCh := make(chan tmux.Outcome, 1)
 	start := time.Now()
 	go func() {
-		resCh <- result{outcome: adapter.NewWindowIn(callCtx, params)}
+		resCh <- create.invoke(callCtx)
 	}()
 
 	select {
-	case r := <-resCh:
-		return r.outcome, nil
+	case outcome := <-resCh:
+		return outcome, nil
 	case <-callCtx.Done():
 		waited := time.Since(start)
 		// Distinguish the caller's ctx cancellation from our own bounded timeout.
 		// The bounded timeout fires only when the caller's ctx is still live, so
 		// check the parent first.
 		if ctx.Err() != nil {
-			return tmux.Outcome{}, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: tmux new-window: context cancelled: %w: %w",
-				ctx.Err(), handler.ErrStructural)
+			return tmux.Outcome{}, fmt.Errorf("daemon: %s: %s: context cancelled: %w: %w",
+				create.op, create.verb, ctx.Err(), handler.ErrStructural)
 		}
 		if s.newWindowTimedOut != nil {
 			s.newWindowTimedOut(waited)
 		}
-		return tmux.Outcome{}, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: tmux new-window did not return within %s: %w: %w",
-			s.newWindowTimeout, ErrTmuxNewWindowTimeout, handler.ErrStructural)
+		return tmux.Outcome{}, fmt.Errorf("daemon: %s: %s did not return within %s: %w: %w",
+			create.op, create.verb, s.newWindowTimeout, create.timedOut, handler.ErrStructural)
 	}
+}
+
+// callNewSessionBounded invokes sc.NewSessionIn under the shared creation bound.
+// It is the independent-session entry point to callBoundedTmuxCreate, and it
+// exists because the production adapter's NewSessionIn is a bare
+// cmd.CombinedOutput: a wedged tmux server returns neither a value nor an error,
+// and the context down both of these call chains carries no deadline of its own.
+// For SpawnRunSession that means a hung create consumes the whole bead run. For
+// SpawnCrewSession it means an operator's crew start that never answers.
+//
+// It is a SEPARATE entry point from callNewWindowBounded, rather than a flag on
+// one function, because two behaviours of the window path are deliberately absent
+// here:
+//
+//   - newWindowMu is not taken. That mutex serializes `tmux new-window` into the
+//     ONE shared daemon session, where concurrent calls contend on the tmux
+//     server's global command lock. Independent sessions are created rarely and
+//     each under its own name, so serializing them daemon-wide would buy nothing
+//     and would let one slow crew start delay every implementer launch.
+//   - The spawn stagger is not applied. It spaces agent cold-starts inside the
+//     shared session, and it is only coherent while newWindowMu is held.
+//
+// Read the first bullet narrowly: it is about creating the SESSION. A crew start
+// goes on to create its keeper WINDOW in that new session, and that call does run
+// under callNewWindowBounded — so it does take newWindowMu and does participate in
+// the stagger. A slow crew start therefore can still delay an implementer launch,
+// one statement later and by design: the keeper window is a real `tmux new-window`
+// contending on the same server lock, and it is bounded, so the delay is bounded.
+//
+// op names the calling constructor and opens the returned error.
+//
+// # What happens to a session created after the bound fires
+//
+// Nothing, deliberately. Abandoning the call does not abandon the work: a tmux
+// server that is slow rather than dead can finish creating the session after the
+// caller has been told the creation failed. This function does NOT then kill it,
+// because at this layer it cannot tell that session apart from one that a
+// concurrent attempt legitimately owns, and killing the wrong one is far worse
+// than leaving the right one:
+//
+//   - A failed scheduled crew start re-fires about every 2 seconds
+//     (fireSpawnCrewAction returns before MarkFired, so the job stays due, and the
+//     spawn-crew overlap check only blocks a crew that is presence-online — which
+//     a crew that failed to spawn is not). The crew session name is byte-identical
+//     across those attempts, so a killer armed by the first attempt reaps whichever
+//     later attempt succeeded. The sentinel adversary re-spawns a fixed crew name
+//     on its own cadence with the same exposure.
+//   - It is not needed. SpawnCrewSession's ErrWindowCollision branch ADOPTS an
+//     existing session under that name, so a late crew orphan is what the next
+//     attempt picks up rather than something it trips over. And a run session
+//     already has its name written to the run registry by
+//     ConfigurePerRunSubstrate BEFORE the spawn, so a late run orphan is
+//     discoverable by name too. Neither is the untracked session it looks like.
+//
+// What the caller gets instead is evidence: the returned error names the session
+// that may have been left behind, so an operator has somewhere to look. The
+// buffered result channel still guarantees the abandoned goroutine can finish its
+// send and be collected.
+//
+// Returns (outcome, nil) when the call completes in time — the caller then
+// inspects outcome.Err as before, which is what keeps SpawnCrewSession's adopt
+// branch working. See callBoundedTmuxCreate for the error shapes.
+func (s *tmuxSubstrate) callNewSessionBounded(ctx context.Context, op string, sc sessionCreator, params tmux.NewWindowIn) (tmux.Outcome, error) {
+	return s.callBoundedTmuxCreate(ctx, boundedCreate{
+		op: op,
+		// Name the session in the verb: on the abandoned path this is the only
+		// evidence an operator has about what tmux may have gone on to create.
+		verb:     fmt.Sprintf("tmux new-session for %q", params.Session),
+		timedOut: ErrTmuxNewSessionTimeout,
+		invoke:   func(callCtx context.Context) tmux.Outcome { return sc.NewSessionIn(callCtx, params) },
+	})
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1700,7 +1855,13 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 		Command:    command,
 	}
 
-	outcome := sc.NewSessionIn(ctx, params)
+	// Bound the `tmux new-session` call. HandleCrewStart waits on this, and the
+	// operator waits on HandleCrewStart, so an unbounded call turns a wedged tmux
+	// server into a crew start that never answers. See callNewSessionBounded.
+	outcome, boundErr := s.callNewSessionBounded(ctx, "SpawnCrewSession", sc, params)
+	if boundErr != nil {
+		return nil, boundErr
+	}
 	if outcome.Err != nil {
 		if errors.Is(outcome.Err, tmux.ErrWindowCollision) {
 			// Session already exists (crew survived a prior daemon restart, or
@@ -1791,7 +1952,14 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 		Command:    command,
 	}
 
-	outcome := sc.NewSessionIn(ctx, params)
+	// Bound the `tmux new-session` call. This is on the dispatch path of a bead
+	// run and the run's context carries no deadline of its own, so an unbounded
+	// call lets a wedged tmux server consume the entire run before anything
+	// notices. See callNewSessionBounded.
+	outcome, boundErr := s.callNewSessionBounded(ctx, "SpawnRunSession", sc, params)
+	if boundErr != nil {
+		return nil, boundErr
+	}
 	if outcome.Err != nil {
 		return nil, fmt.Errorf("daemon: SpawnRunSession %q: %w", runID, outcome.Err)
 	}
@@ -1903,7 +2071,16 @@ func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, ses
 		Command:    shellJoinArgv(argv),
 	}
 
-	outcome := s.adapter.NewWindowIn(ctx, params)
+	// Bounded, like every other window creation in this file. SpawnCrewSession
+	// calls this synchronously, so a bare adapter.NewWindowIn here would give the
+	// bound on the new-session call above nothing to protect: a wedged tmux server
+	// would simply hang the crew start one statement later instead.
+	outcome, boundErr := s.callNewWindowBounded(ctx, s.adapter, params)
+	if boundErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: SpawnCrewSession: launch keeper window for crew %q (%s:%s): %v (non-fatal)\n",
+			crewName, sessName, tmux.WindowKeeper, boundErr)
+		return
+	}
 	if outcome.Err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: SpawnCrewSession: launch keeper window for crew %q (%s:%s): %v (non-fatal)\n",
 			crewName, sessName, tmux.WindowKeeper, outcome.Err)

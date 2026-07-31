@@ -67,6 +67,7 @@ import (
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runlease"
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/schedule"
@@ -1188,6 +1189,34 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	emit := rp.Emitter
 	beadID := beadRecord.BeadID
 
+	// ── The run's resources (RSM-036 … RSM-038) ─────────────────────────────
+	//
+	// runScope holds every resource this run takes, and the deferred close gives
+	// them back in the reverse of the order they were taken, under ONE
+	// disposition read once for the whole run rather than a predicate per
+	// release site.
+	//
+	// The close is registered HERE, above every acquisition, for two reasons.
+	// It must run after every other give-back, because the outermost resources —
+	// the worker slot and the local count — are given back last. And a resource
+	// taken on a path that has already passed this line would be held by a scope
+	// nobody will close again.
+	//
+	// runExit is a function because two of the three facts the disposition
+	// depends on do not exist yet: whether the agent got a tmux session of its
+	// own, and whether a Pi run failed with output worth reading, are both known
+	// only after the launch. It is replaced below, once they exist. Until then
+	// the run holds only resources that every disposition gives back, so the
+	// partial answer here cannot keep anything standing.
+	runScope := &runlease.Scope{}
+	runExit := func() runlease.Exit { return runlease.Exit{DaemonStopping: ctx.Err() != nil} }
+	defer func() {
+		if relErr := runScope.Close(runlease.Decide(runExit())).Err(); relErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s: giving resources back: %v\n",
+				beadID, runID.String(), relErr)
+		}
+	}()
+
 	// hk-hs7ex: release the local slot on exit when the outer loop incremented
 	// localInFlight for this run. relLocalSlot is a mutable flag: if the fallback
 	// SelectWorker path below succeeds and turns a "local" dispatch into a remote
@@ -1725,6 +1754,18 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// is no disk-leak regression on the happy path.
 	runIsPi := false
 
+	// Both post-launch facts now exist, so the scope's close can read the whole
+	// exit rather than the shutdown fact alone. Decide (RSM-037) is where the
+	// polarity lives: survival needs an independent session AND a stopping
+	// daemon, and it wins over retained evidence when both apply.
+	runExit = func() runlease.Exit {
+		return runlease.Exit{
+			SessionRunsIndependently: useIndepSession,
+			DaemonStopping:           ctx.Err() != nil,
+			EvidenceWorthKeeping:     runIsPi && !bridge.Success(),
+		}
+	}
+
 	// Remove the run registry entry on normal exit (session completed).
 	// Registered first (LIFO) so it runs LAST — after session teardown + worktree removal.
 	defer func() {
@@ -2175,10 +2216,13 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// concurrently on a single worker — the 2nd (reviewer) cold-start over the
 	// reverse tunnel otherwise trips agent_ready_timeout under 6-concurrent remote
 	// load. Remote-only (rbc != nil): local runs never construct a tunnel and are
-	// never gated. Released once agent_ready resolves (success/failure/timeout);
-	// the sync.Once + defer backstop guarantees the slot is returned on every exit
-	// path so it can never leak.
-	releaseSpawnSlot := func() {}
+	// never gated. Given back once agent_ready resolves (success/failure/timeout),
+	// through the lease below.
+	//
+	// A local run gets a lease that is born spent: it names the resource, it can
+	// never fire, and the give-back site needs no test for whether there is
+	// anything to give back (RSM-036).
+	spawnSlot := runlease.Hold(runlease.ColdStartToken, nil)
 	if rbc != nil && handles.AgentSpawnSem != nil {
 		select {
 		case handles.AgentSpawnSem <- struct{}{}:
@@ -2188,9 +2232,14 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			failRun(reason, reason)
 			return
 		}
-		var once sync.Once
-		releaseSpawnSlot = func() { once.Do(func() { <-handles.AgentSpawnSem }) }
-		defer releaseSpawnSlot() // leak backstop; prompt release rides AfterReadyResolved
+		// The scope is the backstop the deferred give-back used to be: the token
+		// comes back on the readiness edge below, and on a path that never reaches
+		// that edge the close returns it. The lease runs the give-back at most
+		// once across both, which is what the sync.Once here used to do.
+		spawnSlot = runScope.Hold(runlease.ColdStartToken, func() error {
+			<-handles.AgentSpawnSem
+			return nil
+		})
 	}
 
 	// RT7: provisioning is complete — start the Run machine so every
@@ -2351,10 +2400,13 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		SkipAbortKill: func() bool { return useIndepSession && ctx.Err() != nil },
 		SkipTeardown:  func() bool { return useIndepSession && ctx.Err() != nil },
 		// hk-5z1f0: agent_ready has resolved (or was skipped) — the cold-start
-		// window is over, so return the spawn slot rather than holding it for the
-		// whole run body. The deferred backstop above still covers the early-return
-		// error paths.
-		AfterReadyResolved: releaseSpawnSlot,
+		// window is over, so give the token back rather than holding it for the
+		// whole run body. The scope's close still covers the paths that never
+		// reach this edge.
+		AfterReadyResolved: func() {
+			//nolint:errcheck // the give-back is a receive on a channel this run filled; it cannot fail
+			_ = spawnSlot.Release()
+		},
 	})
 
 	// The resolved harness identity stamps the run-terminal diagnostic. It must

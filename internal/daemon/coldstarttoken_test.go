@@ -54,17 +54,16 @@ package daemon
 //   - delete the take — the five remote tests all go red, and only the local
 //     test stays green, which is what it is for,
 //   - remove the prompt give-back — the window test goes red,
-//   - drop the sync.Once — the exactly-once test goes red,
-//   - delete the deferred give-back — the readiness-timeout test goes red,
+//   - make a lease spendable twice — the exactly-once test goes red,
+//   - hold the token on a lease the run scope does not hold — the
+//     readiness-timeout test goes red,
 //   - gate a local run too — the local test goes red,
 //   - set the production capacity to 2, and then to 4 — BOTH capacity subtests
 //     go red both times.
 //
-// Two mutations also take a second test down with them, and both are honest.
-// Removing the prompt give-back trips the exactly-once test at its stated
-// precondition, because that test needs both paths to run. Dropping the
-// sync.Once wedges the take test, because a second receive on a channel with one
-// slot blocks for ever.
+// Removing the prompt give-back also takes a second test down with it, and that
+// is honest: it trips the exactly-once test at its stated precondition, because
+// that test needs both give-back paths to run.
 //
 // # Where the fixture lives
 //
@@ -656,10 +655,11 @@ func TestColdStartToken_TheTokenComesBackWhenTheColdStartWindowEndsNotWhenTheRun
 // exactly as it was found.
 //
 // Both paths do run on this run. The prompt give-back fires when readiness
-// settles, which the test observes directly. The deferred give-back then fires
-// when beadRunOne returns, because a defer has no condition. Only the sync.Once
+// settles, which the test observes directly. The run scope's close then fires
+// when beadRunOne returns, because a defer has no condition. Only the lease
 // between them stops the second from taking a token that belongs to somebody
-// else.
+// else: a lease runs its give-back at most once, and the scope's close finds it
+// already spent.
 //
 // The sibling token is what makes that visible. A double give-back cannot push
 // the count below zero — it takes the sibling's token instead — so the failure
@@ -669,8 +669,9 @@ func TestColdStartToken_TheTokenComesBackWhenTheColdStartWindowEndsNotWhenTheRun
 // slot, for the same reason the previous test does it: a final count of one is
 // also what a run that never took a token leaves behind.
 //
-// Mutation: drop the sync.Once and give the token back unconditionally. The
-// sibling token is then gone and the final count reads 0 instead of 1.
+// Mutation: make a lease spendable twice — have runlease.Lease.spend return the
+// give-back call without clearing it. The scope's close then makes a second
+// receive, the sibling token is gone, and the final count reads 0 instead of 1.
 func TestColdStartToken_TheTokenComesBackExactlyOnceAcrossBothGiveBackPaths(t *testing.T) {
 	// Not parallel: sets PATH and swaps a package-level seam in
 	// internal/transport/tunnel.

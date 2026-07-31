@@ -170,9 +170,22 @@ func remotefixIdleTunnel(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 // way, and main is the branch the run plan resolves against.
 //
 // AdapterRegistry2 is deliberately NOT set. It decides how the readiness phase
-// ends, which is the subject of some of these tests rather than a setting, and it
-// MUST be non-nil, so a caller that forgets it fails loudly rather than
-// inheriting somebody else's readiness behaviour.
+// ends, which is the subject of some of these tests rather than a setting, so a
+// caller inheriting somebody else's readiness behaviour is the worse failure.
+//
+// Two things about how it fails, because neither is what you would guess and a
+// fixture this one is copied from should not teach the guess:
+//
+//   - Nil does NOT refuse at construction. ExportedWorkLoopDeps assigns the
+//     field straight through with no guard and no default, unlike AgentSpawnSem
+//     and CacheReapMu a few lines above it. The nil guard lives in the
+//     production constructor, which no fixture goes through. So nil panics
+//     inside ForAgent, on the run's own spawned goroutine, and takes the whole
+//     test binary down.
+//   - Non-nil is not sufficient. A registry that holds no adapter for the
+//     resolved agent type degrades to a synthetic ready, which collapses the
+//     readiness window instead of failing. A test about the readiness window
+//     then passes while measuring nothing.
 func remotefixParams(t *testing.T, projectDir string) WorkLoopDepsParams {
 	t.Helper()
 	return WorkLoopDepsParams{

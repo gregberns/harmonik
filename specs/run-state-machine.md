@@ -8,7 +8,7 @@ requirement-prefix: RSM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.3.0
+version: 0.3.1
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-07-31
@@ -209,13 +209,20 @@ process, AND the run is ending because the daemon is stopping. Survive wins over
 when both apply. Only a surviving run leaves its bead in progress for a later boot to adopt; every
 other disposition settles the bead by the run's own outcome.
 
-> **Survive is what a run ASKS for. The system does not deliver it today.** The boot orphan sweep
-> kills every tmux session carrying the project prefix that is not in its exclusion set, with no
-> liveness test, and it runs before the pass that looks for a surviving run. The bead still
-> recovers, because adoption then classifies the run as dead and resets it. Nothing in this spec
-> or in the code MUST be written as if the agent is still there at the next boot. Making survival
-> real needs a way to tell a live surviving session from a genuine orphan, and that is separate
-> work.
+> **Survive is what a run ASKS for. The system does not deliver it today, and it fails twice.**
+>
+> The first failure is inside the daemon's own process. The completion wait kills the agent session
+> whenever it finds the run context already cancelled, on the path a tmux-hosted independent session
+> takes. It names no gate. So the session is already dead before the daemon exits.
+>
+> The second failure is at the next boot. The orphan sweep kills every tmux session carrying the
+> project prefix that is not in its exclusion set, with no liveness test, and it runs before the
+> pass that looks for a surviving run.
+>
+> The bead recovers either way, because adoption then classifies the run as dead and resets it.
+> Nothing in this spec or in the code MUST be written as if the agent is still there at the next
+> boot. Making survival real needs BOTH failures fixed, and the second needs a way to tell a live
+> surviving session from a genuine orphan. That is separate work.
 
 **RSM-038.** Leases MUST be held in a scope that gives them back in the reverse of the order they
 were taken. Per-launch resources MUST be held in a scope nested inside the run's scope: a graph run
@@ -522,6 +529,7 @@ subsumed path, which passes no flag).
 
 | Date | Version | Author | Change |
 |------|---------|--------|--------|
+| 2026-07-31 | 0.3.1 | agent (delete-and-rewrite step 6) | **§4a's survival note corrected. No obligation changed.** Pinning the survive-shutdown gate family found a FIFTH site that the measured map missed, and it fires before the four the map names. The completion wait kills the agent session whenever it finds the run context already cancelled, on the path a tmux-hosted independent session takes, and it names no gate. So survival fails twice, and the first failure is inside the daemon's own process rather than at the next boot: the session is dead before the daemon exits, which means the boot orphan sweep never gets to matter. The blockquote under RSM-037 now records both failures and says that making survival real needs both fixed. Filed as `hk-jyh5t`, alongside the boot-sweep defect `hk-lssmw`. RSM-036, RSM-037 and RSM-038 are unchanged. |
 | 2026-07-31 | 0.3.0 | agent (delete-and-rewrite step 6) | **New §4a, run resource discipline: RSM-036, RSM-037, RSM-038.** The spec had no rule about how a run holds a resource or gives it back, and the daemon therefore open-coded the answer at each release site. One condition — an agent in its own session plus a stopping daemon — reached four sites, spelled three different ways, and missed the hook session and the tunnel. RSM-036 requires a lease, whose give-back call runs at most once and is never retried. RSM-037 requires ONE disposition value for the whole run, decided by a total pure function of the run's exit facts, and forbids a skip flag per resource; it names the three dispositions and what each keeps. RSM-038 requires a scope closed in reverse order, requires the per-launch resources to sit in a nested scope, and names the three ordering edges that are load-bearing. §4a also records that survival is what a run asks for and NOT something the system delivers today, because the boot orphan sweep kills such sessions before anything looks for them. `internal/runlease` is named as the owner and is fenced to the standard library. No existing rule is renumbered and no production behaviour changes: the types land unwired, and the migration of each release site onto them is separate work. |
 | 2026-07-30 | 0.2.2 | agent (spec citation cleanup) | **Rotted pointers repaired. No obligation changed.** The workflow mode `review-loop` was retired and its driver deleted, so `core.WorkflowMode.Valid()` now accepts only `single` and `dot`. The retired mode is removed from the mode lists in RSM-007, RSM-008, RSM-031 and RSM-032. What each of those rules requires is unchanged. Three approximate line-number citations into `workloop.go` are replaced by symbol names (`beadRunOne`, the `d2APIKeyRefusal` constant, the `abortReason` constant), per the repo convention to cite symbols and never line numbers. RSM-008 also gains an OPEN note that records a question the sweep found but must not settle: the rule confines both post-exit guards to the single-shot path, almost all runs take the graph path, and the choice between extending the guards and dropping the protection claim belongs to the operator. References to the event `review_loop_cycle_complete` and to the review-loop-failure budget are left alone, because `core.EventTypeReviewLoopCycleComplete`, `ChargeReviewLoopFailure` and `MaxReviewLoopFailures` all still exist. |
 | 2026-07-27 | 0.2.1 | agent (codename: input-ack-contract) | **Input-ack consumption reconciled with the owner contracts (coordinated drift correction; co-landed with [agent-input.md] 0.1.1 and [handler-contract.md] 0.8.1).** RSM-027 carried a three-valued acceptance class (`Accepted` / `Rejected` / `Degraded`) that never existed in the owner specs: the `Ack` outcome landed BINARY (`Delivered` / `Rejected`) in AIS-003 / HC-070 the day after this spec, with positive acceptance decoupled onto the async `agent_input_acked` event. RSM-027 is amended in place (NOT renumbered) to consume that contract: `Ack{Delivered}` is a driver handoff that leaves positive acceptance pending; `Ack{Rejected}` fail-closes to RSM-025; the correlated `agent_input_acked` is the positive-acceptance event; the correlated `agent_input_stale` fail-closes to RSM-025. The four routes are stated as total. The `input_seq` consumption rule is made explicit — consume the first synchronous outcome once, then the first correlated asynchronous terminal wins; drop only repeated or late observations, never the first `agent_input_acked`; add no second timer. RSM-024's resume-seed bullet is reconciled so a `Delivered` return alone no longer satisfies the sub-bound, citing AIS-003 + AIS-004 + AIS-INV-001 as the composite authority. RSM-027 also names the run-level backstop for a `Delivered` whose async terminal never arrives: the already-composed RSM-024 timer stack (ready sub-bound, `post_ready_hang`, absolute commit-watchdog ceiling) routing to RSM-025 — NOT a new input timer. The correlation bullet also attributes the sequence id to AIS-003b and its serialized `input_seq` payload field name to [event-model.md §6.3], keeping this spec clear of the event payload. `Accepted`, `Degraded`, and the "three-valued acceptance class" are removed. No requirement renumbered; no port, `Ack` record, event schema, timer semantics, or production behaviour changed. |

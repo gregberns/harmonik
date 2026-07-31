@@ -71,6 +71,36 @@ different ways — two of the spellings 24 lines apart and the third 600 lines l
 them carries a further condition the others do not. The hook session and the tunnel are then left
 out entirely, so a surviving agent keeps a session it can no longer report through.
 
+> **Corrected 2026-07-31 while pinning this family: there are FIVE sites, not four, and the fifth
+> fires first.** `WaitWithSocketGrace` in `internal/runloop/waitsocketgrace.go` ends its step 1 with
+> a bare `else if ctx.Err() != nil { _ = sess.Kill(ctx) }`. The watcher is nil on the substrate
+> path, which is the path a tmux-hosted independent session takes, so on shutdown this kills the
+> session. It names no gate and has no equivalent of the two skip predicates. **The survive
+> disposition is therefore defeated inside the daemon's own process**, before the boot sweep of §4
+> is reached — the session is already dead when the daemon exits, so there is nothing left for the
+> next boot to find. The authors came close to seeing it: the comment at the post-wait kill in
+> `agentlaunch.go` calls this "a no-op kill inside the completion wait". It is not a no-op on a live
+> agent. Filed as `hk-jyh5t`.
+
+> **Also corrected: the tunnel entry above is unreachable, not a live leak.** No run holds both a
+> tunnel and the survive condition. Three independent grounds, all checked:
+>
+> 1. Inside the `ConfigurePerRunSubstrate` closure, the `rbc != nil` arm returns before the
+>    `useIndepSession = true` line in the `rbc == nil` arm.
+> 2. DOT mode returns before single-mode `runAgentLaunch`, and only the work loop passes
+>    `ConfigurePerRunSubstrate`.
+> 3. The tunnel is an `exec.CommandContext` on the run context, so it dies with the run regardless.
+>
+> **Do not state this as "`beadRunOne` returns on the remote branch". That is false** — the remote
+> block's returns are failure exits, and the remote happy path falls through and does reach
+> `useIndepSession := false`. The wrong mechanism was written down once already, in the comment
+> justifying the absent test, and a reader who checks it will find it does not match the code and
+> may then distrust the correct conclusion.
+>
+> "Does not gate the tunnel at all" is literally true and reads as a leak. It is a hazard that
+> arrives the day a remote run may keep its own session, not one to chase now. `runlease` keeps the
+> tunnel in its survive set, which is the right shape for that day and costs nothing today.
+
 A per-resource `skip bool` reproduces that spread rather than removing it. The disposition has to be
 **decided once for the run, as a value**, and the scope has to act on that value. That is the
 pure-decision-then-effect shape the principles ask for, and it makes the incoherent combinations

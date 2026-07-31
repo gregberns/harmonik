@@ -60,13 +60,14 @@ func RunQueueList(ctx context.Context, subArgs []string, out, errOut io.Writer) 
 func renderQueueListText(result json.RawMessage, out io.Writer) int {
 	var resp struct {
 		Queues []struct {
-			Name           string `json:"name"`
-			QueueID        string `json:"queue_id"`
-			Status         string `json:"status"`
-			PendingItems   int    `json:"pending_items"`
-			Workers        int    `json:"workers"`
-			CompletedItems int    `json:"completed_items"`
-			FailedItems    int    `json:"failed_items"`
+			Name             string `json:"name"`
+			QueueID          string `json:"queue_id"`
+			Status           string `json:"status"`
+			PendingItems     int    `json:"pending_items"`
+			Workers          int    `json:"workers"`
+			CompletedItems   int    `json:"completed_items"`
+			FailedItems      int    `json:"failed_items"`
+			QuarantineReason string `json:"quarantine_reason"`
 		} `json:"queues"`
 	}
 	p := newPrinter(out)
@@ -85,6 +86,10 @@ func renderQueueListText(result json.RawMessage, out io.Writer) int {
 			q.Name, q.QueueID, q.Status,
 			q.PendingItems, q.Workers, q.CompletedItems, q.FailedItems,
 		)
+		// A quarantined queue keeps its status and its counts, so the row above
+		// reads like a healthy one. The block below is the only thing that
+		// separates a dead queue from a slow one (hk-ujanf).
+		printQuarantineBlock(p, q.Name, q.QuarantineReason)
 	}
 	return renderExit(p)
 }

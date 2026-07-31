@@ -86,6 +86,21 @@ type MutationLocker interface {
 	Wake()
 }
 
+// QuarantineReader is optionally implemented by the QueueSetter passed to
+// NewHandlerAdapter (queuewiring.QueueStore implements it). It reports why a
+// queue name refuses writes, or nil when the name is healthy.
+//
+// The read commands need it because they answer from disk. A quarantine lives
+// only in daemon memory, so a queue that will never accept another write reads
+// on disk exactly like a queue that is merely slow. Without this port the read
+// surface cannot tell an operator the two apart.
+//
+// Spec ref: specs/queue-model.md §3.1 QM-001.
+// Bead ref: hk-ujanf.
+type QuarantineReader interface {
+	QuarantineReason(name string) error
+}
+
 // EventEmitter is the minimal bus interface required by HandlerAdapter to emit
 // queue lifecycle events after persistence. It matches handlercontract.EventEmitter
 // so that the daemon can pass the bus directly without an adapter.
@@ -1320,6 +1335,14 @@ func (a *HandlerAdapter) HandleQueueStatus(ctx context.Context, params json.RawM
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+	// Mark a shut queue here too (hk-ujanf). queue-status resolves the name the
+	// caller asked for, so read the name off the resolved queue rather than the
+	// request: --queue-id names no queue at all.
+	if reader, ok := a.qs.(QuarantineReader); ok && resp.Queue != nil {
+		if reason := reader.QuarantineReason(resp.Queue.Name); reason != nil {
+			resp.QuarantineReason = reason.Error()
+		}
+	}
 	// Surface the current effective ceiling (hk-ohiaf).
 	if a.concurrencyGet != nil {
 		resp.MaxConcurrent = a.concurrencyGet()
@@ -1371,6 +1394,16 @@ func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, 
 	resp, rpcErr := HandleQueueList(ctx, a.projectDir)
 	if rpcErr != nil {
 		return nil, rpcErr
+	}
+	// Mark every queue the daemon has shut (hk-ujanf). HandleQueueList answers
+	// from disk, and the quarantine is in memory, so the marker must be added
+	// here or the row shows a dead queue as a healthy one.
+	if reader, ok := a.qs.(QuarantineReader); ok {
+		for i := range resp.Queues {
+			if reason := reader.QuarantineReason(resp.Queues[i].Name); reason != nil {
+				resp.Queues[i].QuarantineReason = reason.Error()
+			}
+		}
 	}
 	// Surface the current effective ceiling (hk-ohiaf).
 	if a.concurrencyGet != nil {

@@ -78,8 +78,12 @@ unrepresentable rather than merely unwritten.
 
 A second, independent skip retains the worktree when a Pi run fails, so an operator can read the
 captured agent logs. It is set in one place inside the single-implementer tail, which means **a
-graph-mode Pi run never retains anything**. That asymmetry is not deliberate. Step 6 should resolve
-it rather than transcribe it.
+graph-mode Pi run never retains anything**.
+
+> **Settled by the operator, 2026-07-31: that behavior was not intended. Do not preserve it.** The
+> asymmetry is a defect, not a decision. `runlease.Exit.EvidenceWorthKeeping` is mode-agnostic, so
+> the migration resolves it by construction — a failed Pi run keeps its worktree whichever mode it
+> ran in. Do not add a mode test to keep the old shape.
 
 ---
 
@@ -213,7 +217,7 @@ unwritten, which is what §2 asked for.
 
 **Two of the resources gain a keeper they did not have.** The hook session and the tunnel are in the
 survive set. Today they are torn down regardless, which leaves a surviving agent holding a session it
-can no longer report through. That is a behaviour change and it arrives with the migration commit
+can no longer report through. That is a behavior change and it arrives with the migration commit
 that moves those two sites, not before.
 
 **`Decide` is where the polarity lives.** Survival needs BOTH facts — an agent in its own session AND

@@ -631,11 +631,15 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/workersbootwire-freeze-gate.sh
 	scripts/runloop-emitter-gate.sh
 	scripts/workloop-scheduler-freeze-gate.sh
-	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
+	@# `|| exit 1` is load-bearing. Without it the recipe line's status comes from
+	@# the trailing `if`, so a refusal from the script is discarded and the gate
+	@# goes green while the diagnostic scrolls past on stderr.
+	@CHANGED_PKGS=$$(scripts/changed-go-packages.sh) || exit 1; \
 	if [ -n "$$CHANGED_PKGS" ]; then \
-		go test -short $$CHANGED_PKGS; \
+		echo "check-fast: testing" $$CHANGED_PKGS; \
+		printf '%s\n' "$$CHANGED_PKGS" | tr '\n' '\0' | xargs -0 go test -short; \
 	else \
-		echo "check-fast: no changed Go packages, skipping go test"; \
+		echo "check-fast: no Go file changed in HEAD, in the working tree, or untracked - skipping go test"; \
 	fi
 
 # ---------------------------------------------------------------------------
@@ -649,6 +653,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 .PHONY: check-short
 check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -short -race (skips real-daemon E2E; hk-jzepv)
 	scripts/go-format-test.sh
+	scripts/changed-go-packages-test.sh
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...

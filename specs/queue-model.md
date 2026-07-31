@@ -406,6 +406,23 @@ and refuses that name until exact intent/canonical/temp reload, byte/digest
 comparison, and parent sync classify it. A close failure after successful
 directory fsync is diagnostic. No event outcome changes these results.
 
+On ANY I/O error in the atomic-write sequence — that is, `not_committed` as
+well as `commit_indeterminate` — the daemon MUST do all three of these things:
+
+1. Refuse further mutations to that queue name.
+2. Emit `infrastructure_unavailable{failed_prerequisite: queue_write_error}`
+   per [/Users/gb/github/harmonik/specs/event-model.md §8.7.15].
+3. Transition to `degraded` state per
+   [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.8 PL-010].
+
+Operator recovery is `harmonik stop` and a restart. `rejected` is NOT an I/O
+error and MUST NOT trigger any of the three: the replacement was refused before
+any I/O, so nothing about the queue on disk is in doubt.
+
+This paragraph repeats the rule stated in the changelog entry for §3.1 because
+a reader of this section alone implemented only the indeterminate half of it,
+and believed that conformed.
+
 ### 3.2 QM-002 — Read on startup
 
 At PL-005 startup, before readiness or QueueStore installation, the bounded

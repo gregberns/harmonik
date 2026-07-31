@@ -569,6 +569,15 @@ type workLoopDeps struct {
 	// Bead ref: hk-kac8g, hk-m0k0a.
 	heldEventDedup map[string]struct{}
 
+	// queueWriteErrorReported tracks queue names for which the QM-001 failed-write
+	// report has already gone out. The store quarantines a queue after a failed
+	// write, so every later tick re-derives the same failure; without this the
+	// dispatch loop would re-emit the pair every poll interval forever.
+	//
+	// Only the outer poll loop reads/writes this map — NOT per-bead goroutines.
+	// Access is single-threaded, matching heldEventDedup.
+	queueWriteErrorReported map[string]struct{}
+
 	// staleBlockerCloser, when non-nil, is used by the claim-failure path to
 	// auto-close stale blockers (beads already subsumed in main) so the blocked
 	// bead can be retried on the next workloop iteration. When nil the

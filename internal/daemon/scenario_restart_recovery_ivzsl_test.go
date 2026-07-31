@@ -545,7 +545,7 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 	// daemon.Start without hitting QM-027.
 	freshQueue := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "00000000-0000-7000-8000-bbbb000000002",
+		QueueID:       newTestQueueID(),
 		SubmittedAt:   time.Now().UTC(),
 		Status:        queue.QueueStatusActive,
 		Groups: []queue.Group{

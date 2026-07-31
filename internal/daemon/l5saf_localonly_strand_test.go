@@ -63,7 +63,7 @@ func TestL5saf_LocalOnlyItemNotStrandedByCapGuard(t *testing.T) {
 	// selectNextQueue set capturedQueueLocalOnly=true for the picked item.
 	q := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "l5saf-queue-id",
+		QueueID:       newTestQueueID(),
 		// Left unnamed → normalised to the default "main" slot, so the
 		// backward-compatible QueueStore.Queue() accessor returns it below.
 		LocalOnly:   true,

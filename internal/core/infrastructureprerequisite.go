@@ -33,9 +33,15 @@ const (
 
 	// InfrastructurePrerequisiteFilesystemFull indicates the filesystem is full.
 	InfrastructurePrerequisiteFilesystemFull InfrastructurePrerequisite = "filesystem_full"
+
+	// InfrastructurePrerequisiteQueueWriteError indicates an atomic write to a
+	// queue file failed. queue-model.md §3.1 QM-001 makes this emission
+	// mandatory on that path; the daemon refuses further mutations to that
+	// queue and the dispatch that asked for the write is abandoned.
+	InfrastructurePrerequisiteQueueWriteError InfrastructurePrerequisite = "queue_write_error"
 )
 
-// Valid reports whether p is one of the seven declared InfrastructurePrerequisite constants.
+// Valid reports whether p is one of the eight declared InfrastructurePrerequisite constants.
 func (p InfrastructurePrerequisite) Valid() bool {
 	switch p {
 	case InfrastructurePrerequisiteBrMissing,
@@ -44,7 +50,8 @@ func (p InfrastructurePrerequisite) Valid() bool {
 		InfrastructurePrerequisiteBeadsSQLiteLocked,
 		InfrastructurePrerequisiteGitIndexLocked,
 		InfrastructurePrerequisiteHarmonikDirUnwritable,
-		InfrastructurePrerequisiteFilesystemFull:
+		InfrastructurePrerequisiteFilesystemFull,
+		InfrastructurePrerequisiteQueueWriteError:
 		return true
 	default:
 		return false

@@ -146,7 +146,7 @@ func classBFixtureWithGroupStatusDir(t *testing.T, itemStatus, groupStatus strin
 	}
 	q := queueJSON{
 		SchemaVersion: 1,
-		QueueID:       "00000000-0000-0000-0000-000000000001",
+		QueueID:       newTestQueueID(),
 		Name:          "main",
 		SubmittedAt:   time.Now().UTC(),
 		Status:        "active",

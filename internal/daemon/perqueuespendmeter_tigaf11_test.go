@@ -39,7 +39,7 @@ const pqBytesPerUSD = 100_000.0
 func pqMakeQueue(name string, capUSD float64) *queue.Queue {
 	return &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "qid-" + name,
+		QueueID:       newTestQueueID(),
 		Name:          name,
 		Workers:       1,
 		SpendCapUSD:   capUSD,

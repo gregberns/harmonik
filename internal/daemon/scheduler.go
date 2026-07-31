@@ -392,6 +392,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	if deps.heldEventDedup == nil {
 		deps.heldEventDedup = make(map[string]struct{})
 	}
+	if deps.queueWriteErrorReported == nil {
+		deps.queueWriteErrorReported = make(map[string]struct{})
+	}
 	// lastSeenPauseEpoch tracks the most recent pause epoch observed by the
 	// dispatcher.  When the epoch advances (pause lifted or new pause window),
 	// all prior-epoch dedup entries are stale and pruned (hk-o48pb).
@@ -620,7 +623,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Bead ref: hk-45ude.
 
 		var (
-			beadRecord                  core.BeadRecord
+			beadRecord core.BeadRecord
+			// reservedRunID is set by the queue path's reservation transaction,
+			// which generates the RunID BEFORE the write so that status and
+			// identity land together. The br-ready path leaves it unset and
+			// generates its own further down.
+			reservedRunID               core.RunID
+			runIDReserved               bool
 			queueItemIndex              int    // item index within the group (-1 = no queue)
 			capturedQueueName           string // NQ-B1: name of the dispatching queue ("" = br-ready)
 			queueIDField                *string
@@ -1124,143 +1133,69 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					continue
 				}
 
-				// Phase 3 — stamp item as dispatched under the write lock (TOCTOU).
-				// NQ-B1: operate on the SELECTED queue (snapQueueName), not the "main"
-				// slot, so the dispatch stamp lands on the queue the round-robin chose.
+				// Phase 3 — the reservation transaction.
+				//
+				// One durable write records the dispatch: the item becomes
+				// dispatched and carries the RunID that will execute it. The
+				// RunID is generated here, before the write, so status and
+				// identity land together. Until this commit the path wrote an
+				// empty-string RunID placeholder and patched it in a second
+				// write, and both writes ignored their error.
+				//
+				// NQ-B1: reserve on the SELECTED queue (snapQueueName), not the
+				// "main" slot, so the reservation lands on the queue the
+				// round-robin chose.
 				{
-					lq := deps.queueStore.LockForMutation()
-					liveQ := lq.LockedQueueByName(snapQueueName)
-					if liveQ == nil {
-						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
-							return exitClean()
-						}
-						continue
+					runUUID, uuidErr := uuid.NewV7()
+					if uuidErr != nil {
+						// UUID generation failure is fatal — system entropy problem.
+						wg.Wait()
+						return fmt.Errorf("daemon: workloop: generate RunID: %w", uuidErr)
 					}
-					// Cross-queue bead dedup guard (hk-a11re): under the write lock
-					// check every OTHER active queue for an in-flight item carrying the
-					// same bead_id. If found, the bead is already being executed from
-					// another queue — fail this item immediately to prevent two concurrent
-					// implementers. The check must happen while the lock is held so that
-					// the "dispatched" stamp in the winning queue is visible here; no race
-					// is possible between the two queues' Phase 3 blocks because LockForMutation
-					// serializes them.
-					{
-						var crossQueueConflict string
-						for _, otherName := range lq.LockedAllQueueNames() {
-							if otherName == snapQueueName {
-								continue
-							}
-							otherQ := lq.LockedQueueByName(otherName)
-							if otherQ == nil || otherQ.Status != queue.QueueStatusActive {
-								continue
-							}
-							for _, g := range otherQ.Groups {
-								for _, item := range g.Items {
-									if item.BeadID == snapItemBeadID &&
-										(item.Status == queue.ItemStatusDispatched || item.Status == queue.ItemStatusCompleted) {
-										crossQueueConflict = otherName
-										break
-									}
-								}
-								if crossQueueConflict != "" {
-									break
-								}
-							}
-							if crossQueueConflict != "" {
-								break
-							}
-						}
-						if crossQueueConflict != "" {
-							// Fail the duplicate item so the group can advance rather than stall.
-							for gi := range liveQ.Groups {
-								if liveQ.Groups[gi].Status != queue.GroupStatusActive {
-									continue
-								}
-								if liveQ.Groups[gi].GroupIndex != snapGroupIndex {
-									continue
-								}
-								if snapItemIdx < len(liveQ.Groups[gi].Items) &&
-									liveQ.Groups[gi].Items[snapItemIdx].BeadID == snapItemBeadID {
-									liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusFailed
-									liveQ.Groups[gi].Items[snapItemIdx].LastFailureReason = "cross_queue_duplicate"
-								}
-							}
-							lq.LockedSetQueueByName(snapQueueName, liveQ)
-							if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
-								fmt.Fprintf(os.Stderr, "daemon: workloop: Persist cross-queue-duplicate queueID=%s: %v\n",
-									liveQ.QueueID, persistErr)
-							}
-							lq.Done()
-							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s already dispatched/completed from queue %q — failing cross-queue duplicate item (hk-a11re, hk-dorz9)\n",
-								snapItemBeadID, crossQueueConflict)
-							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
-							continue
-						}
-					}
+					reservedRunID = core.RunID(runUUID)
+					runIDReserved = true
 
-					// Locate the same group and item in the live snapshot.
-					foundItem := false
-					maxAttemptsHit := false
-					for gi := range liveQ.Groups {
-						if liveQ.Groups[gi].Status != queue.GroupStatusActive {
-							continue
+					reservation := reserveQueueItem(ctx, deps, queueReservation{
+						QueueName:  snapQueueName,
+						GroupIndex: snapGroupIndex,
+						ItemIndex:  snapItemIdx,
+						BeadID:     snapItemBeadID,
+						RunID:      reservedRunID,
+					})
+
+					switch reservation.Verdict {
+					case reservationReserved:
+						// Durably dispatched. The launch may proceed.
+
+					case reservationItemFailed:
+						switch reservation.FailureReason {
+						case "cross_queue_duplicate":
+							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s already dispatched/completed from queue %q — failing cross-queue duplicate item (hk-a11re, hk-dorz9)\n",
+								snapItemBeadID, reservation.ConflictingQueue)
+						case "max_attempts_exceeded":
+							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d — failing queue item (hk-6pspu)\n",
+								snapItemBeadID, maxItemAttempts)
+						default:
+							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s failed at reservation: %s\n",
+								snapItemBeadID, reservation.FailureReason)
 						}
-						if liveQ.Groups[gi].GroupIndex != snapGroupIndex {
-							continue
-						}
-						if snapItemIdx < len(liveQ.Groups[gi].Items) &&
-							liveQ.Groups[gi].Items[snapItemIdx].BeadID == snapItemBeadID &&
-							liveQ.Groups[gi].Items[snapItemIdx].Status == queue.ItemStatusPending {
-							// hk-6pspu: increment Attempts and enforce maxItemAttempts.
-							liveQ.Groups[gi].Items[snapItemIdx].Attempts++
-							if liveQ.Groups[gi].Items[snapItemIdx].Attempts >= maxItemAttempts {
-								// Set the terminal status so the item leaves Pending —
-								// otherwise the next select re-picks it, re-increments
-								// Attempts, and live-locks dispatch (mirrors the
-								// cross-queue-duplicate sibling above). hk-6pspu.
-								liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusFailed
-								liveQ.Groups[gi].Items[snapItemIdx].LastFailureReason = "max_attempts_exceeded"
-								fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d — failing queue item (hk-6pspu)\n",
-									snapItemBeadID, maxItemAttempts)
-								maxAttemptsHit = true
-								break
-							}
-							runUUIDStr := "" // filled after uuid generation below
-							liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusDispatched
-							liveQ.Groups[gi].Items[snapItemIdx].RunID = &runUUIDStr // placeholder; updated after
-							_ = runUUIDStr                                          // suppress lint
-							foundItem = true
-						}
-					}
-					if maxAttemptsHit {
-						lq.LockedSetQueueByName(snapQueueName, liveQ)
-						if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
-							fmt.Fprintf(os.Stderr, "daemon: workloop: Persist max-attempts queueID=%s: %v\n",
-								liveQ.QueueID, persistErr)
-						}
-						lq.Done()
 						evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 						continue
-					}
-					if !foundItem {
-						lq.Done()
-						// Already dispatched by a concurrent path — retry.
+
+					case reservationWriteFailed:
+						// QM-001: say so loudly and abandon the dispatch.
+						reportQueueWriteError(ctx, deps, snapQueueName, reservation)
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+							return exitClean()
+						}
+						continue
+
+					default: // reservationRetryLater
 						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
 					}
-					lq.LockedSetQueueByName(snapQueueName, liveQ)
-					// Persist the dispatched-stamp so queue.json reflects the
-					// in-memory state (hk-xsutm). Non-fatal: RunID placeholder
-					// will be patched shortly; the important invariant is that
-					// the item is marked dispatched before any other path reads it.
-					if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
-						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist dispatch-stamp queueID=%s: %v\n",
-							liveQ.QueueID, persistErr)
-					}
-					lq.Done()
 				}
 
 				// hk-lr5t: initialize beadRecord with the pre-claim ShowBead result so
@@ -1400,41 +1335,19 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 		beadID = beadRecord.BeadID
 
-		runUUID, uuidErr := uuid.NewV7()
-		if uuidErr != nil {
-			// UUID generation failure is fatal — system entropy problem.
-			wg.Wait()
-			return fmt.Errorf("daemon: workloop: generate RunID: %w", uuidErr)
-		}
-		runID := core.RunID(runUUID)
-
-		// Patch the placeholder RunID string in the queue item now that we have it.
-		// NQ-B1: target the selected queue by name (capturedQueueName), not "main".
-		if queueItemIndex >= 0 && deps.queueStore != nil {
-			lq := deps.queueStore.LockForMutation()
-			liveQ := lq.LockedQueueByName(capturedQueueName)
-			if liveQ != nil {
-				for gi := range liveQ.Groups {
-					if liveQ.Groups[gi].Status != queue.GroupStatusActive {
-						continue
-					}
-					if queueGroupIdxFd != nil && liveQ.Groups[gi].GroupIndex != *queueGroupIdxFd {
-						continue
-					}
-					if queueItemIndex < len(liveQ.Groups[gi].Items) &&
-						liveQ.Groups[gi].Items[queueItemIndex].Status == queue.ItemStatusDispatched {
-						runIDStr := runID.String()
-						liveQ.Groups[gi].Items[queueItemIndex].RunID = &runIDStr
-					}
-				}
-				lq.LockedSetQueueByName(capturedQueueName, liveQ)
-				// Persist the RunID patch (hk-xsutm).
-				if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: Persist RunID-patch queueID=%s: %v\n",
-						liveQ.QueueID, persistErr)
-				}
+		// The queue path already generated its RunID and committed it with the
+		// dispatch stamp in one reservation write, so there is nothing to patch
+		// here any more. The br-ready path has no queue item and generates its
+		// own.
+		runID := reservedRunID
+		if !runIDReserved {
+			runUUID, uuidErr := uuid.NewV7()
+			if uuidErr != nil {
+				// UUID generation failure is fatal — system entropy problem.
+				wg.Wait()
+				return fmt.Errorf("daemon: workloop: generate RunID: %w", uuidErr)
 			}
-			lq.Done()
+			runID = core.RunID(runUUID)
 		}
 
 		claimTID, tidErr := deps.tidGen.Next()

@@ -73,7 +73,7 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "w3cp1-multi-queue",
+		QueueID:       newTestQueueID(),
 		SubmittedAt:   now,
 		Status:        queue.QueueStatusActive,
 		Groups: []queue.Group{
@@ -162,7 +162,7 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "w3cp1-serial-queue",
+		QueueID:       newTestQueueID(),
 		SubmittedAt:   now,
 		Status:        queue.QueueStatusActive,
 		Groups: []queue.Group{
@@ -279,7 +279,7 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "boiwe-wl-queue",
+		QueueID:       newTestQueueID(),
 		SubmittedAt:   now,
 		Status:        queue.QueueStatusActive,
 		Groups: []queue.Group{
@@ -420,7 +420,7 @@ func TestQueueItemWorkflowMode_WorkloopHonoursItemMode(t *testing.T) {
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "hiqrl-rl-queue",
+		QueueID:       newTestQueueID(),
 		SubmittedAt:   now,
 		Status:        queue.QueueStatusActive,
 		Groups: []queue.Group{
@@ -517,7 +517,7 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "smoke-multi-queue",
+		QueueID:       newTestQueueID(),
 		SubmittedAt:   now,
 		Status:        queue.QueueStatusActive,
 		Groups: []queue.Group{

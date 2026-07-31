@@ -60,7 +60,7 @@ func em063FixtureStreamQueueWithBeads(beadIDs ...string) *queue.Queue {
 	}
 	return &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "em063-test-queue",
+		QueueID:       newTestQueueID(),
 		Status:        queue.QueueStatusActive,
 		SubmittedAt:   now,
 		Groups: []queue.Group{
@@ -138,7 +138,7 @@ func TestEM063_Phase1_AlreadyInQueue_DispatchedExcluded(t *testing.T) {
 	runID := "019e0000-0000-7000-0000-000000000001"
 	q := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "em063-dispatched-queue",
+		QueueID:       newTestQueueID(),
 		Status:        queue.QueueStatusActive,
 		SubmittedAt:   now,
 		Groups: []queue.Group{{

@@ -55,7 +55,7 @@ func queueCancelFixturePendingQueue(t *testing.T, beadIDs ...core.BeadID) *queue
 	now := time.Now()
 	return &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "cancel-test-queue-" + t.Name(),
+		QueueID:       newTestQueueID(),
 		SubmittedAt:   now,
 		Status:        queue.QueueStatusActive,
 		Groups: []queue.Group{
@@ -227,7 +227,7 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "cancel-terminal-test-" + t.Name(),
+		QueueID:       newTestQueueID(),
 		SubmittedAt:   now,
 		Status:        queue.QueueStatusPausedByFailure,
 		Groups: []queue.Group{
@@ -319,7 +319,7 @@ func TestQueueCancel_NamedQueue_ArchivedOnShutdown(t *testing.T) {
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "u6m4l-named-queue-" + t.Name(),
+		QueueID:       newTestQueueID(),
 		Name:          queueName,
 		SubmittedAt:   now,
 		Status:        queue.QueueStatusActive,

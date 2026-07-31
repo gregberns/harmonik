@@ -176,6 +176,13 @@ declare -a CEILING_FILES=(
     "internal/daemon/diskcheck_hksxlb.go            3"
     "internal/daemon/eagerfill_em063.go             2"
     "internal/daemon/workloop_handlerpause_kac8g.go 3"
+    # scheduler_reservation.go, 2026-07-30: the dispatch reservation write and the
+    # QM-001 report for a failed one. Same category as the handler-pause row above
+    # — it runs in the outer queue-claim loop, and it runs BEFORE any run exists,
+    # which is the whole point: the reservation failed, so the dispatch is
+    # abandoned and no run is ever created. There is no RunPorts to reach the bus
+    # through at that moment. CEILING, so a later shrink is improvement.
+    "internal/daemon/scheduler_reservation.go       2"
     # subsystem-partition-01, 2026-07-28: the outer poll loop's dashboard-gate and
     # movement-governor blocks, lifted out of runWorkLoop so each can be switched
     # off and never constructed. Same category as the diskcheck / eager-fill rows

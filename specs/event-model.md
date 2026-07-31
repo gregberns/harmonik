@@ -1219,10 +1219,15 @@ reference_commits: <String[]> | null
 #### `infrastructure_unavailable`
 
 ```yaml
-failed_prerequisite: <enum: br_missing | br_timeout | br_version_incompatible | beads_sqlite_locked | git_index_locked | harmonik_dir_unwritable | filesystem_full>
+failed_prerequisite: <enum: br_missing | br_timeout | br_version_incompatible | beads_sqlite_locked | git_index_locked | harmonik_dir_unwritable | filesystem_full | queue_write_error>
 detail_string: <String>
 retry_count: <Integer>
 ```
+
+`queue_write_error` reports a failed atomic write to a queue file. `queue-model.md` §3.1 QM-001 makes
+this emission mandatory on that path, together with a refusal of further mutations to that queue and
+the `degraded` transition of §4.8 PL-010. All three apply to one failure and an emitter MUST do all
+three.
 
 #### `bus_overflow`
 

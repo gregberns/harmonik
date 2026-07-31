@@ -384,7 +384,7 @@ func (l *admissionQueueLedger) assertUnused(t *testing.T) {
 func admissionQueue(name string, items ...queue.Item) *queue.Queue {
 	return &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "admission-" + name + "-id",
+		QueueID:       newTestQueueID(),
 		Name:          name,
 		SubmittedAt:   time.Now().UTC(),
 		Status:        queue.QueueStatusActive,

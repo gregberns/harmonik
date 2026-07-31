@@ -441,6 +441,17 @@ type Snapshot struct {
 	Generation uint64
 }
 
+// ErrQueueQuarantined marks a transaction refused because an earlier write to
+// that queue failed. QM-001 requires the daemon to refuse further mutations
+// after any I/O error in the atomic-write sequence, so the refusal is sticky
+// and does not clear by retrying.
+//
+// Callers MUST distinguish it from an ordinary rejection: an ordinary rejection
+// means "your snapshot is stale, look again", while this means "this queue is
+// shut until an operator repairs it". Reporting the second as the first is how
+// a hard failure becomes a silent spin.
+var ErrQueueQuarantined = errors.New("queuewiring: queue is quarantined after a failed write")
+
 // TransactionRequest describes one clone-mutate-persist-install operation.
 type TransactionRequest struct {
 	Snapshot       Snapshot
@@ -449,6 +460,18 @@ type TransactionRequest struct {
 	WakeRequired   bool
 	ArchiveHandoff *queue.ArchiveHandoffPlan
 	Mutate         func(*queue.Queue) error
+
+	// Precondition, when non-nil, runs under the store write lock after the
+	// generation and snapshot-byte checks pass and before Mutate. It receives a
+	// deep copy of every queue in the store EXCEPT the one being mutated, keyed
+	// by name. A non-nil error rejects the transaction and performs no I/O.
+	//
+	// The generation guard covers one name, so it cannot see a change in a
+	// different queue. The dispatcher's duplicate-bead guard needs exactly that:
+	// it must refuse to reserve a bead that another queue already dispatched.
+	// Running the check here puts it inside the same lock hold as the write it
+	// guards, which is what makes two queues unable to reserve the same bead.
+	Precondition func(others map[string]*queue.Queue) error
 }
 
 // TransactionResult combines durable namespace truth with a fresh snapshot.
@@ -479,7 +502,7 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 	s.queueMu.Lock()
 	if quarantineErr := s.quarantined[name]; quarantineErr != nil {
 		s.queueMu.Unlock()
-		return rejectedTransaction(fmt.Errorf("queue name %q is quarantined: %w", name, quarantineErr))
+		return rejectedTransaction(fmt.Errorf("%w: queue name %q: %w", ErrQueueQuarantined, name, quarantineErr))
 	}
 	if req.Snapshot.Generation != s.generations[name] {
 		s.queueMu.Unlock()
@@ -493,6 +516,12 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 	if req.Mutate == nil {
 		s.queueMu.Unlock()
 		return rejectedTransaction(errors.New("transaction mutation is required"))
+	}
+	if req.Precondition != nil {
+		if err := req.Precondition(s.otherQueuesLocked(name)); err != nil {
+			s.queueMu.Unlock()
+			return rejectedTransaction(err)
+		}
 	}
 	candidate := cloneQueue(current)
 	if candidate == nil {
@@ -543,7 +572,19 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		ArchiveHandoff: req.ArchiveHandoff,
 	})
 	if !commit.Committed() {
-		if commit.Outcome == queue.OutcomeCommitIndeterminate {
+		// QM-001: on ANY I/O error in the atomic-write sequence the daemon MUST
+		// refuse further mutations to this queue. That covers both a write that
+		// definitely did not land and one whose result is unknown — a full disk
+		// and a corrupt queue file do not clear by trying again, and a caller
+		// that keeps trying turns one failure into an unbounded retry loop.
+		//
+		// OutcomeRejected is deliberately NOT quarantined: the replacement was
+		// refused before any I/O was attempted (a malformed request, or a
+		// cancelled context), so nothing about the queue on disk is in doubt and
+		// the next caller deserves a fresh try.
+		//
+		// Spec ref: specs/queue-model.md §3.1 QM-001.
+		if commit.Outcome != queue.OutcomeRejected {
 			s.quarantined[name] = commit.Err
 		}
 		s.queueMu.Unlock()
@@ -575,6 +616,20 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		Snapshot:        resultSnapshot,
 		CleanupErr:      cleanupErr,
 	}
+}
+
+// otherQueuesLocked returns a deep copy of every queue except exclude. The
+// caller must hold the write lock. Copies are handed out rather than the stored
+// pointers because the write path mutates those in place.
+func (s *QueueStore) otherQueuesLocked(exclude string) map[string]*queue.Queue {
+	others := make(map[string]*queue.Queue, len(s.queues))
+	for otherName, otherQueue := range s.queues {
+		if otherName == exclude {
+			continue
+		}
+		others[otherName] = cloneQueue(otherQueue)
+	}
+	return others
 }
 
 func rejectedTransaction(err error) TransactionResult {

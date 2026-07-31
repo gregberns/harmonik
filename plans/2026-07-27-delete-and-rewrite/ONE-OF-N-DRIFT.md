@@ -2,7 +2,43 @@
 
 Base: `e7e74214b` (worktree was at `dc2217527`, BASE_STALE → reset per instruction). No code changed.
 
-> ## ⚠ Read this before using any count below — corrected 2026-07-29, corrected again 2026-07-30
+> ## ⚠⚠ Read this FIRST — corrected again 2026-07-30. There is now ONE launch site.
+>
+> **The launch-path collapse this document argues for has LANDED.** `internal/daemon/agentlaunch.go`
+> holds one function, `runAgentLaunch`, and its own comment reads "runAgentLaunch collapses the three
+> into one" and "There is exactly one gate now". All three surviving call sites route through it:
+> `internal/daemon/workloop.go` (single mode), `internal/daemon/dot_cascade_core.go` (DOT node
+> dispatch), and `internal/daemon/dot_gate.go` (cognition gate). Verify with
+> `grep -rn "runAgentLaunch(ctx" --include='*.go' internal/daemon/ | grep -v _test`.
+>
+> **Three call sites in source, two that can execute — the two counts answer different questions.**
+> The third, the cognition gate in `dot_gate.go`, is dead: `daemon.Config.CPRegistry` has zero
+> assignments anywhere in the tree and no graph declares a `type="gate"` node. Use three when you ask
+> what routes through `runAgentLaunch`. Use two when you ask what runs. See the next banner.
+>
+> **So every "1 of 5" and "1 of 3" below is now "1 of 1", and the drift class this file measures is
+> closed by construction rather than by counting.** Two specific consequences:
+>
+> - **Finding N2 is RESOLVED.** `d2RemoteAPIKeyRefusal` has exactly one production call site, inside
+>   `runAgentLaunch`, so the credential guard now covers every launch including DOT — the path N2
+>   says carries essentially all real traffic. Bead `hk-z4cow` predicted this in its own last line.
+>   Commit `d39ca9a25` is titled "retract the five-site framing" and is an ancestor of HEAD.
+> - **The sandbox gate is resolved the same way.** `sandboxSpawnForRun` also has exactly one call
+>   site, inside `runAgentLaunch`, called before any session-id branching. The per-site scope
+>   parameter is gone and two source-level tests in `internal/daemon/agentlaunch_scope_test.go` pin
+>   it. Bead `hk-j52we` records the operator's decision to make the fix, and the fix is in the tree.
+>
+> The per-site detail below is kept as a dated measurement of how the drift arose. Do not use it to
+> scope work. **Beads carrying the `drift-1ofn` label are largely superseded — check each against
+> `runAgentLaunch` before working it.**
+>
+> ---
+>
+> ## ⚠ Earlier corrections, kept — 2026-07-30 per-finding scoring, then 2026-07-29 on `0db5dcc28`
+>
+> *Not superseded. The banner above says the launch class is closed. The banner below says which
+> individual findings that closed and which it did not, and it carries the executable-site count.
+> Read both.*
 >
 > **2026-07-30. The launch sites are no longer separate at all, so the "1 of N" framing has expired for
 > the launch half of this document.** `runAgentLaunch` in `internal/daemon/agentlaunch.go` landed on
@@ -14,6 +50,13 @@ Base: `e7e74214b` (worktree was at `dc2217527`, BASE_STALE → reset per instruc
 > **N1, N2, N3, N6a, N13, N17 and the teardown-ordering divergence.** What it did NOT close is also
 > exactly as predicted: **N4, N5, N7, N8, N9, N11, N12, N14, N15, N16 — the mode-driver tails — and N10,
 > the sub-workflow walker.** Read those rows as live. Read the launch-site rows as history.
+>
+> **Correction to the line above — N1 and N6 did NOT close.** A later per-finding re-check on the same
+> day walked all seventeen against the tree with a stated grep and scored each one. It found N1 still
+> open (`classifyLaunchFailure` still has no consumer) and N6 still open (`dot_cascade_core.go` still
+> calls only `codex.EnsureRefsTrailer` for every ProcessExit harness). That table is §(c) "Recount,
+> 2026-07-30 — status of all seventeen" and it is the more recent measurement, so it governs. The
+> summary above ran ahead of the evidence for those two rows. It holds for N2, N3, N13 and N17.
 >
 > **Site count is TWO, not three.** Site E, the cognition gate in `dot_gate.go`, cannot execute:
 > `daemon.Config.CPRegistry` has zero assignments anywhere in the tree and no graph declares a
@@ -30,6 +73,19 @@ Base: `e7e74214b` (worktree was at `dc2217527`, BASE_STALE → reset per instruc
 ---
 
 ## What this changes about the plan (2026-07-29 synthesis)
+
+> **Outcome recorded 2026-07-30.** The deletion this section warned about went ahead in `3cec5afd7`.
+> Of the two things it named as review-loop sole homes, **one was carried across and one was lost**:
+>
+> - **Merge retry was carried across.** `Retryable: runmerge.IsRetryableReason` now appears in
+>   `internal/daemon/workloop.go`. Verify: `grep -rn 'IsRetryableReason' --include='*.go' . | grep -v _test`.
+> - **CHB-023 crash-recovery resume was lost.** `persistClaudeSessionID` and
+>   `emitClaudeSessionIDPersisted` return **zero hits repo-wide**, tests included. The symbol went out
+>   with the file. Whether EM-031 resume was re-homed elsewhere or simply dropped is **unverified** —
+>   this sweep only established that these two symbols are gone.
+>
+> The review-budget ladder also survived: `ChargeReviewLoopFailure` is now called from
+> `internal/daemon/workloop.go`, closing N8.
 
 The prior list of four 1-of-N instances was a floor, not a ceiling: **seventeen** are catalogued below.
 Three consequences worth reading before acting on §Next.
@@ -76,6 +132,21 @@ as a separate second step, nor the sub-workflow walker (N10), which needs a thir
 
 ## (a) True driver topology
 
+> **Recounted 2026-07-30. Both numbers in this section are now wrong.** There are **two** mode
+> drivers, not three, and **one** agent-dispatch site, not five.
+>
+> `internal/core/workflowmode.go` now declares only `WorkflowModeSingle` and `WorkflowModeDot`, and
+> its validity check is `case WorkflowModeSingle, WorkflowModeDot`. **`WorkflowModeReviewLoop` no
+> longer exists as a constant.** Stale references to the name survive in comments in
+> `internal/core/run.go` and in `internal/core/reviewloopevents_hk7om2q4.go`, which still declares
+> review-loop event payloads for a mode that cannot be selected.
+>
+> The five `DispatchSegment` rows below are all gone. `grep -rn 'DispatchSegment{' --include='*.go' .`
+> minus tests returns exactly one hit, in `internal/daemon/agentlaunch.go`, inside `runAgentLaunch`.
+>
+> File sizes also moved: `dot_cascade_core.go` is **1,653** lines, not the 1,995 quoted below.
+> `dot_cascade_helpers.go` is 1,018 and `dot_gate.go` is 749. The new `agentlaunch.go` is 836.
+
 The "four peers" framing is stale. There are **three mode drivers** and **five agent-dispatch
 sites**, plus a sixth nested walker.
 
@@ -84,14 +155,15 @@ sites**, plus a sixth nested walker.
 
 | mode | driver | returns via |
 |---|---|---|
-| `WorkflowModeReviewLoop` | `runReviewLoop` (`reviewloop.go`) | `bridge.Success()` |
+| ~~`WorkflowModeReviewLoop`~~ **constant deleted** | ~~`runReviewLoop` (`reviewloop.go`)~~ **file deleted** | — |
 | `WorkflowModeDot` | `driveDotWorkflow` (`dot_cascade_core.go`) | `bridge.Success()` |
 | default (`Single`) | inline tail of `beadRunOne` | `bridge.Success()` |
 
-The review-loop and DOT cases `return` before the single-mode tail begins, so everything textually
-below the switch is path-A-exclusive by construction.
+The DOT case `return`s before the single-mode tail begins, so everything textually below the switch
+is path-A-exclusive by construction.
 
-Five `runloop.DispatchSegment` construction sites — the one primitive every agent launch shares:
+Five `runloop.DispatchSegment` construction sites — the one primitive every agent launch shares.
+**All five are now one, in `runAgentLaunch`. Table kept to show how the drift arose:**
 
 | id | var | enclosing symbol | file |
 |---|---|---|---|
@@ -148,6 +220,38 @@ D and E; it is not a sixth launch site but it is a sixth guard surface (see N10)
 | independent session (`useIndepSession`) | + | - | - | - | - |
 
 ## (c) NEW 1-of-N instances
+
+> ### Recount, 2026-07-30 — status of all seventeen
+>
+> Every finding below was re-checked against the tree with `grep -rn '<symbol>' --include='*.go' .`
+> filtered to non-test files. Verdicts:
+>
+> | # | Status now | Evidence |
+> |---|---|---|
+> | N1 | **OPEN**, but read it as 0 of 1 | `classifyLaunchFailure` still lives only in `internal/runloop/dispatchsegment.go` and still has no consumer |
+> | N2 | **CLOSED** | `d2RemoteAPIKeyRefusal` has one production call site, in `runAgentLaunch` — it now covers every launch |
+> | N3 | **CLOSED** | `newCapturedSpawnProof` is now called from `internal/daemon/agentlaunch.go`, not only from `dispatchDotAgenticNode` |
+> | N4 | **MOOT — the behaviour is gone, not unified** | `persistClaudeSessionID` returns **zero hits repo-wide**, tests included. See the note in §What this changes. |
+> | N5 | **CLOSED** | `shared.MainHistoryHasRefsTrailer` is called from `dot_cascade_core.go`, `workloop.go` (3 sites) and `scheduler.go`. The absent third path was the review-loop, which no longer exists. |
+> | N6 | **OPEN — this one survived intact** | `dot_cascade_core.go` still calls only `codex.EnsureRefsTrailer` for every ProcessExit harness, while `workloop.go` branches pi-vs-codex. A Pi node on the default DOT path still gets the codex backstop. |
+> | N7 | **CLOSED** | `Retryable: runmerge.IsRetryableReason` is now in `internal/daemon/workloop.go` |
+> | N8 | **CLOSED** | `ChargeReviewLoopFailure` is now called from `internal/daemon/workloop.go` |
+> | N9 | **OPEN**, now 1 of 2 | `noChangeTimeoutCh` is still created and selected on only in the single-mode tail of `workloop.go` |
+> | N10 | **UNVERIFIED** | the sub-workflow walker was not re-checked in this sweep |
+> | N11 | **MOOT** | `emitIterationCapHit` returns **zero hits repo-wide** — it went out with `reviewloop.go` |
+> | N12 | **OPEN**, now 1 of 2 | `useIndepSession` is still assigned only inside the single-mode tail |
+> | N13 | **CLOSED** | `runloop.WaitWithSocketGrace` has exactly one non-test call site, in `agentlaunch.go` |
+> | N14 | **OPEN** | `runexec.EvEscapeDetected` still has its `ActEmit` row in `internal/runexec/run.go` and no producer; `workloop.go` still emits the event directly via `emitImplementerEscapedWorktree` |
+> | N15 | **OPEN**, now 1 of 2 | `runTipSHA` is still assigned at exactly one place in `workloop.go` |
+> | N16 | **UNVERIFIED** | `bridge.Start` ordering was not re-checked |
+> | N17 | **MOOT** | it described the review-loop reviewer segment, which no longer exists |
+>
+> Of the four prior claims in §(d): claim 1 still holds in substance —
+> `handler.MapWaitReturnToTerminalEvent` still has exactly one non-test call site, in `workloop.go`.
+> Claim 2 still holds — `emitImplementerEscapedWorktree` is still called only from `workloop.go`.
+> Claim 3 is **CLOSED**: `sandboxSpawnForRun` and `verifySandboxEngaged` each have one call site,
+> both in `runAgentLaunch`. Claim 4 is **MOOT**: `emitNoProgressDetected` returns zero hits
+> repo-wide, and only the live `emitDotNoProgressDetected` remains.
 
 **N1 — `classifyLaunchFailure` has ZERO consumers (0 of 5).** `runloop.DispatchSegment`
 `classifyLaunchFailure` maps a launch error onto `spawn_cap_blocked` / `tmux_new_window_timeout`;
@@ -282,6 +386,24 @@ DOT twins that do fire; `review_fixup_stalled` and `reviewer_budget_exceeded` ar
 called from both walkers.
 
 ## (e) What "collapse all launch paths into one function" fixes for free
+
+> **This section is now a record of a completed move, not a proposal. Verified 2026-07-30.** The
+> collapse landed. Read the prediction against the outcome:
+>
+> - **Predicted eliminated, and eliminated:** N2, N3, N13 and prior claim 3 (the sandbox gate). All
+>   four now have a single call site inside `runAgentLaunch`.
+> - **Eliminated, but by deletion rather than by the collapse:** N17, and N4 and N11 from the
+>   "not fixed" list. Their symbols went out with `reviewloop.go` in `3cec5afd7`.
+> - **Predicted eliminated and NOT eliminated:** **N1**. `classifyLaunchFailure` still has no
+>   consumer. Collapsing the sites made the classification uniform; it did not connect it to
+>   anything. This is the one row of the prediction that failed, and it is still open work.
+> - **Predicted eliminated and NOT eliminated:** **N6**. Only the harness-selection half was in
+>   scope. The codex/pi backstop asymmetry lives in the mode-driver tail, and
+>   `dot_cascade_core.go` still calls only `codex.EnsureRefsTrailer`.
+> - **Correctly predicted to survive:** N5, N7 and N8 were listed as needing a separate terminal-spine
+>   step. They closed anyway when review-loop mode was retired. N9, N12, N14, N15 and prior claims
+>   1 and 2 survive exactly as predicted, now across two mode tails rather than three.
+> - **Still unverified:** N10 and N16 were not re-checked in this sweep.
 
 Eliminated by construction (all are per-launch-site steps inside the five `DispatchSegment` blocks):
 N1, N2, N3, N6 (harness-selection half), N13, N17, and the `ForceTeardownSession` /

@@ -12,6 +12,20 @@ Each fact cost at least one production incident.
 see pane fact 4. **214 structure-caused bugs were discarded** in the
 process — those are the ones a rewrite makes unrepresentable.
 
+**Staleness sweep 2026-07-30: nothing on this page was found false.** The fact count is 89 by
+count (20 + 15 + 16 + 15 + 6 + 17). Every symbol and path this page names still resolves:
+`internal/lifecycle/tmux/buffername.go` `BufferName`, `internal/daemon/sandboxprofile.go`
+`GenerateSandboxProfile`, `internal/brcli/brerror.go` `BrErrorFromExit` and
+`BrErrorFromExitCode`, and three `.db` files under `.beads/`. Pane fact 18's budgets all match
+live constants in `internal/daemon/pasteinject.go` — `reviewFileTimeout` 10 min,
+`reviewFilePerKLineBudget` 10 min, `reviewFileHardCeiling` 60 min, `commitPollTimeout` 30 min,
+`commitHardCeiling` 90 min, `launchHeartbeatTimeout` 180 s, `launchSuppressionCeiling` 12 min,
+`heartbeatStalenessThreshold` 8 min. Pane fact 9's 300-char bound is `reviewerSeedMaxLen`.
+br fact 1's live defect is still live: `BrErrorFromExit` refines only exit 1, so exit 3 still
+classifies as `BrDbLocked`. srt fact 5 is right that the write-to-main denial case is gone.
+Not re-verified: the external-tool version behaviors (they need the tools, not the repo), and
+the 214-bug and ~53-defect archaeology counts.
+
 **Known overlap, not yet consolidated.** The pane-injection and tmux-substrate sections were
 harvested independently and genuinely overlap on two things: **pane-PID / process-identity
 semantics** (pane facts 5–6 vs tmux facts 7–9) and **malformed-target handling** (pane fact 3

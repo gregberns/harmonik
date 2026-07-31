@@ -1,12 +1,25 @@
 # Harmonik -- Agent Discovery Index
 
-> **Start here.** This is the master index for the harmonik knowledge base. Every document in the project is reachable from this file within two hops.
+> **Start here.** This is the curated index for the harmonik knowledge base.
+>
+> **Corrected 2026-07-30.** This line used to claim "Every document in the project is reachable from
+> this file within two hops." That is false and was measured false. Of the 1,682 markdown files under
+> `docs/`, `specs/` and `plans/`, 1,486 are not reachable from here within two hops — 270 of 380 under
+> `docs/` and 1,216 of 1,258 under `plans/`. `specs/` is fully reachable because this file links the
+> whole directory. Treat this index as a curated map of the load-bearing documents, not as an
+> exhaustive one. To find something not listed here, grep.
 >
 > **New to harmonik?** See [README.md](README.md) for what it is and how to install it.
 >
-> **Reading order on boot:** [PRINCIPLES.md](PRINCIPLES.md) (the standard code is held to) → AGENT_INDEX (this map) → [STATUS.md](STATUS.md) (phase + locked decisions) → [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md) (live lanes, medium-term) → [HANDOFF.md](HANDOFF.md) (this-session state).
+> **Reading order on boot:** [PRINCIPLES.md](PRINCIPLES.md) (the standard code is held to) → [plans/2026-07-27-delete-and-rewrite/CHARTER.md](plans/2026-07-27-delete-and-rewrite/CHARTER.md) (the active program) → AGENT_INDEX (this map) → [STATUS.md](STATUS.md) (phase + locked decisions) → `HANDOFF.md` (this-session state, gitignored and machine-local).
 >
-> **Roadmap & progress:** [ROADMAP.md](ROADMAP.md). **Live lanes / epics-in-progress:** [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md).
+> **Corrected 2026-07-30:** the boot order above used to include `.harmonik/context/captain-lanes.md`
+> for every role. That file is captain-tier — its own header says a captain loads it at STARTUP
+> Step 0b and crews and implementers do not. `AGENTS.md` §"Per-role load map" says the same and warns
+> against changing it. The file is also stale: its current-truth block is dated 2026-07-22 and
+> describes a dispatching seven-session fleet, which the delete-and-rewrite program replaced.
+>
+> **Roadmap & progress:** [ROADMAP.md](ROADMAP.md).
 
 ## What Is Harmonik?
 
@@ -101,7 +114,7 @@ document; `CARRY-FORWARD.md` holds the external-world facts any rewrite must sat
 | S03 | [Event Bus](docs/subsystems/event-bus.md) | Pub-sub communication backbone | custom or external |
 | S04 | [Agent Runner](docs/subsystems/agent-runner.md) | Spawn, monitor, manage agent processes | ntm |
 | S05 | [Hook System](docs/subsystems/hook-system.md) | Bridge between agents and workflow | Claude Code hooks |
-| S06 | [Workspace Manager](docs/subsystems/workspace-manager.md) | Isolated work environments | adze, agent-mail |
+| S06 | [Workspace Manager](docs/subsystems/workspace-manager.md) | Isolated work environments | adze *(agent-mail removed 2026-07-30 — uninstalled 2026-06-08, see Components above)* |
 | S07 | [Scenario Harness](docs/subsystems/scenario-harness.md) | End-to-end test harness driving full workflows against twin agent binaries | digital twins, orchestrator |
 | ~~S07~~ | ~~[Verifier Layer (archived)](docs/subsystems/verifier-layer.md)~~ | ~~Quality gates~~ -- *responsibilities migrated to orchestrator + policy* | -- |
 | S08 | [Memory Layer](docs/subsystems/memory-layer.md) | Long-term knowledge storage + retrieval | CASS, CASS memory |
@@ -136,9 +149,9 @@ Most recent entries:
 - [2026-04-13: Initial Brainstorm Session](docs/log/2026-04-13-initial-brainstorm.md) -- First comprehensive capture *(historical)*
 
 ### Specs (normative)
-- [specs/](specs/) — 10 foundation specs + `_registry.yaml` prefix reservations
-- 5 reviewed (v0.3): architecture, execution-model, event-model, handler-contract, control-points
-- 5 draft (v0.1): workspace-model, process-lifecycle, operator-nfr, reconciliation, beads-integration
+- [specs/](specs/) — 34 spec files at the top level, 44 markdown files in total, plus `_registry.yaml` prefix reservations
+- **Corrected 2026-07-30.** This section used to say "10 foundation specs", then "5 reviewed (v0.3)" and "5 draft (v0.1)". All three counts were stale. The ten foundation specs are all `status: reviewed` and their versions now run from 0.3.2 to 0.10.0. The per-spec versions and requirement-ID counts are in [STATUS.md](STATUS.md) §"Spec corpus inventory", re-measured the same day.
+- Read [plans/2026-07-27-delete-and-rewrite/SPEC-TRIAGE.md](plans/2026-07-27-delete-and-rewrite/SPEC-TRIAGE.md) before you treat a requirement as an oracle. A quarter of the requirement IDs in `specs/` appear in no Go file.
 - Template: [docs/foundation/spec-template.md](docs/foundation/spec-template.md) (v1.1)
 
 ### Foundation alignment
@@ -166,7 +179,8 @@ Most recent entries:
 ## Progress & live state
 
 - **Roadmap, landed features, milestone log:** [ROADMAP.md](ROADMAP.md)
-- **Live lanes, epics-in-progress, lane→crew registry:** [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md)
+- **Lane→crew registry (captain-tier, STALE):** [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md). **Corrected 2026-07-30:** this entry used to call the file "live". Its current-truth block is dated 2026-07-22 and describes a dispatching fleet. The daemon is down and the active program is delete-and-rewrite. Only a captain loads it.
+- **The active program's live working document:** [plans/2026-07-27-delete-and-rewrite/NEXT_STEPS.md](plans/2026-07-27-delete-and-rewrite/NEXT_STEPS.md)
 
 ## Agent Skills (operating contracts)
 Booting into a specific role? Load its skill for the operating contract:
@@ -180,7 +194,10 @@ Booting into a specific role? Load its skill for the operating contract:
 
 ## Operational Protocols
 - the `orchestrator-rules` skill (.claude/skills/orchestrator-rules/SKILL.md) -- Permanent orchestrator directives (dispatch, priority, autonomy, monitor pattern)
-- [.harmonik/context/captain-lanes.md](.harmonik/context/captain-lanes.md) -- Live initiatives board: epic IDs, status, done/total counts, blocked items
+- [.harmonik/context/captain-lanes.md](.harmonik/context/captain-lanes.md) -- Captain-tier initiatives board: epic IDs, status, done/total counts, blocked items. **Stale as of 2026-07-30** — see "Progress & live state" above.
+- [docs/daemon-redeploy.md](docs/daemon-redeploy.md) -- Runbook for swapping the daemon binary on the running box: supervisor revival, SIGTERM order, health window and last-good, the `daemon-YYYYMMDD-NN` tag *(added 2026-07-30 — `AGENTS.md` routes here and this index did not reach it)*
+- [docs/disk-reclaim.md](docs/disk-reclaim.md) -- Runbook for a machine running low on disk. Start at its §0, the shared Go caches *(added 2026-07-30 — same reason)*
+- [docs/codex-operator-guide.md](docs/codex-operator-guide.md) -- Operator surface for staffing crews on the Codex harness *(added 2026-07-30 — same reason)*
 - [docs/major-issue-fanout-protocol.md](docs/major-issue-fanout-protocol.md) -- Major-issue fan-out diagnosis protocol: when a wedge survives ≥2 fix attempts, fan out 10–15 agents at distinct angles + ≥2 adversarial verifiers; never hand-grep events.jsonl by run_id
 - [docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md](docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md) -- tapCh competing-consumer race; 18h incident; 6 refuted hypotheses; fix + process lessons (motivating source for major-issue-fanout protocol)
 - [docs/captain-restart.md](docs/captain-restart.md) -- Captain self-restart design (session-keeper on the captain session)

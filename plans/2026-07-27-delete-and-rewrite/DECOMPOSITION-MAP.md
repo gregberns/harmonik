@@ -1214,18 +1214,33 @@ it; do not fold it into a move.
   compensating decrement and a remote-flag write. Any future claim that placement is "decided once"
   has to reckon with this.
 
-### Step 6 — resource leases (~450 lines, MEDIUM risk)
+### Step 6 — resource leases (size NOT costed, MEDIUM risk)
 
 C2: worker slot, tunnel, worktree, tmux session, hook session, spawn token. Each an acquire
 returning a lease with one idempotent release; composed into a scope closed in reverse order.
 
+**Mapped 2026-07-31. Read [`STEP-6-RESOURCE-LEASES.md`](STEP-6-RESOURCE-LEASES.md) before starting** —
+it is the measured map and it corrects this section on four points:
+
+- **There are nine resources, not six, in three different lifetimes.** Three of the six named above
+  are two things each. A graph run holds one tunnel and one worktree while taking and releasing one
+  hook session and one tmux session *per node*, so "one scope closed in reverse" describes the
+  per-run set only. The per-launch set needs a nested scope.
+- **Release is not a per-resource boolean.** One condition reaches four places, spelled three
+  different ways, and misses two resources that need it. The disposition must be decided once for
+  the run, as a value.
+- **One of the three CARRY-FORWARD risks is already satisfied, one is half satisfied, one is open.**
+  The tunnel readiness gate is already a connect probe — do not regress it. The kill rule holds for
+  the local reaper, which targets the process group and polls it, but not for the remote one, which
+  signals a bare process id and never re-resolves the pane. The bound on session creation is open:
+  the independent-session and crew-session constructors do not have one.
+- **~450 lines is not defensible from the map.** Re-cost it after the first two commits.
+
 **Why here:** it depends on step 5 (placement is a plan output) and it is what unblocks step 7 (the
 mode boundary needs a complete resource scope to receive).
 
-**Risk:** medium. This is where the CARRY-FORWARD facts bite hardest — tunnel readiness must be a
-*connectability* probe not an existence check (pane fact / hk-ege6), tmux window creation must be
-externally bounded (tmux fact 3), and every kill must target `-pgid` and probe the group (tmux fact
-7). Get these wrong and runs die silently.
+**Risk:** medium, and concentrated in the disposition rather than in the leases. Getting a skip
+predicate's polarity wrong strands a bead in progress with no live session to adopt.
 
 ### Step 7 — the mode boundary  ✅ **UNBLOCKED. D1 is answered, and half of it already shipped.**
 

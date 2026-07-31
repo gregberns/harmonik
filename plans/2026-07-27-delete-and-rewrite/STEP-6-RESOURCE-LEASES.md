@@ -183,13 +183,11 @@ vector is pinned, including a comment naming the existence-check regression it r
 test spawns a process that ignores termination signals and asserts no descendant survives the kill.
 
 **Hole one: the cold-start token has no test.** Not acquired, not released, not released once, not
-released on the ready-timeout path.
+released on the ready-timeout path. **CLOSED 2026-07-31.**
 
 **Hole two: the entire survive-shutdown gate family is unpinned.** No test references the
 independent-session flag, either adoption pass, or the registry write. That is both a risk for this
-refactor and the reason the boot-sweep defeat above went unnoticed.
-
-Both holes should be closed by the tests this step brings, not left for later.
+refactor and the reason the boot-sweep defeat above went unnoticed. **CLOSED 2026-07-31.**
 
 ---
 
@@ -230,7 +228,9 @@ In order. Each is one commit, each independently reviewable.
 4. Migrate the per-run resources onto the scope, innermost first, one commit each.
 5. Give the per-launch set its own nested scope, and collapse the duplicated tunnel refusal
    reporting into the one reporter the run plan already has.
-6. Close the two test holes.
+6. ✅ **Landed 2026-07-31, and moved AHEAD of steps 4 and 5 on purpose.** Close the two test holes.
+   These are the guard rails for the migration, so pinning them after it would defend nothing. Both
+   were closed before any release site moved, and both found things — see §9.
 
 ---
 
@@ -266,3 +266,48 @@ falls out of reverse order for free and makes the whole rule look automatic. It 
 
 The step's stated size of ~450 lines is not defensible from this map and should not be quoted until
 the first two commits have been measured.
+
+
+---
+
+## 9. What closing the two test holes found — read this before writing the migration's tests
+
+Both holes are closed. The tests are the guard rails for steps 4 and 5, so they went first. Three
+things came out of writing them, and the first is the one that will bite again.
+
+**A test that cannot fail looks exactly like a test that passes.** This happened three separate
+times in one day, in three unrelated places, and each time it was caught by mutating the code rather
+than by reading the test.
+
+- Two cold-start tests passed with the acquisition deleted. "A free slot exists" and "the count is
+  back where it started" are both true of a run that never took a token.
+- Both survive-shutdown teardown mutants passed the whole suite. Every ordering the fixture could
+  drive ended the session through an UNGATED site first, and the session's kill is once-guarded, so
+  by the time the gated site ran there was nothing left for it to prevent.
+- The `check-fast` gate itself had been running zero tests and reporting that there was nothing to
+  do, which is the same shape one level up.
+
+The defence that worked in all three: pair every "nothing happened" claim with positive evidence in
+the same test, and prove the machinery RAN and chose not to act. Park the run and prove it parks
+before freeing a slot. Count the kills that reached tmux, do not merely assert the session lived.
+**Do this for each of the remaining resources, and do not trust a mutation result without first
+confirming the mutation actually applied** — a no-op edit and a real edit produce identical output
+when the thing under test is an absence.
+
+**Two defects in the cold-start token, which the map called the best-behaved of the nine.** The cap
+is daemon-global but six places call it per-worker, one of them the justification text for the
+210-second remote deadline (`hk-r48zr`, needs a decision, do not tidy the comments). And a run that
+times out waiting for readiness holds its slot for the whole run body, because the launch function
+returns before the prompt give-back and the caller falls through (`hk-bp5cu`). The map's claim still
+stands overall — it is the only one of the nine with an idempotent release and a backstop — but the
+release POINT is wrong on one path, and the migration should put the give-back on the
+ready-resolution edge for every outcome of that edge, timeout included.
+
+**One mutant nothing kills, which is not a licence to simplify.** Dropping the cancellation conjunct
+from `SkipAbortKill` alone breaks no test. It is an equivalent mutant today. It is NOT redundant:
+the stall edge reaches that kill with a live context and is unreachable only for two reasons the
+reactorization will remove, and — the stronger argument — RSM-037 requires one disposition read at
+every site, so "redundant at this one site" is a claim about a per-site predicate, which is the
+shape the rule exists to forbid. The reasoning is written into
+`internal/daemon/survive_shutdown_run_resources_test.go` where someone about to simplify it will
+find it.

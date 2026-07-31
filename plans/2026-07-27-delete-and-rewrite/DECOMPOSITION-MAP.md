@@ -892,17 +892,79 @@ new transaction. Background: `UNWIRED-INVENTORY.md` row 5, and the 21-slice plan
 
 Pull C1 out of `beadRunOne`: workflow mode/ref, harness agent type, model/effort, Pi profile,
 active repo, parent commit, lands-on, merge target, protect-branch check, placement intent. All
-deterministic, all decided before any resource is acquired.
+decided before any resource is acquired.
 
-**Why here:** it is the largest purely-decidable chunk of `beadRunOne` and it removes four of the
-five refuse-before-launch early returns — the ones that caused the `hk-3hozm` worker-slot leak
-because they returned before the release defer was registered. Resolving *before* acquiring makes
-that class of bug unrepresentable.
+**⚠ The stated justification below was stale — corrected 2026-07-30.** This step used to be sold as
+the fix for the `hk-3hozm` worker-slot leak. **That leak is already fixed.** The bead closed
+2026-07-18 in commit `3a391dc9`, which hoisted the release to a top-level `defer` in `beadRunOne`
+above every early return. Re-verified today: **zero returns leak a slot.** The motivation survives
+unchanged — resolving before acquiring makes that class of bug unrepresentable — but this step is a
+structural move, not a bug fix. Do not re-price it as remediation.
+
+**Why here:** it is the largest decidable chunk of `beadRunOne`, and it is already contiguous. The
+ten decisions occupy one unbroken block, and **nothing between the top of the function and the
+worker-selection fallback acquires a resource.** The seam is real and it is clean.
+
+**"Decidable" is the property, not "pure".** Three of the ten do I/O and must not be dressed up as
+pure functions:
+
+- **Parent commit** reads `<repo>/.harmonik/branching.yaml` and forks up to two `git rev-parse`
+  calls. It is also *time-varying*: the target branch ref moves as sibling runs merge, so the same
+  inputs give different answers minute to minute.
+- **Lands-on** reads the same file again.
+- **Model and effort** read two process environment variables at call time, deliberately, so an
+  operator can retune them without a daemon restart.
+
+What they share is that they are all settled *before anything is acquired*. That is the invariant
+worth building on.
+
+**The one structural gain: `resolveBranching` runs twice per run.** Once inside `resolveParentCommit`
+(which discards `LandsOn`), then again solely to recover `LandsOn`. The code comment admits the
+duplication exists to avoid widening a return type. Both calls stat and may read the same file, and
+they can disagree if it changes between them. Collapse them into one call that returns what both
+callers need. **The trap:** the first call failing is fatal and reopens the bead; the second failing
+is non-fatal and silently skips the whole protect-branch check. Collapsing them naively changes
+behaviour. This is the real correctness risk of the step — larger than the transcription risk.
 
 **Risk:** low, provided the precedence tables are transcribed exhaustively. The precedence walks are
 subtle (`hk-pkugu`: the model default must be resolved against the harness that will actually be
 selected, or a Pi run asks the Pi provider for a Claude model). Write them as tables and test them
 as tables.
+
+**Two boundaries this step must not cross:**
+
+- **Placement is not a plan output.** `SelectWorker` decides and reserves inside one mutex hold, on
+  purpose. Splitting it re-opens the race it was written to close. The plan carries placement
+  *intent* — local-only, worker target — and stops there.
+- **The run-level model is not the last word for DOT.** The cascade recomputes an effective harness
+  per node and corrects the model against it. Collapsing that into one run-level answer re-opens
+  `hk-pkugu` one level down, on the node axis. Leave the cascade alone.
+
+**Deliberately out of scope: the refusal-reporting split.** Seven refuse-before-launch returns call
+`ReopenBead` directly and emit no `run_failed`. Five ride `failRun` and do. The split is not
+principled — the four earliest refusals have `failRun` in scope and choose not to use it. Unifying
+them would *add* events operators do not expect today, so it is a decision, not a cleanup. Record
+it; do not fold it into a move.
+
+**Found while mapping, recorded not chased:**
+
+- **A pure check sits behind two acquisitions.** The socket path-length check is a `len()` against a
+  platform constant and depends only on the project directory, yet it refuses the run *after* the
+  worker slot is reserved and *after* a tunnel port is allocated. It exists because `ssh -N -R` never
+  validates its local forward destination, so a too-long path lets the tunnel come up, the readiness
+  gate false-green, and every hook connection get swallowed. All true, and none of it needs a worker.
+  Folded into this step as its own commit.
+- **The bead body is parsed three times per run** — once for the target repo, then once inside each
+  of the two `resolveBranching` calls. Three parses, three different fields consumed.
+- **The terminal diagnostic's model and harness are read from two different places 1,150 lines
+  apart.** The model comes from the resolver. The harness is read back off the *launcher*, not from
+  the resolved agent type. Nothing asserts the two agree — which is the exact shape of `hk-pkugu`,
+  and it would be invisible in the log. Returning both from the resolver makes the disagreement
+  checkable.
+- **"Is this run local?" changes value 400 lines in.** The local-slot flag is initialised from the
+  caller and then flipped when the fallback turns a local dispatch into a remote one, with a
+  compensating decrement and a remote-flag write. Any future claim that placement is "decided once"
+  has to reckon with this.
 
 ### Step 6 — resource leases (~450 lines, MEDIUM risk)
 

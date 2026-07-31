@@ -61,8 +61,9 @@ error is nil are all the same defect — a signature that promised more than the
 A package declares the smallest interface it needs and lets callers satisfy it. Dependencies point
 inward and inner packages never import outward.
 
-- The queue package declares `QueueSetter`, `EventEmitter` and `BeadLedger`. The daemon's types
-  happen to satisfy them. The queue never learns that a daemon exists.
+- The queue package declares `QueueSetter`, `MutationLocker`, `EventEmitter` and `BeadLedger`. At
+  boot the daemon wires in `queuewiring.QueueStore`, `queuewiring.BRQueueLedger` and the event bus,
+  and those types happen to satisfy the interfaces. The queue never learns that a daemon exists.
 - An inner module that imports an outer one has been handed knowledge it can never be tested
   without.
 - A boundary a linter can deny is a boundary that holds. `depguard` checks direct imports only, and

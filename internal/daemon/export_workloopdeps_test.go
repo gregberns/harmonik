@@ -116,6 +116,15 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-gql20.14.
 	AgentReadyTimeout time.Duration
 
+	// RemoteAgentReadyTimeout is AgentReadyTimeout's counterpart for a run that
+	// was routed to a remote worker. Zero →
+	// runlaunch.DefaultRemoteAgentReadyTimeout (210s), which is longer than any
+	// test should wait, so a test that drives a REMOTE run onto the
+	// agent_ready_timeout path must set this.
+	//
+	// Bead ref: hk-96d7w (the production knob this mirrors).
+	RemoteAgentReadyTimeout time.Duration
+
 	// CPRegistry, when non-nil, is the ControlPoint registry used to resolve
 	// gate_ref values during DOT workflow gate-node dispatch (hk-karlz). When
 	// nil, gate nodes return a structural eval-failure Outcome without crashing.
@@ -497,6 +506,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		harnessRegistry:            p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
 		substrate:                  p.Substrate,
 		agentReadyTimeout:          p.AgentReadyTimeout,
+		remoteAgentReadyTimeout:    p.RemoteAgentReadyTimeout,
 		projectCfg:                 p.ProjectCfg,
 		queueStore:                 p.QueueStore,
 		queueLedger:                p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam

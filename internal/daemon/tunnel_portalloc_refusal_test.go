@@ -21,101 +21,23 @@ package daemon
 // when the refusal is removed: with the refusal reverted, the ssh shim's log
 // carries the mkdir round trip and the tunnel seam records an argv.
 //
-// Helper prefix: tunport (implementer-protocol.md §Helper-prefix discipline).
+// The remote fixture — the repository, the ssh shim, the tunnel seam, the
+// reserved worker slot, the bead and the run environment — lives in
+// remoterunfixture_test.go and is shared with the cold-start token tests. Only
+// what this test varies is below.
 
 import (
 	"context"
 	"errors"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/lifecycle"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
-	"github.com/gregberns/harmonik/internal/workers"
 )
-
-// tunportWorker is the worker the outer dispatch loop pre-selects. The host is
-// deliberately unroutable: nothing in this test may reach a network, and a run
-// that somehow got past the refusal should fail loudly rather than dial a real
-// machine.
-var tunportWorker = workers.Worker{
-	Name:     "tunport-worker",
-	Host:     "tunport.invalid",
-	Enabled:  true,
-	MaxSlots: 1,
-}
-
-// tunportRepo returns a git repository whose <dir>/.harmonik/daemon.sock path
-// fits the platform's socket-path limit.
-//
-// It does NOT use t.TempDir: that path carries the test's own name, which on a
-// machine with a long temp prefix pushes the socket past the limit and makes
-// the run plan refuse for the hook-socket reason instead — a green test that
-// never reaches the port at all.
-func tunportRepo(t *testing.T) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "hktun")
-	if err != nil {
-		t.Fatalf("tunportRepo: MkdirTemp: %v", err)
-	}
-	t.Cleanup(func() {
-		if rmErr := os.RemoveAll(dir); rmErr != nil {
-			t.Logf("tunportRepo: cleanup %s: %v", dir, rmErr)
-		}
-	})
-	if lenErr := lifecycle.ValidateSocketPathLength(hooksockPath(dir)); lenErr != nil {
-		t.Fatalf("tunportRepo: fixture socket path is already too long, so this test would "+
-			"measure the hook-socket refusal instead of the port refusal: %v", lenErr)
-	}
-	// The same one-commit repository the hook-socket fixture builds; the run
-	// plan's branching decision needs a real branch tip either way.
-	hooksockGitInit(t, dir)
-	return dir
-}
-
-// tunportSSHLog puts a recording `ssh` first on PATH and returns the path of
-// the file it appends one line to per invocation. Every ssh the run would make
-// is a subprocess resolved through PATH (tmux.SSHRunner.Command and the tunnel
-// alike), so the shim is the one place that sees all of them — and it keeps a
-// test that regressed from touching a network.
-func tunportSSHLog(t *testing.T) string {
-	t.Helper()
-	binDir := t.TempDir()
-	logPath := filepath.Join(binDir, "ssh-calls.log")
-	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + logPath + "\nexit 1\n"
-	// 0o700 rather than 0o600: the shim is put on PATH and must be executable.
-	if err := os.WriteFile(filepath.Join(binDir, "ssh"), []byte(shim), 0o700); err != nil { //nolint:gosec // G306: an exec shim in a per-test temp dir must carry the execute bit
-		t.Fatalf("tunportSSHLog: write shim: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return logPath
-}
-
-// tunportSSHCalls returns the lines the shim recorded, or nothing when no ssh
-// ran at all.
-func tunportSSHCalls(t *testing.T, logPath string) []string {
-	t.Helper()
-	raw, err := os.ReadFile(logPath) //nolint:gosec // a path this test just created under its own temp dir
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		t.Fatalf("tunportSSHCalls: read %s: %v", logPath, err)
-	}
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" {
-		return nil
-	}
-	return strings.Split(trimmed, "\n")
-}
 
 // TestTunnelSetup_FailedPortAllocRefusesBeforeSpendingAnything drives a remote
 // run whose port allocation fails through beadRunOne and asserts the refusal is
@@ -126,8 +48,11 @@ func tunportSSHCalls(t *testing.T, logPath string) []string {
 func TestTunnelSetup_FailedPortAllocRefusesBeforeSpendingAnything(t *testing.T) {
 	// Not parallel: swaps two package-level seams in internal/transport/tunnel
 	// and the process PATH.
-	projectDir := tunportRepo(t)
-	sshLog := tunportSSHLog(t)
+	projectDir := remotefixRepo(t)
+	// Exit 1: this run must make no ssh call at all, so nothing here reads the
+	// exit code. It is non-zero so that a regression which DOES call ssh gets a
+	// failure rather than a fake success to carry on with.
+	sshLog := remotefixSSHShim(t, 1)
 
 	// The failure this test exists for. It is unreachable without the seam:
 	// the real allocator fails only when box A can hand out no loopback port.
@@ -139,21 +64,13 @@ func TestTunnelSetup_FailedPortAllocRefusesBeforeSpendingAnything(t *testing.T) 
 	// The tunnel seam records rather than spawns, so a tunnel started for this
 	// run is a test failure and not a stray ssh process.
 	var tunnelBuilds atomic.Int32
-	origRunner := tunnelpkg.ReverseTunnelRunner
-	t.Cleanup(func() { tunnelpkg.ReverseTunnelRunner = origRunner })
-	tunnelpkg.ReverseTunnelRunner = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+	remotefixTunnelSeam(t, func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		tunnelBuilds.Add(1)
 		t.Errorf("a reverse tunnel was constructed for a run whose port allocation failed: %s %v", name, args)
 		return exec.CommandContext(ctx, "true")
-	}
+	})
 
-	// One worker with one slot, reserved before the call — exactly what the
-	// outer dispatch loop hands beadRunOne.
-	reg := workers.NewRegistry(workers.Config{Workers: []workers.Worker{tunportWorker}})
-	preSelected := reg.SelectWorker()
-	if preSelected == nil {
-		t.Fatal("setup: SelectWorker returned nil; expected a reserved slot")
-	}
+	reg, preSelected := remotefixReserveWorker(t)
 
 	var worktreeCreated bool
 	worktreeFactory := func(context.Context, string, string, string) (string, func(), error) {
@@ -165,32 +82,19 @@ func TestTunnelSetup_FailedPortAllocRefusesBeforeSpendingAnything(t *testing.T) 
 	ledger := &runplanacqLedger{}
 	bus := &runplanBus{}
 
-	deps := ExportedWorkLoopDeps(WorkLoopDepsParams{
-		BrAdapter:        ledger,
-		Bus:              bus,
-		ProjectDir:       projectDir,
-		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
-		IntentLogDir:     t.TempDir(),
-		MaxConcurrent:    1,
-		AdapterRegistry2: runplanacqSealedRegistry(t),
-		WorkerRegistry:   reg,
-		WorktreeFactory:  worktreeFactory,
-		TargetBranch:     "main",
-	})
+	params := remotefixParams(t, projectDir)
+	params.BrAdapter = ledger
+	params.Bus = bus
+	params.AdapterRegistry2 = runplanacqSealedRegistry(t)
+	params.WorkerRegistry = reg
+	params.WorktreeFactory = worktreeFactory
+	deps := ExportedWorkLoopDeps(params)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	runID := core.RunID(uuid.New())
-	bead := core.BeadRecord{
-		BeadID:   core.BeadID("hk-tunport-probe"),
-		Title:    "port-alloc refuse probe",
-		BeadType: "task",
-		Status:   core.CoarseStatusOpen,
-	}
-
-	env := deps.runEnv(runID, bead, "", nil, nil, 0, "", "", nil, false, "", core.AgentType(""))
+	bead := remotefixBead("hk-tunport-probe", "port-alloc refuse probe")
+	env := remotefixRunEnv(deps, bead)
 	if succeeded := runBeadOneTest(ctx, deps, env, "", preSelected, false); succeeded {
 		t.Error("beadRunOne reported success for a refused bead")
 	}
@@ -224,7 +128,7 @@ func TestTunnelSetup_FailedPortAllocRefusesBeforeSpendingAnything(t *testing.T) 
 
 	// Nothing was spent on the worker either: no ssh round trip, and no
 	// `ssh -N -R` process for a tunnel that could never carry traffic.
-	if sshCalls := tunportSSHCalls(t, sshLog); len(sshCalls) != 0 {
+	if sshCalls := remotefixSSHCalls(t, sshLog); len(sshCalls) != 0 {
 		t.Errorf("the run made %d ssh call(s) after a failed port allocation; want 0\ncalls:\n%s",
 			len(sshCalls), strings.Join(sshCalls, "\n"))
 	}

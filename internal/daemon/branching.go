@@ -130,15 +130,39 @@ func resolveBranching(ctx context.Context, beadBody, projectRoot, targetBranch s
 	// Tier 1: bead body.
 	beadCfg, parseErr := parseBranchingSection(beadBody)
 	if parseErr != nil {
-		// BI-009b §Error handling: malformed section → warn + treat as absent.
-		// The caller's bead ID is not available here; structured-log without it.
-		slog.WarnContext(ctx, "bead_body_parse_error",
-			"subsystem", "beads-adapter",
-			"parse_error", parseErr.Error(),
-		)
+		warnBeadBodyParseError(ctx, parseErr)
 		// beadCfg is zero-value; all fields fall through.
 	}
+	return resolveBranchingFrom(ctx, beadCfg, projectRoot, targetBranch)
+}
 
+// warnBeadBodyParseError reports a malformed ## Branching section per BI-009b
+// §Error handling: warn, then treat the section as absent. The bead ID is not
+// available at either call site, so the log line carries the parse error alone.
+//
+// It is a named function so that a caller which has ALREADY parsed the body —
+// the run plan, which parses once and feeds both the active-repo decision and
+// the branching decision — reports the same fact the same way.
+func warnBeadBodyParseError(ctx context.Context, parseErr error) {
+	slog.WarnContext(ctx, "bead_body_parse_error",
+		"subsystem", "beads-adapter",
+		"parse_error", parseErr.Error(),
+	)
+}
+
+// resolveBranchingFrom applies tiers 2 and 3 to an ALREADY-PARSED tier-1 bead
+// config. resolveBranching is the spelling for a caller that holds the raw
+// body. This is the spelling for a caller that holds the parse.
+//
+// Splitting the parse out is what lets the run plan read the bead body once
+// instead of three times: it needs target_repo out of tier 1 to choose the
+// projectRoot this function reads tier 2 from, so the parse must happen before
+// the merge, not inside it.
+// The context parameter is unread. It stays in the signature so that every
+// caller keeps passing its context down this chain, which is what lets a future
+// change thread cancellation through to the file read. branching.LoadCached
+// takes no context today.
+func resolveBranchingFrom(_ context.Context, beadCfg BranchingConfig, projectRoot, targetBranch string) (BranchingConfig, error) {
 	// Tier 2: project-level .harmonik/branching.yaml defaults.
 	projDefaults, loadErr := branching.LoadCached(projectRoot)
 	if loadErr != nil {
@@ -384,20 +408,64 @@ func (e *StartFromRefError) Unwrap() error { return e.Cause }
 // emits a structured-log warning and treats bead-body fields as absent; it
 // falls through to project and spec defaults (BI-009b §Error handling).
 func resolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody, targetBranch string) (string, error) {
-	cfg, resolveErr := resolveBranching(ctx, beadBody, repoRoot, targetBranch)
+	beadCfg, parseErr := parseBranchingSection(beadBody)
+	if parseErr != nil {
+		warnBeadBodyParseError(ctx, parseErr)
+	}
+	plan, err := resolveBranchPlan(ctx, repoRoot, beadID, beadCfg, targetBranch)
+	if err != nil {
+		return "", err
+	}
+	return plan.ParentSHA, nil
+}
+
+// branchPlan is the whole branching answer for one bead, resolved in one pass:
+// the merged three-tier config AND the commit its start_from names.
+//
+// It exists because two callers each needed half of it. The parent-commit
+// caller wanted the SHA and threw the config away. A second caller then
+// re-resolved the same three tiers purely to get lands_on back. Both read the
+// same mtime-cached .harmonik/branching.yaml, so a write between the two calls
+// made them disagree. One pass has no window to disagree in.
+type branchPlan struct {
+	// Config is the merged WM-005b config: start_from, lands_on, landing
+	// strategy and target repo.
+	Config BranchingConfig
+
+	// ParentSHA is Config.StartFrom resolved to a commit in repoRoot. It is a
+	// branch tip in the common case, so it is time-varying: a sibling run that
+	// merges moves it.
+	ParentSHA string
+}
+
+// resolveBranchPlan merges the branching tiers and resolves the parent commit,
+// from a bead config the caller has already parsed.
+//
+// Both failures are fail-fast and both keep the wording the single-value
+// resolveParentCommit used, because that wording reaches the operator through
+// the reopen reason:
+//
+//   - A malformed .harmonik/branching.yaml is operator-detectable and MUST NOT
+//     fall through to spec defaults.
+//   - A start_from that does not resolve locally MUST NOT fall back to HEAD.
+//
+// On the second failure the returned plan still carries Config, so a caller can
+// report which ref it was that did not resolve.
+//
+// Spec ref: specs/workspace-model.md §4.2 WM-005b.
+func resolveBranchPlan(ctx context.Context, repoRoot, beadID string, beadCfg BranchingConfig, targetBranch string) (branchPlan, error) {
+	cfg, resolveErr := resolveBranchingFrom(ctx, beadCfg, repoRoot, targetBranch)
 	if resolveErr != nil {
-		// Fail-fast: project config malformed → surface to caller for bead reopen.
-		return "", fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, resolveErr)
+		return branchPlan{}, fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, resolveErr)
 	}
 
-	// cfg.StartFrom is always non-empty after resolveBranching (spec default
-	// fills any unset tier). Resolve the ref to a commit SHA.
+	// cfg.StartFrom is always non-empty after the merge (the spec default fills
+	// any unset tier). Resolve the ref to a commit SHA.
 	sha, err := resolveStartFrom(ctx, repoRoot, cfg.StartFrom)
 	if err != nil {
-		// Fail-fast: start_from ref cannot be resolved locally.
-		return "", fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, err)
+		return branchPlan{Config: cfg}, fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, err)
 	}
-	return sha, nil
+	return branchPlan{Config: cfg, ParentSHA: sha}, nil
 }
 
 // CrossRepoUnsupportedError is the typed error returned when a bead's

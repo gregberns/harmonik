@@ -39,7 +39,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1140,19 +1139,20 @@ func (deps *workLoopDeps) buildRunBundles(env runloop.RunEnv) (runloop.RunPorts,
 //
 //nolint:funlen,gocognit,cyclop // pre-existing: beadRunOne is the run-path giant the RT ports stream (RT15-RT20) exists to decompose; the signature change re-anchors the grandfathered findings and splitting the body here would defeat the behaviour-preserving property of the slice
 func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, handles runloop.SharedHandles, extraContext string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
-	// RSM-010: alias the eleven per-run values off env under the names the body
-	// already uses. Aliasing rather than rewriting ~140 reads is what keeps the
-	// signature change behaviour-obvious — in particular itemWorkflowRef stays a
-	// LOCAL, because the EM-012a tier-0/tier-1 resolveWorkflowRef resolution
-	// below reassigns it and two later readers depend on the resolved value.
-	// The bundle's own copy of that field must never be read on the run path;
-	// the alias below is its one and only reader.
+	// RSM-010: alias the per-run values off env under the names the body already
+	// uses. Aliasing rather than rewriting ~140 reads is what keeps the
+	// signature change behaviour-obvious.
+	//
+	// The four per-item override fields are NOT aliased here. Every one of them
+	// is a tier-0 INPUT to the run plan below, and the body must read the plan's
+	// RESOLVED answer instead. The workflow ref is the reason this matters: an
+	// alias of the raw field would shadow the resolved one, and a reader that
+	// kept the alias would silently take the unresolved value. Leaving the name
+	// undefined makes such a reader a build failure rather than a bug.
 	runID, beadRecord := env.RunID, env.BeadRecord
 	queueName, queueID := env.QueueName, env.QueueID
 	queueGroupIndex, queueItemIndex := env.QueueGroupIndex, env.QueueItemIndex
-	itemWorkflowMode, itemWorkflowRef := env.ItemWorkflowMode, env.ItemWorkflowRef
-	itemTemplateParams, itemLocalOnly := env.ItemTemplateParams, env.ItemLocalOnly
-	itemWorkerTarget := env.ItemWorkerTarget
+	itemTemplateParams := env.ItemTemplateParams
 	// mport.Submit() is the merge exclusion-domain submit surface (RSM-015).
 	mport := rp.Merge
 	// RSM-010: the run's EmitterPort, off the bundle rp already holds.
@@ -1266,25 +1266,40 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		}()
 	}
 
-	// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
-	// Four-tier precedence: per-bead label → project config (no-op) →
-	// daemon default → dot (hk-30vlb). Resolved once at claim time; immutable for
-	// the run's lifetime. See moderesolve.go.
+	// ── The run plan: every decision that precedes an acquisition ────────────
 	//
-	// hk-hiqrl: itemWorkflowMode is a tier-0 per-item override set by the
-	// CLI --review-loop flag via queue.Item.WorkflowMode. When set and valid
-	// it takes precedence over the full EM-012a walk.
-	workflowMode := resolveWorkflowMode(ctx, beadRecord, env.WorkflowModeDefault, emit)
-	if itemWorkflowMode != "" {
-		if candidate := core.WorkflowMode(itemWorkflowMode); candidate.Valid() {
-			workflowMode = candidate
-		}
+	// Ten decisions resolve here, in workloop_runplan.go: workflow mode and
+	// ref, harness, model and effort, Pi provider profile, active repo,
+	// protected branches, parent commit, lands_on, and merge target. All ten
+	// sit above every acquisition in this function — the worktree, the tunnel
+	// port, the agent process, the ssh session on a worker. Five of the
+	// decisions can refuse the bead, and a refusal reopens it and returns having
+	// taken nothing. Keep that order: nothing between here and the
+	// worker-selection block below may acquire a resource.
+	//
+	// The plan carries the RUN-level harness tuple. A DOT run corrects the
+	// harness and the model per node further down — see the note on runPlan.
+	plan := resolveRunPlan(ctx, runPlanRequest{
+		Env:               env,
+		Emit:              emit,
+		Handles:           handles,
+		PreSelectedWorker: preSelectedWorker,
+	})
+	if plan.Verdict != runPlanReady {
+		refuseRunPlan(ctx, env, handles, emit, plan.Refusal)
+		return false
 	}
 
-	// Resolve workflow_ref per EM-012a: per-item (queue.Item.WorkflowRef, hk-qo9pq,
-	// tier-0) wins over per-bead dot:<name> label (hk-30q6, tier-1); absence falls
-	// through to the project-level workflow.dot or embedded standard-bead.dot.
-	itemWorkflowRef = resolveWorkflowRef(beadRecord, itemWorkflowRef)
+	// Alias the plan's answers under the names the body below already uses.
+	workflowMode := plan.WorkflowMode
+	resolvedModel, resolvedEffort := plan.Model, plan.Effort
+	resolvedProfile := plan.PiProfile
+	activeRepo := plan.ActiveRepo
+	effectiveMergeProtectBranches := plan.MergeProtectBranches
+	headSHA := plan.ParentSHA
+	baseBranch := plan.BaseBranch
+	mergeTarget := plan.MergeTarget
+	sdModel = resolvedModel
 
 	// ── RT7/RT9: the per-run Run reactor bridge (RSM-007, RSM-020..022) ──────
 	//
@@ -1299,190 +1314,6 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// zero value (false); every terminal-spine path returns bridge.Success().
 	bridge := runloop.NewRunBridge(env, rp, handles, runID, beadID, workflowMode, emitRunTerminalEff)
 	failRun := func(reason, summary string) { bridge.Fail(ctx, reason, summary) }
-
-	// Resolve (model, effort) per EM-012b four-tier precedence walk.
-	// Resolved once at claim time; sealed into the run for its lifetime.
-	//
-	// The agentType passed here MUST match the harness that will actually be
-	// selected at launch (resolveHarness in routedLaunchSpecBuilder), or the
-	// tier-3 model default leaks across harnesses. Previously this was hardcoded
-	// to core.AgentTypeClaudeCode, which sealed the claude tier-3 default
-	// (claude-sonnet-4-6) into rc.model even for pi/codex runs — a pi run then
-	// asked the pi provider for a claude model and failed. Resolve the harness
-	// agent-type up front (quiet: no events; routedLaunchSpecBuilder still emits
-	// harness_selected at launch) so the model default matches the real harness.
-	// Queue and global defaults are passed as their distinct tiers, matching
-	// buildRunBundles, so quiet resolution equals launch-time resolution.
-	// hk-pkugu (codename:pi-model-leak). See modelpreference.go for tier-3 defaults.
-	resolvedAgentType := resolveHarnessAgentTypeQuiet(
-		beadRecord,
-		env.QueueDefaultHarness,
-		core.AgentType(""), // node default (per-node override in driveDotWorkflow)
-		env.DefaultHarness,
-	)
-	resolvedModel, resolvedEffort := ResolveModelPreference(
-		ctx,
-		beadRecord.Labels,
-		resolvedAgentType,
-		env.ProjectCfg,
-		emit,
-		string(beadID),
-	)
-	sdModel = resolvedModel
-
-	// Resolve the per-bead Pi provider profile from a `profile:<name>` label
-	// (pi-provider-switch, hk-m6uu2 C3). Runs strictly AFTER resolvedAgentType
-	// (hk-pkugu discipline: a claude/codex-resolved bead yields the zero
-	// tuple). An unknown profile reference is fail-loud: reopen the bead
-	// through the same refuse-before-launch seam CrossRepoUnsafeError and
-	// StartFromRefError use below, and return before any launch-spec is built.
-	resolvedProfile, profErr := resolvePiProfile(
-		ctx, beadRecord.Labels, resolvedAgentType,
-		env.ProjectCfg.Harnesses.Pi, emit, string(beadID),
-	)
-	if profErr != nil {
-		reopenTID, _ := handles.TIDGen.Next()
-		fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, profErr)
-		_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
-			runID, reopenTID, beadID, profErr.Error())
-		return
-	}
-	// Locked precedence (C3-spec.md §2): the wire-format triple + credentials
-	// arrive atomically from the profile and are never split; model: overrides
-	// ONLY the model field. When a profile is present and no exactly-one
-	// model: label resolved it, coalesce resolvedModel to profile.Model.
-	if resolvedProfile != (projectconfig.PiProfileConfig{}) && !hasSingleModelLabel(beadRecord.Labels) {
-		resolvedModel = resolvedProfile.Model
-	}
-
-	// Carry the resolved Pi provider identity onto the run handle and emit
-	// provider_selected (hk-8ziid.2, docs/design/pi-multi-provider-slot-accounting.md).
-	// Pi runs only: a matched profile's provider wins, else the harness-global
-	// harnesses.pi.provider default. Non-Pi runs leave resolvedProvider unset
-	// (RunHandle.GetResolvedProvider stays ("", false) — see the atomic-pointer
-	// contract in runregistry.go distinguishing "not yet resolved" from
-	// "resolved to the empty-string default").
-	if resolvedAgentType == core.AgentTypePi {
-		resolvedProvider := resolvedProfile.Provider
-		if resolvedProfile == (projectconfig.PiProfileConfig{}) {
-			resolvedProvider = env.ProjectCfg.Harnesses.Pi.Provider
-		}
-		if rh, ok := handles.RunRegistry.Get(runID); ok && rh != nil {
-			rh.SetResolvedProvider(resolvedProvider)
-		}
-		emitProviderSelected(ctx, emit, runID, resolvedProvider)
-	}
-
-	// Determine activeRepo: the repository where the per-bead worktree lives,
-	// commits happen, and merges are pushed (hk-xfuc cross-repo dispatch).
-	//
-	// For local beads (no target_repo or target_repo == projectDir):
-	//   activeRepo = env.ProjectDir  (unchanged behaviour)
-	//
-	// For cross-repo beads (target_repo declared in ## Branching):
-	//   1. Check the allowed_repos safelist — refuse with CrossRepoUnsafeError
-	//      when the target is not in the list (prevents arbitrary path injection).
-	//   2. Set activeRepo = target_repo; all git-touching operations below use
-	//      activeRepo instead of env.ProjectDir.
-	//
-	// Note: env.ProjectDir remains the harmonik project root for non-git
-	// operations (daemon socket, queue persistence, br adapter, workflow.dot).
-	//
-	// Bead: hk-xfuc (cross-repo dispatch follow-up to hk-3r3 guard).
-	activeRepo := env.ProjectDir
-
-	// Parse the bead body cheaply (tier-1 only; no I/O) to extract target_repo
-	// so we can determine activeRepo before resolveParentCommit, which must run
-	// against the correct repository.
-	earlyBrCfg, _ := parseBranchingSection(beadRecord.Description) // errors treated as absent per BI-009b
-	if earlyBrCfg.TargetRepo != "" && earlyBrCfg.TargetRepo != env.ProjectDir {
-		if !isInAllowedRepos(earlyBrCfg.TargetRepo, env.AllowedRepos) {
-			crErr := &CrossRepoUnsafeError{TargetRepo: earlyBrCfg.TargetRepo, ProjectDir: env.ProjectDir}
-			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, crErr)
-			reopenTID, _ := handles.TIDGen.Next()
-			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
-				crErr.Error())
-			return
-		}
-		activeRepo = earlyBrCfg.TargetRepo
-		slog.InfoContext(ctx, "cross_repo_dispatch",
-			"bead_id", string(beadID),
-			"active_repo", activeRepo,
-			"project_dir", env.ProjectDir,
-		)
-	}
-
-	// effectiveMergeProtectBranches is env.ProtectBranches for local runs.
-	// For cross-repo runs the daemon's ProtectBranches guards harmonik's branches,
-	// not the target repo's; pass nil so the merge gate doesn't refuse a legitimate
-	// target-repo branch (e.g. merging into kerf's "main" when harmonik protects its
-	// own "main"). Hk-xfuc.
-	effectiveMergeProtectBranches := env.ProtectBranches
-	if activeRepo != env.ProjectDir {
-		effectiveMergeProtectBranches = nil
-	}
-
-	// Resolve the parent commit (start_from SHA) for worktree creation per
-	// WM-005b / BI-009b. resolveParentCommit parses the bead's ## Branching
-	// section and resolves start_from to a commit SHA; it falls back to HEAD
-	// when the section is absent or start_from is not set. If start_from is
-	// present but names a ref that does not exist locally, the error is
-	// surfaced as a typed StartFromRefError and the bead is reopened.
-	// Use activeRepo so cross-repo beads resolve against the target repository.
-	headSHA, headErr := resolveParentCommit(ctx, activeRepo, string(beadID), beadRecord.Description, env.TargetBranch)
-	if headErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: resolveParentCommit for bead %s: %v (reopening)\n", beadID, headErr)
-		reopenTID, _ := handles.TIDGen.Next()
-		_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
-			fmt.Sprintf("resolve start_from failed: %v", headErr))
-		return
-	}
-
-	// Resolve lands_on (base branch) for the pre-exit rebase step (hk-mtm0w).
-	// resolveBranching is called a second time here (also called inside
-	// resolveParentCommit) to extract LandsOn without restructuring
-	// resolveParentCommit's return type. The call is cheap (YAML parse + stat).
-	// Non-fatal: if resolveBranching fails here, baseBranch is left empty and
-	// the agent-task header omits the base_branch line.
-	//
-	// Protection gate (hk-ncwb3): if the resolved lands_on is in ProtectBranches,
-	// the bead must be refused — it would try to merge directly into a branch the
-	// operator has declared off-limits for direct pushes. The bead is reopened
-	// with a LandsOnProtectedError so the operator can correct the bead body or
-	// the project branching config.
-	// For cross-repo beads (activeRepo != projectDir), the daemon's ProtectBranches
-	// list governs the harmonik project's branches, not the target repo's; skip the
-	// protect check for cross-repo runs to avoid refusing legitimate target branches.
-	var baseBranch string
-	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, activeRepo, env.TargetBranch); brErr == nil {
-		baseBranch = brCfg.LandsOn
-
-		if activeRepo == env.ProjectDir {
-			for _, protected := range env.ProtectBranches {
-				if baseBranch == protected {
-					protErr := &LandsOnProtectedError{LandsOn: baseBranch}
-					fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, protErr)
-					reopenTID, _ := handles.TIDGen.Next()
-					_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
-						protErr.Error())
-					return
-				}
-			}
-		}
-	}
-
-	// hk-lgykq: per-bead integration-branch targeting. The run branch must LAND
-	// on the same branch it was rebased onto (baseBranch = resolved lands_on),
-	// not the daemon-wide default target. baseBranch already carries the three-
-	// tier precedence (bead ## Branching > branching.yaml > default) resolved by
-	// resolveBranching above, and equals env.TargetBranch when no per-bead
-	// override is present. It is empty only when resolveBranching errored; fall
-	// back to the daemon-wide target in that case so the merge is never directed
-	// at an empty ref (mergeRunBranchToMain fail-closes on empty target).
-	mergeTarget := baseBranch
-	if mergeTarget == "" {
-		mergeTarget = env.TargetBranch
-	}
 
 	// ── DD1 code-sync: select remote worker (remote-substrate B8) ───────────
 	//
@@ -1534,10 +1365,10 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// dispatch time, or a race where a worker slot freed up after the outer loop's
 	// HasFreeSlot peek). This path is rare after the hk-hs7ex hoist but kept for
 	// correctness.
-	if rbc == nil && !itemLocalOnly && handles.Workers != nil {
+	if rbc == nil && !plan.LocalOnly && handles.Workers != nil {
 		var w *workers.Worker
-		if itemWorkerTarget != "" {
-			w = handles.Workers.SelectWorkerByName(itemWorkerTarget)
+		if plan.WorkerTarget != "" {
+			w = handles.Workers.SelectWorkerByName(plan.WorkerTarget)
 		} else {
 			w = handles.Workers.SelectWorker()
 		}
@@ -1618,6 +1449,13 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		}
 
 		daemonHookSock := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
+		// This check also runs in the run plan, which refuses BEFORE the port and
+		// the ssh round trip above. The plan can only cover a run whose worker was
+		// pre-selected. A run that got its worker from the fallback selection was
+		// not yet known to be remote when the plan ran, so this copy is that
+		// path's guard. The two never both refuse: a pre-selected run that failed
+		// the plan returned before this block.
+		//
 		// hk-ta6dg: `ssh -N -R <port>:<daemonHookSock>` never validates this local
 		// forward destination at tunnel start — only when a connection actually
 		// needs forwarding — so a too-long daemonHookSock would let the tunnel
@@ -1914,7 +1752,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 	// Pre-switch: for DOT mode, resolve and pre-load the graph source (hk-30vlb).
 	// Three-tier resolution:
-	//   1. itemWorkflowRef set → explicit path (resolved below in the DOT case).
+	//   1. plan.WorkflowRef set → explicit path (resolved below in the DOT case).
 	//   2. <projectDir>/workflow.dot exists → project-level path (resolved below).
 	//   3. Neither → use the embedded standard-bead.dot (loaded here).
 	//
@@ -1933,7 +1771,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// dishonest — run_started stamps workflow_mode ABOVE this line, so a demoted
 	// run's own start event named a mode it did not execute.
 	var preloadedDotGraph *dot.Graph
-	if workflowMode == core.WorkflowModeDot && itemWorkflowRef == "" {
+	if workflowMode == core.WorkflowModeDot && plan.WorkflowRef == "" {
 		defaultDotPath := filepath.Join(env.ProjectDir, "workflow.dot")
 		if _, statErr := os.Stat(defaultDotPath); os.IsNotExist(statErr) {
 			g, embErr := loadStandardGraph(itemTemplateParams)
@@ -1990,11 +1828,11 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			// Tier 1 or 2: explicit ref or <projectDir>/workflow.dot.
 			// WG-046 ordering: read → substitute(itemTemplateParams) → parse → validate → dispatch.
 			dotPath := filepath.Join(env.ProjectDir, "workflow.dot")
-			if itemWorkflowRef != "" {
-				if filepath.IsAbs(itemWorkflowRef) {
-					dotPath = itemWorkflowRef
+			if plan.WorkflowRef != "" {
+				if filepath.IsAbs(plan.WorkflowRef) {
+					dotPath = plan.WorkflowRef
 				} else {
-					dotPath = filepath.Join(env.ProjectDir, itemWorkflowRef)
+					dotPath = filepath.Join(env.ProjectDir, plan.WorkflowRef)
 				}
 			}
 			var loadErr error

@@ -1236,6 +1236,15 @@ it is the measured map and it corrects this section on four points:
   the independent-session and crew-session constructors do not have one.
 - **~450 lines is not defensible from the map.** Re-cost it after the first two commits.
 
+**Progress, 2026-07-31.** Three of the step's six commits have landed: the two folded-in defects
+(the doomed tunnel, the unbounded session constructors) and the types themselves. The types live in
+`internal/runlease` — a lease, a scope that closes in reverse and can nest, and one disposition
+value per run — fenced by depguard to the standard library and itself, and made normative as
+`specs/run-state-machine.md` §4a (RSM-036 … RSM-038). They are DELIBERATELY UNWIRED. What remains is
+the migration of each release site onto them, the nested per-launch scope, and the two test holes.
+Read `STEP-6-RESOURCE-LEASES.md` §8 before wiring: it records what the types decided, including the
+one behaviour change the migration carries.
+
 **Why here:** it depends on step 5 (placement is a plan output) and it is what unblocks step 7 (the
 mode boundary needs a complete resource scope to receive).
 

@@ -185,15 +185,50 @@ Confirmed present and correct at `8741d0272`:
 
 In order. Each is one commit, each independently reviewable.
 
-1. The lease and scope types, pure, with the disposition as a value rather than a set of
-   predicates. No wiring. Tests first.
-2. Refuse the run when tunnel port allocation fails, instead of spawning a doomed tunnel.
-3. Bound the independent-session and crew-session constructors the way the shared-window path is
-   bounded.
+1. ✅ **Landed 2026-07-31.** The lease and scope types, pure, with the disposition as a value
+   rather than a set of predicates. No wiring. Tests first. → `internal/runlease`, fenced by
+   depguard to the standard library and itself, and made normative as
+   `specs/run-state-machine.md` §4a (RSM-036 … RSM-038). Read §8 below before wiring it.
+2. ✅ **Landed 2026-07-31.** Refuse the run when tunnel port allocation fails, instead of spawning
+   a doomed tunnel.
+3. ✅ **Landed 2026-07-31.** Bound the independent-session and crew-session constructors the way
+   the shared-window path is bounded.
 4. Migrate the per-run resources onto the scope, innermost first, one commit each.
 5. Give the per-launch set its own nested scope, and collapse the duplicated tunnel refusal
    reporting into the one reporter the run plan already has.
 6. Close the two test holes.
+
+---
+
+## 8. What the types decided, for whoever wires them
+
+The package answers three questions the migration would otherwise re-open at each release site.
+
+**The disposition is one of three values, not a set of flags.** `Reclaim` gives everything back.
+`Survive` keeps the agent session, the worktree, the run registry record, the hook session and the
+tunnel, and gives back the four accounting slots, which are this process's bookkeeping and not the
+agent's. `RetainEvidence` keeps the worktree and nothing else. A caller cannot ask for "keep the
+worktree but tear down the session" — the combination is unrepresentable rather than merely
+unwritten, which is what §2 asked for.
+
+**Two of the resources gain a keeper they did not have.** The hook session and the tunnel are in the
+survive set. Today they are torn down regardless, which leaves a surviving agent holding a session it
+can no longer report through. That is a behaviour change and it arrives with the migration commit
+that moves those two sites, not before.
+
+**`Decide` is where the polarity lives.** Survival needs BOTH facts — an agent in its own session AND
+a daemon that is stopping — and it wins over evidence when both apply. Eight input combinations, one
+test.
+
+`Survive` does not promise survival. §4 above says why, and both the package doc and the spec's §4a
+say it in the two places a wiring agent will actually read.
+
+**The scope enforces reverse-of-acquisition and nothing more, and that is less than §3 needs.** Two
+of the three load-bearing ordering edges involve the Pi log capture, which is a step and not a
+resource, so it cannot be a lease and the scope cannot order it. Those two edges stay obligations on
+where the migrating code puts the capture relative to the acquisitions around it. This is the part
+of RSM-038 most likely to be dropped in silence, because the other edge — session before worktree —
+falls out of reverse order for free and makes the whole rule look automatic. It is not.
 
 The step's stated size of ~450 lines is not defensible from this map and should not be quoted until
 the first two commits have been measured.

@@ -8,10 +8,10 @@ requirement-prefix: RSM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.2.2
+version: 0.3.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-30
+last-updated: 2026-07-31
 depends-on:
   - replay-substrate
   - event-model
@@ -177,6 +177,66 @@ access.
 launch-spec builder, worktree factory, worker registry, hook store, harness registry, or gate
 registry MUST resolve to today's production default or documented no-op, with no behavior
 change.
+
+## 4a. Run resource discipline
+
+A run takes nine resources in three lifetimes and a run registry entry on the same axis. Before
+this section the rules for giving them back were open-coded at each release site. The obligations
+here move that to one shape. They constrain HOW a run holds and gives back a resource. They do not
+change WHICH resources a run takes.
+
+**RSM-036.** Every resource a run takes MUST be held as a lease: one value that carries both the
+resource and the single call that gives it back. That call MUST run at most once, whichever
+goroutine asks and however many times. A release site MUST NOT test whether the release already
+happened, and MUST NOT retry a release that failed — a give-back call that cannot succeed does not
+succeed on a second try.
+
+**RSM-037.** A run MUST decide ONE disposition for the whole run, and every release site MUST read
+that one value. A skip flag per resource MUST NOT be used. The disposition MUST be a total pure
+function of the run's exit facts, and those facts MUST be a value the function takes as input, not
+state it reads.
+
+The three dispositions are:
+
+| Disposition | What the run gives back |
+|---|---|
+| reclaim | everything |
+| survive | everything except the agent session, the worktree, the run registry entry, the hook session, and the tunnel |
+| retain-evidence | everything except the worktree |
+
+Survive requires BOTH of its facts: the agent runs in a session of its own that outlives this
+process, AND the run is ending because the daemon is stopping. Survive wins over retain-evidence
+when both apply. Only a surviving run leaves its bead in progress for a later boot to adopt; every
+other disposition settles the bead by the run's own outcome.
+
+> **Survive is what a run ASKS for. The system does not deliver it today.** The boot orphan sweep
+> kills every tmux session carrying the project prefix that is not in its exclusion set, with no
+> liveness test, and it runs before the pass that looks for a surviving run. The bead still
+> recovers, because adoption then classifies the run as dead and resets it. Nothing in this spec
+> or in the code MUST be written as if the agent is still there at the next boot. Making survival
+> real needs a way to tell a live surviving session from a genuine orphan, and that is separate
+> work.
+
+**RSM-038.** Leases MUST be held in a scope that gives them back in the reverse of the order they
+were taken. Per-launch resources MUST be held in a scope nested inside the run's scope: a graph run
+takes and gives back one hook session and one agent session per node while it holds one tunnel and
+one worktree for the whole run, so one flat scope cannot express both lifetimes.
+
+Three ordering edges are load-bearing and MUST hold. The rest of the order is reverse-of-acquisition
+by construction and nothing else depends on it.
+
+1. The agent session MUST die before the worktree is removed. Otherwise `git worktree remove
+   --force` races a live process inside the directory and the run is misrecorded as having produced
+   no commit.
+2. The agent session MUST die before the Pi log capture runs, because reading the session outcome
+   blocks until the session is waited on.
+3. The Pi log capture MUST run before the worktree is removed, because it writes into it.
+
+**Where this lives.** `internal/runlease` holds the lease, the scope, and the disposition. It is a
+pure leaf: it takes the give-back call as a value and knows nothing about what any resource is. Its
+depguard rule allows the standard library and itself, and nothing more. A resource added to that
+package's closed list without a disposition decision is a lint failure, which is how the polarity
+question stays answered.
 
 ## 5. ClockPort and determinism
 
@@ -462,5 +522,6 @@ subsumed path, which passes no flag).
 
 | Date | Version | Author | Change |
 |------|---------|--------|--------|
+| 2026-07-31 | 0.3.0 | agent (delete-and-rewrite step 6) | **New §4a, run resource discipline: RSM-036, RSM-037, RSM-038.** The spec had no rule about how a run holds a resource or gives it back, and the daemon therefore open-coded the answer at each release site. One condition — an agent in its own session plus a stopping daemon — reached four sites, spelled three different ways, and missed the hook session and the tunnel. RSM-036 requires a lease, whose give-back call runs at most once and is never retried. RSM-037 requires ONE disposition value for the whole run, decided by a total pure function of the run's exit facts, and forbids a skip flag per resource; it names the three dispositions and what each keeps. RSM-038 requires a scope closed in reverse order, requires the per-launch resources to sit in a nested scope, and names the three ordering edges that are load-bearing. §4a also records that survival is what a run asks for and NOT something the system delivers today, because the boot orphan sweep kills such sessions before anything looks for them. `internal/runlease` is named as the owner and is fenced to the standard library. No existing rule is renumbered and no production behaviour changes: the types land unwired, and the migration of each release site onto them is separate work. |
 | 2026-07-30 | 0.2.2 | agent (spec citation cleanup) | **Rotted pointers repaired. No obligation changed.** The workflow mode `review-loop` was retired and its driver deleted, so `core.WorkflowMode.Valid()` now accepts only `single` and `dot`. The retired mode is removed from the mode lists in RSM-007, RSM-008, RSM-031 and RSM-032. What each of those rules requires is unchanged. Three approximate line-number citations into `workloop.go` are replaced by symbol names (`beadRunOne`, the `d2APIKeyRefusal` constant, the `abortReason` constant), per the repo convention to cite symbols and never line numbers. RSM-008 also gains an OPEN note that records a question the sweep found but must not settle: the rule confines both post-exit guards to the single-shot path, almost all runs take the graph path, and the choice between extending the guards and dropping the protection claim belongs to the operator. References to the event `review_loop_cycle_complete` and to the review-loop-failure budget are left alone, because `core.EventTypeReviewLoopCycleComplete`, `ChargeReviewLoopFailure` and `MaxReviewLoopFailures` all still exist. |
 | 2026-07-27 | 0.2.1 | agent (codename: input-ack-contract) | **Input-ack consumption reconciled with the owner contracts (coordinated drift correction; co-landed with [agent-input.md] 0.1.1 and [handler-contract.md] 0.8.1).** RSM-027 carried a three-valued acceptance class (`Accepted` / `Rejected` / `Degraded`) that never existed in the owner specs: the `Ack` outcome landed BINARY (`Delivered` / `Rejected`) in AIS-003 / HC-070 the day after this spec, with positive acceptance decoupled onto the async `agent_input_acked` event. RSM-027 is amended in place (NOT renumbered) to consume that contract: `Ack{Delivered}` is a driver handoff that leaves positive acceptance pending; `Ack{Rejected}` fail-closes to RSM-025; the correlated `agent_input_acked` is the positive-acceptance event; the correlated `agent_input_stale` fail-closes to RSM-025. The four routes are stated as total. The `input_seq` consumption rule is made explicit — consume the first synchronous outcome once, then the first correlated asynchronous terminal wins; drop only repeated or late observations, never the first `agent_input_acked`; add no second timer. RSM-024's resume-seed bullet is reconciled so a `Delivered` return alone no longer satisfies the sub-bound, citing AIS-003 + AIS-004 + AIS-INV-001 as the composite authority. RSM-027 also names the run-level backstop for a `Delivered` whose async terminal never arrives: the already-composed RSM-024 timer stack (ready sub-bound, `post_ready_hang`, absolute commit-watchdog ceiling) routing to RSM-025 — NOT a new input timer. The correlation bullet also attributes the sequence id to AIS-003b and its serialized `input_seq` payload field name to [event-model.md §6.3], keeping this spec clear of the event payload. `Accepted`, `Degraded`, and the "three-valued acceptance class" are removed. No requirement renumbered; no port, `Ack` record, event schema, timer semantics, or production behaviour changed. |

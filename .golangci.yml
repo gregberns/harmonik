@@ -1119,6 +1119,22 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runexec MUST NOT import daemon (RSM-028; pure reactor leaf)" }
 
+        # internal/runlease is the run's resource discipline: a lease, a scope,
+        # and the one disposition value that decides what a run gives back. It
+        # holds the caller's give-back call as a value and knows nothing about
+        # what a resource IS, so it needs the standard library and nothing else.
+        # Keep this allow list at $gostd + self. An import of substrate, workers
+        # or tmux here would mean the disposition had started deciding by
+        # inspecting the resource rather than by naming it.
+        # Rationale: specs/run-state-machine.md §4a (RSM-036 … RSM-038).
+        runlease:
+          files: ["**/internal/runlease/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/runlease"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runlease MUST NOT import daemon (RSM-036; pure leaf)" }
+
         daemon:
           files: ["**/internal/daemon/**"]
           allow:

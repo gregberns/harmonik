@@ -33,6 +33,11 @@ attempt fail:
   single 2,289-line function carrying ~40 distinct responsibilities and touching every external tool
   the system uses. `reviewloop.go` and `dot_cascade_core.go` are the same disease — all three
   re-implement the identical launch → dispatch → wait → probe → teardown sequence.
+  > *Progress note, 2026-07-30.* Two of the three are gone. `reviewloop.go` was deleted on 2026-07-28,
+  > and the launch half of the sequence was collapsed into `internal/daemon/agentlaunch.go` on
+  > 2026-07-29. `workloop.go` reads 3,389 lines. The diagnosis above is why the program exists and is
+  > kept as written. The live remainder is "probe" — deciding whether the agent did the work — which is
+  > still written twice. `DECOMPOSITION-MAP.md` §2b and §Step 7 carry the current picture.
 
 Fixing bugs inside that structure produced more debt. The program is to remove the obstruction, then
 rebuild the centre.
@@ -46,8 +51,9 @@ changed, zero new test failures. Details and the exact carve-outs are in `_plan.
 **Phase 2 — partition.** Config-driven enable/disable of each subsystem, so the system can run as a
 small subset. First switch landed 2026-07-28. See §3.
 
-**Phase 3 — decompose and rewrite the core.** `workloop.go` + `reviewloop.go` + `dot_cascade_core.go`
-as ONE unit — rewriting one leaves the duplication intact.
+**Phase 3 — decompose and rewrite the core.** `workloop.go` + ~~`reviewloop.go`~~ + `dot_cascade_core.go`
+as ONE unit — rewriting one leaves the duplication intact. (`reviewloop.go` was deleted 2026-07-28. The
+unit is now two files, and the rule is unchanged.)
 
 **Specs come after, not before** — with the standing caveat that `AGENTS.md` holds specs normative,
 so a conflict is adjudicated, never silently ignored.

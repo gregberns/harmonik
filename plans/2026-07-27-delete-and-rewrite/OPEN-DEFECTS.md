@@ -14,37 +14,39 @@ Found 2026-07-29 unless noted.
 
 ---
 
-## Eliminated by planned work — do not fix these directly
+## RESOLVED by the launch-path collapse — verified 2026-07-30 against HEAD
 
-> **Count correction, 2026-07-29.** These two were measured when there were **five** agent-launch sites.
-> Deleting `reviewloop.go` removed two of them, so the live count is **three**: the single-mode tail in
-> `workloop.go`, the graph-node path in `dot_cascade_core.go`, and the graph-gate path in `dot_gate.go`.
-> The defects are unchanged in kind — the *coverage fractions* below are now 1-of-3, not 1-of-5.
+> **Section status changed 2026-07-30.** This section used to be headed "Eliminated by planned work —
+> do not fix these directly", and every entry pointed forward at a collapse that had not happened. The
+> collapse landed on 2026-07-29 across `6077a24dc`, `ea96471b3`, `18d59aded`, `159b68e78`, `0743e4dec`,
+> `8346edc2f` and `30b5cf02c`. `runAgentLaunch` in `internal/daemon/agentlaunch.go` is the one launch
+> path, and `scripts/readywait-freeze-gate.sh` now allows exactly one `runloop.DispatchSegment` in the
+> tree, in that file. Every entry below was re-checked in the code and all seven are closed.
+>
+> **Live launch-site count is TWO, not three.** The earlier count correction said three: single-mode,
+> the graph node, and the graph gate. The gate does not belong in the count. `daemon.Config.CPRegistry`
+> has zero assignments anywhere in the tree, tests included, and no shipped or project graph declares a
+> `type="gate"` node — so `executeCognitionGate` cannot run. Prior counts on this line read five, then
+> three. It is two.
 
-| What is wrong | When it goes away | Bead |
+| What was wrong | Resolution | Bead |
 |---|---|---|
-| **The credential guard covers 1 of 3 dispatch sites, and not the default one.** `d2RemoteAPIKeyRefusal` runs only on the single-mode path. DOT is the default and carries essentially all traffic, so the 2026-05-30 credential-leak gate protects the path that has run twice ever and not the path everything uses. The conformance test repaired 2026-07-28 guards the guard's *shape*, not its *coverage* — which is why nothing caught this. | Launch-path collapse (§Next step 4) — by construction, since one launch path cannot drift from itself | `hk-z4cow` |
-| **Launch-failure classification is computed by every site and consumed by none.** `classifyLaunchFailure` maps a launch error onto structural event classes; `dispatchSegmentRun.emit` switches only on two other event types and drops both structural classes into `default:`. Sites then hand-roll the same check themselves, and at least one emits nothing. The purest instance of the 1-of-N pattern in the tree. | Launch-path collapse (§Next step 4) | `hk-q15hi` |
+| **The credential guard covers 1 of 3 dispatch sites, and not the default one.** `d2RemoteAPIKeyRefusal` runs only on the single-mode path. DOT is the default and carries essentially all traffic, so the 2026-05-30 credential-leak gate protects the path that has run twice ever and not the path everything uses. | **Closed by construction.** `d2RemoteAPIKeyRefusal` is called once, inside `runAgentLaunch`, so every launch asks it | `hk-z4cow` |
+| **Launch-failure classification is computed by every site and consumed by none.** `classifyLaunchFailure` maps a launch error onto structural event classes; `dispatchSegmentRun.emit` switches only on two other event types and drops both structural classes into `default:`. | **Closed.** `classifyLaunchFailure` is now private to `runloop.DispatchSegment` with one caller, and `runexec`'s `EvLaunchFailed` handler emits `launchFailedEventType(ev.Reason)`, so the class reaches the log. ⚠ **New, smaller defect in its place:** that mapper returns `spawn_cap_blocked` for every reason except `tmux_new_window_timeout`, so a plain launch error is reported as a spawn-cap block. Unbeaded — record it before fixing | `hk-q15hi` |
 
-**Five more found 2026-07-29 while mapping the three sites, all eliminated by the same collapse.** Recording
-them because each is a live production defect *today*, and because they are the direct evidence for why the
-collapse is worth doing — every one is a guard that exists on one path and is simply absent on another,
-with the compiler silent throughout. None is being fixed on its own.
+**The five that rode along.** Each was a guard on one path and absent on another. All five are closed,
+because the step that carried them now exists once.
 
-- **A cognition gate's agent-ready signal carries no run id**, so the stale-run watcher skips it, the
-  "never spawned" flag never flips, and the reaper stays armed for the whole run. The other two paths were
-  fixed for exactly this; the gate was missed by that sweep.
-- **A gate launch that fails reports no reason.** The gate sets both classifier errors, so the machine
-  knows whether the spawn pool was saturated or the terminal-window request hung — and then emits neither.
-  The operator sees a failed launch with no cause.
-- **Single-mode runs never disarm the never-spawned reaper.** Only the graph-node path arms the proof. A
-  codex or pi run in single mode is therefore killed around the thirty-minute mark while perfectly healthy
-  — the same failure already diagnosed and fixed once for the graph path, never propagated.
-- **The agent-ready-timeout event reports the wrong number on remote runs.** All three sites pass the
-  *local* configured timeout to a parameter that means the *effective* one, so a remote run reports a bound
-  shorter than the one that actually fired.
-- **Two of the three paths emit that timeout on a cancellable context**, which is precisely the context the
-  reaper has already cancelled by the time the emission runs. The third deliberately uses a detached one.
+- ~~A cognition gate's agent-ready signal carries no run id.~~ **Closed.** `runAgentLaunch` emits
+  `agent_ready` through `EmitWithRunID` with a populated payload, for every site.
+- ~~A gate launch that fails reports no reason.~~ **Closed.** The spawn-cap and tmux-timeout
+  diagnostics ride the shared path.
+- ~~Single-mode runs never disarm the never-spawned reaper.~~ **Closed.** `newCapturedSpawnProof` is
+  wired once, in `runAgentLaunch`.
+- ~~The agent-ready-timeout event reports the wrong number on remote runs.~~ **Closed.**
+  `runlaunch.EffectiveAgentReadyTimeout` is computed once and the emission uses that value.
+- ~~Two of the three paths emit that timeout on a cancellable context.~~ **Closed.** The one emission
+  uses `context.Background()` with a `//nolint:contextcheck` naming the reason.
 
 ## RESOLVED by the review-loop retirement — verified 2026-07-29 on `e46658ed5`
 
@@ -56,7 +58,7 @@ test. Both are now closed out; kept here because the *reasoning* is the reusable
 | What was wrong | Resolution | Bead |
 |---|---|---|
 | **Crash-recovery resume worked only in review-loop mode.** `persistClaudeSessionID` was review-loop-only; single-mode and DOT both captured a Claude session id and dropped it. | **Consciously retired, with evidence** — the durable write had no reader anywhere (nothing reads `context.json` back, nothing consumes the persisted event, EM-031 recovery reads branch-tip trailers instead), and the resume that *did* work read an in-memory field, not the persisted copy. So the machinery was deleted rather than ported. No production symbol survives; only comments reference it. | `hk-5sebh` |
-| **The default mode treated every merge failure as terminal.** `Retryable: runmerge.IsRetryableReason` was passed to the terminal spine only by the review-loop, and a DOT failure never charged the retry budget, so the close-with-needs-attention ladder could not fire on the default mode. | **Ported to DOT.** Both now ride the DOT arm of the terminal spine in `beadRunOne` — `Retryable: runmerge.IsRetryableReason` and the `Budget.ChargeReviewLoopFailure` ladder. Single-mode still carries neither, which is acceptable only because single mode is scheduled for deletion; if that sequencing changes, this reopens. | `hk-dqmw2` |
+| **The default mode treated every merge failure as terminal.** `Retryable: runmerge.IsRetryableReason` was passed to the terminal spine only by the review-loop, and a DOT failure never charged the retry budget, so the close-with-needs-attention ladder could not fire on the default mode. | **Ported to DOT.** Both now ride the DOT arm of the terminal spine in `beadRunOne` — `Retryable: runmerge.IsRetryableReason` and the `Budget.ChargeReviewLoopFailure` ladder. Single-mode still carries neither. **Correction 2026-07-30:** the reason given here was "single mode is scheduled for deletion", and no plan document schedules it. The honest reason is that single mode has run twice in 2,153 runs, so the gap costs nothing today. It closes when single-shot becomes a graph (DECOMPOSITION-MAP §Step 7). | `hk-dqmw2` |
 
 ## RESOLVED by the sandbox-gate consolidation — 2026-07-29
 
@@ -73,8 +75,9 @@ test. Both are now closed out; kept here because the *reasoning* is the reusable
 | **The registered bus decoder for `handler_capabilities` cannot decode what production emits** — wrong field key and `[]string` vs `[]int`. The wire path works (a different decoder agrees); it is the registered core payload type that is wrong, which breaks strict-decode replay verification. | Independent | `hk-b882r` |
 | **A flapping SSH makes the remote C2 gate pass.** `runAutoStatusInspection` discards `ErrRemoteTransport`, the sentinel that exists specifically to distinguish "SSH failed, inconclusive" from "confirmed absent". The sibling reader in the same package explicitly retries on it. On the **kept** graph path — survives all Phase 3 deletions. Was the only genuine bug among 152 delta-lint findings. | Independent fix | `hk-sbd4l` |
 | **Structural protocol mismatch on the 2nd and 3rd dispatch.** `TestScenario_ConcurrentMultiQueue_N2_HappyPath` fails 4/4 with `error_category=structural / sub_reason=protocol_mismatch` on a deterministic dispatch ordinal — not load. It sits on the known-flake allowlist, wrongly. | Second confirmed case of the allowlist absorbing a real defect | `hk-t2d7n` |
-| **Non-single-mode runs cannot be adopted after a daemon restart.** `useIndepSession` is declared before the mode switch but assigned only in the single-mode tail, so the shared worktree-cleanup defer's guard can only be false on that one path. Review-loop and DOT runs lose their worktree on shutdown. | Needs the terminal spine collapsed — a *second* step after the launch-path collapse, not the same one | `hk-mh3qy` |
-| **The Pi provider profile never reaches graph nodes or cognition gates.** The single-mode launch context carries the provider, key-env, key-file, base-URL and API fields resolved from the Pi profile; the graph-node and gate launch contexts set none of them. A Pi-harness node under the default mode is launched without its profile. | Found while mapping the launch sites. **Not** fixed by the launch-path collapse — spec construction stays at the call site by design, so this needs its own change | `hk-yo9g6` |
+| **DOT runs cannot be adopted after a daemon restart.** `useIndepSession` is declared before the mode switch but assigned only in the single-mode tail, so the shared worktree-cleanup defer's guard can only be false on that one path. DOT runs lose their worktree on shutdown. (Text corrected 2026-07-30: it used to say "Non-single-mode … Review-loop and DOT". Review-loop is gone, so the whole population of affected runs is now DOT — that is, everything.) **Promoted in importance:** this is the one capability that makes "express single-shot as a graph and delete the tail" more than a mechanical move | Needs the terminal spine collapsed — a *second* step after the launch-path collapse, not the same one | `hk-mh3qy` |
+| **The Pi provider profile never reaches graph nodes or cognition gates.** The single-mode launch context carries the provider, key-env, key-file, base-URL and API fields resolved from the Pi profile; the graph-node and gate launch contexts set none of them. A Pi-harness node under the default mode is launched without its profile. **Re-verified 2026-07-30 and still true:** `resolvedProfile` is resolved once in `beadRunOne` and read only by the single-mode `shared.LaunchCtx`. `driveDotWorkflow` is not passed it. The MODEL does reach the graph, because `resolvedModel` is overwritten from the profile before the mode switch, which is why this looks half-wired. **This is the largest live defect on the default path in this file.** | Found while mapping the launch sites. **Not** fixed by the launch-path collapse — spec construction stays at the call site by design, so this needs its own change | `hk-yo9g6` |
+| **The graph path runs the wrong harness's commit fallback for Pi.** `dispatchDotAgenticNode` calls `codex.EnsureRefsTrailer` for every `CompletionProcessExit` harness, and Pi is one. The single-mode tail branches on `core.AgentTypePi` and calls `pi.EnsureRefsTrailer`. Behaviour is the same — both wrappers call the same `internal/harness/shared/refstrailer.go` primitives — so the only wrong thing is the commit message: a Pi node's daemon-fallback commit on the DEFAULT path says `feat(codex): codex turn output`. Found 2026-07-30. | Cosmetic today, and a trap tomorrow: the two wrappers are free to diverge and the compiler will not say so. Fix with the post-exit collapse (§Step 7 piece 1) | unbeaded |
 | **An entire tier of test failures is invisible.** `go test -tags scenario ./internal/daemon/` yields eight failures where the untagged run yields one. Root cause established: no assessment ever ran the tagged tier at all — the recipes only `go vet`ed it and the CI workflow carried `continue-on-error: true`. Full per-test disposition in `NEXT_STEPS.md` §5.2. | **The reporting half is FIXED 2026-07-29** — the flag is removed, so the tier is red and visible. §5.2's hardening remains, and half the tier still skips in CI (`hk-ynohn`) | `hk-97gcz` |
 | **Two freeze gates match call sites, not declarations.** `runloop-freeze-gate.sh` and `queuewiring-freeze-gate.sh` make the `func`/`type`/`const` keyword optional in their declaration regex, so a bare call to a watched symbol reads as a declaration. Measured: a first draft of the new scheduler gate copied that pattern and raised **six false failures against a correct tree**. The two siblings have not fired only because nothing yet calls their symbols bare at line start. | A gate that cries wolf gets disabled, so this is worse than it looks. Fix: require the keyword at column 0, plus a second scan for the grouped `const (` / `type (` form. `workloop-scheduler-freeze-gate.sh` does both and is the model | `hk-freeze-gate-callsite-regex-uemrd` |
 | **A reporting flag hid 20 straight real failures on every REST surface.** `continue-on-error` was documented in two files as masking only the *run* conclusion, leaving the step conclusion honest — and the nightly ops-monitor probe was built on that. False: run, step, and check-runs conclusions all read `success` after an exit 2. Only the annotations API told the truth, so the alert could never fire. | **FIXED 2026-07-29.** Flag removed, probe works unchanged, and the false comments are corrected in `scenario.yml`, `nightly-race.yml` and `ops-monitor-check.sh` | `hk-21v7c` |
@@ -656,6 +659,13 @@ added above it, which is the same failure the admission-order section now avoids
 the compiler is silent on every one of them: the callers still compile, the tests still pass, and the
 guard simply stops being applied on four paths out of five.
 
-That is also the argument for the launch-path collapse being the highest-value remaining move. It does
-not fix these one at a time; it makes the class unable to recur, because one path cannot drift from
-itself.
+That was the argument for the launch-path collapse being the highest-value move. It did not fix those
+one at a time. It made the class unable to recur, because one path cannot drift from itself.
+
+**Updated 2026-07-30. The collapse landed on 2026-07-29, and the argument now points somewhere else.**
+The prediction held: seven of the launch-site items above are closed by construction, and a CI gate
+holds the invariant. The same argument applies unchanged to the step that was deliberately left out of
+scope — "decide whether the agent did the work". That step is still written twice, once in the
+single-mode tail of `beadRunOne` and once in `dispatchDotAgenticNode`, and four of its sub-steps
+already differ, with the default path holding the weaker half. The highest-value remaining move is
+therefore the same move on that step. DECOMPOSITION-MAP §Step 7 states it.

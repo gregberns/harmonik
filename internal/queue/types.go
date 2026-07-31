@@ -515,6 +515,14 @@ type QueueStatusResponse struct {
 	//
 	// Bead ref: hk-ohiaf.
 	MaxConcurrent int `json:"max_concurrent,omitempty"`
+
+	// QuarantineReason is why the daemon refuses every write to this queue,
+	// or empty when the queue is healthy. Queue.Status stays at its last
+	// persisted value through a quarantine, so it cannot show the condition.
+	//
+	// Spec ref: specs/queue-model.md §3.1 QM-001.
+	// Bead ref: hk-ujanf.
+	QuarantineReason string `json:"quarantine_reason,omitempty"`
 }
 
 // QueueSummary is a single-queue row in a QueueListResponse.
@@ -542,6 +550,14 @@ type QueueSummary struct {
 
 	// FailedItems is the count of items that reached failed status.
 	FailedItems int `json:"failed_items"`
+
+	// QuarantineReason is why the daemon refuses every write to this queue,
+	// or empty when the queue is healthy. A quarantined queue keeps its
+	// Status and its counts, so those fields alone cannot show the condition.
+	//
+	// Spec ref: specs/queue-model.md §3.1 QM-001.
+	// Bead ref: hk-ujanf.
+	QuarantineReason string `json:"quarantine_reason,omitempty"`
 }
 
 // QueueListResponse is the response payload for queue-list

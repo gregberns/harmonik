@@ -452,6 +452,32 @@ type Snapshot struct {
 // a hard failure becomes a silent spin.
 var ErrQueueQuarantined = errors.New("queuewiring: queue is quarantined after a failed write")
 
+// The queue read commands reach the quarantine through this port. It is
+// satisfied by a runtime type assertion in queue.HandlerAdapter, so nothing
+// else would catch a rename of the method below.
+var _ queue.QuarantineReader = (*QueueStore)(nil)
+
+// QuarantineReason returns the error that shut the named queue, or nil when the
+// queue still accepts writes. name is normalised here, so callers may pass the
+// operator's spelling.
+//
+// The reason is returned rather than a bare boolean because the operator
+// response depends on it: a full disk and a queue file another process replaced
+// need different repairs. A surface that only says "quarantined" tells an
+// operator to look somewhere, not what to fix.
+//
+// This is a read accessor over state Transact already holds. It adds no state
+// and changes no write behaviour.
+//
+// Spec ref: specs/queue-model.md §3.1 QM-001.
+// Bead ref: hk-ujanf.
+func (s *QueueStore) QuarantineReason(name string) error {
+	name = queue.NormaliseQueueName(name)
+	s.queueMu.RLock()
+	defer s.queueMu.RUnlock()
+	return s.quarantined[name]
+}
+
 // TransactionRequest describes one clone-mutate-persist-install operation.
 type TransactionRequest struct {
 	Snapshot       Snapshot

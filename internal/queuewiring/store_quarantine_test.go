@@ -61,6 +61,58 @@ func TestTransact_FailedWriteQuarantinesTheQueue(t *testing.T) {
 	}
 }
 
+// The quarantine is only useful if something can read it back. QueueStore holds
+// it in memory, so a queue that will never accept another write looks healthy on
+// disk. QuarantineReason is the read surface the queue CLI reports from, and it
+// must answer per queue name — a store-wide "something failed" would mark every
+// healthy queue in the listing.
+//
+// Bead ref: hk-ujanf.
+func TestQuarantineReason_ReportsTheCauseForTheShutQueueOnly(t *testing.T) {
+	projectDir := preconditionProjectDir(t)
+	store := NewQueueStore()
+	store.SetQueueByName("alpha", preconditionQueue(t, "alpha", "hk-shut"))
+	store.SetQueueByName("beta", preconditionQueue(t, "beta", "hk-healthy"))
+
+	if reason := store.QuarantineReason("alpha"); reason != nil {
+		t.Fatalf("QuarantineReason(alpha) = %v before any failure; want nil", reason)
+	}
+
+	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+	if err := os.Chmod(queuesDir, 0o500); err != nil { //nolint:gosec // the test needs a readable but non-writable directory
+		t.Fatalf("chmod queues dir: %v", err)
+	}
+	t.Cleanup(func() {
+		if chmodErr := os.Chmod(queuesDir, 0o700); chmodErr != nil { //nolint:gosec // restoring so t.TempDir cleanup can remove it
+			t.Logf("restore queues dir permissions: %v", chmodErr)
+		}
+	})
+
+	failed := store.Transact(context.Background(), TransactionRequest{
+		Snapshot:      store.Snapshot("alpha"),
+		ProjectDir:    projectDir,
+		OperationKind: queue.OperationReservation,
+		Mutate: func(q *queue.Queue) error {
+			q.Groups[0].Items[0].Status = queue.ItemStatusDispatched
+			return nil
+		},
+	})
+	if failed.Committed() {
+		t.Fatal("the write should have failed against a read-only directory")
+	}
+
+	reason := store.QuarantineReason("alpha")
+	if reason == nil {
+		t.Fatal("QuarantineReason(alpha) = nil after a failed write; the shut queue has no read surface")
+	}
+	if reason.Error() != failed.Err.Error() {
+		t.Errorf("QuarantineReason(alpha) = %q; want the write error %q — a marker with no cause tells an operator nothing to repair", reason, failed.Err)
+	}
+	if other := store.QuarantineReason("beta"); other != nil {
+		t.Errorf("QuarantineReason(beta) = %v; want nil — one shut queue must not mark the healthy ones", other)
+	}
+}
+
 // A replacement refused before any I/O leaves the queue usable. Quarantining
 // here would shut a queue over a malformed request, which is not what QM-001
 // describes and would take the daemon down for a caller's mistake.

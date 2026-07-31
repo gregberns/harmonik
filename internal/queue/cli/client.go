@@ -186,11 +186,44 @@ func renderExit(p *printer) int {
 	return exitSuccess
 }
 
+// printQuarantineBlock writes the quarantine warning for one queue. reason is
+// the daemon's explanation; an empty reason prints nothing, so callers may call
+// it for every queue.
+//
+// The block is deliberately unaligned with the table rows around it, and every
+// line carries the same prefix, so a quarantined queue is visible in a scan
+// down the left edge of a long listing.
+//
+// The wording follows the daemon's own stderr report (internal/daemon/
+// scheduler_reservation.go reportQueueWriteError) on the one point that matters:
+// the condition does not clear by retrying. Text that invites a retry sends the
+// operator back to the same wall.
+//
+// Spec ref: specs/queue-model.md §3.1 QM-001.
+// Bead ref: hk-ujanf.
+func printQuarantineBlock(p *printer, name, reason string) {
+	if reason == "" {
+		return
+	}
+	// Queue.Name is empty in queue.json files that predate the name field, so
+	// the header drops the name rather than print a gap.
+	if name == "" {
+		p.println("!! QUARANTINED — the daemon refuses every write to this queue.")
+	} else {
+		p.printf("!! QUARANTINED  %s — the daemon refuses every write to this queue.\n", name)
+	}
+	p.printf("!!   cause: %s\n", reason)
+	p.println("!!   items in this queue stay pending. They will not run.")
+	p.println("!!   retrying does not clear this.")
+	p.println("!!   check free disk space and the .harmonik/queues directory. Then restart the daemon.")
+}
+
 // renderQueueStatusText prints a human-readable summary of a QueueStatusResponse.
 // The result bytes are the raw JSON from the daemon (resp.Result).
 func renderQueueStatusText(result json.RawMessage, out io.Writer) int {
 	var envelope struct {
 		Queue *struct {
+			Name    string `json:"name"`
 			QueueID string `json:"queue_id"`
 			Status  string `json:"status"`
 			Groups  []struct {
@@ -201,6 +234,7 @@ func renderQueueStatusText(result json.RawMessage, out io.Writer) int {
 				} `json:"items"`
 			} `json:"groups"`
 		} `json:"queue"`
+		QuarantineReason string `json:"quarantine_reason"`
 	}
 	p := newPrinter(out)
 	if err := json.Unmarshal(result, &envelope); err != nil {
@@ -217,6 +251,9 @@ func renderQueueStatusText(result json.RawMessage, out io.Writer) int {
 	q := envelope.Queue
 	p.printf("queue:    %s\n", q.Status)
 	p.printf("queue_id: %s\n", q.QueueID)
+	// Directly under the status line, because it contradicts it: a quarantined
+	// queue still reports "active" (hk-ujanf).
+	printQuarantineBlock(p, q.Name, envelope.QuarantineReason)
 	if len(q.Groups) > 0 {
 		p.printf("groups:   %d\n", len(q.Groups))
 		for gi, g := range q.Groups {

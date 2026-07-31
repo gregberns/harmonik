@@ -1152,10 +1152,29 @@ not: `Config.HandlerBinary` points at a twin and `Config.BrPath` at a wrapper. S
 in-process coverage of construction against a fake agent, and it should stay.
 
 What it never does: **start the daemon as a process, run a real agent, run the supervisor, or cross a
-process boundary.** A defect in the shipped binary, in supervisor revival, in the tmux path, or in
-state that must survive a restart is therefore invisible to it. Note also that
-`scenario_happypath_n1_test.go` pins `WorkflowModeSingle`, a mode selected twice in the entire event
-log. **A live pass does not duplicate this tier. It covers the half the tier cannot reach.**
+process boundary.** A defect in the shipped binary, in supervisor revival, or in state that must
+survive a restart is therefore invisible to it. Note also that `scenario_happypath_n1_test.go` pins
+`WorkflowModeSingle`, a mode selected twice in the entire event log.
+
+**The tmux substrate is the sharpest gap, and the tier says so itself.** Three of the 32 scenario files
+set `Config.Substrate`; the other 29 leave it nil, and `daemon.Config.Substrate`'s own doc says a nil
+substrate falls back to `exec.CommandContext` — no panes. All three that do set one wrap
+`NewTmuxSubstrate` around a **fake adapter**, and
+`scenario_launch_liveness_slotleak_hk40c3y_test.go` records the consequence in a comment: *"the
+fake-substrate path cannot reach `run_completed` (no hook-bridge socket relay → agent_ready_timeout)."*
+`scenario_concurrent_dispatch_vn4_hkukhzu_test.go` is skipped unconditionally for the same reason, and
+its skip text names what is missing: *"agent_ready/outcome arrive over the socket, not stdout… That is
+real tmux + real socket altitude."* So `tmuxsubstrate.go` (3,023 lines), `pasteinject.go` (2,691) and
+the whole hook-bridge relay are untested by this tier **by construction, not by neglect** — and the one
+constraint that stopped it, not touching real tmux on the shared box, no longer applies with the daemon
+down and a scratch clone available.
+
+**Two named tiers that would cover the rest are empty.** `test/crash/crash_stub.go` and
+`test/integration/integration_stub.go` are 7-line build-tag stubs holding **zero test functions**, so
+`check-full`'s `-tags=crash` sub-run tests nothing. Crash, SIGKILL-mid-merge and restart recovery have
+no home today.
+
+**A live pass does not duplicate this tier. It covers the half the tier cannot reach.**
 
 **The apparatus for a real pass is already built and is not being run.** `scripts/scratch-daemon.sh`
 (959 lines) starts a second, fully isolated daemon — its own clone, socket, pidfile, tmux session,

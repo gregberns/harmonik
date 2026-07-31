@@ -449,20 +449,47 @@ because that would wedge every merge. So the item is not stalled. It was conscio
 1. **The gate above it is already red.** `main`'s branch protection requires exactly one check —
    `check (Tier 2)` from `ci.yml` — and that check has failed on every run since 2026-07-17. A second
    required check behind a red first one gates nothing that is not already gated.
-2. **About half the tier skips in CI, and a skip reads as a pass** (`hk-ynohn`). Nothing installs `br`
-   and nothing declares a twin build. The evidence is the clock: `internal/daemon` takes 69 s in CI
-   against 368 s locally, and `TestThroughput_TenBeadsAtMaxFour` fails locally every time yet has never
-   failed in 20 CI runs. **Making a half-skipping tier required makes `main` green on half a tier**,
-   which is worse than leaving it advisory.
-3. **Eight tests fail deterministically.** Per-test dispositions are in §5.2 below. That count needs
-   re-running — `EM015e` has since been deleted with `reviewloop.go` and the branch-guard P0 closed as
-   a stale test, so the live number is lower than eight.
+2. **About half the tier skips in CI, and a skip reads as a pass** (`hk-ynohn`). **Reproduced
+   2026-07-30 by re-running the tier with `br` removed from `PATH`:** skips go from **9 to 39**, and
+   `internal/daemon` drops from **354 s to 54 s** while `test/scenario` drops from **54 s to 2.6 s** —
+   the tier loses 85% and 95% of its execution time and still reports. **Making a half-skipping tier
+   required makes `main` green on half a tier**, which is worse than leaving it advisory.
+
+   ⚠ **Pin the denominator or this number is wrong in both directions.** 39 of the 673 tests that
+   compile under the tag is 6%. 30 of the ~60 that call `skipRealDaemonE2EInShort` — the real-daemon
+   population the tier exists for — is **exactly half**. "Half the tier" is true of the second and
+   false of the first. Quote the population, not the fraction.
+3. **Eight tests fail deterministically.** Per-test dispositions are in §5.2 below. **Re-measured
+   2026-07-30 and the list has moved even though the count has not** — see the correction there before
+   quoting either.
 
 **Where it fits, in order:**
 
-1. **Now, and it is the only part worth doing now: stop the tier skipping.** Install `br` and declare
-   the twin build in the workflow. This is not the gate — it is what makes every later measurement of
-   the gate honest, and it is the one item here whose value does not depend on merging.
+1. **Now, and it is the only part worth doing now: stop the tier skipping.** This is not the gate. It
+   is what makes every later measurement of the gate honest, and it is the one item here whose value
+   does not depend on merging. **Three separate causes, measured 2026-07-30 — "install `br`" is only
+   the first:**
+
+   - **`br` absent — 24 tests.** Three of them say *"CI sets br on PATH"* in their own skip message.
+     Nothing does.
+   - **The twin binary is never built where the tier looks, and these 7 skip LOCALLY too.** Six tests
+     in `t2_scenarios_test.go` want `<root>/twin-fail` and `<root>/twin-hang`, from
+     `test/twins/fail-immediately` and `test/twins/hang`. **No Makefile target, script or workflow
+     builds either, anywhere.** A seventh wants `<root>/harmonik-twin-claude`, which is in
+     `.gitignore` and so can never exist in a fresh checkout. `make test-scenario`'s own comment claims
+     `build-all` compiles it — but `build-twin-claude` is an alias to `build-twin-generic`, which
+     writes `twins/generic-twin` under a different name in a different directory. The Makefile states
+     a precondition it does not satisfy, which is why this reads as solved.
+   - **Two twin-resolution helpers with different search paths in one tier.**
+     `test/scenario/harness_test.go`'s `TestMain` builds its own twins into a temp dir and **swallows
+     the build error**, so that half degrades quietly instead of failing. `scenariotest.TwinBinaryPath`
+     and `workloop_handlerpause_qxtbq_test.go` look on disk instead and cannot succeed in CI.
+     Consolidate on the one that builds what it needs.
+
+   **And seven scenario-tagged tests are orphaned from the tier that names them.** `make test-scenario`
+   runs `./test/scenario/...` and `./internal/daemon/...` only, but `//go:build scenario` files also
+   live in `cmd/harmonik` (4 tests), `internal/sentinel` (2), `internal/keeper` (1) and
+   `internal/runloop` (1). **Two of them fail** when run directly. They are invisible everywhere.
 2. **Then get `check (Tier 2)` green.** It is the required check. Nothing about tier 3 matters while
    tier 2 is red.
 3. **Then close the deterministic failures** (§5.2, `hk-97gcz`), re-counting them first.
@@ -547,11 +574,31 @@ headroom.** That is the shape of the whole family: the assertions encode schedul
 
 **Dispositions, measured 2026-07-29 — all seven are pre-existing; the tier blocks nothing in Phase 3:**
 
-> **⚠ Two rows are closed as of 2026-07-30, so re-count before quoting "eight failures".**
-> `EM015e_NoProgress_ReviewerNotLaunched` is **gone** — `emitNoProgressDetected` has zero hits anywhere
-> and `reviewloop.go` was deleted, which is exactly what its own row predicted. The branch-guard P0 is
-> **closed**, and its row's "false red" verdict was confirmed rather than overturned. The other five
-> test symbols all still exist.
+> **⚠ RE-MEASURED 2026-07-30. The count survived and the list did not — which is the more useful
+> finding.** `go test -tags=scenario -count=1 ./internal/daemon/...` gives **656 pass / 9 skip / 7
+> fail** in 354 s.
+>
+> **Two rows below are closed.** `EM015e_NoProgress_ReviewerNotLaunched` is **gone** —
+> `emitNoProgressDetected` has zero hits anywhere and `reviewloop.go` was deleted, exactly as its row
+> predicted. The branch-guard P0 is **closed**, and its "false red" verdict was confirmed rather than
+> overturned.
+>
+> **Two failures are not on the list at all:** `MultiBead_ConflictSkipsButOthersProceed` (same file and
+> same lost-commit race as `hk-co8g8`, so it is one defect presenting twice, not two) and
+> `Bl2k6_SubstrateKill_LeavesNoOrphanDescendant` (tmux-contended, did not reproduce on a second run).
+>
+> **One row needs its verdict inverted.** `RemoteSubstrate_Localhost_DOT_E2E` is listed as fixed by a
+> one-line `TMPDIR` pin. The pin exists in `check-short` and **not** in `make test-scenario`, so the
+> tier still fails it: macOS `TMPDIR` puts the socket at 130 bytes against the 104-byte `sun_path`
+> limit and the reverse tunnel never comes up. That is a one-line Makefile change nobody made.
+>
+> **`MultiBead_SerializedNCompletion` also prints `serialized N-completion OK: 5 beads closed, 5 files
+> on main` *after* failing** — the third instance of the unconditional-`PASS`-shaped-`t.Logf` problem
+> this section already names.
+>
+> **The lesson, which is why this block is longer than a count.** The list was treated as stable and
+> the count as the thing to re-derive. It is the other way round: the count has been 7–8 throughout
+> while the membership turned over by half. **Re-run the tier; do not re-quote the table.**
 
 | Test | Verdict |
 |---|---|

@@ -305,7 +305,8 @@ type WorkLoopDepsParams struct {
 	// ExportedWorkLoopDeps installs a fresh mutex (mirrors production default).
 	WorktreeCreateMu *sync.Mutex
 
-	// AgentSpawnSem, when non-nil, is the per-worker cold-start spawn semaphore
+	// AgentSpawnSem, when non-nil, is the cold-start spawn semaphore (ONE per
+	// daemon; per-worker only because v1 admits a single worker)
 	// (cap 3) that bounds concurrent remote claude cold-starts (hk-5z1f0). When
 	// nil, ExportedWorkLoopDeps installs a fresh cap-3 channel (production default).
 	AgentSpawnSem chan struct{}
@@ -528,7 +529,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		protectBranches:            p.ProtectBranches,
 		mergeQ:                     mergeQ,
 		worktreeCreateMu:           worktreeCreateMu,
-		agentSpawnSem:              agentSpawnSem,                  // hk-5z1f0: per-worker cold-start spawn semaphore
+		agentSpawnSem:              agentSpawnSem,                  // hk-5z1f0: cold-start spawn semaphore (one per daemon)
 		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
 		emittedEpicsMu:             &sync.Mutex{},
 		workerRegistry:             p.WorkerRegistry, // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)

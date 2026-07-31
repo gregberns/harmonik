@@ -293,6 +293,44 @@ Also carry forward from A3/A2 as pre-work checks (not blockers, but verify early
 
 ---
 
+
+### 6a. Two daemon-wide limits that must become per-target when a second target exists
+
+Added 2026-07-31 from the step-6 resource-lease work. Both are correct today and silently wrong the
+moment this plan succeeds, which is exactly when nobody will be looking at them.
+
+Today the daemon admits ONE worker — `internal/workers.Load` returns `ErrTooManyWorkers` on a second
+entry — so "one for the daemon" and "one per target" are the same number and the drift is
+unobservable. Lifting that cap is this plan's goal.
+
+**`agentSpawnSem` — the cold-start cap (3), in `internal/daemon` `newWorkLoopDeps`.** It bounds how
+many agents may be in their start-up window at once. The resource it protects is the TARGET's, not
+the daemon's: everything inside the window happens on the target box — the tmux new-window, the
+agent's own boot, the hook dial back. The proof is in the guard. A LOCAL cold start costs the daemon
+strictly more, because the agent actually runs there, and it takes no token at all. A cap protecting
+the daemon that exempts its heaviest consumer is not protecting the daemon.
+
+With N targets and one daemon-wide cap of 3, each target gets 3/N and one busy target starves the
+rest. The symptom is `agent_ready_timeout` — the exact failure this cap was added to suppress.
+**Give each target its own cold-start cap, sized with the target, next to whatever expresses its
+concurrency.**
+
+**`worktreeCreateMu` — in the same struct.** The mirror image. It serialises `git worktree add`
+against ONE shared repo on ONE box, because concurrent creates race on HEAD resolution. With two
+targets holding separate repos, a single mutex makes them take turns for no reason. **One lock per
+target.**
+
+**Do not pre-build either as per-worker state in `internal/workers`.** That package's SSH model is
+what this plan replaces, so the work would be thrown away. The constraint belongs to whatever admits
+the second target — which is this plan.
+
+**What NOT to change:** `DefaultRemoteAgentReadyTimeout` (210s) in `internal/runlaunch/deadlines.go`
+survives either shape. It is derived from a worst case of at most 3 concurrent cold starts on one
+box, and that premise holds under every combination of cap-shape and target-count. Only raising the
+cap ABOVE 3 per target invalidates it. Re-derive the deadline then, and not before.
+
+Refs: `hk-r48zr`.
+
 ## 7. Open questions
 
 Resolved here (design calls, defensible from the research + locked decisions):

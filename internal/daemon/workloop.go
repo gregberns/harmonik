@@ -332,6 +332,14 @@ type workLoopDeps struct {
 	//
 	// Production: newWorkLoopDeps always sets this to a non-nil &sync.Mutex{}.
 	// Bead ref: hk-5qp7z.
+	//
+	// SINGLE-WORKER ASSUMPTION (V1): one mutex for the whole daemon, while the
+	// thing it protects — one shared worker repo racing on HEAD/index — is a
+	// property of ONE worker box. With a second execution target this over-
+	// serialises: two targets with separate repos would take turns for no
+	// reason. It needs to become one lock per target, keyed the same way the
+	// cold-start cap will be. Same note on agentSpawnSem, for the mirror-image
+	// reason (it under-serialises rather than over-serialises).
 	worktreeCreateMu *sync.Mutex
 
 	// agentSpawnSem, when non-nil, is a counting semaphore (capacity 3) that
@@ -344,10 +352,28 @@ type workLoopDeps struct {
 	// simultaneous agents (implementer + reviewer per run). The 2nd cold-start
 	// claude spawn — the REVIEW-stage agent — competes for CPU/disk/tunnel
 	// readiness and recurrently trips agent_ready_timeout over the reverse SSH
-	// tunnel. Bounding concurrent cold-starts per worker to 3 keeps each spawn's
-	// warm-up window inside the agent_ready deadline without serialising the
-	// whole run (the semaphore is released as soon as the agent is ready, so it
-	// gates cold-start only, not the run body).
+	// tunnel. Bounding concurrent cold-starts to 3 keeps each spawn's warm-up
+	// window inside the agent_ready deadline without serialising the whole run
+	// (the semaphore is released as soon as the agent is ready, so it gates
+	// cold-start only, not the run body).
+	//
+	// SINGLE-WORKER ASSUMPTION (V1): this is ONE channel for the whole daemon,
+	// created once in newWorkLoopDeps. It reads as per-worker only because
+	// workers.Load rejects a second worker entry (ErrTooManyWorkers), so the
+	// daemon-wide cap and the per-worker cap are the same number today.
+	//
+	// The resource it protects is per-worker, not per-daemon. Everything inside
+	// the window happens on the worker box — the tmux new-window, the agent's
+	// own boot, the hook dial back. The proof is the guard: a LOCAL cold start
+	// costs the daemon strictly more, because the agent runs there, and takes no
+	// token at all. So when more than one execution target becomes possible,
+	// each target needs its own cold-start cap or one busy target will starve
+	// the others. Same note on worktreeCreateMu, for the same reason.
+	//
+	// Do NOT pre-build that as per-worker state in internal/workers: the SSH
+	// remote-worker model is being replaced rather than extended (see
+	// plans/2026-07-21-p3-distributed-execution). The constraint belongs to
+	// whatever admits the second target. Recorded there.
 	//
 	// Remote-only: acquisition is guarded on rbc != nil, mirroring the
 	// reverse-tunnel readiness gate — local runs never construct a tunnel and
@@ -1063,7 +1089,7 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		// return after the drain). A test may inject a pre-started queue via
 		// WithMergeQueue, which runWorkLoop then leaves untouched (hk-yyso7).
 		worktreeCreateMu:           &sync.Mutex{},                  // hk-5qp7z: global worktree-create serialisation for remote runs
-		agentSpawnSem:              make(chan struct{}, 3),         // hk-5z1f0: per-worker cold-start spawn semaphore (cap 3, remote-only)
+		agentSpawnSem:              make(chan struct{}, 3),         // hk-5z1f0: cold-start spawn semaphore (cap 3, remote-only). ONE per daemon; per-worker only because v1 admits one worker — see the take site.
 		cacheReapMu:                &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
 		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:             &sync.Mutex{},
@@ -2144,7 +2170,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// channel). The deliver hook below is what assigns it (hk-trjef).
 	var noChangeTimeoutCh chan struct{}
 
-	// hk-5z1f0: per-worker cold-start spawn semaphore. Acquire immediately before
+	// hk-5z1f0: cold-start spawn semaphore, ONE for the whole daemon. Acquire immediately before
 	// the remote agent Launch so no more than cap (3) claude cold-starts run
 	// concurrently on a single worker — the 2nd (reviewer) cold-start over the
 	// reverse tunnel otherwise trips agent_ready_timeout under 6-concurrent remote

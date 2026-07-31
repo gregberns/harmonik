@@ -39,8 +39,11 @@ const (
 	// SpawnSlot is the substrate's cap on how many agents may be starting at
 	// once. It is given back when the agent reports ready, not at run end.
 	SpawnSlot
-	// ColdStartToken is the daemon-global cap on how many remote runs may be
-	// in their cold-start window at once.
+	// ColdStartToken is the cap on how many remote runs may be in their
+	// cold-start window at once. One channel for the whole daemon today, which
+	// equals a per-worker cap only because the config admits a single worker.
+	// The resource it protects belongs to the worker, so a second execution
+	// target needs a cap of its own.
 	ColdStartToken
 )
 

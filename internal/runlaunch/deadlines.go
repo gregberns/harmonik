@@ -60,7 +60,7 @@ var KillReapTimeout = 10 * time.Second
 // clear reverse-SSH-tunnel readiness while competing with up to 6 concurrent
 // agents; 90s was too tight for that second spawn and recurrently tripped
 // agent_ready_timeout only on the remote worker. 150s covers the reviewer
-// cold-start over the tunnel; a companion per-worker cold-start spawn
+// cold-start over the tunnel; a companion cold-start spawn
 // semaphore (workLoopDeps.agentSpawnSem) bounds how many such spawns overlap.
 //
 // Spec ref: specs/handler-contract.md §4.9 HC-056.

@@ -88,8 +88,9 @@ const WorkerSocketReadyTimeout = 10 * time.Second
 // recorder (mirroring tmux.CommandRunner / tmux.RecordingRunner) to assert the
 // argv without spawning a real ssh. Declared as a package-level var so a test can
 // swap it for the duration of a single test — any test that does so MUST NOT be
-// parallel. internal/daemon/workloop_gate_n5md3_test.go swaps it from the daemon
-// package; that constraint is invisible from here, so do not make it parallel
+// parallel. internal/daemon/tunnel_portalloc_refusal_test.go swaps it from the
+// daemon package, to prove no tunnel is constructed for a run that was already
+// refused; that constraint is invisible from here, so do not make it parallel
 // either.
 var ReverseTunnelRunner = exec.CommandContext
 
@@ -131,7 +132,26 @@ var (
 	reservedTunnelPorts   = make(map[int]bool)
 )
 
-// AllocatePort picks a free TCP port to hand sshd for the worker-side
+// AllocatePort is the seam through which every caller reaches the allocation
+// below. Production holds allocatePort, so the default behaviour is exactly
+// that function; a test swaps it to make allocation FAIL, which is otherwise
+// out of reach — the real allocator fails only when box A cannot hand out a
+// loopback port at all, and no test can arrange that.
+//
+// The failure is worth reaching because of what it costs. A caller that keeps
+// going after a failed alloc spends an ssh round trip and starts an
+// `ssh -N -R 127.0.0.1:0:…` that can never carry traffic, and the readiness
+// gate then fails the run anyway. The refusal therefore belongs at the point
+// of failure, and a test has to be able to put the caller there.
+//
+// Declared as a package-level var for the same reason ReverseTunnelRunner is,
+// and with the same constraint: a test that swaps it MUST NOT be parallel.
+// internal/daemon/tunnel_portalloc_refusal_test.go swaps it from the daemon
+// package. That constraint is invisible from here, so do not make that test
+// parallel either.
+var AllocatePort = allocatePort
+
+// allocatePort picks a free TCP port to hand sshd for the worker-side
 // `-R 127.0.0.1:<port>:…` loopback bind, and RESERVES it (in reservedTunnelPorts)
 // until ReleasePort frees it at tunnel teardown.
 //
@@ -157,7 +177,7 @@ var (
 // the gap before the worker binds it — but box A never binds these ports itself
 // (they are hints for the worker's sshd), so that case is still caught on the
 // worker by ExitOnForwardFailure=yes + the readiness gate.
-func AllocatePort() (int, error) {
+func allocatePort() (int, error) {
 	// Bounded retry: in practice a collision resolves on the first re-Listen,
 	// since the kernel's free-ephemeral pool is large relative to in-flight runs.
 	const maxAttempts = 50

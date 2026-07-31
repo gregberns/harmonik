@@ -1426,21 +1426,47 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// regardless of which selection path set rbc. NFR7: local runs (rbc == nil)
 	// skip this block entirely — byte-identical to prior behavior.
 	if rbc != nil {
+		daemonHookSock := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
+
+		// refuseTunnel reports a fatal reverse-tunnel problem the one way all
+		// three gates below report it: a stderr line, a worker_tunnel_failed
+		// event, and a best-effort bead reopen. Each caller returns immediately
+		// after, so no resource acquired past this point is left held. The three
+		// gates used to carry their own copy of this triple and drifted in the
+		// stage wording; keeping one reporter is what lets a new gate be added
+		// without inventing a fourth spelling.
+		refuseTunnel := func(stage, sockPath string, cause error) {
+			fmt.Fprintf(os.Stderr,
+				"daemon: workloop: reverse-tunnel %s bead %s run %s: %v (reopening, not launching)\n",
+				stage, beadID, runID.String(), cause)
+			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
+				rbc.worker.Name, rbc.worker.Host, sockPath, cause.Error(), emit.Emit)
+			// A TID failure is not actionable: the reopen below is best-effort
+			// either way and runs with the zero TID.
+			reopenTID, _ := handles.TIDGen.Next()                                                               //nolint:errcheck // see comment above
+			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
+				fmt.Sprintf("reverse-tunnel not ready: %v", cause))
+		}
+
 		// Allocate a free TCP port (hint for sshd's worker-side loopback bind)
 		// and form the per-run worker TCP endpoint the hook relay will dial.
+		// A failed alloc is fatal HERE rather than at the readiness gate below:
+		// falling through spent an ssh round trip and started a real
+		// `ssh -N -R 127.0.0.1:0:...` that cannot carry traffic, and the gate
+		// then failed the run anyway. Refusing at the point of failure takes
+		// nothing on a run that is already lost.
 		tunnelPort, portErr := tunnelpkg.AllocatePort()
 		if portErr != nil {
-			// Non-fatal: log and skip the tunnel; the readiness gate below would
-			// fail an empty endpoint, so guard the gate on workerHookSock != "".
-			fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel port alloc bead %s run %s: %v\n",
-				beadID, runID.String(), portErr)
-		} else {
-			rbc.workerHookSock = tunnelpkg.WorkerTCPEndpoint(tunnelPort)
-			// hk-cnp17: free the reserved port when this run ends, so a later
-			// run may reuse it (the reservation prevents two concurrent runs
-			// from being handed the same worker-side hint port).
-			defer tunnelpkg.ReleasePort(tunnelPort)
+			refuseTunnel("port alloc", daemonHookSock, portErr)
+			// succeeded is never assigned before this point, so the explicit
+			// false is byte-equivalent to a naked return (nakedret).
+			return false
 		}
+		rbc.workerHookSock = tunnelpkg.WorkerTCPEndpoint(tunnelPort)
+		// hk-cnp17: free the reserved port when this run ends, so a later
+		// run may reuse it (the reservation prevents two concurrent runs
+		// from being handed the same worker-side hint port).
+		defer tunnelpkg.ReleasePort(tunnelPort)
 
 		if mkErr := tunnelpkg.EnsureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
 			fmt.Fprintf(os.Stderr,
@@ -1448,7 +1474,6 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				beadID, runID.String(), mkErr)
 		}
 
-		daemonHookSock := filepath.Join(env.ProjectDir, ".harmonik", "daemon.sock")
 		// This check also runs in the run plan, which refuses BEFORE the port and
 		// the ssh round trip above. The plan can only cover a run whose worker was
 		// pre-selected. A run that got its worker from the fallback selection was
@@ -1465,14 +1490,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// doomed tunnel, exactly like a readiness-gate failure: no Launch, reopen
 		// the bead.
 		if lenErr := lifecycle.ValidateSocketPathLength(daemonHookSock); lenErr != nil {
-			fmt.Fprintf(os.Stderr,
-				"daemon: workloop: reverse-tunnel socket-path bead %s run %s: %v (reopening, not launching)\n",
-				beadID, runID.String(), lenErr)
-			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
-				rbc.worker.Name, rbc.worker.Host, daemonHookSock, lenErr.Error(), emit.Emit)
-			reopenTID, _ := handles.TIDGen.Next()
-			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
-				fmt.Sprintf("reverse-tunnel not ready: %v", lenErr))
+			refuseTunnel("socket-path", daemonHookSock, lenErr)
 			return
 		}
 		// Mirror the SSHRunner host/opts argv pattern (runner.go SSHRunner.Command):
@@ -1502,28 +1520,22 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 		// gap #7 bead 3: tunnel readiness gate. The worker-side implementer
 		// agent can fire its first agent_ready hook BEFORE the `ssh -N -R`
-		// forward above is actually live; the hook relay retries only on
-		// daemon_not_ready, NOT on a dial failure, so launching the agent
-		// before the forward is live yields a silent bridge_dial_failed →
-		// agent_ready_timeout. Block until the worker-side per-run TCP listener
-		// is confirmed CONNECTABLE (nc -z over the SSHRunner, as the worker
-		// user) before any Launch — an existence-only check would false-green a
-		// non-connectable endpoint (hk-ege6). On timeout/failure (including a
-		// failed port alloc that left workerHookSock empty), do NOT launch:
-		// emit worker_tunnel_failed, reopen
-		// the bead for re-dispatch, and return — the deferred tunnel teardown
-		// (above) and ReleaseSlot run on the way out, so the `ssh -N` process
-		// does not leak. The gate runs ONLY here, inside the remote branch
-		// (NFR7: local runs never construct a tunnel and never reach it).
+		// forward above is actually live. The hook relay does retry a refused
+		// dial on a TCP endpoint, on a backoff inside a bounded window, so a
+		// forward that comes up late is survivable — but a forward that never
+		// comes up burns that whole window and gives up, which reads as a
+		// silent bridge_daemon_startup_window_exceeded → agent_ready_timeout.
+		// This gate is the authority on that case. Block until the
+		// worker-side per-run TCP listener is confirmed CONNECTABLE (nc -z over
+		// the SSHRunner, as the worker user) before any Launch — an
+		// existence-only check would false-green a non-connectable endpoint
+		// (hk-ege6). On timeout or failure, do NOT launch: refuse and return —
+		// the deferred tunnel teardown (above) and ReleaseSlot run on the way
+		// out, so the `ssh -N` process does not leak. The gate runs ONLY here,
+		// inside the remote branch (NFR7: local runs never construct a tunnel
+		// and never reach it).
 		if waitErr := tunnelpkg.WaitWorkerSocketLive(ctx, rbc.sshRunner, rbc.workerHookSock, tunnelpkg.WorkerSocketReadyTimeout); waitErr != nil {
-			fmt.Fprintf(os.Stderr,
-				"daemon: workloop: reverse-tunnel readiness gate bead %s run %s: %v (reopening, not launching)\n",
-				beadID, runID.String(), waitErr)
-			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
-				rbc.worker.Name, rbc.worker.Host, rbc.workerHookSock, waitErr.Error(), emit.Emit)
-			reopenTID, _ := handles.TIDGen.Next()
-			_ = handles.BrAdapter.ReopenBead(ctx, env.IntentLogDir, env.BrTimeoutCfg, runID, reopenTID, beadID, //nolint:errcheck // best-effort reopen; on failure the bead stays in_progress for manual reopen (hk-s20z)
-				fmt.Sprintf("reverse-tunnel not ready: %v", waitErr))
+			refuseTunnel("readiness gate", rbc.workerHookSock, waitErr)
 			return
 		}
 	}

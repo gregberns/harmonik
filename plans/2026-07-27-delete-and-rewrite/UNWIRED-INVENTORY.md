@@ -24,18 +24,29 @@ on-disk `events.jsonl` (~250k events) and `session-data.jsonl` (449 records) whe
 
 ## Baseline measurements (independently computed, whole-repo)
 
-| Measure | Value |
-|---|---|
-| Production Go LOC | 214,511 |
-| Test Go LOC | 300,627 (1.40x production) |
-| Go packages | 113 |
-| Packages import-reachable from any `main` | 67 |
-| Packages NOT import-reachable from any `main` | 46 |
-| Prod LOC in never-imported real-feature packages | 6,056 (guarded by 8,543 test LOC) |
-| Exported symbols with NO cross-package production reference | 759 / 3,304 (**23.0%**) |
-| Declared `EventType` constants not live outside the registry | 41 / 182 (**22.5%**) |
-| `projectconfig` YAML keys with no effective reader | ~20 / 122 (**~16%**) |
-| Production files named for a single bead ID | 187 / 864 (**22%**) |
+**Re-measured 2026-07-30.** This audit is pinned to `bba60dd37`. That commit is an ancestor of the
+current tip, and the tree has moved a long way since — `git rev-list --count bba60dd37..HEAD` gives
+the distance. The package count fell because `3cec5afd7` retired review-loop mode and deleted
+`internal/runloop/reviewcycle/` and `internal/runloop/continuity/` with it.
+
+Each row now carries the command that produces it. Re-run the command rather than trusting the
+number.
+
+| Measure | Value @ HEAD | as audited | Command |
+|---|---|---|---|
+| Production Go LOC | **214,117** | 214,511 | `find . -name '*.go' -not -name '*_test.go' \| xargs cat \| wc -l` |
+| Test Go LOC | **307,741** (1.44x production) | 300,627 (1.40x) | same, with `-name '*_test.go'` |
+| Go packages | **102** | 113 | `go list ./... \| wc -l` |
+| Packages import-reachable from any `main` | **67** | 67 | `go list -deps ./cmd/... \| grep '^github.com/gregberns/harmonik' \| sort -u \| wc -l` |
+| Packages NOT import-reachable from any `main` | **35** | 46 | the two rows above, subtracted |
+| Prod LOC in never-imported real-feature packages | 6,056 (guarded by 8,543 test LOC) | — | **NOT re-measured.** Treat as unverified. |
+| Exported symbols with NO cross-package production reference | 759 / 3,304 (**23.0%**) | — | **NOT re-measured.** Treat as unverified. |
+| Declared `EventType` constants not live outside the registry | 41 / 182 (**22.5%**) | — | **NOT re-measured.** Treat as unverified. |
+| `projectconfig` YAML keys with no effective reader | ~20 / 122 (**~16%**) | — | **NOT re-measured.** Treat as unverified. |
+| Production files named for a single bead ID | 187 / 864 (**22%**) | — | **NOT re-measured.** Treat as unverified. |
+
+The four "not re-measured" rows are named as unverified on purpose. A number nobody can reproduce is
+worse than no number, because it reads as evidence.
 
 ---
 
@@ -43,7 +54,7 @@ on-disk `events.jsonl` (~250k events) and `session-data.jsonl` (449 records) whe
 
 | # | Feature (what an operator/spec-reader thinks they have) | Symbol | What is missing | Evidence it is not live |
 |---|---|---|---|---|
-| 1 | **Failing eval runs are not merged.** `eval-bead.dot` declares `close-pass` and `close-fail`; a failed grader closes without landing. | `dotTerminalNodeIsSuccess`, `internal/daemon/dot_cascade_helpers.go:716` | Terminal disposition is a single-literal denylist `terminalID != "close-needs-attention"`, not a lookup of the graph's declared terminals. | Verified directly. `close-fail` (`eval-bead.dot:29`), `record-fail`, `plan-needs-attention`, `gate_fail` all evaluate **true** → `dot_cascade_core.go:1016` → `workloop.go:4183` merges + closes. `moderesolve.go:186` routes `codename:eval` beads here; **55 such beads in `.beads/issues.jsonl`**. |
+| 1 | **Failing eval runs are not merged.** `eval-bead.dot` declares `close-pass` and `close-fail`; a failed grader closes without landing. | `dotTerminalNodeIsSuccess`, `internal/daemon/dot_cascade_helpers.go:716` | Terminal disposition is a single-literal denylist `terminalID != "close-needs-attention"`, not a lookup of the graph's declared terminals. | Verified directly. `close-fail` (`eval-bead.dot:29`), `record-fail`, `plan-needs-attention`, `gate_fail` all evaluate **true** → `dot_cascade_core.go:1016` → `workloop.go:4183` merges + closes. `internal/daemon/moderesolve.go` routes `codename:eval` beads here. **Count corrected 2026-07-30: 15 beads carry that label, not 55, and all 15 are closed.** The routing is an exact-match on the label, and the code comment says so ("exact-match, not prefix"). The 55 swept in `codename:eval-program` (30), `codename:evalvol-remote` (12) and `codename:eval-harness` (5), which this path does not route. The defect is real; the live exposure is not. |
 | 2 | **Policy, roles, gates, guards, budgets and hooks are enforced** — control-points.md line 1158: *"No requirement is deferred."* | `core.NoOpPolicyEngine` at `cmd/harmonik/main.go:961`; `ParsePolicyDocument`, `NewS02Registrar` | The engine is constructed then **discarded on the next line** (`_ = policyEngine`). `Evaluate` returns `{Permitted: true}` unconditionally; `Registry()` returns an empty map. | `ParsePolicyDocument` has **zero references repo-wide, including tests**. `NewS02Registrar` zero callers. Only `core.PolicyDocument` construction sites are 3 literals in `workflow/loader_test.go`. `gate_allowed/denied/escalated`, `guard_failed/reordered`, `control_points_registered` never emitted. |
 | 3 | **The S05 hook system delivers side-effects at-least-once (at-most-once for non-idempotent).** CP-012..CP-017, CP-040, CP-042. | `internal/hooksystem` (763 prod / 2,785 test LOC) | Whole package. Also duplicated, equally uncalled, in `core/cp017_hook_cognition_s05.go`. | **Zero non-test importers** (verified). No delivery-receipt store exists (`rg 'deliveryReceipt'` → 0 non-test). `fireMechanismHook` emits and stops: `TODO(deferred): apply the side effect`. Live `events.jsonl`: **0** `hook_fired` / `hook_failed` across ~250k events. |
 | 4 | **Budget and spend ceilings deny a dispatch that would exceed the limit** (ON-045/047/048, CP-022). | `CheckBudgetAtDispatch`, `TightestBudget`, `CheckWallClockOuterBound`, `newBudgetCounterState` | Any dispatch-time budget consultation. `budget_ref` is parsed into the AST, non-empty-checked, and dropped. | All zero callers outside `internal/core`; the four `hka8bg*` files have zero tests too. What runs instead: a per-day bytes/max-runs proxy (`spendmeter_hkk3f8g.go`) + a review-retry counter. `budget_warning` has no producer — first signal is the hard stop. |

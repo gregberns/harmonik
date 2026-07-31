@@ -12,53 +12,98 @@ someone fixing a thing that is about to be deleted.
 
 Found 2026-07-29 unless noted.
 
+**Staleness sweep, 2026-07-30.** Every checkable claim in this file was re-run against the tree at
+`15bfdc1544370003a8bd619b61a380f2b034c3e3`. Corrections are inline and dated, and each says what
+changed rather than deleting the old reading. Two things are worth knowing before you read on.
+
+- **The launch-path collapse LANDED on 2026-07-29.** Seven entries that were filed as live defects
+  "eliminated by planned work" are now fixed in the tree. Their beads are still open. Read that section
+  as history, not as a to-do list.
+- **A bead's open state is not evidence.** Five beads in this file are open against code that is
+  already fixed (`hk-z4cow`, `hk-q15hi`, `hk-5sebh`, `hk-dqmw2`, `hk-j52we`), and one that this file
+  said still needed closing has since been closed (`hk-zobns`). Check the code, not the ledger.
+
+Re-confirmed as STILL TRUE on 2026-07-30, with no change needed: the stale-blocker sweep that closes on
+a bare commit-message match, `GenerateSandboxProfile`'s detached doc comment, the `workloopPollInterval`
+comment that describes only one of three wait shapes, the bare `"blocked"` substring in the
+dependency-blocked detector, the two `"sentinel"` constants in different packages, the `handler_capabilities`
+decoder mismatch, the discarded `ErrRemoteTransport` in `runAutoStatusInspection`, the Pi profile that
+reaches only single mode, `useIndepSession` assigned only in the single-mode tail, the two freeze gates
+with an optional declaration keyword, `make check-fast` skipping its own test step on a clean tree, the
+format check reporting success when its tools are absent, and the two spec clauses that still mandate a
+bare `Refs:` grep as a completion test.
+
 ---
 
-## Eliminated by planned work — do not fix these directly
+## RESOLVED by the launch-path collapse — verified 2026-07-30
 
-> **Count correction, 2026-07-29.** These two were measured when there were **five** agent-launch sites.
-> Deleting `reviewloop.go` removed two of them, so the live count is **three**: the single-mode tail in
-> `workloop.go`, the graph-node path in `dot_cascade_core.go`, and the graph-gate path in `dot_gate.go`.
-> The defects are unchanged in kind — the *coverage fractions* below are now 1-of-3, not 1-of-5.
+> **Status change, 2026-07-30.** Every item in this section is now FIXED. The launch-path collapse
+> landed on 2026-07-29 across seven commits, from `6077a24dc` (collapse plus the cognition gate) through
+> `30b5cf02c` (config as the only sandbox switch). `internal/daemon/agentlaunch.go` `runAgentLaunch` is
+> now the single agent-launch path. Its three callers — `internal/daemon/workloop.go` `beadRunOne`,
+> `internal/daemon/dot_cascade_core.go` and `internal/daemon/dot_gate.go` — build the spec and then hand
+> it to that one function. The kept text below is the original filing, because the reasoning is the
+> reusable part.
+>
+> **Earlier count correction, 2026-07-29.** These two were measured when there were **five**
+> agent-launch sites. Deleting `reviewloop.go` removed two of them, which made the live count **three**.
+> The collapse then made it one.
+>
+> Both beads are still OPEN in the ledger as of 2026-07-30 (`hk-z4cow`, `hk-q15hi`). The code is fixed
+> and the ledger has not caught up. Do not read the open state as live work.
 
-| What is wrong | When it goes away | Bead |
+| What was wrong | Resolution | Bead |
 |---|---|---|
-| **The credential guard covers 1 of 3 dispatch sites, and not the default one.** `d2RemoteAPIKeyRefusal` runs only on the single-mode path. DOT is the default and carries essentially all traffic, so the 2026-05-30 credential-leak gate protects the path that has run twice ever and not the path everything uses. The conformance test repaired 2026-07-28 guards the guard's *shape*, not its *coverage* — which is why nothing caught this. | Launch-path collapse (§Next step 4) — by construction, since one launch path cannot drift from itself | `hk-z4cow` |
-| **Launch-failure classification is computed by every site and consumed by none.** `classifyLaunchFailure` maps a launch error onto structural event classes; `dispatchSegmentRun.emit` switches only on two other event types and drops both structural classes into `default:`. Sites then hand-roll the same check themselves, and at least one emits nothing. The purest instance of the 1-of-N pattern in the tree. | Launch-path collapse (§Next step 4) | `hk-q15hi` |
+| **The credential guard covered 1 of 3 dispatch sites, and not the default one.** `d2RemoteAPIKeyRefusal` ran only on the single-mode path. DOT is the default and carries essentially all traffic, so the 2026-05-30 credential-leak gate protected the path that has run twice ever and not the path everything uses. The conformance test repaired 2026-07-28 guarded the guard's *shape*, not its *coverage* — which is why nothing caught this. | **FIXED by the collapse.** `runAgentLaunch` calls `d2RemoteAPIKeyRefusal` once, on the final spawn environment, ahead of the only launch. The conformance test in `internal/daemon/conformance_m4c7_test.go` was re-anchored on the collapsed shape and passes. | `hk-z4cow` |
+| **Launch-failure classification was computed by every site and consumed by none.** `classifyLaunchFailure` maps a launch error onto structural event classes. `dispatchSegmentRun.emit` still switches on two other event types and drops both structural classes into `default:`. Sites then hand-rolled the same check themselves, and at least one emitted nothing. | **FIXED by the collapse.** There is now one production `OnLaunchFailed` hook, in `runAgentLaunch`, and it emits both structural diagnostics. `classifyLaunchFailure` still fills the `EvLaunchFailed` reason, so the classifier and the hook duplicate one test between them — that is a tidy-up, not a coverage hole. | `hk-q15hi` |
 
-**Five more found 2026-07-29 while mapping the three sites, all eliminated by the same collapse.** Recording
-them because each is a live production defect *today*, and because they are the direct evidence for why the
-collapse is worth doing — every one is a guard that exists on one path and is simply absent on another,
-with the compiler silent throughout. None is being fixed on its own.
+**Five more found 2026-07-29 while mapping the three sites. All five are FIXED by the same collapse,
+confirmed 2026-07-30.** Each one is a guard that existed on one path and was simply absent on another,
+with the compiler silent throughout. `agentlaunch.go` carries a `NORMALIZED (was: …)` comment beside
+each fix, so the old behaviour is still readable at the seam.
 
-- **A cognition gate's agent-ready signal carries no run id**, so the stale-run watcher skips it, the
-  "never spawned" flag never flips, and the reaper stays armed for the whole run. The other two paths were
-  fixed for exactly this; the gate was missed by that sweep.
-- **A gate launch that fails reports no reason.** The gate sets both classifier errors, so the machine
-  knows whether the spawn pool was saturated or the terminal-window request hung — and then emits neither.
-  The operator sees a failed launch with no cause.
-- **Single-mode runs never disarm the never-spawned reaper.** Only the graph-node path arms the proof. A
-  codex or pi run in single mode is therefore killed around the thirty-minute mark while perfectly healthy
-  — the same failure already diagnosed and fixed once for the graph path, never propagated.
-- **The agent-ready-timeout event reports the wrong number on remote runs.** All three sites pass the
-  *local* configured timeout to a parameter that means the *effective* one, so a remote run reports a bound
-  shorter than the one that actually fired.
-- **Two of the three paths emit that timeout on a cancellable context**, which is precisely the context the
-  reaper has already cancelled by the time the emission runs. The third deliberately uses a detached one.
+- **A cognition gate's agent-ready signal carried no run id**, so the stale-run watcher skipped it, the
+  "never spawned" flag never flipped, and the reaper stayed armed for the whole run. FIXED: the shared
+  agent-ready callback emits through `EmitWithRunID` with a full `core.AgentReadyPayload`.
+- **A gate launch that failed reported no reason.** The gate set both classifier errors and then emitted
+  neither, so the operator saw a failed launch with no cause. FIXED: the shared `OnLaunchFailed` emits
+  `EmitSpawnCapBlocked` or `EmitTmuxNewWindowTimeout` on every path.
+- **Single-mode runs never disarmed the never-spawned reaper.** Only the graph-node path armed the
+  proof, so a codex or pi run in single mode was killed around the thirty-minute mark while healthy.
+  FIXED: `newCapturedSpawnProof` is armed unconditionally in the shared path.
+- **The agent-ready-timeout event reported the wrong number on remote runs.** All three sites passed the
+  *local* configured timeout to a parameter that means the *effective* one. FIXED: `runAgentLaunch`
+  resolves `EffectiveAgentReadyTimeout` once and reports the same value it arms.
+- **Two of the three paths emitted that timeout on a cancellable context**, which is the context the
+  reaper has already cancelled by the time the emission runs. FIXED: the shared `EmitReadyTimeout` uses
+  `context.Background()`.
+
+**Not fixed by the collapse, and still live:** the Pi provider profile still reaches only the
+single-mode launch context. See the `hk-yo9g6` row below.
 
 ## RESOLVED by the review-loop retirement — verified 2026-07-29 on `e46658ed5`
 
 Both were cases where `runReviewLoop` was the **sole** non-test home of a behaviour, so deleting the file
 would have removed it from the product entirely — and neither would have failed to compile. Third
 instance of the pattern that already cost this program the crew idle-reap tests and the D2 conformance
-test. Both are now closed out; kept here because the *reasoning* is the reusable part.
+test. Both are fixed in the code; kept here because the *reasoning* is the reusable part.
+
+**Ledger correction, 2026-07-30.** An earlier version of this line said "Both are now closed out". That
+is false. `hk-5sebh` and `hk-dqmw2` are both still OPEN in the bead ledger. The code changes landed; the
+beads did not follow. Read the open state as ledger lag, not as live work.
 
 | What was wrong | Resolution | Bead |
 |---|---|---|
-| **Crash-recovery resume worked only in review-loop mode.** `persistClaudeSessionID` was review-loop-only; single-mode and DOT both captured a Claude session id and dropped it. | **Consciously retired, with evidence** — the durable write had no reader anywhere (nothing reads `context.json` back, nothing consumes the persisted event, EM-031 recovery reads branch-tip trailers instead), and the resume that *did* work read an in-memory field, not the persisted copy. So the machinery was deleted rather than ported. No production symbol survives; only comments reference it. | `hk-5sebh` |
+| **Crash-recovery resume worked only in review-loop mode.** `persistClaudeSessionID` was review-loop-only; single-mode and DOT both captured a Claude session id and dropped it. | **Consciously retired, with evidence** — the durable write had no reader anywhere (nothing reads `context.json` back, nothing consumes the persisted event, EM-031 recovery reads branch-tip trailers instead), and the resume that *did* work read an in-memory field, not the persisted copy. So the machinery was deleted rather than ported. No production symbol survives; only comments reference it. Re-checked 2026-07-30: `internal/daemon/sessioncontext_chb023.go` is gone and `persistClaudeSessionID` has no reference in any `.go` file. Note that `specs/execution-model.md` still describes the symbol as live under EM-012, so the spec text lags the tree. | `hk-5sebh` |
 | **The default mode treated every merge failure as terminal.** `Retryable: runmerge.IsRetryableReason` was passed to the terminal spine only by the review-loop, and a DOT failure never charged the retry budget, so the close-with-needs-attention ladder could not fire on the default mode. | **Ported to DOT.** Both now ride the DOT arm of the terminal spine in `beadRunOne` — `Retryable: runmerge.IsRetryableReason` and the `Budget.ChargeReviewLoopFailure` ladder. Single-mode still carries neither, which is acceptable only because single mode is scheduled for deletion; if that sequencing changes, this reopens. | `hk-dqmw2` |
 
 ## RESOLVED by the sandbox-gate consolidation — 2026-07-29
+
+**Ledger note, 2026-07-30.** `hk-j52we` is still OPEN in the bead ledger. The code landed on 2026-07-29
+at `30b5cf02c`. The open state is ledger lag, not live work. `sandboxSpawnForRun` is confirmed as the
+one gate, in `internal/daemon/sandboxgate.go`, asked once per launch from `runAgentLaunch`. UNVERIFIED
+in this pass: the live config values quoted in the row below (backend `srt`, harnesses `[pi]`). They
+were a dated measurement and this pass could not read the project config file.
 
 | What was wrong | Resolution | Bead |
 |---|---|---|
@@ -72,14 +117,14 @@ test. Both are now closed out; kept here because the *reasoning* is the reusable
 | **A wave-group queue stalls for 5 minutes** whenever its lowest-indexed pending item is claimed by a sibling queue, while its other items sit ready. Self-heals, so it presents as "the queue was slow." Reaches production. Detail below. | Missing fallback, not a tuning problem | `hk-nown4` |
 | **The registered bus decoder for `handler_capabilities` cannot decode what production emits** — wrong field key and `[]string` vs `[]int`. The wire path works (a different decoder agrees); it is the registered core payload type that is wrong, which breaks strict-decode replay verification. | Independent | `hk-b882r` |
 | **A flapping SSH makes the remote C2 gate pass.** `runAutoStatusInspection` discards `ErrRemoteTransport`, the sentinel that exists specifically to distinguish "SSH failed, inconclusive" from "confirmed absent". The sibling reader in the same package explicitly retries on it. On the **kept** graph path — survives all Phase 3 deletions. Was the only genuine bug among 152 delta-lint findings. | Independent fix | `hk-sbd4l` |
-| **Structural protocol mismatch on the 2nd and 3rd dispatch.** `TestScenario_ConcurrentMultiQueue_N2_HappyPath` fails 4/4 with `error_category=structural / sub_reason=protocol_mismatch` on a deterministic dispatch ordinal — not load. It sits on the known-flake allowlist, wrongly. | Second confirmed case of the allowlist absorbing a real defect | `hk-t2d7n` |
-| **Non-single-mode runs cannot be adopted after a daemon restart.** `useIndepSession` is declared before the mode switch but assigned only in the single-mode tail, so the shared worktree-cleanup defer's guard can only be false on that one path. Review-loop and DOT runs lose their worktree on shutdown. | Needs the terminal spine collapsed — a *second* step after the launch-path collapse, not the same one | `hk-mh3qy` |
-| **The Pi provider profile never reaches graph nodes or cognition gates.** The single-mode launch context carries the provider, key-env, key-file, base-URL and API fields resolved from the Pi profile; the graph-node and gate launch contexts set none of them. A Pi-harness node under the default mode is launched without its profile. | Found while mapping the launch sites. **Not** fixed by the launch-path collapse — spec construction stays at the call site by design, so this needs its own change | `hk-yo9g6` |
-| **An entire tier of test failures is invisible.** `go test -tags scenario ./internal/daemon/` yields eight failures where the untagged run yields one. Root cause established: no assessment ever ran the tagged tier at all — the recipes only `go vet`ed it and the CI workflow carried `continue-on-error: true`. Full per-test disposition in `NEXT_STEPS.md` §5.2. | **The reporting half is FIXED 2026-07-29** — the flag is removed, so the tier is red and visible. §5.2's hardening remains, and half the tier still skips in CI (`hk-ynohn`) | `hk-97gcz` |
-| **Two freeze gates match call sites, not declarations.** `runloop-freeze-gate.sh` and `queuewiring-freeze-gate.sh` make the `func`/`type`/`const` keyword optional in their declaration regex, so a bare call to a watched symbol reads as a declaration. Measured: a first draft of the new scheduler gate copied that pattern and raised **six false failures against a correct tree**. The two siblings have not fired only because nothing yet calls their symbols bare at line start. | A gate that cries wolf gets disabled, so this is worse than it looks. Fix: require the keyword at column 0, plus a second scan for the grouped `const (` / `type (` form. `workloop-scheduler-freeze-gate.sh` does both and is the model | `hk-freeze-gate-callsite-regex-uemrd` |
+| **`TestScenario_ConcurrentMultiQueue_N2_HappyPath` is red, and the failure signature has changed.** It was filed as `error_category=structural / sub_reason=protocol_mismatch` on a deterministic dispatch ordinal — not load. **Re-measured 2026-07-30: still red, but the mismatch is gone.** The test now times out at `MustCompleteWithin` after 60 s with two `run_started` events and no `protocol_mismatch` anywhere in the event log. So the recorded root cause no longer matches the observed failure and must be re-derived. It is listed as a known flake in `plans/2026-07-13-code-revamp/RT12-acceptance-evidence.md` "Bucket A", wrongly — that list is a document, not a mechanical gate. | Second confirmed case of a known-flake list absorbing a real defect. The failure shape needs a fresh diagnosis | `hk-t2d7n` |
+| **Non-single-mode runs cannot be adopted after a daemon restart.** `useIndepSession` is declared before the mode switch in `internal/daemon/workloop.go` `beadRunOne` but assigned only in the single-mode tail, so the shared worktree-cleanup defer's guard can only be false on that one path. DOT runs lose their worktree on shutdown. Re-checked 2026-07-30: still true. The entry used to read "Review-loop and DOT runs" — review-loop is deleted, so only DOT is left. | Needs the terminal spine collapsed — a *second* step after the launch-path collapse, which landed 2026-07-29 and did not touch this | `hk-mh3qy` |
+| **The Pi provider profile never reaches graph nodes or cognition gates.** The single-mode launch context carries the provider, key-env, key-file, base-URL and API fields resolved from the Pi profile; the graph-node and gate launch contexts set none of them. A Pi-harness node under the default mode is launched without its profile. | Found while mapping the launch sites. **Not** fixed by the launch-path collapse — spec construction stays at the call site by design, so this needs its own change. Re-checked 2026-07-30 after the collapse landed: still true. `workloop.go` sets `Provider`, `APIKeyEnv`, `APIKeyFile` and `BaseURL` from the resolved profile; `dot_cascade_core.go` and `dot_gate.go` set none of them | `hk-yo9g6` |
+| **An entire tier of test failures is invisible.** `go test -tags scenario ./internal/daemon/` yielded eight failures where the untagged run yielded one. UNVERIFIED as of 2026-07-30: the eight-versus-one count was not re-measured, because a whole-package daemon run leaks daemon processes and clears the shared build cache. Treat the count as a dated reading. Root cause established: no assessment ever ran the tagged tier at all — the recipes only `go vet`ed it and the CI workflow carried `continue-on-error: true`. Full per-test disposition in `NEXT_STEPS.md` §5.2. | **The reporting half is FIXED 2026-07-29** — the flag is removed, so the tier is red and visible. §5.2's hardening remains, and half the tier still skips in CI (`hk-ynohn`) | `hk-97gcz` |
+| **Two freeze gates match call sites, not declarations.** `scripts/runloop-freeze-gate.sh` and `scripts/queuewiring-freeze-gate.sh` make the declaration keyword optional in their regex, so a bare call to a watched symbol reads as a declaration. Re-checked 2026-07-30: still true in both. `queuewiring` makes all four of `func`/`var`/`const`/`type` optional in its one scan. `runloop` makes `type`/`var`/`const` optional in its type scan; its separate function scan already requires `func`, so only the type scan is exposed. Measured: a first draft of the new scheduler gate copied that pattern and raised **six false failures against a correct tree**. The two siblings have not fired only because nothing yet calls their symbols bare at line start. | A gate that cries wolf gets disabled, so this is worse than it looks. Fix: require the keyword at column 0, plus a second scan for the grouped `const (` / `type (` form. `workloop-scheduler-freeze-gate.sh` does both and is the model | `hk-freeze-gate-callsite-regex-uemrd` |
 | **A reporting flag hid 20 straight real failures on every REST surface.** `continue-on-error` was documented in two files as masking only the *run* conclusion, leaving the step conclusion honest — and the nightly ops-monitor probe was built on that. False: run, step, and check-runs conclusions all read `success` after an exit 2. Only the annotations API told the truth, so the alert could never fire. | **FIXED 2026-07-29.** Flag removed, probe works unchanged, and the false comments are corrected in `scenario.yml`, `nightly-race.yml` and `ops-monitor-check.sh` | `hk-21v7c` |
-| **The release-ready prompt ignores its own 30-minute cooldown.** `ops_monitor_check_test.sh` test 27e seeds the signal as alerted 6 minutes ago and expects suppression. It is sent anyway. Root cause **not** established — either it is matched against the 5-minute critical cooldown instead of the 30-minute one, or the cooldown key stops matching because the seeded key embeds the commit count. Two red assertions that were stepped over and untracked until 2026-07-29, which is the same shape as the masked tier above. | Pre-existing, confirmed by running the suite with all local changes stashed (313 passed, 2 failed, these two) | `hk-release-due-cooldown-chujb` |
-| **`main`'s only required status check has failed on every run since 2026-07-17.** Branch protection requires exactly one check, `check (Tier 2)` from `ci.yml`. Five consecutive failures, latest 2026-07-22. This was invisible because the ops-monitor health probe read *the newest run of any workflow* on main — which is the Scenario tier reporting a masked success every day. | Surfaced 2026-07-29 by filtering that probe to the required check. `release_due` is gated on a green CI status, so it now correctly refuses to fire — do **not** widen the probe again to make it green | `hk-main-required-check-red-i14hq` |
+| **The release-ready prompt ignores its own 30-minute cooldown.** `test/exploratory/ops_monitor_check_test.sh` test 27e seeds the signal as alerted 6 minutes ago and expects suppression. It is sent anyway. Root cause **not** established — either it is matched against the 5-minute critical cooldown instead of the 30-minute one, or the cooldown key stops matching because the seeded key embeds the commit count. Two red assertions that were stepped over and untracked until 2026-07-29, which is the same shape as the masked tier above. | Pre-existing. Re-run 2026-07-30: **314 passed, 2 failed**, and the two failures are still exactly 27e's. The earlier reading of 313 passed was correct when written and has since gained one assertion | `hk-release-due-cooldown-chujb` |
+| **`main`'s only required status check has failed on every run since 2026-07-17.** Branch protection requires exactly one check, `check (Tier 2)` from `ci.yml`. Five consecutive failures, latest 2026-07-22. This was invisible because the ops-monitor health probe read *the newest run of any workflow* on main — which is the Scenario tier reporting a masked success every day. | Surfaced 2026-07-29 by filtering that probe to the required check. `release_due` is gated on a green CI status, so it now correctly refuses to fire — do **not** widen the probe again to make it green. Re-measured 2026-07-30: branch protection still requires exactly `check (Tier 2)`, the last green run on main was 2026-07-17, and five failures have followed it, the latest still 2026-07-22 | `hk-main-required-check-red-i14hq` |
 | **About half the scenario tier skips in CI, and a skip reads as a pass.** Nothing installs `br` and nothing declares a twin build. Evidence: `internal/daemon` takes 69s in CI against 368s locally, and `TestThroughput_TenBeadsAtMaxFour` fails locally every time yet has never failed in 20 CI runs. | Means a **green** run on that workflow proves much less than it appears to — do not read one as the tier passing | `hk-ynohn` |
 
 ## The format check reports success when its tools are absent — found 2026-07-29
@@ -91,7 +136,8 @@ pass, so `bash scripts/go-format.sh check | tail -5` reports success in any call
 `pipefail`.
 
 Reproduced directly: `GOFUMPT=/nonexistent/gofumpt bash scripts/go-format.sh check` exits 127 and prints
-nothing to stdout. The same command piped through `tail` exits 0.
+nothing to stdout. The same command piped through `tail` exits 0. Re-reproduced 2026-07-30 — the exit
+code and the empty stdout are unchanged.
 
 **Why it matters more than it looks.** `.tools/` is gitignored, so a fresh clone and every agent worktree
 starts without it. Agents in this program run the format check and report "format check passed" from the
@@ -104,12 +150,16 @@ passed" as unverified unless the exit code is shown.** This is the fourth green-
 in this file, after the masked scenario tier, the `continue-on-error` flag that masked it, and
 `make check-fast` skipping its own test step on a clean tree.
 
-**A second way to mis-read the same script, found 2026-07-30.** The script is bash, not POSIX shell, and
-it carries no `#!/usr/bin/env bash` protection against being invoked under the wrong interpreter. Running
-it as `sh scripts/go-format.sh check` dies on a bash-only construct with a syntax error. That failure is
-loud rather than silent, so it is the milder sibling of the defect above, but it produces a NON-ZERO exit
-that has nothing to do with formatting. An agent that reads only the exit code concludes the tree is
-badly formatted when the real fault is the interpreter. Invoke it with `bash`, or execute it directly.
+**A second way to mis-read the same script, found 2026-07-30, corrected 2026-07-30.** The script is
+bash, not POSIX shell. An earlier version of this entry said it "carries no `#!/usr/bin/env bash`
+protection". That is false — line 1 of `scripts/go-format.sh` IS `#!/usr/bin/env bash`. A shebang does
+not help here, because it is read only when the file is executed directly. Naming it as a missing
+shebang points the reader at the wrong repair. The real behaviour is unchanged: `sh scripts/go-format.sh
+check` ignores the shebang, dies on a bash-only construct, and exits **2** with a syntax error on
+stderr. That failure is loud rather than silent, so it is the milder sibling of the defect above, but
+the non-zero exit has nothing to do with formatting. An agent that reads only the exit code concludes
+the tree is badly formatted when the real fault is the interpreter. Invoke it with `bash`, or execute it
+directly.
 
 **This section was re-confirmed on 2026-07-30 rather than extended.** An agent independently
 "discovered" the stdout-versus-stderr behaviour already written above and reported it as a correction.
@@ -146,13 +196,17 @@ when it was written.
   helper, so Go attaches it to nothing and the exported function godocs as bare. The comment holds the
   full `allowWrite` inventory and the world-shared-root rejection rule, so this is the most valuable
   detached comment in the file. Moving the helper above the comment fixes it.
-- **Both `hk-l5saf` comments in `internal/daemon/scheduler.go` cite stale line numbers.** The hoisted
-  guard comment cites "~line 1818" for the Step-2 split gate and "~line 3072" for the `localInFlight`
-  increment. The post-stamp "no guard here" comment cites "~line 3072" as well. All three were
-  `workloop.go` positions and none survived the Seam A split. `scheduler.go` is 2,371 lines, so 3072
-  points past the end of the file. This is the exact failure the "cite symbols, not line numbers"
-  convention exists to stop, and it appeared within one day of the split. Two unrelated "~line 1954"
-  citations in the same file have the same problem.
+  **Still true on 2026-07-30**, proven by `go doc ./internal/daemon GenerateSandboxProfile`, which
+  prints the bare signature and no prose.
+- **FIXED 2026-07-30. Both `hk-l5saf` comments in `internal/daemon/scheduler.go` cited stale line
+  numbers.** The hoisted guard comment cited "~line 1818" for the Step-2 split gate and "~line 3072" for
+  the `localInFlight` increment. The post-stamp "no guard here" comment cited "~line 3072" as well. All
+  three were `workloop.go` positions and none survived the Seam A split. Two unrelated "~line 1954"
+  citations in the same file had the same problem. **All of them are gone.** The commit that made the
+  dispatch admission order data rather than source position (`0b7857c1b`, 2026-07-30) removed every
+  `~line` citation from the file, and a grep for `~line` in `internal/daemon/scheduler.go` now returns
+  nothing. Kept as history: this was the exact failure the "cite symbols, not line numbers" convention
+  exists to stop, and it appeared within one day of the split.
 - **`specs/execution-model.md` EM-063 Phase 2 and EM-064 tier 2 mandate a completion test that is
   known to produce false positives.** Both require `git log --grep "Refs: <bead_id>"` and read a match
   as "already landed" — EM-063 in the daemon's eager-refill pre-screen, EM-064 in the orchestrator's
@@ -199,16 +253,24 @@ Verified by mutation: neutering the protected-branch check leaves `go build` and
 turns the test red on five assertions — and the merge genuinely runs, moving `refs/heads/main` and
 `origin/main`. The test drives the real merge path, not a stub.
 
-**One caveat, and it is not small.** `branchguard_test.go` is behind the `scenario` build tag, so this
-restored assertion does NOT run in the default short gate. It runs only in the scenario tier, which
-this program treats as red and does not gate on. Two other tests in the same file
-(`TestBranchGuard_TargetBranchMergeIsolation`, `TestBranchGuard_FailClosed_TargetInProtectSet`) fail
-there today, identically before and after this work, both timing out at about 30 seconds. **The
-backstop is asserted but nobody is watching the tier that asserts it.** That is a weaker outcome than
-"covered" and should be read that way.
+**One caveat, and it is not small.** `internal/daemon/branchguard_test.go` is behind the `scenario`
+build tag, so this restored assertion does NOT run in the default short gate. It runs only in the
+scenario tier, which this program treats as red and does not gate on. **The backstop is asserted but
+nobody is watching the tier that asserts it.** That is a weaker outcome than "covered" and should be
+read that way. The build tag was re-checked on 2026-07-30 and is still there.
 
-**The bead should be closed as invalid.** Changing a P0's priority or state was previously left as the
-owner's call, so it is named here rather than done.
+**Correction, 2026-07-30 — the two sibling failures are gone.** An earlier version of this paragraph
+said `TestBranchGuard_TargetBranchMergeIsolation` and `TestBranchGuard_FailClosed_TargetInProtectSet`
+"fail there today, both timing out at about 30 seconds". They now PASS. `go test -tags scenario
+./internal/daemon/ -run '^TestBranchGuard_TargetBranchMergeIsolation$|^TestBranchGuard_FailClosed_TargetInProtectSet$'`
+is green in 4.6 seconds, and `TestBranchGuard_FailClosed_MergeGuardBackstop` is green in 1.1 seconds.
+The 30-second timeouts were the low-disk gate described in the disk section below, which held every
+tick before the loop reached the thing under test. The disk was reclaimed on 2026-07-30 and the
+timeouts went with it.
+
+**RESOLVED, 2026-07-30. The bead was closed as invalid.** An earlier version of this line said the
+close was the owner's call and was "named here rather than done". It has since been done: `hk-zobns` is
+CLOSED, dated 2026-07-30, with the invalid-reason text carrying this same argument.
 
 ---
 
@@ -302,11 +364,19 @@ The cooldown that made this a five-minute stall (rather than the previous 2.5-se
 **Do not fix this by shortening the cooldown**; that reverts a deliberate fix instead of supplying the
 missing fallback.
 
-### Six line-number citations inside `runWorkLoop` point at nothing
+### Six line-number citations inside `runWorkLoop` pointed at nothing — FIXED 2026-07-30
+
+**Status, 2026-07-30: all six citations are gone.** The commit that made the dispatch admission order
+data rather than source position (`0b7857c1b`) removed them. A grep for `~line` in
+`internal/daemon/scheduler.go` now returns nothing. The record below is kept because the lesson is the
+reusable part, and because two `~line` citations still live elsewhere in the package — one in
+`internal/daemon/workloop.go` beside the `SelectWorker` pre-reservation, and one in
+`internal/daemon/remote_completion_misfire_repro_test.go`. Neither was re-checked for accuracy in this
+pass.
 
 Found while pinning the admission-gate order (§3 Step 3 prerequisite). The comments in
-`internal/daemon/scheduler.go` `runWorkLoop` cite six approximate line numbers, and **all six are wrong**.
-The Seam A split moved the loop into a new file and every number stayed behind:
+`internal/daemon/scheduler.go` `runWorkLoop` cited six approximate line numbers, and **all six were
+wrong**. The Seam A split moved the loop into a new file and every number stayed behind:
 
 | The comment says | Where the thing is now |
 |---|---|
@@ -315,10 +385,10 @@ The Seam A split moved the loop into a new file and every number stayed behind:
 | "The Step-2 split gate (~line 1818)" | the Step-2 split capacity gate |
 | `localInFlight` "increment at ~line 3072" (twice) | `deps.localInFlight.Add(1)` |
 
-Every one lands past the end of the function or in unrelated code. This is the exact rot the repo's
-cite-symbols rule exists to stop, and the guidance it produces is now actively misleading: the hoisted
-local-cap guard's safety argument rests on "localInFlight is not incremented until ~line 3072", so a
-reader who checks that line finds no increment and cannot verify the claim. Cite the symbol.
+Every one landed past the end of the function or in unrelated code. This is the exact rot the repo's
+cite-symbols rule exists to stop, and the guidance it produced was actively misleading: the hoisted
+local-cap guard's safety argument rested on "localInFlight is not incremented until ~line 3072", so a
+reader who checked that line found no increment and could not verify the claim. Cite the symbol.
 
 ### The admission-order constraints that no test pins, and why
 
@@ -422,18 +492,29 @@ keeps the test green. A snapshot taken before it does not.
 **Constraint 8 — half pinned, and the earlier reading of it was WRONG. Corrected here.**
 An earlier version of this section claimed there were two no-sleep sites, that both drive the item
 terminal first, that a merged variant would be "slower, never wrong", and that only a wall-clock flake
-could test it. Every one of those four claims is false. Re-derived by classifying all 31 outer-loop
-`continue` statements in `runWorkLoop`:
+could test it. Every one of those four claims is false. Re-derived by classifying every outer-loop
+`continue` statement in `runWorkLoop`:
 
-- **There are FIVE no-sleep sites, not two:** the queue bootstrap, the `hk-pina9` pre-claim `ShowBead`
-  bound, the cross-queue duplicate, the `hk-6pspu` max-attempts **stamp** bound, and the `hk-n91y0`
-  claim-blocked path. Twenty-six sites wait. The plan's own §3 item 8 says "twelve sites sleep" and names
-  three no-sleep sites, so it undercounts on both sides.
+> **Count re-measured 2026-07-30. The numbers below moved.** The classification was written against 31
+> outer-loop `continue` statements, five of which did not wait. `runWorkLoop` now holds **28** outer-loop
+> `continue` statements: **4** that do not wait and **24** that do. Two commits on 2026-07-30 caused the
+> change. The one that made the dispatch admission order data rather than source position (`0b7857c1b`)
+> reshaped the ordering, and the one that made the dispatch stamp a single durable write (`b029f9ce1`)
+> **merged the cross-queue-duplicate site and the `hk-6pspu` max-attempts stamp site into one**
+> `reservationItemFailed` branch. It also added a new waiting site, `reservationWriteFailed`. The
+> reasoning below survives the change; only the tally moved. The per-site list is corrected inline.
+
+- **There are FOUR no-sleep sites, not two, and there were five before 2026-07-30:** the queue
+  bootstrap, the `hk-pina9` pre-claim `ShowBead` bound, the reservation-item-failed branch, and the
+  `hk-n91y0` claim-blocked path. Twenty-four sites wait. The reservation-item-failed branch is the merge
+  of what used to be two separate sites, the cross-queue duplicate and the `hk-6pspu` max-attempts
+  **stamp** bound. The plan's own §3 item 8 says "twelve sites sleep" and names three no-sleep sites, so
+  it undercounts on both sides.
 
   **`hk-6pspu` tags TWO sites** — the queue-path stamp bound, which does not sleep, and the br-ready skip
   bound, which does. Keep the word "stamp" or the bead tag alone points at both.
 
-- **"26 sites sleep one poll interval" is loose, and the shape it hides is the one a merge would flatten.**
+- **"24 sites sleep one poll interval" is loose, and the shape it hides is the one a merge would flatten.**
   One statement — the `continue` taken when `selectNextQueue` selects nothing — carries **three wait
   shapes**:
 
@@ -464,10 +545,12 @@ could test it. Every one of those four claims is false. Re-derived by classifyin
 - **"Slower, never wrong" holds only for merging toward the SLEEPING variant.** Merging the other way
   busy-spins the `hk-403fw` cooldown — the exact `bead_claim_skipped` storm the cooldown was added to
   stop. The direction has to be stated or the conclusion is not usable.
-- **It is not even slower in that direction, and a deterministic test exists.** Four of the five reach
-  their `continue` through `evaluateGroupAdvanceWithOutcome`, which calls `queueStore.Wake()`
-  unconditionally on the not-all-succeeded branch. `workloopSleep` selects on that same channel, so a
-  sleep there returns at once: merging those four costs ZERO latency. The bootstrap site is the one
+- **It is not even slower in that direction, and a deterministic test exists.** Every no-sleep site
+  except the bootstrap reaches its `continue` through `evaluateGroupAdvanceWithOutcome`, which calls
+  `queueStore.Wake()` unconditionally on the not-all-succeeded branch. `workloopSleep` selects on that
+  same channel, so a sleep there returns at once: merging those costs ZERO latency. This read "four of
+  the five" before the 2026-07-30 stamp merge cut the no-sleep set to four; it is now three of the four.
+  The bootstrap site is the one
   exception — no `Wake()` fires there, so merging it would cost one poll interval on every queue submit.
   `WakeCh()` is exported, which makes the token a non-blocking-receive observable with no wall clock in
   it. `TestAdmissionOrder_TerminalDedupLeavesAWakeTokenPending` now asserts it.
@@ -543,6 +626,8 @@ moving one of the two. Leave it until something needs it.
 **The nightly race job has failed every run in retained history — 22 nights, back to 2026-07-09.** A
 previous handoff reported it as failing "since at least 2026-07-26" and noted no earlier handoff
 mentioned it. Both parts understate it. There is no successful run to compare against.
+Re-measured 2026-07-30: still 22 failures and no successes in retained history. GitHub ages the oldest
+run off as each new night lands, so the tally stays flat while the window slides.
 
 **It cannot pass, and the reason is structural rather than a bug in the product.** The job runs
 `make check-race-full`, which is `go test -race -count=1 ./...` across the whole module. The module
@@ -558,12 +643,20 @@ that the gating tier's parallelism cap suppresses. Dropping `-short` is exactly 
 planted bugs. So the one job designed to catch real races is the only job that runs the code designed
 to fail.
 
-**Two real failures are sitting behind that permanent red**, in product packages, not fixtures:
+**Two failures were recorded as sitting behind that permanent red**, in product packages, not fixtures:
 
 - `TestDaemonWatchdog_PhantomReviveGuard` in `internal/supervise`.
 - `TestWM040a_OrderingSettingsBeforeWorkspaceLeased` in `internal/workspace`.
 
-Neither is diagnosed here. The point of the entry is that nobody could have seen them: a signal that
+**Correction, 2026-07-30 — neither reproduces.** Both were re-run with `-race -count=1`, first alone by
+exact name and then as part of their whole package. All four runs are green. `internal/supervise` is
+fully green as a package in 40 seconds. `internal/workspace` fails as a package, but on a DIFFERENT
+test, `TestWM001_GitWorktreeAddProducesCanonicalPathAndBranch`, which dies on a segmentation fault from
+`git rev-parse HEAD` — that looks like a property of the agent worktree it was run in, not of the
+product, and it was not chased. So the two named failures should be treated as unreproduced until
+someone shows them again from the real nightly job. The rest of the entry stands.
+
+The point of the entry is that nobody could have seen them: a signal that
 is always red carries no information, so it stopped being read. Four data-race warnings also appear in
 the fixture package and are presumably planted too, but that was not confirmed.
 
@@ -600,8 +693,9 @@ half times faster, because the low-disk gate makes every tick sleep a poll inter
 
 **The mechanism.** The dispatch loop holds a tick when the maintenance pass reports disk below the
 watermark. That gate sits BEFORE queue selection. A fixture that does not stub the disk reading gets
-its tick held before the loop ever reaches the thing the test is about. This box has about 6.4 GiB
-free against a 10 GiB watermark, so the gate is armed for every such fixture.
+its tick held before the loop ever reaches the thing the test is about. At the time of the measurement
+this box had about 6.4 GiB free against a 10 GiB watermark, so the gate was armed for every such
+fixture. It now reports 58 GiB free, well above the watermark, so the gate is not armed today.
 
 **The dangerous half. `TestL5saf_LocalOnlyItemNotStrandedByCapGuard` was VACUOUS on this box, and it
 is one of the two tests this program had been using as its deterministic gate.** Proven by deleting
@@ -611,8 +705,11 @@ one-line disk stub, with the guard still removed, turns it RED. So the guard pos
 admission-order tests were unaffected — they already stub the reading, which is why they kept their
 kill power and why only the older test rotted.
 
-**Exposure.** 32 of the 36 daemon test files that drive the work loop do not stub the disk reading.
-One is proven vacuous. The rest are not individually verified and should not be assumed either way —
+**Exposure.** 32 of the daemon test files that drive the work loop do not stub the disk reading.
+Re-measured 2026-07-30: **37** test files under `internal/daemon` reference `WorkLoopDepsParams` and
+**5** of them set `DiskFreeBytesFunc`, so the unstubbed count is still 32. The denominator was 36 when
+this was written and is now 37 — one file was added and it stubs.
+One file is proven vacuous. The rest are not individually verified and should not be assumed either way —
 some will fail loudly, some may assert nothing. The failure mode is silent in the direction that
 matters.
 
@@ -620,6 +717,12 @@ matters.
 run unmutated, with the real disk reading: **`go test -short ./internal/daemon/` passes in 103
 seconds.** Not a subset, not a stub — the whole package, green. Treat `internal/daemon` as a usable
 gate again.
+
+*Not re-run in the 2026-07-30 staleness sweep*, because a whole-package daemon run leaks daemon
+processes and clears the shared build cache. The precondition still holds: the box reports 58 GiB free
+against a 10 GiB watermark, well clear of the gate. Two narrow readings taken instead both agree with
+the DONE claim — the scenario-tagged branch-guard tests that used to time out at 30 seconds now finish
+in under 5, and the admission-order and sentinel-gate tests are green.
 
 The reclaim itself is worth recording, because `docs/disk-reclaim.md` §0 points at the shared Go
 caches and on this box that was **not** where the space was. `~/Library/Caches/go-build` held 7 MiB,
@@ -656,6 +759,8 @@ added above it, which is the same failure the admission-order section now avoids
 the compiler is silent on every one of them: the callers still compile, the tests still pass, and the
 guard simply stops being applied on four paths out of five.
 
-That is also the argument for the launch-path collapse being the highest-value remaining move. It does
-not fix these one at a time; it makes the class unable to recur, because one path cannot drift from
-itself.
+That was the argument for the launch-path collapse, and the collapse LANDED on 2026-07-29. It did not
+fix the instances one at a time; it made the class unable to recur on the launch path, because one path
+cannot drift from itself. `ONE-OF-N-DRIFT.md` records which instances that removed and which it did
+not: the mode-driver tails still hold ten of them and need the terminal spine collapsed as a separate
+step, and the sub-workflow walker needs a third.

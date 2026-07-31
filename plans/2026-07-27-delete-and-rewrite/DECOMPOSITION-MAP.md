@@ -137,24 +137,44 @@ They are the current state of the tree.
 
 ### 1a. Whole-file metrics
 
-| Measure | `workloop.go` |
-|---|---:|
-| Total lines | 6,656 |
-| Comment lines | 3,103 (47%) |
-| Commits | 370 (first 2026-05-12, last 2026-07-26 — 75 days, ~5/day) |
-| Commits by month | May 108, Jun 140, Jul 122 — **not decaying** |
-| Distinct `hk-…` bead refs cited in comments | **256** |
-| Distinct spec requirement IDs cited | 81 |
-| `//nolint` directives | 19 |
-| `workLoopDeps` struct | 81 fields, spanning lines 189–931 (~740 lines, ~89% comment) |
-| Top-level functions | 39 |
-| Two functions | `runWorkLoop` 1,670 + `beadRunOne` 2,289 = **60% of the file** |
+**Re-measured 2026-07-30. Every number below moved, and one row died.** The table as first written
+described a single 6,656-line file that held both functions. That file no longer exists in that
+shape. `756b6604c` moved `runWorkLoop` out to `internal/daemon/scheduler.go`, and `3cec5afd7`
+retired review-loop mode. The original numbers are kept in the right-hand column so a reader can see
+the size of the drift.
 
-256 distinct bead references is the number that matters. This is not a program; it is a changelog
-with executable annotations. Nearly half the file is prose explaining why the other half is shaped
-the way it is, and much of that prose describes code that is no longer there.
+| Measure | `workloop.go` @ HEAD | as first written |
+|---|---:|---:|
+| Total lines | **3,389** | 6,656 |
+| Comment lines | 1,744 (51%) | 3,103 (47%) |
+| Commits | 382 (first 2026-05-12, last 2026-07-30) | 370 |
+| Commits by month | May 108, Jun 140, Jul 134 — **still not decaying** | Jul 122 |
+| Distinct `hk-…` bead refs cited in comments | **138** | 256 |
+| `//nolint` directives | 10 | 19 |
+| `workLoopDeps` struct | 81 fields, 744 lines, 78% comment | 81 fields, ~740 lines, ~89% comment |
+| Top-level functions | 21 | 39 |
+| One function | `beadRunOne` 1,764 = **52% of the file** | two functions = 60% |
 
-### 1b. `runWorkLoop` — the outer scheduler (lines 1402–3058, 1,670 lines)
+Reproduce the counts with `wc -l internal/daemon/workloop.go`,
+`grep -oE 'hk-[a-z0-9]+' internal/daemon/workloop.go | sort -u | wc -l`, and
+`git log --oneline -- internal/daemon/workloop.go | wc -l`.
+
+The bead-reference count is still the number that matters, and it is still large. This is not a
+program; it is a changelog with executable annotations. About half the file is prose explaining why
+the other half is shaped the way it is, and much of that prose describes code that is no longer
+there. The count fell from 256 to 138 because the review-loop deletion took the annotations with the
+code, not because anyone pruned the prose.
+
+**The distinct-spec-ID row is removed. It was never reproduced.** The original table claimed 81 spec
+requirement IDs, the same number as the `workLoopDeps` field count. No command was recorded, and the
+coincidence is more likely a transcription error than a measurement.
+
+### 1b. `runWorkLoop` — the outer scheduler
+
+**This function is no longer in `workloop.go`.** `756b6604c` ("daemon: split the dispatch scheduler
+out of workloop.go") moved it to `internal/daemon/scheduler.go`, where it is 1,281 lines. Seam A is
+therefore cut. The responsibility table below was measured before the move and is a record of what
+that function did at that time, not a map of the current file.
 
 One goroutine. Owns the poll loop, all admission policy, the claim write, and goroutine spawn.
 
@@ -198,7 +218,13 @@ Note also **three separate `ShowBead` round-trips per dispatch** on the queue pa
 #25 post-claim hydration, plus #24's blocked-status re-read on failure), each with its own retry
 budget and its own failure semantics.
 
-### 1c. `beadRunOne` — the per-run driver (lines 3120–5408, 2,289 lines)
+### 1c. `beadRunOne` — the per-run driver (1,764 lines)
+
+**Re-measured 2026-07-30. The function is 1,764 lines, not 2,289, and its signature now takes 7
+parameters.** Find it with `grep -n '^func beadRunOne' internal/daemon/workloop.go`. Row 17 below is
+dead: `3cec5afd7` retired review-loop mode and deleted its driver, so `beadRunOne` now dispatches two
+modes, not three. The rest of the table was measured before that deletion and before the Seam A
+split. Treat it as a shape, not as current line counts.
 
 | # | Responsibility | ~Lines | External world |
 |---|---|---:|---|
@@ -218,7 +244,7 @@ budget and its own failure semantics.
 | 14 | Pre-run untracked-file snapshot (escape-check baseline) | 10 | **git** |
 | 15 | `run_started` emission | 8 | bus |
 | 16 | DOT graph preload + review-loop safety floor | 26 | filesystem, DOT parser |
-| 17 | **Mode dispatch: review-loop** — remote param assembly, call, `WireSpine`, budget charge, terminal feed | 103 | (delegates 1,586 lines) |
+| 17 | ~~**Mode dispatch: review-loop**~~ — **GONE.** `3cec5afd7` retired the mode and deleted `internal/daemon/reviewloop.go`. Only history comments remain. | 0 | — |
 | 18 | **Mode dispatch: DOT** — graph load, goal injection, remote params, call, `WireSpine` w/ carve-out, orphan-salvage tip SHA | 175 | (delegates 1,884 lines), **git** |
 | 19 | Single-mode: `shared.LaunchCtx` assembly (26 fields) | 61 | — |
 | 20 | Agent-type + Pi flags onto the run handle | 11 | — |
@@ -1100,7 +1126,10 @@ symbols that implement it and must not be simplified back to a return-code check
   labels, which is a `br` adapter concern.
 - **Two dispatch paths** (queue and br-ready) with duplicated pause/decision/attempt gates written
   twice, ~110 lines of near-copy. br-ready is a backward-compat fallback for tests.
-- **The placeholder-RunID two-persist reservation** (§2 Seam B). It is a bug, not a behaviour.
+- ~~**The placeholder-RunID two-persist reservation** (§2 Seam B). It is a bug, not a behaviour.~~
+  **Removed from the tree 2026-07-30 in `b029f9ce1`.** `reserveQueueItem` writes status and Run ID
+  together through `QueueStore.Transact`, so the placeholder no longer exists. Kept here as scar
+  tissue because the shape is what to avoid, not because the code is still there.
 - **`workLoopDeps` passed by value** into every run goroutine, with a comment explaining that value
   fields mutated there are silent no-ops. Do not carry the bundle; carry the plan.
 - **The nil-means-production-default pattern** on 5 of the 9 func-typed fields
@@ -1112,15 +1141,16 @@ symbols that implement it and must not be simplified back to a return-code check
   replacing "the by-value raw-field smuggle."
 - **`SharedHandles` as an explicit non-seam.** Ten concrete pointers and raw sync primitives crossing
   a boundary that documents itself as not being one.
-- **`activateFirstPendingGroup` and `beadExplicitlyReopened`** — dead, kept alive by tests
-  (the second one *admits* this in its doc comment).
-- **19 `//nolint` directives**, including the `//nolint:funlen,gocognit,cyclop` on `beadRunOne`
-  itself. Per `NEXT_STEPS.md` §2.5 this suppression is why the complexity ratchet has never once
-  fired on the largest function in the repo — it was **born over the ceiling at 119 lines** and is
-  2,289 today.
-- **3,103 lines of comment, 256 bead references.** Comments explaining what code used to be there,
-  what a removed check did, and which of 256 tickets caused which line. In a rewrite this is the
-  commit log's job.
+- ~~**`activateFirstPendingGroup` and `beadExplicitlyReopened`** — dead, kept alive by tests~~
+  **Both deleted 2026-07-28.** Neither symbol is in the tree. See §1d.
+- **10 `//nolint` directives** (was 19), including the `//nolint:funlen,gocognit,cyclop` on
+  `beadRunOne` itself. Per `NEXT_STEPS.md` §2.5 this suppression is why the complexity ratchet has
+  never once fired on the largest function in the repo — it was **born over the ceiling at 119
+  lines** and is **1,764** today (was 2,289).
+- **1,744 lines of comment, 138 bead references** (was 3,103 and 256). Comments explaining what code
+  used to be there, what a removed check did, and which ticket caused which line. In a rewrite this
+  is the commit log's job. The counts halved because the review-loop deletion took the annotations
+  with the code, not because anyone pruned the prose.
 
 ---
 
@@ -1129,33 +1159,47 @@ symbols that implement it and must not be simplified back to a return-code check
 Ranked. "Rot" = size × churn × longest-function × distinct responsibilities × mutable globals.
 `workloop.go` is rank 0 and excluded.
 
+**Re-measured 2026-07-30 with `wc -l`. Rank 1 is gone and three other sizes moved.**
+
 | # | File | LOC | Commits | Longest function | Mutable globals | External world |
 |---|---|---:|---:|---|---:|---|
-| 1 | `internal/daemon/reviewloop.go` | 2,194 | 116 | `runReviewLoop` **1,586** | 1 | tmux, claude, codex, git, ssh, fs, bus, hook socket |
-| 2 | `internal/daemon/dot_cascade_core.go` | 1,989 | 123† | `driveDotWorkflow` **1,002** (+`dispatchDotAgenticNode` **882**) | 0 | tmux, claude, codex, git, ssh, fs, bus |
-| 3 | `internal/daemon/pasteinject.go` | 2,691 | 56 | `pasteInjectQuitOnCommit` ~575 | **23** | tmux, ssh, raw `exec.Command` (pgrep/ps/git), git, fs, bus |
+| ~~1~~ | ~~`internal/daemon/reviewloop.go`~~ | **DELETED** | — | — | — | `3cec5afd7`, 2026-07-28 |
+| 2 | `internal/daemon/dot_cascade_core.go` | 1,653 (was 1,989) | 123† | `driveDotWorkflow` **997** (+`dispatchDotAgenticNode` **543**, was 882) | 0 | tmux, claude, codex, git, ssh, fs, bus |
+| 3 | `internal/daemon/pasteinject.go` | 2,691 | 56 | `pasteInjectQuitOnCommit` ~575 | 22 (was 23) | tmux, ssh, raw `exec.Command` (pgrep/ps/git), git, fs, bus |
 | 4 | `internal/daemon/tmuxsubstrate.go` | 3,023 | 67 | `spawnWindowVia` 194 (76 funcs) | 1 | tmux (385 refs), ssh, `syscall.Kill` |
 | 5 | `internal/keeper/watcher.go` | 2,110 | 78 | `(*Watcher).Run` 531 | 1 | fs, tmux, `exec.Command`, events.jsonl |
 | 6 | `internal/eventbus/busimpl.go` | 1,647 | — | max 118 | — | fs (JSONL), 7 `go func` fan-out sites |
-| 7 | `cmd/harmonik/main.go` | 1,517 | 128 | `run` 1,298 | 0 | ~50 verbs, all delegated |
+| 7 | `cmd/harmonik/main.go` | 1,491 (was 1,517) | 128 | `run` 1,298 | 0 | ~50 verbs, all delegated |
 | 8 | `internal/daemon/stalewatch.go` | 1,189 | 15 | `(*StaleWatcher).checkRun` 347 | 6 | git rev-parse, process liveness, bus |
 
 † `dot_cascade_core.go` shows 2 direct commits because it was recently split out of `dot_cascade.go`;
 `--follow` gives 123.
 
-Runners-up: `internal/daemon/dot_gate.go` (888, `executeCognitionGate` 367),
+Runners-up: `internal/daemon/dot_gate.go` (749, was 888; `executeCognitionGate` 367),
 `cmd/harmonik/comms.go` (2,212, `runCommsRecvFollowIO` 300, six hand-rolled socket dial sites),
-`cmd/harmonik/run.go` (942, `runBeadSubcommandIO` 701).
+`cmd/harmonik/run.go` (928, was 942; `runBeadSubcommandIO` 701).
+
+The `dot_cascade_core.go` longest-function numbers were both wrong when written, not merely decayed.
+Measure them with `grep -n '^func ' internal/daemon/dot_cascade_core.go`, which shows the file holds
+exactly two top-level functions. The "two functions are 94% of the file" conclusion below survives
+the correction — the measured share is 93%.
 
 ### Genuinely part of the rotten center (ranks 1–3)
 
-**#1 `reviewloop.go` and #2 `dot_cascade_core.go` are the same disease as `workloop.go`, not
-neighbours of it.** `dot_cascade_core.go` has the worst concentration in the repo — **two functions
-are 94% of the file**, with no intermediate decomposition at all. `runReviewLoop` at 1,586 lines is
-the second-largest function in the repo after `beadRunOne`, and it is structurally *the same code*
-as `beadRunOne`'s single-mode body, re-implemented. **These three files must be rewritten as one
-unit or not at all** — rewriting `workloop.go` alone leaves two-thirds of the duplicated dispatch
-loop in place and guarantees the drift continues.
+**Revised 2026-07-30. The rewrite unit is now two files, not three.** `reviewloop.go` is deleted, so
+the argument below applies to `dot_cascade_core.go` alone.
+
+**`dot_cascade_core.go` is the same disease as `workloop.go`, not a neighbour of it.** It has the
+worst concentration in the repo — **two functions are 93% of the file**, with no intermediate
+decomposition at all. `driveDotWorkflow` at 997 lines is the second-largest function in the repo
+after `beadRunOne`, and it is structurally *the same code* as `beadRunOne`'s single-mode body,
+re-implemented. **These two files must be rewritten as one unit or not at all** — rewriting
+`workloop.go` alone leaves half of the duplicated dispatch loop in place and guarantees the drift
+continues.
+
+The retired third file is the evidence for that claim, not a counter-example. Deleting
+`reviewloop.go` removed 3,834 production lines and needed no replacement, because the graph walker
+was already the general case. That is what a duplicate looks like when it is finally collapsed.
 
 **#3 `pasteinject.go` is the hardest to move**, despite being smaller. Its 23 mutable package
 globals are the empirical budgets from CARRY-FORWARD fact 18, every one of them a test seam mutated
@@ -1193,18 +1237,20 @@ The audit's *process* is dead. Its *evidence* holds up well.
 
 ### Corroborated — independently reached the same conclusion
 
+The size column is re-measured 2026-07-30. Sizes that moved are shown as `then → now`.
+
 | Audit claim | My reading | Verdict |
 |---|---|---|
 | Run graph is 105/105 P0, the top hotspot | Same | **Corroborated** |
-| `runWorkLoop` ~1,667 lines, cyclomatic 266, cognitive 888 | 1,670 lines | **Corroborated** |
-| `beadRunOne` ~2,288, cyclomatic 217, cognitive 396 | 2,289 | **Corroborated** |
-| `runReviewLoop` ~1,582, cyclomatic 136 | 1,586 | **Corroborated** |
-| DOT drivers ~883–1,001 | 882 / 1,002 | **Corroborated** |
-| `workLoopDeps` is a service locator "assembled in stages; validity is temporal not compiler-enforced" | Four-stage assembly across `bootworkloop.go`; ~25 of 81 fields set post-construction | **Corroborated, and worse than stated** |
-| "`runPorts()` deliberately returns required fields nil and a later assembly step fills them" | Confirmed — and the *final* step is inside `beadRunOne` itself (`rp.Worktree`, line 3743) | **Corroborated, and worse than stated** |
+| `runWorkLoop` ~1,667 lines, cyclomatic 266, cognitive 888 | 1,670 → **1,281**, and it moved to `internal/daemon/scheduler.go` | **Corroborated when written** |
+| `beadRunOne` ~2,288, cyclomatic 217, cognitive 396 | 2,289 → **1,764** | **Corroborated when written** |
+| ~~`runReviewLoop` ~1,582, cyclomatic 136~~ | **Gone.** `3cec5afd7` deleted the driver | **Moot** |
+| DOT drivers ~883–1,001 | 882 / 1,002 → **543 / 997** | **Corroborated when written** |
+| `workLoopDeps` is a service locator "assembled in stages; validity is temporal not compiler-enforced" | Four-stage assembly across `bootworkloop.go`; ~25 of 81 fields set post-construction. Field count re-checked at 81. The 25 is **not re-verified** | **Corroborated, and worse than stated** |
+| "`runPorts()` deliberately returns required fields nil and a later assembly step fills them" | Confirmed — and the *final* step is inside `beadRunOne` itself, where it assigns `rp.Worktree` from `worktreePort(wtFactory)` | **Corroborated, and worse than stated** |
 | Its proposed phase decomposition: Resolve → Prepare → Launch/Execute → Finalize → Terminal (`BR-00`…`BR-04`) | Independently arrived at the same four sub-seams (C1–C4) | **Strongly corroborated** — two independent passes, same seams |
 | Its outer-loop decomposition: maintenance → dispatch-permission → dispatch-source → reservation → spawn (`WL-02A`…`WL-04`) | Same as my steps 2, 3, 4 | **Strongly corroborated** |
-| Queue dispatch "persisted `dispatched` without a Run ID, treated durable-write failures as nonfatal, patched the Run ID in a second nonfatal persist, then claimed the Bead" | Confirmed verbatim in `runWorkLoop` | **Corroborated — and still unfixed** |
+| Queue dispatch "persisted `dispatched` without a Run ID, treated durable-write failures as nonfatal, patched the Run ID in a second nonfatal persist, then claimed the Bead" | Was confirmed verbatim. **`b029f9ce1` fixed it on 2026-07-30**: `reserveQueueItem` in `internal/daemon/scheduler_reservation.go` now sets status and Run ID in one `QueueStore.Transact` write, and a failed write aborts the dispatch | **Corroborated, and now FIXED** |
 | `tmuxsubstrate.go` P1: large, many lock domains, but splittable | Same — merely large | **Corroborated** |
 | CLI router (`main.run`) downgraded: "less cognitively coupled than its raw cyclomatic number suggests" | Same | **Corroborated** |
 
@@ -1218,11 +1264,14 @@ The audit's *process* is dead. Its *evidence* holds up well.
    audit used it as a baseline metric that later cards ("meet the exact `ARCH-01` metric target")
    were meant to be scored against.
 
-3. **The dot_cascade atom.** The handoff records the audit estimating this atom at ~1,300/~1,600 LOC;
-   the real indivisible atom is **1,989** (`dot_cascade_core.go`), of which 1,884 lines are two
-   functions. The audit's *per-function* numbers (883/1,001) were accurate — whoever aggregated them
-   into an "atom" estimate under-counted by 20–35%. **Any sizing derived from that estimate is
-   wrong.** Treat 1,989 as the floor.
+3. **The dot_cascade atom.** The handoff records the audit estimating this atom at ~1,300/~1,600 LOC.
+   The real indivisible atom was **1,989** (`dot_cascade_core.go`), of which 1,884 lines were two
+   functions. The audit's *per-function* numbers (883/1,001) were accurate at the time — whoever
+   aggregated them into an "atom" estimate under-counted by 20–35%. **Any sizing derived from that
+   estimate is wrong.**
+   Re-measured 2026-07-30: the file is **1,653** lines and the two functions are 1,540 of them
+   (`driveDotWorkflow` 997, `dispatchDotAgenticNode` 543). Treat **1,653** as the floor now. The
+   ratio did not improve — it is still 93% of the file in two functions.
 
 4. **The audit's framing is extraction-in-place, and that framing is now retired.** Cards `WL-02A`
    through `WL-04` and `BR-01` through `BR-04` all say "extract the X region of `workloop.go`" under
@@ -1239,9 +1288,13 @@ The audit's *process* is dead. Its *evidence* holds up well.
 ### Invalidated since the audit
 
 - **`internal/daemon/dot_cascade.go` no longer exists.** It was split into `dot_cascade_core.go`
-  (1,989) + `dot_cascade_helpers.go` (956). Every audit reference to `dot_cascade.go` needs
-  re-pointing, and the split did **not** reduce the atom — it moved helpers out and left the two
-  giant functions intact.
+  (1,653 today) + `dot_cascade_helpers.go` (1,018 today). Every audit reference to `dot_cascade.go`
+  needs re-pointing, and the split did **not** reduce the atom — it moved helpers out and left the
+  two giant functions intact.
+- **`internal/daemon/reviewloop.go` no longer exists.** `3cec5afd7` retired review-loop mode on
+  2026-07-28 and removed 3,834 production lines: the driver, `internal/daemon/launchspecbuild.go`,
+  `internal/runloop/reviewcycle/`, and `internal/runloop/continuity/`. Every audit card scoped to
+  `RL-*` is moot.
 - **Audit finding #4 (supervisor `Stop` double-close panic) is FIXED.** `Supervisor.Stop` now uses
   `s.stopOnce.Do(func() { close(s.stopCh) })`. Do not carry this forward as an open defect.
 - **`RunEnv`/`RunPorts`/`SharedHandles` field counts have drifted**, so the audit's "baseline and
@@ -1249,8 +1302,10 @@ The audit's *process* is dead. Its *evidence* holds up well.
 
 ### Flagged by the audit, still unactioned
 
-- **Reservation transaction** (torn dispatched/RunID write, non-fatal persists) — open. This is my
-  step 4.
+- ~~**Reservation transaction** (torn dispatched/RunID write, non-fatal persists) — open. This is my
+  step 4.~~ **DONE 2026-07-30 in `b029f9ce1`.** `reserveQueueItem` routes the dispatch through
+  `QueueStore.Transact`, so status and Run ID land in one durable write, and a failed write abandons
+  the dispatch. Decision D3 is answered by that commit, not still pending.
 - **`internal/lifecycle/branchtip_em024a.go` `WritePersistedTip` uses plain `os.WriteFile`** — no
   temp+rename, no fsync. The rewind detector therefore fails *open* after a crash or disk-full,
   which is precisely when it is needed. Confirmed still present.

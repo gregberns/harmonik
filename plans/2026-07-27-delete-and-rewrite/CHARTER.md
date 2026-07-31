@@ -23,16 +23,23 @@ it). **These are findings, not plans — nothing in them is scheduled work.**
 The codebase was not recoverable by extraction and decomposition in place. Two things made every
 attempt fail:
 
-- **A test suite of 525,000 lines against ~216,000 lines of product** (488,000 by the time this
-  program started, after an earlier deletion), roughly half of it files named
+- **A test suite of 525,000 lines against ~216,000 lines of product** (488,000 after this program's
+  own first deletion), **38% of it** files named
   after a ticket ID that pinned internal function signatures rather than behavior. Any restructuring
   broke hundreds of tests that were never protecting anything. Traced to a real instruction that told
   agents to prefix test *helpers* with a per-ticket name, which agents generalized to whole *files*,
   plus a second rule to write scenario tests and never run them. The helper-prefix rule is removed; the second was amended to close the loophole explicitly.
-- **A run machine that generates the bugs.** `internal/daemon/workloop.go` is 6,520 lines with a
+  *(Re-measured 2026-07-30: 525,123 test lines against 216,689 product lines at the program's start
+  commit. The ticket-named share was 199,899 lines, which is 38%, not the "roughly half" this
+  section claimed. The plan documents had over-counted that set by 55,765 lines.)*
+- **A run machine that generates the bugs.** `internal/daemon/workloop.go` was 6,656 lines with a
   single 2,289-line function carrying ~40 distinct responsibilities and touching every external tool
-  the system uses. `reviewloop.go` and `dot_cascade_core.go` are the same disease — all three
+  the system uses. `dot_cascade_core.go` is the same disease — both
   re-implement the identical launch → dispatch → wait → probe → teardown sequence.
+  *(Re-measured 2026-07-30. This section said 6,520 lines. The file was 6,656 at the program's start
+  commit. It is 3,389 lines today and `beadRunOne` is 1,764. The third file this section named,
+  `reviewloop.go`, was **deleted on 2026-07-28** at `3cec5afd7` when review-loop mode was retired,
+  so the duplication is now two-way, not three-way.)*
 
 Fixing bugs inside that structure produced more debt. The program is to remove the obstruction, then
 rebuild the centre.
@@ -46,13 +53,22 @@ changed, zero new test failures. Details and the exact carve-outs are in `_plan.
 **Phase 2 — partition.** Config-driven enable/disable of each subsystem, so the system can run as a
 small subset. First switch landed 2026-07-28. See §3.
 
-**Phase 3 — decompose and rewrite the core.** `workloop.go` + `reviewloop.go` + `dot_cascade_core.go`
-as ONE unit — rewriting one leaves the duplication intact.
+**Phase 3 — decompose and rewrite the core.** `workloop.go` + `scheduler.go` + `dot_cascade_core.go`
+as ONE unit — rewriting one leaves the duplication intact. *(Updated 2026-07-30. `reviewloop.go` was
+deleted on 2026-07-28 and is no longer a target. `scheduler.go` is new: `runWorkLoop` moved there
+from `workloop.go` on 2026-07-28 at `756b6604c`.)*
 
 **Specs come after, not before** — with the standing caveat that `AGENTS.md` holds specs normative,
 so a conflict is adjudicated, never silently ignored.
-**Why they come after:** 25% of requirement IDs appear in no Go file; ~28% of those are stale
+**Why they come after:** 25% of requirement IDs appear in no Go file, ~28% of those are stale,
 and seven would actively regress working code if obeyed. `specs/` is not a trustworthy oracle yet.
+
+*⚠ Unverified as of 2026-07-30 — the orphan rate is disputed and the evidence for it is missing.*
+`SPEC-TRIAGE.md` reports 293 orphans of 1,164 IDs, which is 25.2%. A separate measurement on
+2026-07-30 got 325 of 1,180, which is 27.5%. Neither could be re-run here: the machine data that
+report cites — `traceability.csv`, `trace.json` and the `trace.py` generator — is not in the repo.
+The seven regression-risk requirements DO check out: `SPEC-TRIAGE.md` §4 walks ten candidates and
+confirms seven, refutes one and calls two partial.
 
 ## 3. The core set — DECIDED, not proposed
 
@@ -65,7 +81,7 @@ Operator, 2026-07-28: *"Comprehensive but tight."*
 
 **Everything absent from that list is deferred by default rather than by argument.** Adding to it
 requires a reason. Outside it: comms, crew, captain, keeper, dashboard, live-state, subscribe, the
-sentinel — and the socket listener itself (`harmonik run <bead-id>` already runs work without it).
+sentinel — and the socket listener itself.
 
 **A rewrite that ends with only the queue and bead processing working is a SUCCESS, not a partial one.**
 Operator, 2026-07-28: *"I'm COMPLETELY ok if we get done with part of the re-write and the only thing
@@ -86,11 +102,18 @@ and amend PL-003 rather than obey it.**
 
 ⚠ **The evidence once offered for this was false and is corrected here.** This section previously said
 `harmonik run <bead-id>` "already runs work without it." It does not: `cmd/harmonik/run.go` sets
-`ProjectDir` in its `daemon.Config` exactly as `main.go` does, so `bindSocket` runs and the socket
-subtree is constructed and bound. (Not quite all of it — `harmonik run` sets no subscription-token
-ceiling, so the bandwidth tuner is skipped — but the listener itself is there.) There is no production
-path today that runs work without the listener. The decision stands on its own merits; it never rested
-on that claim.
+`ProjectDir` in its `daemon.Config` exactly as `main.go` does, so the socket subtree is constructed
+and bound. (Not quite all of it — `harmonik run` sets no subscription-token
+ceiling, so the bandwidth tuner is skipped — but the listener itself is there.) The decision stands on
+its own merits; it never rested on that claim. The false parenthetical has now been removed from the
+paragraph above as well.
+
+*Re-checked 2026-07-30, and one sentence here has since gone stale.* This note used to end "There is
+no production path today that runs work without the listener." **There is one now.** Phase 2's first
+switch landed 2026-07-28 at `1452e659a`. Setting `subsystems.socket_listener.enabled: false` in
+`.harmonik/config.yaml` makes `bindSocketIfEnabled` in `internal/daemon/bootsocket.go` construct none
+of the subtree — no handlers, no reapers, no tuner, no listener goroutine, and no socket file on disk.
+The symbol named above also moved: `bindSocket` is now reached only through `bindSocketIfEnabled`.
 
 **And the sequel is named, not scheduled.** Operator, same day: *"once we have the core system working
 again, before we do anything else we probably need to think about how to build a dataplane that
@@ -101,9 +124,8 @@ not part of this program and must not be started early.
 2026-07-28, reopening locked decision #4.** The condition is the operator's and is load-bearing: it is
 the implementation's job to evaluate it, not to assume it. If the investigation finds tmux is genuinely
 load-bearing at dispatch rather than merely checked at boot, reporting that is the correct outcome.
-The daemon hard-refuses to boot outside a tmux session. Locked decision #4 says *"Agent runner (S04):
-NTM-wrapped Go. Inspectability via tmux is a requirement, not a preference"*, and
-`specs/process-lifecycle.md` PL-028b calls a daemon reaching the dispatch loop without `TMUX` a defect.
+Locked decision #4 says *"Agent runner (S04):
+NTM-wrapped Go. Inspectability via tmux is a requirement, not a preference"*.
 Operator: *"If we get more flexibility from removing that, then do so. Seems like another 'crossed
 wires' issue where the underlying reasoning was lost. Maybe it was from before when not run as a daemon.
 Doesn't matter — but we should probably be able to run it any way."*
@@ -114,6 +136,20 @@ that makes it the only possibility. A capability genuinely unavailable without t
 loudly at boot and degraded honestly — never faked, and never deferred to a crash on first dispatch.
 Whatever the implementation requires of PL-021b / PL-028b is a **named spec amendment**, adjudicated,
 not a silent violation.
+
+**This work LANDED on 2026-07-28, and two facts stated above are now out of date.** Verified
+2026-07-30.
+*The daemon no longer hard-refuses to boot outside a tmux session.* `cmd/harmonik/tmuxhosting.go`
+replaced the refusal with a three-outcome capability resolution: ambient session, no ambient session
+but usable tmux (create the deterministic per-project session), or tmux unusable (fatal only when the
+tmux substrate is the selected one, loud warning otherwise). Commit `1f8781730`.
+*PL-028b no longer calls a daemon reaching the dispatch loop without `TMUX` a defect.* The spec was
+amended in the same change at `245994fef` (process-lifecycle v0.6.2), so the amendment happened as this
+section required. `specs/process-lifecycle.md` now reads "tmux absence MUST NOT refuse the boot".
+The residual is the CLI, not the daemon: `cmd/harmonik/run.go` still self-exec-replaces into
+`tmux new-session` when `$TMUX` is unset, and that gate sits ahead of its daemon-up check, so a thin
+socket client to a running daemon still refuses outside tmux. Open as `hk-o3aj5`, P2, and declared as
+a surface gap in the spec text itself.
 
 This is the second time a constraint here turned out to be an inherited assumption nobody had reopened —
 see §5, "a claim that sounds like a blocker gets repeated as one."
@@ -175,8 +211,17 @@ Every one of these cost real time in this program. They are patterns, not incide
   always agent judgment or an operator-set number — never an inference.
 - **Plan estimates do not survive contact.** Step 3 was planned at 4,276 lines and delivered 1,744;
   step 4 at ~18,000 and delivered 860. Re-derive every number before acting on it.
+  *(Both confirmed from git 2026-07-30, and a third case is worse than an estimate that missed.
+  Step 2 was written as "885 files / 255,664 lines". The selector returned 720 files / 199,899 lines
+  on the day, and the plan's own per-package table summed to 720. That number was not an estimate
+  that decayed. It disagreed with the evidence printed beside it.)*
 - **Dead and unfinished look identical from a call graph, and have opposite dispositions.** A 1,005-line
   durable queue substrate reached only from one test is unfinished and load-bearing, not dead.
+  *(Correction 2026-07-30: the example is right and its evidence was wrong when written.
+  `internal/queue/transaction.go` is 1,005 lines, but it was never reached only from a test.
+  `internal/queuewiring/store.go` has called `queue.WriteReplacement` since 2026-07-27 at
+  `528585ffd`, which is before this program began. The lesson stands. The call-graph reading that
+  produced it does not.)*
 - **The compiler is not an oracle for deletion.** Three separate near-misses compiled clean: a package
   `TestMain` whose loss broke test isolation, files that only fail under a non-default build tag, and a
   hardware oracle whose `-run` filter silently matched zero tests and exited green.

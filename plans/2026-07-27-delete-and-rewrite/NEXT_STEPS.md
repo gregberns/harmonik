@@ -1,7 +1,7 @@
 # Next steps — after the cleanup
 
 **Date:** 2026-07-27
-**Sibling:** [`_plan.md`](_plan.md) — deletion and rewrite sequencing. [`CARRY-FORWARD.md`](CARRY-FORWARD.md) — the 83 external facts.
+**Sibling:** [`_plan.md`](_plan.md) — deletion and rewrite sequencing. [`CARRY-FORWARD.md`](CARRY-FORWARD.md) — the 89 external facts. (This line said 83. `grep -cE '^[0-9]+\. ' CARRY-FORWARD.md` returns 89, and both that file's own header and `CHARTER.md` say 89.)
 **This document:** what has to be true *before* the rewrite is worth starting, and what has to change so the same defects do not regrow.
 
 The deletion plan removes bad code. This one removes the things that **produced** it. If only the
@@ -18,8 +18,17 @@ Five workstreams, each with a measured trigger.
 
 ### The finding
 
-**1,180 unique requirement IDs in `specs/`; 291 (25%) appear in zero Go file.** They are not evenly
+**1,180 unique requirement IDs in `specs/`; 325 (28%) appear in zero Go file.** They are not evenly
 spread — the distribution is bimodal:
+
+> **Recount 2026-07-30.** The total is unchanged at 1,180. The orphan count was written as 291 (25%)
+> and is now 325 (28%), because the Go files that cited those IDs were deleted — the prose-only
+> sensors in `internal/specaudit` and the review-loop driver. Commands:
+> `grep -rhoE '\b[A-Z]{2,6}-[0-9]{3}[a-z]?\b' specs/ --include='*.md' | sort -u | wc -l` for the total,
+> and the same pattern over `internal cmd --include='*.go'` piped through `comm -23` for the orphans.
+> Deleting dead test mass raises the orphan rate. That is expected and is not new spec rot.
+> Note §B below reports 1,164 IDs and 293 uncited for the same corpus. The two counts contradict each
+> other. The command above reproduces this section's total exactly, so treat §B's pair as the stale one.
 
 | Healthy (written with the code) | orphan % | | Suspect (written ahead of code) | orphan % |
 |---|---|---|---|---|
@@ -51,7 +60,14 @@ The band between is thin but not empty (`system-state` 23%, `pi-harness` 24%, `f
 specs are not wishful; they are **rotted**. Two deletions caused most of it: commit `353fc3c1e`
 (2026-07-02) removed the entire cognition-loop implementation (9,038 lines of
 `.pi/extensions/flywheel/`), and `e99a52fff` — **this session's specaudit deletion** — removed the
-only enforcement AR-013, AR-052 and HC-026b ever had.
+only enforcement AR-013, AR-052 and HC-026b ever had. Both commits are on HEAD
+(`git merge-base --is-ancestor <sha> HEAD` returns 0 for each).
+
+> **Correction 2026-07-30 — `internal/specaudit` was not deleted, it was reduced.** The package is
+> still in the tree. `ls internal/specaudit` returns three test files and a `doc.go`. What went was
+> the 129 prose-only sensors. What stayed are three tests that import the package they constrain: the
+> agent-type regex (AR-025), the event-bus interface (HQWN-57), and declarative scenario loadability
+> (SH-INV-005). Do not read "the specaudit deletion" as "the directory is gone".
 
 > That second one is a real consequence of today's work. Those sensors were the wrong mechanism
 > (they asserted markdown contained strings), and deleting them was right — but it means the
@@ -103,13 +119,22 @@ These are worse than orphans — a rewrite that *obeys* them regresses the worki
 | **ON-020g / ON-021** | A fully-specified upgrade + `--rollback` + fd-passing subsystem, 7 sub-rules, exit codes. No `upgrade` subcommand exists. A rewrite would treat a phantom as regression scope. |
 | **AR-017** | Closed list of out-of-process actors omits the supervisor, the keeper watcher, and tmux. A rewrite would design a process model that cannot host the running system. |
 | **CL-100** | Names a deleted directory as the *sole legal* wiring point for budget and credentials. Real wiring is `internal/daemon/spendmeter_hkk3f8g.go`. |
-| **ON-018** | Promises N-1 readability of `.harmonik/queue.json`'s `schema_version` (`operator-nfr.md:435`, §4.5). `UnmarshalQueue` returns `ErrSchemaVersion` on anything but 1. (ON-015 is a *different* N-1 promise covering the Beads schema and harmonik's overlay — amending it leaves this contradiction standing.) |
+| **ON-018** | Promises N-1 readability of `.harmonik/queue.json`'s `schema_version` (`specs/operator-nfr.md` §4.5). `internal/queue/types.go` `UnmarshalQueue` returns `ErrSchemaVersion` on anything but 1, and the package's `schemaVersion` constant is 1. (ON-015 is a *different* N-1 promise covering the Beads schema and harmonik's overlay — amending it leaves this contradiction standing.) |
+
+**Re-verified 2026-07-30.** Every code claim in the table above still holds. `WriteAgentTaskVia` is
+still called from `internal/harness/claude/launchspec.go`. `internal/daemon/harnessresolve.go`
+`resolveHarness` still has no error return and still ends `return core.AgentTypeClaudeCode`.
+`grep -rn 'egress_whitelist' --include='*.go' .` returns zero lines. No `upgrade` subcommand exists in
+`cmd/harmonik`. `internal/daemon/spendmeter_hkk3f8g.go` is still the real budget wiring. AR-017 and
+AR-038 were not re-checked in this pass and stay as written.
 
 **A live bug fell out of this** — filed as `hk-rr1dy`: the daemon writes `handler-state.json` at
 `schema_version: 2` while the CLI hard-rejects anything above 1, so `harmonik handler status` and
 `handler resume` fail against state the current daemon wrote, telling the operator to upgrade a
 binary that is already current. The daemon's own comment claims the two constants match. HP-016 is
-the stale contract behind it.
+the stale contract behind it. **Still open and still true on 2026-07-30**:
+`br show hk-rr1dy` reports OPEN, `internal/daemon/handlerpause_persist_m0k0a.go`
+`handlerStateSchemaVersionDaemon` is 2, and `cmd/harmonik/handler.go` `handlerStateSchemaVersion` is 1.
 
 ### What to do
 
@@ -118,7 +143,9 @@ the stale contract behind it.
 2. **Apply the polarity check**, not the noun check. The 7-step decision procedure is scriptable
    through step 3; step 4 (polarity) needs a reader.
 3. **Delete `cognition-loop.md` and the phantom half of `operator-nfr.md` before the rewrite reads
-   them.** Category C is the only one that actively costs you.
+   them.** Category C is the only one that actively costs you. **Not done — both files are still in
+   `specs/` on 2026-07-30.** The Go package this item cites as already deleted,
+   `internal/operatornfr/`, really is gone.
 
 **Do not treat `specs/` as uniformly normative.** The 4–7% specs are usable as a rewrite oracle today.
 The 35–85% specs must be triaged first, and `AGENT_INDEX.md`'s blanket "all of `specs/` is normative"
@@ -148,6 +175,12 @@ twice.
 
 **Action: DELETE the section. Replace with the colocation rule.**
 
+> **DONE, and the premise is now dead.** The rule was removed in `92d81fd60` (on HEAD). The section in
+> `.claude/implementer-protocol.md` now records what it used to say and points at colocation instead.
+> The file count came down with it: `find . -name '*_test.go' | grep -cE '(^|/|_)hk[a-z0-9]{3,}'`
+> returns **44** today, against the 885 that started this. Keep the finding as history. Do not act on
+> it again.
+
 ### 2.2 The instruction that told agents to write tests they never ran
 
 `.claude/implementer-protocol.md` §F19 tells implementers never to run daemon-booting or
@@ -160,22 +193,36 @@ test, at the wrong layer, and do not run it.** That is the 885-file pattern's ot
 the fix* — and treat "the natural gate is a suite I cannot run in budget" as a signal the change is
 too big for one dispatch, not as a licence to defer.
 
+> **DONE.** `.claude/implementer-protocol.md` now carries "Put the test at the lowest layer that still
+> fails before your fix", directly under F19, and frames F19 as an instruction to escalate rather than
+> to fake. F19 itself stays, which is correct — it is a budget rule, not a quality rule.
+
 ### 2.3 Volume incentives
 
-`docs/methodology/TESTING.md` sets **"80% line coverage per package"** (§1) and **"CI fails the merge
+`docs/methodology/TESTING.md` set **"80% line coverage per package"** (§1) and **"CI fails the merge
 if thresholds regress"** (§Coverage enforcement) — plus "one scenario per workflow-library entry."
-These reward volume, and we got volume: **2.25:1 test-to-production** (487,997 test lines against
-216,695 production, post-deletion).
+These reward volume, and we got volume: at the time of writing, **2.25:1 test-to-production**
+(487,997 test lines against 216,695 production).
 
 ⚠ **Do not delete these blindly — a stricter gate is live and unreconciled.** `scripts/coverage-gate.sh`
-enforces a 90% floor / 95% core / 0.3pp regression cap against a checked-in 27-entry
-`coverage.baseline`, and `scripts/cmd-coverage-gate.sh` ratchets `cmd/**`; both run from `make check`
-(Makefile:701, 708). What is false is the *CI* claim — CI runs only `check-short`, which invokes
-neither. Reconcile the doc and the scripts in one change, or you strip the prose and leave a harsher
-undocumented gate behind.
+enforces a 90% floor / 95% core / 0.3pp regression cap against the checked-in `coverage.baseline`, and
+`scripts/cmd-coverage-gate.sh` ratchets `cmd/**`; both run from the `check` target in the `Makefile`,
+not from `check-fast` or `check-short`. What is false is the *CI* claim — CI runs only `check-short`,
+which invokes neither. Reconcile the doc and the scripts in one change, or you strip the prose and
+leave a harsher undocumented gate behind.
 
 **Action: DELETE the targets from the doc and reconcile against the scripts.** Replace with one line: coverage is a diagnostic, never a target — the
 question is *which real behavior is unprotected*, not *what percent*.
+
+> **DONE for the doc half, and three numbers above have moved.** `docs/methodology/TESTING.md`
+> §Coverage enforcement now names `scripts/coverage-gate.sh` as the authority, states that CI runs
+> neither gate, and records that the old bullet was false in both halves. Re-measured 2026-07-30:
+> the ratio is **1.44:1** — 307,741 test lines against 214,117 production, by
+> `find . -name '*_test.go' -exec cat {} + | wc -l` and its `-not -name '*_test.go'` twin. And
+> `coverage.baseline` holds **51** entries, not 27. The 27 was wrong on the day it was written:
+> `git show fa97cf791:coverage.baseline | wc -l`, at the commit that created this document, returns
+> 52. The scripts themselves are unchanged, so the doc-versus-script reconciliation the paragraph asks
+> for is only half done.
 
 ### 2.4 The origin of the markdown-grepping tests
 
@@ -191,14 +238,20 @@ job is to assert a document contains a string. It produced `internal/specaudit`.
 
 - `funlen` reports at the function's **declaration line**, and `check-fast` uses
   `--new-from-rev=HEAD~1`, so a grandfathered function never re-reports. `beadRunOne` was **born over
-  the ceiling at 119 lines** (commit #16 of 370) and is **2,289 today** (peak 2,394) — it has never
-  once produced a finding.
-- ⚠ **And it carries an explicit `//nolint:funlen,gocognit,cyclop`** at `internal/daemon/workloop.go:3119`,
-  justified in-line as "pre-existing … the RT ports stream exists to decompose [it]". **An explicit
-  grandfather list alone does not surface it** — the suppression has to be removed too, or the
-  ratchet still cannot see the largest function in the repo.
+  the ceiling at 119 lines** (commit #16 of 370), peaked at 2,394, and is **1,764 today** — it has
+  never once produced a finding. (Re-measured 2026-07-30. The figure in this bullet said 2,289. The
+  drop is real work, not a measurement change: the dispatch scheduler, the cadenced maintenance and
+  the pure admission gates were all lifted out of `workloop.go` over the last week. It is still by far
+  the largest function in the repo and still 17× the ceiling.)
+- ⚠ **And it carries an explicit `//nolint:funlen,gocognit,cyclop`** on the line above
+  `internal/daemon/workloop.go` `beadRunOne`, justified in-line as "pre-existing … the RT ports stream
+  exists to decompose [it]". **An explicit grandfather list alone does not surface it** — the
+  suppression has to be removed too, or the ratchet still cannot see the largest function in the repo.
+  (This bullet used to cite `workloop.go:3119`. That line number rotted within days of being written,
+  which is why the convention is to name the symbol.)
 - The exclusion `- path: (_test\.go$|^internal/scenario/|^internal/specaudit/)` disables `funlen`,
-  `cyclop` and `gocognit` for **all test code**. 525k lines with no complexity ceiling at all.
+  `cyclop` and `gocognit` for **all test code** — 308k lines with no complexity ceiling at all
+  (re-measured 2026-07-30; the bullet said 525k, and the deletions are why it fell).
 
 **Action:** replace the implicit grandfather with an explicit, checked-in, **shrinking** list — a
 commit touching a listed function must not grow it. Remove the blanket `_test\.go$` exclusion.
@@ -223,6 +276,11 @@ deletes it as part of the work rather than filing it. This matters most for `int
 `internal/core`, the two packages holding the largest remaining concentration and the next to be
 worked.
 
+> **Verified 2026-07-30.** `buildAgentTaskContent` writes both a `## Tests` and a `## Structure`
+> section for every non-reviewer phase. The Sequence table below used to cite this as landing at
+> `734f283a7`. That object is not on this branch — `git merge-base --is-ancestor 734f283a7 HEAD`
+> returns 1. The commit that is on HEAD is `ab12d65ba`, same title. Use that one.
+
 ### 2.7 Reviewer checks that would have caught all of it
 
 `.claude/agents/agent-reviewer.md` §3 asks only whether tests are at "the appropriate tier" and are
@@ -233,10 +291,13 @@ worked.
 - **exporting a pointer to a production global** → `BLOCK` (this exists today and lets tests mutate
   production state)
 
-⚠ Note the two agent-reviewer definitions have diverged: `.claude/agents/agent-reviewer.md` (200
-lines) is what the Agent tool loads, while `.claude/skills/agent-reviewer/SKILL.md` (542 lines) is in
-the live skill registry, is **newer** (Jul 23 vs Jul 12), and is a **superset** — five sections exist
-nowhere else. Reconcile them; do not delete the larger one, which would lose content.
+⚠ Note the two agent-reviewer definitions have diverged: `.claude/agents/agent-reviewer.md` (216
+lines) is what the Agent tool loads, while `.claude/skills/agent-reviewer/SKILL.md` (558 lines) is in
+the live skill registry and is a **superset** — five sections exist nowhere else. Both are still
+present and still divergent on 2026-07-30 (`wc -l` on each). Reconcile them; do not delete the larger
+one, which would lose content. The line counts here said 200 and 542. The "newer — Jul 23 vs Jul 12"
+claim is **unverified**: file timestamps in a fresh worktree are checkout times, so mtime cannot
+settle it. Use `git log -1 --format=%ci` on each path if the ordering matters.
 
 ### 2.8 The architecture-warning mechanism
 
@@ -271,16 +332,45 @@ it is cheap: the orchestrator greps open `structure-block` beads by file before 
 Reuse the existing precedent rather than inventing machinery — `orchestrator-rules` §Priority already
 says friction beads jump ahead of feature work. Add `structure-block` to that same sentence.
 
-**Deployment note:** all 10 shipped skills are currently byte-identical between `.claude/skills/` and
-`cmd/harmonik/assets/skills/`. Any edit to a shipped skill must land in both in the same commit.
+**Deployment note:** all 10 shipped skills are byte-identical between `.claude/skills/` and
+`cmd/harmonik/assets/skills/`. Re-checked 2026-07-30 with
+`diff -rq cmd/harmonik/assets/skills/ .claude/skills/` — the only output is the seven project-authored
+skill directories that have no embedded source. Any edit to a shipped skill must land in both in the
+same commit.
 
 ---
 
 ## 3. Stale phase markers
 
+> ## ⚠ THIS SECTION'S PREMISE IS DEAD FOR `specs/` AND FOR Go. Measured 2026-07-30.
+>
+> **`grep -rn 'MVH' specs/ --include='*.md' | wc -l` returns 0.**
+> **`grep -rn 'MVH' --include='*.go' internal cmd | wc -l` returns 0.**
+>
+> The 2026-07-28 sweep cleared both surfaces completely. Everything below about spec lines, Go lines,
+> the three renames, the `"mvh-required"` enum, and the two "secondary traps" describes a state that no
+> longer exists. It is kept as the record of what was done and why, not as work to do. The one part
+> still live is `docs/`, and item L in §Deferred — housekeeping owns it.
+>
+> Item by item, against the tree today:
+> - **The three renames are done.** `DefaultMVHRoles` no longer exists under any spelling.
+>   `ValidateMVHRoleDefaultSkills` is now `ValidateRequiredRoleDefaultSkills` in
+>   `internal/core/policydocument.go`. `mVHTierOrder` is now `modelTierOrder` in
+>   `internal/core/freedomprofiletightest_hka8bg33.go`.
+> - **The `"mvh-required"` wire value is retired, not preserved.** `internal/core/role.go` now declares
+>   exactly two `RoleStatus` values, `required` and `declared-but-deferred`, and
+>   `internal/core/rolevalidation_test.go` asserts that the old spelling is *rejected*. The warning
+>   below says a blind rename would silently corrupt the policy parser. That was true. It was handled
+>   by a spec amendment plus a rejecting parser, which is what the warning asked for.
+> - **The two latent stubs are still latent, and their MVH wording is gone.**
+>   `internal/daemon/socket.go` `noopRequestHandler` now returns "RequestHandler not wired yet", and
+>   `cmd/harmonik/handler.go` prints "(unavailable — HandlerPauseController not yet wired)". The
+>   qualifier was replaced with "yet", so the feared TODO-to-permanent-design conversion did not
+>   happen. Both are still unwired. Filing them as bugs is still open work.
+
 "MVH" (Minimum Viable Harmonik) was an early phase concept agents latched onto and never let go:
-**443 lines in `specs/`, ~913 lines in `docs/`, ~516 in Go.** (Counts vary by unit — occurrences run
-higher; the figures here are lines.) The damage is that "at MVH" makes a live
+**443 lines in `specs/`, ~913 lines in `docs/`, ~516 in Go**, as measured on 2026-07-27. (Counts vary
+by unit — occurrences run higher; the figures here are lines.) The damage is that "at MVH" makes a live
 requirement read as provisional — `specs/claude-hook-bridge.md` alone carries "the hook timeout is
 fixed at 30 seconds at MVH", "no new bus event is emitted at MVH", "cleanup is acceptable but not
 required at MVH". A reader cannot tell current behavior from abandoned intention.
@@ -299,26 +389,29 @@ required at MVH". A reader cannot tell current behavior from abandoned intention
 `modelTierOrder` (misnamed — it ranks model tiers haiku/sonnet/opus, nothing phase-related; it does
 have 2 in-file callers, so the rename is compiler-checked rather than callerless).
 
-**⚠ The one thing that must not move mechanically:** `"mvh-required"` is an **on-disk policy-document
-YAML enum**, normative in `specs/control-points.md` **§6.2 (line 806) and §6.3 (line 854)** — note
-`policydocument.go:95` mis-cites it as §4.6, which is probably how this got lost — compared against parsed YAML in
-`internal/core/role.go` and `policydocument.go`. A blind `MVH → ""` pass corrupts it and **no compiler
-error catches it** — both sides are string literals, so the policy parser would begin rejecting every
-valid role document at runtime. Changing it needs a spec amendment and a parser accepting both forms.
+**⚠ The one thing that must not move mechanically — RESOLVED, see the banner at the top of this
+section.** `"mvh-required"` was an **on-disk policy-document YAML enum**, normative in
+`specs/control-points.md` §6.2 and §6.3, compared against parsed YAML in `internal/core/role.go` and
+`internal/core/policydocument.go`. A blind `MVH → ""` pass would have corrupted it with **no compiler
+error** — both sides were string literals, so the policy parser would have begun rejecting every valid
+role document at runtime. It was changed the safe way: the enum is now `required`, and the retired
+spelling is rejected with a named error rather than silently ignored.
 
-Two secondary traps: `mVHTierOrder` (lowercase leading m) is missed by a case-sensitive pattern and
-mangled by a case-insensitive one; and stripping "at MVH" from `not wired at MVH` converts a TODO
-into a statement of permanent design.
+Two secondary traps, both now historical: `mVHTierOrder` (lowercase leading m) was missed by a
+case-sensitive pattern and mangled by a case-insensitive one; and stripping "at MVH" from
+`not wired at MVH` would have converted a TODO into a statement of permanent design.
 
-**Three of the "deferrals" are actually live defects, not future work** — `RequestHandler not wired at
-MVH` (`internal/daemon/socket.go:210,214`) and `dispatcher_backlog_held: (unavailable at MVH)`
-(`cmd/harmonik/handler.go:487`) are latent stubs in shipped paths. File as bugs.
+**Three of the "deferrals" are actually live defects, not future work** — the two `noopRequestHandler`
+methods in `internal/daemon/socket.go` and the `dispatcher_backlog_held` line in
+`cmd/harmonik/handler.go` are latent stubs in shipped paths. Still unwired on 2026-07-30. File as bugs.
 
 ### `v0.1` is the same disease, and must be cleaned in the same pass
 
-**110 lines in `specs/`, 533 in `docs/`, 31 in Go** — "in v0.1 the daemon…", "v0.2 may add…", "v0.1
-ships no timeout". It is a *parallel* vocabulary for the same idea, so the specs now carry two
-competing era markers. Fixing only MVH fixes half the problem.
+**130 lines in `specs/`, 534 in `docs/`, 24 in Go** — "in v0.1 the daemon…", "v0.2 may add…", "v0.1
+ships no timeout". (Re-counted 2026-07-30 with `grep -rn 'v0\.1'` over each tree. The figures here
+said 110 / 533 / 31. Unlike MVH, this vocabulary was never swept, and the spec count went **up**.) It
+is a *parallel* vocabulary for the same idea, so the specs now carry two competing era markers. MVH is
+gone, so `v0.1` is what is left of the problem, not half of it.
 
 **Checked and NOT stale — leave alone:** `parity` (327 in Go) is the live `twinparity` subsystem;
 `D1`/`D2` in specs are normatively-cited design-decision IDs, not phases; `P1`/`P2` are bead
@@ -338,13 +431,17 @@ so it needs a look rather than a blanket pass.
 - **24 of 28 are cited by no `specs/*.md` at all.** `specs/examples/README.md` states the governing
   test itself — normative iff a spec section names the file. Only 4 qualify.
 - Two documented invariants are already unmet: WG-037 requires a sibling `<name>.md` per `.dot` (1 of
-  28 has one), and both WG-036's "the engine's example-loader looks there" and the README's cited
-  `internal/workflow/examples_test.go` **do not exist**.
+  28 has one — `per-node-model-effort.md`), and both WG-036's "the engine's example-loader looks there"
+  and the README's cited `internal/workflow/examples_test.go` **do not exist**. All three re-checked
+  2026-07-30: 28 `.dot` files, one sidecar, and no `examples_test.go`. Note WG-036 §13 also names
+  `specs/examples/standard-bead.md` as a required sidecar, and that file is absent too.
 
 **The duplicate is worse than drift — they are different workflows.** `specs/examples/review-loop.dot`
 and `internal/workflow/dot/testdata/review-loop.dot` have different `start_node` (`start` vs
 `implement`), different node sets, different handler refs, and different condition dialects. The
-testdata header still claims it is authoritative "until C5 lands" — C5 landed. Meanwhile
+testdata header still claims it is authoritative "until C5 lands" — C5 landed. **Both halves still
+true 2026-07-30**: the two files still disagree on `start_node`, and the stale header sentence is still
+in the testdata file. Meanwhile
 `standard-bead.dot` **is** byte-identical to its daemon copy, because `standardgraph_sync_test.go`
 enforces it. Guarded copies stay in sync; unguarded ones fork silently.
 
@@ -378,24 +475,38 @@ SW-EX-001 yet **have no test at all** — a gap to fill, not files to delete.
 Two live defects were filed today, and the lesson is not "be more careful":
 
 - **Branch-protection deep guard fails open** — a bead merges to a protected target, the ref actually
-  moves, and it closes `approved`.
+  moves, and it closes `approved`. **⚠ This one was a mis-diagnosis, and it is now closed.**
+  `br show hk-zobns` reports CLOSED as of 2026-07-30, invalid. The guard never failed open. The ref
+  that moved was the *unprotected* `integration` branch that the fixture's own bead asks to land on.
+  Coverage was instead restored at the guard's own seam. Read the §5.2 row for the detail.
 - **`br` exit 3 never stderr-refined** — a permanent "not found" is classified as retryable
-  infrastructure failure, routing to Cat-0 and potentially daemon exit 8.
+  infrastructure failure, routing to Cat-0 and potentially daemon exit 8. **Still live on 2026-07-30**:
+  `internal/brcli/brerror.go` `BrErrorFromExit` still refines only `if code == 1`, and
+  `BrErrorFromExitCode` still has `case 3: return BrDbLocked`.
 
-**Both were caught by tests that already existed and that block nothing.** `.github/workflows/scenario.yml`
-*does* run `make test-scenario` on every push and PR plus a nightly cron — but it carries
-`continue-on-error: true` and its own header says "Non-merge-blocking: no required status check
-configured in branch protection." Neither `check-fast` nor `check-short` invokes the tier either. So
-the suite runs, goes red, and nobody is stopped.
+**Both were caught by tests that already existed and that blocked nothing.** `.github/workflows/scenario.yml`
+runs `make test-scenario` on every push and PR plus a nightly cron. It used to carry
+`continue-on-error: true`, and its header still says "Non-merge-blocking: no required status check
+configured in branch protection." Neither `check-fast` nor `check-short` invokes the tier.
+
+> **The `continue-on-error` half is FIXED, 2026-07-29.**
+> `grep -n 'continue-on-error' .github/workflows/scenario.yml` returns nothing but two warnings not to
+> put it back. The tier now reports its real result, and the ops-monitor nightly probe reads a true
+> conclusion again. The suite still blocks nothing, because the required status check was deliberately
+> **not** added — the workflow header now says do not add it until the deterministic failures close,
+> because doing so would wedge every merge.
 
 **Action, in priority order:**
-1. **Make the scenario tier merge-blocking.** Cheaper than it sounds: delete one
-   `continue-on-error: true` from `.github/workflows/scenario.yml` and add the required status check in
-   branch protection. It goes red until the branch-guard bug is fixed — that is the point.
+1. **Make the scenario tier merge-blocking. HALF DONE — do not repeat the first half.** The
+   `continue-on-error: true` deletion landed on 2026-07-29. What remains is the required status check
+   in branch protection, and that is deliberately gated on the deterministic failures closing first.
+   A second blocker surfaced with it: about half the tier **skips** in CI, because nothing installs
+   `br` and nothing declares a twin build, and a skip reads as a pass. Tracked as `hk-ynohn`, open. So
+   a green run on that workflow today proves much less than it looks like.
 2. **Fix the correct bug, and verify the call chain before believing any claim about which code is
    live.** The `br` defect is instructive in a way that caught this document out. A first pass asserted
    that `BrErrorFromExitCode`'s inverted table was dead code and the real defect lay elsewhere. It is
-   not dead: `BrErrorFromExit` (`internal/brcli/brerror.go:171`) calls it for the base value and only
+   not dead: `internal/brcli/brerror.go` `BrErrorFromExit` calls it for the base value and only
    applies stderr refinement `if code == 1`, so exit 3 falls straight through to
    `case 3: return BrDbLocked`. **That arm is the bug.** The lesson is that "this looks like dead
    code" is a claim requiring a call-chain check, not a reading. Require a fix to name the failing
@@ -407,7 +518,9 @@ the suite runs, goes red, and nobody is stopped.
 early-returns "no unknown keys" for any node that is not a mapping, so a YAML alias defeats the strict
 unknown-key rejection — `keeper: *anchor` (or a `subsystems:` entry) hides a typo'd key behind the
 alias and it is silently accepted. Pre-existing on the keeper block; inherited by the new `subsystems:`
-block. Fix is to resolve alias nodes before the mapping check.
+block. Fix is to resolve alias nodes before the mapping check. **Still live on 2026-07-30** —
+`internal/projectconfig/projectconfig.go` `unknownYAMLKey` still returns `"", true` for any node whose
+`Kind` is not `yaml.MappingNode`, and its own comment now names `alias` in that list.
 
 ### 5.2 The load-sensitive test family — make these robust instead of re-diagnosing them
 
@@ -447,6 +560,16 @@ headroom.** That is the shape of the whole family: the assertions encode schedul
 > of `got 16` (the `ratio` line passes at 0.44 and is a `t.Logf`, not the failure). Something
 > deterministic is causing ~6 re-dispatches regardless of load. Treat the prior ENV/LOAD-FLAKE label as
 > **right about the invariant, unproven about the cause.**
+>
+> **STILL UNEXPLAINED after the low-disk correction. Re-measured 2026-07-30 by this sweep.**
+> `go test ./internal/daemon/ -run '^TestThroughput_TenBeadsAtMaxFour$' -count=1` on a box with 59 GiB
+> free — six times the 10 GiB watermark — fails with **`got 16`** again, and names all sixteen run IDs.
+> This matters because `OPEN-DEFECTS.md` established on the same day that a low disk reading holds the
+> dispatch tick before queue selection and turns 23 daemon tests red, and that
+> `internal/daemon/t11_throughput_test.go` is one of the fixtures that does **not** stub the disk
+> reading. So low disk was the obvious candidate cause, and it is not the cause here. The signature
+> survives an idle box, a healthy disk, and isolation. Do not close this as either a load flake or a
+> disk artifact.
 
 **Two traps that invert the answer if you get them wrong:**
 
@@ -466,13 +589,26 @@ headroom.** That is the shape of the whole family: the assertions encode schedul
   **zero call sites** and the live path emits `review_fixup_stalled`. A flake allowlist that swallows a
   real bug is worse than no allowlist, because it converts a red into permanent silence. Assume EM015e
   is not the only one — every entry needs re-confirming against today's tree, not inherited.
+  **The EM015e test is gone as of 2026-07-30.** `grep -rn 'EM015e' --include='*.go' .` finds only
+  unrelated `internal/workspace` diff-hash tests. The review-loop retirement (`3cec5afd7`) deleted
+  `internal/daemon/reviewloop.go`, `emitNoProgressDetected` and the scenario test together. The lesson
+  about the allowlist stands. The instance does not — do not go looking for that test.
 - **Nothing routinely runs the tagged tier**, so its state is unknown between deliberate looks. Measured
-  2026-07-29: `go test -tags scenario ./internal/daemon/` yields **eight** failures where the untagged
-  run yields one. This is the same invisibility that made "does EM015e fail or never run?" unanswerable
+  2026-07-29: `go test -tags scenario ./internal/daemon/` yielded **eight** failures where the untagged
+  run yielded one. This is the same invisibility that made "does EM015e fail or never run?" unanswerable
   from the tree for days. §5.1's gate is the fix; this section is why it matters.
   **Root cause established 2026-07-29: no prior assessment ever ran `go test -tags scenario` on this
-  package at all.** The P2 recipes only `go vet`ed it, and `.github/workflows/scenario.yml` carries
+  package at all.** The P2 recipes only `go vet`ed it, and `.github/workflows/scenario.yml` carried
   `continue-on-error: true`. The tier was not neglected — it was never looked at.
+
+  > **Both numbers in that bullet are now wrong, in opposite directions. 2026-07-30.**
+  > **The tagged count is at most seven**, because one of the eight — EM015e — no longer exists.
+  > **The untagged count was never one.** `OPEN-DEFECTS.md` establishes that `go test -short
+  > ./internal/daemon/` yields 23 failures when the disk reading is low and **zero** when it is
+  > healthy, on the same box and the same commit. The "exactly one pre-existing failure" that this
+  > whole family was reasoned from was an artifact of a machine below the disk watermark. The `-tags
+  > scenario` figure was measured on the same low-disk box, so it also needs re-measuring before it is
+  > quoted again. Do not re-quote either number without re-running it.
 
 - **Three of these tests print an unconditional `OK` / `PASS`-shaped `t.Logf` while failing** —
   `TestBranchGuard_FailClosed_MergeGuardBackstop`, `TestScenario_RestartRecovery_QM002bDeadlock`, and
@@ -480,14 +616,19 @@ headroom.** That is the shape of the whole family: the assertions encode schedul
   the truth. Deleting those log lines is a five-minute change with outsized payoff, and it belongs with
   this work.
 
-**Dispositions, measured 2026-07-29 — all seven are pre-existing; the tier blocks nothing in Phase 3:**
+**Dispositions, measured 2026-07-29 — all seven are pre-existing; the tier blocks nothing in Phase 3.**
+**Re-checked 2026-07-30: six of the seven test functions are still in the tree** (`t6_scale_shape_test.go`,
+`scenario_restart_recovery_ivzsl_test.go`, `scenario_remote_substrate_localhost_dot_test.go`,
+`scenario_concurrent_multiqueue_hkumemp_test.go`, `scenario_multibead_mergeconflict_serial_hktijaj_test.go`,
+`t11_throughput_test.go`, `branchguard_test.go`). **EM015e is deleted.** `hk-co8g8` and `hk-t2d7n` are
+still OPEN. `hk-zobns` is CLOSED.
 
 | Test | Verdict |
 |---|---|
-| `BranchGuard_FailClosed_MergeGuardBackstop` | **False red.** Guard did not fail open — the ref that moved was the *unprotected* `integration` branch the bead asks for. Premise went stale 2026-07-06 (`hk-lgykq`) when merge-target resolution moved to per-bead `lands_on` and got **stricter**. Open P0 `hk-zobns` is a mis-diagnosis. Real cost is three weeks with no coverage of that backstop. |
+| `BranchGuard_FailClosed_MergeGuardBackstop` | **False red.** Guard did not fail open — the ref that moved was the *unprotected* `integration` branch the bead asks for. Premise went stale 2026-07-06 (`hk-lgykq`) when merge-target resolution moved to per-bead `lands_on` and got **stricter**. `hk-zobns` was a mis-diagnosis and is now **CLOSED invalid, 2026-07-30** — this row said "Open P0". Coverage was restored at the guard's own seam by a direct call to the merge entry point with `target=main` and `protect=[main]`, verified by mutation. The recorded one-line fix could not have worked: the early landing gate and the deep merge guard read the same resolved value against the same list, so protecting `integration` makes the early gate refuse and the deep guard is still never reached. Caveat: `internal/daemon/branchguard_test.go` sits behind the scenario build tag, so the new assertion does not run in the default short gate. |
 | `RemoteSubstrate_Localhost_DOT_E2E` | **False red, environmental.** `t.TempDir()` + a 45-char test name pushes `daemon.sock` to 131 bytes and `ValidateSocketPathLength` correctly refuses. `TMPDIR=/tmp/h` → **PASS in 6.95s**. **The DOT path is healthy** — full remote lifecycle over SSH lands on main and reaches origin. One-line `TMPDIR` pin. |
 | `RestartRecovery_QM002bDeadlock` | **False red.** Behaviour changed correctly under `hk-qkahq`; the wedge is still prevented via `paused-by-failure` + QM-027. |
-| `EM015e_NoProgress_ReviewerNotLaunched` | **True red.** Dead emitter. Dies with `reviewloop.go`; property survives on DOT. |
+| `EM015e_NoProgress_ReviewerNotLaunched` | **True red — and now GONE, 2026-07-30.** Dead emitter. It did die with `reviewloop.go`, in `3cec5afd7`. The property survives on DOT. Nothing to do. |
 | `MultiBead_SerializedNCompletion` | **True red — genuine lost-commit race.** 5/5 including isolated on a quiet box; *which* beads lose varies. Files are non-colliding by construction, so a merge race is the only explanation. → `hk-co8g8`. |
 | `ConcurrentMultiQueue_N2_HappyPath` | **True red.** `structural / protocol_mismatch` on the 2nd and 3rd dispatch — a deterministic ordinal, not load. → `hk-t2d7n`. |
 | `T6_10BeadSequentialDrain` | **Confirmed load flake.** Passes 3/3 on a quiet box at both commits. No action. |
@@ -505,12 +646,12 @@ growing, and there is no point hardening tests nothing runs. Tracked as `hk-97gc
 
 | # | Step | Blocks | Cost |
 |---|---|---|---|
-| 1 | ~~Reconcile `origin/integration/phase-reviewloop-20260725`~~ — **RESOLVED 2026-07-28: abandon it.** See §Deferred item C | nothing | done |
-| 2 | **Agent instruction changes (§2)** — §2.6 landed 2026-07-28 (`734f283a7`); §2.5 ratchet and §2.8 structure-block remain | dispatching any new agent work | mostly deletions |
-| 3 | Wire the scenario tier to a merge-blocking gate (§5.1), then harden the load-sensitive family (§5.2) | trusting any green build | small / then real |
+| 1 | ~~Reconcile `origin/integration/phase-reviewloop-20260725`~~ — **DONE. The remote branch no longer exists** (`git branch -r \| grep integration` returns nothing). See §Deferred item C | nothing | done |
+| 2 | **Agent instruction changes (§2)** — §2.1, §2.2, §2.3-doc and §2.6 have all landed (§2.6 at `ab12d65ba`, not `734f283a7` — that object is not on this branch); §2.5 ratchet, §2.7 reviewer checks and §2.8 structure-block remain | dispatching any new agent work | mostly deletions |
+| 3 | Wire the scenario tier to a merge-blocking gate (§5.1), then harden the load-sensitive family (§5.2) — **the `continue-on-error` half landed 2026-07-29**; the required status check is deliberately held, and `hk-ynohn` (half the tier skips in CI) is a new prerequisite | trusting any green build | small / then real |
 | 4 | Deletion steps 2–4 of the predecessor plan | the rewrite | mechanical |
-| 5 | **Subsystem partition — config-driven enable/disable of each part of the system** (§below) | the rewrite's shape and its priority order | design + planning |
-| 6 | Decompose the run machine — **`workloop.go` + `reviewloop.go` + `dot_cascade_core.go` as one unit** | — | the point of all this |
+| 5 | **Subsystem partition — config-driven enable/disable of each part of the system** (§below) — **substantially SHIPPED, see the note under §6** | the rewrite's shape and its priority order | design + planning |
+| 6 | Decompose the run machine — **`workloop.go` + `dot_cascade_core.go`**. `reviewloop.go` was in this row and is now **deleted** (`3cec5afd7`), so the unit is two files, not three | — | the point of all this |
 | 7 | `.dot` fixture relocation + WG-036 amendment (§4) | nothing — do it opportunistically | small |
 
 **Everything not on that list is deferred.** The failure mode of this project has never been running
@@ -525,11 +666,17 @@ Both found 2026-07-28 by re-verifying the superseded `plans/2026-07-24-code-heal
 tree as it stands. Both are silent: nothing fails, work just disappears.
 
 **Trap 1 — the zero-caller sweep will delete the queue transaction substrate.**
-`internal/queue/transaction.go` (1,005 LOC) is reached only via `queuewiring.QueueStore.Transact`, and
-`Transact` has exactly one caller: a test. Three of its five exported functions have no caller at all.
-It is therefore indistinguishable from dead code to the mechanical selector — but it is **unfinished,
-not dead**, and this plan lists it under KEEP. **It needs an explicit carve-out in the step-4 selector,
-alongside `internal/workflow/scenario/` and the `//go:build scenario` daemon files.**
+`internal/queue/transaction.go` (1,005 LOC, unchanged) is reached via `queuewiring.QueueStore.Transact`.
+It is **unfinished, not dead**, and this plan lists it under KEEP. **It needs an explicit carve-out in
+the step-4 selector, alongside `internal/workflow/scenario/` and the `//go:build scenario` daemon
+files.**
+
+> **The "one caller, and it is a test" half is FALSE as of 2026-07-30.** `Transact` now has a
+> production caller: `internal/daemon/scheduler_reservation.go` `reserveQueueItem`, at two call sites,
+> landed in `b029f9ce1` ("the dispatch stamp is one durable write"). Command:
+> `grep -rn '\.Transact(' --include='*.go' .` — the non-test hits are in `scheduler_reservation.go`.
+> The trap itself is unchanged and still worth the carve-out, because most of the substrate is still
+> unreached. Only the sentence about the caller count was wrong.
 
 **Trap 2 — a `ready` kerf work will overwrite `specs/`, including the correction at this branch's tip.**
 `.kerf/works/reviewloop-decoupling/` holds 11 unlanded spec drafts, among them a `run-state-machine.md`
@@ -538,6 +685,10 @@ copies drafts into `specs/` wholesale, so running it overwrites that correction 
 with pre-correction text. This plan names `specs/` the rewrite oracle. **Do not finalize that work.
 Resolve or abandon it before any spec triage begins.**
 
+> **Still live, re-checked 2026-07-30.** `.kerf/works/reviewloop-decoupling/05-spec-drafts/` still holds
+> 11 drafts, and its `run-state-machine.md` still declares `version: 0.2.1` — the same version as
+> `specs/run-state-machine.md`. Nothing has been resolved or abandoned.
+
 ---
 
 ## 6. Subsystem partition — turn parts of the system on and off by configuration
@@ -545,6 +696,31 @@ Resolve or abandon it before any spec triage begins.**
 **Operator direction, 2026-07-28.** Before rebuilding or fixing anything, build a simple partition that
 decides — at startup, from configuration — which parts of the system are running: queue, comms, keeper,
 crew, and the rest. Each subsystem becomes something you can opt into or out of.
+
+> ## ⚠ THE MECHANISM HAS SHIPPED. Verified 2026-07-30.
+>
+> This section is written as "this needs planning before implementation". The planning happened and so
+> did the implementation. `internal/projectconfig/subsystems.go` declares a closed set of **eight**
+> switchable subsystems, and each has a real gate at its construction seam:
+>
+> `reconciliation_scheduler`, `socket_listener`, `dashboard_gate`, `movement_governor`,
+> `crew_idle_reap`, `bandwidth_tuner`, `branch_reaper`, `worker_report_loop`.
+>
+> An unknown name under `subsystems:` is a hard start-up error, not a silent ignore.
+> `SubsystemsConfig.Enabled` returns **true for anything not explicitly switched off**, so every
+> subsystem is on by default and the config is opt-*out*, not opt-in. Landed across
+> `51143d5b1`, `f6408b861` and `e4abbd67b`.
+>
+> Two statements elsewhere in this document say "the name exists, the call site does not yet" — one for
+> `SubsystemMovementGovernor` in §Deferred item A, one for `SubsystemDashboardGate` in RA-6. **Both are
+> false.** `grep -rn 'SubsystemMovementGovernor\|SubsystemDashboardGate' --include='*.go' .` finds real
+> gates in `internal/daemon/bootworkloop.go`, `internal/daemon/movementgovernor.go` and
+> `internal/daemon/dashboardgate.go`. Each has been corrected in place.
+>
+> What is NOT done: the queue itself is not yet a standalone subsystem, the default-on posture is the
+> opposite of what RA-3 asks for `crew_idle_reap`, and no subsystem has been *deleted* on the strength
+> of being switchable. The prose below still describes the goal correctly. It no longer describes the
+> starting point.
 
 **Why it comes before the rewrite, not after.** It lets the rebuild start with a small subset of the
 product and make *that* genuinely robust before anything else is switched on. Every previous attempt has
@@ -578,8 +754,10 @@ Three consequences that should settle arguments later:
 1. **Segment, then stitch.** Subsystems are separated first and composed back together explicitly at a
    composition root — not left implicitly entangled and documented as if they were separate.
 2. **The queue is the centre.** Where effort is contested, it goes to the queue and the bead-processing
-   path. `internal/queue` is 7,627 production lines with the durable transaction substrate still
-   unfinished (see Trap 1) — that substrate is core work, not a deferred nicety.
+   path. `internal/queue` is 7,718 production lines with the durable transaction substrate still
+   unfinished (see Trap 1) — that substrate is core work, not a deferred nicety. (Re-counted
+   2026-07-30 with `find internal/queue -name '*.go' -not -name '*_test.go' | xargs wc -l`. This said
+   7,627 in two places.)
 3. **Composability is the test of the design.** If the system cannot run without a given subsystem
    present, that subsystem is entangled with the core and the entanglement is the defect.
 
@@ -595,7 +773,8 @@ Three consequences that should settle arguments later:
    operator decision 2026-07-28, recorded in `CHARTER.md` §3, extracted when it blocks the
    decomposition and PL-003 amended rather than obeyed.
    **The reviewer is wrongly fused INTO the core and must come out** — welded into the work loop
-   instead of being a switchable stage, a large part of why `beadRunOne` is 2,289 lines.
+   instead of being a switchable stage, a large part of why `beadRunOne` is 1,764 lines (re-measured
+   2026-07-30; this said 2,289, see §2.5).
    The hard `$TMUX` fail-fast is **cleared to come out** — operator reversal 2026-07-28, recorded in
    `CHARTER.md` §3, which reopens locked decision #4 and is the single source for that decision. Scope
    it from there: the daemon must be able to *run* without tmux; tmux is not removed and stays the
@@ -655,16 +834,29 @@ job was to write that record.
 
 **Delete during the decomposition, not after** — ~190 lines of the governor are near-duplicated *inside*
 `workloop.go`. Carrying dead-by-measurement code through a rewrite is how it becomes permanent. Also
-delete the positive loop, goal-keeper, and `internal/cognition/`.
+delete the positive loop and goal-keeper. **`internal/cognition/` is already gone** — `ls
+internal/cognition` reports no such directory as of 2026-07-30.
 
 **Operator confirmation, 2026-07-28** — the measurement matched the operator's independent recollection:
 *"I'm almost positive that should be pulled, and we probably need to consider removing. I think it was
 added early on and basically always has been a problem."* Sequence is unchanged: gate it out of the core
-(`SubsystemMovementGovernor` — the name exists, the call site does not yet), then delete it during the
-decomposition. Note the governor's observe block still runs on **every** production daemon today — a
-`br ready` shell-out plus an `events.jsonl` scan every two minutes, emitting `governor_signal`, which has
-no **Go** consumer (`scripts/ops-monitor-check.sh` does list it in `ACTIONABLE_EVENT_TYPES`, so the shell
-side is not quite nothing).
+first, then delete it during the decomposition.
+
+> **The gate now exists. Corrected 2026-07-30.** This paragraph said "`SubsystemMovementGovernor` — the
+> name exists, the call site does not yet". The call sites are real:
+> `internal/daemon/bootworkloop.go` and `internal/daemon/movementgovernor.go` both guard on
+> `cfg.Subsystems.Enabled(projectconfig.SubsystemMovementGovernor)`. So the first half of the sequence
+> is done and only the deletion is left. **But the observe block still runs on every default
+> deployment**, because `SubsystemsConfig.Enabled` returns true unless the operator explicitly writes
+> `enabled: false`. Switching it off is now one config line rather than a code change.
+
+The governor's observe block is a `br ready` shell-out plus an `events.jsonl` scan every two minutes,
+emitting `governor_signal`, which still has no **Go** consumer as of 2026-07-30
+(`grep -rn 'governor_signal' --include='*.go' .` finds only the emitter, the event-type declaration and
+the config comment). `scripts/ops-monitor-check.sh` does list it in `ACTIONABLE_EVENT_TYPES`, so the
+shell side is not quite nothing. Treat the 34,125-event and 12.4% figures as a point-in-time reading —
+`internal/projectconfig/subsystems.go` says the same thing in its own comment. Re-derive before
+quoting.
 
 **And a wider direction that falls out of it — audit every bead query outside the queue path.**
 Operator, same day: *"A lot of the bead calling to search beads (outside the normal queue stuff) should
@@ -678,7 +870,8 @@ decomposition, not a sweep to start now.
 (`internal/sentinel/signals.go`, `layera_hkl087e.go`) came from different July work that borrowed the
 package name. They detect per-run stalls — heartbeat gap, review-loop wedge, run age — are tested, have
 zero production callers, and their judgment is evidence-local, which is exactly where the fleet-wide
-governor fails.
+governor fails. Still true 2026-07-30: `grep -rn 'ComputeSnapshot\|DetectLayerA' --include='*.go' .`
+outside `_test.go` files finds only their own definitions and two comments.
 
 **Three landmines when cutting:** `DecisionBlocker` (`decision_block_ev043a.go`) is the general
 human-in-the-loop mechanism with several callers — remove only its `AddQueueBlock("sentinel")` site;
@@ -700,7 +893,9 @@ need to go through the specs and identify what is good and useful, and what is o
 separately: walk a good-size sample to see whether each feature exists and whether we still want it —
 delete some, mark others not-built and build them later. Measured 2026-07-28: **1,164 requirement IDs,
 293 uncited (25%)**; of a 119-ID sample, 48% are implemented-but-untagged, **28% stale**, 13% never
-built. **Seven** requirements would regress working code if a rewrite obeyed them — `AR-017` is the
+built. **⚠ That pair contradicts §1 above, which says 1,180 and 291 for the same corpus. Re-measured
+2026-07-30 the total is 1,180 and the orphan count is 325 (28%) — see the recount box in §1. Use those.
+The 1,164 / 293 pair here reproduces from no command tried in this sweep.** **Seven** requirements would regress working code if a rewrite obeyed them — `AR-017` is the
 worst: a closed list of out-of-process actors that omits tmux, the supervisor, the keeper, `git`, and
 `gh`, so a rewrite obeying it would design a process model that cannot host the running system. Also:
 eight spec files declare **zero** requirement IDs and are unfalsifiable by construction, and
@@ -738,6 +933,11 @@ of the five reserved context keys have no durable carrier at all.
 **The branch tip is preserved at `origin/salvage/reviewloop-kernels-20260729` (`30d4e08`)**, which this
 manifest's own convention marks as protected. So `origin/integration/phase-reviewloop-20260725` can now
 be deleted with nothing at risk, and the cherry-pick decision below is no longer on a deadline.
+
+> **DONE, 2026-07-30. The integration branch is deleted.** `git branch -r | grep -i integration`
+> returns nothing. The salvage branch is still there —
+> `git branch -r --list 'origin/salvage/*'` lists `reviewloop-kernels-20260729` alongside
+> `reviewloop-decoupling-20260729` and `hk-hzj-984ec58c`. Nothing further to do on this item.
 
 **The cherry-pick recommendation is REVISED by the Phase 3 reframe, and split.** The original rationale
 was "`reviewloop.go` is in the rewrite scope, so this extraction is prior art for the rewrite." Phase 3
@@ -787,18 +987,23 @@ corrected: the registered worktree count was **37**, not 29 (31 removed), and **
 before removal, so nothing was lost, but the hazard behind them is unchanged and still worth the
 warning: running bare `br` inside a worktree silently creates a fresh `.beads/beads.db` and issues IDs
 from a new namespace, with no warning and exit 0. 40 provably-merged local branches were deleted;
-**359 local and all 129 remote branches remain**, untouched — the worktrees are cleaned up, the
-branches essentially are not, so branch cleanup proper is still open.
+at the time, **359 local and all 129 remote branches remained**, untouched.
 
-**Five worktrees were deliberately kept, and this is the part that has to survive:**
+> **The branch counts have moved a long way. Re-counted 2026-07-30** with `git branch | wc -l` and
+> `git branch -r | wc -l`: **383 local** and **32 remote**. Local went *up*, because agent worktrees
+> keep creating branches. Remote came down from 129 to 32, so remote branch cleanup did happen even
+> though this item was never worked. Local branch cleanup is still open.
+
+**Five worktrees were deliberately kept, and this is the part that has to survive.**
+**⚠ Two of the five are already gone, checked 2026-07-30 with `git worktree list`.**
 
 | Kept | Why |
 |---|---|
-| `harmonik-wt/cq-01` | 8 staged files incl. an unfinished `internal/queue/transaction_store.go` — the queue-transaction work Trap 1 protects |
-| `harmonik-wt/lift-l8-reviewloop` | 2 staged renames moving `reviewloop.go` into `internal/runloop` — relevant to the run-machine decomposition (step 6) |
-| `harmonik-wt/arch-01-contract` | untracked `.kerf/` artifacts |
-| `harmonik-wt/cq-mig-01` | untracked evidence under `plans/` |
-| `/private/tmp/harmonik-main-integration-20260725` | staged for the item-C hand-harvest |
+| `harmonik-wt/cq-01` | 8 staged files incl. an unfinished `internal/queue/transaction_store.go` — the queue-transaction work Trap 1 protects. **Still present.** |
+| `harmonik-wt/lift-l8-reviewloop` | 2 staged renames moving `reviewloop.go` into `internal/runloop`. **GONE, and it no longer matters**: `reviewloop.go` was deleted outright in `3cec5afd7`, so there is nothing left to move. |
+| `harmonik-wt/arch-01-contract` | untracked `.kerf/` artifacts. **Still present.** |
+| `harmonik-wt/cq-mig-01` | untracked evidence under `plans/`. **Still present.** |
+| `/private/tmp/harmonik-main-integration-20260725` | staged for the item-C hand-harvest. **GONE**, and item C is complete, so nothing is at risk. |
 
 Also kept, and **not** a worktree despite living under `harmonik-wt/`:
 `harmonik-wt/kilo-preserved` is a plain directory holding two deliberately-named evidence patches
@@ -806,12 +1011,15 @@ Also kept, and **not** a worktree despite living under `harmonik-wt/`:
 and `git worktree list` cannot see it, so a worktree-driven sweep will neither remove it nor warn you
 it exists.
 
-One thing needs a human look: **`/tmp/hk-rqhz3.2ebLUi/clone` (271 MB)**, an unregistered self-contained
-clone left by a `harmonik init` smoke test on 2026-07-24. Its three HEAD commits are all present in the
-main repo and its 8 dirty files are init's own scaffolding output, so it is almost certainly disposable
-— but it is dirty, so it was left.
+~~One thing needs a human look: **`/tmp/hk-rqhz3.2ebLUi/clone` (271 MB)**, an unregistered
+self-contained clone left by a `harmonik init` smoke test on 2026-07-24.~~ **Resolved by attrition.**
+That path no longer exists as of 2026-07-30 — `ls -d /tmp/hk-rqhz3.2ebLUi/clone` reports no such file.
+It was almost certainly swept with the 14 GiB of `/private/tmp` scratchpads reclaimed the same day. No
+human look needed.
 
-**E. Delete `plans/2026-07-24-code-health-audit/` — 129 files, 17,813 lines, all tracked.**
+**E. Delete `plans/2026-07-24-code-health-audit/` — 129 files, 17,831 lines, all tracked. Still present
+and still undeleted on 2026-07-30** (`find plans/2026-07-24-code-health-audit -type f | wc -l`, then
+`xargs wc -l`; the line figure here said 17,813).
 It is ~10% live evidence and ~90% dead process; 13 of 92 tasks ever completed and every file with real
 content belongs to one of those 13. Its still-true findings are already folded into this document
 (the two traps above, the corrected measurements, the branch revision). Before `git rm -r`, keep
@@ -933,11 +1141,30 @@ allowed. That seems like bad news."*
 
 It is already the spec. **QM-060:** *"All queue mutations MUST execute through the single QueueStore
 transaction owner."* The owner exists — `internal/queue/transaction.go`, 1,005 lines, reached through
-`queuewiring.QueueStore.Transact`. **It is wired to nothing.** All ten `.Transact(` call sites are in
-`queuewiring/store_transaction_test.go`. The live path is bare `queue.Persist`, at about 20 sites in
-`workloop.go` alone and in eleven files overall, including RPC handlers, startup recovery, the spend
-meter, crew start, and `cmd/harmonik/run.go`. So the rule is written, the mechanism is built, and the
-system routes around both. This is row 5 of `UNWIRED-INVENTORY.md` and it is marked keep, not delete.
+`queuewiring.QueueStore.Transact`. This is row 5 of `UNWIRED-INVENTORY.md` and it is marked keep, not
+delete.
+
+> **⚠ TWO FACTS IN THIS ITEM WERE ALREADY FALSE. Corrected 2026-07-30.**
+>
+> **1. "It is wired to nothing. All ten `.Transact(` call sites are in
+> `queuewiring/store_transaction_test.go`."** Neither half holds.
+> `grep -rn '\.Transact(' --include='*.go' .` shows the test call sites spread over three files
+> (`store_transaction_test.go`, `store_precondition_test.go`, `store_quarantine_test.go`) and **two
+> production call sites** in `internal/daemon/scheduler_reservation.go` `reserveQueueItem`, landed in
+> `b029f9ce1`. The dispatch reservation is a real durable write through the owner. `Transact` also
+> gained a `Precondition` hook and quarantine-on-any-I/O-failure with that work.
+>
+> **2. "bare `queue.Persist`, at about 20 sites in `workloop.go` alone."** There are **zero**
+> `queue.Persist` calls in `workloop.go` — `grep -n 'queue\.Persist(' internal/daemon/workloop.go`
+> returns nothing. The dispatch code moved into `internal/daemon/scheduler.go`, which is where those
+> calls now live. Anyone following this sentence opens the wrong file. The "eleven files overall"
+> figure does hold: `operatorevents.go`, `eagerfill_em063.go`, `perqueuespendmeter_tigaf11.go`,
+> `runports.go`, `crewstart.go`, `startup_pl005_qm002.go`, `scheduler.go`, `persistence.go`,
+> `rpc.go`, `cmd/harmonik/run.go`, plus a scenario helper.
+>
+> So the shape of the problem is unchanged — most writes still bypass the owner — but the item is one
+> caller better off than it says, and it sends you to the wrong file. `UNWIRED-INVENTORY.md` row 5
+> already carries the corrected version.
 
 `Persist` itself is sound — temp file, atomic rename, fsync of the parent directory, a 1 MiB bound. Per
 file it is crash-atomic. What it has no way to provide is what a transaction owner provides: a
@@ -947,8 +1174,10 @@ stop a second writer, and they are exactly what `transaction.go` implements.
 Two separable questions, and the second is the architectural one:
 
 1. **Route every queue write through the existing owner.** Mechanical, already specified, already
-   built. The 21-slice plan in `queue-transaction-contract/07-tasks.md` covers it and **one slice is
-   built**. This is not new design work; it is finishing.
+   built. The 21-slice plan in `queue-transaction-contract/07-tasks.md` covers it. The "one slice is
+   built" count predates `b029f9ce1`, which routed the dispatch reservation through `Transact` — treat
+   the slice count as **unverified** and re-read the task file before quoting it. This is not new
+   design work; it is finishing.
 2. **Decide the general rule for the system, not just for queues.** Multiple processes will need to
    persist state — that is fine and expected. Two writers on one file is not. The rule to test every
    new persistent file against: *one owner writes it, everyone else asks that owner.* Worth stating
@@ -979,8 +1208,11 @@ working code if a rewrite obeyed them.
 
 **RA-1. Reassess `harmonik harness` — it is a testing system with tentacles into everything.**
 Operator, 2026-07-28: *"I'm not even sure we've actually used it and it seems to have tentacles all
-over."* `internal/scenario` is **4,952 lines of production code** behind the `harmonik harness`
-subcommand, and `cmd/harmonik/harness.go` calls **45** exported symbols from it. Its reach is far wider
+over."* `internal/scenario` is **4,660 lines of production code** behind the `harmonik harness`
+subcommand, and `cmd/harmonik/harness.go` calls **45** exported symbols from it. (Re-measured
+2026-07-30: the symbol count is exact — `grep -o 'scenario\.[A-Z][A-Za-z0-9_]*' cmd/harmonik/harness.go
+| sort -u | wc -l` returns 45. The production-line figure said 4,952 and has drifted down.) Its reach
+is far wider
 than the call list suggests: scenario-file parsing fans out into agent overrides, fixture setup, git
 seeding, file seeds, event expectations, workspace predicates, outcome expectations and cadence tags;
 bootstrap reaches project-root synthesis; matrix expansion is called straight from the CLI. That reach
@@ -1012,7 +1244,8 @@ Verified in source:
   (§8.3, `workloop.go`). All dispatch on that queue stops and the state survives daemon restart.
 - **`harmonik queue resume <name>` does not clear it.** `internal/queuewiring/operatorevents.go` skips any
   queue whose status is not `paused-by-drain`; its own doc comment says it transitions "from
-  paused-by-drain back to active". It resumes the *other* pause state.
+  paused-by-drain back to active". It resumes the *other* pause state. **Still true 2026-07-30** —
+  every status reference in that file is `paused-by-drain`.
 - `specs/queue-model.md` §8.4 states the recovery outright: *"v0.1 recovery is daemon restart followed by a
   fresh `queue-submit` after the operator addresses the failed beads; v0.2 will add `queue-resume`."* And
   QM-027 explicitly permits a fresh submit to overwrite a `paused-by-failure` queue.
@@ -1046,8 +1279,16 @@ Operator, 2026-07-28. The replacement should be **non-deterministic and agent-co
 about whether a crew is actually idle, made by an agent that can look, not a timer that reaps on a fixed
 rule. Deterministic reaping of a live-but-quiet session is the same failure shape as the movement
 governor in §A: a mechanical rule scoring "no visible output" as "not working", and acting on it.
-Carry this into the partition work (§6) — `crew-idle-reap` is one of the eleven subsystems currently
-behind the single socket-listener condition, and it should default to **off** when it becomes switchable.
+
+> **It IS switchable now, and it defaults to ON. Corrected 2026-07-30.** This paragraph said
+> `crew-idle-reap` was "one of the eleven subsystems currently behind the single socket-listener
+> condition" and asked that it default to off "when it becomes switchable". It became switchable in
+> `51143d5b1`: `internal/projectconfig/subsystems.go` declares `SubsystemCrewIdleReap`, gated at
+> `daemon.buildCommsAndCrewHandlers`. But `SubsystemsConfig.Enabled` returns true for anything not
+> explicitly switched off, so the operator's requirement is **unmet** — it is on unless somebody
+> writes `enabled: false`. Two things to decide, and they are separable: flip the default, and decide
+> whether the body should be deleted at all. Its scan has been an operator-directed no-op since
+> 2026-07-18, and it is still constructed on every boot.
 
 **RA-4. The bandwidth tuner — a rolling-5h token-rate auto-tuner for `--max-concurrent`.**
 Operator, 2026-07-28: *"I assume that may be something like token use — also dumb."* Confirmed:
@@ -1138,8 +1379,12 @@ without it by default.
 **The residue that IS sharp:** `dashboard_stale` has no Go consumer — the system emits a
 dispatch-withholding signal that nothing in the product reads.
 
-**Disposition:** gate the coupling out of the core (`SubsystemDashboardGate` — the name exists, the call
-site does not yet). Note this sheds the *import*, not the daemon's knowledge of the file:
+**Disposition:** gate the coupling out of the core. **The gate is now BUILT — corrected 2026-07-30.**
+This line said "`SubsystemDashboardGate` — the name exists, the call site does not yet". The call site
+is `internal/daemon/dashboardgate.go`, which returns early unless
+`pc.Subsystems.Enabled(projectconfig.SubsystemDashboardGate)`. As with every other subsystem, the
+default is on, so switching it off is a config line rather than a code change. Note this sheds the
+*import*, not the daemon's knowledge of the file:
 `internal/daemon/dashboardgather.go` reads the same `dashboard.json` directly through its own type, so
 "remove the blockers" means both the forcing gate and that second read path.
 
@@ -1199,47 +1444,70 @@ deadline with no release named.
 `agent-config-reviewer` while wiring the document in. The new `PRINCIPLES → AGENT_INDEX → STATUS →
 HANDOFF` reading order lives in `AGENTS.md` §Start here, but the per-role load map says each role
 skill's boot runbook is authoritative, and `crew-launch/SKILL.md` enumerates a deliberately minimal
-load that does not include it. So §6 — *"beware test theater: a suite that mostly asserts constants is
+load that does not include it. **Still true 2026-07-30** — `grep -n 'PRINCIPLES'` finds nothing in
+either `.claude/skills/crew-launch/SKILL.md` or its embedded source under
+`cmd/harmonik/assets/skills/`. So §6 — *"beware test theater: a suite that mostly asserts constants is
 not coverage"* — never reaches the role that writes tests. **Not a contradiction, a coverage hole.**
 Fixing it is a dual-path edit (`cmd/harmonik/assets/skills/crew-launch/` plus the byte-identical
 `.claude/skills/` mirror), which is why it was not smuggled into a config-review commit. Captains need
 no equivalent change — captains do not write code.
 
-**K. Role validators are not wired into `RegisterFromDocument`.** `internal/core/s02registrar_hka8bg45.go`
-calls only `ValidateSections` and `ValidateSchemaVersion`; `ValidateRoles`, `ValidateDeferredRoleShells`
-and `ValidateRequiredRoleDefaultSkills` have **no non-test caller**, so CP-028/CP-030/CP-031 are enforced
-only under `go test`. Found 2026-07-28 during the role-status rename; wiring them changes registrar
+**K. Role validators are not wired into `RegisterFromDocument`. Still true 2026-07-30.**
+`internal/core/s02registrar_hka8bg45.go` calls only `ValidateSections` and `ValidateSchemaVersion`;
+`ValidateRoles`, `ValidateDeferredRoleShells` and `ValidateRequiredRoleDefaultSkills` still have **no
+non-test caller** — the only non-test hits are their own definitions in `policydocument.go` — so
+CP-028/CP-030/CP-031 are enforced only under `go test`. Found 2026-07-28 during the role-status rename; wiring them changes registrar
 behavior and needs its own test surface, so it was correctly kept out of a rename. Related to item J,
 which is the lint for this class of bug.
 
-**L. `MVH` survives as a milestone noun in 18 live documents.** The 2026-07-28 sweep cleared `specs/`,
-all Go code, and `docs/foundation/spec-template.md` — the generator — but "MVH-baseline", "post-MVH",
-"at MVH" and "MVH ordering" remain in `docs/decompose-to-tasks/` (the `bootstrap-subset/` set and the
-`mnem-maps/*.csv` files), plus `docs/review-claude-hook-bridge-spec.md`. A further 26 files are dated
-records or pilot captures and are deliberately left as history. **The 18 live ones are the regrowth
-path** — agents read working documents as current context and imitate the vocabulary, which is how the
-term survived two previous removals.
+**L. `MVH` survives as a milestone noun in `docs/`, and only there.** The 2026-07-28 sweep cleared
+`specs/`, all Go code, and `docs/foundation/spec-template.md` — the generator. Both of those are
+confirmed empty on 2026-07-30 (`grep -rn 'MVH' specs/ --include='*.md' | wc -l` and the same over
+`internal cmd --include='*.go'` each return 0). "MVH-baseline", "post-MVH", "at MVH" and "MVH ordering"
+remain in `docs/decompose-to-tasks/` (the `bootstrap-subset/` set and the `mnem-maps/*.csv` files), plus
+`docs/review-claude-hook-bridge-spec.md`. **The live ones are the regrowth path** — agents read working
+documents as current context and imitate the vocabulary, which is how the term survived two previous
+removals.
+
+> **The split is unverified.** This item said "18 live documents" against "a further 26 dated records
+> or pilot captures", which totals 44. `grep -rl 'MVH' docs/ | wc -l` returns **144** files on
+> 2026-07-30. The difference is probably a narrower original scope rather than growth, but the working
+> versus historical split was not reproducible from this document, so treat both figures as unproven
+> and re-derive the live set before sweeping.
 
 **J. Lint for a bare string literal where a typed constant exists.** Operator, 2026-07-28, prompted by
 `internal/core/policydocument.go` comparing `r.Status` against the literal `"mvh-required"` while
-`internal/core/role.go` declares `RoleStatusMVHRequired` with that exact value. Renaming the constant
+`internal/core/role.go` declared `RoleStatusMVHRequired` with that exact value. Renaming the constant
 would have left the literal stale **with no compiler error**, and that particular comparison `continue`s
 on mismatch, so role validation would have silently stopped enforcing CP-031. The same latent bug sat
-next to it on `declared-but-deferred`. This is a `PRINCIPLES.md` §7 lever and worth having *if* an
+next to it on `declared-but-deferred`.
+
+> **The prompting instance is gone. Verified 2026-07-30.** `RoleStatusMVHRequired` no longer exists.
+> `internal/core/role.go` declares exactly two statuses, and `policydocument.go` now compares against
+> the typed constants `RoleStatusRequired` and `RoleStatusDeclaredButDeferred`, with a `Valid()` check
+> as the single enforcement site. The general ask survives — this is a class of bug, not one site — but
+> nobody should go looking for the `"mvh-required"` literal.
+
+This is a `PRINCIPLES.md` §7 lever and worth having *if* an
 existing linter can express it — check `golangci-lint`'s `goconst`, `usestdlibvars`, and whether a
 `forbidigo`/`ruleguard` pattern can catch "string literal equal to the value of a declared constant of
 a named type." **Prefer configuring a linter already in `.golangci.yml` over writing a new gate.**
 
-**P. Any unrecognized `harmonik` subcommand starts the daemon.** `harmonik status`, `harmonik daemon
-status` — anything not in the dispatch table falls through to the daemon-start path, which then exits on
-the `$TMUX` guard. Known issue, recorded not chased: the consequence for this program is that there is
+**P. Any unrecognized `harmonik` subcommand starts the daemon. UNVERIFIED in this sweep** — proving it
+means running an unknown subcommand, which is the behaviour under complaint, and the top-level fall-
+through in `cmd/harmonik/main.go` was not traced. Note the nested verb tables (`queue`, `worker`,
+`keeper`) do reject an unknown verb with exit 2, so if the claim holds it is specific to the top level.
+`harmonik status`, `harmonik daemon status` — anything not in the dispatch table falls through to the
+daemon-start path, which then exits on the `$TMUX` guard. Known issue, recorded not chased: the consequence for this program is that there is
 **no read-only status surface outside tmux**, so "is the core running?" cannot be answered without
 booting something. Worth an unknown-subcommand error before the partition work needs to inspect a
 running core.
 
-**I. Fresh worktrees have no `.tools/`.** Every agent dispatched into a new worktree hits
-`make check-fast` failing immediately at `fmt-check` with `gofumpt: No such file or directory`. Either
-worktree setup runs `make tools`, or `check-fast` bootstraps `.tools/` when absent.
+**I. Fresh worktrees have no `.tools/`. Confirmed live 2026-07-30, from inside a fresh worktree.**
+`ls -d .tools` reports no such file, and the `check-fast` target still calls `scripts/go-format.sh check`
+and `$(TOOLS_DIR)/golangci-lint` with no `tools` prerequisite. Every agent dispatched into a new
+worktree hits `make check-fast` failing immediately at `fmt-check` with `gofumpt: No such file or
+directory`. Either worktree setup runs `make tools`, or `check-fast` bootstraps `.tools/` when absent.
 
 ---
 
@@ -1255,8 +1523,9 @@ bead ledger, which is machine-local and does not travel.
   reaching `core.SelectNextEdge` directly is not the same contract. Decide during the run-machine
   decomposition whether CP-021 is a real requirement or spec rot.
 - **`CycleIDFromNonceMarker` (`internal/keeper/cycle.go`) is callerless** after
-  `nonce_provenance.go` went. It is exported, so nothing breaks and no linter fires — which is exactly
-  why it will sit there. Candidate for the next sweep, along with the rest of the keeper's T6 render leg.
+  `nonce_provenance.go` went. Still callerless on 2026-07-30 — a repo-wide grep finds only its own
+  declaration and doc comment, not even a test. It is exported, so nothing breaks and no linter fires
+  — which is exactly why it will sit there. Candidate for the next sweep, along with the rest of the keeper's T6 render leg.
 - **`coverage.baseline` is now approximate for four packages** — `internal/core`, `internal/daemon`,
   `internal/handlercontract`, `internal/keeper` each lost covered production files. Do **not** hand-edit
   the numbers; re-derive them. Nothing is gated on this today: `scripts/coverage-gate.sh` runs only from
@@ -1272,11 +1541,12 @@ not travel.
 
 - **The step-4 premise was wrong, and the corrected scope is one file pair, not ~18,000 LOC.**
   `_plan.md` §3 row 4 says delete the `internal/scenario` harness engine. It cannot be deleted:
-  4,952 of its 17,126 lines are production code behind the shipped `harmonik harness` subcommand
+  4,660 of its 16,269 lines are production code behind the shipped `harmonik harness` subcommand
   (`cmd/harmonik/harness.go`, dispatched from `main.go`), which calls 45 exported symbols from the
-  package. `ParseScenarioFile` → `ScenarioFile.Valid()` reaches agentoverride, fixturesetup, gitseedop,
+  package. (Re-counted 2026-07-30; this said 4,952 of 17,126 across 31 test files, and the tree now
+  holds 30.) `ParseScenarioFile` → `ScenarioFile.Valid()` reaches agentoverride, fixturesetup, gitseedop,
   fileseed, eventexpectation, workspacepredicate, outcomeexpectation and cadencetag; `EvaluateAssertions`
-  evaluates three of those at runtime. Of the 31 test files, 22 cover that production surface and 9 drive
+  evaluates three of those at runtime. Of the test files, 22 cover that production surface and 9 drive
   `internal/queue` / `queuewiring` / `lifecycle` directly. Exactly one — `crashrecovery_test.go` — had a
   subject the CLI could not reach, and it went with `crashrecovery.go`. **Update the row rather than
   re-attempting it.**
@@ -1292,7 +1562,10 @@ not travel.
   `git show afdfccbd0:internal/scenario/crashrecovery.go`.
 - **Two more zero-caller residues the step-3 sweep missed**, both in `internal/scenario`:
   `sh_inv_004_rerun_diff.go` (264 lines; all 7 exported symbols callerless, no test file) and
-  `NewFixtureRoot` in `fixtureroot.go` — `harness.go` inlines `os.MkdirTemp` instead of calling it.
+  `NewFixtureRoot` in `fixtureroot.go`. Both are still in the tree on 2026-07-30, and `NewFixtureRoot`
+  still has no non-test caller. **But the reason given for the second one no longer resolves:** this
+  bullet said "`harness.go` inlines `os.MkdirTemp` instead of calling it", and
+  `internal/scenario/harness.go` does not exist. Re-find the inlining site before acting on it.
   `ScenarioProjectRoot` in the same file **is** live via `SynthesizeProjectRoot` ← `BootstrapFixture`,
   so the file stays. Caveat for the sweeper: `NewFixtureRoot` has test coverage, so deleting it takes
   tests with it.
@@ -1314,7 +1587,8 @@ not travel.
 
 ## What this document is not
 
-It is 400 lines, so the "keep it short" instruction at the top deserves an honest accounting: **length
+It is over 1,300 lines — it said 400 when that number was roughly right, and nobody updated it as the
+document tripled. The "keep it short" instruction at the top deserves an honest accounting: **length
 was never the disease.** The predecessor plan (`plans/2026-07-24-code-health-audit/`) had a task
 index, a state model, a disposition lattice, a coordinator protocol, and 92 task cards — and reached
 **13 of 92 complete**, with 77 never leaving triage. The bottleneck was never task

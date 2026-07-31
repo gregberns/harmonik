@@ -2,7 +2,34 @@
 
 Base: `e7e74214b` (worktree was at `dc2217527`, BASE_STALE → reset per instruction). No code changed.
 
-> ## ⚠ Read this before using any count below — corrected 2026-07-29 on `0db5dcc28`
+> ## ⚠⚠ Read this FIRST — corrected again 2026-07-30. There is now ONE launch site.
+>
+> **The launch-path collapse this document argues for has LANDED.** `internal/daemon/agentlaunch.go`
+> holds one function, `runAgentLaunch`, and its own comment reads "runAgentLaunch collapses the three
+> into one" and "There is exactly one gate now". All three surviving call sites route through it:
+> `internal/daemon/workloop.go` (single mode), `internal/daemon/dot_cascade_core.go` (DOT node
+> dispatch), and `internal/daemon/dot_gate.go` (cognition gate). Verify with
+> `grep -rn "runAgentLaunch(ctx" --include='*.go' internal/daemon/ | grep -v _test`.
+>
+> **So every "1 of 5" and "1 of 3" below is now "1 of 1", and the drift class this file measures is
+> closed by construction rather than by counting.** Two specific consequences:
+>
+> - **Finding N2 is RESOLVED.** `d2RemoteAPIKeyRefusal` has exactly one production call site, inside
+>   `runAgentLaunch`, so the credential guard now covers every launch including DOT — the path N2
+>   says carries essentially all real traffic. Bead `hk-z4cow` predicted this in its own last line.
+>   Commit `d39ca9a25` is titled "retract the five-site framing" and is an ancestor of HEAD.
+> - **The sandbox gate is resolved the same way.** `sandboxSpawnForRun` also has exactly one call
+>   site, inside `runAgentLaunch`, called before any session-id branching. The per-site scope
+>   parameter is gone and two source-level tests in `internal/daemon/agentlaunch_scope_test.go` pin
+>   it. Bead `hk-j52we` records the operator's decision to make the fix, and the fix is in the tree.
+>
+> The per-site detail below is kept as a dated measurement of how the drift arose. Do not use it to
+> scope work. **Beads carrying the `drift-1ofn` label are largely superseded — check each against
+> `runAgentLaunch` before working it.**
+>
+> ---
+>
+> ## ⚠ Superseded banner, kept for history — corrected 2026-07-29 on `0db5dcc28`
 >
 > **This measurement was taken when there were five agent-launch sites. There are now three.** Sites B and
 > C both lived in `reviewloop.go`, which has since been deleted; A, D and E survive unchanged. So every

@@ -1029,14 +1029,18 @@ flagged as sequel work rather than quietly promoted into the core set.
 **This is not a carve-out.** It is here because every step below changes boot-time construction, and
 nothing that runs today exercises a real boot.
 
-**What the scenario tier already covers, and what it cannot.** `internal/daemon/scenario_*` boots the
-production composition root by calling `daemon.Start` in a goroutine, with `Config.HandlerBinary`
-pointed at a twin binary and `Config.BrPath` at a wrapper. That is genuine in-process coverage of
-construction and it should stay. It never starts a second process, never runs a real agent, never runs
-the supervisor, and never crosses a process boundary — so a defect in the shipped binary, in the
-supervisor, in the tmux path, or in state that must survive a restart is invisible to it. Note also
-that `scenario_happypath_n1_test.go` pins `WorkflowModeSingle`, a mode selected twice in the entire
-event log. **A live pass does not duplicate that tier. It covers the half the tier cannot reach.**
+**What the scenario tier already covers, and what it cannot. Be precise about this, because the tier
+is stronger than "unit tests" and weaker than "end to end", and both mislabels have been used.**
+`internal/daemon/scenario_*` (26 files) and `test/scenario/` (5) boot the production composition root
+by calling `daemon.Start` in a goroutine. Real `git` and real `br` run as subprocesses. The *agent* does
+not: `Config.HandlerBinary` points at a twin and `Config.BrPath` at a wrapper. So the tier is genuine
+in-process coverage of construction against a fake agent, and it should stay.
+
+What it never does: **start the daemon as a process, run a real agent, run the supervisor, or cross a
+process boundary.** A defect in the shipped binary, in supervisor revival, in the tmux path, or in
+state that must survive a restart is therefore invisible to it. Note also that
+`scenario_happypath_n1_test.go` pins `WorkflowModeSingle`, a mode selected twice in the entire event
+log. **A live pass does not duplicate this tier. It covers the half the tier cannot reach.**
 
 **The apparatus for a real pass is already built and is not being run.** `scripts/scratch-daemon.sh`
 (959 lines) starts a second, fully isolated daemon — its own clone, socket, pidfile, tmux session,

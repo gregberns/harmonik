@@ -1766,22 +1766,6 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		}
 	}
 
-	// Remove the run registry entry on normal exit (session completed).
-	// Registered first (LIFO) so it runs LAST — after session teardown + worktree removal.
-	defer func() {
-		if useIndepSession && ctx.Err() == nil && env.ProjectDir != "" {
-			// Non-fatal: an absent record is the already-cleaned case, and any
-			// other failure is retried by the next boot's adoption sweep. Report
-			// it rather than discarding it (errcheck check-blank), matching
-			// adoptDeadRunSessions' handling of the same call.
-			if remErr := runpkg.Remove(env.ProjectDir, runID.String()); remErr != nil &&
-				!errors.Is(remErr, runpkg.ErrNotFound) {
-				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: Remove run registry entry %s: %v\n", runID.String(), remErr)
-			}
-		}
-	}()
-
 	if wtCleanup != nil {
 		defer func() {
 			// hk-j6wm7: on a Pi FAILURE, retain the worktree (skip cleanup) and log
@@ -2328,7 +2312,24 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				fmt.Fprintf(os.Stderr, "daemon: workloop: run registry write failed for %s: %v (using shared session)\n", runID.String(), writeErr)
 				prs.runSessionID = ""
 				useIndepSession = false
+				return
 			}
+			// The record exists, so the run holds it. A surviving run leaves it
+			// standing — it is how the next boot finds this agent's session by
+			// name — and every other ending gives it back. The hold is HERE rather
+			// than at the top of the run because a record that was never written
+			// is not a resource, and the write is the only place that knows.
+			runScope.Hold(runlease.RunRecord, func() error {
+				// An absent record is the already-cleaned case, not a failure. Any
+				// other failure is retried by the next boot's adoption sweep, so it
+				// is reported and not acted on — the same handling
+				// adoptDeadRunSessions gives this call.
+				if remErr := runpkg.Remove(env.ProjectDir, runID.String()); remErr != nil &&
+					!errors.Is(remErr, runpkg.ErrNotFound) {
+					return remErr
+				}
+				return nil
+			})
 		},
 		// hk-wnqos: the single-mode implementer is the terminal/merge spawn — it
 		// draws from the reserved +1 slot in spawnSem so a saturated non-terminal

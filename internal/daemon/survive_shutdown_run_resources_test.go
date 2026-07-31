@@ -4,18 +4,21 @@ package daemon
 // survive-shutdown condition reaches, driven through the real beadRunOne.
 //
 // The launch-seam sites are in survive_shutdown_gate_test.go. These three live
-// in beadRunOne itself, each with its own spelling of the same condition:
+// in beadRunOne itself:
 //
-//   - the worktree cleanup defer keeps the worktree,
-//   - the run registry defer keeps the record, so the next boot can find the
-//     session by name,
+//   - the worktree is kept,
+//   - the run registry record is kept, so the next boot can find the session by
+//     name,
 //   - and the shutdown branch returns WITHOUT reopening the bead, so the bead
 //     stays in progress for a later boot to adopt.
 //
-// One condition, three spellings, two of them twenty-odd lines apart and the
-// third six hundred lines later. That spread is the reason this file drives the
-// whole function rather than testing a predicate: a test that re-states the
-// condition cannot see a site that states it differently.
+// When this file was written each of the three had its own spelling of the same
+// condition — two of them twenty-odd lines apart and the third six hundred lines
+// later. That spread is the reason this file drives the whole function rather
+// than testing a predicate: a test that re-states the condition cannot see a
+// site that states it differently. The sites are moving onto one runlease
+// disposition one at a time, so the file keeps driving the function while some
+// sites have a spelling and some no longer do. The record no longer has one.
 //
 // Both half-conditions are covered separately for each site, because a
 // conjunction is exactly where a wrong spelling hides — a site that tested only

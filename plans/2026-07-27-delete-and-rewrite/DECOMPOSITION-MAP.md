@@ -833,6 +833,30 @@ between them.
 > this decision removes. The error must be loud: an event, a visible marker on `queue list`, and a
 > message specific enough that an agent investigates rather than shrugs.
 
+**✅ DONE 2026-07-30 — `internal/daemon/scheduler_reservation.go`.** The dispatch reserves through
+`QueueStore.Transact` in one write that sets status and RunID together. A write that does not reach
+disk abandons the dispatch: no claim, no launch, item stays pending. Pinned end-to-end by
+`TestReservationWriteFailure_NeverClaimsAndNeverLaunches`, which drives the real `runWorkLoop`.
+
+Four things found on the way, none of which the step anticipated:
+
+- **The event the spec demands could not be built.** `queue-model.md` QM-001 names
+  `failed_prerequisite: queue_write_error`; `event-model.md`, which owns the event type, listed
+  seven values and that was not one. Added to both the owner spec and `internal/core`.
+- **QM-001 asks for three things and the code did none.** Refuse further mutations, emit, go
+  degraded. `Transact` now quarantines on any I/O-failure outcome — but NOT on a pre-I/O refusal,
+  which attempted no write. Getting that wrong broke an existing concurrency test.
+- **A quarantined queue read as "retry later" and spun silently.** `queuewiring.ErrQueueQuarantined`
+  separates "this queue is shut" from "your snapshot is stale". The report is bounded to once per
+  queue or a sticky failure emits every poll interval forever.
+- **14 test fixtures used non-UUID queue IDs**, which the spec forbids and the durable write rejects.
+  Five tests regressed the moment dispatch used the real write. Fixed, not suppressed.
+
+Still open: D3's marker on `queue list` (`hk-ujanf`). Step 3b's cross-queue-dedup fold landed here
+via `TransactionRequest.Precondition`; attempts-bound(a) landed in the same reservation write.
+
+**Original assessment, kept because the work confirmed it:**
+
 **⚠ The premise of this step is stale — re-verified 2026-07-30. Step 4 is mostly WIRING, not writing.**
 
 `QueueStore.Transact` in `internal/queuewiring/store.go` already implements the reservation

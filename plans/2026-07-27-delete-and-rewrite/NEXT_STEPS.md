@@ -1,7 +1,12 @@
 # Next steps — after the cleanup
 
-**Date:** 2026-07-27
-**Sibling:** [`_plan.md`](_plan.md) — deletion and rewrite sequencing. [`CARRY-FORWARD.md`](CARRY-FORWARD.md) — the 83 external facts.
+**Date:** 2026-07-27. **Reconciled against the tree 2026-07-30** — the corrections are marked ⚠ in place.
+**Read first:** [`CHARTER.md`](CHARTER.md) — the stable statement of what the program is and what "done"
+means. It outranks this document on intent.
+**Siblings:** [`_plan.md`](_plan.md) — deletion sequencing. [`DECOMPOSITION-MAP.md`](DECOMPOSITION-MAP.md)
+— the ordered steps, and where the live order now lives. [`OPEN-DEFECTS.md`](OPEN-DEFECTS.md) — defects
+recorded, not chased. [`SPEC-TRIAGE.md`](SPEC-TRIAGE.md) — the traceability report §1 commissioned.
+[`CARRY-FORWARD.md`](CARRY-FORWARD.md) — the 89 external facts (this line used to say 83).
 **This document:** what has to be true *before* the rewrite is worth starting, and what has to change so the same defects do not regrow.
 
 The deletion plan removes bad code. This one removes the things that **produced** it. If only the
@@ -20,6 +25,17 @@ Five workstreams, each with a measured trigger.
 
 **1,180 unique requirement IDs in `specs/`; 291 (25%) appear in zero Go file.** They are not evenly
 spread — the distribution is bimodal:
+
+> **⚠ Re-derived 2026-07-30, same regex: still 1,180 IDs, but the orphans are now 324 (27.5%).**
+> Orphanhood got **worse by 33 IDs**, and the cleanup is the cause — deleting `internal/specaudit`,
+> retiring `reviewloop.go` and removing 681 signature-pinning test files took the citing Go files with
+> them. That inverts this section's framing: the deletions are **manufacturing** orphans, so an orphan
+> count taken after a deletion step measures the deletion, not the spec.
+>
+> **The report this section asks for at "What to do" now exists** — [`SPEC-TRIAGE.md`](SPEC-TRIAGE.md),
+> with `traceability.csv` beside it. It uses a different attribution model (registry prefix ownership,
+> not per-file occurrence) and so reports different totals. **Three numbers for one thing is two too
+> many. Trust `SPEC-TRIAGE.md`; treat the table below as the shape, not the count.**
 
 | Healthy (written with the code) | orphan % | | Suspect (written ahead of code) | orphan % |
 |---|---|---|---|---|
@@ -165,7 +181,9 @@ too big for one dispatch, not as a licence to defer.
 `docs/methodology/TESTING.md` sets **"80% line coverage per package"** (§1) and **"CI fails the merge
 if thresholds regress"** (§Coverage enforcement) — plus "one scenario per workflow-library entry."
 These reward volume, and we got volume: **2.25:1 test-to-production** (487,997 test lines against
-216,695 production, post-deletion).
+216,695 production, post-deletion). **⚠ Re-measured 2026-07-30: the ratio is now 1.44:1** — 306,825
+test lines against 212,562 production. The deletions moved the ratio; nothing about the incentives
+that produced it has changed, so the number is a result, not a fix.
 
 ⚠ **Do not delete these blindly — a stricter gate is live and unreconciled.** `scripts/coverage-gate.sh`
 enforces a 90% floor / 95% core / 0.3pp regression cap against a checked-in 27-entry
@@ -389,9 +407,11 @@ configured in branch protection." Neither `check-fast` nor `check-short` invokes
 the suite runs, goes red, and nobody is stopped.
 
 **Action, in priority order:**
-1. **Make the scenario tier merge-blocking.** Cheaper than it sounds: delete one
+1. ~~**Make the scenario tier merge-blocking.** Cheaper than it sounds: delete one
    `continue-on-error: true` from `.github/workflows/scenario.yml` and add the required status check in
-   branch protection. It goes red until the branch-guard bug is fixed — that is the point.
+   branch protection. It goes red until the branch-guard bug is fixed — that is the point.~~
+   **⚠ HALF DONE, and the other half was reversed on purpose. Re-stated 2026-07-30 — see
+   §5.1a below, which is now the live version of this item.**
 2. **Fix the correct bug, and verify the call chain before believing any claim about which code is
    live.** The `br` defect is instructive in a way that caught this document out. A first pass asserted
    that `BrErrorFromExitCode`'s inverted table was dead code and the real defect lay elsewhere. It is
@@ -408,6 +428,51 @@ early-returns "no unknown keys" for any node that is not a mapping, so a YAML al
 unknown-key rejection — `keeper: *anchor` (or a `subsystems:` entry) hides a typo'd key behind the
 alias and it is silently accepted. Pre-existing on the keeper block; inherited by the new `subsystems:`
 block. Fix is to resolve alias nodes before the mapping check.
+
+### 5.1a The scenario-tier gate — on the list, and here is where it fits
+
+**Added 2026-07-30. Operator call, and it is load-bearing on the ordering:** *"it does not really
+matter right now because we are not close to merging, so put it on the list and work out where it
+fits."* **Treat it as placed work, not as a blocker.**
+
+**What already landed.** The `continue-on-error: true` flag is gone from
+`.github/workflows/scenario.yml` (`hk-plw4z`, `hk-21v7c`). The tier now reports the truth on every REST
+surface, and the nightly ops-monitor probe works again with no change to the probe. That was the safe
+half, and it is done.
+
+**What did not land, deliberately.** The tier is still **not** a required status check, and the
+workflow header now says so in as many words: do not add it until the deterministic failures close,
+because that would wedge every merge. So the item is not stalled. It was consciously deferred.
+
+**Three measured reasons it is correctly deferred, not one:**
+
+1. **The gate above it is already red.** `main`'s branch protection requires exactly one check —
+   `check (Tier 2)` from `ci.yml` — and that check has failed on every run since 2026-07-17. A second
+   required check behind a red first one gates nothing that is not already gated.
+2. **About half the tier skips in CI, and a skip reads as a pass** (`hk-ynohn`). Nothing installs `br`
+   and nothing declares a twin build. The evidence is the clock: `internal/daemon` takes 69 s in CI
+   against 368 s locally, and `TestThroughput_TenBeadsAtMaxFour` fails locally every time yet has never
+   failed in 20 CI runs. **Making a half-skipping tier required makes `main` green on half a tier**,
+   which is worse than leaving it advisory.
+3. **Eight tests fail deterministically.** Per-test dispositions are in §5.2 below. That count needs
+   re-running — `EM015e` has since been deleted with `reviewloop.go` and the branch-guard P0 closed as
+   a stale test, so the live number is lower than eight.
+
+**Where it fits, in order:**
+
+1. **Now, and it is the only part worth doing now: stop the tier skipping.** Install `br` and declare
+   the twin build in the workflow. This is not the gate — it is what makes every later measurement of
+   the gate honest, and it is the one item here whose value does not depend on merging.
+2. **Then get `check (Tier 2)` green.** It is the required check. Nothing about tier 3 matters while
+   tier 2 is red.
+3. **Then close the deterministic failures** (§5.2, `hk-97gcz`), re-counting them first.
+4. **Then add the required status check** — when merging to `main` resumes. In the decomposition order
+   that is after `DECOMPOSITION-MAP.md` §3 step 15, not before it.
+
+**Do not read this as "the tier does not matter."** `DECOMPOSITION-MAP.md` §3 step 9 turns a live
+scratch-daemon pass into the per-step acceptance check for the decomposition, precisely because this
+tier cannot gate anything yet. The two are complements: the scenario tier is in-process coverage of the
+composition root with a fake agent, and the live pass is the half it cannot reach.
 
 ### 5.2 The load-sensitive test family — make these robust instead of re-diagnosing them
 
@@ -482,6 +547,12 @@ headroom.** That is the shape of the whole family: the assertions encode schedul
 
 **Dispositions, measured 2026-07-29 — all seven are pre-existing; the tier blocks nothing in Phase 3:**
 
+> **⚠ Two rows are closed as of 2026-07-30, so re-count before quoting "eight failures".**
+> `EM015e_NoProgress_ReviewerNotLaunched` is **gone** — `emitNoProgressDetected` has zero hits anywhere
+> and `reviewloop.go` was deleted, which is exactly what its own row predicted. The branch-guard P0 is
+> **closed**, and its row's "false red" verdict was confirmed rather than overturned. The other five
+> test symbols all still exist.
+
 | Test | Verdict |
 |---|---|
 | `BranchGuard_FailClosed_MergeGuardBackstop` | **False red.** Guard did not fail open — the ref that moved was the *unprotected* `integration` branch the bead asks for. Premise went stale 2026-07-06 (`hk-lgykq`) when merge-target resolution moved to per-bead `lands_on` and got **stricter**. Open P0 `hk-zobns` is a mis-diagnosis. Real cost is three weeks with no coverage of that backstop. |
@@ -503,15 +574,19 @@ growing, and there is no point hardening tests nothing runs. Tracked as `hk-97gc
 
 ## Sequence
 
-| # | Step | Blocks | Cost |
-|---|---|---|---|
-| 1 | ~~Reconcile `origin/integration/phase-reviewloop-20260725`~~ — **RESOLVED 2026-07-28: abandon it.** See §Deferred item C | nothing | done |
-| 2 | **Agent instruction changes (§2)** — §2.6 landed 2026-07-28 (`734f283a7`); §2.5 ratchet and §2.8 structure-block remain | dispatching any new agent work | mostly deletions |
-| 3 | Wire the scenario tier to a merge-blocking gate (§5.1), then harden the load-sensitive family (§5.2) | trusting any green build | small / then real |
-| 4 | Deletion steps 2–4 of the predecessor plan | the rewrite | mechanical |
-| 5 | **Subsystem partition — config-driven enable/disable of each part of the system** (§below) | the rewrite's shape and its priority order | design + planning |
-| 6 | Decompose the run machine — **`workloop.go` + `reviewloop.go` + `dot_cascade_core.go` as one unit** | — | the point of all this |
-| 7 | `.dot` fixture relocation + WG-036 amendment (§4) | nothing — do it opportunistically | small |
+**⚠ Re-measured 2026-07-30. Six of these seven rows are done, overtaken, or name a file that no
+longer exists.** The live order now lives in [`DECOMPOSITION-MAP.md`](DECOMPOSITION-MAP.md) §3, where
+the steps are written and numbered. This table is a record of what was planned, not a plan.
+
+| # | Step | Status 2026-07-30 |
+|---|---|---|
+| 1 | Reconcile `origin/integration/phase-reviewloop-20260725` | **DONE.** The remote branch is gone. Its tip survives at `origin/salvage/reviewloop-kernels-20260729`. |
+| 2 | Agent instruction changes (§2) | **MOSTLY DONE.** §2.1, §2.2, §2.3, §2.6 and §2.7 all landed. §2.5's explicit shrinking grandfather list and §2.8's structure-block have no implementation. ⚠ The SHA this row used to cite for §2.6 (`734f283a7`) is not an ancestor of this branch — the commit is `ab12d65ba`. |
+| 3 | Scenario tier merge-blocking (§5.1), then harden the load-sensitive family (§5.2) | **SPLIT, and the second half was reversed on purpose.** The reporting half landed. The gating half is deliberately deferred — see §5.1. |
+| 4 | Deletion steps 2–4 of the predecessor plan | **DONE.** |
+| 5 | Subsystem partition | **LANDED — eight switches ship today.** See §6. |
+| 6 | Decompose the run machine | **IN PROGRESS, and it is a two-file job now, not three.** `reviewloop.go` is deleted. `DECOMPOSITION-MAP.md` §3 steps 0–4 are done and step 5 is being written. |
+| 7 | `.dot` fixture relocation + WG-036 amendment (§4) | **NOT STARTED.** Still true exactly as written. |
 
 **Everything not on that list is deferred.** The failure mode of this project has never been running
 out of things to do; it has been doing the interesting adjacent thing instead of the load-bearing one.
@@ -541,6 +616,23 @@ Resolve or abandon it before any spec triage begins.**
 ---
 
 ## 6. Subsystem partition — turn parts of the system on and off by configuration
+
+> **⚠ STATUS 2026-07-30 — the mechanism LANDED. This section is now planning for work already done,
+> and it is kept only for the operator quote and the core-set statement below.**
+>
+> `internal/projectconfig/subsystems.go` ships **eight** switches — `reconciliation_scheduler`,
+> `socket_listener`, `dashboard_gate`, `movement_governor`, `crew_idle_reap`, `bandwidth_tuner`,
+> `branch_reaper`, `worker_report_loop` — and all eight are gated at their construction seams, not made
+> inert. So RA-3, RA-4 and RA-6 below are partly executed: the "the name exists, the call site does not
+> yet" wording in RA-6 and in item A is **stale**. The `$TMUX` fail-fast is also out.
+>
+> **What is left is coverage, not design, and it moved to `DECOMPOSITION-MAP.md` §3 step 12.** Nine bus
+> consumers are still constructed with no switch at all, and six of the subsystems the charter puts
+> outside the core — comms, crew, captain, keeper, live-state, subscribe — have no switch of their own.
+> They ride `socket_listener`, which is one coarse switch over eleven things.
+>
+> `CHARTER.md` §2 and §3 now own the stable statement of the partition and the core set. Read those, not
+> this.
 
 **Operator direction, 2026-07-28.** Before rebuilding or fixing anything, build a simple partition that
 decides — at startup, from configuration — which parts of the system are running: queue, comms, keeper,
@@ -939,6 +1031,20 @@ transaction owner."* The owner exists — `internal/queue/transaction.go`, 1,005
 meter, crew start, and `cmd/harmonik/run.go`. So the rule is written, the mechanism is built, and the
 system routes around both. This is row 5 of `UNWIRED-INVENTORY.md` and it is marked keep, not delete.
 
+> **⚠ "Wired to nothing" is FALSE as of 2026-07-30, and the file pointer is wrong too.** There are
+> **two production `Transact` call sites**, both in `internal/daemon/scheduler_reservation.go`
+> (`reserveQueueItem`), landed by the step-4 reservation work. The `Persist` sites also moved out of
+> `workloop.go` into `scheduler.go` when Seam A split. `UNWIRED-INVENTORY.md` row 5 already carries
+> this correction, so **read that row, not this paragraph**, and re-run
+> `grep -rn '\.Transact(' --include='*.go' internal/ cmd/` before quoting any count.
+>
+> **Item 1 below is still the live work, and it is now measured.** Queue status is set by direct field
+> assignment at **27 production sites, in 9 files, across 5 packages**, and `Persist` is called from 9
+> production files in 5 packages. That is `DECOMPOSITION-MAP.md` §3 step 11. Also note
+> `ClassifyReplaceIntent` in `internal/queue/transaction.go` has **zero production callers** while
+> `WriteReplacement` is now wired — intents are written and never classified on the recovery path.
+> Recorded, not chased.
+
 `Persist` itself is sound — temp file, atomic rename, fsync of the parent directory, a 1 MiB bound. Per
 file it is crash-atomic. What it has no way to provide is what a transaction owner provides: a
 generation guard, a replace intent, archive handoff binding, and quarantine. Those are the things that
@@ -1319,6 +1425,23 @@ was never the disease.** The predecessor plan (`plans/2026-07-24-code-health-aud
 index, a state model, a disposition lattice, a coordinator protocol, and 92 task cards — and reached
 **13 of 92 complete**, with 77 never leaving triage. The bottleneck was never task
 decomposition, and adding more of it never helped.
+
+> **⚠ Counted 2026-07-30: it is 1,400 lines, not 400.** The defence above is sound and the count under
+> it was wrong by 3.5x on the day it was written. Two things followed from the drift, and both are the
+> thing this section says it is guarding against:
+>
+> - **The document grew two lettered backlogs** — "Deferred — real work" (A–G) and "Deferred —
+>   housekeeping" (I–P, out of alphabetical order). A lettered list of items with owners and blockers
+>   is a task index whatever it is called. The live ones belong in `OPEN-DEFECTS.md`, which exists for
+>   exactly that and says why.
+> - **It has two `## 6` headings and a `## 7` that is unrelated to either.** The numbering has become
+>   the lattice.
+>
+> The ordered work has moved to `DECOMPOSITION-MAP.md` §3. **What earns its place here is the findings
+> nothing else records** — §2.4, §2.5's grandfather list, §2.7's reviewer divergence, §2.8's
+> structure-block, §4 in full, §5's `br` exit-3 arm, the `unknownYAMLKey` alias hole, and Traps 1 and 2.
+> Anything in this file that a sibling doc now owns should be cut on the next edit rather than
+> re-reconciled.
 
 Everything here is a **finding or a decision**, each with the measurement behind it. There is no task
 index, no state machine, no per-task card, no staffing model, and nothing to keep in sync. Every

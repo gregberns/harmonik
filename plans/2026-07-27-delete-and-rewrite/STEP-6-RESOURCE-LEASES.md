@@ -111,9 +111,17 @@ captured agent logs. It is set in one place inside the single-implementer tail, 
 graph-mode Pi run never retains anything**.
 
 > **Settled by the operator, 2026-07-31: that behavior was not intended. Do not preserve it.** The
-> asymmetry is a defect, not a decision. `runlease.Exit.EvidenceWorthKeeping` is mode-agnostic, so
-> the migration resolves it by construction — a failed Pi run keeps its worktree whichever mode it
-> ran in. Do not add a mode test to keep the old shape.
+> asymmetry is a defect, not a decision. Do not add a mode test to keep the old shape.
+>
+> **Corrected 2026-07-31 while migrating the worktree: it does NOT resolve by construction.** This
+> section said `runlease.Exit.EvidenceWorthKeeping` is mode-agnostic and that the migration would
+> therefore fix the asymmetry on its own. The FIELD is mode-agnostic. Its source is not. The run
+> sets its Pi fact from the resolved launch artifacts in the single-mode tail, which is below the
+> graph branch's return, so a graph run reports no evidence however the disposition is written.
+> Meanwhile `runAgentLaunch` writes the capture for EVERY Pi launch and the graph cascade calls it
+> per node, so a failed graph-mode Pi run does produce output and does have it deleted. Two
+> independent readers reached the same conclusion. Fixing it needs the fact carried out of the
+> cascade, which is its own commit — see §7 step 4a.
 
 ---
 
@@ -225,7 +233,11 @@ In order. Each is one commit, each independently reviewable.
    a doomed tunnel.
 3. ✅ **Landed 2026-07-31.** Bound the independent-session and crew-session constructors the way
    the shared-window path is bounded.
-4. Migrate the per-run resources onto the scope, innermost first, one commit each.
+4. Migrate the per-run resources onto the scope, innermost first, one commit each. Landed so far,
+   innermost outward: the cold-start token, the run record, the worktree.
+4a. Carry the "this run captured agent output into its worktree" fact out of the graph cascade, so
+   the evidence disposition is true in both modes. §2's correction says why this is a commit of its
+   own and not a consequence of step 4.
 5. Give the per-launch set its own nested scope, and collapse the duplicated tunnel refusal
    reporting into the one reporter the run plan already has.
 6. ✅ **Landed 2026-07-31, and moved AHEAD of steps 4 and 5 on purpose.** Close the two test holes.

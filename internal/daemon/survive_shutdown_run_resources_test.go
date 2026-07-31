@@ -386,6 +386,13 @@ type surviveRunOpts struct {
 	// The working path is the only one where the first kill on the session is
 	// the one the teardown gate covers.
 	agentReportsReady bool
+
+	// piRun resolves the run's harness to Pi, which is the harness that writes
+	// its captured output INSIDE the worktree. It is the second reason a run
+	// keeps a worktree, and it is independent of the survive condition: the
+	// agent exits without committing, so the run fails, and a failed run's
+	// capture is the only record of why.
+	piRun bool
 }
 
 // surviveRunDrive runs one bead through the real beadRunOne, on the shutdown
@@ -444,7 +451,13 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 	// is real, so "kept" and "removed" are observable on disk rather than only
 	// in a counter.
 	wtPath := filepath.Join(t.TempDir(), "run-worktree")
-	if err := os.MkdirAll(wtPath, 0o755); err != nil { //nolint:gosec // test fixture dir
+	if opts.piRun {
+		// A real git worktree, because this run has to FAIL and the failure has to
+		// be the ordinary one: the agent produced no commit. The no-commit guard
+		// asks git, and a plain directory cannot answer, so a bare temp dir ends
+		// the run as a success and the retention branch is never reached.
+		surviveRunGitWorktree(t, projectDir, wtPath)
+	} else if err := os.MkdirAll(wtPath, 0o755); err != nil { //nolint:gosec // test fixture dir
 		t.Fatalf("surviveRun: create worktree fixture: %v", err)
 	}
 	out.worktreePath = wtPath
@@ -463,11 +476,11 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 	// type, which is the daemon's own skip-the-ready-wait posture. A populated
 	// one holds the run in its ready wait until the timeout or the abort.
 	registry := surviveRunSealedRegistry(t)
-	if opts.agentReportsReady {
+	if opts.agentReportsReady || opts.piRun {
 		registry = surviveRunEmptySealedRegistry()
 	}
 
-	deps := ExportedWorkLoopDeps(WorkLoopDepsParams{
+	params := WorkLoopDepsParams{
 		BrAdapter:        out.ledger,
 		Bus:              eventbus.NewBusImpl(),
 		ProjectDir:       projectDir,
@@ -482,7 +495,17 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 		// Short enough that the daemon-keeps-running case reaches its ready
 		// timeout quickly; the shutdown cases abort long before it.
 		AgentReadyTimeout: 500 * time.Millisecond,
-	})
+	}
+	if opts.piRun {
+		params.LaunchSpecBuilder = ExportedPiProcessExitLaunchSpecBuilder(surviveRunPiScript(t))
+		harnesses, err := ExportedNewHarnessRegistry()
+		if err != nil {
+			t.Fatalf("surviveRun: build the harness registry: %v", err)
+		}
+		params.HarnessRegistry = harnesses
+	}
+
+	deps := ExportedWorkLoopDeps(params)
 
 	bead := core.BeadRecord{
 		BeadID:   core.BeadID("hk-survive-run-probe"),
@@ -496,6 +519,31 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 	mu.Lock()
 	defer mu.Unlock()
 	return out
+}
+
+// surviveRunGitWorktree adds a real git worktree of repo at path.
+func surviveRunGitWorktree(t *testing.T, repo, path string) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b",
+		"survive-run-fixture", path, "HEAD")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("surviveRunGitWorktree: git worktree add: %v\n%s", err, out)
+	}
+}
+
+// surviveRunPiScript writes the agent a Pi run launches. It prints one line and
+// exits cleanly WITHOUT committing, which is the fast-fail this retention exists
+// for: the run produced no commit, so it failed, and the printed line is the
+// only thing that says what it did.
+func surviveRunPiScript(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "pi-agent.sh")
+	const script = "#!/bin/sh\necho 'pi agent: cannot reach the model endpoint'\nexit 3\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil { //nolint:gosec // test fixture script must be executable
+		t.Fatalf("surviveRunPiScript: WriteFile: %v", err)
+	}
+	return path
 }
 
 // surviveRunEmptySealedRegistry seals a registry with no adapters in it, so
@@ -652,6 +700,82 @@ func TestSurviveShutdown_ARunThatEndsWhileTheDaemonRunsGivesBackItsWorktreeAndRe
 	if reopens, _ := out.ledger.beadSettled(); len(reopens) == 0 {
 		t.Error("the bead was left in progress.\n" +
 			"Nothing is working it: the daemon is up and this run has ended. Only a surviving run may leave its bead for a later boot.")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The other reason a worktree is kept: it holds the only record of a failure
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestSurviveShutdown_AFailedPiRunKeepsTheWorktreeItsCapturedOutputIsIn asserts
+// that a run whose captured agent output lives inside its worktree keeps that
+// worktree when it fails.
+//
+// This is the SECOND reason a run keeps a worktree and it has nothing to do with
+// surviving a shutdown. The daemon is up and the run has ended, which is exactly
+// the case the test above requires to give everything back. The difference is
+// that a Pi agent writes its stdout under the worktree, so removing it destroys
+// the only record of why the run failed (hk-j6wm7).
+//
+// The test asserts the capture is really there before it asserts the worktree
+// survived. Without that, "the directory still exists" would also be true of a
+// run that captured nothing, and the retention would be defended without anyone
+// checking it protects something.
+//
+// The test above is the nearest thing to a control: a run that also ends while
+// the daemon is up, and whose worktree goes away. It is not a one-variable
+// control, and saying so matters more than the symmetry. That run has a session
+// of its own, gets a plain directory rather than a git worktree, and holds the
+// claude adapter. Only the last of those could plausibly matter here, and the
+// two mutations below are what actually establishes the claim.
+//
+// Mutations, both run: make RetainEvidence release the worktree in
+// internal/runlease, and separately report the exit with EvidenceWorthKeeping
+// false. Each deletes the capture and turns this test red.
+//
+// LIMIT, and it is a real one: this covers the SINGLE-mode path only. A
+// graph-mode Pi node writes the same capture into the same worktree and does not
+// keep it, because the fact this run reports is set below the graph branch's
+// return.
+func TestSurviveShutdown_AFailedPiRunKeepsTheWorktreeItsCapturedOutputIsIn(t *testing.T) {
+	t.Parallel()
+
+	out := surviveRunDriveWith(t, surviveRunOpts{piRun: true})
+
+	capture := filepath.Join(out.worktreePath, ".harmonik", "pi-agent", "pi-stdout.log")
+	if _, err := os.Stat(capture); err != nil {
+		// Two very different failures reach here, so name which one it is. A
+		// removed worktree is the behaviour under test breaking; a missing capture
+		// under a live worktree is the fixture no longer reaching the Pi path.
+		if !out.worktreeSurvived() {
+			t.Fatalf("the worktree at %s was removed, and the captured Pi output went with it.\n"+
+				"A failed Pi run's capture is inside the worktree and nowhere else, so removing it "+
+				"deletes the only record of why the run failed.", out.worktreePath)
+		}
+		t.Fatalf("the run captured no Pi output at %s: %v\n"+
+			"This run must reach the Pi launch path and write its stdout inside the worktree. "+
+			"Without a capture, a surviving worktree below would protect nothing and this test "+
+			"would pass whatever the run decided.", capture, err)
+	}
+	if reopens, _ := out.ledger.beadSettled(); len(reopens) == 0 {
+		t.Fatal("the run did not fail.\n" +
+			"The retention is for FAILED runs only. A successful run's worktree is removed, so a " +
+			"fixture whose run succeeded would measure the wrong branch.")
+	}
+
+	if out.worktreeCleanups != 0 {
+		t.Errorf("the worktree cleanup ran %d times.\n"+
+			"A failed Pi run's captured output is inside the worktree and nowhere else. Removing it "+
+			"deletes the only evidence of why the run failed.", out.worktreeCleanups)
+	}
+	if !out.worktreeSurvived() {
+		t.Errorf("the worktree at %s was removed, and the captured Pi output went with it",
+			out.worktreePath)
+	}
+	if out.runRecordSurvived() {
+		t.Error("the run registry record is still on disk.\n" +
+			"Keeping the EVIDENCE does not mean keeping the run. The daemon is up and this run has " +
+			"ended, so a record left behind makes the next boot adopt a run that no longer exists.")
 	}
 }
 

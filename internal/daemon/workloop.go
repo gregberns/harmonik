@@ -1767,19 +1767,33 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	}
 
 	if wtCleanup != nil {
+		// The worktree is the resource two of the three dispositions keep, for two
+		// different reasons: a surviving run still has an agent working inside it,
+		// and a run whose captured output is the only record of why it failed
+		// (hk-j6wm7) has nothing else to show an operator. The run no longer asks
+		// which reason applies. It asks once, at the close.
+		runScope.Hold(runlease.Worktree, func() error {
+			wtCleanup()
+			return nil
+		})
+		// The give-back is the scope's. This notice is not, because this is the
+		// only place that knows WHERE the worktree is, and an operator who has to
+		// read a failed run's captured output needs the path. It reads the same
+		// one answer the close reads.
 		defer func() {
-			// hk-j6wm7: on a Pi FAILURE, retain the worktree (skip cleanup) and log
-			// where the retained artifacts live so an operator/captain can inspect
-			// the pi-agent dir + captured pi-stdout.log / pi-stderr.log.
-			if runIsPi && !bridge.Success() {
-				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: hk-j6wm7: Pi run %s (bead %s) FAILED — retaining worktree for post-mortem inspection at %s (pi output under %s/.harmonik/pi-agent/)\n",
-					runID.String(), beadID, wtPath, wtPath)
+			d := runlease.Decide(runExit())
+			if d.Releases(runlease.Worktree) {
 				return
 			}
-			if !useIndepSession || ctx.Err() == nil {
-				wtCleanup()
+			// Only a run kept FOR its evidence has captured output to point at. A
+			// surviving run is kept because an agent is still working in there.
+			capture := ""
+			if d == runlease.RetainEvidence {
+				capture = fmt.Sprintf(" — the captured output is under %s/.harmonik/pi-agent/", wtPath)
 			}
+			fmt.Fprintf(os.Stderr,
+				"daemon: workloop: run %s (bead %s) ends %s — its worktree is kept at %s%s\n",
+				runID.String(), beadID, d, wtPath, capture)
 		}()
 	}
 

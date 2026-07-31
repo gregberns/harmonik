@@ -325,7 +325,7 @@ Per `docs/methodology/TESTING.md` layer expectations for the change scope:
 | A new or widened `export_*_test.go` entry | `REQUEST_CHANGES` | `test-only-seam` |
 | An `export_*_test.go` entry exporting a **pointer to a production global** | `BLOCK` | `test-only-seam` |
 
-Rationale: bead-named test files reached 885 files / 255,664 lines — 52% of all test code — before anyone noticed the duplication. Pointer exports let tests mutate production state and have already caused two real `-race` data races.
+Rationale: bead-named test files reached 199,899 lines — 38% of all test code — before anyone noticed the duplication. That figure is the re-measurement of 2026-07-30 recorded in `plans/2026-07-27-delete-and-rewrite/CHARTER.md` §1, which corrects an earlier over-count of 255,664 lines by 55,765 lines. The ban stands unchanged: a smaller number is still 199,899 lines of tests named after the archaeology instead of the promise. Pointer exports let tests mutate production state and have already caused two real `-race` data races.
 
 Findings → flag: `missing-tests`, `bead-named-test`, `test-only-seam`
 

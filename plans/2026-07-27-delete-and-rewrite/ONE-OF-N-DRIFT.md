@@ -13,7 +13,7 @@ Base: `e7e74214b` (worktree was at `dc2217527`, BASE_STALE → reset per instruc
 >
 > **Three call sites in source, two that can execute — the two counts answer different questions.**
 > The third, the cognition gate in `dot_gate.go`, is dead: `daemon.Config.CPRegistry` has zero
-> assignments anywhere in the tree and no graph declares a `type="gate"` node. Use three when you ask
+> assignments anywhere in the tree and no graph the daemon runs declares a `type="gate"` node. Use three when you ask
 > what routes through `runAgentLaunch`. Use two when you ask what runs. See the next banner.
 >
 > **So every "1 of 5" and "1 of 3" below is now "1 of 1", and the drift class this file measures is
@@ -59,8 +59,8 @@ Base: `e7e74214b` (worktree was at `dc2217527`, BASE_STALE → reset per instruc
 > summary above ran ahead of the evidence for those two rows. It holds for N2, N3, N13 and N17.
 >
 > **Site count is TWO, not three.** Site E, the cognition gate in `dot_gate.go`, cannot execute:
-> `daemon.Config.CPRegistry` has zero assignments anywhere in the tree and no graph declares a
-> `type="gate"` node. The count on this line has read five, then three. It is two.
+> `daemon.Config.CPRegistry` has zero assignments anywhere in the tree and no graph the daemon runs
+> declares a `type="gate"` node. The count on this line has read five, then three. It is two.
 >
 > *Earlier correction, 2026-07-29 on `0db5dcc28`, kept for provenance:* this measurement was taken when
 > there were five agent-launch sites; sites B and C both lived in `reviewloop.go`, which was deleted, so

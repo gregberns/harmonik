@@ -36,10 +36,12 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 ## Knowledge Base Map
 
 ### Engineering Principles -- The Standard Code Is Held To
-[PRINCIPLES.md](PRINCIPLES.md) — pure core / effectful shell; consumer-owned ports; record→replay→fault
-injection; time is a port; explicit state machines with a single writer; tests that pin a real rule
-(and the warning against test theater); enforcement by CI lever; prove one vertical, then generalize.
-Read before writing or rewriting code. Load-bearing for the delete-and-rewrite program.
+[PRINCIPLES.md](PRINCIPLES.md) — nine sections, in order. A pure core with the effects at the edge,
+and the clock is one of those effects. Illegal states unrepresentable. Total functions.
+Consumer-owned ports. Compose small functions instead of configuring one large one. One writer and
+one explicit state machine. A test that defends a named claim, plus the warning against test theater.
+Behavior you can re-run. Prove one vertical, then generalize. Read it before you write or rewrite
+code. Load-bearing for the delete-and-rewrite program.
 
 ### Active Program -- Delete and Rewrite
 [plans/2026-07-27-delete-and-rewrite/CHARTER.md](plans/2026-07-27-delete-and-rewrite/CHARTER.md) — stable:

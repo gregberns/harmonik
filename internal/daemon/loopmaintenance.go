@@ -97,7 +97,7 @@ type maintenanceObservation struct {
 // switchable subsystems whose per-loop state lives inside them.
 //
 // One instance per runWorkLoop call, held by pointer, touched only from that
-// goroutine. There is exactly one writer (PRINCIPLES §5) and it is the loop.
+// goroutine. There is exactly one writer (PRINCIPLES §6) and it is the loop.
 type loopMaintenance struct {
 	// state is the periodic-maintenance timing and latch state (RSM-011).
 	state loopMaintenanceState

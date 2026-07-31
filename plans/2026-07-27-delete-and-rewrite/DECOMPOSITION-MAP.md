@@ -92,14 +92,15 @@ Two things worth carrying forward from that run:
 > | Function | File | Lines | State |
 > |---|---|---:|---|
 > | `runAgentLaunch` | `internal/daemon/agentlaunch.go` | 836 | **the ONE launch path.** All three remaining sites call it. A CI gate (`scripts/readywait-freeze-gate.sh`) allows exactly one `runloop.DispatchSegment` in the tree, and it must be here |
-> | `beadRunOne` | `internal/daemon/workloop.go` | 1,773 | run driver. Its single-mode tail is about 722 lines |
+> | `beadRunOne` | `internal/daemon/workloop.go` | 1,603 | run driver. Its single-mode tail was measured at about 722 lines before Step 5 — see the ⚠ under §1c |
 > | `driveDotWorkflow` | `internal/daemon/dot_cascade_core.go` | 997 | the graph walker. **The default and the traffic** |
 > | `dispatchDotAgenticNode` | `internal/daemon/dot_cascade_core.go` | 543 | per-node dispatch inside the walker |
-> | `executeCognitionGate` | `internal/daemon/dot_gate.go` | 234 | **cannot run.** No code sets `daemon.Config.CPRegistry` and no graph declares a `type="gate"` node |
+> | `executeCognitionGate` | `internal/daemon/dot_gate.go` | 234 | **cannot run.** No code sets `daemon.Config.CPRegistry`, and no graph the daemon runs declares a `type="gate"` node |
 > | ~~`runReviewLoop`~~ | ~~`internal/daemon/reviewloop.go`~~ | ~~2,194~~ | **deleted 2026-07-28 (`3cec5afd7`)** |
 >
 > `runWorkLoop`, the outer scheduler, also left this file — `756b6604c` (2026-07-29) moved it to
-> `internal/daemon/scheduler.go`. That is why `workloop.go` reads 3,389 lines and not 6,656.
+> `internal/daemon/scheduler.go`, and Step 5 (`4070c75ed`) moved the run-plan resolver out to
+> `internal/daemon/workloop_runplan.go`. That is why `workloop.go` reads 3,227 lines and not 6,656.
 >
 > What is still duplicated, and what to do about it, is §2b. The short version: the launch step is
 > one function; "decide whether it did the work" is still written twice.
@@ -156,26 +157,32 @@ shape. `756b6604c` moved `runWorkLoop` out to `internal/daemon/scheduler.go`, an
 retired review-loop mode. The original numbers are kept in the right-hand column so a reader can see
 the size of the drift.
 
-| Measure | `workloop.go` @ HEAD | as first written |
-|---|---:|---:|
-| Total lines | **3,389** | 6,656 |
-| Comment lines | 1,744 (51%) | 3,103 (47%) |
-| Commits | 382 (first 2026-05-12, last 2026-07-30) | 370 |
-| Commits by month | May 108, Jun 140, Jul 134 — **still not decaying** | Jul 122 |
-| Distinct `hk-…` bead refs cited in comments | **138** | 256 |
-| `//nolint` directives | 10 | 19 |
-| `workLoopDeps` struct | 81 fields, 744 lines, 78% comment | 81 fields, ~740 lines, ~89% comment |
-| Top-level functions | 21 | 39 |
-| One function | `beadRunOne` 1,764 = **52% of the file** | two functions = 60% |
+**Re-measured again 2026-07-30, after Step 5.** The middle column below moved a second time in one
+day. `4070c75ed` pulled the run-plan resolver out to `internal/daemon/workloop_runplan.go` (580
+lines), which took 162 lines off the file and 161 off `beadRunOne`.
+
+| Measure | `workloop.go` @ HEAD | before Step 5 | as first written |
+|---|---:|---:|---:|
+| Total lines | **3,227** | 3,389 | 6,656 |
+| Comment lines | 1,672 (52%) | 1,744 (51%) | 3,103 (47%) |
+| Commits | 384 (first 2026-05-12, last 2026-07-30) | 382 | 370 |
+| Commits by month | May 108, Jun 140, Jul 136 — **still not decaying** | — | Jul 122 |
+| Distinct `hk-…` bead refs cited in comments | **130** | 138 | 256 |
+| `//nolint` directives | 6 | 10 | 19 |
+| `workLoopDeps` struct | 81 fields, 744 lines, 78% comment | same | 81 fields, ~740 lines, ~89% comment |
+| Top-level functions | 21 | 21 | 39 |
+| One function | `beadRunOne` 1,603 = **50% of the file** | 1,764 | two functions = 60% |
 
 Reproduce the counts with `wc -l internal/daemon/workloop.go`,
-`grep -oE 'hk-[a-z0-9]+' internal/daemon/workloop.go | sort -u | wc -l`, and
-`git log --oneline -- internal/daemon/workloop.go | wc -l`.
+`grep -oE 'hk-[a-z0-9]+' internal/daemon/workloop.go | sort -u | wc -l`,
+`git log --oneline -- internal/daemon/workloop.go | wc -l`,
+`grep -cE '^\s*(//|/\*|\*)' internal/daemon/workloop.go` for the comment count, and
+`awk '/^func beadRunOne/,/^}/' internal/daemon/workloop.go | wc -l` for the function.
 
 The bead-reference count is still the number that matters, and it is still large. This is not a
 program; it is a changelog with executable annotations. About half the file is prose explaining why
 the other half is shaped the way it is, and much of that prose describes code that is no longer
-there. The count fell from 256 to 138 because the review-loop deletion took the annotations with the
+there. The count fell from 256 to 130 because deletions and extractions took the annotations with the
 code, not because anyone pruned the prose.
 
 **The distinct-spec-ID row is removed. It was never reproduced.** The original table claimed 81 spec
@@ -231,10 +238,20 @@ Note also **three separate `ShowBead` round-trips per dispatch** on the queue pa
 #25 post-claim hydration, plus #24's blocked-status re-read on failure), each with its own retry
 budget and its own failure semantics.
 
-### 1c. `beadRunOne` — the per-run driver (1,764 lines)
+### 1c. `beadRunOne` — the per-run driver (1,603 lines)
 
-**Re-measured 2026-07-30. The function is 1,764 lines, not 2,289, and its signature now takes 7
-parameters.** Find it with `grep -n '^func beadRunOne' internal/daemon/workloop.go`. Row 17 below is
+**Re-measured 2026-07-30, after Step 5. The function is 1,603 lines — it read 1,764 earlier the same
+day and 2,289 as first written — and its signature takes 7
+parameters.** Find it with `grep -n '^func beadRunOne' internal/daemon/workloop.go` and size it with
+`awk '/^func beadRunOne/,/^}/' internal/daemon/workloop.go | wc -l`.
+
+> ⚠ **The "722 deletable single-mode lines" figure is now unsafe to quote, and it is quoted in four
+> places** — §0's table, §2b, Step 7 and the §1d summary. It was derived from the pre-Step-5 function,
+> when `beadRunOne` was 1,764 lines. Step 5 took 161 lines out of that function, and how many of them
+> came out of the single-mode tail was never recorded. **Do not rescale it.** Re-derive the tail by
+> measuring from the mode switch to the end of the function before pricing Step 7 off it.
+
+Row 17 below is
 dead: `3cec5afd7` retired review-loop mode and deleted its driver, so `beadRunOne` now dispatches two
 modes, not three. The rest of the table was measured before that deletion and before the Seam A
 split. Treat it as a shape, not as current line counts.
@@ -492,15 +509,26 @@ callers:
 
 The cognition gate cannot run. `daemon.Config.CPRegistry` has **zero assignments anywhere in the
 tree**, tests included, so `daemonGate.LookupGate` always reports "no registry loaded" and a gate node
-returns a structural eval-failure before any launch. And no graph declares one: `type="gate"` appears
-zero times in the embedded `internal/daemon/standard-bead.dot`, in this project's `workflow.dot`, in
-`sonnet-triple-review.dot` and in `eval-bead.dot`. Counting `dot_gate.go` as a live launch path
-overstates the live count by one.
+returns a structural eval-failure before any launch. Reproduce it with
+`grep -rnE 'CPRegistry[[:space:]]*[:=]' --include='*.go' .`, which returns nothing. **Do not
+reproduce it with a bare `grep CPRegistry`** — that returns 7 hits, including the field declaration in
+`daemon.go` and the read in `workloop.go`. The field exists and is read. Nothing writes it.
+
+**And no graph the daemon runs declares a gate node. Narrowed 2026-07-30 — the evidence covers four
+graphs, not the tree.** `type="gate"` appears zero times in the embedded
+`internal/daemon/standard-bead.dot`, in this project's `workflow.dot`, in `sonnet-triple-review.dot`
+and in `eval-bead.dot`. It is **not** absent from the tree. Measure it with
+`grep -rln 'type="gate"' --include='*.dot' .`, which returns exactly one file:
+`specs/examples/quality-gate-policy.dot`. That is a spec example and no run path loads it. Every
+other match in the tree is a Go test fixture or prose, including this document. The conclusion is
+unchanged — counting `dot_gate.go` as a live launch path overstates the live count by one — but state
+the four graphs rather than the whole tree, or the next reader greps and finds the claim false.
 
 **What is genuinely still duplicated**, after the launch collapse and measured on 2026-07-30:
 
 - **The post-exit interpretation.** The single-mode tail (`internal/daemon/workloop.go`, about 722
-  lines from the mode switch to the end of `beadRunOne`) and the graph node
+  lines from the mode switch to the end of `beadRunOne` — measured before Step 5, see the ⚠ in §1c)
+  and the graph node
   (`dispatchDotAgenticNode`, about 543 lines) each hand-roll the same four steps after
   `runAgentLaunch` returns: probe worktree HEAD, emit `implementer_phase_complete`, run the
   process-exit commit fallback, then decide what no-commit means. The steps agree in shape and
@@ -554,7 +582,8 @@ It claimed:
 - Single mode was "lines 4232–5407 (~1,175 lines)". **Wrong by about 1.6x today.** The single-mode
   tail is about 722 lines. Two things shrank it: the review-loop retirement, and `756b6604c`
   (2026-07-29) which moved the dispatch scheduler out to `internal/daemon/scheduler.go`.
-  `beadRunOne` now spans about 1,773 lines in total, not 2,289.
+  `beadRunOne` spanned about 1,773 lines in total at that measurement, not 2,289. It is **1,603**
+  after Step 5, and the 722 figure has not been re-derived since. See the ⚠ in §1c.
 - `runReviewLoop` existed with 19 parameters. **Gone since `3cec5afd7`, 2026-07-28.**
 - "Each of the three then re-implements: build launch spec → attach substrate → register hook
   session → `DispatchSegment` with 7 hooks → paste inject → wait with socket grace → probe worktree
@@ -635,6 +664,12 @@ co-owned by two goroutines.
 The ordering rule is: **carve out things whose data flows one way and whose absence the compiler can
 prove.** Anything requiring a behaviour decision goes late and gets flagged.
 
+> **Where the order stands, measured 2026-07-30.** Step 0 items 1 and 2 are done and item 3 is now a
+> test-repair job. Step 1 is retired. **Steps 2, 3a, 4 and 5 have LANDED**, each with the commit named
+> under its own heading. **Steps 6 through 15 are NOT STARTED**, and none of them was done under
+> another name — the tree was checked for each. Step 3b, step 7's first piece and step 8 are the parts
+> of the early steps that remain.
+
 ### Step 0 — prerequisites (already in the plan, restated because they gate everything)
 
 **Re-measured 2026-07-29: items 1 and 2 are DONE. Only item 3 is outstanding.**
@@ -645,10 +680,15 @@ prove.** Anything requiring a behaviour decision goes late and gets flagged.
    `origin/salvage/reviewloop-kernels-20260729`, whose tip is byte-identical to the integration tip.
    `NEXT_STEPS.md` item C carries the detail, and the harvest is settled rather than hopeful — the
    v0.9.6 changelog row in `specs/execution-model.md` records that the prose was checked against the
-   code before amending, and names what was deliberately left behind. The branch itself still exists
-   and is now safe to delete. That is an operator action, not a prerequisite, and it is not a one-liner:
-   a worktree is still checked out on that branch at `/private/tmp/harmonik-main-integration-20260725`
-   and has to be removed first.
+   code before amending, and names what was deliberately left behind.
+
+   **Re-measured 2026-07-30: the branch and its worktree are both GONE.** This item used to end by
+   saying the branch still existed and that a worktree at
+   `/private/tmp/harmonik-main-integration-20260725` had to be removed before it could be deleted.
+   `git ls-remote --heads origin` no longer lists `integration/phase-reviewloop-20260725`, and that
+   worktree path does not exist. **The salvage tip does still exist** —
+   `origin/salvage/reviewloop-kernels-20260729` is on the remote today, so the contents are still
+   recoverable. Nothing here is outstanding.
 2. ~~Finish the test-mass deletion, including the 4 unit-test files that bind `beadRunOne`'s
    7-parameter signature.~~ **DONE as written, but read the caveat.** Exactly **one** test file calls
    `beadRunOne` today — the shim at `internal/daemon/export_workloop_test.go`. Against one production
@@ -661,11 +701,21 @@ prove.** Anything requiring a behaviour decision goes late and gets flagged.
    its signature, so the compiler will not warn you. Its own header records that it already broke once
    when the launch path was collapsed. Expect to update it whenever statements move inside that
    function.
-3. **Make the scenario tier merge-blocking.** The rewrite's *only* oracle is
-   `internal/daemon/scenario_*` (26 files, 54 test funcs) + `test/scenario/` (11 tests, 27 s). Today
-   `.github/workflows/scenario.yml` carries `continue-on-error: true` and neither `check-fast` nor
-   `check-short` runs the tier. **You cannot validate a rewrite against a gate that blocks nothing.**
-   This is one line of YAML and it is the single highest-leverage item on the list.
+3. **Make the scenario tier merge-blocking. Re-briefed 2026-07-30 — the YAML half is DONE and the
+   item is now blocked on test failures, not on a config line.** The rewrite's *only* oracle is
+   `internal/daemon/scenario_*` (26 files, 54 test funcs) + `test/scenario/` (11 tests, 27 s). This
+   item used to read "this is one line of YAML". That line landed: `1ee9154e8` corrected the false
+   claim that made the tier look green, and `7f1028316` removed `continue-on-error: true`, so the
+   workflow now reports its own failures.
+
+   **What remains is not a config change.** The tier is genuinely red — 8 deterministic failures that
+   reproduce in isolation, plus load flakes that pass when run alone. Most of the 8 are stale tests
+   (`hk-97gcz`); one is a real defect in the merge path (`hk-co8g8`). Separately, the workflow
+   installs no `br` and declares no twin build, so about half the tier skips and a skip reads as a
+   pass (`hk-ynohn`). `.github/workflows/scenario.yml` carries its own warning not to add itself to
+   the required status checks until the 8 close, because doing so wedges every merge. So: close the 8,
+   fix the skip, then make it required. **You still cannot validate a rewrite against a gate that
+   blocks nothing** — but the work to get there is test repair, and it should be priced as such.
 
 ### Step 1 — free deletions — ⚠ RETIRED 2026-07-29. Nothing here is both free and outstanding.
 
@@ -697,7 +747,12 @@ that a list which says the compiler will prove it invites you to skip reading th
 to delete. §5 already says plan estimates do not survive contact. A deletion inventory is an estimate,
 and it is one that reads as a fact.
 
-### Step 2 — lift the cadenced maintenance out of the poll loop (~300 lines, low risk)
+### Step 2 — lift the cadenced maintenance out of the poll loop — ✅ **LANDED**
+
+**✅ DONE — `internal/daemon/loopmaintenance.go`, 283 lines.** Built at `054b7bd92` and merged at
+`05edae952`. The paragraph under Step 3 constraint 6 already read "Step 2 as BUILT"; only this heading
+was never updated. The description below is the brief the work was done from. Read it as the design,
+not as outstanding work.
 
 Responsibilities 6–13 of `runWorkLoop` (schedule tick, coordinator reap, disk check, dashboard gate,
 eager refill, sentinel observe, sentinel ACT) are already *mostly* in their own files
@@ -879,7 +934,13 @@ place", name the real set first.
 
 **Do this instead — split the step:**
 
-- **Step 3a (low risk, worth doing).** Fold the genuinely pure predicates — decision-required,
+- **Step 3a — ✅ LANDED.** Built at `78d966abd` and `0b7857c1b`, merged at `0e2bafbe3`. The gates now
+  live in `internal/orchestrator/admission.go` (453 lines): `AdmitAtTick`, `BeforeLookup`,
+  `AfterLookup` and `BeforeStamp` are the four stages, and `ErrGateInputMissing` is how a gate asked
+  to run before its inputs exist fails loudly instead of reading a zero value. The brief it was built
+  from follows. Read it as the design, not as outstanding work.
+
+  Fold the genuinely pure predicates — decision-required,
   sentinel-queue, local-cap, and greenlight once the bead record is in hand — into
   `internal/orchestrator` beside `SelectNextQueue`. Encode the order as data, not scattered `if`s.
 
@@ -975,8 +1036,10 @@ Four things found on the way, none of which the step anticipated:
 - **14 test fixtures used non-UUID queue IDs**, which the spec forbids and the durable write rejects.
   Five tests regressed the moment dispatch used the real write. Fixed, not suppressed.
 
-Still open: D3's marker on `queue list` (`hk-ujanf`). Step 3b's cross-queue-dedup fold landed here
-via `TransactionRequest.Precondition`; attempts-bound(a) landed in the same reservation write.
+**Nothing is open. Re-checked 2026-07-30.** This paragraph used to read "Still open: D3's marker on
+`queue list` (`hk-ujanf`)". That landed at `67c2e7615` and merged at `15bfdc154` — a shut queue now
+says so on the read commands. Step 3b's cross-queue-dedup fold landed here via
+`TransactionRequest.Precondition`, and attempts-bound(a) landed in the same reservation write.
 
 **Original assessment, kept because the work confirmed it:**
 
@@ -1011,7 +1074,20 @@ work is to route `scheduler.go` through the owner that exists and to wire the ev
 new transaction. Background: `UNWIRED-INVENTORY.md` row 5, and the 21-slice plan in
 `.kerf/works/queue-transaction-contract/07-tasks.md` with one slice built.
 
-### Step 5 — the run-plan resolver (~350 lines, low risk, high value)
+### Step 5 — the run-plan resolver — ✅ **LANDED**
+
+**✅ DONE — `internal/daemon/workloop_runplan.go`, 580 lines.** Built at `4070c75ed` and merged at
+`44b3a7e4d`. The socket-path-length hoist named at the end of this step landed separately at
+`fabc7cb21`. The brief it was built from follows. Read it as the design, not as outstanding work.
+
+⚠ **The step left two production functions with no production caller.** `resolveBranching` and
+`resolveParentCommit` in `internal/daemon/branching.go` are now reached only through the test shims in
+`internal/daemon/export_branching_test.go`. `grep -rnE '\bresolveBranching\(|\bresolveParentCommit\('`
+over `internal/` and `cmd/` returns the two shim lines and the two declarations, and nothing else. This
+is the same shape as the Step 1 entries this map retired for being wrong, so it is recorded here rather
+than asserted as free: **re-derive it before deleting anything.** Retiring the two belongs to a later
+step, not to Step 5, because `branchguard_test.go` and `runplan_precedence_test.go` assert behaviour
+through those shims and that behaviour has to keep a home first.
 
 Pull C1 out of `beadRunOne`: workflow mode/ref, harness agent type, model/effort, Pi profile,
 active repo, parent commit, lands-on, merge target, protect-branch check, placement intent. All
@@ -1124,11 +1200,14 @@ reach a mode.
    no graph equivalent: the independent tmux session and its restart adoption (`hk-mh3qy`, the real
    blocker), the escaped-worktree guard, `noCommitGuardShouldReopen`, the implementer comms presence
    join and leave, and the Pi provider profile on the launch context (`hk-yo9g6`). Port those onto the
-   graph node, then the tail is about 722 deletable lines and `core.WorkflowMode` reduces to one
-   value.
+   graph node, then the tail is deletable and `core.WorkflowMode` reduces to one
+   value. **Do not price this step at "722 deletable lines".** That figure came from `beadRunOne` at
+   1,764 lines, Step 5 has since taken 161 lines out of the function, and nobody recorded how many of
+   them left the tail. Re-derive it. See the ⚠ in §1c.
 
 Do **not** count `dot_gate.go` in this step. Its cognition-gate launch is unreachable — no code sets
-`daemon.Config.CPRegistry` and no graph declares a `type="gate"` node. Decide separately whether to
+`daemon.Config.CPRegistry` and no graph the daemon runs declares a `type="gate"` node (see §2b).
+Decide separately whether to
 wire it or delete it. Migrating it costs real work and buys nothing until one of those two things is
 true.
 
@@ -1159,7 +1238,9 @@ that shape is what steps 9–15 are about. The rule from here is: **make each un
 declarable, then declare it.**
 
 All numbers below measured 2026-07-30 on `15bfdc154`. Two that the rest of this section rests on:
-`internal/daemon` is **42,438 production lines in 95 files**, and **106 files in `internal/` are over
+`internal/daemon` is **42,924 production lines in 96 files** (re-measured later on 2026-07-30 — it
+read 42,438 in 95 files at `15bfdc154` earlier the same day, so the package **grew** across a single
+day of this program), and **106 files in `internal/` are over
 400 lines and hold 49% of the tree's production code in 14% of its files**.
 
 Steps 9–15 are the core. **Step 16 is not** — it is named because the operator asked for it, and it is
@@ -1235,7 +1316,7 @@ launchd agent is loaded. Nothing gates it off in code. Turning it back on is a c
 
 ### Step 10 — the composition root (~800 lines, MEDIUM risk — a design, not a move)
 
-`workLoopDeps` holds **81 fields**, and its declaration alone spans **743 of `workloop.go`'s 3,389
+`workLoopDeps` holds **81 fields**, and its declaration alone spans **743 of `workloop.go`'s 3,227
 lines** — more than a fifth of the file is one type. It is assembled in four stages across
 `bootworkloop.go` (`buildWorkLoopDeps`, `seedGovernorDeps`, `injectWorkLoopDeps`,
 `startBackgroundLoops`), with **25 post-construction field writes** there and 3 more in `scheduler.go`.
@@ -1247,7 +1328,7 @@ nil-deref at boot.
 made most of its fields locally owned, not before."* Steps 2–6 are that work. This step is the licensed
 successor to that instruction, and the reason it was deferred rather than dropped.
 
-**Why it blocks done:** `PRINCIPLES.md` §2 asks for consumer-owned ports. An 81-field bundle threaded
+**Why it blocks done:** `PRINCIPLES.md` §4 asks for consumer-owned ports. An 81-field bundle threaded
 through every run means no unit of the core has a declared dependency set, and validity is temporal —
 which boot phase are we in — rather than something the compiler checks. It also blocks §6's "switching
 one back on is a one-line change", because a subsystem's handle is a nullable field on a shared bundle
@@ -1328,7 +1409,7 @@ through the shadow struct, so two readers of one event disagree by construction.
 
 **Why here:** this is §4's "consolidate by default" in its purest form — two definitions of one wire
 format, both compiling, already drifted. And it blocks §6's "tests that fail when behavior breaks": a
-payload change breaks a consumer with nothing red in between. `PRINCIPLES.md` §3 wants record→replay to
+payload change breaks a consumer with nothing red in between. `PRINCIPLES.md` §8 wants record→replay to
 be the substrate, and replay is currently decoding into the wrong shape.
 
 **Why it is a design:** the fix is a choice. Either amend the spec'd payload to the shape actually
@@ -1350,7 +1431,7 @@ bus has the same shape at smaller scale: `EventBus` plus four extension interfac
 
 **Read the contrast, or this gets mis-applied.** The 13 one-method `Emit` interfaces re-declared across
 `eventbus`, `lifecycle`, `handlercontract`, `queue`, `brcli` and `daemon` are **not** a tangle — that is
-`PRINCIPLES.md` §2 working as designed, and `runloop.EmitterPort` is the documented idiom. The
+`PRINCIPLES.md` §4 working as designed, and `runloop.EmitterPort` is the documented idiom. The
 difference is direction. A consumer narrowing a dependency is the principle. A consumer interrogating
 an implementation to find out what it can do is the defect.
 
@@ -1365,7 +1446,10 @@ are the only thing keeping a non-tmux path alive.
 
 ### Step 15 — split `internal/daemon` (~large, LOW risk — a move, and it is the last one)
 
-42,438 production lines, 95 non-test files, 183 test files, and a fan-out of **52 internal packages**.
+**42,924 production lines, 96 non-test files, 193 test files** (re-measured later on 2026-07-30). The
+production figures read 42,438 in 95 files at `15bfdc154` earlier the same day. The 183 test files
+figure is older still, from 2026-07-29. Note the direction: this package is the one the program
+exists to shrink, and it grew. It also has a fan-out of **52 internal packages**.
 It holds the scheduler, the run driver, the tmux substrate, the paste-inject watchdogs, the DOT
 cascade, the boot composition root — *and* comms, crew, dashboard, decisions, subscribe, quiesce,
 handler-pause, spend metering and the schedule tick.
@@ -1427,7 +1511,7 @@ made as one.
 **One thing worth taking from the keeper before then, in the other direction.** `step.go` / `cycle.go` /
 `shell.go` / `ports.go` are a working functional-core-and-shell split, and four files in
 `internal/daemon` and `internal/runloop` already carry comments naming `internal/keeper/ports.go` as
-the idiom they mirror. `PRINCIPLES.md` §8 says to find the subsystem that already embodies the target
+the idiom they mirror. `PRINCIPLES.md` §9 says to find the subsystem that already embodies the target
 and make the rest of the tree look like it. **That subsystem is the keeper.** Steps 10 and 14 should
 read it before designing anything.
 
@@ -1567,11 +1651,17 @@ symbols that implement it and must not be simplified back to a return-code check
   a boundary that documents itself as not being one.
 - ~~**`activateFirstPendingGroup` and `beadExplicitlyReopened`** — dead, kept alive by tests~~
   **Both deleted 2026-07-28.** Neither symbol is in the tree. See §1d.
-- **10 `//nolint` directives** (was 19), including the `//nolint:funlen,gocognit,cyclop` on
+- **`resolveBranching` and `resolveParentCommit` — dead, kept alive by tests. New 2026-07-30, and this
+  program made it.** Step 5 moved the last production callers into
+  `internal/daemon/workloop_runplan.go`, and the two functions in `internal/daemon/branching.go` now
+  have only the shims in `export_branching_test.go`. The scar tissue is that a refactor can strand a
+  function without anything going red, so re-derive the caller set before deleting either. Retiring
+  them belongs to a later step. See Step 5.
+- **6 `//nolint` directives** (was 19, then 10), including the `//nolint:funlen,gocognit,cyclop` on
   `beadRunOne` itself. Per `NEXT_STEPS.md` §2.5 this suppression is why the complexity ratchet has
   never once fired on the largest function in the repo — it was **born over the ceiling at 119
-  lines** and is **1,764** today (was 2,289).
-- **1,744 lines of comment, 138 bead references** (was 3,103 and 256). Comments explaining what code
+  lines** and is **1,603** today (was 2,289).
+- **1,672 lines of comment, 130 bead references** (was 3,103 and 256). Comments explaining what code
   used to be there, what a removed check did, and which ticket caused which line. In a rewrite this
   is the commit log's job. The counts halved because the review-loop deletion took the annotations
   with the code, not because anyone pruned the prose.
@@ -1677,7 +1767,7 @@ The size column is re-measured 2026-07-30. Sizes that moved are shown as `then �
 |---|---|---|
 | Run graph is 105/105 P0, the top hotspot | Same | **Corroborated** |
 | `runWorkLoop` ~1,667 lines, cyclomatic 266, cognitive 888 | 1,670 → **1,281**, and it moved to `internal/daemon/scheduler.go` | **Corroborated when written** |
-| `beadRunOne` ~2,288, cyclomatic 217, cognitive 396 | 2,289 → **1,764** | **Corroborated when written** |
+| `beadRunOne` ~2,288, cyclomatic 217, cognitive 396 | 2,289 → **1,603** | **Corroborated when written** |
 | ~~`runReviewLoop` ~1,582, cyclomatic 136~~ | **Gone.** `3cec5afd7` deleted the driver | **Moot** |
 | DOT drivers ~883–1,001 | 882 / 1,002 → **543 / 997** | **Corroborated when written** |
 | `workLoopDeps` is a service locator "assembled in stages; validity is temporal not compiler-enforced" | Four-stage assembly across `bootworkloop.go`; ~25 of 81 fields set post-construction. Field count re-checked at 81. The 25 is **not re-verified** | **Corroborated, and worse than stated** |
@@ -1772,7 +1862,7 @@ The size column is re-measured 2026-07-30. Sizes that moved are shown as `then �
 | **D2** | **Do the escape check and no-commit guard belong to the Run machine or to the caller?** | Rewrite step 8 | Moving them into the machine *changes behaviour* — DOT runs that pass today would start being guarded, and DOT is the default. Deleting `ActCheckEscape` admits the machine's `Guarding` phase is decorative. |
 | **D3** | **Is a failed queue-reservation persist fatal to the dispatch?** | Rewrite step 4 | Correct answer is yes (no claim, no launch). But under disk pressure it converts silent inconsistency into visible dispatch stall. |
 | **D4** | ✅ **MOOT 2026-07-30.** It asked whether `reviewloop.go` and `dot_cascade_core.go` were in scope with `workloop.go`. `reviewloop.go` was deleted on 2026-07-28, and the launch step of the other two was collapsed into `agentlaunch.go` on 2026-07-29, so the question answered itself by events. The surviving half of it — "are the run driver and the graph cascade one unit?" — is yes, and step 7 above now states it directly. | Nothing | — |
-| **D5** | **Does the scenario tier become merge-blocking before the rewrite starts?** | Everything | It is one line of YAML. Without it there is no oracle. It goes red immediately (the `hk-zobns` branch-protection guard fails open) — which is the point, but it is a visible red build the operator has to accept. |
+| **D5** | **Does the scenario tier become merge-blocking before the rewrite starts?** | Everything | **Re-briefed 2026-07-30. It is no longer one line of YAML.** That line landed (`1ee9154e8`, `7f1028316`) and the tier now reports its own failures. What is left is 8 deterministic scenario failures plus a skip that reads as a pass, and `.github/workflows/scenario.yml` warns not to make itself required until those close. The decision is therefore how much test repair to buy before the rewrite starts, not whether to flip a flag. Without an oracle the rewrite has nothing to validate against. See Step 0 item 3. |
 
 ---
 
@@ -1799,8 +1889,8 @@ Pi stderr capture, and the independent tmux session that lets a run survive a da
 DOT path MUST NOT run them, so aligning them is a spec amendment (D2), not a cleanup — and `hk-co8g8`
 found the escape check killing innocent runs, so extending it as-is would spread a live bug. And the
 cognition gate in `dot_gate.go` is not part of this either: no code sets `daemon.Config.CPRegistry`
-and no graph declares a `type="gate"` node, so it cannot execute today. Wire it or delete it as its
-own decision.
+and no graph the daemon runs declares a `type="gate"` node, so it cannot execute today. Wire it or
+delete it as its own decision.
 
 <details>
 <summary>What §8 said before 2026-07-30, and why each claim was wrong.</summary>

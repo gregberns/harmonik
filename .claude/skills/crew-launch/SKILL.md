@@ -78,6 +78,10 @@ harmonik start crew --name paul --queue paul-q --mission /tmp/paul.md   # advanc
 > `.harmonik/context/captain-lanes.md`, `project.yaml`, the orchestrator-rules
 > standing-rules skill) — you are scoped to ONE epic + ONE queue; your mission
 > file is your tier-1 state. Fleet-level state is the captain's concern.
+>
+> **One addition: `PRINCIPLES.md` at the repo root.** Your beads produce the code
+> and the tests, and §7 there is the rule that a test name states the claim it
+> defends instead of a ticket ID.
 
 > **One-call discovery shortcut — run the crew boot digest first:**
 > ```bash

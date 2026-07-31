@@ -1235,33 +1235,42 @@ deleted rather than done.
 
 ### The rewrite is built to `PRINCIPLES.md`
 
-[`PRINCIPLES.md`](../../PRINCIPLES.md) — repo root, 84 lines, added 2026-07-15 — states the eight
-principles this codebase is supposed to be built on. **Until 2026-07-28 it had ZERO inbound references anywhere in the tree** —
+[`PRINCIPLES.md`](../../PRINCIPLES.md) — repo root, added 2026-07-15 — states the principles this
+codebase is supposed to be built on. **Until 2026-07-28 it had ZERO inbound references anywhere in the tree** —
 `git grep -l "PRINCIPLES.md" HEAD` returned nothing. The link direction was one-way: PRINCIPLES.md
 cites `plans/2026-07-13-code-revamp/`, not the reverse. So no agent ever loaded it. It is now cited from
 `AGENTS.md` and `AGENT_INDEX.md`.
 
-The cost of that omission is measurable. Its §6 reads: *"Beware test theater: a suite that mostly
-asserts constants is not coverage. 'Green' must mean the product code actually ran."* Thirteen days
-later this project deleted ~225,000 lines of exactly that. The warning was already in the tree.
+> **⚠ The file was rewritten on 2026-07-30 and every section number below moved.** It held eight
+> sections and it now holds nine. Consumer-owned ports went from §2 to §4. Record → replay went from
+> §3 to §8. "Time is a port" is no longer its own section — it is a bullet inside §1. Single writer
+> went from §5 to §6. The test-theater warning went from §6 to §7. "Enforce with CI levers" is gone
+> as a section: the idea sits in the preamble, and the settings live in `.golangci.yml` and
+> `docs/foundation/project-level/quality-checks.md`. "Prove one vertical" went from §8 to §9. The
+> numbers below are the CURRENT ones. Do not quote an older document's number without re-checking it.
 
-Four of the eight map directly onto work already planned, which is a good sign the principles are real
+The cost of that omission is measurable. Its §7 reads: *"A suite that mostly asserts constants is not
+coverage."* Thirteen days after the file was written this project deleted ~225,000 lines of exactly
+that. The warning was already in the tree.
+
+Four sections map directly onto work already planned, which is a good sign the principles are real
 rather than aspirational:
 
-- **§8 prove one vertical, then generalize** — this is the operator's own method for the rewrite
+- **§9 prove one vertical, then generalize** — this is the operator's own method for the rewrite
   (queue + bead processing first, everything else later), independently re-derived.
-- **§2 consumer-owned ports** — the decomposition seams for `workloop.go` / `reviewloop.go` /
+- **§4 consumer-owned ports** — the decomposition seams for `workloop.go` / `reviewloop.go` /
   `dot_cascade_core.go`.
-- **§4 time is a port** — directly addresses the mutable package-level timing `var`s identified as the
-  single biggest blocker to rewriting the run machine.
-- **§5 explicit state machines, single writer** — the diagnosis of `beadRunOne`, which open-codes the
-  same transitions in four places.
+- **§1's clock bullet** — time is an input threaded in, not a package-level `var` read at the call
+  site. This addresses the mutable package-level timing `var`s identified as the single biggest
+  blocker to rewriting the run machine.
+- **§6 one writer, and one explicit state machine** — the diagnosis of `beadRunOne`, which open-codes
+  the same transitions in four places.
 
-**One tension to hold consciously.** §7 says "enforce the principles with CI levers, not vibes", while
-the operator's direction is *"I dont want to build more guards and crap to maintain."* These reconcile:
-most of §7's named levers already exist (`.golangci.yml` complexity ceilings, depguard boundary rules,
-the `--new-from-rev` ratchet, the `scripts/*-gate.sh` set). The rule is **use the levers that exist;
-do not build new ones without a reason that survives being questioned.**
+**One tension to hold consciously.** The preamble says a principle nothing checks stops being true,
+while the operator's direction is *"I dont want to build more guards and crap to maintain."* These
+reconcile: most of the levers already exist (`.golangci.yml` complexity ceilings, depguard boundary
+rules, the `--new-from-rev` ratchet, the `scripts/*-gate.sh` set). The rule is **use the levers that
+exist; do not build new ones without a reason that survives being questioned.**
 
 ### A worked example of why this section exists: AR-009
 
@@ -1604,14 +1613,20 @@ sentence pointing at the Deferred-extensions paragraph *without* adjudicating. A
 reconciliation's deferred paragraph reading "MAY ship as a follow-on within one release" — an unanchored
 deadline with no release named.
 
-**M. Crews never load `PRINCIPLES.md`, and crews are who write the tests.** Found 2026-07-28 by
+**M. Crews never load `PRINCIPLES.md`, and crews are who write the tests. ✅ FIXED 2026-07-30.** The
+minimal-load callout in `cmd/harmonik/assets/skills/crew-launch/SKILL.md` now names `PRINCIPLES.md` as
+the one addition to the crew's boot load, and `.claude/skills/crew-launch/SKILL.md` carries the
+byte-identical mirror. `AGENTS.md` §Per-role load map lists it too. The finding is kept below because
+the reasoning is the reusable part.
+
+Found 2026-07-28 by
 `agent-config-reviewer` while wiring the document in. The new `PRINCIPLES → AGENT_INDEX → STATUS →
 HANDOFF` reading order lives in `AGENTS.md` §Start here, but the per-role load map says each role
 skill's boot runbook is authoritative, and `crew-launch/SKILL.md` enumerates a deliberately minimal
-load that does not include it. **Still true 2026-07-30** — `grep -n 'PRINCIPLES'` finds nothing in
-either `.claude/skills/crew-launch/SKILL.md` or its embedded source under
-`cmd/harmonik/assets/skills/`. So §6 — *"beware test theater: a suite that mostly asserts constants is
-not coverage"* — never reaches the role that writes tests. **Not a contradiction, a coverage hole.**
+load that did not include it. **Was still true on the morning of 2026-07-30** — `grep -n 'PRINCIPLES'`
+found nothing in either `.claude/skills/crew-launch/SKILL.md` or its embedded source under
+`cmd/harmonik/assets/skills/`. So §7 — *"a suite that mostly asserts constants is
+not coverage"* — never reached the role that writes tests. **Not a contradiction, a coverage hole.**
 Fixing it is a dual-path edit (`cmd/harmonik/assets/skills/crew-launch/` plus the byte-identical
 `.claude/skills/` mirror), which is why it was not smuggled into a config-review commit. Captains need
 no equivalent change — captains do not write code.
@@ -1652,7 +1667,8 @@ next to it on `declared-but-deferred`.
 > as the single enforcement site. The general ask survives — this is a class of bug, not one site — but
 > nobody should go looking for the `"mvh-required"` literal.
 
-This is a `PRINCIPLES.md` §7 lever and worth having *if* an
+This is a toolchain lever, so it belongs with the other gate settings in `.golangci.yml` and
+`docs/foundation/project-level/quality-checks.md`. It is worth having *if* an
 existing linter can express it — check `golangci-lint`'s `goconst`, `usestdlibvars`, and whether a
 `forbidigo`/`ruleguard` pattern can catch "string literal equal to the value of a declared constant of
 a named type." **Prefer configuring a linter already in `.golangci.yml` over writing a new gate.**

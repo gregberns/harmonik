@@ -304,7 +304,7 @@ It is well-built and well-tested, and it is **not** a functional-core exemplar. 
 protocol write). It is a shell. Its own test is named `TestProductionPackageRemainsEffectFree`, which is
 false as written and will mislead anyone who copies the pattern believing they are copying a pure core.
 
-It teaches `PRINCIPLES.md` §2 (consumer-owned ports — it declares both ports itself and imports nothing
+It teaches `PRINCIPLES.md` §4 (consumer-owned ports — it declares both ports itself and imports nothing
 outward) and not §1. Neither port has an implementation anywhere in the tree: the only `EnsureCommitted`
 in the repo is a test recorder. **The boundary has never met real git or a real protocol write**, so its
 shape is a hypothesis.
@@ -322,7 +322,8 @@ is in a hardcoded allowlist, no package-level `var`, no `go` statement, no `defe
 
 It is real — add `"time"` and it goes red — but it is narrower than its name and it duplicates existing
 enforcement. **Both packages are already inside the `.golangci.yml` `runloop` depguard component**
-(`files: ["**/internal/runloop/**"]`), which is the CI lever `PRINCIPLES.md` §7 actually asks for. The AST
+(`files: ["**/internal/runloop/**"]`), which is where this project keeps its import-boundary gate —
+`.golangci.yml` and `docs/foundation/project-level/quality-checks.md` own that setting. The AST
 test adds: no package vars, no goroutines, no defer. It misses `func init()` entirely, and it is not
 transitive — `internal/core` is allow-listed, so a clock read added there stays green.
 

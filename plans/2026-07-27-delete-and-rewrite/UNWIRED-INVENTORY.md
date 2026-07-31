@@ -50,6 +50,11 @@ symbol names, because the tree has moved 122 commits since the audit.
 
 ## Baseline measurements (independently computed, whole-repo)
 
+> **Every open row of this document is still unwired, re-checked 2026-07-30. Nothing has been
+> wired since the audit.** The rows that changed state are the ones already struck out, and each was
+> struck out because it was wrong when written or because the code was deleted — not because someone
+> connected it. Read a lack of strike-through as "still true", not as "not looked at".
+
 **Re-measured 2026-07-30.** This audit is pinned to `bba60dd37`. That commit is an ancestor of the
 current tip, and the tree has moved a long way since — `git rev-list --count bba60dd37..HEAD` gives
 the distance. The package count fell because `3cec5afd7` retired review-loop mode and deleted
@@ -58,20 +63,31 @@ the distance. The package count fell because `3cec5afd7` retired review-loop mod
 Each row now carries the command that produces it. Re-run the command rather than trusting the
 number.
 
-| Measure | Value @ HEAD | as audited | Command |
-|---|---|---|---|
-| Production Go LOC | **214,117** | 214,511 | `find . -name '*.go' -not -name '*_test.go' \| xargs cat \| wc -l` |
-| Test Go LOC | **307,741** (1.44x production) | 300,627 (1.40x) | same, with `-name '*_test.go'` |
-| Go packages | **102** | 113 | `go list ./... \| wc -l` |
-| Packages import-reachable from any `main` | **67** | 67 | `go list -deps ./cmd/... \| grep '^github.com/gregberns/harmonik' \| sort -u \| wc -l` |
-| Packages NOT import-reachable from `./cmd/...` | **35** | 46 | the two rows above, subtracted |
-| Packages NOT import-reachable from ANY `main` | **32** | — | `comm -23` of `go list ./...` against `go list -deps` of every `main` package |
-| Prod / test LOC in never-imported feature packages | **4,943 prod / 7,854 test** across all 9 (`hooksystem` 763/2,785, `replay` 1,091/741, `watch` 699/1,208, `structuredlog` 498/695, `twinparity` 662/702, `codexdigitaltwin` 449/262, `codexreactor` 340/388, `keepertwin` 427/272, `specaudit` 14/801) | 6,056 / 8,543 | `find <pkg> -name '*.go' -not -name '*_test.go' \| xargs cat \| wc -l` per package |
-| Exported symbols with NO cross-package production reference | **1,337 / 3,162 (42.3%)** | 759 / 3,304 (23.0%) | see the method note below |
-| Declared `EventType` constants not live outside the registry | **52 / 182 (28.6%)** | 41 / 182 (22.5%) | denominator `grep -cE '^\tEventType[A-Za-z0-9_]+' internal/core/eventtype.go`; numerator = constants with no whole-word match in a non-test file outside `eventtype.go`, `eventreg*.go`, `pertypecompat*.go`, `eventbus/busimpl.go` |
-| `projectconfig` distinct YAML keys | **121** | ~122 | `grep -rhoE 'yaml:"[a-z_]+' internal/projectconfig/*.go \| sed 's/yaml:"//' \| sort -u \| wc -l` |
-| Production `.go` files | **894** | 864 | `find . -name '*.go' -not -name '*_test.go' -not -path './.git/*' \| wc -l` |
-| Production files named for a single bead ID | **129 / 894 (14.4%)** by the regex at right — NOT comparable to the audit, which did not record its pattern | 187 / 864 (22%) | `find . -name '*.go' -not -name '*_test.go' -not -path './.git/*' -exec basename {} \; \| grep -cE '_[a-z0-9]*[0-9][a-z0-9]*\.go$'` |
+**Four rows were re-measured later on 2026-07-30, and all four had moved.** Production LOC, test LOC,
+production file count and the bead-named file count all drifted between the two passes on the same
+day. The package counts and the YAML-key count did not. The "Value @ HEAD" column below is the later
+measurement and the earlier one is recorded beside it.
+
+⚠ **Every `find`-based command in this table needs `-not -path './.claude/*'` and it did not have
+it.** Agent worktrees now sit under `.claude/worktrees/`, and each one is a full checkout. Without
+that exclusion the production-file count reads 8,916 instead of 897. The commands below carry the
+exclusion. A number produced by the old command form is roughly ten times too large and should be
+thrown away rather than reconciled.
+
+| Measure | Value @ HEAD | earlier on 2026-07-30 | as audited | Command |
+|---|---|---|---|---|
+| Production Go LOC | **214,604** | 214,117 | 214,511 | `find . -name '*.go' -not -name '*_test.go' -not -path './.git/*' -not -path './.claude/*' \| xargs cat \| wc -l` |
+| Test Go LOC | **309,509** (1.44x production) | 307,741 | 300,627 (1.40x) | same, with `-name '*_test.go'` |
+| Go packages | **102** | 102 | 113 | `go list ./... \| wc -l` |
+| Packages import-reachable from any `main` | **67** | 67 | 67 | `go list -deps ./cmd/... \| grep '^github.com/gregberns/harmonik' \| sort -u \| wc -l` |
+| Packages NOT import-reachable from `./cmd/...` | **35** | 35 | 46 | the two rows above, subtracted |
+| Packages NOT import-reachable from ANY `main` | **32** | 32 | — | `comm -23` of `go list ./...` against `go list -deps` of every `main` package |
+| Prod / test LOC in never-imported feature packages | **4,943 prod / 7,854 test** across all 9 (`hooksystem` 763/2,785, `replay` 1,091/741, `watch` 699/1,208, `structuredlog` 498/695, `twinparity` 662/702, `codexdigitaltwin` 449/262, `codexreactor` 340/388, `keepertwin` 427/272, `specaudit` 14/801) | same | 6,056 / 8,543 | `find <pkg> -name '*.go' -not -name '*_test.go' \| xargs cat \| wc -l` per package |
+| Exported symbols with NO cross-package production reference | **1,337 / 3,162 (42.3%)** | same | 759 / 3,304 (23.0%) | see the method note below |
+| Declared `EventType` constants not live outside the registry | **52 / 182 (28.6%)** | same | 41 / 182 (22.5%) | denominator `grep -cE '^\tEventType[A-Za-z0-9_]+' internal/core/eventtype.go`; numerator = constants with no whole-word match in a non-test file outside `eventtype.go`, `eventreg*.go`, `pertypecompat*.go`, `eventbus/busimpl.go` |
+| `projectconfig` distinct YAML keys | **121** | 121 | ~122 | `grep -rhoE 'yaml:"[a-z_]+' internal/projectconfig/*.go \| sed 's/yaml:"//' \| sort -u \| wc -l` |
+| Production `.go` files | **897** | 894 | 864 | `find . -name '*.go' -not -name '*_test.go' -not -path './.git/*' -not -path './.claude/*' \| wc -l` |
+| Production files named for a single bead ID | **130 / 897 (14.5%)** by the regex at right — NOT comparable to the audit, which did not record its pattern | 129 / 894 | 187 / 864 (22%) | `find . -name '*.go' -not -name '*_test.go' -not -path './.git/*' -not -path './.claude/*' -exec basename {} \; \| grep -cE '_[a-z0-9]*[0-9][a-z0-9]*\.go$'` |
 
 **Method for the exported-symbol row (recomputed 2026-07-30).** The audit's 759 / 3,304 cannot be
 reproduced, because it did not record how it counted. The figure above uses a stated, repeatable
@@ -136,7 +152,7 @@ known-live symbols (`queue.Persist`, `workspace.CreateWorktree` — neither flag
 | 37 | **Crew slots are reclaimed when a crew goes idle.** | `crewrun.CrewIdleReaper.StartWatcher` | The watcher body — it is an empty function; `loop`/`scan`/`checkCrew`/`reap` are `//nolint:unused`. | Constructed fully at `bootsocket.go:252` and started at `bootworkloop.go:238`. A documented 2026-07-18 operator disable, but the consequence stands. |
 | 38 | **`harmonik queue resume` recovers a paused queue.** | `queuewiring.transitionToActive` | Handling for 2 of 3 pause states. `transitionToActive` skips anything that is not `paused-by-drain`. | `paused-by-failure` (`internal/daemon/scheduler.go`, `internal/lifecycle/startup_pl005_qm002.go`) and `paused-by-budget` (`internal/daemon/perqueuespendmeter_tigaf11.go`) are both produced live. `queue.ResumeFromFailure` / `RearmFailedItems` have zero callers and there is no `queue retry` verb. `paused-by-budget` stays wedged until UTC-day rollover. **Correction 2026-07-30:** "`HandleOperatorResume` returns nil regardless" is FALSE. `OperatorPauseController.HandleOperatorResume` (`internal/daemon/operatorpause.go`) returns wrapped errors from `json.Marshal` and from `bus.Emit`; it returns an early nil only for the idempotent already-not-paused case. The effect the row is reaching for survives by a different route: the `operator_resuming` event it emits is dropped downstream by the drain-only filter in `transitionToActive`, so the socket still answers OK on a queue that stays paused. |
 | ~~39~~ | ~~**Review-cycle and continuity kernels**~~ **CLOSED — the code is deleted** | ~~`internal/runloop/reviewcycle` (652), `internal/runloop/continuity` (475)~~ | — | The audit was right that both packages had zero importers of any kind. They were harvested from an abandoned branch in `1b56dafb5` on 2026-07-28 and knowingly parked. **Commit `3cec5afd7` ("daemon: retire review-loop mode and delete its driver") deleted both directories**, together with `internal/daemon/reviewloop.go`. Verify with `ls internal/runloop/reviewcycle internal/runloop/continuity` → no such directory. Nothing to scope. Harvested and deleted the same day, so this row was stale when it was written. Its lesson is worth keeping: harvesting a kernel from an abandoned branch does not make it wired, and a "knowingly parked" note is not a plan. |
-| 41 | **A graph can gate on a policy ControlPoint** — `specs/workflow-graph.md` WG-001 declares `gate` as one of four node types, WG-005 gives it an attribute set, and `internal/daemon/dot_gate.go` implements both a mechanism evaluator and a cognition evaluator that launches a real agent. **Found 2026-07-30; this row is new.** | `dispatchDotGateNode`, `buildMechanismGateEval`, `buildCognitionGateEval`, `executeCognitionGate` — `internal/daemon/dot_gate.go` (749 lines) | Two things, either of which alone makes it dead. `daemon.Config.CPRegistry` is never assigned: `grep -rn 'CPRegistry:'` over the whole tree returns **zero hits**, tests included, so `daemonGate.LookupGate` always reports "no registry loaded" and any gate node returns a structural eval-failure before a launch. And no graph asks for one. | `type="gate"` appears **zero** times in the embedded `internal/daemon/standard-bead.dot`, in this project's `workflow.dot`, in `sonnet-triple-review.dot` and in `eval-bead.dot`. `dot_gate.go`'s own source says so about the remote path: *"the default workflow.dot uses a tool-command commit_gate, not a cognition gate, so no live remote run exercises this path today."* Real gating is done by the `commit_gate` **shell tool node**, which is a `non-agentic` node and does not touch this file. **Consequence for the rewrite:** counting `dot_gate.go` as a live launch path inflates the duplication count and prices migration work that buys nothing. Wire it or delete it — decide, do not migrate it by default. |
+| 41 | **A graph can gate on a policy ControlPoint** — `specs/workflow-graph.md` WG-001 declares `gate` as one of four node types, WG-005 gives it an attribute set, and `internal/daemon/dot_gate.go` implements both a mechanism evaluator and a cognition evaluator that launches a real agent. **Found 2026-07-30; this row is new.** | `dispatchDotGateNode`, `buildMechanismGateEval`, `buildCognitionGateEval`, `executeCognitionGate` — `internal/daemon/dot_gate.go` (749 lines) | Two things, either of which alone makes it dead. `daemon.Config.CPRegistry` is never assigned: `grep -rnE 'CPRegistry[[:space:]]*[:=]' --include='*.go' .` returns **zero hits**, tests included, so `daemonGate.LookupGate` always reports "no registry loaded" and any gate node returns a structural eval-failure before a launch. **Use that command, not a bare `grep CPRegistry`** — the bare form returns 7 hits, including the field declaration in `daemon.go` and the read in `workloop.go`. The field is declared and read. Nothing writes it. And no graph the daemon runs asks for one. | `type="gate"` appears **zero** times in the embedded `internal/daemon/standard-bead.dot`, in this project's `workflow.dot`, in `sonnet-triple-review.dot` and in `eval-bead.dot`. It is not absent from the tree — `specs/examples/quality-gate-policy.dot` declares one, and no run path loads it. `dot_gate.go`'s own source says so about the remote path: *"the default workflow.dot uses a tool-command commit_gate, not a cognition gate, so no live remote run exercises this path today."* Real gating is done by the `commit_gate` **shell tool node**, which is a `non-agentic` node and does not touch this file. **Consequence for the rewrite:** counting `dot_gate.go` as a live launch path inflates the duplication count and prices migration work that buys nothing. Wire it or delete it — decide, do not migrate it by default. |
 | 40 | **`harmonik harness` runs the conformance scenario suite.** | `cmd/harmonik/harness.go` | `BrPath`/`KerfPath` — no flag supplies them, and `bootworkloop.go:30` is `if bs.cfg.BrPath == "" { return nil }`, which skips the entire PL-005 work loop and is the last statement of `daemon.Start`. | The registered conformance command boots a daemon that never dispatches, while `scenarios/smoke/checkpoint-and-merge.yaml` asserts daemon-side events only the work loop can produce. |
 
 Also confirmed, lower severity: `LaunchSpec.HandlerSpec` is assigned only in tests, so `runIDStr`
@@ -195,10 +211,15 @@ Still ignored:
 - `stall_sentinel.escalation.*` and `.detection.*` — nothing detects, nothing pages, at any tier.
   `cmd/harmonik/resolve_stall_sentinel_config.go` uses them only as presence gates.
 - `watch.absent_thresh_s` / `stall_ticks` — validated, never used.
-- `keeper.timings.max_boot_grace_total` — the parsed field has no reader. The value keeper
-  actually uses is the `2 × boot_grace` default computed in `internal/keeper/cycle.go`.
-- `keeper.self_service.instruct_only_when_idle` — threaded all the way to
-  `WatcherConfig.SelfServiceInstructOnlyWhenIdle`, where no conditional reads it.
+- `keeper.timings.max_boot_grace_total` — **re-checked 2026-07-30, and it looks wired when it is
+  not.** `CyclerConfig.MaxBootGraceTotal` exists and `internal/keeper/step.go` genuinely reads it, so
+  a grep on the Go identifier is reassuring. The YAML key never reaches that field: nothing in
+  `cmd/harmonik` assigns it, and `internal/keeper/cycle.go` fills it with `2 × BootGracePeriod`. So
+  the operator can set the key to any value and the behaviour does not change.
+- `keeper.self_service.instruct_only_when_idle` — **re-checked 2026-07-30, and this one also looks
+  wired.** It is threaded through `resolve_keeper_config.go` and `keeper_cmd.go` all the way to
+  `WatcherConfig.SelfServiceInstructOnlyWhenIdle`. The field is assigned and never tested — no
+  conditional anywhere reads it.
 - `keeper.hard_ceiling.cooldown` — silently shadowed by the different key
   `keeper.cadence.hard_ceiling_cooldown`, which is what the resolver reads.
 - `sandbox.network.mode` — `parseSandboxBlock` validates only `backend`. The source says the
@@ -251,7 +272,7 @@ per-file cohort** across workspace-model, reconciliation and handler-contract (W
 WM-022..024, WM-040, WM-063, RC-002a/018/019/025a/026a, HC-004/043/045/046-050/055/070): each
 requirement got its own file, its own tests, and its own bead, and none got a call site. A large
 share of production files are named for a single bead ID — the audit put it at 187 of 864 (22%)
-without recording its pattern, and a stated regex now gives 129 of 894 (14.4%); the two are not
+without recording its pattern, and a stated regex now gives 130 of 897 (14.5%); the two are not
 comparable, so use whichever you can re-run. Either way that decomposition is precisely the
 mechanism by which a feature reaches "compiles, tested, bead closed" without ever being
 integrated. Third, the **operator-observability surface** — dashboard, usage/cost, structured

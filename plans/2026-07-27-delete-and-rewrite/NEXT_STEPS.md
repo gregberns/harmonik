@@ -927,6 +927,37 @@ Two lessons, and they are the reason for this whole section:
    standing triage verdict is to keep §4.1–4.5 and delete §4.0/4.6/4.10, which constrain documents
    rather than code. AR-009 is in that territory.
 
+**G. Centralize durable writes — one owner per file, and make a second writer impossible.**
+Operator, 2026-07-30: *"persistence across multiple threads/processes on THE SAME FILES should not be
+allowed. That seems like bad news."*
+
+It is already the spec. **QM-060:** *"All queue mutations MUST execute through the single QueueStore
+transaction owner."* The owner exists — `internal/queue/transaction.go`, 1,005 lines, reached through
+`queuewiring.QueueStore.Transact`. **It is wired to nothing.** All ten `.Transact(` call sites are in
+`queuewiring/store_transaction_test.go`. The live path is bare `queue.Persist`, at about 20 sites in
+`workloop.go` alone and in eleven files overall, including RPC handlers, startup recovery, the spend
+meter, crew start, and `cmd/harmonik/run.go`. So the rule is written, the mechanism is built, and the
+system routes around both. This is row 5 of `UNWIRED-INVENTORY.md` and it is marked keep, not delete.
+
+`Persist` itself is sound — temp file, atomic rename, fsync of the parent directory, a 1 MiB bound. Per
+file it is crash-atomic. What it has no way to provide is what a transaction owner provides: a
+generation guard, a replace intent, archive handoff binding, and quarantine. Those are the things that
+stop a second writer, and they are exactly what `transaction.go` implements.
+
+Two separable questions, and the second is the architectural one:
+
+1. **Route every queue write through the existing owner.** Mechanical, already specified, already
+   built. The 21-slice plan in `queue-transaction-contract/07-tasks.md` covers it and **one slice is
+   built**. This is not new design work; it is finishing.
+2. **Decide the general rule for the system, not just for queues.** Multiple processes will need to
+   persist state — that is fine and expected. Two writers on one file is not. The rule to test every
+   new persistent file against: *one owner writes it, everyone else asks that owner.* Worth stating
+   once, in the architecture, rather than re-deciding per file. Defer until the queue case is finished,
+   because that case will show what the general seam has to look like.
+
+Related and already recorded: `hk-f1wb0` (nothing prunes the bead history while the daemon is off) is
+the same shape one layer down — a file with no owner, so no policy reaches it.
+
 ---
 
 ## Re-assess — parts of the system whose existence is in question

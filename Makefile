@@ -6,7 +6,21 @@
 .DEFAULT_GOAL := check
 
 # Tool bin dir — keeps dev tools out of the global GOPATH.
-TOOLS_DIR := $(PWD)/.tools
+#
+# Resolved against the MAIN working tree rather than $(PWD). `.tools` holds
+# built binaries and is gitignored, so a git worktree receives none of it, and
+# every target that reached a tool there died with a bare ENOENT that never said
+# "you are in a worktree and the tools live elsewhere". That covers fmt,
+# fmt-check, lint and all three check tiers. Agents are routinely run in their
+# own worktrees, so each one met this and improvised privately — and an agent
+# that improvised by skipping the format step produced a commit that died at the
+# fail-closed format gate much later, with no clue why.
+#
+# --git-common-dir returns the SHARED .git from inside a worktree as well as
+# from the main checkout, so its parent is the main working tree either way.
+# Falls back to $(PWD) outside a repository.
+TOOLS_HOME := $(shell git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git/*$$||')
+TOOLS_DIR := $(if $(TOOLS_HOME),$(TOOLS_HOME),$(PWD))/.tools
 GOBIN_TOOLS := GOBIN=$(TOOLS_DIR)
 
 # Module path (matches go.mod).

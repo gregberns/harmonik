@@ -18,8 +18,16 @@ mode=$1
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
-gofumpt=${GOFUMPT:-"$repo_root/.tools/gofumpt"}
-gci=${GCI:-"$repo_root/.tools/gci"}
+# The tools live in the MAIN working tree, not this one. `.tools` holds built
+# binaries and is gitignored, so a git worktree receives none of it and this
+# script died with a bare "No such file or directory" on the tool path.
+# --git-common-dir gives the shared .git from a worktree as well as from the
+# main checkout, so its parent is the main working tree either way.
+tools_home=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git/*$||')
+[[ -n "$tools_home" ]] || tools_home=$repo_root
+
+gofumpt=${GOFUMPT:-"$tools_home/.tools/gofumpt"}
+gci=${GCI:-"$tools_home/.tools/gci"}
 module=$(go list -m -f '{{.Path}}')
 
 files=()

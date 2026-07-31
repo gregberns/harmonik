@@ -102,6 +102,30 @@ the test list should learn what the system promises.
   for free by any environment where nothing happens at all.
 - If you did not watch the test fail, you do not know what it tests.
 
+**Start from the assumption that it does not work.** Not that it is badly written — that it is not
+running, or is running and measuring nothing. In this tree that assumption keeps being right, and
+reading never catches it, because **a test that cannot fail looks exactly like a test that passes**.
+One day in July 2026 found three unrelated instances: two tests that passed with the code they
+covered deleted, a whole gate family whose guard could never act because an unguarded path always
+ran first, and the delta gate itself, which had been running zero tests and reporting that there was
+nothing to do. Green meant nothing in all three.
+
+So treat verifying the harness as first-class work, ahead of adding to it. Do not ask permission to
+stop and check whether a test does what it claims — that is the work.
+
+- **Break it on purpose and watch.** Change the code so the claim is false, and confirm THAT test
+  fails. Then confirm the change actually applied — grep for it. A no-op edit and a real edit
+  produce identical output when the thing under test is an absence, so an unverified mutation is
+  evidence of nothing. Three probes failed this way in one day, each reporting a pass.
+- **Pair every negative claim with positive evidence in the same test.** "The worktree survived"
+  proves nothing on its own. Prove the machinery ran and chose not to act: count the calls that
+  reached the boundary, park the run and prove it parks before you free it.
+- **Ask what would have to be true for this test to be unable to fail**, and then check whether it
+  is true. Usually it is something upstream: a guard that never runs because something ungated fires
+  first, a fake whose default answer is the answer under test, a filter that excluded the case.
+- **Suspect a green gate as readily as a red one.** A gate that reports "nothing to do" is making a
+  claim, and it can be wrong the same way a test can.
+
 ## 8. Prefer behavior you can re-run
 
 Where a subsystem's input is real and messy, capture the raw stream once and replay it offline

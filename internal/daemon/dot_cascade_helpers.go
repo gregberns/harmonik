@@ -107,6 +107,53 @@ func resolveDotWorktreeHEAD(ctx context.Context, runner tmux.CommandRunner, wtPa
 	return gitprobe.ResolveWorktreeHEADVia(ctx, runner, wtPath)
 }
 
+// dotNodeTerminalFailure classifies what the agent REPORTED on its way out and
+// returns the reason the node must fail with. ok is false when the exit is not a
+// failure.
+//
+// It is the graph's copy of the single-mode tail's terminal decision, and it
+// keeps that decision's three cases in the same order:
+//
+//   - CHB-020 branch 1, the Stop hook reported WORK_COMPLETE or
+//     REVIEWER_VERDICT. A pass, whatever the exit code was.
+//   - Nothing reported AND exit 0 AND no watcher error. This is the auto-close
+//     heuristic for twin-blind runs, and it is also a pass. A ProcessExit
+//     harness reports nothing by design, so dropping this case would fail every
+//     codex and pi node.
+//   - Everything else is a failure: a FAILURE_SIGNAL, a non-zero exit with
+//     nothing reported, or a watcher that could not read the progress stream.
+//
+// The graph decided node success on HEAD advance alone before this existed, so
+// an agent that committed and then signalled failure was recorded as a SUCCESS
+// node and its work was merged (hk-v4wer).
+//
+// Spec: specs/claude-hook-bridge.md §4.7 CHB-020.
+func dotNodeTerminalFailure(
+	sessionID string,
+	exit runloop.ExitInfo,
+	socketOutcome *handler.ExportedOutcomeEmittedPayload,
+	watcherErr error,
+) (string, bool) {
+	term := handler.MapWaitReturnToTerminalEvent(sessionID, exit.ExitCode, exit.WaitErr, socketOutcome)
+	watcherFailed := watcherErr != nil && !isWatcherErrCanceled(watcherErr)
+
+	if term.Type == handlercontract.ProgressMsgTypeAgentCompleted {
+		return "", false
+	}
+	if socketOutcome == nil && exit.ExitCode == exitCodeClean && !watcherFailed {
+		return "", false
+	}
+
+	switch {
+	case watcherFailed:
+		return fmt.Sprintf("watcher error: %v exit=%d", watcherErr, exit.ExitCode), true
+	case term.SubReason != "":
+		return fmt.Sprintf("agent_failed class=%s sub_reason=%s exit=%d", term.Class, term.SubReason, exit.ExitCode), true
+	default:
+		return fmt.Sprintf("exit=%d", exit.ExitCode), true
+	}
+}
+
 // errDotNoChangeSubsumed is returned by dispatchDotAgenticNode when the
 // implementer exited without advancing HEAD and the bead is already subsumed
 // in main (work landed via a prior run). driveDotWorkflow maps this to

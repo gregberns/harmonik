@@ -1607,6 +1607,23 @@ func dispatchDotAgenticNode(
 		}
 	}
 
+	// What the agent REPORTED decides the node, not only whether HEAD moved
+	// (hk-v4wer). dotNodeTerminalFailure is the same three-case decision the
+	// single-mode tail makes: a Stop-hook completion passes, a silent clean exit
+	// passes, and a FAILURE_SIGNAL / non-zero exit / watcher error fails.
+	//
+	// It runs AFTER the commit fallback, so a codex node that produced work is
+	// still credited with the daemon-side commit before the node is judged, and
+	// BEFORE the HEAD-advance guard, so a reported failure is reported as such
+	// rather than as a generic "no commit".
+	var nodeWatcherErr error
+	if launch.Watcher != nil {
+		nodeWatcherErr = launch.Watcher.Err()
+	}
+	if reason, failed := dotNodeTerminalFailure(artifacts.HandlerSessionID, launch.Exit, launch.SocketOutcome, nodeWatcherErr); failed {
+		return core.Outcome{}, fmt.Errorf("node %q (implementer) %s", node.ID, reason)
+	}
+
 	// Implementer-class node: require HEAD to have advanced past its pre-launch
 	// state (per EM-015d). Gate on node.NonCommitting per WG-041 §I.4 /
 	// EM-058 non-committing sub-note (§II.8): when non_committing="true", a

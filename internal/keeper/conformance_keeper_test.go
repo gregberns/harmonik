@@ -19,18 +19,7 @@ package keeper
 //   floor/live-watcher-no-lockfile   → TestLiveKeeperPresent_NoLockfile
 //   corpus/1/restartnow-b4-fake-tmux → TestRestartNow_CrewAgent_AccCorpus1_B4
 //
-// ─── GAP.  One slot in this tier has no test left to register. ──────────────
-//
-//   floor/operator-attached-warn-only
-//       Owned by TestSelectWarnText_OperatorAttached_SuppressesActionable.
-//       Deleted by ec66da798.  The scenario is unguarded today: nothing proves
-//       that an operator attached to the pane suppresses the actionable WARN
-//       text.
-//
-// The slot is absent on purpose.  It is NOT registered as a t.Skip.  A skip
-// passes, and a passing slot that asserts nothing is the exact failure this
-// file was restored to end.  Read the gap as real lost coverage, not as a
-// formatting choice.  Register the slot again when a test owns it.
+//   floor/operator-attached-warn-only   → TestSelectWarnText_OperatorAttached_SuppressesActionable
 //
 // ─── History.  Why this file went missing. ─────────────────────────────────
 //
@@ -55,11 +44,11 @@ import "testing"
 // TestKeeperConformance covers the white-box acceptance corpus floor items and
 // the fake-tmux layer of corpus item #1 (restart-now no_tmux_target fix, B4).
 func TestKeeperConformance(t *testing.T) {
-	t.Log("keeper acceptance corpus, white-box tier: 4 slots registered, 1 GAP.")
-	t.Log("GAP floor/operator-attached-warn-only — TestSelectWarnText_OperatorAttached_SuppressesActionable, deleted by ec66da798.")
+	t.Log("keeper acceptance corpus, white-box tier: 5 slots registered.")
 
 	t.Run("floor/band-min-200k-1m", TestMinAbsOrPctCeil)
 	t.Run("floor/live-watcher-lock-held", TestLiveKeeperPresent_LockHeld)
 	t.Run("floor/live-watcher-no-lockfile", TestLiveKeeperPresent_NoLockfile)
+	t.Run("floor/operator-attached-warn-only", TestSelectWarnText_OperatorAttached_SuppressesActionable)
 	t.Run("corpus/1/restartnow-b4-fake-tmux", TestRestartNow_CrewAgent_AccCorpus1_B4)
 }

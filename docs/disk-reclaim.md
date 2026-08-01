@@ -373,6 +373,7 @@ A reclaim that checks one convention finds almost nothing:
 | `~/Library/Caches/golangci-lint` | the linter's default cache — **1.1 GiB**, missing from this runbook until 2026-07-28 |
 | `$TMPDIR/tmp.XXXXXXXX` | bare inline `GOCACHE=$(mktemp -d)` — **unowned, the big one in `$TMPDIR`** |
 | `$TMPDIR/harmonik-gocache.XXXXXX` | `scripts/with-isolated-gocache.sh` (self-cleaning except on SIGKILL) |
+| `~/Library/Caches/harmonik-lane-gocache/<name>-<hash>` | `scripts/with-lane-gocache.sh`, used by every Go step in `check-short`. **Persistent by design, never self-cleans, and OUTLIVES the worktree that made it** — persistence is what keeps a lane warm, but agent worktrees are created and discarded constantly here and nothing reaps what they leave. One directory per checkout: 157 MiB for `go build ./...` alone, larger once `-race` test objects land. This is the "one cache per session" shape recommended above. **`go clean -cache` does NOT reach these** — it clears whatever `GOCACHE` resolves to, which by default is `go-build`. Sweep with `rm -rf ~/Library/Caches/harmonik-lane-gocache`; deleting any one directory is safe and costs that checkout one cold build. Override the root with `HARMONIK_LANE_GOCACHE_ROOT`. |
 | `$TMPDIR/go-build*` | the Go toolchain's own temp dirs |
 | `~/.cache/h-*-gocache`, `/tmp/h-*/gocache` | long-lived named caches (assessor campaigns, isolated lanes) |
 | `<worktree>/.harmonik/go-cache` | the daemon's merge gate (`internal/daemon/workloop.go`) |

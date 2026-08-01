@@ -695,11 +695,30 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	@# loadgen.sh's argument parsing, where an omitted option value once turned
 	@# the parser itself into the runaway spin loop the script exists to prevent.
 	scripts/loadgen-test.sh
+	@# Under a second. Guards the cache KEY below, where every failure is silent:
+	@# two checkouts that collide share a cache and the corruption comes back, and
+	@# two wrapped lines that disagree each build cold with nothing to see.
+	scripts/with-lane-gocache-test.sh
 	$(MAKE) fmt-check
-	go vet ./...
-	go build ./...
-	$(MAKE) vet-tagged
-	$(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=origin/main
+	@# Every Go step below runs under a GOCACHE private to THIS checkout. The lanes
+	@# used to share one, and a concurrent process invalidating cache facts mid-run
+	@# gives "could not import ... no such file or directory" (measured 2026-07-22,
+	@# documented at the coverage gate), so the second lane had to wait on a
+	@# 2-to-3-minute recipe. The cache is keyed on the checkout root and PERSISTS,
+	@# so each lane stays as warm as the shared cache is today — the wrapper
+	@# computes the same path every time, which is what lets these separate lines
+	@# share one cache. Do NOT swap in with-isolated-gocache.sh: it deletes the
+	@# cache on exit, so every line here would build cold.
+	@#
+	@# This makes two concurrent runs in DIFFERENT checkouts correct. It does not
+	@# make them free, and it does not cover two runs in the SAME checkout. The
+	@# -p=1 -parallel=1 note further down is deliberate and still stands: the runs
+	@# compete for CPU, and a gate result from a loaded box is not evidence either
+	@# way. See LANES.md section 5 before running two at once.
+	scripts/with-lane-gocache.sh go vet ./...
+	scripts/with-lane-gocache.sh go build ./...
+	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
+	scripts/with-lane-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=origin/main
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
 	scripts/crewrun-freeze-gate.sh
@@ -724,7 +743,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	#                 default 10m, else it panics "test timed out after 10m0s")
 	# Restore -parallel=2 only after the colliding pkgs are made hermetic
 	# (see follow-up hk-d515w).
-	TMPDIR=/tmp go test -short -race -count=1 -p=1 -parallel=1 -timeout=20m ./...
+	TMPDIR=/tmp scripts/with-lane-gocache.sh go test -short -race -count=1 -p=1 -parallel=1 -timeout=20m ./...
 
 # ---------------------------------------------------------------------------
 # check-report — QUIET unified reporter over the check gauntlet (hk-l4sen).

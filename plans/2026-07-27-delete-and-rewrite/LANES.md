@@ -434,11 +434,27 @@ The 14 gates cost about 40 seconds. A warm `go build ./...` costs about 2.5 seco
 - **`--allow-parallel-runners` has landed** on `check-fast` and `check-short` at `5d8b75d87`, so the
   machine-wide `golangci-lint` lock no longer stops two lanes from linting at once. It is **still
   missing** from `make check` and `make lint`. If that error returns, some other recipe lacks the flag.
-- **Two lanes do not run `check-short` at the same time.** It uses `-p=1 -parallel=1` deliberately, to
-  stop cross-package `-race` saturation on a 10-CPU box. Both lanes also share one `GOCACHE`, and the
-  `Makefile` already documents what that costs: a concurrent process invalidating cache facts mid-run
-  produces `could not import ...: no such file or directory`. Until `check-short` is wrapped in
-  `scripts/with-isolated-gocache.sh`, the second lane waits. **That wrap belongs to alpha.**
+- **The `GOCACHE` half is NARROWED as of 2026-08-01, and narrowed is the honest word.** Every Go step
+  in `check-short` now runs under `scripts/with-lane-gocache.sh`, which keys a PERSISTENT cache on the
+  checkout root. **Two lanes in DIFFERENT checkouts no longer share cache facts**, so neither can
+  produce `could not import ...: no such file or directory` in the other. Two things survive and the
+  word "fixed" would hide both: two runs in the SAME checkout — an agent and a human, or two agents —
+  still share one cache and are exactly as exposed as before; and a persistent cache is reachable by
+  Go's own daily trim, which a `mktemp -d` cache never lived long enough to meet, so that vector is
+  given back. Only `GOCACHE` is isolated — golangci-lint's own cache stays shared, and
+  `--allow-parallel-runners` is what covers that side.
+  **Not `with-isolated-gocache.sh`, and the difference is the whole point.** That script hands the
+  command a `mktemp -d` cache and deletes it on exit, which is right for the one-shot coverage gate
+  and wrong for a recipe a lane runs repeatedly — every run would start cold. Measured back-to-back
+  `go build ./...`: lane cache 9.15s then 1.33s, isolated 8.78s then 8.67s. Same isolation, about
+  6.5x faster on the second run, and `go build` is the cheap case next to `-race` tests. This is the
+  "one cache per session, not one per command" shape `docs/disk-reclaim.md` already prescribed.
+  It costs one cache per lane on disk — 157 MiB for `go build` alone, more with test objects.
+- **The `-p=1 -parallel=1` half still stands, and it is a REAL reason not to run two at once.** It
+  serializes deliberately, to stop cross-package `-race` saturation on a 10-CPU box. Two concurrent
+  runs in different checkouts no longer corrupt each other, but they still compete for CPU, and the
+  rule below about a loaded machine applies in full. **The cache work made concurrent runs correct
+  across checkouts, not free.**
 - **Parallelism has a ceiling and it is the daemon test suite.** Five agents at once drove the load
   average past 70 and the suite went red with a different set of tests on each run, every one of which
   passed in isolation. **A gate result from a loaded machine is not evidence — neither a green nor a

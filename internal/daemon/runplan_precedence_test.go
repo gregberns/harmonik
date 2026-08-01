@@ -100,6 +100,8 @@ func (h *runplanHandle) SetRemote(bool)                  {}
 func (h *runplanHandle) SetAgentType(core.AgentType)     {}
 func (h *runplanHandle) SetMachine(*hclifecycle.Machine) {}
 func (h *runplanHandle) Aborted() bool                   { return false }
+func (h *runplanHandle) SetCapturedAgentOutput()         {}
+func (h *runplanHandle) CapturedAgentOutput() bool       { return false }
 
 // runplanRegistry hands out the one handle.
 type runplanRegistry struct{ h *runplanHandle }

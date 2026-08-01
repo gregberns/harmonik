@@ -1263,10 +1263,17 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// terminal events carry it directly, eliminating captain br round-trips.
 	// Best-effort: errors leave the fields empty (non-fatal).
 	owningEpicID, owningEpicAssignee := resolveOwningEpicFromRecord(ctx, handles.BrAdapter, beadRecord)
+	// runHandle is looked up ONCE and held, rather than fetched again at each use.
+	// The exit disposition below reads it from a deferred close, and the force-reap
+	// watchdog (StaleWatcher.forceReap) can Unregister a wedged run while its
+	// goroutine is still unwinding — so a second lookup at close time can miss a
+	// handle the run still owns, and would then throw away the evidence of the very
+	// failure that wedged it. Nil only when the caller registered no handle.
+	runHandle, _ := handles.RunRegistry.Get(runID)
 	// Propagate to RunHandle so StaleWatcher can read the attribution without
 	// its own br calls.
-	if handle, ok := handles.RunRegistry.Get(runID); ok {
-		handle.SetOwningEpic(owningEpicID, owningEpicAssignee)
+	if runHandle != nil {
+		runHandle.SetOwningEpic(owningEpicID, owningEpicAssignee)
 	}
 
 	// sdStartedAt, sdModel, sdHarness are captured by the run-terminal effector
@@ -1756,27 +1763,29 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// worktree survive SIGKILL; on normal exit cleanup runs as usual.
 	useIndepSession := false
 
-	// hk-j6wm7: retain the run worktree (which contains the pi-agent dir + the
-	// captured stdout/stderr, see below) on FAILURE for Pi runs so the fast-fail
-	// error — e.g. the ~4.5s exit0-no-commit against a locally-hosted
-	// OpenAI-compatible endpoint (ornith) — is observable post-mortem. runIsPi is
-	// set true once the harness resolves to Pi (below); the run outcome is the
-	// Run machine's terminal state (bridge.Success(), RSM-022). This mirrors the hk-o85ye survive-cleanup
-	// gate: skip the deferred wtCleanup on an abnormal outcome so the artifacts
-	// survive, instead of deleting the only evidence of why the run failed.
-	// Successful Pi runs and ALL non-Pi runs clean up exactly as before, so there
-	// is no disk-leak regression on the happy path.
+	// hk-j6wm7: runIsPi says this run's harness resolved to Pi. It gates ONE thing
+	// now — the single-mode post-mortem stderr write far below, which is a
+	// single-mode step and has no graph-mode equivalent. It no longer decides
+	// whether the worktree is kept. That fact is recorded at the LAUNCH, which is
+	// the only place both workflow modes pass through. Setting it here left a
+	// graph-mode Pi run writing its capture and having it deleted, because this
+	// line sits below the graph branch's return.
 	runIsPi := false
 
 	// Both post-launch facts now exist, so the scope's close can read the whole
 	// exit rather than the shutdown fact alone. Decide (RSM-037) is where the
 	// polarity lives: survival needs an independent session AND a stopping
 	// daemon, and it wins over retained evidence when both apply.
+	//
+	// The evidence fact comes off the run's handle, so it is true for a graph run
+	// and a single-mode run alike. The launch marks it, and both modes launch.
+	// A run with no handle reports no evidence — it also captured none, because
+	// the mark and the capture are made by the same call.
 	runExit = func() runlease.Exit {
 		return runlease.Exit{
 			SessionRunsIndependently: useIndepSession,
 			DaemonStopping:           ctx.Err() != nil,
-			EvidenceWorthKeeping:     runIsPi && !bridge.Success(),
+			EvidenceWorthKeeping:     runHandle != nil && runHandle.CapturedAgentOutput() && !bridge.Success(),
 		}
 	}
 
@@ -2196,8 +2205,9 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	if rh, ok := handles.RunRegistry.Get(runID); ok && rh != nil {
 		rh.SetAgentType(shared.ArtifactAgentType(artifacts))
 	}
-	// hk-j6wm7: record whether this run is a Pi run so the deferred wtCleanup can
-	// retain the worktree (and the captured pi output under it) on failure.
+	// hk-j6wm7: record whether this run is a Pi run, for the single-mode
+	// post-mortem stderr write below. The worktree retention no longer reads this
+	// — the launch marks the run's handle instead, so a graph run reports it too.
 	if shared.ArtifactAgentType(artifacts) == core.AgentTypePi {
 		runIsPi = true
 	}

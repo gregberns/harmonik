@@ -68,11 +68,29 @@ func ExportedStoreLocalInFlight(deps workLoopDeps, n int32) {
 // through rp.LaunchBuilder instead.
 
 // runBeadOneTest mirrors the runWorkLoop goroutine caller for white-box tests:
-// it builds the per-run bundles (including the RT18.11 launch-builder resolution
-// that used to live inside beadRunOne) and invokes beadRunOne, so a test that
-// constructs a workLoopDeps + RunEnv drives a single bead run exactly as
-// production does.
+// it registers the run's handle, builds the per-run bundles (including the
+// RT18.11 launch-builder resolution that used to live inside beadRunOne) and
+// invokes beadRunOne, so a test that constructs a workLoopDeps + RunEnv drives a
+// single bead run exactly as production does.
+//
+// The Register/Unregister pair mirrors the dispatch loop in scheduler.go, which
+// registers the handle BEFORE it starts the run goroutine and unregisters it in a
+// defer that outlives every defer inside beadRunOne. Without it every
+// RunRegistry.Get on the run path missed and the seams that hang off the handle —
+// the resolved agent type, the session lifecycle machine, the abort flag, the
+// captured-output fact the exit disposition reads — were dead in every white-box
+// test while being live in production.
 func runBeadOneTest(ctx context.Context, deps workLoopDeps, env runloop.RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool { //nolint:unparam // mirrors beadRunOne's parameter list for parity; current callers all pass "" for extraContext
+	deps.runRegistry.Register(env.RunID, &RunHandle{
+		BeadID:          env.BeadRecord.BeadID,
+		QueueName:       env.QueueName,
+		QueueID:         env.QueueID,
+		QueueGroupIndex: env.QueueGroupIndex,
+		QueueItemIndex:  env.QueueItemIndex,
+		Labels:          env.BeadRecord.Labels,
+		StartedAt:       time.Now(),
+	})
+	defer deps.runRegistry.Unregister(env.RunID)
 	rp, handles := deps.buildRunBundles(env)
 	return beadRunOne(ctx, env, rp, handles, extraContext, preSelected, localSlotHeld)
 }

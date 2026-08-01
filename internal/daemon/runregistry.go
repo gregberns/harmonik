@@ -115,6 +115,17 @@ type RunHandle struct {
 	// Bead ref: hk-4tjt6.
 	Remote atomic.Bool
 
+	// capturedAgentOutput is true once some launch of this run has captured the
+	// agent's own output INSIDE the run's worktree. It is the fact the run's exit
+	// disposition reads to keep a failed run's worktree, because that capture is
+	// then the only record of why the run failed (RSM-037 retain-evidence).
+	//
+	// It lives on the HANDLE rather than on a local of the run function because a
+	// graph run reaches the launch once per node and returns from the mode switch
+	// before the single-mode tail. A local set in that tail is never true for a
+	// graph run. Mirrors the SetAgentType/GetAgentType atomic pattern above.
+	capturedAgentOutput atomic.Bool
+
 	// resolvedProvider is the resolved Pi provider identity for this run
 	// (per-provider slot-accounting design, docs/design/pi-multi-provider-slot-accounting.md).
 	// Nil until SetResolvedProvider is called. Empty string is a valid resolved
@@ -153,6 +164,24 @@ func (h *RunHandle) GetAgentType() core.AgentType {
 		return *p
 	}
 	return core.AgentType("")
+}
+
+// SetCapturedAgentOutput records that a launch of this run has captured the
+// agent's output inside the run's worktree. Called by runAgentLaunch. Thread-safe.
+//
+// It takes no argument on purpose. The fact is a latch. It goes false → true and
+// never back. A graph run calls the launch once per node, so a setter that took a
+// bool would let a later node with no capture erase the mark an earlier node
+// made, and the run would then delete the worktree holding that node's output.
+func (h *RunHandle) SetCapturedAgentOutput() {
+	h.capturedAgentOutput.Store(true)
+}
+
+// CapturedAgentOutput reports whether any launch of this run captured the agent's
+// output inside the run's worktree. False before the first such launch and for a
+// run whose harness captures nothing. Thread-safe.
+func (h *RunHandle) CapturedAgentOutput() bool {
+	return h.capturedAgentOutput.Load()
 }
 
 // SetResolvedProvider stores the resolved Pi provider identity for this run.

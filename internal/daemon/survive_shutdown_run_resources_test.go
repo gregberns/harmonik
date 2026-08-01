@@ -82,6 +82,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -321,6 +322,12 @@ type surviveRunOutcome struct {
 	// before the spawn" as an observation rather than as a reading of the code.
 	recordAtSpawn    runpkg.Record
 	recordAtSpawnErr error
+
+	// startedMode is the workflow_mode the run stamped on its own run_started
+	// event. It is how a test states "this run took the graph path" as something
+	// the run said about itself, rather than as a restatement of the fixture's
+	// own configuration.
+	startedMode string
 }
 
 // worktreeSurvived reports whether the worktree directory is still on disk.
@@ -393,7 +400,35 @@ type surviveRunOpts struct {
 	// agent exits without committing, so the run fails, and a failed run's
 	// capture is the only record of why.
 	piRun bool
+
+	// graphMode runs the bead through the DOT cascade instead of the single-mode
+	// tail. Combined with piRun it is the case the evidence retention used to
+	// miss: the cascade launches the same Pi agent, which writes the same capture
+	// into the same worktree, but the run's own single-mode tail never runs.
+	graphMode bool
 }
+
+// surviveRunOneAgenticNodeGraph is the smallest graph that reaches a real agent
+// launch: start → implement (agentic) → a terminal. The Pi agent this fixture
+// launches exits without committing, so `implement` fails and the cascade lands
+// on close-needs-attention, which is the failed run the retention is for.
+const surviveRunOneAgenticNodeGraph = `digraph "survive-run-evidence" {
+    schema_version="1";
+    version="1.0";
+    workflow_id="survive-run-evidence";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    start [type="non-agentic", handler_ref="noop", idempotency_class="idempotent"];
+    implement [type="agentic", agent_type="implementer", handler_ref="pi-implementer", idempotency_class="non-idempotent"];
+    close [type="non-agentic", handler_ref="noop", idempotency_class="idempotent"];
+    "close-needs-attention" [type="non-agentic", handler_ref="noop", idempotency_class="idempotent"];
+
+    start -> implement;
+    implement -> close [condition="outcome.status == 'SUCCESS'"];
+    implement -> "close-needs-attention";
+}
+`
 
 // surviveRunDrive runs one bead through the real beadRunOne, on the shutdown
 // ordering that aborts the dispatch. It is the two-fact spelling of
@@ -480,9 +515,34 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 		registry = surviveRunEmptySealedRegistry()
 	}
 
+	// A synchronous consumer, not an observer: the mode is read after the run
+	// returns, and an observer's fan-out may not have landed by then.
+	bus := eventbus.NewBusImpl()
+	if _, subErr := bus.Subscribe(core.Subscription{
+		ConsumerID:    "survive-run-started-mode",
+		ConsumerClass: core.ConsumerClassSynchronous,
+		EventPattern:  core.EventPattern{Types: map[core.EventType]struct{}{core.EventTypeRunStarted: {}}},
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, evt core.Event) error {
+			// An unreadable payload leaves startedMode empty, and the test that
+			// reads it fails on the empty value with its own message. Returning the
+			// error here would instead fail the EMIT, which changes the run under
+			// test to report a problem in the reader.
+			var pl core.RunStartedPayload
+			if uErr := json.Unmarshal(evt.Payload, &pl); uErr == nil && pl.WorkflowMode != nil {
+				mu.Lock()
+				out.startedMode = string(*pl.WorkflowMode)
+				mu.Unlock()
+			}
+			return nil
+		},
+	}); subErr != nil {
+		t.Fatalf("surviveRun: subscribe the run_started mode reader: %v", subErr)
+	}
+
 	params := WorkLoopDepsParams{
 		BrAdapter:        out.ledger,
-		Bus:              eventbus.NewBusImpl(),
+		Bus:              bus,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
 		HandlerArgs:      []string{"-c", "exit 0"},
@@ -503,6 +563,17 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 			t.Fatalf("surviveRun: build the harness registry: %v", err)
 		}
 		params.HarnessRegistry = harnesses
+	}
+	if opts.graphMode {
+		// The graph is loaded from <projectDir>/workflow.dot, which is the tier-2
+		// source a real project uses. Seeding a file here also keeps the run off the
+		// embedded standard-bead.dot, whose reviewer and commit-gate nodes need a
+		// verdict and a toolchain this fixture cannot supply.
+		dotPath := filepath.Join(projectDir, "workflow.dot")
+		if err := os.WriteFile(dotPath, []byte(surviveRunOneAgenticNodeGraph), 0o600); err != nil {
+			t.Fatalf("surviveRun: seed workflow.dot: %v", err)
+		}
+		params.WorkflowModeDefault = core.WorkflowModeDot
 	}
 
 	deps := ExportedWorkLoopDeps(params)
@@ -727,16 +798,22 @@ func TestSurviveShutdown_ARunThatEndsWhileTheDaemonRunsGivesBackItsWorktreeAndRe
 // control, and saying so matters more than the symmetry. That run has a session
 // of its own, gets a plain directory rather than a git worktree, and holds the
 // claude adapter. Only the last of those could plausibly matter here, and the
-// two mutations below are what actually establishes the claim.
+// mutations below are what actually establishes the claim.
 //
-// Mutations, both run: make RetainEvidence release the worktree in
-// internal/runlease, and separately report the exit with EvidenceWorthKeeping
-// false. Each deletes the capture and turns this test red.
+// Four mutations were run. Each one deletes the capture and turns this test red.
+// Make RetainEvidence release the worktree in internal/runlease. Report the exit
+// with EvidenceWorthKeeping hard-coded false. Delete the SetCapturedAgentOutput
+// call in runAgentLaunch. Drop the handle registration from runBeadOneTest — the
+// mark then lands nowhere, which is what this fixture did before this test's
+// graph-mode sibling was written.
 //
-// LIMIT, and it is a real one: this covers the SINGLE-mode path only. A
-// graph-mode Pi node writes the same capture into the same worktree and does not
-// keep it, because the fact this run reports is set below the graph branch's
-// return.
+// SCOPE: this drives the SINGLE-mode path.
+// TestSurviveShutdown_AFailedGraphModePiRunKeepsTheWorktreeItsCapturedOutputIsIn
+// drives the graph path. The two are separate tests because the fact used to be
+// recorded in the single-mode tail, below the graph branch's return, so a
+// graph-mode Pi run wrote the same capture into the same worktree and had it
+// deleted. Both tests must exist for the pair to mean anything: the fact is now
+// recorded at the launch, and the launch is the one step both modes share.
 func TestSurviveShutdown_AFailedPiRunKeepsTheWorktreeItsCapturedOutputIsIn(t *testing.T) {
 	t.Parallel()
 
@@ -776,6 +853,74 @@ func TestSurviveShutdown_AFailedPiRunKeepsTheWorktreeItsCapturedOutputIsIn(t *te
 		t.Error("the run registry record is still on disk.\n" +
 			"Keeping the EVIDENCE does not mean keeping the run. The daemon is up and this run has " +
 			"ended, so a record left behind makes the next boot adopt a run that no longer exists.")
+	}
+}
+
+// TestSurviveShutdown_AFailedGraphModePiRunKeepsTheWorktreeItsCapturedOutputIsIn
+// is the same claim as the test above, for a run driven through the DOT cascade.
+//
+// This is the case the retention used to miss. The cascade launches the same Pi
+// agent, and that launch writes the same capture into the same worktree, but the
+// run reported the Pi fact from its single-mode tail — which sits below the graph
+// branch's return and therefore never runs for a graph run. So a failed
+// graph-mode Pi run produced real output and had it deleted. Almost every
+// production run is a graph run, so that was the common case, not the corner.
+//
+// The test proves the run really took the graph path before it asserts anything
+// about the worktree. Without that check a fixture that silently fell back to
+// single mode would pass this test while defending nothing.
+//
+// Four mutations were run. Each one turns this test red. Delete the
+// SetCapturedAgentOutput call in runAgentLaunch. Report the exit with
+// EvidenceWorthKeeping hard-coded false. Make RetainEvidence release the
+// worktree. And the one that pins the whole point of the commit — restore the
+// old source by reading the single-mode runIsPi local instead of the handle,
+// which leaves the single-mode test above GREEN and turns only this one red.
+//
+// A fifth turns it red too. Drop the handle registration from runBeadOneTest.
+//
+// A sixth pins the mode guard itself. Drop the WorkflowModeDefault assignment in
+// the fixture and this test fails on the MODE check rather than passing as a
+// second copy of the single-mode test.
+func TestSurviveShutdown_AFailedGraphModePiRunKeepsTheWorktreeItsCapturedOutputIsIn(t *testing.T) {
+	t.Parallel()
+
+	out := surviveRunDriveWith(t, surviveRunOpts{piRun: true, graphMode: true})
+
+	if out.startedMode != string(core.WorkflowModeDot) {
+		t.Fatalf("the run started in workflow mode %q, want %q.\n"+
+			"This test only means something if the run took the graph path. A fixture that fell "+
+			"back to single mode would re-test the case the test above already covers.",
+			out.startedMode, core.WorkflowModeDot)
+	}
+
+	capture := filepath.Join(out.worktreePath, ".harmonik", "pi-agent", "pi-stdout.log")
+	if _, err := os.Stat(capture); err != nil {
+		// Same two very different failures as the single-mode test, named apart for
+		// the same reason.
+		if !out.worktreeSurvived() {
+			t.Fatalf("the worktree at %s was removed, and the captured Pi output went with it.\n"+
+				"A graph node's capture is inside the run's worktree and nowhere else, so removing "+
+				"it deletes the only record of why the run failed.", out.worktreePath)
+		}
+		t.Fatalf("the graph run captured no Pi output at %s: %v\n"+
+			"The cascade must reach the agentic node's Pi launch and write its stdout inside the "+
+			"worktree. Without a capture, a surviving worktree below would protect nothing.", capture, err)
+	}
+	if reopens, _ := out.ledger.beadSettled(); len(reopens) == 0 {
+		t.Fatal("the run did not fail.\n" +
+			"The retention is for FAILED runs only. A successful run's worktree is removed, so a " +
+			"fixture whose run succeeded would measure the wrong branch.")
+	}
+
+	if out.worktreeCleanups != 0 {
+		t.Errorf("the worktree cleanup ran %d times.\n"+
+			"A failed graph-mode Pi run's captured output is inside the worktree and nowhere else.",
+			out.worktreeCleanups)
+	}
+	if !out.worktreeSurvived() {
+		t.Errorf("the worktree at %s was removed, and the captured Pi output went with it",
+			out.worktreePath)
 	}
 }
 

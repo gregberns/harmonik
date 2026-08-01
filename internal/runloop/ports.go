@@ -173,8 +173,8 @@ type BudgetPort interface {
 
 // RunHandlePort is the consumer-defined surface the run path uses to update the
 // live RunHandle for its OWN run_id (LIFT crit 4). The run path reaches a handle
-// only through RunRegistryPort.Get and performs exactly these six run-scoped
-// operations; narrowing to this interface means the run path names neither the daemon
+// only through RunRegistryPort.Get and performs exactly the run-scoped
+// operations below; narrowing to this interface means the run path names neither the daemon
 // *RunHandle type nor its unexported `aborted` field, so it can compile in
 // package runloop without importing daemon. *RunHandle is the production
 // adapter (structural satisfaction) — see the var _ assertion beside the adapter.
@@ -198,6 +198,24 @@ type RunHandlePort interface {
 	// before cancelling its context (hk-0z5x). Maps to aborted.Load() — the
 	// accessor that lifts the daemon-private `aborted` field across the port.
 	Aborted() bool
+
+	// SetCapturedAgentOutput and CapturedAgentOutput carry one fact: some launch
+	// of this run wrote the agent's own output INSIDE the run's worktree. The run
+	// reads it at its exit to decide whether to keep that worktree, because on a
+	// failure the capture is the only record of why the run failed.
+	//
+	// The fact belongs to the LAUNCH and not to the run for one reason: the launch
+	// is the single place both workflow modes pass through. A graph run reaches it
+	// once per node and returns from the mode switch before the single-mode tail
+	// runs, so the same fact recorded in that tail is never true for a graph run —
+	// and a failed graph-mode run then had its captured output deleted. The handle
+	// is the only object both the per-node launch and the run's exit can reach.
+	//
+	// The setter takes no argument because the fact is a latch. See the method on
+	// the production adapter for why a bool-taking setter is unsafe under a graph
+	// run's several launches.
+	SetCapturedAgentOutput()
+	CapturedAgentOutput() bool
 }
 
 // RunRegistryPort is the consumer-defined run-registry surface of the run path

@@ -390,6 +390,29 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// still sees every byte.
 	var piStdoutFile *os.File
 	if agentType == core.AgentTypePi {
+		// Tell the run that a launch of it captures agent output into the run's
+		// worktree, so a failed run keeps that worktree instead of deleting the
+		// only record of why it failed (RSM-037 retain-evidence).
+		//
+		// The mark is made HERE because this function is the one place BOTH
+		// workflow modes pass through. The run used to set the same fact in its
+		// single-mode tail, which sits below the graph branch's return, so a graph
+		// run never reported it — while the graph cascade calls this function once
+		// per node and writes the capture below just the same. That asymmetry is
+		// the defect this replaces.
+		//
+		// It is keyed on the RESOLVED HARNESS and NOT on whether the capture
+		// directory below was created, and that is deliberate. On a remote run the
+		// worktree lives on the WORKER, while the os.MkdirAll below runs on THIS
+		// box against a path that belongs to another machine. Whether it succeeds
+		// here says nothing about the worker worktree that retention keeps, so
+		// keying the fact on it would answer a question about one machine with a
+		// measurement from another. The fact the run reported before was the
+		// resolved harness alone — mode-independent AND location-independent — and
+		// it stays that way.
+		if h, ok := handles.RunRegistry.Get(runID); ok {
+			h.SetCapturedAgentOutput()
+		}
 		captureDir := filepath.Join(in.WorktreePath, ".harmonik", "pi-agent")
 		// 0o700, NOT core.HarmonikDirMode: this is the same directory
 		// pi.BuildLaunchSpec creates as PI_CODING_AGENT_DIR, which holds agent

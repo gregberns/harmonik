@@ -408,7 +408,9 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 		}
 
 		if allResolved {
-			g.Items[i].Status = ItemStatusPending
+			if err := ResolveDeferredItem(&g.Items[i]); err != nil {
+				return undeferred, err
+			}
 			undeferred = append(undeferred, blocked)
 		}
 	}

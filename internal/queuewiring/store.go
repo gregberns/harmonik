@@ -433,13 +433,10 @@ func cloneItem(item queue.Item) queue.Item {
 	return out
 }
 
-// Snapshot is an immutable detached queue value plus its volatile
-// process-local generation. Generation is never persisted or recovery evidence.
-type Snapshot struct {
-	Name       string
-	Queue      *queue.Queue
-	Generation uint64
-}
+// Snapshot is kept as an alias for existing QueueStore callers. The queue
+// package owns the transaction port so queue operations do not import this
+// registry package.
+type Snapshot = queue.QueueSnapshot
 
 // ErrQueueQuarantined marks a transaction refused because an earlier write to
 // that queue failed. QM-001 requires the daemon to refuse further mutations
@@ -478,35 +475,13 @@ func (s *QueueStore) QuarantineReason(name string) error {
 	return s.quarantined[name]
 }
 
-// TransactionRequest describes one clone-mutate-persist-install operation.
-type TransactionRequest struct {
-	Snapshot       Snapshot
-	ProjectDir     string
-	OperationKind  queue.OperationKind
-	WakeRequired   bool
-	ArchiveHandoff *queue.ArchiveHandoffPlan
-	Mutate         func(*queue.Queue) error
+// TransactionRequest is kept as an alias for existing QueueStore callers.
+type TransactionRequest = queue.TransactionRequest
 
-	// Precondition, when non-nil, runs under the store write lock after the
-	// generation and snapshot-byte checks pass and before Mutate. It receives a
-	// deep copy of every queue in the store EXCEPT the one being mutated, keyed
-	// by name. A non-nil error rejects the transaction and performs no I/O.
-	//
-	// The generation guard covers one name, so it cannot see a change in a
-	// different queue. The dispatcher's duplicate-bead guard needs exactly that:
-	// it must refuse to reserve a bead that another queue already dispatched.
-	// Running the check here puts it inside the same lock hold as the write it
-	// guards, which is what makes two queues unable to reserve the same bead.
-	Precondition func(others map[string]*queue.Queue) error
-}
+// TransactionResult is kept as an alias for existing QueueStore callers.
+type TransactionResult = queue.TransactionResult
 
-// TransactionResult combines durable namespace truth with a fresh snapshot.
-// Snapshot is populated only when committed state was installed.
-type TransactionResult struct {
-	queue.NamespaceResult
-	Snapshot   Snapshot
-	CleanupErr error
-}
+var _ queue.TransactionStore = (*QueueStore)(nil)
 
 // Snapshot returns a deep-cloned, immutable view. Callers must provide this
 // exact generation to Transact; any intervening mutation rejects before I/O.

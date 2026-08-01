@@ -67,9 +67,13 @@ func queueOpDrainFixtureConsumer(
 // queueOpDrainFixtureActiveQueue builds a minimal *queue.Queue with status active.
 func queueOpDrainFixtureActiveQueue(t *testing.T) *queue.Queue {
 	t.Helper()
+	queueID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("queueOpDrainFixtureActiveQueue: NewV7 for QueueID: %v", err)
+	}
 	return &queue.Queue{
 		SchemaVersion: 1,
-		QueueID:       "qopd-" + t.Name(),
+		QueueID:       queueID.String(),
 		SubmittedAt:   time.Now().UTC(),
 		Groups: []queue.Group{
 			{
@@ -81,6 +85,90 @@ func queueOpDrainFixtureActiveQueue(t *testing.T) *queue.Queue {
 			},
 		},
 		Status: queue.QueueStatusActive,
+	}
+}
+
+// TestQueueOpDrain_PauseDoesNotWake_ResumeWakes verifies that an in-memory
+// pause preserves the workloop sleep, while a matching resume wakes it.
+func TestQueueOpDrain_PauseDoesNotWake_ResumeWakes(t *testing.T) {
+	t.Parallel()
+
+	qs := queuewiring.NewQueueStore()
+	qs.SetQueue(queueOpDrainFixtureActiveQueue(t))
+	select {
+	case <-qs.WakeCh():
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("SetQueue did not signal WakeCh")
+	}
+
+	c := queueOpDrainFixtureConsumer(t, qs, queueOpDrainFixtureSealedBus(t))
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), queueOpDrainFixturePauseEvent(t, core.OperatorPauseStatusValuePausing)); err != nil {
+		t.Fatalf("handleOperatorPauseStatus: %v", err)
+	}
+	select {
+	case <-qs.WakeCh():
+		t.Fatal("pause spuriously signaled WakeCh")
+	default:
+	}
+
+	if err := queuewiring.ExportedQueueOpConsumerHandleResuming(c, context.Background(), queueOpDrainFixtureResumingEvent(t)); err != nil {
+		t.Fatalf("handleOperatorResuming: %v", err)
+	}
+	select {
+	case <-qs.WakeCh():
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("resume did not signal WakeCh")
+	}
+}
+
+// TestQueueOpDrain_PersistFailureKeepsQueueActive verifies that a failed
+// transaction does not install the candidate or emit queue_paused.
+func TestQueueOpDrain_PersistFailureKeepsQueueActive(t *testing.T) {
+	t.Parallel()
+
+	projectFile := t.TempDir() + "/not-a-project"
+	if err := os.WriteFile(projectFile, []byte("file"), 0o600); err != nil {
+		t.Fatalf("WriteFile project path: %v", err)
+	}
+
+	bus := eventbus.NewBusImpl()
+	var pausedEvents int
+	if _, err := bus.Subscribe(core.Subscription{
+		ConsumerID:    "test-capture-failed-queue-pause",
+		ConsumerClass: core.ConsumerClassSynchronous,
+		EventPattern:  core.EventPattern{Types: map[core.EventType]struct{}{core.EventTypeQueuePaused: {}}},
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(context.Context, core.Event) error {
+			pausedEvents++
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("bus.Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("bus.Seal: %v", err)
+	}
+
+	qs := queuewiring.NewQueueStore()
+	qs.SetQueue(queueOpDrainFixtureActiveQueue(t))
+	c := queuewiring.NewQueueOperatorEventConsumer(queuewiring.QueueOperatorEventConsumerConfig{
+		QueueStore: qs,
+		ProjectDir: projectFile,
+		Bus:        bus,
+	})
+	if err := queuewiring.ExportedQueueOpConsumerHandlePauseStatus(c, context.Background(), queueOpDrainFixturePauseEvent(t, core.OperatorPauseStatusValuePausing)); err == nil {
+		t.Fatal("handleOperatorPauseStatus succeeded with an invalid project directory")
+	}
+
+	got := qs.Queue()
+	if got == nil {
+		t.Fatal("queue was removed after failed transaction")
+	}
+	if got.Status != queue.QueueStatusActive {
+		t.Fatalf("queue status after failed transaction = %q, want %q", got.Status, queue.QueueStatusActive)
+	}
+	if pausedEvents != 0 {
+		t.Fatalf("queue_paused events after failed transaction = %d, want 0", pausedEvents)
 	}
 }
 
@@ -368,12 +456,11 @@ func TestQueueOpDrain_QueuePausedEventEmitted(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestQueueOpDrain_PauseSurvivesReload verifies the QM-055 requirement: a queue
-// paused via transitionToPausedByDrain that is written to disk via queue.Persist
-// loads back as paused-by-drain when read through queue.Load.
+// written as paused-by-drain through queue.Persist loads back with that status
+// when read through queue.Load.
 //
-// This test does NOT use the consumer directly; it exercises the persistence
-// path that the consumer invokes — queue.Persist followed by queue.Load —
-// to confirm that paused-by-drain status is round-tripped correctly.
+// This test does NOT use the consumer directly. It confirms that the queue
+// persistence format round-trips paused-by-drain unchanged.
 //
 // Spec ref: specs/queue-model.md §8.6 QM-055.
 func TestQueueOpDrain_PauseSurvivesReload(t *testing.T) {

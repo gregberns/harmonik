@@ -465,6 +465,65 @@ func TestCompleteAndUnlinkIdempotent(t *testing.T) {
 	}
 }
 
+func TestTerminalResultWriteFailurePreservesCallerQueue(t *testing.T) {
+	t.Parallel()
+
+	projectFile := filepath.Join(t.TempDir(), "not-a-project-directory")
+	if err := os.WriteFile(projectFile, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	completed := completeUnlinkFixtureQueue()
+	completedResult := queue.CompleteAndUnlinkResult(context.Background(), projectFile, &completed)
+	if completedResult.Committed || completedResult.CommitErr == nil || completedResult.CleanupErr != nil {
+		t.Fatalf("completion result = %+v, want failed write", completedResult)
+	}
+	if completed.Status != queue.QueueStatusActive {
+		t.Fatalf("completion status = %q, want active after failed write", completed.Status)
+	}
+
+	cancelled := typesFixtureQueue()
+	cancelResult := queue.CancelQueueOnShutdownResult(context.Background(), projectFile, &cancelled, time.Now())
+	if cancelResult.Committed || cancelResult.CommitErr == nil || cancelResult.CleanupErr != nil {
+		t.Fatalf("cancellation result = %+v, want failed write", cancelResult)
+	}
+	if cancelled.Status != queue.QueueStatusActive {
+		t.Fatalf("cancellation status = %q, want active after failed write", cancelled.Status)
+	}
+}
+
+func TestCancelQueueOnShutdownResultReportsCleanupFailureAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	projectDir := persistFixtureProjectDir(t)
+	q := typesFixtureQueue()
+	archiveTime := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	dst := filepath.Join(projectDir, ".harmonik", "queues", "main.json.cancelled-20260801120000")
+	if err := os.Mkdir(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result := queue.CancelQueueOnShutdownResult(context.Background(), projectDir, &q, archiveTime)
+	if !result.Committed || result.CommitErr != nil || result.CleanupErr == nil {
+		t.Fatalf("result = %+v, want committed cleanup failure", result)
+	}
+	if q.Status != queue.QueueStatusCancelled {
+		t.Fatalf("status = %q, want cancelled after committed write", q.Status)
+	}
+}
+
+func TestCancelQueueOnShutdownNilIsSuccessfulNoOp(t *testing.T) {
+	t.Parallel()
+
+	result := queue.CancelQueueOnShutdownResult(context.Background(), t.TempDir(), nil, time.Now())
+	if result.Committed || result.CommitErr != nil || result.CleanupErr != nil {
+		t.Fatalf("result = %+v, want no-op", result)
+	}
+	if err := queue.CancelQueueOnShutdown(context.Background(), t.TempDir(), nil); err != nil {
+		t.Fatalf("CancelQueueOnShutdown(nil): %v", err)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ArchiveFailedQueue tests (hk-ly4w5)
 // ─────────────────────────────────────────────────────────────────────────────

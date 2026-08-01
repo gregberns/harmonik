@@ -20,6 +20,11 @@ const (
 	CoarseStatusPinned     CoarseStatus = "pinned"
 )
 
+var terminalCoarseStatuses = [...]CoarseStatus{
+	CoarseStatusClosed,
+	CoarseStatusTombstone,
+}
+
 // Valid reports whether s is one of the eight declared CoarseStatus constants at Beads v0.1.45.
 // Future Beads extensions are NOT rejected here; callers that need pass-through behaviour
 // for unknown values should check Valid() and treat false as an acceptable unknown rather
@@ -35,10 +40,21 @@ func (s CoarseStatus) Valid() bool {
 	}
 }
 
-// IsTerminal reports whether s is a terminal Beads status. Closed and
-// tombstone are terminal. Unknown future values remain non-terminal.
+// TerminalCoarseStatuses returns the terminal Beads statuses. The returned
+// slice is a copy and callers can change it safely.
+func TerminalCoarseStatuses() []CoarseStatus {
+	return append([]CoarseStatus(nil), terminalCoarseStatuses[:]...)
+}
+
+// IsTerminal reports whether s is a terminal Beads status. Unknown future
+// values remain non-terminal.
 func (s CoarseStatus) IsTerminal() bool {
-	return s == CoarseStatusClosed || s == CoarseStatusTombstone
+	for _, terminal := range terminalCoarseStatuses {
+		if s == terminal {
+			return true
+		}
+	}
+	return false
 }
 
 // MarshalText implements encoding.TextMarshaler so CoarseStatus serialises

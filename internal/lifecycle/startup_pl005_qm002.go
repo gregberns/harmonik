@@ -318,8 +318,9 @@ func reconcileDispatchedItems(
 				"group_index", gi,
 			)
 
-			item.Status = queue.ItemStatusPending
-			item.RunID = nil // clear run_id on revert
+			if transitionErr := queue.RecoverDispatchedItemToPending(item); transitionErr != nil {
+				return fmt.Errorf("QM-002a: recover dispatched item: %w", transitionErr)
+			}
 
 			// Build the event payload now; emit AFTER persist per QM-063.
 			if emitter != nil {
@@ -509,7 +510,9 @@ func reconcileThreeWay(
 						"group_index", gi,
 						"ledger_status", string(dispRecord.Status),
 					)
-					item.Status = queue.ItemStatusCompleted
+					if transitionErr := queue.ReconcileItemToCompleted(item); transitionErr != nil {
+						return fmt.Errorf("QM-002b Class A': reconcile dispatched item: %w", transitionErr)
+					}
 					classACount++
 					if emitter != nil {
 						pendingEvents = appendMismatchObserved(ctx, logger, pendingEvents, core.ReconciliationMismatchObservedPayload{
@@ -569,7 +572,9 @@ func reconcileThreeWay(
 					"item_status", preStatus,
 				)
 
-				item.Status = queue.ItemStatusFailed
+				if transitionErr := queue.ReconcileItemToFailed(item); transitionErr != nil {
+					return fmt.Errorf("QM-002b Class D: reconcile stranded item: %w", transitionErr)
+				}
 				classACount++
 
 				if emitter != nil {
@@ -611,7 +616,9 @@ func reconcileThreeWay(
 				"ledger_status", string(record.Status),
 			)
 
-			item.Status = queue.ItemStatusCompleted
+			if transitionErr := queue.ReconcileItemToCompleted(item); transitionErr != nil {
+				return fmt.Errorf("QM-002b Class A: reconcile pending item: %w", transitionErr)
+			}
 			classACount++
 
 			if emitter != nil {
@@ -866,13 +873,12 @@ func reconcileQueueTerminalState(
 			continue
 		}
 		allTerminal := true
-		hasFailed := false
 		for _, item := range g.Items {
 			switch item.Status {
 			case queue.ItemStatusCompleted:
 				// terminal, success
 			case queue.ItemStatusFailed:
-				hasFailed = true
+				// terminal, failure
 			default:
 				// pending, dispatched, deferred-for-ledger-dep — not terminal
 				allTerminal = false
@@ -882,10 +888,8 @@ func reconcileQueueTerminalState(
 			continue
 		}
 		before := g.Status
-		if hasFailed {
-			g.Status = queue.GroupStatusCompleteWithFailures
-		} else {
-			g.Status = queue.GroupStatusCompleteSuccess
+		if transitionErr := queue.CompleteActiveGroup(g, time.Now()); transitionErr != nil {
+			return false, fmt.Errorf("reconcile F5: complete group: %w", transitionErr)
 		}
 		logger.InfoContext(ctx, "reconcile F5: advanced all-terminal active group (stale active-marker)",
 			"queue_id", q.QueueID,
@@ -937,7 +941,9 @@ func reconcileQueueTerminalState(
 		logger.InfoContext(ctx, "reconcile F5: all groups terminal with failures; demoting queue to paused-by-failure",
 			"queue_id", q.QueueID,
 		)
-		q.Status = queue.QueueStatusPausedByFailure
+		if transitionErr := queue.PauseQueueForFailure(q); transitionErr != nil {
+			return false, fmt.Errorf("reconcile F5: pause queue: %w", transitionErr)
+		}
 		if persistErr := queue.Persist(ctx, projectDir, q); persistErr != nil {
 			logger.WarnContext(ctx, "reconcile F5: Persist paused-by-failure failed; queue stays active in file",
 				"queue_id", q.QueueID,

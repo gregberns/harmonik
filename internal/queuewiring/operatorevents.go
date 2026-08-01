@@ -20,7 +20,7 @@ package queuewiring
 //
 // On entry to paused-by-drain the consumer:
 //  1. Transitions Queue.Status from active → paused-by-drain.
-//  2. Persists via queue.Persist (QM-001) — persist-before-emit per QM-063.
+//  2. Commits through QueueStore.Transact — persist-before-emit per QM-063.
 //  3. Emits queue_paused{reason: "operator_drain"} (QM-054 step 2).
 //
 // QM-055 — persisted pause survives restart: the persistence step above writes
@@ -39,6 +39,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -53,7 +54,7 @@ type QueueOperatorEventConsumerConfig struct {
 	QueueStore *QueueStore
 
 	// ProjectDir is the harmonik project directory (e.g. "/path/to/project").
-	// Used as the base path for queue.Persist (QM-001).
+	// Used as the base path for QueueStore.Transact (QM-001).
 	// When empty the consumer still transitions in-memory state but skips
 	// the persist step (unit-test mode without a filesystem).
 	ProjectDir string
@@ -183,38 +184,18 @@ func (c *QueueOperatorEventConsumer) handleOperatorResuming(ctx context.Context,
 //
 // Per QM-054 steps (per matched queue):
 //  1. Transition Queue.Status from active → paused-by-drain.
-//  2. Persist via QM-001 (queue.Persist). Persist-before-emit per QM-063.
+//  2. Commit via QueueStore.Transact. Persist-before-emit per QM-063.
 //  3. Emit queue_paused{reason: "operator_drain"}.
 //
 // No-op when no queue is loaded or no active queue matches.
 func (c *QueueOperatorEventConsumer) transitionToPausedByDrain(ctx context.Context, queueName string) error {
-	lq := c.cfg.QueueStore.LockForMutation()
-	defer lq.Done()
-
-	var names []string
-	if queueName != "" {
-		names = []string{queue.NormaliseQueueName(queueName)}
-	} else {
-		names = lq.LockedAllQueueNames()
-	}
-
-	for _, name := range names {
-		q := lq.LockedQueueByName(name)
-		if q == nil {
-			continue // queue not loaded — skip
+	for _, name := range c.matchedQueueNames(queueName) {
+		q, transitioned, err := c.transitionQueue(ctx, name, queue.OperationPause, false, queue.QueueStatusActive, queue.PauseQueueForDrain)
+		if err != nil {
+			return fmt.Errorf("queue-operator-drain: pause[%s]: %w", name, err)
 		}
-		if q.Status != queue.QueueStatusActive {
-			continue // already paused or completed — idempotent no-op for this queue
-		}
-
-		q.Status = queue.QueueStatusPausedByDrain
-		lq.LockedSetQueueByName(name, q)
-
-		// QM-063: persist BEFORE emitting the queue_paused event.
-		if c.cfg.ProjectDir != "" {
-			if err := queue.Persist(ctx, c.cfg.ProjectDir, q); err != nil {
-				return fmt.Errorf("queue-operator-drain: pause[%s]: persist: %w", name, err)
-			}
+		if !transitioned {
+			continue
 		}
 
 		// Find the currently active group index for the queue_paused payload (QM-054
@@ -263,46 +244,73 @@ func (c *QueueOperatorEventConsumer) transitionToPausedByDrain(ctx context.Conte
 // After transitioning, Wake() is signalled so the idle workloop unblocks
 // immediately instead of waiting for the next submit/append (hk-ekj).
 func (c *QueueOperatorEventConsumer) transitionToActive(ctx context.Context, queueName string) error {
-	lq := c.cfg.QueueStore.LockForMutation()
-
-	var names []string
-	if queueName != "" {
-		names = []string{queue.NormaliseQueueName(queueName)}
-	} else {
-		names = lq.LockedAllQueueNames()
-	}
-
-	var transitioned bool
-	for _, name := range names {
-		q := lq.LockedQueueByName(name)
-		if q == nil {
-			continue // queue not loaded — skip
+	for _, name := range c.matchedQueueNames(queueName) {
+		_, _, err := c.transitionQueue(ctx, name, queue.OperationResume, true, queue.QueueStatusPausedByDrain, queue.ResumeQueueFromDrain)
+		if err != nil {
+			return fmt.Errorf("queue-operator-drain: resume[%s]: %w", name, err)
 		}
-		if q.Status != queue.QueueStatusPausedByDrain {
-			continue // not paused-by-drain — idempotent no-op for this queue
-		}
-
-		q.Status = queue.QueueStatusActive
-		lq.LockedSetQueueByName(name, q)
-		transitioned = true
-
-		// Persist the resumed status.
-		if c.cfg.ProjectDir != "" {
-			if err := queue.Persist(ctx, c.cfg.ProjectDir, q); err != nil {
-				lq.Done()
-				return fmt.Errorf("queue-operator-drain: resume[%s]: persist: %w", name, err)
-			}
-		}
-	}
-
-	lq.Done()
-
-	// Wake the idle workloop so it re-evaluates dispatch immediately (hk-ekj).
-	// Without this, a workloop blocked in workloopIdleWait would not see the
-	// paused-by-drain → active transition until the next submit/append signal.
-	if transitioned {
-		c.cfg.QueueStore.Wake()
 	}
 
 	return nil
+}
+
+func (c *QueueOperatorEventConsumer) matchedQueueNames(queueName string) []string {
+	if queueName != "" {
+		return []string{queue.NormaliseQueueName(queueName)}
+	}
+	queues := c.cfg.QueueStore.AllQueues()
+	names := make([]string, 0, len(queues))
+	for name := range queues {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (c *QueueOperatorEventConsumer) transitionQueue(
+	ctx context.Context,
+	name string,
+	kind queue.OperationKind,
+	wake bool,
+	expected queue.QueueStatus,
+	mutate func(*queue.Queue) error,
+) (*queue.Queue, bool, error) {
+	if c.cfg.ProjectDir == "" {
+		locked := c.cfg.QueueStore.LockForMutation()
+		live := locked.LockedQueueByName(name)
+		if live == nil || live.Status != expected {
+			locked.Done()
+			return nil, false, nil
+		}
+		candidate := *live
+		if err := mutate(&candidate); err != nil {
+			locked.Done()
+			return nil, false, err
+		}
+		locked.LockedSetQueueByName(name, &candidate)
+		locked.Done()
+		if wake {
+			c.cfg.QueueStore.Wake()
+		}
+		return &candidate, true, nil
+	}
+
+	snapshot := c.cfg.QueueStore.Snapshot(name)
+	if snapshot.Queue == nil || snapshot.Queue.Status != expected {
+		return nil, false, nil
+	}
+	result := c.cfg.QueueStore.Transact(ctx, queue.TransactionRequest{
+		Snapshot:      snapshot,
+		ProjectDir:    c.cfg.ProjectDir,
+		OperationKind: kind,
+		WakeRequired:  wake,
+		Mutate:        mutate,
+	})
+	if !result.Committed() {
+		return nil, false, result.Err
+	}
+	if result.CleanupErr != nil {
+		return nil, false, result.CleanupErr
+	}
+	return result.Snapshot.Queue, true, nil
 }

@@ -91,6 +91,13 @@ test:  ## go test ./... (no race; quick smoke)
 leakcheck:  ## Report abandoned processes (orphaned shells, test binaries, busy orphans)
 	@./scripts/leakcheck.sh
 
+# leakreap: kill the orphaned shells and test binaries leakcheck found. Only that
+# one shape — a busy orphan of an unmodelled shape, or a live parent with a big
+# child pool, is still reported and left alone for you to read.
+.PHONY: leakreap
+leakreap:  ## Kill orphaned shells and test binaries (leakcheck rule 1 only)
+	@./scripts/leakcheck.sh --kill
+
 # smoke-scratch: run harmonik smoke in a throw-away temp project so real-daemon
 # validation never commits scratch files to the main trunk (logmine F17 / hk-nk9pu).
 # Prereq: harmonik binary is built from source (this target builds it internally).
@@ -675,6 +682,10 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -short -race (skips real-daemon E2E; hk-jzepv)
 	scripts/go-format-test.sh
 	scripts/changed-go-packages-test.sh
+	@# ~12s, so it lives here rather than in check-fast's <15s budget. It guards
+	@# loadgen.sh's argument parsing, where an omitted option value once turned
+	@# the parser itself into the runaway spin loop the script exists to prevent.
+	scripts/loadgen-test.sh
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...

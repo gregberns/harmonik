@@ -6,6 +6,13 @@
 # to load the machine, ran a test, and failed to kill them. They ran for 13 hours
 # at about 551% CPU before anyone noticed. Nothing in the repo could have told you.
 #
+# It happened a second time anyway — 12 subshells, 22 h 39 m, load average 27 —
+# because this script only REPORTS, and it reports to an interactive prompt that
+# no agent ever sees. Two things came out of that. `--kill` below, so acting is
+# one command. And `scripts/loadgen.sh`, the tested load generator, so nobody
+# hand-rolls the line that caused both: `LOADPIDS=$(jobs -p); …; kill $LOADPIDS`
+# is silently a no-op in zsh, which is the shell agents get.
+#
 # Why it has almost no false positives. Plenty of this user's processes are
 # legitimately orphaned to init — ssh-agent, cfprefsd, node_exporter, a tmux
 # server. All of them idle at 0.0% CPU, and NONE of them is a bare shell or a Go
@@ -31,14 +38,35 @@
 # cleanup steps here that reported success and did nothing. See the zsh table in
 # docs/disk-reclaim.md.
 #
-# Exit 0 clean, 1 when something was found. Reports only, never kills: the caller
-# decides, and a wrong automated kill is worse than the leak.
+# Exit 0 clean, 1 when something was found. BY DEFAULT it reports only and never
+# kills: the caller decides, and a wrong automated kill is worse than the leak.
+#
+# --kill opts INTO reaping, and ONLY rule 1 — an orphaned shell or Go test binary,
+# the one shape this script's own rule text calls "always a bug, there is no
+# benign version of this". Rule 2 catches shapes we deliberately do not model, and
+# rule 3's parent is alive and may still be working; both stay report-only, so a
+# --kill run that leaves a BUSY or SPAWN entry standing still exits 1. The caller
+# still decides, which is the property the default protects. What --kill removes
+# is the manual pid-and-pgid dance between deciding and acting.
 
 set -uo pipefail
 
 CPU_FLOOR="${LEAKCHECK_CPU_FLOOR:-20}" # percent, for rule 2
 uid="$(id -u)"
 found=0
+do_kill=0
+reap=()           # rule-1 pids, collected during the scan and killed after it
+reported_other=0  # a BUSY or SPAWN entry was printed — --kill does not touch those,
+                  # so it must not exit 0 while one is still standing
+
+case "${1:-}" in
+--kill) do_kill=1 ;;
+'') ;;
+*)
+    echo "usage: leakcheck.sh [--kill]" >&2
+    exit 2
+    ;;
+esac
 
 # ps output is trimmed, so fields are positional and stable: pid ppid %cpu etime comm
 # `comm` is the full path on darwin, which is what the shape match needs.
@@ -52,6 +80,7 @@ while read -r pid ppid cpu etime comm; do
     sh | bash | zsh | dash | *.test)
         printf 'LEAK  pid=%-7s cpu=%-6s up=%-14s %s\n' "$pid" "$cpu" "$etime" "$comm"
         found=1
+        reap+=("$pid")
         continue
         ;;
     esac
@@ -76,6 +105,7 @@ while read -r pid ppid cpu etime comm; do
     if [ "$cpu_int" -ge "$CPU_FLOOR" ]; then
         printf 'BUSY  pid=%-7s cpu=%-6s up=%-14s %s\n' "$pid" "$cpu" "$etime" "$comm"
         found=1
+        reported_other=1
     fi
 done < <(ps -eo uid=,pid=,ppid=,pcpu=,etime=,comm= | awk -v u="$uid" '$1==u {$1=""; print}')
 
@@ -111,10 +141,48 @@ while read -r count parent_pid; do
 
     printf 'SPAWN pid=%-7s children=%-5s %s\n' "$parent_pid" "$count" "$parent_cmd"
     found=1
+    reported_other=1
 done < <(ps -eo uid=,ppid= | awk -v u="$uid" '$1==u {c[$2]++} END {for (p in c) print c[p], p}')
+
+# Reap, when asked. Re-derive the WHOLE rule-1 test at kill time rather than
+# trusting the scan. The scan's `ps` is already seconds old: the process may have
+# exited and the pid may have been reused. Re-checking uid and orphanhood alone is
+# not enough, because this user owns processes that are legitimately orphaned to
+# init — ssh-agent, cfprefsd, node_exporter, a tmux server — and a reused pid
+# landing on one of those would pass both. The filename shape is what makes rule 1
+# rule 1, so it is re-applied here too, and it is the check that keeps the
+# "almost no false positives" claim true at the moment it matters.
+if [ "$do_kill" -eq 1 ] && [ "${#reap[@]}" -gt 0 ]; then
+    echo
+    killed=0
+    for pid in "${reap[@]}"; do
+        read -r now_uid now_ppid now_comm <<<"$(ps -p "$pid" -o uid=,ppid=,comm= 2>/dev/null)"
+        [ "${now_uid:-}" = "$uid" ] || continue # gone, or reused by another user
+        [ "${now_ppid:-}" = "1" ] || continue   # no longer an orphan
+        case "${now_comm##*/}" in
+        sh | bash | zsh | dash | *.test) ;;
+        *) continue ;; # pid reused by something that is not a rule-1 shape
+        esac
+        if kill -9 "$pid" 2>/dev/null; then
+            echo "REAPED pid=$pid"
+            killed=$((killed + 1))
+        fi
+    done
+    echo "leakcheck: reaped $killed of ${#reap[@]} orphaned shells / test binaries."
+    echo "BUSY and SPAWN entries above, if any, were NOT touched — read them yourself."
+    # Reaping rule 1 does not make the run clean. A surviving BUSY or SPAWN is
+    # still a finding, and the exit code is the only part of this a caller reads.
+    if [ "$reported_other" -ne 0 ]; then
+        exit 1
+    fi
+    exit 0
+fi
 
 if [ "$found" -ne 0 ]; then
     echo
+    if [ "${#reap[@]}" -gt 0 ]; then
+        echo "Reap the LEAK lines above with:  make leakreap    (or leakcheck.sh --kill)"
+    fi
     echo "LEAK / BUSY  are ORPHANED — parented to init, nothing attached, safe to kill."
     echo "SPAWN        is a LIVE parent with a runaway child pool. It is still doing"
     echo "             something. Look before you kill it, and kill the GROUP, not the"

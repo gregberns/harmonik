@@ -261,6 +261,15 @@ In order. Each is one commit, each independently reviewable.
    NOT a consequence of step 4 — see §2's correction.
 5. Give the per-launch set its own nested scope, and collapse the duplicated tunnel refusal
    reporting into the one reporter the run plan already has.
+   - The refusal half is ✅ **landed 2026-07-31.** The second copy of the report — a closure in the
+     remote block of `beadRunOne` that wrote its own stderr line, `worker_tunnel_failed` event and
+     reopen — is gone. The three gates (port allocation, the socket-path check, the readiness gate)
+     now build a `runPlanRefusal` through one `tunnelRefusal` builder and report it through
+     `refuseRunPlan`, which is the reporter the plan's five decisions already used. The two copies
+     agreed on wording, so nothing about the report moved. Guarded by
+     `internal/daemon/tunnel_refusal_report_test.go`: the socket-path gate on the fallback-worker
+     path and the readiness gate had no end-to-end test at all before this.
+   - The nested-launch-scope half is still open.
 6. ✅ **Landed 2026-07-31, and moved AHEAD of steps 4 and 5 on purpose.** Close the two test holes.
    These are the guard rails for the migration, so pinning them after it would defend nothing. Both
    were closed before any release site moved, and both found things — see §9.

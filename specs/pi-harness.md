@@ -8,10 +8,10 @@ requirement-prefix: PI
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.0
+version: 0.1.1
 spec-template-version: 1.1
 owner: pilot-author
-last-updated: 2026-06-30
+last-updated: 2026-08-01
 depends-on:
   - architecture
   - handler-contract
@@ -89,7 +89,21 @@ depends-on:
 ## §3 Commit fallback
 
 - **PI-030** `ensurePiRefsTrailer` MUST guarantee a `Refs: <bead-id>` trailer using the codex decision
-  table (no-op / amend / commit / no-change) and MUST NOT fabricate a commit on a clean worktree.
+  table (no-op / amend / commit / no-change) and MUST NOT fabricate a commit on a clean worktree. It
+  is the fallback for every Pi run, in BOTH workflow modes.
+
+  > **Scope clarified 2026-08-01 (STEP-7 post-exit collapse, `codename:step7-collapse`).** The clause
+  > named no workflow mode. The `dot` path read that as permission to call the codex wrapper for every
+  > process-exit harness, so the daemon wrote a Pi node's fallback commit with the codex message. The
+  > `single` path has always branched on the harness. The two wrappers reach the same four primitives
+  > in `internal/harness/shared/refstrailer.go` and return the same `shared.RefsOutcome`, so the
+  > message prefix was the only difference in behaviour. **The no-work detector of
+  > [event-model.md §8.1.12] MUST stay outside that harness branch.** It reads the shared outcome
+  > enum, so one detector covers whichever leg ran. The `dot` path had Pi no-work coverage only
+  > because it always called the codex function, and a fix that adds a Pi leg while leaving the
+  > detector inside the codex one removes that coverage without any signal (hk-3ywqv). No obligation
+  > is weakened and no requirement ID is added, renumbered, or retired.
+
 - **PI-031 (remote-safe)** Every git operation in the fallback MUST route through the run's `runner`
   when non-nil (and fall back to local `exec` when nil), so the remote SSH substrate works. It MUST be
   gated at the existing `Completion()==ProcessExit` seam.

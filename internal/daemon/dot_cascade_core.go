@@ -79,11 +79,9 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/claude"
-	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/projectconfig"
-	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/runloop"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workflow"
@@ -1490,13 +1488,13 @@ func dispatchDotAgenticNode(
 
 	// The launch itself is the ONE path in agentlaunch.go. This site keeps only
 	// what to launch (above) and what the exit means (below).
+	logPrefix := fmt.Sprintf("daemon: dot: bead %s node %q run %s", beadID, node.ID, runID.String())
 	launch := runAgentLaunch(ctx, agentLaunchInput{
-		Env:     env,
-		Ports:   ports,
-		Handles: handles,
-		RunID:   runID,
-		LogPrefix: fmt.Sprintf("daemon: dot: bead %s node %q run %s",
-			beadID, node.ID, runID.String()),
+		Env:               env,
+		Ports:             ports,
+		Handles:           handles,
+		RunID:             runID,
+		LogPrefix:         logPrefix,
 		Spec:              spec,
 		Artifacts:         artifacts,
 		WorktreePath:      wtPath,
@@ -1549,30 +1547,37 @@ func dispatchDotAgenticNode(
 		// Fall through: the session has exited and been torn down.
 	}
 
-	// HC-065: drive Terminating → Terminated/Failed for the node's session, the
-	// same transition the single-mode tail makes at the same point (hk-b4xf2).
-	// Background ctx per RSM-022, so the lifecycle_transition emission survives a
-	// run ctx the stale watcher has already cancelled.
-	transitionToTerminated(context.Background(), launch.Session.Machine(), runID, emit, //nolint:contextcheck // RSM-022: the lifecycle_transition emission must survive a reaper-cancelled run ctx; Background swap by design
-		launch.Exit.ExitCode, launch.Exit.WaitErr)
-
-	// Emit implementer_phase_complete (hk-cd8yu / hk-mvjs4) immediately after the
-	// implementer session ends, mirroring the single-mode path. Skipped for
-	// reviewer-class nodes (they produce reviewer_verdict instead).
-	//
-	// hk-368i4: nodePhaseDur is captured ONCE and reused by the no-work detector
-	// further down, so the event's duration_seconds and the detector's verdict
-	// come from the same measurement.
-	nodePhaseDur := ports.Clock.Since(launch.LaunchedAt)
-	if !isReviewer {
-		curHead, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
-		commitLanded := curHead != "" && curHead != preHeadSHA
-		runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, launch.Exit.ExitCode,
-			launch.Exit.StderrTail, commitLanded, nodePhaseDur)
-	}
-
-	if ctx.Err() != nil {
-		return core.Outcome{}, fmt.Errorf("context cancelled during node %q", node.ID)
+	// The post-exit interpretation's shared opening is the ONE path in
+	// agentlaunch.go, the way the launch above is: the HC-065 terminal
+	// transition, the implementer_phase_complete emit, the cancellation check
+	// and the process-exit commit fallback. What stays below is the graph's own
+	// — the reviewer verdict read, the terminal classification, the HEAD-advance
+	// guard with its non_committing opt-out, and auto_status.
+	postExit := runAgentPostExit(ctx, agentPostExitInput{
+		Env:          env,
+		Ports:        ports,
+		RunID:        runID,
+		BeadID:       beadID,
+		LogPrefix:    logPrefix,
+		Launch:       launch,
+		Runner:       runner,
+		WorktreePath: wtPath,
+		// A cascade needs a PER-NODE baseline, because node N's baseline is node
+		// N−1's tip. This is the HEAD probed immediately before this node
+		// launched, not the run's parent SHA.
+		BaselineSHA: preHeadSHA,
+		AgentType:   shared.ArtifactAgentType(artifacts),
+		// A reviewer node produces reviewer_verdict rather than
+		// implementer_phase_complete, and it has no commit to fall back on.
+		Implementer: !isReviewer,
+		// A graph node always stops on a cancelled context: its caller,
+		// driveDotWorkflow, turns the error into the run's failure.
+		CancelReason: func() string {
+			return fmt.Sprintf("context cancelled during node %q", node.ID)
+		},
+	})
+	if postExit.CancelReason != "" {
+		return core.Outcome{}, errors.New(postExit.CancelReason)
 	}
 
 	// Capture the claude_session_id for implementer-resume back-edges.
@@ -1637,34 +1642,6 @@ func dispatchDotAgenticNode(
 			PreferredLabelFlags: flags,         // hk-m1wqp: carries reviewer flags to driveDotWorkflow for review_fixup_stalled
 			Notes:               verdict.Notes, // hk-wixms: carry verdict notes so the next implementer-resume back-edge can deliver them via reviewer-feedback.iter-<N-1>.md
 		}, nil
-	}
-
-	// codex --sandbox workspace-write cannot commit inside a worktree (.git points
-	// outside the sandbox root → self-commit fails 100%). After the process exits,
-	// the daemon stages+commits any changes codex produced via codex.EnsureRefsTrailer
-	// (internal/harness/codex/commit.go, hk-gd9r). Mirrors workloop.go:4007-4019. Must run before
-	// resolveDotWorktreeHEAD so the no-commit guard below sees any commit we create.
-	// runAgentLaunch already resolved the harness; reuse its answer rather than
-	// re-walking the registry for the same question.
-	if launch.Harness != nil && launch.Harness.Completion() == handlercontract.CompletionProcessExit {
-		codexOutcome, ensureErr := codex.EnsureRefsTrailer(ctx, runner, wtPath, preHeadSHA, beadID)
-		if ensureErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
-				beadID, ensureErr)
-		} else {
-			fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %s\n",
-				beadID, codexOutcome)
-			// hk-368i4: same detector as the workloop path — a no-change
-			// outcome from a node that finished in seconds is a no-work run.
-			// Diagnostic only; the no-commit guard below still decides.
-			if codex.NoWorkSuspected(codexOutcome, nodePhaseDur, env.CodexNoWorkDurationFloor) {
-				floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
-				fmt.Fprintf(os.Stderr,
-					"daemon: dot: bead %s node %q: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
-					beadID, node.ID, nodePhaseDur, floor)
-				codex.EmitImplementerNoWorkSuspected(ctx, emit, runID, beadID, nodePhaseDur, floor)
-			}
-		}
 	}
 
 	// What the agent REPORTED decides the node, not only whether HEAD moved

@@ -71,6 +71,8 @@
 .bv/
 /harmonik
 /harmonik-twin-claude
+/twin-fail
+/twin-hang
 
 # Pi extension node_modules (npm install output; lockfile is committed)
 .pi/extensions/*/node_modules/

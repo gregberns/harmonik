@@ -123,8 +123,8 @@ test-e2e-real-claude-reviewloop:  ## Run real-Claude review-loop E2E smoke (requ
 	go test -tags e2e_real_claude -timeout 300s -v -run TestE2ERealClaudeReviewLoopMode ./internal/daemon/...
 
 # test-scenario: run the scenario tier with -race and the scenario build tag.
-# Prereq: build-all compiles cmd/harmonik + all twins (twins/generic-twin,
-# harmonik-twin-claude) so scenario tests can locate them without a rebuild.
+# Prereq: build-all compiles cmd/harmonik and the twins that daemon scenarios
+# locate without a rebuild.
 # Budget: 10 minutes, matching the scenario sub-run in check-full (Tier 3).
 # Covers all packages that carry //go:build scenario files:
 #   ./test/scenario/...  — top-level scenario package (test/scenario/harness_test.go)
@@ -578,11 +578,21 @@ build-twin-generic:  ## Build cmd/harmonik-twin-generic → twins/generic-twin (
 	@mkdir -p $(TWINS_DIR)
 	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o $(TWINS_DIR)/generic-twin ./cmd/harmonik-twin-generic
 
-# build-twin-claude: alias kept for compatibility during transition; delegates
-# to build-twin-generic until hk-w5vra.2 ships the real Claude twin.
-# TODO(hk-w5vra.2): replace this alias with the real harmonik-twin-claude build.
+# build-twin-claude: compile the Claude lifecycle twin at the path used by
+# daemon scenario fixtures.
 .PHONY: build-twin-claude
-build-twin-claude: build-twin-generic  ## Alias → build-twin-generic (hk-w5vra.2 will replace with real Claude twin)
+build-twin-claude:  ## Build cmd/harmonik-twin-claude → ./harmonik-twin-claude
+	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o ./harmonik-twin-claude ./cmd/harmonik-twin-claude
+
+# build-twin-fail: compile the failure twin used by T2 daemon scenarios.
+.PHONY: build-twin-fail
+build-twin-fail:  ## Build test/twins/fail-immediately → ./twin-fail
+	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o ./twin-fail ./test/twins/fail-immediately
+
+# build-twin-hang: compile the hanging twin used by T2 daemon scenarios.
+.PHONY: build-twin-hang
+build-twin-hang:  ## Build test/twins/hang → ./twin-hang
+	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o ./twin-hang ./test/twins/hang
 
 # build-twin-pi: compile cmd/harmonik-twin-pi/ into twins/pi-twin. The pi test
 # twin emits pi's `--mode json` NDJSON lifecycle (session → message_start/end →
@@ -593,10 +603,9 @@ build-twin-pi:  ## Build cmd/harmonik-twin-pi → twins/pi-twin (SH-009 / HC-043
 	@mkdir -p $(TWINS_DIR)
 	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o $(TWINS_DIR)/pi-twin ./cmd/harmonik-twin-pi
 
-# twins: build all twin binaries into twins/.
-# Add further per-twin prerequisites here as new twin packages land.
+# twins: build the scenario twin binaries.
 .PHONY: twins
-twins: build-twin-generic build-twin-pi  ## Build all twin binaries into twins/ (SH-009 search-path default)
+twins: build-twin-generic build-twin-claude build-twin-pi build-twin-fail build-twin-hang  ## Build scenario twins
 
 # build-all: build the module + all twin binaries.
 # Suitable as a pre-scenario-test warmup target.

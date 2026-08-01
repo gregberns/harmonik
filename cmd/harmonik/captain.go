@@ -81,6 +81,10 @@ import (
 // boot-seed paste (mirrors daemon.splashDismissDelay = 750ms).
 const captainSplashDismissDelay = 750 * time.Millisecond
 
+// captainModel is pinned because captain work needs the planning and judgment
+// model. The captain has no model-selection flag.
+const captainModel = "opus"
+
 // captainLaunchRunFn is the seam tests inject to capture the assembled
 // agent-window tmux new-session command without spawning a real session.
 // Production passes runCaptainTmux. Kept (hk-ly0n) so existing argv tests on the
@@ -266,7 +270,7 @@ func (o osCaptainTmuxOps) PasteSeedToAgentPane(ctx context.Context, sessionID, p
 // session:
 //
 //	tmux new-session -d -s <session> -n agent -e HARMONIK_AGENT=<name> \
-//	  claude --dangerously-skip-permissions --remote-control <name> --session-id <id>
+//	  claude --dangerously-skip-permissions --model opus --remote-control <name> --session-id <id>
 //
 // -n agent names the first window so the keeper can target "<session>:agent"
 // (window-nesting, hk-z036). --dangerously-skip-permissions mirrors the retired
@@ -286,6 +290,7 @@ func buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix string) *exec.Cm
 		"-n", ltmux.WindowAgent,
 		"-e", "HARMONIK_AGENT="+name,
 		"claude", "--dangerously-skip-permissions",
+		"--model", captainModel,
 		"--remote-control", crewrun.JoinRemoteControlName(rcPrefix, name),
 		"--session-id", sessionID,
 	)

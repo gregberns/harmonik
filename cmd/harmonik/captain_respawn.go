@@ -70,7 +70,7 @@ func runCaptainRespawnTmux(cmd *exec.Cmd) ([]byte, error) { return cmd.Output() 
 // buildCaptainRespawnWindowCmd assembles the agent-window respawn command:
 //
 //	tmux respawn-window -k -t <session>:agent -e HARMONIK_AGENT=<name> \
-//	  claude --dangerously-skip-permissions --remote-control <name> --resume <sessionID>
+//	  claude --dangerously-skip-permissions --model opus --remote-control <name> --resume <sessionID>
 //
 // -k KILLS the (dead) existing pane and re-launches in place — the agent window
 // only, never the whole session, so the sibling keeper window survives. --resume
@@ -91,6 +91,7 @@ func buildCaptainRespawnWindowCmd(name, tmuxTarget, sessionID, rcPrefix string) 
 		"-t", tmuxTarget,
 		"-e", "HARMONIK_AGENT="+name,
 		"claude", "--dangerously-skip-permissions",
+		"--model", captainModel,
 		"--remote-control", crewrun.JoinRemoteControlName(rcPrefix, name),
 		"--resume", sessionID,
 	)

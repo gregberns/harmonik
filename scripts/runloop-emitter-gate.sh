@@ -271,7 +271,13 @@ fi
 PORT_RE='\brp\.Emitter\b|\bports\.Emitter\b'
 declare -a PORT_SITES=(
     "internal/daemon/workloop.go            4"  # beadRunOne x2; close + epic helpers x2
-    "internal/daemon/agentlaunch.go         1"  # runAgentLaunch binds
+    # agentlaunch.go 1 -> 2 on 2026-08-01: the post-exit collapse gave the file a
+    # SECOND owner, runAgentPostExit, which holds the lifecycle transition, the
+    # implementer_phase_complete emit and the no-work detector that beadRunOne and
+    # dispatchDotAgenticNode used to run one copy of each. It binds the emitter the
+    # same way runAgentLaunch does. Both owners are pinned by name below, so this
+    # raise cannot hide a site that left the seam.
+    "internal/daemon/agentlaunch.go         2"  # runAgentLaunch binds; runAgentPostExit binds
     "internal/daemon/dot_cascade_core.go    2"  # driveDotWorkflow + dispatchDotAgenticNode bind
     "internal/daemon/dot_gate.go            2"  # executeCognitionGate binds; dispatchDotGateNode reads inline
     "internal/runloop/runbridge.go           3"  # three inline b.rp.Emitter reads, no local
@@ -302,6 +308,7 @@ declare -a PORT_SYMBOL_SITES=(
     "internal/daemon/workloop.go|^func emitBeadClosedAndMaybeEpic\\(|emitBeadClosedAndMaybeEpic|1"
     "internal/daemon/workloop.go|^func maybeEmitEpicCompleted\\(|maybeEmitEpicCompleted|1"
     "internal/daemon/agentlaunch.go|^func runAgentLaunch\\(|runAgentLaunch|1"
+    "internal/daemon/agentlaunch.go|^func runAgentPostExit\\(|runAgentPostExit|1"
     "internal/daemon/dot_cascade_core.go|^func driveDotWorkflow\\(|driveDotWorkflow|1"
     "internal/daemon/dot_cascade_core.go|^func dispatchDotAgenticNode\\(|dispatchDotAgenticNode|1"
     "internal/daemon/dot_gate.go|^func dispatchDotGateNode\\(|dispatchDotGateNode|1"

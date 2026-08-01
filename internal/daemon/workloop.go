@@ -55,8 +55,6 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/harness/claude"
-	"github.com/gregberns/harmonik/internal/harness/codex"
-	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -66,7 +64,6 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/runexec"
-	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/runlease"
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runmerge"
@@ -2262,13 +2259,13 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 	// The launch itself is the ONE path in agentlaunch.go. This site keeps only
 	// what to launch (above) and what the exit means (below).
+	logPrefix := fmt.Sprintf("daemon: workloop: bead %s run %s", beadID, runID.String())
 	launch := runAgentLaunch(ctx, agentLaunchInput{
-		Env:     env,
-		Ports:   rp,
-		Handles: handles,
-		RunID:   runID,
-		LogPrefix: fmt.Sprintf("daemon: workloop: bead %s run %s",
-			beadID, runID.String()),
+		Env:           env,
+		Ports:         rp,
+		Handles:       handles,
+		RunID:         runID,
+		LogPrefix:     logPrefix,
 		Spec:          spec,
 		Artifacts:     artifacts,
 		WorktreePath:  wtPath,
@@ -2527,142 +2524,56 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 
 	socketOutcome, ei := launch.SocketOutcome, launch.Exit
 
-	// HC-065: Drive StateTerminating → StateTerminated/StateFailed transitions.
-	// The session has exited (the completion wait returned). Attempt to advance
-	// the Machine through Terminating to a terminal state. Transitions that are
-	// invalid for the current state (e.g. machine already in StateFailed from
-	// agent_failed) are silently ignored.
-	transitionToTerminated(context.Background(), sess.Machine(), runID, emit,
-		ei.ExitCode, ei.WaitErr)
-
-	// Step 7a: emit implementer_phase_complete (hk-cd8yu).
-	//
-	// Fires immediately after the implementer session ends regardless of how —
-	// normal exit, noChange-timeout kill, abort, or context cancellation —
-	// closing the diagnostic gap between run_started and the run's terminal where
-	// silent implementer failures previously produced no structured event.
-	//
-	// "Regardless of how" is why the per-run abort check below sits AFTER this
-	// emit rather than before it (hk-aekon). It used to return above, so the one
-	// exit that most needs a diagnostic — an agent reaped mid-run — was the one
-	// that left none. The graph node checks its own cancellation after its emit
-	// for the same reason, and this is now the same order on both sides.
-	//
-	// commitLanded is determined by comparing the current worktree HEAD against
-	// headSHA.  gitprobe.ResolveWorktreeHEAD errors are treated as "not landed" (conservative).
-	// REMOTE: route via runRunner so HEAD is read from the worker (nil ⇒ box-A-local).
-	//
-	// hk-368i4: implementerPhaseDur is captured ONCE here and reused by the
-	// no-work detector below, so the event's duration_seconds and the detector's
-	// verdict are computed from the same measurement — a reader correlating the
-	// two can never see them disagree.
-	implementerPhaseDur := rp.Clock.Since(launch.LaunchedAt)
-	{
-		curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath)
-		commitLanded := curHead != "" && curHead != headSHA
-		runlaunch.EmitImplementerPhaseComplete(ctx, emit, runID, ei.ExitCode, ei.StderrTail,
-			commitLanded, implementerPhaseDur)
-	}
-
-	// hk-0z5x: per-run abort check — fired when the never-spawned reaper in
-	// StaleWatcher cancels the per-run context (ctx) because launch_initiated
-	// was observed but agent_ready never arrived within NeverSpawnedReaperTimeout.
-	// The kill-consumer backstop and the fast dead-process reap latch the same
-	// flag before they cancel, so every reaper arrives here.
-	//
-	// Distinguish from daemon-wide shutdown (where ctx is also cancelled but
-	// handle.aborted is NOT set): check handle.aborted before treating this as
-	// a per-run abort. Daemon shutdown falls through to the existing ctx.Err()
-	// check in the no-commit path which leaves the item 'dispatched' for QM-002a
-	// recovery.
-	//
-	// It runs after the phase-complete emit above so an aborted run reports the
-	// phase it was killed in. Moving it down also brings the HC-065 terminal
-	// transition onto this path, which its own godoc has always claimed ("EVERY
-	// exit path") and which the abort return used to skip; the three launch-fail
-	// returns further up still skip it, and that half is hk-b4xf2's, not this
-	// commit's.
-	if ctx.Err() != nil {
-		if handle, ok := handles.RunRegistry.Get(runID); ok && handle.Aborted() {
-			// RT7 / RSM-031 row 1b: the never-spawned-reaper abort is the Aborted
-			// dispatch-terminal class; its reason rides the mode-failure event
-			// (reopen + run_failed via the spine, Background ctx per RSM-022).
-			const abortReason = "never_spawned_reaper: launch_initiated but agent_ready not received within deadline"
-			failRun(abortReason, abortReason)
-			// succeeded is never assigned anywhere in this function, so the
-			// explicit false is byte-equivalent to the naked return this branch
-			// carried before it moved (nakedret).
-			return false
-		}
-		// ctx cancelled for other reasons (daemon shutdown) — fall through to the
-		// existing daemon-shutdown handling in the no-commit path.
-	}
-
-	// ── ProcessExit daemon-side commit fallback (hk-gd9r / hk-mazln) ─────────
-	//
-	// codex: --sandbox workspace-write blocks writes to .git. The daemon runs
-	// git OUTSIDE the sandbox and calls codex.EnsureRefsTrailer to stage+commit
-	// any worktree changes codex produced but could not commit.
-	//
-	// Pi: unsandboxed, so Pi can self-commit, but a weak free model may not (or
-	// may omit the trailer). ensurePiRefsTrailer applies the same deterministic
-	// fallback so the standard trailer-detection path succeeds.
-	//
-	// Shared decision table (see internal/harness/codex/commit.go / internal/harness/pi/commit.go):
-	//   • HEAD already carries "Refs: <beadID>" → no-op (agent self-committed).
-	//   • HEAD advanced but lacks the trailer → amend HEAD to add it.
-	//   • HEAD unchanged, worktree dirty → stage all + create trailer commit.
-	//   • HEAD unchanged, worktree clean → no_change (fall through to guard).
-	//
-	// Fires only for CompletionProcessExit harnesses (codex, pi). claude runs
-	// through the interactive TUI and self-commits; this block is a no-op for
-	// claude. On error we log and fall through to the no-commit guard.
-	if handles.HarnessRegistry != nil {
-		agType := shared.ArtifactAgentType(artifacts)
-		if h, hErr := handles.HarnessRegistry.ForAgent(agType); hErr == nil &&
-			h.Completion() == handlercontract.CompletionProcessExit {
-			// The two wrappers differ in the message prefix they write and in
-			// nothing else that matters here: both reach the same four primitives
-			// in internal/harness/shared/refstrailer.go and both return the same
-			// shared.RefsOutcome. There is one outcome enum, not a codex one and a
-			// parallel Pi one, and that single enum is what lets ONE detector read
-			// whichever leg ran.
-			var outcome shared.RefsOutcome
-			var ensureErr error
-			label := "ensureCodexRefsTrailer"
-			if agType == core.AgentTypePi {
-				label = "ensurePiRefsTrailer"
-				outcome, ensureErr = pi.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
-			} else {
-				outcome, ensureErr = codex.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
+	// The post-exit interpretation's shared opening is the ONE path in
+	// agentlaunch.go, the way the launch above is: the HC-065 terminal
+	// transition, the implementer_phase_complete emit, the abort check and the
+	// process-exit commit fallback. Everything below the call is single mode's
+	// own — the terminal classification, the spine, the two guards and the
+	// shutdown drain — and none of it has a graph counterpart.
+	postExit := runAgentPostExit(ctx, agentPostExitInput{
+		Env:          env,
+		Ports:        rp,
+		RunID:        runID,
+		BeadID:       beadID,
+		LogPrefix:    logPrefix,
+		Launch:       launch,
+		Runner:       runRunner,
+		WorktreePath: wtPath,
+		// Single mode measures HEAD advance against the repo HEAD its worktree
+		// was cut from. That value cannot be empty, so this side needs no probe
+		// and carries no probe error.
+		BaselineSHA: headSHA,
+		AgentType:   shared.ArtifactAgentType(artifacts),
+		Implementer: true,
+		// hk-0z5x: the per-run abort. The never-spawned reaper in StaleWatcher
+		// cancels this run's context because launch_initiated was observed but
+		// agent_ready never arrived. The kill-consumer backstop and the fast
+		// dead-process reap latch the same flag before they cancel, so every
+		// reaper arrives here.
+		//
+		// Daemon-wide shutdown cancels the same context and does NOT latch that
+		// flag, and single mode must fall THROUGH on it: the terminal switch
+		// below drains committed-but-unmerged work (hk-dnrg) and leaves a
+		// surviving run's bead in_progress for QM-002a recovery. So the empty
+		// answer here is the shutdown case, not an oversight.
+		CancelReason: func() string {
+			if handle, ok := handles.RunRegistry.Get(runID); ok && handle.Aborted() {
+				return "never_spawned_reaper: launch_initiated but agent_ready not received within deadline"
 			}
-			if ensureErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s: %v (falling through to no-commit guard)\n",
-					label, beadID, ensureErr)
-			} else {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s: %s\n",
-					label, beadID, outcome)
-				// hk-368i4: a no-change outcome from a phase that finished in
-				// seconds is a no-work run, not a bead that had nothing to do.
-				// Diagnostic only — the run is already failing via the
-				// no-commit guard; this records WHY, which is what was
-				// missing when hk-jcrzn went undetected.
-				//
-				// hk-3ywqv: the detector reads the outcome of whichever leg ran, so
-				// it covers every CompletionProcessExit harness rather than codex
-				// alone. It used to sit inside the codex leg, so a single-mode Pi
-				// run — same clean worktree, same seconds-long phase — produced no
-				// record at all. The detector's home is `codex` only by where it
-				// was first written; its input is the shared enum.
-				if codex.NoWorkSuspected(outcome, implementerPhaseDur, env.CodexNoWorkDurationFloor) {
-					floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
-					fmt.Fprintf(os.Stderr,
-						"daemon: workloop: bead %s: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
-						beadID, implementerPhaseDur, floor)
-					codex.EmitImplementerNoWorkSuspected(ctx, emit, runID, beadID, implementerPhaseDur, floor)
-				}
-			}
-		}
+			return ""
+		},
+	})
+	if postExit.CancelReason != "" {
+		// RT7 / RSM-031 row 1b: the never-spawned-reaper abort is the Aborted
+		// dispatch-terminal class; its reason rides the mode-failure event
+		// (reopen + run_failed via the spine, Background ctx per RSM-022).
+		//
+		// The run reports the phase it was killed in, because the shared region
+		// emits implementer_phase_complete before it consults this (hk-aekon).
+		failRun(postExit.CancelReason, postExit.CancelReason)
+		// succeeded is never assigned anywhere in this function, so the explicit
+		// false is byte-equivalent to a naked return (nakedret).
+		return false
 	}
 
 	// Step 8: map Wait-return to a terminal event (CHB-020 branches 1/2/3).

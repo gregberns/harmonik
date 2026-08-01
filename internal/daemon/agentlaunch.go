@@ -47,8 +47,11 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/codex"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
@@ -936,4 +939,221 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 
 	giveBackHookSession()
 	return res
+}
+
+// ── The ONE post-exit interpretation ────────────────────────────────────────
+//
+// runAgentLaunch collapsed the LAUNCH. The region AFTER it returns stayed
+// copied: single mode in beadRunOne and the graph node in dispatchDotAgenticNode
+// each read the dead session and each hand-rolled the same opening steps.
+//
+// The two regions are NOT duplicates, and calling them that is how a collapse
+// goes wrong. Measured before this change they were 195 code lines against 100,
+// and most of the single side has no graph counterpart at all — the
+// escaped-worktree guard, the terminal-classification switch, the spine wiring,
+// the shutdown drain, the Pi stderr capture. Only the opening steps are
+// genuinely paired, 45 code lines against 29, and only those live here: the
+// HC-065 lifecycle terminal transition, the implementer_phase_complete emit, the
+// cancellation check, and the process-exit commit fallback.
+//
+// # What stays at the call site, and why
+//
+// What "no commit" MEANS is a deliberate difference. A graph node reads a
+// non_committing opt-out and passes an iteration-≥2 run through to the diff-hash
+// check per specs/execution-model.md EM-058 component C, and single mode has
+// nowhere to put either. How each side states a hard failure is a second one:
+// single mode IS the run's terminal decision so it reopens the bead, while the
+// graph node has a caller that turns an error into one.
+//
+// The post-exit HEAD probe stays at the call site too, and that is a judgement
+// rather than an oversight. Its POSITION is load-bearing on the single side: it
+// runs after the escaped-worktree guard's wait on the merge exclusion domain, so
+// a shutdown that lands during that wait fails the probe and the run drains
+// instead of reopening. Probing earlier would move that race onto a different
+// terminal, to save one line.
+
+// agentPostExitInput is everything runAgentPostExit needs. The two fields at the
+// bottom are the deliberate per-site variation; everything above them is the
+// part that used to be copied twice.
+type agentPostExitInput struct {
+	Env   runloop.RunEnv
+	Ports runloop.RunPorts
+
+	RunID  core.RunID
+	BeadID core.BeadID
+
+	// LogPrefix identifies this run in stderr diagnostics. Give it the same
+	// prefix the matching runAgentLaunch call was given.
+	LogPrefix string
+
+	// Launch is what runAgentLaunch handed back. The caller has already decided
+	// what Launch.Fail means; this reads the exit facts, the session's lifecycle
+	// machine and the resolved harness.
+	Launch agentLaunchResult
+
+	// Runner and WorktreePath address the run's worktree. Runner is the per-run
+	// CommandRunner — an SSHRunner for a remote run, nil for a local one — so a
+	// remote run reads HEAD on the worker (NFR7).
+	Runner       tmuxpkg.CommandRunner
+	WorktreePath string
+
+	// BaselineSHA is the SHA that "did HEAD advance" is measured against, and it
+	// is also the parent the commit fallback amends against. Single mode passes
+	// the repo HEAD its worktree was cut from. A graph node passes the HEAD
+	// probed immediately before THAT node launched, because node N's baseline is
+	// node N−1's tip.
+	BaselineSHA string
+
+	// AgentType is the run's resolved agent type and it picks the commit
+	// fallback's harness wrapper. Pass the artifacts' agent type — the same value
+	// runAgentLaunch resolved Launch.Harness from.
+	AgentType core.AgentType
+
+	// Implementer marks an implementer-class agent. A reviewer node gets the
+	// lifecycle transition and the cancellation check and nothing else: it
+	// produces reviewer_verdict rather than implementer_phase_complete, and it
+	// has no commit to fall back on.
+	Implementer bool
+
+	// CancelReason answers one question: the run context is cancelled — must
+	// this run stop, and with what reason? It is consulted ONLY when the context
+	// is already cancelled, and an EMPTY answer means keep going.
+	//
+	// The two modes answer differently on purpose. A graph node always stops. In
+	// single mode only a per-run abort stops here; daemon-wide shutdown cancels
+	// the same context and must fall through, because the terminal switch below
+	// the call drains committed-but-unmerged work and leaves a surviving run's
+	// bead alone. nil never stops.
+	CancelReason func() string
+}
+
+// agentPostExitResult is what the shared region hands back. It carries one field
+// because everything else this region does is an emission or a commit, not a
+// value the caller reads.
+type agentPostExitResult struct {
+	// CancelReason is non-empty when the run context was cancelled AND the site
+	// said to stop. The caller turns it into its own terminal — a reopened bead
+	// in single mode, a node error in the graph — and MUST NOT continue.
+	//
+	// implementer_phase_complete has already been emitted by the time this can
+	// be set, which is the whole point of checking cancellation here rather than
+	// before the emit (hk-aekon).
+	CancelReason string
+}
+
+// runAgentPostExit interprets a dead agent session, for the part both execution
+// modes ask the same question about. See the block comment above for the seam.
+//
+// It never decides what a failure MEANS — no bead is reopened, no node outcome
+// is synthesized. It emits the diagnostics the exit owes, gives the agent's
+// uncommitted work a commit, and reports whether the run must stop.
+func runAgentPostExit(ctx context.Context, in agentPostExitInput) agentPostExitResult {
+	env, ports := in.Env, in.Ports
+	emit := ports.Emitter
+	launch := in.Launch
+	logf := newAgentLaunchLogf(os.Stderr, in.LogPrefix)
+
+	// HC-065: drive Terminating → Terminated/Failed for the session that just
+	// exited. A transition that is invalid for the machine's current state (it
+	// may already be Failed from agent_failed) is silently ignored. Background
+	// ctx per RSM-022, so the lifecycle_transition emission survives a run ctx
+	// the stale watcher has already cancelled.
+	transitionToTerminated(context.Background(), launch.Session.Machine(), in.RunID, emit, //nolint:contextcheck // RSM-022: the lifecycle_transition emission must survive a reaper-cancelled run ctx; Background swap by design
+		launch.Exit.ExitCode, launch.Exit.WaitErr)
+
+	// implementer_phase_complete (hk-cd8yu) closes the diagnostic gap between
+	// run_started and the run's terminal, where a silent implementer failure used
+	// to leave no structured event at all.
+	//
+	// hk-368i4: the phase duration is measured ONCE here and reused by the
+	// no-work detector below, so a reader correlating the event's
+	// duration_seconds with the detector's verdict can never see them disagree.
+	//
+	// commitLanded compares the worktree HEAD now against the baseline. A probe
+	// error reads as "not landed", which is the conservative answer for a
+	// diagnostic.
+	phaseDur := ports.Clock.Since(launch.LaunchedAt)
+	if in.Implementer {
+		curHead, _ := gitprobe.ResolveWorktreeHEADVia(ctx, in.Runner, in.WorktreePath) //nolint:errcheck // a probe error reads as "not landed" — the conservative answer for a diagnostic, and the caller's guard runs its own probe
+		commitLanded := curHead != "" && curHead != in.BaselineSHA
+		runlaunch.EmitImplementerPhaseComplete(ctx, emit, in.RunID, launch.Exit.ExitCode,
+			launch.Exit.StderrTail, commitLanded, phaseDur)
+	}
+
+	// The cancellation check sits AFTER that emit and not before it (hk-aekon).
+	// Single mode used to return above the emit, so the one exit that most needs
+	// a diagnostic — an agent reaped mid-run — was the one that left none. Both
+	// modes now get the order from this function rather than from a convention
+	// each site keeps for itself.
+	if ctx.Err() != nil && in.CancelReason != nil {
+		if reason := in.CancelReason(); reason != "" {
+			return agentPostExitResult{CancelReason: reason}
+		}
+	}
+	if !in.Implementer {
+		return agentPostExitResult{}
+	}
+
+	// ── ProcessExit daemon-side commit fallback (hk-gd9r / hk-mazln) ─────────
+	//
+	// codex runs under --sandbox workspace-write, which blocks writes to .git, so
+	// codex cannot commit inside a worktree at all. Pi is unsandboxed and can
+	// self-commit, but a weak free model may not, or may omit the trailer. Either
+	// way the daemon runs git OUTSIDE the sandbox and commits what the agent
+	// produced but did not.
+	//
+	// The decision table is shared (internal/harness/codex/commit.go and
+	// internal/harness/pi/commit.go):
+	//   • HEAD already carries "Refs: <beadID>" → no-op, the agent self-committed.
+	//   • HEAD advanced but lacks the trailer → amend HEAD to add it.
+	//   • HEAD unchanged, worktree dirty → stage all and create the trailer commit.
+	//   • HEAD unchanged, worktree clean → no_change, and the caller's guard decides.
+	//
+	// It fires only for a CompletionProcessExit harness. claude runs through the
+	// interactive TUI and self-commits, so this is a no-op for it. On error we
+	// log and leave the run to the caller's no-commit guard.
+	if launch.Harness == nil || launch.Harness.Completion() != handlercontract.CompletionProcessExit {
+		return agentPostExitResult{}
+	}
+
+	// The two wrappers differ in the message prefix they write and in nothing
+	// else that matters here: both reach the same four primitives in
+	// internal/harness/shared/refstrailer.go and both return the same
+	// shared.RefsOutcome. The graph used to call the codex wrapper for every
+	// harness, so a Pi node's daemon-side commit said feat(codex). The harness
+	// that ran writes its own prefix now, which is what the Pi harness owns its
+	// fallback for (specs/pi-harness.md PI-030).
+	//
+	// Keeping the no-work detector OUTSIDE this branch is load-bearing. There is
+	// ONE outcome enum, not a codex one and a parallel Pi one, and that is what
+	// lets one detector read whichever leg ran. The graph had Pi no-work coverage
+	// only because it always called the codex function, so adding a Pi leg while
+	// leaving the detector inside the codex leg would delete that coverage in
+	// silence (hk-3ywqv).
+	var outcome shared.RefsOutcome
+	var ensureErr error
+	label := "ensureCodexRefsTrailer"
+	if in.AgentType == core.AgentTypePi {
+		label = "ensurePiRefsTrailer"
+		outcome, ensureErr = pi.EnsureRefsTrailer(ctx, in.Runner, in.WorktreePath, in.BaselineSHA, in.BeadID)
+	} else {
+		outcome, ensureErr = codex.EnsureRefsTrailer(ctx, in.Runner, in.WorktreePath, in.BaselineSHA, in.BeadID)
+	}
+	if ensureErr != nil {
+		logf("%s: %v (falling through to the no-commit guard)", label, ensureErr)
+		return agentPostExitResult{}
+	}
+	logf("%s: %s", label, outcome)
+
+	// hk-368i4: a no-change outcome from a phase that finished in seconds is a
+	// no-work run, not a bead that had nothing to do. Diagnostic only — the run
+	// is already failing through the caller's no-commit guard; this records WHY,
+	// which is what was missing when hk-jcrzn went undetected.
+	if codex.NoWorkSuspected(outcome, phaseDur, env.CodexNoWorkDurationFloor) {
+		floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
+		logf("implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)",
+			phaseDur, floor)
+		codex.EmitImplementerNoWorkSuspected(ctx, emit, in.RunID, in.BeadID, phaseDur, floor)
+	}
+	return agentPostExitResult{}
 }

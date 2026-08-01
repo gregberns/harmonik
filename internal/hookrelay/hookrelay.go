@@ -568,15 +568,20 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 	}
 
 	wallStart := time.Now()
+	wallCtx, cancelWall := context.WithTimeout(context.Background(), wallMax)
+	defer cancelWall()
 	retryDelay := retryBase
 
 	for {
 		// CHB-015: 5s dial timeout.
-		dialCtx, cancelDial := context.WithTimeout(context.Background(), dialTimeout)
+		dialCtx, cancelDial := context.WithTimeout(wallCtx, dialTimeout)
 		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, network, address)
 		cancelDial()
 
 		if dialErr != nil {
+			if wallErr := wallCtx.Err(); wallErr != nil {
+				return fmt.Errorf("bridge_daemon_startup_window_exceeded: dial failed after %v: %w", time.Since(wallStart), wallErr)
+			}
 			// CHB-016: a socket that is not yet listening (cold boot / in-place
 			// binary swap per docs/daemon-redeploy.md) surfaces as a dial error,
 			// not a daemon_not_ready ACK. Retry those within the startup window
@@ -587,7 +592,9 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 					return fmt.Errorf("bridge_daemon_startup_window_exceeded: dial failed after %v: %w", elapsed, dialErr)
 				}
 				writeDiagnostic(stderr, "hook-relay: dial failed (%v), retrying in %v\n", dialErr, retryDelay)
-				time.Sleep(retryDelay)
+				if waitErr := waitForRetry(wallCtx, retryDelay); waitErr != nil {
+					return fmt.Errorf("bridge_daemon_startup_window_exceeded: dial failed after %v: %w", time.Since(wallStart), waitErr)
+				}
 				retryDelay *= 2
 				if retryDelay > retryMax {
 					retryDelay = retryMax
@@ -595,6 +602,12 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 				continue
 			}
 			return fmt.Errorf("bridge_dial_failed: %w", dialErr)
+		}
+
+		if wallDeadline, ok := wallCtx.Deadline(); ok {
+			if deadlineErr := conn.SetWriteDeadline(wallDeadline); deadlineErr != nil {
+				return errors.Join(fmt.Errorf("bridge_dial_failed: set write deadline: %w", deadlineErr), conn.Close())
+			}
 		}
 
 		// CHB-015: write exactly one NDJSON line terminated by \n.
@@ -607,7 +620,11 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 		}
 
 		// CHB-015: read back one NDJSON line within 5s.
-		if deadlineErr := conn.SetReadDeadline(time.Now().Add(readTimeout)); deadlineErr != nil {
+		readDeadline := time.Now().Add(readTimeout)
+		if wallDeadline, ok := wallCtx.Deadline(); ok && wallDeadline.Before(readDeadline) {
+			readDeadline = wallDeadline
+		}
+		if deadlineErr := conn.SetReadDeadline(readDeadline); deadlineErr != nil {
 			return errors.Join(fmt.Errorf("bridge_dial_failed: set read deadline: %w", deadlineErr), conn.Close())
 		}
 
@@ -641,7 +658,9 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 				return fmt.Errorf("bridge_daemon_startup_window_exceeded: daemon_not_ready after %v", elapsed)
 			}
 			writeDiagnostic(stderr, "hook-relay: daemon_not_ready (%s), retrying in %v\n", ack.Reason, retryDelay)
-			time.Sleep(retryDelay)
+			if waitErr := waitForRetry(wallCtx, retryDelay); waitErr != nil {
+				return fmt.Errorf("bridge_daemon_startup_window_exceeded: daemon_not_ready after %v: %w", time.Since(wallStart), waitErr)
+			}
 			retryDelay *= 2
 			if retryDelay > retryMax {
 				retryDelay = retryMax
@@ -651,6 +670,18 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 
 		// Any other non-ok status (bad_envelope, unknown_session, etc.) is unrecoverable.
 		return fmt.Errorf("bridge_dial_failed: daemon rejected message: status=%s reason=%s", ack.Status, ack.Reason)
+	}
+}
+
+// waitForRetry waits for delay or returns when the startup window ends.
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

@@ -48,6 +48,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -280,8 +282,6 @@ func cancelFindByID(ctx context.Context, projectDir, queueID string) (*queue.Que
 // queueCancelOperatorEvent is the JSONL event emitted when the operator
 // cancels a queue via `harmonik queue cancel`.
 type queueCancelOperatorEvent struct {
-	EventType   string `json:"event_type"`
-	EmittedAt   string `json:"emitted_at"`
 	QueueID     string `json:"queue_id"`
 	PriorStatus string `json:"prior_status"`
 	By          string `json:"by"`
@@ -295,16 +295,30 @@ type queueCancelOperatorEvent struct {
 // tests) can tell a journalled cancel from an unjournalled one; RunQueueCancel
 // deliberately ignores it and still exits 0.
 func emitQueueCancelEvent(projectDir, queueID, priorStatus string) (err error) {
-	evt := queueCancelOperatorEvent{
-		EventType:   "queue_cancelled_operator",
-		EmittedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+	payload, err := json.Marshal(queueCancelOperatorEvent{
 		QueueID:     queueID,
 		PriorStatus: priorStatus,
 		By:          "operator",
-	}
-	line, err := json.Marshal(evt)
+	})
 	if err != nil {
-		return fmt.Errorf("marshal queue_cancelled_operator: %w", err)
+		return fmt.Errorf("marshal queue_cancelled_operator payload: %w", err)
+	}
+	eventID, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("new queue_cancelled_operator event ID: %w", err)
+	}
+	event := core.Event{
+		EventID:       core.EventID(eventID),
+		SchemaVersion: 1,
+		Type:          "queue_cancelled_operator",
+		TimestampWall: time.Now().UTC(),
+		// Queue owns this CLI fallback writer and registers its subsystem ID.
+		SourceSubsystem: "github.com/gregberns/harmonik/internal/queue",
+		Payload:         payload,
+	}
+	line, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal queue_cancelled_operator event: %w", err)
 	}
 	line = append(line, '\n')
 

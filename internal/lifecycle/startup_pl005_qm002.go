@@ -500,9 +500,8 @@ func reconcileThreeWay(
 						)
 						continue
 					}
-					isDispLedgerClosed := dispRecord.Status == core.CoarseStatusClosed ||
-						dispRecord.Status == core.CoarseStatusTombstone
-					if !isDispLedgerClosed {
+					isDispLedgerTerminal := dispRecord.Status.IsTerminal()
+					if !isDispLedgerTerminal {
 						continue
 					}
 					logger.InfoContext(ctx, "QM-002b Class A': advancing dispatched item to completed (bead_closed_queue_dispatched)",
@@ -600,9 +599,8 @@ func reconcileThreeWay(
 				)
 				continue
 			}
-			isLedgerClosed := record.Status == core.CoarseStatusClosed ||
-				record.Status == core.CoarseStatusTombstone
-			if !isLedgerClosed {
+			isLedgerTerminal := record.Status.IsTerminal()
+			if !isLedgerTerminal {
 				continue
 			}
 

@@ -110,7 +110,7 @@ const taskBranchPrefix = "refs/heads/run/"
 // any forward-compatible unknown status) are treated as non-terminal per the
 // read-surface pass-through rule in beads-integration.md §4.3 BI-013.
 func isTerminalBeadStatus(s core.CoarseStatus) bool {
-	return s == core.CoarseStatusClosed || s == core.CoarseStatusTombstone
+	return s.IsTerminal()
 }
 
 // BeadsQuerier is the interface for querying bead status from the Beads store.

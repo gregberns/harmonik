@@ -197,6 +197,40 @@ const (
 	// MUST. The emit half survives this switch and the routing half does not, so
 	// off is a declared reduction in conformance. The default is on.
 	SubsystemLedgerImportRecovery SubsystemName = "ledger_import_recovery"
+
+	// SubsystemSubscribeHub names the SubscribeHub (daemon.SubscribeHub), the
+	// long-lived wildcard bus observer that fans events out to `subscribe` socket
+	// connections. It is what `harmonik subscribe` and every --follow client read.
+	//
+	// CHARTER §3 puts subscribe outside the core set by name. Off means the
+	// `subscribe` socket op is REFUSED with "SubscribeHandler not registered".
+	// The daemon keeps writing every event to events.jsonl either way, so the
+	// record survives.
+	//
+	// This is the one switch in this group that leaves a nil field on bootState.
+	// Its two consumer sites are both inside the socket-listener subtree, so with
+	// socket_listener already off neither is reached at all.
+	//
+	// SPEC: three clauses make this op a MUST, so off is a declared reduction in
+	// conformance. specs/hitl-decisions.md N5/N8 (a blocked agent MUST wait on an
+	// open subscribe stream), specs/cognition-loop.md CL-060 (consumers MUST use
+	// subscribe and MUST NOT tail events.jsonl outside cold start), and
+	// specs/event-model.md EV-037 (reconnect MUST supply since_event_id).
+	//
+	// READ THIS BEFORE YOU SET IT. The daemon refuses loudly, but only two of the
+	// six clients of this op check the response envelope, so the refusal does not
+	// reach an operator intact. `subscribe --follow` and `comms recv
+	// --follow`/`--wait` report it and exit 1. Plain `harmonik subscribe` copies
+	// the refusal to stdout and exits 0. `harmonik run` through the daemon exits
+	// 1 with no reason. `harmonik smoke` reports it as a timeout. Worst,
+	// `decisions wait` and `raise --wait` return at once with empty output and
+	// exit 0, so a blocked agent reads "no decision" and carries on. That gap is
+	// in cmd/harmonik, it is older than this switch, and this switch is the first
+	// thing that makes it reachable. RECORDED AS hk-1dwk2 (P1), NOT FIXED HERE.
+	// It is rated P1 because hitl-decisions N5/N8 make waiting on an open
+	// subscribe stream a MUST, so a `decisions wait` that returns empty and
+	// succeeds against a refused subscription is a conformance break.
+	SubsystemSubscribeHub SubsystemName = "subscribe_hub"
 )
 
 // knownSubsystems is the closed set of names the `subsystems:` block accepts.
@@ -215,6 +249,7 @@ var knownSubsystems = map[SubsystemName]struct{}{
 	SubsystemDaemonSpendMeter:        {},
 	SubsystemReviewGateAnomaly:       {},
 	SubsystemLedgerImportRecovery:    {},
+	SubsystemSubscribeHub:            {},
 }
 
 // ErrUnknownSubsystem is returned when the subsystems: block names a subsystem

@@ -206,18 +206,27 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 	}
 
 	// SubscribeHub (hk-6ynv4): long-lived wildcard observer fanning events out to
-	// "subscribe" socket-op connections. Always registered; dormant until used.
-	subscribeHubCfg := SubscribeHubConfig{
-		Bus:             bus,
-		ActiveRuns:      bs.sharedRunRegistry,
-		EventsJSONLPath: cfg.JSONLLogPath, // for since_event_id replay (hk-a5sil)
-	}
-	if pe, ok := bus.(eventbus.CommsPresenceEmitter); ok {
-		subscribeHubCfg.PresenceEmitter = pe
-	}
-	bs.subscribeHub = NewSubscribeHub(subscribeHubCfg)
-	if subscribeErr := bs.subscribeHub.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: SubscribeHub.Subscribe: %w", subscribeErr)
+	// "subscribe" socket-op connections. Dormant until used.
+	//
+	// Gated: CHARTER §3 names subscribe outside the core set. Off leaves
+	// bs.subscribeHub nil, and the two seams that read it are both in
+	// bootsocket.go. The daemon keeps writing every event to events.jsonl, so
+	// off costs the live tail and not the record.
+	if cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemSubscribeHub) {
+		subscribeHubCfg := SubscribeHubConfig{
+			Bus:             bus,
+			ActiveRuns:      bs.sharedRunRegistry,
+			EventsJSONLPath: cfg.JSONLLogPath, // for since_event_id replay (hk-a5sil)
+		}
+		if pe, ok := bus.(eventbus.CommsPresenceEmitter); ok {
+			subscribeHubCfg.PresenceEmitter = pe
+		}
+		bs.subscribeHub = NewSubscribeHub(subscribeHubCfg)
+		if subscribeErr := bs.subscribeHub.Subscribe(bus); subscribeErr != nil {
+			return fmt.Errorf("daemon.Start: SubscribeHub.Subscribe: %w", subscribeErr)
+		}
+	} else {
+		bs.logSubsystemDisabled(projectconfig.SubsystemSubscribeHub, "subscribe hub not constructed")
 	}
 
 	return nil

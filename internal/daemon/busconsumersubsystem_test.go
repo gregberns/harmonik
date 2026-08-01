@@ -25,10 +25,16 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"maps"
+	"net"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
@@ -51,6 +57,11 @@ type buspartCase struct {
 // either: both are reached from inside injectWorkLoopDeps and
 // startBackgroundLoops, which the composition-root step rewrites, so gating them
 // is that step's work rather than this one's.
+//
+// SubscribeHub IS here, and it is the one entry that leaves a nil bootState
+// field behind. Both of its consumer sites sit in bootsocket.go inside the
+// socket-listener subtree, so its guards are in that file and touch none of the
+// composition-root assembly functions.
 var buspartCases = []buspartCase{
 	{
 		name:    "HandlerPausePolicyGoroutine",
@@ -75,6 +86,12 @@ var buspartCases = []buspartCase{
 		subsys:  projectconfig.SubsystemLedgerImportRecovery,
 		prefix:  "cat-bl2-ledger-import-failure",
 		logWant: "bead-ledger import recovery not constructed",
+	},
+	{
+		name:    "SubscribeHub",
+		subsys:  projectconfig.SubsystemSubscribeHub,
+		prefix:  "subscribe-hub",
+		logWant: "subscribe hub not constructed",
 	},
 }
 
@@ -202,6 +219,8 @@ subsystems:
     enabled: false
   ledger_import_recovery:
     enabled: false
+  subscribe_hub:
+    enabled: false
 `
 
 // The switches compose, and the daemon still reaches its work loop with all of
@@ -221,5 +240,158 @@ func TestSubsystemPartition_BusConsumers_DisabledDaemonStillReachesWorkLoop(t *t
 	}
 	if !strings.Contains(logs, "composition-root wiring audit") {
 		t.Error("daemon did not reach startBackgroundLoops with these consumers switched off; the core must run without them")
+	}
+}
+
+// --- the socket seam SubscribeHub leaves behind -------------------------------
+
+// SubscribeHub is the one gated consumer here that a socket handler holds, so
+// off leaves a nil *SubscribeHub on bootState. A nil POINTER placed in the
+// SocketHandlers.Subscribe INTERFACE field is not a nil interface, so the
+// daemon's own `if sub == nil` guard would not fire and the subscribe op would
+// dereference a nil receiver instead.
+//
+// These two tests read the difference off a live socket rather than off the
+// field, because the field being nil is not the fact that matters. What these
+// tests measure is what the DAEMON writes on the wire: a refusal envelope when
+// the hub is absent, and a stream when it is present.
+//
+// They deliberately do NOT measure what an operator sees, because that is worse
+// and it is not this package's to fix. Only two of the six clients of this op
+// check the response envelope. Plain `harmonik subscribe` prints the refusal and
+// exits 0, and `decisions wait` returns empty and exits 0. Filed as hk-1dwk2
+// (P1), against cmd/harmonik.
+
+// buspartSubscribeOpConfigYAML enables the socket listener (the subscribe op
+// needs it) and switches off only the hub.
+const buspartSubscribeOpConfigYAML = sockpartBaseConfigYAML + `
+subsystems:
+  subscribe_hub:
+    enabled: false
+`
+
+// buspartSubscribeReplayAll is a `subscribe` request that asks for every event
+// already in events.jsonl. The all-zero UUID sorts below every UUIDv7, so
+// ScanAfter replays the whole file.
+//
+// This is what makes the served case DETERMINISTIC, and the test is flaky
+// without it. A bare `{"op":"subscribe"}` waits for a live event or for the
+// idle heartbeat, and the heartbeat clamps to a floor of 10 s, so a short
+// deadline was really measuring incidental daemon chatter. Replay is encoded
+// synchronously before HandleSubscribe enters its live select, and
+// emitStartupEvents fsyncs daemon_started before the socket binds, so at least
+// one line is always waiting.
+const buspartSubscribeReplayAll = `{"op":"subscribe","since_event_id":"00000000-0000-0000-0000-000000000000"}`
+
+// buspartDialSocket connects to the daemon socket, retrying until the deadline.
+//
+// It retries because bind(2) and listen(2) are two syscalls: the socket inode
+// exists between them, and a connect(2) in that window fails with
+// ECONNREFUSED. Waiting for the file to appear and then dialing once loses that
+// race on a loaded machine.
+func buspartDialSocket(t *testing.T, projectDir string, timeout time.Duration) net.Conn {
+	t.Helper()
+	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, err := net.Dial("unix", sockPath)
+		if err == nil {
+			return conn
+		}
+		lastErr = err
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("buspartDialSocket: no listener on %s within %s: %v", sockPath, timeout, lastErr)
+	return nil
+}
+
+// buspartProbeSubscribeOp boots a daemon, sends one `subscribe` request, and
+// reports the FIRST JSON object the daemon writes back.
+//
+// The return is the raw object rather than a decoded SocketResponse, and that
+// matters. A streamed event line decodes into SocketResponse with every field
+// at its zero value, so a decode that succeeds proves nothing about which of
+// the two paths ran. The discriminator is the SHAPE. A refusal carries an
+// `error` field. A stream line does not.
+func buspartProbeSubscribeOp(t *testing.T, yamlContent string) (first map[string]json.RawMessage, gotAny bool) {
+	t.Helper()
+	projectDir, jsonlPath := sockpartProjectDir(t, yamlContent)
+	cfg := Config{
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              sockpartStubBr(t),
+		WorkflowModeDefault: core.WorkflowModeDot,
+		LogWriter:           &sockpartSyncBuffer{},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- StartForTesting(ctx, cfg) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("daemon.Start did not return within 10 s after context cancellation")
+		}
+	})
+
+	conn := buspartDialSocket(t, projectDir, 10*time.Second)
+	defer func() { _ = conn.Close() }()
+
+	if _, writeErr := conn.Write([]byte(buspartSubscribeReplayAll)); writeErr != nil {
+		t.Fatalf("buspartProbeSubscribeOp: write: %v", writeErr)
+	}
+	if deadlineErr := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); deadlineErr != nil {
+		t.Fatalf("buspartProbeSubscribeOp: SetReadDeadline: %v", deadlineErr)
+	}
+	var raw map[string]json.RawMessage
+	if decodeErr := json.NewDecoder(conn).Decode(&raw); decodeErr != nil {
+		return nil, false
+	}
+	return raw, true
+}
+
+// buspartRefusalText returns the `error` text carried by a socket refusal, and
+// false when the object is not a refusal at all.
+func buspartRefusalText(obj map[string]json.RawMessage) (string, bool) {
+	rawErr, ok := obj["error"]
+	if !ok {
+		return "", false
+	}
+	var text string
+	if err := json.Unmarshal(rawErr, &text); err != nil || text == "" {
+		return "", false
+	}
+	return text, true
+}
+
+// Default state: the hub is present, so the subscribe op does NOT answer with a
+// SocketResponse — the connection becomes the stream. This is the half that
+// proves the disabled case below is reading a real difference.
+func TestSubsystemPartition_SubscribeHub_DefaultServesTheSubscribeOp(t *testing.T) {
+	first, gotAny := buspartProbeSubscribeOp(t, sockpartBaseConfigYAML)
+	if !gotAny {
+		t.Fatal("the subscribe op replayed nothing with no subsystems: block; this probe cannot tell a served stream from a refusal unless the served case answers")
+	}
+	if text, refused := buspartRefusalText(first); refused {
+		t.Errorf("the subscribe op was refused with %q and no subsystems: block; absent config must not disable anything", text)
+	}
+}
+
+// Disabled state: the op fails LOUDLY. The daemon must say the handler is not
+// registered, which is the honest answer for a capability that was switched off.
+// It must not panic on a nil receiver, and it must not hang.
+func TestSubsystemPartition_SubscribeHub_DisabledFailsTheSubscribeOpLoudly(t *testing.T) {
+	first, gotAny := buspartProbeSubscribeOp(t, buspartSubscribeOpConfigYAML)
+	if !gotAny {
+		t.Fatal("the subscribe op wrote nothing with subsystems.subscribe_hub.enabled: false; a switched-off capability must be refused, never faked or left to hang")
+	}
+	text, refused := buspartRefusalText(first)
+	if !refused {
+		t.Fatalf("the subscribe op served a stream with subsystems.subscribe_hub.enabled: false; first line carried fields %v", slices.Sorted(maps.Keys(first)))
+	}
+	if !strings.Contains(text, "SubscribeHandler not registered") {
+		t.Errorf("the subscribe op was refused with %q; an absent hub must be reported as an unregistered handler, not as some other failure", text)
 	}
 }

@@ -1493,7 +1493,18 @@ func dispatchDotAgenticNode(
 		// Implementers DO go through the tap so the budget watchdog sees progress.
 		HeartbeatViaTap: !isReviewer,
 		OnBeforeLaunch:  emitReviewerLaunched,
-		Deliver:         dotDeliver,
+		// hk-b4xf2: the stale watcher's silent-hang drive and stategather's
+		// dashboard read both reach the lifecycle machine through the RunHandle.
+		// A graph run never set it, so both were inert on the path that carries
+		// the traffic. A graph run holds one session per node, so the handle
+		// carries the machine of the node running now — which is the one a stale
+		// watcher firing right now needs to see.
+		OnLaunchedExtra: func(_ context.Context, sess handler.Session) {
+			if handle, ok := handles.RunRegistry.Get(runID); ok {
+				handle.SetMachine(sess.Machine())
+			}
+		},
+		Deliver: dotDeliver,
 	})
 	// The heartbeat must keep beating through everything below — the auto_status
 	// `go build` in particular — or the stale watcher's dead-process reap cancels
@@ -1510,6 +1521,13 @@ func dispatchDotAgenticNode(
 	case agentLaunchOK:
 		// Fall through: the session has exited and been torn down.
 	}
+
+	// HC-065: drive Terminating → Terminated/Failed for the node's session, the
+	// same transition the single-mode tail makes at the same point (hk-b4xf2).
+	// Background ctx per RSM-022, so the lifecycle_transition emission survives a
+	// run ctx the stale watcher has already cancelled.
+	transitionToTerminated(context.Background(), launch.Session.Machine(), runID, emit, //nolint:contextcheck // RSM-022: the lifecycle_transition emission must survive a reaper-cancelled run ctx; Background swap by design
+		launch.Exit.ExitCode, launch.Exit.WaitErr)
 
 	// Emit implementer_phase_complete (hk-cd8yu / hk-mvjs4) immediately after the
 	// implementer session ends, mirroring the single-mode path. Skipped for

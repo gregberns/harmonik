@@ -25,6 +25,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 // dotFixtureGraph is a minimal valid DOT workflow: start (non-agentic noop) →
@@ -138,6 +139,14 @@ type dotFixtureOpts struct {
 	// workspace writes through (the Config.Runner seam). Nil keeps every probe
 	// bare-local.
 	Runner tmuxPkg.CommandRunner
+
+	// HookStore replaces the default fixture store. Nil installs
+	// dotFixtureHookStore over HookOutcome.
+	HookStore runloop.HookStore
+
+	// RunRegistry lets a test read the in-flight RunHandle while the run is
+	// still live. Nil creates a fresh one inside the deps.
+	RunRegistry *daemon.RunRegistry
 }
 
 // dotFixtureResult is what the caller asserts on.
@@ -213,6 +222,11 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 	if err := os.WriteFile(filepath.Join(projectDir, "workflow.dot"), []byte(dotFixtureGraph), 0o644); err != nil {
 		t.Fatalf("runDotFixtureBead: write workflow.dot: %v", err)
 	}
+	var hookStore runloop.HookStore = dotFixtureHookStore{Outcome: json.RawMessage(opts.HookOutcome)}
+	if opts.HookStore != nil {
+		hookStore = opts.HookStore
+	}
+
 	handlerScript := opts.HandlerScript
 	if handlerScript == "" {
 		handlerScript = dotFixtureCommittingHandler(t, beadID)
@@ -250,7 +264,8 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 		HandlerArgs:   []string{handlerScript},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:    qs,
-		HookStore:     dotFixtureHookStore{Outcome: json.RawMessage(opts.HookOutcome)},
+		HookStore:     hookStore,
+		RunRegistry:   opts.RunRegistry,
 		Runner:        opts.Runner,
 		// No claude adapter: the shell implementer never relays agent_ready, so
 		// the readiness gate is bypassed and the run proceeds on the process exit

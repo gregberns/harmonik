@@ -3279,11 +3279,18 @@ func maybeEmitEpicCompleted(ctx context.Context, ports runloop.RunPorts, handles
 // current state to StateTerminated (clean exit) or StateFailed (error exit),
 // driving through StateTerminating if needed (HC-065).
 //
-// Called by beadRunOne after waitWithSocketGrace returns so that EVERY exit
-// path (normal, cancel, crash) reaches a terminal state. Transitions that
-// are invalid for the current Machine state (e.g. machine already in
-// StateFailed from an agent_failed progress-stream event) are silently
-// ignored.
+// Called once the completion wait has returned, by the single-mode tail and by
+// each graph node (hk-b4xf2). Transitions that are invalid for the current
+// Machine state — a machine already in StateFailed from an agent_failed
+// progress-stream event, say — are silently ignored.
+//
+// It does NOT cover every exit path, and the earlier claim that it did was
+// wrong. A launch that never produced a session has no machine to transition,
+// which is correct and needs nothing. Two paths DO leave a live session behind
+// and still return above this call. An agent_ready timeout does so in both
+// modes. A per-run abort does so in single mode only, because the graph node
+// checks the cancelled context BELOW this call. Runs that take either path end
+// with a machine that never reached a terminal state.
 //
 // A lifecycle_transition event is emitted to the bus for each successful
 // Machine transition. ctx SHOULD be a live (non-cancelled) context so that

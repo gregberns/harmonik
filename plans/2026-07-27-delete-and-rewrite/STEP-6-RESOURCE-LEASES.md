@@ -197,6 +197,25 @@ released on the ready-timeout path. **CLOSED 2026-07-31.**
 independent-session flag, either adoption pass, or the registry write. That is both a risk for this
 refactor and the reason the boot-sweep defeat above went unnoticed. **CLOSED 2026-07-31.**
 
+**Hole three: the tunnel port lease has no end-to-end test.** Opened by step 4 and named in its own
+commit: the give-back moved onto the run's scope while the reservation set in
+`internal/transport/tunnel` had no exported reader, so nothing outside that package could ask
+whether a run gave its port back. The leak is silent — the set is process-global, nothing in
+production reads it, and a kept port is simply never handed out again. **CLOSED 2026-07-31.** The
+package gained `PortReserved`. Three drives of the real `beadRunOne` now assert the give-back on the
+ordinary ending and on both refusals that sit below the allocation, and each pairs the free-port
+claim with proof the run took the port first.
+
+> Two things that came out of closing it. A production reader was preferred to a test-only seam
+> because the test-only seam does not reach: an `export_test.go` compiles into its own package's
+> test binary only, and the test that matters drives a whole run and therefore lives in
+> `internal/daemon`. And one mutant nothing kills — put the give-back back on a bare `defer` and
+> every test stays green, because no reachable run holds a tunnel port under any disposition but
+> `Reclaim`. That is the same unreachability §2 records for the tunnel, so it is a fact about the
+> system rather than a hole in the tests. It is written into
+> `internal/daemon/tunnel_port_release_test.go` where someone about to simplify the lease away will
+> find it.
+
 ---
 
 ## 6. Carry-forward facts that must survive verbatim

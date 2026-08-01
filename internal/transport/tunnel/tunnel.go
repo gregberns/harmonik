@@ -213,6 +213,31 @@ func allocatePort() (int, error) {
 	return 0, fmt.Errorf("tunnel.AllocatePort: no free port after %d attempts", maxAttempts)
 }
 
+// PortReserved reports whether port is currently held by an in-flight run on
+// this daemon. It is the read half of the reservation set that AllocatePort
+// writes and ReleasePort clears.
+//
+// Production never asks. The run that reserved a port already knows the number,
+// and no other code has a decision that turns on the answer. The reader exists
+// because the give-back does: internal/daemon puts ReleasePort on the run's
+// resource scope, and until this function existed no test outside this package
+// could tell a run that gave its port back from a run that leaked it. The
+// reservation is process-global, so a leak is silent — the port is simply never
+// handed out again for the life of the daemon, and the daemon looks healthy
+// while its usable port space shrinks.
+//
+// A test-only seam in an export_test.go file would be the smaller surface and
+// was the first choice. It does not reach: an export_test.go is compiled only
+// into THIS package's test binary, and the test that matters drives a whole
+// remote run and therefore lives in internal/daemon. Making the observation
+// exported is the honest cost of putting the give-back under test at the level
+// it actually fails.
+func PortReserved(port int) bool {
+	reservedTunnelPortsMu.Lock()
+	defer reservedTunnelPortsMu.Unlock()
+	return reservedTunnelPorts[port]
+}
+
 // ReleasePort frees a port previously reserved by AllocatePort so a later run may
 // reuse it. Called at per-run tunnel teardown. Safe to call with a port that was
 // never reserved (no-op).

@@ -1217,38 +1217,40 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		}
 	}()
 
-	// hk-hs7ex: release the local slot on exit when the outer loop incremented
-	// localInFlight for this run. relLocalSlot is a mutable flag: if the fallback
-	// SelectWorker path below succeeds and turns a "local" dispatch into a remote
-	// one, it sets relLocalSlot=false and decrements localInFlight immediately so
-	// the outer loop's increment is balanced by this call rather than the deferred
-	// cleanup.
-	relLocalSlot := localSlotHeld
-	defer func() {
-		if relLocalSlot && handles.LocalInFlight != nil {
+	// hk-hs7ex: the outer loop increments localInFlight before it starts this run,
+	// and this run gives it back. The lease replaces a mutable flag: the fallback
+	// worker selection below turns a "local" dispatch into a remote one, and it
+	// gives the count back THERE, through this lease, rather than switching off a
+	// deferred cleanup. A run that never held the count gets a lease born spent,
+	// so the give-back site needs no test for whether there is anything to give.
+	localSlot := runlease.Hold(runlease.LocalSlot, nil)
+	if localSlotHeld && handles.LocalInFlight != nil {
+		localSlot = runScope.Hold(runlease.LocalSlot, func() error {
 			handles.LocalInFlight.Add(-1)
-		}
-	}()
+			return nil
+		})
+	}
 
-	// hk-3hozm: release the pre-reserved REMOTE worker slot on ANY exit path,
+	// hk-3hozm: give the pre-reserved REMOTE worker slot back on ANY exit path,
 	// including the four refuse-before-launch early returns below (bad pi profile,
 	// CrossRepoUnsafeError, unresolvable start_from/parent commit, LandsOnProtected).
-	// The outer dispatch loop pre-reserved this slot via SelectWorker (~line 3078)
-	// and the caller MUST balance it with ReleaseSlot. That release was previously
-	// registered only at the remote-runner setup (the `preSelectedWorker != nil`
-	// block far below), AFTER those early returns — so a refused remote bead
-	// ReopenBeads'd and returned without releasing, permanently over-counting the
-	// registry until HasFreeSlot()==false forever wedged the remote path. Hoisting
-	// the release to a top-level defer fires it exactly once on every return path.
-	// Keyed on preSelectedWorker so it is inert for the fallback path (which is
-	// mutually exclusive — it runs only when rbc==nil, i.e. preSelectedWorker==nil —
-	// and acquires+releases its own slot after these early returns).
-	relWorkerSlot := preSelectedWorker != nil && handles.Workers != nil
-	defer func() {
-		if relWorkerSlot {
+	// The outer dispatch loop pre-reserved this slot via SelectWorker and the
+	// caller MUST balance it with ReleaseSlot. That release was once registered
+	// only at the remote-runner setup far below, AFTER those early returns — so a
+	// refused remote bead reopened and returned without releasing, permanently
+	// over-counting the registry until HasFreeSlot() was false for ever and the
+	// remote path wedged. Holding it here, above every early return, is what fixed
+	// that, and the scope is what makes it fire exactly once.
+	//
+	// Keyed on preSelectedWorker so it is inert for the fallback path, which is
+	// mutually exclusive — it runs only when rbc == nil, so preSelectedWorker is
+	// nil — and takes a slot of its own after these early returns.
+	if preSelectedWorker != nil && handles.Workers != nil {
+		runScope.Hold(runlease.WorkerSlot, func() error {
 			handles.Workers.ReleaseSlot()
-		}
-	}()
+			return nil
+		})
+	}
 
 	// runTipSHA is set (in the DOT failure path) to the worktree HEAD SHA when
 	// HEAD has advanced past the parent commit — meaning the implementer produced
@@ -1410,10 +1412,10 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			// hk-zexsj: pin the tmux SSHRunner off the shared SSH ControlMaster.
 			sshRunner: tmuxpkg.SSHRunner{Host: preSelectedWorker.Host, Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"}},
 		}
-		// hk-3hozm: the balancing ReleaseSlot for this pre-reserved slot is now
-		// registered at the top of beadRunOne (relWorkerSlot defer) so it also
-		// covers the refuse-before-launch early returns above. No release here —
-		// registering one would double-free the slot.
+		// hk-3hozm: this pre-reserved slot is held on the run's scope at the top of
+		// beadRunOne, so the give-back also covers the refuse-before-launch early
+		// returns above. Nothing to do here — a second hold would give the slot
+		// back twice.
 	}
 	// hk-f10xl [L5 Move 2]: per-queue routing gate fallback. Applies when
 	// preSelectedWorker is nil (e.g. br-ready path with no available worker at
@@ -1440,15 +1442,18 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				// worker opts.
 				sshRunner: tmuxpkg.SSHRunner{Host: w.Host, Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"}},
 			}
-			defer handles.Workers.ReleaseSlot()
+			runScope.Hold(runlease.WorkerSlot, func() error {
+				handles.Workers.ReleaseSlot()
+				return nil
+			})
 			// hk-hs7ex: the outer loop incremented localInFlight thinking this was
-			// a local run. A worker slot became available between the gate and here
-			// so this run is actually remote. Correct the count immediately and
-			// disable the deferred cleanup.
-			if localSlotHeld && handles.LocalInFlight != nil {
-				handles.LocalInFlight.Add(-1)
-				relLocalSlot = false
-			}
+			// a local run. A worker slot became available between the gate and here,
+			// so this run is actually remote and never needed the local count.
+			// Giving it back NOW rather than at the end is the point: the increment
+			// was made on a guess that is now known to be wrong, and the lease makes
+			// the end-of-run give-back a no-op rather than a double decrement.
+			//nolint:errcheck // the give-back is an atomic decrement; it cannot fail
+			_ = localSlot.Release()
 			// hk-4tjt6: mirror the Remote flag update so LenForQueueLocal
 			// stops counting this run against the per-queue local cap.
 			if h, ok := handles.RunRegistry.Get(runID); ok {

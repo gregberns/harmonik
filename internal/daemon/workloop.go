@@ -2752,8 +2752,45 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// reads the WORKER's run-branch HEAD (nil runRunner ⇒ box-A-local, NFR7). The
 	// noCommitGuardShouldReopen checks if THIS bead's code landed in the target
 	// repo's main branch (cross-repo: activeRepo; local: env.ProjectDir).
-	if curHeadSHA, curHeadErr := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath); curHeadErr == nil &&
-		noCommitGuardShouldReopen(ctx, activeRepo, curHeadSHA, headSHA, beadID) {
+	//
+	// The probe error is its own terminal, not a reason to skip the guard
+	// (hk-fmere). The two questions used to share one condition — "did the probe
+	// succeed" AND "should the run reopen" — so a probe that errored answered the
+	// first `false`, the whole condition went false, and the guard never ran. An
+	// exit-0 run that produced nothing then fell through to the clean-exit
+	// classification below, merged as no-change, and CLOSED the bead green. A
+	// guard whose own instrument is broken must refuse, never pass.
+	//
+	// specs/execution-model.md EM-058 component C states the obligation for both
+	// modes: "A worktree whose HEAD cannot be resolved at all is a daemon-side
+	// error in BOTH modes (a broken worktree is a real failure)." The graph node
+	// already refuses at the same probe, before and after its launch.
+	//
+	// The graph expresses that refusal as `return core.Outcome{}, err`, because a
+	// node has a caller — driveDotWorkflow — that turns the error into a run
+	// failure. Single mode has no such caller: this region IS the run's terminal
+	// decision, so its equivalent of a hard fail is the reopen spine, the same
+	// terminal the escape guard above and the no-commit guard below already take.
+	// The bead goes back to the queue rather than closing on an unread fact.
+	//
+	// The refusal is scoped to a LIVE run. A cancelled ctx fails this probe too,
+	// and there the failure says the daemon is going away, not that the worktree
+	// is broken. Reopening on it would hand a surviving run's bead to a second
+	// agent while the first one is still working it.
+	curHeadSHA, curHeadErr := gitprobe.ResolveWorktreeHEADVia(ctx, runRunner, wtPath)
+	if curHeadErr != nil && ctx.Err() == nil {
+		failReason := fmt.Sprintf("worktree_head_unreadable: resolve worktree HEAD after implementer exit=%d: %v", ei.ExitCode, curHeadErr)
+		failRun(failReason, failReason)
+		// succeeded is never assigned anywhere in this function, so the explicit
+		// false is byte-equivalent to a naked return (nakedret).
+		return false
+	}
+	// The shutdown terminal is the switch below's to decide, and it leaves the
+	// bead alone: it drains committed-but-unmerged work (hk-dnrg) and leaves a
+	// surviving run's bead in_progress for QM-002a. curHeadSHA is empty when the
+	// probe failed, and the guard cannot fire on an empty SHA because a real
+	// parent is never the empty string, so a failed probe never reopens here.
+	if noCommitGuardShouldReopen(ctx, activeRepo, curHeadSHA, headSHA, beadID) {
 		// hk-4ie1z: the implementer's worktree HEAD never advanced past the
 		// parent (NO commit) AND this bead's own work is not on main. The prior
 		// escape hatch (hk-cwxow) bypassed the guard whenever refs/heads/main had

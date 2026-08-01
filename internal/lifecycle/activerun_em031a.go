@@ -383,10 +383,8 @@ func queryNonTerminalBeads(ctx context.Context, querier BeadsQuerier) (
 	}
 
 	// Also collect terminal beads so the branch scan can exclude them.
-	// We query closed + tombstone to build the exclusion set.
-	terminalStatuses := []string{"closed", "tombstone"}
-	for _, status := range terminalStatuses {
-		records, queryErr := querier.ListBeadsByStatus(ctx, status)
+	for _, status := range core.TerminalCoarseStatuses() {
+		records, queryErr := querier.ListBeadsByStatus(ctx, string(status))
 		if queryErr != nil {
 			if isBeadsUnavailable(queryErr) {
 				return nil, nil, fmt.Errorf("%w: %w", ErrBeadsUnavailable, queryErr)

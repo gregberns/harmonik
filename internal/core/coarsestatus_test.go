@@ -66,6 +66,29 @@ func TestCoarseStatusIsTerminal(t *testing.T) {
 	}
 }
 
+func TestTerminalCoarseStatuses(t *testing.T) {
+	t.Parallel()
+
+	got := TerminalCoarseStatuses()
+	want := []CoarseStatus{CoarseStatusClosed, CoarseStatusTombstone}
+	if len(got) != len(want) {
+		t.Fatalf("TerminalCoarseStatuses length = %d, want %d", len(got), len(want))
+	}
+	for i, status := range want {
+		if got[i] != status {
+			t.Errorf("TerminalCoarseStatuses()[%d] = %q, want %q", i, got[i], status)
+		}
+		if !status.IsTerminal() {
+			t.Errorf("terminal status %q is not terminal", status)
+		}
+	}
+
+	got[0] = CoarseStatusOpen
+	if again := TerminalCoarseStatuses()[0]; again != CoarseStatusClosed {
+		t.Errorf("TerminalCoarseStatuses returned shared storage: got %q, want %q", again, CoarseStatusClosed)
+	}
+}
+
 func TestCoarseStatusUnmarshalText(t *testing.T) {
 	t.Parallel()
 

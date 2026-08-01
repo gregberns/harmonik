@@ -206,10 +206,9 @@ seed_for_cell() {
 }
 
 # The core-loop-proof cells pin dispatch.workflow_mode = "dot" (cells.json). The scratch
-# daemon must therefore boot in dot mode, NOT scratch-daemon.sh's review-loop default —
-# a review-loop daemon would (a) fail the dispatch-mode gap assertion and (b) run the
-# heavier multi-turn review cycle. Export so BOTH the cycle-up and any batch-triggered
-# cmd_up inherit it; an explicit operator override still wins.
+# daemon must therefore boot in dot mode. The scratch daemon also defaults to dot.
+# Export the value so both the cycle-up and batch-triggered cmd_up calls use it.
+# An explicit operator override still wins.
 export SCRATCH_WORKFLOW_MODE="${SCRATCH_WORKFLOW_MODE:-dot}"
 
 # ---- clean the scratch daemon ---------------------------------------------

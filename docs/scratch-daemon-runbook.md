@@ -72,7 +72,7 @@ init  →  build  →  up  →  batch  →  feedback  →  down
 | Env var | Applies to | Default | Effect |
 |---|---|---|---|
 | `SCRATCH_MAX_CONCURRENT` | `up` | `1` | daemon `--max-concurrent`. |
-| `SCRATCH_WORKFLOW_MODE`  | `up` | `review-loop` | daemon `--workflow-mode`. |
+| `SCRATCH_WORKFLOW_MODE`  | `up` | `dot` | daemon `--workflow-mode`. |
 | `SCRATCH_DAEMON_FLAGS`   | `up` | (empty) | extra flags appended verbatim to the daemon start. |
 | `SCRATCH_BATCH_TIMEOUT`  | `batch` | `1800` | max seconds `batch` waits for terminal events before marking the rest `incomplete`. |
 

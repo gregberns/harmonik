@@ -36,7 +36,7 @@
 #
 # Options (env vars):
 #   SCRATCH_MAX_CONCURRENT  — daemon --max-concurrent      (default: 1)
-#   SCRATCH_WORKFLOW_MODE   — daemon --workflow-mode        (default: review-loop)
+#   SCRATCH_WORKFLOW_MODE   — daemon --workflow-mode        (default: dot)
 #   SCRATCH_DAEMON_FLAGS    — extra flags appended verbatim to the daemon start
 #   SCRATCH_BATCH_TIMEOUT   — batch: max seconds to await terminal events (default: 1800)
 #
@@ -349,7 +349,7 @@ cmd_up() {
     fi
 
     local max_concurrent="${SCRATCH_MAX_CONCURRENT:-1}"
-    local workflow_mode="${SCRATCH_WORKFLOW_MODE:-review-loop}"
+    local workflow_mode="${SCRATCH_WORKFLOW_MODE:-dot}"
     local extra_flags="${SCRATCH_DAEMON_FLAGS:-}"
 
     echo "[scratch-daemon] starting standalone daemon (session=$sess, project=$scratch)"

@@ -35,6 +35,12 @@ func (s CoarseStatus) Valid() bool {
 	}
 }
 
+// IsTerminal reports whether s is a terminal Beads status. Closed and
+// tombstone are terminal. Unknown future values remain non-terminal.
+func (s CoarseStatus) IsTerminal() bool {
+	return s == CoarseStatusClosed || s == CoarseStatusTombstone
+}
+
 // MarshalText implements encoding.TextMarshaler so CoarseStatus serialises
 // correctly in JSON and YAML.
 func (s CoarseStatus) MarshalText() ([]byte, error) {

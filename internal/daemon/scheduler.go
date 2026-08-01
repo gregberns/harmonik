@@ -993,8 +993,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						// can reach allItemsTerminal. Non-terminal statuses (in_progress, draft,
 						// deferred, pinned) remain deferred-for-ledger-dep to be re-evaluated
 						// on the next poll cycle (hk-3kq05).
-						if preClaimRecord.Status == core.CoarseStatusClosed ||
-							preClaimRecord.Status == core.CoarseStatusTombstone {
+						if preClaimRecord.Status.IsTerminal() {
 							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 						} else {
 							// hk-l2xd1: in_progress with no active run → auto-reset to break

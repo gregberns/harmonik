@@ -41,6 +41,31 @@ func TestCoarseStatusValid(t *testing.T) {
 	}
 }
 
+func TestCoarseStatusIsTerminal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		status CoarseStatus
+		want   bool
+	}{
+		{CoarseStatusOpen, false},
+		{CoarseStatusInProgress, false},
+		{CoarseStatusBlocked, false},
+		{CoarseStatusDeferred, false},
+		{CoarseStatusDraft, false},
+		{CoarseStatusPinned, false},
+		{CoarseStatusClosed, true},
+		{CoarseStatusTombstone, true},
+		{CoarseStatus("future_status"), false},
+	}
+
+	for _, test := range tests {
+		if got := test.status.IsTerminal(); got != test.want {
+			t.Errorf("CoarseStatus(%q).IsTerminal() = %t, want %t", test.status, got, test.want)
+		}
+	}
+}
+
 func TestCoarseStatusUnmarshalText(t *testing.T) {
 	t.Parallel()
 

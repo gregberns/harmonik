@@ -62,12 +62,15 @@ func ResumeFromFailure(q *Queue) (rearmed []core.BeadID, ok bool) {
 		// absorbing, so it cannot self-resurrect). Groups that were still
 		// pending/active when the queue parked are left as-is.
 		if q.Groups[gi].Status == GroupStatusCompleteWithFailures {
-			q.Groups[gi].Status = GroupStatusActive
-			q.Groups[gi].CompletedAt = nil
+			if err := ReactivateFailedGroup(&q.Groups[gi]); err != nil {
+				return nil, false
+			}
 		}
 	}
 
-	q.Status = QueueStatusActive
+	if err := ResumeQueueFromFailure(q); err != nil {
+		return nil, false
+	}
 	return rearmed, true
 }
 
@@ -107,9 +110,9 @@ func RearmFailedItems(g *Group) []core.BeadID {
 		if g.Items[i].Status != ItemStatusFailed {
 			continue
 		}
-		g.Items[i].Status = ItemStatusPending
-		g.Items[i].Attempts = 0
-		g.Items[i].LastFailureReason = ""
+		if err := ReactivateFailedItem(&g.Items[i]); err != nil {
+			continue
+		}
 		rearmed = append(rearmed, g.Items[i].BeadID)
 	}
 	return rearmed

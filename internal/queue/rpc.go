@@ -301,7 +301,13 @@ func HandleQueueSubmit(
 		deferredSet := buildDeferredSet(deferredPairs, i)
 		for j := range items {
 			if _, deferred := deferredSet[items[j].BeadID]; deferred {
-				items[j].Status = ItemStatusDeferredForLedgerDep
+				if err := DeferItemForLedgerDependency(&items[j]); err != nil {
+					return QueueSubmitResponse{}, nil, nil, &RPCError{
+						Code:    -32099,
+						Message: "internal_error",
+						Detail:  map[string]any{"error": err.Error()},
+					}
+				}
 			}
 		}
 		groups[i] = Group{

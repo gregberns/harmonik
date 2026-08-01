@@ -33,6 +33,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,36 +46,37 @@ import (
 )
 
 // twinBinaryPath is set by TestMain after the twin binary is built once.
-// The zero value means the twin was not found / built; scenarios that require
-// it call t.Skip if this is empty.
 var twinBinaryPath string
 
 // codexTwinBinaryPath is set by TestMain after harmonik-twin-codex is built.
-// Scenarios that require the codex twin call t.Skip if this is empty.
 var codexTwinBinaryPath string
 
 // TestMain builds the harmonik-twin-claude and harmonik-twin-codex binaries
 // once per test binary run and stores their paths in twinBinaryPath /
-// codexTwinBinaryPath. Tests that require a twin check its field before
-// proceeding.
+// codexTwinBinaryPath. A twin build failure fails the whole tier. A skipped
+// twin scenario would hide the failed build and turn a broken tier green.
 func TestMain(m *testing.M) {
 	bin, err := scenarioFixtureBuildTwin()
-	if err == nil {
-		twinBinaryPath = bin
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "scenario: build harmonik-twin-claude: %v\n", err)
+		os.Exit(1)
 	}
+	twinBinaryPath = bin
+
 	codexBin, codexErr := scenarioFixtureBuildCodexTwin()
-	if codexErr == nil {
-		codexTwinBinaryPath = codexBin
+	if codexErr != nil {
+		fmt.Fprintf(os.Stderr, "scenario: build harmonik-twin-codex: %v\n", codexErr)
+		os.Exit(1)
 	}
+	codexTwinBinaryPath = codexBin
+
 	os.Exit(m.Run())
 }
 
 // scenarioFixtureBuildTwin builds cmd/harmonik-twin-claude into a temp directory
 // and returns its absolute path.
 //
-// On failure, a descriptive error is returned. Callers (test functions) use
-// twinBinaryPath and skip if it is empty — build failures are not fatal to
-// tests that don't require the twin.
+// On failure, a descriptive error is returned and TestMain fails the tier.
 func scenarioFixtureBuildTwin() (string, error) {
 	goTool, err := exec.LookPath("go")
 	if err != nil {
@@ -117,8 +119,7 @@ func scenarioFixtureBuildTwin() (string, error) {
 // scenarioFixtureBuildCodexTwin builds cmd/harmonik-twin-codex into a temp
 // directory and returns its absolute path.
 //
-// On failure, a descriptive error is returned. Callers (test functions) use
-// codexTwinBinaryPath and skip if it is empty.
+// On failure, a descriptive error is returned and TestMain fails the tier.
 func scenarioFixtureBuildCodexTwin() (string, error) {
 	goTool, err := exec.LookPath("go")
 	if err != nil {
